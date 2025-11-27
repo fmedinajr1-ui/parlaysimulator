@@ -14,7 +14,102 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      parlay_history: {
+        Row: {
+          ai_roasts: Json | null
+          combined_probability: number
+          created_at: string
+          degenerate_level: string
+          id: string
+          is_settled: boolean
+          is_won: boolean | null
+          legs: Json
+          potential_payout: number
+          settled_at: string | null
+          stake: number
+          user_id: string
+        }
+        Insert: {
+          ai_roasts?: Json | null
+          combined_probability: number
+          created_at?: string
+          degenerate_level: string
+          id?: string
+          is_settled?: boolean
+          is_won?: boolean | null
+          legs: Json
+          potential_payout: number
+          settled_at?: string | null
+          stake: number
+          user_id: string
+        }
+        Update: {
+          ai_roasts?: Json | null
+          combined_probability?: number
+          created_at?: string
+          degenerate_level?: string
+          id?: string
+          is_settled?: boolean
+          is_won?: boolean | null
+          legs?: Json
+          potential_payout?: number
+          settled_at?: string | null
+          stake?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          avatar_url: string | null
+          bio: string | null
+          created_at: string
+          id: string
+          instagram_handle: string | null
+          lifetime_degenerate_score: number
+          total_losses: number
+          total_payout: number
+          total_staked: number
+          total_wins: number
+          twitter_handle: string | null
+          updated_at: string
+          user_id: string
+          username: string | null
+        }
+        Insert: {
+          avatar_url?: string | null
+          bio?: string | null
+          created_at?: string
+          id?: string
+          instagram_handle?: string | null
+          lifetime_degenerate_score?: number
+          total_losses?: number
+          total_payout?: number
+          total_staked?: number
+          total_wins?: number
+          twitter_handle?: string | null
+          updated_at?: string
+          user_id: string
+          username?: string | null
+        }
+        Update: {
+          avatar_url?: string | null
+          bio?: string | null
+          created_at?: string
+          id?: string
+          instagram_handle?: string | null
+          lifetime_degenerate_score?: number
+          total_losses?: number
+          total_payout?: number
+          total_staked?: number
+          total_wins?: number
+          twitter_handle?: string | null
+          updated_at?: string
+          user_id?: string
+          username?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

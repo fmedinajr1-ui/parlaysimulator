@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 const navItems = [
   { icon: Home, label: "Home", path: "/" },
   { icon: BarChart3, label: "Analyze", path: "/upload" },
-  { icon: User, label: "Profile", path: "/profile", disabled: true },
+  { icon: User, label: "Profile", path: "/profile" },
 ];
 
 export function BottomNav() {
@@ -17,18 +17,6 @@ export function BottomNav() {
         {navItems.map((item) => {
           const isActive = location.pathname === item.path;
           const Icon = item.icon;
-
-          if (item.disabled) {
-            return (
-              <div
-                key={item.path}
-                className="flex flex-col items-center justify-center gap-0.5 py-2 px-5 min-h-[52px] min-w-[64px] opacity-40 cursor-not-allowed"
-              >
-                <Icon className="w-6 h-6 text-muted-foreground" />
-                <span className="text-[10px] text-muted-foreground font-medium">{item.label}</span>
-              </div>
-            );
-          }
 
           return (
             <Link

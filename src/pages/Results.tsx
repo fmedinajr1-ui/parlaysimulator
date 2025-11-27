@@ -9,17 +9,22 @@ import { BankrollCard } from "@/components/results/BankrollCard";
 import { LegBreakdown } from "@/components/results/LegBreakdown";
 import { ShareableMeme } from "@/components/results/ShareableMeme";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, RotateCcw } from "lucide-react";
+import { ArrowLeft, RotateCcw, Save, Loader2, LogIn } from "lucide-react";
 import { ParlaySimulation } from "@/types/parlay";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
+import { toast } from "@/hooks/use-toast";
 
 const Results = () => {
   const location = useLocation();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const simulation = location.state?.simulation as ParlaySimulation | undefined;
   const [aiRoasts, setAiRoasts] = useState<string[] | null>(null);
   const [isLoadingRoasts, setIsLoadingRoasts] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isSaved, setIsSaved] = useState(false);
 
   useEffect(() => {
     if (!simulation) {
@@ -74,6 +79,72 @@ const Results = () => {
 
   // Use AI roasts if available, otherwise fall back to static ones
   const displayRoasts = aiRoasts || simulation.trashTalk;
+
+  const handleSaveParlay = async () => {
+    if (!user) {
+      navigate('/auth');
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      // Calculate degen score for this parlay (inverse of probability * 100)
+      const degenScore = Math.min(100, (1 - simulation.combinedProbability) * 100);
+
+      const { error } = await supabase.from('parlay_history').insert({
+        user_id: user.id,
+        legs: simulation.legs.map(leg => ({
+          description: leg.description,
+          odds: leg.odds
+        })),
+        stake: simulation.stake,
+        potential_payout: simulation.potentialPayout,
+        combined_probability: simulation.combinedProbability,
+        degenerate_level: simulation.degenerateLevel,
+        ai_roasts: aiRoasts
+      });
+
+      if (error) throw error;
+
+      // Update profile stats
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('total_staked, lifetime_degenerate_score')
+        .eq('user_id', user.id)
+        .single();
+
+      if (profile) {
+        const currentStaked = Number(profile.total_staked);
+        const currentDegenScore = Number(profile.lifetime_degenerate_score);
+        // Running average of degen score
+        const newDegenScore = currentStaked > 0 
+          ? ((currentDegenScore * currentStaked) + (degenScore * simulation.stake)) / (currentStaked + simulation.stake)
+          : degenScore;
+
+        await supabase
+          .from('profiles')
+          .update({
+            total_staked: currentStaked + simulation.stake,
+            lifetime_degenerate_score: newDegenScore
+          })
+          .eq('user_id', user.id);
+      }
+
+      setIsSaved(true);
+      toast({
+        title: "Parlay saved! 🔥",
+        description: "Check your profile to track your degen history."
+      });
+    } catch (error: any) {
+      toast({
+        title: "Save failed",
+        description: error.message,
+        variant: "destructive"
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background pb-24 touch-pan-y">
@@ -142,10 +213,41 @@ const Results = () => {
           />
         </div>
 
-        {/* Run Another */}
-        <div className="mt-6 text-center">
-          <Link to="/upload">
-            <Button variant="neon" size="lg" className="font-display">
+        {/* Save to Profile */}
+        <div className="mt-6 space-y-3">
+          {user ? (
+            <Button
+              variant="outline"
+              size="lg"
+              className="w-full font-display"
+              onClick={handleSaveParlay}
+              disabled={isSaving || isSaved}
+            >
+              {isSaving ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  SAVING...
+                </>
+              ) : isSaved ? (
+                '✅ SAVED TO PROFILE'
+              ) : (
+                <>
+                  <Save className="w-4 h-4 mr-2" />
+                  SAVE TO PROFILE
+                </>
+              )}
+            </Button>
+          ) : (
+            <Link to="/auth" className="block">
+              <Button variant="outline" size="lg" className="w-full font-display">
+                <LogIn className="w-4 h-4 mr-2" />
+                LOG IN TO SAVE
+              </Button>
+            </Link>
+          )}
+
+          <Link to="/upload" className="block">
+            <Button variant="neon" size="lg" className="w-full font-display">
               🎟️ ANALYZE ANOTHER SLIP
             </Button>
           </Link>

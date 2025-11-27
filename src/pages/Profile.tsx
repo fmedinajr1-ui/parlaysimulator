@@ -1,76 +1,164 @@
-import { BottomNav } from "@/components/BottomNav";
-import { FeedCard } from "@/components/FeedCard";
-import { Button } from "@/components/ui/button";
-import { Lock, User, Trophy, History, Bell } from "lucide-react";
-import { Link } from "react-router-dom";
+import { useState, useEffect } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
+import { BottomNav } from '@/components/BottomNav';
+import { ProfileHeader } from '@/components/profile/ProfileHeader';
+import { SocialLinks } from '@/components/profile/SocialLinks';
+import { DegenStats } from '@/components/profile/DegenStats';
+import { ParlayHistoryFeed } from '@/components/profile/ParlayHistoryFeed';
+import { Button } from '@/components/ui/button';
+import { Loader2, LogOut, Upload } from 'lucide-react';
+import { toast } from '@/hooks/use-toast';
+
+interface Profile {
+  username: string | null;
+  bio: string | null;
+  avatar_url: string | null;
+  twitter_handle: string | null;
+  instagram_handle: string | null;
+  total_wins: number;
+  total_losses: number;
+  total_staked: number;
+  total_payout: number;
+  lifetime_degenerate_score: number;
+}
 
 const Profile = () => {
+  const { user, isLoading: authLoading, signOut } = useAuth();
+  const navigate = useNavigate();
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    if (!authLoading && !user) {
+      navigate('/auth');
+    }
+  }, [user, authLoading, navigate]);
+
+  useEffect(() => {
+    if (user) {
+      fetchProfile();
+    }
+  }, [user]);
+
+  const fetchProfile = async () => {
+    if (!user) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (error) throw error;
+      
+      if (data) {
+        setProfile({
+          username: data.username,
+          bio: data.bio,
+          avatar_url: data.avatar_url,
+          twitter_handle: data.twitter_handle,
+          instagram_handle: data.instagram_handle,
+          total_wins: data.total_wins,
+          total_losses: data.total_losses,
+          total_staked: Number(data.total_staked),
+          total_payout: Number(data.total_payout),
+          lifetime_degenerate_score: Number(data.lifetime_degenerate_score)
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching profile:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleProfileUpdate = (updates: Partial<Profile>) => {
+    if (profile) {
+      setProfile({ ...profile, ...updates });
+    }
+  };
+
+  const handleSignOut = async () => {
+    await signOut();
+    toast({
+      title: "Signed out",
+      description: "See you next time, degen!"
+    });
+    navigate('/');
+  };
+
+  if (authLoading || isLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!profile) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <p className="text-muted-foreground">Failed to load profile</p>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background pb-24">
       <main className="max-w-lg mx-auto px-4 py-6">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <div className="w-24 h-24 rounded-full gradient-purple mx-auto mb-4 flex items-center justify-center">
-            <User className="w-12 h-12 text-foreground" />
-          </div>
-          <h1 className="font-display text-3xl text-foreground mb-2">
-            DEGEN PROFILE
-          </h1>
-          <p className="text-muted-foreground">
-            Coming soon... 🚀
-          </p>
+        {/* Logout button */}
+        <div className="flex justify-end mb-4">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleSignOut}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <LogOut className="w-4 h-4 mr-2" />
+            Sign out
+          </Button>
         </div>
 
-        {/* Coming Soon Features */}
-        <div className="space-y-4">
-          <FeedCard className="opacity-60">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-xl bg-muted flex items-center justify-center">
-                <Trophy className="w-6 h-6 text-neon-yellow" />
-              </div>
-              <div className="flex-1">
-                <p className="font-semibold text-foreground">Degen Stats</p>
-                <p className="text-sm text-muted-foreground">Track your parlay history</p>
-              </div>
-              <Lock className="w-5 h-5 text-muted-foreground" />
-            </div>
-          </FeedCard>
+        {/* Profile Header */}
+        <ProfileHeader 
+          profile={profile} 
+          onUpdate={handleProfileUpdate}
+        />
 
-          <FeedCard className="opacity-60">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-xl bg-muted flex items-center justify-center">
-                <History className="w-6 h-6 text-neon-cyan" />
-              </div>
-              <div className="flex-1">
-                <p className="font-semibold text-foreground">Slip History</p>
-                <p className="text-sm text-muted-foreground">Review past roasts</p>
-              </div>
-              <Lock className="w-5 h-5 text-muted-foreground" />
-            </div>
-          </FeedCard>
+        {/* Social Links */}
+        <div className="mt-6">
+          <SocialLinks
+            twitterHandle={profile.twitter_handle}
+            instagramHandle={profile.instagram_handle}
+            onUpdate={(updates) => handleProfileUpdate(updates as Partial<Profile>)}
+          />
+        </div>
 
-          <FeedCard className="opacity-60">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-xl bg-muted flex items-center justify-center">
-                <Bell className="w-6 h-6 text-neon-purple" />
-              </div>
-              <div className="flex-1">
-                <p className="font-semibold text-foreground">Alerts</p>
-                <p className="text-sm text-muted-foreground">Get notified on your slips</p>
-              </div>
-              <Lock className="w-5 h-5 text-muted-foreground" />
-            </div>
-          </FeedCard>
+        {/* Degen Stats */}
+        <div className="mt-4">
+          <DegenStats
+            totalWins={profile.total_wins}
+            totalLosses={profile.total_losses}
+            totalStaked={profile.total_staked}
+            totalPayout={profile.total_payout}
+            lifetimeDegenScore={profile.lifetime_degenerate_score}
+          />
+        </div>
+
+        {/* Parlay History */}
+        <div className="mt-4">
+          <ParlayHistoryFeed onStatsUpdate={fetchProfile} />
         </div>
 
         {/* CTA */}
         <div className="mt-8 text-center">
-          <p className="text-muted-foreground mb-4">
-            For now, keep analyzing those slips! 🔥
-          </p>
           <Link to="/upload">
             <Button variant="neon" size="lg" className="font-display">
-              🎟️ UPLOAD A SLIP
+              <Upload className="w-4 h-4 mr-2" />
+              UPLOAD A SLIP
             </Button>
           </Link>
         </div>
