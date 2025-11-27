@@ -1,1 +1,4 @@
 project_id = "pajakaqphlxoqjtrxzmi"
+
+[functions.extract-parlay]
+verify_jwt = false
