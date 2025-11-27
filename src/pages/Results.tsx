@@ -29,27 +29,27 @@ const Results = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background pb-24">
-      <main className="max-w-lg mx-auto px-4 py-6">
+    <div className="min-h-screen bg-background pb-24 touch-pan-y">
+      <main className="max-w-lg mx-auto px-3 py-4">
         {/* Header */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-4">
           <Link to="/upload">
-            <Button variant="ghost" size="sm">
-              <ArrowLeft className="w-4 h-4" />
+            <Button variant="ghost" size="default" className="min-w-[44px]">
+              <ArrowLeft className="w-5 h-5" />
               Back
             </Button>
           </Link>
           <h1 className="font-display text-xl text-foreground">YOUR RESULTS</h1>
           <Link to="/upload">
-            <Button variant="ghost" size="sm">
-              <RotateCcw className="w-4 h-4" />
+            <Button variant="ghost" size="default" className="min-w-[44px]">
+              <RotateCcw className="w-5 h-5" />
               New
             </Button>
           </Link>
         </div>
 
         {/* Results Feed */}
-        <div className="space-y-4">
+        <div className="space-y-3">
           <ProbabilityCard 
             probability={simulation.combinedProbability} 
             degenerateLevel={simulation.degenerateLevel}
@@ -59,17 +59,17 @@ const Results = () => {
           <DegenerateMeter 
             probability={simulation.combinedProbability}
             degenerateLevel={simulation.degenerateLevel}
-            delay={200}
+            delay={100}
           />
           
           <TrashTalkThread 
             trashTalk={simulation.trashTalk}
-            delay={400}
+            delay={200}
           />
           
           <SimulationHighlights 
             highlights={simulation.simulationHighlights}
-            delay={600}
+            delay={300}
           />
           
           <BankrollCard 
@@ -77,24 +77,24 @@ const Results = () => {
             potentialPayout={simulation.potentialPayout}
             expectedValue={simulation.expectedValue}
             probability={simulation.combinedProbability}
-            delay={800}
+            delay={400}
           />
           
           <LegBreakdown 
             legs={simulation.legs}
-            delay={1000}
+            delay={500}
           />
           
           <ShareableMeme 
             probability={simulation.combinedProbability}
             degenerateLevel={simulation.degenerateLevel}
             legCount={simulation.legs.length}
-            delay={1200}
+            delay={600}
           />
         </div>
 
         {/* Run Another */}
-        <div className="mt-8 text-center">
+        <div className="mt-6 text-center">
           <Link to="/upload">
             <Button variant="neon" size="lg" className="font-display">
               🎟️ ANALYZE ANOTHER SLIP
