@@ -2,3 +2,6 @@ project_id = "pajakaqphlxoqjtrxzmi"
 
 [functions.extract-parlay]
 verify_jwt = false
+
+[functions.generate-roasts]
+verify_jwt = false
