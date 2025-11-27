@@ -7,21 +7,21 @@ import { SampleParlayButton } from "@/components/SampleParlayButton";
 
 const Index = () => {
   return (
-    <div className="min-h-screen bg-background pb-24">
+    <div className="min-h-screen bg-background pb-24 touch-pan-y">
       {/* Main content */}
-      <main className="max-w-lg mx-auto px-4 py-6">
+      <main className="max-w-lg mx-auto px-3 py-4">
         <HeroBanner />
         
         {/* Quick Actions */}
-        <div className="flex justify-center gap-3 mb-6">
+        <div className="flex justify-center gap-3 mb-5">
           <SampleParlayButton />
         </div>
         
         {/* Example Cards */}
-        <div className="space-y-4 mb-6">
-          <ExampleCard type="roast" delay={100} />
-          <ExampleCard type="meter" delay={200} />
-          <ExampleCard type="highlight" delay={300} />
+        <div className="space-y-3 mb-5">
+          <ExampleCard type="roast" delay={50} />
+          <ExampleCard type="meter" delay={100} />
+          <ExampleCard type="highlight" delay={150} />
         </div>
 
         <HowItWorks />
