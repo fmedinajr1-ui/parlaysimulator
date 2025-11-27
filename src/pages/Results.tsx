@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from "react-router-dom";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { BottomNav } from "@/components/BottomNav";
 import { ProbabilityCard } from "@/components/results/ProbabilityCard";
 import { DegenerateMeter } from "@/components/results/DegenerateMeter";
@@ -12,11 +12,14 @@ import { Button } from "@/components/ui/button";
 import { ArrowLeft, RotateCcw } from "lucide-react";
 import { ParlaySimulation } from "@/types/parlay";
 import { Link } from "react-router-dom";
+import { supabase } from "@/integrations/supabase/client";
 
 const Results = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const simulation = location.state?.simulation as ParlaySimulation | undefined;
+  const [aiRoasts, setAiRoasts] = useState<string[] | null>(null);
+  const [isLoadingRoasts, setIsLoadingRoasts] = useState(true);
 
   useEffect(() => {
     if (!simulation) {
@@ -24,9 +27,53 @@ const Results = () => {
     }
   }, [simulation, navigate]);
 
+  // Fetch AI-generated roasts
+  useEffect(() => {
+    if (!simulation) return;
+
+    const fetchRoasts = async () => {
+      setIsLoadingRoasts(true);
+      try {
+        const { data, error } = await supabase.functions.invoke('generate-roasts', {
+          body: {
+            legs: simulation.legs.map(leg => ({
+              description: leg.description,
+              odds: leg.odds,
+              impliedProbability: leg.impliedProbability,
+            })),
+            probability: simulation.combinedProbability,
+            degenerateLevel: simulation.degenerateLevel,
+            stake: simulation.stake,
+            potentialPayout: simulation.potentialPayout,
+          }
+        });
+
+        if (error) {
+          console.error('Error fetching roasts:', error);
+          // Fall back to static roasts
+          setAiRoasts(null);
+        } else if (data?.roasts && Array.isArray(data.roasts)) {
+          setAiRoasts(data.roasts);
+        } else {
+          setAiRoasts(null);
+        }
+      } catch (err) {
+        console.error('Failed to fetch AI roasts:', err);
+        setAiRoasts(null);
+      } finally {
+        setIsLoadingRoasts(false);
+      }
+    };
+
+    fetchRoasts();
+  }, [simulation]);
+
   if (!simulation) {
     return null;
   }
+
+  // Use AI roasts if available, otherwise fall back to static ones
+  const displayRoasts = aiRoasts || simulation.trashTalk;
 
   return (
     <div className="min-h-screen bg-background pb-24 touch-pan-y">
@@ -63,7 +110,9 @@ const Results = () => {
           />
           
           <TrashTalkThread 
-            trashTalk={simulation.trashTalk}
+            trashTalk={displayRoasts}
+            isLoading={isLoadingRoasts}
+            isAiGenerated={!!aiRoasts}
             delay={200}
           />
           
