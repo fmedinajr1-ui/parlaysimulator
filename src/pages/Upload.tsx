@@ -4,10 +4,11 @@ import { BottomNav } from "@/components/BottomNav";
 import { FeedCard } from "@/components/FeedCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Upload as UploadIcon, Flame, X } from "lucide-react";
+import { Plus, Upload as UploadIcon, Flame, X, Loader2, Sparkles } from "lucide-react";
 import { createLeg, simulateParlay } from "@/lib/parlay-calculator";
 import { ParlayLeg } from "@/types/parlay";
 import { toast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
 
 interface LegInput {
   id: string;
@@ -24,6 +25,7 @@ const Upload = () => {
   ]);
   const [stake, setStake] = useState("10");
   const [isDragging, setIsDragging] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const addLeg = () => {
     if (legs.length >= 15) {
@@ -54,7 +56,16 @@ const Upload = () => {
     ));
   };
 
-  const handleFileSelect = useCallback((file: File) => {
+  const convertFileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handleFileSelect = useCallback(async (file: File) => {
     // Validate file type
     if (!file.type.startsWith('image/')) {
       toast({
@@ -75,10 +86,71 @@ const Upload = () => {
       return;
     }
 
+    setIsProcessing(true);
+    
     toast({
-      title: "Image uploaded! 📸",
-      description: "OCR coming soon. For now, enter your legs manually.",
+      title: "Scanning your slip... 🔍",
+      description: "AI is reading your betting slip.",
     });
+
+    try {
+      // Convert file to base64
+      const imageBase64 = await convertFileToBase64(file);
+
+      // Call the edge function
+      const { data, error } = await supabase.functions.invoke('extract-parlay', {
+        body: { imageBase64 }
+      });
+
+      if (error) {
+        console.error('Edge function error:', error);
+        throw new Error(error.message || 'Failed to process image');
+      }
+
+      if (data?.error) {
+        throw new Error(data.error);
+      }
+
+      const extractedLegs = data?.legs || [];
+
+      if (extractedLegs.length === 0) {
+        toast({
+          title: "No legs found 🤔",
+          description: "Couldn't read your slip. Try a clearer image or enter manually.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Convert extracted legs to LegInput format
+      const newLegs: LegInput[] = extractedLegs.map((leg: { description: string; odds: string }) => ({
+        id: crypto.randomUUID(),
+        description: leg.description || "",
+        odds: leg.odds?.replace('+', '') || "", // Remove + prefix, we'll handle display
+      }));
+
+      // Ensure we have at least 2 legs
+      while (newLegs.length < 2) {
+        newLegs.push({ id: crypto.randomUUID(), description: "", odds: "" });
+      }
+
+      setLegs(newLegs);
+
+      toast({
+        title: `Found ${extractedLegs.length} legs! 🎯`,
+        description: "Your parlay has been loaded. Review and run simulation!",
+      });
+
+    } catch (error) {
+      console.error('OCR error:', error);
+      toast({
+        title: "Scan failed 😵",
+        description: error instanceof Error ? error.message : "Try again or enter manually.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsProcessing(false);
+    }
   }, []);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -110,8 +182,10 @@ const Upload = () => {
   }, [handleFileSelect]);
 
   const triggerFileInput = useCallback(() => {
-    fileInputRef.current?.click();
-  }, []);
+    if (!isProcessing) {
+      fileInputRef.current?.click();
+    }
+  }, [isProcessing]);
 
   const handleSimulate = () => {
     // Validate inputs
@@ -181,39 +255,61 @@ const Upload = () => {
           </p>
         </div>
 
-        {/* Drop Zone - Now Tappable */}
+        {/* Drop Zone - Now with AI OCR */}
         <FeedCard 
           variant="full-bleed"
-          className={`mb-5 transition-all duration-200 cursor-pointer active:scale-[0.98] ${
+          className={`mb-5 transition-all duration-200 ${
+            isProcessing 
+              ? 'border-2 border-neon-purple border-dashed cursor-wait' 
+              : 'cursor-pointer active:scale-[0.98]'
+          } ${
             isDragging 
               ? 'border-2 border-neon-green border-dashed scale-[1.02]' 
-              : 'border border-dashed border-border'
+              : !isProcessing ? 'border border-dashed border-border' : ''
           }`}
-          onDrop={handleDrop}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
+          onDrop={!isProcessing ? handleDrop : undefined}
+          onDragOver={!isProcessing ? handleDragOver : undefined}
+          onDragLeave={!isProcessing ? handleDragLeave : undefined}
           onClick={triggerFileInput}
         >
           <div className="text-center py-6">
-            <div className="w-14 h-14 rounded-full gradient-neon mx-auto mb-3 flex items-center justify-center">
-              <UploadIcon className="w-7 h-7 text-background" />
-            </div>
-            <p className="font-semibold text-foreground mb-1">
-              Tap to Upload Your Slip
-            </p>
-            <p className="text-sm text-muted-foreground mb-3">
-              or drag & drop (OCR coming soon)
-            </p>
-            <Button 
-              variant="muted" 
-              size="default"
-              onClick={(e) => {
-                e.stopPropagation();
-                triggerFileInput();
-              }}
-            >
-              Browse Files
-            </Button>
+            {isProcessing ? (
+              <>
+                <div className="w-14 h-14 rounded-full gradient-purple mx-auto mb-3 flex items-center justify-center">
+                  <Loader2 className="w-7 h-7 text-foreground animate-spin" />
+                </div>
+                <p className="font-semibold text-foreground mb-1">
+                  AI Scanning Your Slip...
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Extracting your parlay legs
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="w-14 h-14 rounded-full gradient-neon mx-auto mb-3 flex items-center justify-center">
+                  <UploadIcon className="w-7 h-7 text-background" />
+                </div>
+                <p className="font-semibold text-foreground mb-1 flex items-center justify-center gap-2">
+                  <Sparkles className="w-4 h-4 text-neon-purple" />
+                  AI-Powered Slip Scanner
+                  <Sparkles className="w-4 h-4 text-neon-purple" />
+                </p>
+                <p className="text-sm text-muted-foreground mb-3">
+                  Upload a photo and we'll extract your legs automatically
+                </p>
+                <Button 
+                  variant="muted" 
+                  size="default"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    triggerFileInput();
+                  }}
+                >
+                  Browse Files
+                </Button>
+              </>
+            )}
           </div>
         </FeedCard>
 
@@ -302,6 +398,7 @@ const Upload = () => {
             size="xl" 
             className="w-full font-display text-xl tracking-wider shadow-lg shadow-primary/30"
             onClick={handleSimulate}
+            disabled={isProcessing}
           >
             <Flame className="w-6 h-6" />
             RUN SIMULATION 🔥
