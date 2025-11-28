@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.generate-roasts]
 verify_jwt = false
+
+[functions.analyze-parlay]
+verify_jwt = false

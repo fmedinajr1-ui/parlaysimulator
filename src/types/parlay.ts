@@ -4,6 +4,32 @@ export interface ParlayLeg {
   odds: number; // American odds
   impliedProbability: number;
   riskLevel: 'low' | 'medium' | 'high' | 'extreme';
+  aiAnalysis?: LegAnalysis;
+}
+
+export interface LegAnalysis {
+  sport: string;
+  betType: 'moneyline' | 'spread' | 'total' | 'player_prop' | 'other';
+  team?: string;
+  player?: string;
+  insights: string[];
+  riskFactors: string[];
+  trendDirection: 'favorable' | 'neutral' | 'unfavorable';
+  adjustedProbability: number;
+  confidenceLevel: 'high' | 'medium' | 'low';
+  vegasJuice: number;
+  correlatedWith?: number[];
+}
+
+export interface CorrelatedLegPair {
+  indices: number[];
+  reason: string;
+}
+
+export interface ParlayAnalysis {
+  legAnalyses: Array<LegAnalysis & { legIndex: number }>;
+  correlatedLegs: CorrelatedLegPair[];
+  overallAssessment: string;
 }
 
 export interface ParlaySimulation {
@@ -16,6 +42,7 @@ export interface ParlaySimulation {
   expectedValue: number;
   simulationHighlights: SimulationHighlight[];
   trashTalk: string[];
+  aiAnalysis?: ParlayAnalysis;
 }
 
 export type DegenerateLevel = 
