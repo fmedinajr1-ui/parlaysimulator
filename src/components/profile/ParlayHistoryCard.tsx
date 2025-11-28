@@ -49,6 +49,8 @@ export const ParlayHistoryCard = ({
     try {
       const settledAt = new Date().toISOString();
       
+      console.log('Settling parlay:', id, 'won:', won);
+
       const { error } = await supabase
         .from('parlay_history')
         .update({
@@ -58,26 +60,31 @@ export const ParlayHistoryCard = ({
         })
         .eq('id', id);
 
-      if (error) throw error;
+      if (error) {
+        console.error('Parlay settle error:', JSON.stringify(error, null, 2));
+        throw error;
+      }
 
-      // Update training data with outcome
-      const { error: trainingError } = await supabase
+      // Update training data with outcome - this triggers AI learning!
+      const { data: updatedRows, error: trainingError } = await supabase
         .from('parlay_training_data')
         .update({
           parlay_outcome: won,
           settled_at: settledAt
         })
-        .eq('parlay_history_id', id);
+        .eq('parlay_history_id', id)
+        .select();
 
       if (trainingError) {
-        console.error('Error updating training data:', trainingError);
+        console.error('Training data update error:', JSON.stringify(trainingError, null, 2));
+      } else {
+        console.log('Training data updated for AI learning:', updatedRows?.length, 'legs');
       }
 
       // Update profile stats
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         const updateField = won ? 'total_wins' : 'total_losses';
-        const payoutUpdate = won ? { total_payout: potentialPayout } : {};
         
         // Get current profile
         const { data: profile } = await supabase
@@ -87,22 +94,29 @@ export const ParlayHistoryCard = ({
           .single();
 
         if (profile) {
-          await supabase
+          const { error: profileError } = await supabase
             .from('profiles')
             .update({
               [updateField]: (profile[updateField as keyof typeof profile] as number) + 1,
               ...(won ? { total_payout: (profile.total_payout as number) + potentialPayout } : {})
             })
             .eq('user_id', user.id);
+
+          if (profileError) {
+            console.error('Profile update error:', JSON.stringify(profileError, null, 2));
+          } else {
+            console.log('Profile stats updated');
+          }
         }
       }
 
       onSettle(id, won);
       toast({
         title: won ? "W! 🔥" : "L... 💀",
-        description: won ? "Nice hit, degen!" : "The books thank you for your donation."
+        description: won ? "Nice hit! AI is learning from your wins." : "AI is learning from this too."
       });
     } catch (error: any) {
+      console.error('Settlement failed:', error);
       toast({
         title: "Error",
         description: error.message,
