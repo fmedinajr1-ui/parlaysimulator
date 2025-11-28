@@ -25,6 +25,7 @@ const Results = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const simulation = location.state?.simulation as ParlaySimulation | undefined;
+  const extractedGameTime = location.state?.extractedGameTime as string | undefined;
   const [aiRoasts, setAiRoasts] = useState<string[] | null>(null);
   const [isLoadingRoasts, setIsLoadingRoasts] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -212,6 +213,21 @@ const Results = () => {
 
       console.log('Saving parlay for user:', session.user.id);
 
+      // Parse extracted game time to ISO timestamp
+      let eventStartTime: string | null = null;
+      if (extractedGameTime) {
+        try {
+          // Try to parse common date formats from betting slips
+          const parsed = new Date(extractedGameTime);
+          if (!isNaN(parsed.getTime())) {
+            eventStartTime = parsed.toISOString();
+            console.log('Parsed game time:', eventStartTime);
+          }
+        } catch (e) {
+          console.error('Failed to parse game time:', e);
+        }
+      }
+
       const { data: parlayData, error } = await supabase.from('parlay_history').insert({
         user_id: session.user.id, // Use fresh session user ID
         legs: simulation.legs.map(leg => ({
@@ -222,7 +238,8 @@ const Results = () => {
         potential_payout: simulation.potentialPayout,
         combined_probability: simulation.combinedProbability,
         degenerate_level: simulation.degenerateLevel,
-        ai_roasts: aiRoasts
+        ai_roasts: aiRoasts,
+        event_start_time: eventStartTime
       }).select().single();
 
       if (error) {
