@@ -8,9 +8,12 @@ import { SimulationHighlights } from "@/components/results/SimulationHighlights"
 import { BankrollCard } from "@/components/results/BankrollCard";
 import { LegBreakdown } from "@/components/results/LegBreakdown";
 import { ShareableMeme } from "@/components/results/ShareableMeme";
+import { LegIntelligenceCard } from "@/components/results/LegIntelligenceCard";
+import { CorrelationWarning } from "@/components/results/CorrelationWarning";
+import { BookEdgeCard } from "@/components/results/BookEdgeCard";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, RotateCcw, Save, Loader2, LogIn } from "lucide-react";
-import { ParlaySimulation } from "@/types/parlay";
+import { ParlaySimulation, ParlayAnalysis } from "@/types/parlay";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -25,6 +28,10 @@ const Results = () => {
   const [isLoadingRoasts, setIsLoadingRoasts] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
+  
+  // AI Analysis state
+  const [aiAnalysis, setAiAnalysis] = useState<ParlayAnalysis | null>(null);
+  const [isLoadingAnalysis, setIsLoadingAnalysis] = useState(true);
 
   useEffect(() => {
     if (!simulation) {
@@ -71,6 +78,54 @@ const Results = () => {
     };
 
     fetchRoasts();
+  }, [simulation]);
+
+  // Fetch AI-powered leg analysis
+  useEffect(() => {
+    if (!simulation) return;
+
+    const fetchAnalysis = async () => {
+      setIsLoadingAnalysis(true);
+      try {
+        const { data, error } = await supabase.functions.invoke('analyze-parlay', {
+          body: {
+            legs: simulation.legs.map(leg => ({
+              description: leg.description,
+              odds: leg.odds,
+              impliedProbability: leg.impliedProbability,
+            })),
+            stake: simulation.stake,
+            combinedProbability: simulation.combinedProbability,
+          }
+        });
+
+        if (error) {
+          console.error('Error fetching analysis:', error);
+          if (error.message?.includes('429') || error.message?.includes('Rate limit')) {
+            toast({
+              title: "Rate limited",
+              description: "Too many requests. Analysis will retry shortly.",
+              variant: "destructive",
+            });
+          }
+          setAiAnalysis(null);
+        } else if (data?.error) {
+          console.error('Analysis error:', data.error);
+          setAiAnalysis(null);
+        } else if (data?.legAnalyses) {
+          setAiAnalysis(data as ParlayAnalysis);
+        } else {
+          setAiAnalysis(null);
+        }
+      } catch (err) {
+        console.error('Failed to fetch AI analysis:', err);
+        setAiAnalysis(null);
+      } finally {
+        setIsLoadingAnalysis(false);
+      }
+    };
+
+    fetchAnalysis();
   }, [simulation]);
 
   if (!simulation) {
@@ -179,12 +234,45 @@ const Results = () => {
             degenerateLevel={simulation.degenerateLevel}
             delay={100}
           />
+
+          {/* AI-Powered Intelligence Section */}
+          <LegIntelligenceCard 
+            legs={simulation.legs}
+            legAnalyses={aiAnalysis?.legAnalyses}
+            isLoading={isLoadingAnalysis}
+            delay={150}
+          />
+
+          {aiAnalysis?.correlatedLegs && aiAnalysis.correlatedLegs.length > 0 && (
+            <CorrelationWarning 
+              correlatedLegs={aiAnalysis.correlatedLegs}
+              legs={simulation.legs}
+              delay={175}
+            />
+          )}
+
+          <BookEdgeCard 
+            legs={simulation.legs}
+            legAnalyses={aiAnalysis?.legAnalyses}
+            delay={200}
+          />
+
+          {/* Overall AI Assessment */}
+          {aiAnalysis?.overallAssessment && (
+            <div 
+              className="bg-card/50 rounded-xl p-4 border border-neon-purple/30 slide-up"
+              style={{ animationDelay: '225ms' }}
+            >
+              <p className="text-xs font-semibold text-neon-purple uppercase mb-2">🧠 AI VERDICT</p>
+              <p className="text-sm text-foreground italic">"{aiAnalysis.overallAssessment}"</p>
+            </div>
+          )}
           
           <TrashTalkThread 
             trashTalk={displayRoasts}
             isLoading={isLoadingRoasts}
             isAiGenerated={!!aiRoasts}
-            delay={200}
+            delay={250}
           />
           
           <SimulationHighlights 
@@ -197,19 +285,19 @@ const Results = () => {
             potentialPayout={simulation.potentialPayout}
             expectedValue={simulation.expectedValue}
             probability={simulation.combinedProbability}
-            delay={400}
+            delay={350}
           />
           
           <LegBreakdown 
             legs={simulation.legs}
-            delay={500}
+            delay={400}
           />
           
           <ShareableMeme 
             probability={simulation.combinedProbability}
             degenerateLevel={simulation.degenerateLevel}
             legCount={simulation.legs.length}
-            delay={600}
+            delay={450}
           />
         </div>
 
