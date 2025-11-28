@@ -192,9 +192,10 @@ const Results = () => {
       return;
     }
 
-    // Verify session is valid before saving
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
+    // Force refresh session to ensure it's valid
+    const { data: { session }, error: sessionError } = await supabase.auth.refreshSession();
+    if (sessionError || !session) {
+      console.error('Session error:', sessionError);
       toast({
         title: "Session expired",
         description: "Please log in again to save your parlay.",
@@ -209,10 +210,10 @@ const Results = () => {
       // Calculate degen score for this parlay (inverse of probability * 100)
       const degenScore = Math.min(100, (1 - simulation.combinedProbability) * 100);
 
-      console.log('Saving parlay for user:', user.id, 'session user:', session.user.id);
+      console.log('Saving parlay for user:', session.user.id);
 
       const { data: parlayData, error } = await supabase.from('parlay_history').insert({
-        user_id: user.id,
+        user_id: session.user.id, // Use fresh session user ID
         legs: simulation.legs.map(leg => ({
           description: leg.description,
           odds: leg.odds
@@ -224,19 +225,24 @@ const Results = () => {
         ai_roasts: aiRoasts
       }).select().single();
 
-      if (error) throw error;
+      if (error) {
+        console.error('Parlay save error:', JSON.stringify(error, null, 2));
+        throw error;
+      }
 
-      // Save training data for each leg
-      if (parlayData && aiAnalysis?.legAnalyses) {
+      console.log('Parlay saved successfully:', parlayData.id);
+
+      // Save training data for each leg - even without AI analysis
+      if (parlayData) {
         const trainingData = simulation.legs.map((leg, idx) => {
-          const legAnalysis = aiAnalysis.legAnalyses.find(la => la.legIndex === idx);
-          const isCorrelated = aiAnalysis.correlatedLegs?.some(
+          const legAnalysis = aiAnalysis?.legAnalyses?.find(la => la.legIndex === idx);
+          const isCorrelated = aiAnalysis?.correlatedLegs?.some(
             cl => cl.indices.includes(idx)
           );
           
           return {
             parlay_history_id: parlayData.id,
-            user_id: user.id,
+            user_id: session.user.id,
             leg_index: idx,
             description: leg.description,
             odds: leg.odds,
@@ -258,7 +264,9 @@ const Results = () => {
           .insert(trainingData);
 
         if (trainingError) {
-          console.error('Error saving training data:', trainingError);
+          console.error('Training data save error:', JSON.stringify(trainingError, null, 2));
+        } else {
+          console.log('Training data saved:', trainingData.length, 'legs');
         }
       }
 
@@ -266,7 +274,7 @@ const Results = () => {
       const { data: profile } = await supabase
         .from('profiles')
         .select('total_staked, lifetime_degenerate_score')
-        .eq('user_id', user.id)
+        .eq('user_id', session.user.id)
         .single();
 
       if (profile) {
@@ -283,18 +291,19 @@ const Results = () => {
             total_staked: currentStaked + simulation.stake,
             lifetime_degenerate_score: newDegenScore
           })
-          .eq('user_id', user.id);
+          .eq('user_id', session.user.id);
       }
 
       setIsSaved(true);
       toast({
         title: "Parlay saved! 🔥",
-        description: "Check your profile to track your degen history."
+        description: `Saved ${simulation.legs.length} legs for AI learning.`
       });
     } catch (error: any) {
+      console.error('Save failed:', error);
       toast({
         title: "Save failed",
-        description: error.message,
+        description: error.message || "Please try again",
         variant: "destructive"
       });
     } finally {
