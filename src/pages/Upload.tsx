@@ -1,15 +1,19 @@
 import { useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { format } from "date-fns";
 import { BottomNav } from "@/components/BottomNav";
 import { FeedCard } from "@/components/FeedCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Upload as UploadIcon, Flame, X, Loader2, Sparkles, CheckCircle2, Clock } from "lucide-react";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Plus, Upload as UploadIcon, Flame, X, Loader2, Sparkles, CheckCircle2, Clock, Pencil, CalendarIcon } from "lucide-react";
 import { createLeg, simulateParlay, americanToDecimal } from "@/lib/parlay-calculator";
 import { ParlayLeg } from "@/types/parlay";
 import { toast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { cn } from "@/lib/utils";
 
 // Calculate estimated per-leg odds when we only have total odds
 function calculateEstimatedLegOdds(totalOdds: number, numLegs: number): number {
@@ -41,6 +45,53 @@ const Upload = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [extractedTotalOdds, setExtractedTotalOdds] = useState<number | null>(null);
   const [extractedGameTime, setExtractedGameTime] = useState<string | null>(null);
+  const [isEditingGameTime, setIsEditingGameTime] = useState(false);
+  const [editDate, setEditDate] = useState<Date | undefined>(undefined);
+  const [editTime, setEditTime] = useState("19:00");
+
+  // Parse extracted game time to Date for editing
+  const parseGameTimeForEdit = useCallback((gameTime: string) => {
+    try {
+      const parsed = new Date(gameTime);
+      if (!isNaN(parsed.getTime())) {
+        setEditDate(parsed);
+        setEditTime(format(parsed, "HH:mm"));
+      } else {
+        // Default to today at 7pm if parsing fails
+        setEditDate(new Date());
+        setEditTime("19:00");
+      }
+    } catch {
+      setEditDate(new Date());
+      setEditTime("19:00");
+    }
+  }, []);
+
+  const handleEditGameTime = () => {
+    if (extractedGameTime) {
+      parseGameTimeForEdit(extractedGameTime);
+    } else {
+      setEditDate(new Date());
+      setEditTime("19:00");
+    }
+    setIsEditingGameTime(true);
+  };
+
+  const handleSaveGameTime = () => {
+    if (editDate) {
+      const [hours, minutes] = editTime.split(':').map(Number);
+      const newDate = new Date(editDate);
+      newDate.setHours(hours, minutes, 0, 0);
+      setExtractedGameTime(format(newDate, "MMM d, yyyy h:mm a"));
+    }
+    setIsEditingGameTime(false);
+  };
+
+  const handleAddGameTimeManually = () => {
+    setEditDate(new Date());
+    setEditTime("19:00");
+    setIsEditingGameTime(true);
+  };
 
   const addLeg = () => {
     if (legs.length >= 15) {
@@ -392,55 +443,124 @@ const Upload = () => {
         </div>
 
         {/* Extracted Data Banners */}
-        {(extractedTotalOdds || extractedGameTime) && (
-          <div className="space-y-2 mb-4">
-            {/* Extracted Total Odds Banner */}
-            {extractedTotalOdds && (
-              <div className="bg-neon-green/10 border border-neon-green/30 rounded-xl p-3 flex items-center justify-between slide-up">
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-5 h-5 text-neon-green" />
-                  <div>
-                    <p className="text-xs text-muted-foreground">Total Parlay Odds (from slip)</p>
-                    <p className="text-lg font-bold text-neon-green">
-                      {extractedTotalOdds > 0 ? '+' : ''}{extractedTotalOdds}
-                    </p>
-                  </div>
+        <div className="space-y-2 mb-4">
+          {/* Extracted Total Odds Banner */}
+          {extractedTotalOdds && (
+            <div className="bg-neon-green/10 border border-neon-green/30 rounded-xl p-3 flex items-center justify-between slide-up">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-neon-green" />
+                <div>
+                  <p className="text-xs text-muted-foreground">Total Parlay Odds (from slip)</p>
+                  <p className="text-lg font-bold text-neon-green">
+                    {extractedTotalOdds > 0 ? '+' : ''}{extractedTotalOdds}
+                  </p>
                 </div>
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
-                  onClick={() => setExtractedTotalOdds(null)}
-                  className="text-muted-foreground hover:text-destructive"
-                >
-                  <X className="w-4 h-4" />
-                </Button>
               </div>
-            )}
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={() => setExtractedTotalOdds(null)}
+                className="text-muted-foreground hover:text-destructive"
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+          )}
 
-            {/* Extracted Game Time Banner */}
-            {extractedGameTime && (
-              <div className="bg-neon-purple/10 border border-neon-purple/30 rounded-xl p-3 flex items-center justify-between slide-up">
-                <div className="flex items-center gap-2">
-                  <Clock className="w-5 h-5 text-neon-purple" />
-                  <div>
-                    <p className="text-xs text-muted-foreground">First Game Starts (from slip)</p>
-                    <p className="text-base font-bold text-neon-purple">
-                      {extractedGameTime}
-                    </p>
+          {/* Extracted Game Time Banner or Add Button */}
+          {extractedGameTime ? (
+            <div className="bg-neon-purple/10 border border-neon-purple/30 rounded-xl p-3 slide-up">
+              {isEditingGameTime ? (
+                <div className="space-y-3">
+                  <p className="text-xs text-muted-foreground">Edit Game Start Time</p>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          className={cn(
+                            "justify-start text-left font-normal flex-1",
+                            !editDate && "text-muted-foreground"
+                          )}
+                        >
+                          <CalendarIcon className="mr-2 h-4 w-4" />
+                          {editDate ? format(editDate, "MMM d, yyyy") : <span>Pick date</span>}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="start">
+                        <Calendar
+                          mode="single"
+                          selected={editDate}
+                          onSelect={setEditDate}
+                          initialFocus
+                          className={cn("p-3 pointer-events-auto")}
+                        />
+                      </PopoverContent>
+                    </Popover>
+                    <Input
+                      type="time"
+                      value={editTime}
+                      onChange={(e) => setEditTime(e.target.value)}
+                      className="w-32"
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <Button size="sm" onClick={handleSaveGameTime} className="flex-1">
+                      Save
+                    </Button>
+                    <Button 
+                      size="sm" 
+                      variant="ghost" 
+                      onClick={() => setIsEditingGameTime(false)}
+                    >
+                      Cancel
+                    </Button>
                   </div>
                 </div>
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
-                  onClick={() => setExtractedGameTime(null)}
-                  className="text-muted-foreground hover:text-destructive"
-                >
-                  <X className="w-4 h-4" />
-                </Button>
-              </div>
-            )}
-          </div>
-        )}
+              ) : (
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-5 h-5 text-neon-purple" />
+                    <div>
+                      <p className="text-xs text-muted-foreground">First Game Starts</p>
+                      <p className="text-base font-bold text-neon-purple">
+                        {extractedGameTime}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex gap-1">
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={handleEditGameTime}
+                      className="text-muted-foreground hover:text-neon-purple"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </Button>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={() => setExtractedGameTime(null)}
+                      className="text-muted-foreground hover:text-destructive"
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleAddGameTimeManually}
+              className="w-full border-dashed border-neon-purple/30 text-muted-foreground hover:text-neon-purple hover:border-neon-purple/50"
+            >
+              <Clock className="w-4 h-4 mr-2" />
+              Add Game Start Time (optional)
+            </Button>
+          )}
+        </div>
 
         {/* Legs Table */}
         <FeedCard variant="full-bleed" className="mb-5">
