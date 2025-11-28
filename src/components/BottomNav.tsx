@@ -1,8 +1,9 @@
-import { Home, BarChart3, User, Trophy } from "lucide-react";
+import { Home, BarChart3, User, Trophy, Shield } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
+import { useAdminRole } from "@/hooks/useAdminRole";
 
-const navItems = [
+const baseNavItems = [
   { icon: Home, label: "Home", path: "/" },
   { icon: BarChart3, label: "Analyze", path: "/upload" },
   { icon: Trophy, label: "Ranks", path: "/leaderboard" },
@@ -11,6 +12,11 @@ const navItems = [
 
 export function BottomNav() {
   const location = useLocation();
+  const { isAdmin } = useAdminRole();
+
+  const navItems = isAdmin 
+    ? [...baseNavItems.slice(0, 3), { icon: Shield, label: "Admin", path: "/admin" }, baseNavItems[3]]
+    : baseNavItems;
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 bg-card/95 backdrop-blur-xl border-t border-border safe-area-bottom">
@@ -24,7 +30,7 @@ export function BottomNav() {
               key={item.path}
               to={item.path}
               className={cn(
-                "flex flex-col items-center justify-center gap-0.5 py-2 px-5 min-h-[52px] min-w-[64px] rounded-xl transition-all duration-150 active:scale-95",
+                "flex flex-col items-center justify-center gap-0.5 py-2 px-3 min-h-[52px] min-w-[56px] rounded-xl transition-all duration-150 active:scale-95",
                 isActive 
                   ? "text-primary" 
                   : "text-muted-foreground hover:text-foreground active:bg-muted/50"

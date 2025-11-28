@@ -20,6 +20,7 @@ interface ParlayHistoryItem {
   is_settled: boolean;
   ai_roasts: string[] | null;
   created_at: string;
+  event_start_time: string | null;
 }
 
 interface ParlayHistoryFeedProps {
@@ -107,6 +108,7 @@ export const ParlayHistoryFeed = ({ onStatsUpdate }: ParlayHistoryFeedProps) => 
           isSettled={item.is_settled}
           aiRoasts={item.ai_roasts}
           createdAt={item.created_at}
+          eventStartTime={item.event_start_time}
           onSettle={handleSettle}
         />
       ))}

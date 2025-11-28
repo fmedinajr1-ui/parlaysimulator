@@ -11,3 +11,9 @@ verify_jwt = false
 
 [functions.ai-learning-engine]
 verify_jwt = false
+
+[functions.fetch-game-scores]
+verify_jwt = false
+
+[functions.auto-settle-parlays]
+verify_jwt = false

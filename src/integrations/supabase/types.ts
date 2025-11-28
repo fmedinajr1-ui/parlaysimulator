@@ -53,12 +53,41 @@ export type Database = {
         }
         Relationships: []
       }
+      email_subscribers: {
+        Row: {
+          email: string
+          id: string
+          is_subscribed: boolean | null
+          source: string | null
+          subscribed_at: string | null
+          user_id: string | null
+        }
+        Insert: {
+          email: string
+          id?: string
+          is_subscribed?: boolean | null
+          source?: string | null
+          subscribed_at?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          email?: string
+          id?: string
+          is_subscribed?: boolean | null
+          source?: string | null
+          subscribed_at?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       parlay_history: {
         Row: {
           ai_roasts: Json | null
+          all_games_started: boolean | null
           combined_probability: number
           created_at: string
           degenerate_level: string
+          event_start_time: string | null
           id: string
           is_settled: boolean
           is_won: boolean | null
@@ -70,9 +99,11 @@ export type Database = {
         }
         Insert: {
           ai_roasts?: Json | null
+          all_games_started?: boolean | null
           combined_probability: number
           created_at?: string
           degenerate_level: string
+          event_start_time?: string | null
           id?: string
           is_settled?: boolean
           is_won?: boolean | null
@@ -84,9 +115,11 @@ export type Database = {
         }
         Update: {
           ai_roasts?: Json | null
+          all_games_started?: boolean | null
           combined_probability?: number
           created_at?: string
           degenerate_level?: string
+          event_start_time?: string | null
           id?: string
           is_settled?: boolean
           is_won?: boolean | null
@@ -106,6 +139,10 @@ export type Database = {
           bet_type: string | null
           created_at: string
           description: string
+          event_id: string | null
+          event_result: string | null
+          event_start_time: string | null
+          event_status: string | null
           id: string
           implied_probability: number
           is_correlated: boolean | null
@@ -128,6 +165,10 @@ export type Database = {
           bet_type?: string | null
           created_at?: string
           description: string
+          event_id?: string | null
+          event_result?: string | null
+          event_start_time?: string | null
+          event_status?: string | null
           id?: string
           implied_probability: number
           is_correlated?: boolean | null
@@ -150,6 +191,10 @@ export type Database = {
           bet_type?: string | null
           created_at?: string
           description?: string
+          event_id?: string | null
+          event_result?: string | null
+          event_start_time?: string | null
+          event_status?: string | null
           id?: string
           implied_probability?: number
           is_correlated?: boolean | null
@@ -226,6 +271,27 @@ export type Database = {
         }
         Relationships: []
       }
+      user_roles: {
+        Row: {
+          created_at: string | null
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -240,6 +306,37 @@ export type Database = {
           correct_predictions: number
           sport: string
           total_predictions: number
+        }[]
+      }
+      get_all_parlays_admin: {
+        Args: never
+        Returns: {
+          combined_probability: number
+          created_at: string
+          degenerate_level: string
+          event_start_time: string
+          id: string
+          is_settled: boolean
+          is_won: boolean
+          legs: Json
+          potential_payout: number
+          stake: number
+          user_id: string
+          username: string
+        }[]
+      }
+      get_all_users_admin: {
+        Args: never
+        Returns: {
+          avatar_url: string
+          created_at: string
+          email: string
+          lifetime_degenerate_score: number
+          total_losses: number
+          total_staked: number
+          total_wins: number
+          user_id: string
+          username: string
         }[]
       }
       get_leaderboard_stats: {
@@ -270,9 +367,16 @@ export type Database = {
           wins: number
         }[]
       }
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "admin" | "moderator" | "user"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -399,6 +503,8 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["admin", "moderator", "user"],
+    },
   },
 } as const
