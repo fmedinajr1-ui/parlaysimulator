@@ -232,13 +232,21 @@ const Results = () => {
 
       console.log('Parlay saved successfully:', parlayData.id);
 
-      // Save training data for each leg - even without AI analysis
+      // Save training data for each leg with AI analysis
       if (parlayData) {
         const trainingData = simulation.legs.map((leg, idx) => {
           const legAnalysis = aiAnalysis?.legAnalyses?.find(la => la.legIndex === idx);
           const isCorrelated = aiAnalysis?.correlatedLegs?.some(
             cl => cl.indices.includes(idx)
           );
+          
+          // Log AI analysis data being captured
+          console.log(`Leg ${idx} AI data:`, {
+            sport: legAnalysis?.sport,
+            betType: legAnalysis?.betType,
+            confidence: legAnalysis?.confidenceLevel,
+            adjustedProb: legAnalysis?.adjustedProbability
+          });
           
           return {
             parlay_history_id: parlayData.id,
@@ -266,7 +274,7 @@ const Results = () => {
         if (trainingError) {
           console.error('Training data save error:', JSON.stringify(trainingError, null, 2));
         } else {
-          console.log('Training data saved:', trainingData.length, 'legs');
+          console.log('Training data saved with AI analysis:', trainingData.length, 'legs');
         }
       }
 
@@ -429,27 +437,39 @@ const Results = () => {
         {/* Save to Profile */}
         <div className="mt-6 space-y-3">
           {user ? (
-            <Button
-              variant="outline"
-              size="lg"
-              className="w-full font-display"
-              onClick={handleSaveParlay}
-              disabled={isSaving || isSaved}
-            >
-              {isSaving ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  SAVING...
-                </>
-              ) : isSaved ? (
-                '✅ SAVED TO PROFILE'
-              ) : (
-                <>
-                  <Save className="w-4 h-4 mr-2" />
-                  SAVE TO PROFILE
-                </>
+            <>
+              {isLoadingAnalysis && !isSaved && (
+                <p className="text-xs text-muted-foreground text-center">
+                  ⏳ Waiting for AI analysis to complete for better learning data...
+                </p>
               )}
-            </Button>
+              <Button
+                variant="outline"
+                size="lg"
+                className="w-full font-display"
+                onClick={handleSaveParlay}
+                disabled={isSaving || isSaved || isLoadingAnalysis}
+              >
+                {isSaving ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    SAVING...
+                  </>
+                ) : isSaved ? (
+                  '✅ SAVED TO PROFILE'
+                ) : isLoadingAnalysis ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ANALYZING...
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-4 h-4 mr-2" />
+                    SAVE TO PROFILE
+                  </>
+                )}
+              </Button>
+            </>
           ) : (
             <Link to="/auth" className="block">
               <Button variant="outline" size="lg" className="w-full font-display">
