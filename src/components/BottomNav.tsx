@@ -1,10 +1,11 @@
-import { Home, BarChart3, User } from "lucide-react";
+import { Home, BarChart3, User, Trophy } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 
 const navItems = [
   { icon: Home, label: "Home", path: "/" },
   { icon: BarChart3, label: "Analyze", path: "/upload" },
+  { icon: Trophy, label: "Ranks", path: "/leaderboard" },
   { icon: User, label: "Profile", path: "/profile" },
 ];
 
