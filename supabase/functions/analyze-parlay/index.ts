@@ -1,5 +1,6 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -22,8 +23,15 @@ interface LegAnalysis {
   trendDirection: 'favorable' | 'neutral' | 'unfavorable';
   adjustedProbability: number;
   confidenceLevel: 'high' | 'medium' | 'low';
-  vegasJuice: number; // Estimated vig percentage
-  correlatedWith?: number[]; // Indices of correlated legs
+  vegasJuice: number;
+  correlatedWith?: number[];
+}
+
+interface HistoricalContext {
+  userOverall?: { totalBets: number; totalWins: number; hitRate: string | number };
+  aiOverall?: { totalPredictions: number; correctPredictions: number; accuracy: string | number };
+  userStatsByType?: Array<{ sport: string; bet_type: string; total_bets: number; wins: number; hit_rate: number }>;
+  aiMetricsByType?: Array<{ sport: string; bet_type: string; confidence_level: string; total_predictions: number; correct_predictions: number; accuracy_rate: number }>;
 }
 
 serve(async (req) => {
@@ -32,10 +40,11 @@ serve(async (req) => {
   }
 
   try {
-    const { legs, stake, combinedProbability } = await req.json() as {
+    const { legs, stake, combinedProbability, userId } = await req.json() as {
       legs: LegInput[];
       stake: number;
       combinedProbability: number;
+      userId?: string;
     };
 
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
@@ -45,10 +54,77 @@ serve(async (req) => {
 
     console.log(`Analyzing ${legs.length} parlay legs with stake $${stake}`);
 
+    // Fetch historical context if user is logged in
+    let historicalContext: HistoricalContext = {};
+    if (userId) {
+      try {
+        const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+        const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+        const [userStatsResult, aiMetricsResult] = await Promise.all([
+          supabase.rpc('get_user_betting_stats', { p_user_id: userId }),
+          supabase.rpc('get_ai_accuracy_stats')
+        ]);
+
+        const userStats = userStatsResult.data || [];
+        const aiMetrics = aiMetricsResult.data || [];
+
+        const totalBets = userStats.reduce((sum: number, s: any) => sum + Number(s.total_bets || 0), 0);
+        const totalWins = userStats.reduce((sum: number, s: any) => sum + Number(s.wins || 0), 0);
+        const overallHitRate = totalBets > 0 ? (totalWins / totalBets * 100).toFixed(1) : '0';
+
+        const aiTotalPredictions = aiMetrics.reduce((sum: number, m: any) => sum + Number(m.total_predictions || 0), 0);
+        const aiCorrectPredictions = aiMetrics.reduce((sum: number, m: any) => sum + Number(m.correct_predictions || 0), 0);
+        const aiOverallAccuracy = aiTotalPredictions > 0 ? (aiCorrectPredictions / aiTotalPredictions * 100).toFixed(1) : '0';
+
+        historicalContext = {
+          userOverall: { totalBets, totalWins, hitRate: overallHitRate },
+          aiOverall: { totalPredictions: aiTotalPredictions, correctPredictions: aiCorrectPredictions, accuracy: aiOverallAccuracy },
+          userStatsByType: userStats,
+          aiMetricsByType: aiMetrics
+        };
+
+        console.log(`Historical context loaded: ${totalBets} total user bets, ${aiTotalPredictions} AI predictions`);
+      } catch (histError) {
+        console.error('Error fetching historical context:', histError);
+      }
+    }
+
     // Build the prompt for AI analysis
     const legsText = legs.map((leg, idx) => 
       `Leg ${idx + 1}: "${leg.description}" | Odds: ${leg.odds > 0 ? '+' : ''}${leg.odds} | Implied Prob: ${(leg.impliedProbability * 100).toFixed(1)}%`
     ).join('\n');
+
+    // Build historical context section for prompt
+    let historicalSection = '';
+    if (historicalContext.userOverall && historicalContext.userOverall.totalBets > 0) {
+      historicalSection += `\n\nHISTORICAL DATA - USER'S BETTING RECORD:
+- Overall record: ${historicalContext.userOverall.totalWins}-${historicalContext.userOverall.totalBets - historicalContext.userOverall.totalWins} (${historicalContext.userOverall.hitRate}% hit rate)`;
+      
+      if (historicalContext.userStatsByType && historicalContext.userStatsByType.length > 0) {
+        historicalSection += '\n- By category:';
+        historicalContext.userStatsByType.slice(0, 5).forEach(stat => {
+          historicalSection += `\n  • ${stat.sport} ${stat.bet_type}: ${stat.wins}/${stat.total_bets} (${Number(stat.hit_rate).toFixed(0)}%)`;
+        });
+      }
+    }
+
+    if (historicalContext.aiOverall && Number(historicalContext.aiOverall.totalPredictions) > 0) {
+      historicalSection += `\n\nAI PREDICTION TRACK RECORD:
+- Overall accuracy: ${historicalContext.aiOverall.correctPredictions}/${historicalContext.aiOverall.totalPredictions} (${historicalContext.aiOverall.accuracy}%)`;
+      
+      if (historicalContext.aiMetricsByType && historicalContext.aiMetricsByType.length > 0) {
+        historicalSection += '\n- By category (confidence level):';
+        historicalContext.aiMetricsByType.slice(0, 5).forEach(metric => {
+          historicalSection += `\n  • ${metric.sport} ${metric.bet_type} (${metric.confidence_level}): ${metric.correct_predictions}/${metric.total_predictions} (${Number(metric.accuracy_rate).toFixed(0)}%)`;
+        });
+      }
+    }
+
+    if (historicalSection) {
+      historicalSection += '\n\nUse this historical data to calibrate your confidence levels and adjusted probabilities. If this user or bet type has a track record, factor it in.';
+    }
 
     const prompt = `You are an expert sharp sports bettor and analyst. Analyze this parlay slip and provide detailed intelligence on each leg.
 
@@ -56,7 +132,7 @@ PARLAY SLIP:
 ${legsText}
 
 Total Stake: $${stake}
-Combined Probability: ${(combinedProbability * 100).toFixed(2)}%
+Combined Probability: ${(combinedProbability * 100).toFixed(2)}%${historicalSection}
 
 For EACH leg, provide analysis in this exact JSON format. Be specific and analytical:
 
@@ -98,8 +174,10 @@ ANALYSIS GUIDELINES:
    - Weather factors (outdoor sports): -3% to -8%
    - Public money inflating lines: -5%
    - Sharp money indicator: +5%
+   - Historical performance data (if available): factor in user's actual hit rate
 4. Be brutally honest. If it's a sucker bet, say so in risk factors.
 5. Reference real factors when possible (primetime games, divisional matchups, back-to-backs, etc.)
+6. If historical data shows the AI has been accurate/inaccurate on certain bet types, adjust confidence accordingly.
 
 Return ONLY valid JSON, no other text.`;
 
@@ -114,7 +192,7 @@ Return ONLY valid JSON, no other text.`;
         messages: [
           { 
             role: 'system', 
-            content: 'You are a sharp sports betting analyst. Always return valid JSON. Be specific, analytical, and brutally honest about bet quality.' 
+            content: 'You are a sharp sports betting analyst with access to historical betting data. Always return valid JSON. Be specific, analytical, and brutally honest about bet quality. Use any provided historical performance data to calibrate your predictions.' 
           },
           { role: 'user', content: prompt }
         ],

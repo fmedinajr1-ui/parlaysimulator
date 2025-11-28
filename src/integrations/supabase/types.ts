@@ -14,6 +14,45 @@ export type Database = {
   }
   public: {
     Tables: {
+      ai_performance_metrics: {
+        Row: {
+          accuracy_rate: number
+          avg_odds: number
+          bet_type: string
+          confidence_level: string
+          correct_predictions: number
+          id: string
+          profit_units: number
+          sport: string
+          total_predictions: number
+          updated_at: string
+        }
+        Insert: {
+          accuracy_rate?: number
+          avg_odds?: number
+          bet_type: string
+          confidence_level: string
+          correct_predictions?: number
+          id?: string
+          profit_units?: number
+          sport: string
+          total_predictions?: number
+          updated_at?: string
+        }
+        Update: {
+          accuracy_rate?: number
+          avg_odds?: number
+          bet_type?: string
+          confidence_level?: string
+          correct_predictions?: number
+          id?: string
+          profit_units?: number
+          sport?: string
+          total_predictions?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       parlay_history: {
         Row: {
           ai_roasts: Json | null
@@ -58,6 +97,83 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      parlay_training_data: {
+        Row: {
+          ai_adjusted_probability: number | null
+          ai_confidence: string | null
+          ai_trend_direction: string | null
+          bet_type: string | null
+          created_at: string
+          description: string
+          id: string
+          implied_probability: number
+          is_correlated: boolean | null
+          leg_index: number
+          leg_outcome: boolean | null
+          odds: number
+          parlay_history_id: string
+          parlay_outcome: boolean | null
+          player: string | null
+          settled_at: string | null
+          sport: string | null
+          team: string | null
+          user_id: string
+          vegas_juice: number | null
+        }
+        Insert: {
+          ai_adjusted_probability?: number | null
+          ai_confidence?: string | null
+          ai_trend_direction?: string | null
+          bet_type?: string | null
+          created_at?: string
+          description: string
+          id?: string
+          implied_probability: number
+          is_correlated?: boolean | null
+          leg_index: number
+          leg_outcome?: boolean | null
+          odds: number
+          parlay_history_id: string
+          parlay_outcome?: boolean | null
+          player?: string | null
+          settled_at?: string | null
+          sport?: string | null
+          team?: string | null
+          user_id: string
+          vegas_juice?: number | null
+        }
+        Update: {
+          ai_adjusted_probability?: number | null
+          ai_confidence?: string | null
+          ai_trend_direction?: string | null
+          bet_type?: string | null
+          created_at?: string
+          description?: string
+          id?: string
+          implied_probability?: number
+          is_correlated?: boolean | null
+          leg_index?: number
+          leg_outcome?: boolean | null
+          odds?: number
+          parlay_history_id?: string
+          parlay_outcome?: boolean | null
+          player?: string | null
+          settled_at?: string | null
+          sport?: string | null
+          team?: string | null
+          user_id?: string
+          vegas_juice?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "parlay_training_data_parlay_history_id_fkey"
+            columns: ["parlay_history_id"]
+            isOneToOne: false
+            referencedRelation: "parlay_history"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       profiles: {
         Row: {
@@ -115,6 +231,17 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      get_ai_accuracy_stats: {
+        Args: never
+        Returns: {
+          accuracy_rate: number
+          bet_type: string
+          confidence_level: string
+          correct_predictions: number
+          sport: string
+          total_predictions: number
+        }[]
+      }
       get_leaderboard_stats: {
         Args: { time_period?: string }
         Returns: {
@@ -129,6 +256,18 @@ export type Database = {
           total_wins: number
           user_id: string
           username: string
+        }[]
+      }
+      get_user_betting_stats: {
+        Args: { p_user_id: string }
+        Returns: {
+          avg_odds: number
+          bet_type: string
+          by_confidence: Json
+          hit_rate: number
+          sport: string
+          total_bets: number
+          wins: number
         }[]
       }
     }

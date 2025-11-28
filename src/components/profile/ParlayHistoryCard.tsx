@@ -47,16 +47,31 @@ export const ParlayHistoryCard = ({
   const handleSettle = async (won: boolean) => {
     setIsSettling(true);
     try {
+      const settledAt = new Date().toISOString();
+      
       const { error } = await supabase
         .from('parlay_history')
         .update({
           is_won: won,
           is_settled: true,
-          settled_at: new Date().toISOString()
+          settled_at: settledAt
         })
         .eq('id', id);
 
       if (error) throw error;
+
+      // Update training data with outcome
+      const { error: trainingError } = await supabase
+        .from('parlay_training_data')
+        .update({
+          parlay_outcome: won,
+          settled_at: settledAt
+        })
+        .eq('parlay_history_id', id);
+
+      if (trainingError) {
+        console.error('Error updating training data:', trainingError);
+      }
 
       // Update profile stats
       const { data: { user } } = await supabase.auth.getUser();
