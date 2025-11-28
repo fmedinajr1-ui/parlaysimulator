@@ -4,12 +4,25 @@ import { BottomNav } from "@/components/BottomNav";
 import { FeedCard } from "@/components/FeedCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Upload as UploadIcon, Flame, X, Loader2, Sparkles } from "lucide-react";
-import { createLeg, simulateParlay } from "@/lib/parlay-calculator";
+import { Badge } from "@/components/ui/badge";
+import { Plus, Upload as UploadIcon, Flame, X, Loader2, Sparkles, CheckCircle2 } from "lucide-react";
+import { createLeg, simulateParlay, americanToDecimal } from "@/lib/parlay-calculator";
 import { ParlayLeg } from "@/types/parlay";
 import { toast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 
+// Calculate estimated per-leg odds when we only have total odds
+function calculateEstimatedLegOdds(totalOdds: number, numLegs: number): number {
+  const totalDecimal = americanToDecimal(totalOdds);
+  const perLegDecimal = Math.pow(totalDecimal, 1 / numLegs);
+  
+  // Convert back to American odds
+  if (perLegDecimal >= 2) {
+    return Math.round((perLegDecimal - 1) * 100);
+  } else {
+    return Math.round(-100 / (perLegDecimal - 1));
+  }
+}
 interface LegInput {
   id: string;
   description: string;
@@ -228,17 +241,32 @@ const Upload = () => {
         return;
       }
       
-      const oddsNum = parseInt(leg.odds);
-      if (isNaN(oddsNum) || oddsNum === 0 || (oddsNum > -100 && oddsNum < 100)) {
-        toast({
-          title: "Invalid odds! 🎲",
-          description: "Use American odds like +150 or -110",
-          variant: "destructive",
-        });
-        return;
+      // When we have extractedTotalOdds, individual odds are optional
+      if (extractedTotalOdds !== null) {
+        const oddsNum = leg.odds ? parseInt(leg.odds) : calculateEstimatedLegOdds(extractedTotalOdds, legs.length);
+        // Only validate if user entered something
+        if (leg.odds && (isNaN(oddsNum) || oddsNum === 0 || (oddsNum > -100 && oddsNum < 100))) {
+          toast({
+            title: "Invalid odds! 🎲",
+            description: "Use American odds like +150 or -110",
+            variant: "destructive",
+          });
+          return;
+        }
+        validLegs.push(createLeg(leg.description, oddsNum));
+      } else {
+        // Standard validation when no total odds extracted
+        const oddsNum = parseInt(leg.odds);
+        if (isNaN(oddsNum) || oddsNum === 0 || (oddsNum > -100 && oddsNum < 100)) {
+          toast({
+            title: "Invalid odds! 🎲",
+            description: "Use American odds like +150 or -110",
+            variant: "destructive",
+          });
+          return;
+        }
+        validLegs.push(createLeg(leg.description, oddsNum));
       }
-      
-      validLegs.push(createLeg(leg.description, oddsNum));
     }
 
     const stakeNum = parseFloat(stake);
@@ -350,6 +378,29 @@ const Upload = () => {
           <div className="flex-1 h-px bg-border" />
         </div>
 
+        {/* Extracted Total Odds Banner */}
+        {extractedTotalOdds && (
+          <div className="bg-neon-green/10 border border-neon-green/30 rounded-xl p-3 mb-4 flex items-center justify-between slide-up">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-5 h-5 text-neon-green" />
+              <div>
+                <p className="text-xs text-muted-foreground">Total Parlay Odds (from slip)</p>
+                <p className="text-lg font-bold text-neon-green">
+                  {extractedTotalOdds > 0 ? '+' : ''}{extractedTotalOdds}
+                </p>
+              </div>
+            </div>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={() => setExtractedTotalOdds(null)}
+              className="text-muted-foreground hover:text-destructive"
+            >
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
+        )}
+
         {/* Legs Table */}
         <FeedCard variant="full-bleed" className="mb-5">
           <p className="text-sm text-muted-foreground uppercase tracking-wider mb-3">
@@ -373,10 +424,10 @@ const Upload = () => {
                   className="flex-1"
                 />
                 <Input
-                  placeholder="+150"
+                  placeholder={extractedTotalOdds ? "Auto" : "+150"}
                   value={leg.odds}
                   onChange={(e) => updateLeg(leg.id, 'odds', e.target.value)}
-                  className="w-20 text-center"
+                  className={`w-20 text-center ${!leg.odds && extractedTotalOdds ? 'text-muted-foreground italic' : ''}`}
                   inputMode="numeric"
                 />
                 <Button 
