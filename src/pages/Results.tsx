@@ -192,10 +192,24 @@ const Results = () => {
       return;
     }
 
+    // Verify session is valid before saving
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      toast({
+        title: "Session expired",
+        description: "Please log in again to save your parlay.",
+        variant: "destructive"
+      });
+      navigate('/auth');
+      return;
+    }
+
     setIsSaving(true);
     try {
       // Calculate degen score for this parlay (inverse of probability * 100)
       const degenScore = Math.min(100, (1 - simulation.combinedProbability) * 100);
+
+      console.log('Saving parlay for user:', user.id, 'session user:', session.user.id);
 
       const { data: parlayData, error } = await supabase.from('parlay_history').insert({
         user_id: user.id,
