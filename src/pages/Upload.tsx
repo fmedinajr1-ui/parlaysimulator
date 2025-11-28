@@ -5,7 +5,7 @@ import { FeedCard } from "@/components/FeedCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Upload as UploadIcon, Flame, X, Loader2, Sparkles, CheckCircle2 } from "lucide-react";
+import { Plus, Upload as UploadIcon, Flame, X, Loader2, Sparkles, CheckCircle2, Clock } from "lucide-react";
 import { createLeg, simulateParlay, americanToDecimal } from "@/lib/parlay-calculator";
 import { ParlayLeg } from "@/types/parlay";
 import { toast } from "@/hooks/use-toast";
@@ -391,26 +391,54 @@ const Upload = () => {
           <div className="flex-1 h-px bg-border" />
         </div>
 
-        {/* Extracted Total Odds Banner */}
-        {extractedTotalOdds && (
-          <div className="bg-neon-green/10 border border-neon-green/30 rounded-xl p-3 mb-4 flex items-center justify-between slide-up">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-5 h-5 text-neon-green" />
-              <div>
-                <p className="text-xs text-muted-foreground">Total Parlay Odds (from slip)</p>
-                <p className="text-lg font-bold text-neon-green">
-                  {extractedTotalOdds > 0 ? '+' : ''}{extractedTotalOdds}
-                </p>
+        {/* Extracted Data Banners */}
+        {(extractedTotalOdds || extractedGameTime) && (
+          <div className="space-y-2 mb-4">
+            {/* Extracted Total Odds Banner */}
+            {extractedTotalOdds && (
+              <div className="bg-neon-green/10 border border-neon-green/30 rounded-xl p-3 flex items-center justify-between slide-up">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-5 h-5 text-neon-green" />
+                  <div>
+                    <p className="text-xs text-muted-foreground">Total Parlay Odds (from slip)</p>
+                    <p className="text-lg font-bold text-neon-green">
+                      {extractedTotalOdds > 0 ? '+' : ''}{extractedTotalOdds}
+                    </p>
+                  </div>
+                </div>
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={() => setExtractedTotalOdds(null)}
+                  className="text-muted-foreground hover:text-destructive"
+                >
+                  <X className="w-4 h-4" />
+                </Button>
               </div>
-            </div>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              onClick={() => setExtractedTotalOdds(null)}
-              className="text-muted-foreground hover:text-destructive"
-            >
-              <X className="w-4 h-4" />
-            </Button>
+            )}
+
+            {/* Extracted Game Time Banner */}
+            {extractedGameTime && (
+              <div className="bg-neon-purple/10 border border-neon-purple/30 rounded-xl p-3 flex items-center justify-between slide-up">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-5 h-5 text-neon-purple" />
+                  <div>
+                    <p className="text-xs text-muted-foreground">First Game Starts (from slip)</p>
+                    <p className="text-base font-bold text-neon-purple">
+                      {extractedGameTime}
+                    </p>
+                  </div>
+                </div>
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={() => setExtractedGameTime(null)}
+                  className="text-muted-foreground hover:text-destructive"
+                >
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+            )}
           </div>
         )}
 
