@@ -26,6 +26,7 @@ const Upload = () => {
   const [stake, setStake] = useState("10");
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [extractedTotalOdds, setExtractedTotalOdds] = useState<number | null>(null);
 
   const addLeg = () => {
     if (legs.length >= 15) {
@@ -54,6 +55,10 @@ const Upload = () => {
     setLegs(legs.map((leg) => 
       leg.id === id ? { ...leg, [field]: value } : leg
     ));
+    // Clear extracted total odds when user manually edits legs
+    if (field === 'odds') {
+      setExtractedTotalOdds(null);
+    }
   };
 
   const convertFileToBase64 = (file: File): Promise<string> => {
@@ -112,6 +117,8 @@ const Upload = () => {
       }
 
       const extractedLegs = data?.legs || [];
+      const extractedTotalOddsStr = data?.totalOdds;
+      const extractedStake = data?.stake;
 
       if (extractedLegs.length === 0) {
         toast({
@@ -136,9 +143,29 @@ const Upload = () => {
 
       setLegs(newLegs);
 
+      // Parse and store extracted total odds
+      if (extractedTotalOddsStr) {
+        const parsedOdds = parseInt(extractedTotalOddsStr.replace('+', ''));
+        if (!isNaN(parsedOdds) && parsedOdds !== 0) {
+          setExtractedTotalOdds(parsedOdds);
+          console.log('Extracted total parlay odds:', parsedOdds);
+        }
+      } else {
+        setExtractedTotalOdds(null);
+      }
+
+      // Pre-populate stake if extracted
+      if (extractedStake) {
+        const stakeNum = parseFloat(extractedStake.replace(/[$,]/g, ''));
+        if (!isNaN(stakeNum) && stakeNum > 0) {
+          setStake(stakeNum.toString());
+        }
+      }
+
+      const oddsInfo = extractedTotalOddsStr ? ` Total odds: ${extractedTotalOddsStr}` : '';
       toast({
         title: `Found ${extractedLegs.length} legs! 🎯`,
-        description: "Your parlay has been loaded. Review and run simulation!",
+        description: `Your parlay has been loaded.${oddsInfo} Review and run simulation!`,
       });
 
     } catch (error) {
@@ -224,8 +251,11 @@ const Upload = () => {
       return;
     }
 
-    // Run simulation
-    const simulation = simulateParlay(validLegs, stakeNum);
+    // Run simulation - use extracted total odds if available
+    const simulation = simulateParlay(validLegs, stakeNum, extractedTotalOdds ?? undefined);
+    
+    // Clear extracted odds after use
+    setExtractedTotalOdds(null);
     
     // Navigate to results with simulation data
     navigate('/results', { state: { simulation } });
