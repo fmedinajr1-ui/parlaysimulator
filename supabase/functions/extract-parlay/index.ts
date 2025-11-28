@@ -36,39 +36,47 @@ serve(async (req) => {
 Your job is to extract parlay information from betting slip images.
 
 Extract the following information:
-1. All individual legs with their descriptions and American odds
+1. All individual legs with their descriptions, American odds, and game date/time
 2. The TOTAL PARLAY ODDS if shown on the slip (look for total odds, combined odds, or parlay odds - usually a single number like "+2456" or "-150")
 3. The STAKE/WAGER amount if visible (the amount being bet, e.g., "$10.00", "$25")
 4. The POTENTIAL PAYOUT or "To Win" amount if visible
+5. The EARLIEST game date/time from all legs (for when the parlay starts)
 
 For individual legs, extract:
 - The description (team name, player name, bet type like "ML", "Over/Under", spread, etc.)
 - The American odds for THAT SPECIFIC LEG (like +150, -110, +250, etc.)
+- The game date/time if visible (look for dates like "Nov 28", "11/28", times like "7:00 PM", "19:00", or combined like "Nov 28 7:00 PM EST")
 
 IMPORTANT: 
 - The TOTAL ODDS is different from individual leg odds - it's the combined odds for the entire parlay
 - Look for labels like "Total Odds", "Parlay Odds", "Combined", or just a prominently displayed odds value
 - For stake, look for "Wager", "Stake", "Bet Amount", or dollar amounts
 - For payout, look for "To Win", "Potential Payout", "Returns", etc.
+- For game times, betting apps typically show the date/time near each leg or game matchup
+- Common formats: "Today 7:00 PM", "Tomorrow 1:00 PM", "Nov 28, 2024 7:00 PM", "11/28 19:00"
 
 Return ONLY valid JSON in this exact format:
 {
   "legs": [
-    {"description": "Lakers ML", "odds": "-150"},
-    {"description": "Chiefs -3.5", "odds": "-110"},
-    {"description": "Curry Over 25.5 Pts", "odds": "+120"}
+    {"description": "Lakers ML", "odds": "-150", "gameTime": "Nov 28, 2024 7:00 PM EST"},
+    {"description": "Chiefs -3.5", "odds": "-110", "gameTime": "Nov 28, 2024 8:30 PM EST"},
+    {"description": "Curry Over 25.5 Pts", "odds": "+120", "gameTime": "Nov 29, 2024 10:00 PM EST"}
   ],
   "totalOdds": "+2456",
   "stake": "25.00",
-  "potentialPayout": "638.50"
+  "potentialPayout": "638.50",
+  "earliestGameTime": "Nov 28, 2024 7:00 PM EST"
 }
 
 Rules:
-- Set totalOdds, stake, or potentialPayout to null if not clearly visible on the slip
+- Set totalOdds, stake, potentialPayout, or earliestGameTime to null if not clearly visible
+- Set individual leg gameTime to null if not visible for that leg
 - For odds, always include the + or - sign
 - For stake and potentialPayout, just use the number without $ symbol
+- For game times, include timezone if visible, otherwise assume local time
+- earliestGameTime should be the soonest game time from all legs
 - Keep leg descriptions concise
-- If you cannot read the image clearly or it's not a betting slip, return: {"legs": [], "totalOdds": null, "stake": null, "potentialPayout": null}`;
+- If you cannot read the image clearly or it's not a betting slip, return: {"legs": [], "totalOdds": null, "stake": null, "potentialPayout": null, "earliestGameTime": null}`;
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -128,7 +136,7 @@ Rules:
     console.log("AI response:", content);
 
     // Parse the JSON from the response
-    let result = { legs: [], totalOdds: null, stake: null, potentialPayout: null };
+    let result = { legs: [], totalOdds: null, stake: null, potentialPayout: null, earliestGameTime: null };
     try {
       // Try to extract JSON from the response (it might have markdown code blocks)
       const jsonMatch = content.match(/\{[\s\S]*\}/);
@@ -138,7 +146,8 @@ Rules:
           legs: parsed.legs || [],
           totalOdds: parsed.totalOdds || null,
           stake: parsed.stake || null,
-          potentialPayout: parsed.potentialPayout || null
+          potentialPayout: parsed.potentialPayout || null,
+          earliestGameTime: parsed.earliestGameTime || null
         };
       }
     } catch (parseError) {
