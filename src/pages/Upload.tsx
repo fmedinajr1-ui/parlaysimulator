@@ -360,7 +360,6 @@ const Upload = () => {
         ref={fileInputRef}
         type="file"
         accept="image/*"
-        capture="environment"
         onChange={handleFileInputChange}
         className="hidden"
         aria-hidden="true"
