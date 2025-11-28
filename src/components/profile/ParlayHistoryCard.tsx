@@ -6,6 +6,7 @@ import { toast } from '@/hooks/use-toast';
 import { Check, X, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { DEGEN_TIERS, DegenerateLevel } from '@/types/parlay';
+import { GameCountdown } from '@/components/GameCountdown';
 
 interface ParlayLeg {
   description: string;
@@ -23,6 +24,7 @@ interface ParlayHistoryCardProps {
   isSettled: boolean;
   aiRoasts: string[] | null;
   createdAt: string;
+  eventStartTime?: string | null;
   onSettle: (id: string, isWon: boolean) => void;
 }
 
@@ -37,6 +39,7 @@ export const ParlayHistoryCard = ({
   isSettled,
   aiRoasts,
   createdAt,
+  eventStartTime,
   onSettle
 }: ParlayHistoryCardProps) => {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -152,6 +155,14 @@ export const ParlayHistoryCard = ({
           )}
         </div>
       </div>
+
+      {/* Countdown Timer */}
+      <GameCountdown 
+        eventStartTime={eventStartTime} 
+        isSettled={isSettled}
+        isWon={isWon}
+        className="mb-3"
+      />
 
       {/* Probability */}
       <div className="mb-3">
