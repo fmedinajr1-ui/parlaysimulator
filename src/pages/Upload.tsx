@@ -40,6 +40,7 @@ const Upload = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [extractedTotalOdds, setExtractedTotalOdds] = useState<number | null>(null);
+  const [extractedGameTime, setExtractedGameTime] = useState<string | null>(null);
 
   const addLeg = () => {
     if (legs.length >= 15) {
@@ -132,6 +133,7 @@ const Upload = () => {
       const extractedLegs = data?.legs || [];
       const extractedTotalOddsStr = data?.totalOdds;
       const extractedStake = data?.stake;
+      const extractedEarliestGameTime = data?.earliestGameTime;
 
       if (extractedLegs.length === 0) {
         toast({
@@ -175,10 +177,19 @@ const Upload = () => {
         }
       }
 
+      // Store extracted game time
+      if (extractedEarliestGameTime) {
+        setExtractedGameTime(extractedEarliestGameTime);
+        console.log('Extracted game time:', extractedEarliestGameTime);
+      } else {
+        setExtractedGameTime(null);
+      }
+
       const oddsInfo = extractedTotalOddsStr ? ` Total odds: ${extractedTotalOddsStr}` : '';
+      const timeInfo = extractedEarliestGameTime ? ` Game time: ${extractedEarliestGameTime}` : '';
       toast({
         title: `Found ${extractedLegs.length} legs! 🎯`,
-        description: `Your parlay has been loaded.${oddsInfo} Review and run simulation!`,
+        description: `Your parlay has been loaded.${oddsInfo}${timeInfo} Review and run simulation!`,
       });
 
     } catch (error) {
@@ -282,11 +293,13 @@ const Upload = () => {
     // Run simulation - use extracted total odds if available
     const simulation = simulateParlay(validLegs, stakeNum, extractedTotalOdds ?? undefined);
     
-    // Clear extracted odds after use
+    // Clear extracted data after use
+    const gameTimeToPass = extractedGameTime;
     setExtractedTotalOdds(null);
+    setExtractedGameTime(null);
     
-    // Navigate to results with simulation data
-    navigate('/results', { state: { simulation } });
+    // Navigate to results with simulation data and extracted game time
+    navigate('/results', { state: { simulation, extractedGameTime: gameTimeToPass } });
   };
 
   return (
