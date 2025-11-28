@@ -297,6 +297,10 @@ const Results = () => {
             probability={simulation.combinedProbability}
             degenerateLevel={simulation.degenerateLevel}
             legCount={simulation.legs.length}
+            legs={simulation.legs}
+            stake={simulation.stake}
+            potentialPayout={simulation.potentialPayout}
+            roast={displayRoasts?.[0]}
             delay={450}
           />
         </div>
