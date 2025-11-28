@@ -11,6 +11,7 @@ import { ShareableMeme } from "@/components/results/ShareableMeme";
 import { LegIntelligenceCard } from "@/components/results/LegIntelligenceCard";
 import { CorrelationWarning } from "@/components/results/CorrelationWarning";
 import { BookEdgeCard } from "@/components/results/BookEdgeCard";
+import { HistoricalInsightsCard } from "@/components/results/HistoricalInsightsCard";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, RotateCcw, Save, Loader2, LogIn } from "lucide-react";
 import { ParlaySimulation, ParlayAnalysis } from "@/types/parlay";
@@ -32,6 +33,14 @@ const Results = () => {
   // AI Analysis state
   const [aiAnalysis, setAiAnalysis] = useState<ParlayAnalysis | null>(null);
   const [isLoadingAnalysis, setIsLoadingAnalysis] = useState(true);
+  
+  // Historical context state
+  const [historicalContext, setHistoricalContext] = useState<{
+    legContexts: any[];
+    userOverall: { totalBets: number; totalWins: number; hitRate: string | number };
+    aiOverall: { totalPredictions: number; correctPredictions: number; accuracy: string | number };
+  } | null>(null);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(true);
 
   useEffect(() => {
     if (!simulation) {
@@ -96,6 +105,7 @@ const Results = () => {
             })),
             stake: simulation.stake,
             combinedProbability: simulation.combinedProbability,
+            userId: user?.id, // Pass user ID for historical context
           }
         });
 
@@ -128,6 +138,47 @@ const Results = () => {
     fetchAnalysis();
   }, [simulation]);
 
+  // Fetch historical context
+  useEffect(() => {
+    if (!simulation || !user) {
+      setIsLoadingHistory(false);
+      return;
+    }
+
+    const fetchHistory = async () => {
+      setIsLoadingHistory(true);
+      try {
+        const { data, error } = await supabase.functions.invoke('ai-learning-engine', {
+          body: {
+            action: 'get_historical_context',
+            userId: user.id,
+            legs: simulation.legs.map(leg => ({
+              description: leg.description,
+              sport: leg.aiAnalysis?.sport,
+              betType: leg.aiAnalysis?.betType
+            }))
+          }
+        });
+
+        if (error) {
+          console.error('Error fetching historical context:', error);
+        } else if (data) {
+          setHistoricalContext({
+            legContexts: data.legContexts || [],
+            userOverall: data.userOverall || { totalBets: 0, totalWins: 0, hitRate: 0 },
+            aiOverall: data.aiOverall || { totalPredictions: 0, correctPredictions: 0, accuracy: 0 }
+          });
+        }
+      } catch (err) {
+        console.error('Failed to fetch historical context:', err);
+      } finally {
+        setIsLoadingHistory(false);
+      }
+    };
+
+    fetchHistory();
+  }, [simulation, user]);
+
   if (!simulation) {
     return null;
   }
@@ -146,7 +197,7 @@ const Results = () => {
       // Calculate degen score for this parlay (inverse of probability * 100)
       const degenScore = Math.min(100, (1 - simulation.combinedProbability) * 100);
 
-      const { error } = await supabase.from('parlay_history').insert({
+      const { data: parlayData, error } = await supabase.from('parlay_history').insert({
         user_id: user.id,
         legs: simulation.legs.map(leg => ({
           description: leg.description,
@@ -157,9 +208,45 @@ const Results = () => {
         combined_probability: simulation.combinedProbability,
         degenerate_level: simulation.degenerateLevel,
         ai_roasts: aiRoasts
-      });
+      }).select().single();
 
       if (error) throw error;
+
+      // Save training data for each leg
+      if (parlayData && aiAnalysis?.legAnalyses) {
+        const trainingData = simulation.legs.map((leg, idx) => {
+          const legAnalysis = aiAnalysis.legAnalyses.find(la => la.legIndex === idx);
+          const isCorrelated = aiAnalysis.correlatedLegs?.some(
+            cl => cl.indices.includes(idx)
+          );
+          
+          return {
+            parlay_history_id: parlayData.id,
+            user_id: user.id,
+            leg_index: idx,
+            description: leg.description,
+            odds: leg.odds,
+            implied_probability: leg.impliedProbability,
+            sport: legAnalysis?.sport || null,
+            bet_type: legAnalysis?.betType || null,
+            team: legAnalysis?.team || null,
+            player: legAnalysis?.player || null,
+            ai_adjusted_probability: legAnalysis?.adjustedProbability || null,
+            ai_confidence: legAnalysis?.confidenceLevel || null,
+            ai_trend_direction: legAnalysis?.trendDirection || null,
+            vegas_juice: legAnalysis?.vegasJuice || null,
+            is_correlated: isCorrelated || false
+          };
+        });
+
+        const { error: trainingError } = await supabase
+          .from('parlay_training_data')
+          .insert(trainingData);
+
+        if (trainingError) {
+          console.error('Error saving training data:', trainingError);
+        }
+      }
 
       // Update profile stats
       const { data: profile } = await supabase
@@ -256,6 +343,17 @@ const Results = () => {
             legAnalyses={aiAnalysis?.legAnalyses}
             delay={200}
           />
+
+          {/* Historical Insights - only show if user is logged in */}
+          {user && (
+            <HistoricalInsightsCard
+              legContexts={historicalContext?.legContexts || []}
+              userOverall={historicalContext?.userOverall || { totalBets: 0, totalWins: 0, hitRate: 0 }}
+              aiOverall={historicalContext?.aiOverall || { totalPredictions: 0, correctPredictions: 0, accuracy: 0 }}
+              isLoading={isLoadingHistory}
+              delay={210}
+            />
+          )}
 
           {/* Overall AI Assessment */}
           {aiAnalysis?.overallAssessment && (
