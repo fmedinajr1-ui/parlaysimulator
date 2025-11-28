@@ -128,12 +128,33 @@ export function generateHighlights(legs: ParlayLeg[]): SimulationHighlight[] {
 }
 
 // Main simulation function
-export function simulateParlay(legs: ParlayLeg[], stake: number): ParlaySimulation {
-  // Calculate combined probability
+// providedTotalOdds: American odds extracted from bet slip (e.g., +2456 or -150)
+export function simulateParlay(
+  legs: ParlayLeg[], 
+  stake: number, 
+  providedTotalOdds?: number
+): ParlaySimulation {
+  // Calculate combined probability from individual legs
   const combinedProbability = legs.reduce((acc, leg) => acc * leg.impliedProbability, 1);
   
-  // Calculate total decimal odds
-  const totalDecimalOdds = legs.reduce((acc, leg) => acc * americanToDecimal(leg.odds), 1);
+  let totalOdds: number;
+  let totalDecimalOdds: number;
+  
+  if (providedTotalOdds !== undefined) {
+    // Use the provided total odds from the bet slip
+    totalOdds = providedTotalOdds;
+    totalDecimalOdds = americanToDecimal(providedTotalOdds);
+  } else {
+    // Calculate from individual legs
+    totalDecimalOdds = legs.reduce((acc, leg) => acc * americanToDecimal(leg.odds), 1);
+    
+    // Convert total odds back to American
+    if (totalDecimalOdds >= 2) {
+      totalOdds = Math.round((totalDecimalOdds - 1) * 100);
+    } else {
+      totalOdds = Math.round(-100 / (totalDecimalOdds - 1));
+    }
+  }
   
   // Calculate potential payout
   const potentialPayout = stake * totalDecimalOdds;
@@ -148,14 +169,6 @@ export function simulateParlay(legs: ParlayLeg[], stake: number): ParlaySimulati
   // Generate content
   const trashTalk = generateTrashTalk(legs, combinedProbability);
   const simulationHighlights = generateHighlights(legs);
-  
-  // Convert total odds back to American
-  let totalOdds: number;
-  if (totalDecimalOdds >= 2) {
-    totalOdds = Math.round((totalDecimalOdds - 1) * 100);
-  } else {
-    totalOdds = Math.round(-100 / (totalDecimalOdds - 1));
-  }
   
   return {
     legs,

@@ -33,24 +33,42 @@ serve(async (req) => {
     console.log("Processing betting slip image with AI...");
 
     const systemPrompt = `You are an expert at reading betting slips and sports betting parlays. 
-Your job is to extract parlay leg information from betting slip images.
+Your job is to extract parlay information from betting slip images.
 
-For each leg/bet in the parlay, extract:
-1. The description (team name, player name, bet type like "ML", "Over/Under", spread, etc.)
-2. The American odds (like +150, -110, +250, etc.)
+Extract the following information:
+1. All individual legs with their descriptions and American odds
+2. The TOTAL PARLAY ODDS if shown on the slip (look for total odds, combined odds, or parlay odds - usually a single number like "+2456" or "-150")
+3. The STAKE/WAGER amount if visible (the amount being bet, e.g., "$10.00", "$25")
+4. The POTENTIAL PAYOUT or "To Win" amount if visible
 
-Return ONLY a valid JSON array with the extracted legs. Each leg should have:
-- "description": string (the bet description, keep it concise like "Lakers ML" or "Mahomes Over 2.5 TDs")
-- "odds": string (American odds format like "+150" or "-110")
+For individual legs, extract:
+- The description (team name, player name, bet type like "ML", "Over/Under", spread, etc.)
+- The American odds for THAT SPECIFIC LEG (like +150, -110, +250, etc.)
 
-If you cannot read the image clearly or it's not a betting slip, return an empty array [].
+IMPORTANT: 
+- The TOTAL ODDS is different from individual leg odds - it's the combined odds for the entire parlay
+- Look for labels like "Total Odds", "Parlay Odds", "Combined", or just a prominently displayed odds value
+- For stake, look for "Wager", "Stake", "Bet Amount", or dollar amounts
+- For payout, look for "To Win", "Potential Payout", "Returns", etc.
 
-Example output format:
-[
-  {"description": "Lakers ML", "odds": "-150"},
-  {"description": "Chiefs -3.5", "odds": "-110"},
-  {"description": "Curry Over 25.5 Pts", "odds": "+120"}
-]`;
+Return ONLY valid JSON in this exact format:
+{
+  "legs": [
+    {"description": "Lakers ML", "odds": "-150"},
+    {"description": "Chiefs -3.5", "odds": "-110"},
+    {"description": "Curry Over 25.5 Pts", "odds": "+120"}
+  ],
+  "totalOdds": "+2456",
+  "stake": "25.00",
+  "potentialPayout": "638.50"
+}
+
+Rules:
+- Set totalOdds, stake, or potentialPayout to null if not clearly visible on the slip
+- For odds, always include the + or - sign
+- For stake and potentialPayout, just use the number without $ symbol
+- Keep leg descriptions concise
+- If you cannot read the image clearly or it's not a betting slip, return: {"legs": [], "totalOdds": null, "stake": null, "potentialPayout": null}`;
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -67,7 +85,7 @@ Example output format:
             content: [
               {
                 type: "text",
-                text: "Extract all parlay legs from this betting slip image. Return only the JSON array."
+                text: "Extract all parlay information from this betting slip image. Return only the JSON."
               },
               {
                 type: "image_url",
@@ -105,27 +123,41 @@ Example output format:
     }
 
     const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || "[]";
+    const content = data.choices?.[0]?.message?.content || "{}";
     
     console.log("AI response:", content);
 
     // Parse the JSON from the response
-    let legs = [];
+    let result = { legs: [], totalOdds: null, stake: null, potentialPayout: null };
     try {
       // Try to extract JSON from the response (it might have markdown code blocks)
-      const jsonMatch = content.match(/\[[\s\S]*\]/);
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
-        legs = JSON.parse(jsonMatch[0]);
+        const parsed = JSON.parse(jsonMatch[0]);
+        result = {
+          legs: parsed.legs || [],
+          totalOdds: parsed.totalOdds || null,
+          stake: parsed.stake || null,
+          potentialPayout: parsed.potentialPayout || null
+        };
       }
     } catch (parseError) {
       console.error("Failed to parse AI response:", parseError);
-      legs = [];
+      // Try legacy array format as fallback
+      try {
+        const arrayMatch = content.match(/\[[\s\S]*\]/);
+        if (arrayMatch) {
+          result.legs = JSON.parse(arrayMatch[0]);
+        }
+      } catch {
+        console.error("Failed to parse legacy format too");
+      }
     }
 
-    console.log("Extracted legs:", legs);
+    console.log("Extracted data:", result);
 
     return new Response(
-      JSON.stringify({ legs }),
+      JSON.stringify(result),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
