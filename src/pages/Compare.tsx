@@ -1,0 +1,287 @@
+import { useState, useCallback } from 'react';
+import { BottomNav } from '@/components/BottomNav';
+import { FeedCard } from '@/components/FeedCard';
+import { Button } from '@/components/ui/button';
+import { ParlaySlot, LegInput } from '@/components/compare/ParlaySlot';
+import { ComparisonDashboard } from '@/components/compare/ComparisonDashboard';
+import { QuickSelectHistory } from '@/components/compare/QuickSelectHistory';
+import { compareParlays, ComparisonResult } from '@/lib/comparison-utils';
+import { createLeg, simulateParlay, americanToDecimal } from '@/lib/parlay-calculator';
+import { ParlayLeg, ParlaySimulation } from '@/types/parlay';
+import { toast } from '@/hooks/use-toast';
+import { Plus, Scale, Loader2, RotateCcw } from 'lucide-react';
+
+interface SlotState {
+  id: string;
+  legs: LegInput[];
+  stake: string;
+  extractedTotalOdds: number | null;
+  status: 'empty' | 'filled' | 'processing';
+}
+
+// Calculate estimated per-leg odds when we only have total odds
+function calculateEstimatedLegOdds(totalOdds: number, numLegs: number): number {
+  const totalDecimal = americanToDecimal(totalOdds);
+  const perLegDecimal = Math.pow(totalDecimal, 1 / numLegs);
+  
+  if (perLegDecimal >= 2) {
+    return Math.round((perLegDecimal - 1) * 100);
+  } else {
+    return Math.round(-100 / (perLegDecimal - 1));
+  }
+}
+
+const createEmptySlot = (): SlotState => ({
+  id: crypto.randomUUID(),
+  legs: [],
+  stake: '10',
+  extractedTotalOdds: null,
+  status: 'empty'
+});
+
+const Compare = () => {
+  const [slots, setSlots] = useState<SlotState[]>([createEmptySlot(), createEmptySlot()]);
+  const [isComparing, setIsComparing] = useState(false);
+  const [comparisonResult, setComparisonResult] = useState<ComparisonResult | null>(null);
+  const [historySlotIndex, setHistorySlotIndex] = useState<number | null>(null);
+
+  const updateSlot = useCallback((index: number, legs: LegInput[], stake: string, extractedTotalOdds: number | null) => {
+    setSlots(prev => prev.map((slot, i) => 
+      i === index 
+        ? { ...slot, legs, stake, extractedTotalOdds, status: legs.length > 0 ? 'filled' : 'empty' }
+        : slot
+    ));
+    setComparisonResult(null); // Clear previous results
+  }, []);
+
+  const clearSlot = useCallback((index: number) => {
+    setSlots(prev => prev.map((slot, i) => 
+      i === index ? createEmptySlot() : slot
+    ));
+    setComparisonResult(null);
+  }, []);
+
+  const addSlot = useCallback(() => {
+    if (slots.length >= 4) {
+      toast({
+        title: "Max 4 parlays! 🎰",
+        description: "You can compare up to 4 parlays at once.",
+      });
+      return;
+    }
+    setSlots(prev => [...prev, createEmptySlot()]);
+  }, [slots.length]);
+
+  const removeSlot = useCallback((index: number) => {
+    if (slots.length <= 2) {
+      toast({
+        title: "Need at least 2 parlays!",
+        description: "You need at least 2 parlays to compare.",
+      });
+      return;
+    }
+    setSlots(prev => prev.filter((_, i) => i !== index));
+    setComparisonResult(null);
+  }, [slots.length]);
+
+  const handleSelectFromHistory = useCallback((index: number) => {
+    setHistorySlotIndex(index);
+  }, []);
+
+  const handleHistorySelect = useCallback((legs: LegInput[], stake: string) => {
+    if (historySlotIndex !== null) {
+      updateSlot(historySlotIndex, legs, stake, null);
+    }
+    setHistorySlotIndex(null);
+  }, [historySlotIndex, updateSlot]);
+
+  const validateAndSimulate = (slot: SlotState): ParlaySimulation | null => {
+    if (slot.status !== 'filled' || slot.legs.length < 2) {
+      return null;
+    }
+
+    const validLegs: ParlayLeg[] = [];
+    
+    for (const leg of slot.legs) {
+      if (!leg.description.trim()) {
+        return null;
+      }
+      
+      if (slot.extractedTotalOdds !== null) {
+        const oddsNum = leg.odds ? parseInt(leg.odds) : calculateEstimatedLegOdds(slot.extractedTotalOdds, slot.legs.length);
+        if (leg.odds && (isNaN(oddsNum) || oddsNum === 0 || (oddsNum > -100 && oddsNum < 100))) {
+          return null;
+        }
+        validLegs.push(createLeg(leg.description, oddsNum));
+      } else {
+        const oddsNum = parseInt(leg.odds);
+        if (isNaN(oddsNum) || oddsNum === 0 || (oddsNum > -100 && oddsNum < 100)) {
+          return null;
+        }
+        validLegs.push(createLeg(leg.description, oddsNum));
+      }
+    }
+
+    const stakeNum = parseFloat(slot.stake);
+    if (isNaN(stakeNum) || stakeNum <= 0) {
+      return null;
+    }
+
+    return simulateParlay(validLegs, stakeNum, slot.extractedTotalOdds ?? undefined);
+  };
+
+  const handleCompare = useCallback(() => {
+    const filledSlots = slots.filter(s => s.status === 'filled');
+    
+    if (filledSlots.length < 2) {
+      toast({
+        title: "Need more parlays! 🎯",
+        description: "Fill in at least 2 parlays to compare.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsComparing(true);
+
+    try {
+      const simulations: ParlaySimulation[] = [];
+      
+      for (let i = 0; i < slots.length; i++) {
+        const slot = slots[i];
+        if (slot.status === 'filled') {
+          const sim = validateAndSimulate(slot);
+          if (!sim) {
+            toast({
+              title: `Invalid Parlay ${i + 1} ❌`,
+              description: "Check all legs have descriptions and valid odds.",
+              variant: "destructive",
+            });
+            setIsComparing(false);
+            return;
+          }
+          simulations.push(sim);
+        }
+      }
+
+      const result = compareParlays(simulations);
+      setComparisonResult(result);
+
+      toast({
+        title: "Comparison complete! 📊",
+        description: `Analyzed ${simulations.length} parlays. Check out the results!`,
+      });
+    } catch (error) {
+      console.error('Comparison error:', error);
+      toast({
+        title: "Comparison failed 😵",
+        description: "Something went wrong. Try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsComparing(false);
+    }
+  }, [slots]);
+
+  const handleReset = useCallback(() => {
+    setSlots([createEmptySlot(), createEmptySlot()]);
+    setComparisonResult(null);
+  }, []);
+
+  const filledCount = slots.filter(s => s.status === 'filled').length;
+
+  return (
+    <div className="min-h-screen bg-background pb-32 touch-pan-y">
+      <main className="max-w-lg mx-auto px-3 py-4">
+        {/* Header */}
+        <div className="text-center mb-5">
+          <h1 className="font-display text-3xl text-gradient-fire mb-1">
+            ⚖️ COMPARE PARLAYS
+          </h1>
+          <p className="text-muted-foreground text-sm">
+            Add up to 4 parlays and find your best bet.
+          </p>
+        </div>
+
+        {/* Parlay Slots */}
+        <div className="space-y-4 mb-5">
+          {slots.map((slot, index) => (
+            <ParlaySlot
+              key={slot.id}
+              index={index}
+              legs={slot.legs}
+              stake={slot.stake}
+              extractedTotalOdds={slot.extractedTotalOdds}
+              status={slot.status}
+              onUpdate={(legs, stake, odds) => updateSlot(index, legs, stake, odds)}
+              onClear={() => clearSlot(index)}
+              onSelectFromHistory={() => handleSelectFromHistory(index)}
+              canRemove={slots.length > 2}
+            />
+          ))}
+        </div>
+
+        {/* Add Slot Button */}
+        {slots.length < 4 && (
+          <Button
+            variant="outline"
+            className="w-full mb-5 border-dashed"
+            onClick={addSlot}
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Add Another Parlay
+          </Button>
+        )}
+
+        {/* Action Buttons */}
+        <div className="flex gap-3 mb-6">
+          <Button
+            variant="outline"
+            onClick={handleReset}
+            className="flex-1"
+            disabled={isComparing}
+          >
+            <RotateCcw className="w-4 h-4 mr-2" />
+            Reset
+          </Button>
+          <Button
+            onClick={handleCompare}
+            className="flex-[2] gradient-fire"
+            disabled={isComparing || filledCount < 2}
+          >
+            {isComparing ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Comparing...
+              </>
+            ) : (
+              <>
+                <Scale className="w-4 h-4 mr-2" />
+                Compare ({filledCount}/4)
+              </>
+            )}
+          </Button>
+        </div>
+
+        {/* Comparison Results */}
+        {comparisonResult && (
+          <div className="slide-up">
+            <ComparisonDashboard comparisonResult={comparisonResult} />
+          </div>
+        )}
+      </main>
+
+      {/* History Modal */}
+      {historySlotIndex !== null && (
+        <QuickSelectHistory
+          onSelect={handleHistorySelect}
+          onClose={() => setHistorySlotIndex(null)}
+        />
+      )}
+
+      <BottomNav />
+    </div>
+  );
+};
+
+export default Compare;

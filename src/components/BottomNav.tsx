@@ -1,4 +1,4 @@
-import { Home, BarChart3, User, Trophy, Shield } from "lucide-react";
+import { Home, BarChart3, User, Trophy, Shield, Scale } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { useAdminRole } from "@/hooks/useAdminRole";
@@ -6,6 +6,7 @@ import { useAdminRole } from "@/hooks/useAdminRole";
 const baseNavItems = [
   { icon: Home, label: "Home", path: "/" },
   { icon: BarChart3, label: "Analyze", path: "/upload" },
+  { icon: Scale, label: "Compare", path: "/compare" },
   { icon: Trophy, label: "Ranks", path: "/leaderboard" },
   { icon: User, label: "Profile", path: "/profile" },
 ];
