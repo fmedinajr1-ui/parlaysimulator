@@ -28,7 +28,7 @@ interface Profile {
 
 const Profile = () => {
   const { user, isLoading: authLoading, signOut } = useAuth();
-  const { isSubscribed, isAdmin, subscriptionEnd, openCustomerPortal } = useSubscription();
+  const { isSubscribed, isAdmin, subscriptionEnd, openCustomerPortal, startCheckout } = useSubscription();
   const navigate = useNavigate();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -114,7 +114,7 @@ const Profile = () => {
       <main className="max-w-lg mx-auto px-4 py-6">
         {/* Subscription Status & Actions */}
         <div className="flex items-center justify-between mb-4">
-          {(isSubscribed || isAdmin) && (
+          {(isSubscribed || isAdmin) ? (
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary/10 border border-primary/20">
                 <Crown className="w-4 h-4 text-primary" />
@@ -128,6 +128,15 @@ const Profile = () => {
                 </span>
               )}
             </div>
+          ) : (
+            <Button
+              onClick={startCheckout}
+              className="gradient-fire text-foreground"
+              size="sm"
+            >
+              <Crown className="w-4 h-4 mr-2" />
+              Upgrade to Pro - $5/mo
+            </Button>
           )}
           <div className="flex items-center gap-2 ml-auto">
             {isSubscribed && !isAdmin && (
