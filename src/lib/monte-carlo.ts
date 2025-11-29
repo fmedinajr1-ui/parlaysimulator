@@ -1,4 +1,22 @@
-import { ParlaySimulation } from '@/types/parlay';
+import { ParlaySimulation, ParlayLeg } from '@/types/parlay';
+
+export interface UpsetFactors {
+  underdogBoost: number;      // Extra % chance for underdogs (+200 to +499)
+  heavyUnderdogBoost: number; // Extra % for heavy underdogs (+500 or higher)
+  favoriteVariance: number;   // % chance favorites fail unexpectedly
+  chaosDayChance: number;     // Chance of "upset day" affecting multiple legs
+  chaosDayMultiplier: number; // Boost multiplier on chaos days
+}
+
+export interface UpsetStats {
+  totalUpsets: number;
+  upsetWins: number;           // Wins that only happened due to upset boost
+  pureOddsWinRate: number;     // Win rate without upset factors
+  adjustedWinRate: number;     // Win rate with upset factors
+  upsetImpact: number;         // Difference between adjusted and pure
+  chaosDayWins: number;        // Wins on chaos day scenarios
+  totalChaosDays: number;      // Total chaos day scenarios
+}
 
 export interface MonteCarloResult {
   parlayIndex: number;
@@ -17,6 +35,7 @@ export interface MonteCarloResult {
     p75: number;
     p95: number;
   };
+  upsetStats: UpsetStats;
 }
 
 export interface PayoutBucket {
@@ -32,30 +51,122 @@ export interface ProfitBucket {
   label: string;
 }
 
-// Run Monte Carlo simulation for a single parlay
+// Default upset factors based on sports betting research
+const DEFAULT_UPSET_FACTORS: UpsetFactors = {
+  underdogBoost: 0.035,       // +3.5% for +200 to +499 underdogs
+  heavyUnderdogBoost: 0.06,   // +6% for +500+ heavy underdogs
+  favoriteVariance: 0.025,    // -2.5% for heavy favorites (-300 or better)
+  chaosDayChance: 0.05,       // 5% of simulations are "chaos days"
+  chaosDayMultiplier: 1.15,   // 15% boost on upset days for underdogs
+};
+
+// Calculate adjusted probability with upset factors
+function calculateAdjustedProbability(
+  leg: ParlayLeg, 
+  isChaosDayActive: boolean,
+  factors: UpsetFactors = DEFAULT_UPSET_FACTORS
+): number {
+  let adjustedProb = leg.impliedProbability;
+  const odds = leg.odds;
+
+  // Heavy underdog boost (+500 or higher)
+  if (odds >= 500) {
+    adjustedProb += factors.heavyUnderdogBoost;
+  }
+  // Underdog boost (+200 to +499)
+  else if (odds >= 200) {
+    adjustedProb += factors.underdogBoost;
+  }
+  // Slight underdog (+100 to +199)
+  else if (odds > 0 && odds < 200) {
+    adjustedProb += 0.02; // +2% boost
+  }
+  // Heavy favorite variance (-300 or better)
+  else if (odds <= -300) {
+    adjustedProb -= factors.favoriteVariance; // Risk of upset
+  }
+  // Moderate favorite (-200 to -299)
+  else if (odds <= -200) {
+    adjustedProb -= 0.015; // -1.5% upset risk
+  }
+
+  // Chaos day multiplier (underdogs get boosted on chaos days)
+  if (isChaosDayActive && odds > 0) {
+    adjustedProb *= factors.chaosDayMultiplier;
+  }
+
+  // Cap probability between 1% and 95%
+  return Math.min(0.95, Math.max(0.01, adjustedProb));
+}
+
+// Run Monte Carlo simulation for a single parlay with upset factors
 export function runMonteCarloSimulation(
   simulation: ParlaySimulation,
-  iterations: number = 10000
+  iterations: number = 100000,
+  upsetFactors: UpsetFactors = DEFAULT_UPSET_FACTORS
 ): MonteCarloResult {
   const outcomes: number[] = [];
   let wins = 0;
   let losses = 0;
+  
+  // Pure odds tracking (without upset factors)
+  let pureWins = 0;
+  
+  // Upset tracking
+  let upsetWins = 0;
+  let chaosDayWins = 0;
+  let totalChaosDays = 0;
+  let totalUpsets = 0;
 
   for (let i = 0; i < iterations; i++) {
-    // Simulate each leg
-    let allLegsHit = true;
-    
+    // Determine if this is a "chaos day" (5% chance)
+    const isChaosDayActive = Math.random() < upsetFactors.chaosDayChance;
+    if (isChaosDayActive) totalChaosDays++;
+
+    // Track both pure and adjusted outcomes
+    let allLegsHitPure = true;
+    let allLegsHitAdjusted = true;
+    let hadUpsetHit = false;
+
     for (const leg of simulation.legs) {
       const random = Math.random();
-      if (random > leg.impliedProbability) {
-        allLegsHit = false;
-        break;
+      const pureProb = leg.impliedProbability;
+      const adjustedProb = calculateAdjustedProbability(leg, isChaosDayActive, upsetFactors);
+
+      // Pure odds check
+      if (random > pureProb) {
+        allLegsHitPure = false;
+      }
+
+      // Adjusted odds check
+      if (random > adjustedProb) {
+        allLegsHitAdjusted = false;
+      } else if (random > pureProb && random <= adjustedProb) {
+        // This leg hit only because of upset boost
+        hadUpsetHit = true;
+        totalUpsets++;
       }
     }
 
-    if (allLegsHit) {
+    // Track pure wins
+    if (allLegsHitPure) {
+      pureWins++;
+    }
+
+    // Track adjusted wins
+    if (allLegsHitAdjusted) {
       wins++;
       outcomes.push(simulation.potentialPayout - simulation.stake);
+      
+      // Was this a win due to upset factor?
+      if (hadUpsetHit || (isChaosDayActive && !allLegsHitPure)) {
+        upsetWins++;
+      }
+      
+      // Chaos day win tracking
+      if (isChaosDayActive) {
+        chaosDayWins++;
+      }
     } else {
       losses++;
       outcomes.push(-simulation.stake);
@@ -103,13 +214,17 @@ export function runMonteCarloSimulation(
 
   // Calculate expected profit from simulation
   const expectedProfit = outcomes.reduce((a, b) => a + b, 0) / iterations;
+  
+  // Calculate win rates
+  const pureOddsWinRate = (pureWins / iterations) * 100;
+  const adjustedWinRate = (wins / iterations) * 100;
 
   return {
     parlayIndex: 0,
     simulations: iterations,
     wins,
     losses,
-    winRate: (wins / iterations) * 100,
+    winRate: adjustedWinRate,
     payoutDistribution,
     profitDistribution,
     expectedProfit,
@@ -121,13 +236,22 @@ export function runMonteCarloSimulation(
       p75: getPercentile(sortedOutcomes, 75),
       p95: getPercentile(sortedOutcomes, 95),
     },
+    upsetStats: {
+      totalUpsets,
+      upsetWins,
+      pureOddsWinRate,
+      adjustedWinRate,
+      upsetImpact: adjustedWinRate - pureOddsWinRate,
+      chaosDayWins,
+      totalChaosDays,
+    },
   };
 }
 
 // Run Monte Carlo for multiple parlays and generate comparative data
 export function runComparativeSimulation(
   simulations: ParlaySimulation[],
-  iterations: number = 10000
+  iterations: number = 100000
 ): {
   results: MonteCarloResult[];
   comparisonData: ComparisonDataPoint[];
@@ -148,6 +272,8 @@ export function runComparativeSimulation(
     expectedProfit: result.expectedProfit,
     potentialWin: simulations[idx].potentialPayout - simulations[idx].stake,
     stake: simulations[idx].stake,
+    pureWinRate: result.upsetStats.pureOddsWinRate,
+    upsetImpact: result.upsetStats.upsetImpact,
   }));
 
   // Find best parlays
@@ -176,4 +302,6 @@ export interface ComparisonDataPoint {
   expectedProfit: number;
   potentialWin: number;
   stake: number;
+  pureWinRate: number;
+  upsetImpact: number;
 }

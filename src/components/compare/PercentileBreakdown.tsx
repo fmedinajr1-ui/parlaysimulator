@@ -233,6 +233,27 @@ export function PercentileBreakdown({ results, stakes }: PercentileBreakdownProp
               </p>
             </div>
           </div>
+          
+          {/* Upset Impact Summary */}
+          <div className="mt-3 pt-3 border-t border-border/50">
+            <h5 className="text-xs font-medium mb-2 text-neon-orange">Upset Factor Analysis</h5>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <span className="text-muted-foreground">Most Upset Potential:</span>
+                <p className="font-bold text-neon-orange">
+                  Parlay {results.reduce((best, curr, idx) => 
+                    curr.upsetStats.upsetImpact > results[best].upsetStats.upsetImpact ? idx : best, 0
+                  ) + 1} (+{Math.max(...results.map(r => r.upsetStats.upsetImpact)).toFixed(2)}%)
+                </p>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Chaos Day Wins:</span>
+                <p className="font-bold text-neon-orange">
+                  {results.reduce((sum, r) => sum + r.upsetStats.chaosDayWins, 0).toLocaleString()} total
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </FeedCard>
