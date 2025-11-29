@@ -4,6 +4,7 @@ import { FeedCard } from '@/components/FeedCard';
 import { Badge } from '@/components/ui/badge';
 import { Crown, TrendingUp, TrendingDown, DollarSign, Percent, Trophy, Target } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { MonteCarloVisualization } from './MonteCarloVisualization';
 
 interface ComparisonDashboardProps {
   comparisonResult: ComparisonResult;
@@ -181,6 +182,9 @@ export function ComparisonDashboard({ comparisonResult }: ComparisonDashboardPro
           );
         })}
       </div>
+
+      {/* Monte Carlo Simulation */}
+      <MonteCarloVisualization simulations={simulations} />
     </div>
   );
 }
