@@ -271,6 +271,66 @@ export type Database = {
         }
         Relationships: []
       }
+      scan_usage: {
+        Row: {
+          created_at: string | null
+          id: string
+          last_scan_at: string | null
+          scan_count: number | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          last_scan_at?: string | null
+          scan_count?: number | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          last_scan_at?: string | null
+          scan_count?: number | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      subscriptions: {
+        Row: {
+          created_at: string | null
+          current_period_end: string | null
+          current_period_start: string | null
+          id: string
+          status: string
+          stripe_customer_id: string | null
+          stripe_subscription_id: string | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          current_period_end?: string | null
+          current_period_start?: string | null
+          id?: string
+          status?: string
+          stripe_customer_id?: string | null
+          stripe_subscription_id?: string | null
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          current_period_end?: string | null
+          current_period_start?: string | null
+          id?: string
+          status?: string
+          stripe_customer_id?: string | null
+          stripe_subscription_id?: string | null
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           created_at: string | null
@@ -297,6 +357,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      check_scan_access: { Args: { p_user_id: string }; Returns: Json }
       get_ai_accuracy_stats: {
         Args: never
         Returns: {
@@ -374,6 +435,7 @@ export type Database = {
         }
         Returns: boolean
       }
+      increment_scan_count: { Args: { p_user_id: string }; Returns: undefined }
     }
     Enums: {
       app_role: "admin" | "moderator" | "user"
