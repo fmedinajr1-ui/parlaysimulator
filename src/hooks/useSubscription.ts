@@ -92,6 +92,25 @@ export function useSubscription() {
     }
   }, [user, session]);
 
+  const openCustomerPortal = useCallback(async () => {
+    if (!user || !session) return;
+
+    try {
+      const { data, error } = await supabase.functions.invoke('customer-portal');
+
+      if (error) {
+        console.error('Error opening customer portal:', error);
+        return;
+      }
+
+      if (data?.url) {
+        window.open(data.url, '_blank');
+      }
+    } catch (err) {
+      console.error('Error opening customer portal:', err);
+    }
+  }, [user, session]);
+
   useEffect(() => {
     checkSubscription();
   }, [checkSubscription]);
@@ -111,5 +130,6 @@ export function useSubscription() {
     checkSubscription,
     incrementScan,
     startCheckout,
+    openCustomerPortal,
   };
 }
