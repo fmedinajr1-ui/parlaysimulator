@@ -19,6 +19,7 @@ import {
 } from 'recharts';
 import { Dices, TrendingUp, Trophy, Loader2, RotateCcw } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { PercentileBreakdown } from './PercentileBreakdown';
 
 interface MonteCarloVisualizationProps {
   simulations: ParlaySimulation[];
@@ -280,6 +281,12 @@ export function MonteCarloVisualization({ simulations }: MonteCarloVisualization
               ))}
             </div>
           </div>
+
+          {/* Percentile Breakdown */}
+          <PercentileBreakdown 
+            results={results.results} 
+            stakes={simulations.map(s => s.stake)} 
+          />
 
           {/* Stats Summary */}
           <div className="rounded-lg p-3 bg-primary/10 border border-primary/30">
