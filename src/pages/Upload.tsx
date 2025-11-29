@@ -1,5 +1,5 @@
-import { useState, useCallback, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useCallback, useRef, useEffect } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { format } from "date-fns";
 import { BottomNav } from "@/components/BottomNav";
 import { FeedCard } from "@/components/FeedCard";
@@ -8,12 +8,15 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Plus, Upload as UploadIcon, Flame, X, Loader2, Sparkles, CheckCircle2, Clock, Pencil, CalendarIcon } from "lucide-react";
+import { PaywallModal } from "@/components/PaywallModal";
+import { Plus, Upload as UploadIcon, Flame, X, Loader2, Sparkles, CheckCircle2, Clock, Pencil, CalendarIcon, Crown } from "lucide-react";
 import { createLeg, simulateParlay, americanToDecimal } from "@/lib/parlay-calculator";
 import { ParlayLeg } from "@/types/parlay";
 import { toast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
+import { useSubscription } from "@/hooks/useSubscription";
+import { useAuth } from "@/contexts/AuthContext";
 
 // Calculate estimated per-leg odds when we only have total odds
 function calculateEstimatedLegOdds(totalOdds: number, numLegs: number): number {
@@ -27,6 +30,7 @@ function calculateEstimatedLegOdds(totalOdds: number, numLegs: number): number {
     return Math.round(-100 / (perLegDecimal - 1));
   }
 }
+
 interface LegInput {
   id: string;
   description: string;
@@ -35,6 +39,10 @@ interface LegInput {
 
 const Upload = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const { user } = useAuth();
+  const { isSubscribed, isAdmin, canScan, scansRemaining, incrementScan, startCheckout, checkSubscription } = useSubscription();
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [legs, setLegs] = useState<LegInput[]>([
     { id: crypto.randomUUID(), description: "", odds: "" },
@@ -48,6 +56,23 @@ const Upload = () => {
   const [isEditingGameTime, setIsEditingGameTime] = useState(false);
   const [editDate, setEditDate] = useState<Date | undefined>(undefined);
   const [editTime, setEditTime] = useState("19:00");
+  const [showPaywall, setShowPaywall] = useState(false);
+
+  // Check for success/cancel params from Stripe checkout
+  useEffect(() => {
+    if (searchParams.get('success') === 'true') {
+      toast({
+        title: "Welcome to Pro! 🎉",
+        description: "You now have unlimited parlay scans.",
+      });
+      checkSubscription();
+    } else if (searchParams.get('canceled') === 'true') {
+      toast({
+        title: "Checkout canceled",
+        description: "No worries, you can upgrade anytime.",
+      });
+    }
+  }, [searchParams, checkSubscription]);
 
   // Parse extracted game time to Date for editing
   const parseGameTimeForEdit = useCallback((gameTime: string) => {
@@ -57,7 +82,6 @@ const Upload = () => {
         setEditDate(parsed);
         setEditTime(format(parsed, "HH:mm"));
       } else {
-        // Default to today at 7pm if parsing fails
         setEditDate(new Date());
         setEditTime("19:00");
       }
@@ -136,6 +160,12 @@ const Upload = () => {
   };
 
   const handleFileSelect = useCallback(async (file: File) => {
+    // Check scan access for logged-in users
+    if (user && !canScan && !isSubscribed && !isAdmin) {
+      setShowPaywall(true);
+      return;
+    }
+
     // Validate file type
     if (!file.type.startsWith('image/')) {
       toast({
@@ -195,11 +225,16 @@ const Upload = () => {
         return;
       }
 
+      // Increment scan count for free users after successful scan
+      if (user && !isSubscribed && !isAdmin) {
+        await incrementScan();
+      }
+
       // Convert extracted legs to LegInput format
       const newLegs: LegInput[] = extractedLegs.map((leg: { description: string; odds: string }) => ({
         id: crypto.randomUUID(),
         description: leg.description || "",
-        odds: leg.odds?.replace('+', '') || "", // Remove + prefix, we'll handle display
+        odds: leg.odds?.replace('+', '') || "",
       }));
 
       // Ensure we have at least 2 legs
@@ -214,7 +249,6 @@ const Upload = () => {
         const parsedOdds = parseInt(extractedTotalOddsStr.replace('+', ''));
         if (!isNaN(parsedOdds) && parsedOdds !== 0) {
           setExtractedTotalOdds(parsedOdds);
-          console.log('Extracted total parlay odds:', parsedOdds);
         }
       } else {
         setExtractedTotalOdds(null);
@@ -231,7 +265,6 @@ const Upload = () => {
       // Store extracted game time
       if (extractedEarliestGameTime) {
         setExtractedGameTime(extractedEarliestGameTime);
-        console.log('Extracted game time:', extractedEarliestGameTime);
       } else {
         setExtractedGameTime(null);
       }
@@ -253,7 +286,7 @@ const Upload = () => {
     } finally {
       setIsProcessing(false);
     }
-  }, []);
+  }, [user, canScan, isSubscribed, isAdmin, incrementScan]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -285,9 +318,14 @@ const Upload = () => {
 
   const triggerFileInput = useCallback(() => {
     if (!isProcessing) {
+      // Check scan access before opening file picker
+      if (user && !canScan && !isSubscribed && !isAdmin) {
+        setShowPaywall(true);
+        return;
+      }
       fileInputRef.current?.click();
     }
-  }, [isProcessing]);
+  }, [isProcessing, user, canScan, isSubscribed, isAdmin]);
 
   const handleSimulate = () => {
     // Validate inputs
@@ -365,6 +403,14 @@ const Upload = () => {
         aria-hidden="true"
       />
 
+      {/* Paywall Modal */}
+      <PaywallModal
+        isOpen={showPaywall}
+        onClose={() => setShowPaywall(false)}
+        onSubscribe={startCheckout}
+        scansUsed={3 - scansRemaining}
+      />
+
       <main className="max-w-lg mx-auto px-3 py-4">
         {/* Header */}
         <div className="text-center mb-5">
@@ -375,6 +421,28 @@ const Upload = () => {
             Add your legs and prepare for judgment.
           </p>
         </div>
+
+        {/* Scan Counter / Pro Badge */}
+        {user && (
+          <div className="flex justify-center mb-4">
+            {isSubscribed || isAdmin ? (
+              <Badge className="bg-primary/20 text-primary border-primary/30 gap-1">
+                <Crown className="w-3 h-3" />
+                {isAdmin ? 'ADMIN' : 'PRO'} - Unlimited Scans
+              </Badge>
+            ) : (
+              <Badge 
+                variant="outline" 
+                className={cn(
+                  "gap-1",
+                  scansRemaining === 0 && "border-destructive/50 text-destructive"
+                )}
+              >
+                {scansRemaining}/3 Free Scans
+              </Badge>
+            )}
+          </div>
+        )}
 
         {/* Drop Zone - Now with AI OCR */}
         <FeedCard 

@@ -1,4 +1,4 @@
-import { Home, BarChart3, User, Trophy, Shield, Scale } from "lucide-react";
+import { Home, BarChart3, User, Shield, Scale } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { useAdminRole } from "@/hooks/useAdminRole";
@@ -7,7 +7,6 @@ const baseNavItems = [
   { icon: Home, label: "Home", path: "/" },
   { icon: BarChart3, label: "Analyze", path: "/upload" },
   { icon: Scale, label: "Compare", path: "/compare" },
-  { icon: Trophy, label: "Ranks", path: "/leaderboard" },
   { icon: User, label: "Profile", path: "/profile" },
 ];
 
@@ -31,7 +30,7 @@ export function BottomNav() {
               key={item.path}
               to={item.path}
               className={cn(
-                "flex flex-col items-center justify-center gap-0.5 py-2 px-3 min-h-[52px] min-w-[56px] rounded-xl transition-all duration-150 active:scale-95",
+                "flex flex-col items-center justify-center gap-0.5 py-2 px-4 min-h-[52px] min-w-[64px] rounded-xl transition-all duration-150 active:scale-95",
                 isActive 
                   ? "text-primary" 
                   : "text-muted-foreground hover:text-foreground active:bg-muted/50"
