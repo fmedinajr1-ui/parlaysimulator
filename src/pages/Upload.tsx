@@ -227,7 +227,29 @@ const Upload = () => {
 
       // Increment scan count for free users after successful scan
       if (user && !isSubscribed && !isAdmin) {
+        // Check if this scan will leave them with 1 remaining (scansRemaining is 2 now)
+        const willHaveOneScanLeft = scansRemaining === 2;
         await incrementScan();
+        
+        // Show upgrade reminder when they have 1 scan left
+        if (willHaveOneScanLeft) {
+          setTimeout(() => {
+            toast({
+              title: "1 Free Scan Remaining! ⚠️",
+              description: "Upgrade to Pro for unlimited scans at $5/mo",
+              action: (
+                <Button 
+                  variant="default" 
+                  size="sm" 
+                  onClick={startCheckout}
+                  className="shrink-0"
+                >
+                  Upgrade
+                </Button>
+              ),
+            });
+          }, 2000); // Show after the success toast
+        }
       }
 
       // Convert extracted legs to LegInput format
