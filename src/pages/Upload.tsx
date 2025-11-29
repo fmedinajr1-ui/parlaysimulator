@@ -424,22 +424,33 @@ const Upload = () => {
 
         {/* Scan Counter / Pro Badge */}
         {user && (
-          <div className="flex justify-center mb-4">
+          <div className="flex justify-center items-center gap-2 mb-4">
             {isSubscribed || isAdmin ? (
               <Badge className="bg-primary/20 text-primary border-primary/30 gap-1">
                 <Crown className="w-3 h-3" />
                 {isAdmin ? 'ADMIN' : 'PRO'} - Unlimited Scans
               </Badge>
             ) : (
-              <Badge 
-                variant="outline" 
-                className={cn(
-                  "gap-1",
-                  scansRemaining === 0 && "border-destructive/50 text-destructive"
-                )}
-              >
-                {scansRemaining}/3 Free Scans
-              </Badge>
+              <>
+                <Badge 
+                  variant="outline" 
+                  className={cn(
+                    "gap-1",
+                    scansRemaining === 0 && "border-destructive/50 text-destructive"
+                  )}
+                >
+                  {scansRemaining}/3 Free Scans
+                </Badge>
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={startCheckout}
+                  className="text-primary hover:text-primary/80 hover:bg-primary/10"
+                >
+                  <Crown className="w-4 h-4 mr-1" />
+                  Upgrade
+                </Button>
+              </>
             )}
           </div>
         )}
