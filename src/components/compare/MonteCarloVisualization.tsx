@@ -20,6 +20,7 @@ import {
 import { Dices, TrendingUp, Trophy, Loader2, RotateCcw, Zap, Flame } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { PercentileBreakdown } from './PercentileBreakdown';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 interface MonteCarloVisualizationProps {
   simulations: ParlaySimulation[];
@@ -53,10 +54,10 @@ export function MonteCarloVisualization({ simulations }: MonteCarloVisualization
     bestByExpectedProfit: number;
   } | null>(null);
   const [iterations, setIterations] = useState(100000);
+  const isMobile = useIsMobile();
 
   const runSimulation = () => {
     setIsRunning(true);
-    // Use setTimeout to allow UI to update
     setTimeout(() => {
       const simulationResults = runComparativeSimulation(simulations, iterations);
       setResults(simulationResults);
@@ -72,23 +73,23 @@ export function MonteCarloVisualization({ simulations }: MonteCarloVisualization
   const winRateData = useMemo(() => {
     if (!results) return [];
     return results.comparisonData.map((d, idx) => ({
-      name: d.name,
+      name: isMobile ? `P${idx + 1}` : d.name,
       'Win Rate': d.winRate,
       'Loss Rate': d.lossRate,
       'Pure Odds': d.pureWinRate,
       isBest: idx === results.bestByWinRate,
     }));
-  }, [results]);
+  }, [results, isMobile]);
 
   // Prepare data for expected profit chart
   const profitData = useMemo(() => {
     if (!results) return [];
     return results.comparisonData.map((d, idx) => ({
-      name: d.name,
+      name: isMobile ? `P${idx + 1}` : d.name,
       'Expected Profit': d.expectedProfit,
       isBest: idx === results.bestByExpectedProfit,
     }));
-  }, [results]);
+  }, [results, isMobile]);
 
   // Prepare pie chart data for individual parlay
   const getPieData = (result: MonteCarloResult) => [
@@ -99,41 +100,41 @@ export function MonteCarloVisualization({ simulations }: MonteCarloVisualization
   if (simulations.length === 0) return null;
 
   return (
-    <FeedCard className="p-4 mt-4">
-      <div className="flex items-center justify-between mb-4">
+    <FeedCard className="p-3 sm:p-4 mt-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
         <div className="flex items-center gap-2">
           <Dices className="w-5 h-5 text-primary" />
-          <h3 className="font-display text-sm text-primary">MONTE CARLO SIMULATION</h3>
+          <h3 className="font-display text-sm text-primary">MONTE CARLO</h3>
         </div>
-        <div className="flex items-center gap-2">
-          <Badge variant="outline" className="text-xs bg-neon-orange/10 text-neon-orange border-neon-orange/30">
-            <Zap className="w-3 h-3 mr-1" />
-            Upset Factors
+        <div className="flex items-center gap-2 flex-wrap">
+          <Badge variant="outline" className="text-[10px] bg-neon-orange/10 text-neon-orange border-neon-orange/30">
+            <Zap className="w-2.5 h-2.5 mr-0.5" />
+            Upsets
           </Badge>
-          <Badge variant="outline" className="text-xs">
-            {iterations.toLocaleString()} iterations
+          <Badge variant="outline" className="text-[10px]">
+            {iterations >= 1000 ? `${iterations/1000}K` : iterations} runs
           </Badge>
         </div>
       </div>
 
       {!results ? (
         <div className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            Run 100,000 simulated bets with <span className="text-neon-orange font-medium">realistic upset factors</span> to see probability distributions and expected outcomes.
+          <p className="text-xs sm:text-sm text-muted-foreground">
+            Run {iterations >= 1000 ? `${iterations/1000}K` : iterations} simulations with <span className="text-neon-orange font-medium">upset factors</span>.
           </p>
           
-          {/* Upset Factor Info */}
-          <div className="rounded-lg p-3 bg-neon-orange/10 border border-neon-orange/20">
+          {/* Upset Factor Info - Condensed on mobile */}
+          <div className="rounded-lg p-2.5 sm:p-3 bg-neon-orange/10 border border-neon-orange/20">
             <div className="flex items-center gap-2 mb-2">
               <Flame className="w-4 h-4 text-neon-orange" />
-              <span className="text-xs font-medium text-neon-orange">UPSET FACTORS INCLUDED</span>
+              <span className="text-[10px] sm:text-xs font-medium text-neon-orange">UPSET FACTORS</span>
             </div>
-            <ul className="text-xs text-muted-foreground space-y-1">
-              <li>• Heavy underdogs (+500+): +6% win boost</li>
-              <li>• Underdogs (+200-499): +3.5% win boost</li>
-              <li>• Heavy favorites (-300+): 2.5% upset risk</li>
-              <li>• 5% "Chaos Day" scenarios with 15% underdog boost</li>
-            </ul>
+            <div className="grid grid-cols-2 gap-1 text-[10px] sm:text-xs text-muted-foreground">
+              <span>• Underdogs: +3-6% boost</span>
+              <span>• Favorites: 2.5% upset risk</span>
+              <span>• 5% "Chaos Days"</span>
+              <span>• 15% underdog boost</span>
+            </div>
           </div>
           
           {/* Iteration selector */}
@@ -144,9 +145,9 @@ export function MonteCarloVisualization({ simulations }: MonteCarloVisualization
                 variant={iterations === iter ? "default" : "outline"}
                 size="sm"
                 onClick={() => setIterations(iter)}
-                className={cn(iterations === iter && "bg-primary")}
+                className={cn("text-xs", iterations === iter && "bg-primary")}
               >
-                {iter.toLocaleString()}
+                {iter >= 1000 ? `${iter/1000}K` : iter}
               </Button>
             ))}
           </div>
@@ -159,36 +160,39 @@ export function MonteCarloVisualization({ simulations }: MonteCarloVisualization
             {isRunning ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Running {iterations.toLocaleString()} Simulations...
+                Running...
               </>
             ) : (
               <>
                 <Dices className="w-4 h-4 mr-2" />
-                Run Monte Carlo Simulation
+                Run Simulation
               </>
             )}
           </Button>
         </div>
       ) : (
-        <div className="space-y-6">
-          {/* Upset Stats Summary */}
-          <div className="rounded-lg p-3 bg-neon-orange/10 border border-neon-orange/20">
-            <div className="flex items-center gap-2 mb-3">
+        <div className="space-y-4 sm:space-y-6">
+          {/* Upset Stats Summary - Simplified on mobile */}
+          <div className="rounded-lg p-2.5 sm:p-3 bg-neon-orange/10 border border-neon-orange/20">
+            <div className="flex items-center gap-2 mb-2 sm:mb-3">
               <Zap className="w-4 h-4 text-neon-orange" />
-              <h4 className="text-sm font-medium text-neon-orange">Upset Factor Impact</h4>
+              <h4 className="text-xs sm:text-sm font-medium text-neon-orange">Upset Impact</h4>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className={cn(
+              "grid gap-2 sm:gap-3",
+              results.results.length <= 2 ? "grid-cols-2" : "grid-cols-2 sm:grid-cols-4"
+            )}>
               {results.results.map((result, idx) => (
                 <div key={idx} className="text-center">
-                  <p className="text-[10px] text-muted-foreground mb-1">Parlay {idx + 1}</p>
+                  <p className="text-[9px] sm:text-[10px] text-muted-foreground mb-0.5">P{idx + 1}</p>
                   <div className="flex items-center justify-center gap-1">
-                    <span className="text-xs text-muted-foreground">{result.upsetStats.pureOddsWinRate.toFixed(1)}%</span>
-                    <span className="text-neon-green text-xs">→</span>
-                    <span className="text-sm font-bold text-neon-green">{result.upsetStats.adjustedWinRate.toFixed(1)}%</span>
+                    <span className="text-[10px] sm:text-xs text-muted-foreground">{result.upsetStats.pureOddsWinRate.toFixed(1)}%</span>
+                    <span className="text-neon-green text-[10px] sm:text-xs">→</span>
+                    <span className="text-xs sm:text-sm font-bold text-neon-green">{result.upsetStats.adjustedWinRate.toFixed(1)}%</span>
                   </div>
                   <Badge 
                     className={cn(
-                      "text-[10px] mt-1",
+                      "text-[8px] sm:text-[10px] mt-0.5",
                       result.upsetStats.upsetImpact > 0 
                         ? "bg-neon-green/20 text-neon-green border-neon-green/30" 
                         : "bg-destructive/20 text-destructive border-destructive/30"
@@ -199,25 +203,15 @@ export function MonteCarloVisualization({ simulations }: MonteCarloVisualization
                 </div>
               ))}
             </div>
-            <div className="mt-3 pt-3 border-t border-neon-orange/20 grid grid-cols-2 gap-2 text-xs">
-              <div>
-                <span className="text-muted-foreground">Chaos Day Scenarios:</span>
-                <span className="ml-1 font-medium">{results.results[0]?.upsetStats.totalChaosDays.toLocaleString()}</span>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Total Upset Hits:</span>
-                <span className="ml-1 font-medium text-neon-orange">{results.results.reduce((sum, r) => sum + r.upsetStats.totalUpsets, 0).toLocaleString()}</span>
-              </div>
-            </div>
           </div>
 
           {/* Win Rate Comparison */}
           <div>
-            <div className="flex items-center gap-2 mb-3">
+            <div className="flex items-center gap-2 mb-2 sm:mb-3">
               <Trophy className="w-4 h-4 text-neon-yellow" />
-              <h4 className="text-sm font-medium">Win Rate Distribution (With Upsets)</h4>
+              <h4 className="text-xs sm:text-sm font-medium">Win Rate (With Upsets)</h4>
             </div>
-            <div className="h-48">
+            <div className="h-36 sm:h-48">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={winRateData} layout="vertical">
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -226,20 +220,21 @@ export function MonteCarloVisualization({ simulations }: MonteCarloVisualization
                     domain={[0, 100]} 
                     tickFormatter={(v) => `${v}%`}
                     stroke="hsl(var(--muted-foreground))"
-                    fontSize={12}
+                    fontSize={isMobile ? 10 : 12}
                   />
                   <YAxis 
                     type="category" 
                     dataKey="name" 
-                    width={70}
+                    width={isMobile ? 30 : 70}
                     stroke="hsl(var(--muted-foreground))"
-                    fontSize={12}
+                    fontSize={isMobile ? 10 : 12}
                   />
                   <Tooltip
                     contentStyle={{
                       backgroundColor: 'hsl(var(--card))',
                       border: '1px solid hsl(var(--border))',
                       borderRadius: '8px',
+                      fontSize: isMobile ? '10px' : '12px',
                     }}
                     formatter={(value: number, name: string) => [
                       `${value.toFixed(2)}%`,
@@ -262,29 +257,31 @@ export function MonteCarloVisualization({ simulations }: MonteCarloVisualization
 
           {/* Expected Profit Comparison */}
           <div>
-            <div className="flex items-center gap-2 mb-3">
+            <div className="flex items-center gap-2 mb-2 sm:mb-3">
               <TrendingUp className="w-4 h-4 text-neon-green" />
-              <h4 className="text-sm font-medium">Expected Profit per Bet</h4>
+              <h4 className="text-xs sm:text-sm font-medium">Expected Profit</h4>
             </div>
-            <div className="h-48">
+            <div className="h-32 sm:h-48">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={profitData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                   <XAxis 
                     dataKey="name" 
                     stroke="hsl(var(--muted-foreground))"
-                    fontSize={12}
+                    fontSize={isMobile ? 10 : 12}
                   />
                   <YAxis 
                     tickFormatter={(v) => `$${v.toFixed(0)}`}
                     stroke="hsl(var(--muted-foreground))"
-                    fontSize={12}
+                    fontSize={isMobile ? 10 : 12}
+                    width={isMobile ? 35 : 50}
                   />
                   <Tooltip
                     contentStyle={{
                       backgroundColor: 'hsl(var(--card))',
                       border: '1px solid hsl(var(--border))',
                       borderRadius: '8px',
+                      fontSize: isMobile ? '10px' : '12px',
                     }}
                     formatter={(value: number) => [`$${value.toFixed(2)}`, 'Expected Profit']}
                   />
@@ -301,41 +298,43 @@ export function MonteCarloVisualization({ simulations }: MonteCarloVisualization
             </div>
           </div>
 
-          {/* Individual Parlay Breakdowns */}
+          {/* Individual Parlay Breakdowns - Responsive grid */}
           <div>
-            <h4 className="text-sm font-medium mb-3">Individual Distributions</h4>
-            <div className="grid grid-cols-2 gap-3">
+            <h4 className="text-xs sm:text-sm font-medium mb-2 sm:mb-3">Individual Results</h4>
+            <div className={cn(
+              "grid gap-2 sm:gap-3",
+              results.results.length <= 2 ? "grid-cols-2" : "grid-cols-2"
+            )}>
               {results.results.map((result, idx) => (
                 <div 
                   key={idx} 
                   className={cn(
-                    "rounded-lg p-3 bg-muted/30",
+                    "rounded-lg p-2 sm:p-3 bg-muted/30",
                     idx === results.bestByWinRate && "ring-2 ring-primary"
                   )}
                 >
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-medium">Parlay {idx + 1}</span>
+                  <div className="flex items-center justify-between mb-1 sm:mb-2">
+                    <span className="text-[10px] sm:text-xs font-medium">P{idx + 1}</span>
                     <div className="flex items-center gap-1">
                       {result.upsetStats.upsetImpact > 0.5 && (
-                        <Badge className="text-[10px] bg-neon-orange/20 text-neon-orange border-neon-orange/30">
-                          <Zap className="w-2 h-2 mr-0.5" />
-                          Upset Boost
+                        <Badge className="text-[8px] sm:text-[10px] bg-neon-orange/20 text-neon-orange border-neon-orange/30 px-1">
+                          <Zap className="w-2 h-2" />
                         </Badge>
                       )}
                       {idx === results.bestByWinRate && (
-                        <Badge className="text-xs bg-primary">Best</Badge>
+                        <Badge className="text-[8px] sm:text-xs bg-primary px-1 sm:px-2">Best</Badge>
                       )}
                     </div>
                   </div>
-                  <div className="h-24">
+                  <div className="h-16 sm:h-24">
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
                         <Pie
                           data={getPieData(result)}
                           cx="50%"
                           cy="50%"
-                          innerRadius={20}
-                          outerRadius={35}
+                          innerRadius={isMobile ? 12 : 20}
+                          outerRadius={isMobile ? 24 : 35}
                           dataKey="value"
                           strokeWidth={0}
                         >
@@ -343,22 +342,15 @@ export function MonteCarloVisualization({ simulations }: MonteCarloVisualization
                             <Cell key={`cell-${i}`} fill={entry.fill} />
                           ))}
                         </Pie>
-                        <Legend 
-                          iconSize={8}
-                          wrapperStyle={{ fontSize: '10px' }}
-                        />
                       </PieChart>
                     </ResponsiveContainer>
                   </div>
-                  <div className="text-center mt-1">
-                    <p className="text-lg font-bold text-primary">
+                  <div className="text-center">
+                    <p className="text-sm sm:text-lg font-bold text-primary">
                       {result.winRate.toFixed(1)}%
                     </p>
-                    <p className="text-xs text-muted-foreground">
-                      {result.wins.toLocaleString()} / {result.simulations.toLocaleString()} wins
-                    </p>
-                    <p className="text-[10px] text-neon-orange mt-1">
-                      {result.upsetStats.upsetWins.toLocaleString()} upset-assisted wins
+                    <p className="text-[9px] sm:text-xs text-muted-foreground">
+                      {result.wins.toLocaleString()} wins
                     </p>
                   </div>
                 </div>
@@ -372,33 +364,21 @@ export function MonteCarloVisualization({ simulations }: MonteCarloVisualization
             stakes={simulations.map(s => s.stake)} 
           />
 
-          {/* Stats Summary */}
-          <div className="rounded-lg p-3 bg-primary/10 border border-primary/30">
-            <h4 className="text-sm font-medium mb-2 text-primary">Simulation Summary</h4>
-            <div className="grid grid-cols-2 gap-2 text-xs">
+          {/* Stats Summary - Condensed on mobile */}
+          <div className="rounded-lg p-2.5 sm:p-3 bg-primary/10 border border-primary/30">
+            <h4 className="text-xs sm:text-sm font-medium mb-2 text-primary">Summary</h4>
+            <div className="grid grid-cols-2 gap-2 text-[10px] sm:text-xs">
               <div>
                 <span className="text-muted-foreground">Best Win Rate:</span>
                 <p className="font-bold">
-                  Parlay {results.bestByWinRate + 1} ({results.results[results.bestByWinRate].winRate.toFixed(1)}%)
+                  P{results.bestByWinRate + 1} ({results.results[results.bestByWinRate].winRate.toFixed(1)}%)
                 </p>
               </div>
               <div>
-                <span className="text-muted-foreground">Best Expected Profit:</span>
+                <span className="text-muted-foreground">Best Profit:</span>
                 <p className="font-bold">
-                  Parlay {results.bestByExpectedProfit + 1} (${results.results[results.bestByExpectedProfit].expectedProfit.toFixed(2)})
+                  P{results.bestByExpectedProfit + 1} (${results.results[results.bestByExpectedProfit].expectedProfit.toFixed(2)})
                 </p>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Highest Upset Impact:</span>
-                <p className="font-bold text-neon-orange">
-                  Parlay {results.results.reduce((best, curr, idx) => 
-                    curr.upsetStats.upsetImpact > results.results[best].upsetStats.upsetImpact ? idx : best, 0
-                  ) + 1} (+{Math.max(...results.results.map(r => r.upsetStats.upsetImpact)).toFixed(2)}%)
-                </p>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Simulations Run:</span>
-                <p className="font-bold">{iterations.toLocaleString()}</p>
               </div>
             </div>
           </div>
@@ -407,6 +387,7 @@ export function MonteCarloVisualization({ simulations }: MonteCarloVisualization
             variant="outline"
             onClick={resetSimulation}
             className="w-full"
+            size={isMobile ? "sm" : "default"}
           >
             <RotateCcw className="w-4 h-4 mr-2" />
             Run New Simulation

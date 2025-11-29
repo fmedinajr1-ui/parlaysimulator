@@ -17,3 +17,12 @@ verify_jwt = false
 
 [functions.auto-settle-parlays]
 verify_jwt = false
+
+[functions.create-checkout]
+verify_jwt = false
+
+[functions.check-subscription]
+verify_jwt = false
+
+[functions.increment-scan]
+verify_jwt = false

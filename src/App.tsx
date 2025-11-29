@@ -9,7 +9,6 @@ import Upload from "./pages/Upload";
 import Results from "./pages/Results";
 import Profile from "./pages/Profile";
 import Auth from "./pages/Auth";
-import Leaderboard from "./pages/Leaderboard";
 import Admin from "./pages/Admin";
 import Compare from "./pages/Compare";
 import NotFound from "./pages/NotFound";
@@ -29,7 +28,6 @@ const App = () => (
             <Route path="/results" element={<Results />} />
             <Route path="/profile" element={<Profile />} />
             <Route path="/auth" element={<Auth />} />
-            <Route path="/leaderboard" element={<Leaderboard />} />
             <Route path="/admin" element={<Admin />} />
             <Route path="/compare" element={<Compare />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
