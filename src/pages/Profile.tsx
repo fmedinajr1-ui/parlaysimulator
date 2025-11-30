@@ -9,6 +9,7 @@ import { SocialLinks } from '@/components/profile/SocialLinks';
 import { DegenStats } from '@/components/profile/DegenStats';
 import { ParlayHistoryFeed } from '@/components/profile/ParlayHistoryFeed';
 import { AIPerformanceCard } from '@/components/profile/AIPerformanceCard';
+import { NotificationPreferences } from '@/components/profile/NotificationPreferences';
 import { Button } from '@/components/ui/button';
 import { Loader2, LogOut, Upload, CreditCard, Crown } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
@@ -192,6 +193,13 @@ const Profile = () => {
         <div className="mt-4">
           <AIPerformanceCard userId={user!.id} />
         </div>
+
+        {/* Notification Preferences - Pro users only */}
+        {(isSubscribed || isAdmin) && (
+          <div className="mt-4">
+            <NotificationPreferences />
+          </div>
+        )}
 
         {/* Parlay History */}
         <div className="mt-4">

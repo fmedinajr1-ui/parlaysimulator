@@ -80,6 +80,42 @@ export type Database = {
         }
         Relationships: []
       }
+      notification_preferences: {
+        Row: {
+          created_at: string
+          email: string
+          email_notifications: boolean
+          favorite_sports: string[] | null
+          id: string
+          last_notified_at: string | null
+          min_confidence_threshold: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          email: string
+          email_notifications?: boolean
+          favorite_sports?: string[] | null
+          id?: string
+          last_notified_at?: string | null
+          min_confidence_threshold?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          email?: string
+          email_notifications?: boolean
+          favorite_sports?: string[] | null
+          id?: string
+          last_notified_at?: string | null
+          min_confidence_threshold?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       parlay_history: {
         Row: {
           ai_roasts: Json | null
