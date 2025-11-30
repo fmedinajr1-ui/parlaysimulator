@@ -5,12 +5,14 @@ import { useSubscription } from "@/hooks/useSubscription";
 import { useNavigate } from "react-router-dom";
 import { BottomNav } from "@/components/BottomNav";
 import { SuggestionPerformanceCard } from "@/components/suggestions/SuggestionPerformanceCard";
+import { SuggestionHistoryFeed } from "@/components/suggestions/SuggestionHistoryFeed";
 import { CalibrationDashboard } from "@/components/results/CalibrationDashboard";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { 
   Sparkles, 
   Loader2, 
@@ -24,7 +26,8 @@ import {
   Clock,
   Flame,
   Shield,
-  BarChart3
+  BarChart3,
+  History
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -72,6 +75,7 @@ const Suggestions = () => {
   const [userPattern, setUserPattern] = useState<UserPattern | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [activeTab, setActiveTab] = useState("suggestions");
   
   // Filters
   const [sportFilter, setSportFilter] = useState("All");
@@ -350,332 +354,352 @@ const Suggestions = () => {
             <h1 className="text-xl font-display text-foreground">AI SUGGESTIONS</h1>
           </div>
           <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowFilters(!showFilters)}
-            >
-              <Filter className="w-4 h-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={generateSuggestions}
-              disabled={isGenerating}
-            >
-              {isGenerating ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <RefreshCw className="w-4 h-4" />
-              )}
-            </Button>
+            {activeTab === "suggestions" && (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowFilters(!showFilters)}
+                >
+                  <Filter className="w-4 h-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={generateSuggestions}
+                  disabled={isGenerating}
+                >
+                  {isGenerating ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="w-4 h-4" />
+                  )}
+                </Button>
+              </>
+            )}
           </div>
         </div>
 
-        {/* AI Suggestion Performance Stats */}
-        <div className="mb-4">
-          <SuggestionPerformanceCard />
-        </div>
+        {/* Tabs */}
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-4">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="suggestions" className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4" />
+              Suggestions
+            </TabsTrigger>
+            <TabsTrigger value="history" className="flex items-center gap-2">
+              <History className="w-4 h-4" />
+              History
+            </TabsTrigger>
+          </TabsList>
 
-        {/* AI Calibration Dashboard */}
-        <div className="mb-4">
-          <CalibrationDashboard compact />
-        </div>
+          <TabsContent value="suggestions" className="mt-4 space-y-4">
+            {/* AI Suggestion Performance Stats */}
+            <SuggestionPerformanceCard />
 
-        {/* User Pattern Analytics */}
-        {userPattern && (
-          <Card className="mb-4 bg-card/50 border-border/50">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-display flex items-center gap-2">
-                <Brain className="w-4 h-4 text-primary" />
-                YOUR BETTING PROFILE
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="bg-muted/30 rounded-lg p-3">
-                  <p className="text-xs text-muted-foreground mb-1">Favorite Sports</p>
-                  <div className="flex flex-wrap gap-1">
-                    {userPattern.favorite_sports.length > 0 ? (
-                      userPattern.favorite_sports.map(sport => (
-                        <Badge key={sport} variant="secondary" className="text-xs">
-                          {sport}
-                        </Badge>
-                      ))
-                    ) : (
-                      <span className="text-xs text-muted-foreground">No data yet</span>
-                    )}
-                  </div>
-                </div>
-                <div className="bg-muted/30 rounded-lg p-3">
-                  <p className="text-xs text-muted-foreground mb-1">Preferred Bet Types</p>
-                  <div className="flex flex-wrap gap-1">
-                    {userPattern.favorite_bet_types.length > 0 ? (
-                      userPattern.favorite_bet_types.map(type => (
-                        <Badge key={type} variant="secondary" className="text-xs capitalize">
-                          {type.replace('_', ' ')}
-                        </Badge>
-                      ))
-                    ) : (
-                      <span className="text-xs text-muted-foreground">No data yet</span>
-                    )}
-                  </div>
-                </div>
-              </div>
+            {/* AI Calibration Dashboard */}
+            <CalibrationDashboard compact />
 
-              {Object.keys(userPattern.win_rate_by_sport).length > 0 && (
-                <div className="bg-muted/30 rounded-lg p-3">
-                  <p className="text-xs text-muted-foreground mb-2">Win Rate by Sport</p>
-                  <div className="space-y-2">
-                    {Object.entries(userPattern.win_rate_by_sport)
-                      .sort((a, b) => b[1] - a[1])
-                      .slice(0, 3)
-                      .map(([sport, rate]) => (
-                        <div key={sport} className="flex items-center justify-between">
-                          <span className="text-sm">{sport}</span>
-                          <div className="flex items-center gap-2">
-                            <div className="w-24 h-2 bg-muted rounded-full overflow-hidden">
-                              <div 
-                                className={cn(
-                                  "h-full rounded-full",
-                                  rate >= 0.5 ? "bg-neon-green" : "bg-neon-orange"
-                                )}
-                                style={{ width: `${rate * 100}%` }}
-                              />
-                            </div>
-                            <span className={cn(
-                              "text-xs font-medium",
-                              rate >= 0.5 ? "text-neon-green" : "text-neon-orange"
-                            )}>
-                              {(rate * 100).toFixed(0)}%
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="bg-primary/5 rounded-lg p-3 border border-primary/10">
-                <div className="flex items-start gap-2">
-                  <BarChart3 className="w-4 h-4 text-primary shrink-0 mt-0.5" />
-                  <p className="text-xs text-muted-foreground">
-                    Suggestions are tailored to your betting patterns. The more you bet, the smarter the recommendations become.
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Filters */}
-        {showFilters && (
-          <Card className="mb-4 bg-card/50 border-border/50">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-display">FILTERS</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">Sport</label>
-                  <Select value={sportFilter} onValueChange={setSportFilter}>
-                    <SelectTrigger className="h-9">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {SPORTS.map(sport => (
-                        <SelectItem key={sport} value={sport}>{sport}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">Confidence</label>
-                  <Select value={confidenceFilter} onValueChange={setConfidenceFilter}>
-                    <SelectTrigger className="h-9">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {CONFIDENCE_LEVELS.map(level => (
-                        <SelectItem key={level} value={level}>{level}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs text-muted-foreground">Odds Range</label>
-                  <span className="text-xs text-muted-foreground">
-                    {formatOdds(oddsRange[0])} to {formatOdds(oddsRange[1])}
-                  </span>
-                </div>
-                <Slider
-                  value={oddsRange}
-                  onValueChange={(value) => setOddsRange(value as [number, number])}
-                  min={-500}
-                  max={2000}
-                  step={50}
-                  className="w-full"
-                />
-              </div>
-
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                className="w-full"
-                onClick={() => {
-                  setSportFilter("All");
-                  setConfidenceFilter("All");
-                  setOddsRange([-500, 1000]);
-                }}
-              >
-                Reset Filters
-              </Button>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Suggestions */}
-        {isLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-          </div>
-        ) : filteredSuggestions.length > 0 ? (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <p className="text-sm text-muted-foreground">
-                {filteredSuggestions.length} suggestion{filteredSuggestions.length !== 1 ? 's' : ''} found
-              </p>
-            </div>
-
-            {filteredSuggestions.map((suggestion) => (
-              <Card 
-                key={suggestion.id} 
-                className="bg-card/50 border-border/50 hover:border-primary/30 transition-all"
-              >
+            {/* User Pattern Analytics */}
+            {userPattern && (
+              <Card className="bg-card/50 border-border/50">
                 <CardHeader className="pb-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Flame className="w-4 h-4 text-primary" />
-                      <CardTitle className="text-sm font-display">{suggestion.sport} PARLAY</CardTitle>
-                    </div>
-                    <Badge 
-                      variant="outline" 
-                      className={cn("text-xs", getConfidenceColor(suggestion.confidence_score))}
-                    >
-                      {getConfidenceLabel(suggestion.confidence_score)} ({(suggestion.confidence_score * 100).toFixed(0)}%)
-                    </Badge>
-                  </div>
+                  <CardTitle className="text-sm font-display flex items-center gap-2">
+                    <Brain className="w-4 h-4 text-primary" />
+                    YOUR BETTING PROFILE
+                  </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  {/* Legs */}
-                  <div className="space-y-2">
-                    {suggestion.legs.map((leg, index) => (
-                      <div 
-                        key={index}
-                        className="flex items-center justify-between text-sm bg-muted/30 rounded-lg px-3 py-2"
-                      >
-                        <div className="flex-1 min-w-0">
-                          <p className="text-foreground truncate">{leg.description}</p>
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <span>{leg.sport}</span>
-                            <span>•</span>
-                            <span className="capitalize">{leg.betType.replace('_', ' ')}</span>
-                            <span>•</span>
-                            <Clock className="w-3 h-3" />
-                            <span>{formatTimeUntil(leg.eventTime)}</span>
-                          </div>
-                        </div>
-                        <div className="text-right ml-2">
-                          <Badge variant="secondary" className="mb-1">
-                            {formatOdds(leg.odds)}
-                          </Badge>
-                          <p className="text-xs text-muted-foreground">
-                            {(leg.impliedProbability * 100).toFixed(0)}%
-                          </p>
-                        </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-muted/30 rounded-lg p-3">
+                      <p className="text-xs text-muted-foreground mb-1">Favorite Sports</p>
+                      <div className="flex flex-wrap gap-1">
+                        {userPattern.favorite_sports.length > 0 ? (
+                          userPattern.favorite_sports.map(sport => (
+                            <Badge key={sport} variant="secondary" className="text-xs">
+                              {sport}
+                            </Badge>
+                          ))
+                        ) : (
+                          <span className="text-xs text-muted-foreground">No data yet</span>
+                        )}
                       </div>
-                    ))}
-                  </div>
-
-                  {/* Stats */}
-                  <div className="grid grid-cols-3 gap-2 pt-2 border-t border-border/30">
-                    <div className="text-center">
-                      <p className="text-xs text-muted-foreground">Total Odds</p>
-                      <p className="text-lg font-bold text-primary">
-                        {formatOdds(suggestion.total_odds)}
-                      </p>
                     </div>
-                    <div className="text-center">
-                      <p className="text-xs text-muted-foreground">Win Prob</p>
-                      <p className="text-lg font-bold">
-                        {(suggestion.combined_probability * 100).toFixed(1)}%
-                      </p>
-                    </div>
-                    <div className="text-center">
-                      <p className="text-xs text-muted-foreground">$10 Wins</p>
-                      <p className="text-lg font-bold text-neon-green">
-                        ${suggestion.total_odds > 0 
-                          ? ((suggestion.total_odds / 100) * 10 + 10).toFixed(0)
-                          : ((100 / Math.abs(suggestion.total_odds)) * 10 + 10).toFixed(0)
-                        }
-                      </p>
+                    <div className="bg-muted/30 rounded-lg p-3">
+                      <p className="text-xs text-muted-foreground mb-1">Preferred Bet Types</p>
+                      <div className="flex flex-wrap gap-1">
+                        {userPattern.favorite_bet_types.length > 0 ? (
+                          userPattern.favorite_bet_types.map(type => (
+                            <Badge key={type} variant="secondary" className="text-xs capitalize">
+                              {type.replace('_', ' ')}
+                            </Badge>
+                          ))
+                        ) : (
+                          <span className="text-xs text-muted-foreground">No data yet</span>
+                        )}
+                      </div>
                     </div>
                   </div>
 
-                  {/* Reason */}
+                  {Object.keys(userPattern.win_rate_by_sport).length > 0 && (
+                    <div className="bg-muted/30 rounded-lg p-3">
+                      <p className="text-xs text-muted-foreground mb-2">Win Rate by Sport</p>
+                      <div className="space-y-2">
+                        {Object.entries(userPattern.win_rate_by_sport)
+                          .sort((a, b) => b[1] - a[1])
+                          .slice(0, 3)
+                          .map(([sport, rate]) => (
+                            <div key={sport} className="flex items-center justify-between">
+                              <span className="text-sm">{sport}</span>
+                              <div className="flex items-center gap-2">
+                                <div className="w-24 h-2 bg-muted rounded-full overflow-hidden">
+                                  <div 
+                                    className={cn(
+                                      "h-full rounded-full",
+                                      rate >= 0.5 ? "bg-neon-green" : "bg-neon-orange"
+                                    )}
+                                    style={{ width: `${rate * 100}%` }}
+                                  />
+                                </div>
+                                <span className={cn(
+                                  "text-xs font-medium",
+                                  rate >= 0.5 ? "text-neon-green" : "text-neon-orange"
+                                )}>
+                                  {(rate * 100).toFixed(0)}%
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="bg-primary/5 rounded-lg p-3 border border-primary/10">
                     <div className="flex items-start gap-2">
-                      <Brain className="w-4 h-4 text-primary shrink-0 mt-0.5" />
-                      <div>
-                        <p className="text-xs font-medium text-foreground mb-1">Why This Parlay?</p>
-                        <p className="text-xs text-muted-foreground">{suggestion.suggestion_reason}</p>
-                      </div>
+                      <BarChart3 className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+                      <p className="text-xs text-muted-foreground">
+                        Suggestions are tailored to your betting patterns. The more you bet, the smarter the recommendations become.
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Filters */}
+            {showFilters && (
+              <Card className="bg-card/50 border-border/50">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-display">FILTERS</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1 block">Sport</label>
+                      <Select value={sportFilter} onValueChange={setSportFilter}>
+                        <SelectTrigger className="h-9">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {SPORTS.map(sport => (
+                            <SelectItem key={sport} value={sport}>{sport}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1 block">Confidence</label>
+                      <Select value={confidenceFilter} onValueChange={setConfidenceFilter}>
+                        <SelectTrigger className="h-9">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {CONFIDENCE_LEVELS.map(level => (
+                            <SelectItem key={level} value={level}>{level}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
 
-                  {/* Action */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-xs text-muted-foreground">Odds Range</label>
+                      <span className="text-xs text-muted-foreground">
+                        {formatOdds(oddsRange[0])} to {formatOdds(oddsRange[1])}
+                      </span>
+                    </div>
+                    <Slider
+                      value={oddsRange}
+                      onValueChange={(value) => setOddsRange(value as [number, number])}
+                      min={-500}
+                      max={2000}
+                      step={50}
+                      className="w-full"
+                    />
+                  </div>
+
                   <Button 
-                    onClick={() => handleAnalyze(suggestion)}
-                    className="w-full group"
-                    variant="outline"
+                    variant="ghost" 
+                    size="sm" 
+                    className="w-full"
+                    onClick={() => {
+                      setSportFilter("All");
+                      setConfidenceFilter("All");
+                      setOddsRange([-500, 1000]);
+                    }}
                   >
-                    Run Full Analysis
-                    <ChevronRight className="w-4 h-4 ml-1 group-hover:translate-x-1 transition-transform" />
+                    Reset Filters
                   </Button>
                 </CardContent>
               </Card>
-            ))}
-          </div>
-        ) : (
-          <div className="bg-card/50 border border-border/50 rounded-xl p-8 text-center">
-            <Sparkles className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-            <h3 className="font-semibold text-foreground mb-2">No Suggestions Yet</h3>
-            <p className="text-sm text-muted-foreground mb-6">
-              {suggestions.length > 0 
-                ? "No parlays match your current filters. Try adjusting them."
-                : "Generate personalized parlay suggestions based on your betting history and real-time odds."
-              }
-            </p>
-            {suggestions.length === 0 && (
-              <Button onClick={generateSuggestions} disabled={isGenerating}>
-                {isGenerating ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Generating...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-4 h-4 mr-2" />
-                    Generate Suggestions
-                  </>
-                )}
-              </Button>
             )}
-          </div>
-        )}
+
+            {/* Suggestions */}
+            {isLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+              </div>
+            ) : filteredSuggestions.length > 0 ? (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-muted-foreground">
+                    {filteredSuggestions.length} suggestion{filteredSuggestions.length !== 1 ? 's' : ''} found
+                  </p>
+                </div>
+
+                {filteredSuggestions.map((suggestion) => (
+                  <Card 
+                    key={suggestion.id} 
+                    className="bg-card/50 border-border/50 hover:border-primary/30 transition-all"
+                  >
+                    <CardHeader className="pb-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Flame className="w-4 h-4 text-primary" />
+                          <CardTitle className="text-sm font-display">{suggestion.sport} PARLAY</CardTitle>
+                        </div>
+                        <Badge 
+                          variant="outline" 
+                          className={cn("text-xs", getConfidenceColor(suggestion.confidence_score))}
+                        >
+                          {getConfidenceLabel(suggestion.confidence_score)} ({(suggestion.confidence_score * 100).toFixed(0)}%)
+                        </Badge>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {/* Legs */}
+                      <div className="space-y-2">
+                        {suggestion.legs.map((leg, index) => (
+                          <div 
+                            key={index}
+                            className="flex items-center justify-between text-sm bg-muted/30 rounded-lg px-3 py-2"
+                          >
+                            <div className="flex-1 min-w-0">
+                              <p className="text-foreground truncate">{leg.description}</p>
+                              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                <span>{leg.sport}</span>
+                                <span>•</span>
+                                <span className="capitalize">{leg.betType.replace('_', ' ')}</span>
+                                <span>•</span>
+                                <Clock className="w-3 h-3" />
+                                <span>{formatTimeUntil(leg.eventTime)}</span>
+                              </div>
+                            </div>
+                            <div className="text-right ml-2">
+                              <Badge variant="secondary" className="mb-1">
+                                {formatOdds(leg.odds)}
+                              </Badge>
+                              <p className="text-xs text-muted-foreground">
+                                {(leg.impliedProbability * 100).toFixed(0)}%
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Stats */}
+                      <div className="grid grid-cols-3 gap-2 pt-2 border-t border-border/30">
+                        <div className="text-center">
+                          <p className="text-xs text-muted-foreground">Total Odds</p>
+                          <p className="text-lg font-bold text-primary">
+                            {formatOdds(suggestion.total_odds)}
+                          </p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-xs text-muted-foreground">Win Prob</p>
+                          <p className="text-lg font-bold">
+                            {(suggestion.combined_probability * 100).toFixed(1)}%
+                          </p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-xs text-muted-foreground">$10 Wins</p>
+                          <p className="text-lg font-bold text-neon-green">
+                            ${suggestion.total_odds > 0 
+                              ? ((suggestion.total_odds / 100) * 10 + 10).toFixed(0)
+                              : ((100 / Math.abs(suggestion.total_odds)) * 10 + 10).toFixed(0)
+                            }
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Reason */}
+                      <div className="bg-primary/5 rounded-lg p-3 border border-primary/10">
+                        <div className="flex items-start gap-2">
+                          <Brain className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+                          <div>
+                            <p className="text-xs font-medium text-foreground mb-1">Why This Parlay?</p>
+                            <p className="text-xs text-muted-foreground">{suggestion.suggestion_reason}</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Action */}
+                      <Button 
+                        onClick={() => handleAnalyze(suggestion)}
+                        className="w-full group"
+                        variant="outline"
+                      >
+                        Run Full Analysis
+                        <ChevronRight className="w-4 h-4 ml-1 group-hover:translate-x-1 transition-transform" />
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            ) : (
+              <div className="bg-card/50 border border-border/50 rounded-xl p-8 text-center">
+                <Sparkles className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                <h3 className="font-semibold text-foreground mb-2">No Suggestions Yet</h3>
+                <p className="text-sm text-muted-foreground mb-6">
+                  {suggestions.length > 0 
+                    ? "No parlays match your current filters. Try adjusting them."
+                    : "Generate personalized parlay suggestions based on your betting history and real-time odds."
+                  }
+                </p>
+                {suggestions.length === 0 && (
+                  <Button onClick={generateSuggestions} disabled={isGenerating}>
+                    {isGenerating ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4 mr-2" />
+                        Generate Suggestions
+                      </>
+                    )}
+                  </Button>
+                )}
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="history" className="mt-4">
+            <SuggestionHistoryFeed />
+          </TabsContent>
+        </Tabs>
       </main>
       <BottomNav />
     </div>
