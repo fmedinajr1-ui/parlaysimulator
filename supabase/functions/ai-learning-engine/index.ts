@@ -38,6 +38,17 @@ interface SimilarBet {
   won: boolean;
 }
 
+interface SuggestionAccuracy {
+  sport: string;
+  confidenceLevel: string;
+  totalSuggestions: number;
+  totalWon: number;
+  totalLost: number;
+  accuracyRate: number;
+  avgOdds: number;
+  roiPercentage: number;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -82,6 +93,72 @@ serve(async (req) => {
       });
     }
 
+    if (action === 'get_suggestion_accuracy') {
+      // Get AI suggestion accuracy metrics - how well AI suggestions perform
+      const { data: suggestionAccuracy, error: suggestionError } = await supabase
+        .rpc('get_suggestion_accuracy_stats');
+
+      if (suggestionError) {
+        console.error('Error fetching suggestion accuracy:', suggestionError);
+        throw suggestionError;
+      }
+
+      // Transform to camelCase for frontend
+      const transformed: SuggestionAccuracy[] = (suggestionAccuracy || []).map((s: any) => ({
+        sport: s.sport,
+        confidenceLevel: s.confidence_level,
+        totalSuggestions: s.total_suggestions,
+        totalWon: s.total_won,
+        totalLost: s.total_lost,
+        accuracyRate: s.accuracy_rate,
+        avgOdds: s.avg_odds,
+        roiPercentage: s.roi_percentage,
+      }));
+
+      // Calculate summary stats
+      const totalSuggestions = transformed.reduce((sum, s) => sum + s.totalSuggestions, 0);
+      const totalWon = transformed.reduce((sum, s) => sum + s.totalWon, 0);
+      const totalLost = transformed.reduce((sum, s) => sum + s.totalLost, 0);
+      const overallAccuracy = totalSuggestions > 0 
+        ? ((totalWon / totalSuggestions) * 100).toFixed(1) 
+        : '0';
+
+      // Best performing sports
+      const bestSports = [...transformed]
+        .filter(s => s.totalSuggestions >= 3)
+        .sort((a, b) => b.accuracyRate - a.accuracyRate)
+        .slice(0, 3);
+
+      // Best performing confidence levels
+      const byConfidence: Record<string, { total: number; won: number; accuracy: number }> = {};
+      for (const s of transformed) {
+        if (!byConfidence[s.confidenceLevel]) {
+          byConfidence[s.confidenceLevel] = { total: 0, won: 0, accuracy: 0 };
+        }
+        byConfidence[s.confidenceLevel].total += s.totalSuggestions;
+        byConfidence[s.confidenceLevel].won += s.totalWon;
+      }
+      for (const level of Object.keys(byConfidence)) {
+        byConfidence[level].accuracy = byConfidence[level].total > 0
+          ? (byConfidence[level].won / byConfidence[level].total) * 100
+          : 0;
+      }
+
+      return new Response(JSON.stringify({ 
+        suggestionAccuracy: transformed,
+        summary: {
+          totalSuggestions,
+          totalWon,
+          totalLost,
+          overallAccuracy: parseFloat(overallAccuracy),
+          bestSports,
+          byConfidence,
+        }
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     if (action === 'find_similar_bets' && legs) {
       // Find historically similar bets for each leg
       const similarBets: { legIndex: number; similar: SimilarBet[] }[] = [];
@@ -120,14 +197,16 @@ serve(async (req) => {
 
     if (action === 'get_historical_context' && userId && legs) {
       // Comprehensive historical context for analysis
-      const [userStatsResult, aiMetricsResult] = await Promise.all([
+      const [userStatsResult, aiMetricsResult, suggestionAccuracyResult] = await Promise.all([
         supabase.rpc('get_user_betting_stats', { p_user_id: userId }),
-        supabase.rpc('get_ai_accuracy_stats')
+        supabase.rpc('get_ai_accuracy_stats'),
+        supabase.rpc('get_suggestion_accuracy_stats'),
       ]);
 
       // Get user's recent performance by sport/bet type
       const userStats = userStatsResult.data || [];
       const aiMetrics = aiMetricsResult.data || [];
+      const suggestionAccuracy = suggestionAccuracyResult.data || [];
 
       // Build context for each leg
       const legContexts = legs.map((leg: any, index: number) => {
@@ -144,6 +223,10 @@ serve(async (req) => {
           m.bet_type?.toLowerCase() === betType.toLowerCase()
         );
 
+        const suggestionSportMetrics = suggestionAccuracy.find((s: any) =>
+          s.sport?.toLowerCase() === sport.toLowerCase()
+        );
+
         return {
           legIndex: index,
           userRecord: userSportStats ? {
@@ -155,7 +238,13 @@ serve(async (req) => {
             totalPredictions: aiSportMetrics.total_predictions,
             correctPredictions: aiSportMetrics.correct_predictions,
             accuracyRate: aiSportMetrics.accuracy_rate
-          } : null
+          } : null,
+          suggestionAccuracy: suggestionSportMetrics ? {
+            totalSuggestions: suggestionSportMetrics.total_suggestions,
+            totalWon: suggestionSportMetrics.total_won,
+            accuracyRate: suggestionSportMetrics.accuracy_rate,
+            roiPercentage: suggestionSportMetrics.roi_percentage,
+          } : null,
         };
       });
 
@@ -169,6 +258,11 @@ serve(async (req) => {
       const aiCorrectPredictions = aiMetrics.reduce((sum: number, m: any) => sum + Number(m.correct_predictions || 0), 0);
       const aiOverallAccuracy = aiTotalPredictions > 0 ? (aiCorrectPredictions / aiTotalPredictions * 100).toFixed(1) : 0;
 
+      // Calculate overall suggestion accuracy
+      const suggestionTotal = suggestionAccuracy.reduce((sum: number, s: any) => sum + Number(s.total_suggestions || 0), 0);
+      const suggestionWon = suggestionAccuracy.reduce((sum: number, s: any) => sum + Number(s.total_won || 0), 0);
+      const suggestionOverallAccuracy = suggestionTotal > 0 ? (suggestionWon / suggestionTotal * 100).toFixed(1) : 0;
+
       return new Response(JSON.stringify({
         legContexts,
         userOverall: {
@@ -181,8 +275,14 @@ serve(async (req) => {
           correctPredictions: aiCorrectPredictions,
           accuracy: aiOverallAccuracy
         },
+        suggestionOverall: {
+          totalSuggestions: suggestionTotal,
+          totalWon: suggestionWon,
+          accuracy: suggestionOverallAccuracy,
+        },
         userStatsByType: userStats,
-        aiMetricsByType: aiMetrics
+        aiMetricsByType: aiMetrics,
+        suggestionAccuracyByType: suggestionAccuracy,
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });

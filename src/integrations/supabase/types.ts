@@ -573,6 +573,48 @@ export type Database = {
         }
         Relationships: []
       }
+      suggestion_accuracy_metrics: {
+        Row: {
+          accuracy_rate: number
+          avg_odds: number
+          confidence_level: string
+          id: string
+          roi_percentage: number
+          sport: string
+          suggestion_strategy: string
+          total_lost: number
+          total_suggestions: number
+          total_won: number
+          updated_at: string
+        }
+        Insert: {
+          accuracy_rate?: number
+          avg_odds?: number
+          confidence_level: string
+          id?: string
+          roi_percentage?: number
+          sport: string
+          suggestion_strategy?: string
+          total_lost?: number
+          total_suggestions?: number
+          total_won?: number
+          updated_at?: string
+        }
+        Update: {
+          accuracy_rate?: number
+          avg_odds?: number
+          confidence_level?: string
+          id?: string
+          roi_percentage?: number
+          sport?: string
+          suggestion_strategy?: string
+          total_lost?: number
+          total_suggestions?: number
+          total_won?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       suggestion_performance: {
         Row: {
           created_at: string
@@ -737,6 +779,19 @@ export type Database = {
           price_change: number
           sharp_indicator: string
           sport: string
+        }[]
+      }
+      get_suggestion_accuracy_stats: {
+        Args: never
+        Returns: {
+          accuracy_rate: number
+          avg_odds: number
+          confidence_level: string
+          roi_percentage: number
+          sport: string
+          total_lost: number
+          total_suggestions: number
+          total_won: number
         }[]
       }
       get_suggestion_performance_stats: {
