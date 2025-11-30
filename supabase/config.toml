@@ -35,3 +35,6 @@ verify_jwt = false
 
 [functions.send-parlay-alert]
 verify_jwt = false
+
+[functions.daily-suggestions-job]
+verify_jwt = false
