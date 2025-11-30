@@ -10,6 +10,7 @@ import { DegenStats } from '@/components/profile/DegenStats';
 import { ParlayHistoryFeed } from '@/components/profile/ParlayHistoryFeed';
 import { AIPerformanceCard } from '@/components/profile/AIPerformanceCard';
 import { BettingCalendarCard } from '@/components/profile/BettingCalendarCard';
+import { UpsetTrackerCard } from '@/components/profile/UpsetTrackerCard';
 import { NotificationPreferences } from '@/components/profile/NotificationPreferences';
 import { Button } from '@/components/ui/button';
 import { Loader2, LogOut, Upload, CreditCard, Crown } from 'lucide-react';
@@ -198,6 +199,11 @@ const Profile = () => {
         {/* Smart Betting Calendar */}
         <div className="mt-4">
           <BettingCalendarCard userId={user!.id} />
+        </div>
+
+        {/* Upset Tracker */}
+        <div className="mt-4">
+          <UpsetTrackerCard userId={user!.id} />
         </div>
 
         {/* Notification Preferences - Pro users only */}

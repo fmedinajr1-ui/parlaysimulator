@@ -50,3 +50,6 @@ verify_jwt = false
 
 [functions.betting-calendar-insights]
 verify_jwt = false
+
+[functions.upset-tracker]
+verify_jwt = false
