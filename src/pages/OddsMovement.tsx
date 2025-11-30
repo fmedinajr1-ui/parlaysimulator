@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { OddsMovementCard } from "@/components/results/OddsMovementCard";
 import { SharpMoneyAlerts } from "@/components/results/SharpMoneyAlerts";
 import { LineHistoryChart } from "@/components/odds/LineHistoryChart";
+import { PushNotificationToggle } from "@/components/odds/PushNotificationToggle";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
@@ -148,6 +149,11 @@ const OddsMovement = () => {
             </div>
             <p className="text-2xl font-display text-foreground">{stats.avgPriceChange}</p>
           </div>
+        </div>
+
+        {/* Push Notification Settings */}
+        <div className="mb-6">
+          <PushNotificationToggle />
         </div>
 
         {/* Main Content Tabs */}
