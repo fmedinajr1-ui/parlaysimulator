@@ -17,7 +17,10 @@ export function useTutorial(page: TutorialPage) {
   // Check if tutorial is needed
   useEffect(() => {
     const checkTutorial = async () => {
+      console.log('[Tutorial] Checking tutorial for page:', page, 'user:', user?.id);
+      
       if (!user) {
+        console.log('[Tutorial] No user, skipping tutorial check');
         setIsLoading(false);
         return;
       }
@@ -29,8 +32,15 @@ export function useTutorial(page: TutorialPage) {
           .eq('user_id', user.id)
           .single();
 
+        console.log('[Tutorial] Profile data:', data, 'error:', error);
+
         if (error) {
           console.error('Error fetching tutorial status:', error);
+          // If no profile exists, show tutorial anyway
+          if (error.code === 'PGRST116') {
+            console.log('[Tutorial] No profile found, showing tutorial');
+            setTimeout(() => setShowTutorial(true), 500);
+          }
           setIsLoading(false);
           return;
         }
@@ -38,9 +48,11 @@ export function useTutorial(page: TutorialPage) {
         const completed = (data?.tutorial_completed as TutorialCompleted) || {};
         setTutorialCompleted(completed);
         
+        console.log('[Tutorial] Tutorial completed status:', completed, 'page completed:', completed[page]);
+        
         // Show tutorial if not completed for this page
         if (!completed[page]) {
-          // Small delay to let the page render first
+          console.log('[Tutorial] Showing tutorial for page:', page);
           setTimeout(() => setShowTutorial(true), 500);
         }
       } catch (err) {
