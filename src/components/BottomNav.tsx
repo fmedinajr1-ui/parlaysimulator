@@ -1,4 +1,4 @@
-import { Home, BarChart3, User, Shield, Scale } from "lucide-react";
+import { Home, BarChart3, User, Shield, Scale, Sparkles } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { useAdminRole } from "@/hooks/useAdminRole";
@@ -6,6 +6,7 @@ import { useAdminRole } from "@/hooks/useAdminRole";
 const baseNavItems = [
   { icon: Home, label: "Home", path: "/" },
   { icon: BarChart3, label: "Analyze", path: "/upload" },
+  { icon: Sparkles, label: "Picks", path: "/suggestions" },
   { icon: Scale, label: "Compare", path: "/compare" },
   { icon: User, label: "Profile", path: "/profile" },
 ];
@@ -14,8 +15,15 @@ export function BottomNav() {
   const location = useLocation();
   const { isAdmin } = useAdminRole();
 
+  // For admins, replace Compare with Admin to keep 5 items max
   const navItems = isAdmin 
-    ? [...baseNavItems.slice(0, 3), { icon: Shield, label: "Admin", path: "/admin" }, baseNavItems[3]]
+    ? [
+        baseNavItems[0], // Home
+        baseNavItems[1], // Analyze  
+        baseNavItems[2], // Picks
+        { icon: Shield, label: "Admin", path: "/admin" },
+        baseNavItems[4], // Profile
+      ]
     : baseNavItems;
 
   return (
