@@ -5,6 +5,7 @@ import { useSubscription } from "@/hooks/useSubscription";
 import { useNavigate } from "react-router-dom";
 import { BottomNav } from "@/components/BottomNav";
 import { SuggestionPerformanceCard } from "@/components/suggestions/SuggestionPerformanceCard";
+import { CalibrationDashboard } from "@/components/results/CalibrationDashboard";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -374,6 +375,11 @@ const Suggestions = () => {
         {/* AI Suggestion Performance Stats */}
         <div className="mb-4">
           <SuggestionPerformanceCard />
+        </div>
+
+        {/* AI Calibration Dashboard */}
+        <div className="mb-4">
+          <CalibrationDashboard compact />
         </div>
 
         {/* User Pattern Analytics */}

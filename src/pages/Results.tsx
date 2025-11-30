@@ -12,6 +12,7 @@ import { LegIntelligenceCard } from "@/components/results/LegIntelligenceCard";
 import { CorrelationWarning } from "@/components/results/CorrelationWarning";
 import { BookEdgeCard } from "@/components/results/BookEdgeCard";
 import { HistoricalInsightsCard } from "@/components/results/HistoricalInsightsCard";
+import { CalibrationDashboard } from "@/components/results/CalibrationDashboard";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, RotateCcw, Save, Loader2, LogIn } from "lucide-react";
 import { ParlaySimulation, ParlayAnalysis } from "@/types/parlay";
@@ -425,6 +426,9 @@ const Results = () => {
             />
           )}
 
+          {/* AI Calibration Dashboard */}
+          <CalibrationDashboard delay={215} />
+
           {/* Overall AI Assessment */}
           {aiAnalysis?.overallAssessment && (
             <div 
@@ -458,6 +462,7 @@ const Results = () => {
           
           <LegBreakdown 
             legs={simulation.legs}
+            legAnalyses={aiAnalysis?.legAnalyses}
             delay={400}
           />
           

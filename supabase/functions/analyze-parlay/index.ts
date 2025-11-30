@@ -13,6 +13,24 @@ interface LegInput {
   impliedProbability: number;
 }
 
+interface InjuryAlert {
+  player: string;
+  team: string;
+  status: 'OUT' | 'DOUBTFUL' | 'QUESTIONABLE' | 'PROBABLE' | 'DAY-TO-DAY';
+  injuryType: string;
+  injuryDetails: string;
+  impactLevel: 'critical' | 'high' | 'medium' | 'low';
+  affectsLegs?: number[];
+}
+
+interface CalibrationFactor {
+  sport: string;
+  bet_type: string;
+  confidence_level: string;
+  calibration_factor: number;
+  sample_size: number;
+}
+
 interface LegAnalysis {
   sport: string;
   betType: 'moneyline' | 'spread' | 'total' | 'player_prop' | 'other';
@@ -22,9 +40,11 @@ interface LegAnalysis {
   riskFactors: string[];
   trendDirection: 'favorable' | 'neutral' | 'unfavorable';
   adjustedProbability: number;
+  calibratedProbability?: number;
   confidenceLevel: 'high' | 'medium' | 'low';
   vegasJuice: number;
   correlatedWith?: number[];
+  injuryAlerts?: InjuryAlert[];
 }
 
 interface HistoricalContext {
@@ -54,14 +74,51 @@ serve(async (req) => {
 
     console.log(`Analyzing ${legs.length} parlay legs with stake $${stake}`);
 
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // Fetch calibration factors
+    let calibrationFactors: CalibrationFactor[] = [];
+    try {
+      const { data: calibData } = await supabase
+        .from('ai_calibration_factors')
+        .select('sport, bet_type, confidence_level, calibration_factor, sample_size')
+        .gte('sample_size', 3);
+      
+      calibrationFactors = calibData || [];
+      console.log(`Loaded ${calibrationFactors.length} calibration factors`);
+    } catch (calibError) {
+      console.error('Error fetching calibration factors:', calibError);
+    }
+
+    // Fetch injury data for relevant sports
+    let injuries: InjuryAlert[] = [];
+    try {
+      const { data: injuryData } = await supabase
+        .from('injury_cache')
+        .select('*')
+        .gt('expires_at', new Date().toISOString());
+      
+      if (injuryData && injuryData.length > 0) {
+        injuries = injuryData.map((i: any) => ({
+          player: i.player_name,
+          team: i.team,
+          status: i.status,
+          injuryType: i.injury_type,
+          injuryDetails: i.injury_details,
+          impactLevel: i.impact_level
+        }));
+        console.log(`Loaded ${injuries.length} injury alerts from cache`);
+      }
+    } catch (injuryError) {
+      console.error('Error fetching injuries:', injuryError);
+    }
+
     // Fetch historical context if user is logged in
     let historicalContext: HistoricalContext = {};
     if (userId) {
       try {
-        const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-        const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
         const [userStatsResult, aiMetricsResult] = await Promise.all([
           supabase.rpc('get_user_betting_stats', { p_user_id: userId }),
           supabase.rpc('get_ai_accuracy_stats')
@@ -126,13 +183,35 @@ serve(async (req) => {
       historicalSection += '\n\nUse this historical data to calibrate your confidence levels and adjusted probabilities. If this user or bet type has a track record, factor it in.';
     }
 
+    // Build calibration context
+    let calibrationSection = '';
+    if (calibrationFactors.length > 0) {
+      calibrationSection = '\n\nCALIBRATION FACTORS (based on historical AI accuracy):';
+      calibrationFactors.forEach(cf => {
+        const factor = Number(cf.calibration_factor);
+        const status = factor < 0.95 ? 'OVERCONFIDENT' : factor > 1.05 ? 'UNDERCONFIDENT' : 'WELL CALIBRATED';
+        calibrationSection += `\n- ${cf.sport} ${cf.bet_type} (${cf.confidence_level}): ${(factor * 100).toFixed(0)}% calibration (${status})`;
+      });
+      calibrationSection += '\n\nApply these calibration factors to your adjusted probabilities. If AI has been overconfident, reduce your probability estimates accordingly.';
+    }
+
+    // Build injury context
+    let injurySection = '';
+    if (injuries.length > 0) {
+      injurySection = '\n\nCURRENT INJURY REPORT:';
+      injuries.forEach(inj => {
+        injurySection += `\n- ${inj.player} (${inj.team}): ${inj.status} - ${inj.injuryType}. Impact: ${inj.impactLevel}`;
+      });
+      injurySection += '\n\nConsider these injuries when analyzing player props and team performance. Flag any legs that may be affected.';
+    }
+
     const prompt = `You are an expert sharp sports bettor and analyst. Analyze this parlay slip and provide detailed intelligence on each leg.
 
 PARLAY SLIP:
 ${legsText}
 
 Total Stake: $${stake}
-Combined Probability: ${(combinedProbability * 100).toFixed(2)}%${historicalSection}
+Combined Probability: ${(combinedProbability * 100).toFixed(2)}%${historicalSection}${calibrationSection}${injurySection}
 
 For EACH leg, provide analysis in this exact JSON format. Be specific and analytical:
 
@@ -155,7 +234,17 @@ For EACH leg, provide analysis in this exact JSON format. Be specific and analyt
       "trendDirection": "favorable|neutral|unfavorable",
       "adjustedProbability": 0.XX,
       "confidenceLevel": "high|medium|low",
-      "vegasJuice": X.X
+      "vegasJuice": X.X,
+      "injuryAlerts": [
+        {
+          "player": "Player Name",
+          "team": "Team Name", 
+          "status": "OUT|DOUBTFUL|QUESTIONABLE|PROBABLE|DAY-TO-DAY",
+          "injuryType": "Type",
+          "injuryDetails": "Details",
+          "impactLevel": "critical|high|medium|low"
+        }
+      ]
     }
   ],
   "correlatedLegs": [
