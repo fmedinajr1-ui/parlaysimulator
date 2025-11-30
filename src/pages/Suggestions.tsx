@@ -235,9 +235,9 @@ const Suggestions = () => {
     if (riskFilter !== "All") {
       filtered = filtered.filter(s => {
         const prob = s.combined_probability;
-        if (riskFilter === "Low") return prob >= 0.25; // 25%+ win probability
-        if (riskFilter === "Medium") return prob >= 0.10 && prob < 0.25; // 10-25%
-        return prob < 0.10; // High risk: <10%
+        if (riskFilter === "Low") return prob >= 0.60; // 60%+ win probability (high confidence)
+        if (riskFilter === "Medium") return prob >= 0.25 && prob < 0.60; // 25-60%
+        return prob < 0.25; // High risk: <25%
       });
     }
 
