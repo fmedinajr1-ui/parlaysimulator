@@ -27,7 +27,9 @@ import {
   Flame,
   Shield,
   BarChart3,
-  History
+  History,
+  User,
+  Layers
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -61,8 +63,28 @@ interface UserPattern {
   win_rate_by_sport: Record<string, number>;
 }
 
-const SPORTS = ["All", "NBA", "NFL", "NHL", "MLB", "NCAAB", "NCAAF", "Soccer"];
-const CONFIDENCE_LEVELS = ["All", "High", "Medium", "Low"];
+// Sport groups for filtering
+const SPORT_GROUPS = {
+  "All": [],
+  "Football": ["NFL", "NCAAF"],
+  "Basketball": ["NBA", "NCAAB"],
+  "Hockey": ["NHL"],
+  "Baseball": ["MLB"],
+  "Soccer": ["Soccer"],
+};
+
+const SPORTS = ["All", "Football", "Basketball", "Hockey", "Baseball", "Soccer", "NFL", "NBA", "NHL", "MLB", "NCAAB", "NCAAF"];
+const RISK_LEVELS = ["All", "Low", "Medium", "High"];
+const BET_TYPES = ["All", "Moneyline", "Spreads", "Totals", "Player Props"];
+const LEG_COUNTS = [
+  { label: "Any", value: "any" },
+  { label: "3 legs", value: "3" },
+  { label: "4 legs", value: "4" },
+  { label: "5 legs", value: "5" },
+  { label: "6 legs", value: "6" },
+  { label: "3-4 legs", value: "3-4" },
+  { label: "5-6 legs", value: "5-6" },
+];
 
 const Suggestions = () => {
   const { user } = useAuth();
@@ -79,8 +101,10 @@ const Suggestions = () => {
   
   // Filters
   const [sportFilter, setSportFilter] = useState("All");
-  const [confidenceFilter, setConfidenceFilter] = useState("All");
-  const [oddsRange, setOddsRange] = useState<[number, number]>([-500, 1000]);
+  const [riskFilter, setRiskFilter] = useState("All");
+  const [betTypeFilter, setBetTypeFilter] = useState("All");
+  const [legCountFilter, setLegCountFilter] = useState("any");
+  const [oddsRange, setOddsRange] = useState<[number, number]>([-500, 2000]);
   const [showFilters, setShowFilters] = useState(false);
 
   useEffect(() => {
@@ -92,7 +116,7 @@ const Suggestions = () => {
 
   useEffect(() => {
     applyFilters();
-  }, [suggestions, sportFilter, confidenceFilter, oddsRange]);
+  }, [suggestions, sportFilter, riskFilter, betTypeFilter, legCountFilter, oddsRange]);
 
   const fetchSuggestions = async () => {
     if (!user) return;
@@ -189,18 +213,62 @@ const Suggestions = () => {
   const applyFilters = () => {
     let filtered = [...suggestions];
 
+    // Sport filter (including groups)
     if (sportFilter !== "All") {
-      filtered = filtered.filter(s => s.sport === sportFilter);
+      const sportGroup = SPORT_GROUPS[sportFilter as keyof typeof SPORT_GROUPS];
+      if (sportGroup && sportGroup.length > 0) {
+        // It's a sport group
+        filtered = filtered.filter(s => 
+          sportGroup.includes(s.sport) || 
+          s.legs.some(leg => sportGroup.includes(leg.sport))
+        );
+      } else {
+        // Individual sport
+        filtered = filtered.filter(s => 
+          s.sport === sportFilter || 
+          s.legs.some(leg => leg.sport === sportFilter)
+        );
+      }
     }
 
-    if (confidenceFilter !== "All") {
+    // Risk filter (based on combined probability)
+    if (riskFilter !== "All") {
       filtered = filtered.filter(s => {
-        if (confidenceFilter === "High") return s.confidence_score >= 0.6;
-        if (confidenceFilter === "Medium") return s.confidence_score >= 0.4 && s.confidence_score < 0.6;
-        return s.confidence_score < 0.4;
+        const prob = s.combined_probability;
+        if (riskFilter === "Low") return prob >= 0.25; // 25%+ win probability
+        if (riskFilter === "Medium") return prob >= 0.10 && prob < 0.25; // 10-25%
+        return prob < 0.10; // High risk: <10%
       });
     }
 
+    // Bet type filter
+    if (betTypeFilter !== "All") {
+      const betTypeMap: Record<string, string[]> = {
+        "Moneyline": ["moneyline", "h2h"],
+        "Spreads": ["spread", "spreads"],
+        "Totals": ["total", "totals", "over", "under"],
+        "Player Props": ["player_points", "player_rebounds", "player_assists", "player_pass_tds", "player_rush_yds", "player_goals", "player_prop"],
+      };
+      const targetTypes = betTypeMap[betTypeFilter] || [];
+      filtered = filtered.filter(s => 
+        s.legs.some(leg => 
+          targetTypes.some(t => leg.betType?.toLowerCase().includes(t))
+        )
+      );
+    }
+
+    // Leg count filter
+    if (legCountFilter !== "any") {
+      if (legCountFilter.includes("-")) {
+        const [min, max] = legCountFilter.split("-").map(Number);
+        filtered = filtered.filter(s => s.legs.length >= min && s.legs.length <= max);
+      } else {
+        const exactCount = parseInt(legCountFilter);
+        filtered = filtered.filter(s => s.legs.length === exactCount);
+      }
+    }
+
+    // Odds range filter
     filtered = filtered.filter(s => 
       s.total_odds >= oddsRange[0] && s.total_odds <= oddsRange[1]
     );
@@ -271,6 +339,20 @@ const Suggestions = () => {
     return "Risky";
   };
 
+  const getRiskLabel = (prob: number) => {
+    if (prob >= 0.25) return { label: "Low Risk", color: "text-neon-green bg-neon-green/10" };
+    if (prob >= 0.10) return { label: "Medium", color: "text-neon-yellow bg-neon-yellow/10" };
+    return { label: "High Risk", color: "text-neon-orange bg-neon-orange/10" };
+  };
+
+  const getBetTypeBadge = (betType: string) => {
+    const type = betType?.toLowerCase() || '';
+    if (type.includes('player') || type.includes('prop')) return { label: "Player Prop", icon: User };
+    if (type.includes('spread')) return { label: "Spread", icon: Target };
+    if (type.includes('total') || type.includes('over') || type.includes('under')) return { label: "Total", icon: Layers };
+    return { label: "Moneyline", icon: TrendingUp };
+  };
+
   const formatTimeUntil = (dateString: string) => {
     const eventDate = new Date(dateString);
     const now = new Date();
@@ -281,6 +363,22 @@ const Suggestions = () => {
     if (diffHours < 24) return `${diffHours}h`;
     return `${Math.floor(diffHours / 24)}d`;
   };
+
+  const resetFilters = () => {
+    setSportFilter("All");
+    setRiskFilter("All");
+    setBetTypeFilter("All");
+    setLegCountFilter("any");
+    setOddsRange([-500, 2000]);
+  };
+
+  const activeFilterCount = [
+    sportFilter !== "All",
+    riskFilter !== "All",
+    betTypeFilter !== "All",
+    legCountFilter !== "any",
+    oddsRange[0] !== -500 || oddsRange[1] !== 2000,
+  ].filter(Boolean).length;
 
   // Not logged in
   if (!user) {
@@ -360,8 +458,14 @@ const Suggestions = () => {
                   variant="outline"
                   size="sm"
                   onClick={() => setShowFilters(!showFilters)}
+                  className={cn(activeFilterCount > 0 && "border-primary")}
                 >
                   <Filter className="w-4 h-4" />
+                  {activeFilterCount > 0 && (
+                    <Badge variant="secondary" className="ml-1 h-5 w-5 p-0 text-xs">
+                      {activeFilterCount}
+                    </Badge>
+                  )}
                 </Button>
                 <Button
                   variant="outline"
@@ -486,13 +590,14 @@ const Suggestions = () => {
               </Card>
             )}
 
-            {/* Filters */}
+            {/* Enhanced Filters */}
             {showFilters && (
               <Card className="bg-card/50 border-border/50">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm font-display">FILTERS</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                  {/* Sport & Risk Row */}
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="text-xs text-muted-foreground mb-1 block">Sport</label>
@@ -501,27 +606,62 @@ const Suggestions = () => {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {SPORTS.map(sport => (
-                            <SelectItem key={sport} value={sport}>{sport}</SelectItem>
+                          <SelectItem value="All">All Sports</SelectItem>
+                          <SelectItem value="Football">🏈 Football (NFL/NCAAF)</SelectItem>
+                          <SelectItem value="Basketball">🏀 Basketball (NBA/NCAAB)</SelectItem>
+                          <SelectItem value="Hockey">🏒 Hockey (NHL)</SelectItem>
+                          <SelectItem value="Baseball">⚾ Baseball (MLB)</SelectItem>
+                          <SelectItem value="Soccer">⚽ Soccer</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1 block">Risk Level</label>
+                      <Select value={riskFilter} onValueChange={setRiskFilter}>
+                        <SelectTrigger className="h-9">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="All">All Risks</SelectItem>
+                          <SelectItem value="Low">🟢 Low (25%+ prob)</SelectItem>
+                          <SelectItem value="Medium">🟡 Medium (10-25%)</SelectItem>
+                          <SelectItem value="High">🔴 High (&lt;10%)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  {/* Bet Type & Leg Count Row */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1 block">Bet Type</label>
+                      <Select value={betTypeFilter} onValueChange={setBetTypeFilter}>
+                        <SelectTrigger className="h-9">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {BET_TYPES.map(type => (
+                            <SelectItem key={type} value={type}>{type}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                     </div>
                     <div>
-                      <label className="text-xs text-muted-foreground mb-1 block">Confidence</label>
-                      <Select value={confidenceFilter} onValueChange={setConfidenceFilter}>
+                      <label className="text-xs text-muted-foreground mb-1 block">Leg Count</label>
+                      <Select value={legCountFilter} onValueChange={setLegCountFilter}>
                         <SelectTrigger className="h-9">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {CONFIDENCE_LEVELS.map(level => (
-                            <SelectItem key={level} value={level}>{level}</SelectItem>
+                          {LEG_COUNTS.map(opt => (
+                            <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                     </div>
                   </div>
 
+                  {/* Odds Range */}
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <label className="text-xs text-muted-foreground">Odds Range</label>
@@ -533,7 +673,7 @@ const Suggestions = () => {
                       value={oddsRange}
                       onValueChange={(value) => setOddsRange(value as [number, number])}
                       min={-500}
-                      max={2000}
+                      max={5000}
                       step={50}
                       className="w-full"
                     />
@@ -543,11 +683,7 @@ const Suggestions = () => {
                     variant="ghost" 
                     size="sm" 
                     className="w-full"
-                    onClick={() => {
-                      setSportFilter("All");
-                      setConfidenceFilter("All");
-                      setOddsRange([-500, 1000]);
-                    }}
+                    onClick={resetFilters}
                   >
                     Reset Filters
                   </Button>
@@ -568,104 +704,119 @@ const Suggestions = () => {
                   </p>
                 </div>
 
-                {filteredSuggestions.map((suggestion) => (
-                  <Card 
-                    key={suggestion.id} 
-                    className="bg-card/50 border-border/50 hover:border-primary/30 transition-all"
-                  >
-                    <CardHeader className="pb-2">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Flame className="w-4 h-4 text-primary" />
-                          <CardTitle className="text-sm font-display">{suggestion.sport} PARLAY</CardTitle>
+                {filteredSuggestions.map((suggestion) => {
+                  const riskInfo = getRiskLabel(suggestion.combined_probability);
+                  return (
+                    <Card 
+                      key={suggestion.id} 
+                      className="bg-card/50 border-border/50 hover:border-primary/30 transition-all"
+                    >
+                      <CardHeader className="pb-2">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Flame className="w-4 h-4 text-primary" />
+                            <CardTitle className="text-sm font-display">{suggestion.sport} PARLAY</CardTitle>
+                            <Badge variant="outline" className="text-xs">
+                              {suggestion.legs.length} legs
+                            </Badge>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <Badge 
+                              variant="outline" 
+                              className={cn("text-xs", riskInfo.color)}
+                            >
+                              {riskInfo.label}
+                            </Badge>
+                          </div>
                         </div>
-                        <Badge 
-                          variant="outline" 
-                          className={cn("text-xs", getConfidenceColor(suggestion.confidence_score))}
-                        >
-                          {getConfidenceLabel(suggestion.confidence_score)} ({(suggestion.confidence_score * 100).toFixed(0)}%)
-                        </Badge>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                      {/* Legs */}
-                      <div className="space-y-2">
-                        {suggestion.legs.map((leg, index) => (
-                          <div 
-                            key={index}
-                            className="flex items-center justify-between text-sm bg-muted/30 rounded-lg px-3 py-2"
-                          >
-                            <div className="flex-1 min-w-0">
-                              <p className="text-foreground truncate">{leg.description}</p>
-                              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                <span>{leg.sport}</span>
-                                <span>•</span>
-                                <span className="capitalize">{leg.betType.replace('_', ' ')}</span>
-                                <span>•</span>
-                                <Clock className="w-3 h-3" />
-                                <span>{formatTimeUntil(leg.eventTime)}</span>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        {/* Legs */}
+                        <div className="space-y-2">
+                          {suggestion.legs.map((leg, index) => {
+                            const betBadge = getBetTypeBadge(leg.betType);
+                            const BetIcon = betBadge.icon;
+                            return (
+                              <div 
+                                key={index}
+                                className="flex items-center justify-between text-sm bg-muted/30 rounded-lg px-3 py-2"
+                              >
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-foreground truncate">{leg.description}</p>
+                                  <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
+                                    <span>{leg.sport}</span>
+                                    <span>•</span>
+                                    <div className="flex items-center gap-1">
+                                      <BetIcon className="w-3 h-3" />
+                                      <span>{betBadge.label}</span>
+                                    </div>
+                                    <span>•</span>
+                                    <Clock className="w-3 h-3" />
+                                    <span>{formatTimeUntil(leg.eventTime)}</span>
+                                  </div>
+                                </div>
+                                <div className="text-right ml-2">
+                                  <Badge variant="secondary" className="mb-1">
+                                    {formatOdds(leg.odds)}
+                                  </Badge>
+                                  <p className="text-xs text-muted-foreground">
+                                    {(leg.impliedProbability * 100).toFixed(0)}%
+                                  </p>
+                                </div>
                               </div>
-                            </div>
-                            <div className="text-right ml-2">
-                              <Badge variant="secondary" className="mb-1">
-                                {formatOdds(leg.odds)}
-                              </Badge>
-                              <p className="text-xs text-muted-foreground">
-                                {(leg.impliedProbability * 100).toFixed(0)}%
-                              </p>
-                            </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Stats */}
+                        <div className="grid grid-cols-3 gap-2 pt-2 border-t border-border/30">
+                          <div className="text-center">
+                            <p className="text-xs text-muted-foreground">Total Odds</p>
+                            <p className="text-lg font-bold text-primary">
+                              {formatOdds(suggestion.total_odds)}
+                            </p>
                           </div>
-                        ))}
-                      </div>
-
-                      {/* Stats */}
-                      <div className="grid grid-cols-3 gap-2 pt-2 border-t border-border/30">
-                        <div className="text-center">
-                          <p className="text-xs text-muted-foreground">Total Odds</p>
-                          <p className="text-lg font-bold text-primary">
-                            {formatOdds(suggestion.total_odds)}
-                          </p>
-                        </div>
-                        <div className="text-center">
-                          <p className="text-xs text-muted-foreground">Win Prob</p>
-                          <p className="text-lg font-bold">
-                            {(suggestion.combined_probability * 100).toFixed(1)}%
-                          </p>
-                        </div>
-                        <div className="text-center">
-                          <p className="text-xs text-muted-foreground">$10 Wins</p>
-                          <p className="text-lg font-bold text-neon-green">
-                            ${suggestion.total_odds > 0 
-                              ? ((suggestion.total_odds / 100) * 10 + 10).toFixed(0)
-                              : ((100 / Math.abs(suggestion.total_odds)) * 10 + 10).toFixed(0)
-                            }
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* Reason */}
-                      <div className="bg-primary/5 rounded-lg p-3 border border-primary/10">
-                        <div className="flex items-start gap-2">
-                          <Brain className="w-4 h-4 text-primary shrink-0 mt-0.5" />
-                          <div>
-                            <p className="text-xs font-medium text-foreground mb-1">Why This Parlay?</p>
-                            <p className="text-xs text-muted-foreground">{suggestion.suggestion_reason}</p>
+                          <div className="text-center">
+                            <p className="text-xs text-muted-foreground">Win Prob</p>
+                            <p className="text-lg font-bold">
+                              {(suggestion.combined_probability * 100).toFixed(1)}%
+                            </p>
+                          </div>
+                          <div className="text-center">
+                            <p className="text-xs text-muted-foreground">$10 Wins</p>
+                            <p className="text-lg font-bold text-neon-green">
+                              ${suggestion.total_odds > 0 
+                                ? ((suggestion.total_odds / 100) * 10 + 10).toFixed(0)
+                                : ((100 / Math.abs(suggestion.total_odds)) * 10 + 10).toFixed(0)
+                              }
+                            </p>
                           </div>
                         </div>
-                      </div>
 
-                      {/* Action */}
-                      <Button 
-                        onClick={() => handleAnalyze(suggestion)}
-                        className="w-full group"
-                        variant="outline"
-                      >
-                        Run Full Analysis
-                        <ChevronRight className="w-4 h-4 ml-1 group-hover:translate-x-1 transition-transform" />
-                      </Button>
-                    </CardContent>
-                  </Card>
-                ))}
+                        {/* Reason */}
+                        <div className="bg-primary/5 rounded-lg p-3 border border-primary/10">
+                          <div className="flex items-start gap-2">
+                            <Brain className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+                            <div>
+                              <p className="text-xs font-medium text-foreground mb-1">Why This Parlay?</p>
+                              <p className="text-xs text-muted-foreground">{suggestion.suggestion_reason}</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Action */}
+                        <Button 
+                          onClick={() => handleAnalyze(suggestion)}
+                          className="w-full group"
+                          variant="outline"
+                        >
+                          Run Full Analysis
+                          <ChevronRight className="w-4 h-4 ml-1 group-hover:translate-x-1 transition-transform" />
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
               </div>
             ) : (
               <div className="bg-card/50 border border-border/50 rounded-xl p-8 text-center">

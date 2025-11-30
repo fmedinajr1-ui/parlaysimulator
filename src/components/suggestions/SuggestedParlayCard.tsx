@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Sparkles, TrendingUp, Clock, ChevronRight } from "lucide-react";
+import { Sparkles, TrendingUp, Clock, ChevronRight, Target, Layers, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
 import { createLeg, simulateParlay } from "@/lib/parlay-calculator";
@@ -36,16 +36,18 @@ export function SuggestedParlayCard({
 }: SuggestedParlayCardProps) {
   const navigate = useNavigate();
 
-  const getConfidenceColor = (score: number) => {
-    if (score >= 0.6) return "text-neon-green";
-    if (score >= 0.4) return "text-neon-yellow";
-    return "text-neon-orange";
+  const getRiskLabel = (prob: number) => {
+    if (prob >= 0.25) return { label: "Low Risk", color: "text-neon-green bg-neon-green/10" };
+    if (prob >= 0.10) return { label: "Medium", color: "text-neon-yellow bg-neon-yellow/10" };
+    return { label: "High Risk", color: "text-neon-orange bg-neon-orange/10" };
   };
 
-  const getConfidenceLabel = (score: number) => {
-    if (score >= 0.6) return "High Confidence";
-    if (score >= 0.4) return "Medium";
-    return "Risky";
+  const getBetTypeBadge = (betType: string) => {
+    const type = betType?.toLowerCase() || '';
+    if (type.includes('player') || type.includes('prop')) return { label: "Prop", icon: User };
+    if (type.includes('spread')) return { label: "Spread", icon: Target };
+    if (type.includes('total') || type.includes('over') || type.includes('under')) return { label: "Total", icon: Layers };
+    return { label: "ML", icon: TrendingUp };
   };
 
   const formatOdds = (odds: number) => {
@@ -64,11 +66,12 @@ export function SuggestedParlayCard({
   };
 
   const handleAnalyze = () => {
-    // Convert suggested legs to ParlayLeg format and simulate
     const parlayLegs = legs.map(leg => createLeg(leg.description, leg.odds));
     const simulation = simulateParlay(parlayLegs, 10, totalOdds);
     navigate('/results', { state: { simulation } });
   };
+
+  const riskInfo = getRiskLabel(combinedProbability);
 
   return (
     <Card className="bg-card/50 border-border/50 hover:border-primary/30 transition-all duration-300">
@@ -77,37 +80,49 @@ export function SuggestedParlayCard({
           <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-primary" />
             <CardTitle className="text-sm font-display">{sport} PARLAY</CardTitle>
+            <Badge variant="outline" className="text-xs">
+              {legs.length} legs
+            </Badge>
           </div>
           <Badge 
             variant="outline" 
-            className={cn("text-xs", getConfidenceColor(confidenceScore))}
+            className={cn("text-xs", riskInfo.color)}
           >
-            {getConfidenceLabel(confidenceScore)}
+            {riskInfo.label}
           </Badge>
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
         {/* Legs */}
         <div className="space-y-2">
-          {legs.map((leg, index) => (
-            <div 
-              key={index}
-              className="flex items-center justify-between text-sm bg-muted/30 rounded-lg px-3 py-2"
-            >
-              <div className="flex-1 min-w-0">
-                <p className="text-foreground truncate">{leg.description}</p>
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <span>{leg.sport}</span>
-                  <span>•</span>
-                  <Clock className="w-3 h-3" />
-                  <span>{formatTimeUntil(leg.eventTime)}</span>
+          {legs.map((leg, index) => {
+            const betBadge = getBetTypeBadge(leg.betType);
+            const BetIcon = betBadge.icon;
+            return (
+              <div 
+                key={index}
+                className="flex items-center justify-between text-sm bg-muted/30 rounded-lg px-3 py-2"
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="text-foreground truncate">{leg.description}</p>
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
+                    <span>{leg.sport}</span>
+                    <span>•</span>
+                    <div className="flex items-center gap-1">
+                      <BetIcon className="w-3 h-3" />
+                      <span>{betBadge.label}</span>
+                    </div>
+                    <span>•</span>
+                    <Clock className="w-3 h-3" />
+                    <span>{formatTimeUntil(leg.eventTime)}</span>
+                  </div>
                 </div>
+                <Badge variant="secondary" className="ml-2 shrink-0">
+                  {formatOdds(leg.odds)}
+                </Badge>
               </div>
-              <Badge variant="secondary" className="ml-2 shrink-0">
-                {formatOdds(leg.odds)}
-              </Badge>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         {/* Stats */}
