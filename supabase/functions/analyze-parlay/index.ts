@@ -67,9 +67,9 @@ serve(async (req) => {
       userId?: string;
     };
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY is not configured');
+    const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
+    if (!OPENAI_API_KEY) {
+      throw new Error('OPENAI_API_KEY is not configured');
     }
 
     console.log(`Analyzing ${legs.length} parlay legs with stake $${stake}`);
@@ -270,14 +270,14 @@ ANALYSIS GUIDELINES:
 
 Return ONLY valid JSON, no other text.`;
 
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
+        model: 'gpt-4o-mini',
         messages: [
           { 
             role: 'system', 
@@ -285,12 +285,14 @@ Return ONLY valid JSON, no other text.`;
           },
           { role: 'user', content: prompt }
         ],
+        max_tokens: 3000,
+        temperature: 0.7,
       }),
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('AI gateway error:', response.status, errorText);
+      console.error('OpenAI API error:', response.status, errorText);
       
       if (response.status === 429) {
         return new Response(JSON.stringify({ error: 'Rate limits exceeded, please try again later.' }), {
@@ -298,13 +300,13 @@ Return ONLY valid JSON, no other text.`;
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
-      if (response.status === 402) {
-        return new Response(JSON.stringify({ error: 'AI credits exhausted. Please add credits to continue.' }), {
+      if (response.status === 402 || response.status === 401) {
+        return new Response(JSON.stringify({ error: 'AI service error. Please check configuration.' }), {
           status: 402,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
-      throw new Error('AI gateway error');
+      throw new Error('OpenAI API error');
     }
 
     const data = await response.json();
@@ -314,7 +316,7 @@ Return ONLY valid JSON, no other text.`;
       throw new Error('No content in AI response');
     }
 
-    console.log('AI response received, parsing...');
+    console.log('OpenAI response received, parsing...');
 
     // Parse the JSON response
     let analysis;
