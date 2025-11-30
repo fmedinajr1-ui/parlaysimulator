@@ -29,7 +29,11 @@ import {
   BarChart3,
   History,
   User,
-  Layers
+  Layers,
+  CheckCircle,
+  XCircle,
+  Lightbulb,
+  AlertTriangle
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -61,6 +65,20 @@ interface UserPattern {
   favorite_bet_types: string[];
   avg_odds_range: { min: number; max: number };
   win_rate_by_sport: Record<string, number>;
+  winning_sports?: string[];
+  losing_sports?: string[];
+  sport_records?: Record<string, { wins: number; losses: number; rate: number }>;
+  bet_type_records?: Record<string, { wins: number; losses: number; rate: number }>;
+}
+
+interface LearningInsights {
+  bestPatterns: { sport: string; betType: string; winRate: number; record: string }[];
+  avoidPatterns: { sport: string; betType: string; winRate: number; record: string; reason: string }[];
+  totalBets: number;
+  totalWins: number;
+  totalLosses: number;
+  overallWinRate: number;
+  message: string;
 }
 
 // Sport groups for filtering
@@ -95,6 +113,7 @@ const Suggestions = () => {
   const [suggestions, setSuggestions] = useState<SuggestedParlay[]>([]);
   const [filteredSuggestions, setFilteredSuggestions] = useState<SuggestedParlay[]>([]);
   const [userPattern, setUserPattern] = useState<UserPattern | null>(null);
+  const [learningInsights, setLearningInsights] = useState<LearningInsights | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [activeTab, setActiveTab] = useState("suggestions");
@@ -111,6 +130,7 @@ const Suggestions = () => {
     if (user && (isSubscribed || isAdmin)) {
       fetchSuggestions();
       fetchUserPattern();
+      fetchLearningInsights();
     }
   }, [user, isSubscribed, isAdmin]);
 
@@ -210,6 +230,94 @@ const Suggestions = () => {
     }
   };
 
+  const fetchLearningInsights = async () => {
+    if (!user) return;
+    
+    try {
+      const { data, error } = await supabase
+        .from('parlay_training_data')
+        .select('sport, bet_type, odds, parlay_outcome')
+        .eq('user_id', user.id);
+
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        const sportStats: Record<string, { wins: number; losses: number }> = {};
+        let totalWins = 0;
+        let totalLosses = 0;
+
+        for (const leg of data) {
+          if (leg.parlay_outcome !== null) {
+            if (leg.sport) {
+              if (!sportStats[leg.sport]) sportStats[leg.sport] = { wins: 0, losses: 0 };
+              if (leg.parlay_outcome) {
+                sportStats[leg.sport].wins++;
+                totalWins++;
+              } else {
+                sportStats[leg.sport].losses++;
+                totalLosses++;
+              }
+            }
+          }
+        }
+
+        // Build best patterns (>50% win rate)
+        const bestPatterns = Object.entries(sportStats)
+          .filter(([_, stats]) => {
+            const total = stats.wins + stats.losses;
+            return total >= 2 && (stats.wins / total) >= 0.5;
+          })
+          .sort((a, b) => {
+            const rateA = a[1].wins / (a[1].wins + a[1].losses);
+            const rateB = b[1].wins / (b[1].wins + b[1].losses);
+            return rateB - rateA;
+          })
+          .slice(0, 3)
+          .map(([sport, stats]) => ({
+            sport,
+            betType: 'mixed',
+            winRate: Math.round((stats.wins / (stats.wins + stats.losses)) * 100),
+            record: `${stats.wins}-${stats.losses}`,
+          }));
+
+        // Build avoid patterns (<40% win rate)
+        const avoidPatterns = Object.entries(sportStats)
+          .filter(([_, stats]) => {
+            const total = stats.wins + stats.losses;
+            return total >= 2 && (stats.wins / total) < 0.4;
+          })
+          .sort((a, b) => {
+            const rateA = a[1].wins / (a[1].wins + a[1].losses);
+            const rateB = b[1].wins / (b[1].wins + b[1].losses);
+            return rateA - rateB;
+          })
+          .slice(0, 3)
+          .map(([sport, stats]) => ({
+            sport,
+            betType: 'mixed',
+            winRate: Math.round((stats.wins / (stats.wins + stats.losses)) * 100),
+            record: `${stats.wins}-${stats.losses}`,
+            reason: stats.wins === 0 ? 'Zero wins' : `Only ${Math.round((stats.wins / (stats.wins + stats.losses)) * 100)}% win rate`,
+          }));
+
+        const totalBets = totalWins + totalLosses;
+        setLearningInsights({
+          bestPatterns,
+          avoidPatterns,
+          totalBets,
+          totalWins,
+          totalLosses,
+          overallWinRate: totalBets > 0 ? Math.round((totalWins / totalBets) * 100) : 0,
+          message: bestPatterns.length > 0 
+            ? `Focusing on ${bestPatterns.map(p => p.sport).slice(0, 2).join(', ')}`
+            : 'Building your betting profile...',
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching learning insights:', error);
+    }
+  };
+
   const applyFilters = () => {
     let filtered = [...suggestions];
 
@@ -299,6 +407,9 @@ const Suggestions = () => {
         await fetchSuggestions();
         if (data.userPattern) {
           setUserPattern(data.userPattern);
+        }
+        if (data.learningInsights) {
+          setLearningInsights(data.learningInsights);
         }
       } else {
         toast({
@@ -504,6 +615,73 @@ const Suggestions = () => {
 
             {/* AI Calibration Dashboard */}
             <CalibrationDashboard compact />
+
+            {/* AI Learning Insights Banner */}
+            {learningInsights && (learningInsights.bestPatterns.length > 0 || learningInsights.avoidPatterns.length > 0) && (
+              <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-display flex items-center gap-2">
+                    <Lightbulb className="w-4 h-4 text-primary" />
+                    AI LEARNING INSIGHTS
+                    <Badge variant="secondary" className="text-xs ml-auto">
+                      {learningInsights.totalBets} bets • {learningInsights.overallWinRate}% win rate
+                    </Badge>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {/* Best Patterns */}
+                  {learningInsights.bestPatterns.length > 0 && (
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
+                        <CheckCircle className="w-3 h-3 text-neon-green" />
+                        AI is focusing on (your winning patterns):
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {learningInsights.bestPatterns.map((pattern, idx) => (
+                          <Badge 
+                            key={idx} 
+                            variant="outline" 
+                            className="bg-neon-green/10 text-neon-green border-neon-green/30"
+                          >
+                            {pattern.sport} ({pattern.winRate}% • {pattern.record})
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Avoid Patterns */}
+                  {learningInsights.avoidPatterns.length > 0 && (
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
+                        <XCircle className="w-3 h-3 text-neon-red" />
+                        AI is avoiding (learned from losses):
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {learningInsights.avoidPatterns.map((pattern, idx) => (
+                          <Badge 
+                            key={idx} 
+                            variant="outline" 
+                            className="bg-neon-red/10 text-neon-red border-neon-red/30"
+                          >
+                            {pattern.sport} ({pattern.winRate}% • {pattern.record})
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {learningInsights.message && (
+                    <div className="flex items-start gap-2 p-2 rounded bg-muted/30 border border-border/30">
+                      <Brain className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+                      <p className="text-xs text-muted-foreground italic">
+                        {learningInsights.message}
+                      </p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
 
             {/* User Pattern Analytics */}
             {userPattern && (

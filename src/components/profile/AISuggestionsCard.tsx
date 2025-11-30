@@ -13,9 +13,16 @@ import {
   CheckCircle, 
   AlertTriangle, 
   Flame,
-  TrendingUp
+  TrendingUp,
+  Brain,
+  XCircle,
+  Lightbulb,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
+import { cn } from '@/lib/utils';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 
 interface AISuggestionsCardProps {
   userId: string;
@@ -29,6 +36,16 @@ interface Suggestion {
   suggestion_reason: string;
   confidence_score: number;
   legs: any[];
+}
+
+interface LearningInsights {
+  bestPatterns: { sport: string; betType: string; winRate: number; record: string }[];
+  avoidPatterns: { sport: string; betType: string; winRate: number; record: string; reason: string }[];
+  totalBets: number;
+  totalWins: number;
+  totalLosses: number;
+  overallWinRate: number;
+  message: string;
 }
 
 const getRiskTier = (probability: number) => {
@@ -68,11 +85,14 @@ const formatOdds = (odds: number) => {
 
 export function AISuggestionsCard({ userId }: AISuggestionsCardProps) {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [learningInsights, setLearningInsights] = useState<LearningInsights | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [showInsights, setShowInsights] = useState(true);
 
   useEffect(() => {
     fetchSuggestions();
+    fetchLearningInsights();
   }, [userId]);
 
   const fetchSuggestions = async () => {
@@ -98,14 +118,117 @@ export function AISuggestionsCard({ userId }: AISuggestionsCardProps) {
     }
   };
 
+  const fetchLearningInsights = async () => {
+    try {
+      // Fetch user's betting history to calculate learning insights
+      const { data, error } = await supabase
+        .from('parlay_training_data')
+        .select('sport, bet_type, odds, parlay_outcome')
+        .eq('user_id', userId);
+
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        const sportStats: Record<string, { wins: number; losses: number }> = {};
+        const betTypeStats: Record<string, { wins: number; losses: number }> = {};
+        let totalWins = 0;
+        let totalLosses = 0;
+
+        for (const leg of data) {
+          if (leg.parlay_outcome !== null) {
+            // Sport stats
+            if (leg.sport) {
+              if (!sportStats[leg.sport]) sportStats[leg.sport] = { wins: 0, losses: 0 };
+              if (leg.parlay_outcome) {
+                sportStats[leg.sport].wins++;
+                totalWins++;
+              } else {
+                sportStats[leg.sport].losses++;
+                totalLosses++;
+              }
+            }
+            // Bet type stats
+            if (leg.bet_type) {
+              if (!betTypeStats[leg.bet_type]) betTypeStats[leg.bet_type] = { wins: 0, losses: 0 };
+              if (leg.parlay_outcome) {
+                betTypeStats[leg.bet_type].wins++;
+              } else {
+                betTypeStats[leg.bet_type].losses++;
+              }
+            }
+          }
+        }
+
+        // Build best patterns (>50% win rate)
+        const bestPatterns = Object.entries(sportStats)
+          .filter(([_, stats]) => {
+            const total = stats.wins + stats.losses;
+            return total >= 2 && (stats.wins / total) >= 0.5;
+          })
+          .sort((a, b) => {
+            const rateA = a[1].wins / (a[1].wins + a[1].losses);
+            const rateB = b[1].wins / (b[1].wins + b[1].losses);
+            return rateB - rateA;
+          })
+          .slice(0, 3)
+          .map(([sport, stats]) => ({
+            sport,
+            betType: 'mixed',
+            winRate: Math.round((stats.wins / (stats.wins + stats.losses)) * 100),
+            record: `${stats.wins}-${stats.losses}`,
+          }));
+
+        // Build avoid patterns (<40% win rate)
+        const avoidPatterns = Object.entries(sportStats)
+          .filter(([_, stats]) => {
+            const total = stats.wins + stats.losses;
+            return total >= 2 && (stats.wins / total) < 0.4;
+          })
+          .sort((a, b) => {
+            const rateA = a[1].wins / (a[1].wins + a[1].losses);
+            const rateB = b[1].wins / (b[1].wins + b[1].losses);
+            return rateA - rateB;
+          })
+          .slice(0, 3)
+          .map(([sport, stats]) => ({
+            sport,
+            betType: 'mixed',
+            winRate: Math.round((stats.wins / (stats.wins + stats.losses)) * 100),
+            record: `${stats.wins}-${stats.losses}`,
+            reason: stats.wins === 0 ? 'Zero wins' : `Only ${Math.round((stats.wins / (stats.wins + stats.losses)) * 100)}% win rate`,
+          }));
+
+        const totalBets = totalWins + totalLosses;
+        setLearningInsights({
+          bestPatterns,
+          avoidPatterns,
+          totalBets,
+          totalWins,
+          totalLosses,
+          overallWinRate: totalBets > 0 ? Math.round((totalWins / totalBets) * 100) : 0,
+          message: bestPatterns.length > 0 
+            ? `Focusing on ${bestPatterns.map(p => p.sport).slice(0, 2).join(', ')}`
+            : 'Building your betting profile...',
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching learning insights:', error);
+    }
+  };
+
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
-      const { error } = await supabase.functions.invoke('generate-suggestions', {
+      const { data, error } = await supabase.functions.invoke('generate-suggestions', {
         body: { userId }
       });
 
       if (error) throw error;
+
+      // Update learning insights from response
+      if (data?.learningInsights) {
+        setLearningInsights(data.learningInsights);
+      }
 
       toast({
         title: "Suggestions refreshed!",
@@ -177,6 +300,91 @@ export function AISuggestionsCard({ userId }: AISuggestionsCardProps) {
         </div>
       </div>
 
+      {/* Learning Insights Section */}
+      {learningInsights && (learningInsights.bestPatterns.length > 0 || learningInsights.avoidPatterns.length > 0) && (
+        <Collapsible open={showInsights} onOpenChange={setShowInsights} className="mb-4">
+          <CollapsibleTrigger asChild>
+            <button className="w-full flex items-center justify-between p-3 rounded-lg bg-primary/5 border border-primary/20 hover:bg-primary/10 transition-colors">
+              <div className="flex items-center gap-2">
+                <Brain className="w-4 h-4 text-primary" />
+                <span className="text-sm font-medium text-foreground">AI Learning Insights</span>
+                {learningInsights.totalBets > 0 && (
+                  <Badge variant="secondary" className="text-xs">
+                    {learningInsights.totalBets} bets • {learningInsights.overallWinRate}% win rate
+                  </Badge>
+                )}
+              </div>
+              {showInsights ? (
+                <ChevronUp className="w-4 h-4 text-muted-foreground" />
+              ) : (
+                <ChevronDown className="w-4 h-4 text-muted-foreground" />
+              )}
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="mt-2">
+            <div className="space-y-2 p-3 rounded-lg bg-muted/30 border border-border/50">
+              {/* Best Patterns */}
+              {learningInsights.bestPatterns.length > 0 && (
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1">
+                    <Lightbulb className="w-3 h-3" />
+                    AI is focusing on:
+                  </p>
+                  <div className="space-y-1">
+                    {learningInsights.bestPatterns.map((pattern, idx) => (
+                      <div 
+                        key={idx}
+                        className="flex items-center justify-between text-sm bg-neon-green/10 rounded px-2 py-1"
+                      >
+                        <span className="flex items-center gap-1.5">
+                          <CheckCircle className="w-3 h-3 text-neon-green" />
+                          <span className="text-foreground">{pattern.sport}</span>
+                        </span>
+                        <span className="text-xs text-neon-green font-mono">
+                          {pattern.winRate}% ({pattern.record})
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Avoid Patterns */}
+              {learningInsights.avoidPatterns.length > 0 && (
+                <div className="mt-2">
+                  <p className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3" />
+                    AI is avoiding:
+                  </p>
+                  <div className="space-y-1">
+                    {learningInsights.avoidPatterns.map((pattern, idx) => (
+                      <div 
+                        key={idx}
+                        className="flex items-center justify-between text-sm bg-neon-red/10 rounded px-2 py-1"
+                      >
+                        <span className="flex items-center gap-1.5">
+                          <XCircle className="w-3 h-3 text-neon-red" />
+                          <span className="text-foreground">{pattern.sport}</span>
+                        </span>
+                        <span className="text-xs text-neon-red font-mono">
+                          {pattern.winRate}% ({pattern.record})
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {learningInsights.message && (
+                <p className="text-xs text-muted-foreground italic mt-2 pt-2 border-t border-border/30">
+                  {learningInsights.message}
+                </p>
+              )}
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      )}
+
       {/* Risk Tier Badges */}
       <div className="flex flex-wrap gap-2 mb-4">
         {tierCounts.veryLow > 0 && (
@@ -235,7 +443,12 @@ export function AISuggestionsCard({ userId }: AISuggestionsCardProps) {
                 >
                   <div className="flex items-start justify-between mb-2">
                     <div className="flex items-center gap-2">
-                      <TierIcon className="w-4 h-4" style={{ color: `hsl(var(--${tier.dotColor.replace('bg-', '')}))` }} />
+                      <TierIcon className={cn(
+                        "w-4 h-4",
+                        suggestion.combined_probability >= 0.60 ? "text-neon-green" :
+                        suggestion.combined_probability >= 0.50 ? "text-primary" :
+                        suggestion.combined_probability >= 0.25 ? "text-neon-yellow" : "text-neon-red"
+                      )} />
                       <span className="font-mono text-lg font-bold text-foreground">
                         {(suggestion.combined_probability * 100).toFixed(1)}%
                       </span>
@@ -255,7 +468,7 @@ export function AISuggestionsCard({ userId }: AISuggestionsCardProps) {
                   </div>
                   
                   {suggestion.suggestion_reason && (
-                    <p className="text-xs text-muted-foreground mt-2 line-clamp-1 italic">
+                    <p className="text-xs text-muted-foreground mt-2 line-clamp-2 italic">
                       "{suggestion.suggestion_reason}"
                     </p>
                   )}
