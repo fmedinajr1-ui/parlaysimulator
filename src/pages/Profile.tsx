@@ -9,6 +9,7 @@ import { SocialLinks } from '@/components/profile/SocialLinks';
 import { DegenStats } from '@/components/profile/DegenStats';
 import { ParlayHistoryFeed } from '@/components/profile/ParlayHistoryFeed';
 import { AIPerformanceCard } from '@/components/profile/AIPerformanceCard';
+import { AISuggestionsCard } from '@/components/profile/AISuggestionsCard';
 import { BettingCalendarCard } from '@/components/profile/BettingCalendarCard';
 import { UpsetTrackerCard } from '@/components/profile/UpsetTrackerCard';
 import { NotificationPreferences } from '@/components/profile/NotificationPreferences';
@@ -190,6 +191,13 @@ const Profile = () => {
             lifetimeDegenScore={profile.lifetime_degenerate_score}
           />
         </div>
+
+        {/* AI Suggestions - Pro users only */}
+        {(isSubscribed || isAdmin) && (
+          <div className="mt-4">
+            <AISuggestionsCard userId={user!.id} />
+          </div>
+        )}
 
         {/* AI Performance */}
         <div className="mt-4">
