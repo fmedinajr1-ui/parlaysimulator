@@ -34,11 +34,21 @@ interface OddsEvent {
   bookmakers: OddsBookmaker[];
 }
 
-interface UserPattern {
+// Enhanced user pattern with winning data
+interface EnhancedUserPattern {
   favorite_sports: string[];
   favorite_bet_types: string[];
   avg_odds_range: { min: number; max: number };
   win_rate_by_sport: Record<string, number>;
+  // New: Winning patterns from trained data
+  winning_sports: string[];
+  winning_bet_types: string[];
+  winning_odds_range: { min: number; max: number };
+  winning_leg_count: number;
+  total_wins: number;
+  total_bets: number;
+  overall_win_rate: number;
+  bet_type_win_rates: Record<string, number>;
 }
 
 interface AccuracyMetric {
@@ -136,24 +146,33 @@ serve(async (req) => {
 
     console.log('Accuracy metrics loaded:', Object.keys(accuracyMap).length, 'entries');
 
-    // Step 2: Analyze user's betting patterns
+    // Step 2: Enhanced user pattern analysis from training data
     console.log('Analyzing user patterns for:', userId);
     
     const { data: userHistory, error: historyError } = await supabase
       .from('parlay_training_data')
-      .select('sport, bet_type, odds, parlay_outcome')
+      .select('sport, bet_type, odds, parlay_outcome, leg_index, parlay_history_id')
       .eq('user_id', userId);
 
     if (historyError) {
       console.error('Error fetching user history:', historyError);
     }
 
-    // Build user pattern profile
-    const userPattern: UserPattern = {
+    // Build enhanced user pattern profile with winning patterns
+    const userPattern: EnhancedUserPattern = {
       favorite_sports: [],
       favorite_bet_types: [],
       avg_odds_range: { min: -200, max: 200 },
       win_rate_by_sport: {},
+      // New winning pattern fields
+      winning_sports: [],
+      winning_bet_types: [],
+      winning_odds_range: { min: -300, max: 100 },
+      winning_leg_count: 3,
+      total_wins: 0,
+      total_bets: 0,
+      overall_win_rate: 0,
+      bet_type_win_rates: {},
     };
 
     if (userHistory && userHistory.length > 0) {
@@ -161,8 +180,18 @@ serve(async (req) => {
       const sportCounts: Record<string, number> = {};
       const betTypeCounts: Record<string, number> = {};
       const sportWins: Record<string, { wins: number; total: number }> = {};
+      const betTypeWins: Record<string, { wins: number; total: number }> = {};
+      
+      // Track winning patterns
+      const winningOdds: number[] = [];
+      const losingOdds: number[] = [];
+      const parlayLegCounts: Record<string, number> = {};
+      const winningParlayLegCounts: number[] = [];
+      
       let totalOdds = 0;
       let oddsCount = 0;
+      let totalWins = 0;
+      let totalBets = 0;
 
       for (const leg of userHistory) {
         if (leg.sport) {
@@ -173,15 +202,39 @@ serve(async (req) => {
           }
           if (leg.parlay_outcome !== null) {
             sportWins[leg.sport].total++;
-            if (leg.parlay_outcome) sportWins[leg.sport].wins++;
+            totalBets++;
+            if (leg.parlay_outcome) {
+              sportWins[leg.sport].wins++;
+              totalWins++;
+              if (leg.odds) winningOdds.push(leg.odds);
+            } else {
+              if (leg.odds) losingOdds.push(leg.odds);
+            }
           }
         }
+        
         if (leg.bet_type) {
           betTypeCounts[leg.bet_type] = (betTypeCounts[leg.bet_type] || 0) + 1;
+          
+          if (!betTypeWins[leg.bet_type]) {
+            betTypeWins[leg.bet_type] = { wins: 0, total: 0 };
+          }
+          if (leg.parlay_outcome !== null) {
+            betTypeWins[leg.bet_type].total++;
+            if (leg.parlay_outcome) {
+              betTypeWins[leg.bet_type].wins++;
+            }
+          }
         }
+        
         if (leg.odds) {
           totalOdds += leg.odds;
           oddsCount++;
+        }
+        
+        // Track leg counts per parlay
+        if (leg.parlay_history_id) {
+          parlayLegCounts[leg.parlay_history_id] = (parlayLegCounts[leg.parlay_history_id] || 0) + 1;
         }
       }
 
@@ -196,11 +249,38 @@ serve(async (req) => {
         .slice(0, 2)
         .map(([type]) => type);
 
-      // Calculate win rates
+      // Calculate win rates by sport
       for (const [sport, stats] of Object.entries(sportWins)) {
         if (stats.total > 0) {
           userPattern.win_rate_by_sport[sport] = stats.wins / stats.total;
         }
+      }
+
+      // Calculate win rates by bet type
+      for (const [betType, stats] of Object.entries(betTypeWins)) {
+        if (stats.total > 0) {
+          userPattern.bet_type_win_rates[betType] = stats.wins / stats.total;
+        }
+      }
+
+      // Get WINNING sports (>50% win rate)
+      userPattern.winning_sports = Object.entries(userPattern.win_rate_by_sport)
+        .filter(([_, rate]) => rate >= 0.5)
+        .sort((a, b) => b[1] - a[1])
+        .map(([sport]) => sport);
+
+      // Get WINNING bet types (>50% win rate)
+      userPattern.winning_bet_types = Object.entries(userPattern.bet_type_win_rates)
+        .filter(([_, rate]) => rate >= 0.5)
+        .sort((a, b) => b[1] - a[1])
+        .map(([type]) => type);
+
+      // Calculate winning odds range
+      if (winningOdds.length > 0) {
+        userPattern.winning_odds_range = {
+          min: Math.min(...winningOdds),
+          max: Math.max(...winningOdds),
+        };
       }
 
       // Calculate average odds range
@@ -211,15 +291,38 @@ serve(async (req) => {
           max: Math.max(avgOdds + 100, 200),
         };
       }
+
+      // Get most common winning leg count
+      const legCountFrequency: Record<number, number> = {};
+      for (const count of Object.values(parlayLegCounts)) {
+        legCountFrequency[count] = (legCountFrequency[count] || 0) + 1;
+      }
+      const mostCommonLegCount = Object.entries(legCountFrequency)
+        .sort((a, b) => b[1] - a[1])[0];
+      if (mostCommonLegCount) {
+        userPattern.winning_leg_count = parseInt(mostCommonLegCount[0]);
+      }
+
+      // Overall stats
+      userPattern.total_wins = totalWins;
+      userPattern.total_bets = totalBets;
+      userPattern.overall_win_rate = totalBets > 0 ? totalWins / totalBets : 0;
     }
 
-    console.log('User pattern:', userPattern);
+    console.log('Enhanced user pattern:', {
+      winning_sports: userPattern.winning_sports,
+      winning_bet_types: userPattern.winning_bet_types,
+      winning_odds_range: userPattern.winning_odds_range,
+      overall_win_rate: userPattern.overall_win_rate,
+    });
 
     // Step 3: Fetch odds from The Odds API
     // Prioritize Football, Basketball, Hockey as requested
     const primarySports = ['NFL', 'NBA', 'NHL', 'NCAAF', 'NCAAB'];
-    let sportsToFetch = userPattern.favorite_sports.length > 0 
-      ? [...new Set([...userPattern.favorite_sports.filter(s => primarySports.includes(s)), ...primarySports])]
+    
+    // Prioritize user's WINNING sports first
+    let sportsToFetch = userPattern.winning_sports.length > 0 
+      ? [...new Set([...userPattern.winning_sports.filter(s => primarySports.includes(s)), ...primarySports])]
       : primarySports;
 
     // Sort sports by AI accuracy if we have metrics
@@ -293,7 +396,7 @@ serve(async (req) => {
       });
     }
 
-    // Step 4: Generate suggestions based on patterns AND AI learning
+    // Step 4: Generate suggestions - PRIORITIZING LOW RISK + DATA-DRIVEN
     const suggestions = [];
     
     // Helper to adjust confidence based on historical accuracy
@@ -326,8 +429,261 @@ serve(async (req) => {
       }, 1);
       return decimalToAmerican(totalDecimal);
     };
+
+    // Helper to check if leg matches user's winning patterns
+    const matchesUserWinningPattern = (leg: SuggestionLeg): boolean => {
+      const sportMatches = userPattern.winning_sports.includes(leg.sport);
+      const betTypeMatches = userPattern.winning_bet_types.some(wbt => 
+        leg.betType.toLowerCase().includes(wbt.toLowerCase())
+      );
+      const oddsInRange = leg.odds >= userPattern.winning_odds_range.min && 
+                          leg.odds <= userPattern.winning_odds_range.max;
+      return sportMatches || betTypeMatches || oddsInRange;
+    };
+
+    // ========================================
+    // STRATEGY 1: DATA-DRIVEN LOW RISK (ALWAYS GENERATED FIRST)
+    // Uses user's winning patterns from trained data
+    // ========================================
+    console.log('Generating data-driven low-risk suggestions...');
     
-    // Strategy 1: Low Risk - 3 leg favorites parlay (25%+ probability)
+    const dataDrivenLegs: SuggestionLeg[] = [];
+    let dataDrivenProb = 1;
+
+    // Prioritize events from user's WINNING sports
+    const prioritizedEvents = allOdds.sort((a, b) => {
+      const aWinRate = userPattern.win_rate_by_sport[a.sport_key] || 0;
+      const bWinRate = userPattern.win_rate_by_sport[b.sport_key] || 0;
+      return bWinRate - aWinRate;
+    });
+
+    for (const event of prioritizedEvents) {
+      const bookmaker = event.bookmakers[0];
+      if (!bookmaker || dataDrivenLegs.length >= 3) continue;
+
+      const h2hMarket = bookmaker.markets.find(m => m.key === 'h2h');
+      if (!h2hMarket) continue;
+
+      // Pick heavy favorites only (odds -150 to -400)
+      const favorite = h2hMarket.outcomes.reduce((a, b) => a.price < b.price ? a : b);
+      const americanOdds = decimalToAmerican(favorite.price);
+      
+      // Only include heavy favorites for low risk
+      if (americanOdds <= -150 && americanOdds >= -400) {
+        const impliedProb = americanToImplied(americanOdds);
+        
+        // Check if combined prob stays >= 25% (low risk)
+        if (dataDrivenProb * impliedProb >= 0.25) {
+          dataDrivenProb *= impliedProb;
+
+          dataDrivenLegs.push({
+            description: `${favorite.name} ML vs ${event.home_team === favorite.name ? event.away_team : event.home_team}`,
+            odds: americanOdds,
+            impliedProbability: impliedProb,
+            sport: event.sport_key,
+            betType: 'moneyline',
+            eventTime: event.commence_time,
+          });
+        }
+      }
+    }
+
+    if (dataDrivenLegs.length >= 2) {
+      const totalOdds = calculateTotalOdds(dataDrivenLegs);
+      const sportsList = [...new Set(dataDrivenLegs.map(l => l.sport))].join(', ');
+      const winRateNote = userPattern.overall_win_rate > 0 
+        ? ` Your ${(userPattern.overall_win_rate * 100).toFixed(0)}% win rate supports this style.`
+        : '';
+      
+      suggestions.push({
+        legs: dataDrivenLegs,
+        total_odds: totalOdds,
+        combined_probability: dataDrivenProb,
+        suggestion_reason: `🎯 DATA-DRIVEN LOW RISK: Heavy favorites from ${sportsList}. High confidence based on trained data patterns.${winRateNote}`,
+        sport: dataDrivenLegs[0].sport,
+        confidence_score: 0.85,
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        is_data_driven: true,
+      });
+    }
+
+    // ========================================
+    // STRATEGY 2: AI ACCURACY LOW RISK
+    // Uses sports where AI has highest accuracy
+    // ========================================
+    console.log('Generating AI accuracy low-risk suggestions...');
+    
+    const bestAccuracySports = Object.entries(accuracyMap)
+      .filter(([_, metric]) => metric.total_suggestions >= 3 && metric.accuracy_rate >= 50)
+      .sort((a, b) => b[1].accuracy_rate - a[1].accuracy_rate)
+      .slice(0, 3);
+
+    if (bestAccuracySports.length > 0) {
+      const aiLowRiskLegs: SuggestionLeg[] = [];
+      let aiLowRiskProb = 1;
+
+      for (const [key, metric] of bestAccuracySports) {
+        if (aiLowRiskLegs.length >= 3) break;
+        
+        const sport = metric.sport;
+        const sportEvents = allOdds.filter(e => e.sport_key === sport);
+
+        for (const event of sportEvents) {
+          if (aiLowRiskLegs.length >= 3) break;
+          
+          const bookmaker = event.bookmakers[0];
+          if (!bookmaker) continue;
+
+          const h2hMarket = bookmaker.markets.find(m => m.key === 'h2h');
+          if (!h2hMarket) continue;
+
+          const favorite = h2hMarket.outcomes.reduce((a, b) => a.price < b.price ? a : b);
+          const americanOdds = decimalToAmerican(favorite.price);
+          
+          if (americanOdds <= -120 && americanOdds >= -350) {
+            const impliedProb = americanToImplied(americanOdds);
+            
+            if (aiLowRiskProb * impliedProb >= 0.20) {
+              aiLowRiskProb *= impliedProb;
+
+              aiLowRiskLegs.push({
+                description: `${favorite.name} ML vs ${event.home_team === favorite.name ? event.away_team : event.home_team}`,
+                odds: americanOdds,
+                impliedProbability: impliedProb,
+                sport: event.sport_key,
+                betType: 'moneyline',
+                eventTime: event.commence_time,
+              });
+            }
+          }
+        }
+      }
+
+      if (aiLowRiskLegs.length >= 2) {
+        const totalOdds = calculateTotalOdds(aiLowRiskLegs);
+        const topAccuracy = bestAccuracySports[0][1].accuracy_rate;
+        
+        suggestions.push({
+          legs: aiLowRiskLegs,
+          total_odds: totalOdds,
+          combined_probability: aiLowRiskProb,
+          suggestion_reason: `🤖 AI LOW RISK: Based on sports where AI suggestions hit ${topAccuracy.toFixed(0)}%+ accuracy. High confidence picks.`,
+          sport: aiLowRiskLegs[0].sport,
+          confidence_score: Math.min(topAccuracy / 100 * 1.1, 0.9),
+          expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          is_data_driven: true,
+        });
+      }
+    }
+
+    // ========================================
+    // STRATEGY 3: USER PATTERN MATCHED PARLAY
+    // Matches user's exact winning bet types/sports
+    // ========================================
+    if (userPattern.winning_sports.length > 0 || userPattern.winning_bet_types.length > 0) {
+      console.log('Generating user pattern matched suggestions...');
+      
+      const patternLegs: SuggestionLeg[] = [];
+      let patternProb = 1;
+
+      // Focus on user's winning sports
+      const winningSportEvents = allOdds.filter(e => 
+        userPattern.winning_sports.includes(e.sport_key)
+      );
+
+      for (const event of winningSportEvents.length > 0 ? winningSportEvents : allOdds) {
+        const bookmaker = event.bookmakers[0];
+        if (!bookmaker || patternLegs.length >= 3) continue;
+
+        // Try to match user's winning bet types
+        const preferSpread = userPattern.winning_bet_types.includes('spread');
+        const preferTotal = userPattern.winning_bet_types.includes('total');
+
+        if (preferSpread) {
+          const spreadMarket = bookmaker.markets.find(m => m.key === 'spreads');
+          if (spreadMarket) {
+            const spread = spreadMarket.outcomes[0];
+            const americanOdds = decimalToAmerican(spread.price);
+            const impliedProb = americanToImplied(americanOdds);
+            
+            if (patternProb * impliedProb >= 0.20) {
+              patternProb *= impliedProb;
+              patternLegs.push({
+                description: `${spread.name} ${spread.point! > 0 ? '+' : ''}${spread.point}`,
+                odds: americanOdds,
+                impliedProbability: impliedProb,
+                sport: event.sport_key,
+                betType: 'spread',
+                eventTime: event.commence_time,
+              });
+              continue;
+            }
+          }
+        }
+
+        if (preferTotal) {
+          const totalsMarket = bookmaker.markets.find(m => m.key === 'totals');
+          if (totalsMarket) {
+            const total = totalsMarket.outcomes[0];
+            const americanOdds = decimalToAmerican(total.price);
+            const impliedProb = americanToImplied(americanOdds);
+            
+            if (patternProb * impliedProb >= 0.20) {
+              patternProb *= impliedProb;
+              patternLegs.push({
+                description: `${event.home_team} vs ${event.away_team} ${total.name} ${total.point}`,
+                odds: americanOdds,
+                impliedProbability: impliedProb,
+                sport: event.sport_key,
+                betType: 'total',
+                eventTime: event.commence_time,
+              });
+              continue;
+            }
+          }
+        }
+
+        // Default to moneyline favorite
+        const h2hMarket = bookmaker.markets.find(m => m.key === 'h2h');
+        if (h2hMarket && patternLegs.length < 3) {
+          const favorite = h2hMarket.outcomes.reduce((a, b) => a.price < b.price ? a : b);
+          const americanOdds = decimalToAmerican(favorite.price);
+          const impliedProb = americanToImplied(americanOdds);
+          
+          if (patternProb * impliedProb >= 0.15) {
+            patternProb *= impliedProb;
+            patternLegs.push({
+              description: `${favorite.name} ML vs ${event.home_team === favorite.name ? event.away_team : event.home_team}`,
+              odds: americanOdds,
+              impliedProbability: impliedProb,
+              sport: event.sport_key,
+              betType: 'moneyline',
+              eventTime: event.commence_time,
+            });
+          }
+        }
+      }
+
+      if (patternLegs.length >= 2) {
+        const totalOdds = calculateTotalOdds(patternLegs);
+        const sportsList = userPattern.winning_sports.slice(0, 2).join(', ') || 'your favorites';
+        
+        suggestions.push({
+          legs: patternLegs,
+          total_odds: totalOdds,
+          combined_probability: patternProb,
+          suggestion_reason: `📊 PATTERN MATCHED: Built from ${sportsList} where you have the highest win rates. Tailored to your successful betting style.`,
+          sport: patternLegs[0].sport,
+          confidence_score: 0.75,
+          expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          is_data_driven: true,
+        });
+      }
+    }
+
+    // ========================================
+    // STRATEGY 4: Standard Low Risk (backup)
+    // ========================================
     const favoritesLegs: SuggestionLeg[] = [];
     let favoritesProb = 1;
 
@@ -338,7 +694,6 @@ serve(async (req) => {
       const h2hMarket = bookmaker.markets.find(m => m.key === 'h2h');
       if (!h2hMarket) continue;
 
-      // Pick heavy favorites only (odds -200 or better)
       const favorite = h2hMarket.outcomes.reduce((a, b) => a.price < b.price ? a : b);
       const americanOdds = decimalToAmerican(favorite.price);
       
@@ -365,14 +720,16 @@ serve(async (req) => {
         legs: favoritesLegs,
         total_odds: totalOdds,
         combined_probability: favoritesProb,
-        suggestion_reason: buildReason('Low risk chalk parlay with heavy favorites. Safe play with decent odds.', favoritesLegs[0].sport, 'high'),
+        suggestion_reason: buildReason('✅ LOW RISK: Heavy favorites parlay. Safe play with decent odds.', favoritesLegs[0].sport, 'high'),
         sport: favoritesLegs[0].sport,
         confidence_score: adjustedConfidence,
         expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       });
     }
 
-    // Strategy 2: Medium Risk - 4 leg mixed parlay (10-25% probability)
+    // ========================================
+    // STRATEGY 5: Medium Risk Mixed (4 legs)
+    // ========================================
     const mixedLegs: SuggestionLeg[] = [];
     let mixedProb = 1;
 
@@ -380,7 +737,6 @@ serve(async (req) => {
       const bookmaker = event.bookmakers[0];
       if (!bookmaker || mixedLegs.length >= 4) continue;
 
-      // Alternate between moneylines and spreads
       if (mixedLegs.length % 2 === 0) {
         const h2hMarket = bookmaker.markets.find(m => m.key === 'h2h');
         if (h2hMarket) {
@@ -425,58 +781,16 @@ serve(async (req) => {
         legs: mixedLegs,
         total_odds: totalOdds,
         combined_probability: mixedProb,
-        suggestion_reason: buildReason('Medium risk 4-leg parlay mixing moneylines and spreads. Balanced risk/reward.', 'Mixed', 'medium'),
+        suggestion_reason: buildReason('⚖️ MEDIUM RISK: 4-leg parlay mixing moneylines and spreads. Balanced risk/reward.', 'Mixed', 'medium'),
         sport: 'Mixed',
         confidence_score: 0.5,
         expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       });
     }
 
-    // Strategy 3: High Risk - 5-6 leg underdog parlay (<10% probability, big payout)
-    const underdogLegs: SuggestionLeg[] = [];
-    let underdogProb = 1;
-
-    for (const event of allOdds) {
-      const bookmaker = event.bookmakers[0];
-      if (!bookmaker || underdogLegs.length >= 5) continue;
-
-      const h2hMarket = bookmaker.markets.find(m => m.key === 'h2h');
-      if (!h2hMarket) continue;
-
-      // Pick slight to medium underdogs (+100 to +300)
-      const underdog = h2hMarket.outcomes.reduce((a, b) => a.price > b.price ? a : b);
-      const americanOdds = decimalToAmerican(underdog.price);
-      
-      if (americanOdds >= 100 && americanOdds <= 300) {
-        const impliedProb = americanToImplied(americanOdds);
-        underdogProb *= impliedProb;
-
-        underdogLegs.push({
-          description: `${underdog.name} ML vs ${event.home_team === underdog.name ? event.away_team : event.home_team}`,
-          odds: americanOdds,
-          impliedProbability: impliedProb,
-          sport: event.sport_key,
-          betType: 'moneyline',
-          eventTime: event.commence_time,
-        });
-      }
-    }
-
-    if (underdogLegs.length >= 4) {
-      const totalOdds = calculateTotalOdds(underdogLegs);
-      
-      suggestions.push({
-        legs: underdogLegs,
-        total_odds: totalOdds,
-        combined_probability: underdogProb,
-        suggestion_reason: buildReason('🔥 HIGH RISK: Underdog parlay for massive payout potential. Lottery ticket play!', 'Mixed', 'low'),
-        sport: 'Mixed',
-        confidence_score: 0.3,
-        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      });
-    }
-
-    // Strategy 4: Player Props Parlay (3-4 props from games)
+    // ========================================
+    // STRATEGY 6: Player Props (if user has prop success)
+    // ========================================
     const propLegs: SuggestionLeg[] = [];
     let propProb = 1;
 
@@ -489,13 +803,11 @@ serve(async (req) => {
       for (const market of markets) {
         if (propLegs.length >= 4) break;
         
-        // Look for over/under props with reasonable odds
         for (const outcome of market.outcomes) {
           if (propLegs.length >= 4) break;
           
           const americanOdds = decimalToAmerican(outcome.price);
           
-          // Only include props with decent odds (-150 to +150)
           if (americanOdds >= -150 && americanOdds <= 150) {
             const impliedProb = americanToImplied(americanOdds);
             propProb *= impliedProb;
@@ -522,14 +834,16 @@ serve(async (req) => {
         legs: propLegs,
         total_odds: totalOdds,
         combined_probability: propProb,
-        suggestion_reason: buildReason('Player props parlay! Individual player performances across games.', propLegs[0].sport, 'medium'),
+        suggestion_reason: buildReason('🏀 PLAYER PROPS: Individual player performances across games.', propLegs[0].sport, 'medium'),
         sport: propLegs[0].sport,
         confidence_score: 0.45,
         expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       });
     }
 
-    // Strategy 5: Totals parlay (over/unders)
+    // ========================================
+    // STRATEGY 7: Totals parlay
+    // ========================================
     const totalsLegs: SuggestionLeg[] = [];
     let totalsProb = 1;
 
@@ -540,7 +854,6 @@ serve(async (req) => {
       const totalsMarket = bookmaker.markets.find(m => m.key === 'totals');
       if (!totalsMarket) continue;
 
-      // Pick over or under based on odds
       const bestTotal = totalsMarket.outcomes.reduce((a, b) => a.price < b.price ? a : b);
       const americanOdds = decimalToAmerican(bestTotal.price);
       const impliedProb = americanToImplied(americanOdds);
@@ -563,64 +876,15 @@ serve(async (req) => {
         legs: totalsLegs,
         total_odds: totalOdds,
         combined_probability: totalsProb,
-        suggestion_reason: buildReason('Totals-only parlay focusing on game over/unders. Great for high-scoring matchups.', totalsLegs[0].sport, 'medium'),
+        suggestion_reason: buildReason('📈 TOTALS PARLAY: Game over/unders. Great for high-scoring matchups.', totalsLegs[0].sport, 'medium'),
         sport: 'Mixed',
         confidence_score: 0.5,
         expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       });
     }
 
-    // Strategy 6: High accuracy sport-specific suggestion
-    const bestAccuracySport = Object.entries(accuracyMap)
-      .filter(([_, metric]) => metric.total_suggestions >= 5 && metric.accuracy_rate >= 55)
-      .sort((a, b) => b[1].accuracy_rate - a[1].accuracy_rate)[0];
-
-    if (bestAccuracySport) {
-      const [key, metric] = bestAccuracySport;
-      const sport = metric.sport;
-      const sportEvents = allOdds.filter(e => e.sport_key === sport).slice(0, 3);
-
-      if (sportEvents.length >= 2) {
-        const legs: SuggestionLeg[] = [];
-        let totalProb = 1;
-
-        for (const event of sportEvents) {
-          const bookmaker = event.bookmakers[0];
-          if (!bookmaker) continue;
-
-          const h2hMarket = bookmaker.markets.find(m => m.key === 'h2h');
-          if (!h2hMarket) continue;
-
-          const favorite = h2hMarket.outcomes.reduce((a, b) => a.price < b.price ? a : b);
-          const americanOdds = decimalToAmerican(favorite.price);
-          const impliedProb = americanToImplied(americanOdds);
-          totalProb *= impliedProb;
-
-          legs.push({
-            description: `${favorite.name} ML vs ${event.home_team === favorite.name ? event.away_team : event.home_team}`,
-            odds: americanOdds,
-            impliedProbability: impliedProb,
-            sport: event.sport_key,
-            betType: 'moneyline',
-            eventTime: event.commence_time,
-          });
-        }
-
-        if (legs.length >= 2) {
-          const totalOdds = calculateTotalOdds(legs);
-
-          suggestions.push({
-            legs,
-            total_odds: totalOdds,
-            combined_probability: totalProb,
-            suggestion_reason: `🔥 HOT PICK: ${sport} suggestions have ${metric.accuracy_rate.toFixed(0)}% accuracy (${metric.total_won}/${metric.total_suggestions} won). Based on AI learning from historical performance.`,
-            sport: sport,
-            confidence_score: Math.min(metric.accuracy_rate / 100 * 1.1, 0.95),
-            expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-          });
-        }
-      }
-    }
+    // Sort suggestions: LOW RISK (high probability) first
+    suggestions.sort((a, b) => b.combined_probability - a.combined_probability);
 
     // Step 5: Save suggestions to database
     if (suggestions.length > 0) {
@@ -649,7 +913,7 @@ serve(async (req) => {
       }
     }
 
-    console.log(`Generated ${suggestions.length} suggestions with AI learning`);
+    console.log(`Generated ${suggestions.length} suggestions with LOW RISK priority`);
 
     return new Response(JSON.stringify({ 
       suggestions,
