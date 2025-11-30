@@ -442,20 +442,155 @@ serve(async (req) => {
     };
 
     // ========================================
-    // STRATEGY 1: DATA-DRIVEN LOW RISK (ALWAYS GENERATED FIRST)
-    // Uses user's winning patterns from trained data
+    // STRATEGY 0: VERY LOW RISK 60%+ (2-leg super heavy favorites)
     // ========================================
-    console.log('Generating data-driven low-risk suggestions...');
+    console.log('Generating VERY LOW RISK (60%+) suggestions...');
     
-    const dataDrivenLegs: SuggestionLeg[] = [];
-    let dataDrivenProb = 1;
+    // Get all heavy favorites sorted by implied probability (heaviest first)
+    const allFavorites: { event: OddsEvent; favorite: OddsOutcome; americanOdds: number; impliedProb: number }[] = [];
+    
+    for (const event of allOdds) {
+      const bookmaker = event.bookmakers[0];
+      if (!bookmaker) continue;
+      
+      const h2hMarket = bookmaker.markets.find(m => m.key === 'h2h');
+      if (!h2hMarket) continue;
+      
+      const favorite = h2hMarket.outcomes.reduce((a, b) => a.price < b.price ? a : b);
+      const americanOdds = decimalToAmerican(favorite.price);
+      
+      // Only super heavy favorites (-300 or heavier) for 60%+ tier
+      if (americanOdds <= -300) {
+        allFavorites.push({
+          event,
+          favorite,
+          americanOdds,
+          impliedProb: americanToImplied(americanOdds),
+        });
+      }
+    }
+    
+    // Sort by implied probability (highest first)
+    allFavorites.sort((a, b) => b.impliedProb - a.impliedProb);
+    
+    // Try to build a 2-leg parlay with 60%+ combined probability
+    if (allFavorites.length >= 2) {
+      const veryLowRiskLegs: SuggestionLeg[] = [];
+      let veryLowRiskProb = 1;
+      
+      for (const fav of allFavorites) {
+        if (veryLowRiskLegs.length >= 2) break;
+        
+        const newProb = veryLowRiskProb * fav.impliedProb;
+        if (newProb >= 0.60) {
+          veryLowRiskProb = newProb;
+          veryLowRiskLegs.push({
+            description: `${fav.favorite.name} ML vs ${fav.event.home_team === fav.favorite.name ? fav.event.away_team : fav.event.home_team}`,
+            odds: fav.americanOdds,
+            impliedProbability: fav.impliedProb,
+            sport: fav.event.sport_key,
+            betType: 'moneyline',
+            eventTime: fav.event.commence_time,
+          });
+        }
+      }
+      
+      if (veryLowRiskLegs.length === 2 && veryLowRiskProb >= 0.60) {
+        const totalOdds = calculateTotalOdds(veryLowRiskLegs);
+        suggestions.push({
+          legs: veryLowRiskLegs,
+          total_odds: totalOdds,
+          combined_probability: veryLowRiskProb,
+          suggestion_reason: `🛡️ VERY LOW RISK (60%+): 2-leg parlay with super heavy favorites. ${(veryLowRiskProb * 100).toFixed(1)}% win probability!`,
+          sport: veryLowRiskLegs[0].sport,
+          confidence_score: 0.95,
+          expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          is_data_driven: true,
+        });
+      }
+    }
 
+    // ========================================
+    // STRATEGY 1: LOW RISK 50%+ (2-leg heavy favorites)
+    // ========================================
+    console.log('Generating LOW RISK (50%+) suggestions...');
+    
+    // Get moderately heavy favorites for 50%+ tier
+    const moderateFavorites: { event: OddsEvent; favorite: OddsOutcome; americanOdds: number; impliedProb: number }[] = [];
+    
+    for (const event of allOdds) {
+      const bookmaker = event.bookmakers[0];
+      if (!bookmaker) continue;
+      
+      const h2hMarket = bookmaker.markets.find(m => m.key === 'h2h');
+      if (!h2hMarket) continue;
+      
+      const favorite = h2hMarket.outcomes.reduce((a, b) => a.price < b.price ? a : b);
+      const americanOdds = decimalToAmerican(favorite.price);
+      
+      // Heavy favorites (-250 or heavier) for 50%+ tier
+      if (americanOdds <= -250 && americanOdds >= -600) {
+        moderateFavorites.push({
+          event,
+          favorite,
+          americanOdds,
+          impliedProb: americanToImplied(americanOdds),
+        });
+      }
+    }
+    
+    moderateFavorites.sort((a, b) => b.impliedProb - a.impliedProb);
+    
+    if (moderateFavorites.length >= 2) {
+      const lowRiskLegs: SuggestionLeg[] = [];
+      let lowRiskProb = 1;
+      
+      for (const fav of moderateFavorites) {
+        if (lowRiskLegs.length >= 2) break;
+        
+        const newProb = lowRiskProb * fav.impliedProb;
+        if (newProb >= 0.50) {
+          lowRiskProb = newProb;
+          lowRiskLegs.push({
+            description: `${fav.favorite.name} ML vs ${fav.event.home_team === fav.favorite.name ? fav.event.away_team : fav.event.home_team}`,
+            odds: fav.americanOdds,
+            impliedProbability: fav.impliedProb,
+            sport: fav.event.sport_key,
+            betType: 'moneyline',
+            eventTime: fav.event.commence_time,
+          });
+        }
+      }
+      
+      if (lowRiskLegs.length === 2 && lowRiskProb >= 0.50) {
+        const totalOdds = calculateTotalOdds(lowRiskLegs);
+        suggestions.push({
+          legs: lowRiskLegs,
+          total_odds: totalOdds,
+          combined_probability: lowRiskProb,
+          suggestion_reason: `✅ LOW RISK (50%+): 2-leg parlay with heavy favorites. ${(lowRiskProb * 100).toFixed(1)}% win probability!`,
+          sport: lowRiskLegs[0].sport,
+          confidence_score: 0.88,
+          expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          is_data_driven: true,
+        });
+      }
+    }
+
+    // ========================================
+    // STRATEGY 2: DATA-DRIVEN PARLAY (uses user's winning patterns)
+    // ========================================
+    console.log('Generating data-driven suggestions...');
+    
     // Prioritize events from user's WINNING sports
     const prioritizedEvents = allOdds.sort((a, b) => {
       const aWinRate = userPattern.win_rate_by_sport[a.sport_key] || 0;
       const bWinRate = userPattern.win_rate_by_sport[b.sport_key] || 0;
       return bWinRate - aWinRate;
     });
+
+    const dataDrivenLegs: SuggestionLeg[] = [];
+    let dataDrivenProb = 1;
 
     for (const event of prioritizedEvents) {
       const bookmaker = event.bookmakers[0];
@@ -464,27 +599,22 @@ serve(async (req) => {
       const h2hMarket = bookmaker.markets.find(m => m.key === 'h2h');
       if (!h2hMarket) continue;
 
-      // Pick heavy favorites only (odds -150 to -400)
       const favorite = h2hMarket.outcomes.reduce((a, b) => a.price < b.price ? a : b);
       const americanOdds = decimalToAmerican(favorite.price);
       
-      // Only include heavy favorites for low risk
+      // Include favorites for data-driven parlay
       if (americanOdds <= -150 && americanOdds >= -400) {
         const impliedProb = americanToImplied(americanOdds);
-        
-        // Check if combined prob stays >= 50% (low risk = 50%+ hit rate)
-        if (dataDrivenProb * impliedProb >= 0.50) {
-          dataDrivenProb *= impliedProb;
+        dataDrivenProb *= impliedProb;
 
-          dataDrivenLegs.push({
-            description: `${favorite.name} ML vs ${event.home_team === favorite.name ? event.away_team : event.home_team}`,
-            odds: americanOdds,
-            impliedProbability: impliedProb,
-            sport: event.sport_key,
-            betType: 'moneyline',
-            eventTime: event.commence_time,
-          });
-        }
+        dataDrivenLegs.push({
+          description: `${favorite.name} ML vs ${event.home_team === favorite.name ? event.away_team : event.home_team}`,
+          odds: americanOdds,
+          impliedProbability: impliedProb,
+          sport: event.sport_key,
+          betType: 'moneyline',
+          eventTime: event.commence_time,
+        });
       }
     }
 
@@ -499,9 +629,9 @@ serve(async (req) => {
         legs: dataDrivenLegs,
         total_odds: totalOdds,
         combined_probability: dataDrivenProb,
-        suggestion_reason: `🎯 DATA-DRIVEN LOW RISK: Heavy favorites from ${sportsList}. High confidence based on trained data patterns.${winRateNote}`,
+        suggestion_reason: `🎯 DATA-DRIVEN: Heavy favorites from ${sportsList}. Based on your betting patterns.${winRateNote}`,
         sport: dataDrivenLegs[0].sport,
-        confidence_score: 0.85,
+        confidence_score: 0.75,
         expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
         is_data_driven: true,
       });
