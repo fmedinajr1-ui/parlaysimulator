@@ -745,6 +745,18 @@ export type Database = {
           username: string
         }[]
       }
+      get_betting_time_patterns: {
+        Args: { p_user_id: string }
+        Returns: {
+          avg_odds: number
+          day_of_week: number
+          month: number
+          total_bets: number
+          upset_wins: number
+          win_rate: number
+          wins: number
+        }[]
+      }
       get_leaderboard_stats: {
         Args: { time_period?: string }
         Returns: {
