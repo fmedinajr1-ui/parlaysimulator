@@ -131,6 +131,7 @@ export type Database = {
           potential_payout: number
           settled_at: string | null
           stake: number
+          suggested_parlay_id: string | null
           user_id: string
         }
         Insert: {
@@ -147,6 +148,7 @@ export type Database = {
           potential_payout: number
           settled_at?: string | null
           stake: number
+          suggested_parlay_id?: string | null
           user_id: string
         }
         Update: {
@@ -163,9 +165,18 @@ export type Database = {
           potential_payout?: number
           settled_at?: string | null
           stake?: number
+          suggested_parlay_id?: string | null
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "parlay_history_suggested_parlay_id_fkey"
+            columns: ["suggested_parlay_id"]
+            isOneToOne: false
+            referencedRelation: "suggested_parlays"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       parlay_training_data: {
         Row: {
@@ -409,6 +420,60 @@ export type Database = {
         }
         Relationships: []
       }
+      suggestion_performance: {
+        Row: {
+          created_at: string
+          id: string
+          outcome: boolean | null
+          parlay_history_id: string
+          payout: number | null
+          settled_at: string | null
+          stake: number
+          suggested_parlay_id: string
+          user_id: string
+          was_followed: boolean
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          outcome?: boolean | null
+          parlay_history_id: string
+          payout?: number | null
+          settled_at?: string | null
+          stake?: number
+          suggested_parlay_id: string
+          user_id: string
+          was_followed?: boolean
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          outcome?: boolean | null
+          parlay_history_id?: string
+          payout?: number | null
+          settled_at?: string | null
+          stake?: number
+          suggested_parlay_id?: string
+          user_id?: string
+          was_followed?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "suggestion_performance_parlay_history_id_fkey"
+            columns: ["parlay_history_id"]
+            isOneToOne: false
+            referencedRelation: "parlay_history"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "suggestion_performance_suggested_parlay_id_fkey"
+            columns: ["suggested_parlay_id"]
+            isOneToOne: false
+            referencedRelation: "suggested_parlays"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_roles: {
         Row: {
           created_at: string | null
@@ -492,6 +557,20 @@ export type Database = {
           total_wins: number
           user_id: string
           username: string
+        }[]
+      }
+      get_suggestion_performance_stats: {
+        Args: { p_user_id?: string }
+        Returns: {
+          avg_confidence: number
+          performance_by_sport: Json
+          total_lost: number
+          total_pending: number
+          total_profit: number
+          total_staked: number
+          total_suggestions_followed: number
+          total_won: number
+          win_rate: number
         }[]
       }
       get_user_betting_stats: {

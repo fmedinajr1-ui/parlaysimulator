@@ -4,6 +4,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useSubscription } from "@/hooks/useSubscription";
 import { useNavigate } from "react-router-dom";
 import { BottomNav } from "@/components/BottomNav";
+import { SuggestionPerformanceCard } from "@/components/suggestions/SuggestionPerformanceCard";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -247,7 +248,8 @@ const Suggestions = () => {
   const handleAnalyze = (suggestion: SuggestedParlay) => {
     const parlayLegs = suggestion.legs.map(leg => createLeg(leg.description, leg.odds));
     const simulation = simulateParlay(parlayLegs, 10, suggestion.total_odds);
-    navigate('/results', { state: { simulation } });
+    // Pass suggested_parlay_id to track performance when user saves
+    navigate('/results', { state: { simulation, suggestedParlayId: suggestion.id } });
   };
 
   const formatOdds = (odds: number) => odds > 0 ? `+${odds}` : odds.toString();
@@ -367,6 +369,11 @@ const Suggestions = () => {
               )}
             </Button>
           </div>
+        </div>
+
+        {/* AI Suggestion Performance Stats */}
+        <div className="mb-4">
+          <SuggestionPerformanceCard />
         </div>
 
         {/* User Pattern Analytics */}
