@@ -80,6 +80,72 @@ export type Database = {
         }
         Relationships: []
       }
+      line_movements: {
+        Row: {
+          bookmaker: string
+          commence_time: string | null
+          created_at: string
+          description: string
+          detected_at: string
+          event_id: string
+          id: string
+          is_sharp_action: boolean | null
+          market_type: string
+          movement_type: string
+          new_point: number | null
+          new_price: number
+          old_point: number | null
+          old_price: number
+          outcome_name: string
+          point_change: number | null
+          price_change: number
+          sharp_indicator: string | null
+          sport: string
+        }
+        Insert: {
+          bookmaker: string
+          commence_time?: string | null
+          created_at?: string
+          description: string
+          detected_at?: string
+          event_id: string
+          id?: string
+          is_sharp_action?: boolean | null
+          market_type: string
+          movement_type?: string
+          new_point?: number | null
+          new_price: number
+          old_point?: number | null
+          old_price: number
+          outcome_name: string
+          point_change?: number | null
+          price_change: number
+          sharp_indicator?: string | null
+          sport: string
+        }
+        Update: {
+          bookmaker?: string
+          commence_time?: string | null
+          created_at?: string
+          description?: string
+          detected_at?: string
+          event_id?: string
+          id?: string
+          is_sharp_action?: boolean | null
+          market_type?: string
+          movement_type?: string
+          new_point?: number | null
+          new_price?: number
+          old_point?: number | null
+          old_price?: number
+          outcome_name?: string
+          point_change?: number | null
+          price_change?: number
+          sharp_indicator?: string | null
+          sport?: string
+        }
+        Relationships: []
+      }
       notification_preferences: {
         Row: {
           created_at: string
@@ -113,6 +179,54 @@ export type Database = {
           min_confidence_threshold?: number
           updated_at?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      odds_snapshots: {
+        Row: {
+          away_team: string
+          bookmaker: string
+          commence_time: string | null
+          created_at: string
+          event_id: string
+          home_team: string
+          id: string
+          market_type: string
+          outcome_name: string
+          point: number | null
+          price: number
+          snapshot_time: string
+          sport: string
+        }
+        Insert: {
+          away_team: string
+          bookmaker: string
+          commence_time?: string | null
+          created_at?: string
+          event_id: string
+          home_team: string
+          id?: string
+          market_type?: string
+          outcome_name: string
+          point?: number | null
+          price: number
+          snapshot_time?: string
+          sport: string
+        }
+        Update: {
+          away_team?: string
+          bookmaker?: string
+          commence_time?: string | null
+          created_at?: string
+          event_id?: string
+          home_team?: string
+          id?: string
+          market_type?: string
+          outcome_name?: string
+          point?: number | null
+          price?: number
+          snapshot_time?: string
+          sport?: string
         }
         Relationships: []
       }
@@ -501,6 +615,13 @@ export type Database = {
     }
     Functions: {
       check_scan_access: { Args: { p_user_id: string }; Returns: Json }
+      detect_sharp_money: {
+        Args: { p_point_change?: number; p_price_change: number }
+        Returns: {
+          indicator: string
+          is_sharp: boolean
+        }[]
+      }
       get_ai_accuracy_stats: {
         Args: never
         Returns: {
@@ -557,6 +678,26 @@ export type Database = {
           total_wins: number
           user_id: string
           username: string
+        }[]
+      }
+      get_recent_line_movements: {
+        Args: { p_limit?: number; p_sport?: string }
+        Returns: {
+          bookmaker: string
+          commence_time: string
+          description: string
+          detected_at: string
+          event_id: string
+          id: string
+          is_sharp_action: boolean
+          market_type: string
+          new_price: number
+          old_price: number
+          outcome_name: string
+          point_change: number
+          price_change: number
+          sharp_indicator: string
+          sport: string
         }[]
       }
       get_suggestion_performance_stats: {
