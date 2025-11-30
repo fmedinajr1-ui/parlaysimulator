@@ -26,6 +26,7 @@ const Results = () => {
   const { user } = useAuth();
   const simulation = location.state?.simulation as ParlaySimulation | undefined;
   const extractedGameTime = location.state?.extractedGameTime as string | undefined;
+  const suggestedParlayId = location.state?.suggestedParlayId as string | undefined;
   const [aiRoasts, setAiRoasts] = useState<string[] | null>(null);
   const [isLoadingRoasts, setIsLoadingRoasts] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -239,7 +240,8 @@ const Results = () => {
         combined_probability: simulation.combinedProbability,
         degenerate_level: simulation.degenerateLevel,
         ai_roasts: aiRoasts,
-        event_start_time: eventStartTime
+        event_start_time: eventStartTime,
+        suggested_parlay_id: suggestedParlayId || null
       }).select().single();
 
       if (error) {
@@ -292,6 +294,26 @@ const Results = () => {
           console.error('Training data save error:', JSON.stringify(trainingError, null, 2));
         } else {
           console.log('Training data saved with AI analysis:', trainingData.length, 'legs');
+        }
+
+        // Track suggestion performance if this came from an AI suggestion
+        if (suggestedParlayId) {
+          const { error: perfError } = await supabase
+            .from('suggestion_performance')
+            .insert({
+              suggested_parlay_id: suggestedParlayId,
+              user_id: session.user.id,
+              parlay_history_id: parlayData.id,
+              was_followed: true,
+              stake: simulation.stake,
+              outcome: null // Will be updated when parlay is settled
+            });
+
+          if (perfError) {
+            console.error('Suggestion performance tracking error:', perfError);
+          } else {
+            console.log('Suggestion performance tracked for:', suggestedParlayId);
+          }
         }
       }
 
