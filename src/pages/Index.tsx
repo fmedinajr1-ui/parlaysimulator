@@ -6,6 +6,7 @@ import { BottomNav } from "@/components/BottomNav";
 import { SampleParlayButton } from "@/components/SampleParlayButton";
 import { SuggestedParlays } from "@/components/suggestions/SuggestedParlays";
 import { OddsMovementCard } from "@/components/results/OddsMovementCard";
+import { CompareTeaser } from "@/components/CompareTeaser";
 
 const Index = () => {
   return (
@@ -25,6 +26,9 @@ const Index = () => {
           <ExampleCard type="meter" delay={100} />
           <ExampleCard type="highlight" delay={150} />
         </div>
+
+        {/* Compare Parlays */}
+        <CompareTeaser />
 
         {/* AI Suggested Parlays */}
         <div className="mb-5">
