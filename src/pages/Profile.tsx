@@ -9,6 +9,7 @@ import { SocialLinks } from '@/components/profile/SocialLinks';
 import { DegenStats } from '@/components/profile/DegenStats';
 import { ParlayHistoryFeed } from '@/components/profile/ParlayHistoryFeed';
 import { AIPerformanceCard } from '@/components/profile/AIPerformanceCard';
+import { BettingCalendarCard } from '@/components/profile/BettingCalendarCard';
 import { NotificationPreferences } from '@/components/profile/NotificationPreferences';
 import { Button } from '@/components/ui/button';
 import { Loader2, LogOut, Upload, CreditCard, Crown } from 'lucide-react';
@@ -192,6 +193,11 @@ const Profile = () => {
         {/* AI Performance */}
         <div className="mt-4">
           <AIPerformanceCard userId={user!.id} />
+        </div>
+
+        {/* Smart Betting Calendar */}
+        <div className="mt-4">
+          <BettingCalendarCard userId={user!.id} />
         </div>
 
         {/* Notification Preferences - Pro users only */}
