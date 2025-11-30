@@ -4,6 +4,7 @@ import { HowItWorks } from "@/components/HowItWorks";
 import { FeatureTeaser } from "@/components/FeatureTeaser";
 import { BottomNav } from "@/components/BottomNav";
 import { SampleParlayButton } from "@/components/SampleParlayButton";
+import { SuggestedParlays } from "@/components/suggestions/SuggestedParlays";
 
 const Index = () => {
   return (
@@ -22,6 +23,11 @@ const Index = () => {
           <ExampleCard type="roast" delay={50} />
           <ExampleCard type="meter" delay={100} />
           <ExampleCard type="highlight" delay={150} />
+        </div>
+
+        {/* AI Suggested Parlays */}
+        <div className="mb-5">
+          <SuggestedParlays />
         </div>
 
         <HowItWorks />

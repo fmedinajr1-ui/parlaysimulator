@@ -331,6 +331,48 @@ export type Database = {
         }
         Relationships: []
       }
+      suggested_parlays: {
+        Row: {
+          combined_probability: number
+          confidence_score: number
+          created_at: string
+          expires_at: string
+          id: string
+          is_active: boolean
+          legs: Json
+          sport: string
+          suggestion_reason: string
+          total_odds: number
+          user_id: string | null
+        }
+        Insert: {
+          combined_probability: number
+          confidence_score?: number
+          created_at?: string
+          expires_at: string
+          id?: string
+          is_active?: boolean
+          legs: Json
+          sport: string
+          suggestion_reason: string
+          total_odds: number
+          user_id?: string | null
+        }
+        Update: {
+          combined_probability?: number
+          confidence_score?: number
+          created_at?: string
+          expires_at?: string
+          id?: string
+          is_active?: boolean
+          legs?: Json
+          sport?: string
+          suggestion_reason?: string
+          total_odds?: number
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           created_at: string | null
