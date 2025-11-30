@@ -273,6 +273,33 @@ serve(async (req) => {
         console.error('Error inserting movements:', movementError);
       } else {
         console.log(`Detected ${allMovements.length} line movements, ${allMovements.filter(m => m.is_sharp_action).length} sharp`);
+        
+        // Send push notifications for sharp alerts
+        const sharpMovements = allMovements.filter(m => m.is_sharp_action);
+        for (const sharpMove of sharpMovements) {
+          try {
+            await fetch(`${supabaseUrl}/functions/v1/send-push-notification`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${supabaseServiceKey}`,
+              },
+              body: JSON.stringify({
+                action: 'notify',
+                alert: {
+                  sport: sharpMove.sport,
+                  description: sharpMove.description,
+                  bookmaker: sharpMove.bookmaker,
+                  price_change: sharpMove.price_change,
+                  sharp_indicator: sharpMove.sharp_indicator,
+                }
+              })
+            });
+            console.log(`Push notification sent for sharp move: ${sharpMove.description}`);
+          } catch (pushError) {
+            console.error('Error sending push notification:', pushError);
+          }
+        }
       }
     }
 
