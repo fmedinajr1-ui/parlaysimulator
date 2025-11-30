@@ -7,6 +7,15 @@ export interface ParlayLeg {
   aiAnalysis?: LegAnalysis;
 }
 
+export interface InjuryAlert {
+  player: string;
+  team: string;
+  status: 'OUT' | 'DOUBTFUL' | 'QUESTIONABLE' | 'PROBABLE' | 'DAY-TO-DAY';
+  injuryType: string;
+  injuryDetails: string;
+  impactLevel: 'critical' | 'high' | 'medium' | 'low';
+}
+
 export interface LegAnalysis {
   sport: string;
   betType: 'moneyline' | 'spread' | 'total' | 'player_prop' | 'other';
@@ -16,9 +25,11 @@ export interface LegAnalysis {
   riskFactors: string[];
   trendDirection: 'favorable' | 'neutral' | 'unfavorable';
   adjustedProbability: number;
+  calibratedProbability?: number;
   confidenceLevel: 'high' | 'medium' | 'low';
   vegasJuice: number;
   correlatedWith?: number[];
+  injuryAlerts?: InjuryAlert[];
 }
 
 export interface CorrelatedLegPair {

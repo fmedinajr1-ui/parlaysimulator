@@ -1,8 +1,9 @@
 import { FeedCard } from "@/components/FeedCard";
 import { ParlayLeg, LegAnalysis } from "@/types/parlay";
 import { Badge } from "@/components/ui/badge";
-import { TrendingUp, TrendingDown, Minus, AlertTriangle, CheckCircle, Brain, Loader2 } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, AlertTriangle, CheckCircle, Brain, Loader2, UserX } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { InjuryAlertBadge } from "./InjuryAlertBadge";
 
 interface LegIntelligenceCardProps {
   legs: ParlayLeg[];
@@ -146,6 +147,14 @@ export function LegIntelligenceCard({ legs, legAnalyses, isLoading, delay = 0 }:
                           {(analysis.adjustedProbability * 100).toFixed(1)}%
                         </span>
                       </div>
+                      {analysis.calibratedProbability && (
+                        <div>
+                          <span className="text-muted-foreground">Calibrated: </span>
+                          <span className="font-mono font-bold text-neon-purple">
+                            {(analysis.calibratedProbability * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                      )}
                       <div>
                         <span className="text-muted-foreground">Juice: </span>
                         <span className={cn(
@@ -156,6 +165,21 @@ export function LegIntelligenceCard({ legs, legAnalyses, isLoading, delay = 0 }:
                         </span>
                       </div>
                     </div>
+
+                    {/* Injury Alerts */}
+                    {analysis.injuryAlerts && analysis.injuryAlerts.length > 0 && (
+                      <div className="mt-2 pt-2 border-t border-border/30">
+                        <div className="flex items-center gap-1 mb-2">
+                          <UserX className="w-3 h-3 text-neon-orange" />
+                          <span className="text-xs font-semibold text-muted-foreground">INJURY IMPACT</span>
+                        </div>
+                        <div className="space-y-2">
+                          {analysis.injuryAlerts.map((injury, i) => (
+                            <InjuryAlertBadge key={i} injury={injury} compact />
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </>
                 )}
 
