@@ -472,8 +472,8 @@ serve(async (req) => {
       if (americanOdds <= -150 && americanOdds >= -400) {
         const impliedProb = americanToImplied(americanOdds);
         
-        // Check if combined prob stays >= 60% (low risk = 60%+ hit rate)
-        if (dataDrivenProb * impliedProb >= 0.60) {
+        // Check if combined prob stays >= 50% (low risk = 50%+ hit rate)
+        if (dataDrivenProb * impliedProb >= 0.50) {
           dataDrivenProb *= impliedProb;
 
           dataDrivenLegs.push({
@@ -543,8 +543,8 @@ serve(async (req) => {
           if (americanOdds <= -200 && americanOdds >= -400) {
             const impliedProb = americanToImplied(americanOdds);
             
-            // Low risk requires 60%+ hit rate
-            if (aiLowRiskProb * impliedProb >= 0.60) {
+            // Low risk requires 50%+ hit rate
+            if (aiLowRiskProb * impliedProb >= 0.50) {
               aiLowRiskProb *= impliedProb;
 
               aiLowRiskLegs.push({

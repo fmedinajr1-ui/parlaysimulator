@@ -74,7 +74,7 @@ const SPORT_GROUPS = {
 };
 
 const SPORTS = ["All", "Football", "Basketball", "Hockey", "Baseball", "Soccer", "NFL", "NBA", "NHL", "MLB", "NCAAB", "NCAAF"];
-const RISK_LEVELS = ["All", "Low", "Medium", "High"];
+const RISK_LEVELS = ["All", "Very Low (60%+)", "Low (50%+)", "Medium", "High"];
 const BET_TYPES = ["All", "Moneyline", "Spreads", "Totals", "Player Props"];
 const LEG_COUNTS = [
   { label: "Any", value: "any" },
@@ -101,7 +101,7 @@ const Suggestions = () => {
   
   // Filters - Default to Low Risk for best suggestions first
   const [sportFilter, setSportFilter] = useState("All");
-  const [riskFilter, setRiskFilter] = useState("Low");
+  const [riskFilter, setRiskFilter] = useState("Low (50%+)");
   const [betTypeFilter, setBetTypeFilter] = useState("All");
   const [legCountFilter, setLegCountFilter] = useState("any");
   const [oddsRange, setOddsRange] = useState<[number, number]>([-500, 2000]);
@@ -235,8 +235,9 @@ const Suggestions = () => {
     if (riskFilter !== "All") {
       filtered = filtered.filter(s => {
         const prob = s.combined_probability;
-        if (riskFilter === "Low") return prob >= 0.60; // 60%+ win probability (high confidence)
-        if (riskFilter === "Medium") return prob >= 0.25 && prob < 0.60; // 25-60%
+        if (riskFilter === "Very Low (60%+)") return prob >= 0.60; // 60%+ win probability (highest confidence)
+        if (riskFilter === "Low (50%+)") return prob >= 0.50; // 50%+ win probability (high confidence)
+        if (riskFilter === "Medium") return prob >= 0.25 && prob < 0.50; // 25-50%
         return prob < 0.25; // High risk: <25%
       });
     }
@@ -366,7 +367,7 @@ const Suggestions = () => {
 
   const resetFilters = () => {
     setSportFilter("All");
-    setRiskFilter("Low"); // Keep Low Risk as default
+    setRiskFilter("Low (50%+)"); // Keep Low Risk as default
     setBetTypeFilter("All");
     setLegCountFilter("any");
     setOddsRange([-500, 2000]);
