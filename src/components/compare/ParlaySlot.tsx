@@ -28,6 +28,7 @@ interface ParlaySlotProps {
   onClear: () => void;
   onSelectFromHistory: () => void;
   canRemove: boolean;
+  showTutorialAttributes?: boolean;
 }
 
 export function ParlaySlot({
@@ -39,7 +40,8 @@ export function ParlaySlot({
   onUpdate,
   onClear,
   onSelectFromHistory,
-  canRemove
+  canRemove,
+  showTutorialAttributes = false,
 }: ParlaySlotProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -263,8 +265,9 @@ export function ParlaySlot({
           <div className="grid grid-cols-1 gap-2">
             <Button
               variant="outline"
-              className="h-auto py-3 justify-start gap-3"
+              className="h-auto py-3 justify-start gap-3 touch-target-lg"
               onClick={triggerFileInput}
+              data-tutorial={showTutorialAttributes ? "upload-button" : undefined}
             >
               <Upload className="w-5 h-5 text-primary" />
               <div className="text-left">
@@ -275,8 +278,9 @@ export function ParlaySlot({
 
             <Button
               variant="outline"
-              className="h-auto py-3 justify-start gap-3"
+              className="h-auto py-3 justify-start gap-3 touch-target-lg"
               onClick={handleStartManual}
+              data-tutorial={showTutorialAttributes ? "manual-button" : undefined}
             >
               <Pencil className="w-5 h-5 text-primary" />
               <div className="text-left">
@@ -287,8 +291,9 @@ export function ParlaySlot({
 
             <Button
               variant="outline"
-              className="h-auto py-3 justify-start gap-3"
+              className="h-auto py-3 justify-start gap-3 touch-target-lg"
               onClick={onSelectFromHistory}
+              data-tutorial={showTutorialAttributes ? "history-button" : undefined}
             >
               <History className="w-5 h-5 text-primary" />
               <div className="text-left">

@@ -399,7 +399,7 @@ const Upload = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background pb-32 touch-pan-y">
+    <div className="min-h-dvh bg-background pb-nav-safe touch-pan-y overflow-x-safe">
       {/* Hidden File Input */}
       <input
         ref={fileInputRef}

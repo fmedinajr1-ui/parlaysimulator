@@ -84,8 +84,8 @@ const OddsMovement = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background pb-24 touch-pan-y">
-      <main className="max-w-4xl mx-auto px-4 py-6">
+    <div className="min-h-dvh bg-background pb-nav-safe touch-pan-y overflow-x-safe">
+      <main className="max-w-4xl mx-auto px-3 py-4">
         {/* Header */}
         <div className="flex items-center gap-3 mb-6">
           <Button 

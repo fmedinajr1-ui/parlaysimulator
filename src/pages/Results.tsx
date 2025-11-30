@@ -361,7 +361,7 @@ const Results = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background pb-24 touch-pan-y">
+    <div className="min-h-dvh bg-background pb-nav-safe touch-pan-y overflow-x-safe">
       <main className="max-w-lg mx-auto px-3 py-4">
         {/* Header */}
         <div className="flex items-center justify-between mb-4">
