@@ -99,9 +99,9 @@ const Suggestions = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [activeTab, setActiveTab] = useState("suggestions");
   
-  // Filters
+  // Filters - Default to Low Risk for best suggestions first
   const [sportFilter, setSportFilter] = useState("All");
-  const [riskFilter, setRiskFilter] = useState("All");
+  const [riskFilter, setRiskFilter] = useState("Low");
   const [betTypeFilter, setBetTypeFilter] = useState("All");
   const [legCountFilter, setLegCountFilter] = useState("any");
   const [oddsRange, setOddsRange] = useState<[number, number]>([-500, 2000]);
@@ -366,7 +366,7 @@ const Suggestions = () => {
 
   const resetFilters = () => {
     setSportFilter("All");
-    setRiskFilter("All");
+    setRiskFilter("Low"); // Keep Low Risk as default
     setBetTypeFilter("All");
     setLegCountFilter("any");
     setOddsRange([-500, 2000]);

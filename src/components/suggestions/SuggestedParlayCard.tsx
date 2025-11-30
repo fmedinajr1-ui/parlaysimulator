@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Sparkles, TrendingUp, Clock, ChevronRight, Target, Layers, User } from "lucide-react";
+import { Sparkles, TrendingUp, Clock, ChevronRight, Target, Layers, User, BarChart3, Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
 import { createLeg, simulateParlay } from "@/lib/parlay-calculator";
@@ -23,6 +23,7 @@ interface SuggestedParlayCardProps {
   sport: string;
   confidenceScore: number;
   expiresAt: string;
+  isDataDriven?: boolean;
 }
 
 export function SuggestedParlayCard({
@@ -33,6 +34,7 @@ export function SuggestedParlayCard({
   sport,
   confidenceScore,
   expiresAt,
+  isDataDriven,
 }: SuggestedParlayCardProps) {
   const navigate = useNavigate();
 
@@ -72,9 +74,18 @@ export function SuggestedParlayCard({
   };
 
   const riskInfo = getRiskLabel(combinedProbability);
+  
+  // Check if suggestion reason indicates data-driven
+  const isDataDrivenSuggestion = isDataDriven || 
+    suggestionReason.includes('DATA-DRIVEN') || 
+    suggestionReason.includes('PATTERN MATCHED') || 
+    suggestionReason.includes('AI LOW RISK');
 
   return (
-    <Card className="bg-card/50 border-border/50 hover:border-primary/30 transition-all duration-300">
+    <Card className={cn(
+      "bg-card/50 border-border/50 hover:border-primary/30 transition-all duration-300",
+      isDataDrivenSuggestion && "border-primary/40 bg-primary/5"
+    )}>
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -84,12 +95,23 @@ export function SuggestedParlayCard({
               {legs.length} legs
             </Badge>
           </div>
-          <Badge 
-            variant="outline" 
-            className={cn("text-xs", riskInfo.color)}
-          >
-            {riskInfo.label}
-          </Badge>
+          <div className="flex items-center gap-1">
+            {isDataDrivenSuggestion && (
+              <Badge 
+                variant="outline" 
+                className="text-xs text-primary bg-primary/10 border-primary/30"
+              >
+                <BarChart3 className="w-3 h-3 mr-1" />
+                Your Data
+              </Badge>
+            )}
+            <Badge 
+              variant="outline" 
+              className={cn("text-xs", riskInfo.color)}
+            >
+              {riskInfo.label}
+            </Badge>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
