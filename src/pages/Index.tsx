@@ -33,7 +33,12 @@ const Index = () => {
 
         {/* Live Line Movements */}
         <div className="mb-5">
-          <OddsMovementCard compact showSharpOnly delay={200} />
+          <a href="/odds" className="block">
+            <OddsMovementCard compact showSharpOnly delay={200} />
+          </a>
+          <p className="text-xs text-muted-foreground text-center mt-2">
+            Tap to view full odds dashboard →
+          </p>
         </div>
 
         <HowItWorks />
