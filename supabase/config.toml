@@ -41,3 +41,6 @@ verify_jwt = false
 
 [functions.fetch-injury-updates]
 verify_jwt = false
+
+[functions.track-odds-movement]
+verify_jwt = false
