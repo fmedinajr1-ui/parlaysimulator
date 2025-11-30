@@ -393,6 +393,7 @@ export type Database = {
           total_payout: number
           total_staked: number
           total_wins: number
+          tutorial_completed: Json | null
           twitter_handle: string | null
           updated_at: string
           user_id: string
@@ -409,6 +410,7 @@ export type Database = {
           total_payout?: number
           total_staked?: number
           total_wins?: number
+          tutorial_completed?: Json | null
           twitter_handle?: string | null
           updated_at?: string
           user_id: string
@@ -425,6 +427,7 @@ export type Database = {
           total_payout?: number
           total_staked?: number
           total_wins?: number
+          tutorial_completed?: Json | null
           twitter_handle?: string | null
           updated_at?: string
           user_id?: string

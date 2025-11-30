@@ -1,15 +1,17 @@
 import { useState, useCallback } from 'react';
 import { BottomNav } from '@/components/BottomNav';
-import { FeedCard } from '@/components/FeedCard';
 import { Button } from '@/components/ui/button';
 import { ParlaySlot, LegInput } from '@/components/compare/ParlaySlot';
 import { ComparisonDashboard } from '@/components/compare/ComparisonDashboard';
 import { QuickSelectHistory } from '@/components/compare/QuickSelectHistory';
+import { TutorialOverlay } from '@/components/tutorial/TutorialOverlay';
+import { compareTutorialSteps } from '@/components/tutorial/tutorialSteps';
 import { compareParlays, ComparisonResult } from '@/lib/comparison-utils';
 import { createLeg, simulateParlay, americanToDecimal } from '@/lib/parlay-calculator';
 import { ParlayLeg, ParlaySimulation } from '@/types/parlay';
 import { toast } from '@/hooks/use-toast';
-import { Plus, Scale, Loader2, RotateCcw } from 'lucide-react';
+import { useTutorial } from '@/hooks/useTutorial';
+import { Plus, Scale, Loader2, RotateCcw, HelpCircle } from 'lucide-react';
 
 interface SlotState {
   id: string;
@@ -44,6 +46,8 @@ const Compare = () => {
   const [isComparing, setIsComparing] = useState(false);
   const [comparisonResult, setComparisonResult] = useState<ComparisonResult | null>(null);
   const [historySlotIndex, setHistorySlotIndex] = useState<number | null>(null);
+  
+  const { showTutorial, setShowTutorial, markComplete } = useTutorial('compare');
 
   const updateSlot = useCallback((index: number, legs: LegInput[], stake: string, extractedTotalOdds: number | null) => {
     setSlots(prev => prev.map((slot, i) => 
@@ -191,33 +195,52 @@ const Compare = () => {
   const filledCount = slots.filter(s => s.status === 'filled').length;
 
   return (
-    <div className="min-h-screen bg-background pb-32 touch-pan-y">
-      <main className="max-w-lg mx-auto px-3 py-4">
-        {/* Header */}
-        <div className="text-center mb-5">
-          <h1 className="font-display text-3xl text-gradient-fire mb-1">
-            ⚖️ COMPARE PARLAYS
-          </h1>
+    <div className="min-h-dvh bg-background pb-nav-safe touch-pan-y overflow-x-safe">
+      {/* Tutorial Overlay */}
+      <TutorialOverlay
+        steps={compareTutorialSteps}
+        isOpen={showTutorial}
+        onComplete={markComplete}
+        onSkip={markComplete}
+      />
+      
+      <main className="max-w-lg mx-auto px-3 py-3">
+        {/* Header - compact for mobile */}
+        <div className="text-center mb-4 header-compact">
+          <div className="flex items-center justify-center gap-2">
+            <h1 className="font-display text-2xl sm:text-3xl text-gradient-fire">
+              ⚖️ COMPARE PARLAYS
+            </h1>
+            <button
+              onClick={() => setShowTutorial(true)}
+              className="p-1.5 text-muted-foreground hover:text-foreground transition-colors"
+              aria-label="Show tutorial"
+            >
+              <HelpCircle className="w-5 h-5" />
+            </button>
+          </div>
           <p className="text-muted-foreground text-sm">
             Add up to 4 parlays and find your best bet.
           </p>
         </div>
 
-        {/* Parlay Slots */}
-        <div className="space-y-4 mb-5">
+        {/* Parlay Slots - scrollable area */}
+        <div className="space-y-3 mb-4 scroll-area-mobile scrollbar-hide">
           {slots.map((slot, index) => (
-            <ParlaySlot
-              key={slot.id}
-              index={index}
-              legs={slot.legs}
-              stake={slot.stake}
-              extractedTotalOdds={slot.extractedTotalOdds}
-              status={slot.status}
-              onUpdate={(legs, stake, odds) => updateSlot(index, legs, stake, odds)}
-              onClear={() => clearSlot(index)}
-              onSelectFromHistory={() => handleSelectFromHistory(index)}
-              canRemove={slots.length > 2}
-            />
+            <div key={slot.id} data-tutorial={`parlay-slot-${index}`}>
+              <ParlaySlot
+                index={index}
+                legs={slot.legs}
+                stake={slot.stake}
+                extractedTotalOdds={slot.extractedTotalOdds}
+                status={slot.status}
+                onUpdate={(legs, stake, odds) => updateSlot(index, legs, stake, odds)}
+                onClear={() => clearSlot(index)}
+                onSelectFromHistory={() => handleSelectFromHistory(index)}
+                canRemove={slots.length > 2}
+                showTutorialAttributes={index === 0}
+              />
+            </div>
           ))}
         </div>
 
@@ -225,47 +248,51 @@ const Compare = () => {
         {slots.length < 4 && (
           <Button
             variant="outline"
-            className="w-full mb-5 border-dashed"
+            className="w-full mb-4 border-dashed h-11 touch-target"
             onClick={addSlot}
+            data-tutorial="add-slot"
           >
             <Plus className="w-4 h-4 mr-2" />
             Add Another Parlay
           </Button>
         )}
 
-        {/* Action Buttons */}
-        <div className="flex gap-3 mb-6">
-          <Button
-            variant="outline"
-            onClick={handleReset}
-            className="flex-1"
-            disabled={isComparing}
-          >
-            <RotateCcw className="w-4 h-4 mr-2" />
-            Reset
-          </Button>
-          <Button
-            onClick={handleCompare}
-            className="flex-[2] gradient-fire"
-            disabled={isComparing || filledCount < 2}
-          >
-            {isComparing ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Comparing...
-              </>
-            ) : (
-              <>
-                <Scale className="w-4 h-4 mr-2" />
-                Compare ({filledCount}/4)
-              </>
-            )}
-          </Button>
+        {/* Action Buttons - sticky on mobile */}
+        <div className="sticky-bottom-actions">
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={handleReset}
+              className="flex-1 h-12 touch-target-lg"
+              disabled={isComparing}
+            >
+              <RotateCcw className="w-4 h-4 mr-2" />
+              Reset
+            </Button>
+            <Button
+              onClick={handleCompare}
+              className="flex-[2] h-12 gradient-fire touch-target-lg"
+              disabled={isComparing || filledCount < 2}
+              data-tutorial="compare-button"
+            >
+              {isComparing ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Comparing...
+                </>
+              ) : (
+                <>
+                  <Scale className="w-4 h-4 mr-2" />
+                  Compare ({filledCount}/4)
+                </>
+              )}
+            </Button>
+          </div>
         </div>
 
         {/* Comparison Results */}
         {comparisonResult && (
-          <div className="slide-up">
+          <div className="slide-up mt-4">
             <ComparisonDashboard comparisonResult={comparisonResult} />
           </div>
         )}

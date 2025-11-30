@@ -114,8 +114,8 @@ const Profile = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background pb-24">
-      <main className="max-w-lg mx-auto px-4 py-6">
+    <div className="min-h-dvh bg-background pb-nav-safe overflow-x-safe">
+      <main className="max-w-lg mx-auto px-3 py-4">
         {/* Subscription Status & Actions */}
         <div className="flex items-center justify-between mb-4">
           {(isSubscribed || isAdmin) ? (

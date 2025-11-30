@@ -495,13 +495,13 @@ const Suggestions = () => {
   // Not logged in
   if (!user) {
     return (
-      <div className="min-h-screen bg-background pb-24">
+      <div className="min-h-dvh bg-background pb-nav-safe overflow-x-safe">
         <main className="max-w-lg mx-auto px-3 py-4">
           <div className="text-center py-12">
             <Lock className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
             <h1 className="text-xl font-display text-foreground mb-2">SIGN IN REQUIRED</h1>
             <p className="text-muted-foreground mb-6">Sign in to access AI-powered parlay suggestions</p>
-            <Button onClick={() => navigate('/auth')}>Sign In</Button>
+            <Button onClick={() => navigate('/auth')} className="touch-target-lg">Sign In</Button>
           </div>
         </main>
         <BottomNav />
@@ -512,7 +512,7 @@ const Suggestions = () => {
   // Not subscribed
   if (!isSubscribed && !isAdmin) {
     return (
-      <div className="min-h-screen bg-background pb-24">
+      <div className="min-h-dvh bg-background pb-nav-safe overflow-x-safe">
         <main className="max-w-lg mx-auto px-3 py-4">
           <div className="text-center py-8">
             <div className="w-16 h-16 rounded-full bg-gradient-to-br from-primary/20 to-primary/10 flex items-center justify-center mx-auto mb-4">
@@ -543,7 +543,7 @@ const Suggestions = () => {
                   Confidence scoring for each suggestion
                 </li>
               </ul>
-              <Button onClick={startCheckout} className="w-full gradient-fire">
+              <Button onClick={startCheckout} className="w-full gradient-fire touch-target-lg">
                 Upgrade to Pro - $5/mo
               </Button>
             </CardContent>
@@ -555,7 +555,7 @@ const Suggestions = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background pb-24">
+    <div className="min-h-dvh bg-background pb-nav-safe overflow-x-safe">
       <main className="max-w-lg mx-auto px-3 py-4">
         {/* Header */}
         <div className="flex items-center justify-between mb-4">
