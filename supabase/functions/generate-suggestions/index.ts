@@ -34,13 +34,13 @@ interface OddsEvent {
   bookmakers: OddsBookmaker[];
 }
 
-// Enhanced user pattern with winning data
+// Enhanced user pattern with winning AND losing data
 interface EnhancedUserPattern {
   favorite_sports: string[];
   favorite_bet_types: string[];
   avg_odds_range: { min: number; max: number };
   win_rate_by_sport: Record<string, number>;
-  // New: Winning patterns from trained data
+  // Winning patterns from trained data
   winning_sports: string[];
   winning_bet_types: string[];
   winning_odds_range: { min: number; max: number };
@@ -49,6 +49,22 @@ interface EnhancedUserPattern {
   total_bets: number;
   overall_win_rate: number;
   bet_type_win_rates: Record<string, number>;
+  // NEW: Losing patterns to AVOID
+  losing_sports: string[];
+  losing_bet_types: string[];
+  sport_records: Record<string, { wins: number; losses: number; rate: number }>;
+  bet_type_records: Record<string, { wins: number; losses: number; rate: number }>;
+}
+
+// Learning insights structure
+interface LearningInsights {
+  bestPatterns: { sport: string; betType: string; winRate: number; record: string }[];
+  avoidPatterns: { sport: string; betType: string; winRate: number; record: string; reason: string }[];
+  totalBets: number;
+  totalWins: number;
+  totalLosses: number;
+  overallWinRate: number;
+  message: string;
 }
 
 interface AccuracyMetric {
@@ -158,13 +174,13 @@ serve(async (req) => {
       console.error('Error fetching user history:', historyError);
     }
 
-    // Build enhanced user pattern profile with winning patterns
+    // Build enhanced user pattern profile with winning AND losing patterns
     const userPattern: EnhancedUserPattern = {
       favorite_sports: [],
       favorite_bet_types: [],
       avg_odds_range: { min: -200, max: 200 },
       win_rate_by_sport: {},
-      // New winning pattern fields
+      // Winning pattern fields
       winning_sports: [],
       winning_bet_types: [],
       winning_odds_range: { min: -300, max: 100 },
@@ -173,6 +189,22 @@ serve(async (req) => {
       total_bets: 0,
       overall_win_rate: 0,
       bet_type_win_rates: {},
+      // NEW: Losing pattern fields
+      losing_sports: [],
+      losing_bet_types: [],
+      sport_records: {},
+      bet_type_records: {},
+    };
+    
+    // Learning insights to return to UI
+    const learningInsights: LearningInsights = {
+      bestPatterns: [],
+      avoidPatterns: [],
+      totalBets: 0,
+      totalWins: 0,
+      totalLosses: 0,
+      overallWinRate: 0,
+      message: '',
     };
 
     if (userHistory && userHistory.length > 0) {
@@ -263,6 +295,28 @@ serve(async (req) => {
         }
       }
 
+      // Build sport records for learning insights
+      for (const [sport, stats] of Object.entries(sportWins)) {
+        if (stats.total > 0) {
+          userPattern.sport_records[sport] = {
+            wins: stats.wins,
+            losses: stats.total - stats.wins,
+            rate: stats.wins / stats.total,
+          };
+        }
+      }
+      
+      // Build bet type records for learning insights
+      for (const [betType, stats] of Object.entries(betTypeWins)) {
+        if (stats.total > 0) {
+          userPattern.bet_type_records[betType] = {
+            wins: stats.wins,
+            losses: stats.total - stats.wins,
+            rate: stats.wins / stats.total,
+          };
+        }
+      }
+
       // Get WINNING sports (>50% win rate)
       userPattern.winning_sports = Object.entries(userPattern.win_rate_by_sport)
         .filter(([_, rate]) => rate >= 0.5)
@@ -274,6 +328,73 @@ serve(async (req) => {
         .filter(([_, rate]) => rate >= 0.5)
         .sort((a, b) => b[1] - a[1])
         .map(([type]) => type);
+      
+      // NEW: Get LOSING sports (<40% win rate with at least 2 bets)
+      userPattern.losing_sports = Object.entries(userPattern.sport_records)
+        .filter(([_, record]) => record.rate < 0.4 && (record.wins + record.losses) >= 2)
+        .sort((a, b) => a[1].rate - b[1].rate)
+        .map(([sport]) => sport);
+      
+      // NEW: Get LOSING bet types (<40% win rate with at least 2 bets)
+      userPattern.losing_bet_types = Object.entries(userPattern.bet_type_records)
+        .filter(([_, record]) => record.rate < 0.4 && (record.wins + record.losses) >= 2)
+        .sort((a, b) => a[1].rate - b[1].rate)
+        .map(([type]) => type);
+      
+      // Build learning insights for UI
+      learningInsights.totalBets = totalBets;
+      learningInsights.totalWins = totalWins;
+      learningInsights.totalLosses = totalBets - totalWins;
+      learningInsights.overallWinRate = totalBets > 0 ? (totalWins / totalBets) * 100 : 0;
+      
+      // Best patterns (>50% win rate)
+      const allPatterns: { sport: string; betType: string; wins: number; losses: number; rate: number }[] = [];
+      for (const [sport, record] of Object.entries(userPattern.sport_records)) {
+        for (const [betType, btRecord] of Object.entries(userPattern.bet_type_records)) {
+          // Use sport-level rate for simplicity
+          allPatterns.push({
+            sport,
+            betType,
+            wins: record.wins,
+            losses: record.losses,
+            rate: record.rate,
+          });
+        }
+      }
+      
+      // Get top performing sport/betType combos
+      learningInsights.bestPatterns = Object.entries(userPattern.sport_records)
+        .filter(([_, record]) => record.rate >= 0.5 && (record.wins + record.losses) >= 2)
+        .sort((a, b) => b[1].rate - a[1].rate)
+        .slice(0, 3)
+        .map(([sport, record]) => ({
+          sport,
+          betType: userPattern.winning_bet_types[0] || 'mixed',
+          winRate: Math.round(record.rate * 100),
+          record: `${record.wins}-${record.losses}`,
+        }));
+      
+      // Patterns to avoid (<40% win rate)
+      learningInsights.avoidPatterns = Object.entries(userPattern.sport_records)
+        .filter(([_, record]) => record.rate < 0.4 && (record.wins + record.losses) >= 2)
+        .sort((a, b) => a[1].rate - b[1].rate)
+        .slice(0, 3)
+        .map(([sport, record]) => ({
+          sport,
+          betType: userPattern.losing_bet_types[0] || 'mixed',
+          winRate: Math.round(record.rate * 100),
+          record: `${record.wins}-${record.losses}`,
+          reason: record.wins === 0 ? 'Zero wins' : `Only ${Math.round(record.rate * 100)}% win rate`,
+        }));
+      
+      // Build message
+      const avoidList = userPattern.losing_sports.slice(0, 2).join(', ');
+      const focusList = userPattern.winning_sports.slice(0, 2).join(', ');
+      learningInsights.message = focusList 
+        ? `Focusing on ${focusList} (your best sports)${avoidList ? `. Avoiding ${avoidList} (low win rate)` : ''}`
+        : avoidList 
+          ? `Avoiding ${avoidList} (low win rate)`
+          : 'Building your betting profile...';
 
       // Calculate winning odds range
       if (winningOdds.length > 0) {
@@ -312,9 +433,22 @@ serve(async (req) => {
     console.log('Enhanced user pattern:', {
       winning_sports: userPattern.winning_sports,
       winning_bet_types: userPattern.winning_bet_types,
+      losing_sports: userPattern.losing_sports,
+      losing_bet_types: userPattern.losing_bet_types,
       winning_odds_range: userPattern.winning_odds_range,
       overall_win_rate: userPattern.overall_win_rate,
     });
+    
+    console.log('Learning insights:', learningInsights);
+    
+    // Helper to check if a leg matches LOSING patterns (should be avoided)
+    const matchesLosingPattern = (sport: string, betType: string): boolean => {
+      const sportIsLosing = userPattern.losing_sports.includes(sport);
+      const betTypeIsLosing = userPattern.losing_bet_types.some(lt => 
+        betType.toLowerCase().includes(lt.toLowerCase())
+      );
+      return sportIsLosing || betTypeIsLosing;
+    };
 
     // Step 3: Fetch odds from The Odds API
     // Prioritize Football, Basketball, Hockey as requested
@@ -1045,10 +1179,12 @@ serve(async (req) => {
     }
 
     console.log(`Generated ${suggestions.length} suggestions with LOW RISK priority`);
+    console.log('Returning learning insights:', learningInsights);
 
     return new Response(JSON.stringify({ 
       suggestions,
       userPattern,
+      learningInsights,
       accuracyMetrics: accuracyMetrics || [],
       message: `Generated ${suggestions.length} personalized parlay suggestions` 
     }), {
