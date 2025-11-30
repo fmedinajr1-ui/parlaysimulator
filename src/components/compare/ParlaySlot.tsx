@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { useSubscription } from '@/hooks/useSubscription';
 import { useAuth } from '@/contexts/AuthContext';
 import { PaywallModal } from '@/components/PaywallModal';
+import { compressImage, validateImageFile } from '@/lib/image-compression';
 
 export interface LegInput {
   id: string;
@@ -48,15 +49,6 @@ export function ParlaySlot({
   const { user } = useAuth();
   const { isSubscribed, isAdmin, canScan, scansRemaining, incrementScan, startCheckout } = useSubscription();
 
-  const convertFileToBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  };
-
   const handleFileSelect = useCallback(async (file: File) => {
     // Check scan access for logged-in users
     if (user && !canScan && !isSubscribed && !isAdmin) {
@@ -64,19 +56,12 @@ export function ParlaySlot({
       return;
     }
 
-    if (!file.type.startsWith('image/')) {
+    // Validate file
+    const validation = validateImageFile(file);
+    if (!validation.valid) {
       toast({
-        title: "Wrong file type! 📁",
-        description: "Please upload an image of your betting slip.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    if (file.size > 10 * 1024 * 1024) {
-      toast({
-        title: "File too big! 📦",
-        description: "Max file size is 10MB.",
+        title: "Invalid file! 📁",
+        description: validation.error,
         variant: "destructive",
       });
       return;
@@ -85,7 +70,8 @@ export function ParlaySlot({
     setIsProcessing(true);
 
     try {
-      const imageBase64 = await convertFileToBase64(file);
+      // Compress image before upload
+      const { base64: imageBase64 } = await compressImage(file);
       const { data, error } = await supabase.functions.invoke('extract-parlay', {
         body: { imageBase64 }
       });

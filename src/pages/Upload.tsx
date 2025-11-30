@@ -17,6 +17,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import { useSubscription } from "@/hooks/useSubscription";
 import { useAuth } from "@/contexts/AuthContext";
+import { compressImage, validateImageFile } from "@/lib/image-compression";
 
 // Calculate estimated per-leg odds when we only have total odds
 function calculateEstimatedLegOdds(totalOdds: number, numLegs: number): number {
@@ -150,15 +151,6 @@ const Upload = () => {
     }
   };
 
-  const convertFileToBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  };
-
   const handleFileSelect = useCallback(async (file: File) => {
     // Check scan access for logged-in users
     if (user && !canScan && !isSubscribed && !isAdmin) {
@@ -166,21 +158,12 @@ const Upload = () => {
       return;
     }
 
-    // Validate file type
-    if (!file.type.startsWith('image/')) {
+    // Validate file
+    const validation = validateImageFile(file);
+    if (!validation.valid) {
       toast({
-        title: "Wrong file type! 📁",
-        description: "Please upload an image of your betting slip.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    // Validate file size (max 10MB)
-    if (file.size > 10 * 1024 * 1024) {
-      toast({
-        title: "File too big! 📦",
-        description: "Max file size is 10MB.",
+        title: "Invalid file! 📁",
+        description: validation.error,
         variant: "destructive",
       });
       return;
@@ -189,13 +172,15 @@ const Upload = () => {
     setIsProcessing(true);
     
     toast({
-      title: "Scanning your slip... 🔍",
-      description: "AI is reading your betting slip.",
+      title: "Compressing & scanning... 🔍",
+      description: "Optimizing image for AI analysis.",
     });
 
     try {
-      // Convert file to base64
-      const imageBase64 = await convertFileToBase64(file);
+      // Compress image before upload
+      const { base64: imageBase64, originalSize, compressedSize } = await compressImage(file);
+      
+      console.log(`Upload: ${(originalSize / 1024).toFixed(0)}KB → ${(compressedSize / 1024).toFixed(0)}KB`);
 
       // Call the edge function
       const { data, error } = await supabase.functions.invoke('extract-parlay', {
