@@ -56,6 +56,15 @@ export function SuggestedParlayCard({
     return odds > 0 ? `+${odds}` : odds.toString();
   };
 
+  const getOddsColor = (odds: number) => {
+    if (odds <= -400) return "bg-emerald-500/20 text-emerald-400 border-emerald-500/30";
+    if (odds <= -300) return "bg-green-500/20 text-green-400 border-green-500/30";
+    if (odds <= -200) return "bg-lime-500/20 text-lime-400 border-lime-500/30";
+    if (odds <= -150) return "bg-yellow-500/20 text-yellow-400 border-yellow-500/30";
+    if (odds <= -100) return "bg-orange-500/20 text-orange-400 border-orange-500/30";
+    return "bg-red-500/20 text-red-400 border-red-500/30";
+  };
+
   const formatTimeUntil = (dateString: string) => {
     const eventDate = new Date(dateString);
     const now = new Date();
@@ -120,28 +129,52 @@ export function SuggestedParlayCard({
           {legs.map((leg, index) => {
             const betBadge = getBetTypeBadge(leg.betType);
             const BetIcon = betBadge.icon;
+            const oddsColor = getOddsColor(leg.odds);
+            const probPercent = (leg.impliedProbability * 100).toFixed(0);
             return (
               <div 
                 key={index}
-                className="flex items-center justify-between text-sm bg-muted/30 rounded-lg px-3 py-2"
+                className="bg-muted/30 rounded-lg px-3 py-2.5 space-y-2"
               >
-                <div className="flex-1 min-w-0">
-                  <p className="text-foreground truncate">{leg.description}</p>
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
-                    <span>{leg.sport}</span>
-                    <span>•</span>
-                    <div className="flex items-center gap-1">
-                      <BetIcon className="w-3 h-3" />
-                      <span>{betBadge.label}</span>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-foreground leading-tight">{leg.description}</p>
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
+                      <span>{leg.sport}</span>
+                      <span>•</span>
+                      <div className="flex items-center gap-1">
+                        <BetIcon className="w-3 h-3" />
+                        <span>{betBadge.label}</span>
+                      </div>
+                      <span>•</span>
+                      <Clock className="w-3 h-3" />
+                      <span>{formatTimeUntil(leg.eventTime)}</span>
                     </div>
-                    <span>•</span>
-                    <Clock className="w-3 h-3" />
-                    <span>{formatTimeUntil(leg.eventTime)}</span>
+                  </div>
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    <Badge 
+                      variant="outline" 
+                      className={cn("text-sm font-bold px-2.5 py-0.5 border", oddsColor)}
+                    >
+                      {formatOdds(leg.odds)}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">{probPercent}% hit</span>
                   </div>
                 </div>
-                <Badge variant="secondary" className="ml-2 shrink-0">
-                  {formatOdds(leg.odds)}
-                </Badge>
+                {/* Probability bar */}
+                <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                  <div 
+                    className={cn(
+                      "h-full rounded-full transition-all",
+                      leg.impliedProbability >= 0.75 ? "bg-emerald-500" :
+                      leg.impliedProbability >= 0.65 ? "bg-green-500" :
+                      leg.impliedProbability >= 0.55 ? "bg-lime-500" :
+                      leg.impliedProbability >= 0.50 ? "bg-yellow-500" :
+                      "bg-orange-500"
+                    )}
+                    style={{ width: `${Math.min(leg.impliedProbability * 100, 100)}%` }}
+                  />
+                </div>
               </div>
             );
           })}
