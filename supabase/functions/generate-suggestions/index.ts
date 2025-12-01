@@ -151,6 +151,20 @@ serve(async (req) => {
       console.error('Error fetching accuracy metrics:', accuracyError);
     }
 
+    // Fetch recent sharp money alerts (last 24 hours)
+    console.log('Fetching recent sharp money alerts...');
+    const { data: sharpAlerts, error: sharpError } = await supabase
+      .from('line_movements')
+      .select('*')
+      .eq('is_sharp_action', true)
+      .gte('detected_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+      .order('detected_at', { ascending: false });
+
+    if (sharpError) {
+      console.error('Error fetching sharp alerts:', sharpError);
+    }
+    console.log(`Found ${sharpAlerts?.length || 0} sharp movements`);
+
     // Build accuracy map for quick lookup
     const accuracyMap: Record<string, AccuracyMetric> = {};
     if (accuracyMetrics) {
@@ -1214,6 +1228,121 @@ serve(async (req) => {
       console.log(`Created 8-leg NBA props parlay with ${(combinedProb * 100).toFixed(1)}% probability and +${totalOdds} odds`);
     } else {
       console.log(`Only found ${selectedNBALegs.length} qualifying NBA props (need 8)`);
+    }
+
+    // ========================================
+    // STRATEGY 9: SHARP MONEY PARLAY
+    // Follow the smart money - bet in direction of sharp movements
+    // ========================================
+    if (sharpAlerts && sharpAlerts.length > 0) {
+      console.log('Generating SHARP MONEY PARLAY...');
+      
+      const sharpLegs: SuggestionLeg[] = [];
+      let sharpProb = 1;
+      const usedEvents = new Set<string>();
+      
+      // Filter for movements where sharps are ON this side (odds shortened)
+      // new_price < old_price means odds got shorter = sharps betting this side
+      const sharpBackedMoves = sharpAlerts.filter(alert => {
+        return alert.new_price < alert.old_price;
+      });
+      
+      console.log(`Sharp-backed movements (odds shortened): ${sharpBackedMoves.length}`);
+      
+      for (const sharpMove of sharpBackedMoves) {
+        if (sharpLegs.length >= 4) break;
+        if (usedEvents.has(sharpMove.event_id)) continue;
+        
+        // Find this event in our fetched odds
+        const event = allOdds.find(e => {
+          const matchesDescription = `${e.away_team} @ ${e.home_team}` === sharpMove.description ||
+                                      e.home_team === sharpMove.outcome_name ||
+                                      e.away_team === sharpMove.outcome_name;
+          return matchesDescription || e.id === sharpMove.event_id;
+        });
+        
+        if (!event) {
+          // Event not in our odds data, use the sharp alert data directly
+          const americanOdds = sharpMove.new_price;
+          const impliedProb = americanToImplied(americanOdds);
+          
+          if (sharpProb * impliedProb >= 0.10) {
+            sharpProb *= impliedProb;
+            usedEvents.add(sharpMove.event_id);
+            
+            sharpLegs.push({
+              description: `${sharpMove.outcome_name} (${sharpMove.market_type === 'h2h' ? 'ML' : sharpMove.market_type})`,
+              odds: americanOdds,
+              impliedProbability: impliedProb,
+              sport: sharpMove.sport,
+              betType: sharpMove.market_type === 'h2h' ? 'moneyline' : sharpMove.market_type,
+              eventTime: sharpMove.commence_time || new Date().toISOString(),
+            });
+          }
+          continue;
+        }
+        
+        // Get current odds from the bookmaker
+        const bookmaker = event.bookmakers.find(b => b.key === sharpMove.bookmaker) || event.bookmakers[0];
+        if (!bookmaker) continue;
+        
+        // Find the specific market and outcome
+        const market = bookmaker.markets.find(m => m.key === sharpMove.market_type);
+        if (!market) continue;
+        
+        const outcome = market.outcomes.find(o => o.name === sharpMove.outcome_name);
+        if (!outcome) continue;
+        
+        const americanOdds = decimalToAmerican(outcome.price);
+        const impliedProb = americanToImplied(americanOdds);
+        
+        if (sharpProb * impliedProb >= 0.10) {
+          sharpProb *= impliedProb;
+          usedEvents.add(sharpMove.event_id);
+          
+          let description = sharpMove.outcome_name;
+          if (sharpMove.market_type === 'spreads' && outcome.point !== undefined) {
+            description = `${sharpMove.outcome_name} ${outcome.point > 0 ? '+' : ''}${outcome.point}`;
+          } else if (sharpMove.market_type === 'totals' && outcome.point !== undefined) {
+            description = `${event.away_team} @ ${event.home_team} ${outcome.name} ${outcome.point}`;
+          } else if (sharpMove.market_type === 'h2h') {
+            description = `${sharpMove.outcome_name} ML`;
+          }
+          
+          sharpLegs.push({
+            description,
+            odds: americanOdds,
+            impliedProbability: impliedProb,
+            sport: sharpMove.sport,
+            betType: sharpMove.market_type === 'h2h' ? 'moneyline' : sharpMove.market_type,
+            eventTime: event.commence_time,
+          });
+        }
+      }
+      
+      if (sharpLegs.length >= 2) {
+        const totalOdds = calculateTotalOdds(sharpLegs);
+        const sharpIndicators = sharpBackedMoves
+          .slice(0, 3)
+          .map(m => m.sharp_indicator?.split(' - ')[0])
+          .filter(Boolean)
+          .join(', ');
+        
+        suggestions.unshift({
+          legs: sharpLegs,
+          total_odds: totalOdds,
+          combined_probability: sharpProb,
+          suggestion_reason: `⚡ SHARP MONEY PARLAY: Following smart money movement. ${sharpIndicators || 'Sharp action detected'}. These lines moved with professional action.`,
+          sport: sharpLegs[0].sport,
+          confidence_score: 0.80,
+          expires_at: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(), // 12 hour expiry (time sensitive)
+          is_data_driven: true,
+        });
+        
+        console.log(`Created SHARP MONEY PARLAY with ${sharpLegs.length} legs`);
+      } else {
+        console.log(`Only found ${sharpLegs.length} qualifying sharp-backed legs (need 2)`);
+      }
     }
 
     // Sort suggestions: LOW RISK (high probability) first
