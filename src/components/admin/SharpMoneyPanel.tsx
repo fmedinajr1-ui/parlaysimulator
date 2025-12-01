@@ -26,13 +26,16 @@ interface LineMovement {
   detected_at: string;
   commence_time: string | null;
   player_name?: string | null;
-  // New classification fields
+  // Classification fields
   movement_authenticity?: 'real' | 'fake' | 'uncertain' | null;
   authenticity_confidence?: number | null;
   recommendation?: 'pick' | 'fade' | 'caution' | null;
   recommendation_reason?: string | null;
   opposite_side_moved?: boolean | null;
   books_consensus?: number | null;
+  // Final pick fields
+  final_pick?: string | null;
+  is_primary_record?: boolean | null;
 }
 
 const MARKET_LABELS: Record<string, string> = {
@@ -422,9 +425,33 @@ export function SharpMoneyPanel() {
                         <p className="text-sm text-muted-foreground truncate">
                           {movement.description}
                         </p>
-                        <p className="font-medium text-sm mt-1">
-                          {movement.outcome_name}
-                        </p>
+                        
+                        {/* FINAL PICK - Prominently displayed */}
+                        {movement.final_pick && movement.is_sharp_action && (
+                          <div className="mt-2 p-2 rounded-md border bg-primary/5 border-primary/30">
+                            <div className="flex items-center gap-2">
+                              <Target className="w-4 h-4 text-primary" />
+                              <span className="font-bold text-primary text-sm">
+                                FINAL PICK: {movement.final_pick}
+                              </span>
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              {movement.movement_authenticity === 'real' 
+                                ? '✅ Following verified sharp action'
+                                : movement.movement_authenticity === 'fake'
+                                  ? '👎 Fading fake/trap movement'
+                                  : '⚠️ Proceed with caution'
+                              }
+                            </p>
+                          </div>
+                        )}
+                        
+                        {/* Fallback outcome name if no final pick */}
+                        {!movement.final_pick && (
+                          <p className="font-medium text-sm mt-1">
+                            {movement.outcome_name}
+                          </p>
+                        )}
 
                         {/* Recommendation reason */}
                         {movement.recommendation_reason && (

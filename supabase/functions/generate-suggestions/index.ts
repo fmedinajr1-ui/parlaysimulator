@@ -1463,11 +1463,13 @@ serve(async (req) => {
 
     // ========================================
     // STRATEGY 11: FADE PARLAY
-    // Bet AGAINST fake/trap sharp movements
+    // Bet AGAINST fake/trap sharp movements using final_pick
     // ========================================
     if (sharpAlerts && sharpAlerts.length > 0) {
       const fakeSharpMoves = sharpAlerts.filter(m => 
-        m.movement_authenticity === 'fake' && m.recommendation === 'fade'
+        m.movement_authenticity === 'fake' && 
+        m.recommendation === 'fade' &&
+        m.is_primary_record !== false // Only use primary records with final_pick
       );
       
       console.log(`Found ${fakeSharpMoves.length} fake sharp movements to fade...`);
@@ -1489,14 +1491,11 @@ serve(async (req) => {
             : fakeMove.event_id;
           if (usedEvents.has(eventKey)) continue;
           
-          // For fade, we bet the OPPOSITE - if sharps pushed odds down, we take the higher side
-          // If the movement was on Over, we fade to Under, etc.
-          const isOver = fakeMove.outcome_name.toLowerCase().includes('over');
-          const isUnder = fakeMove.outcome_name.toLowerCase().includes('under');
+          // Use final_pick if available (already contains the correct side to bet)
+          const finalPick = fakeMove.final_pick || fakeMove.outcome_name;
           
-          // Use a standard opposite odds calculation (approximate)
+          // Use a standard odds calculation
           const originalOdds = fakeMove.old_price;
-          // If original was -110, opposite is roughly -110 too for totals/spreads
           const fadeOdds = originalOdds < -110 ? -110 : (originalOdds > 110 ? -110 : -105);
           const impliedProb = americanToImplied(fadeOdds);
           
@@ -1504,13 +1503,13 @@ serve(async (req) => {
             fadeProb *= impliedProb;
             usedEvents.add(eventKey);
             
+            // Use final_pick for the description
             let fadeDescription = '';
             if (fakeMove.player_name) {
               const propType = fakeMove.market_type.replace('player_', '').replace(/_/g, ' ').toUpperCase();
-              const fadeSide = isOver ? 'Under' : (isUnder ? 'Over' : 'Opposite');
-              fadeDescription = `FADE: ${fakeMove.player_name} ${propType} ${fadeSide}`;
+              fadeDescription = `${fakeMove.player_name} ${propType}: ${finalPick}`;
             } else {
-              fadeDescription = `FADE: ${fakeMove.description} - Opposite of ${fakeMove.outcome_name}`;
+              fadeDescription = `${finalPick}`;
             }
             
             fadeLegs.push({
@@ -1536,27 +1535,28 @@ serve(async (req) => {
             legs: fadeLegs,
             total_odds: totalOdds,
             combined_probability: fadeProb,
-            suggestion_reason: `🚨 FADE PARLAY: Betting AGAINST fake sharp movements. ${fadeReasons}. These moves show signs of market traps - we're taking the opposite side!`,
+            suggestion_reason: `🚨 FADE PARLAY: AI-selected picks against market traps. ${fadeReasons}. Final picks determined by movement analysis.`,
             sport: fadeLegs[0].sport,
             confidence_score: 0.65,
             expires_at: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString(),
             is_data_driven: true,
           });
           
-          console.log(`Created FADE PARLAY with ${fadeLegs.length} legs against fake sharp movements`);
+          console.log(`Created FADE PARLAY with ${fadeLegs.length} legs using final_pick`);
         }
       }
     }
 
     // ========================================
     // STRATEGY 12: HIGH-CONFIDENCE REAL SHARP PARLAY
-    // Only verified real sharp movements with high confidence
+    // Only verified real sharp movements with high confidence using final_pick
     // ========================================
     if (sharpAlerts && sharpAlerts.length > 0) {
       const realHighConfidence = sharpAlerts.filter(m => 
         m.movement_authenticity === 'real' && 
         (m.authenticity_confidence || 0) >= 0.65 &&
         m.recommendation === 'pick' &&
+        m.is_primary_record !== false && // Only use primary records
         m.new_price < m.old_price
       );
       
@@ -1582,6 +1582,9 @@ serve(async (req) => {
           const americanOdds = realMove.new_price;
           const impliedProb = americanToImplied(americanOdds);
           
+          // Use final_pick if available
+          const finalPick = realMove.final_pick || realMove.outcome_name;
+          
           if (realSharpProb * impliedProb >= 0.08) {
             realSharpProb *= impliedProb;
             usedEvents.add(eventKey);
@@ -1589,13 +1592,9 @@ serve(async (req) => {
             let description = '';
             if (realMove.player_name) {
               const propType = realMove.market_type.replace('player_', '').replace(/_/g, ' ').toUpperCase();
-              let cleanOutcome = realMove.outcome_name;
-              if (cleanOutcome.includes(realMove.player_name)) {
-                cleanOutcome = cleanOutcome.replace(realMove.player_name, '').trim();
-              }
-              description = `✅ ${realMove.player_name} ${propType} ${cleanOutcome}`;
+              description = `✅ ${realMove.player_name} ${propType}: ${finalPick}`;
             } else {
-              description = `✅ ${realMove.outcome_name} (${realMove.market_type === 'h2h' ? 'ML' : realMove.market_type})`;
+              description = `✅ ${finalPick}`;
             }
             
             realSharpLegs.push({
@@ -1619,14 +1618,14 @@ serve(async (req) => {
             legs: realSharpLegs,
             total_odds: totalOdds,
             combined_probability: realSharpProb,
-            suggestion_reason: `✅ VERIFIED SHARP PARLAY: ${realSharpLegs.length} legs with CONFIRMED real sharp money (${avgConfidence}% avg confidence). Multi-book consensus, late money, classic sharp patterns detected.`,
+            suggestion_reason: `✅ VERIFIED SHARP PARLAY: ${realSharpLegs.length} AI-selected final picks with ${avgConfidence}% confidence. Multi-book consensus and classic sharp patterns detected.`,
             sport: realSharpLegs[0].sport,
             confidence_score: 0.85,
             expires_at: new Date(Date.now() + 10 * 60 * 60 * 1000).toISOString(),
             is_data_driven: true,
           });
           
-          console.log(`Created VERIFIED SHARP PARLAY with ${realSharpLegs.length} high-confidence legs`);
+          console.log(`Created VERIFIED SHARP PARLAY with ${realSharpLegs.length} legs using final_pick`);
         }
       }
     }
