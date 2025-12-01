@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Loader2, Zap, TrendingUp, TrendingDown, RefreshCw, Clock } from 'lucide-react';
+import { Loader2, Zap, TrendingUp, TrendingDown, RefreshCw, Clock, Radio } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 interface LineMovement {
@@ -28,11 +28,52 @@ export function SharpMoneyPanel() {
   const [movements, setMovements] = useState<LineMovement[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isTracking, setIsTracking] = useState(false);
+  const [isLive, setIsLive] = useState(false);
+  const [newAlertCount, setNewAlertCount] = useState(0);
   const { toast } = useToast();
+
+  const handleNewMovement = useCallback((payload: { new: LineMovement }) => {
+    const newMovement = payload.new;
+    
+    setMovements(prev => {
+      // Check if already exists
+      if (prev.some(m => m.id === newMovement.id)) return prev;
+      return [newMovement, ...prev].slice(0, 50);
+    });
+    
+    // Show toast for sharp actions
+    if (newMovement.is_sharp_action) {
+      setNewAlertCount(prev => prev + 1);
+      toast({
+        title: "⚡ New Sharp Alert!",
+        description: `${newMovement.outcome_name} - ${newMovement.sharp_indicator?.split(' - ')[0] || 'Sharp Action'}`,
+      });
+    }
+  }, [toast]);
 
   useEffect(() => {
     fetchMovements();
-  }, []);
+
+    // Subscribe to real-time updates
+    const channel = supabase
+      .channel('line-movements-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'line_movements'
+        },
+        handleNewMovement
+      )
+      .subscribe((status) => {
+        setIsLive(status === 'SUBSCRIBED');
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [handleNewMovement]);
 
   const fetchMovements = async () => {
     setIsLoading(true);
@@ -137,6 +178,25 @@ export function SharpMoneyPanel() {
         <Button variant="outline" onClick={fetchMovements}>
           <RefreshCw className="w-4 h-4" />
         </Button>
+      </div>
+
+      {/* Live Status Indicator */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className={`w-2 h-2 rounded-full ${isLive ? 'bg-green-500 animate-pulse' : 'bg-muted-foreground'}`} />
+          <span className="text-xs text-muted-foreground">
+            {isLive ? 'Live updates enabled' : 'Connecting...'}
+          </span>
+        </div>
+        {newAlertCount > 0 && (
+          <Badge 
+            variant="destructive" 
+            className="cursor-pointer"
+            onClick={() => setNewAlertCount(0)}
+          >
+            {newAlertCount} new alert{newAlertCount > 1 ? 's' : ''}
+          </Badge>
+        )}
       </div>
 
       {/* Stats Cards */}
