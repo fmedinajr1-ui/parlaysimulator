@@ -112,9 +112,9 @@ export function AccuracyProjection({ categories, currentAccuracy, totalSamples }
                     <Badge variant="secondary" className="text-xs">{cat.bet_type}</Badge>
                   </div>
                   <div className="text-right">
-                    <p className="text-sm font-bold text-yellow-500">{cat.accuracy.toFixed(0)}%</p>
+                    <p className="text-sm font-bold text-yellow-500">{(cat.accuracy ?? 0).toFixed(0)}%</p>
                     <p className="text-xs text-muted-foreground">
-                      ~{Math.ceil((80 - cat.accuracy) * 2)} more wins needed
+                      ~{Math.ceil((80 - (cat.accuracy ?? 0)) * 2)} more wins needed
                     </p>
                   </div>
                 </div>
@@ -132,7 +132,7 @@ export function AccuracyProjection({ categories, currentAccuracy, totalSamples }
             <div className="flex flex-wrap gap-2">
               {atTarget.map((cat, idx) => (
                 <Badge key={idx} variant="default" className="bg-green-500/20 text-green-500 border-green-500/30">
-                  {cat.sport} {cat.bet_type} ({cat.accuracy.toFixed(0)}%)
+                  {cat.sport} {cat.bet_type} ({(cat.accuracy ?? 0).toFixed(0)}%)
                 </Badge>
               ))}
             </div>
