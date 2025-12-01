@@ -9,7 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { PaywallModal } from "@/components/PaywallModal";
-import { Plus, Upload as UploadIcon, Flame, X, Loader2, Sparkles, CheckCircle2, Clock, Pencil, CalendarIcon, Crown, Image } from "lucide-react";
+import { QuickCheckResults } from "@/components/upload/QuickCheckResults";
+import { Plus, Upload as UploadIcon, Flame, X, Loader2, Sparkles, CheckCircle2, Clock, Pencil, CalendarIcon, Crown, Image, Shield } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { createLeg, simulateParlay, americanToDecimal } from "@/lib/parlay-calculator";
 import { ParlayLeg } from "@/types/parlay";
@@ -74,6 +75,8 @@ const Upload = () => {
   const [showPaywall, setShowPaywall] = useState(false);
   const [uploadQueue, setUploadQueue] = useState<QueuedSlip[]>([]);
   const [processingIndex, setProcessingIndex] = useState<number>(-1);
+  const [isQuickChecking, setIsQuickChecking] = useState(false);
+  const [quickCheckResults, setQuickCheckResults] = useState<any>(null);
 
   // Check for success/cancel params from Stripe checkout
   useEffect(() => {
@@ -155,6 +158,62 @@ const Upload = () => {
     setEditDate(new Date());
     setEditTime("19:00");
     setIsEditingGameTime(true);
+  };
+
+  const handleQuickCheck = async () => {
+    // Validate that we have at least 2 legs with descriptions
+    const validLegs = legs.filter(leg => leg.description.trim());
+    
+    if (validLegs.length < 2) {
+      toast({
+        title: "Need more legs! 🎲",
+        description: "Add at least 2 legs with descriptions to run Quick Check.",
+      });
+      return;
+    }
+
+    setIsQuickChecking(true);
+    setQuickCheckResults(null);
+
+    try {
+      const { data, error } = await supabase.functions.invoke('quick-sharp-check', {
+        body: { 
+          legs: validLegs.map(leg => ({ description: leg.description }))
+        }
+      });
+
+      if (error) throw error;
+      
+      setQuickCheckResults(data);
+      
+      // Show toast based on results
+      if (data.hasSharpConflicts) {
+        toast({
+          title: "⚠️ Sharp Conflicts Detected",
+          description: data.suggestedAction,
+          variant: "destructive",
+        });
+      } else if (data.overallRisk === 'caution') {
+        toast({
+          title: "🟡 Proceed with Caution",
+          description: data.suggestedAction,
+        });
+      } else {
+        toast({
+          title: "🟢 Looking Good!",
+          description: data.suggestedAction,
+        });
+      }
+    } catch (error) {
+      console.error('Quick check error:', error);
+      toast({
+        title: "Quick Check Failed",
+        description: "Unable to fetch sharp data. Try again later.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsQuickChecking(false);
+    }
   };
 
   const addLeg = () => {
@@ -761,6 +820,35 @@ const Upload = () => {
             />
           </div>
         </FeedCard>
+
+        {/* Quick Check Button & Results */}
+        {legs.filter(l => l.description.trim()).length >= 2 && (
+          <div className="mb-5 space-y-3">
+            <Button
+              variant="outline"
+              size="lg"
+              className="w-full border-primary/30 text-primary hover:bg-primary/10 hover:border-primary/50"
+              onClick={handleQuickCheck}
+              disabled={isQuickChecking}
+            >
+              {isQuickChecking ? (
+                <>
+                  <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                  Checking Sharp Data...
+                </>
+              ) : (
+                <>
+                  <Shield className="w-5 h-5 mr-2" />
+                  ⚡ Quick Sharp Check
+                </>
+              )}
+            </Button>
+            
+            {quickCheckResults && (
+              <QuickCheckResults results={quickCheckResults} />
+            )}
+          </div>
+        )}
       </main>
 
       {/* Sticky CTA */}
