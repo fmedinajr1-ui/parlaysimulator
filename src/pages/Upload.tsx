@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import { format } from "date-fns";
 import { BottomNav } from "@/components/BottomNav";
 import { FeedCard } from "@/components/FeedCard";
@@ -53,6 +53,7 @@ interface QueuedSlip {
 
 const Upload = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const { user } = useAuth();
   const { isSubscribed, isAdmin, canScan, scansRemaining, incrementScan, startCheckout, checkSubscription } = useSubscription();
@@ -89,6 +90,29 @@ const Upload = () => {
       });
     }
   }, [searchParams, checkSubscription]);
+
+  // Handle optimized legs from Results page
+  useEffect(() => {
+    const optimizedData = location.state as { 
+      optimizedLegs?: Array<{ id: string; description: string; odds: string }>;
+      optimizationApplied?: boolean;
+      removedCount?: number;
+    } | null;
+
+    if (optimizedData?.optimizedLegs && optimizedData.optimizationApplied) {
+      // Pre-fill with optimized legs
+      setLegs(optimizedData.optimizedLegs);
+      
+      // Show success toast
+      toast({
+        title: "✨ Parlay Optimized!",
+        description: `Removed ${optimizedData.removedCount} problematic leg${optimizedData.removedCount !== 1 ? 's' : ''}. Review and analyze your improved parlay.`,
+      });
+      
+      // Clear navigation state
+      navigate('/upload', { replace: true, state: null });
+    }
+  }, [location.state, navigate]);
 
   // Parse extracted game time to Date for editing
   const parseGameTimeForEdit = useCallback((gameTime: string) => {
