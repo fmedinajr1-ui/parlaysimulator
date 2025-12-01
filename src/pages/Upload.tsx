@@ -858,44 +858,55 @@ const Upload = () => {
         </FeedCard>
 
         {/* Quick Check Button & Results */}
-        {legs.filter(l => l.description.trim()).length >= 2 && (
-          <div className="mb-5 space-y-3">
-            <Button
-              variant="outline"
-              size="lg"
-              className="w-full border-primary/30 text-primary hover:bg-primary/10 hover:border-primary/50"
-              onClick={handleQuickCheck}
-              disabled={isQuickChecking}
-            >
-              {isQuickChecking ? (
-                <>
-                  <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                  Checking Sharp Data...
-                </>
-              ) : (
-                <>
-                  <Shield className="w-5 h-5 mr-2" />
-                  ⚡ Quick Sharp Check
-                </>
-              )}
-            </Button>
-            
-            {quickCheckResults && (
+        <div className="mb-5 space-y-3">
+          <Button
+            variant="outline"
+            size="lg"
+            className={cn(
+              "w-full transition-all",
+              legs.filter(l => l.description.trim()).length >= 2
+                ? "border-primary/30 text-primary hover:bg-primary/10 hover:border-primary/50"
+                : "border-muted text-muted-foreground cursor-not-allowed opacity-50"
+            )}
+            onClick={handleQuickCheck}
+            disabled={isQuickChecking || legs.filter(l => l.description.trim()).length < 2}
+          >
+            {isQuickChecking ? (
               <>
-                <QuickCheckResults results={quickCheckResults} />
-                
-                {showOptimizer && (
-                  <UploadOptimizer
-                    legs={legs}
-                    quickCheckResults={quickCheckResults}
-                    onRemoveLegs={handleRemoveProblematicLegs}
-                    onDismiss={() => setShowOptimizer(false)}
-                  />
-                )}
+                <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                Checking Sharp Data...
+              </>
+            ) : (
+              <>
+                <Shield className="w-5 h-5 mr-2" />
+                ⚡ Quick Sharp Check
               </>
             )}
-          </div>
-        )}
+          </Button>
+          
+          {/* Hint when disabled */}
+          {legs.filter(l => l.description.trim()).length < 2 && (
+            <p className="text-xs text-muted-foreground text-center">
+              Enter at least 2 legs to check against sharp money data
+            </p>
+          )}
+          
+          {/* Results when available */}
+          {quickCheckResults && (
+            <>
+              <QuickCheckResults results={quickCheckResults} />
+              
+              {showOptimizer && (
+                <UploadOptimizer
+                  legs={legs}
+                  quickCheckResults={quickCheckResults}
+                  onRemoveLegs={handleRemoveProblematicLegs}
+                  onDismiss={() => setShowOptimizer(false)}
+                />
+              )}
+            </>
+          )}
+        </div>
       </main>
 
       {/* Sticky CTA */}
