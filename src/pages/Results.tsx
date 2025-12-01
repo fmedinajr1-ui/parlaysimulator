@@ -407,6 +407,9 @@ const Results = () => {
           <ParlayOptimizer 
             legs={simulation.legs}
             legAnalyses={aiAnalysis?.legAnalyses}
+            stake={simulation.stake}
+            combinedProbability={simulation.combinedProbability}
+            potentialPayout={simulation.potentialPayout}
             delay={130}
           />
 

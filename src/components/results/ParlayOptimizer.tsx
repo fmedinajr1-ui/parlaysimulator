@@ -2,13 +2,16 @@ import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { FeedCard } from "../FeedCard";
 import { LegAnalysis, ParlayLeg } from "@/types/parlay";
-import { Zap, TrendingUp, X, RefreshCw } from "lucide-react";
+import { Zap, TrendingUp, X, RefreshCw, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 interface ParlayOptimizerProps {
   legs: ParlayLeg[];
   legAnalyses?: Array<LegAnalysis & { legIndex: number }>;
+  stake: number;
+  combinedProbability: number;
+  potentialPayout: number;
   delay?: number;
 }
 
@@ -28,7 +31,7 @@ const TRAP_SIGNALS = [
   'FAKE_SHARP_TAG'
 ];
 
-export function ParlayOptimizer({ legs, legAnalyses, delay = 0 }: ParlayOptimizerProps) {
+export function ParlayOptimizer({ legs, legAnalyses, stake, combinedProbability, potentialPayout, delay = 0 }: ParlayOptimizerProps) {
   const navigate = useNavigate();
   const [showOptimizer, setShowOptimizer] = useState(false);
   const [suggestions, setSuggestions] = useState<OptimizationSuggestion[]>([]);
@@ -128,6 +131,45 @@ export function ParlayOptimizer({ legs, legAnalyses, delay = 0 }: ParlayOptimize
     return calculateHealthScore(remainingAnalyses);
   };
 
+  const calculateOptimizedStats = () => {
+    if (suggestions.length === 0) return null;
+    
+    // Get high priority legs to remove
+    const highPrioritySuggestions = suggestions.filter(s => s.priority === 'high');
+    const removedIndices = new Set(highPrioritySuggestions.map(s => s.legIndex));
+    
+    // Calculate remaining legs' combined probability
+    const remainingLegs = legs.filter((_, idx) => !removedIndices.has(idx));
+    const optimizedProbability = remainingLegs.reduce((prob, leg) => prob * leg.impliedProbability, 1);
+    
+    // Calculate optimized payout
+    const totalOdds = remainingLegs.reduce((total, leg) => {
+      const decimal = leg.odds > 0 ? (leg.odds / 100) + 1 : (100 / Math.abs(leg.odds)) + 1;
+      return total * decimal;
+    }, 1);
+    const optimizedPayout = stake * totalOdds;
+    
+    // Calculate expected value
+    const originalEV = (combinedProbability * potentialPayout) - stake;
+    const optimizedEV = (optimizedProbability * optimizedPayout) - stake;
+    
+    return {
+      remainingLegs: remainingLegs.length,
+      removedLegs: removedIndices.size,
+      optimizedProbability,
+      optimizedPayout,
+      originalEV,
+      optimizedEV,
+      probabilityImprovement: ((optimizedProbability - combinedProbability) / combinedProbability) * 100,
+      payoutChange: optimizedPayout - potentialPayout,
+      evImprovement: optimizedEV - originalEV
+    };
+  };
+
+  const optimizedScore = calculateOptimizedScore();
+  const scoreImprovement = optimizedScore - currentHealthScore;
+  const optimizedStats = calculateOptimizedStats();
+
   const handleOptimize = () => {
     if (suggestions.length > 0) {
       // Get high priority legs to remove
@@ -164,9 +206,6 @@ export function ParlayOptimizer({ legs, legAnalyses, delay = 0 }: ParlayOptimize
 
   if (!hasIssues) return null;
 
-  const optimizedScore = calculateOptimizedScore();
-  const scoreImprovement = optimizedScore - currentHealthScore;
-
   return (
     <>
       <FeedCard delay={delay}>
@@ -202,20 +241,98 @@ export function ParlayOptimizer({ legs, legAnalyses, delay = 0 }: ParlayOptimize
             </DialogDescription>
           </DialogHeader>
 
-          {/* Score Improvement Preview */}
-          {suggestions.filter(s => s.priority === 'high').length > 0 && (
-            <div className="p-4 bg-neon-purple/10 rounded-lg border border-neon-purple/30 mb-4">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs text-muted-foreground uppercase">Health Score Impact</span>
-                <div className="flex items-center gap-2">
-                  <span className="text-lg font-bold text-neon-red">{currentHealthScore.toFixed(0)}%</span>
-                  <TrendingUp className="w-4 h-4 text-neon-green" />
-                  <span className="text-lg font-bold text-neon-green">{optimizedScore.toFixed(0)}%</span>
+          {/* Before/After Comparison */}
+          {optimizedStats && (
+            <div className="mb-4 space-y-3">
+              {/* Probability Comparison */}
+              <div className="p-4 bg-muted/50 rounded-lg border border-border/50">
+                <p className="text-xs text-muted-foreground uppercase mb-3">Win Probability</p>
+                <div className="grid grid-cols-3 gap-2 items-center">
+                  <div className="text-center">
+                    <p className="text-xs text-muted-foreground mb-1">Original</p>
+                    <p className="text-2xl font-bold text-neon-red">
+                      {(combinedProbability * 100).toFixed(1)}%
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">{legs.length} legs</p>
+                  </div>
+                  <div className="flex justify-center">
+                    <ArrowRight className="w-6 h-6 text-neon-green" />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xs text-muted-foreground mb-1">Optimized</p>
+                    <p className="text-2xl font-bold text-neon-green">
+                      {(optimizedStats.optimizedProbability * 100).toFixed(1)}%
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">{optimizedStats.remainingLegs} legs</p>
+                  </div>
+                </div>
+                <div className="mt-3 p-2 bg-neon-green/10 rounded text-center">
+                  <p className="text-sm font-bold text-neon-green">
+                    +{optimizedStats.probabilityImprovement.toFixed(0)}% improvement
+                  </p>
                 </div>
               </div>
-              <p className="text-xs text-neon-purple">
-                +{scoreImprovement.toFixed(0)} point improvement by removing high-priority legs
-              </p>
+
+              {/* Payout Comparison */}
+              <div className="p-4 bg-muted/50 rounded-lg border border-border/50">
+                <p className="text-xs text-muted-foreground uppercase mb-3">Potential Payout</p>
+                <div className="grid grid-cols-3 gap-2 items-center">
+                  <div className="text-center">
+                    <p className="text-xs text-muted-foreground mb-1">Original</p>
+                    <p className="text-xl font-bold text-foreground">
+                      ${potentialPayout.toFixed(2)}
+                    </p>
+                  </div>
+                  <div className="flex justify-center">
+                    <ArrowRight className="w-6 h-6 text-muted-foreground" />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xs text-muted-foreground mb-1">Optimized</p>
+                    <p className="text-xl font-bold text-foreground">
+                      ${optimizedStats.optimizedPayout.toFixed(2)}
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-3 p-2 bg-muted/30 rounded text-center">
+                  <p className="text-sm font-medium text-muted-foreground">
+                    {optimizedStats.payoutChange > 0 ? '+' : ''}${optimizedStats.payoutChange.toFixed(2)} change
+                  </p>
+                </div>
+              </div>
+
+              {/* Expected Value Comparison */}
+              <div className="p-4 bg-gradient-to-r from-neon-purple/10 to-neon-pink/10 rounded-lg border border-neon-purple/30">
+                <p className="text-xs text-muted-foreground uppercase mb-3">Expected Value (EV)</p>
+                <div className="grid grid-cols-3 gap-2 items-center">
+                  <div className="text-center">
+                    <p className="text-xs text-muted-foreground mb-1">Original</p>
+                    <p className={`text-xl font-bold ${optimizedStats.originalEV >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
+                      {optimizedStats.originalEV >= 0 ? '+' : ''}${optimizedStats.originalEV.toFixed(2)}
+                    </p>
+                  </div>
+                  <div className="flex justify-center">
+                    <ArrowRight className="w-6 h-6 text-neon-purple" />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xs text-muted-foreground mb-1">Optimized</p>
+                    <p className={`text-xl font-bold ${optimizedStats.optimizedEV >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
+                      {optimizedStats.optimizedEV >= 0 ? '+' : ''}${optimizedStats.optimizedEV.toFixed(2)}
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-3 p-2 bg-neon-purple/20 rounded text-center">
+                  <p className="text-sm font-bold text-neon-purple">
+                    {optimizedStats.evImprovement >= 0 ? '+' : ''}${optimizedStats.evImprovement.toFixed(2)} EV improvement
+                  </p>
+                </div>
+              </div>
+
+              {/* Summary */}
+              <div className="p-3 bg-background/50 rounded-lg border border-border/50">
+                <p className="text-xs text-muted-foreground">
+                  <span className="font-medium">📊 Summary:</span> By removing {optimizedStats.removedLegs} problematic leg{optimizedStats.removedLegs !== 1 ? 's' : ''}, your win probability increases by <span className="text-neon-green font-medium">{optimizedStats.probabilityImprovement.toFixed(0)}%</span> with an EV improvement of <span className="text-neon-purple font-medium">${optimizedStats.evImprovement.toFixed(2)}</span>.
+                </p>
+              </div>
             </div>
           )}
 
