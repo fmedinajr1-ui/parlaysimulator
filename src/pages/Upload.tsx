@@ -98,7 +98,7 @@ const Upload = () => {
     }
   }, [searchParams, checkSubscription]);
 
-  // Handle optimized legs from Results page
+  // Handle optimized legs from Results page  
   useEffect(() => {
     const optimizedData = location.state as { 
       optimizedLegs?: Array<{ id: string; description: string; odds: string }>;
