@@ -15,6 +15,7 @@ import { HistoricalInsightsCard } from "@/components/results/HistoricalInsightsC
 import { CalibrationDashboard } from "@/components/results/CalibrationDashboard";
 import { SharpMoneyAlerts } from "@/components/results/SharpMoneyAlerts";
 import { TrapAvoidanceCard } from "@/components/results/TrapAvoidanceCard";
+import { ParlayHealthCard } from "@/components/results/ParlayHealthCard";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, RotateCcw, Save, Loader2, LogIn } from "lucide-react";
 import { ParlaySimulation, ParlayAnalysis } from "@/types/parlay";
@@ -393,6 +394,12 @@ const Results = () => {
             probability={simulation.combinedProbability}
             degenerateLevel={simulation.degenerateLevel}
             delay={100}
+          />
+
+          {/* Parlay Health Score Dashboard */}
+          <ParlayHealthCard 
+            legAnalyses={aiAnalysis?.legAnalyses}
+            delay={120}
           />
 
           {/* Trap Avoidance Card - Show at top if traps detected */}
