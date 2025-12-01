@@ -1,6 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import { Sparkles, TrendingUp, Clock, ChevronRight, Target, Layers, User, BarChart3, Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
@@ -13,6 +14,13 @@ interface SuggestedLeg {
   sport: string;
   betType: string;
   eventTime: string;
+  hybridScore?: number;
+  hybridBreakdown?: {
+    sharp: number;
+    user: number;
+    ai: number;
+  };
+  recommendation?: string;
 }
 
 interface SuggestedParlayCardProps {
@@ -24,6 +32,7 @@ interface SuggestedParlayCardProps {
   confidenceScore: number;
   expiresAt: string;
   isDataDriven?: boolean;
+  isHybrid?: boolean;
 }
 
 export function SuggestedParlayCard({
@@ -35,6 +44,7 @@ export function SuggestedParlayCard({
   confidenceScore,
   expiresAt,
   isDataDriven,
+  isHybrid,
 }: SuggestedParlayCardProps) {
   const navigate = useNavigate();
 
@@ -84,16 +94,19 @@ export function SuggestedParlayCard({
 
   const riskInfo = getRiskLabel(combinedProbability);
   
-  // Check if suggestion reason indicates data-driven
+  // Check if suggestion reason indicates data-driven or hybrid
   const isDataDrivenSuggestion = isDataDriven || 
     suggestionReason.includes('DATA-DRIVEN') || 
     suggestionReason.includes('PATTERN MATCHED') || 
     suggestionReason.includes('AI LOW RISK');
+  
+  const isHybridSuggestion = isHybrid || suggestionReason.includes('HYBRID PARLAY');
 
   return (
     <Card className={cn(
       "bg-card/50 border-border/50 hover:border-primary/30 transition-all duration-300",
-      isDataDrivenSuggestion && "border-primary/40 bg-primary/5"
+      isHybridSuggestion && "border-neon-purple/50 bg-neon-purple/5",
+      isDataDrivenSuggestion && !isHybridSuggestion && "border-primary/40 bg-primary/5"
     )}>
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
@@ -105,7 +118,16 @@ export function SuggestedParlayCard({
             </Badge>
           </div>
           <div className="flex items-center gap-1">
-            {isDataDrivenSuggestion && (
+            {isHybridSuggestion && (
+              <Badge 
+                variant="outline" 
+                className="text-xs text-neon-purple bg-neon-purple/10 border-neon-purple/30"
+              >
+                <Shield className="w-3 h-3 mr-1" />
+                Hybrid
+              </Badge>
+            )}
+            {isDataDrivenSuggestion && !isHybridSuggestion && (
               <Badge 
                 variant="outline" 
                 className="text-xs text-primary bg-primary/10 border-primary/30"
@@ -161,6 +183,7 @@ export function SuggestedParlayCard({
                     <span className="text-xs text-muted-foreground">{probPercent}% hit</span>
                   </div>
                 </div>
+                
                 {/* Probability bar */}
                 <div className="h-1.5 bg-muted rounded-full overflow-hidden">
                   <div 
@@ -175,6 +198,26 @@ export function SuggestedParlayCard({
                     style={{ width: `${Math.min(leg.impliedProbability * 100, 100)}%` }}
                   />
                 </div>
+                
+                {/* Hybrid Score Breakdown */}
+                {leg.hybridScore && leg.hybridBreakdown && (
+                  <div className="mt-2 p-2 bg-neon-purple/10 rounded border border-neon-purple/20">
+                    <div className="flex justify-between text-xs mb-2">
+                      <span className="text-muted-foreground">Sharp: {leg.hybridBreakdown.sharp}/40</span>
+                      <span className="text-muted-foreground">User: {leg.hybridBreakdown.user}/35</span>
+                      <span className="text-muted-foreground">AI: {leg.hybridBreakdown.ai}/25</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Progress value={leg.hybridScore} className="h-2" />
+                      <Badge 
+                        variant={leg.recommendation === 'STRONG_PICK' ? 'default' : 'secondary'}
+                        className="text-xs"
+                      >
+                        {leg.recommendation}
+                      </Badge>
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}

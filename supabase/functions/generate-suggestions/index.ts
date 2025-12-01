@@ -76,6 +76,14 @@ interface AccuracyMetric {
   roi_percentage: number;
 }
 
+interface HybridScore {
+  sharpScore: number;      // 0-40 points from sharp data
+  userPatternScore: number; // 0-35 points from user history
+  aiAccuracyScore: number;  // 0-25 points from AI track record
+  totalScore: number;       // 0-100 combined
+  recommendation: 'STRONG_PICK' | 'PICK' | 'NEUTRAL' | 'FADE' | 'STRONG_FADE';
+}
+
 interface SuggestionLeg {
   description: string;
   odds: number;
@@ -83,6 +91,9 @@ interface SuggestionLeg {
   sport: string;
   betType: string;
   eventTime: string;
+  hybridScore?: number;
+  hybridBreakdown?: { sharp: number; user: number; ai: number };
+  recommendation?: string;
 }
 
 // Sport key mapping for The Odds API
@@ -588,6 +599,112 @@ serve(async (req) => {
       const oddsInRange = leg.odds >= userPattern.winning_odds_range.min && 
                           leg.odds <= userPattern.winning_odds_range.max;
       return sportMatches || betTypeMatches || oddsInRange;
+    };
+
+    // HYBRID SCORE FORMULA: Combines sharp money + user patterns + AI accuracy
+    const calculateHybridScore = (
+      leg: { sport: string; betType: string; odds: number; description: string; eventId?: string },
+      sharpAlerts: any[],
+      userPattern: EnhancedUserPattern,
+      accuracyMap: Record<string, AccuracyMetric>
+    ): HybridScore => {
+      let sharpScore = 0;
+      let userPatternScore = 0;
+      let aiAccuracyScore = 0;
+
+      // SHARP SCORE (0-40 points)
+      const matchingSharp = sharpAlerts.find(alert => 
+        alert.sport === leg.sport && 
+        alert.description.toLowerCase().includes(leg.description.toLowerCase().split(' ')[0])
+      );
+
+      if (matchingSharp) {
+        // Base authenticity score
+        if (matchingSharp.movement_authenticity === 'real') sharpScore += 20;
+        else if (matchingSharp.movement_authenticity === 'uncertain') sharpScore += 8;
+        else if (matchingSharp.movement_authenticity === 'fake') sharpScore -= 15;
+
+        // Recommendation bonus
+        if (matchingSharp.recommendation === 'pick') sharpScore += 15;
+        else if (matchingSharp.recommendation === 'caution') sharpScore += 5;
+        else if (matchingSharp.recommendation === 'fade') sharpScore -= 10;
+
+        // Confidence multiplier
+        sharpScore *= (matchingSharp.authenticity_confidence || 0.5);
+
+        // Multi-book consensus bonus
+        if (matchingSharp.books_consensus >= 3) sharpScore += 5;
+      }
+
+      // USER PATTERN SCORE (0-35 points)
+      const sportRecord = userPattern.sport_records[leg.sport];
+      const betTypeRecord = userPattern.bet_type_records[leg.betType];
+
+      if (sportRecord) {
+        const sportWinRate = sportRecord.rate;
+        if (sportWinRate >= 0.6) userPatternScore += 20;
+        else if (sportWinRate >= 0.5) userPatternScore += 12;
+        else if (sportWinRate >= 0.4) userPatternScore += 5;
+        else userPatternScore -= 10;
+
+        // Sample size confidence
+        const totalBets = sportRecord.wins + sportRecord.losses;
+        if (totalBets >= 10) userPatternScore += 5;
+        else if (totalBets >= 5) userPatternScore += 2;
+      }
+
+      if (betTypeRecord) {
+        const betTypeWinRate = betTypeRecord.rate;
+        if (betTypeWinRate >= 0.5) userPatternScore += 10;
+        else if (betTypeWinRate < 0.4) userPatternScore -= 5;
+      }
+
+      // AI ACCURACY SCORE (0-25 points)
+      const aiMetric = accuracyMap[`${leg.sport}_high`] || accuracyMap[`${leg.sport}_medium`];
+      if (aiMetric) {
+        if (aiMetric.accuracy_rate >= 60) aiAccuracyScore += 15;
+        else if (aiMetric.accuracy_rate >= 50) aiAccuracyScore += 10;
+        else if (aiMetric.accuracy_rate >= 40) aiAccuracyScore += 5;
+        else aiAccuracyScore -= 5;
+
+        // ROI bonus
+        if (aiMetric.roi_percentage >= 10) aiAccuracyScore += 10;
+        else if (aiMetric.roi_percentage >= 0) aiAccuracyScore += 5;
+
+        // Sample size
+        if (aiMetric.total_suggestions >= 10) aiAccuracyScore += 3;
+      }
+
+      const totalScore = Math.max(0, Math.min(100, sharpScore + userPatternScore + aiAccuracyScore));
+
+      // Determine recommendation
+      let recommendation: HybridScore['recommendation'];
+      if (totalScore >= 75) recommendation = 'STRONG_PICK';
+      else if (totalScore >= 55) recommendation = 'PICK';
+      else if (totalScore >= 35) recommendation = 'NEUTRAL';
+      else if (totalScore >= 20) recommendation = 'FADE';
+      else recommendation = 'STRONG_FADE';
+
+      return { 
+        sharpScore: Math.round(sharpScore), 
+        userPatternScore: Math.round(userPatternScore), 
+        aiAccuracyScore: Math.round(aiAccuracyScore), 
+        totalScore: Math.round(totalScore), 
+        recommendation 
+      };
+    };
+
+    // Helper to check conflicting signals
+    const hasConflictingSignals = (leg1: any, leg2: any): boolean => {
+      if (leg1.eventId === leg2.eventId) {
+        // Same game, opposite sides
+        if (leg1.betType === 'total' && leg2.betType === 'total') {
+          return (leg1.description.includes('Over') && leg2.description.includes('Under')) ||
+                 (leg1.description.includes('Under') && leg2.description.includes('Over'));
+        }
+        return leg1.outcome !== leg2.outcome;
+      }
+      return false;
     };
 
     // ========================================
@@ -1855,6 +1972,171 @@ serve(async (req) => {
       }
     }
 
+    // ========================================
+    // STRATEGY 16: HYBRID PARLAY
+    // Combines sharp money + user patterns + AI accuracy in one formula
+    // ========================================
+    console.log('Generating HYBRID PARLAY (Sharp + User + AI)...');
+    
+    // Collect ALL potential legs from various sources
+    const allPotentialLegs: Array<{
+      leg: SuggestionLeg & { eventId?: string };
+      hybridScore: HybridScore;
+    }> = [];
+    
+    // Score legs from current odds data
+    for (const event of allOdds.slice(0, 15)) {
+      const bookmaker = event.bookmakers[0];
+      if (!bookmaker) continue;
+      
+      // Try moneyline
+      const h2hMarket = bookmaker.markets.find(m => m.key === 'h2h');
+      if (h2hMarket) {
+        for (const outcome of h2hMarket.outcomes) {
+          const americanOdds = decimalToAmerican(outcome.price);
+          if (americanOdds <= -150 && americanOdds >= -400) {
+            const legCandidate = {
+              sport: event.sport_key,
+              betType: 'moneyline',
+              odds: americanOdds,
+              description: `${outcome.name} ML`,
+              eventId: event.id,
+            };
+            const score = calculateHybridScore(legCandidate, sharpAlerts || [], userPattern, accuracyMap);
+            if (score.totalScore >= 60) {
+              allPotentialLegs.push({
+                leg: {
+                  description: legCandidate.description,
+                  odds: americanOdds,
+                  impliedProbability: americanToImplied(americanOdds),
+                  sport: event.sport_key,
+                  betType: 'moneyline',
+                  eventTime: event.commence_time,
+                  eventId: event.id,
+                  hybridScore: score.totalScore,
+                  hybridBreakdown: {
+                    sharp: score.sharpScore,
+                    user: score.userPatternScore,
+                    ai: score.aiAccuracyScore,
+                  },
+                  recommendation: score.recommendation,
+                },
+                hybridScore: score,
+              });
+            }
+          }
+        }
+      }
+      
+      // Try player props if available
+      const propsForEvent = playerPropsData.get(event.id);
+      if (propsForEvent) {
+        for (const market of propsForEvent.slice(0, 3)) {
+          for (const outcome of market.outcomes.slice(0, 2)) {
+            const americanOdds = decimalToAmerican(outcome.price);
+            if (americanOdds <= -200 && americanOdds >= -500) {
+              const propType = market.key.replace('player_', '').replace(/_/g, ' ').toUpperCase();
+              const legCandidate = {
+                sport: event.sport_key,
+                betType: market.key,
+                odds: americanOdds,
+                description: `${outcome.name} ${propType}`,
+                eventId: event.id,
+              };
+              const score = calculateHybridScore(legCandidate, sharpAlerts || [], userPattern, accuracyMap);
+              if (score.totalScore >= 60) {
+                allPotentialLegs.push({
+                  leg: {
+                    description: legCandidate.description,
+                    odds: americanOdds,
+                    impliedProbability: americanToImplied(americanOdds),
+                    sport: event.sport_key,
+                    betType: market.key,
+                    eventTime: event.commence_time,
+                    eventId: event.id,
+                    hybridScore: score.totalScore,
+                    hybridBreakdown: {
+                      sharp: score.sharpScore,
+                      user: score.userPatternScore,
+                      ai: score.aiAccuracyScore,
+                    },
+                    recommendation: score.recommendation,
+                  },
+                  hybridScore: score,
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    // Sort by hybrid score (highest first)
+    allPotentialLegs.sort((a, b) => b.hybridScore.totalScore - a.hybridScore.totalScore);
+    
+    // Filter to only PICK or STRONG_PICK
+    const qualifiedLegs = allPotentialLegs.filter(scored => 
+      scored.hybridScore.recommendation === 'PICK' || 
+      scored.hybridScore.recommendation === 'STRONG_PICK'
+    );
+    
+    console.log(`Found ${qualifiedLegs.length} legs scoring 60+ with PICK/STRONG_PICK recommendation`);
+    
+    // Build hybrid parlay from top-scoring legs (avoid conflicts)
+    if (qualifiedLegs.length >= 2) {
+      const hybridLegs: SuggestionLeg[] = [];
+      let hybridProb = 1;
+      const usedEvents = new Set<string>();
+      
+      for (const scored of qualifiedLegs) {
+        if (hybridLegs.length >= 4) break;
+        if (usedEvents.has(scored.leg.eventId || '')) continue;
+        
+        // Check for conflicts with existing legs
+        const hasConflict = hybridLegs.some(existing => 
+          hasConflictingSignals(existing, scored.leg)
+        );
+        if (hasConflict) continue;
+        
+        const newProb = hybridProb * scored.leg.impliedProbability;
+        if (newProb >= 0.15) {
+          hybridProb = newProb;
+          if (scored.leg.eventId) usedEvents.add(scored.leg.eventId);
+          hybridLegs.push(scored.leg);
+        }
+      }
+      
+      if (hybridLegs.length >= 2) {
+        const totalOdds = calculateTotalOdds(hybridLegs);
+        const avgHybridScore = Math.round(
+          hybridLegs.reduce((sum, leg) => sum + (leg.hybridScore || 0), 0) / hybridLegs.length
+        );
+        
+        // Build hybrid scores for storage
+        const hybridScoresData = hybridLegs.map(leg => ({
+          description: leg.description,
+          hybridScore: leg.hybridScore,
+          breakdown: leg.hybridBreakdown,
+          recommendation: leg.recommendation,
+        }));
+        
+        suggestions.unshift({
+          legs: hybridLegs,
+          total_odds: totalOdds,
+          combined_probability: hybridProb,
+          suggestion_reason: `🧬 HYBRID PARLAY: ${hybridLegs.length} legs where Sharp Money + Your History + AI Data ALL align. Avg score: ${avgHybridScore}/100. Top-scoring picks only!`,
+          sport: hybridLegs[0].sport,
+          confidence_score: Math.min(avgHybridScore / 100 * 1.1, 0.95),
+          expires_at: new Date(now.getTime() + 18 * 60 * 60 * 1000).toISOString(),
+          is_data_driven: true,
+          is_hybrid: true,
+          hybrid_scores: hybridScoresData,
+        });
+        
+        console.log(`Created HYBRID PARLAY with ${hybridLegs.length} legs, avg hybrid score: ${avgHybridScore}`);
+      }
+    }
+
     // Sort suggestions: LOW RISK (high probability) first
     suggestions.sort((a, b) => b.combined_probability - a.combined_probability);
 
@@ -1878,6 +2160,8 @@ serve(async (req) => {
           sport: s.sport,
           confidence_score: s.confidence_score,
           expires_at: s.expires_at,
+          is_hybrid: s.is_hybrid || false,
+          hybrid_scores: s.hybrid_scores || null,
         })));
 
       if (insertError) {
