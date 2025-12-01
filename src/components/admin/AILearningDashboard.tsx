@@ -152,7 +152,7 @@ export function AILearningDashboard() {
               <Target className="w-4 h-4 text-chart-1" />
               <span className="text-xs text-muted-foreground uppercase tracking-wide">Accuracy</span>
             </div>
-            <p className="text-3xl font-bold text-foreground">{overview?.overallAccuracy.toFixed(1) || 0}%</p>
+            <p className="text-3xl font-bold text-foreground">{(overview?.overallAccuracy ?? 0).toFixed(1)}%</p>
             <p className="text-xs text-muted-foreground mt-1">
               Target: 80%
             </p>
@@ -184,7 +184,7 @@ export function AILearningDashboard() {
                   {bestCategory.sport}
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  {bestCategory.accuracy.toFixed(0)}% ({bestCategory.wins}/{bestCategory.settled})
+                  {(bestCategory.accuracy ?? 0).toFixed(0)}% ({bestCategory.wins}/{bestCategory.settled})
                 </p>
               </>
             ) : (
@@ -222,7 +222,7 @@ export function AILearningDashboard() {
             className="h-3"
           />
           <p className="text-xs text-muted-foreground mt-2 text-center">
-            {overview?.overallAccuracy.toFixed(1)}% overall accuracy • Need 80% target
+            {(overview?.overallAccuracy ?? 0).toFixed(1)}% overall accuracy • Need 80% target
           </p>
         </CardContent>
       </Card>
@@ -256,11 +256,11 @@ export function AILearningDashboard() {
                   </Badge>
                 </div>
                 <span className={`font-bold ${
-                  cat.accuracy >= 80 ? 'text-green-500' :
-                  cat.accuracy >= 60 ? 'text-yellow-500' :
+                  (cat.accuracy ?? 0) >= 80 ? 'text-green-500' :
+                  (cat.accuracy ?? 0) >= 60 ? 'text-yellow-500' :
                   'text-muted-foreground'
                 }`}>
-                  {cat.accuracy.toFixed(0)}%
+                  {(cat.accuracy ?? 0).toFixed(0)}%
                 </span>
               </div>
               <div className="flex items-center gap-2">
