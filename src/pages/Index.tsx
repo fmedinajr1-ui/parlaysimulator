@@ -7,6 +7,8 @@ import { SampleParlayButton } from "@/components/SampleParlayButton";
 import { SuggestedParlays } from "@/components/suggestions/SuggestedParlays";
 import { OddsMovementCard } from "@/components/results/OddsMovementCard";
 import { CompareTeaser } from "@/components/CompareTeaser";
+import { Button } from "@/components/ui/button";
+import { Link } from "react-router-dom";
 
 const Index = () => {
   return (
@@ -16,8 +18,18 @@ const Index = () => {
         <HeroBanner />
         
         {/* Quick Actions */}
-        <div className="flex justify-center gap-3 mb-5">
-          <SampleParlayButton />
+        <div className="flex flex-col items-center gap-3 mb-5">
+          {/* Primary CTA - Analyze Your Parlay */}
+          <Link to="/upload" className="w-full max-w-xs">
+            <Button variant="neon" size="lg" className="w-full font-display text-lg tracking-wider">
+              🎯 Analyze Your Parlay
+            </Button>
+          </Link>
+          
+          {/* Secondary action */}
+          <div className="flex gap-3">
+            <SampleParlayButton />
+          </div>
         </div>
         
         {/* Example Cards */}
