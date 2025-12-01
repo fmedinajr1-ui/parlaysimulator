@@ -58,15 +58,15 @@ export function ParlayOptimizer({ legs, legAnalyses, stake, combinedProbability,
   const analyzeOptimizations = () => {
     const suggestions: OptimizationSuggestion[] = [];
 
-    legAnalyses.forEach((analysis, idx) => {
-      const leg = legs[idx];
+    legAnalyses.forEach((analysis) => {
+      const leg = legs[analysis.legIndex];
       if (!leg) return;
 
       // Check for trap bets (highest priority)
       if (analysis.sharpRecommendation === 'fade' && 
           analysis.sharpSignals?.some(s => TRAP_SIGNALS.includes(s))) {
         suggestions.push({
-          legIndex: idx,
+          legIndex: analysis.legIndex,
           leg,
           reason: `🚨 TRAP BET: ${analysis.sharpReason || 'Fake sharp movement detected'}`,
           impact: 'Removing this leg will significantly improve your parlay health',
@@ -78,7 +78,7 @@ export function ParlayOptimizer({ legs, legAnalyses, stake, combinedProbability,
       // Check for fade recommendations
       if (analysis.sharpRecommendation === 'fade') {
         suggestions.push({
-          legIndex: idx,
+          legIndex: analysis.legIndex,
           leg,
           reason: `❌ FADE: ${analysis.sharpReason || 'Sharp money against this bet'}`,
           impact: 'Removing this leg will improve your parlay health',
@@ -91,7 +91,7 @@ export function ParlayOptimizer({ legs, legAnalyses, stake, combinedProbability,
       if (analysis.sharpRecommendation === 'caution' && 
           analysis.sharpConfidence && analysis.sharpConfidence < 0.4) {
         suggestions.push({
-          legIndex: idx,
+          legIndex: analysis.legIndex,
           leg,
           reason: `⚠️ LOW CONFIDENCE: Mixed or weak signals detected`,
           impact: 'Consider removing to reduce risk',
@@ -103,7 +103,7 @@ export function ParlayOptimizer({ legs, legAnalyses, stake, combinedProbability,
       // Check for extreme risk level
       if (leg.riskLevel === 'extreme') {
         suggestions.push({
-          legIndex: idx,
+          legIndex: analysis.legIndex,
           leg,
           reason: `💀 EXTREME RISK: This leg has very low probability`,
           impact: 'Removing this leg will significantly improve parlay probability',
@@ -171,30 +171,63 @@ export function ParlayOptimizer({ legs, legAnalyses, stake, combinedProbability,
   const optimizedStats = calculateOptimizedStats();
 
   const handleOptimize = () => {
-    if (suggestions.length > 0) {
-      // Get high priority legs to remove
-      const highPrioritySuggestions = suggestions.filter(s => s.priority === 'high');
-      const removedIndices = new Set(highPrioritySuggestions.map(s => s.legIndex));
-      
-      // Create optimized legs array (keeping only non-removed legs)
-      const optimizedLegs = legs
-        .map((leg, idx) => ({ leg, originalIndex: idx }))
-        .filter(({ originalIndex }) => !removedIndices.has(originalIndex))
-        .map(({ leg }) => ({
-          id: leg.id,
-          description: leg.description,
-          odds: leg.odds.toString()
-        }));
-      
-      // Navigate to upload page with optimized legs
-      navigate('/upload', {
-        state: {
-          optimizedLegs,
-          optimizationApplied: true,
-          removedCount: removedIndices.size
-        }
-      });
+    console.log('🔄 Rebuild Parlay clicked');
+    console.log('📊 Total suggestions:', suggestions.length);
+    
+    if (suggestions.length === 0) {
+      console.log('⚠️ No suggestions to apply');
+      return;
     }
+
+    // Get all suggestions to remove (both high and medium if no high exist)
+    const highPrioritySuggestions = suggestions.filter(s => s.priority === 'high');
+    const suggestionsToRemove = highPrioritySuggestions.length > 0 
+      ? highPrioritySuggestions 
+      : suggestions.filter(s => s.priority === 'medium');
+    
+    console.log('🎯 High priority suggestions:', highPrioritySuggestions.length);
+    console.log('🗑️ Suggestions to remove:', suggestionsToRemove.length);
+    
+    if (suggestionsToRemove.length === 0) {
+      console.log('⚠️ No removable suggestions found');
+      return;
+    }
+    
+    const removedIndices = new Set(suggestionsToRemove.map(s => s.legIndex));
+    console.log('📍 Indices to remove:', Array.from(removedIndices));
+    
+    // Create optimized legs array (keeping only non-removed legs)
+    const optimizedLegs = legs
+      .map((leg, idx) => ({ leg, originalIndex: idx }))
+      .filter(({ originalIndex }) => !removedIndices.has(originalIndex))
+      .map(({ leg }) => ({
+        id: leg.id,
+        description: leg.description,
+        odds: leg.odds.toString()
+      }));
+    
+    console.log('✅ Optimized legs count:', optimizedLegs.length);
+    
+    // Validation: Ensure at least 2 legs remain
+    if (optimizedLegs.length < 2) {
+      console.log('❌ Cannot rebuild: Would leave fewer than 2 legs');
+      alert('Cannot rebuild: Removing these legs would leave fewer than 2 legs. A parlay needs at least 2 legs.');
+      return;
+    }
+    
+    console.log('🚀 Navigating to upload with optimized legs');
+    
+    // Close dialog before navigation
+    setShowOptimizer(false);
+    
+    // Navigate to upload page with optimized legs
+    navigate('/upload', {
+      state: {
+        optimizedLegs,
+        optimizationApplied: true,
+        removedCount: removedIndices.size
+      }
+    });
   };
 
   // Only show optimizer if there are suggestions to make
