@@ -489,7 +489,7 @@ export function BulkSlipUpload() {
                       <p className="text-sm font-medium">{item.result?.legs.length} Legs Extracted</p>
                       <p className="text-xs text-muted-foreground">
                         Stake: ${item.result?.stake || 'N/A'} • 
-                        Payout: ${item.result?.potentialPayout?.toFixed(2) || 'N/A'}
+                        Payout: ${typeof item.result?.potentialPayout === 'number' ? item.result.potentialPayout.toFixed(2) : 'N/A'}
                       </p>
                     </div>
                   </div>
