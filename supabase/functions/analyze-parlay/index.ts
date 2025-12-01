@@ -45,6 +45,11 @@ interface LegAnalysis {
   vegasJuice: number;
   correlatedWith?: number[];
   injuryAlerts?: InjuryAlert[];
+  sharpRecommendation?: 'pick' | 'fade' | 'caution' | null;
+  sharpReason?: string;
+  sharpSignals?: string[];
+  sharpConfidence?: number;
+  sharpFinalPick?: string;
 }
 
 interface HistoricalContext {
@@ -205,13 +210,48 @@ serve(async (req) => {
       injurySection += '\n\nConsider these injuries when analyzing player props and team performance. Flag any legs that may be affected.';
     }
 
+    // Fetch recent line movements (last 6 hours)
+    let lineMovements: any[] = [];
+    try {
+      const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+      const { data: movementData } = await supabase
+        .from('line_movements')
+        .select('*')
+        .gte('detected_at', sixHoursAgo)
+        .order('detected_at', { ascending: false })
+        .limit(100);
+      
+      lineMovements = movementData || [];
+      console.log(`Loaded ${lineMovements.length} recent line movements`);
+    } catch (movementError) {
+      console.error('Error fetching line movements:', movementError);
+    }
+
+    // Build sharp money context
+    let sharpSection = '';
+    if (lineMovements.length > 0) {
+      sharpSection = '\n\nREAL-TIME SHARP LINE MOVEMENTS (last 6 hours):';
+      const sharpMovements = lineMovements.filter(m => m.is_sharp_action || m.movement_authenticity === 'real' || m.recommendation);
+      sharpMovements.slice(0, 15).forEach(m => {
+        const rec = m.recommendation ? ` | ${m.recommendation.toUpperCase()}` : '';
+        const auth = m.movement_authenticity ? ` (${m.movement_authenticity})` : '';
+        sharpSection += `\n- ${m.description} | ${m.market_type}${rec}${auth}`;
+        if (m.sharp_indicator) sharpSection += ` | Signal: ${m.sharp_indicator}`;
+      });
+      sharpSection += '\n\nSHARP ANALYSIS RULES:';
+      sharpSection += '\n- PICK: Real sharp money detected (authentic movement, multi-book consensus, late money sweet spot) - bet this side';
+      sharpSection += '\n- FADE: Fake/trap movement detected (single book, opposite side moved, low confidence) - bet the opposite';
+      sharpSection += '\n- CAUTION: Mixed signals or uncertain - proceed carefully';
+      sharpSection += '\n\nFor each leg, analyze if any sharp movements match the bet. Provide sharpRecommendation, sharpReason, sharpSignals array, sharpConfidence (0-1), and sharpFinalPick.';
+    }
+
     const prompt = `You are an expert sharp sports bettor and analyst. Analyze this parlay slip and provide detailed intelligence on each leg.
 
 PARLAY SLIP:
 ${legsText}
 
 Total Stake: $${stake}
-Combined Probability: ${(combinedProbability * 100).toFixed(2)}%${historicalSection}${calibrationSection}${injurySection}
+Combined Probability: ${(combinedProbability * 100).toFixed(2)}%${historicalSection}${calibrationSection}${injurySection}${sharpSection}
 
 For EACH leg, provide analysis in this exact JSON format. Be specific and analytical:
 
@@ -244,7 +284,12 @@ For EACH leg, provide analysis in this exact JSON format. Be specific and analyt
           "injuryDetails": "Details",
           "impactLevel": "critical|high|medium|low"
         }
-      ]
+      ],
+      "sharpRecommendation": "pick|fade|caution|null",
+      "sharpReason": "Explanation of sharp signals detected",
+      "sharpSignals": ["MULTI_BOOK_CONSENSUS", "LATE_MONEY_SWEET_SPOT"],
+      "sharpConfidence": 0.75,
+      "sharpFinalPick": "Team/Player to bet or 'No sharp action detected'"
     }
   ],
   "correlatedLegs": [
@@ -264,9 +309,14 @@ ANALYSIS GUIDELINES:
    - Public money inflating lines: -5%
    - Sharp money indicator: +5%
    - Historical performance data (if available): factor in user's actual hit rate
-4. Be brutally honest. If it's a sucker bet, say so in risk factors.
-5. Reference real factors when possible (primetime games, divisional matchups, back-to-backs, etc.)
-6. If historical data shows the AI has been accurate/inaccurate on certain bet types, adjust confidence accordingly.
+4. SHARP ANALYSIS: For each leg, check if line movements match the bet. Set sharpRecommendation based on:
+   - "pick": Real sharp money (multi-book consensus, late money, high confidence, authentic movement)
+   - "fade": Fake/trap money (single book, opposite side moved, low confidence, questionable authenticity)
+   - "caution": Mixed signals or insufficient data
+   - null: No relevant line movement data
+5. Be brutally honest. If it's a sucker bet, say so in risk factors.
+6. Reference real factors when possible (primetime games, divisional matchups, back-to-backs, etc.)
+7. If historical data shows the AI has been accurate/inaccurate on certain bet types, adjust confidence accordingly.
 
 Return ONLY valid JSON, no other text.`;
 

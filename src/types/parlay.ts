@@ -30,6 +30,11 @@ export interface LegAnalysis {
   vegasJuice: number;
   correlatedWith?: number[];
   injuryAlerts?: InjuryAlert[];
+  sharpRecommendation?: 'pick' | 'fade' | 'caution' | null;
+  sharpReason?: string;
+  sharpSignals?: string[];
+  sharpConfidence?: number;
+  sharpFinalPick?: string;
 }
 
 export interface CorrelatedLegPair {
