@@ -400,14 +400,45 @@ export function SharpMoneyPanel() {
                           )}
                         </div>
 
-                        {/* Classification badges for sharp movements */}
+                        {/* AI Betting Rule Badges */}
                         {movement.is_sharp_action && (
-                          <div className="flex items-center gap-2 mb-2">
+                          <div className="flex items-center gap-2 mb-2 flex-wrap">
                             {getAuthenticityBadge(movement.movement_authenticity)}
                             {getRecommendationBadge(movement.recommendation)}
                             {movement.books_consensus && movement.books_consensus > 1 && (
                               <Badge variant="outline" className="text-xs">
                                 {movement.books_consensus} books
+                              </Badge>
+                            )}
+                            {/* AI Knowledge Rule Badges */}
+                            {movement.recommendation_reason?.includes('LINE_AND_JUICE') && (
+                              <Badge variant="outline" className="text-xs bg-green-500/10 text-green-400 border-green-500/30">
+                                ✅ Line+Juice
+                              </Badge>
+                            )}
+                            {movement.recommendation_reason?.includes('LATE_MONEY_SWEET_SPOT') && (
+                              <Badge variant="outline" className="text-xs bg-green-500/10 text-green-400 border-green-500/30">
+                                🕐 1-3hr Sweet Spot
+                              </Badge>
+                            )}
+                            {movement.recommendation_reason?.includes('PRICE_ONLY') && (
+                              <Badge variant="outline" className="text-xs bg-red-500/10 text-red-400 border-red-500/30">
+                                ❌ Price-Only Trap
+                              </Badge>
+                            )}
+                            {movement.recommendation_reason?.includes('EARLY_MORNING') && (
+                              <Badge variant="outline" className="text-xs bg-yellow-500/10 text-yellow-400 border-yellow-500/30">
+                                🌅 Morning Trap
+                              </Badge>
+                            )}
+                            {movement.recommendation_reason?.includes('STEAM_MOVE_NO_CONSENSUS') && (
+                              <Badge variant="outline" className="text-xs bg-red-500/10 text-red-400 border-red-500/30">
+                                🚨 Single Book Steam
+                              </Badge>
+                            )}
+                            {movement.recommendation_reason?.includes('MULTI_BOOK') && (
+                              <Badge variant="outline" className="text-xs bg-green-500/10 text-green-400 border-green-500/30">
+                                📚 Multi-Book Consensus
                               </Badge>
                             )}
                           </div>
