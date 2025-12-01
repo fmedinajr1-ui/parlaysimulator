@@ -25,21 +25,12 @@ export const CHAMPIONSHIP_CALENDAR: ChampionshipEvent[] = [
   { sport: 'NBA', event: 'NBA Finals', emoji: '🏆', month: 6, dayRange: [1, 20], hotTip: 'Home court matters', upsetProne: false },
   { sport: 'NBA', event: 'Christmas Games', emoji: '🎄', month: 12, specificDay: 25, hotTip: 'Showcase games, unpredictable', upsetProne: true },
   
-  // MLB
-  { sport: 'MLB', event: 'Wild Card Series', emoji: '⚾', month: 10, dayRange: [1, 5], hotTip: 'Pitching dominates short series', upsetProne: true },
-  { sport: 'MLB', event: 'Division Series', emoji: '⚾', month: 10, dayRange: [6, 15], hotTip: 'Aces get the ball', upsetProne: false },
-  { sport: 'MLB', event: 'Championship Series', emoji: '⚾', month: 10, dayRange: [16, 25], hotTip: 'Momentum swings', upsetProne: true },
-  { sport: 'MLB', event: 'World Series', emoji: '🏆', month: 10, dayRange: [25, 31], hotTip: 'Anything can happen in 7 games', upsetProne: true },
-  
   // NHL
   { sport: 'NHL', event: 'First Round Playoffs', emoji: '🏒', month: 4, dayRange: [15, 30], hotTip: 'Physical play increases', upsetProne: true },
   { sport: 'NHL', event: 'Conference Finals', emoji: '🏒', month: 5, dayRange: [15, 31], hotTip: 'Goalies make the difference', upsetProne: false },
   { sport: 'NHL', event: 'Stanley Cup Finals', emoji: '🏆', month: 6, dayRange: [1, 25], hotTip: 'Experience and depth win', upsetProne: false },
   
-  // College
-  { sport: 'NCAAB', event: 'March Madness First Round', emoji: '🏀', month: 3, dayRange: [19, 22], hotTip: 'Upset city! 12-5 matchups', upsetProne: true },
-  { sport: 'NCAAB', event: 'March Madness Sweet 16', emoji: '🏀', month: 3, dayRange: [27, 28], hotTip: 'Cinderellas emerge', upsetProne: true },
-  { sport: 'NCAAB', event: 'Final Four', emoji: '🏆', month: 4, dayRange: [5, 7], hotTip: 'Blue bloods vs underdogs', upsetProne: true },
+  // College Football
   { sport: 'NCAAF', event: 'College Football Playoff', emoji: '🏈', month: 12, dayRange: [20, 31], hotTip: 'Bowl season intensity', upsetProne: false },
   { sport: 'NCAAF', event: 'National Championship', emoji: '🏆', month: 1, specificDay: 13, hotTip: 'Elite matchup', upsetProne: false },
 ];
