@@ -22,45 +22,98 @@ interface GameResult {
   homeScore: number | null;
   awayScore: number | null;
   winner?: string;
+  sport?: string;
+}
+
+// Normalize team name for matching
+function normalizeTeamName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 // Determine if a leg won based on game result
 function determineLegOutcome(leg: ParlayLeg, game: GameResult): boolean | null {
-  if (game.status !== 'final') return null;
+  if (game.status !== 'final') {
+    console.log(`Game not final: ${game.homeTeam} vs ${game.awayTeam} (${game.status})`);
+    return null;
+  }
+  
+  if (game.homeScore === null || game.awayScore === null) {
+    console.log(`Missing scores for ${game.homeTeam} vs ${game.awayTeam}`);
+    return null;
+  }
   
   const desc = leg.description.toLowerCase();
+  const homeNorm = normalizeTeamName(game.homeTeam);
+  const awayNorm = normalizeTeamName(game.awayTeam);
+  const descNorm = normalizeTeamName(desc);
+  
+  // Determine which team the bet is on
+  const isHomeTeamBet = descNorm.includes(homeNorm) || 
+    descNorm.includes(homeNorm.split(' ').pop() || '');
+  const isAwayTeamBet = descNorm.includes(awayNorm) || 
+    descNorm.includes(awayNorm.split(' ').pop() || '');
+  
+  console.log(`Evaluating: "${desc.substring(0, 60)}..."`);
+  console.log(`Home: ${game.homeTeam} (${game.homeScore}), Away: ${game.awayTeam} (${game.awayScore})`);
+  console.log(`Bet on: ${isHomeTeamBet ? 'home' : isAwayTeamBet ? 'away' : 'unknown'}`);
   
   // Handle moneyline bets
-  if (desc.includes('moneyline') || desc.includes(' ml')) {
-    const teamName = desc.replace(/moneyline|ml/gi, '').trim();
-    return game.winner?.toLowerCase().includes(teamName) || false;
+  if (desc.includes('moneyline') || desc.includes(' ml') || 
+      (desc.includes('to win') && !desc.includes('spread'))) {
+    const betTeamWon = isHomeTeamBet 
+      ? game.homeScore > game.awayScore
+      : game.awayScore > game.homeScore;
+    console.log(`Moneyline bet result: ${betTeamWon ? 'WON' : 'LOST'}`);
+    return betTeamWon;
   }
   
   // Handle spread bets
-  if (desc.includes('+') || desc.includes('-')) {
-    const spreadMatch = desc.match(/([+-]?\d+\.?\d*)/);
-    if (spreadMatch && game.homeScore !== null && game.awayScore !== null) {
-      const spread = parseFloat(spreadMatch[1]);
-      const scoreDiff = game.homeScore - game.awayScore;
-      
-      // Simplified spread logic - needs team context
-      return scoreDiff + spread > 0;
+  const spreadMatch = desc.match(/([+-]?\d+\.?\d*)\s*(pts?|points?)?/);
+  if (spreadMatch && (desc.includes('spread') || desc.includes('+') || desc.includes('-'))) {
+    const spread = parseFloat(spreadMatch[1]);
+    const scoreDiff = game.homeScore - game.awayScore;
+    
+    // If bet is on home team, add spread to home score
+    // If bet is on away team, add spread to away score (which is like subtracting from diff)
+    let adjustedDiff: number;
+    if (isHomeTeamBet) {
+      adjustedDiff = scoreDiff + spread;
+    } else if (isAwayTeamBet) {
+      adjustedDiff = -scoreDiff + spread;
+    } else {
+      console.log(`Can't determine team for spread bet`);
+      return null;
     }
+    
+    const won = adjustedDiff > 0;
+    console.log(`Spread bet: ${spread}, scoreDiff: ${scoreDiff}, adjustedDiff: ${adjustedDiff}, result: ${won ? 'WON' : 'LOST'}`);
+    return won;
   }
   
-  // Handle over/under bets
+  // Handle over/under (totals) bets
   if (desc.includes('over') || desc.includes('under')) {
-    const totalMatch = desc.match(/(\d+\.?\d*)/);
-    if (totalMatch && game.homeScore !== null && game.awayScore !== null) {
+    const totalMatch = desc.match(/(\d+\.?\d*)\s*(pts?|points?)?/);
+    if (totalMatch) {
       const total = parseFloat(totalMatch[1]);
       const actualTotal = game.homeScore + game.awayScore;
       
-      if (desc.includes('over')) return actualTotal > total;
-      if (desc.includes('under')) return actualTotal < total;
+      let won: boolean;
+      if (desc.includes('over')) {
+        won = actualTotal > total;
+      } else {
+        won = actualTotal < total;
+      }
+      console.log(`Over/Under bet: line ${total}, actual ${actualTotal}, result: ${won ? 'WON' : 'LOST'}`);
+      return won;
     }
   }
   
-  // For complex props, return null (requires manual settlement)
+  // For player props and complex bets, return null (requires manual settlement)
+  console.log(`Can't auto-determine outcome for: "${desc.substring(0, 60)}..."`);
   return null;
 }
 
@@ -72,7 +125,7 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
   try {
-    console.log('Starting auto-settle process...');
+    console.log('=== Starting auto-settle process ===');
     
     // Fetch unsettled parlays where games should have started
     const { data: unsettledParlays, error: fetchError } = await supabase
@@ -86,12 +139,13 @@ serve(async (req) => {
       throw fetchError;
     }
     
-    console.log(`Found ${unsettledParlays?.length || 0} parlays to check`);
+    console.log(`Found ${unsettledParlays?.length || 0} unsettled parlays to check`);
     
     const results: Array<{ parlayId: string; status: string; details?: string }> = [];
     
     for (const parlay of unsettledParlays || []) {
       try {
+        console.log(`\n--- Processing parlay ${parlay.id} ---`);
         const legs = parlay.legs as ParlayLeg[];
         
         // Get training data for this parlay to check leg outcomes
@@ -101,40 +155,52 @@ serve(async (req) => {
           .eq('parlay_history_id', parlay.id)
           .order('leg_index');
         
-        // Fetch current game scores
-        const legDescriptions = legs.map(l => l.description);
+        // Determine sports from training data or leg descriptions
         const sports = [...new Set(trainingData?.map(t => t.sport).filter(Boolean) || [])];
+        const legDescriptions = legs.map(l => l.description);
         
-        let allGamesFinished = true;
-        let allLegsWon = true;
-        let anyLegLost = false;
+        console.log(`Parlay has ${legs.length} legs, sports: ${sports.join(', ') || 'unknown'}`);
+        
+        // Fetch game scores
+        const scoreResponse = await fetch(`${supabaseUrl}/functions/v1/fetch-game-scores`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${supabaseServiceKey}`,
+          },
+          body: JSON.stringify({
+            sport: sports[0] || null,
+            legDescriptions,
+          }),
+        });
+        
         let gameResults: Record<number, GameResult | null> = {};
         
-        // Fetch scores for each sport
-        for (const sport of sports.length ? sports : ['nba', 'nfl', 'mlb', 'nhl']) {
-          const scoreResponse = await fetch(`${supabaseUrl}/functions/v1/fetch-game-scores`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${supabaseServiceKey}`,
-            },
-            body: JSON.stringify({
-              sport,
-              legDescriptions,
-            }),
-          });
-          
-          if (scoreResponse.ok) {
-            const scoreData = await scoreResponse.json();
-            Object.assign(gameResults, scoreData.matchedGames || {});
-          }
+        if (scoreResponse.ok) {
+          const scoreData = await scoreResponse.json();
+          gameResults = scoreData.matchedGames || {};
+          console.log(`Matched ${Object.values(gameResults).filter(Boolean).length}/${legs.length} legs to games`);
+        } else {
+          console.log(`Failed to fetch scores: ${scoreResponse.status}`);
         }
         
         // Evaluate each leg
+        let allGamesFinished = true;
+        let allLegsWon = true;
+        let anyLegLost = false;
+        let determinedLegs = 0;
+        
         for (let i = 0; i < legs.length; i++) {
           const game = gameResults[i];
           
-          if (!game || game.status !== 'final') {
+          if (!game) {
+            console.log(`Leg ${i}: No game matched`);
+            allGamesFinished = false;
+            continue;
+          }
+          
+          if (game.status !== 'final') {
+            console.log(`Leg ${i}: Game not final (${game.status})`);
             allGamesFinished = false;
             continue;
           }
@@ -142,35 +208,32 @@ serve(async (req) => {
           const legOutcome = determineLegOutcome(legs[i], game);
           
           if (legOutcome === null) {
-            // Can't determine outcome automatically
             allGamesFinished = false;
-          } else if (legOutcome === false) {
-            anyLegLost = true;
-            allLegsWon = false;
+          } else {
+            determinedLegs++;
             
             // Update training data with leg outcome
             await supabase
               .from('parlay_training_data')
               .update({
-                leg_outcome: false,
+                leg_outcome: legOutcome,
                 event_status: 'final',
-                event_result: 'loss',
+                event_result: legOutcome ? 'win' : 'loss',
               })
               .eq('parlay_history_id', parlay.id)
               .eq('leg_index', i);
-          } else {
-            // Update training data with leg outcome
-            await supabase
-              .from('parlay_training_data')
-              .update({
-                leg_outcome: true,
-                event_status: 'final',
-                event_result: 'win',
-              })
-              .eq('parlay_history_id', parlay.id)
-              .eq('leg_index', i);
+            
+            if (legOutcome === false) {
+              anyLegLost = true;
+              allLegsWon = false;
+              console.log(`Leg ${i}: LOST ❌`);
+            } else {
+              console.log(`Leg ${i}: WON ✓`);
+            }
           }
         }
+        
+        console.log(`Summary: ${determinedLegs}/${legs.length} determined, anyLost: ${anyLegLost}, allWon: ${allLegsWon && allGamesFinished}`);
         
         // If any leg lost, the parlay is lost
         if (anyLegLost) {
@@ -193,20 +256,29 @@ serve(async (req) => {
             })
             .eq('parlay_history_id', parlay.id);
           
-          // Update profile stats
-          await supabase
+          // Update profile stats - fetch current values and increment
+          const { data: profile } = await supabase
             .from('profiles')
-            .update({
-              total_losses: supabase.rpc('increment', { x: 1 }),
-              total_staked: supabase.rpc('increment', { x: parlay.stake }),
-            })
-            .eq('user_id', parlay.user_id);
+            .select('total_losses, total_staked')
+            .eq('user_id', parlay.user_id)
+            .maybeSingle();
+          
+          if (profile) {
+            await supabase
+              .from('profiles')
+              .update({
+                total_losses: (profile.total_losses || 0) + 1,
+                total_staked: (profile.total_staked || 0) + Number(parlay.stake),
+              })
+              .eq('user_id', parlay.user_id);
+          }
           
           results.push({
             parlayId: parlay.id,
             status: 'settled',
-            details: 'Lost - at least one leg failed',
+            details: 'LOST - at least one leg failed',
           });
+          console.log(`Parlay ${parlay.id}: SETTLED as LOST`);
           
         } else if (allGamesFinished && allLegsWon) {
           // All games finished and all legs won
@@ -229,28 +301,38 @@ serve(async (req) => {
             })
             .eq('parlay_history_id', parlay.id);
           
-          // Update profile stats
-          await supabase
+          // Update profile stats - fetch current values and increment
+          const { data: profile } = await supabase
             .from('profiles')
-            .update({
-              total_wins: supabase.rpc('increment', { x: 1 }),
-              total_staked: supabase.rpc('increment', { x: parlay.stake }),
-              total_payout: supabase.rpc('increment', { x: parlay.potential_payout }),
-            })
-            .eq('user_id', parlay.user_id);
+            .select('total_wins, total_staked, total_payout')
+            .eq('user_id', parlay.user_id)
+            .maybeSingle();
+          
+          if (profile) {
+            await supabase
+              .from('profiles')
+              .update({
+                total_wins: (profile.total_wins || 0) + 1,
+                total_staked: (profile.total_staked || 0) + Number(parlay.stake),
+                total_payout: (profile.total_payout || 0) + Number(parlay.potential_payout),
+              })
+              .eq('user_id', parlay.user_id);
+          }
           
           results.push({
             parlayId: parlay.id,
             status: 'settled',
-            details: 'Won - all legs hit!',
+            details: 'WON - all legs hit! 🎉',
           });
+          console.log(`Parlay ${parlay.id}: SETTLED as WON 🎉`);
           
         } else {
           results.push({
             parlayId: parlay.id,
             status: 'pending',
-            details: 'Games still in progress or unable to determine outcome',
+            details: `${determinedLegs}/${legs.length} legs determined, waiting for more games`,
           });
+          console.log(`Parlay ${parlay.id}: Still pending`);
         }
         
       } catch (err) {
@@ -264,11 +346,18 @@ serve(async (req) => {
       }
     }
     
-    console.log('Auto-settle complete:', results);
+    console.log('\n=== Auto-settle complete ===');
+    console.log(`Processed: ${results.length}`);
+    console.log(`Settled: ${results.filter(r => r.status === 'settled').length}`);
+    console.log(`Pending: ${results.filter(r => r.status === 'pending').length}`);
+    console.log(`Errors: ${results.filter(r => r.status === 'error').length}`);
     
     return new Response(
       JSON.stringify({
         processed: results.length,
+        settled: results.filter(r => r.status === 'settled').length,
+        pending: results.filter(r => r.status === 'pending').length,
+        errors: results.filter(r => r.status === 'error').length,
         results,
         timestamp: new Date().toISOString(),
       }),
