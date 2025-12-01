@@ -82,7 +82,9 @@ export type Database = {
       }
       line_movements: {
         Row: {
+          authenticity_confidence: number | null
           bookmaker: string
+          books_consensus: number | null
           commence_time: string | null
           created_at: string
           description: string
@@ -91,20 +93,26 @@ export type Database = {
           id: string
           is_sharp_action: boolean | null
           market_type: string
+          movement_authenticity: string | null
           movement_type: string
           new_point: number | null
           new_price: number
           old_point: number | null
           old_price: number
+          opposite_side_moved: boolean | null
           outcome_name: string
           player_name: string | null
           point_change: number | null
           price_change: number
+          recommendation: string | null
+          recommendation_reason: string | null
           sharp_indicator: string | null
           sport: string
         }
         Insert: {
+          authenticity_confidence?: number | null
           bookmaker: string
+          books_consensus?: number | null
           commence_time?: string | null
           created_at?: string
           description: string
@@ -113,20 +121,26 @@ export type Database = {
           id?: string
           is_sharp_action?: boolean | null
           market_type: string
+          movement_authenticity?: string | null
           movement_type?: string
           new_point?: number | null
           new_price: number
           old_point?: number | null
           old_price: number
+          opposite_side_moved?: boolean | null
           outcome_name: string
           player_name?: string | null
           point_change?: number | null
           price_change: number
+          recommendation?: string | null
+          recommendation_reason?: string | null
           sharp_indicator?: string | null
           sport: string
         }
         Update: {
+          authenticity_confidence?: number | null
           bookmaker?: string
+          books_consensus?: number | null
           commence_time?: string | null
           created_at?: string
           description?: string
@@ -135,15 +149,19 @@ export type Database = {
           id?: string
           is_sharp_action?: boolean | null
           market_type?: string
+          movement_authenticity?: string | null
           movement_type?: string
           new_point?: number | null
           new_price?: number
           old_point?: number | null
           old_price?: number
+          opposite_side_moved?: boolean | null
           outcome_name?: string
           player_name?: string | null
           point_change?: number | null
           price_change?: number
+          recommendation?: string | null
+          recommendation_reason?: string | null
           sharp_indicator?: string | null
           sport?: string
         }
