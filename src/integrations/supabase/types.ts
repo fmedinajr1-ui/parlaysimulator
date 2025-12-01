@@ -80,6 +80,81 @@ export type Database = {
         }
         Relationships: []
       }
+      juiced_props: {
+        Row: {
+          bookmaker: string
+          commence_time: string
+          created_at: string | null
+          event_id: string
+          final_pick: string | null
+          final_pick_confidence: number | null
+          final_pick_reason: string | null
+          final_pick_time: string | null
+          game_description: string
+          id: string
+          is_locked: boolean | null
+          juice_amount: number
+          juice_direction: string
+          juice_level: string
+          line: number
+          morning_scan_time: string | null
+          opening_over_price: number | null
+          over_price: number
+          player_name: string
+          prop_type: string
+          sport: string
+          under_price: number
+        }
+        Insert: {
+          bookmaker: string
+          commence_time: string
+          created_at?: string | null
+          event_id: string
+          final_pick?: string | null
+          final_pick_confidence?: number | null
+          final_pick_reason?: string | null
+          final_pick_time?: string | null
+          game_description: string
+          id?: string
+          is_locked?: boolean | null
+          juice_amount: number
+          juice_direction: string
+          juice_level: string
+          line: number
+          morning_scan_time?: string | null
+          opening_over_price?: number | null
+          over_price: number
+          player_name: string
+          prop_type: string
+          sport: string
+          under_price: number
+        }
+        Update: {
+          bookmaker?: string
+          commence_time?: string
+          created_at?: string | null
+          event_id?: string
+          final_pick?: string | null
+          final_pick_confidence?: number | null
+          final_pick_reason?: string | null
+          final_pick_time?: string | null
+          game_description?: string
+          id?: string
+          is_locked?: boolean | null
+          juice_amount?: number
+          juice_direction?: string
+          juice_level?: string
+          line?: number
+          morning_scan_time?: string | null
+          opening_over_price?: number | null
+          over_price?: number
+          player_name?: string
+          prop_type?: string
+          sport?: string
+          under_price?: number
+        }
+        Relationships: []
+      }
       line_movements: {
         Row: {
           authenticity_confidence: number | null
