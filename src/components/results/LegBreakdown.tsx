@@ -24,6 +24,18 @@ const riskEmojis = {
   extreme: "💀",
 };
 
+const sharpColors = {
+  pick: "bg-neon-green/20 text-neon-green border-neon-green/30",
+  fade: "bg-neon-red/20 text-neon-red border-neon-red/30",
+  caution: "bg-neon-yellow/20 text-neon-yellow border-neon-yellow/30",
+};
+
+const sharpEmojis = {
+  pick: "✅ PICK",
+  fade: "❌ FADE",
+  caution: "⚠️ CAUTION",
+};
+
 export function LegBreakdown({ legs, legAnalyses, delay = 0 }: LegBreakdownProps) {
   const [expandedLeg, setExpandedLeg] = useState<string | null>(null);
 
@@ -111,6 +123,39 @@ export function LegBreakdown({ legs, legAnalyses, delay = 0 }: LegBreakdownProps
                       <p className="text-xs text-muted-foreground mt-1">
                         Adjusted based on AI's historical accuracy
                       </p>
+                    </div>
+                  )}
+                  
+                  {/* Sharp recommendation */}
+                  {analysis?.sharpRecommendation && (
+                    <div className={`mt-3 p-3 rounded-lg border ${sharpColors[analysis.sharpRecommendation]}`}>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-bold">
+                          {sharpEmojis[analysis.sharpRecommendation]}
+                        </span>
+                        {analysis.sharpConfidence && (
+                          <span className="text-xs opacity-80">
+                            {(analysis.sharpConfidence * 100).toFixed(0)}% confidence
+                          </span>
+                        )}
+                      </div>
+                      {analysis.sharpReason && (
+                        <p className="text-xs mt-2 opacity-90">{analysis.sharpReason}</p>
+                      )}
+                      {analysis.sharpSignals && analysis.sharpSignals.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {analysis.sharpSignals.map((signal, idx) => (
+                            <span key={idx} className="text-xs px-1.5 py-0.5 rounded bg-background/50 opacity-80">
+                              {signal}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {analysis.sharpFinalPick && (
+                        <p className="text-sm font-medium mt-2">
+                          🎯 {analysis.sharpFinalPick}
+                        </p>
+                      )}
                     </div>
                   )}
                   
