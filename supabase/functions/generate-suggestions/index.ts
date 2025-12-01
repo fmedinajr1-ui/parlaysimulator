@@ -1461,6 +1461,176 @@ serve(async (req) => {
       }
     }
 
+    // ========================================
+    // STRATEGY 11: FADE PARLAY
+    // Bet AGAINST fake/trap sharp movements
+    // ========================================
+    if (sharpAlerts && sharpAlerts.length > 0) {
+      const fakeSharpMoves = sharpAlerts.filter(m => 
+        m.movement_authenticity === 'fake' && m.recommendation === 'fade'
+      );
+      
+      console.log(`Found ${fakeSharpMoves.length} fake sharp movements to fade...`);
+      
+      if (fakeSharpMoves.length >= 2) {
+        const fadeLegs: SuggestionLeg[] = [];
+        let fadeProb = 1;
+        const usedEvents = new Set<string>();
+        
+        // Sort by authenticity confidence (most confident fakes first)
+        const sortedFakeMoves = [...fakeSharpMoves].sort((a, b) => 
+          (b.authenticity_confidence || 0) - (a.authenticity_confidence || 0)
+        );
+        
+        for (const fakeMove of sortedFakeMoves) {
+          if (fadeLegs.length >= 4) break;
+          const eventKey = fakeMove.player_name 
+            ? `${fakeMove.event_id}-${fakeMove.player_name}` 
+            : fakeMove.event_id;
+          if (usedEvents.has(eventKey)) continue;
+          
+          // For fade, we bet the OPPOSITE - if sharps pushed odds down, we take the higher side
+          // If the movement was on Over, we fade to Under, etc.
+          const isOver = fakeMove.outcome_name.toLowerCase().includes('over');
+          const isUnder = fakeMove.outcome_name.toLowerCase().includes('under');
+          
+          // Use a standard opposite odds calculation (approximate)
+          const originalOdds = fakeMove.old_price;
+          // If original was -110, opposite is roughly -110 too for totals/spreads
+          const fadeOdds = originalOdds < -110 ? -110 : (originalOdds > 110 ? -110 : -105);
+          const impliedProb = americanToImplied(fadeOdds);
+          
+          if (fadeProb * impliedProb >= 0.10) {
+            fadeProb *= impliedProb;
+            usedEvents.add(eventKey);
+            
+            let fadeDescription = '';
+            if (fakeMove.player_name) {
+              const propType = fakeMove.market_type.replace('player_', '').replace(/_/g, ' ').toUpperCase();
+              const fadeSide = isOver ? 'Under' : (isUnder ? 'Over' : 'Opposite');
+              fadeDescription = `FADE: ${fakeMove.player_name} ${propType} ${fadeSide}`;
+            } else {
+              fadeDescription = `FADE: ${fakeMove.description} - Opposite of ${fakeMove.outcome_name}`;
+            }
+            
+            fadeLegs.push({
+              description: fadeDescription,
+              odds: fadeOdds,
+              impliedProbability: impliedProb,
+              sport: fakeMove.sport,
+              betType: fakeMove.market_type,
+              eventTime: fakeMove.commence_time || new Date().toISOString(),
+            });
+          }
+        }
+        
+        if (fadeLegs.length >= 2) {
+          const totalOdds = calculateTotalOdds(fadeLegs);
+          const fadeReasons = fakeSharpMoves
+            .slice(0, 2)
+            .map(m => m.recommendation_reason?.split('.')[0])
+            .filter(Boolean)
+            .join('; ');
+          
+          suggestions.unshift({
+            legs: fadeLegs,
+            total_odds: totalOdds,
+            combined_probability: fadeProb,
+            suggestion_reason: `🚨 FADE PARLAY: Betting AGAINST fake sharp movements. ${fadeReasons}. These moves show signs of market traps - we're taking the opposite side!`,
+            sport: fadeLegs[0].sport,
+            confidence_score: 0.65,
+            expires_at: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString(),
+            is_data_driven: true,
+          });
+          
+          console.log(`Created FADE PARLAY with ${fadeLegs.length} legs against fake sharp movements`);
+        }
+      }
+    }
+
+    // ========================================
+    // STRATEGY 12: HIGH-CONFIDENCE REAL SHARP PARLAY
+    // Only verified real sharp movements with high confidence
+    // ========================================
+    if (sharpAlerts && sharpAlerts.length > 0) {
+      const realHighConfidence = sharpAlerts.filter(m => 
+        m.movement_authenticity === 'real' && 
+        (m.authenticity_confidence || 0) >= 0.65 &&
+        m.recommendation === 'pick' &&
+        m.new_price < m.old_price
+      );
+      
+      console.log(`Found ${realHighConfidence.length} high-confidence real sharp movements...`);
+      
+      if (realHighConfidence.length >= 2) {
+        const realSharpLegs: SuggestionLeg[] = [];
+        let realSharpProb = 1;
+        const usedEvents = new Set<string>();
+        
+        // Sort by confidence (highest first)
+        const sortedRealMoves = [...realHighConfidence].sort((a, b) => 
+          (b.authenticity_confidence || 0) - (a.authenticity_confidence || 0)
+        );
+        
+        for (const realMove of sortedRealMoves) {
+          if (realSharpLegs.length >= 4) break;
+          const eventKey = realMove.player_name 
+            ? `${realMove.event_id}-${realMove.player_name}` 
+            : realMove.event_id;
+          if (usedEvents.has(eventKey)) continue;
+          
+          const americanOdds = realMove.new_price;
+          const impliedProb = americanToImplied(americanOdds);
+          
+          if (realSharpProb * impliedProb >= 0.08) {
+            realSharpProb *= impliedProb;
+            usedEvents.add(eventKey);
+            
+            let description = '';
+            if (realMove.player_name) {
+              const propType = realMove.market_type.replace('player_', '').replace(/_/g, ' ').toUpperCase();
+              let cleanOutcome = realMove.outcome_name;
+              if (cleanOutcome.includes(realMove.player_name)) {
+                cleanOutcome = cleanOutcome.replace(realMove.player_name, '').trim();
+              }
+              description = `✅ ${realMove.player_name} ${propType} ${cleanOutcome}`;
+            } else {
+              description = `✅ ${realMove.outcome_name} (${realMove.market_type === 'h2h' ? 'ML' : realMove.market_type})`;
+            }
+            
+            realSharpLegs.push({
+              description,
+              odds: americanOdds,
+              impliedProbability: impliedProb,
+              sport: realMove.sport,
+              betType: realMove.market_type,
+              eventTime: realMove.commence_time || new Date().toISOString(),
+            });
+          }
+        }
+        
+        if (realSharpLegs.length >= 2) {
+          const totalOdds = calculateTotalOdds(realSharpLegs);
+          const avgConfidence = Math.round(
+            (realHighConfidence.reduce((sum, m) => sum + (m.authenticity_confidence || 0), 0) / realHighConfidence.length) * 100
+          );
+          
+          suggestions.unshift({
+            legs: realSharpLegs,
+            total_odds: totalOdds,
+            combined_probability: realSharpProb,
+            suggestion_reason: `✅ VERIFIED SHARP PARLAY: ${realSharpLegs.length} legs with CONFIRMED real sharp money (${avgConfidence}% avg confidence). Multi-book consensus, late money, classic sharp patterns detected.`,
+            sport: realSharpLegs[0].sport,
+            confidence_score: 0.85,
+            expires_at: new Date(Date.now() + 10 * 60 * 60 * 1000).toISOString(),
+            is_data_driven: true,
+          });
+          
+          console.log(`Created VERIFIED SHARP PARLAY with ${realSharpLegs.length} high-confidence legs`);
+        }
+      }
+    }
+
     // Sort suggestions: LOW RISK (high probability) first
     suggestions.sort((a, b) => b.combined_probability - a.combined_probability);
 

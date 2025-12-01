@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Loader2, Zap, TrendingUp, TrendingDown, RefreshCw, Clock, User, Target } from 'lucide-react';
+import { Loader2, Zap, TrendingUp, TrendingDown, RefreshCw, Clock, User, Target, CheckCircle, XCircle, AlertTriangle, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 interface LineMovement {
@@ -26,6 +26,13 @@ interface LineMovement {
   detected_at: string;
   commence_time: string | null;
   player_name?: string | null;
+  // New classification fields
+  movement_authenticity?: 'real' | 'fake' | 'uncertain' | null;
+  authenticity_confidence?: number | null;
+  recommendation?: 'pick' | 'fade' | 'caution' | null;
+  recommendation_reason?: string | null;
+  opposite_side_moved?: boolean | null;
+  books_consensus?: number | null;
 }
 
 const MARKET_LABELS: Record<string, string> = {
@@ -59,9 +66,11 @@ export function SharpMoneyPanel() {
     if (newMovement.is_sharp_action) {
       setNewAlertCount(prev => prev + 1);
       const playerInfo = newMovement.player_name ? ` (${newMovement.player_name})` : '';
+      const authBadge = newMovement.movement_authenticity === 'real' ? '✅' : 
+                        newMovement.movement_authenticity === 'fake' ? '🚨' : '⚠️';
       toast({
-        title: "⚡ New Sharp Alert!",
-        description: `${newMovement.outcome_name}${playerInfo} - ${newMovement.sharp_indicator?.split(' - ')[0] || 'Sharp Action'}`,
+        title: `${authBadge} New Sharp Alert!`,
+        description: `${newMovement.outcome_name}${playerInfo} - ${newMovement.recommendation?.toUpperCase() || 'CAUTION'}`,
       });
     }
   }, [toast]);
@@ -99,7 +108,8 @@ export function SharpMoneyPanel() {
         .limit(100);
 
       if (error) throw error;
-      setMovements(data || []);
+      // Cast the data to handle the string -> union type conversion
+      setMovements((data || []) as LineMovement[]);
     } catch (err) {
       console.error('Error fetching movements:', err);
       toast({
@@ -126,7 +136,7 @@ export function SharpMoneyPanel() {
 
       toast({
         title: "Tracking Complete",
-        description: `Found ${data.movementsDetected} movements (${data.sharpAlerts} sharp, ${data.playerPropMovements || 0} player props)`,
+        description: `Found ${data.movementsDetected} movements (${data.realSharpMoves || 0} real, ${data.fakeSharpMoves || 0} fake)`,
       });
 
       fetchMovements();
@@ -153,11 +163,54 @@ export function SharpMoneyPanel() {
     return 'text-muted-foreground';
   };
 
-  const getSharpBadgeVariant = (indicator: string | null): "default" | "secondary" | "destructive" | "outline" => {
-    if (!indicator) return 'outline';
-    if (indicator.includes('STEAM')) return 'destructive';
-    if (indicator.includes('SHARP ACTION')) return 'default';
-    return 'secondary';
+  const getAuthenticityBadge = (authenticity: string | null | undefined) => {
+    if (authenticity === 'real') {
+      return (
+        <Badge variant="default" className="bg-green-500/20 text-green-400 border-green-500/30">
+          <CheckCircle className="w-3 h-3 mr-1" />
+          REAL
+        </Badge>
+      );
+    }
+    if (authenticity === 'fake') {
+      return (
+        <Badge variant="destructive" className="bg-red-500/20 text-red-400 border-red-500/30">
+          <XCircle className="w-3 h-3 mr-1" />
+          FAKE
+        </Badge>
+      );
+    }
+    return (
+      <Badge variant="secondary" className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30">
+        <AlertTriangle className="w-3 h-3 mr-1" />
+        UNCERTAIN
+      </Badge>
+    );
+  };
+
+  const getRecommendationBadge = (recommendation: string | null | undefined) => {
+    if (recommendation === 'pick') {
+      return (
+        <Badge variant="outline" className="bg-green-500/10 text-green-400 border-green-500/30">
+          <ThumbsUp className="w-3 h-3 mr-1" />
+          PICK
+        </Badge>
+      );
+    }
+    if (recommendation === 'fade') {
+      return (
+        <Badge variant="outline" className="bg-red-500/10 text-red-400 border-red-500/30">
+          <ThumbsDown className="w-3 h-3 mr-1" />
+          FADE
+        </Badge>
+      );
+    }
+    return (
+      <Badge variant="outline" className="bg-yellow-500/10 text-yellow-400 border-yellow-500/30">
+        <AlertTriangle className="w-3 h-3 mr-1" />
+        CAUTION
+      </Badge>
+    );
   };
 
   const getMarketLabel = (marketType: string) => {
@@ -172,14 +225,17 @@ export function SharpMoneyPanel() {
   const filteredMovements = movements.filter(m => {
     if (activeTab === 'all') return true;
     if (activeTab === 'sharp') return m.is_sharp_action;
+    if (activeTab === 'real') return m.movement_authenticity === 'real';
+    if (activeTab === 'fade') return m.movement_authenticity === 'fake';
     if (activeTab === 'props') return isPlayerProp(m);
     if (activeTab === 'games') return !isPlayerProp(m);
     return true;
   });
 
   const sharpMovements = movements.filter(m => m.is_sharp_action);
+  const realSharpMovements = movements.filter(m => m.movement_authenticity === 'real');
+  const fakeSharpMovements = movements.filter(m => m.movement_authenticity === 'fake');
   const playerPropMovements = movements.filter(m => isPlayerProp(m));
-  const sharpPropMovements = movements.filter(m => m.is_sharp_action && isPlayerProp(m));
 
   if (isLoading) {
     return (
@@ -242,10 +298,22 @@ export function SharpMoneyPanel() {
             <p className="text-xs text-muted-foreground">Total Moves</p>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="border-green-500/30 bg-green-500/5">
           <CardContent className="p-3 text-center">
-            <p className="text-2xl font-bold text-destructive">{sharpMovements.length}</p>
-            <p className="text-xs text-muted-foreground">Sharp Alerts</p>
+            <div className="flex items-center justify-center gap-1">
+              <CheckCircle className="w-4 h-4 text-green-500" />
+              <p className="text-2xl font-bold text-green-500">{realSharpMovements.length}</p>
+            </div>
+            <p className="text-xs text-muted-foreground">Real Sharp</p>
+          </CardContent>
+        </Card>
+        <Card className="border-red-500/30 bg-red-500/5">
+          <CardContent className="p-3 text-center">
+            <div className="flex items-center justify-center gap-1">
+              <XCircle className="w-4 h-4 text-red-500" />
+              <p className="text-2xl font-bold text-red-500">{fakeSharpMovements.length}</p>
+            </div>
+            <p className="text-xs text-muted-foreground">Fake/Trap</p>
           </CardContent>
         </Card>
         <Card>
@@ -257,24 +325,23 @@ export function SharpMoneyPanel() {
             <p className="text-xs text-muted-foreground">Player Props</p>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="p-3 text-center">
-            <div className="flex items-center justify-center gap-1">
-              <Zap className="w-4 h-4 text-orange-500" />
-              <p className="text-2xl font-bold text-orange-500">{sharpPropMovements.length}</p>
-            </div>
-            <p className="text-xs text-muted-foreground">Sharp Props</p>
-          </CardContent>
-        </Card>
       </div>
 
       {/* Tabs for filtering */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-6">
           <TabsTrigger value="all">All</TabsTrigger>
+          <TabsTrigger value="real" className="text-green-500">
+            <CheckCircle className="w-3 h-3 mr-1" />
+            Real
+          </TabsTrigger>
+          <TabsTrigger value="fade" className="text-red-500">
+            <XCircle className="w-3 h-3 mr-1" />
+            Fade
+          </TabsTrigger>
           <TabsTrigger value="sharp">
             <Zap className="w-3 h-3 mr-1" />
-            Sharp
+            All Sharp
           </TabsTrigger>
           <TabsTrigger value="props">
             <User className="w-3 h-3 mr-1" />
@@ -296,7 +363,18 @@ export function SharpMoneyPanel() {
           ) : (
             <div className="space-y-2 max-h-[600px] overflow-y-auto">
               {filteredMovements.map((movement) => (
-                <Card key={movement.id} className={movement.is_sharp_action ? 'border-destructive/50 bg-destructive/5' : ''}>
+                <Card 
+                  key={movement.id} 
+                  className={
+                    movement.movement_authenticity === 'real' 
+                      ? 'border-green-500/50 bg-green-500/5' 
+                      : movement.movement_authenticity === 'fake'
+                        ? 'border-red-500/50 bg-red-500/5'
+                        : movement.is_sharp_action 
+                          ? 'border-yellow-500/50 bg-yellow-500/5' 
+                          : ''
+                  }
+                >
                   <CardContent className="py-3">
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex-1 min-w-0">
@@ -319,6 +397,19 @@ export function SharpMoneyPanel() {
                           )}
                         </div>
 
+                        {/* Classification badges for sharp movements */}
+                        {movement.is_sharp_action && (
+                          <div className="flex items-center gap-2 mb-2">
+                            {getAuthenticityBadge(movement.movement_authenticity)}
+                            {getRecommendationBadge(movement.recommendation)}
+                            {movement.books_consensus && movement.books_consensus > 1 && (
+                              <Badge variant="outline" className="text-xs">
+                                {movement.books_consensus} books
+                              </Badge>
+                            )}
+                          </div>
+                        )}
+
                         {/* Player name if prop */}
                         {movement.player_name && (
                           <div className="font-semibold text-primary flex items-center gap-1 mb-1">
@@ -335,8 +426,15 @@ export function SharpMoneyPanel() {
                           {movement.outcome_name}
                         </p>
 
-                        {/* Sharp indicator */}
-                        {movement.is_sharp_action && movement.sharp_indicator && (
+                        {/* Recommendation reason */}
+                        {movement.recommendation_reason && (
+                          <p className="text-xs text-muted-foreground mt-2 italic">
+                            {movement.recommendation_reason}
+                          </p>
+                        )}
+
+                        {/* Sharp indicator (legacy) */}
+                        {movement.is_sharp_action && movement.sharp_indicator && !movement.recommendation_reason && (
                           <div className="flex items-center gap-1 mt-2">
                             <Zap className="w-3 h-3 text-destructive" />
                             <span className="text-xs text-destructive font-medium">
@@ -367,6 +465,11 @@ export function SharpMoneyPanel() {
                         {movement.point_change !== null && Math.abs(movement.point_change) >= 0.5 && (
                           <div className="text-xs text-muted-foreground mt-1">
                             Line: {movement.old_point} → {movement.new_point}
+                          </div>
+                        )}
+                        {movement.authenticity_confidence !== null && movement.authenticity_confidence !== undefined && (
+                          <div className="text-xs text-muted-foreground mt-1">
+                            {Math.round(movement.authenticity_confidence * 100)}% conf
                           </div>
                         )}
                         <div className="flex items-center gap-1 justify-end mt-1 text-xs text-muted-foreground">

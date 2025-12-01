@@ -51,6 +51,23 @@ interface LineMovement {
   sharp_indicator?: string;
   commence_time?: string;
   player_name?: string;
+  // New classification fields
+  movement_authenticity?: 'real' | 'fake' | 'uncertain';
+  authenticity_confidence?: number;
+  recommendation?: 'pick' | 'fade' | 'caution';
+  recommendation_reason?: string;
+  opposite_side_moved?: boolean;
+  books_consensus?: number;
+}
+
+interface SharpAnalysis {
+  authenticity: 'real' | 'fake' | 'uncertain';
+  confidence: number;
+  recommendation: 'pick' | 'fade' | 'caution';
+  reason: string;
+  signals: string[];
+  oppositeSideMoved: boolean;
+  booksConsensus: number;
 }
 
 const SPORT_KEYS: Record<string, string> = {
@@ -82,6 +99,132 @@ const MARKET_LABELS: Record<string, string> = {
   'h2h': 'ML',
   'totals': 'Total'
 };
+
+// Analyze sharp movement to determine if it's real or fake
+function analyzeSharpMovement(
+  movement: LineMovement,
+  allRecentMovements: LineMovement[],
+  hoursToGame: number
+): SharpAnalysis {
+  const signals: string[] = [];
+  let realScore = 0;
+  let fakeScore = 0;
+  
+  // Check if opposite side also moved (both sides = market adjustment)
+  const oppositeMoved = allRecentMovements.find(m => 
+    m.event_id === movement.event_id && 
+    m.market_type === movement.market_type &&
+    m.outcome_name !== movement.outcome_name &&
+    m.bookmaker === movement.bookmaker &&
+    Math.abs(m.price_change) >= 5
+  );
+  
+  if (oppositeMoved) {
+    fakeScore += 3;
+    signals.push('BOTH_SIDES_MOVED');
+  } else {
+    realScore += 2;
+    signals.push('SINGLE_SIDE_MOVEMENT');
+  }
+  
+  // Check if multiple books moved same direction
+  const sameDirectionBooks = allRecentMovements.filter(m =>
+    m.event_id === movement.event_id &&
+    m.outcome_name === movement.outcome_name &&
+    m.bookmaker !== movement.bookmaker &&
+    Math.sign(m.price_change) === Math.sign(movement.price_change)
+  );
+  
+  const booksConsensus = sameDirectionBooks.length + 1;
+  
+  if (booksConsensus >= 2) {
+    realScore += 3;
+    signals.push('MULTI_BOOK_CONSENSUS');
+  } else if (booksConsensus === 1) {
+    // Only one book moved - could be a trap
+    fakeScore += 1;
+    signals.push('SINGLE_BOOK_DIVERGENCE');
+  }
+  
+  // Check price vs line movement (price moved without spread change = classic sharp)
+  if (Math.abs(movement.price_change) >= 8 && 
+      (!movement.point_change || Math.abs(movement.point_change) < 0.5)) {
+    realScore += 2;
+    signals.push('PRICE_WITHOUT_LINE_CHANGE');
+  }
+  
+  // Line AND price moved together = normal adjustment
+  if (movement.point_change && Math.abs(movement.point_change) >= 0.5 &&
+      Math.abs(movement.price_change) >= 5) {
+    fakeScore += 1;
+    signals.push('LINE_AND_PRICE_MOVED');
+  }
+  
+  // Late money is sharper (< 4 hours to game)
+  if (hoursToGame <= 4) {
+    realScore += 2;
+    signals.push('LATE_MONEY');
+  } else if (hoursToGame >= 12) {
+    fakeScore += 1;
+    signals.push('EARLY_MOVEMENT');
+  }
+  
+  // Steam move analysis (very large movement)
+  if (Math.abs(movement.price_change) >= 15) {
+    realScore += 1;
+    signals.push('STEAM_MOVE');
+  }
+  
+  // Player props tend to be sharper (books have less data)
+  if (movement.player_name) {
+    realScore += 1;
+    signals.push('PLAYER_PROP');
+  }
+  
+  // Favorite shortening even more = could be public overreaction
+  if (movement.new_price < -200 && movement.price_change < -5) {
+    fakeScore += 1;
+    signals.push('HEAVY_FAVORITE_SHORTENING');
+  }
+  
+  // Calculate final verdict
+  const totalScore = Math.max(realScore + fakeScore, 1);
+  const realConfidence = realScore / totalScore;
+  
+  let authenticity: 'real' | 'fake' | 'uncertain';
+  let recommendation: 'pick' | 'fade' | 'caution';
+  let reason: string;
+  
+  if (realScore >= fakeScore + 2) {
+    authenticity = 'real';
+    recommendation = 'pick';
+    const keySignals = signals.filter(s => 
+      ['MULTI_BOOK_CONSENSUS', 'SINGLE_SIDE_MOVEMENT', 'LATE_MONEY', 'PRICE_WITHOUT_LINE_CHANGE', 'STEAM_MOVE'].includes(s)
+    );
+    reason = `Strong professional action. ${keySignals.join(', ').replace(/_/g, ' ')}`;
+  } else if (fakeScore >= realScore + 2) {
+    authenticity = 'fake';
+    recommendation = 'fade';
+    const keySignals = signals.filter(s => 
+      ['BOTH_SIDES_MOVED', 'EARLY_MOVEMENT', 'SINGLE_BOOK_DIVERGENCE', 'HEAVY_FAVORITE_SHORTENING'].includes(s)
+    );
+    reason = `Likely market adjustment or trap. ${keySignals.join(', ').replace(/_/g, ' ')}`;
+  } else {
+    authenticity = 'uncertain';
+    recommendation = 'caution';
+    reason = `Mixed signals - proceed with caution. ${signals.slice(0, 2).join(', ').replace(/_/g, ' ')}`;
+  }
+  
+  return { 
+    authenticity, 
+    confidence: Math.round(realConfidence * 100) / 100, 
+    recommendation, 
+    reason, 
+    signals,
+    oppositeSideMoved: !!oppositeMoved,
+    booksConsensus
+  };
+}
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -209,11 +352,34 @@ serve(async (req) => {
       console.log(`Inserted ${snapshotsToInsert.length} odds snapshots`);
     }
 
+    // Analyze sharp movements before inserting
+    const now = new Date();
+    const analyzedMovements = allMovements.map(m => {
+      if (m.is_sharp_action) {
+        const hoursToGame = m.commence_time 
+          ? (new Date(m.commence_time).getTime() - now.getTime()) / (1000 * 60 * 60)
+          : 24;
+        
+        const analysis = analyzeSharpMovement(m, allMovements, hoursToGame);
+        
+        return {
+          ...m,
+          movement_authenticity: analysis.authenticity,
+          authenticity_confidence: analysis.confidence,
+          recommendation: analysis.recommendation,
+          recommendation_reason: analysis.reason,
+          opposite_side_moved: analysis.oppositeSideMoved,
+          books_consensus: analysis.booksConsensus,
+        };
+      }
+      return m;
+    });
+
     // Insert line movements
-    if (allMovements.length > 0) {
+    if (analyzedMovements.length > 0) {
       const { error: movementError } = await supabase
         .from('line_movements')
-        .insert(allMovements.map(m => ({
+        .insert(analyzedMovements.map(m => ({
           event_id: m.event_id,
           sport: m.sport,
           description: m.description,
@@ -229,18 +395,29 @@ serve(async (req) => {
           is_sharp_action: m.is_sharp_action,
           sharp_indicator: m.sharp_indicator,
           commence_time: m.commence_time,
-          player_name: m.player_name
+          player_name: m.player_name,
+          movement_authenticity: m.movement_authenticity || 'uncertain',
+          authenticity_confidence: m.authenticity_confidence || 0.5,
+          recommendation: m.recommendation || 'caution',
+          recommendation_reason: m.recommendation_reason,
+          opposite_side_moved: m.opposite_side_moved || false,
+          books_consensus: m.books_consensus || 1,
         })));
 
       if (movementError) {
         console.error('Error inserting movements:', movementError);
       } else {
-        const sharpCount = allMovements.filter(m => m.is_sharp_action).length;
-        const playerPropCount = allMovements.filter(m => m.player_name).length;
-        console.log(`Detected ${allMovements.length} movements (${sharpCount} sharp, ${playerPropCount} player props)`);
+        const sharpCount = analyzedMovements.filter(m => m.is_sharp_action).length;
+        const playerPropCount = analyzedMovements.filter(m => m.player_name).length;
+        const realSharpCount = analyzedMovements.filter(m => m.movement_authenticity === 'real').length;
+        const fakeSharpCount = analyzedMovements.filter(m => m.movement_authenticity === 'fake').length;
+        
+        console.log(`Detected ${analyzedMovements.length} movements:`);
+        console.log(`  - ${sharpCount} sharp (${realSharpCount} real, ${fakeSharpCount} fake)`);
+        console.log(`  - ${playerPropCount} player props`);
         
         // Send push notifications for sharp alerts
-        const sharpMovements = allMovements.filter(m => m.is_sharp_action);
+        const sharpMovements = analyzedMovements.filter(m => m.is_sharp_action);
         for (const sharpMove of sharpMovements) {
           try {
             await fetch(`${supabaseUrl}/functions/v1/send-push-notification`, {
@@ -258,11 +435,13 @@ serve(async (req) => {
                   price_change: sharpMove.price_change,
                   sharp_indicator: sharpMove.sharp_indicator,
                   player_name: sharpMove.player_name,
-                  market_type: sharpMove.market_type
+                  market_type: sharpMove.market_type,
+                  movement_authenticity: sharpMove.movement_authenticity,
+                  recommendation: sharpMove.recommendation,
                 }
               })
             });
-            console.log(`Push notification sent for sharp move: ${sharpMove.player_name || sharpMove.description}`);
+            console.log(`Push notification sent for sharp move: ${sharpMove.player_name || sharpMove.description} (${sharpMove.movement_authenticity})`);
           } catch (pushError) {
             console.error('Error sending push notification:', pushError);
           }
@@ -277,13 +456,18 @@ serve(async (req) => {
       .delete()
       .lt('snapshot_time', cutoffTime);
 
+    const realSharpMoves = analyzedMovements.filter(m => m.movement_authenticity === 'real');
+    const fakeSharpMoves = analyzedMovements.filter(m => m.movement_authenticity === 'fake');
+
     return new Response(JSON.stringify({
       success: true,
       snapshotsCreated: snapshotsToInsert.length,
-      movementsDetected: allMovements.length,
-      sharpAlerts: allMovements.filter(m => m.is_sharp_action).length,
-      playerPropMovements: allMovements.filter(m => m.player_name).length,
-      movements: allMovements
+      movementsDetected: analyzedMovements.length,
+      sharpAlerts: analyzedMovements.filter(m => m.is_sharp_action).length,
+      playerPropMovements: analyzedMovements.filter(m => m.player_name).length,
+      realSharpMoves: realSharpMoves.length,
+      fakeSharpMoves: fakeSharpMoves.length,
+      movements: analyzedMovements
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
@@ -424,7 +608,7 @@ async function processOutcome(
   const { data: existingSnapshot } = await query
     .order('snapshot_time', { ascending: false })
     .limit(1)
-    .single();
+    .maybeSingle();
 
   // Create new snapshot
   const newSnapshot = {
