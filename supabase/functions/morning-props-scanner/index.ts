@@ -73,11 +73,9 @@ function detectJuice(overPrice: number, underPrice: number, openingOverPrice?: n
 function mapSportDisplay(sport: string): string {
   const sportMap: Record<string, string> = {
     'basketball_nba': 'NBA',
-    'basketball_ncaab': 'NCAAB',
     'americanfootball_nfl': 'NFL',
     'americanfootball_ncaaf': 'NCAAF',
     'icehockey_nhl': 'NHL',
-    'baseball_mlb': 'MLB',
   };
   return sportMap[sport] || sport;
 }
@@ -115,14 +113,13 @@ serve(async (req) => {
     
     console.log('🌅 Starting morning props scanner...');
     
-    // Sports to scan for player props
-    const sportsToScan = [
-      'basketball_nba',
-      'basketball_ncaab',
-      'americanfootball_nfl',
-      'americanfootball_ncaaf',
-      'icehockey_nhl',
-    ];
+  // Sports to scan for player props - NBA, Football, Hockey only
+  const sportsToScan = [
+    'basketball_nba',           // NBA player props
+    'americanfootball_nfl',     // NFL player props
+    'americanfootball_ncaaf',   // College football player props
+    'icehockey_nhl',            // NHL player props
+  ];
     
     // Player prop markets to check
     const propMarkets = [
