@@ -1233,9 +1233,10 @@ serve(async (req) => {
     // ========================================
     // STRATEGY 9: SHARP MONEY PARLAY
     // Follow the smart money - bet in direction of sharp movements
+    // Now includes player props!
     // ========================================
     if (sharpAlerts && sharpAlerts.length > 0) {
-      console.log('Generating SHARP MONEY PARLAY...');
+      console.log('Generating SHARP MONEY PARLAY (including player props)...');
       
       const sharpLegs: SuggestionLeg[] = [];
       let sharpProb = 1;
@@ -1247,9 +1248,47 @@ serve(async (req) => {
         return alert.new_price < alert.old_price;
       });
       
-      console.log(`Sharp-backed movements (odds shortened): ${sharpBackedMoves.length}`);
+      // Separate game lines and player props
+      const gameLineMoves = sharpBackedMoves.filter(m => !m.player_name);
+      const playerPropMoves = sharpBackedMoves.filter(m => m.player_name);
       
-      for (const sharpMove of sharpBackedMoves) {
+      console.log(`Sharp-backed movements: ${sharpBackedMoves.length} total (${gameLineMoves.length} game lines, ${playerPropMoves.length} player props)`);
+      
+      // Process player prop sharp moves first (they're often more specific/valuable)
+      for (const sharpMove of playerPropMoves) {
+        if (sharpLegs.length >= 4) break;
+        if (usedEvents.has(`${sharpMove.event_id}-${sharpMove.player_name}`)) continue;
+        
+        const americanOdds = sharpMove.new_price;
+        const impliedProb = americanToImplied(americanOdds);
+        
+        if (sharpProb * impliedProb >= 0.08) { // Lower threshold for props
+          sharpProb *= impliedProb;
+          usedEvents.add(`${sharpMove.event_id}-${sharpMove.player_name}`);
+          
+          // Format player prop description
+          const propTypeLabel = sharpMove.market_type
+            .replace('player_', '')
+            .replace(/_/g, ' ')
+            .toUpperCase();
+          
+          const description = `${sharpMove.player_name} ${propTypeLabel} ${sharpMove.outcome_name.includes(sharpMove.player_name || '') ? sharpMove.outcome_name.replace(sharpMove.player_name || '', '').trim() : sharpMove.outcome_name}`;
+          
+          sharpLegs.push({
+            description: description.trim(),
+            odds: americanOdds,
+            impliedProbability: impliedProb,
+            sport: sharpMove.sport,
+            betType: sharpMove.market_type,
+            eventTime: sharpMove.commence_time || new Date().toISOString(),
+          });
+          
+          console.log(`Added player prop: ${sharpMove.player_name} - ${propTypeLabel}`);
+        }
+      }
+      
+      // Then add game lines
+      for (const sharpMove of gameLineMoves) {
         if (sharpLegs.length >= 4) break;
         if (usedEvents.has(sharpMove.event_id)) continue;
         
@@ -1322,26 +1361,103 @@ serve(async (req) => {
       
       if (sharpLegs.length >= 2) {
         const totalOdds = calculateTotalOdds(sharpLegs);
+        const hasPlayerProps = sharpLegs.some(l => l.betType.startsWith('player_'));
+        const propCount = sharpLegs.filter(l => l.betType.startsWith('player_')).length;
+        
         const sharpIndicators = sharpBackedMoves
           .slice(0, 3)
           .map(m => m.sharp_indicator?.split(' - ')[0])
           .filter(Boolean)
           .join(', ');
         
+        const propNote = hasPlayerProps ? ` Includes ${propCount} player prop${propCount > 1 ? 's' : ''} with sharp action.` : '';
+        
         suggestions.unshift({
           legs: sharpLegs,
           total_odds: totalOdds,
           combined_probability: sharpProb,
-          suggestion_reason: `⚡ SHARP MONEY PARLAY: Following smart money movement. ${sharpIndicators || 'Sharp action detected'}. These lines moved with professional action.`,
+          suggestion_reason: `⚡ SHARP MONEY PARLAY: Following smart money movement. ${sharpIndicators || 'Sharp action detected'}.${propNote} These lines moved with professional action.`,
           sport: sharpLegs[0].sport,
           confidence_score: 0.80,
           expires_at: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(), // 12 hour expiry (time sensitive)
           is_data_driven: true,
         });
         
-        console.log(`Created SHARP MONEY PARLAY with ${sharpLegs.length} legs`);
+        console.log(`Created SHARP MONEY PARLAY with ${sharpLegs.length} legs (${propCount} player props)`);
       } else {
         console.log(`Only found ${sharpLegs.length} qualifying sharp-backed legs (need 2)`);
+      }
+    }
+    
+    // ========================================
+    // STRATEGY 10: SHARP PLAYER PROPS ONLY
+    // Pure player props parlay from sharp movements
+    // ========================================
+    if (sharpAlerts && sharpAlerts.length > 0) {
+      const sharpPropMoves = sharpAlerts.filter(m => m.player_name && m.new_price < m.old_price);
+      
+      if (sharpPropMoves.length >= 3) {
+        console.log(`Generating SHARP PROPS PARLAY from ${sharpPropMoves.length} player prop movements...`);
+        
+        const sharpPropLegs: SuggestionLeg[] = [];
+        let sharpPropProb = 1;
+        const usedPlayers = new Set<string>();
+        
+        // Sort by price change magnitude (bigger moves = stronger signal)
+        const sortedPropMoves = [...sharpPropMoves].sort((a, b) => 
+          Math.abs(b.price_change) - Math.abs(a.price_change)
+        );
+        
+        for (const sharpMove of sortedPropMoves) {
+          if (sharpPropLegs.length >= 5) break;
+          if (usedPlayers.has(sharpMove.player_name!)) continue;
+          
+          const americanOdds = sharpMove.new_price;
+          const impliedProb = americanToImplied(americanOdds);
+          
+          if (sharpPropProb * impliedProb >= 0.05) {
+            sharpPropProb *= impliedProb;
+            usedPlayers.add(sharpMove.player_name!);
+            
+            const propTypeLabel = sharpMove.market_type
+              .replace('player_', '')
+              .replace(/_/g, ' ')
+              .toUpperCase();
+            
+            // Clean up the outcome name
+            let cleanOutcome = sharpMove.outcome_name;
+            if (sharpMove.player_name && cleanOutcome.includes(sharpMove.player_name)) {
+              cleanOutcome = cleanOutcome.replace(sharpMove.player_name, '').trim();
+            }
+            
+            sharpPropLegs.push({
+              description: `${sharpMove.player_name} ${propTypeLabel} ${cleanOutcome}`,
+              odds: americanOdds,
+              impliedProbability: impliedProb,
+              sport: sharpMove.sport,
+              betType: sharpMove.market_type,
+              eventTime: sharpMove.commence_time || new Date().toISOString(),
+            });
+          }
+        }
+        
+        if (sharpPropLegs.length >= 3) {
+          const totalOdds = calculateTotalOdds(sharpPropLegs);
+          const playerNames = sharpPropLegs.slice(0, 3).map(l => l.description.split(' ')[0]).join(', ');
+          
+          suggestions.unshift({
+            legs: sharpPropLegs,
+            total_odds: totalOdds,
+            combined_probability: sharpPropProb,
+            suggestion_reason: `🏀⚡ SHARP PROPS PARLAY: ${sharpPropLegs.length} player props with sharp money action. Featuring ${playerNames}. Professional bettors are on these lines!`,
+            sport: sharpPropLegs[0].sport,
+            confidence_score: 0.78,
+            expires_at: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(), // 8 hour expiry (props are time sensitive)
+            is_data_driven: true,
+          });
+          
+          console.log(`Created SHARP PROPS PARLAY with ${sharpPropLegs.length} legs`);
+        }
       }
     }
 
