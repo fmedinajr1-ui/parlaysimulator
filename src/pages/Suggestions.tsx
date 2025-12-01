@@ -9,6 +9,7 @@ import { SuggestionHistoryFeed } from "@/components/suggestions/SuggestionHistor
 import { StrategyPerformanceCard } from "@/components/suggestions/StrategyPerformanceCard";
 import { CalibrationDashboard } from "@/components/results/CalibrationDashboard";
 import { JuicedPropsCard } from "@/components/suggestions/JuicedPropsCard";
+import { SuggestedParlayOptimizer } from "@/components/suggestions/SuggestedParlayOptimizer";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -133,6 +134,8 @@ const Suggestions = () => {
   const [legCountFilter, setLegCountFilter] = useState("any");
   const [oddsRange, setOddsRange] = useState<[number, number]>([-500, 2000]);
   const [showFilters, setShowFilters] = useState(false);
+  const [optimizerOpen, setOptimizerOpen] = useState(false);
+  const [selectedParlayForOptimization, setSelectedParlayForOptimization] = useState<SuggestedParlay | null>(null);
 
   useEffect(() => {
     if (user && (isSubscribed || isAdmin)) {
@@ -444,6 +447,26 @@ const Suggestions = () => {
     const simulation = simulateParlay(parlayLegs, 10, suggestion.total_odds);
     // Pass suggested_parlay_id to track performance when user saves
     navigate('/results', { state: { simulation, suggestedParlayId: suggestion.id } });
+  };
+
+  const hasOptimizableLegs = (suggestion: SuggestedParlay): boolean => {
+    return suggestion.legs.some((leg: any) => {
+      if (leg.hybridScore !== undefined && leg.hybridScore < 50) return true;
+      if (leg.recommendation === 'FADE' || leg.recommendation === 'STRONG_FADE') return true;
+      if (leg.recommendation === 'NEUTRAL' && leg.hybridScore && leg.hybridScore < 45) return true;
+      if (leg.impliedProbability < 0.40) return true;
+      if (leg.hybridBreakdown) {
+        if (leg.hybridBreakdown.sharp < 10) return true;
+        if (leg.hybridBreakdown.user < 8) return true;
+        if (leg.hybridBreakdown.ai < 5) return true;
+      }
+      return false;
+    });
+  };
+
+  const openOptimizer = (suggestion: SuggestedParlay) => {
+    setSelectedParlayForOptimization(suggestion);
+    setOptimizerOpen(true);
   };
 
   const formatOdds = (odds: number) => odds > 0 ? `+${odds}` : odds.toString();
@@ -1034,15 +1057,27 @@ const Suggestions = () => {
                           </div>
                         </div>
 
-                        {/* Action */}
-                        <Button 
-                          onClick={() => handleAnalyze(suggestion)}
-                          className="w-full group"
-                          variant="outline"
-                        >
-                          Run Full Analysis
-                          <ChevronRight className="w-4 h-4 ml-1 group-hover:translate-x-1 transition-transform" />
-                        </Button>
+                        {/* Action Buttons */}
+                        <div className="flex gap-2">
+                          {hasOptimizableLegs(suggestion) && (
+                            <Button 
+                              onClick={() => openOptimizer(suggestion)}
+                              variant="outline"
+                              className="flex-1 border-neon-purple/30 text-neon-purple hover:bg-neon-purple/10"
+                            >
+                              <Zap className="w-4 h-4 mr-1" />
+                              Optimize
+                            </Button>
+                          )}
+                          <Button 
+                            onClick={() => handleAnalyze(suggestion)}
+                            className={cn("group", hasOptimizableLegs(suggestion) ? "flex-1" : "w-full")}
+                            variant="outline"
+                          >
+                            Run Full Analysis
+                            <ChevronRight className="w-4 h-4 ml-1 group-hover:translate-x-1 transition-transform" />
+                          </Button>
+                        </div>
                       </CardContent>
                     </Card>
                   );
@@ -1434,6 +1469,20 @@ const Suggestions = () => {
         </Tabs>
       </main>
       <BottomNav />
+
+      {/* Optimizer Dialog */}
+      {selectedParlayForOptimization && (
+        <SuggestedParlayOptimizer
+          legs={selectedParlayForOptimization.legs}
+          totalOdds={selectedParlayForOptimization.total_odds}
+          combinedProbability={selectedParlayForOptimization.combined_probability}
+          isOpen={optimizerOpen}
+          onClose={() => {
+            setOptimizerOpen(false);
+            setSelectedParlayForOptimization(null);
+          }}
+        />
+      )}
     </div>
   );
 };
