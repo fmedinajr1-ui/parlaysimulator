@@ -9,7 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { PaywallModal } from "@/components/PaywallModal";
-import { Plus, Upload as UploadIcon, Flame, X, Loader2, Sparkles, CheckCircle2, Clock, Pencil, CalendarIcon, Crown } from "lucide-react";
+import { Plus, Upload as UploadIcon, Flame, X, Loader2, Sparkles, CheckCircle2, Clock, Pencil, CalendarIcon, Crown, Image } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
 import { createLeg, simulateParlay, americanToDecimal } from "@/lib/parlay-calculator";
 import { ParlayLeg } from "@/types/parlay";
 import { toast } from "@/hooks/use-toast";
@@ -38,6 +39,18 @@ interface LegInput {
   odds: string;
 }
 
+interface QueuedSlip {
+  id: string;
+  file: File;
+  preview: string;
+  status: 'pending' | 'processing' | 'success' | 'error';
+  extractedLegs?: { description: string; odds: string }[];
+  extractedTotalOdds?: number;
+  extractedStake?: string;
+  extractedGameTime?: string;
+  error?: string;
+}
+
 const Upload = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -58,6 +71,8 @@ const Upload = () => {
   const [editDate, setEditDate] = useState<Date | undefined>(undefined);
   const [editTime, setEditTime] = useState("19:00");
   const [showPaywall, setShowPaywall] = useState(false);
+  const [uploadQueue, setUploadQueue] = useState<QueuedSlip[]>([]);
+  const [processingIndex, setProcessingIndex] = useState<number>(-1);
 
   // Check for success/cancel params from Stripe checkout
   useEffect(() => {
@@ -151,159 +166,133 @@ const Upload = () => {
     }
   };
 
-  const handleFileSelect = useCallback(async (file: File) => {
+  const handleFilesSelected = useCallback(async (files: File[]) => {
     // Check scan access for logged-in users
     if (user && !canScan && !isSubscribed && !isAdmin) {
       setShowPaywall(true);
       return;
     }
 
-    // Validate file
-    const validation = validateImageFile(file);
-    if (!validation.valid) {
-      toast({
-        title: "Invalid file! 📁",
-        description: validation.error,
-        variant: "destructive",
-      });
+    // Validate and queue files
+    const newQueue: QueuedSlip[] = files
+      .filter(file => {
+        const validation = validateImageFile(file);
+        if (!validation.valid) {
+          toast({
+            title: "Invalid file skipped",
+            description: validation.error,
+            variant: "destructive",
+          });
+          return false;
+        }
+        return true;
+      })
+      .slice(0, 10) // Max 10 files at once
+      .map(file => ({
+        id: crypto.randomUUID(),
+        file,
+        preview: URL.createObjectURL(file),
+        status: 'pending' as const,
+      }));
+
+    if (newQueue.length === 0) {
+      toast({ title: "No valid images", variant: "destructive" });
       return;
     }
 
+    setUploadQueue(newQueue);
     setIsProcessing(true);
-    
-    toast({
-      title: "Compressing & scanning... 🔍",
-      description: "Optimizing image for AI analysis.",
-    });
 
-    try {
-      // Compress image before upload
-      const { base64: imageBase64, originalSize, compressedSize } = await compressImage(file);
+    // Process queue sequentially
+    const allExtractedLegs: LegInput[] = [];
+    let lastGameTime: string | null = null;
+    let lastTotalOdds: number | null = null;
+    let lastStake: string | null = null;
+    let successCount = 0;
+
+    for (let i = 0; i < newQueue.length; i++) {
+      setProcessingIndex(i);
       
-      console.log(`Upload: ${(originalSize / 1024).toFixed(0)}KB → ${(compressedSize / 1024).toFixed(0)}KB`);
+      // Update status to processing
+      setUploadQueue(prev => prev.map((item, idx) => 
+        idx === i ? { ...item, status: 'processing' } : item
+      ));
 
-      // Call the edge function
-      const { data, error } = await supabase.functions.invoke('extract-parlay', {
-        body: { imageBase64 }
-      });
-
-      if (error) {
-        console.error('Edge function error:', error);
-        throw new Error(error.message || 'Failed to process image');
-      }
-
-      if (data?.error) {
-        throw new Error(data.error);
-      }
-
-      const extractedLegs = data?.legs || [];
-      const extractedTotalOddsStr = data?.totalOdds;
-      const extractedStake = data?.stake;
-      const extractedEarliestGameTime = data?.earliestGameTime;
-
-      if (extractedLegs.length === 0) {
-        toast({
-          title: "No legs found 🤔",
-          description: "Couldn't read your slip. Try a clearer image or enter manually.",
-          variant: "destructive",
+      try {
+        const { base64 } = await compressImage(newQueue[i].file);
+        const { data, error } = await supabase.functions.invoke('extract-parlay', {
+          body: { imageBase64: base64 }
         });
-        return;
-      }
 
-      // Increment scan count for free users after successful scan
-      if (user && !isSubscribed && !isAdmin) {
-        // Check if this scan will leave them with 1 remaining (scansRemaining is 2 now)
-        const willHaveOneScanLeft = scansRemaining === 2;
-        await incrementScan();
+        if (error) throw new Error(error.message);
+        if (data?.error) throw new Error(data.error);
+
+        const extractedLegs = data?.legs || [];
         
-        // Show upgrade reminder when they have 1 scan left
-        if (willHaveOneScanLeft) {
-          setTimeout(() => {
-            toast({
-              title: "1 Free Scan Remaining! ⚠️",
-              description: "Upgrade to Pro for unlimited scans at $5/mo",
-              action: (
-                <Button 
-                  variant="default" 
-                  size="sm" 
-                  onClick={startCheckout}
-                  className="shrink-0"
-                >
-                  Upgrade
-                </Button>
-              ),
-            });
-          }, 2000); // Show after the success toast
-        }
+        // Add extracted legs to combined list
+        extractedLegs.forEach((leg: any) => {
+          allExtractedLegs.push({
+            id: crypto.randomUUID(),
+            description: leg.description || "",
+            odds: leg.odds?.replace('+', '') || "",
+          });
+        });
+
+        // Store data from last successful extraction
+        if (data?.totalOdds) lastTotalOdds = parseInt(data.totalOdds.replace('+', ''));
+        if (data?.earliestGameTime) lastGameTime = data.earliestGameTime;
+        if (data?.stake) lastStake = data.stake;
+
+        // Update status to success
+        setUploadQueue(prev => prev.map((item, idx) => 
+          idx === i ? { ...item, status: 'success', extractedLegs } : item
+        ));
+
+        successCount++;
+
+        // Increment scan for free users
+        if (user && !isSubscribed && !isAdmin) await incrementScan();
+
+      } catch (err) {
+        setUploadQueue(prev => prev.map((item, idx) => 
+          idx === i ? { ...item, status: 'error', error: String(err) } : item
+        ));
       }
 
-      // Convert extracted legs to LegInput format
-      const newLegs: LegInput[] = extractedLegs.map((leg: { description: string; odds: string }) => ({
-        id: crypto.randomUUID(),
-        description: leg.description || "",
-        odds: leg.odds?.replace('+', '') || "",
-      }));
-
-      // Ensure we have at least 2 legs
-      while (newLegs.length < 2) {
-        newLegs.push({ id: crypto.randomUUID(), description: "", odds: "" });
-      }
-
-      setLegs(newLegs);
-
-      // Parse and store extracted total odds
-      if (extractedTotalOddsStr) {
-        const parsedOdds = parseInt(extractedTotalOddsStr.replace('+', ''));
-        if (!isNaN(parsedOdds) && parsedOdds !== 0) {
-          setExtractedTotalOdds(parsedOdds);
-        }
-      } else {
-        setExtractedTotalOdds(null);
-      }
-
-      // Pre-populate stake if extracted
-      if (extractedStake) {
-        const stakeNum = parseFloat(extractedStake.replace(/[$,]/g, ''));
-        if (!isNaN(stakeNum) && stakeNum > 0) {
-          setStake(stakeNum.toString());
-        }
-      }
-
-      // Store extracted game time
-      if (extractedEarliestGameTime) {
-        setExtractedGameTime(extractedEarliestGameTime);
-      } else {
-        setExtractedGameTime(null);
-      }
-
-      const oddsInfo = extractedTotalOddsStr ? ` Total odds: ${extractedTotalOddsStr}` : '';
-      const timeInfo = extractedEarliestGameTime ? ` Game time: ${extractedEarliestGameTime}` : '';
-      toast({
-        title: `Found ${extractedLegs.length} legs! 🎯`,
-        description: `Your parlay has been loaded.${oddsInfo}${timeInfo} Review and run simulation!`,
-      });
-
-    } catch (error) {
-      console.error('OCR error:', error);
-      toast({
-        title: "Scan failed 😵",
-        description: error instanceof Error ? error.message : "Try again or enter manually.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsProcessing(false);
+      // Small delay between files to avoid rate limiting
+      if (i < newQueue.length - 1) await new Promise(r => setTimeout(r, 1000));
     }
-  }, [user, canScan, isSubscribed, isAdmin, incrementScan]);
+
+    // Set combined legs from all slips
+    if (allExtractedLegs.length > 0) {
+      setLegs(allExtractedLegs.length >= 2 ? allExtractedLegs : 
+        [...allExtractedLegs, { id: crypto.randomUUID(), description: "", odds: "" }]);
+    }
+    
+    if (lastTotalOdds) setExtractedTotalOdds(lastTotalOdds);
+    if (lastGameTime) setExtractedGameTime(lastGameTime);
+    if (lastStake) setStake(lastStake.replace(/[$,]/g, ''));
+
+    setIsProcessing(false);
+    setProcessingIndex(-1);
+
+    if (successCount > 0) {
+      toast({
+        title: `Extracted ${allExtractedLegs.length} total legs! 🎯`,
+        description: `From ${successCount} slip${successCount > 1 ? 's' : ''}`,
+      });
+    }
+  }, [user, canScan, isSubscribed, isAdmin, incrementScan, startCheckout, scansRemaining]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
     
-    const file = e.dataTransfer.files[0];
-    if (file) {
-      handleFileSelect(file);
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      handleFilesSelected(Array.from(files));
     }
-  }, [handleFileSelect]);
+  }, [handleFilesSelected]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -315,13 +304,13 @@ const Upload = () => {
   }, []);
 
   const handleFileInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      handleFileSelect(file);
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      handleFilesSelected(Array.from(files));
     }
     // Reset input so same file can be selected again
     e.target.value = '';
-  }, [handleFileSelect]);
+  }, [handleFilesSelected]);
 
   const triggerFileInput = useCallback(() => {
     if (!isProcessing) {
@@ -405,6 +394,7 @@ const Upload = () => {
         ref={fileInputRef}
         type="file"
         accept="image/*"
+        multiple
         onChange={handleFileInputChange}
         className="hidden"
         aria-hidden="true"
@@ -503,7 +493,9 @@ const Upload = () => {
                   <Sparkles className="w-4 h-4 text-neon-purple" />
                 </p>
                 <p className="text-sm text-muted-foreground mb-3">
-                  Upload a photo and we'll extract your legs automatically
+                  Upload photos and we'll extract your legs automatically
+                  <br />
+                  <span className="text-xs opacity-70">Supports multiple slips at once!</span>
                 </p>
                 <Button 
                   variant="muted" 
@@ -516,6 +508,36 @@ const Upload = () => {
                   Browse Files
                 </Button>
               </>
+            )}
+
+            {/* Queue Progress */}
+            {uploadQueue.length > 0 && isProcessing && (
+              <div className="mt-4 space-y-3">
+                <div className="flex items-center justify-between text-sm">
+                  <span>Processing {processingIndex + 1} of {uploadQueue.length}</span>
+                  <span>{uploadQueue.filter(q => q.status === 'success').length} completed</span>
+                </div>
+                <Progress value={((processingIndex + 1) / uploadQueue.length) * 100} />
+                <div className="grid grid-cols-5 gap-2">
+                  {uploadQueue.map((item) => (
+                    <div key={item.id} className="relative aspect-square rounded overflow-hidden border border-border">
+                      <img src={item.preview} alt="Slip" className="w-full h-full object-cover" />
+                      <div className={cn(
+                        "absolute inset-0 flex items-center justify-center",
+                        item.status === 'processing' && "bg-background/80",
+                        item.status === 'success' && "bg-green-500/20",
+                        item.status === 'error' && "bg-red-500/20",
+                        item.status === 'pending' && "bg-background/50"
+                      )}>
+                        {item.status === 'processing' && <Loader2 className="w-5 h-5 animate-spin" />}
+                        {item.status === 'success' && <CheckCircle2 className="w-5 h-5 text-green-500" />}
+                        {item.status === 'error' && <X className="w-5 h-5 text-red-500" />}
+                        {item.status === 'pending' && <Image className="w-5 h-5 text-muted-foreground" />}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
         </FeedCard>
