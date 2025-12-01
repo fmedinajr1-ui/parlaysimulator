@@ -6,6 +6,7 @@ import { useNavigate } from "react-router-dom";
 import { BottomNav } from "@/components/BottomNav";
 import { SuggestionPerformanceCard } from "@/components/suggestions/SuggestionPerformanceCard";
 import { SuggestionHistoryFeed } from "@/components/suggestions/SuggestionHistoryFeed";
+import { StrategyPerformanceCard } from "@/components/suggestions/StrategyPerformanceCard";
 import { CalibrationDashboard } from "@/components/results/CalibrationDashboard";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -1382,7 +1383,8 @@ const Suggestions = () => {
             })()}
           </TabsContent>
 
-          <TabsContent value="history" className="mt-4">
+          <TabsContent value="history" className="mt-4 space-y-4">
+            <StrategyPerformanceCard />
             <SuggestionHistoryFeed />
           </TabsContent>
         </Tabs>

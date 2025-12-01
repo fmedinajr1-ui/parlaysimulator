@@ -820,6 +820,21 @@ export type Database = {
           sport: string
         }[]
       }
+      get_strategy_performance_stats: {
+        Args: { p_user_id?: string }
+        Returns: {
+          avg_odds: number
+          roi_percentage: number
+          strategy_type: string
+          total_followed: number
+          total_lost: number
+          total_pending: number
+          total_profit: number
+          total_staked: number
+          total_won: number
+          win_rate: number
+        }[]
+      }
       get_suggestion_accuracy_stats: {
         Args: never
         Returns: {
