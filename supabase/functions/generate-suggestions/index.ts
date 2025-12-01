@@ -96,9 +96,9 @@ const SPORT_KEYS: Record<string, string> = {
   'Soccer': 'soccer_epl',
 };
 
-// Player prop markets for different sports
+// Player prop markets for different sports - expanded for NBA
 const PLAYER_PROP_MARKETS: Record<string, string[]> = {
-  'NBA': ['player_points', 'player_rebounds', 'player_assists', 'player_threes'],
+  'NBA': ['player_points', 'player_rebounds', 'player_assists', 'player_threes', 'player_points_rebounds_assists', 'player_steals', 'player_blocks'],
   'NCAAB': ['player_points', 'player_rebounds', 'player_assists'],
   'NFL': ['player_pass_tds', 'player_pass_yds', 'player_rush_yds', 'player_reception_yds'],
   'NCAAF': ['player_pass_tds', 'player_pass_yds', 'player_rush_yds'],
@@ -491,10 +491,11 @@ serve(async (req) => {
           }
           allOdds.push(...events.slice(0, 6));
           
-          // Fetch player props for the first few events
+          // Fetch player props for events - fetch more for NBA (up to 10 games)
           const propMarkets = PLAYER_PROP_MARKETS[sport];
+          const maxPropsEvents = sport === 'NBA' ? 10 : 2; // Fetch more NBA props for 8-leg parlays
           if (propMarkets && events.length > 0) {
-            for (const event of events.slice(0, 2)) {
+            for (const event of events.slice(0, maxPropsEvents)) {
               try {
                 const propsUrl = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${event.id}/odds?apiKey=${ODDS_API_KEY}&regions=us&markets=${propMarkets.join(',')}&oddsFormat=decimal`;
                 const propsResponse = await fetch(propsUrl);
@@ -1146,6 +1147,73 @@ serve(async (req) => {
         confidence_score: 0.5,
         expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       });
+    }
+
+    // ========================================
+    // STRATEGY 8: NBA PLAYER PROPS - 8 LEG FAVORITES (odds < -200)
+    // ========================================
+    console.log('Generating NBA 8-leg player props favorites parlay...');
+    
+    const nbaEvents = allOdds.filter(e => e.sport_key === 'NBA');
+    const allNBAFavoriteProps: SuggestionLeg[] = [];
+
+    // Collect all NBA player props with odds less than -200 (heavy favorites)
+    for (const [eventId, markets] of playerPropsData) {
+      const event = nbaEvents.find(e => e.id === eventId);
+      if (!event) continue;
+
+      for (const market of markets) {
+        for (const outcome of market.outcomes) {
+          const americanOdds = decimalToAmerican(outcome.price);
+          
+          // Only include props with odds LESS than -200 (heavy favorites)
+          // e.g., -250, -300, -400, -500
+          if (americanOdds < -200) {
+            const propType = market.key.replace('player_', '').replace(/_/g, ' ');
+            const pointStr = outcome.point ? (outcome.name.includes('Over') ? 'O' : 'U') + outcome.point : '';
+            
+            allNBAFavoriteProps.push({
+              description: `${outcome.description || outcome.name} ${propType} ${pointStr}`.trim(),
+              odds: americanOdds,
+              impliedProbability: americanToImplied(americanOdds),
+              sport: 'NBA',
+              betType: 'player_prop',
+              eventTime: event.commence_time,
+            });
+          }
+        }
+      }
+    }
+
+    console.log(`Found ${allNBAFavoriteProps.length} NBA props with odds < -200`);
+
+    // Sort by implied probability (highest first - safest picks)
+    allNBAFavoriteProps.sort((a, b) => b.impliedProbability - a.impliedProbability);
+
+    // Take the top 8 props (highest probability favorites)
+    const selectedNBALegs = allNBAFavoriteProps.slice(0, 8);
+
+    if (selectedNBALegs.length === 8) {
+      const combinedProb = selectedNBALegs.reduce((acc, leg) => acc * leg.impliedProbability, 1);
+      const totalOdds = calculateTotalOdds(selectedNBALegs);
+      
+      // Format the odds display
+      const avgOdds = Math.round(selectedNBALegs.reduce((sum, leg) => sum + leg.odds, 0) / 8);
+      
+      suggestions.unshift({
+        legs: selectedNBALegs,
+        total_odds: totalOdds,
+        combined_probability: combinedProb,
+        suggestion_reason: `🏀 NBA PLAYER PROPS - 8 LEG FAVORITES: All heavy favorite props (avg ${avgOdds}). Combined probability: ${(combinedProb * 100).toFixed(1)}%. High volume parlay!`,
+        sport: 'NBA',
+        confidence_score: combinedProb,
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        is_data_driven: true,
+      });
+      
+      console.log(`Created 8-leg NBA props parlay with ${(combinedProb * 100).toFixed(1)}% probability and +${totalOdds} odds`);
+    } else {
+      console.log(`Only found ${selectedNBALegs.length} qualifying NBA props (need 8)`);
     }
 
     // Sort suggestions: LOW RISK (high probability) first
