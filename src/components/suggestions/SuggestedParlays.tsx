@@ -26,6 +26,7 @@ interface SuggestedParlay {
   sport: string;
   confidence_score: number;
   expires_at: string;
+  is_hybrid?: boolean;
 }
 
 export function SuggestedParlays() {
@@ -191,6 +192,7 @@ export function SuggestedParlays() {
               sport={suggestion.sport}
               confidenceScore={suggestion.confidence_score}
               expiresAt={suggestion.expires_at}
+              isHybrid={suggestion.is_hybrid}
             />
           ))}
         </div>

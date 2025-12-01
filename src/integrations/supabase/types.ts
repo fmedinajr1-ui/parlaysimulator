@@ -645,8 +645,10 @@ export type Database = {
           confidence_score: number
           created_at: string
           expires_at: string
+          hybrid_scores: Json | null
           id: string
           is_active: boolean
+          is_hybrid: boolean | null
           legs: Json
           sport: string
           suggestion_reason: string
@@ -658,8 +660,10 @@ export type Database = {
           confidence_score?: number
           created_at?: string
           expires_at: string
+          hybrid_scores?: Json | null
           id?: string
           is_active?: boolean
+          is_hybrid?: boolean | null
           legs: Json
           sport: string
           suggestion_reason: string
@@ -671,8 +675,10 @@ export type Database = {
           confidence_score?: number
           created_at?: string
           expires_at?: string
+          hybrid_scores?: Json | null
           id?: string
           is_active?: boolean
+          is_hybrid?: boolean | null
           legs?: Json
           sport?: string
           suggestion_reason?: string

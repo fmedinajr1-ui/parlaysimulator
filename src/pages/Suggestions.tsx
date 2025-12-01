@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
+import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { 
   Sparkles, 
@@ -63,6 +64,8 @@ interface SuggestedParlay {
   confidence_score: number;
   expires_at: string;
   created_at: string;
+  is_hybrid?: boolean;
+  hybrid_scores?: any;
 }
 
 interface UserPattern {
@@ -97,7 +100,7 @@ const SPORT_GROUPS = {
 };
 
 const SPORTS = ["All", "Football", "Basketball", "Hockey", "Baseball", "Soccer", "NFL", "NBA", "NHL", "MLB", "NCAAB", "NCAAF"];
-const RISK_LEVELS = ["All", "Very Low (60%+)", "Low (50%+)", "Medium", "High"];
+const RISK_LEVELS = ["All", "Hybrid", "Very Low (60%+)", "Low (50%+)", "Medium", "High"];
 const BET_TYPES = ["All", "Moneyline", "Spreads", "Totals", "Player Props"];
 const LEG_COUNTS = [
   { label: "Any", value: "any" },
@@ -344,13 +347,14 @@ const Suggestions = () => {
       }
     }
 
-    // Risk filter (based on combined probability)
+    // Risk filter (based on combined probability or hybrid)
     if (riskFilter !== "All") {
       filtered = filtered.filter(s => {
+        if (riskFilter === "Hybrid") return s.is_hybrid === true;
         const prob = s.combined_probability;
-        if (riskFilter === "Very Low (60%+)") return prob >= 0.60; // 60%+ win probability (highest confidence)
-        if (riskFilter === "Low (50%+)") return prob >= 0.50; // 50%+ win probability (high confidence)
-        if (riskFilter === "Medium") return prob >= 0.25 && prob < 0.50; // 25-50%
+        if (riskFilter === "Very Low (60%+)") return prob >= 0.60;
+        if (riskFilter === "Low (50%+)") return prob >= 0.50;
+        if (riskFilter === "Medium") return prob >= 0.25 && prob < 0.50;
         return prob < 0.25; // High risk: <25%
       });
     }
@@ -813,7 +817,9 @@ const Suggestions = () => {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="All">All Risks</SelectItem>
-                          <SelectItem value="Low">🟢 Low (25%+ prob)</SelectItem>
+                          <SelectItem value="Hybrid">🧬 Hybrid Formula</SelectItem>
+                          <SelectItem value="Very Low (60%+)">🛡️ Very Low (60%+)</SelectItem>
+                          <SelectItem value="Low (50%+)">🟢 Low (50%+)</SelectItem>
                           <SelectItem value="Medium">🟡 Medium (10-25%)</SelectItem>
                           <SelectItem value="High">🔴 High (&lt;10%)</SelectItem>
                         </SelectContent>
@@ -899,7 +905,10 @@ const Suggestions = () => {
                   return (
                     <Card 
                       key={suggestion.id} 
-                      className="bg-card/50 border-border/50 hover:border-primary/30 transition-all"
+                      className={cn(
+                        "bg-card/50 border-border/50 hover:border-primary/30 transition-all",
+                        suggestion.is_hybrid && "border-neon-purple/50 bg-neon-purple/5"
+                      )}
                     >
                       <CardHeader className="pb-2">
                         <div className="flex items-center justify-between">
@@ -911,6 +920,15 @@ const Suggestions = () => {
                             </Badge>
                           </div>
                           <div className="flex items-center gap-1">
+                            {suggestion.is_hybrid && (
+                              <Badge 
+                                variant="outline" 
+                                className="text-xs text-neon-purple bg-neon-purple/10 border-neon-purple/30"
+                              >
+                                <Shield className="w-3 h-3 mr-1" />
+                                Hybrid
+                              </Badge>
+                            )}
                             <Badge 
                               variant="outline" 
                               className={cn("text-xs", riskInfo.color)}
@@ -929,30 +947,52 @@ const Suggestions = () => {
                             return (
                               <div 
                                 key={index}
-                                className="flex items-center justify-between text-sm bg-muted/30 rounded-lg px-3 py-2"
+                                className="bg-muted/30 rounded-lg px-3 py-2.5 space-y-2"
                               >
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-foreground truncate">{leg.description}</p>
-                                  <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
-                                    <span>{leg.sport}</span>
-                                    <span>•</span>
-                                    <div className="flex items-center gap-1">
-                                      <BetIcon className="w-3 h-3" />
-                                      <span>{betBadge.label}</span>
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm text-foreground leading-tight">{leg.description}</p>
+                                    <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
+                                      <span>{leg.sport}</span>
+                                      <span>•</span>
+                                      <div className="flex items-center gap-1">
+                                        <BetIcon className="w-3 h-3" />
+                                        <span>{betBadge.label}</span>
+                                      </div>
+                                      <span>•</span>
+                                      <Clock className="w-3 h-3" />
+                                      <span>{formatTimeUntil(leg.eventTime)}</span>
                                     </div>
-                                    <span>•</span>
-                                    <Clock className="w-3 h-3" />
-                                    <span>{formatTimeUntil(leg.eventTime)}</span>
+                                  </div>
+                                  <div className="flex flex-col items-end gap-1 shrink-0">
+                                    <Badge variant="secondary" className="text-sm font-bold">
+                                      {formatOdds(leg.odds)}
+                                    </Badge>
+                                    <span className="text-xs text-muted-foreground">
+                                      {(leg.impliedProbability * 100).toFixed(0)}%
+                                    </span>
                                   </div>
                                 </div>
-                                <div className="text-right ml-2">
-                                  <Badge variant="secondary" className="mb-1">
-                                    {formatOdds(leg.odds)}
-                                  </Badge>
-                                  <p className="text-xs text-muted-foreground">
-                                    {(leg.impliedProbability * 100).toFixed(0)}%
-                                  </p>
-                                </div>
+                                
+                                {/* Hybrid Score Breakdown - only show if hybrid data exists */}
+                                {(leg as any).hybridScore && (leg as any).hybridBreakdown && (
+                                  <div className="mt-2 p-2 bg-neon-purple/10 rounded border border-neon-purple/20">
+                                    <div className="flex justify-between text-xs mb-2">
+                                      <span className="text-muted-foreground">Sharp: {(leg as any).hybridBreakdown.sharp}/40</span>
+                                      <span className="text-muted-foreground">User: {(leg as any).hybridBreakdown.user}/35</span>
+                                      <span className="text-muted-foreground">AI: {(leg as any).hybridBreakdown.ai}/25</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <Progress value={(leg as any).hybridScore} className="h-2 flex-1" />
+                                      <Badge 
+                                        variant={(leg as any).recommendation === 'STRONG_PICK' ? 'default' : 'secondary'}
+                                        className="text-xs shrink-0"
+                                      >
+                                        {(leg as any).recommendation}
+                                      </Badge>
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             );
                           })}
