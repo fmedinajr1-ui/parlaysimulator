@@ -103,6 +103,25 @@ const MARKET_LABELS: Record<string, string> = {
   'totals': 'Total'
 };
 
+// AI BETTING KNOWLEDGE RULES
+// Sharp signals to FOLLOW, Trap signals to FADE
+const AI_BETTING_RULES = {
+  // SHARP SIGNALS - Follow these
+  sharp: {
+    LINE_AND_JUICE_MOVED: { weight: 3, description: 'Line + juice moved together = confirmed action' },
+    LATE_MONEY_SWEET_SPOT: { weight: 3, minHours: 1, maxHours: 3, description: 'Late moves 1-3 hours pregame' },
+    INJURY_UNDER: { weight: 2, description: 'Unders with injury signals' },
+    MULTI_BOOK_CONSENSUS: { weight: 2, description: 'Multiple books moved same direction' },
+  },
+  // TRAP SIGNALS - Fade these
+  trap: {
+    EARLY_MORNING_OVER: { weight: -3, description: 'Fade early morning overs' },
+    PRICE_ONLY_MOVE: { weight: -3, description: 'Price moved but line stayed = trap' },
+    FAKE_SHARP_TAG: { weight: -2, description: 'Sharp action label with no line move' },
+    STEAM_MOVE_NO_CONSENSUS: { weight: -2, description: 'Big move on single book only' },
+  },
+};
+
 // Analyze sharp movement to determine if it's real or fake
 function analyzeSharpMovement(
   movement: LineMovement,
@@ -149,33 +168,54 @@ function analyzeSharpMovement(
     signals.push('SINGLE_BOOK_DIVERGENCE');
   }
   
-  // Check price vs line movement (price moved without spread change = classic sharp)
+  // ❌ TRAP: Price moved but line stayed = FAKE SHARP (most important fix!)
   if (Math.abs(movement.price_change) >= 8 && 
       (!movement.point_change || Math.abs(movement.point_change) < 0.5)) {
-    realScore += 2;
-    signals.push('PRICE_WITHOUT_LINE_CHANGE');
+    fakeScore += 3;  // This is a TRAP - price only = fake
+    signals.push('PRICE_ONLY_MOVE_TRAP');
   }
   
-  // Line AND price moved together = normal adjustment
+  // ✅ SHARP: Line AND juice moved together on SINGLE side = confirmed real action
   if (movement.point_change && Math.abs(movement.point_change) >= 0.5 &&
-      Math.abs(movement.price_change) >= 5) {
-    fakeScore += 1;
-    signals.push('LINE_AND_PRICE_MOVED');
+      Math.abs(movement.price_change) >= 5 && !oppositeMoved) {
+    realScore += 3;
+    signals.push('LINE_AND_JUICE_CONFIRMED');
   }
   
-  // Late money is sharper (< 4 hours to game)
-  if (hoursToGame <= 4) {
-    realScore += 2;
-    signals.push('LATE_MONEY');
-  } else if (hoursToGame >= 12) {
-    fakeScore += 1;
-    signals.push('EARLY_MOVEMENT');
+  // Line AND price moved together on BOTH sides = market adjustment
+  if (movement.point_change && Math.abs(movement.point_change) >= 0.5 &&
+      Math.abs(movement.price_change) >= 5 && oppositeMoved) {
+    fakeScore += 2;
+    signals.push('MARKET_ADJUSTMENT');
   }
   
-  // Steam move analysis (very large movement)
-  if (Math.abs(movement.price_change) >= 15) {
+  // ✅ SHARP: Late money 1-3 hours pregame = SWEET SPOT (highest confidence)
+  if (hoursToGame >= 1 && hoursToGame <= 3) {
+    realScore += 3;
+    signals.push('LATE_MONEY_SWEET_SPOT');
+  } else if (hoursToGame < 1) {
+    // Very late money - still good but less time to react
     realScore += 1;
-    signals.push('STEAM_MOVE');
+    signals.push('VERY_LATE_MONEY');
+  } else if (hoursToGame >= 8) {
+    // ❌ TRAP: Early morning moves are often public traps
+    fakeScore += 2;
+    signals.push('EARLY_MORNING_MOVE');
+  } else if (hoursToGame >= 4) {
+    // Medium timing - neutral
+    signals.push('MODERATE_TIMING');
+  }
+  
+  // Steam move analysis (very large movement) - only counts if multi-book
+  if (Math.abs(movement.price_change) >= 15) {
+    if (booksConsensus >= 2) {
+      realScore += 2;
+      signals.push('STEAM_MOVE_CONFIRMED');
+    } else {
+      // ❌ TRAP: Big move on single book = could be trap
+      fakeScore += 2;
+      signals.push('STEAM_MOVE_NO_CONSENSUS');
+    }
   }
   
   // Player props tend to be sharper (books have less data)
@@ -184,9 +224,9 @@ function analyzeSharpMovement(
     signals.push('PLAYER_PROP');
   }
   
-  // Favorite shortening even more = could be public overreaction
+  // ❌ TRAP: Heavy favorite shortening even more = public overreaction
   if (movement.new_price < -200 && movement.price_change < -5) {
-    fakeScore += 1;
+    fakeScore += 2;
     signals.push('HEAVY_FAVORITE_SHORTENING');
   }
   

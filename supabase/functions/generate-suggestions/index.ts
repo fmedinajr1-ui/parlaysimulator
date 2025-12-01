@@ -1630,6 +1630,231 @@ serve(async (req) => {
       }
     }
 
+    // ========================================
+    // STRATEGY 13: LATE SHARP MONEY (1-3 hours pregame)
+    // ✅ RULE: Follow late moves 1-3 hours pregame - highest confidence window
+    // ========================================
+    const now = new Date();
+    if (sharpAlerts && sharpAlerts.length > 0) {
+      console.log('Generating LATE SHARP MONEY strategy (1-3hr sweet spot)...');
+      
+      const lateSharpMoves = sharpAlerts.filter(m => {
+        if (!m.commence_time) return false;
+        const hoursToGame = (new Date(m.commence_time).getTime() - now.getTime()) / (1000 * 60 * 60);
+        // 1-3 hour sweet spot with verified sharp action
+        return hoursToGame >= 1 && hoursToGame <= 3 && 
+               m.movement_authenticity === 'real' &&
+               m.new_price < m.old_price;
+      });
+      
+      console.log(`Found ${lateSharpMoves.length} late sharp moves in 1-3hr window`);
+      
+      if (lateSharpMoves.length >= 2) {
+        const lateSharpLegs: SuggestionLeg[] = [];
+        let lateSharpProb = 1;
+        const usedEvents = new Set<string>();
+        
+        for (const move of lateSharpMoves) {
+          if (lateSharpLegs.length >= 4) break;
+          const eventKey = move.player_name ? `${move.event_id}-${move.player_name}` : move.event_id;
+          if (usedEvents.has(eventKey)) continue;
+          
+          const americanOdds = move.new_price;
+          const impliedProb = americanToImplied(americanOdds);
+          
+          if (lateSharpProb * impliedProb >= 0.10) {
+            lateSharpProb *= impliedProb;
+            usedEvents.add(eventKey);
+            
+            const finalPick = move.final_pick || move.outcome_name;
+            let description = move.player_name 
+              ? `🕐 ${move.player_name}: ${finalPick}`
+              : `🕐 ${finalPick}`;
+            
+            lateSharpLegs.push({
+              description,
+              odds: americanOdds,
+              impliedProbability: impliedProb,
+              sport: move.sport,
+              betType: move.market_type,
+              eventTime: move.commence_time || now.toISOString(),
+            });
+          }
+        }
+        
+        if (lateSharpLegs.length >= 2) {
+          const totalOdds = calculateTotalOdds(lateSharpLegs);
+          
+          suggestions.unshift({
+            legs: lateSharpLegs,
+            total_odds: totalOdds,
+            combined_probability: lateSharpProb,
+            suggestion_reason: `🕐 LATE SHARP: ${lateSharpLegs.length} moves 1-3 hours before game - highest confidence window. Sharp money peaks in this timeframe.`,
+            sport: lateSharpLegs[0].sport,
+            confidence_score: 0.88,
+            expires_at: new Date(now.getTime() + 3 * 60 * 60 * 1000).toISOString(), // 3 hour expiry
+            is_data_driven: true,
+          });
+          
+          console.log(`Created LATE SHARP PARLAY with ${lateSharpLegs.length} legs`);
+        }
+      }
+    }
+
+    // ========================================
+    // STRATEGY 14: MORNING FADE PARLAY
+    // ❌ RULE: Fade early morning overs - public trap
+    // ========================================
+    if (sharpAlerts && sharpAlerts.length > 0) {
+      console.log('Generating MORNING FADE strategy...');
+      
+      // Find morning overs with heavy juice (potential traps)
+      const currentHourUTC = now.getUTCHours();
+      const isCurrentlyMorning = currentHourUTC < 18; // Before 1 PM ET
+      
+      const morningOversToFade = sharpAlerts.filter(m => {
+        // Check if detected in morning hours
+        const detectedTime = new Date(m.detected_at);
+        const detectedHourUTC = detectedTime.getUTCHours();
+        const wasDetectedMorning = detectedHourUTC < 16; // Before 11 AM ET
+        
+        // Over with heavy action that we should fade
+        const isOver = m.outcome_name?.toLowerCase().includes('over');
+        const hasHeavyAction = m.price_change < -10; // Odds shortened significantly
+        
+        // Look for price-only moves (traps)
+        const isPriceOnlyTrap = m.recommendation_reason?.includes('PRICE_ONLY') ||
+                                m.movement_authenticity === 'fake';
+        
+        return wasDetectedMorning && isOver && (hasHeavyAction || isPriceOnlyTrap);
+      });
+      
+      console.log(`Found ${morningOversToFade.length} morning overs to fade`);
+      
+      if (morningOversToFade.length >= 2 && isCurrentlyMorning) {
+        const fadeLegs: SuggestionLeg[] = [];
+        let fadeProb = 1;
+        const usedPlayers = new Set<string>();
+        
+        for (const move of morningOversToFade) {
+          if (fadeLegs.length >= 4) break;
+          const key = move.player_name || move.event_id;
+          if (usedPlayers.has(key)) continue;
+          
+          // Fade the over = bet Under
+          const fadeOdds = -110; // Standard vig
+          const impliedProb = americanToImplied(fadeOdds);
+          
+          if (fadeProb * impliedProb >= 0.15) {
+            fadeProb *= impliedProb;
+            usedPlayers.add(key);
+            
+            let description = move.player_name 
+              ? `🌅 ${move.player_name} UNDER (fade AM Over)`
+              : `🌅 ${move.description} UNDER`;
+            
+            fadeLegs.push({
+              description,
+              odds: fadeOdds,
+              impliedProbability: impliedProb,
+              sport: move.sport,
+              betType: move.market_type,
+              eventTime: move.commence_time || now.toISOString(),
+            });
+          }
+        }
+        
+        if (fadeLegs.length >= 2) {
+          const totalOdds = calculateTotalOdds(fadeLegs);
+          
+          suggestions.push({
+            legs: fadeLegs,
+            total_odds: totalOdds,
+            combined_probability: fadeProb,
+            suggestion_reason: `🌅 MORNING FADE: Betting UNDER on ${fadeLegs.length} early morning overs. Public money loads up on overs early - fade the trap.`,
+            sport: fadeLegs[0].sport,
+            confidence_score: 0.70,
+            expires_at: new Date(now.getTime() + 8 * 60 * 60 * 1000).toISOString(),
+            is_data_driven: true,
+          });
+          
+          console.log(`Created MORNING FADE PARLAY with ${fadeLegs.length} legs`);
+        }
+      }
+    }
+
+    // ========================================
+    // STRATEGY 15: INJURY UNDERS
+    // ✅ RULE: Follow unders with injury signals
+    // ========================================
+    if (sharpAlerts && sharpAlerts.length > 0) {
+      console.log('Generating INJURY UNDERS strategy...');
+      
+      // Find movements with injury-related signals
+      const injuryRelatedMoves = sharpAlerts.filter(m => 
+        m.recommendation_reason?.toLowerCase().includes('injury') ||
+        m.sharp_indicator?.toLowerCase().includes('injury') ||
+        // Also include unders with significant movement (could be injury news)
+        (m.outcome_name?.toLowerCase().includes('under') && 
+         Math.abs(m.price_change) >= 15 &&
+         m.movement_authenticity === 'real')
+      );
+      
+      console.log(`Found ${injuryRelatedMoves.length} injury-related movements`);
+      
+      if (injuryRelatedMoves.length >= 2) {
+        const injuryLegs: SuggestionLeg[] = [];
+        let injuryProb = 1;
+        const usedPlayers = new Set<string>();
+        
+        for (const move of injuryRelatedMoves) {
+          if (injuryLegs.length >= 4) break;
+          const key = move.player_name || move.event_id;
+          if (usedPlayers.has(key)) continue;
+          
+          const americanOdds = move.outcome_name?.toLowerCase().includes('under') 
+            ? move.new_price 
+            : -110;
+          const impliedProb = americanToImplied(americanOdds);
+          
+          if (injuryProb * impliedProb >= 0.15) {
+            injuryProb *= impliedProb;
+            usedPlayers.add(key);
+            
+            let description = move.player_name 
+              ? `🏥 ${move.player_name} UNDER (injury factor)`
+              : `🏥 ${move.description} UNDER`;
+            
+            injuryLegs.push({
+              description,
+              odds: americanOdds,
+              impliedProbability: impliedProb,
+              sport: move.sport,
+              betType: move.market_type,
+              eventTime: move.commence_time || now.toISOString(),
+            });
+          }
+        }
+        
+        if (injuryLegs.length >= 2) {
+          const totalOdds = calculateTotalOdds(injuryLegs);
+          
+          suggestions.push({
+            legs: injuryLegs,
+            total_odds: totalOdds,
+            combined_probability: injuryProb,
+            suggestion_reason: `🏥 INJURY UNDERS: ${injuryLegs.length} games with injury signals - lean Under. Player injuries affect scoring output.`,
+            sport: injuryLegs[0].sport,
+            confidence_score: 0.72,
+            expires_at: new Date(now.getTime() + 6 * 60 * 60 * 1000).toISOString(),
+            is_data_driven: true,
+          });
+          
+          console.log(`Created INJURY UNDERS PARLAY with ${injuryLegs.length} legs`);
+        }
+      }
+    }
+
     // Sort suggestions: LOW RISK (high probability) first
     suggestions.sort((a, b) => b.combined_probability - a.combined_probability);
 

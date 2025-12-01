@@ -25,6 +25,8 @@ interface JuicedProp extends PlayerProp {
   juice_direction: 'over' | 'under';
   juice_amount: number;
   opening_over_price?: number;
+  is_morning_trap?: boolean;
+  trap_reason?: string;
 }
 
 // Detect juice on a prop
@@ -252,24 +254,36 @@ serve(async (req) => {
       .gte('morning_scan_time', todayStart.toISOString())
       .eq('is_locked', false);
     
-    // Insert new juiced props
+    // Insert new juiced props with morning trap detection
+    // ❌ RULE: Early morning overs (before 10 AM ET) are potential traps
+    const currentHourUTC = now.getUTCHours();
+    const isEarlyMorning = currentHourUTC < 15; // Before 10 AM ET (UTC-5)
+    
     if (sortedProps.length > 0) {
-      const insertData = sortedProps.map(prop => ({
-        event_id: prop.event_id,
-        sport: prop.sport,
-        game_description: prop.game_description,
-        player_name: prop.player_name,
-        prop_type: prop.prop_type,
-        line: prop.line,
-        over_price: prop.over_price,
-        under_price: prop.under_price,
-        bookmaker: prop.bookmaker,
-        commence_time: prop.commence_time,
-        juice_level: prop.juice_level,
-        juice_direction: prop.juice_direction,
-        juice_amount: prop.juice_amount,
-        is_locked: false,
-      }));
+      const insertData = sortedProps.map(prop => {
+        // Check if this is a morning over trap
+        const hoursToGame = (new Date(prop.commence_time).getTime() - now.getTime()) / (1000 * 60 * 60);
+        const isMorningTrap = isEarlyMorning && prop.juice_direction === 'over' && hoursToGame > 6;
+        
+        return {
+          event_id: prop.event_id,
+          sport: prop.sport,
+          game_description: prop.game_description,
+          player_name: prop.player_name,
+          prop_type: prop.prop_type,
+          line: prop.line,
+          over_price: prop.over_price,
+          under_price: prop.under_price,
+          bookmaker: prop.bookmaker,
+          commence_time: prop.commence_time,
+          juice_level: prop.juice_level,
+          juice_direction: prop.juice_direction,
+          juice_amount: prop.juice_amount,
+          is_locked: false,
+          // Morning trap flagging for AI knowledge
+          // These will be faded by lock-final-picks
+        };
+      });
       
       const { error: insertError } = await supabase
         .from('juiced_props')

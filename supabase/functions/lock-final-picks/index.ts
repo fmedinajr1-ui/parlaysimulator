@@ -22,6 +22,7 @@ interface JuicedProp {
   juice_amount: number;
   bookmaker: string;
   commence_time: string;
+  morning_scan_time?: string;
 }
 
 interface FinalPickDecision {
@@ -30,13 +31,23 @@ interface FinalPickDecision {
   confidence: number;
 }
 
+// AI BETTING KNOWLEDGE RULES
+const AI_BETTING_RULES = {
+  FOLLOW: ['LINE_AND_JUICE_MOVED', 'LATE_MONEY_SWEET_SPOT', 'INJURY_UNDER', 'MULTI_BOOK_CONSENSUS'],
+  FADE: ['EARLY_MORNING_OVER', 'PRICE_ONLY_MOVE', 'FAKE_SHARP_TAG', 'STEAM_MOVE_NO_CONSENSUS'],
+};
+
 // Decision matrix for final picks
 function determineFinalPick(
   prop: JuicedProp,
   currentOverPrice: number,
   currentUnderPrice: number,
   hasSharpOnUnder: boolean,
-  hasSharpOnOver: boolean
+  hasSharpOnOver: boolean,
+  hoursToGame: number,
+  isMorningTrap: boolean,
+  hasInjurySignal: boolean,
+  sharpSignals: string[]
 ): FinalPickDecision {
   const juiceLevel = prop.juice_level;
   const originalJuiceOnOver = prop.juice_direction === 'over';
@@ -49,9 +60,44 @@ function determineFinalPick(
   const overPriceChange = currentOverPrice - prop.over_price;
   const steamMove = Math.abs(overPriceChange) >= 15;
   
+  // ✅ RULE: Follow unders with injury signals
+  if (hasInjurySignal) {
+    return {
+      pick: 'under',
+      reason: '🏥 Injury signal detected - lean Under',
+      confidence: 0.72,
+    };
+  }
+  
+  // ❌ RULE: Fade early morning overs (public trap)
+  if (isMorningTrap && prop.juice_direction === 'over') {
+    return {
+      pick: 'under',
+      reason: '🌅 Fading early morning over - likely public trap',
+      confidence: 0.68,
+    };
+  }
+  
+  // ✅ RULE: Follow late moves 1-3 hours pregame (sweet spot)
+  const isLateMoneyWindow = hoursToGame >= 1 && hoursToGame <= 3;
+  
+  // Check for price-only traps in sharp signals
+  const hasPriceOnlyTrap = sharpSignals.some(s => s.includes('PRICE_ONLY'));
+  const hasConfirmedSharp = sharpSignals.some(s => 
+    s.includes('LINE_AND_JUICE') || s.includes('LATE_MONEY_SWEET_SPOT') || s.includes('MULTI_BOOK')
+  );
+  
+  // ❌ RULE: Fade price-only moves (trap)
+  if (hasPriceOnlyTrap && !hasConfirmedSharp) {
+    return {
+      pick: originalJuiceOnOver ? 'under' : 'over',
+      reason: '❌ Fading price-only move - no line confirmation',
+      confidence: 0.65,
+    };
+  }
+  
   // Decision matrix
   if (juiceReversed) {
-    // Juice flipped - go with the original side that was juiced
     return {
       pick: originalJuiceOnOver ? 'over' : 'under',
       reason: '🔄 Steam reversed - Value on original side',
@@ -61,22 +107,20 @@ function determineFinalPick(
   
   if (juiceLevel === 'heavy') {
     if (hasSharpOnUnder && !hasSharpOnOver) {
-      // Heavy public action on Over, sharp money on Under = FADE
+      const confidence = isLateMoneyWindow ? 0.78 : 0.75;
       return {
         pick: 'under',
-        reason: '🎯 Sharp money fading heavy public Over action',
-        confidence: 0.75,
+        reason: `🎯 Sharp money fading heavy public Over${isLateMoneyWindow ? ' | 🕐 1-3hr window' : ''}`,
+        confidence,
       };
     }
-    if (hasSharpOnOver) {
-      // Sharp confirming heavy action = FOLLOW
+    if (hasSharpOnOver && hasConfirmedSharp) {
       return {
         pick: 'over',
-        reason: '💰 Sharp confirmation despite juice - Follow the money',
+        reason: '💰 Sharp confirmation with line+juice move - Follow the money',
         confidence: 0.72,
       };
     }
-    // Heavy juice, no sharp signal = FADE public
     return {
       pick: 'under',
       reason: '📉 Fading heavy public action - Line moved too far',
@@ -86,20 +130,20 @@ function determineFinalPick(
   
   if (juiceLevel === 'moderate') {
     if (hasSharpOnUnder) {
+      const confidence = isLateMoneyWindow ? 0.73 : 0.70;
       return {
         pick: 'under',
-        reason: '⚡ Sharp money on Under with moderate juice',
-        confidence: 0.70,
+        reason: `⚡ Sharp money on Under${isLateMoneyWindow ? ' | 🕐 1-3hr window' : ''}`,
+        confidence,
       };
     }
-    if (hasSharpOnOver && steamMove) {
+    if (hasSharpOnOver && steamMove && hasConfirmedSharp) {
       return {
         pick: 'over',
-        reason: '🔥 Steam move with sharp confirmation',
+        reason: '🔥 Confirmed steam move with sharp action',
         confidence: 0.68,
       };
     }
-    // Default to fading moderate juice
     return {
       pick: 'under',
       reason: '📊 Fading moderate public juice',
@@ -107,23 +151,22 @@ function determineFinalPick(
     };
   }
   
-  // Light juice - less conviction
+  // Light juice
   if (hasSharpOnUnder) {
     return {
       pick: 'under',
       reason: '💡 Sharp action on Under',
-      confidence: 0.62,
+      confidence: isLateMoneyWindow ? 0.65 : 0.62,
     };
   }
-  if (hasSharpOnOver) {
+  if (hasSharpOnOver && hasConfirmedSharp) {
     return {
       pick: 'over',
-      reason: '💡 Sharp action on Over',
+      reason: '💡 Confirmed sharp action on Over',
       confidence: 0.60,
     };
   }
   
-  // No clear signal - default to fading juice
   return {
     pick: 'under',
     reason: '⚖️ Slight lean to Under - fading public',
@@ -192,12 +235,45 @@ serve(async (req) => {
       .eq('is_sharp_action', true)
       .gte('detected_at', new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString());
     
+    // Check for injury signals in recent movements
+    const { data: injuryMoves } = await supabase
+      .from('line_movements')
+      .select('*')
+      .or('recommendation_reason.ilike.%injury%,sharp_indicator.ilike.%injury%')
+      .gte('detected_at', new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString());
+    
+    const playersWithInjurySignals = new Set(
+      (injuryMoves || []).map((m: any) => m.player_name?.toLowerCase()).filter(Boolean)
+    );
+    
     // Process each prop
     for (const prop of propsToLock as JuicedProp[]) {
+      // Calculate hours to game
+      const hoursToGame = (new Date(prop.commence_time).getTime() - now.getTime()) / (1000 * 60 * 60);
+      
+      // Check if this is a morning trap (prop found before 10 AM ET and > 6 hours to game)
+      const scanTime = prop.morning_scan_time ? new Date(prop.morning_scan_time) : now;
+      const isMorningTrap = scanTime.getUTCHours() < 15 && hoursToGame > 6;
+      
+      // Check for injury signal on this player
+      const hasInjurySignal = playersWithInjurySignals.has(prop.player_name.toLowerCase());
+      
       // Check if there's sharp action on this player
       const sharpOnPlayer = (recentSharp || []).filter((s: any) => 
         s.player_name?.toLowerCase() === prop.player_name.toLowerCase()
       );
+      
+      // Collect sharp signals for this player
+      const sharpSignals: string[] = sharpOnPlayer.flatMap((s: any) => {
+        const signals: string[] = [];
+        if (s.recommendation_reason?.includes('LINE_AND_JUICE')) signals.push('LINE_AND_JUICE');
+        if (s.recommendation_reason?.includes('LATE_MONEY_SWEET_SPOT')) signals.push('LATE_MONEY_SWEET_SPOT');
+        if (s.recommendation_reason?.includes('PRICE_ONLY')) signals.push('PRICE_ONLY_TRAP');
+        if (s.recommendation_reason?.includes('MULTI_BOOK')) signals.push('MULTI_BOOK');
+        if (s.movement_authenticity === 'real') signals.push('VERIFIED_SHARP');
+        if (s.movement_authenticity === 'fake') signals.push('FAKE_SHARP');
+        return signals;
+      });
       
       const hasSharpOnOver = sharpOnPlayer.some((s: any) => 
         s.outcome_name?.toLowerCase().includes('over')
@@ -210,13 +286,17 @@ serve(async (req) => {
       const currentOverPrice = prop.over_price;
       const currentUnderPrice = prop.under_price;
       
-      // Determine final pick
+      // Determine final pick with enhanced rules
       const decision = determineFinalPick(
         prop,
         currentOverPrice,
         currentUnderPrice,
         hasSharpOnUnder,
-        hasSharpOnOver
+        hasSharpOnOver,
+        hoursToGame,
+        isMorningTrap,
+        hasInjurySignal,
+        sharpSignals
       );
       
       // Update the database
