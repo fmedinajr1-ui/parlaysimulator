@@ -51,13 +51,16 @@ interface LineMovement {
   sharp_indicator?: string;
   commence_time?: string;
   player_name?: string;
-  // New classification fields
+  // Classification fields
   movement_authenticity?: 'real' | 'fake' | 'uncertain';
   authenticity_confidence?: number;
   recommendation?: 'pick' | 'fade' | 'caution';
   recommendation_reason?: string;
   opposite_side_moved?: boolean;
   books_consensus?: number;
+  // Final pick fields
+  final_pick?: string;
+  is_primary_record?: boolean;
 }
 
 interface SharpAnalysis {
@@ -375,11 +378,15 @@ serve(async (req) => {
       return m;
     });
 
-    // Insert line movements
-    if (analyzedMovements.length > 0) {
+    // Consolidate movements to determine final pick per event/market
+    const consolidatedMovements = consolidateMovements(analyzedMovements);
+
+    // Insert line movements (only primary records)
+    const primaryMovements = consolidatedMovements.filter(m => m.is_primary_record !== false);
+    if (primaryMovements.length > 0) {
       const { error: movementError } = await supabase
         .from('line_movements')
-        .insert(analyzedMovements.map(m => ({
+        .insert(primaryMovements.map(m => ({
           event_id: m.event_id,
           sport: m.sport,
           description: m.description,
@@ -402,22 +409,24 @@ serve(async (req) => {
           recommendation_reason: m.recommendation_reason,
           opposite_side_moved: m.opposite_side_moved || false,
           books_consensus: m.books_consensus || 1,
+          final_pick: m.final_pick,
+          is_primary_record: m.is_primary_record ?? true,
         })));
 
       if (movementError) {
         console.error('Error inserting movements:', movementError);
       } else {
-        const sharpCount = analyzedMovements.filter(m => m.is_sharp_action).length;
-        const playerPropCount = analyzedMovements.filter(m => m.player_name).length;
-        const realSharpCount = analyzedMovements.filter(m => m.movement_authenticity === 'real').length;
-        const fakeSharpCount = analyzedMovements.filter(m => m.movement_authenticity === 'fake').length;
+        const sharpCount = primaryMovements.filter(m => m.is_sharp_action).length;
+        const playerPropCount = primaryMovements.filter(m => m.player_name).length;
+        const realSharpCount = primaryMovements.filter(m => m.movement_authenticity === 'real').length;
+        const fakeSharpCount = primaryMovements.filter(m => m.movement_authenticity === 'fake').length;
         
-        console.log(`Detected ${analyzedMovements.length} movements:`);
+        console.log(`Detected ${primaryMovements.length} primary movements:`);
         console.log(`  - ${sharpCount} sharp (${realSharpCount} real, ${fakeSharpCount} fake)`);
         console.log(`  - ${playerPropCount} player props`);
         
-        // Send push notifications for sharp alerts
-        const sharpMovements = analyzedMovements.filter(m => m.is_sharp_action);
+        // Send push notifications for sharp alerts with final picks
+        const sharpMovements = primaryMovements.filter(m => m.is_sharp_action);
         for (const sharpMove of sharpMovements) {
           try {
             await fetch(`${supabaseUrl}/functions/v1/send-push-notification`, {
@@ -438,10 +447,11 @@ serve(async (req) => {
                   market_type: sharpMove.market_type,
                   movement_authenticity: sharpMove.movement_authenticity,
                   recommendation: sharpMove.recommendation,
+                  final_pick: sharpMove.final_pick,
                 }
               })
             });
-            console.log(`Push notification sent for sharp move: ${sharpMove.player_name || sharpMove.description} (${sharpMove.movement_authenticity})`);
+            console.log(`Push notification sent: FINAL PICK ${sharpMove.final_pick} (${sharpMove.movement_authenticity})`);
           } catch (pushError) {
             console.error('Error sending push notification:', pushError);
           }
@@ -456,18 +466,18 @@ serve(async (req) => {
       .delete()
       .lt('snapshot_time', cutoffTime);
 
-    const realSharpMoves = analyzedMovements.filter(m => m.movement_authenticity === 'real');
-    const fakeSharpMoves = analyzedMovements.filter(m => m.movement_authenticity === 'fake');
+    const realSharpMoves = primaryMovements.filter(m => m.movement_authenticity === 'real');
+    const fakeSharpMoves = primaryMovements.filter(m => m.movement_authenticity === 'fake');
 
     return new Response(JSON.stringify({
       success: true,
       snapshotsCreated: snapshotsToInsert.length,
-      movementsDetected: analyzedMovements.length,
-      sharpAlerts: analyzedMovements.filter(m => m.is_sharp_action).length,
-      playerPropMovements: analyzedMovements.filter(m => m.player_name).length,
+      movementsDetected: primaryMovements.length,
+      sharpAlerts: primaryMovements.filter(m => m.is_sharp_action).length,
+      playerPropMovements: primaryMovements.filter(m => m.player_name).length,
       realSharpMoves: realSharpMoves.length,
       fakeSharpMoves: fakeSharpMoves.length,
-      movements: analyzedMovements
+      movements: primaryMovements
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
@@ -483,6 +493,81 @@ serve(async (req) => {
     });
   }
 });
+
+// Consolidate movements to determine ONE final pick per event/market
+function consolidateMovements(movements: LineMovement[]): LineMovement[] {
+  // Group by event_id + market_type + bookmaker
+  const groups = new Map<string, LineMovement[]>();
+  
+  for (const movement of movements) {
+    const key = `${movement.event_id}_${movement.market_type}_${movement.bookmaker}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(movement);
+  }
+  
+  const consolidatedMovements: LineMovement[] = [];
+  
+  for (const [key, groupMovements] of groups) {
+    if (groupMovements.length <= 1) {
+      // Single movement - it IS the final pick
+      const m = groupMovements[0];
+      let finalPick = m.outcome_name;
+      
+      // If fake, the final pick should be the opposite (but we only have one side)
+      // So we just mark what we have
+      if (m.movement_authenticity === 'fake') {
+        // For fake movements, we want to fade this side, so final pick is still the opposite
+        // But since we don't have the opposite outcome name directly, we'll indicate to bet AGAINST this
+        m.recommendation_reason = `FADE ${m.outcome_name} - ${m.recommendation_reason || 'Market adjustment detected'}`;
+      }
+      
+      consolidatedMovements.push({
+        ...m,
+        final_pick: finalPick,
+        is_primary_record: true
+      });
+      continue;
+    }
+    
+    // Multiple movements for same event/market/book - find the primary (bigger move)
+    const sorted = [...groupMovements].sort((a, b) => 
+      Math.abs(b.price_change) - Math.abs(a.price_change)
+    );
+    
+    const primary = sorted[0];
+    const secondary = sorted[1];
+    
+    // Determine final pick based on authenticity
+    let finalPick: string;
+    let updatedReason = primary.recommendation_reason || '';
+    
+    if (primary.movement_authenticity === 'real') {
+      // REAL sharp = BET the side that moved (sharps are on it)
+      finalPick = primary.outcome_name;
+      updatedReason = `BET ${finalPick} - ${updatedReason}`;
+    } else if (primary.movement_authenticity === 'fake') {
+      // FAKE = FADE the fake movement = BET the opposite side
+      finalPick = secondary?.outcome_name || `Opposite of ${primary.outcome_name}`;
+      updatedReason = `FADE ${primary.outcome_name}, BET ${finalPick} - ${updatedReason}`;
+    } else {
+      // Uncertain - use the larger movement side as the pick with caution
+      finalPick = primary.outcome_name;
+      updatedReason = `Consider ${finalPick} - ${updatedReason}`;
+    }
+    
+    // Mark primary record with final decision
+    consolidatedMovements.push({
+      ...primary,
+      final_pick: finalPick,
+      is_primary_record: true,
+      recommendation_reason: updatedReason,
+    });
+    
+    // Don't add secondary - we only want ONE record per event/market
+  }
+  
+  return consolidatedMovements;
+}
 
 // Process game line odds for an event
 async function processEventOdds(

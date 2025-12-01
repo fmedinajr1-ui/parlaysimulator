@@ -90,7 +90,9 @@ export type Database = {
           description: string
           detected_at: string
           event_id: string
+          final_pick: string | null
           id: string
+          is_primary_record: boolean | null
           is_sharp_action: boolean | null
           market_type: string
           movement_authenticity: string | null
@@ -118,7 +120,9 @@ export type Database = {
           description: string
           detected_at?: string
           event_id: string
+          final_pick?: string | null
           id?: string
+          is_primary_record?: boolean | null
           is_sharp_action?: boolean | null
           market_type: string
           movement_authenticity?: string | null
@@ -146,7 +150,9 @@ export type Database = {
           description?: string
           detected_at?: string
           event_id?: string
+          final_pick?: string | null
           id?: string
+          is_primary_record?: boolean | null
           is_sharp_action?: boolean | null
           market_type?: string
           movement_authenticity?: string | null
