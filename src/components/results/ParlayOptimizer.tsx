@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 import { FeedCard } from "../FeedCard";
 import { LegAnalysis, ParlayLeg } from "@/types/parlay";
 import { Zap, TrendingUp, X, RefreshCw } from "lucide-react";
@@ -8,7 +9,6 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 interface ParlayOptimizerProps {
   legs: ParlayLeg[];
   legAnalyses?: Array<LegAnalysis & { legIndex: number }>;
-  onOptimize?: (removedLegIndices: number[]) => void;
   delay?: number;
 }
 
@@ -28,7 +28,8 @@ const TRAP_SIGNALS = [
   'FAKE_SHARP_TAG'
 ];
 
-export function ParlayOptimizer({ legs, legAnalyses, onOptimize, delay = 0 }: ParlayOptimizerProps) {
+export function ParlayOptimizer({ legs, legAnalyses, delay = 0 }: ParlayOptimizerProps) {
+  const navigate = useNavigate();
   const [showOptimizer, setShowOptimizer] = useState(false);
   const [suggestions, setSuggestions] = useState<OptimizationSuggestion[]>([]);
 
@@ -128,10 +129,29 @@ export function ParlayOptimizer({ legs, legAnalyses, onOptimize, delay = 0 }: Pa
   };
 
   const handleOptimize = () => {
-    if (onOptimize && suggestions.length > 0) {
+    if (suggestions.length > 0) {
+      // Get high priority legs to remove
       const highPrioritySuggestions = suggestions.filter(s => s.priority === 'high');
-      onOptimize(highPrioritySuggestions.map(s => s.legIndex));
-      setShowOptimizer(false);
+      const removedIndices = new Set(highPrioritySuggestions.map(s => s.legIndex));
+      
+      // Create optimized legs array (keeping only non-removed legs)
+      const optimizedLegs = legs
+        .map((leg, idx) => ({ leg, originalIndex: idx }))
+        .filter(({ originalIndex }) => !removedIndices.has(originalIndex))
+        .map(({ leg }) => ({
+          id: leg.id,
+          description: leg.description,
+          odds: leg.odds.toString()
+        }));
+      
+      // Navigate to upload page with optimized legs
+      navigate('/upload', {
+        state: {
+          optimizedLegs,
+          optimizationApplied: true,
+          removedCount: removedIndices.size
+        }
+      });
     }
   };
 
@@ -253,22 +273,18 @@ export function ParlayOptimizer({ legs, legAnalyses, onOptimize, delay = 0 }: Pa
               <X className="w-4 h-4 mr-2" />
               Keep Current Parlay
             </Button>
-            {onOptimize && (
-              <Button 
-                onClick={handleOptimize}
-                className="flex-1 bg-gradient-to-r from-neon-purple to-neon-pink hover:opacity-90"
-              >
-                <RefreshCw className="w-4 h-4 mr-2" />
-                Apply Optimization
-              </Button>
-            )}
+            <Button 
+              onClick={handleOptimize}
+              className="flex-1 bg-gradient-to-r from-neon-purple to-neon-pink hover:opacity-90"
+            >
+              <RefreshCw className="w-4 h-4 mr-2" />
+              Rebuild Parlay
+            </Button>
           </div>
 
-          {!onOptimize && (
-            <p className="text-xs text-muted-foreground text-center mt-2">
-              💡 Tip: Return to the upload page to rebuild your parlay without these legs
-            </p>
-          )}
+          <p className="text-xs text-muted-foreground text-center mt-2">
+            💡 Will automatically rebuild your parlay with problematic legs removed
+          </p>
         </DialogContent>
       </Dialog>
     </>
