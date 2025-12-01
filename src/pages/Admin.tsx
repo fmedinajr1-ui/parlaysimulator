@@ -74,30 +74,47 @@ export default function Admin() {
   }, [isAdmin, isCheckingAdmin, navigate, toast]);
 
   useEffect(() => {
-    if (isAdmin) {
+    if (isAdmin && !isCheckingAdmin) {
       fetchAdminData();
     }
-  }, [isAdmin]);
+  }, [isAdmin, isCheckingAdmin]);
 
   const fetchAdminData = async () => {
     setIsLoading(true);
     try {
-      // Fetch parlays
-      const { data: parlaysData, error: parlaysError } = await supabase.rpc('get_all_parlays_admin');
-      if (parlaysError) throw parlaysError;
-      const typedParlays = (parlaysData || []).map((p: Record<string, unknown>) => ({
-        ...p,
-        legs: p.legs as Array<{ description: string; odds: number }>
-      })) as ParlayData[];
+      // Fetch parlays - handle independently
+      let typedParlays: ParlayData[] = [];
+      try {
+        const { data: parlaysData, error: parlaysError } = await supabase.rpc('get_all_parlays_admin');
+        if (parlaysError) {
+          console.error('Error fetching parlays:', parlaysError);
+        } else {
+          typedParlays = (parlaysData || []).map((p: Record<string, unknown>) => ({
+            ...p,
+            legs: p.legs as Array<{ description: string; odds: number }>
+          })) as ParlayData[];
+        }
+      } catch (parlayErr) {
+        console.error('Exception fetching parlays:', parlayErr);
+      }
       setParlays(typedParlays);
 
-      // Fetch email subscribers
-      const { data: emailsData, error: emailsError } = await supabase
-        .from('email_subscribers')
-        .select('*')
-        .order('subscribed_at', { ascending: false });
-      if (emailsError) throw emailsError;
-      setEmails(emailsData || []);
+      // Fetch email subscribers - handle independently
+      let emailsData: EmailSubscriber[] = [];
+      try {
+        const { data, error: emailsError } = await supabase
+          .from('email_subscribers')
+          .select('*')
+          .order('subscribed_at', { ascending: false });
+        if (emailsError) {
+          console.error('Error fetching emails:', emailsError);
+        } else {
+          emailsData = data || [];
+        }
+      } catch (emailErr) {
+        console.error('Exception fetching emails:', emailErr);
+      }
+      setEmails(emailsData);
 
     } catch (err) {
       console.error('Error fetching admin data:', err);
