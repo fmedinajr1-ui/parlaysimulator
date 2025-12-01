@@ -97,6 +97,7 @@ export type Database = {
           old_point: number | null
           old_price: number
           outcome_name: string
+          player_name: string | null
           point_change: number | null
           price_change: number
           sharp_indicator: string | null
@@ -118,6 +119,7 @@ export type Database = {
           old_point?: number | null
           old_price: number
           outcome_name: string
+          player_name?: string | null
           point_change?: number | null
           price_change: number
           sharp_indicator?: string | null
@@ -139,6 +141,7 @@ export type Database = {
           old_point?: number | null
           old_price?: number
           outcome_name?: string
+          player_name?: string | null
           point_change?: number | null
           price_change?: number
           sharp_indicator?: string | null
@@ -193,6 +196,7 @@ export type Database = {
           id: string
           market_type: string
           outcome_name: string
+          player_name: string | null
           point: number | null
           price: number
           snapshot_time: string
@@ -208,6 +212,7 @@ export type Database = {
           id?: string
           market_type?: string
           outcome_name: string
+          player_name?: string | null
           point?: number | null
           price: number
           snapshot_time?: string
@@ -223,6 +228,7 @@ export type Database = {
           id?: string
           market_type?: string
           outcome_name?: string
+          player_name?: string | null
           point?: number | null
           price?: number
           snapshot_time?: string

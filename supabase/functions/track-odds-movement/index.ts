@@ -10,6 +10,7 @@ interface OddsOutcome {
   name: string;
   price: number;
   point?: number;
+  description?: string; // Player name for player props
 }
 
 interface OddsMarket {
@@ -49,6 +50,7 @@ interface LineMovement {
   is_sharp_action: boolean;
   sharp_indicator?: string;
   commence_time?: string;
+  player_name?: string;
 }
 
 const SPORT_KEYS: Record<string, string> = {
@@ -60,15 +62,37 @@ const SPORT_KEYS: Record<string, string> = {
   'MLB': 'baseball_mlb',
 };
 
+// Player prop markets to track
+const PLAYER_PROP_MARKETS = [
+  'player_points',
+  'player_rebounds',
+  'player_assists',
+  'player_threes',
+  'player_points_rebounds_assists'
+];
+
+// Map market keys to readable labels
+const MARKET_LABELS: Record<string, string> = {
+  'player_points': 'PTS',
+  'player_rebounds': 'REB',
+  'player_assists': 'AST',
+  'player_threes': '3PM',
+  'player_points_rebounds_assists': 'PRA',
+  'spreads': 'Spread',
+  'h2h': 'ML',
+  'totals': 'Total'
+};
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const { sports, action } = await req.json() as {
+    const { sports, action, includePlayerProps } = await req.json() as {
       sports?: string[];
       action?: 'fetch' | 'get_movements' | 'get_sharp_alerts';
+      includePlayerProps?: boolean;
     };
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -83,7 +107,7 @@ serve(async (req) => {
         .from('line_movements')
         .select('*')
         .order('detected_at', { ascending: false })
-        .limit(30);
+        .limit(50);
 
       if (error) throw error;
 
@@ -99,7 +123,7 @@ serve(async (req) => {
         .select('*')
         .eq('is_sharp_action', true)
         .order('detected_at', { ascending: false })
-        .limit(20);
+        .limit(30);
 
       if (error) throw error;
 
@@ -117,6 +141,7 @@ serve(async (req) => {
     const targetSports = sports || ['NBA', 'NFL', 'NCAAB'];
     const allMovements: LineMovement[] = [];
     const snapshotsToInsert: any[] = [];
+    const shouldFetchProps = includePlayerProps !== false; // Default to true
 
     for (const sport of targetSports) {
       const sportKey = SPORT_KEYS[sport];
@@ -125,6 +150,7 @@ serve(async (req) => {
       console.log(`Fetching odds for ${sport}...`);
 
       try {
+        // Fetch game lines (spreads, moneylines, totals)
         const oddsResponse = await fetch(
           `https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?apiKey=${ODDS_API_KEY}&regions=us&markets=spreads,h2h,totals&oddsFormat=american`
         );
@@ -137,95 +163,28 @@ serve(async (req) => {
         const events: OddsEvent[] = await oddsResponse.json();
         console.log(`Got ${events.length} events for ${sport}`);
 
+        // Process game lines
         for (const event of events) {
-          for (const bookmaker of event.bookmakers) {
-            // Only track major books
-            if (!['fanduel', 'draftkings', 'betmgm', 'caesars'].includes(bookmaker.key)) {
-              continue;
-            }
+          await processEventOdds(event, sport, supabase, snapshotsToInsert, allMovements);
+        }
 
-            for (const market of bookmaker.markets) {
-              for (const outcome of market.outcomes) {
-                const snapshotKey = `${event.id}-${bookmaker.key}-${market.key}-${outcome.name}`;
-                
-                // Check for existing snapshot
-                const { data: existingSnapshot } = await supabase
-                  .from('odds_snapshots')
-                  .select('*')
-                  .eq('event_id', event.id)
-                  .eq('bookmaker', bookmaker.key)
-                  .eq('market_type', market.key)
-                  .eq('outcome_name', outcome.name)
-                  .order('snapshot_time', { ascending: false })
-                  .limit(1)
-                  .single();
+        // Fetch player props for NBA games starting within 6 hours
+        if (sport === 'NBA' && shouldFetchProps) {
+          const now = new Date();
+          const sixHoursFromNow = new Date(now.getTime() + 6 * 60 * 60 * 1000);
+          
+          const upcomingEvents = events.filter(event => {
+            const eventTime = new Date(event.commence_time);
+            return eventTime > now && eventTime < sixHoursFromNow;
+          });
 
-                // Create new snapshot
-                const newSnapshot = {
-                  event_id: event.id,
-                  sport: sport,
-                  home_team: event.home_team,
-                  away_team: event.away_team,
-                  commence_time: event.commence_time,
-                  bookmaker: bookmaker.key,
-                  market_type: market.key,
-                  outcome_name: outcome.name,
-                  price: outcome.price,
-                  point: outcome.point || null,
-                  snapshot_time: new Date().toISOString()
-                };
+          console.log(`Fetching player props for ${upcomingEvents.length} upcoming NBA games...`);
 
-                snapshotsToInsert.push(newSnapshot);
-
-                // Detect line movement
-                if (existingSnapshot) {
-                  const priceChange = outcome.price - existingSnapshot.price;
-                  const pointChange = outcome.point !== undefined && existingSnapshot.point !== null
-                    ? outcome.point - existingSnapshot.point
-                    : null;
-
-                  // Only track significant movements (5+ points in price or 0.5+ in spread)
-                  const isSignificantMove = Math.abs(priceChange) >= 5 || 
-                    (pointChange !== null && Math.abs(pointChange) >= 0.5);
-
-                  if (isSignificantMove) {
-                    // Detect sharp money
-                    let isSharp = false;
-                    let sharpIndicator: string | undefined;
-
-                    if (Math.abs(priceChange) >= 15) {
-                      isSharp = true;
-                      sharpIndicator = 'STEAM MOVE - Major price shift detected';
-                    } else if (Math.abs(priceChange) >= 10 && (pointChange === null || Math.abs(pointChange) < 0.5)) {
-                      isSharp = true;
-                      sharpIndicator = 'SHARP ACTION - Price moved without spread change';
-                    } else if (Math.abs(priceChange) >= 8) {
-                      isSharp = true;
-                      sharpIndicator = 'POSSIBLE SHARP - Significant line movement';
-                    }
-
-                    const movement: LineMovement = {
-                      event_id: event.id,
-                      sport: sport,
-                      description: `${event.away_team} @ ${event.home_team}`,
-                      bookmaker: bookmaker.key,
-                      market_type: market.key,
-                      outcome_name: outcome.name,
-                      old_price: existingSnapshot.price,
-                      new_price: outcome.price,
-                      old_point: existingSnapshot.point,
-                      new_point: outcome.point,
-                      price_change: priceChange,
-                      point_change: pointChange || undefined,
-                      is_sharp_action: isSharp,
-                      sharp_indicator: sharpIndicator,
-                      commence_time: event.commence_time
-                    };
-
-                    allMovements.push(movement);
-                  }
-                }
-              }
+          for (const event of upcomingEvents) {
+            try {
+              await processPlayerProps(event, sport, ODDS_API_KEY, supabase, snapshotsToInsert, allMovements);
+            } catch (propError) {
+              console.error(`Error fetching props for ${event.id}:`, propError);
             }
           }
         }
@@ -236,15 +195,18 @@ serve(async (req) => {
 
     // Batch insert snapshots
     if (snapshotsToInsert.length > 0) {
-      const { error: snapshotError } = await supabase
-        .from('odds_snapshots')
-        .insert(snapshotsToInsert);
+      // Insert in batches of 100 to avoid payload limits
+      for (let i = 0; i < snapshotsToInsert.length; i += 100) {
+        const batch = snapshotsToInsert.slice(i, i + 100);
+        const { error: snapshotError } = await supabase
+          .from('odds_snapshots')
+          .insert(batch);
 
-      if (snapshotError) {
-        console.error('Error inserting snapshots:', snapshotError);
-      } else {
-        console.log(`Inserted ${snapshotsToInsert.length} odds snapshots`);
+        if (snapshotError) {
+          console.error('Error inserting snapshot batch:', snapshotError);
+        }
       }
+      console.log(`Inserted ${snapshotsToInsert.length} odds snapshots`);
     }
 
     // Insert line movements
@@ -266,13 +228,16 @@ serve(async (req) => {
           point_change: m.point_change,
           is_sharp_action: m.is_sharp_action,
           sharp_indicator: m.sharp_indicator,
-          commence_time: m.commence_time
+          commence_time: m.commence_time,
+          player_name: m.player_name
         })));
 
       if (movementError) {
         console.error('Error inserting movements:', movementError);
       } else {
-        console.log(`Detected ${allMovements.length} line movements, ${allMovements.filter(m => m.is_sharp_action).length} sharp`);
+        const sharpCount = allMovements.filter(m => m.is_sharp_action).length;
+        const playerPropCount = allMovements.filter(m => m.player_name).length;
+        console.log(`Detected ${allMovements.length} movements (${sharpCount} sharp, ${playerPropCount} player props)`);
         
         // Send push notifications for sharp alerts
         const sharpMovements = allMovements.filter(m => m.is_sharp_action);
@@ -292,10 +257,12 @@ serve(async (req) => {
                   bookmaker: sharpMove.bookmaker,
                   price_change: sharpMove.price_change,
                   sharp_indicator: sharpMove.sharp_indicator,
+                  player_name: sharpMove.player_name,
+                  market_type: sharpMove.market_type
                 }
               })
             });
-            console.log(`Push notification sent for sharp move: ${sharpMove.description}`);
+            console.log(`Push notification sent for sharp move: ${sharpMove.player_name || sharpMove.description}`);
           } catch (pushError) {
             console.error('Error sending push notification:', pushError);
           }
@@ -315,6 +282,7 @@ serve(async (req) => {
       snapshotsCreated: snapshotsToInsert.length,
       movementsDetected: allMovements.length,
       sharpAlerts: allMovements.filter(m => m.is_sharp_action).length,
+      playerPropMovements: allMovements.filter(m => m.player_name).length,
       movements: allMovements
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -331,3 +299,206 @@ serve(async (req) => {
     });
   }
 });
+
+// Process game line odds for an event
+async function processEventOdds(
+  event: OddsEvent,
+  sport: string,
+  supabase: any,
+  snapshotsToInsert: any[],
+  allMovements: LineMovement[]
+) {
+  for (const bookmaker of event.bookmakers) {
+    // Only track major books
+    if (!['fanduel', 'draftkings', 'betmgm', 'caesars'].includes(bookmaker.key)) {
+      continue;
+    }
+
+    for (const market of bookmaker.markets) {
+      for (const outcome of market.outcomes) {
+        await processOutcome(
+          event,
+          sport,
+          bookmaker,
+          market.key,
+          outcome,
+          supabase,
+          snapshotsToInsert,
+          allMovements
+        );
+      }
+    }
+  }
+}
+
+// Fetch and process player props for an NBA event
+async function processPlayerProps(
+  event: OddsEvent,
+  sport: string,
+  apiKey: string,
+  supabase: any,
+  snapshotsToInsert: any[],
+  allMovements: LineMovement[]
+) {
+  const propsUrl = `https://api.the-odds-api.com/v4/sports/basketball_nba/events/${event.id}/odds?apiKey=${apiKey}&regions=us&markets=${PLAYER_PROP_MARKETS.join(',')}&oddsFormat=american`;
+  
+  console.log(`Fetching player props for: ${event.away_team} @ ${event.home_team}`);
+  
+  const propsResponse = await fetch(propsUrl);
+  
+  if (!propsResponse.ok) {
+    console.error(`Failed to fetch player props for ${event.id}:`, propsResponse.status);
+    return;
+  }
+
+  const propsData = await propsResponse.json();
+  
+  if (!propsData.bookmakers || propsData.bookmakers.length === 0) {
+    console.log(`No player props available for ${event.id}`);
+    return;
+  }
+
+  let propCount = 0;
+  
+  for (const bookmaker of propsData.bookmakers) {
+    // Only track major books
+    if (!['fanduel', 'draftkings', 'betmgm', 'caesars'].includes(bookmaker.key)) {
+      continue;
+    }
+
+    for (const market of bookmaker.markets) {
+      if (!PLAYER_PROP_MARKETS.includes(market.key)) continue;
+
+      for (const outcome of market.outcomes) {
+        // outcome.description contains player name
+        const playerName = outcome.description || 'Unknown Player';
+        
+        await processOutcome(
+          event,
+          sport,
+          bookmaker,
+          market.key,
+          outcome,
+          supabase,
+          snapshotsToInsert,
+          allMovements,
+          playerName
+        );
+        propCount++;
+      }
+    }
+  }
+  
+  console.log(`Processed ${propCount} player prop outcomes for ${event.id}`);
+}
+
+// Process a single outcome (game line or player prop)
+async function processOutcome(
+  event: OddsEvent,
+  sport: string,
+  bookmaker: Bookmaker,
+  marketKey: string,
+  outcome: OddsOutcome,
+  supabase: any,
+  snapshotsToInsert: any[],
+  allMovements: LineMovement[],
+  playerName?: string
+) {
+  const outcomeName = playerName 
+    ? `${playerName} ${outcome.name} ${outcome.point || ''}`
+    : outcome.name;
+  
+  // Check for existing snapshot
+  let query = supabase
+    .from('odds_snapshots')
+    .select('*')
+    .eq('event_id', event.id)
+    .eq('bookmaker', bookmaker.key)
+    .eq('market_type', marketKey)
+    .eq('outcome_name', outcomeName);
+  
+  if (playerName) {
+    query = query.eq('player_name', playerName);
+  }
+  
+  const { data: existingSnapshot } = await query
+    .order('snapshot_time', { ascending: false })
+    .limit(1)
+    .single();
+
+  // Create new snapshot
+  const newSnapshot = {
+    event_id: event.id,
+    sport: sport,
+    home_team: event.home_team,
+    away_team: event.away_team,
+    commence_time: event.commence_time,
+    bookmaker: bookmaker.key,
+    market_type: marketKey,
+    outcome_name: outcomeName,
+    price: outcome.price,
+    point: outcome.point || null,
+    player_name: playerName || null,
+    snapshot_time: new Date().toISOString()
+  };
+
+  snapshotsToInsert.push(newSnapshot);
+
+  // Detect line movement
+  if (existingSnapshot) {
+    const priceChange = outcome.price - existingSnapshot.price;
+    const pointChange = outcome.point !== undefined && existingSnapshot.point !== null
+      ? outcome.point - existingSnapshot.point
+      : null;
+
+    // Only track significant movements
+    // For player props, be slightly more sensitive (4+ point price change)
+    const priceThreshold = playerName ? 4 : 5;
+    const isSignificantMove = Math.abs(priceChange) >= priceThreshold || 
+      (pointChange !== null && Math.abs(pointChange) >= 0.5);
+
+    if (isSignificantMove) {
+      // Detect sharp money
+      let isSharp = false;
+      let sharpIndicator: string | undefined;
+
+      if (Math.abs(priceChange) >= 15) {
+        isSharp = true;
+        sharpIndicator = playerName 
+          ? `STEAM MOVE - ${MARKET_LABELS[marketKey] || marketKey} prop shifted ${Math.abs(priceChange)} pts`
+          : 'STEAM MOVE - Major price shift detected';
+      } else if (Math.abs(priceChange) >= 10 && (pointChange === null || Math.abs(pointChange) < 0.5)) {
+        isSharp = true;
+        sharpIndicator = playerName
+          ? `SHARP ACTION - ${MARKET_LABELS[marketKey] || marketKey} moved without line change`
+          : 'SHARP ACTION - Price moved without spread change';
+      } else if (Math.abs(priceChange) >= 8) {
+        isSharp = true;
+        sharpIndicator = playerName
+          ? `POSSIBLE SHARP - ${MARKET_LABELS[marketKey] || marketKey} line movement`
+          : 'POSSIBLE SHARP - Significant line movement';
+      }
+
+      const movement: LineMovement = {
+        event_id: event.id,
+        sport: sport,
+        description: `${event.away_team} @ ${event.home_team}`,
+        bookmaker: bookmaker.key,
+        market_type: marketKey,
+        outcome_name: outcomeName,
+        old_price: existingSnapshot.price,
+        new_price: outcome.price,
+        old_point: existingSnapshot.point,
+        new_point: outcome.point,
+        price_change: priceChange,
+        point_change: pointChange || undefined,
+        is_sharp_action: isSharp,
+        sharp_indicator: sharpIndicator,
+        commence_time: event.commence_time,
+        player_name: playerName
+      };
+
+      allMovements.push(movement);
+    }
+  }
+}
