@@ -135,9 +135,18 @@ export function ParlayOptimizer({ legs, legAnalyses, stake, combinedProbability,
   const calculateOptimizedStats = () => {
     if (suggestions.length === 0) return null;
     
-    // Get high priority legs to remove
-    const highPrioritySuggestions = suggestions.filter(s => s.priority === 'high');
-    const removedIndices = new Set(highPrioritySuggestions.map(s => s.legIndex));
+    // Calculate maximum removable legs (must keep at least 2)
+    const maxRemovable = Math.max(0, legs.length - 2);
+    
+    // Sort suggestions by priority
+    const sortedSuggestions = [...suggestions].sort((a, b) => {
+      const priorityOrder = { high: 0, medium: 1, low: 2 };
+      return priorityOrder[a.priority] - priorityOrder[b.priority];
+    });
+    
+    // Only remove as many as we can while maintaining a valid parlay
+    const suggestionsToRemove = sortedSuggestions.slice(0, maxRemovable);
+    const removedIndices = new Set(suggestionsToRemove.map(s => s.legIndex));
     
     // Calculate remaining legs' combined probability
     const remainingLegs = legs.filter((_, idx) => !removedIndices.has(idx));
@@ -157,6 +166,8 @@ export function ParlayOptimizer({ legs, legAnalyses, stake, combinedProbability,
     return {
       remainingLegs: remainingLegs.length,
       removedLegs: removedIndices.size,
+      totalProblematicLegs: suggestions.length,
+      isPartialOptimization: suggestionsToRemove.length < suggestions.length,
       optimizedProbability,
       optimizedPayout,
       originalEV,
@@ -180,18 +191,39 @@ export function ParlayOptimizer({ legs, legAnalyses, stake, combinedProbability,
       return;
     }
 
-    // Get all suggestions to remove (both high and medium if no high exist)
-    const highPrioritySuggestions = suggestions.filter(s => s.priority === 'high');
-    const suggestionsToRemove = highPrioritySuggestions.length > 0 
-      ? highPrioritySuggestions 
-      : suggestions.filter(s => s.priority === 'medium');
+    // Calculate maximum removable legs (must keep at least 2)
+    const maxRemovable = legs.length - 2;
     
-    console.log('🎯 High priority suggestions:', highPrioritySuggestions.length);
-    console.log('🗑️ Suggestions to remove:', suggestionsToRemove.length);
-    
-    if (suggestionsToRemove.length === 0) {
-      console.log('⚠️ No removable suggestions found');
+    // Edge case: 2-leg parlay with issues
+    if (maxRemovable <= 0) {
+      console.log('❌ Cannot optimize 2-leg parlay');
+      toast({
+        title: "Cannot optimize",
+        description: "Your parlay only has 2 legs. Consider replacing problematic legs instead of removing them.",
+        variant: "destructive"
+      });
       return;
+    }
+
+    // Sort suggestions by priority (high → medium → low)
+    const sortedSuggestions = [...suggestions].sort((a, b) => {
+      const priorityOrder = { high: 0, medium: 1, low: 2 };
+      return priorityOrder[a.priority] - priorityOrder[b.priority];
+    });
+    
+    // Only remove as many as we can while maintaining a valid parlay
+    const suggestionsToRemove = sortedSuggestions.slice(0, maxRemovable);
+    
+    console.log('🎯 Total problematic legs:', suggestions.length);
+    console.log('✂️ Legs we can remove:', suggestionsToRemove.length);
+    console.log('⚠️ Legs that must stay:', suggestions.length - suggestionsToRemove.length);
+    
+    // Show partial optimization warning if not all can be removed
+    if (suggestionsToRemove.length < suggestions.length) {
+      toast({
+        title: "Partial optimization applied",
+        description: `Removed ${suggestionsToRemove.length} of ${suggestions.length} problematic legs. Consider replacing the remaining ones.`,
+      });
     }
     
     const removedIndices = new Set(suggestionsToRemove.map(s => s.legIndex));
@@ -208,19 +240,6 @@ export function ParlayOptimizer({ legs, legAnalyses, stake, combinedProbability,
       }));
     
     console.log('✅ Optimized legs count:', optimizedLegs.length);
-    
-    // Validation: Ensure at least 2 legs remain
-    if (optimizedLegs.length < 2) {
-      console.log('❌ Cannot rebuild: Would leave fewer than 2 legs');
-      toast({
-        title: "Cannot rebuild",
-        description: "Removing these legs would leave fewer than 2 legs. A parlay needs at least 2 legs.",
-        variant: "destructive"
-      });
-      return;
-    }
-    
-    console.log('🚀 Navigating to upload with optimized legs');
     
     // Store original legs for undo functionality
     const originalLegs = legs.map(leg => ({
@@ -286,6 +305,23 @@ export function ParlayOptimizer({ legs, legAnalyses, stake, combinedProbability,
               Remove problematic legs to improve your parlay's health score
             </DialogDescription>
           </DialogHeader>
+
+          {/* Partial Optimization Warning */}
+          {optimizedStats && optimizedStats.isPartialOptimization && (
+            <div className="mb-4 p-3 bg-neon-yellow/10 border border-neon-yellow/30 rounded-lg">
+              <div className="flex items-start gap-2">
+                <span className="text-base">⚠️</span>
+                <div>
+                  <p className="text-sm font-semibold text-neon-yellow mb-1">
+                    Partial Optimization
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Only removing the {optimizedStats.removedLegs} most problematic leg{optimizedStats.removedLegs !== 1 ? 's' : ''} to maintain a valid parlay. {optimizedStats.totalProblematicLegs - optimizedStats.removedLegs} problematic leg{(optimizedStats.totalProblematicLegs - optimizedStats.removedLegs) !== 1 ? 's' : ''} will remain—consider replacing them.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Before/After Comparison */}
           {optimizedStats && (
@@ -384,46 +420,77 @@ export function ParlayOptimizer({ legs, legAnalyses, stake, combinedProbability,
 
           {/* Suggestions List */}
           <div className="space-y-3 mb-4">
-            {suggestions.map((suggestion) => (
-              <div 
-                key={suggestion.legIndex}
-                className={`p-3 rounded-lg border ${
-                  suggestion.priority === 'high' 
-                    ? 'bg-neon-red/10 border-neon-red/30' 
-                    : 'bg-neon-yellow/10 border-neon-yellow/30'
-                }`}
-              >
-                <div className="flex items-start gap-2 mb-2">
-                  <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${
-                    suggestion.priority === 'high' 
-                      ? 'bg-neon-red/20 text-neon-red' 
-                      : 'bg-neon-yellow/20 text-neon-yellow'
-                  }`}>
-                    LEG #{suggestion.legIndex + 1}
-                  </span>
-                  <span className={`text-xs font-bold px-1.5 py-0.5 rounded uppercase ${
-                    suggestion.priority === 'high' 
-                      ? 'bg-neon-red/20 text-neon-red' 
-                      : 'bg-neon-yellow/20 text-neon-yellow'
-                  }`}>
-                    {suggestion.priority}
-                  </span>
-                </div>
+            {(() => {
+              const maxRemovable = Math.max(0, legs.length - 2);
+              const sortedSuggestions = [...suggestions].sort((a, b) => {
+                const priorityOrder = { high: 0, medium: 1, low: 2 };
+                return priorityOrder[a.priority] - priorityOrder[b.priority];
+              });
+              const willBeRemoved = new Set(sortedSuggestions.slice(0, maxRemovable).map(s => s.legIndex));
+              
+              return suggestions.map((suggestion) => {
+                const isRemovable = willBeRemoved.has(suggestion.legIndex);
                 
-                <p className="text-sm font-medium text-foreground mb-1">
-                  {suggestion.leg.description}
-                </p>
-                
-                <p className="text-xs text-muted-foreground mb-2">
-                  {suggestion.reason}
-                </p>
-                
-                <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <TrendingUp className="w-3 h-3" />
-                  {suggestion.impact}
-                </div>
-              </div>
-            ))}
+                return (
+                  <div 
+                    key={suggestion.legIndex}
+                    className={`p-3 rounded-lg border ${
+                      isRemovable
+                        ? suggestion.priority === 'high' 
+                          ? 'bg-neon-red/10 border-neon-red/30' 
+                          : 'bg-neon-yellow/10 border-neon-yellow/30'
+                        : 'bg-muted/30 border-border/50 opacity-60'
+                    }`}
+                  >
+                    <div className="flex items-start gap-2 mb-2">
+                      <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${
+                        isRemovable
+                          ? suggestion.priority === 'high' 
+                            ? 'bg-neon-red/20 text-neon-red' 
+                            : 'bg-neon-yellow/20 text-neon-yellow'
+                          : 'bg-muted text-muted-foreground'
+                      }`}>
+                        LEG #{suggestion.legIndex + 1}
+                      </span>
+                      <span className={`text-xs font-bold px-1.5 py-0.5 rounded uppercase ${
+                        isRemovable
+                          ? suggestion.priority === 'high' 
+                            ? 'bg-neon-red/20 text-neon-red' 
+                            : 'bg-neon-yellow/20 text-neon-yellow'
+                          : 'bg-muted text-muted-foreground'
+                      }`}>
+                        {suggestion.priority}
+                      </span>
+                      {!isRemovable && (
+                        <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground">
+                          KEPT
+                        </span>
+                      )}
+                    </div>
+                    
+                    <p className="text-sm font-medium text-foreground mb-1">
+                      {suggestion.leg.description}
+                    </p>
+                    
+                    <p className="text-xs text-muted-foreground mb-2">
+                      {suggestion.reason}
+                    </p>
+                    
+                    {isRemovable ? (
+                      <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                        <X className="w-3 h-3" />
+                        Will be removed: {suggestion.impact}
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                        <RefreshCw className="w-3 h-3" />
+                        Consider replacing this leg manually
+                      </div>
+                    )}
+                  </div>
+                );
+              });
+            })()}
           </div>
 
           {/* Action Buttons */}
