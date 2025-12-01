@@ -59,6 +59,100 @@ interface HistoricalContext {
   aiMetricsByType?: Array<{ sport: string; bet_type: string; confidence_level: string; total_predictions: number; correct_predictions: number; accuracy_rate: number }>;
 }
 
+interface LineMovement {
+  description: string;
+  market_type: string;
+  player_name?: string;
+  recommendation?: string;
+  recommendation_reason?: string;
+  movement_authenticity?: string;
+  authenticity_confidence?: number;
+  sharp_indicator?: string;
+  final_pick?: string;
+  is_sharp_action?: boolean;
+}
+
+interface MatchedSharpData {
+  recommendation: string;
+  reason: string;
+  authenticity: string;
+  confidence: number;
+  signals: string[];
+  finalPick: string;
+  isTrap: boolean;
+}
+
+const TRAP_SIGNALS = [
+  'BOTH_SIDES_MOVED',
+  'PRICE_ONLY_MOVE_TRAP',
+  'SINGLE_BOOK_DIVERGENCE',
+  'EARLY_MORNING_OVER',
+  'FAKE_SHARP_TAG'
+];
+
+// Deterministic matching function
+function matchLegToMovements(legDescription: string, movements: LineMovement[]): MatchedSharpData | null {
+  const descLower = legDescription.toLowerCase();
+  
+  // Extract team names, player names, and key terms
+  const teamRegex = /\b(lakers|celtics|warriors|nets|knicks|heat|bucks|sixers|raptors|bulls|cavaliers|pistons|pacers|magic|hawks|hornets|wizards|nuggets|timberwolves|thunder|trail blazers|jazz|clippers|kings|suns|mavericks|rockets|grizzlies|pelicans|spurs|chiefs|bills|bengals|cowboys|eagles|49ers|rams|packers|ravens|browns|steelers|dolphins|jets|patriots|raiders|chargers|broncos|colts|jaguars|titans|texans|commanders|giants|panthers|falcons|saints|buccaneers|seahawks|cardinals|lions|bears|vikings)\b/gi;
+  const playerRegex = /\b([A-Z][a-z]+\s[A-Z][a-z]+)\b/g;
+  
+  const teams = descLower.match(teamRegex) || [];
+  const players = legDescription.match(playerRegex) || [];
+  
+  // Find matching movements
+  const matches = movements.filter(m => {
+    const moveDesc = m.description.toLowerCase();
+    const playerName = m.player_name?.toLowerCase() || '';
+    
+    // Check for team match
+    const teamMatch = teams.some(team => moveDesc.includes(team.toLowerCase()));
+    // Check for player match
+    const playerMatch = players.some(player => playerName.includes(player.toLowerCase()));
+    
+    return teamMatch || playerMatch;
+  });
+  
+  if (matches.length === 0) return null;
+  
+  // Sort by confidence and authenticity
+  const sortedMatches = matches.sort((a, b) => {
+    const aConf = a.authenticity_confidence || 0;
+    const bConf = b.authenticity_confidence || 0;
+    return bConf - aConf;
+  });
+  
+  const bestMatch = sortedMatches[0];
+  
+  // Parse signals from sharp indicator
+  const signals: string[] = [];
+  if (bestMatch.sharp_indicator) {
+    const indicatorUpper = bestMatch.sharp_indicator.toUpperCase();
+    if (indicatorUpper.includes('MULTI_BOOK')) signals.push('MULTI_BOOK_CONSENSUS');
+    if (indicatorUpper.includes('LATE_MONEY')) signals.push('LATE_MONEY_SWEET_SPOT');
+    if (indicatorUpper.includes('STEAM')) signals.push('STEAM_MOVE');
+    if (indicatorUpper.includes('REVERSE')) signals.push('REVERSE_LINE_MOVEMENT');
+    if (indicatorUpper.includes('SINGLE') || indicatorUpper.includes('DIVERGENCE')) signals.push('SINGLE_BOOK_DIVERGENCE');
+    if (indicatorUpper.includes('BOTH_SIDES')) signals.push('BOTH_SIDES_MOVED');
+  }
+  
+  // Detect trap bets
+  const isTrap = bestMatch.movement_authenticity === 'fake' || 
+                 signals.some(s => TRAP_SIGNALS.includes(s)) ||
+                 (bestMatch.recommendation === 'fade');
+  
+  return {
+    recommendation: bestMatch.recommendation || 'caution',
+    reason: bestMatch.recommendation_reason || 'Sharp line movement detected',
+    authenticity: bestMatch.movement_authenticity || 'uncertain',
+    confidence: bestMatch.authenticity_confidence || 0.5,
+    signals,
+    finalPick: bestMatch.final_pick || 'No clear pick',
+    isTrap
+  };
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -227,7 +321,21 @@ serve(async (req) => {
       console.error('Error fetching line movements:', movementError);
     }
 
-    // Build sharp money context
+    // Pre-process sharp data for each leg using deterministic matching
+    const legSharpData = legs.map((leg, idx) => {
+      const matchedMovements = matchLegToMovements(leg.description, lineMovements as LineMovement[]);
+      
+      if (matchedMovements) {
+        return {
+          legIndex: idx,
+          hasSharpData: true,
+          ...matchedMovements
+        };
+      }
+      return { legIndex: idx, hasSharpData: false };
+    });
+
+    // Build sharp money context with pre-matched data
     let sharpSection = '';
     if (lineMovements.length > 0) {
       sharpSection = '\n\nREAL-TIME SHARP LINE MOVEMENTS (last 6 hours):';
@@ -238,11 +346,24 @@ serve(async (req) => {
         sharpSection += `\n- ${m.description} | ${m.market_type}${rec}${auth}`;
         if (m.sharp_indicator) sharpSection += ` | Signal: ${m.sharp_indicator}`;
       });
+      
+      sharpSection += '\n\nPRE-MATCHED SHARP DATA FOR EACH LEG (use this data directly):';
+      legSharpData.forEach(d => {
+        if (d.hasSharpData && 'recommendation' in d) {
+          sharpSection += `\nLeg ${d.legIndex + 1}: ${d.recommendation.toUpperCase()} - ${d.reason}`;
+          if (d.isTrap) sharpSection += ' ⚠️ TRAP ALERT';
+          sharpSection += ` | Signals: ${d.signals.join(', ') || 'None'}`;
+          sharpSection += ` | Final Pick: ${d.finalPick}`;
+        } else {
+          sharpSection += `\nLeg ${d.legIndex + 1}: No sharp data available`;
+        }
+      });
+      
       sharpSection += '\n\nSHARP ANALYSIS RULES:';
       sharpSection += '\n- PICK: Real sharp money detected (authentic movement, multi-book consensus, late money sweet spot) - bet this side';
       sharpSection += '\n- FADE: Fake/trap movement detected (single book, opposite side moved, low confidence) - bet the opposite';
       sharpSection += '\n- CAUTION: Mixed signals or uncertain - proceed carefully';
-      sharpSection += '\n\nFor each leg, analyze if any sharp movements match the bet. Provide sharpRecommendation, sharpReason, sharpSignals array, sharpConfidence (0-1), and sharpFinalPick.';
+      sharpSection += '\n\n⚠️ CRITICAL: Use the PRE-MATCHED SHARP DATA above for sharpRecommendation fields. Only override if you have strong reasoning.';
     }
 
     const prompt = `You are an expert sharp sports bettor and analyst. Analyze this parlay slip and provide detailed intelligence on each leg.
