@@ -4,35 +4,25 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAdminRole } from '@/hooks/useAdminRole';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { 
-  Users, 
   FileText, 
   Mail, 
-  TrendingUp, 
   Loader2, 
   Shield,
   CheckCircle,
   XCircle,
   RefreshCw,
-  Download
+  Download,
+  Brain,
+  Upload
 } from 'lucide-react';
 import { BottomNav } from '@/components/BottomNav';
-
-interface UserData {
-  user_id: string;
-  email: string;
-  username: string | null;
-  avatar_url: string | null;
-  total_wins: number;
-  total_losses: number;
-  total_staked: number;
-  lifetime_degenerate_score: number;
-  created_at: string;
-}
+import { AILearningDashboard } from '@/components/admin/AILearningDashboard';
+import { BulkSlipUpload } from '@/components/admin/BulkSlipUpload';
 
 interface ParlayData {
   id: string;
@@ -63,12 +53,11 @@ export default function Admin() {
   const { isAdmin, isLoading: isCheckingAdmin } = useAdminRole();
   const { toast } = useToast();
   
-  const [users, setUsers] = useState<UserData[]>([]);
   const [parlays, setParlays] = useState<ParlayData[]>([]);
   const [emails, setEmails] = useState<EmailSubscriber[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSettling, setIsSettling] = useState(false);
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState('ai-learning');
 
   useEffect(() => {
     if (!isCheckingAdmin && !isAdmin) {
@@ -90,15 +79,9 @@ export default function Admin() {
   const fetchAdminData = async () => {
     setIsLoading(true);
     try {
-      // Fetch users
-      const { data: usersData, error: usersError } = await supabase.rpc('get_all_users_admin');
-      if (usersError) throw usersError;
-      setUsers(usersData || []);
-
       // Fetch parlays
       const { data: parlaysData, error: parlaysError } = await supabase.rpc('get_all_parlays_admin');
       if (parlaysError) throw parlaysError;
-      // Cast legs from Json to proper type
       const typedParlays = (parlaysData || []).map((p: Record<string, unknown>) => ({
         ...p,
         legs: p.legs as Array<{ description: string; odds: number }>
@@ -203,13 +186,9 @@ export default function Admin() {
     return null;
   }
 
-  const totalUsers = users.length;
   const totalParlays = parlays.length;
   const settledParlays = parlays.filter(p => p.is_settled).length;
-  const totalStaked = parlays.reduce((sum, p) => sum + Number(p.stake), 0);
-  const winRate = settledParlays > 0 
-    ? (parlays.filter(p => p.is_won).length / settledParlays * 100).toFixed(1) 
-    : '0';
+  const pendingParlays = parlays.filter(p => !p.is_settled).length;
 
   return (
     <div className="min-h-screen bg-background pb-20">
@@ -222,153 +201,144 @@ export default function Admin() {
       </div>
 
       <div className="p-4 space-y-4">
-        {/* Stats Overview */}
-        <div className="grid grid-cols-2 gap-3">
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-2">
-                <Users className="w-4 h-4 text-primary" />
-                <span className="text-sm text-muted-foreground">Users</span>
-              </div>
-              <p className="text-2xl font-bold mt-1">{totalUsers}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-2">
-                <FileText className="w-4 h-4 text-primary" />
-                <span className="text-sm text-muted-foreground">Parlays</span>
-              </div>
-              <p className="text-2xl font-bold mt-1">{totalParlays}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-2">
-                <TrendingUp className="w-4 h-4 text-primary" />
-                <span className="text-sm text-muted-foreground">Total Staked</span>
-              </div>
-              <p className="text-2xl font-bold mt-1">${totalStaked.toLocaleString()}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-2">
-                <Mail className="w-4 h-4 text-primary" />
-                <span className="text-sm text-muted-foreground">Subscribers</span>
-              </div>
-              <p className="text-2xl font-bold mt-1">{emails.filter(e => e.is_subscribed).length}</p>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Auto-Settle Button */}
-        <Button 
-          onClick={handleRunAutoSettle} 
-          disabled={isSettling}
-          className="w-full"
-        >
-          {isSettling ? (
-            <>
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              Running Auto-Settle...
-            </>
-          ) : (
-            <>
-              <RefreshCw className="w-4 h-4 mr-2" />
-              Run Auto-Settle
-            </>
-          )}
-        </Button>
-
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="users">Users</TabsTrigger>
-            <TabsTrigger value="parlays">Parlays</TabsTrigger>
-            <TabsTrigger value="emails">Emails</TabsTrigger>
+          <TabsList className="grid w-full grid-cols-4">
+            <TabsTrigger value="ai-learning" className="text-xs">
+              <Brain className="w-3 h-3 mr-1" />
+              AI
+            </TabsTrigger>
+            <TabsTrigger value="bulk-upload" className="text-xs">
+              <Upload className="w-3 h-3 mr-1" />
+              Upload
+            </TabsTrigger>
+            <TabsTrigger value="parlays" className="text-xs">
+              <FileText className="w-3 h-3 mr-1" />
+              Parlays
+            </TabsTrigger>
+            <TabsTrigger value="emails" className="text-xs">
+              <Mail className="w-3 h-3 mr-1" />
+              Emails
+            </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="users" className="space-y-3 mt-4">
-            {users.map(user => (
-              <Card key={user.user_id}>
-                <CardContent className="p-4">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="font-medium">{user.username || 'Anonymous'}</p>
-                      <p className="text-xs text-muted-foreground">{user.email}</p>
-                    </div>
-                    <Badge variant="outline">
-                      {user.total_wins}W - {user.total_losses}L
-                    </Badge>
-                  </div>
-                  <div className="mt-2 flex gap-4 text-xs text-muted-foreground">
-                    <span>Staked: ${Number(user.total_staked).toLocaleString()}</span>
-                    <span>Score: {Number(user.lifetime_degenerate_score).toFixed(0)}</span>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+          {/* AI Learning Tab */}
+          <TabsContent value="ai-learning" className="mt-4">
+            <AILearningDashboard />
           </TabsContent>
 
-          <TabsContent value="parlays" className="space-y-3 mt-4">
-            {parlays.map(parlay => (
-              <Card key={parlay.id}>
-                <CardContent className="p-4">
-                  <div className="flex justify-between items-start mb-2">
-                    <div>
-                      <p className="text-sm font-medium">{parlay.username || 'Anonymous'}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {new Date(parlay.created_at).toLocaleDateString()}
+          {/* Bulk Upload Tab */}
+          <TabsContent value="bulk-upload" className="mt-4">
+            <BulkSlipUpload />
+          </TabsContent>
+
+          {/* Parlays Tab */}
+          <TabsContent value="parlays" className="space-y-4 mt-4">
+            {/* Stats */}
+            <div className="grid grid-cols-3 gap-2">
+              <Card>
+                <CardContent className="p-3 text-center">
+                  <p className="text-2xl font-bold">{totalParlays}</p>
+                  <p className="text-xs text-muted-foreground">Total</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-3 text-center">
+                  <p className="text-2xl font-bold text-green-500">{settledParlays}</p>
+                  <p className="text-xs text-muted-foreground">Settled</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-3 text-center">
+                  <p className="text-2xl font-bold text-yellow-500">{pendingParlays}</p>
+                  <p className="text-xs text-muted-foreground">Pending</p>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Auto-Settle Button */}
+            <Button 
+              onClick={handleRunAutoSettle} 
+              disabled={isSettling}
+              className="w-full"
+            >
+              {isSettling ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Running Auto-Settle...
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="w-4 h-4 mr-2" />
+                  Run Auto-Settle
+                </>
+              )}
+            </Button>
+
+            {/* Parlay List */}
+            <div className="space-y-3">
+              {parlays.map(parlay => (
+                <Card key={parlay.id}>
+                  <CardContent className="p-4">
+                    <div className="flex justify-between items-start mb-2">
+                      <div>
+                        <p className="text-sm font-medium">{parlay.username || 'Anonymous'}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {new Date(parlay.created_at).toLocaleDateString()}
+                        </p>
+                      </div>
+                      {parlay.is_settled ? (
+                        <Badge variant={parlay.is_won ? "default" : "destructive"}>
+                          {parlay.is_won ? 'WON' : 'LOST'}
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline">Pending</Badge>
+                      )}
+                    </div>
+                    <div className="text-xs space-y-1 mb-3">
+                      <p>{parlay.legs?.length || 0} legs • ${Number(parlay.stake).toFixed(2)} stake</p>
+                      <p className="text-muted-foreground">
+                        Potential: ${Number(parlay.potential_payout).toFixed(2)} • 
+                        Prob: {(Number(parlay.combined_probability) * 100).toFixed(1)}%
                       </p>
                     </div>
-                    {parlay.is_settled ? (
-                      <Badge variant={parlay.is_won ? "default" : "destructive"}>
-                        {parlay.is_won ? 'WON' : 'LOST'}
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline">Pending</Badge>
+                    {!parlay.is_settled && (
+                      <div className="flex gap-2">
+                        <Button 
+                          size="sm" 
+                          variant="outline"
+                          onClick={() => handleManualSettle(parlay.id, true)}
+                          className="flex-1"
+                        >
+                          <CheckCircle className="w-3 h-3 mr-1" />
+                          Won
+                        </Button>
+                        <Button 
+                          size="sm" 
+                          variant="outline"
+                          onClick={() => handleManualSettle(parlay.id, false)}
+                          className="flex-1"
+                        >
+                          <XCircle className="w-3 h-3 mr-1" />
+                          Lost
+                        </Button>
+                      </div>
                     )}
-                  </div>
-                  <div className="text-xs space-y-1 mb-3">
-                    <p>{parlay.legs?.length || 0} legs • ${Number(parlay.stake).toFixed(2)} stake</p>
-                    <p className="text-muted-foreground">
-                      Potential: ${Number(parlay.potential_payout).toFixed(2)} • 
-                      Prob: {(Number(parlay.combined_probability) * 100).toFixed(1)}%
-                    </p>
-                  </div>
-                  {!parlay.is_settled && (
-                    <div className="flex gap-2">
-                      <Button 
-                        size="sm" 
-                        variant="outline"
-                        onClick={() => handleManualSettle(parlay.id, true)}
-                        className="flex-1"
-                      >
-                        <CheckCircle className="w-3 h-3 mr-1" />
-                        Won
-                      </Button>
-                      <Button 
-                        size="sm" 
-                        variant="outline"
-                        onClick={() => handleManualSettle(parlay.id, false)}
-                        className="flex-1"
-                      >
-                        <XCircle className="w-3 h-3 mr-1" />
-                        Lost
-                      </Button>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            ))}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
           </TabsContent>
 
+          {/* Emails Tab */}
           <TabsContent value="emails" className="space-y-3 mt-4">
             <Button onClick={exportEmails} variant="outline" className="w-full">
               <Download className="w-4 h-4 mr-2" />
               Export Emails CSV
             </Button>
+            <p className="text-sm text-muted-foreground text-center">
+              {emails.filter(e => e.is_subscribed).length} active subscribers
+            </p>
             {emails.map(subscriber => (
               <Card key={subscriber.id}>
                 <CardContent className="p-4">
