@@ -16,6 +16,7 @@ import { CalibrationDashboard } from "@/components/results/CalibrationDashboard"
 import { SharpMoneyAlerts } from "@/components/results/SharpMoneyAlerts";
 import { TrapAvoidanceCard } from "@/components/results/TrapAvoidanceCard";
 import { ParlayHealthCard } from "@/components/results/ParlayHealthCard";
+import { ParlayOptimizer } from "@/components/results/ParlayOptimizer";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, RotateCcw, Save, Loader2, LogIn } from "lucide-react";
 import { ParlaySimulation, ParlayAnalysis } from "@/types/parlay";
@@ -400,6 +401,13 @@ const Results = () => {
           <ParlayHealthCard 
             legAnalyses={aiAnalysis?.legAnalyses}
             delay={120}
+          />
+
+          {/* Parlay Optimizer */}
+          <ParlayOptimizer 
+            legs={simulation.legs}
+            legAnalyses={aiAnalysis?.legAnalyses}
+            delay={130}
           />
 
           {/* Trap Avoidance Card - Show at top if traps detected */}
