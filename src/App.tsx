@@ -1,4 +1,3 @@
-import React, { useState } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -18,10 +17,9 @@ import OddsMovement from "./pages/OddsMovement";
 import Install from "./pages/Install";
 import NotFound from "./pages/NotFound";
 
-const App = () => {
-  const [queryClient] = useState(() => new QueryClient());
+const queryClient = new QueryClient();
 
-  return (
+const App = () => (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <TooltipProvider>
@@ -47,7 +45,6 @@ const App = () => {
         </TooltipProvider>
       </AuthProvider>
     </QueryClientProvider>
-  );
-};
+);
 
 export default App;
