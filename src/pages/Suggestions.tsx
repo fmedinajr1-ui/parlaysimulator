@@ -33,7 +33,8 @@ import {
   CheckCircle,
   XCircle,
   Lightbulb,
-  AlertTriangle
+  AlertTriangle,
+  Zap
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -564,21 +565,23 @@ const Suggestions = () => {
             <h1 className="text-xl font-display text-foreground">AI SUGGESTIONS</h1>
           </div>
           <div className="flex items-center gap-2">
-            {activeTab === "suggestions" && (
+            {(activeTab === "suggestions" || activeTab === "sharp-props") && (
               <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setShowFilters(!showFilters)}
-                  className={cn(activeFilterCount > 0 && "border-primary")}
-                >
-                  <Filter className="w-4 h-4" />
-                  {activeFilterCount > 0 && (
-                    <Badge variant="secondary" className="ml-1 h-5 w-5 p-0 text-xs">
-                      {activeFilterCount}
-                    </Badge>
-                  )}
-                </Button>
+                {activeTab === "suggestions" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowFilters(!showFilters)}
+                    className={cn(activeFilterCount > 0 && "border-primary")}
+                  >
+                    <Filter className="w-4 h-4" />
+                    {activeFilterCount > 0 && (
+                      <Badge variant="secondary" className="ml-1 h-5 w-5 p-0 text-xs">
+                        {activeFilterCount}
+                      </Badge>
+                    )}
+                  </Button>
+                )}
                 <Button
                   variant="outline"
                   size="sm"
@@ -598,13 +601,17 @@ const Suggestions = () => {
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-4">
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="suggestions" className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4" />
-              Suggestions
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="suggestions" className="flex items-center gap-1 text-xs">
+              <Sparkles className="w-3 h-3" />
+              All
             </TabsTrigger>
-            <TabsTrigger value="history" className="flex items-center gap-2">
-              <History className="w-4 h-4" />
+            <TabsTrigger value="sharp-props" className="flex items-center gap-1 text-xs">
+              <Zap className="w-3 h-3" />
+              Sharp Props
+            </TabsTrigger>
+            <TabsTrigger value="history" className="flex items-center gap-1 text-xs">
+              <History className="w-3 h-3" />
               History
             </TabsTrigger>
           </TabsList>
@@ -1024,6 +1031,238 @@ const Suggestions = () => {
                 )}
               </div>
             )}
+          </TabsContent>
+
+          {/* Sharp Props Tab */}
+          <TabsContent value="sharp-props" className="mt-4 space-y-4">
+            {/* Sharp Props Header */}
+            <Card className="bg-gradient-to-br from-orange-500/10 to-yellow-500/10 border-orange-500/30">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-orange-500/20 flex items-center justify-center">
+                    <Zap className="w-5 h-5 text-orange-500" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-foreground">Sharp Money Props</h3>
+                    <p className="text-xs text-muted-foreground">
+                      Player props with professional betting action detected
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Sharp Props Parlays */}
+            {(() => {
+              // Filter for sharp money parlays with player props
+              const sharpPropsParlays = suggestions.filter(s => {
+                const isSharpParlay = s.suggestion_reason.toLowerCase().includes('sharp');
+                const hasPlayerProps = s.legs.some(leg => 
+                  leg.betType?.toLowerCase().includes('player') || 
+                  leg.betType?.toLowerCase().includes('prop')
+                );
+                return isSharpParlay || hasPlayerProps;
+              });
+
+              if (isLoading) {
+                return (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+                  </div>
+                );
+              }
+
+              if (sharpPropsParlays.length === 0) {
+                return (
+                  <Card className="bg-card/50 border-border/50">
+                    <CardContent className="p-8 text-center">
+                      <Zap className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                      <h3 className="font-semibold text-foreground mb-2">No Sharp Props Available</h3>
+                      <p className="text-sm text-muted-foreground mb-6">
+                        Sharp money player prop parlays will appear here when detected. Generate new suggestions to find the latest sharp action.
+                      </p>
+                      <Button onClick={generateSuggestions} disabled={isGenerating}>
+                        {isGenerating ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Scanning...
+                          </>
+                        ) : (
+                          <>
+                            <Zap className="w-4 h-4 mr-2" />
+                            Find Sharp Props
+                          </>
+                        )}
+                      </Button>
+                    </CardContent>
+                  </Card>
+                );
+              }
+
+              return (
+                <div className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    {sharpPropsParlays.length} sharp prop parlay{sharpPropsParlays.length !== 1 ? 's' : ''} found
+                  </p>
+
+                  {sharpPropsParlays.map((suggestion) => {
+                    const riskInfo = getRiskLabel(suggestion.combined_probability);
+                    const isSharpParlay = suggestion.suggestion_reason.toLowerCase().includes('sharp');
+                    const propLegsCount = suggestion.legs.filter(leg => 
+                      leg.betType?.toLowerCase().includes('player') || 
+                      leg.betType?.toLowerCase().includes('prop')
+                    ).length;
+
+                    return (
+                      <Card 
+                        key={suggestion.id} 
+                        className={cn(
+                          "border-2 transition-all",
+                          isSharpParlay 
+                            ? "bg-gradient-to-br from-orange-500/5 to-yellow-500/5 border-orange-500/30 hover:border-orange-500/50" 
+                            : "bg-card/50 border-border/50 hover:border-primary/30"
+                        )}
+                      >
+                        <CardHeader className="pb-2">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              {isSharpParlay ? (
+                                <Zap className="w-4 h-4 text-orange-500" />
+                              ) : (
+                                <User className="w-4 h-4 text-primary" />
+                              )}
+                              <CardTitle className="text-sm font-display">
+                                {isSharpParlay ? 'SHARP PROPS' : 'PLAYER PROPS'} PARLAY
+                              </CardTitle>
+                              <Badge variant="outline" className="text-xs">
+                                {suggestion.legs.length} legs
+                              </Badge>
+                              {propLegsCount > 0 && (
+                                <Badge variant="secondary" className="text-xs bg-primary/10 text-primary">
+                                  {propLegsCount} prop{propLegsCount > 1 ? 's' : ''}
+                                </Badge>
+                              )}
+                            </div>
+                            <Badge 
+                              variant="outline" 
+                              className={cn("text-xs", riskInfo.color)}
+                            >
+                              {riskInfo.label}
+                            </Badge>
+                          </div>
+                        </CardHeader>
+                        <CardContent className="space-y-3">
+                          {/* Legs */}
+                          <div className="space-y-2">
+                            {suggestion.legs.map((leg, index) => {
+                              const betBadge = getBetTypeBadge(leg.betType);
+                              const BetIcon = betBadge.icon;
+                              const isPropLeg = leg.betType?.toLowerCase().includes('player') || 
+                                               leg.betType?.toLowerCase().includes('prop');
+                              return (
+                                <div 
+                                  key={index}
+                                  className={cn(
+                                    "flex items-center justify-between text-sm rounded-lg px-3 py-2",
+                                    isPropLeg ? "bg-primary/10 border border-primary/20" : "bg-muted/30"
+                                  )}
+                                >
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2">
+                                      {isPropLeg && <User className="w-3 h-3 text-primary" />}
+                                      <p className="text-foreground truncate">{leg.description}</p>
+                                    </div>
+                                    <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
+                                      <span>{leg.sport}</span>
+                                      <span>•</span>
+                                      <div className="flex items-center gap-1">
+                                        <BetIcon className="w-3 h-3" />
+                                        <span>{betBadge.label}</span>
+                                      </div>
+                                      <span>•</span>
+                                      <Clock className="w-3 h-3" />
+                                      <span>{formatTimeUntil(leg.eventTime)}</span>
+                                    </div>
+                                  </div>
+                                  <div className="text-right ml-2">
+                                    <Badge variant="secondary" className="mb-1">
+                                      {formatOdds(leg.odds)}
+                                    </Badge>
+                                    <p className="text-xs text-muted-foreground">
+                                      {(leg.impliedProbability * 100).toFixed(0)}%
+                                    </p>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          {/* Stats */}
+                          <div className="grid grid-cols-3 gap-2 pt-2 border-t border-border/30">
+                            <div className="text-center">
+                              <p className="text-xs text-muted-foreground">Total Odds</p>
+                              <p className="text-lg font-bold text-primary">
+                                {formatOdds(suggestion.total_odds)}
+                              </p>
+                            </div>
+                            <div className="text-center">
+                              <p className="text-xs text-muted-foreground">Win Prob</p>
+                              <p className="text-lg font-bold">
+                                {(suggestion.combined_probability * 100).toFixed(1)}%
+                              </p>
+                            </div>
+                            <div className="text-center">
+                              <p className="text-xs text-muted-foreground">$10 Wins</p>
+                              <p className="text-lg font-bold text-neon-green">
+                                ${suggestion.total_odds > 0 
+                                  ? ((suggestion.total_odds / 100) * 10 + 10).toFixed(0)
+                                  : ((100 / Math.abs(suggestion.total_odds)) * 10 + 10).toFixed(0)
+                                }
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Reason */}
+                          <div className={cn(
+                            "rounded-lg p-3 border",
+                            isSharpParlay 
+                              ? "bg-orange-500/5 border-orange-500/20" 
+                              : "bg-primary/5 border-primary/10"
+                          )}>
+                            <div className="flex items-start gap-2">
+                              {isSharpParlay ? (
+                                <Zap className="w-4 h-4 text-orange-500 shrink-0 mt-0.5" />
+                              ) : (
+                                <Brain className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+                              )}
+                              <div>
+                                <p className="text-xs font-medium text-foreground mb-1">
+                                  {isSharpParlay ? 'Sharp Money Action' : 'Why These Props?'}
+                                </p>
+                                <p className="text-xs text-muted-foreground">{suggestion.suggestion_reason}</p>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Action */}
+                          <Button 
+                            onClick={() => handleAnalyze(suggestion)}
+                            className={cn(
+                              "w-full group",
+                              isSharpParlay && "bg-orange-500 hover:bg-orange-600"
+                            )}
+                            variant={isSharpParlay ? "default" : "outline"}
+                          >
+                            {isSharpParlay ? 'Analyze Sharp Parlay' : 'Run Full Analysis'}
+                            <ChevronRight className="w-4 h-4 ml-1 group-hover:translate-x-1 transition-transform" />
+                          </Button>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </TabsContent>
 
           <TabsContent value="history" className="mt-4">
