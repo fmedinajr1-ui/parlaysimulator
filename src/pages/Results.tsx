@@ -14,6 +14,7 @@ import { BookEdgeCard } from "@/components/results/BookEdgeCard";
 import { HistoricalInsightsCard } from "@/components/results/HistoricalInsightsCard";
 import { CalibrationDashboard } from "@/components/results/CalibrationDashboard";
 import { SharpMoneyAlerts } from "@/components/results/SharpMoneyAlerts";
+import { TrapAvoidanceCard } from "@/components/results/TrapAvoidanceCard";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, RotateCcw, Save, Loader2, LogIn } from "lucide-react";
 import { ParlaySimulation, ParlayAnalysis } from "@/types/parlay";
@@ -392,6 +393,12 @@ const Results = () => {
             probability={simulation.combinedProbability}
             degenerateLevel={simulation.degenerateLevel}
             delay={100}
+          />
+
+          {/* Trap Avoidance Card - Show at top if traps detected */}
+          <TrapAvoidanceCard 
+            legAnalyses={aiAnalysis?.legAnalyses}
+            delay={140}
           />
 
           {/* AI-Powered Intelligence Section */}

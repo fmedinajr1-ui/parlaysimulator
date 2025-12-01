@@ -126,6 +126,21 @@ export function LegBreakdown({ legs, legAnalyses, delay = 0 }: LegBreakdownProps
                     </div>
                   )}
                   
+                  {/* Trap Alert - Show prominently if detected */}
+                  {analysis?.sharpRecommendation === 'fade' && analysis?.sharpSignals?.some(s => 
+                    ['BOTH_SIDES_MOVED', 'PRICE_ONLY_MOVE_TRAP', 'SINGLE_BOOK_DIVERGENCE', 'FAKE_SHARP_TAG'].includes(s)
+                  ) && (
+                    <div className="mt-3 p-3 rounded-lg bg-neon-red/20 border border-neon-red/50 animate-pulse">
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="w-5 h-5 text-neon-red" />
+                        <span className="font-bold text-neon-red">⚠️ TRAP ALERT</span>
+                      </div>
+                      <p className="text-xs text-neon-red/90 mt-1">
+                        Sharp money analysis detected this may be a trap bet. Consider fading this leg.
+                      </p>
+                    </div>
+                  )}
+                  
                   {/* Sharp recommendation */}
                   {analysis?.sharpRecommendation && (
                     <div className={`mt-3 p-3 rounded-lg border ${sharpColors[analysis.sharpRecommendation]}`}>
