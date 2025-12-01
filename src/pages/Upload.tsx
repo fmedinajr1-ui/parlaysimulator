@@ -79,6 +79,8 @@ const Upload = () => {
   const [isQuickChecking, setIsQuickChecking] = useState(false);
   const [quickCheckResults, setQuickCheckResults] = useState<any>(null);
   const [showOptimizer, setShowOptimizer] = useState(false);
+  const [originalLegs, setOriginalLegs] = useState<LegInput[] | null>(null);
+  const [undoCountdown, setUndoCountdown] = useState<number>(0);
 
   // Check for success/cancel params from Stripe checkout
   useEffect(() => {
@@ -100,11 +102,18 @@ const Upload = () => {
   useEffect(() => {
     const optimizedData = location.state as { 
       optimizedLegs?: Array<{ id: string; description: string; odds: string }>;
+      originalLegs?: Array<{ id: string; description: string; odds: string }>;
       optimizationApplied?: boolean;
       removedCount?: number;
     } | null;
 
     if (optimizedData?.optimizedLegs && optimizedData.optimizationApplied) {
+      // Store original legs for undo
+      if (optimizedData.originalLegs) {
+        setOriginalLegs(optimizedData.originalLegs);
+        setUndoCountdown(10);
+      }
+      
       // Pre-fill with optimized legs
       setLegs(optimizedData.optimizedLegs);
       
@@ -118,6 +127,33 @@ const Upload = () => {
       navigate('/upload', { replace: true, state: null });
     }
   }, [location.state, navigate]);
+
+  // Countdown timer for undo button
+  useEffect(() => {
+    if (undoCountdown > 0) {
+      const timer = setTimeout(() => {
+        setUndoCountdown(undoCountdown - 1);
+      }, 1000);
+      
+      return () => clearTimeout(timer);
+    } else if (undoCountdown === 0 && originalLegs) {
+      // Clear original legs when countdown expires
+      setOriginalLegs(null);
+    }
+  }, [undoCountdown, originalLegs]);
+
+  const handleUndo = () => {
+    if (originalLegs) {
+      setLegs(originalLegs);
+      setOriginalLegs(null);
+      setUndoCountdown(0);
+      
+      toast({
+        title: "↩️ Parlay Restored",
+        description: "Original parlay has been restored.",
+      });
+    }
+  };
 
   // Parse extracted game time to Date for editing
   const parseGameTimeForEdit = useCallback((gameTime: string) => {
@@ -667,6 +703,29 @@ const Upload = () => {
           <span className="text-muted-foreground text-xs">or enter manually</span>
           <div className="flex-1 h-px bg-border" />
         </div>
+
+        {/* Undo Banner */}
+        {originalLegs && undoCountdown > 0 && (
+          <div className="bg-primary/10 border border-primary/30 rounded-xl p-3 flex items-center justify-between slide-up mb-4">
+            <div className="flex items-center gap-3 flex-1">
+              <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
+                <span className="text-lg font-bold text-primary">{undoCountdown}</span>
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-foreground">Optimization Applied</p>
+                <p className="text-xs text-muted-foreground">Undo available for {undoCountdown}s</p>
+              </div>
+            </div>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={handleUndo}
+              className="border-primary/30 text-primary hover:bg-primary/20 hover:border-primary/50"
+            >
+              ↩️ Undo
+            </Button>
+          </div>
+        )}
 
         {/* Extracted Data Banners */}
         <div className="space-y-2 mb-4">

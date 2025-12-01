@@ -5,6 +5,7 @@ import { LegAnalysis, ParlayLeg } from "@/types/parlay";
 import { Zap, TrendingUp, X, RefreshCw, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { toast } from "@/hooks/use-toast";
 
 interface ParlayOptimizerProps {
   legs: ParlayLeg[];
@@ -211,19 +212,31 @@ export function ParlayOptimizer({ legs, legAnalyses, stake, combinedProbability,
     // Validation: Ensure at least 2 legs remain
     if (optimizedLegs.length < 2) {
       console.log('❌ Cannot rebuild: Would leave fewer than 2 legs');
-      alert('Cannot rebuild: Removing these legs would leave fewer than 2 legs. A parlay needs at least 2 legs.');
+      toast({
+        title: "Cannot rebuild",
+        description: "Removing these legs would leave fewer than 2 legs. A parlay needs at least 2 legs.",
+        variant: "destructive"
+      });
       return;
     }
     
     console.log('🚀 Navigating to upload with optimized legs');
     
+    // Store original legs for undo functionality
+    const originalLegs = legs.map(leg => ({
+      id: leg.id,
+      description: leg.description,
+      odds: leg.odds.toString()
+    }));
+    
     // Close dialog before navigation
     setShowOptimizer(false);
     
-    // Navigate to upload page with optimized legs
+    // Navigate to upload page with optimized legs and originals for undo
     navigate('/upload', {
       state: {
         optimizedLegs,
+        originalLegs,
         optimizationApplied: true,
         removedCount: removedIndices.size
       }
