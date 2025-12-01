@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
 import { 
   FileText, 
@@ -58,6 +59,8 @@ export default function Admin() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSettling, setIsSettling] = useState(false);
   const [activeTab, setActiveTab] = useState('ai-learning');
+  const [selectedParlays, setSelectedParlays] = useState<Set<string>>(new Set());
+  const [isBatchSettling, setIsBatchSettling] = useState(false);
 
   useEffect(() => {
     if (!isCheckingAdmin && !isAdmin) {
@@ -174,6 +177,65 @@ export default function Admin() {
     URL.revokeObjectURL(url);
   };
 
+  // Batch selection handlers
+  const pendingParlaysList = parlays.filter(p => !p.is_settled);
+  
+  const handleSelectAll = () => {
+    const pendingIds = pendingParlaysList.map(p => p.id);
+    if (selectedParlays.size === pendingIds.length && pendingIds.length > 0) {
+      setSelectedParlays(new Set());
+    } else {
+      setSelectedParlays(new Set(pendingIds));
+    }
+  };
+
+  const handleToggleParlay = (id: string) => {
+    const newSelected = new Set(selectedParlays);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
+    } else {
+      newSelected.add(id);
+    }
+    setSelectedParlays(newSelected);
+  };
+
+  const handleBatchSettle = async (won: boolean) => {
+    if (selectedParlays.size === 0) return;
+    
+    setIsBatchSettling(true);
+    try {
+      const ids = Array.from(selectedParlays);
+      
+      const { error } = await supabase
+        .from('parlay_history')
+        .update({
+          is_settled: true,
+          is_won: won,
+          settled_at: new Date().toISOString()
+        })
+        .in('id', ids);
+
+      if (error) throw error;
+
+      toast({
+        title: "Batch Settlement Complete",
+        description: `${ids.length} parlay${ids.length > 1 ? 's' : ''} marked as ${won ? 'won' : 'lost'}`
+      });
+
+      setSelectedParlays(new Set());
+      fetchAdminData();
+    } catch (err) {
+      console.error('Error batch settling:', err);
+      toast({
+        title: "Error",
+        description: "Failed to settle parlays",
+        variant: "destructive"
+      });
+    } finally {
+      setIsBatchSettling(false);
+    }
+  };
+
   if (isCheckingAdmin || isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -275,55 +337,139 @@ export default function Admin() {
               )}
             </Button>
 
+            {/* Batch Selection Controls */}
+            {pendingParlays > 0 && (
+              <Card className="bg-muted/50">
+                <CardContent className="p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Checkbox 
+                        checked={selectedParlays.size === pendingParlaysList.length && pendingParlaysList.length > 0}
+                        onCheckedChange={handleSelectAll}
+                      />
+                      <span className="text-sm">Select All Pending ({pendingParlays})</span>
+                    </div>
+                    {selectedParlays.size > 0 && (
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        onClick={() => setSelectedParlays(new Set())}
+                      >
+                        Clear
+                      </Button>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Batch Action Bar */}
+            {selectedParlays.size > 0 && (
+              <Card className="sticky top-0 z-10 border-primary/50 shadow-lg">
+                <CardContent className="p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-medium">
+                      {selectedParlays.size} selected
+                    </span>
+                    <div className="flex gap-2">
+                      <Button 
+                        size="sm" 
+                        variant="outline"
+                        onClick={() => handleBatchSettle(true)}
+                        disabled={isBatchSettling}
+                        className="border-green-500 text-green-500 hover:bg-green-500/10"
+                      >
+                        {isBatchSettling ? (
+                          <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                        ) : (
+                          <CheckCircle className="w-3 h-3 mr-1" />
+                        )}
+                        All Won
+                      </Button>
+                      <Button 
+                        size="sm" 
+                        variant="outline"
+                        onClick={() => handleBatchSettle(false)}
+                        disabled={isBatchSettling}
+                        className="border-red-500 text-red-500 hover:bg-red-500/10"
+                      >
+                        {isBatchSettling ? (
+                          <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                        ) : (
+                          <XCircle className="w-3 h-3 mr-1" />
+                        )}
+                        All Lost
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             {/* Parlay List */}
             <div className="space-y-3">
               {parlays.map(parlay => (
-                <Card key={parlay.id}>
+                <Card 
+                  key={parlay.id}
+                  className={selectedParlays.has(parlay.id) ? 'ring-2 ring-primary' : ''}
+                >
                   <CardContent className="p-4">
-                    <div className="flex justify-between items-start mb-2">
-                      <div>
-                        <p className="text-sm font-medium">{parlay.username || 'Anonymous'}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {new Date(parlay.created_at).toLocaleDateString()}
-                        </p>
-                      </div>
-                      {parlay.is_settled ? (
-                        <Badge variant={parlay.is_won ? "default" : "destructive"}>
-                          {parlay.is_won ? 'WON' : 'LOST'}
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline">Pending</Badge>
+                    <div className="flex gap-3">
+                      {!parlay.is_settled && (
+                        <div className="pt-1">
+                          <Checkbox
+                            checked={selectedParlays.has(parlay.id)}
+                            onCheckedChange={() => handleToggleParlay(parlay.id)}
+                          />
+                        </div>
                       )}
-                    </div>
-                    <div className="text-xs space-y-1 mb-3">
-                      <p>{parlay.legs?.length || 0} legs • ${Number(parlay.stake).toFixed(2)} stake</p>
-                      <p className="text-muted-foreground">
-                        Potential: ${Number(parlay.potential_payout).toFixed(2)} • 
-                        Prob: {(Number(parlay.combined_probability) * 100).toFixed(1)}%
-                      </p>
-                    </div>
-                    {!parlay.is_settled && (
-                      <div className="flex gap-2">
-                        <Button 
-                          size="sm" 
-                          variant="outline"
-                          onClick={() => handleManualSettle(parlay.id, true)}
-                          className="flex-1"
-                        >
-                          <CheckCircle className="w-3 h-3 mr-1" />
-                          Won
-                        </Button>
-                        <Button 
-                          size="sm" 
-                          variant="outline"
-                          onClick={() => handleManualSettle(parlay.id, false)}
-                          className="flex-1"
-                        >
-                          <XCircle className="w-3 h-3 mr-1" />
-                          Lost
-                        </Button>
+                      <div className="flex-1">
+                        <div className="flex justify-between items-start mb-2">
+                          <div>
+                            <p className="text-sm font-medium">{parlay.username || 'Anonymous'}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {new Date(parlay.created_at).toLocaleDateString()}
+                            </p>
+                          </div>
+                          {parlay.is_settled ? (
+                            <Badge variant={parlay.is_won ? "default" : "destructive"}>
+                              {parlay.is_won ? 'WON' : 'LOST'}
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline">Pending</Badge>
+                          )}
+                        </div>
+                        <div className="text-xs space-y-1 mb-3">
+                          <p>{parlay.legs?.length || 0} legs • ${Number(parlay.stake).toFixed(2)} stake</p>
+                          <p className="text-muted-foreground">
+                            Potential: ${Number(parlay.potential_payout).toFixed(2)} • 
+                            Prob: {(Number(parlay.combined_probability) * 100).toFixed(1)}%
+                          </p>
+                        </div>
+                        {!parlay.is_settled && (
+                          <div className="flex gap-2">
+                            <Button 
+                              size="sm" 
+                              variant="outline"
+                              onClick={() => handleManualSettle(parlay.id, true)}
+                              className="flex-1"
+                            >
+                              <CheckCircle className="w-3 h-3 mr-1" />
+                              Won
+                            </Button>
+                            <Button 
+                              size="sm" 
+                              variant="outline"
+                              onClick={() => handleManualSettle(parlay.id, false)}
+                              className="flex-1"
+                            >
+                              <XCircle className="w-3 h-3 mr-1" />
+                              Lost
+                            </Button>
+                          </div>
+                        )}
                       </div>
-                    )}
+                    </div>
                   </CardContent>
                 </Card>
               ))}
