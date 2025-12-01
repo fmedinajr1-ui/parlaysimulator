@@ -10,6 +10,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { PaywallModal } from "@/components/PaywallModal";
 import { QuickCheckResults } from "@/components/upload/QuickCheckResults";
+import { UploadOptimizer } from "@/components/upload/UploadOptimizer";
 import { Plus, Upload as UploadIcon, Flame, X, Loader2, Sparkles, CheckCircle2, Clock, Pencil, CalendarIcon, Crown, Image, Shield } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { createLeg, simulateParlay, americanToDecimal } from "@/lib/parlay-calculator";
@@ -77,6 +78,7 @@ const Upload = () => {
   const [processingIndex, setProcessingIndex] = useState<number>(-1);
   const [isQuickChecking, setIsQuickChecking] = useState(false);
   const [quickCheckResults, setQuickCheckResults] = useState<any>(null);
+  const [showOptimizer, setShowOptimizer] = useState(false);
 
   // Check for success/cancel params from Stripe checkout
   useEffect(() => {
@@ -186,6 +188,15 @@ const Upload = () => {
       
       setQuickCheckResults(data);
       
+      // Auto-show optimizer if problematic legs detected
+      const hasProblematicLegs = data.legs.some((leg: any) => 
+        leg.riskLevel === 'danger' || leg.riskLevel === 'caution'
+      );
+      
+      if (hasProblematicLegs) {
+        setShowOptimizer(true);
+      }
+      
       // Show toast based on results
       if (data.hasSharpConflicts) {
         toast({
@@ -214,6 +225,31 @@ const Upload = () => {
     } finally {
       setIsQuickChecking(false);
     }
+  };
+
+  const handleRemoveProblematicLegs = (legIds: string[]) => {
+    const remainingLegs = legs.filter(leg => !legIds.includes(leg.id));
+    
+    // Ensure at least 2 legs remain
+    if (remainingLegs.length < 2) {
+      toast({
+        title: "Can't Remove All Legs! 🙅",
+        description: "You need at least 2 legs for a parlay. Keep some strong picks!",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    setLegs(remainingLegs);
+    setShowOptimizer(false);
+    
+    // Clear quick check results to allow re-checking
+    setQuickCheckResults(null);
+    
+    toast({
+      title: "✨ Parlay Optimized!",
+      description: `Removed ${legIds.length} weak leg${legIds.length > 1 ? 's' : ''}. Re-run Quick Check to verify.`,
+    });
   };
 
   const addLeg = () => {
@@ -845,7 +881,18 @@ const Upload = () => {
             </Button>
             
             {quickCheckResults && (
-              <QuickCheckResults results={quickCheckResults} />
+              <>
+                <QuickCheckResults results={quickCheckResults} />
+                
+                {showOptimizer && (
+                  <UploadOptimizer
+                    legs={legs}
+                    quickCheckResults={quickCheckResults}
+                    onRemoveLegs={handleRemoveProblematicLegs}
+                    onDismiss={() => setShowOptimizer(false)}
+                  />
+                )}
+              </>
             )}
           </div>
         )}
