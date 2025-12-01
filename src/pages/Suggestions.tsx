@@ -8,6 +8,7 @@ import { SuggestionPerformanceCard } from "@/components/suggestions/SuggestionPe
 import { SuggestionHistoryFeed } from "@/components/suggestions/SuggestionHistoryFeed";
 import { StrategyPerformanceCard } from "@/components/suggestions/StrategyPerformanceCard";
 import { CalibrationDashboard } from "@/components/results/CalibrationDashboard";
+import { JuicedPropsCard } from "@/components/suggestions/JuicedPropsCard";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1038,6 +1039,9 @@ const Suggestions = () => {
 
           {/* Sharp Props Tab */}
           <TabsContent value="sharp-props" className="mt-4 space-y-4">
+            {/* Juiced Props Card - Morning Scan */}
+            <JuicedPropsCard />
+            
             {/* Sharp Props Header */}
             <Card className="bg-gradient-to-br from-orange-500/10 to-yellow-500/10 border-orange-500/30">
               <CardContent className="p-4">

@@ -193,6 +193,97 @@ serve(async (req) => {
       });
     }
 
+    // Handle morning juice scan notifications
+    if (action === 'notify_morning_juice') {
+      const { data: juiceData } = req.json ? await req.json().catch(() => ({})) : {};
+      const notifyData = juiceData || (await req.json().catch(() => ({}))).data;
+      
+      const { data: subscriptions, error: subError } = await supabase
+        .from('push_subscriptions')
+        .select('*')
+        .eq('is_active', true);
+
+      if (subError) throw subError;
+
+      const payload: PushPayload = {
+        title: `🌅 Morning Juiced Overs`,
+        body: `${notifyData?.total || 0} player props with heavy Over action found for today`,
+        icon: '/favicon.ico',
+        badge: '/favicon.ico',
+        tag: `morning-juice-${Date.now()}`,
+        data: {
+          url: '/suggestions',
+          type: 'morning_juice_scan',
+          total: notifyData?.total || 0,
+          heavy: notifyData?.heavy || 0,
+        },
+      };
+
+      let sentCount = 0;
+      for (const sub of subscriptions || []) {
+        const success = await sendWebPush(
+          { endpoint: sub.endpoint, p256dh_key: sub.p256dh_key, auth_key: sub.auth_key },
+          payload,
+          vapidPublicKey,
+          vapidPrivateKey
+        );
+        if (success) sentCount++;
+      }
+
+      return new Response(JSON.stringify({ success: true, sent: sentCount }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Handle final pick locked notifications
+    if (action === 'notify_final_pick') {
+      const { data: pickData } = req.json ? await req.json().catch(() => ({})) : {};
+      const notifyData = pickData || (await req.json().catch(() => ({}))).data;
+      
+      const { data: subscriptions, error: subError } = await supabase
+        .from('push_subscriptions')
+        .select('*')
+        .eq('is_active', true);
+
+      if (subError) throw subError;
+
+      const oddsDisplay = notifyData?.odds > 0 ? `+${notifyData.odds}` : notifyData?.odds;
+      
+      const payload: PushPayload = {
+        title: `🎯 FINAL PICK LOCKED`,
+        body: `${notifyData?.player} ${notifyData?.pick} ${notifyData?.line} ${notifyData?.prop} @ ${oddsDisplay}`,
+        icon: '/favicon.ico',
+        badge: '/favicon.ico',
+        tag: `final-pick-${Date.now()}`,
+        data: {
+          url: '/suggestions',
+          type: 'final_pick',
+          player: notifyData?.player,
+          prop: notifyData?.prop,
+          pick: notifyData?.pick,
+          line: notifyData?.line,
+          odds: notifyData?.odds,
+          confidence: notifyData?.confidence,
+          reason: notifyData?.reason,
+        },
+      };
+
+      let sentCount = 0;
+      for (const sub of subscriptions || []) {
+        const success = await sendWebPush(
+          { endpoint: sub.endpoint, p256dh_key: sub.p256dh_key, auth_key: sub.auth_key },
+          payload,
+          vapidPublicKey,
+          vapidPrivateKey
+        );
+        if (success) sentCount++;
+      }
+
+      return new Response(JSON.stringify({ success: true, sent: sentCount }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     // Get VAPID public key for client
     if (action === 'getVapidKey') {
       return new Response(JSON.stringify({ 

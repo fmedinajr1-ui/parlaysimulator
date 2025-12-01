@@ -53,3 +53,9 @@ verify_jwt = false
 
 [functions.upset-tracker]
 verify_jwt = false
+
+[functions.morning-props-scanner]
+verify_jwt = false
+
+[functions.lock-final-picks]
+verify_jwt = false

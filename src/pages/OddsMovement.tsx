@@ -5,11 +5,12 @@ import { OddsMovementCard } from "@/components/results/OddsMovementCard";
 import { SharpMoneyAlerts } from "@/components/results/SharpMoneyAlerts";
 import { LineHistoryChart } from "@/components/odds/LineHistoryChart";
 import { PushNotificationToggle } from "@/components/odds/PushNotificationToggle";
+import { JuicedPropsCard } from "@/components/suggestions/JuicedPropsCard";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Activity, Zap, TrendingUp, RefreshCw, ChevronLeft } from "lucide-react";
+import { Activity, Zap, TrendingUp, RefreshCw, ChevronLeft, Flame } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 const SPORTS = [
@@ -158,18 +159,22 @@ const OddsMovement = () => {
 
         {/* Main Content Tabs */}
         <Tabs defaultValue="movements" className="space-y-4">
-          <TabsList className="grid w-full grid-cols-3 bg-card">
+          <TabsList className="grid w-full grid-cols-4 bg-card">
             <TabsTrigger value="movements" className="data-[state=active]:bg-neon-purple/20">
-              <Activity className="w-4 h-4 mr-2" />
-              All Moves
+              <Activity className="w-4 h-4 mr-1" />
+              <span className="hidden sm:inline">All</span>
             </TabsTrigger>
             <TabsTrigger value="sharp" className="data-[state=active]:bg-neon-yellow/20">
-              <Zap className="w-4 h-4 mr-2" />
-              Sharp Only
+              <Zap className="w-4 h-4 mr-1" />
+              <span className="hidden sm:inline">Sharp</span>
+            </TabsTrigger>
+            <TabsTrigger value="juiced" className="data-[state=active]:bg-neon-orange/20">
+              <Flame className="w-4 h-4 mr-1" />
+              <span className="hidden sm:inline">Props</span>
             </TabsTrigger>
             <TabsTrigger value="charts" className="data-[state=active]:bg-neon-green/20">
-              <TrendingUp className="w-4 h-4 mr-2" />
-              Charts
+              <TrendingUp className="w-4 h-4 mr-1" />
+              <span className="hidden sm:inline">Charts</span>
             </TabsTrigger>
           </TabsList>
 
@@ -186,6 +191,10 @@ const OddsMovement = () => {
               showSharpOnly
               delay={0}
             />
+          </TabsContent>
+
+          <TabsContent value="juiced" className="space-y-4">
+            <JuicedPropsCard />
           </TabsContent>
 
           <TabsContent value="charts" className="space-y-4">
