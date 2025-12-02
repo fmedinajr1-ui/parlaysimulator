@@ -70,6 +70,8 @@ export default function SharpLineCalculator() {
   const [currentUnder, setCurrentUnder] = useState('');
   const [currentLine, setCurrentLine] = useState('');
   const [fetchingOdds, setFetchingOdds] = useState<string | null>(null);
+  const [fetchingAll, setFetchingAll] = useState(false);
+  const [fetchProgress, setFetchProgress] = useState({ current: 0, total: 0 });
 
   useEffect(() => {
     fetchTrackedProps();
@@ -275,6 +277,74 @@ export default function SharpLineCalculator() {
     }
   };
 
+  const handleFetchAllOdds = async () => {
+    const pendingProps = trackedProps.filter(p => p.status === 'pending' && p.event_id);
+    
+    if (pendingProps.length === 0) {
+      toast.error('No pending props with event IDs to fetch');
+      return;
+    }
+
+    setFetchingAll(true);
+    setFetchProgress({ current: 0, total: pendingProps.length });
+
+    let successCount = 0;
+    let failCount = 0;
+
+    for (let i = 0; i < pendingProps.length; i++) {
+      const prop = pendingProps[i];
+      setFetchProgress({ current: i + 1, total: pendingProps.length });
+
+      try {
+        const { data, error } = await supabase.functions.invoke('fetch-current-odds', {
+          body: {
+            event_id: prop.event_id,
+            sport: prop.sport,
+            player_name: prop.player_name,
+            prop_type: prop.prop_type,
+            bookmaker: prop.bookmaker
+          }
+        });
+
+        if (error || !data.success) {
+          failCount++;
+          continue;
+        }
+
+        await supabase
+          .from('sharp_line_tracker')
+          .update({
+            current_over_price: data.odds.over_price,
+            current_under_price: data.odds.under_price,
+            current_line: data.odds.line,
+            last_updated: new Date().toISOString(),
+            status: 'updated'
+          })
+          .eq('id', prop.id);
+
+        successCount++;
+      } catch (err) {
+        console.error(`Error fetching odds for ${prop.player_name}:`, err);
+        failCount++;
+      }
+
+      // Small delay to avoid rate limiting
+      if (i < pendingProps.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+    }
+
+    setFetchingAll(false);
+    setFetchProgress({ current: 0, total: 0 });
+    fetchTrackedProps();
+
+    if (successCount > 0) {
+      toast.success(`Updated ${successCount} props${failCount > 0 ? `, ${failCount} failed` : ''}`);
+    } else {
+      toast.error(`Failed to fetch all ${failCount} props`);
+    }
+  };
+
   const handleDeleteProp = async (id: string) => {
     try {
       const { error } = await supabase
@@ -475,7 +545,39 @@ export default function SharpLineCalculator() {
               </CardContent>
             </Card>
           ) : (
-            trackedProps.map((prop) => (
+            <>
+              {/* Fetch All Button */}
+              {trackedProps.filter(p => p.status === 'pending' && p.event_id).length > 0 && (
+                <Card className="bg-primary/5 border-primary/20">
+                  <CardContent className="py-3">
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm">
+                        <span className="font-medium">{trackedProps.filter(p => p.status === 'pending' && p.event_id).length}</span>
+                        <span className="text-muted-foreground"> pending props ready to fetch</span>
+                      </div>
+                      <Button 
+                        onClick={handleFetchAllOdds} 
+                        disabled={fetchingAll}
+                        size="sm"
+                      >
+                        {fetchingAll ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Fetching {fetchProgress.current}/{fetchProgress.total}...
+                          </>
+                        ) : (
+                          <>
+                            <RefreshCw className="w-4 h-4 mr-2" />
+                            Fetch All Odds
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {trackedProps.map((prop) => (
               <Card key={prop.id} className="overflow-hidden">
                 <CardHeader className="pb-3">
                   <div className="flex items-center justify-between">
@@ -678,7 +780,8 @@ export default function SharpLineCalculator() {
                   )}
                 </CardContent>
               </Card>
-            ))
+            ))}
+            </>
           )}
         </TabsContent>
       </Tabs>
