@@ -6,16 +6,28 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// NBA Stats API headers required for requests
+const NBA_STATS_HEADERS = {
+  'Accept': 'application/json, text/plain, */*',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Host': 'stats.nba.com',
+  'Origin': 'https://www.nba.com',
+  'Referer': 'https://www.nba.com/',
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'x-nba-stats-origin': 'stats',
+  'x-nba-stats-token': 'true',
+};
+
 // Sport-specific stat mappings
 const PROP_TO_STAT_MAP: Record<string, Record<string, string>> = {
   basketball_nba: {
-    'player_points': 'points',
-    'player_rebounds': 'rebounds',
-    'player_assists': 'assists',
-    'player_threes': 'three_pointers',
-    'player_points_rebounds_assists': 'pra',
-    'player_steals': 'steals',
-    'player_blocks': 'blocks',
+    'player_points': 'PTS',
+    'player_rebounds': 'REB',
+    'player_assists': 'AST',
+    'player_threes': 'FG3M',
+    'player_points_rebounds_assists': 'PRA',
+    'player_steals': 'STL',
+    'player_blocks': 'BLK',
   },
   americanfootball_nfl: {
     'player_pass_tds': 'passing_touchdowns',
@@ -23,65 +35,198 @@ const PROP_TO_STAT_MAP: Record<string, Record<string, string>> = {
     'player_rush_yds': 'rushing_yards',
     'player_receptions': 'receptions',
     'player_reception_yds': 'receiving_yards',
-    'player_rush_attempts': 'rushing_attempts',
   },
   icehockey_nhl: {
     'player_goals': 'goals',
     'player_assists': 'assists',
     'player_points': 'points',
     'player_shots_on_goal': 'shots',
-    'player_saves': 'saves',
   }
 };
 
 const SPORT_KEYS = ['basketball_nba', 'americanfootball_nfl', 'icehockey_nhl'];
 
-// Fetch player game logs from various APIs
-async function fetchPlayerStats(playerName: string, sport: string, supabase: any): Promise<any[]> {
-  // First check cache
+// Search for NBA player ID by name
+async function searchNBAPlayerId(playerName: string): Promise<string | null> {
+  try {
+    const searchUrl = `https://stats.nba.com/stats/commonallplayers?IsOnlyCurrentSeason=1&LeagueID=00&Season=2024-25`;
+    
+    const response = await fetch(searchUrl, { headers: NBA_STATS_HEADERS });
+    if (!response.ok) {
+      console.error('Failed to fetch NBA players list:', response.status);
+      return null;
+    }
+    
+    const data = await response.json();
+    const players = data.resultSets?.[0]?.rowSet || [];
+    const headers = data.resultSets?.[0]?.headers || [];
+    
+    const displayNameIdx = headers.indexOf('DISPLAY_FIRST_LAST');
+    const playerIdIdx = headers.indexOf('PERSON_ID');
+    
+    // Normalize the search name
+    const normalizedSearch = playerName.toLowerCase().trim();
+    
+    // Find matching player
+    for (const player of players) {
+      const fullName = (player[displayNameIdx] || '').toLowerCase();
+      if (fullName === normalizedSearch || fullName.includes(normalizedSearch)) {
+        return String(player[playerIdIdx]);
+      }
+    }
+    
+    // Try partial match on last name
+    const lastNameSearch = normalizedSearch.split(' ').pop();
+    for (const player of players) {
+      const fullName = (player[displayNameIdx] || '').toLowerCase();
+      if (fullName.includes(lastNameSearch || '')) {
+        return String(player[playerIdIdx]);
+      }
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error searching NBA player:', error);
+    return null;
+  }
+}
+
+// Fetch real NBA player game logs
+async function fetchNBAPlayerGameLogs(playerId: string, numGames: number = 5): Promise<any[]> {
+  try {
+    const url = `https://stats.nba.com/stats/playergamelog?PlayerID=${playerId}&Season=2024-25&SeasonType=Regular%20Season`;
+    
+    console.log(`Fetching NBA game logs for player ${playerId}`);
+    
+    const response = await fetch(url, { headers: NBA_STATS_HEADERS });
+    if (!response.ok) {
+      console.error('Failed to fetch NBA game log:', response.status);
+      return [];
+    }
+    
+    const data = await response.json();
+    const resultSet = data.resultSets?.[0];
+    if (!resultSet) return [];
+    
+    const headers = resultSet.headers || [];
+    const rows = resultSet.rowSet || [];
+    
+    // Map header indices
+    const indices = {
+      gameDate: headers.indexOf('GAME_DATE'),
+      matchup: headers.indexOf('MATCHUP'),
+      pts: headers.indexOf('PTS'),
+      reb: headers.indexOf('REB'),
+      ast: headers.indexOf('AST'),
+      stl: headers.indexOf('STL'),
+      blk: headers.indexOf('BLK'),
+      fg3m: headers.indexOf('FG3M'),
+    };
+    
+    // Get most recent games
+    const gameLogs = rows.slice(0, numGames).map((row: any[], index: number) => ({
+      game_number: index + 1,
+      date: row[indices.gameDate],
+      opponent: row[indices.matchup],
+      stats: {
+        PTS: row[indices.pts] || 0,
+        REB: row[indices.reb] || 0,
+        AST: row[indices.ast] || 0,
+        STL: row[indices.stl] || 0,
+        BLK: row[indices.blk] || 0,
+        FG3M: row[indices.fg3m] || 0,
+        PRA: (row[indices.pts] || 0) + (row[indices.reb] || 0) + (row[indices.ast] || 0),
+      }
+    }));
+    
+    console.log(`Found ${gameLogs.length} NBA games for player ${playerId}`);
+    return gameLogs;
+  } catch (error) {
+    console.error('Error fetching NBA game logs:', error);
+    return [];
+  }
+}
+
+// Fetch player stats from cache or API
+async function fetchPlayerStats(playerName: string, sport: string, propType: string, supabase: any): Promise<any[]> {
+  const statKey = PROP_TO_STAT_MAP[sport]?.[propType] || propType;
+  
+  // Check cache first (within last 24 hours)
+  const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const { data: cached } = await supabase
     .from('player_stats_cache')
     .select('*')
     .eq('player_name', playerName)
     .eq('sport', sport)
+    .eq('stat_type', statKey)
+    .gte('created_at', oneDayAgo)
     .order('game_date', { ascending: false })
     .limit(5);
 
   if (cached && cached.length >= 5) {
-    console.log(`Using cached stats for ${playerName}`);
-    return cached;
+    console.log(`Using cached stats for ${playerName} (${statKey})`);
+    return cached.map((c: any) => ({
+      game_number: 0,
+      date: c.game_date,
+      stat_value: c.stat_value,
+      opponent: c.opponent
+    }));
   }
 
-  // For now, we'll generate mock historical data based on the line
-  // In production, you'd integrate with real APIs like:
-  // - NBA: stats.nba.com/stats/playergamelog
-  // - NFL: ESPN API
-  // - NHL: api-web.nhle.com
-  console.log(`No cached stats for ${playerName}, will use line-based estimation`);
-  return [];
-}
-
-// Generate realistic game logs based on the line
-function generateEstimatedGameLogs(playerName: string, line: number, propType: string, numGames: number = 5): any[] {
-  const logs = [];
-  const variance = line * 0.25; // 25% variance around the line
-  
-  for (let i = 0; i < numGames; i++) {
-    // Generate realistic values around the line
-    const randomFactor = Math.random() * 2 - 1; // -1 to 1
-    const value = Math.max(0, Math.round((line + (randomFactor * variance)) * 10) / 10);
+  // Fetch from API based on sport
+  if (sport === 'basketball_nba') {
+    const playerId = await searchNBAPlayerId(playerName);
+    if (!playerId) {
+      console.log(`Could not find NBA player ID for: ${playerName}`);
+      return [];
+    }
     
-    logs.push({
-      game_number: i + 1,
-      stat_value: value,
-      date: new Date(Date.now() - (i * 3 * 24 * 60 * 60 * 1000)).toISOString().split('T')[0],
-      hit_over: value > line,
-      hit_under: value < line,
-      margin: Math.round((value - line) * 10) / 10
-    });
+    const gameLogs = await fetchNBAPlayerGameLogs(playerId, 5);
+    
+    if (gameLogs.length > 0) {
+      // Cache the results
+      const cacheInserts = [];
+      for (const game of gameLogs) {
+        // Cache each stat type from this game
+        for (const [statType, value] of Object.entries(game.stats)) {
+          cacheInserts.push({
+            player_name: playerName,
+            player_id: playerId,
+            sport: sport,
+            game_date: game.date,
+            opponent: game.opponent,
+            stat_type: statType,
+            stat_value: value,
+          });
+        }
+      }
+      
+      // Upsert to cache
+      const { error: cacheError } = await supabase
+        .from('player_stats_cache')
+        .upsert(cacheInserts, { 
+          onConflict: 'player_name,sport,game_date,stat_type',
+          ignoreDuplicates: true
+        });
+      
+      if (cacheError) {
+        console.error('Error caching player stats:', cacheError);
+      }
+      
+      // Return the specific stat we need
+      return gameLogs.map((game, idx) => ({
+        game_number: idx + 1,
+        date: game.date,
+        stat_value: game.stats[statKey] || 0,
+        opponent: game.opponent
+      }));
+    }
   }
   
-  return logs;
+  // TODO: Add NFL and NHL API integrations
+  // For now return empty for non-NBA or if API fails
+  console.log(`No API integration for ${sport} or API call failed for ${playerName}`);
+  return [];
 }
 
 // Calculate hit rate from game logs
@@ -90,8 +235,9 @@ function calculateHitRate(gameLogs: any[], line: number): { overHits: number; un
   let underHits = 0;
   
   gameLogs.forEach(game => {
-    if (game.stat_value > line) overHits++;
-    else if (game.stat_value < line) underHits++;
+    const value = game.stat_value;
+    if (value > line) overHits++;
+    else if (value < line) underHits++;
   });
   
   const total = gameLogs.length;
@@ -111,19 +257,19 @@ function calculateConfidence(gameLogs: any[], line: number, hitRate: number): nu
   let confidence = hitRate * 100;
   
   // Calculate average margin
-  const margins = gameLogs.map(g => Math.abs(g.margin || (g.stat_value - line)));
+  const margins = gameLogs.map(g => Math.abs((g.stat_value || 0) - line));
   const avgMargin = margins.reduce((a, b) => a + b, 0) / margins.length;
   
-  // Higher margin = more confident
-  const marginBonus = Math.min(avgMargin / line * 20, 15);
+  // Higher margin = more confident (capped at 15 bonus points)
+  const marginBonus = Math.min(avgMargin / Math.max(line, 1) * 20, 15);
   confidence += marginBonus;
   
   // Consistency bonus (low standard deviation)
-  const values = gameLogs.map(g => g.stat_value);
+  const values = gameLogs.map(g => g.stat_value || 0);
   const mean = values.reduce((a, b) => a + b, 0) / values.length;
   const variance = values.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / values.length;
   const stdDev = Math.sqrt(variance);
-  const consistencyBonus = Math.max(0, 10 - (stdDev / line * 10));
+  const consistencyBonus = Math.max(0, 10 - (stdDev / Math.max(line, 1) * 10));
   confidence += consistencyBonus;
   
   return Math.min(Math.round(confidence), 100);
@@ -147,6 +293,7 @@ serve(async (req) => {
 
     const analyzedProps: any[] = [];
     const errors: string[] = [];
+    const apiStats = { playersSearched: 0, gamesFound: 0, propsAnalyzed: 0 };
 
     for (const sport of sports) {
       try {
@@ -178,7 +325,11 @@ serve(async (req) => {
 
         for (const event of upcomingEvents) {
           // Fetch player props for this event
-          const propsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${THE_ODDS_API_KEY}&regions=us&markets=${propMarkets.slice(0, 3).join(',')}&oddsFormat=american`;
+          const marketsToFetch = sport === 'basketball_nba' 
+            ? ['player_points', 'player_rebounds', 'player_assists', 'player_threes']
+            : propMarkets.slice(0, 3);
+          
+          const propsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${THE_ODDS_API_KEY}&regions=us&markets=${marketsToFetch.join(',')}&oddsFormat=american`;
           
           try {
             const propsRes = await fetch(propsUrl);
@@ -191,7 +342,7 @@ serve(async (req) => {
             
             if (!propsData.bookmakers || propsData.bookmakers.length === 0) continue;
 
-            // Process each bookmaker's props
+            // Process each bookmaker's props (limit to first 2 bookmakers)
             for (const bookmaker of propsData.bookmakers.slice(0, 2)) {
               for (const market of bookmaker.markets || []) {
                 // Group outcomes by player
@@ -218,16 +369,32 @@ serve(async (req) => {
                   const overPrice = overOutcome.price;
                   const underPrice = underOutcome.price;
 
-                  // Fetch or generate historical stats
-                  let gameLogs = await fetchPlayerStats(playerName, sport, supabase);
+                  apiStats.playersSearched++;
                   
-                  if (gameLogs.length < 5) {
-                    // Generate estimated game logs for demo
-                    gameLogs = generateEstimatedGameLogs(playerName, line, market.key, 5);
+                  // Fetch real player stats from API
+                  const gameLogs = await fetchPlayerStats(playerName, sport, market.key, supabase);
+                  
+                  if (gameLogs.length < 3) {
+                    console.log(`Insufficient game data for ${playerName} (${gameLogs.length} games)`);
+                    continue;
                   }
 
+                  apiStats.gamesFound += gameLogs.length;
+                  apiStats.propsAnalyzed++;
+
+                  // Format game logs with hit/miss data
+                  const formattedLogs = gameLogs.map((game, idx) => ({
+                    game_number: idx + 1,
+                    stat_value: game.stat_value,
+                    date: game.date,
+                    opponent: game.opponent,
+                    hit_over: game.stat_value > line,
+                    hit_under: game.stat_value < line,
+                    margin: Math.round((game.stat_value - line) * 10) / 10
+                  }));
+
                   // Calculate hit rates
-                  const { overHits, underHits, hitRateOver, hitRateUnder } = calculateHitRate(gameLogs, line);
+                  const { overHits, underHits, hitRateOver, hitRateUnder } = calculateHitRate(formattedLogs, line);
 
                   // Determine recommended side
                   let recommendedSide: string | null = null;
@@ -243,7 +410,7 @@ serve(async (req) => {
 
                   // Only save props with good hit rates
                   if (recommendedSide) {
-                    const confidence = calculateConfidence(gameLogs, line, bestHitRate);
+                    const confidence = calculateConfidence(formattedLogs, line, bestHitRate);
                     
                     const propData = {
                       player_name: playerName,
@@ -252,12 +419,12 @@ serve(async (req) => {
                       current_line: line,
                       over_price: overPrice,
                       under_price: underPrice,
-                      games_analyzed: gameLogs.length,
+                      games_analyzed: formattedLogs.length,
                       over_hits: overHits,
                       under_hits: underHits,
                       hit_rate_over: Math.round(hitRateOver * 100) / 100,
                       hit_rate_under: Math.round(hitRateUnder * 100) / 100,
-                      game_logs: gameLogs,
+                      game_logs: formattedLogs,
                       recommended_side: recommendedSide,
                       confidence_score: confidence,
                       event_id: event.id,
@@ -279,7 +446,7 @@ serve(async (req) => {
                       console.error('Error upserting hit rate:', upsertError);
                     } else {
                       analyzedProps.push(propData);
-                      console.log(`✓ ${playerName} ${market.key} ${line}: ${recommendedSide.toUpperCase()} ${Math.round(bestHitRate * 100)}% hit rate`);
+                      console.log(`✓ ${playerName} ${market.key} ${line}: ${recommendedSide.toUpperCase()} ${Math.round(bestHitRate * 100)}% hit rate (${overHits}/${formattedLogs.length} games)`);
                     }
                   }
                 }
@@ -299,6 +466,7 @@ serve(async (req) => {
       success: true,
       analyzed: analyzedProps.length,
       props: analyzedProps,
+      apiStats,
       errors
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
