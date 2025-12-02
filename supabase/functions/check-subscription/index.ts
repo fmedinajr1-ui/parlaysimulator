@@ -30,16 +30,39 @@ serve(async (req) => {
     if (!stripeKey) throw new Error("STRIPE_SECRET_KEY is not set");
 
     const authHeader = req.headers.get("Authorization");
-    if (!authHeader) throw new Error("No authorization header provided");
+    
+    // If no auth header, return free tier status
+    if (!authHeader) {
+      logStep("No auth header, returning free tier status");
+      return new Response(JSON.stringify({
+        subscribed: false,
+        isAdmin: false,
+        canScan: true,
+        scansRemaining: 3,
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200,
+      });
+    }
 
     const token = authHeader.replace("Bearer ", "");
     const { data: userData, error: userError } = await supabaseClient.auth.getUser(token);
     
-    if (userError) throw new Error(`Authentication error: ${userError.message}`);
+    // If auth error, return free tier status
+    if (userError || !userData.user?.email) {
+      logStep("Auth error or no user email, returning free tier status", { error: userError?.message });
+      return new Response(JSON.stringify({
+        subscribed: false,
+        isAdmin: false,
+        canScan: true,
+        scansRemaining: 3,
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200,
+      });
+    }
     
     const user = userData.user;
-    if (!user?.email) throw new Error("User not authenticated or email not available");
-    
     logStep("User authenticated", { userId: user.id, email: user.email });
 
     // Check if user is admin
