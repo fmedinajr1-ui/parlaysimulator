@@ -160,11 +160,16 @@ export type Database = {
           authenticity_confidence: number | null
           bookmaker: string
           books_consensus: number | null
+          closing_point: number | null
+          closing_price: number | null
+          clv_direction: string | null
           commence_time: string | null
           created_at: string
           description: string
           detected_at: string
+          determination_status: string | null
           event_id: string
+          final_determination_time: string | null
           final_pick: string | null
           id: string
           is_primary_record: boolean | null
@@ -176,10 +181,13 @@ export type Database = {
           new_price: number
           old_point: number | null
           old_price: number
+          opening_point: number | null
+          opening_price: number | null
           opposite_side_moved: boolean | null
           outcome_name: string
           player_name: string | null
           point_change: number | null
+          preliminary_confidence: number | null
           price_change: number
           recommendation: string | null
           recommendation_reason: string | null
@@ -190,11 +198,16 @@ export type Database = {
           authenticity_confidence?: number | null
           bookmaker: string
           books_consensus?: number | null
+          closing_point?: number | null
+          closing_price?: number | null
+          clv_direction?: string | null
           commence_time?: string | null
           created_at?: string
           description: string
           detected_at?: string
+          determination_status?: string | null
           event_id: string
+          final_determination_time?: string | null
           final_pick?: string | null
           id?: string
           is_primary_record?: boolean | null
@@ -206,10 +219,13 @@ export type Database = {
           new_price: number
           old_point?: number | null
           old_price: number
+          opening_point?: number | null
+          opening_price?: number | null
           opposite_side_moved?: boolean | null
           outcome_name: string
           player_name?: string | null
           point_change?: number | null
+          preliminary_confidence?: number | null
           price_change: number
           recommendation?: string | null
           recommendation_reason?: string | null
@@ -220,11 +236,16 @@ export type Database = {
           authenticity_confidence?: number | null
           bookmaker?: string
           books_consensus?: number | null
+          closing_point?: number | null
+          closing_price?: number | null
+          clv_direction?: string | null
           commence_time?: string | null
           created_at?: string
           description?: string
           detected_at?: string
+          determination_status?: string | null
           event_id?: string
+          final_determination_time?: string | null
           final_pick?: string | null
           id?: string
           is_primary_record?: boolean | null
@@ -236,10 +257,13 @@ export type Database = {
           new_price?: number
           old_point?: number | null
           old_price?: number
+          opening_point?: number | null
+          opening_price?: number | null
           opposite_side_moved?: boolean | null
           outcome_name?: string
           player_name?: string | null
           point_change?: number | null
+          preliminary_confidence?: number | null
           price_change?: number
           recommendation?: string | null
           recommendation_reason?: string | null
@@ -641,45 +665,57 @@ export type Database = {
       }
       suggested_parlays: {
         Row: {
+          clv_score: number | null
           combined_probability: number
           confidence_score: number
           created_at: string
           expires_at: string
+          final_recommendation: string | null
           hybrid_scores: Json | null
           id: string
+          initial_recommendation: string | null
           is_active: boolean
           is_hybrid: boolean | null
           legs: Json
+          pick_status: string | null
           sport: string
           suggestion_reason: string
           total_odds: number
           user_id: string | null
         }
         Insert: {
+          clv_score?: number | null
           combined_probability: number
           confidence_score?: number
           created_at?: string
           expires_at: string
+          final_recommendation?: string | null
           hybrid_scores?: Json | null
           id?: string
+          initial_recommendation?: string | null
           is_active?: boolean
           is_hybrid?: boolean | null
           legs: Json
+          pick_status?: string | null
           sport: string
           suggestion_reason: string
           total_odds: number
           user_id?: string | null
         }
         Update: {
+          clv_score?: number | null
           combined_probability?: number
           confidence_score?: number
           created_at?: string
           expires_at?: string
+          final_recommendation?: string | null
           hybrid_scores?: Json | null
           id?: string
+          initial_recommendation?: string | null
           is_active?: boolean
           is_hybrid?: boolean | null
           legs?: Json
+          pick_status?: string | null
           sport?: string
           suggestion_reason?: string
           total_odds?: number
