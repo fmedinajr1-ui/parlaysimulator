@@ -147,6 +147,143 @@ async function fetchNBAPlayerGameLogs(playerId: string, numGames: number = 5): P
   }
 }
 
+// Search for NFL player ID and fetch game logs via ESPN API
+async function fetchNFLPlayerGameLogs(playerName: string, numGames: number = 5): Promise<any[]> {
+  try {
+    // First, search for player using ESPN's athlete search
+    const normalizedName = playerName.toLowerCase().trim();
+    const searchUrl = `https://site.api.espn.com/apis/common/v3/search?query=${encodeURIComponent(playerName)}&limit=10&type=player`;
+    
+    console.log(`Searching ESPN for NFL player: ${playerName}`);
+    
+    const searchRes = await fetch(searchUrl, {
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+      }
+    });
+    
+    if (!searchRes.ok) {
+      console.error('ESPN search failed:', searchRes.status);
+      return [];
+    }
+    
+    const searchData = await searchRes.json();
+    const athletes = searchData.athletes || [];
+    
+    // Find NFL player
+    let playerId: string | null = null;
+    for (const athlete of athletes) {
+      if (athlete.league?.slug === 'nfl') {
+        const fullName = athlete.displayName?.toLowerCase() || '';
+        if (fullName === normalizedName || fullName.includes(normalizedName)) {
+          playerId = athlete.id;
+          break;
+        }
+      }
+    }
+    
+    if (!playerId) {
+      console.log(`Could not find NFL player ID for: ${playerName}`);
+      return [];
+    }
+    
+    console.log(`Found NFL player ${playerName} with ID: ${playerId}`);
+    
+    // Fetch player game log from ESPN
+    const gameLogUrl = `https://site.web.api.espn.com/apis/common/v3/sports/football/nfl/athletes/${playerId}/gamelog`;
+    
+    const gameLogRes = await fetch(gameLogUrl, {
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+      }
+    });
+    
+    if (!gameLogRes.ok) {
+      console.error('ESPN game log fetch failed:', gameLogRes.status);
+      return [];
+    }
+    
+    const gameLogData = await gameLogRes.json();
+    
+    // Parse game log data
+    const categories = gameLogData.categories || [];
+    const events = gameLogData.events || {};
+    const gameLogs: any[] = [];
+    
+    // Get stat labels and values
+    const statMap: Record<number, {key: string, value: number}[]> = {};
+    const gameIds: string[] = [];
+    
+    for (const category of categories) {
+      const categoryName = category.name; // passing, rushing, receiving
+      const labels = category.labels || [];
+      const events = category.events || [];
+      
+      // Get game IDs from first category
+      if (gameIds.length === 0) {
+        for (const event of events) {
+          if (event.eventId) gameIds.push(event.eventId);
+        }
+      }
+      
+      // Map stats by game
+      for (let i = 0; i < events.length && i < numGames; i++) {
+        const eventStats = events[i].stats || [];
+        if (!statMap[i]) statMap[i] = [];
+        
+        for (let j = 0; j < labels.length; j++) {
+          const label = labels[j];
+          const value = parseFloat(eventStats[j]) || 0;
+          
+          // Map ESPN labels to our stat keys
+          if (categoryName === 'passing') {
+            if (label === 'YDS') statMap[i].push({ key: 'passing_yards', value });
+            if (label === 'TD') statMap[i].push({ key: 'passing_touchdowns', value });
+          } else if (categoryName === 'rushing') {
+            if (label === 'YDS') statMap[i].push({ key: 'rushing_yards', value });
+            if (label === 'TD') statMap[i].push({ key: 'rushing_touchdowns', value });
+          } else if (categoryName === 'receiving') {
+            if (label === 'YDS') statMap[i].push({ key: 'receiving_yards', value });
+            if (label === 'REC') statMap[i].push({ key: 'receptions', value });
+            if (label === 'TD') statMap[i].push({ key: 'receiving_touchdowns', value });
+          }
+        }
+      }
+    }
+    
+    // Build game logs
+    const eventDetails = Object.values(events) as any[];
+    for (let i = 0; i < Math.min(numGames, eventDetails.length); i++) {
+      const event = eventDetails[i];
+      const stats: Record<string, number> = {};
+      
+      // Aggregate stats for this game
+      const gameStats = statMap[i] || [];
+      for (const stat of gameStats) {
+        if (stat && stat.key) {
+          stats[stat.key] = stat.value;
+        }
+      }
+      
+      gameLogs.push({
+        game_number: i + 1,
+        date: event?.date || new Date().toISOString().split('T')[0],
+        opponent: event?.opponent?.displayName || 'Unknown',
+        playerId,
+        stats
+      });
+    }
+    
+    console.log(`Found ${gameLogs.length} NFL games for ${playerName}`);
+    return gameLogs;
+  } catch (error) {
+    console.error('Error fetching NFL game logs:', error);
+    return [];
+  }
+}
+
 // Fetch player stats from cache or API
 async function fetchPlayerStats(playerName: string, sport: string, propType: string, supabase: any): Promise<any[]> {
   const statKey = PROP_TO_STAT_MAP[sport]?.[propType] || propType;
@@ -223,8 +360,48 @@ async function fetchPlayerStats(playerName: string, sport: string, propType: str
     }
   }
   
-  // TODO: Add NFL and NHL API integrations
-  // For now return empty for non-NBA or if API fails
+  // NFL stats via ESPN API
+  if (sport === 'americanfootball_nfl') {
+    const gameLogs = await fetchNFLPlayerGameLogs(playerName, 5);
+    
+    if (gameLogs.length > 0) {
+      // Cache the results
+      const cacheInserts = [];
+      for (const game of gameLogs) {
+        for (const [statType, value] of Object.entries(game.stats)) {
+          cacheInserts.push({
+            player_name: playerName,
+            player_id: game.playerId,
+            sport: sport,
+            game_date: game.date,
+            opponent: game.opponent,
+            stat_type: statType,
+            stat_value: value,
+          });
+        }
+      }
+      
+      const { error: cacheError } = await supabase
+        .from('player_stats_cache')
+        .upsert(cacheInserts, { 
+          onConflict: 'player_name,sport,game_date,stat_type',
+          ignoreDuplicates: true
+        });
+      
+      if (cacheError) {
+        console.error('Error caching NFL player stats:', cacheError);
+      }
+      
+      return gameLogs.map((game, idx) => ({
+        game_number: idx + 1,
+        date: game.date,
+        stat_value: game.stats[statKey] || 0,
+        opponent: game.opponent
+      }));
+    }
+  }
+  
+  // TODO: Add NHL API integration
   console.log(`No API integration for ${sport} or API call failed for ${playerName}`);
   return [];
 }
