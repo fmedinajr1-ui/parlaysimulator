@@ -20,12 +20,14 @@ import {
   Download,
   Brain,
   Upload,
-  Zap
+  Zap,
+  TrendingUp
 } from 'lucide-react';
 import { BottomNav } from '@/components/BottomNav';
 import { AILearningDashboard } from '@/components/admin/AILearningDashboard';
 import { BulkSlipUpload } from '@/components/admin/BulkSlipUpload';
 import { SharpMoneyPanel } from '@/components/admin/SharpMoneyPanel';
+import { LineShoppingPanel } from '@/components/admin/LineShoppingPanel';
 
 interface ParlayData {
   id: string;
@@ -284,7 +286,7 @@ export default function Admin() {
       <div className="p-4 space-y-4">
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="ai-learning" className="text-xs">
               <Brain className="w-3 h-3 mr-1" />
               AI
@@ -292,6 +294,10 @@ export default function Admin() {
             <TabsTrigger value="sharp-money" className="text-xs">
               <Zap className="w-3 h-3 mr-1" />
               Sharp
+            </TabsTrigger>
+            <TabsTrigger value="line-shopping" className="text-xs">
+              <TrendingUp className="w-3 h-3 mr-1" />
+              Lines
             </TabsTrigger>
             <TabsTrigger value="bulk-upload" className="text-xs">
               <Upload className="w-3 h-3 mr-1" />
@@ -315,6 +321,11 @@ export default function Admin() {
           {/* Sharp Money Tab */}
           <TabsContent value="sharp-money" className="mt-4">
             <SharpMoneyPanel />
+          </TabsContent>
+
+          {/* Line Shopping Tab */}
+          <TabsContent value="line-shopping" className="mt-4">
+            <LineShoppingPanel />
           </TabsContent>
 
           {/* Bulk Upload Tab */}
