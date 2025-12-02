@@ -12,6 +12,9 @@ verify_jwt = false
 [functions.scan-opening-lines]
 verify_jwt = false
 
+[functions.fetch-current-odds]
+verify_jwt = false
+
 [functions.generate-roasts]
 verify_jwt = false
 

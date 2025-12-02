@@ -69,6 +69,7 @@ export default function SharpLineCalculator() {
   const [currentOver, setCurrentOver] = useState('');
   const [currentUnder, setCurrentUnder] = useState('');
   const [currentLine, setCurrentLine] = useState('');
+  const [fetchingOdds, setFetchingOdds] = useState<string | null>(null);
 
   useEffect(() => {
     fetchTrackedProps();
@@ -221,6 +222,56 @@ export default function SharpLineCalculator() {
       toast.error('Failed to scan props');
     } finally {
       setScanning(false);
+    }
+  };
+
+  const handleFetchCurrentOdds = async (prop: TrackedProp) => {
+    if (!prop.event_id) {
+      toast.error('No event ID - cannot fetch odds');
+      return;
+    }
+
+    setFetchingOdds(prop.id);
+
+    try {
+      const { data, error } = await supabase.functions.invoke('fetch-current-odds', {
+        body: {
+          event_id: prop.event_id,
+          sport: prop.sport,
+          player_name: prop.player_name,
+          prop_type: prop.prop_type,
+          bookmaker: prop.bookmaker
+        }
+      });
+
+      if (error) throw error;
+
+      if (!data.success) {
+        toast.error(data.error || 'Failed to fetch odds');
+        return;
+      }
+
+      // Update the database with fetched odds
+      const { error: updateError } = await supabase
+        .from('sharp_line_tracker')
+        .update({
+          current_over_price: data.odds.over_price,
+          current_under_price: data.odds.under_price,
+          current_line: data.odds.line,
+          last_updated: new Date().toISOString(),
+          status: 'updated'
+        })
+        .eq('id', prop.id);
+
+      if (updateError) throw updateError;
+
+      toast.success(`Fetched: O ${data.odds.over_price > 0 ? '+' : ''}${data.odds.over_price} / U ${data.odds.under_price > 0 ? '+' : ''}${data.odds.under_price}`);
+      fetchTrackedProps();
+    } catch (error) {
+      console.error('Error fetching current odds:', error);
+      toast.error('Failed to fetch current odds');
+    } finally {
+      setFetchingOdds(null);
     }
   };
 
@@ -535,7 +586,20 @@ export default function SharpLineCalculator() {
                       </div>
                     </div>
                   ) : (
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 flex-wrap">
+                      <Button
+                        size="sm"
+                        variant="default"
+                        onClick={() => handleFetchCurrentOdds(prop)}
+                        disabled={fetchingOdds === prop.id || !prop.event_id}
+                      >
+                        {fetchingOdds === prop.id ? (
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        ) : (
+                          <RefreshCw className="w-4 h-4 mr-2" />
+                        )}
+                        Fetch Current
+                      </Button>
                       <Button
                         size="sm"
                         variant="outline"
@@ -546,8 +610,7 @@ export default function SharpLineCalculator() {
                           setCurrentLine(prop.current_line?.toString() || '');
                         }}
                       >
-                        <RefreshCw className="w-4 h-4 mr-2" />
-                        Update Odds
+                        Manual Entry
                       </Button>
                       <Button
                         size="sm"
