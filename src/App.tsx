@@ -15,6 +15,7 @@ import Compare from "./pages/Compare";
 import Suggestions from "./pages/Suggestions";
 import OddsMovement from "./pages/OddsMovement";
 import SharpMoney from "./pages/SharpMoney";
+import LineShopping from "./pages/LineShopping";
 import Install from "./pages/Install";
 import NotFound from "./pages/NotFound";
 
@@ -39,6 +40,7 @@ const App = () => {
               <Route path="/suggestions" element={<Suggestions />} />
               <Route path="/odds" element={<OddsMovement />} />
               <Route path="/sharp" element={<SharpMoney />} />
+              <Route path="/line-shopping" element={<LineShopping />} />
               <Route path="/install" element={<Install />} />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />

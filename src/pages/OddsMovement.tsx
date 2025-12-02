@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Activity, Zap, TrendingUp, RefreshCw, ChevronLeft, Flame } from "lucide-react";
+import { Activity, Zap, TrendingUp, RefreshCw, ChevronLeft, Flame, ShoppingCart } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 const SPORTS = [
@@ -101,6 +101,14 @@ const OddsMovement = () => {
             <h1 className="text-3xl font-display text-foreground">ODDS MOVEMENT</h1>
             <p className="text-sm text-muted-foreground">Track line shifts & sharp money in real-time</p>
           </div>
+          <Button 
+            variant="outline" 
+            size="icon" 
+            onClick={() => navigate('/line-shopping')}
+            className="mr-2"
+          >
+            <ShoppingCart className="w-4 h-4" />
+          </Button>
           <Button 
             variant="outline" 
             size="icon" 
