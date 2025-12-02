@@ -21,6 +21,9 @@ interface SuggestedLeg {
     ai: number;
   };
   recommendation?: string;
+  bestBook?: string;
+  lineEdge?: number;
+  availableAt?: string[];
 }
 
 interface SuggestedParlayCardProps {
@@ -181,8 +184,37 @@ export function SuggestedParlayCard({
                       {formatOdds(leg.odds)}
                     </Badge>
                     <span className="text-xs text-muted-foreground">{probPercent}% hit</span>
+                    {leg.bestBook && leg.lineEdge && leg.lineEdge > 0 && (
+                      <Badge 
+                        variant="outline" 
+                        className="text-xs bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+                      >
+                        +{leg.lineEdge} edge
+                      </Badge>
+                    )}
                   </div>
                 </div>
+                
+                {/* Best Line Indicator */}
+                {leg.bestBook && (
+                  <div className="flex items-center gap-2 text-xs">
+                    <div className="flex items-center gap-1 text-emerald-400">
+                      <TrendingUp className="w-3 h-3" />
+                      <span className="font-medium">Best line:</span>
+                    </div>
+                    <span className="text-muted-foreground">{leg.bestBook}</span>
+                    {leg.lineEdge && leg.lineEdge > 0 && (
+                      <span className="text-emerald-400">
+                        ({leg.lineEdge > 0 ? '+' : ''}{leg.lineEdge} vs avg)
+                      </span>
+                    )}
+                    {leg.availableAt && leg.availableAt.length > 1 && (
+                      <span className="text-muted-foreground">
+                        • {leg.availableAt.length} books
+                      </span>
+                    )}
+                  </div>
+                )}
                 
                 {/* Probability bar */}
                 <div className="h-1.5 bg-muted rounded-full overflow-hidden">

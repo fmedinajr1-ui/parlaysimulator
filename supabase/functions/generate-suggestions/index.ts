@@ -94,6 +94,9 @@ interface SuggestionLeg {
   hybridScore?: number;
   hybridBreakdown?: { sharp: number; user: number; ai: number };
   recommendation?: string;
+  bestBook?: string;
+  lineEdge?: number;
+  availableAt?: string[];
 }
 
 // Sport key mapping for The Odds API
@@ -803,25 +806,25 @@ serve(async (req) => {
     console.log('Generating VERY LOW RISK (60%+) suggestions...');
     
     // Get all heavy favorites sorted by implied probability (heaviest first)
-    const allFavorites: { event: OddsEvent; favorite: OddsOutcome; americanOdds: number; impliedProb: number }[] = [];
+    const allFavorites: { event: OddsEvent; favorite: OddsOutcome; americanOdds: number; impliedProb: number; bestLine: BestLine | null }[] = [];
     
     for (const event of allOdds) {
-      const bookmaker = event.bookmakers[0];
-      if (!bookmaker) continue;
-      
-      const h2hMarket = bookmaker.markets.find(m => m.key === 'h2h');
+      const h2hMarket = event.bookmakers[0]?.markets.find(m => m.key === 'h2h');
       if (!h2hMarket) continue;
       
       const favorite = h2hMarket.outcomes.reduce((a, b) => a.price < b.price ? a : b);
-      const americanOdds = decimalToAmerican(favorite.price);
+      const bestLine = findBestLine(event, 'h2h', favorite.name);
+      
+      if (!bestLine) continue;
       
       // Only super heavy favorites (-300 or heavier) for 60%+ tier
-      if (americanOdds <= -300) {
+      if (bestLine.americanOdds <= -300) {
         allFavorites.push({
           event,
           favorite,
-          americanOdds,
-          impliedProb: americanToImplied(americanOdds),
+          americanOdds: bestLine.americanOdds,
+          impliedProb: americanToImplied(bestLine.americanOdds),
+          bestLine,
         });
       }
     }
@@ -847,6 +850,9 @@ serve(async (req) => {
             sport: fav.event.sport_key,
             betType: 'moneyline',
             eventTime: fav.event.commence_time,
+            bestBook: fav.bestLine?.bookmaker,
+            lineEdge: fav.bestLine?.lineEdge,
+            availableAt: fav.bestLine?.availableAt,
           });
         }
       }
@@ -872,25 +878,25 @@ serve(async (req) => {
     console.log('Generating LOW RISK (50%+) suggestions...');
     
     // Get moderately heavy favorites for 50%+ tier
-    const moderateFavorites: { event: OddsEvent; favorite: OddsOutcome; americanOdds: number; impliedProb: number }[] = [];
+    const moderateFavorites: { event: OddsEvent; favorite: OddsOutcome; americanOdds: number; impliedProb: number; bestLine: BestLine | null }[] = [];
     
     for (const event of allOdds) {
-      const bookmaker = event.bookmakers[0];
-      if (!bookmaker) continue;
-      
-      const h2hMarket = bookmaker.markets.find(m => m.key === 'h2h');
+      const h2hMarket = event.bookmakers[0]?.markets.find(m => m.key === 'h2h');
       if (!h2hMarket) continue;
       
       const favorite = h2hMarket.outcomes.reduce((a, b) => a.price < b.price ? a : b);
-      const americanOdds = decimalToAmerican(favorite.price);
+      const bestLine = findBestLine(event, 'h2h', favorite.name);
+      
+      if (!bestLine) continue;
       
       // Heavy favorites (-250 or heavier) for 50%+ tier
-      if (americanOdds <= -250 && americanOdds >= -600) {
+      if (bestLine.americanOdds <= -250 && bestLine.americanOdds >= -600) {
         moderateFavorites.push({
           event,
           favorite,
-          americanOdds,
-          impliedProb: americanToImplied(americanOdds),
+          americanOdds: bestLine.americanOdds,
+          impliedProb: americanToImplied(bestLine.americanOdds),
+          bestLine,
         });
       }
     }
@@ -914,6 +920,9 @@ serve(async (req) => {
             sport: fav.event.sport_key,
             betType: 'moneyline',
             eventTime: fav.event.commence_time,
+            bestBook: fav.bestLine?.bookmaker,
+            lineEdge: fav.bestLine?.lineEdge,
+            availableAt: fav.bestLine?.availableAt,
           });
         }
       }
@@ -962,14 +971,20 @@ serve(async (req) => {
       if (americanOdds <= -150 && americanOdds >= -400) {
         const impliedProb = americanToImplied(americanOdds);
         dataDrivenProb *= impliedProb;
+        
+        // Find best line across all bookmakers
+        const bestLine = findBestLine(event, 'h2h', favorite.name);
 
         dataDrivenLegs.push({
           description: `${favorite.name} ML vs ${event.home_team === favorite.name ? event.away_team : event.home_team}`,
-          odds: americanOdds,
+          odds: bestLine?.americanOdds || americanOdds,
           impliedProbability: impliedProb,
           sport: event.sport_key,
           betType: 'moneyline',
           eventTime: event.commence_time,
+          bestBook: bestLine?.bookmaker,
+          lineEdge: bestLine?.lineEdge,
+          availableAt: bestLine?.availableAt,
         });
       }
     }
@@ -1032,14 +1047,20 @@ serve(async (req) => {
             // Low risk requires 50%+ hit rate
             if (aiLowRiskProb * impliedProb >= 0.50) {
               aiLowRiskProb *= impliedProb;
+              
+              // Find best line across all bookmakers
+              const bestLine = findBestLine(event, 'h2h', favorite.name);
 
               aiLowRiskLegs.push({
                 description: `${favorite.name} ML vs ${event.home_team === favorite.name ? event.away_team : event.home_team}`,
-                odds: americanOdds,
+                odds: bestLine?.americanOdds || americanOdds,
                 impliedProbability: impliedProb,
                 sport: event.sport_key,
                 betType: 'moneyline',
                 eventTime: event.commence_time,
+                bestBook: bestLine?.bookmaker,
+                lineEdge: bestLine?.lineEdge,
+                availableAt: bestLine?.availableAt,
               });
             }
           }
