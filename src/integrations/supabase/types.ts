@@ -639,6 +639,99 @@ export type Database = {
         }
         Relationships: []
       }
+      sharp_line_tracker: {
+        Row: {
+          ai_confidence: number | null
+          ai_direction: string | null
+          ai_reasoning: string | null
+          ai_recommendation: string | null
+          ai_signals: Json | null
+          bookmaker: string
+          commence_time: string | null
+          created_at: string | null
+          created_by: string | null
+          current_line: number | null
+          current_over_price: number | null
+          current_under_price: number | null
+          event_id: string | null
+          game_description: string
+          id: string
+          input_method: string | null
+          last_updated: string | null
+          line_movement: number | null
+          opening_line: number
+          opening_over_price: number
+          opening_time: string | null
+          opening_under_price: number
+          player_name: string
+          price_movement_over: number | null
+          price_movement_under: number | null
+          prop_type: string
+          sport: string
+          status: string | null
+        }
+        Insert: {
+          ai_confidence?: number | null
+          ai_direction?: string | null
+          ai_reasoning?: string | null
+          ai_recommendation?: string | null
+          ai_signals?: Json | null
+          bookmaker: string
+          commence_time?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          current_line?: number | null
+          current_over_price?: number | null
+          current_under_price?: number | null
+          event_id?: string | null
+          game_description: string
+          id?: string
+          input_method?: string | null
+          last_updated?: string | null
+          line_movement?: number | null
+          opening_line: number
+          opening_over_price: number
+          opening_time?: string | null
+          opening_under_price: number
+          player_name: string
+          price_movement_over?: number | null
+          price_movement_under?: number | null
+          prop_type: string
+          sport: string
+          status?: string | null
+        }
+        Update: {
+          ai_confidence?: number | null
+          ai_direction?: string | null
+          ai_reasoning?: string | null
+          ai_recommendation?: string | null
+          ai_signals?: Json | null
+          bookmaker?: string
+          commence_time?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          current_line?: number | null
+          current_over_price?: number | null
+          current_under_price?: number | null
+          event_id?: string | null
+          game_description?: string
+          id?: string
+          input_method?: string | null
+          last_updated?: string | null
+          line_movement?: number | null
+          opening_line?: number
+          opening_over_price?: number
+          opening_time?: string | null
+          opening_under_price?: number
+          player_name?: string
+          price_movement_over?: number | null
+          price_movement_under?: number | null
+          prop_type?: string
+          sport?: string
+          status?: string | null
+        }
+        Relationships: []
+      }
       subscriptions: {
         Row: {
           created_at: string | null
