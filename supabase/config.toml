@@ -74,3 +74,9 @@ verify_jwt = false
 
 [functions.finalize-line-determination]
 verify_jwt = false
+
+[functions.analyze-hitrate-props]
+verify_jwt = false
+
+[functions.build-hitrate-parlays]
+verify_jwt = false
