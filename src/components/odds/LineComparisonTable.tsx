@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TrendingUp, TrendingDown, Star, Trophy } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { LineShoppingCalculator } from "./LineShoppingCalculator";
 
 interface LineComparisonTableProps {
   eventId: string;
@@ -170,21 +171,22 @@ export const LineComparisonTable = ({ eventId, sport, marketType }: LineComparis
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Trophy className="w-5 h-5 text-neon-yellow" />
-            <span>Odds Comparison</span>
-          </div>
-          {gameInfo && (
-            <Badge variant="outline" className="text-xs">
-              {gameInfo.away} @ {gameInfo.home}
-            </Badge>
-          )}
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Trophy className="w-5 h-5 text-neon-yellow" />
+              <span>Odds Comparison</span>
+            </div>
+            {gameInfo && (
+              <Badge variant="outline" className="text-xs">
+                {gameInfo.away} @ {gameInfo.home}
+              </Badge>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
         <ScrollArea className="w-full">
           <div className="min-w-[800px]">
             <Table>
@@ -271,5 +273,23 @@ export const LineComparisonTable = ({ eventId, sport, marketType }: LineComparis
         </div>
       </CardContent>
     </Card>
+
+      {data.length > 0 && (
+        <LineShoppingCalculator
+          bookmakerOdds={bookmakers
+            .map(book => {
+              const odds = data[0]?.odds[book];
+              if (!odds) return null;
+              return {
+                bookmaker: book,
+                price: odds.price,
+                point: odds.point
+              };
+            })
+            .filter(Boolean) as { bookmaker: string; price: number; point?: number }[]}
+          outcomeName={data[0]?.outcome || ""}
+        />
+      )}
+    </div>
   );
 };
