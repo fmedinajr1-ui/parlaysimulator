@@ -174,6 +174,7 @@ export type Database = {
           id: string
           is_primary_record: boolean | null
           is_sharp_action: boolean | null
+          linked_parlay_ids: string[] | null
           market_type: string
           movement_authenticity: string | null
           movement_type: string
@@ -184,7 +185,9 @@ export type Database = {
           opening_point: number | null
           opening_price: number | null
           opposite_side_moved: boolean | null
+          outcome_correct: boolean | null
           outcome_name: string
+          outcome_verified: boolean | null
           player_name: string | null
           point_change: number | null
           preliminary_confidence: number | null
@@ -193,6 +196,7 @@ export type Database = {
           recommendation_reason: string | null
           sharp_indicator: string | null
           sport: string
+          trap_score: number | null
         }
         Insert: {
           authenticity_confidence?: number | null
@@ -212,6 +216,7 @@ export type Database = {
           id?: string
           is_primary_record?: boolean | null
           is_sharp_action?: boolean | null
+          linked_parlay_ids?: string[] | null
           market_type: string
           movement_authenticity?: string | null
           movement_type?: string
@@ -222,7 +227,9 @@ export type Database = {
           opening_point?: number | null
           opening_price?: number | null
           opposite_side_moved?: boolean | null
+          outcome_correct?: boolean | null
           outcome_name: string
+          outcome_verified?: boolean | null
           player_name?: string | null
           point_change?: number | null
           preliminary_confidence?: number | null
@@ -231,6 +238,7 @@ export type Database = {
           recommendation_reason?: string | null
           sharp_indicator?: string | null
           sport: string
+          trap_score?: number | null
         }
         Update: {
           authenticity_confidence?: number | null
@@ -250,6 +258,7 @@ export type Database = {
           id?: string
           is_primary_record?: boolean | null
           is_sharp_action?: boolean | null
+          linked_parlay_ids?: string[] | null
           market_type?: string
           movement_authenticity?: string | null
           movement_type?: string
@@ -260,7 +269,9 @@ export type Database = {
           opening_point?: number | null
           opening_price?: number | null
           opposite_side_moved?: boolean | null
+          outcome_correct?: boolean | null
           outcome_name?: string
+          outcome_verified?: boolean | null
           player_name?: string | null
           point_change?: number | null
           preliminary_confidence?: number | null
@@ -269,6 +280,7 @@ export type Database = {
           recommendation_reason?: string | null
           sharp_indicator?: string | null
           sport?: string
+          trap_score?: number | null
         }
         Relationships: []
       }
@@ -819,6 +831,81 @@ export type Database = {
           },
         ]
       }
+      trap_patterns: {
+        Row: {
+          bet_type: string
+          bookmaker: string | null
+          both_sides_moved: boolean | null
+          confirmed_trap: boolean | null
+          created_at: string | null
+          early_morning_move: boolean | null
+          id: string
+          loss_amount: number | null
+          market_type: string
+          movement_size: number | null
+          original_movement_id: string | null
+          parlay_id: string | null
+          price_only_move: boolean | null
+          sport: string
+          time_before_game_hours: number | null
+          trap_signature: string | null
+          was_single_book: boolean | null
+        }
+        Insert: {
+          bet_type: string
+          bookmaker?: string | null
+          both_sides_moved?: boolean | null
+          confirmed_trap?: boolean | null
+          created_at?: string | null
+          early_morning_move?: boolean | null
+          id?: string
+          loss_amount?: number | null
+          market_type: string
+          movement_size?: number | null
+          original_movement_id?: string | null
+          parlay_id?: string | null
+          price_only_move?: boolean | null
+          sport: string
+          time_before_game_hours?: number | null
+          trap_signature?: string | null
+          was_single_book?: boolean | null
+        }
+        Update: {
+          bet_type?: string
+          bookmaker?: string | null
+          both_sides_moved?: boolean | null
+          confirmed_trap?: boolean | null
+          created_at?: string | null
+          early_morning_move?: boolean | null
+          id?: string
+          loss_amount?: number | null
+          market_type?: string
+          movement_size?: number | null
+          original_movement_id?: string | null
+          parlay_id?: string | null
+          price_only_move?: boolean | null
+          sport?: string
+          time_before_game_hours?: number | null
+          trap_signature?: string | null
+          was_single_book?: boolean | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "trap_patterns_original_movement_id_fkey"
+            columns: ["original_movement_id"]
+            isOneToOne: false
+            referencedRelation: "line_movements"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "trap_patterns_parlay_id_fkey"
+            columns: ["parlay_id"]
+            isOneToOne: false
+            referencedRelation: "parlay_history"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_roles: {
         Row: {
           created_at: string | null
@@ -941,6 +1028,23 @@ export type Database = {
           price_change: number
           sharp_indicator: string
           sport: string
+        }[]
+      }
+      get_similar_historical_patterns: {
+        Args: {
+          p_bet_type: string
+          p_odds_max?: number
+          p_odds_min?: number
+          p_price_only?: boolean
+          p_single_book?: boolean
+          p_sport: string
+        }
+        Returns: {
+          avg_loss_when_trap: number
+          pattern_count: number
+          recommendation: string
+          trap_rate: number
+          win_rate: number
         }[]
       }
       get_strategy_performance_stats: {

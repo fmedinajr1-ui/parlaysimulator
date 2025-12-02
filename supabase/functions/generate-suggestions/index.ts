@@ -135,6 +135,96 @@ function americanToImplied(odds: number): number {
   }
 }
 
+// BEST LINE FINDER: Compare all bookmakers for best odds
+interface BestLine {
+  bookmaker: string;
+  price: number;
+  point?: number;
+  americanOdds: number;
+  lineEdge: number; // How much better than average
+  availableAt: string[];
+}
+
+function findBestLine(event: OddsEvent, marketKey: string, outcomeName: string): BestLine | null {
+  const allLines: Array<{
+    bookmaker: string;
+    price: number;
+    point?: number;
+    americanOdds: number;
+  }> = [];
+
+  for (const bookmaker of event.bookmakers) {
+    const market = bookmaker.markets.find(m => m.key === marketKey);
+    if (!market) continue;
+
+    const outcome = market.outcomes.find(o => o.name === outcomeName);
+    if (!outcome) continue;
+
+    allLines.push({
+      bookmaker: bookmaker.key,
+      price: outcome.price,
+      point: outcome.point,
+      americanOdds: decimalToAmerican(outcome.price),
+    });
+  }
+
+  if (allLines.length === 0) return null;
+
+  // Sort by best odds (highest for + odds, closest to 0 for - odds)
+  allLines.sort((a, b) => b.americanOdds - a.americanOdds);
+
+  const bestLine = allLines[0];
+  const avgOdds = allLines.reduce((sum, l) => sum + l.americanOdds, 0) / allLines.length;
+  const lineEdge = bestLine.americanOdds - avgOdds;
+
+  return {
+    ...bestLine,
+    lineEdge: Math.round(lineEdge),
+    availableAt: allLines
+      .filter(l => Math.abs(l.americanOdds - bestLine.americanOdds) <= 5)
+      .map(l => l.bookmaker),
+  };
+}
+
+// TRAP PATTERN CHECKER: Query historical trap patterns
+async function checkTrapPatterns(
+  supabase: any,
+  sport: string,
+  betType: string,
+  odds: number
+): Promise<{ isTrap: boolean; trapRate: number; recommendation: string; reason?: string }> {
+  try {
+    const { data, error } = await supabase
+      .rpc('get_similar_historical_patterns', {
+        p_sport: sport,
+        p_bet_type: betType,
+        p_odds_min: odds - 50,
+        p_odds_max: odds + 50,
+      });
+
+    if (error || !data || data.length === 0) {
+      return { isTrap: false, trapRate: 0, recommendation: 'INSUFFICIENT_DATA' };
+    }
+
+    const pattern = data[0];
+    const trapRate = pattern.trap_rate || 0;
+
+    return {
+      isTrap: trapRate > 40,
+      trapRate,
+      recommendation: pattern.recommendation,
+      reason: trapRate > 60 
+        ? `⚠️ High trap risk: ${trapRate}% of similar patterns were traps` 
+        : trapRate > 40
+        ? `⚠️ Moderate trap risk: ${trapRate}% trap rate`
+        : undefined,
+    };
+  } catch (err) {
+    console.error('Error checking trap patterns:', err);
+    return { isTrap: false, trapRate: 0, recommendation: 'ERROR' };
+  }
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
