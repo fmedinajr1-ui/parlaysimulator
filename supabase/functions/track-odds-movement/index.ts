@@ -799,28 +799,28 @@ async function processOutcome(
       ? outcome.point - existingSnapshot.point
       : null;
 
-    // Only track significant movements
-    // For player props, be slightly more sensitive (4+ point price change)
-    const priceThreshold = playerName ? 4 : 5;
+    // Only track significant movements (lowered thresholds for better detection)
+    // For player props, be more sensitive (2+ point price change)
+    const priceThreshold = playerName ? 2 : 3;
     const isSignificantMove = Math.abs(priceChange) >= priceThreshold || 
       (pointChange !== null && Math.abs(pointChange) >= 0.5);
 
     if (isSignificantMove) {
-      // Detect sharp money
+      // Detect sharp money (lowered thresholds)
       let isSharp = false;
       let sharpIndicator: string | undefined;
 
-      if (Math.abs(priceChange) >= 15) {
+      if (Math.abs(priceChange) >= 10) {
         isSharp = true;
         sharpIndicator = playerName 
           ? `STEAM MOVE - ${MARKET_LABELS[marketKey] || marketKey} prop shifted ${Math.abs(priceChange)} pts`
           : 'STEAM MOVE - Major price shift detected';
-      } else if (Math.abs(priceChange) >= 10 && (pointChange === null || Math.abs(pointChange) < 0.5)) {
+      } else if (Math.abs(priceChange) >= 7 && (pointChange === null || Math.abs(pointChange) < 0.5)) {
         isSharp = true;
         sharpIndicator = playerName
           ? `SHARP ACTION - ${MARKET_LABELS[marketKey] || marketKey} moved without line change`
           : 'SHARP ACTION - Price moved without spread change';
-      } else if (Math.abs(priceChange) >= 8) {
+      } else if (Math.abs(priceChange) >= 5) {
         isSharp = true;
         sharpIndicator = playerName
           ? `POSSIBLE SHARP - ${MARKET_LABELS[marketKey] || marketKey} line movement`
