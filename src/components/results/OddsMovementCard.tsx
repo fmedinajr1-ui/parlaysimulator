@@ -25,6 +25,10 @@ interface LineMovement {
   sharp_indicator?: string;
   detected_at: string;
   commence_time?: string;
+  determination_status?: 'pending' | 'final';
+  clv_direction?: 'positive' | 'negative' | 'neutral';
+  movement_authenticity?: string;
+  recommendation?: string;
 }
 
 interface OddsMovementCardProps {
@@ -169,13 +173,40 @@ export function OddsMovementCard({
         {movements.map((movement) => (
           <div 
             key={movement.id}
-            className={`p-3 rounded-lg border transition-all ${
+            className={`p-3 rounded-lg border transition-all relative ${
               movement.is_sharp_action 
-                ? 'bg-neon-yellow/10 border-neon-yellow/30' 
+                ? movement.determination_status === 'pending'
+                  ? 'bg-neon-yellow/5 border-neon-yellow/20 border-dashed' 
+                  : 'bg-neon-yellow/10 border-neon-yellow/30'
                 : 'bg-muted/50 border-border/50'
             }`}
           >
-            <div className="flex items-start justify-between gap-2">
+            {/* Pending/Final Status Badge */}
+            {movement.is_sharp_action && (
+              <div className="absolute top-2 right-2">
+                {movement.determination_status === 'pending' ? (
+                  <Badge variant="outline" className="text-[9px] px-1.5 py-0.5 border-dashed">
+                    ⏳ PENDING
+                  </Badge>
+                ) : (
+                  <div className="flex gap-1">
+                    <Badge className="text-[9px] px-1.5 py-0.5 bg-neon-green/20 text-neon-green border-neon-green/30">
+                      ✓ FINAL
+                    </Badge>
+                    {movement.clv_direction && (
+                      <Badge 
+                        variant={movement.clv_direction === 'positive' ? 'default' : 'destructive'} 
+                        className="text-[9px] px-1.5 py-0.5"
+                      >
+                        CLV {movement.clv_direction === 'positive' ? '+' : '-'}
+                      </Badge>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex items-start justify-between gap-2 mt-6">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
                   <Badge variant="outline" className="text-xs">
@@ -230,9 +261,17 @@ export function OddsMovementCard({
               </div>
             )}
 
-            <p className="text-xs text-muted-foreground mt-1">
-              {formatDistanceToNow(new Date(movement.detected_at), { addSuffix: true })}
-            </p>
+            <div className="flex items-center justify-between mt-1">
+              <p className="text-xs text-muted-foreground">
+                {formatDistanceToNow(new Date(movement.detected_at), { addSuffix: true })}
+              </p>
+              
+              {movement.determination_status === 'pending' && movement.commence_time && (
+                <p className="text-[10px] text-muted-foreground italic">
+                  Final call 1hr before game
+                </p>
+              )}
+            </div>
           </div>
         ))}
       </div>

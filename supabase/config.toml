@@ -62,3 +62,6 @@ verify_jwt = false
 
 [functions.lock-final-picks]
 verify_jwt = false
+
+[functions.finalize-line-determination]
+verify_jwt = false

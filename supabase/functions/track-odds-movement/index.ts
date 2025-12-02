@@ -61,6 +61,11 @@ interface LineMovement {
   // Final pick fields
   final_pick?: string;
   is_primary_record?: boolean;
+  // CLV and pending/final tracking
+  determination_status?: 'pending' | 'final';
+  opening_price?: number;
+  opening_point?: number;
+  preliminary_confidence?: number;
 }
 
 interface SharpAnalysis {
@@ -451,6 +456,11 @@ serve(async (req) => {
           books_consensus: m.books_consensus || 1,
           final_pick: m.final_pick,
           is_primary_record: m.is_primary_record ?? true,
+          // CLV and pending/final tracking
+          determination_status: m.determination_status || 'pending',
+          opening_price: m.opening_price,
+          opening_point: m.opening_point,
+          preliminary_confidence: m.authenticity_confidence || 0.5,
         })));
 
       if (movementError) {
@@ -734,6 +744,24 @@ async function processOutcome(
     .order('snapshot_time', { ascending: false })
     .limit(1)
     .maybeSingle();
+  
+  // Check for the FIRST snapshot (opening line) for this event/market/outcome
+  let openingQuery = supabase
+    .from('odds_snapshots')
+    .select('price, point')
+    .eq('event_id', event.id)
+    .eq('bookmaker', bookmaker.key)
+    .eq('market_type', marketKey)
+    .eq('outcome_name', outcomeName);
+  
+  if (playerName) {
+    openingQuery = openingQuery.eq('player_name', playerName);
+  }
+  
+  const { data: openingSnapshot } = await openingQuery
+    .order('snapshot_time', { ascending: true })
+    .limit(1)
+    .maybeSingle();
 
   // Create new snapshot
   const newSnapshot = {
@@ -804,7 +832,12 @@ async function processOutcome(
         is_sharp_action: isSharp,
         sharp_indicator: sharpIndicator,
         commence_time: event.commence_time,
-        player_name: playerName
+        player_name: playerName,
+        // Store opening line for CLV calculation later
+        opening_price: openingSnapshot?.price || existingSnapshot.price,
+        opening_point: openingSnapshot?.point || existingSnapshot.point,
+        // Mark as pending until final determination 1 hour before game
+        determination_status: 'pending'
       };
 
       allMovements.push(movement);

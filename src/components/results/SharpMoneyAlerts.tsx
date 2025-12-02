@@ -18,6 +18,10 @@ interface SharpAlert {
   sharp_indicator: string;
   detected_at: string;
   commence_time?: string;
+  determination_status?: 'pending' | 'final';
+  clv_direction?: 'positive' | 'negative' | 'neutral';
+  movement_authenticity?: string;
+  recommendation?: string;
 }
 
 interface SharpMoneyAlertsProps {
@@ -122,9 +126,22 @@ export function SharpMoneyAlerts({ delay = 0, limit = 5 }: SharpMoneyAlertsProps
         {alerts.map((alert) => (
           <div 
             key={alert.id}
-            className="p-2 rounded-lg bg-neon-yellow/10 border border-neon-yellow/20"
+            className="p-2 rounded-lg bg-neon-yellow/10 border border-neon-yellow/20 relative"
           >
-            <div className="flex items-center justify-between gap-2">
+            {/* Pending/Final Status Badge */}
+            <div className="absolute top-1 right-1">
+              {alert.determination_status === 'pending' ? (
+                <Badge variant="outline" className="text-[9px] px-1 py-0 border-dashed">
+                  ⏳ PENDING
+                </Badge>
+              ) : (
+                <Badge className="text-[9px] px-1 py-0 bg-neon-green/20 text-neon-green border-neon-green/30">
+                  ✓ FINAL
+                </Badge>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between gap-2 mt-4">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1 mb-0.5">
                   <Badge variant="outline" className="text-[10px] px-1 py-0">
@@ -133,6 +150,14 @@ export function SharpMoneyAlerts({ delay = 0, limit = 5 }: SharpMoneyAlertsProps
                   <Badge variant="secondary" className="text-[10px] px-1 py-0">
                     {getBookmakerName(alert.bookmaker)}
                   </Badge>
+                  {alert.clv_direction && alert.determination_status === 'final' && (
+                    <Badge 
+                      variant={alert.clv_direction === 'positive' ? 'default' : 'destructive'} 
+                      className="text-[9px] px-1 py-0"
+                    >
+                      CLV {alert.clv_direction === 'positive' ? '+' : '-'}
+                    </Badge>
+                  )}
                 </div>
                 <p className="text-xs font-medium text-foreground truncate">
                   {alert.description}
@@ -170,6 +195,13 @@ export function SharpMoneyAlerts({ delay = 0, limit = 5 }: SharpMoneyAlertsProps
                 {formatDistanceToNow(new Date(alert.detected_at), { addSuffix: true })}
               </p>
             </div>
+
+            {/* Show preliminary status message for pending */}
+            {alert.determination_status === 'pending' && (
+              <p className="text-[9px] text-muted-foreground mt-1 italic">
+                Final determination in ~1hr before game
+              </p>
+            )}
           </div>
         ))}
       </div>
