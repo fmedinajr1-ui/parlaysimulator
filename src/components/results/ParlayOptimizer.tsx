@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { FeedCard } from "../FeedCard";
 import { LegAnalysis, ParlayLeg } from "@/types/parlay";
-import { Zap, TrendingUp, X, RefreshCw, ArrowRight } from "lucide-react";
+import { Zap, TrendingUp, X, RefreshCw, ArrowRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "@/hooks/use-toast";
@@ -36,6 +36,7 @@ export function ParlayOptimizer({ legs, legAnalyses, stake, combinedProbability,
   const navigate = useNavigate();
   const [showOptimizer, setShowOptimizer] = useState(false);
   const [suggestions, setSuggestions] = useState<OptimizationSuggestion[]>([]);
+  const [isOptimizing, setIsOptimizing] = useState(false);
 
   if (!legAnalyses || legAnalyses.length === 0) return null;
 
@@ -188,78 +189,97 @@ export function ParlayOptimizer({ legs, legAnalyses, stake, combinedProbability,
     
     if (suggestions.length === 0) {
       console.log('⚠️ No suggestions to apply');
+      toast({
+        title: "No optimizations needed",
+        description: "No problematic legs were found to remove.",
+      });
+      setShowOptimizer(false);
       return;
     }
 
-    // Calculate maximum removable legs (must keep at least 2)
-    const maxRemovable = legs.length - 2;
-    
-    // Edge case: 2-leg parlay with issues
-    if (maxRemovable <= 0) {
-      console.log('❌ Cannot optimize 2-leg parlay');
-      toast({
-        title: "Cannot optimize",
-        description: "Your parlay only has 2 legs. Consider replacing problematic legs instead of removing them.",
-        variant: "destructive"
-      });
-      return;
-    }
+    setIsOptimizing(true);
 
-    // Sort suggestions by priority (high → medium → low)
-    const sortedSuggestions = [...suggestions].sort((a, b) => {
-      const priorityOrder = { high: 0, medium: 1, low: 2 };
-      return priorityOrder[a.priority] - priorityOrder[b.priority];
-    });
-    
-    // Only remove as many as we can while maintaining a valid parlay
-    const suggestionsToRemove = sortedSuggestions.slice(0, maxRemovable);
-    
-    console.log('🎯 Total problematic legs:', suggestions.length);
-    console.log('✂️ Legs we can remove:', suggestionsToRemove.length);
-    console.log('⚠️ Legs that must stay:', suggestions.length - suggestionsToRemove.length);
-    
-    // Show partial optimization warning if not all can be removed
-    if (suggestionsToRemove.length < suggestions.length) {
-      toast({
-        title: "Partial optimization applied",
-        description: `Removed ${suggestionsToRemove.length} of ${suggestions.length} problematic legs. Consider replacing the remaining ones.`,
+    try {
+      // Calculate maximum removable legs (must keep at least 2)
+      const maxRemovable = legs.length - 2;
+      
+      // Edge case: 2-leg parlay with issues
+      if (maxRemovable <= 0) {
+        console.log('❌ Cannot optimize 2-leg parlay');
+        toast({
+          title: "Cannot optimize",
+          description: "Your parlay only has 2 legs. Consider replacing problematic legs instead of removing them.",
+          variant: "destructive"
+        });
+        setIsOptimizing(false);
+        return;
+      }
+
+      // Sort suggestions by priority (high → medium → low)
+      const sortedSuggestions = [...suggestions].sort((a, b) => {
+        const priorityOrder = { high: 0, medium: 1, low: 2 };
+        return priorityOrder[a.priority] - priorityOrder[b.priority];
       });
-    }
-    
-    const removedIndices = new Set(suggestionsToRemove.map(s => s.legIndex));
-    console.log('📍 Indices to remove:', Array.from(removedIndices));
-    
-    // Create optimized legs array (keeping only non-removed legs)
-    const optimizedLegs = legs
-      .map((leg, idx) => ({ leg, originalIndex: idx }))
-      .filter(({ originalIndex }) => !removedIndices.has(originalIndex))
-      .map(({ leg }) => ({
+      
+      // Only remove as many as we can while maintaining a valid parlay
+      const suggestionsToRemove = sortedSuggestions.slice(0, maxRemovable);
+      
+      console.log('🎯 Total problematic legs:', suggestions.length);
+      console.log('✂️ Legs we can remove:', suggestionsToRemove.length);
+      console.log('⚠️ Legs that must stay:', suggestions.length - suggestionsToRemove.length);
+      
+      // Show partial optimization warning if not all can be removed
+      if (suggestionsToRemove.length < suggestions.length) {
+        toast({
+          title: "Partial optimization applied",
+          description: `Removed ${suggestionsToRemove.length} of ${suggestions.length} problematic legs. Consider replacing the remaining ones.`,
+        });
+      }
+      
+      const removedIndices = new Set(suggestionsToRemove.map(s => s.legIndex));
+      console.log('📍 Indices to remove:', Array.from(removedIndices));
+      
+      // Create optimized legs array (keeping only non-removed legs)
+      const optimizedLegs = legs
+        .map((leg, idx) => ({ leg, originalIndex: idx }))
+        .filter(({ originalIndex }) => !removedIndices.has(originalIndex))
+        .map(({ leg }) => ({
+          id: leg.id,
+          description: leg.description,
+          odds: leg.odds.toString()
+        }));
+      
+      console.log('✅ Optimized legs count:', optimizedLegs.length);
+      
+      // Store original legs for undo functionality
+      const originalLegs = legs.map(leg => ({
         id: leg.id,
         description: leg.description,
         odds: leg.odds.toString()
       }));
-    
-    console.log('✅ Optimized legs count:', optimizedLegs.length);
-    
-    // Store original legs for undo functionality
-    const originalLegs = legs.map(leg => ({
-      id: leg.id,
-      description: leg.description,
-      odds: leg.odds.toString()
-    }));
-    
-    // Close dialog before navigation
-    setShowOptimizer(false);
-    
-    // Navigate to upload page with optimized legs and originals for undo
-    navigate('/upload', {
-      state: {
-        optimizedLegs,
-        originalLegs,
-        optimizationApplied: true,
-        removedCount: removedIndices.size
-      }
-    });
+      
+      // Close dialog before navigation
+      setShowOptimizer(false);
+      
+      // Navigate to upload page with optimized legs and originals for undo
+      navigate('/upload', {
+        state: {
+          optimizedLegs,
+          originalLegs,
+          optimizationApplied: true,
+          removedCount: removedIndices.size
+        }
+      });
+    } catch (error) {
+      console.error('❌ Optimization failed:', error);
+      toast({
+        title: "Failed to rebuild parlay",
+        description: "Something went wrong. Please try again.",
+        variant: "destructive"
+      });
+    } finally {
+      setIsOptimizing(false);
+    }
   };
 
   // Only show optimizer if there are suggestions to make
@@ -505,9 +525,14 @@ export function ParlayOptimizer({ legs, legAnalyses, stake, combinedProbability,
             </Button>
             <Button 
               onClick={handleOptimize}
+              disabled={isOptimizing}
               className="flex-1 bg-gradient-to-r from-neon-purple to-neon-pink hover:opacity-90"
             >
-              <RefreshCw className="w-4 h-4 mr-2" />
+              {isOptimizing ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4 mr-2" />
+              )}
               Rebuild Parlay
             </Button>
           </div>
