@@ -34,6 +34,7 @@ const OddsMovement = () => {
   const [selectedSport, setSelectedSport] = useState("all");
   const [stats, setStats] = useState<Stats>({ totalMovements: 0, sharpAlerts: 0, avgPriceChange: 0 });
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const fetchStats = async () => {
     try {
@@ -55,6 +56,14 @@ const OddsMovement = () => {
       const avgChange = movements.length > 0 
         ? movements.reduce((sum: number, m: any) => sum + Math.abs(m.price_change), 0) / movements.length 
         : 0;
+
+      // Get the most recent detected_at timestamp
+      if (movements.length > 0) {
+        const mostRecent = movements.reduce((latest: any, m: any) => 
+          new Date(m.detected_at) > new Date(latest.detected_at) ? m : latest
+        );
+        setLastUpdated(new Date(mostRecent.detected_at));
+      }
 
       setStats({
         totalMovements: movements.length,
@@ -213,11 +222,18 @@ const OddsMovement = () => {
         </Tabs>
 
         {/* Real-time indicator */}
-        <div className="mt-6 flex items-center justify-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-neon-green animate-pulse" />
-          <span className="text-xs text-muted-foreground">
-            Live updates enabled • Data from FanDuel, DraftKings, BetMGM & Caesars
-          </span>
+        <div className="mt-6 flex flex-col items-center gap-2">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-neon-green animate-pulse" />
+            <span className="text-xs text-muted-foreground">
+              Auto-updates every 8 hours • Data from FanDuel, DraftKings, BetMGM & Caesars
+            </span>
+          </div>
+          {lastUpdated && (
+            <span className="text-xs text-muted-foreground/70">
+              Last updated: {lastUpdated.toLocaleString()}
+            </span>
+          )}
         </div>
       </main>
 
