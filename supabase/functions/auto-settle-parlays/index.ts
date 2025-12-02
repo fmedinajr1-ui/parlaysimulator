@@ -273,6 +273,28 @@ serve(async (req) => {
               .eq('user_id', parlay.user_id);
           }
           
+          // TRAP LEARNING: Record patterns from losses
+          if (parlay.suggested_parlay_id) {
+            try {
+              console.log(`Recording trap patterns for suggested parlay loss...`);
+              await fetch(`${supabaseUrl}/functions/v1/record-trap-pattern`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${supabaseServiceKey}`,
+                },
+                body: JSON.stringify({
+                  parlayId: parlay.id,
+                  suggestedParlayId: parlay.suggested_parlay_id,
+                  wasLoss: true,
+                  lossAmount: Number(parlay.stake),
+                }),
+              });
+            } catch (trapError) {
+              console.error('Failed to record trap pattern:', trapError);
+            }
+          }
+          
           results.push({
             parlayId: parlay.id,
             status: 'settled',
@@ -317,6 +339,28 @@ serve(async (req) => {
                 total_payout: (profile.total_payout || 0) + Number(parlay.potential_payout),
               })
               .eq('user_id', parlay.user_id);
+          }
+          
+          // TRAP LEARNING: Record winning patterns
+          if (parlay.suggested_parlay_id) {
+            try {
+              console.log(`Recording winning sharp patterns...`);
+              await fetch(`${supabaseUrl}/functions/v1/record-trap-pattern`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${supabaseServiceKey}`,
+                },
+                body: JSON.stringify({
+                  parlayId: parlay.id,
+                  suggestedParlayId: parlay.suggested_parlay_id,
+                  wasLoss: false,
+                  lossAmount: 0,
+                }),
+              });
+            } catch (trapError) {
+              console.error('Failed to record winning pattern:', trapError);
+            }
           }
           
           results.push({
