@@ -80,3 +80,6 @@ verify_jwt = false
 
 [functions.build-hitrate-parlays]
 verify_jwt = false
+
+[functions.test-stats-apis]
+verify_jwt = false
