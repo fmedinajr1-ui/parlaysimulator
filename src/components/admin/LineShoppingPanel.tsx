@@ -37,6 +37,8 @@ export const LineShoppingPanel = () => {
       let query = supabase
         .from('odds_snapshots')
         .select('*')
+        .in('sport', ['basketball_nba', 'americanfootball_nfl'])
+        .neq('player_name', null)
         .order('snapshot_time', { ascending: false })
         .limit(100);
 
@@ -50,9 +52,8 @@ export const LineShoppingPanel = () => {
 
       setSnapshots(data || []);
 
-      // Get unique sports for filter
-      const uniqueSports = Array.from(new Set(data?.map(s => s.sport) || []));
-      setSports(uniqueSports);
+      // Set fixed sports for NBA and NFL
+      setSports(['basketball_nba', 'americanfootball_nfl']);
     } catch (error) {
       console.error('Error fetching odds:', error);
     } finally {
@@ -95,10 +96,9 @@ export const LineShoppingPanel = () => {
                 <SelectValue placeholder="Filter by sport" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Sports</SelectItem>
-                {sports.map(sport => (
-                  <SelectItem key={sport} value={sport}>{sport}</SelectItem>
-                ))}
+                <SelectItem value="all">All Props</SelectItem>
+                <SelectItem value="basketball_nba">NBA</SelectItem>
+                <SelectItem value="americanfootball_nfl">NFL</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -117,8 +117,13 @@ export const LineShoppingPanel = () => {
                   <Card key={idx} className="bg-muted/30">
                     <CardHeader className="pb-3">
                       <div className="flex items-center justify-between">
-                        <CardTitle className="text-base">{game.matchup}</CardTitle>
-                        <Badge variant="outline">{game.market_type}</Badge>
+                        <div>
+                          <CardTitle className="text-base">{game.matchup}</CardTitle>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {game.sport === 'basketball_nba' ? 'NBA' : 'NFL'} • {game.market_type}
+                          </p>
+                        </div>
+                        <Badge variant="outline">{game.snapshots[0]?.player_name}</Badge>
                       </div>
                     </CardHeader>
                     <CardContent>
