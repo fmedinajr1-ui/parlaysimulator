@@ -15,6 +15,9 @@ interface SuggestedLeg {
   sport: string;
   betType: string;
   eventTime: string;
+  bestBook?: string;
+  lineEdge?: number;
+  availableAt?: string[];
 }
 
 interface SuggestedParlay {
