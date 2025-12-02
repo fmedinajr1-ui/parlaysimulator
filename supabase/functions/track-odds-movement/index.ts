@@ -274,6 +274,205 @@ function analyzeSharpMovement(
   };
 }
 
+// Background processing function for odds tracking
+async function processOddsInBackground(
+  sports: string[],
+  includePlayerProps: boolean
+) {
+  const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+  const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  const supabase = createClient(supabaseUrl, supabaseServiceKey);
+  const ODDS_API_KEY = Deno.env.get('THE_ODDS_API_KEY')!;
+
+  const allMovements: LineMovement[] = [];
+  const snapshotsToInsert: any[] = [];
+
+  console.log(`[Background] Starting odds processing for: ${sports.join(', ')}`);
+
+  for (const sport of sports) {
+    const sportKey = SPORT_KEYS[sport];
+    if (!sportKey) continue;
+
+    console.log(`[Background] Fetching odds for ${sport}...`);
+
+    try {
+      // Fetch game lines (spreads, moneylines, totals)
+      const oddsResponse = await fetch(
+        `https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?apiKey=${ODDS_API_KEY}&regions=us&markets=spreads,h2h,totals&oddsFormat=american`
+      );
+
+      if (!oddsResponse.ok) {
+        console.error(`[Background] Failed to fetch ${sport} odds:`, oddsResponse.status);
+        continue;
+      }
+
+      const events: OddsEvent[] = await oddsResponse.json();
+      console.log(`[Background] Got ${events.length} events for ${sport}`);
+
+      // Process game lines
+      for (const event of events) {
+        await processEventOdds(event, sport, supabase, snapshotsToInsert, allMovements);
+      }
+
+      // Fetch player props for NBA games starting within 6 hours
+      if (sport === 'NBA' && includePlayerProps) {
+        const now = new Date();
+        const sixHoursFromNow = new Date(now.getTime() + 6 * 60 * 60 * 1000);
+        
+        const upcomingEvents = events.filter(event => {
+          const eventTime = new Date(event.commence_time);
+          return eventTime > now && eventTime < sixHoursFromNow;
+        });
+
+        console.log(`[Background] Fetching player props for ${upcomingEvents.length} upcoming NBA games...`);
+
+        for (const event of upcomingEvents) {
+          try {
+            await processPlayerProps(event, sport, ODDS_API_KEY, supabase, snapshotsToInsert, allMovements);
+          } catch (propError) {
+            console.error(`[Background] Error fetching props for ${event.id}:`, propError);
+          }
+        }
+      }
+    } catch (sportError) {
+      console.error(`[Background] Error processing ${sport}:`, sportError);
+    }
+  }
+
+  // Batch insert snapshots
+  if (snapshotsToInsert.length > 0) {
+    // Insert in batches of 100 to avoid payload limits
+    for (let i = 0; i < snapshotsToInsert.length; i += 100) {
+      const batch = snapshotsToInsert.slice(i, i + 100);
+      const { error: snapshotError } = await supabase
+        .from('odds_snapshots')
+        .insert(batch);
+
+      if (snapshotError) {
+        console.error('[Background] Error inserting snapshot batch:', snapshotError);
+      }
+    }
+    console.log(`[Background] Inserted ${snapshotsToInsert.length} odds snapshots`);
+  }
+
+  // Analyze sharp movements before inserting
+  const now = new Date();
+  const analyzedMovements = allMovements.map(m => {
+    if (m.is_sharp_action) {
+      const hoursToGame = m.commence_time 
+        ? (new Date(m.commence_time).getTime() - now.getTime()) / (1000 * 60 * 60)
+        : 24;
+      
+      const analysis = analyzeSharpMovement(m, allMovements, hoursToGame);
+      
+      return {
+        ...m,
+        movement_authenticity: analysis.authenticity,
+        authenticity_confidence: analysis.confidence,
+        recommendation: analysis.recommendation,
+        recommendation_reason: analysis.reason,
+        opposite_side_moved: analysis.oppositeSideMoved,
+        books_consensus: analysis.booksConsensus,
+      };
+    }
+    return m;
+  });
+
+  // Consolidate movements to determine final pick per event/market
+  const consolidatedMovements = consolidateMovements(analyzedMovements);
+
+  // Insert line movements (only primary records)
+  const primaryMovements = consolidatedMovements.filter(m => m.is_primary_record !== false);
+  if (primaryMovements.length > 0) {
+    const { error: movementError } = await supabase
+      .from('line_movements')
+      .insert(primaryMovements.map(m => ({
+        event_id: m.event_id,
+        sport: m.sport,
+        description: m.description,
+        bookmaker: m.bookmaker,
+        market_type: m.market_type,
+        outcome_name: m.outcome_name,
+        old_price: m.old_price,
+        new_price: m.new_price,
+        old_point: m.old_point,
+        new_point: m.new_point,
+        price_change: m.price_change,
+        point_change: m.point_change,
+        is_sharp_action: m.is_sharp_action,
+        sharp_indicator: m.sharp_indicator,
+        commence_time: m.commence_time,
+        player_name: m.player_name,
+        movement_authenticity: m.movement_authenticity || 'uncertain',
+        authenticity_confidence: m.authenticity_confidence || 0.5,
+        recommendation: m.recommendation || 'caution',
+        recommendation_reason: m.recommendation_reason,
+        opposite_side_moved: m.opposite_side_moved || false,
+        books_consensus: m.books_consensus || 1,
+        final_pick: m.final_pick,
+        is_primary_record: m.is_primary_record ?? true,
+        determination_status: m.determination_status || 'pending',
+        opening_price: m.opening_price,
+        opening_point: m.opening_point,
+        preliminary_confidence: m.authenticity_confidence || 0.5,
+      })));
+
+    if (movementError) {
+      console.error('[Background] Error inserting movements:', movementError);
+    } else {
+      const sharpCount = primaryMovements.filter(m => m.is_sharp_action).length;
+      const playerPropCount = primaryMovements.filter(m => m.player_name).length;
+      const realSharpCount = primaryMovements.filter(m => m.movement_authenticity === 'real').length;
+      const fakeSharpCount = primaryMovements.filter(m => m.movement_authenticity === 'fake').length;
+      
+      console.log(`[Background] Detected ${primaryMovements.length} primary movements:`);
+      console.log(`[Background]   - ${sharpCount} sharp (${realSharpCount} real, ${fakeSharpCount} fake)`);
+      console.log(`[Background]   - ${playerPropCount} player props`);
+      
+      // Send push notifications for sharp alerts
+      const sharpMovements = primaryMovements.filter(m => m.is_sharp_action);
+      for (const sharpMove of sharpMovements) {
+        try {
+          await fetch(`${supabaseUrl}/functions/v1/send-push-notification`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${supabaseServiceKey}`,
+            },
+            body: JSON.stringify({
+              action: 'notify',
+              alert: {
+                sport: sharpMove.sport,
+                description: sharpMove.description,
+                bookmaker: sharpMove.bookmaker,
+                price_change: sharpMove.price_change,
+                sharp_indicator: sharpMove.sharp_indicator,
+                player_name: sharpMove.player_name,
+                market_type: sharpMove.market_type,
+                movement_authenticity: sharpMove.movement_authenticity,
+                recommendation: sharpMove.recommendation,
+                final_pick: sharpMove.final_pick,
+              }
+            })
+          });
+          console.log(`[Background] Push notification sent: FINAL PICK ${sharpMove.final_pick}`);
+        } catch (pushError) {
+          console.error('[Background] Error sending push notification:', pushError);
+        }
+      }
+    }
+  }
+
+  // Clean up old snapshots (keep last 24 hours)
+  const cutoffTime = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  await supabase
+    .from('odds_snapshots')
+    .delete()
+    .lt('snapshot_time', cutoffTime);
+
+  console.log(`[Background] Completed - ${snapshotsToInsert.length} snapshots, ${primaryMovements.length} movements`);
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -292,8 +491,6 @@ serve(async (req) => {
 
     // Get recent line movements
     if (action === 'get_movements') {
-      const sport = sports?.[0] || null;
-      
       const { data: movements, error } = await supabase
         .from('line_movements')
         .select('*')
@@ -323,211 +520,25 @@ serve(async (req) => {
       });
     }
 
-    // Fetch and track odds
+    // Fetch and track odds - use background processing
     const ODDS_API_KEY = Deno.env.get('THE_ODDS_API_KEY');
     if (!ODDS_API_KEY) {
       throw new Error('THE_ODDS_API_KEY is not configured');
     }
 
     const targetSports = sports || ['NBA', 'NFL', 'NCAAB'];
-    const allMovements: LineMovement[] = [];
-    const snapshotsToInsert: any[] = [];
-    const shouldFetchProps = includePlayerProps !== false; // Default to true
+    const shouldFetchProps = includePlayerProps !== false;
 
-    for (const sport of targetSports) {
-      const sportKey = SPORT_KEYS[sport];
-      if (!sportKey) continue;
+    // Start background processing - this continues after response is sent
+    // @ts-ignore - EdgeRuntime is available in Deno edge functions
+    EdgeRuntime.waitUntil(processOddsInBackground(targetSports, shouldFetchProps));
 
-      console.log(`Fetching odds for ${sport}...`);
-
-      try {
-        // Fetch game lines (spreads, moneylines, totals)
-        const oddsResponse = await fetch(
-          `https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?apiKey=${ODDS_API_KEY}&regions=us&markets=spreads,h2h,totals&oddsFormat=american`
-        );
-
-        if (!oddsResponse.ok) {
-          console.error(`Failed to fetch ${sport} odds:`, oddsResponse.status);
-          continue;
-        }
-
-        const events: OddsEvent[] = await oddsResponse.json();
-        console.log(`Got ${events.length} events for ${sport}`);
-
-        // Process game lines
-        for (const event of events) {
-          await processEventOdds(event, sport, supabase, snapshotsToInsert, allMovements);
-        }
-
-        // Fetch player props for NBA games starting within 6 hours
-        if (sport === 'NBA' && shouldFetchProps) {
-          const now = new Date();
-          const sixHoursFromNow = new Date(now.getTime() + 6 * 60 * 60 * 1000);
-          
-          const upcomingEvents = events.filter(event => {
-            const eventTime = new Date(event.commence_time);
-            return eventTime > now && eventTime < sixHoursFromNow;
-          });
-
-          console.log(`Fetching player props for ${upcomingEvents.length} upcoming NBA games...`);
-
-          for (const event of upcomingEvents) {
-            try {
-              await processPlayerProps(event, sport, ODDS_API_KEY, supabase, snapshotsToInsert, allMovements);
-            } catch (propError) {
-              console.error(`Error fetching props for ${event.id}:`, propError);
-            }
-          }
-        }
-      } catch (sportError) {
-        console.error(`Error processing ${sport}:`, sportError);
-      }
-    }
-
-    // Batch insert snapshots
-    if (snapshotsToInsert.length > 0) {
-      // Insert in batches of 100 to avoid payload limits
-      for (let i = 0; i < snapshotsToInsert.length; i += 100) {
-        const batch = snapshotsToInsert.slice(i, i + 100);
-        const { error: snapshotError } = await supabase
-          .from('odds_snapshots')
-          .insert(batch);
-
-        if (snapshotError) {
-          console.error('Error inserting snapshot batch:', snapshotError);
-        }
-      }
-      console.log(`Inserted ${snapshotsToInsert.length} odds snapshots`);
-    }
-
-    // Analyze sharp movements before inserting
-    const now = new Date();
-    const analyzedMovements = allMovements.map(m => {
-      if (m.is_sharp_action) {
-        const hoursToGame = m.commence_time 
-          ? (new Date(m.commence_time).getTime() - now.getTime()) / (1000 * 60 * 60)
-          : 24;
-        
-        const analysis = analyzeSharpMovement(m, allMovements, hoursToGame);
-        
-        return {
-          ...m,
-          movement_authenticity: analysis.authenticity,
-          authenticity_confidence: analysis.confidence,
-          recommendation: analysis.recommendation,
-          recommendation_reason: analysis.reason,
-          opposite_side_moved: analysis.oppositeSideMoved,
-          books_consensus: analysis.booksConsensus,
-        };
-      }
-      return m;
-    });
-
-    // Consolidate movements to determine final pick per event/market
-    const consolidatedMovements = consolidateMovements(analyzedMovements);
-
-    // Insert line movements (only primary records)
-    const primaryMovements = consolidatedMovements.filter(m => m.is_primary_record !== false);
-    if (primaryMovements.length > 0) {
-      const { error: movementError } = await supabase
-        .from('line_movements')
-        .insert(primaryMovements.map(m => ({
-          event_id: m.event_id,
-          sport: m.sport,
-          description: m.description,
-          bookmaker: m.bookmaker,
-          market_type: m.market_type,
-          outcome_name: m.outcome_name,
-          old_price: m.old_price,
-          new_price: m.new_price,
-          old_point: m.old_point,
-          new_point: m.new_point,
-          price_change: m.price_change,
-          point_change: m.point_change,
-          is_sharp_action: m.is_sharp_action,
-          sharp_indicator: m.sharp_indicator,
-          commence_time: m.commence_time,
-          player_name: m.player_name,
-          movement_authenticity: m.movement_authenticity || 'uncertain',
-          authenticity_confidence: m.authenticity_confidence || 0.5,
-          recommendation: m.recommendation || 'caution',
-          recommendation_reason: m.recommendation_reason,
-          opposite_side_moved: m.opposite_side_moved || false,
-          books_consensus: m.books_consensus || 1,
-          final_pick: m.final_pick,
-          is_primary_record: m.is_primary_record ?? true,
-          // CLV and pending/final tracking
-          determination_status: m.determination_status || 'pending',
-          opening_price: m.opening_price,
-          opening_point: m.opening_point,
-          preliminary_confidence: m.authenticity_confidence || 0.5,
-        })));
-
-      if (movementError) {
-        console.error('Error inserting movements:', movementError);
-      } else {
-        const sharpCount = primaryMovements.filter(m => m.is_sharp_action).length;
-        const playerPropCount = primaryMovements.filter(m => m.player_name).length;
-        const realSharpCount = primaryMovements.filter(m => m.movement_authenticity === 'real').length;
-        const fakeSharpCount = primaryMovements.filter(m => m.movement_authenticity === 'fake').length;
-        
-        console.log(`Detected ${primaryMovements.length} primary movements:`);
-        console.log(`  - ${sharpCount} sharp (${realSharpCount} real, ${fakeSharpCount} fake)`);
-        console.log(`  - ${playerPropCount} player props`);
-        
-        // Send push notifications for sharp alerts with final picks
-        const sharpMovements = primaryMovements.filter(m => m.is_sharp_action);
-        for (const sharpMove of sharpMovements) {
-          try {
-            await fetch(`${supabaseUrl}/functions/v1/send-push-notification`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${supabaseServiceKey}`,
-              },
-              body: JSON.stringify({
-                action: 'notify',
-                alert: {
-                  sport: sharpMove.sport,
-                  description: sharpMove.description,
-                  bookmaker: sharpMove.bookmaker,
-                  price_change: sharpMove.price_change,
-                  sharp_indicator: sharpMove.sharp_indicator,
-                  player_name: sharpMove.player_name,
-                  market_type: sharpMove.market_type,
-                  movement_authenticity: sharpMove.movement_authenticity,
-                  recommendation: sharpMove.recommendation,
-                  final_pick: sharpMove.final_pick,
-                }
-              })
-            });
-            console.log(`Push notification sent: FINAL PICK ${sharpMove.final_pick} (${sharpMove.movement_authenticity})`);
-          } catch (pushError) {
-            console.error('Error sending push notification:', pushError);
-          }
-        }
-      }
-    }
-
-    // Clean up old snapshots (keep last 24 hours)
-    const cutoffTime = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    await supabase
-      .from('odds_snapshots')
-      .delete()
-      .lt('snapshot_time', cutoffTime);
-
-    const realSharpMoves = primaryMovements.filter(m => m.movement_authenticity === 'real');
-    const fakeSharpMoves = primaryMovements.filter(m => m.movement_authenticity === 'fake');
-
+    // Return immediate response
     return new Response(JSON.stringify({
       success: true,
-      snapshotsCreated: snapshotsToInsert.length,
-      movementsDetected: primaryMovements.length,
-      sharpAlerts: primaryMovements.filter(m => m.is_sharp_action).length,
-      playerPropMovements: primaryMovements.filter(m => m.player_name).length,
-      realSharpMoves: realSharpMoves.length,
-      fakeSharpMoves: fakeSharpMoves.length,
-      movements: primaryMovements
+      message: 'Odds tracking started in background',
+      sports: targetSports,
+      includePlayerProps: shouldFetchProps
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
