@@ -284,6 +284,109 @@ async function fetchNFLPlayerGameLogs(playerName: string, numGames: number = 5):
   }
 }
 
+// Search for NHL player ID and fetch game logs via NHL Web API
+async function fetchNHLPlayerGameLogs(playerName: string, numGames: number = 5): Promise<any[]> {
+  try {
+    const normalizedName = playerName.toLowerCase().trim();
+    console.log(`Searching NHL for player: ${playerName}`);
+    
+    // Search for player using NHL Web API
+    const searchUrl = `https://search.d3.nhle.com/api/v1/search/player?culture=en-us&limit=20&q=${encodeURIComponent(playerName)}`;
+    
+    const searchRes = await fetch(searchUrl, {
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+      }
+    });
+    
+    if (!searchRes.ok) {
+      console.error('NHL search failed:', searchRes.status);
+      return [];
+    }
+    
+    const searchData = await searchRes.json();
+    
+    // Find matching player - search returns array of players
+    let playerId: string | null = null;
+    for (const player of searchData) {
+      const fullName = player.name?.toLowerCase() || '';
+      if (fullName === normalizedName || fullName.includes(normalizedName)) {
+        playerId = player.playerId;
+        break;
+      }
+    }
+    
+    // Try partial match on last name if no exact match
+    if (!playerId) {
+      const lastNameSearch = normalizedName.split(' ').pop();
+      for (const player of searchData) {
+        const fullName = player.name?.toLowerCase() || '';
+        if (fullName.includes(lastNameSearch || '')) {
+          playerId = player.playerId;
+          break;
+        }
+      }
+    }
+    
+    if (!playerId) {
+      console.log(`Could not find NHL player ID for: ${playerName}`);
+      return [];
+    }
+    
+    console.log(`Found NHL player ${playerName} with ID: ${playerId}`);
+    
+    // Fetch player game log from NHL Web API (current season 2024-25)
+    const gameLogUrl = `https://api-web.nhle.com/v1/player/${playerId}/game-log/20242025/2`;
+    
+    const gameLogRes = await fetch(gameLogUrl, {
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+      }
+    });
+    
+    if (!gameLogRes.ok) {
+      console.error('NHL game log fetch failed:', gameLogRes.status);
+      return [];
+    }
+    
+    const gameLogData = await gameLogRes.json();
+    const gameLogs: any[] = [];
+    
+    // Parse game log data - NHL API returns gameLog array
+    const games = gameLogData.gameLog || [];
+    
+    for (let i = 0; i < Math.min(numGames, games.length); i++) {
+      const game = games[i];
+      
+      gameLogs.push({
+        game_number: i + 1,
+        date: game.gameDate || new Date().toISOString().split('T')[0],
+        opponent: game.opponentAbbrev || 'Unknown',
+        playerId,
+        stats: {
+          goals: game.goals || 0,
+          assists: game.assists || 0,
+          points: (game.goals || 0) + (game.assists || 0),
+          shots: game.shots || 0,
+          pim: game.pim || 0,
+          plusMinus: game.plusMinus || 0,
+          powerPlayGoals: game.powerPlayGoals || 0,
+          gameWinningGoals: game.gameWinningGoals || 0,
+          toi: game.toi || '00:00'
+        }
+      });
+    }
+    
+    console.log(`Found ${gameLogs.length} NHL games for ${playerName}`);
+    return gameLogs;
+  } catch (error) {
+    console.error('Error fetching NHL game logs:', error);
+    return [];
+  }
+}
+
 // Fetch player stats from cache or API
 async function fetchPlayerStats(playerName: string, sport: string, propType: string, supabase: any): Promise<any[]> {
   const statKey = PROP_TO_STAT_MAP[sport]?.[propType] || propType;
@@ -401,7 +504,49 @@ async function fetchPlayerStats(playerName: string, sport: string, propType: str
     }
   }
   
-  // TODO: Add NHL API integration
+  // NHL stats via NHL Web API
+  if (sport === 'icehockey_nhl') {
+    const gameLogs = await fetchNHLPlayerGameLogs(playerName, 5);
+    
+    if (gameLogs.length > 0) {
+      // Cache the results
+      const cacheInserts = [];
+      for (const game of gameLogs) {
+        for (const [statType, value] of Object.entries(game.stats)) {
+          if (typeof value === 'number') {
+            cacheInserts.push({
+              player_name: playerName,
+              player_id: game.playerId,
+              sport: sport,
+              game_date: game.date,
+              opponent: game.opponent,
+              stat_type: statType,
+              stat_value: value,
+            });
+          }
+        }
+      }
+      
+      const { error: cacheError } = await supabase
+        .from('player_stats_cache')
+        .upsert(cacheInserts, { 
+          onConflict: 'player_name,sport,game_date,stat_type',
+          ignoreDuplicates: true
+        });
+      
+      if (cacheError) {
+        console.error('Error caching NHL player stats:', cacheError);
+      }
+      
+      return gameLogs.map((game, idx) => ({
+        game_number: idx + 1,
+        date: game.date,
+        stat_value: game.stats[statKey] || 0,
+        opponent: game.opponent
+      }));
+    }
+  }
+  
   console.log(`No API integration for ${sport} or API call failed for ${playerName}`);
   return [];
 }
