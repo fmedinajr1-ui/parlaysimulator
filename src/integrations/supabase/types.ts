@@ -80,6 +80,51 @@ export type Database = {
         }
         Relationships: []
       }
+      hitrate_parlays: {
+        Row: {
+          combined_probability: number
+          created_at: string
+          expires_at: string
+          id: string
+          is_active: boolean | null
+          legs: Json
+          min_hit_rate: number
+          sharp_analysis: Json | null
+          sharp_optimized: boolean | null
+          sport: string | null
+          strategy_type: string
+          total_odds: number
+        }
+        Insert: {
+          combined_probability: number
+          created_at?: string
+          expires_at: string
+          id?: string
+          is_active?: boolean | null
+          legs?: Json
+          min_hit_rate?: number
+          sharp_analysis?: Json | null
+          sharp_optimized?: boolean | null
+          sport?: string | null
+          strategy_type?: string
+          total_odds: number
+        }
+        Update: {
+          combined_probability?: number
+          created_at?: string
+          expires_at?: string
+          id?: string
+          is_active?: boolean | null
+          legs?: Json
+          min_hit_rate?: number
+          sharp_analysis?: Json | null
+          sharp_optimized?: boolean | null
+          sport?: string | null
+          strategy_type?: string
+          total_odds?: number
+        }
+        Relationships: []
+      }
       juiced_props: {
         Row: {
           bookmaker: string
@@ -521,6 +566,114 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      player_prop_hitrates: {
+        Row: {
+          analyzed_at: string
+          bookmaker: string | null
+          commence_time: string | null
+          confidence_score: number | null
+          current_line: number
+          event_id: string | null
+          expires_at: string | null
+          game_description: string | null
+          game_logs: Json | null
+          games_analyzed: number
+          hit_rate_over: number
+          hit_rate_under: number
+          id: string
+          over_hits: number
+          over_price: number | null
+          player_name: string
+          prop_type: string
+          recommended_side: string | null
+          sport: string
+          under_hits: number
+          under_price: number | null
+        }
+        Insert: {
+          analyzed_at?: string
+          bookmaker?: string | null
+          commence_time?: string | null
+          confidence_score?: number | null
+          current_line: number
+          event_id?: string | null
+          expires_at?: string | null
+          game_description?: string | null
+          game_logs?: Json | null
+          games_analyzed?: number
+          hit_rate_over?: number
+          hit_rate_under?: number
+          id?: string
+          over_hits?: number
+          over_price?: number | null
+          player_name: string
+          prop_type: string
+          recommended_side?: string | null
+          sport: string
+          under_hits?: number
+          under_price?: number | null
+        }
+        Update: {
+          analyzed_at?: string
+          bookmaker?: string | null
+          commence_time?: string | null
+          confidence_score?: number | null
+          current_line?: number
+          event_id?: string | null
+          expires_at?: string | null
+          game_description?: string | null
+          game_logs?: Json | null
+          games_analyzed?: number
+          hit_rate_over?: number
+          hit_rate_under?: number
+          id?: string
+          over_hits?: number
+          over_price?: number | null
+          player_name?: string
+          prop_type?: string
+          recommended_side?: string | null
+          sport?: string
+          under_hits?: number
+          under_price?: number | null
+        }
+        Relationships: []
+      }
+      player_stats_cache: {
+        Row: {
+          created_at: string
+          game_date: string
+          id: string
+          opponent: string | null
+          player_id: string | null
+          player_name: string
+          sport: string
+          stat_type: string
+          stat_value: number
+        }
+        Insert: {
+          created_at?: string
+          game_date: string
+          id?: string
+          opponent?: string | null
+          player_id?: string | null
+          player_name: string
+          sport: string
+          stat_type: string
+          stat_value: number
+        }
+        Update: {
+          created_at?: string
+          game_date?: string
+          id?: string
+          opponent?: string | null
+          player_id?: string | null
+          player_name?: string
+          sport?: string
+          stat_type?: string
+          stat_value?: number
+        }
+        Relationships: []
       }
       profiles: {
         Row: {

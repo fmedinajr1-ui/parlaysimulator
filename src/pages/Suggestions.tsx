@@ -9,6 +9,7 @@ import { SuggestionHistoryFeed } from "@/components/suggestions/SuggestionHistor
 import { StrategyPerformanceCard } from "@/components/suggestions/StrategyPerformanceCard";
 import { CalibrationDashboard } from "@/components/results/CalibrationDashboard";
 import { JuicedPropsCard } from "@/components/suggestions/JuicedPropsCard";
+import { HitRatePicks } from "@/components/suggestions/HitRatePicks";
 import { SuggestedParlayOptimizer } from "@/components/suggestions/SuggestedParlayOptimizer";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -632,14 +633,18 @@ const Suggestions = () => {
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-4">
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="suggestions" className="flex items-center gap-1 text-xs">
               <Sparkles className="w-3 h-3" />
               All
             </TabsTrigger>
+            <TabsTrigger value="hitrate" className="flex items-center gap-1 text-xs">
+              <Target className="w-3 h-3" />
+              Hit Rate
+            </TabsTrigger>
             <TabsTrigger value="sharp-props" className="flex items-center gap-1 text-xs">
               <Zap className="w-3 h-3" />
-              Sharp Props
+              Sharp
             </TabsTrigger>
             <TabsTrigger value="history" className="flex items-center gap-1 text-xs">
               <History className="w-3 h-3" />
@@ -1110,6 +1115,11 @@ const Suggestions = () => {
                 )}
               </div>
             )}
+          </TabsContent>
+
+          {/* Hit Rate Tab */}
+          <TabsContent value="hitrate" className="mt-4 space-y-4">
+            <HitRatePicks />
           </TabsContent>
 
           {/* Sharp Props Tab */}
