@@ -80,3 +80,9 @@ verify_jwt = false
 
 [functions.build-hitrate-parlays]
 verify_jwt = false
+
+[functions.verify-sharp-outcomes]
+verify_jwt = false
+
+[functions.calculate-calibration]
+verify_jwt = false
