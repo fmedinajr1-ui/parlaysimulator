@@ -410,15 +410,32 @@ export function SharpMoneyPanel() {
                                 {movement.books_consensus} books
                               </Badge>
                             )}
+                            {/* Calibration Badge */}
+                            {movement.recommendation_reason?.includes('[Calibration:') && (
+                              <Badge variant="outline" className="text-xs bg-purple-500/10 text-purple-400 border-purple-500/30">
+                                <Target className="w-3 h-3 mr-1" />
+                                Calibrated
+                              </Badge>
+                            )}
                             {/* AI Knowledge Rule Badges */}
                             {movement.recommendation_reason?.includes('LINE_AND_JUICE') && (
                               <Badge variant="outline" className="text-xs bg-green-500/10 text-green-400 border-green-500/30">
                                 ✅ Line+Juice
                               </Badge>
                             )}
-                            {movement.recommendation_reason?.includes('LATE_MONEY_SWEET_SPOT') && (
+                            {movement.recommendation_reason?.includes('RLM') && (
                               <Badge variant="outline" className="text-xs bg-green-500/10 text-green-400 border-green-500/30">
-                                🕐 1-3hr Sweet Spot
+                                🔄 RLM Detected
+                              </Badge>
+                            )}
+                            {movement.recommendation_reason?.includes('CLV') && (
+                              <Badge variant="outline" className="text-xs bg-green-500/10 text-green-400 border-green-500/30">
+                                📈 CLV Value
+                              </Badge>
+                            )}
+                            {movement.recommendation_reason?.includes('LATE_MONEY') && (
+                              <Badge variant="outline" className="text-xs bg-green-500/10 text-green-400 border-green-500/30">
+                                🕐 Late Money
                               </Badge>
                             )}
                             {movement.recommendation_reason?.includes('PRICE_ONLY') && (
@@ -426,19 +443,14 @@ export function SharpMoneyPanel() {
                                 ❌ Price-Only Trap
                               </Badge>
                             )}
-                            {movement.recommendation_reason?.includes('EARLY_MORNING') && (
+                            {movement.recommendation_reason?.includes('EARLY') && (
                               <Badge variant="outline" className="text-xs bg-yellow-500/10 text-yellow-400 border-yellow-500/30">
-                                🌅 Morning Trap
+                                🌅 Early Action
                               </Badge>
                             )}
-                            {movement.recommendation_reason?.includes('STEAM_MOVE_NO_CONSENSUS') && (
+                            {movement.recommendation_reason?.includes('EXTREME_JUICE') && (
                               <Badge variant="outline" className="text-xs bg-red-500/10 text-red-400 border-red-500/30">
-                                🚨 Single Book Steam
-                              </Badge>
-                            )}
-                            {movement.recommendation_reason?.includes('MULTI_BOOK') && (
-                              <Badge variant="outline" className="text-xs bg-green-500/10 text-green-400 border-green-500/30">
-                                📚 Multi-Book Consensus
+                                🚨 Extreme Juice
                               </Badge>
                             )}
                           </div>
