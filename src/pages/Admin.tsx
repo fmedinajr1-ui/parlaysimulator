@@ -276,7 +276,7 @@ export default function Admin() {
   const pendingParlays = parlays.filter(p => !p.is_settled).length;
 
   return (
-    <div className="min-h-screen bg-background pb-20">
+    <div className="min-h-screen bg-background pb-24">
       {/* Header */}
       <div className="bg-card border-b border-border p-4">
         <div className="flex items-center gap-2">

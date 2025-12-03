@@ -31,8 +31,9 @@ export function BottomNav() {
   return (
     <nav className={cn(
       "fixed bottom-0 left-0 right-0 z-50",
-      "bg-card/95 backdrop-blur-xl border-t border-border",
-      "safe-area-bottom touch-pan-y"
+      "bg-card backdrop-blur-xl border-t border-border",
+      "safe-area-bottom touch-pan-y",
+      "supports-[position:sticky]:sticky"
     )}>
       {/* Offline indicator */}
       {!isOnline && (

@@ -3,9 +3,11 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, TrendingUp, TrendingDown } from "lucide-react";
+import { Loader2, RefreshCw } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 interface OddsSnapshot {
   id: string;
@@ -19,13 +21,15 @@ interface OddsSnapshot {
   price: number;
   point: number | null;
   snapshot_time: string;
+  player_name?: string | null;
 }
 
 export const LineShoppingPanel = () => {
   const [snapshots, setSnapshots] = useState<OddsSnapshot[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [selectedSport, setSelectedSport] = useState<string>("all");
-  const [sports, setSports] = useState<string[]>([]);
+  const { toast } = useToast();
 
   useEffect(() => {
     fetchOddsData();
@@ -51,13 +55,41 @@ export const LineShoppingPanel = () => {
       if (error) throw error;
 
       setSnapshots(data || []);
-
-      // Set fixed sports for NBA and NFL
-      setSports(['basketball_nba', 'americanfootball_nfl']);
     } catch (error) {
       console.error('Error fetching odds:', error);
+      toast({
+        title: "Error",
+        description: "Failed to fetch odds data",
+        variant: "destructive"
+      });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRefreshOdds = async () => {
+    setRefreshing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('track-odds-movement');
+      
+      if (error) throw error;
+
+      toast({
+        title: "Odds Refreshed",
+        description: `Tracked ${data?.tracked || 0} new odds movements`
+      });
+
+      // Refetch data after refresh
+      await fetchOddsData();
+    } catch (error) {
+      console.error('Error refreshing odds:', error);
+      toast({
+        title: "Refresh Failed",
+        description: "Could not refresh odds data",
+        variant: "destructive"
+      });
+    } finally {
+      setRefreshing(false);
     }
   };
 
@@ -73,12 +105,13 @@ export const LineShoppingPanel = () => {
         sport: snap.sport,
         matchup: `${snap.away_team} @ ${snap.home_team}`,
         market_type: snap.market_type,
+        player_name: snap.player_name,
         snapshots: []
       };
     }
     acc[key].snapshots.push(snap);
     return acc;
-  }, {} as Record<string, any>);
+  }, {} as Record<string, { event_id: string; sport: string; matchup: string; market_type: string; player_name?: string | null; snapshots: OddsSnapshot[] }>);
 
   const games = Object.values(groupedByGame).slice(0, 20);
 
@@ -86,21 +119,37 @@ export const LineShoppingPanel = () => {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>Line Shopping Data</CardTitle>
-              <CardDescription>Recent odds snapshots across bookmakers</CardDescription>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex-1 min-w-0">
+              <CardTitle className="text-base">Line Shopping Data</CardTitle>
+              <CardDescription className="text-xs">Recent odds snapshots across bookmakers</CardDescription>
             </div>
-            <Select value={selectedSport} onValueChange={setSelectedSport}>
-              <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="Filter by sport" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Props</SelectItem>
-                <SelectItem value="basketball_nba">NBA</SelectItem>
-                <SelectItem value="americanfootball_nfl">NFL</SelectItem>
-              </SelectContent>
-            </Select>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRefreshOdds}
+                disabled={refreshing}
+                className="gap-1"
+              >
+                {refreshing ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <RefreshCw className="w-3 h-3" />
+                )}
+                <span className="hidden sm:inline">Refresh</span>
+              </Button>
+              <Select value={selectedSport} onValueChange={setSelectedSport}>
+                <SelectTrigger className="w-[120px]">
+                  <SelectValue placeholder="Filter" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Props</SelectItem>
+                  <SelectItem value="basketball_nba">NBA</SelectItem>
+                  <SelectItem value="americanfootball_nfl">NFL</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -109,9 +158,24 @@ export const LineShoppingPanel = () => {
               <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
             </div>
           ) : games.length === 0 ? (
-            <p className="text-center text-muted-foreground py-8">No odds data available</p>
+            <div className="text-center py-8 space-y-3">
+              <p className="text-muted-foreground">No odds data available</p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRefreshOdds}
+                disabled={refreshing}
+              >
+                {refreshing ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <RefreshCw className="w-4 h-4 mr-2" />
+                )}
+                Fetch Latest Odds
+              </Button>
+            </div>
           ) : (
-            <ScrollArea className="h-[600px]">
+            <ScrollArea className="h-[500px]">
               <div className="space-y-4">
                 {games.map((game, idx) => (
                   <Card key={idx} className="bg-muted/30">
@@ -123,7 +187,9 @@ export const LineShoppingPanel = () => {
                             {game.sport === 'basketball_nba' ? 'NBA' : 'NFL'} • {game.market_type}
                           </p>
                         </div>
-                        <Badge variant="outline">{game.snapshots[0]?.player_name}</Badge>
+                        {game.player_name && (
+                          <Badge variant="outline">{game.player_name}</Badge>
+                        )}
                       </div>
                     </CardHeader>
                     <CardContent>
