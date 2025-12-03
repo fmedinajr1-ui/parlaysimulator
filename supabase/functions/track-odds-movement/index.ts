@@ -480,7 +480,19 @@ serve(async (req) => {
   }
 
   try {
-    const { sports, action, includePlayerProps } = await req.json() as {
+    // Handle empty body gracefully (e.g., from cron jobs)
+    let body: { sports?: string[]; action?: string; includePlayerProps?: boolean } = {};
+    try {
+      const text = await req.text();
+      if (text && text.trim()) {
+        body = JSON.parse(text);
+      }
+    } catch {
+      // Empty or invalid JSON, use defaults
+      console.log('[track-odds-movement] No body or invalid JSON, using defaults');
+    }
+    
+    const { sports, action, includePlayerProps } = body as {
       sports?: string[];
       action?: 'fetch' | 'get_movements' | 'get_sharp_alerts';
       includePlayerProps?: boolean;
