@@ -6,103 +6,124 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// NBA Stats API headers required for requests
+// Timeout for API calls (10 seconds)
+const API_TIMEOUT = 10000;
+
+// Cached NBA players list (populated once per invocation)
+let nbaPlayersCache: Map<string, string> | null = null;
+
+// NBA Stats API headers
 const NBA_STATS_HEADERS = {
-  'Accept': 'application/json, text/plain, */*',
-  'Accept-Language': 'en-US,en;q=0.9',
+  'Accept': 'application/json',
   'Host': 'stats.nba.com',
   'Origin': 'https://www.nba.com',
   'Referer': 'https://www.nba.com/',
-  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'x-nba-stats-origin': 'stats',
-  'x-nba-stats-token': 'true',
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
 };
 
-// Sport-specific stat mappings
 const PROP_TO_STAT_MAP: Record<string, Record<string, string>> = {
   basketball_nba: {
     'player_points': 'PTS',
     'player_rebounds': 'REB',
     'player_assists': 'AST',
     'player_threes': 'FG3M',
-    'player_points_rebounds_assists': 'PRA',
-    'player_steals': 'STL',
-    'player_blocks': 'BLK',
   },
   americanfootball_nfl: {
     'player_pass_tds': 'passing_touchdowns',
     'player_pass_yds': 'passing_yards',
     'player_rush_yds': 'rushing_yards',
-    'player_receptions': 'receptions',
-    'player_reception_yds': 'receiving_yards',
   },
   icehockey_nhl: {
     'player_goals': 'goals',
     'player_assists': 'assists',
     'player_points': 'points',
-    'player_shots_on_goal': 'shots',
   }
 };
 
-const SPORT_KEYS = ['basketball_nba', 'americanfootball_nfl', 'icehockey_nhl'];
-
-// Search for NBA player ID by name
-async function searchNBAPlayerId(playerName: string): Promise<string | null> {
+// Fetch with timeout wrapper
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeout = API_TIMEOUT): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+  
   try {
-    const searchUrl = `https://stats.nba.com/stats/commonallplayers?IsOnlyCurrentSeason=1&LeagueID=00&Season=2024-25`;
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(timeoutId);
+    return response;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    throw error;
+  }
+}
+
+// Load NBA players list ONCE and cache it
+async function loadNBAPlayersCache(): Promise<boolean> {
+  if (nbaPlayersCache && nbaPlayersCache.size > 0) return true;
+  
+  try {
+    console.log('[NBA] Loading players list...');
+    const url = 'https://stats.nba.com/stats/commonallplayers?IsOnlyCurrentSeason=1&LeagueID=00&Season=2024-25';
+    // Use longer timeout for initial load (25 seconds)
+    const response = await fetchWithTimeout(url, { headers: NBA_STATS_HEADERS }, 25000);
     
-    const response = await fetch(searchUrl, { headers: NBA_STATS_HEADERS });
     if (!response.ok) {
-      console.error('Failed to fetch NBA players list:', response.status);
-      return null;
+      console.error('[NBA] Failed to load players list:', response.status);
+      nbaPlayersCache = new Map();
+      return false;
     }
     
     const data = await response.json();
     const players = data.resultSets?.[0]?.rowSet || [];
     const headers = data.resultSets?.[0]?.headers || [];
     
-    const displayNameIdx = headers.indexOf('DISPLAY_FIRST_LAST');
-    const playerIdIdx = headers.indexOf('PERSON_ID');
+    const nameIdx = headers.indexOf('DISPLAY_FIRST_LAST');
+    const idIdx = headers.indexOf('PERSON_ID');
     
-    // Normalize the search name
-    const normalizedSearch = playerName.toLowerCase().trim();
-    
-    // Find matching player
+    nbaPlayersCache = new Map();
     for (const player of players) {
-      const fullName = (player[displayNameIdx] || '').toLowerCase();
-      if (fullName === normalizedSearch || fullName.includes(normalizedSearch)) {
-        return String(player[playerIdIdx]);
+      const name = (player[nameIdx] || '').toLowerCase().trim();
+      const id = String(player[idIdx]);
+      if (name && id) {
+        nbaPlayersCache.set(name, id);
       }
     }
     
-    // Try partial match on last name
-    const lastNameSearch = normalizedSearch.split(' ').pop();
-    for (const player of players) {
-      const fullName = (player[displayNameIdx] || '').toLowerCase();
-      if (fullName.includes(lastNameSearch || '')) {
-        return String(player[playerIdIdx]);
-      }
-    }
-    
-    return null;
+    console.log(`[NBA] Cached ${nbaPlayersCache.size} players`);
+    return nbaPlayersCache.size > 0;
   } catch (error) {
-    console.error('Error searching NBA player:', error);
-    return null;
+    console.error('[NBA] Error loading players:', error);
+    nbaPlayersCache = new Map();
+    return false;
   }
 }
 
-// Fetch real NBA player game logs
-async function fetchNBAPlayerGameLogs(playerId: string, numGames: number = 5): Promise<any[]> {
+// Fast NBA player ID lookup from cache
+function getNBAPlayerId(playerName: string): string | null {
+  if (!nbaPlayersCache) return null;
+  
+  const normalized = playerName.toLowerCase().trim();
+  
+  // Exact match
+  if (nbaPlayersCache.has(normalized)) {
+    return nbaPlayersCache.get(normalized)!;
+  }
+  
+  // Partial match
+  for (const [name, id] of nbaPlayersCache) {
+    if (name.includes(normalized) || normalized.includes(name)) {
+      return id;
+    }
+  }
+  
+  return null;
+}
+
+// Fetch NBA player game logs
+async function fetchNBAGameLogs(playerId: string): Promise<any[]> {
   try {
     const url = `https://stats.nba.com/stats/playergamelog?PlayerID=${playerId}&Season=2024-25&SeasonType=Regular%20Season`;
+    const response = await fetchWithTimeout(url, { headers: NBA_STATS_HEADERS });
     
-    console.log(`Fetching NBA game logs for player ${playerId}`);
-    
-    const response = await fetch(url, { headers: NBA_STATS_HEADERS });
-    if (!response.ok) {
-      console.error('Failed to fetch NBA game log:', response.status);
-      return [];
-    }
+    if (!response.ok) return [];
     
     const data = await response.json();
     const resultSet = data.resultSets?.[0];
@@ -111,287 +132,35 @@ async function fetchNBAPlayerGameLogs(playerId: string, numGames: number = 5): P
     const headers = resultSet.headers || [];
     const rows = resultSet.rowSet || [];
     
-    // Map header indices
-    const indices = {
-      gameDate: headers.indexOf('GAME_DATE'),
+    const idx = {
+      date: headers.indexOf('GAME_DATE'),
       matchup: headers.indexOf('MATCHUP'),
       pts: headers.indexOf('PTS'),
       reb: headers.indexOf('REB'),
       ast: headers.indexOf('AST'),
-      stl: headers.indexOf('STL'),
-      blk: headers.indexOf('BLK'),
       fg3m: headers.indexOf('FG3M'),
     };
     
-    // Get most recent games
-    const gameLogs = rows.slice(0, numGames).map((row: any[], index: number) => ({
-      game_number: index + 1,
-      date: row[indices.gameDate],
-      opponent: row[indices.matchup],
+    return rows.slice(0, 5).map((row: any[]) => ({
+      date: row[idx.date],
+      opponent: row[idx.matchup],
       stats: {
-        PTS: row[indices.pts] || 0,
-        REB: row[indices.reb] || 0,
-        AST: row[indices.ast] || 0,
-        STL: row[indices.stl] || 0,
-        BLK: row[indices.blk] || 0,
-        FG3M: row[indices.fg3m] || 0,
-        PRA: (row[indices.pts] || 0) + (row[indices.reb] || 0) + (row[indices.ast] || 0),
+        PTS: row[idx.pts] || 0,
+        REB: row[idx.reb] || 0,
+        AST: row[idx.ast] || 0,
+        FG3M: row[idx.fg3m] || 0,
       }
     }));
-    
-    console.log(`Found ${gameLogs.length} NBA games for player ${playerId}`);
-    return gameLogs;
-  } catch (error) {
-    console.error('Error fetching NBA game logs:', error);
+  } catch {
     return [];
   }
 }
 
-// Search for NFL player ID and fetch game logs via ESPN API
-async function fetchNFLPlayerGameLogs(playerName: string, numGames: number = 5): Promise<any[]> {
-  try {
-    // First, search for player using ESPN's athlete search
-    const normalizedName = playerName.toLowerCase().trim();
-    const searchUrl = `https://site.api.espn.com/apis/common/v3/search?query=${encodeURIComponent(playerName)}&limit=10&type=player`;
-    
-    console.log(`Searching ESPN for NFL player: ${playerName}`);
-    
-    const searchRes = await fetch(searchUrl, {
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
-      }
-    });
-    
-    if (!searchRes.ok) {
-      console.error('ESPN search failed:', searchRes.status);
-      return [];
-    }
-    
-    const searchData = await searchRes.json();
-    const athletes = searchData.athletes || [];
-    
-    // Find NFL player
-    let playerId: string | null = null;
-    for (const athlete of athletes) {
-      if (athlete.league?.slug === 'nfl') {
-        const fullName = athlete.displayName?.toLowerCase() || '';
-        if (fullName === normalizedName || fullName.includes(normalizedName)) {
-          playerId = athlete.id;
-          break;
-        }
-      }
-    }
-    
-    if (!playerId) {
-      console.log(`Could not find NFL player ID for: ${playerName}`);
-      return [];
-    }
-    
-    console.log(`Found NFL player ${playerName} with ID: ${playerId}`);
-    
-    // Fetch player game log from ESPN
-    const gameLogUrl = `https://site.web.api.espn.com/apis/common/v3/sports/football/nfl/athletes/${playerId}/gamelog`;
-    
-    const gameLogRes = await fetch(gameLogUrl, {
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
-      }
-    });
-    
-    if (!gameLogRes.ok) {
-      console.error('ESPN game log fetch failed:', gameLogRes.status);
-      return [];
-    }
-    
-    const gameLogData = await gameLogRes.json();
-    
-    // Parse game log data
-    const categories = gameLogData.categories || [];
-    const events = gameLogData.events || {};
-    const gameLogs: any[] = [];
-    
-    // Get stat labels and values
-    const statMap: Record<number, {key: string, value: number}[]> = {};
-    const gameIds: string[] = [];
-    
-    for (const category of categories) {
-      const categoryName = category.name; // passing, rushing, receiving
-      const labels = category.labels || [];
-      const events = category.events || [];
-      
-      // Get game IDs from first category
-      if (gameIds.length === 0) {
-        for (const event of events) {
-          if (event.eventId) gameIds.push(event.eventId);
-        }
-      }
-      
-      // Map stats by game
-      for (let i = 0; i < events.length && i < numGames; i++) {
-        const eventStats = events[i].stats || [];
-        if (!statMap[i]) statMap[i] = [];
-        
-        for (let j = 0; j < labels.length; j++) {
-          const label = labels[j];
-          const value = parseFloat(eventStats[j]) || 0;
-          
-          // Map ESPN labels to our stat keys
-          if (categoryName === 'passing') {
-            if (label === 'YDS') statMap[i].push({ key: 'passing_yards', value });
-            if (label === 'TD') statMap[i].push({ key: 'passing_touchdowns', value });
-          } else if (categoryName === 'rushing') {
-            if (label === 'YDS') statMap[i].push({ key: 'rushing_yards', value });
-            if (label === 'TD') statMap[i].push({ key: 'rushing_touchdowns', value });
-          } else if (categoryName === 'receiving') {
-            if (label === 'YDS') statMap[i].push({ key: 'receiving_yards', value });
-            if (label === 'REC') statMap[i].push({ key: 'receptions', value });
-            if (label === 'TD') statMap[i].push({ key: 'receiving_touchdowns', value });
-          }
-        }
-      }
-    }
-    
-    // Build game logs
-    const eventDetails = Object.values(events) as any[];
-    for (let i = 0; i < Math.min(numGames, eventDetails.length); i++) {
-      const event = eventDetails[i];
-      const stats: Record<string, number> = {};
-      
-      // Aggregate stats for this game
-      const gameStats = statMap[i] || [];
-      for (const stat of gameStats) {
-        if (stat && stat.key) {
-          stats[stat.key] = stat.value;
-        }
-      }
-      
-      gameLogs.push({
-        game_number: i + 1,
-        date: event?.date || new Date().toISOString().split('T')[0],
-        opponent: event?.opponent?.displayName || 'Unknown',
-        playerId,
-        stats
-      });
-    }
-    
-    console.log(`Found ${gameLogs.length} NFL games for ${playerName}`);
-    return gameLogs;
-  } catch (error) {
-    console.error('Error fetching NFL game logs:', error);
-    return [];
-  }
-}
-
-// Search for NHL player ID and fetch game logs via NHL Web API
-async function fetchNHLPlayerGameLogs(playerName: string, numGames: number = 5): Promise<any[]> {
-  try {
-    const normalizedName = playerName.toLowerCase().trim();
-    console.log(`Searching NHL for player: ${playerName}`);
-    
-    // Search for player using NHL Web API
-    const searchUrl = `https://search.d3.nhle.com/api/v1/search/player?culture=en-us&limit=20&q=${encodeURIComponent(playerName)}`;
-    
-    const searchRes = await fetch(searchUrl, {
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
-      }
-    });
-    
-    if (!searchRes.ok) {
-      console.error('NHL search failed:', searchRes.status);
-      return [];
-    }
-    
-    const searchData = await searchRes.json();
-    
-    // Find matching player - search returns array of players
-    let playerId: string | null = null;
-    for (const player of searchData) {
-      const fullName = player.name?.toLowerCase() || '';
-      if (fullName === normalizedName || fullName.includes(normalizedName)) {
-        playerId = player.playerId;
-        break;
-      }
-    }
-    
-    // Try partial match on last name if no exact match
-    if (!playerId) {
-      const lastNameSearch = normalizedName.split(' ').pop();
-      for (const player of searchData) {
-        const fullName = player.name?.toLowerCase() || '';
-        if (fullName.includes(lastNameSearch || '')) {
-          playerId = player.playerId;
-          break;
-        }
-      }
-    }
-    
-    if (!playerId) {
-      console.log(`Could not find NHL player ID for: ${playerName}`);
-      return [];
-    }
-    
-    console.log(`Found NHL player ${playerName} with ID: ${playerId}`);
-    
-    // Fetch player game log from NHL Web API (current season 2024-25)
-    const gameLogUrl = `https://api-web.nhle.com/v1/player/${playerId}/game-log/20242025/2`;
-    
-    const gameLogRes = await fetch(gameLogUrl, {
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
-      }
-    });
-    
-    if (!gameLogRes.ok) {
-      console.error('NHL game log fetch failed:', gameLogRes.status);
-      return [];
-    }
-    
-    const gameLogData = await gameLogRes.json();
-    const gameLogs: any[] = [];
-    
-    // Parse game log data - NHL API returns gameLog array
-    const games = gameLogData.gameLog || [];
-    
-    for (let i = 0; i < Math.min(numGames, games.length); i++) {
-      const game = games[i];
-      
-      gameLogs.push({
-        game_number: i + 1,
-        date: game.gameDate || new Date().toISOString().split('T')[0],
-        opponent: game.opponentAbbrev || 'Unknown',
-        playerId,
-        stats: {
-          goals: game.goals || 0,
-          assists: game.assists || 0,
-          points: (game.goals || 0) + (game.assists || 0),
-          shots: game.shots || 0,
-          pim: game.pim || 0,
-          plusMinus: game.plusMinus || 0,
-          powerPlayGoals: game.powerPlayGoals || 0,
-          gameWinningGoals: game.gameWinningGoals || 0,
-          toi: game.toi || '00:00'
-        }
-      });
-    }
-    
-    console.log(`Found ${gameLogs.length} NHL games for ${playerName}`);
-    return gameLogs;
-  } catch (error) {
-    console.error('Error fetching NHL game logs:', error);
-    return [];
-  }
-}
-
-// Fetch player stats from cache or API
+// Fetch player stats with caching
 async function fetchPlayerStats(playerName: string, sport: string, propType: string, supabase: any): Promise<any[]> {
   const statKey = PROP_TO_STAT_MAP[sport]?.[propType] || propType;
   
-  // Check cache first (within last 24 hours)
+  // Check DB cache first
   const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const { data: cached } = await supabase
     .from('player_stats_cache')
@@ -403,165 +172,57 @@ async function fetchPlayerStats(playerName: string, sport: string, propType: str
     .order('game_date', { ascending: false })
     .limit(5);
 
-  if (cached && cached.length >= 5) {
-    console.log(`Using cached stats for ${playerName} (${statKey})`);
+  if (cached && cached.length >= 3) {
     return cached.map((c: any) => ({
-      game_number: 0,
       date: c.game_date,
       stat_value: c.stat_value,
       opponent: c.opponent
     }));
   }
 
-  // Fetch from API based on sport
+  // NBA - use cached player list
   if (sport === 'basketball_nba') {
-    const playerId = await searchNBAPlayerId(playerName);
-    if (!playerId) {
-      console.log(`Could not find NBA player ID for: ${playerName}`);
-      return [];
-    }
+    const playerId = getNBAPlayerId(playerName);
+    if (!playerId) return [];
     
-    const gameLogs = await fetchNBAPlayerGameLogs(playerId, 5);
+    const gameLogs = await fetchNBAGameLogs(playerId);
+    if (gameLogs.length === 0) return [];
     
-    if (gameLogs.length > 0) {
-      // Cache the results
-      const cacheInserts = [];
-      for (const game of gameLogs) {
-        // Cache each stat type from this game
-        for (const [statType, value] of Object.entries(game.stats)) {
-          cacheInserts.push({
-            player_name: playerName,
-            player_id: playerId,
-            sport: sport,
-            game_date: game.date,
-            opponent: game.opponent,
-            stat_type: statType,
-            stat_value: value,
-          });
-        }
-      }
-      
-      // Upsert to cache
-      const { error: cacheError } = await supabase
-        .from('player_stats_cache')
-        .upsert(cacheInserts, { 
-          onConflict: 'player_name,sport,game_date,stat_type',
-          ignoreDuplicates: true
-        });
-      
-      if (cacheError) {
-        console.error('Error caching player stats:', cacheError);
-      }
-      
-      // Return the specific stat we need
-      return gameLogs.map((game, idx) => ({
-        game_number: idx + 1,
-        date: game.date,
-        stat_value: game.stats[statKey] || 0,
-        opponent: game.opponent
-      }));
-    }
+    // Cache results
+    const cacheInserts = gameLogs.flatMap(game => 
+      Object.entries(game.stats).map(([statType, value]) => ({
+        player_name: playerName,
+        player_id: playerId,
+        sport,
+        game_date: game.date,
+        opponent: game.opponent,
+        stat_type: statType,
+        stat_value: value,
+      }))
+    );
+    
+    await supabase.from('player_stats_cache').upsert(cacheInserts, { 
+      onConflict: 'player_name,sport,game_date,stat_type',
+      ignoreDuplicates: true
+    });
+    
+    return gameLogs.map((game, idx) => ({
+      date: game.date,
+      stat_value: game.stats[statKey] || 0,
+      opponent: game.opponent
+    }));
   }
   
-  // NFL stats via ESPN API
-  if (sport === 'americanfootball_nfl') {
-    const gameLogs = await fetchNFLPlayerGameLogs(playerName, 5);
-    
-    if (gameLogs.length > 0) {
-      // Cache the results
-      const cacheInserts = [];
-      for (const game of gameLogs) {
-        for (const [statType, value] of Object.entries(game.stats)) {
-          cacheInserts.push({
-            player_name: playerName,
-            player_id: game.playerId,
-            sport: sport,
-            game_date: game.date,
-            opponent: game.opponent,
-            stat_type: statType,
-            stat_value: value,
-          });
-        }
-      }
-      
-      const { error: cacheError } = await supabase
-        .from('player_stats_cache')
-        .upsert(cacheInserts, { 
-          onConflict: 'player_name,sport,game_date,stat_type',
-          ignoreDuplicates: true
-        });
-      
-      if (cacheError) {
-        console.error('Error caching NFL player stats:', cacheError);
-      }
-      
-      return gameLogs.map((game, idx) => ({
-        game_number: idx + 1,
-        date: game.date,
-        stat_value: game.stats[statKey] || 0,
-        opponent: game.opponent
-      }));
-    }
-  }
-  
-  // NHL stats via NHL Web API
-  if (sport === 'icehockey_nhl') {
-    const gameLogs = await fetchNHLPlayerGameLogs(playerName, 5);
-    
-    if (gameLogs.length > 0) {
-      // Cache the results
-      const cacheInserts = [];
-      for (const game of gameLogs) {
-        for (const [statType, value] of Object.entries(game.stats)) {
-          if (typeof value === 'number') {
-            cacheInserts.push({
-              player_name: playerName,
-              player_id: game.playerId,
-              sport: sport,
-              game_date: game.date,
-              opponent: game.opponent,
-              stat_type: statType,
-              stat_value: value,
-            });
-          }
-        }
-      }
-      
-      const { error: cacheError } = await supabase
-        .from('player_stats_cache')
-        .upsert(cacheInserts, { 
-          onConflict: 'player_name,sport,game_date,stat_type',
-          ignoreDuplicates: true
-        });
-      
-      if (cacheError) {
-        console.error('Error caching NHL player stats:', cacheError);
-      }
-      
-      return gameLogs.map((game, idx) => ({
-        game_number: idx + 1,
-        date: game.date,
-        stat_value: game.stats[statKey] || 0,
-        opponent: game.opponent
-      }));
-    }
-  }
-  
-  console.log(`No API integration for ${sport} or API call failed for ${playerName}`);
   return [];
 }
 
-// Calculate hit rate from game logs
-function calculateHitRate(gameLogs: any[], line: number): { overHits: number; underHits: number; hitRateOver: number; hitRateUnder: number } {
-  let overHits = 0;
-  let underHits = 0;
-  
-  gameLogs.forEach(game => {
-    const value = game.stat_value;
-    if (value > line) overHits++;
-    else if (value < line) underHits++;
+// Calculate hit rate
+function calculateHitRate(gameLogs: any[], line: number) {
+  let overHits = 0, underHits = 0;
+  gameLogs.forEach(g => {
+    if (g.stat_value > line) overHits++;
+    else if (g.stat_value < line) underHits++;
   });
-  
   const total = gameLogs.length;
   return {
     overHits,
@@ -571,29 +232,13 @@ function calculateHitRate(gameLogs: any[], line: number): { overHits: number; un
   };
 }
 
-// Calculate confidence score based on consistency
+// Calculate confidence score
 function calculateConfidence(gameLogs: any[], line: number, hitRate: number): number {
   if (gameLogs.length === 0) return 0;
-  
-  // Base confidence from hit rate
   let confidence = hitRate * 100;
-  
-  // Calculate average margin
   const margins = gameLogs.map(g => Math.abs((g.stat_value || 0) - line));
   const avgMargin = margins.reduce((a, b) => a + b, 0) / margins.length;
-  
-  // Higher margin = more confident (capped at 15 bonus points)
-  const marginBonus = Math.min(avgMargin / Math.max(line, 1) * 20, 15);
-  confidence += marginBonus;
-  
-  // Consistency bonus (low standard deviation)
-  const values = gameLogs.map(g => g.stat_value || 0);
-  const mean = values.reduce((a, b) => a + b, 0) / values.length;
-  const variance = values.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / values.length;
-  const stdDev = Math.sqrt(variance);
-  const consistencyBonus = Math.max(0, 10 - (stdDev / Math.max(line, 1) * 10));
-  confidence += consistencyBonus;
-  
+  confidence += Math.min(avgMargin / Math.max(line, 1) * 20, 15);
   return Math.min(Math.round(confidence), 100);
 }
 
@@ -602,203 +247,169 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const startTime = Date.now();
+  
   try {
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const THE_ODDS_API_KEY = Deno.env.get('THE_ODDS_API_KEY')!;
-
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
     
-    const { sports = SPORT_KEYS, minHitRate = 0.8 } = await req.json().catch(() => ({}));
+    const { sports = ['basketball_nba'], limit = 20, minHitRate = 0.75 } = await req.json().catch(() => ({}));
 
-    console.log('Analyzing hit rate props for sports:', sports);
+    console.log(`[HitRate] Starting analysis for ${sports.join(', ')} (limit: ${limit})`);
+
+    // Pre-load NBA players cache if needed
+    let nbaAvailable = true;
+    if (sports.includes('basketball_nba')) {
+      nbaAvailable = await loadNBAPlayersCache();
+      if (!nbaAvailable) {
+        console.log('[HitRate] NBA API unavailable - will only use cached player data');
+      }
+    }
 
     const analyzedProps: any[] = [];
-    const errors: string[] = [];
-    const apiStats = { playersSearched: 0, gamesFound: 0, propsAnalyzed: 0 };
+    let propsChecked = 0;
 
     for (const sport of sports) {
+      if (propsChecked >= limit) break;
+      
       try {
-        // Fetch today's events
+        // Fetch events
         const eventsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events?apiKey=${THE_ODDS_API_KEY}`;
-        const eventsRes = await fetch(eventsUrl);
-        
-        if (!eventsRes.ok) {
-          errors.push(`Failed to fetch events for ${sport}: ${eventsRes.status}`);
-          continue;
-        }
+        const eventsRes = await fetchWithTimeout(eventsUrl);
+        if (!eventsRes.ok) continue;
 
         const events = await eventsRes.json();
-        console.log(`Found ${events.length} events for ${sport}`);
-
-        // Filter events within next 24 hours
         const now = new Date();
-        const upcomingEvents = events.filter((e: any) => {
-          const commence = new Date(e.commence_time);
-          const hoursUntil = (commence.getTime() - now.getTime()) / (1000 * 60 * 60);
-          return hoursUntil > 0 && hoursUntil <= 24;
-        }).slice(0, 5); // Limit to 5 events to save API calls
+        
+        // Filter upcoming events (next 24h), limit to 3
+        const upcomingEvents = events
+          .filter((e: any) => {
+            const hours = (new Date(e.commence_time).getTime() - now.getTime()) / 3600000;
+            return hours > 0 && hours <= 24;
+          })
+          .slice(0, 3);
 
-        console.log(`Processing ${upcomingEvents.length} upcoming events for ${sport}`);
-
-        // Get prop markets for this sport
-        const propMarkets = Object.keys(PROP_TO_STAT_MAP[sport] || {});
-        if (propMarkets.length === 0) continue;
+        console.log(`[HitRate] ${sport}: ${upcomingEvents.length} upcoming events`);
 
         for (const event of upcomingEvents) {
-          // Fetch player props for this event
-          const marketsToFetch = sport === 'basketball_nba' 
-            ? ['player_points', 'player_rebounds', 'player_assists', 'player_threes']
-            : propMarkets.slice(0, 3);
+          if (propsChecked >= limit) break;
           
-          const propsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${THE_ODDS_API_KEY}&regions=us&markets=${marketsToFetch.join(',')}&oddsFormat=american`;
+          // Fetch props (limit markets)
+          const markets = sport === 'basketball_nba' ? 'player_points,player_rebounds' : 'player_points';
+          const propsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${THE_ODDS_API_KEY}&regions=us&markets=${markets}&oddsFormat=american`;
           
           try {
-            const propsRes = await fetch(propsUrl);
-            if (!propsRes.ok) {
-              console.log(`Failed to fetch props for event ${event.id}`);
-              continue;
-            }
-
-            const propsData = await propsRes.json();
+            const propsRes = await fetchWithTimeout(propsUrl);
+            if (!propsRes.ok) continue;
             
-            if (!propsData.bookmakers || propsData.bookmakers.length === 0) continue;
+            const propsData = await propsRes.json();
+            const bookmaker = propsData.bookmakers?.[0];
+            if (!bookmaker) continue;
 
-            // Process each bookmaker's props (limit to first 2 bookmakers)
-            for (const bookmaker of propsData.bookmakers.slice(0, 2)) {
-              for (const market of bookmaker.markets || []) {
-                // Group outcomes by player
-                const playerOutcomes: Record<string, any[]> = {};
+            for (const market of bookmaker.markets || []) {
+              if (propsChecked >= limit) break;
+              
+              // Group by player
+              const playerOutcomes: Record<string, any[]> = {};
+              for (const outcome of market.outcomes || []) {
+                const name = outcome.description;
+                if (!name) continue;
+                if (!playerOutcomes[name]) playerOutcomes[name] = [];
+                playerOutcomes[name].push(outcome);
+              }
+
+              // Process players (batch of 5 at a time)
+              const players = Object.entries(playerOutcomes).slice(0, 10);
+              
+              for (const [playerName, outcomes] of players) {
+                if (propsChecked >= limit) break;
                 
-                for (const outcome of market.outcomes || []) {
-                  const playerName = outcome.description;
-                  if (!playerName) continue;
-                  
-                  if (!playerOutcomes[playerName]) {
-                    playerOutcomes[playerName] = [];
-                  }
-                  playerOutcomes[playerName].push(outcome);
+                const over = outcomes.find((o: any) => o.name === 'Over');
+                const under = outcomes.find((o: any) => o.name === 'Under');
+                if (!over || !under) continue;
+
+                const line = over.point || 0;
+                propsChecked++;
+
+                const gameLogs = await fetchPlayerStats(playerName, sport, market.key, supabase);
+                if (gameLogs.length < 3) continue;
+
+                const { overHits, underHits, hitRateOver, hitRateUnder } = calculateHitRate(gameLogs, line);
+                
+                let recommendedSide: string | null = null;
+                let bestHitRate = 0;
+                
+                if (hitRateOver >= minHitRate) {
+                  recommendedSide = 'over';
+                  bestHitRate = hitRateOver;
+                } else if (hitRateUnder >= minHitRate) {
+                  recommendedSide = 'under';
+                  bestHitRate = hitRateUnder;
                 }
 
-                // Analyze each player's prop
-                for (const [playerName, outcomes] of Object.entries(playerOutcomes)) {
-                  const overOutcome = outcomes.find((o: any) => o.name === 'Over');
-                  const underOutcome = outcomes.find((o: any) => o.name === 'Under');
-                  
-                  if (!overOutcome || !underOutcome) continue;
+                if (recommendedSide) {
+                  const propData = {
+                    player_name: playerName,
+                    sport,
+                    prop_type: market.key,
+                    current_line: line,
+                    over_price: over.price,
+                    under_price: under.price,
+                    games_analyzed: gameLogs.length,
+                    over_hits: overHits,
+                    under_hits: underHits,
+                    hit_rate_over: Math.round(hitRateOver * 100) / 100,
+                    hit_rate_under: Math.round(hitRateUnder * 100) / 100,
+                    game_logs: gameLogs,
+                    recommended_side: recommendedSide,
+                    confidence_score: calculateConfidence(gameLogs, line, bestHitRate),
+                    event_id: event.id,
+                    game_description: `${event.away_team} @ ${event.home_team}`,
+                    bookmaker: bookmaker.key,
+                    commence_time: event.commence_time,
+                    analyzed_at: new Date().toISOString(),
+                    expires_at: event.commence_time
+                  };
 
-                  const line = overOutcome.point || 0;
-                  const overPrice = overOutcome.price;
-                  const underPrice = underOutcome.price;
+                  await supabase.from('player_prop_hitrates').upsert(propData, {
+                    onConflict: 'player_name,sport,prop_type,current_line,event_id'
+                  });
 
-                  apiStats.playersSearched++;
-                  
-                  // Fetch real player stats from API
-                  const gameLogs = await fetchPlayerStats(playerName, sport, market.key, supabase);
-                  
-                  if (gameLogs.length < 3) {
-                    console.log(`Insufficient game data for ${playerName} (${gameLogs.length} games)`);
-                    continue;
-                  }
-
-                  apiStats.gamesFound += gameLogs.length;
-                  apiStats.propsAnalyzed++;
-
-                  // Format game logs with hit/miss data
-                  const formattedLogs = gameLogs.map((game, idx) => ({
-                    game_number: idx + 1,
-                    stat_value: game.stat_value,
-                    date: game.date,
-                    opponent: game.opponent,
-                    hit_over: game.stat_value > line,
-                    hit_under: game.stat_value < line,
-                    margin: Math.round((game.stat_value - line) * 10) / 10
-                  }));
-
-                  // Calculate hit rates
-                  const { overHits, underHits, hitRateOver, hitRateUnder } = calculateHitRate(formattedLogs, line);
-
-                  // Determine recommended side
-                  let recommendedSide: string | null = null;
-                  let bestHitRate = 0;
-                  
-                  if (hitRateOver >= minHitRate) {
-                    recommendedSide = 'over';
-                    bestHitRate = hitRateOver;
-                  } else if (hitRateUnder >= minHitRate) {
-                    recommendedSide = 'under';
-                    bestHitRate = hitRateUnder;
-                  }
-
-                  // Only save props with good hit rates
-                  if (recommendedSide) {
-                    const confidence = calculateConfidence(formattedLogs, line, bestHitRate);
-                    
-                    const propData = {
-                      player_name: playerName,
-                      sport: sport,
-                      prop_type: market.key,
-                      current_line: line,
-                      over_price: overPrice,
-                      under_price: underPrice,
-                      games_analyzed: formattedLogs.length,
-                      over_hits: overHits,
-                      under_hits: underHits,
-                      hit_rate_over: Math.round(hitRateOver * 100) / 100,
-                      hit_rate_under: Math.round(hitRateUnder * 100) / 100,
-                      game_logs: formattedLogs,
-                      recommended_side: recommendedSide,
-                      confidence_score: confidence,
-                      event_id: event.id,
-                      game_description: `${event.away_team} @ ${event.home_team}`,
-                      bookmaker: bookmaker.key,
-                      commence_time: event.commence_time,
-                      analyzed_at: new Date().toISOString(),
-                      expires_at: event.commence_time
-                    };
-
-                    // Upsert to database
-                    const { error: upsertError } = await supabase
-                      .from('player_prop_hitrates')
-                      .upsert(propData, {
-                        onConflict: 'player_name,sport,prop_type,current_line,event_id'
-                      });
-
-                    if (upsertError) {
-                      console.error('Error upserting hit rate:', upsertError);
-                    } else {
-                      analyzedProps.push(propData);
-                      console.log(`✓ ${playerName} ${market.key} ${line}: ${recommendedSide.toUpperCase()} ${Math.round(bestHitRate * 100)}% hit rate (${overHits}/${formattedLogs.length} games)`);
-                    }
-                  }
+                  analyzedProps.push(propData);
+                  console.log(`✓ ${playerName} ${market.key} ${line}: ${recommendedSide.toUpperCase()} ${Math.round(bestHitRate * 100)}%`);
                 }
               }
             }
-          } catch (eventError) {
-            console.error(`Error processing event ${event.id}:`, eventError);
+          } catch (e) {
+            console.error(`Event error:`, e);
           }
         }
-      } catch (sportError) {
-        errors.push(`Error processing ${sport}: ${sportError}`);
-        console.error(`Error processing ${sport}:`, sportError);
+      } catch (e) {
+        console.error(`Sport error ${sport}:`, e);
       }
     }
+
+    const duration = Date.now() - startTime;
+    console.log(`[HitRate] Complete: ${analyzedProps.length} props found in ${duration}ms`);
 
     return new Response(JSON.stringify({
       success: true,
       analyzed: analyzedProps.length,
-      props: analyzedProps,
-      apiStats,
-      errors
+      propsChecked,
+      duration,
+      props: analyzedProps
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
 
   } catch (error) {
-    console.error('Error in analyze-hitrate-props:', error);
+    console.error('[HitRate] Fatal error:', error);
     return new Response(JSON.stringify({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      duration: Date.now() - startTime
     }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
