@@ -86,3 +86,6 @@ verify_jwt = false
 
 [functions.calculate-calibration]
 verify_jwt = false
+
+[functions.data-pipeline-orchestrator]
+verify_jwt = false
