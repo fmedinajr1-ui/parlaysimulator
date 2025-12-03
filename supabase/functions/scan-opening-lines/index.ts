@@ -31,7 +31,7 @@ serve(async (req) => {
   }
 
   try {
-    const { sports = ['basketball_nba', 'americanfootball_nfl'] } = await req.json();
+    const { sports = ['basketball_nba', 'americanfootball_nfl'] } = await req.json().catch(() => ({}));
     
     const apiKey = Deno.env.get('THE_ODDS_API_KEY');
     if (!apiKey) {
