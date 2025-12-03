@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,7 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { Plus, RefreshCw, Target, TrendingUp, TrendingDown, AlertTriangle, Check, X, Loader2, Brain, Scan, Search, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { Plus, RefreshCw, Target, TrendingUp, TrendingDown, AlertTriangle, Check, X, Loader2, Brain, Scan, Search, ArrowUpDown, ArrowUp, ArrowDown, Timer, TimerOff } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
 
 type SortField = 'player_name' | 'ai_confidence' | 'movement' | 'created_at';
 type SortDirection = 'asc' | 'desc';
@@ -85,6 +86,12 @@ export default function SharpLineCalculator() {
   const [sortField, setSortField] = useState<SortField>('created_at');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
 
+  // Auto-refresh state
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [refreshInterval, setRefreshInterval] = useState(60); // seconds
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [nextRefreshIn, setNextRefreshIn] = useState<number>(0);
+
   // Filtered and sorted props
   const filteredAndSortedProps = useMemo(() => {
     let result = trackedProps.filter(prop => {
@@ -135,6 +142,46 @@ export default function SharpLineCalculator() {
   useEffect(() => {
     fetchTrackedProps();
   }, []);
+
+  // Auto-refresh ref to avoid stale closures
+  const fetchAllOddsRef = useRef<(() => Promise<void>) | null>(null);
+
+  // Auto-refresh effect
+  useEffect(() => {
+    if (!autoRefresh) {
+      setNextRefreshIn(0);
+      return;
+    }
+
+    const pendingProps = trackedProps.filter(p => p.status === 'pending' && p.event_id);
+    if (pendingProps.length === 0) {
+      setAutoRefresh(false);
+      toast.info('Auto-refresh disabled: No pending props with event IDs');
+      return;
+    }
+
+    setNextRefreshIn(refreshInterval);
+
+    const countdownInterval = setInterval(() => {
+      setNextRefreshIn(prev => {
+        if (prev <= 1) return refreshInterval;
+        return prev - 1;
+      });
+    }, 1000);
+
+    const refreshTimer = setInterval(async () => {
+      if (fetchAllOddsRef.current) {
+        toast.info('Auto-refreshing odds...');
+        await fetchAllOddsRef.current();
+        setLastRefresh(new Date());
+      }
+    }, refreshInterval * 1000);
+
+    return () => {
+      clearInterval(countdownInterval);
+      clearInterval(refreshTimer);
+    };
+  }, [autoRefresh, refreshInterval, trackedProps.length]);
 
   const fetchTrackedProps = async () => {
     try {
@@ -404,6 +451,11 @@ export default function SharpLineCalculator() {
     }
   };
 
+  // Keep ref updated for auto-refresh
+  useEffect(() => {
+    fetchAllOddsRef.current = handleFetchAllOdds;
+  }, [trackedProps]);
+
   const handleDeleteProp = async (id: string) => {
     try {
       const { error } = await supabase
@@ -605,36 +657,84 @@ export default function SharpLineCalculator() {
             </Card>
           ) : (
             <>
-              {/* Fetch All Button */}
-              {pendingFilteredProps.length > 0 && (
-                <Card className="bg-primary/5 border-primary/20">
-                  <CardContent className="py-3">
-                    <div className="flex items-center justify-between">
-                      <div className="text-sm">
-                        <span className="font-medium">{pendingFilteredProps.length}</span>
-                        <span className="text-muted-foreground"> pending props ready to fetch</span>
-                      </div>
-                      <Button 
-                        onClick={handleFetchAllOdds} 
-                        disabled={fetchingAll}
-                        size="sm"
-                      >
-                        {fetchingAll ? (
-                          <>
-                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                            Fetching {fetchProgress.current}/{fetchProgress.total}...
-                          </>
-                        ) : (
-                          <>
-                            <RefreshCw className="w-4 h-4 mr-2" />
-                            Fetch All Odds
-                          </>
-                        )}
-                      </Button>
+              {/* Fetch All Button & Auto-Refresh */}
+              <Card className="bg-primary/5 border-primary/20">
+                <CardContent className="py-3 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm">
+                      <span className="font-medium">{pendingFilteredProps.length}</span>
+                      <span className="text-muted-foreground"> pending props ready to fetch</span>
                     </div>
-                  </CardContent>
-                </Card>
-              )}
+                    <Button 
+                      onClick={handleFetchAllOdds} 
+                      disabled={fetchingAll || pendingFilteredProps.length === 0}
+                      size="sm"
+                    >
+                      {fetchingAll ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Fetching {fetchProgress.current}/{fetchProgress.total}...
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className="w-4 h-4 mr-2" />
+                          Fetch All Odds
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                  
+                  {/* Auto-Refresh Controls */}
+                  <div className="flex items-center justify-between border-t border-border pt-3">
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-2">
+                        {autoRefresh ? (
+                          <Timer className="w-4 h-4 text-green-500" />
+                        ) : (
+                          <TimerOff className="w-4 h-4 text-muted-foreground" />
+                        )}
+                        <Label htmlFor="auto-refresh" className="text-sm cursor-pointer">
+                          Auto-refresh
+                        </Label>
+                        <Switch
+                          id="auto-refresh"
+                          checked={autoRefresh}
+                          onCheckedChange={setAutoRefresh}
+                          disabled={pendingFilteredProps.length === 0}
+                        />
+                      </div>
+                      
+                      {autoRefresh && (
+                        <Select 
+                          value={refreshInterval.toString()} 
+                          onValueChange={(v) => setRefreshInterval(parseInt(v))}
+                        >
+                          <SelectTrigger className="w-[100px] h-8">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="30">30 sec</SelectItem>
+                            <SelectItem value="60">1 min</SelectItem>
+                            <SelectItem value="120">2 min</SelectItem>
+                            <SelectItem value="300">5 min</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </div>
+                    
+                    {autoRefresh && (
+                      <div className="text-xs text-muted-foreground">
+                        Next refresh in <span className="font-mono text-foreground">{nextRefreshIn}s</span>
+                        {lastRefresh && (
+                          <span className="ml-2">
+                            (Last: {lastRefresh.toLocaleTimeString()})
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
 
               {/* Search, Filter & Sort Toolbar */}
               <Card className="bg-card/50">
