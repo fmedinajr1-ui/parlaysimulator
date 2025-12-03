@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { BottomNav } from "@/components/BottomNav";
 import { supabase } from "@/integrations/supabase/client";
 import { OddsMovementCard } from "@/components/results/OddsMovementCard";
 import { SharpMoneyAlerts } from "@/components/results/SharpMoneyAlerts";
@@ -236,8 +235,6 @@ const OddsMovement = () => {
           )}
         </div>
       </main>
-
-      <BottomNav />
     </div>
   );
 };

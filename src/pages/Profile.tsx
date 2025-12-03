@@ -3,7 +3,6 @@ import { useNavigate, Link } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSubscription } from '@/hooks/useSubscription';
-import { BottomNav } from '@/components/BottomNav';
 import { ProfileHeader } from '@/components/profile/ProfileHeader';
 import { SocialLinks } from '@/components/profile/SocialLinks';
 import { DegenStats } from '@/components/profile/DegenStats';
@@ -236,8 +235,6 @@ const Profile = () => {
           </Link>
         </div>
       </main>
-
-      <BottomNav />
     </div>
   );
 };

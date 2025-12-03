@@ -1,7 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import { format } from "date-fns";
-import { BottomNav } from "@/components/BottomNav";
 import { FeedCard } from "@/components/FeedCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -983,8 +982,6 @@ const Upload = () => {
           </Button>
         </div>
       </div>
-
-      <BottomNav />
     </div>
   );
 };

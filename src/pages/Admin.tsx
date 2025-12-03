@@ -24,7 +24,6 @@ import {
   TrendingUp,
   Calculator
 } from 'lucide-react';
-import { BottomNav } from '@/components/BottomNav';
 import { AILearningDashboard } from '@/components/admin/AILearningDashboard';
 import { BulkSlipUpload } from '@/components/admin/BulkSlipUpload';
 import { SharpMoneyPanel } from '@/components/admin/SharpMoneyPanel';
@@ -555,8 +554,6 @@ export default function Admin() {
           </TabsContent>
         </Tabs>
       </div>
-
-      <BottomNav />
     </div>
   );
 }

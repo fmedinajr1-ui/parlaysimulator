@@ -3,7 +3,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSubscription } from "@/hooks/useSubscription";
 import { useNavigate } from "react-router-dom";
-import { BottomNav } from "@/components/BottomNav";
 import { SuggestionPerformanceCard } from "@/components/suggestions/SuggestionPerformanceCard";
 import { SuggestionHistoryFeed } from "@/components/suggestions/SuggestionHistoryFeed";
 import { StrategyPerformanceCard } from "@/components/suggestions/StrategyPerformanceCard";
@@ -537,7 +536,6 @@ const Suggestions = () => {
             <Button onClick={() => navigate('/auth')} className="touch-target-lg">Sign In</Button>
           </div>
         </main>
-        <BottomNav />
       </div>
     );
   }
@@ -582,7 +580,6 @@ const Suggestions = () => {
             </CardContent>
           </Card>
         </main>
-        <BottomNav />
       </div>
     );
   }
@@ -1478,7 +1475,6 @@ const Suggestions = () => {
           </TabsContent>
         </Tabs>
       </main>
-      <BottomNav />
 
       {/* Optimizer Dialog */}
       {selectedParlayForOptimization && (

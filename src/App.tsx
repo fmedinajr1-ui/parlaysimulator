@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { PWAInstallPrompt } from "@/components/PWAInstallPrompt";
 import { PageTransition } from "@/components/PageTransition";
+import { BottomNav } from "@/components/BottomNav";
 import Index from "./pages/Index";
 import Upload from "./pages/Upload";
 import Results from "./pages/Results";
@@ -55,6 +56,7 @@ const App = () => {
             <Toaster />
             <Sonner />
             <AnimatedRoutes />
+            <BottomNav />
             <PWAInstallPrompt />
           </TooltipProvider>
         </AuthProvider>

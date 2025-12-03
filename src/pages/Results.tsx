@@ -1,6 +1,5 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
-import { BottomNav } from "@/components/BottomNav";
 import { ProbabilityCard } from "@/components/results/ProbabilityCard";
 import { DegenerateMeter } from "@/components/results/DegenerateMeter";
 import { TrashTalkThread } from "@/components/results/TrashTalkThread";
@@ -559,8 +558,6 @@ const Results = () => {
           </Link>
         </div>
       </main>
-
-      <BottomNav />
     </div>
   );
 };
