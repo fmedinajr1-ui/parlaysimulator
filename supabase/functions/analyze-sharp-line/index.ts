@@ -27,6 +27,9 @@ interface AnalysisResult {
   signals: {
     sharp: string[];
     trap: string[];
+    historicalSampleSize?: number;
+    historicalOverWinRate?: number;
+    historicalUnderWinRate?: number;
   };
   calibrationApplied?: boolean;
   strategyBoost?: number;
@@ -121,6 +124,72 @@ serve(async (req) => {
       if (overBooks > underBooks * 2) consensusDirection = 'over';
       else if (underBooks > overBooks * 2) consensusDirection = 'under';
     }
+
+    // === FETCH HISTORICAL PATTERN DATA FOR CAUTION DIRECTION ===
+    let historicalOverWinRate = 0.5;
+    let historicalUnderWinRate = 0.5;
+    let historicalSampleSize = 0;
+    let historicalDirection: 'over' | 'under' | null = null;
+
+    // Get historical line movement outcomes for similar props
+    const { data: historicalMovements } = await supabase
+      .from('line_movements')
+      .select('outcome_correct, outcome_name, price_change, point_change')
+      .eq('sport', input.sport)
+      .eq('market_type', 'player_prop')
+      .eq('outcome_verified', true)
+      .not('outcome_correct', 'is', null)
+      .limit(200);
+
+    if (historicalMovements && historicalMovements.length > 0) {
+      historicalSampleSize = historicalMovements.length;
+      
+      // Calculate win rates by direction
+      const overBets = historicalMovements.filter(m => 
+        m.outcome_name?.toLowerCase().includes('over')
+      );
+      const underBets = historicalMovements.filter(m => 
+        m.outcome_name?.toLowerCase().includes('under')
+      );
+
+      if (overBets.length >= 10) {
+        const overWins = overBets.filter(m => m.outcome_correct === true).length;
+        historicalOverWinRate = overWins / overBets.length;
+      }
+      
+      if (underBets.length >= 10) {
+        const underWins = underBets.filter(m => m.outcome_correct === true).length;
+        historicalUnderWinRate = underWins / underBets.length;
+      }
+
+      // Determine historical lean
+      if (Math.abs(historicalOverWinRate - historicalUnderWinRate) >= 0.05) {
+        historicalDirection = historicalOverWinRate > historicalUnderWinRate ? 'over' : 'under';
+      }
+    }
+
+    // Also check trap patterns for similar scenarios
+    const { data: trapPatterns } = await supabase
+      .from('trap_patterns')
+      .select('bet_type, confirmed_trap, price_only_move')
+      .eq('sport', input.sport)
+      .eq('market_type', 'player_prop')
+      .limit(100);
+
+    let trapOverRate = 0;
+    let trapUnderRate = 0;
+    if (trapPatterns && trapPatterns.length > 0) {
+      const confirmedTraps = trapPatterns.filter(t => t.confirmed_trap === true);
+      // Analyze which direction traps occur more frequently
+      const priceOnlyTraps = confirmedTraps.filter(t => t.price_only_move === true).length;
+      if (priceOnlyTraps > confirmedTraps.length * 0.6) {
+        // Price-only moves are traps - movement direction is often wrong
+        trapOverRate = 0.4;
+        trapUnderRate = 0.6;
+      }
+    }
+
+    console.log(`Historical data: ${historicalSampleSize} samples, Over: ${(historicalOverWinRate * 100).toFixed(1)}%, Under: ${(historicalUnderWinRate * 100).toFixed(1)}%`);
 
     // Calculate movements
     const lineChange = input.current_line - input.opening_line;
@@ -304,6 +373,50 @@ serve(async (req) => {
     } else {
       recommendation = 'caution';
       confidence = 0.35 + Math.abs(finalScore) / 150;
+      
+      // === ENHANCED CAUTION DIRECTION USING HISTORICAL DATA ===
+      // Determine best direction based on historical patterns
+      let cautionScore = { over: 0, under: 0 };
+      
+      // Factor 1: Historical win rates (weight: 30)
+      if (historicalSampleSize >= 20) {
+        cautionScore.over += historicalOverWinRate * 30;
+        cautionScore.under += historicalUnderWinRate * 30;
+      }
+      
+      // Factor 2: Current movement direction (weight: 20) - lean opposite of public
+      if (overPriceChange < -5) {
+        // Over getting juicier = public on over, lean under
+        cautionScore.under += 20;
+      } else if (underPriceChange < -5) {
+        cautionScore.over += 20;
+      }
+      
+      // Factor 3: Line movement (weight: 25)
+      if (lineChange > 0.5) {
+        // Line moved up = books expect more, lean under
+        cautionScore.under += 25;
+      } else if (lineChange < -0.5) {
+        cautionScore.over += 25;
+      }
+      
+      // Factor 4: Market consensus (weight: 15)
+      if (consensusDirection) {
+        cautionScore[consensusDirection] += 15;
+      }
+      
+      // Factor 5: Trap pattern analysis (weight: 10)
+      if (trapOverRate > 0 || trapUnderRate > 0) {
+        cautionScore.over -= trapOverRate * 10;
+        cautionScore.under -= trapUnderRate * 10;
+      }
+      
+      // Set direction based on highest score
+      direction = cautionScore.over >= cautionScore.under ? 'over' : 'under';
+      
+      // Add historical confidence to main confidence
+      const historicalConfBoost = Math.abs(cautionScore.over - cautionScore.under) / 200;
+      confidence = Math.min(0.6, confidence + historicalConfBoost);
     }
 
     // Build enhanced reasoning
@@ -344,13 +457,20 @@ serve(async (req) => {
         reasoning += `Extreme juice indicates public overload. `;
       }
     } else {
-      reasoning = `Mixed signals - wait for clarity. `;
-      reasoning += `Sharp: ${sharpScore}, Trap: ${trapScore}, Net: ${finalScore.toFixed(1)}. `;
+      reasoning = `Mixed signals - lean ${direction.toUpperCase()} based on historical patterns. `;
+      if (historicalSampleSize >= 20) {
+        const betterRate = direction === 'over' ? historicalOverWinRate : historicalUnderWinRate;
+        reasoning += `Historical ${direction} win rate: ${(betterRate * 100).toFixed(0)}% (${historicalSampleSize} samples). `;
+      }
+      if (lineChange !== 0) {
+        reasoning += `Line moved ${lineChange > 0 ? '+' : ''}${lineChange.toFixed(1)}. `;
+      }
+      reasoning += `Sharp: ${sharpScore}, Trap: ${trapScore}. `;
       if (signals.sharp.length > 0) {
-        reasoning += `Positive: ${signals.sharp.slice(0, 3).join(', ')}. `;
+        reasoning += `Positive: ${signals.sharp.slice(0, 2).join(', ')}. `;
       }
       if (signals.trap.length > 0) {
-        reasoning += `Concerns: ${signals.trap.slice(0, 3).join(', ')}. `;
+        reasoning += `Concerns: ${signals.trap.slice(0, 2).join(', ')}. `;
       }
     }
 
@@ -359,7 +479,12 @@ serve(async (req) => {
       direction,
       confidence,
       reasoning: reasoning.trim(),
-      signals,
+      signals: {
+        ...signals,
+        historicalSampleSize,
+        historicalOverWinRate: Math.round(historicalOverWinRate * 100),
+        historicalUnderWinRate: Math.round(historicalUnderWinRate * 100),
+      },
       calibrationApplied,
       strategyBoost
     };
