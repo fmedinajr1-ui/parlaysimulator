@@ -8,10 +8,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { Plus, RefreshCw, Target, TrendingUp, TrendingDown, AlertTriangle, Check, X, Loader2, Brain, Scan, Search, ArrowUpDown, ArrowUp, ArrowDown, Timer, TimerOff } from 'lucide-react';
+import { Plus, RefreshCw, Target, TrendingUp, TrendingDown, AlertTriangle, Check, X, Loader2, Brain, Scan, Search, ArrowUpDown, ArrowUp, ArrowDown, Timer, TimerOff, Clock } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 
-type SortField = 'player_name' | 'ai_confidence' | 'movement' | 'created_at';
+type SortField = 'player_name' | 'ai_confidence' | 'movement' | 'created_at' | 'last_updated';
 type SortDirection = 'asc' | 'desc';
 
 interface TrackedProp {
@@ -128,6 +128,11 @@ export default function SharpLineCalculator() {
           break;
         case 'created_at':
           comparison = new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+          break;
+        case 'last_updated':
+          const updA = a.last_updated ? new Date(a.last_updated).getTime() : 0;
+          const updB = b.last_updated ? new Date(b.last_updated).getTime() : 0;
+          comparison = updB - updA;
           break;
       }
       
@@ -511,6 +516,28 @@ export default function SharpLineCalculator() {
     return price > 0 ? `+${price}` : price.toString();
   };
 
+  const formatTimestamp = (dateString: string | null) => {
+    if (!dateString) return null;
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMins / 60);
+    
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const getFreshnessColor = (dateString: string | null) => {
+    if (!dateString) return 'text-muted-foreground';
+    const diffMins = (Date.now() - new Date(dateString).getTime()) / 60000;
+    if (diffMins < 15) return 'text-green-400';
+    if (diffMins < 60) return 'text-yellow-400';
+    return 'text-red-400';
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -828,6 +855,7 @@ export default function SharpLineCalculator() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="created_at">📅 Date Added</SelectItem>
+                          <SelectItem value="last_updated">🕐 Last Fetched</SelectItem>
                           <SelectItem value="player_name">🔤 Player Name</SelectItem>
                           <SelectItem value="ai_confidence">📊 Confidence</SelectItem>
                           <SelectItem value="movement">📈 Movement</SelectItem>
@@ -904,16 +932,47 @@ export default function SharpLineCalculator() {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                  {/* Timestamps Row */}
+                  <div className="flex flex-wrap gap-4 text-xs border-b border-border pb-3">
+                    <div className="flex items-center gap-1">
+                      <Clock className="w-3 h-3 text-muted-foreground" />
+                      <span className="text-muted-foreground">Last Fetched:</span>
+                      <span className={`font-medium ${getFreshnessColor(prop.last_updated)}`}>
+                        {formatTimestamp(prop.last_updated) || 'Never'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="text-muted-foreground">Opening:</span>
+                      <span className="text-foreground">{formatTimestamp(prop.opening_time) || formatTimestamp(prop.created_at)}</span>
+                    </div>
+                    {prop.commence_time && (
+                      <div className="flex items-center gap-1">
+                        <span className="text-muted-foreground">Game:</span>
+                        <span className="text-foreground">
+                          {new Date(prop.commence_time).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
                   {/* Opening vs Current Odds */}
                   <div className="grid grid-cols-2 gap-4">
                     <div className="p-3 rounded-lg bg-muted/30">
-                      <p className="text-xs text-muted-foreground mb-1">Opening</p>
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-xs text-muted-foreground">Opening</p>
+                        <p className="text-xs text-muted-foreground">{formatTimestamp(prop.opening_time) || ''}</p>
+                      </div>
                       <p className="font-mono font-semibold">
                         O {formatPrice(prop.opening_over_price)} / U {formatPrice(prop.opening_under_price)}
                       </p>
                     </div>
                     <div className="p-3 rounded-lg bg-muted/30">
-                      <p className="text-xs text-muted-foreground mb-1">Current</p>
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-xs text-muted-foreground">Current</p>
+                        <p className={`text-xs ${getFreshnessColor(prop.last_updated)}`}>
+                          {formatTimestamp(prop.last_updated) || ''}
+                        </p>
+                      </div>
                       {prop.current_over_price ? (
                         <p className="font-mono font-semibold">
                           O {formatPrice(prop.current_over_price)} / U {formatPrice(prop.current_under_price!)}
