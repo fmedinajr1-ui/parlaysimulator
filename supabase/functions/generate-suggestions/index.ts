@@ -254,7 +254,18 @@ serve(async (req) => {
   }
 
   try {
-    const { userId } = await req.json();
+    // Handle empty body gracefully (e.g., from cron jobs)
+    let body: { userId?: string } = {};
+    try {
+      const text = await req.text();
+      if (text && text.trim()) {
+        body = JSON.parse(text);
+      }
+    } catch {
+      console.log('[generate-suggestions] No body or invalid JSON, using defaults');
+    }
+    
+    const { userId } = body;
     
     const ODDS_API_KEY = Deno.env.get('THE_ODDS_API_KEY');
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
