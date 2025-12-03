@@ -1,5 +1,4 @@
 import { useState, useCallback } from 'react';
-import { BottomNav } from '@/components/BottomNav';
 import { Button } from '@/components/ui/button';
 import { ParlaySlot, LegInput } from '@/components/compare/ParlaySlot';
 import { ComparisonDashboard } from '@/components/compare/ComparisonDashboard';
@@ -305,8 +304,6 @@ const Compare = () => {
           onClose={() => setHistorySlotIndex(null)}
         />
       )}
-
-      <BottomNav />
     </div>
   );
 };

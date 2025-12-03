@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { BottomNav } from "@/components/BottomNav";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -236,8 +235,6 @@ const LineShopping = () => {
           </span>
         </div>
       </main>
-
-      <BottomNav />
     </div>
   );
 };

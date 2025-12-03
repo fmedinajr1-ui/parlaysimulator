@@ -2,7 +2,6 @@ import { HeroBanner } from "@/components/HeroBanner";
 import { ExampleCarousel } from "@/components/ExampleCarousel";
 import { HowItWorks } from "@/components/HowItWorks";
 import { FeatureTeaser } from "@/components/FeatureTeaser";
-import { BottomNav } from "@/components/BottomNav";
 import { SampleParlayButton } from "@/components/SampleParlayButton";
 import { SuggestedParlays } from "@/components/suggestions/SuggestedParlays";
 import { OddsMovementCard } from "@/components/results/OddsMovementCard";
@@ -51,8 +50,6 @@ const Index = () => {
         <HowItWorks />
         <FeatureTeaser />
       </main>
-
-      <BottomNav />
     </div>
   );
 };

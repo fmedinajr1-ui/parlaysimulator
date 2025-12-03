@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { BottomNav } from "@/components/BottomNav";
 import { FeedCard } from "@/components/FeedCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -388,8 +387,6 @@ export default function SharpMoney() {
           </div>
         )}
       </div>
-      
-      <BottomNav />
     </div>
   );
 }

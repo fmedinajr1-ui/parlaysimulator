@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { BottomNav } from "@/components/BottomNav";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -96,7 +95,6 @@ const Install = () => {
             </Badge>
           </div>
         </main>
-        <BottomNav />
       </div>
     );
   }
@@ -246,7 +244,6 @@ const Install = () => {
           </CardContent>
         </Card>
       </main>
-      <BottomNav />
     </div>
   );
 };
