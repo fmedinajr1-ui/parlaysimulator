@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,7 +8,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { Plus, RefreshCw, Target, TrendingUp, TrendingDown, AlertTriangle, Check, X, Loader2, Brain, Scan } from 'lucide-react';
+import { Plus, RefreshCw, Target, TrendingUp, TrendingDown, AlertTriangle, Check, X, Loader2, Brain, Scan, Search, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+
+type SortField = 'player_name' | 'ai_confidence' | 'movement' | 'created_at';
+type SortDirection = 'asc' | 'desc';
 
 interface TrackedProp {
   id: string;
@@ -72,6 +75,62 @@ export default function SharpLineCalculator() {
   const [fetchingOdds, setFetchingOdds] = useState<string | null>(null);
   const [fetchingAll, setFetchingAll] = useState(false);
   const [fetchProgress, setFetchProgress] = useState({ current: 0, total: 0 });
+
+  // Search, Filter & Sort state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sportFilter, setSportFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [recFilter, setRecFilter] = useState('all');
+  const [propTypeFilter, setPropTypeFilter] = useState('all');
+  const [sortField, setSortField] = useState<SortField>('created_at');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+
+  // Filtered and sorted props
+  const filteredAndSortedProps = useMemo(() => {
+    let result = trackedProps.filter(prop => {
+      const matchesSearch = !searchQuery || 
+        prop.player_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        prop.game_description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        prop.prop_type.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        prop.bookmaker.toLowerCase().includes(searchQuery.toLowerCase());
+      
+      const matchesSport = sportFilter === 'all' || prop.sport === sportFilter;
+      const matchesStatus = statusFilter === 'all' || prop.status === statusFilter;
+      const matchesRec = recFilter === 'all' || prop.ai_recommendation === recFilter;
+      const matchesPropType = propTypeFilter === 'all' || prop.prop_type === propTypeFilter;
+      
+      return matchesSearch && matchesSport && matchesStatus && matchesRec && matchesPropType;
+    });
+
+    result.sort((a, b) => {
+      let comparison = 0;
+      
+      switch (sortField) {
+        case 'player_name':
+          comparison = a.player_name.localeCompare(b.player_name);
+          break;
+        case 'ai_confidence':
+          const confA = a.ai_confidence ?? -1;
+          const confB = b.ai_confidence ?? -1;
+          comparison = confB - confA;
+          break;
+        case 'movement':
+          const moveA = Math.abs(a.price_movement_over ?? 0);
+          const moveB = Math.abs(b.price_movement_over ?? 0);
+          comparison = moveB - moveA;
+          break;
+        case 'created_at':
+          comparison = new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+          break;
+      }
+      
+      return sortDirection === 'desc' ? comparison : -comparison;
+    });
+
+    return result;
+  }, [trackedProps, searchQuery, sportFilter, statusFilter, recFilter, propTypeFilter, sortField, sortDirection]);
+
+  const pendingFilteredProps = filteredAndSortedProps.filter(p => p.status === 'pending' && p.event_id);
 
   useEffect(() => {
     fetchTrackedProps();
@@ -547,12 +606,12 @@ export default function SharpLineCalculator() {
           ) : (
             <>
               {/* Fetch All Button */}
-              {trackedProps.filter(p => p.status === 'pending' && p.event_id).length > 0 && (
+              {pendingFilteredProps.length > 0 && (
                 <Card className="bg-primary/5 border-primary/20">
                   <CardContent className="py-3">
                     <div className="flex items-center justify-between">
                       <div className="text-sm">
-                        <span className="font-medium">{trackedProps.filter(p => p.status === 'pending' && p.event_id).length}</span>
+                        <span className="font-medium">{pendingFilteredProps.length}</span>
                         <span className="text-muted-foreground"> pending props ready to fetch</span>
                       </div>
                       <Button 
@@ -577,7 +636,148 @@ export default function SharpLineCalculator() {
                 </Card>
               )}
 
-              {trackedProps.map((prop) => (
+              {/* Search, Filter & Sort Toolbar */}
+              <Card className="bg-card/50">
+                <CardContent className="py-4 space-y-4">
+                  {/* Search Bar */}
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search players, games, props..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="pl-10 pr-10"
+                    />
+                    {searchQuery && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
+                        onClick={() => setSearchQuery('')}
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
+                    )}
+                  </div>
+
+                  {/* Filters Row */}
+                  <div className="flex flex-wrap gap-2">
+                    <Select value={sportFilter} onValueChange={setSportFilter}>
+                      <SelectTrigger className="w-[120px]">
+                        <SelectValue placeholder="Sport" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Sports</SelectItem>
+                        <SelectItem value="basketball_nba">NBA</SelectItem>
+                        <SelectItem value="americanfootball_nfl">NFL</SelectItem>
+                      </SelectContent>
+                    </Select>
+
+                    <Select value={statusFilter} onValueChange={setStatusFilter}>
+                      <SelectTrigger className="w-[120px]">
+                        <SelectValue placeholder="Status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Status</SelectItem>
+                        <SelectItem value="pending">Pending</SelectItem>
+                        <SelectItem value="updated">Updated</SelectItem>
+                        <SelectItem value="analyzed">Analyzed</SelectItem>
+                      </SelectContent>
+                    </Select>
+
+                    <Select value={recFilter} onValueChange={setRecFilter}>
+                      <SelectTrigger className="w-[140px]">
+                        <SelectValue placeholder="Recommendation" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Recs</SelectItem>
+                        <SelectItem value="pick">✅ Pick</SelectItem>
+                        <SelectItem value="fade">❌ Fade</SelectItem>
+                        <SelectItem value="caution">⚠️ Caution</SelectItem>
+                      </SelectContent>
+                    </Select>
+
+                    <Select value={propTypeFilter} onValueChange={setPropTypeFilter}>
+                      <SelectTrigger className="w-[130px]">
+                        <SelectValue placeholder="Prop Type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Props</SelectItem>
+                        {PROP_TYPES.map(pt => (
+                          <SelectItem key={pt} value={pt}>{pt}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Sort Row */}
+                  <div className="flex items-center justify-between border-t border-border pt-4">
+                    <div className="flex items-center gap-2">
+                      <ArrowUpDown className="w-4 h-4 text-muted-foreground" />
+                      <span className="text-sm text-muted-foreground">Sort by:</span>
+                      <Select 
+                        value={sortField} 
+                        onValueChange={(v) => {
+                          setSortField(v as SortField);
+                          if (v === 'player_name') setSortDirection('asc');
+                          else setSortDirection('desc');
+                        }}
+                      >
+                        <SelectTrigger className="w-[150px]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="created_at">📅 Date Added</SelectItem>
+                          <SelectItem value="player_name">🔤 Player Name</SelectItem>
+                          <SelectItem value="ai_confidence">📊 Confidence</SelectItem>
+                          <SelectItem value="movement">📈 Movement</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setSortDirection(d => d === 'asc' ? 'desc' : 'asc')}
+                        className="px-2"
+                      >
+                        {sortDirection === 'desc' ? (
+                          <ArrowDown className="w-4 h-4" />
+                        ) : (
+                          <ArrowUp className="w-4 h-4" />
+                        )}
+                      </Button>
+                    </div>
+
+                    {/* Results Count */}
+                    <div className="text-sm text-muted-foreground">
+                      Showing <span className="font-medium text-foreground">{filteredAndSortedProps.length}</span> of {trackedProps.length} props
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* No Results Message */}
+              {filteredAndSortedProps.length === 0 && trackedProps.length > 0 && (
+                <Card>
+                  <CardContent className="py-8 text-center">
+                    <Search className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
+                    <p className="text-muted-foreground">No props match your filters</p>
+                    <Button
+                      variant="link"
+                      onClick={() => {
+                        setSearchQuery('');
+                        setSportFilter('all');
+                        setStatusFilter('all');
+                        setRecFilter('all');
+                        setPropTypeFilter('all');
+                      }}
+                    >
+                      Clear all filters
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
+
+              {filteredAndSortedProps.map((prop) => (
               <Card key={prop.id} className="overflow-hidden">
                 <CardHeader className="pb-3">
                   <div className="flex items-center justify-between">
