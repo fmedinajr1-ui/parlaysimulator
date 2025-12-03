@@ -80,8 +80,28 @@ interface HybridScore {
   sharpScore: number;      // 0-40 points from sharp data
   userPatternScore: number; // 0-35 points from user history
   aiAccuracyScore: number;  // 0-25 points from AI track record
-  totalScore: number;       // 0-100 combined
+  calibrationScore: number; // 0-15 points from calibration factors
+  strategyScore: number;    // 0-10 points from strategy performance
+  totalScore: number;       // 0-125 combined, normalized to 0-100
   recommendation: 'STRONG_PICK' | 'PICK' | 'NEUTRAL' | 'FADE' | 'STRONG_FADE';
+  calibratedProbability?: number;
+}
+
+interface CalibrationFactor {
+  sport: string;
+  bet_type: string;
+  odds_bucket: string;
+  calibration_factor: number;
+  sample_size: number;
+  actual_win_rate: number;
+}
+
+interface StrategyPerformance {
+  strategy_name: string;
+  win_rate: number;
+  roi_percentage: number;
+  confidence_adjustment: number;
+  total_suggestions: number;
 }
 
 interface SuggestionLeg {
@@ -279,6 +299,91 @@ serve(async (req) => {
     }
 
     console.log('Accuracy metrics loaded:', Object.keys(accuracyMap).length, 'entries');
+
+    // Fetch calibration factors for probability adjustment
+    console.log('Fetching calibration factors...');
+    const { data: calibrationFactors, error: calibError } = await supabase
+      .from('ai_calibration_factors')
+      .select('*')
+      .gte('sample_size', 3);
+    
+    if (calibError) {
+      console.error('Error fetching calibration factors:', calibError);
+    }
+    console.log(`Loaded ${calibrationFactors?.length || 0} calibration factors`);
+    
+    // Build calibration lookup map
+    const calibrationMap: Record<string, CalibrationFactor> = {};
+    if (calibrationFactors) {
+      for (const factor of calibrationFactors) {
+        const key = `${factor.sport}_${factor.bet_type}_${factor.odds_bucket}`;
+        calibrationMap[key] = factor;
+        // Also store by sport+bucket for fallback
+        const sportKey = `${factor.sport}_${factor.odds_bucket}`;
+        if (!calibrationMap[sportKey]) {
+          calibrationMap[sportKey] = factor;
+        }
+      }
+    }
+    
+    // Fetch strategy performance for confidence adjustment
+    console.log('Fetching strategy performance...');
+    const { data: strategyPerformance, error: stratError } = await supabase
+      .from('strategy_performance')
+      .select('*')
+      .gte('total_suggestions', 3);
+    
+    if (stratError) {
+      console.error('Error fetching strategy performance:', stratError);
+    }
+    console.log(`Loaded ${strategyPerformance?.length || 0} strategy performance records`);
+    
+    // Build strategy lookup map
+    const strategyMap: Record<string, StrategyPerformance> = {};
+    if (strategyPerformance) {
+      for (const strat of strategyPerformance) {
+        strategyMap[strat.strategy_name] = strat;
+      }
+    }
+
+    // Helper to get calibration factor
+    const getCalibrationFactor = (sport: string, betType: string, odds: number): CalibrationFactor | null => {
+      const oddsBucket = odds <= -300 ? '-500_to_-300'
+        : odds <= -200 ? '-300_to_-200'
+        : odds <= -150 ? '-200_to_-150'
+        : odds <= -110 ? '-150_to_-110'
+        : odds <= 100 ? '-110_to_100'
+        : odds <= 150 ? '100_to_150'
+        : odds <= 200 ? '150_to_200'
+        : odds <= 300 ? '200_to_300'
+        : '300_to_500';
+      
+      // Try exact match first
+      const exactKey = `${sport}_${betType}_${oddsBucket}`;
+      if (calibrationMap[exactKey]) return calibrationMap[exactKey];
+      
+      // Try sport + bucket
+      const sportKey = `${sport}_${oddsBucket}`;
+      if (calibrationMap[sportKey]) return calibrationMap[sportKey];
+      
+      // Try just bucket
+      for (const key of Object.keys(calibrationMap)) {
+        if (key.endsWith(`_${oddsBucket}`)) {
+          return calibrationMap[key];
+        }
+      }
+      
+      return null;
+    };
+
+    // Helper to get calibrated probability
+    const getCalibratedProbability = (impliedProb: number, sport: string, betType: string, odds: number): number => {
+      const factor = getCalibrationFactor(sport, betType, odds);
+      if (factor && factor.sample_size >= 5) {
+        return Math.min(0.95, Math.max(0.05, impliedProb * factor.calibration_factor));
+      }
+      return impliedProb;
+    };
 
     // Step 2: Enhanced user pattern analysis from training data
     console.log('Analyzing user patterns for:', userId);
@@ -694,16 +799,19 @@ serve(async (req) => {
       return sportMatches || betTypeMatches || oddsInRange;
     };
 
-    // HYBRID SCORE FORMULA: Combines sharp money + user patterns + AI accuracy
+    // HYBRID SCORE FORMULA: Combines sharp money + user patterns + AI accuracy + calibration + strategy
     const calculateHybridScore = (
-      leg: { sport: string; betType: string; odds: number; description: string; eventId?: string },
+      leg: { sport: string; betType: string; odds: number; description: string; eventId?: string; impliedProbability?: number },
       sharpAlerts: any[],
       userPattern: EnhancedUserPattern,
-      accuracyMap: Record<string, AccuracyMetric>
+      accuracyMap: Record<string, AccuracyMetric>,
+      strategyType?: string
     ): HybridScore => {
       let sharpScore = 0;
       let userPatternScore = 0;
       let aiAccuracyScore = 0;
+      let calibrationScore = 0;
+      let strategyScore = 0;
 
       // SHARP SCORE (0-40 points)
       const matchingSharp = sharpAlerts.find(alert => 
@@ -768,7 +876,48 @@ serve(async (req) => {
         if (aiMetric.total_suggestions >= 10) aiAccuracyScore += 3;
       }
 
-      const totalScore = Math.max(0, Math.min(100, sharpScore + userPatternScore + aiAccuracyScore));
+      // CALIBRATION SCORE (0-15 points) - Based on historical calibration factors
+      const calibFactor = getCalibrationFactor(leg.sport, leg.betType, leg.odds);
+      if (calibFactor && calibFactor.sample_size >= 5) {
+        // Well-calibrated (factor 0.9-1.1) gets max points
+        if (calibFactor.calibration_factor >= 0.9 && calibFactor.calibration_factor <= 1.1) {
+          calibrationScore += 10;
+        }
+        // Underconfident (factor > 1.1) - actual win rate is higher than predicted
+        else if (calibFactor.calibration_factor > 1.1) {
+          calibrationScore += 15; // Bonus for underconfident bets
+        }
+        // Overconfident (factor < 0.9) - actual win rate is lower than predicted
+        else if (calibFactor.calibration_factor < 0.9) {
+          calibrationScore -= 5; // Penalty for overconfident bets
+        }
+        
+        // Sample size confidence bonus
+        if (calibFactor.sample_size >= 20) calibrationScore += 5;
+        else if (calibFactor.sample_size >= 10) calibrationScore += 2;
+      }
+
+      // STRATEGY SCORE (0-10 points) - Based on historical strategy performance
+      if (strategyType && strategyMap[strategyType]) {
+        const strat = strategyMap[strategyType];
+        
+        if (strat.win_rate >= 60) strategyScore += 10;
+        else if (strat.win_rate >= 50) strategyScore += 7;
+        else if (strat.win_rate >= 40) strategyScore += 3;
+        else if (strat.win_rate < 40 && strat.total_suggestions >= 5) strategyScore -= 5;
+        
+        // ROI bonus
+        if (strat.roi_percentage >= 10) strategyScore += 3;
+        else if (strat.roi_percentage < -10) strategyScore -= 3;
+      }
+
+      // Calculate calibrated probability
+      const impliedProb = leg.impliedProbability || americanToImplied(leg.odds);
+      const calibratedProbability = getCalibratedProbability(impliedProb, leg.sport, leg.betType, leg.odds);
+
+      // Normalized total score (max 125 -> normalize to 100)
+      const rawTotal = sharpScore + userPatternScore + aiAccuracyScore + calibrationScore + strategyScore;
+      const totalScore = Math.max(0, Math.min(100, (rawTotal / 125) * 100));
 
       // Determine recommendation
       let recommendation: HybridScore['recommendation'];
@@ -781,9 +930,12 @@ serve(async (req) => {
       return { 
         sharpScore: Math.round(sharpScore), 
         userPatternScore: Math.round(userPatternScore), 
-        aiAccuracyScore: Math.round(aiAccuracyScore), 
+        aiAccuracyScore: Math.round(aiAccuracyScore),
+        calibrationScore: Math.round(calibrationScore),
+        strategyScore: Math.round(strategyScore),
         totalScore: Math.round(totalScore), 
-        recommendation 
+        recommendation,
+        calibratedProbability,
       };
     };
 

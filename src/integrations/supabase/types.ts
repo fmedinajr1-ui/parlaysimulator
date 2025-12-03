@@ -14,6 +14,51 @@ export type Database = {
   }
   public: {
     Tables: {
+      ai_calibration_factors: {
+        Row: {
+          actual_win_rate: number
+          bet_type: string
+          calibration_factor: number
+          created_at: string
+          id: string
+          last_updated: string
+          odds_bucket: string
+          predicted_probability: number
+          sample_size: number
+          sport: string
+          total_bets: number
+          total_wins: number
+        }
+        Insert: {
+          actual_win_rate?: number
+          bet_type: string
+          calibration_factor?: number
+          created_at?: string
+          id?: string
+          last_updated?: string
+          odds_bucket: string
+          predicted_probability?: number
+          sample_size?: number
+          sport: string
+          total_bets?: number
+          total_wins?: number
+        }
+        Update: {
+          actual_win_rate?: number
+          bet_type?: string
+          calibration_factor?: number
+          created_at?: string
+          id?: string
+          last_updated?: string
+          odds_bucket?: string
+          predicted_probability?: number
+          sample_size?: number
+          sport?: string
+          total_bets?: number
+          total_wins?: number
+        }
+        Relationships: []
+      }
       ai_performance_metrics: {
         Row: {
           accuracy_rate: number
@@ -216,6 +261,7 @@ export type Database = {
           event_id: string
           final_determination_time: string | null
           final_pick: string | null
+          game_result: string | null
           id: string
           is_primary_record: boolean | null
           is_sharp_action: boolean | null
@@ -242,6 +288,7 @@ export type Database = {
           sharp_indicator: string | null
           sport: string
           trap_score: number | null
+          verified_at: string | null
         }
         Insert: {
           authenticity_confidence?: number | null
@@ -258,6 +305,7 @@ export type Database = {
           event_id: string
           final_determination_time?: string | null
           final_pick?: string | null
+          game_result?: string | null
           id?: string
           is_primary_record?: boolean | null
           is_sharp_action?: boolean | null
@@ -284,6 +332,7 @@ export type Database = {
           sharp_indicator?: string | null
           sport: string
           trap_score?: number | null
+          verified_at?: string | null
         }
         Update: {
           authenticity_confidence?: number | null
@@ -300,6 +349,7 @@ export type Database = {
           event_id?: string
           final_determination_time?: string | null
           final_pick?: string | null
+          game_result?: string | null
           id?: string
           is_primary_record?: boolean | null
           is_sharp_action?: boolean | null
@@ -326,6 +376,7 @@ export type Database = {
           sharp_indicator?: string | null
           sport?: string
           trap_score?: number | null
+          verified_at?: string | null
         }
         Relationships: []
       }
@@ -885,6 +936,51 @@ export type Database = {
         }
         Relationships: []
       }
+      strategy_performance: {
+        Row: {
+          avg_odds: number
+          confidence_adjustment: number
+          created_at: string
+          id: string
+          last_updated: string
+          roi_percentage: number
+          strategy_name: string
+          total_lost: number
+          total_pending: number
+          total_suggestions: number
+          total_won: number
+          win_rate: number
+        }
+        Insert: {
+          avg_odds?: number
+          confidence_adjustment?: number
+          created_at?: string
+          id?: string
+          last_updated?: string
+          roi_percentage?: number
+          strategy_name: string
+          total_lost?: number
+          total_pending?: number
+          total_suggestions?: number
+          total_won?: number
+          win_rate?: number
+        }
+        Update: {
+          avg_odds?: number
+          confidence_adjustment?: number
+          created_at?: string
+          id?: string
+          last_updated?: string
+          roi_percentage?: number
+          strategy_name?: string
+          total_lost?: number
+          total_pending?: number
+          total_suggestions?: number
+          total_won?: number
+          win_rate?: number
+        }
+        Relationships: []
+      }
       subscriptions: {
         Row: {
           created_at: string | null
@@ -1178,6 +1274,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      calculate_calibration_factors: { Args: never; Returns: undefined }
       check_scan_access: { Args: { p_user_id: string }; Returns: Json }
       detect_sharp_money: {
         Args: { p_point_change?: number; p_price_change: number }
@@ -1238,6 +1335,15 @@ export type Database = {
           upset_wins: number
           win_rate: number
           wins: number
+        }[]
+      }
+      get_calibrated_probability: {
+        Args: { p_bet_type: string; p_odds: number; p_sport: string }
+        Returns: {
+          calibrated_probability: number
+          calibration_factor: number
+          confidence_level: string
+          sample_size: number
         }[]
       }
       get_leaderboard_stats: {
@@ -1355,6 +1461,7 @@ export type Database = {
         Returns: boolean
       }
       increment_scan_count: { Args: { p_user_id: string }; Returns: undefined }
+      update_strategy_performance: { Args: never; Returns: undefined }
     }
     Enums: {
       app_role: "admin" | "moderator" | "user"
