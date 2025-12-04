@@ -2,7 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Sparkles, TrendingUp, Clock, ChevronRight, Target, Layers, User, BarChart3, Shield } from "lucide-react";
+import { Sparkles, TrendingUp, Clock, ChevronRight, Target, Layers, User, BarChart3, Shield, Activity, AlertTriangle, Zap, Minus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
 import { createLeg, simulateParlay } from "@/lib/parlay-calculator";
@@ -37,6 +37,72 @@ interface SuggestedParlayCardProps {
   isDataDriven?: boolean;
   isHybrid?: boolean;
 }
+
+// Helper to extract movement bucket from suggestion reason or signals
+const getMovementBucket = (reason: string): { 
+  bucket: 'extreme' | 'large' | 'moderate' | 'small' | 'minimal' | null;
+  label: string;
+  icon: typeof Activity;
+  className: string;
+  description: string;
+} | null => {
+  if (reason.includes('EXCESSIVE_MOVEMENT') || reason.includes('Extreme movement')) {
+    return { 
+      bucket: 'extreme', 
+      label: 'Extreme', 
+      icon: AlertTriangle,
+      className: 'bg-red-500/20 text-red-400 border-red-500/30',
+      description: '50+ pts move - often a trap'
+    };
+  }
+  if (reason.includes('OPTIMAL_MOVEMENT') || reason.includes('Optimal movement zone')) {
+    return { 
+      bucket: 'large', 
+      label: 'Optimal', 
+      icon: Zap,
+      className: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
+      description: '30-50 pts - highest accuracy zone'
+    };
+  }
+  if (reason.includes('MODERATE_SHARP') || reason.includes('Good movement size')) {
+    return { 
+      bucket: 'moderate', 
+      label: 'Moderate', 
+      icon: Activity,
+      className: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
+      description: '15-30 pts - solid movement'
+    };
+  }
+  if (reason.includes('MINIMAL_MOVEMENT') || reason.includes('minimal')) {
+    return { 
+      bucket: 'minimal', 
+      label: 'Minimal', 
+      icon: Minus,
+      className: 'bg-muted text-muted-foreground border-border',
+      description: '<10 pts - may be noise'
+    };
+  }
+  // Check for historical pattern signals
+  if (reason.includes('HISTORICAL_TRAP_PATTERN')) {
+    return { 
+      bucket: 'extreme', 
+      label: 'Trap Pattern', 
+      icon: AlertTriangle,
+      className: 'bg-red-500/20 text-red-400 border-red-500/30',
+      description: 'Historical trap detected'
+    };
+  }
+  if (reason.includes('HISTORICAL_WIN_PATTERN')) {
+    return { 
+      bucket: 'large', 
+      label: 'Win Pattern', 
+      icon: Zap,
+      className: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
+      description: 'Historical win pattern'
+    };
+  }
+  return null;
+};
 
 export function SuggestedParlayCard({
   legs,
@@ -104,15 +170,20 @@ export function SuggestedParlayCard({
     suggestionReason.includes('AI LOW RISK');
   
   const isHybridSuggestion = isHybrid || suggestionReason.includes('HYBRID PARLAY');
+  
+  // Get movement bucket from suggestion reason
+  const movementBucket = getMovementBucket(suggestionReason);
 
   return (
     <Card className={cn(
       "bg-card/50 border-border/50 hover:border-primary/30 transition-all duration-300",
       isHybridSuggestion && "border-neon-purple/50 bg-neon-purple/5",
-      isDataDrivenSuggestion && !isHybridSuggestion && "border-primary/40 bg-primary/5"
+      isDataDrivenSuggestion && !isHybridSuggestion && "border-primary/40 bg-primary/5",
+      movementBucket?.bucket === 'extreme' && "border-red-500/30",
+      movementBucket?.bucket === 'large' && "border-emerald-500/30"
     )}>
       <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-primary" />
             <CardTitle className="text-sm font-display">{sport} PARLAY</CardTitle>
@@ -120,7 +191,18 @@ export function SuggestedParlayCard({
               {legs.length} legs
             </Badge>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 flex-wrap">
+            {/* Movement Bucket Indicator */}
+            {movementBucket && (
+              <Badge 
+                variant="outline" 
+                className={cn("text-xs border", movementBucket.className)}
+                title={movementBucket.description}
+              >
+                <movementBucket.icon className="w-3 h-3 mr-1" />
+                {movementBucket.label}
+              </Badge>
+            )}
             {isHybridSuggestion && (
               <Badge 
                 variant="outline" 
