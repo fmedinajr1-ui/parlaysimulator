@@ -150,11 +150,11 @@ serve(async (req) => {
 
     if (!foundOdds) {
       return new Response(JSON.stringify({ 
-        success: false, 
-        error: 'Player prop not found in current odds',
+        success: true, 
+        found: false,
+        message: 'Player prop not found in current odds',
         searched: { player_name, prop_type, bookmaker }
       }), {
-        status: 404,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
@@ -163,6 +163,7 @@ serve(async (req) => {
 
     return new Response(JSON.stringify({ 
       success: true, 
+      found: true,
       odds: foundOdds 
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

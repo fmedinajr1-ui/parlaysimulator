@@ -100,18 +100,16 @@ export default function Collaborate() {
       return data;
     },
     onSuccess: (data, prop) => {
-      if (data?.found) {
+      if (data?.found && data?.odds) {
         toast({
           title: 'Odds Updated',
-          description: `${prop.player_name}: Line ${data.line}, Over ${data.over_price}, Under ${data.under_price}`,
+          description: `${prop.player_name}: Line ${data.odds.line}, Over ${data.odds.over_price}, Under ${data.odds.under_price}`,
         });
-        // Update the local data
         queryClient.invalidateQueries({ queryKey: ['collab-tracked-props'] });
       } else {
         toast({
-          title: 'Not Found',
-          description: 'Could not find current odds for this prop',
-          variant: 'destructive',
+          title: 'Not Available',
+          description: `${prop.player_name} prop not found on ${prop.bookmaker}`,
         });
       }
     },
