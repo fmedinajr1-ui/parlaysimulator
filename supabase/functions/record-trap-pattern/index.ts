@@ -74,11 +74,18 @@ serve(async (req) => {
         const hoursBeforeGame = (commenceTime.getTime() - detectedTime.getTime()) / (1000 * 60 * 60);
         const earlyMorningMove = detectedTime.getHours() >= 6 && detectedTime.getHours() <= 10;
 
-        // Generate trap signature for pattern matching
-        const trapSignature = `${leg.sport || 'unknown'}_${leg.betType || 'unknown'}_` +
-                            `${wasSingleBook ? 'single_book' : 'multi_book'}_` +
-                            `${priceOnlyMove ? 'price_only' : 'line_move'}_` +
-                            `${earlyMorningMove ? 'morning' : 'normal'}`;
+        // Determine movement size bucket
+        const movementSize = Math.abs(movement.price_change);
+        const movementBucket = 
+          movementSize >= 50 ? 'extreme' :
+          movementSize >= 30 ? 'large' :
+          movementSize >= 15 ? 'moderate' :
+          movementSize >= 10 ? 'small' : 'minimal';
+
+        // Generate trap signature for pattern matching (now includes movement bucket)
+        const trapSignature = `${leg.sport || 'unknown'}_${leg.betType || 'unknown'}_${movementBucket}_` +
+                            `${wasSingleBook ? 'single' : 'multi'}_` +
+                            `${priceOnlyMove ? 'price_only' : 'line_move'}`;
 
         // Insert trap pattern record
         const { error: insertError } = await supabase
@@ -93,7 +100,8 @@ serve(async (req) => {
             price_only_move: priceOnlyMove,
             early_morning_move: earlyMorningMove,
             both_sides_moved: bothSidesMoved,
-            movement_size: Math.abs(movement.price_change),
+            movement_size: movementSize,
+            movement_bucket: movementBucket,
             time_before_game_hours: hoursBeforeGame,
             parlay_id: parlayId,
             confirmed_trap: wasLoss,

@@ -171,7 +171,7 @@ serve(async (req) => {
     // Also check trap patterns for similar scenarios
     const { data: trapPatterns } = await supabase
       .from('trap_patterns')
-      .select('bet_type, confirmed_trap, price_only_move')
+      .select('bet_type, confirmed_trap, price_only_move, movement_size, movement_bucket')
       .eq('sport', input.sport)
       .eq('market_type', 'player_prop')
       .limit(100);
@@ -191,10 +191,65 @@ serve(async (req) => {
 
     console.log(`Historical data: ${historicalSampleSize} samples, Over: ${(historicalOverWinRate * 100).toFixed(1)}%, Under: ${(historicalUnderWinRate * 100).toFixed(1)}%`);
 
-    // Calculate movements
+    // Calculate movements (moved up for use in movement bucket analysis)
     const lineChange = input.current_line - input.opening_line;
     const overPriceChange = input.current_over_price - input.opening_over_price;
     const underPriceChange = input.current_under_price - input.opening_under_price;
+
+    // === MOVEMENT SIZE BUCKET ANALYSIS (NEW) ===
+    const maxPriceChange = Math.max(Math.abs(overPriceChange), Math.abs(underPriceChange));
+    let movementBucket: 'extreme' | 'large' | 'moderate' | 'small' | 'minimal';
+    let movementBucketSignal = '';
+    let movementBucketTrapAdjust = 0;
+    let movementBucketSharpAdjust = 0;
+
+    if (maxPriceChange >= 50) {
+      movementBucket = 'extreme';
+      movementBucketSignal = 'EXCESSIVE_MOVEMENT_WARNING';
+      movementBucketTrapAdjust = 30; // Historical 51.4% win rate = trap territory
+    } else if (maxPriceChange >= 30) {
+      movementBucket = 'large';
+      movementBucketSignal = 'OPTIMAL_MOVEMENT_ZONE';
+      movementBucketSharpAdjust = 25; // Historical 71.9% win rate = best zone
+    } else if (maxPriceChange >= 15) {
+      movementBucket = 'moderate';
+      movementBucketSignal = 'MODERATE_SHARP_ACTION';
+      movementBucketSharpAdjust = 15; // Historical 60% win rate
+    } else if (maxPriceChange >= 10) {
+      movementBucket = 'small';
+      // Neutral - 54.4% win rate
+    } else {
+      movementBucket = 'minimal';
+      movementBucketSignal = 'MINIMAL_MOVEMENT_NOISE';
+      movementBucketTrapAdjust = 10; // Too small to be meaningful
+    }
+
+    console.log(`Movement bucket: ${movementBucket} (${maxPriceChange} pts)`);
+
+    // Fetch historical outcomes for similar movement sizes
+    let historicalMovementTrapRate = 0;
+    let historicalMovementSampleSize = 0;
+    const { data: historicalBySize } = await supabase
+      .from('trap_patterns')
+      .select('confirmed_trap, movement_size')
+      .eq('sport', input.sport)
+      .gte('movement_size', maxPriceChange * 0.7)  // Within 30% range
+      .lte('movement_size', maxPriceChange * 1.3)
+      .limit(50);
+
+    if (historicalBySize && historicalBySize.length >= 10) {
+      historicalMovementSampleSize = historicalBySize.length;
+      historicalMovementTrapRate = historicalBySize.filter(p => p.confirmed_trap).length / historicalBySize.length;
+      
+      if (historicalMovementTrapRate >= 0.6) {
+        movementBucketSignal = `HISTORICAL_TRAP_PATTERN_${Math.round(historicalMovementTrapRate * 100)}%`;
+        movementBucketTrapAdjust += 25;
+      } else if (historicalMovementTrapRate <= 0.3) {
+        movementBucketSignal = `HISTORICAL_WIN_PATTERN_${Math.round((1 - historicalMovementTrapRate) * 100)}%`;
+        movementBucketSharpAdjust += 20;
+      }
+      console.log(`Historical movement pattern: ${historicalMovementSampleSize} samples, ${(historicalMovementTrapRate * 100).toFixed(1)}% trap rate`);
+    }
 
     // Determine hours to game
     let hoursToGame = 24;
@@ -325,6 +380,18 @@ serve(async (req) => {
       trapScore += 20;
     }
 
+    // === MOVEMENT SIZE BUCKET SIGNALS (NEW) ===
+    // Apply movement bucket adjustments based on historical pattern analysis
+    if (movementBucketSignal) {
+      if (movementBucketTrapAdjust > 0) {
+        signals.trap.push(movementBucketSignal);
+        trapScore += movementBucketTrapAdjust;
+      } else if (movementBucketSharpAdjust > 0) {
+        signals.sharp.push(movementBucketSignal);
+        sharpScore += movementBucketSharpAdjust;
+      }
+    }
+
     // Determine direction based on movement
     let direction: 'over' | 'under' = 'over';
     if (overPriceChange < 0) {
@@ -439,6 +506,15 @@ serve(async (req) => {
       if (signals.sharp.includes('CLV_VALUE_DETECTED')) {
         reasoning += `CLV opportunity - current price better than projected close. `;
       }
+      if (signals.sharp.includes('OPTIMAL_MOVEMENT_ZONE')) {
+        reasoning += `✅ Optimal movement zone (${maxPriceChange} pts) - historically 72% accurate. `;
+      }
+      if (signals.sharp.includes('MODERATE_SHARP_ACTION')) {
+        reasoning += `Good movement size (${maxPriceChange} pts) - historically 60% accurate. `;
+      }
+      if (signals.sharp.some(s => s.startsWith('HISTORICAL_WIN_PATTERN_'))) {
+        reasoning += `📊 Similar ${maxPriceChange}pt moves have ${Math.round((1 - historicalMovementTrapRate) * 100)}% win rate. `;
+      }
       if (calibrationApplied) {
         reasoning += `[Calibration: ${(calibrationFactor * 100).toFixed(0)}%] `;
       }
@@ -455,6 +531,12 @@ serve(async (req) => {
       }
       if (signals.trap.includes('EXTREME_JUICE_WARNING')) {
         reasoning += `Extreme juice indicates public overload. `;
+      }
+      if (signals.trap.includes('EXCESSIVE_MOVEMENT_WARNING')) {
+        reasoning += `⚠️ Extreme movement (${maxPriceChange} pts) - historically only 51% accurate, likely trap. `;
+      }
+      if (signals.trap.some(s => s.startsWith('HISTORICAL_TRAP_PATTERN_'))) {
+        reasoning += `📊 Similar ${maxPriceChange}pt moves have ${Math.round(historicalMovementTrapRate * 100)}% trap rate in this sport. `;
       }
     } else {
       reasoning = `Mixed signals - lean ${direction.toUpperCase()} based on historical patterns. `;
