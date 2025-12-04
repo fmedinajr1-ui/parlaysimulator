@@ -13,6 +13,7 @@ import Results from "./pages/Results";
 import Profile from "./pages/Profile";
 import Auth from "./pages/Auth";
 import Admin from "./pages/Admin";
+import Collaborate from "./pages/Collaborate";
 import Compare from "./pages/Compare";
 import Suggestions from "./pages/Suggestions";
 import OddsMovement from "./pages/OddsMovement";
@@ -35,6 +36,7 @@ function AnimatedRoutes() {
         <Route path="/profile" element={<Profile />} />
         <Route path="/auth" element={<Auth />} />
         <Route path="/admin" element={<Admin />} />
+        <Route path="/collaborate" element={<Collaborate />} />
         <Route path="/compare" element={<Compare />} />
         <Route path="/suggestions" element={<Suggestions />} />
         <Route path="/odds" element={<OddsMovement />} />
