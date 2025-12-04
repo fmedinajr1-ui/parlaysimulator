@@ -5,23 +5,41 @@ import { HitRateParlayCard } from "./HitRateParlayCard";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, RefreshCw, Target, Zap, TrendingUp, AlertCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+
+const HIT_RATE_OPTIONS = [
+  { value: 0.5, label: "50%+" },
+  { value: 0.6, label: "60%+" },
+  { value: 0.7, label: "70%+" },
+  { value: 0.8, label: "80%+" },
+];
+
+const getHitRateBadgeClass = (rate: number) => {
+  if (rate >= 0.9) return 'bg-neon-green/20 text-neon-green border-neon-green/30'; // Exceptional
+  if (rate >= 0.8) return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'; // Excellent
+  if (rate >= 0.7) return 'bg-neon-yellow/20 text-neon-yellow border-neon-yellow/30'; // Good
+  if (rate >= 0.6) return 'bg-amber-500/20 text-amber-400 border-amber-500/30'; // Above average
+  return 'bg-orange-500/20 text-orange-400 border-orange-500/30'; // Moderate (50-60%)
+};
 
 export function HitRatePicks() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isBuilding, setIsBuilding] = useState(false);
+  const [hitRateThreshold, setHitRateThreshold] = useState(0.6);
 
   // Fetch existing hit rate parlays
   const { data: parlays, isLoading: parlaysLoading } = useQuery({
-    queryKey: ['hitrate-parlays'],
+    queryKey: ['hitrate-parlays', hitRateThreshold],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('hitrate_parlays')
         .select('*')
         .eq('is_active', true)
+        .gte('min_hit_rate', hitRateThreshold)
         .gt('expires_at', new Date().toISOString())
         .order('created_at', { ascending: false });
       
@@ -32,12 +50,12 @@ export function HitRatePicks() {
 
   // Fetch individual high hit-rate props
   const { data: props, isLoading: propsLoading } = useQuery({
-    queryKey: ['hitrate-props'],
+    queryKey: ['hitrate-props', hitRateThreshold],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('player_prop_hitrates')
         .select('*')
-        .or('hit_rate_over.gte.0.8,hit_rate_under.gte.0.8')
+        .or(`hit_rate_over.gte.${hitRateThreshold},hit_rate_under.gte.${hitRateThreshold}`)
         .gt('expires_at', new Date().toISOString())
         .order('confidence_score', { ascending: false })
         .limit(20);
@@ -54,7 +72,7 @@ export function HitRatePicks() {
       const { data, error } = await supabase.functions.invoke('analyze-hitrate-props', {
         body: { 
           sports: ['basketball_nba', 'americanfootball_nfl', 'icehockey_nhl'],
-          minHitRate: 0.8 
+          minHitRate: hitRateThreshold 
         }
       });
 
@@ -62,10 +80,10 @@ export function HitRatePicks() {
 
       toast({
         title: "Analysis Complete",
-        description: `Found ${data.analyzed} props with 80%+ hit rates`,
+        description: `Found ${data.analyzed} props with ${Math.round(hitRateThreshold * 100)}%+ hit rates`,
       });
 
-      queryClient.invalidateQueries({ queryKey: ['hitrate-props'] });
+      queryClient.invalidateQueries({ queryKey: ['hitrate-props', hitRateThreshold] });
     } catch (error) {
       console.error('Error analyzing props:', error);
       toast({
@@ -84,7 +102,7 @@ export function HitRatePicks() {
     try {
       const { data, error } = await supabase.functions.invoke('build-hitrate-parlays', {
         body: { 
-          minHitRate: 0.8,
+          minHitRate: hitRateThreshold,
           maxLegs: 4,
           runSharpAnalysis: true
         }
@@ -97,7 +115,7 @@ export function HitRatePicks() {
         description: `Created ${data.parlaysCreated} hit rate parlays`,
       });
 
-      queryClient.invalidateQueries({ queryKey: ['hitrate-parlays'] });
+      queryClient.invalidateQueries({ queryKey: ['hitrate-parlays', hitRateThreshold] });
     } catch (error) {
       console.error('Error building parlays:', error);
       toast({
@@ -129,32 +147,54 @@ export function HitRatePicks() {
   return (
     <div className="space-y-6">
       {/* Header Actions */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <Button
-          onClick={analyzeProps}
-          disabled={isAnalyzing}
-          className="flex-1 bg-primary hover:bg-primary/90"
-        >
-          {isAnalyzing ? (
-            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-          ) : (
-            <Target className="h-4 w-4 mr-2" />
-          )}
-          Scan Hit Rates
-        </Button>
-        <Button
-          onClick={buildParlays}
-          disabled={isBuilding || !props?.length}
-          variant="outline"
-          className="flex-1 border-neon-purple/30 text-neon-purple hover:bg-neon-purple/10"
-        >
-          {isBuilding ? (
-            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-          ) : (
-            <Zap className="h-4 w-4 mr-2" />
-          )}
-          Build Parlays
-        </Button>
+      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+        {/* Hit Rate Threshold Selector */}
+        <div className="flex items-center gap-2">
+          <label className="text-sm text-muted-foreground whitespace-nowrap">Min Hit Rate:</label>
+          <Select 
+            value={String(hitRateThreshold)} 
+            onValueChange={(v) => setHitRateThreshold(Number(v))}
+          >
+            <SelectTrigger className="w-24 bg-background border-border">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-popover border-border">
+              {HIT_RATE_OPTIONS.map(opt => (
+                <SelectItem key={opt.value} value={String(opt.value)}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="flex gap-3 flex-1 w-full sm:w-auto">
+          <Button
+            onClick={analyzeProps}
+            disabled={isAnalyzing}
+            className="flex-1 bg-primary hover:bg-primary/90"
+          >
+            {isAnalyzing ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <Target className="h-4 w-4 mr-2" />
+            )}
+            Scan Hit Rates
+          </Button>
+          <Button
+            onClick={buildParlays}
+            disabled={isBuilding || !props?.length}
+            variant="outline"
+            className="flex-1 border-neon-purple/30 text-neon-purple hover:bg-neon-purple/10"
+          >
+            {isBuilding ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <Zap className="h-4 w-4 mr-2" />
+            )}
+            Build Parlays
+          </Button>
+        </div>
       </div>
 
       {/* Loading State */}
@@ -220,13 +260,7 @@ export function HitRatePicks() {
                         </div>
                       </div>
                       <div className="text-right">
-                        <Badge 
-                          className={`${
-                            bestHitRate >= 1 
-                              ? 'bg-neon-green/20 text-neon-green border-neon-green/30' 
-                              : 'bg-neon-yellow/20 text-neon-yellow border-neon-yellow/30'
-                          }`}
-                        >
+                        <Badge className={getHitRateBadgeClass(bestHitRate)}>
                           {hits}/{prop.games_analyzed} ({formatHitRate(bestHitRate)})
                         </Badge>
                         <div className="text-xs text-muted-foreground mt-1">
