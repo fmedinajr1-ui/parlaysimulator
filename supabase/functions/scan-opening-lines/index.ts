@@ -77,9 +77,12 @@ serve(async (req) => {
 
       console.log(`${relevantEvents.length} events are in the target window (4-24 hours out)`);
 
+      // Select markets based on sport
+      const marketsToScan = sport === 'americanfootball_nfl' ? NFL_MARKETS : NBA_MARKETS;
+
       // For each relevant event, fetch player props
       for (const event of relevantEvents.slice(0, 5)) { // Limit to 5 events per sport
-        for (const market of PLAYER_PROP_MARKETS.slice(0, 4)) { // Limit markets to save API calls
+        for (const market of marketsToScan.slice(0, 4)) { // Limit markets to save API calls
           try {
             const propsUrl = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${event.id}/odds?apiKey=${apiKey}&regions=us&markets=${market}&oddsFormat=american`;
             const propsRes = await fetch(propsUrl);
