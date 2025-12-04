@@ -5,9 +5,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { TrendingUp, TrendingDown, AlertTriangle, Activity, Minus, Zap, Target, Trophy, XCircle, Lightbulb, CheckCircle, Ban, Info, Calendar } from 'lucide-react';
+import { TrendingUp, TrendingDown, AlertTriangle, Activity, Minus, Zap, Target, Trophy, XCircle, Lightbulb, CheckCircle, Ban, Info, Calendar, Clock, RefreshCw } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
-import { subDays, format } from 'date-fns';
+import { subDays, format, formatDistanceToNow } from 'date-fns';
 
 type TimePeriod = '7d' | '30d' | '90d' | 'all';
 
@@ -150,6 +150,49 @@ export function MovementAccuracyDashboard() {
     },
   });
 
+  // Get the most recent data timestamp for freshness indicator
+  const { data: dataFreshness } = useQuery({
+    queryKey: ['trap-patterns-freshness', selectedSport, timePeriod],
+    queryFn: async () => {
+      let query = supabase
+        .from('trap_patterns')
+        .select('created_at')
+        .order('created_at', { ascending: false })
+        .limit(1);
+      
+      if (selectedSport !== 'all') {
+        query = query.eq('sport', selectedSport);
+      }
+
+      const periodConfig = TIME_PERIOD_CONFIG[timePeriod];
+      if (periodConfig.days) {
+        const startDate = subDays(new Date(), periodConfig.days).toISOString();
+        query = query.gte('created_at', startDate);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      
+      return data?.[0]?.created_at || null;
+    },
+  });
+
+  // Calculate freshness status
+  const freshnessStatus = useMemo(() => {
+    if (!dataFreshness) return { status: 'stale', color: 'text-muted-foreground', bg: 'bg-muted/50' };
+    
+    const lastUpdate = new Date(dataFreshness);
+    const hoursAgo = (Date.now() - lastUpdate.getTime()) / (1000 * 60 * 60);
+    
+    if (hoursAgo < 24) {
+      return { status: 'fresh', color: 'text-emerald-500', bg: 'bg-emerald-500/10', label: 'Fresh' };
+    } else if (hoursAgo < 72) {
+      return { status: 'recent', color: 'text-amber-500', bg: 'bg-amber-500/10', label: 'Recent' };
+    } else {
+      return { status: 'stale', color: 'text-red-500', bg: 'bg-red-500/10', label: 'Stale' };
+    }
+  }, [dataFreshness]);
+
   const totalPatterns = bucketStats?.reduce((sum, s) => sum + s.total, 0) || 0;
   const avgWinRate = bucketStats?.length 
     ? Math.round(bucketStats.reduce((sum, s) => sum + s.winRate * s.total, 0) / totalPatterns)
@@ -274,6 +317,35 @@ export function MovementAccuracyDashboard() {
           </div>
         ) : (
           <>
+            {/* Data Freshness Indicator */}
+            <div className={`flex items-center justify-between p-3 rounded-lg ${freshnessStatus.bg} border border-border/50`}>
+              <div className="flex items-center gap-2">
+                <Clock className={`h-4 w-4 ${freshnessStatus.color}`} />
+                <span className="text-sm">
+                  {dataFreshness ? (
+                    <>
+                      Last updated{' '}
+                      <span className={`font-medium ${freshnessStatus.color}`}>
+                        {formatDistanceToNow(new Date(dataFreshness), { addSuffix: true })}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-muted-foreground">No data available</span>
+                  )}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {dataFreshness && (
+                  <Badge variant="outline" className={freshnessStatus.color}>
+                    {freshnessStatus.label}
+                  </Badge>
+                )}
+                <span className="text-xs text-muted-foreground">
+                  {dataFreshness && format(new Date(dataFreshness), 'MMM d, h:mm a')}
+                </span>
+              </div>
+            </div>
+
             {/* Summary Stats */}
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
               <Card className="bg-muted/30">
