@@ -11,23 +11,18 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
 import { 
   FileText, 
-  Mail, 
   Loader2, 
   Shield,
   CheckCircle,
   XCircle,
   RefreshCw,
-  Download,
   Brain,
-  Upload,
   Zap,
   TrendingUp,
   Calculator
 } from 'lucide-react';
 import { AILearningDashboard } from '@/components/admin/AILearningDashboard';
-import { BulkSlipUpload } from '@/components/admin/BulkSlipUpload';
 import { SharpMoneyPanel } from '@/components/admin/SharpMoneyPanel';
-import { LineShoppingPanel } from '@/components/admin/LineShoppingPanel';
 import SharpLineCalculator from '@/components/admin/SharpLineCalculator';
 import { MovementAccuracyDashboard } from '@/components/admin/MovementAccuracyDashboard';
 
@@ -46,14 +41,6 @@ interface ParlayData {
   event_start_time: string | null;
 }
 
-interface EmailSubscriber {
-  id: string;
-  email: string;
-  subscribed_at: string;
-  is_subscribed: boolean;
-  source: string;
-}
-
 export default function Admin() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -61,7 +48,6 @@ export default function Admin() {
   const { toast } = useToast();
   
   const [parlays, setParlays] = useState<ParlayData[]>([]);
-  const [emails, setEmails] = useState<EmailSubscriber[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSettling, setIsSettling] = useState(false);
   const [activeTab, setActiveTab] = useState('ai-learning');
@@ -88,7 +74,6 @@ export default function Admin() {
   const fetchAdminData = async () => {
     setIsLoading(true);
     try {
-      // Fetch parlays - handle independently
       let typedParlays: ParlayData[] = [];
       try {
         const { data: parlaysData, error: parlaysError } = await supabase.rpc('get_all_parlays_admin');
@@ -104,24 +89,6 @@ export default function Admin() {
         console.error('Exception fetching parlays:', parlayErr);
       }
       setParlays(typedParlays);
-
-      // Fetch email subscribers - handle independently
-      let emailsData: EmailSubscriber[] = [];
-      try {
-        const { data, error: emailsError } = await supabase
-          .from('email_subscribers')
-          .select('*')
-          .order('subscribed_at', { ascending: false });
-        if (emailsError) {
-          console.error('Error fetching emails:', emailsError);
-        } else {
-          emailsData = data || [];
-        }
-      } catch (emailErr) {
-        console.error('Exception fetching emails:', emailErr);
-      }
-      setEmails(emailsData);
-
     } catch (err) {
       console.error('Error fetching admin data:', err);
       toast({
@@ -188,19 +155,6 @@ export default function Admin() {
     }
   };
 
-  const exportEmails = () => {
-    const subscribedEmails = emails.filter(e => e.is_subscribed).map(e => e.email);
-    const csv = subscribedEmails.join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'email-subscribers.csv';
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  // Batch selection handlers
   const pendingParlaysList = parlays.filter(p => !p.is_settled);
   
   const handleSelectAll = () => {
@@ -288,7 +242,7 @@ export default function Admin() {
       <div className="p-4 space-y-4">
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-8">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="ai-learning" className="text-xs">
               <Brain className="w-3 h-3 mr-1" />
               AI
@@ -305,21 +259,9 @@ export default function Admin() {
               <Calculator className="w-3 h-3 mr-1" />
               Calc
             </TabsTrigger>
-            <TabsTrigger value="line-shopping" className="text-xs">
-              <TrendingUp className="w-3 h-3 mr-1" />
-              Lines
-            </TabsTrigger>
-            <TabsTrigger value="bulk-upload" className="text-xs">
-              <Upload className="w-3 h-3 mr-1" />
-              Upload
-            </TabsTrigger>
             <TabsTrigger value="parlays" className="text-xs">
               <FileText className="w-3 h-3 mr-1" />
               Parlays
-            </TabsTrigger>
-            <TabsTrigger value="emails" className="text-xs">
-              <Mail className="w-3 h-3 mr-1" />
-              Emails
             </TabsTrigger>
           </TabsList>
 
@@ -341,16 +283,6 @@ export default function Admin() {
           {/* Sharp Line Calculator Tab */}
           <TabsContent value="sharp-calc" className="mt-4">
             <SharpLineCalculator />
-          </TabsContent>
-
-          {/* Line Shopping Tab */}
-          <TabsContent value="line-shopping" className="mt-4">
-            <LineShoppingPanel />
-          </TabsContent>
-
-          {/* Bulk Upload Tab */}
-          <TabsContent value="bulk-upload" className="mt-4">
-            <BulkSlipUpload />
           </TabsContent>
 
           {/* Parlays Tab */}
@@ -533,34 +465,6 @@ export default function Admin() {
                 </Card>
               ))}
             </div>
-          </TabsContent>
-
-          {/* Emails Tab */}
-          <TabsContent value="emails" className="space-y-3 mt-4">
-            <Button onClick={exportEmails} variant="outline" className="w-full">
-              <Download className="w-4 h-4 mr-2" />
-              Export Emails CSV
-            </Button>
-            <p className="text-sm text-muted-foreground text-center">
-              {emails.filter(e => e.is_subscribed).length} active subscribers
-            </p>
-            {emails.map(subscriber => (
-              <Card key={subscriber.id}>
-                <CardContent className="p-4">
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <p className="font-medium text-sm">{subscriber.email}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {new Date(subscriber.subscribed_at).toLocaleDateString()} • {subscriber.source}
-                      </p>
-                    </div>
-                    <Badge variant={subscriber.is_subscribed ? "default" : "secondary"}>
-                      {subscriber.is_subscribed ? 'Active' : 'Unsubscribed'}
-                    </Badge>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
           </TabsContent>
         </Tabs>
       </div>
