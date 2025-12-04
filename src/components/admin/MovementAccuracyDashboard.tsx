@@ -5,8 +5,18 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { TrendingUp, TrendingDown, AlertTriangle, Activity, Minus, Zap, Target, Trophy, XCircle, Lightbulb, CheckCircle, Ban, Info } from 'lucide-react';
+import { TrendingUp, TrendingDown, AlertTriangle, Activity, Minus, Zap, Target, Trophy, XCircle, Lightbulb, CheckCircle, Ban, Info, Calendar } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
+import { subDays, format } from 'date-fns';
+
+type TimePeriod = '7d' | '30d' | '90d' | 'all';
+
+const TIME_PERIOD_CONFIG: Record<TimePeriod, { label: string; days: number | null }> = {
+  '7d': { label: 'Last 7 Days', days: 7 },
+  '30d': { label: 'Last 30 Days', days: 30 },
+  '90d': { label: 'Last 90 Days', days: 90 },
+  'all': { label: 'All Time', days: null },
+};
 
 interface MovementBucketStats {
   bucket: string;
@@ -62,16 +72,24 @@ const BUCKET_CONFIG: Record<string, { label: string; icon: React.ReactNode; colo
 
 export function MovementAccuracyDashboard() {
   const [selectedSport, setSelectedSport] = useState<string>('all');
+  const [timePeriod, setTimePeriod] = useState<TimePeriod>('30d');
 
   const { data: bucketStats, isLoading } = useQuery({
-    queryKey: ['movement-accuracy-by-bucket', selectedSport],
+    queryKey: ['movement-accuracy-by-bucket', selectedSport, timePeriod],
     queryFn: async () => {
       let query = supabase
         .from('trap_patterns')
-        .select('movement_bucket, confirmed_trap, movement_size');
+        .select('movement_bucket, confirmed_trap, movement_size, created_at');
       
       if (selectedSport !== 'all') {
         query = query.eq('sport', selectedSport);
+      }
+
+      // Apply time period filter
+      const periodConfig = TIME_PERIOD_CONFIG[timePeriod];
+      if (periodConfig.days) {
+        const startDate = subDays(new Date(), periodConfig.days).toISOString();
+        query = query.gte('created_at', startDate);
       }
 
       const { data, error } = await query;
@@ -206,27 +224,42 @@ export function MovementAccuracyDashboard() {
   return (
     <Card>
       <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <Target className="h-5 w-5 text-primary" />
-              Movement Accuracy by Bucket
-            </CardTitle>
-            <CardDescription>
-              Historical win rates based on line movement size classification
-            </CardDescription>
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Target className="h-5 w-5 text-primary" />
+                Movement Accuracy by Bucket
+              </CardTitle>
+              <CardDescription>
+                Historical win rates based on line movement size classification
+              </CardDescription>
+            </div>
           </div>
-          <Select value={selectedSport} onValueChange={setSelectedSport}>
-            <SelectTrigger className="w-[140px]">
-              <SelectValue placeholder="All Sports" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Sports</SelectItem>
-              {sports?.map(sport => (
-                <SelectItem key={sport} value={sport}>{sport.toUpperCase()}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="flex items-center gap-2">
+            <Select value={timePeriod} onValueChange={(v) => setTimePeriod(v as TimePeriod)}>
+              <SelectTrigger className="w-[140px]">
+                <Calendar className="h-4 w-4 mr-2" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Object.entries(TIME_PERIOD_CONFIG).map(([key, config]) => (
+                  <SelectItem key={key} value={key}>{config.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={selectedSport} onValueChange={setSelectedSport}>
+              <SelectTrigger className="w-[140px]">
+                <SelectValue placeholder="All Sports" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Sports</SelectItem>
+                {sports?.map(sport => (
+                  <SelectItem key={sport} value={sport}>{sport.toUpperCase()}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-6">
