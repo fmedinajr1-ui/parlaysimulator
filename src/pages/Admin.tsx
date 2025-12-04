@@ -29,6 +29,7 @@ import { BulkSlipUpload } from '@/components/admin/BulkSlipUpload';
 import { SharpMoneyPanel } from '@/components/admin/SharpMoneyPanel';
 import { LineShoppingPanel } from '@/components/admin/LineShoppingPanel';
 import SharpLineCalculator from '@/components/admin/SharpLineCalculator';
+import { MovementAccuracyDashboard } from '@/components/admin/MovementAccuracyDashboard';
 
 interface ParlayData {
   id: string;
@@ -287,7 +288,7 @@ export default function Admin() {
       <div className="p-4 space-y-4">
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-7">
+          <TabsList className="grid w-full grid-cols-8">
             <TabsTrigger value="ai-learning" className="text-xs">
               <Brain className="w-3 h-3 mr-1" />
               AI
@@ -295,6 +296,10 @@ export default function Admin() {
             <TabsTrigger value="sharp-money" className="text-xs">
               <Zap className="w-3 h-3 mr-1" />
               Sharp
+            </TabsTrigger>
+            <TabsTrigger value="movement" className="text-xs">
+              <TrendingUp className="w-3 h-3 mr-1" />
+              Move
             </TabsTrigger>
             <TabsTrigger value="sharp-calc" className="text-xs">
               <Calculator className="w-3 h-3 mr-1" />
@@ -326,6 +331,11 @@ export default function Admin() {
           {/* Sharp Money Tab */}
           <TabsContent value="sharp-money" className="mt-4">
             <SharpMoneyPanel />
+          </TabsContent>
+
+          {/* Movement Accuracy Tab */}
+          <TabsContent value="movement" className="mt-4">
+            <MovementAccuracyDashboard />
           </TabsContent>
 
           {/* Sharp Line Calculator Tab */}
