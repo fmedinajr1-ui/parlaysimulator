@@ -11,18 +11,22 @@ const SPORT_KEYS: Record<string, string> = {
   'americanfootball_nfl': 'americanfootball_nfl'
 };
 
-const PLAYER_PROP_MARKETS = [
+const NBA_MARKETS = [
   'player_points',
   'player_rebounds', 
   'player_assists',
   'player_threes',
   'player_blocks',
-  'player_steals',
-  'player_points_rebounds_assists',
+  'player_steals'
+];
+
+const NFL_MARKETS = [
   'player_pass_yds',
   'player_rush_yds',
   'player_reception_yds',
-  'player_anytime_td'
+  'player_anytime_td',
+  'player_pass_tds',
+  'player_receptions'
 ];
 
 serve(async (req) => {
