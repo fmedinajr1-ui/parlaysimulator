@@ -101,15 +101,18 @@ export default function Collaborate() {
     },
     onSuccess: (data, prop) => {
       if (data?.found && data?.odds) {
+        const differentBook = data.found_on_different_book;
         toast({
-          title: 'Odds Updated',
-          description: `${prop.player_name}: Line ${data.odds.line}, Over ${data.odds.over_price}, Under ${data.odds.under_price}`,
+          title: differentBook ? 'Found on Different Book' : 'Odds Updated',
+          description: differentBook 
+            ? `${prop.player_name}: Found on ${data.odds.bookmaker} instead - Line ${data.odds.line}, Over ${data.odds.over_price}, Under ${data.odds.under_price}`
+            : `${prop.player_name}: Line ${data.odds.line}, Over ${data.odds.over_price}, Under ${data.odds.under_price}`,
         });
         queryClient.invalidateQueries({ queryKey: ['collab-tracked-props'] });
       } else {
         toast({
           title: 'Not Available',
-          description: `${prop.player_name} prop not found on ${prop.bookmaker}`,
+          description: `${prop.player_name} prop not found on any bookmaker`,
         });
       }
     },
