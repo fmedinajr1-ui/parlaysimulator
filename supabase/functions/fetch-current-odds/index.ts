@@ -30,9 +30,9 @@ serve(async (req) => {
   }
 
   try {
-    const { event_id, sport, player_name, prop_type, bookmaker } = await req.json();
+    const { event_id, sport, player_name, prop_type, bookmaker, search_all_books = false } = await req.json();
     
-    console.log('Fetching current odds for:', { event_id, sport, player_name, prop_type, bookmaker });
+    console.log('Fetching current odds for:', { event_id, sport, player_name, prop_type, bookmaker, search_all_books });
 
     const apiKey = Deno.env.get('THE_ODDS_API_KEY');
     if (!apiKey) {
@@ -57,79 +57,37 @@ serve(async (req) => {
     const data = await response.json();
     console.log('API response bookmakers:', data.bookmakers?.length || 0);
 
-    // Find the specific bookmaker and player
-    let foundOdds = null;
-    
-    for (const bookie of data.bookmakers || []) {
-      // Check if this is the bookmaker we want (or any if not specified)
-      if (bookmaker && bookie.key !== bookmaker) continue;
-      
-      for (const marketData of bookie.markets || []) {
-        // Group outcomes by player
-        const playerOutcomes: Record<string, any[]> = {};
+    // Helper function to search for player odds in bookmakers
+    const findPlayerOdds = (bookmakers: any[], targetBookmaker?: string) => {
+      for (const bookie of bookmakers || []) {
+        // Skip if we're looking for a specific bookmaker and this isn't it
+        if (targetBookmaker && bookie.key !== targetBookmaker) continue;
         
-        for (const outcome of marketData.outcomes || []) {
-          const playerKey = outcome.description || outcome.name;
-          if (!playerOutcomes[playerKey]) {
-            playerOutcomes[playerKey] = [];
-          }
-          playerOutcomes[playerKey].push(outcome);
-        }
-
-        // Find the player we're looking for (fuzzy match)
-        for (const [name, outcomes] of Object.entries(playerOutcomes)) {
-          const normalizedSearchName = player_name.toLowerCase().replace(/[^a-z]/g, '');
-          const normalizedFoundName = name.toLowerCase().replace(/[^a-z]/g, '');
-          
-          if (normalizedFoundName.includes(normalizedSearchName) || 
-              normalizedSearchName.includes(normalizedFoundName)) {
-            
-            const overOutcome = outcomes.find((o: any) => o.name === 'Over');
-            const underOutcome = outcomes.find((o: any) => o.name === 'Under');
-
-            if (overOutcome && underOutcome) {
-              foundOdds = {
-                player_name: name,
-                bookmaker: bookie.key,
-                market: marketData.key,
-                line: overOutcome.point,
-                over_price: overOutcome.price,
-                under_price: underOutcome.price,
-                last_update: bookie.last_update
-              };
-              break;
-            }
-          }
-        }
-        
-        if (foundOdds) break;
-      }
-      
-      if (foundOdds) break;
-    }
-
-    if (!foundOdds) {
-      // Try to find any matching player prop across all bookmakers
-      for (const bookie of data.bookmakers || []) {
         for (const marketData of bookie.markets || []) {
+          // Group outcomes by player
+          const playerOutcomes: Record<string, any[]> = {};
+          
           for (const outcome of marketData.outcomes || []) {
-            const name = outcome.description || '';
+            const playerKey = outcome.description || outcome.name;
+            if (!playerOutcomes[playerKey]) {
+              playerOutcomes[playerKey] = [];
+            }
+            playerOutcomes[playerKey].push(outcome);
+          }
+
+          // Find the player we're looking for (fuzzy match)
+          for (const [name, outcomes] of Object.entries(playerOutcomes)) {
             const normalizedSearchName = player_name.toLowerCase().replace(/[^a-z]/g, '');
             const normalizedFoundName = name.toLowerCase().replace(/[^a-z]/g, '');
             
             if (normalizedFoundName.includes(normalizedSearchName) || 
                 normalizedSearchName.includes(normalizedFoundName)) {
               
-              // Found a match, get the pair
-              const allOutcomes = marketData.outcomes.filter((o: any) => 
-                (o.description || '').toLowerCase().replace(/[^a-z]/g, '') === normalizedFoundName
-              );
-              
-              const overOutcome = allOutcomes.find((o: any) => o.name === 'Over');
-              const underOutcome = allOutcomes.find((o: any) => o.name === 'Under');
+              const overOutcome = outcomes.find((o: any) => o.name === 'Over');
+              const underOutcome = outcomes.find((o: any) => o.name === 'Under');
 
               if (overOutcome && underOutcome) {
-                foundOdds = {
+                return {
                   player_name: name,
                   bookmaker: bookie.key,
                   market: marketData.key,
@@ -138,14 +96,26 @@ serve(async (req) => {
                   under_price: underOutcome.price,
                   last_update: bookie.last_update
                 };
-                break;
               }
             }
           }
-          if (foundOdds) break;
         }
-        if (foundOdds) break;
       }
+      return null;
+    };
+
+    // First try the specific bookmaker if provided and not searching all
+    let foundOdds = null;
+    let searchedAllBooks = false;
+    
+    if (bookmaker && !search_all_books) {
+      foundOdds = findPlayerOdds(data.bookmakers, bookmaker);
+    }
+    
+    // If not found on specific bookmaker, search all bookmakers
+    if (!foundOdds) {
+      foundOdds = findPlayerOdds(data.bookmakers);
+      searchedAllBooks = true;
     }
 
     if (!foundOdds) {
@@ -159,12 +129,14 @@ serve(async (req) => {
       });
     }
 
-    console.log('Found odds:', foundOdds);
+    console.log('Found odds:', foundOdds, 'searched all books:', searchedAllBooks);
 
     return new Response(JSON.stringify({ 
       success: true, 
       found: true,
-      odds: foundOdds 
+      odds: foundOdds,
+      found_on_different_book: searchedAllBooks && bookmaker && foundOdds.bookmaker !== bookmaker,
+      original_bookmaker: bookmaker
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
