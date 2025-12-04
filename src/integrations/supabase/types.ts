@@ -1184,6 +1184,7 @@ export type Database = {
           id: string
           loss_amount: number | null
           market_type: string
+          movement_bucket: string | null
           movement_size: number | null
           original_movement_id: string | null
           parlay_id: string | null
@@ -1203,6 +1204,7 @@ export type Database = {
           id?: string
           loss_amount?: number | null
           market_type: string
+          movement_bucket?: string | null
           movement_size?: number | null
           original_movement_id?: string | null
           parlay_id?: string | null
@@ -1222,6 +1224,7 @@ export type Database = {
           id?: string
           loss_amount?: number | null
           market_type?: string
+          movement_bucket?: string | null
           movement_size?: number | null
           original_movement_id?: string | null
           parlay_id?: string | null
@@ -1360,6 +1363,20 @@ export type Database = {
           total_wins: number
           user_id: string
           username: string
+        }[]
+      }
+      get_movement_accuracy: {
+        Args: {
+          p_max_movement: number
+          p_min_movement: number
+          p_sport: string
+        }
+        Returns: {
+          recommendation: string
+          total_patterns: number
+          trap_count: number
+          trap_rate: number
+          win_count: number
         }[]
       }
       get_recent_line_movements: {
