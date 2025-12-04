@@ -1478,6 +1478,7 @@ export type Database = {
         Returns: boolean
       }
       increment_scan_count: { Args: { p_user_id: string }; Returns: undefined }
+      is_collaborator: { Args: { _user_id: string }; Returns: boolean }
       update_strategy_performance: { Args: never; Returns: undefined }
     }
     Enums: {

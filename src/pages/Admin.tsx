@@ -19,12 +19,14 @@ import {
   Brain,
   Zap,
   TrendingUp,
-  Calculator
+  Calculator,
+  Users
 } from 'lucide-react';
 import { AILearningDashboard } from '@/components/admin/AILearningDashboard';
 import { SharpMoneyPanel } from '@/components/admin/SharpMoneyPanel';
 import SharpLineCalculator from '@/components/admin/SharpLineCalculator';
 import { MovementAccuracyDashboard } from '@/components/admin/MovementAccuracyDashboard';
+import { CollaboratorManager } from '@/components/admin/CollaboratorManager';
 
 interface ParlayData {
   id: string;
@@ -242,7 +244,7 @@ export default function Admin() {
       <div className="p-4 space-y-4">
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="ai-learning" className="text-xs">
               <Brain className="w-3 h-3 mr-1" />
               AI
@@ -258,6 +260,10 @@ export default function Admin() {
             <TabsTrigger value="sharp-calc" className="text-xs">
               <Calculator className="w-3 h-3 mr-1" />
               Calc
+            </TabsTrigger>
+            <TabsTrigger value="collab" className="text-xs">
+              <Users className="w-3 h-3 mr-1" />
+              Collab
             </TabsTrigger>
             <TabsTrigger value="parlays" className="text-xs">
               <FileText className="w-3 h-3 mr-1" />
@@ -283,6 +289,11 @@ export default function Admin() {
           {/* Sharp Line Calculator Tab */}
           <TabsContent value="sharp-calc" className="mt-4">
             <SharpLineCalculator />
+          </TabsContent>
+
+          {/* Collaborator Management Tab */}
+          <TabsContent value="collab" className="mt-4">
+            <CollaboratorManager />
           </TabsContent>
 
           {/* Parlays Tab */}
