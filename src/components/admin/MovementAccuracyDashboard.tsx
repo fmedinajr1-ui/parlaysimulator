@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, Legend } from 'recharts';
-import { TrendingUp, TrendingDown, AlertTriangle, Activity, Minus, Zap, Target, Trophy, XCircle } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { TrendingUp, TrendingDown, AlertTriangle, Activity, Minus, Zap, Target, Trophy, XCircle, Lightbulb, CheckCircle, Ban, Info } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 
 interface MovementBucketStats {
@@ -15,6 +15,16 @@ interface MovementBucketStats {
   traps: number;
   winRate: number;
   trapRate: number;
+}
+
+interface Recommendation {
+  type: 'optimal' | 'caution' | 'avoid';
+  bucket: string;
+  label: string;
+  winRate: number;
+  confidence: 'high' | 'medium' | 'low';
+  sampleSize: number;
+  reason: string;
 }
 
 const BUCKET_CONFIG: Record<string, { label: string; icon: React.ReactNode; color: string; barColor: string }> = {
@@ -126,6 +136,64 @@ export function MovementAccuracyDashboard() {
   const avgWinRate = bucketStats?.length 
     ? Math.round(bucketStats.reduce((sum, s) => sum + s.winRate * s.total, 0) / totalPatterns)
     : 0;
+
+  // Recommendation Engine
+  const recommendations = useMemo((): Recommendation[] => {
+    if (!bucketStats || bucketStats.length === 0) return [];
+
+    const recs: Recommendation[] = [];
+    const MIN_SAMPLE_HIGH = 20;
+    const MIN_SAMPLE_MEDIUM = 10;
+    const WIN_RATE_OPTIMAL = 55;
+    const WIN_RATE_CAUTION = 45;
+
+    bucketStats.forEach((stat) => {
+      const config = BUCKET_CONFIG[stat.bucket];
+      const confidence: 'high' | 'medium' | 'low' = 
+        stat.total >= MIN_SAMPLE_HIGH ? 'high' : 
+        stat.total >= MIN_SAMPLE_MEDIUM ? 'medium' : 'low';
+
+      if (stat.winRate >= WIN_RATE_OPTIMAL && stat.total >= MIN_SAMPLE_MEDIUM) {
+        recs.push({
+          type: 'optimal',
+          bucket: stat.bucket,
+          label: config?.label || stat.bucket,
+          winRate: stat.winRate,
+          confidence,
+          sampleSize: stat.total,
+          reason: `${stat.winRate}% historical win rate with ${stat.total} samples suggests this is a reliable movement range.`
+        });
+      } else if (stat.winRate < WIN_RATE_CAUTION && stat.total >= MIN_SAMPLE_MEDIUM) {
+        recs.push({
+          type: 'avoid',
+          bucket: stat.bucket,
+          label: config?.label || stat.bucket,
+          winRate: stat.winRate,
+          confidence,
+          sampleSize: stat.total,
+          reason: `${stat.trapRate}% trap rate indicates high risk. Consider fading or avoiding bets in this range.`
+        });
+      } else if (stat.total >= MIN_SAMPLE_MEDIUM) {
+        recs.push({
+          type: 'caution',
+          bucket: stat.bucket,
+          label: config?.label || stat.bucket,
+          winRate: stat.winRate,
+          confidence,
+          sampleSize: stat.total,
+          reason: `Mixed results with ${stat.winRate}% win rate. Use additional signals before betting.`
+        });
+      }
+    });
+
+    // Sort by type priority: optimal first, then caution, then avoid
+    const typePriority = { optimal: 0, caution: 1, avoid: 2 };
+    return recs.sort((a, b) => typePriority[a.type] - typePriority[b.type]);
+  }, [bucketStats]);
+
+  const optimalRanges = recommendations.filter(r => r.type === 'optimal');
+  const cautionRanges = recommendations.filter(r => r.type === 'caution');
+  const avoidRanges = recommendations.filter(r => r.type === 'avoid');
 
   const chartData = bucketStats?.map(s => ({
     name: BUCKET_CONFIG[s.bucket]?.label || s.bucket,
@@ -285,6 +353,111 @@ export function MovementAccuracyDashboard() {
                 );
               })}
             </div>
+
+            {/* Recommendation Engine */}
+            {recommendations.length > 0 && (
+              <Card className="border-primary/20 bg-gradient-to-br from-primary/5 to-transparent">
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <Lightbulb className="h-5 w-5 text-primary" />
+                    Recommendation Engine
+                  </CardTitle>
+                  <CardDescription>
+                    AI-powered suggestions based on {totalPatterns} historical patterns
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* Optimal Ranges */}
+                  {optimalRanges.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 text-sm font-medium text-emerald-500">
+                        <CheckCircle className="h-4 w-4" />
+                        Optimal Movement Ranges
+                      </div>
+                      {optimalRanges.map((rec) => (
+                        <div key={rec.bucket} className="ml-6 p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="font-medium">{rec.label}</span>
+                            <div className="flex items-center gap-2">
+                              <Badge variant="outline" className="text-emerald-500 border-emerald-500/30">
+                                {rec.winRate}% Win Rate
+                              </Badge>
+                              <Badge variant="secondary" className="text-xs">
+                                {rec.confidence} confidence
+                              </Badge>
+                            </div>
+                          </div>
+                          <p className="text-sm text-muted-foreground">{rec.reason}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Caution Ranges */}
+                  {cautionRanges.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 text-sm font-medium text-amber-500">
+                        <Info className="h-4 w-4" />
+                        Exercise Caution
+                      </div>
+                      {cautionRanges.map((rec) => (
+                        <div key={rec.bucket} className="ml-6 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="font-medium">{rec.label}</span>
+                            <div className="flex items-center gap-2">
+                              <Badge variant="outline" className="text-amber-500 border-amber-500/30">
+                                {rec.winRate}% Win Rate
+                              </Badge>
+                              <Badge variant="secondary" className="text-xs">
+                                {rec.confidence} confidence
+                              </Badge>
+                            </div>
+                          </div>
+                          <p className="text-sm text-muted-foreground">{rec.reason}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Avoid Ranges */}
+                  {avoidRanges.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 text-sm font-medium text-red-500">
+                        <Ban className="h-4 w-4" />
+                        Avoid These Ranges
+                      </div>
+                      {avoidRanges.map((rec) => (
+                        <div key={rec.bucket} className="ml-6 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="font-medium">{rec.label}</span>
+                            <div className="flex items-center gap-2">
+                              <Badge variant="outline" className="text-red-500 border-red-500/30">
+                                {rec.winRate}% Win Rate
+                              </Badge>
+                              <Badge variant="secondary" className="text-xs">
+                                {rec.confidence} confidence
+                              </Badge>
+                            </div>
+                          </div>
+                          <p className="text-sm text-muted-foreground">{rec.reason}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Quick Summary */}
+                  <div className="pt-3 border-t border-border/50">
+                    <p className="text-sm text-muted-foreground">
+                      <span className="font-medium text-foreground">Quick Summary: </span>
+                      {optimalRanges.length > 0 
+                        ? `Focus on ${optimalRanges.map(r => r.label).join(', ')} for best results.`
+                        : 'Not enough data to recommend optimal ranges yet.'}
+                      {avoidRanges.length > 0 && ` Avoid ${avoidRanges.map(r => r.label).join(', ')}.`}
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
             {/* Insights */}
             {bucketStats && bucketStats.length > 0 && (
