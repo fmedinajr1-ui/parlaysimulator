@@ -11,6 +11,7 @@ import { AIPerformanceCard } from '@/components/profile/AIPerformanceCard';
 import { AISuggestionsCard } from '@/components/profile/AISuggestionsCard';
 import { BettingCalendarCard } from '@/components/profile/BettingCalendarCard';
 import { UpsetTrackerCard } from '@/components/profile/UpsetTrackerCard';
+import { TodaysUpsetPredictions } from '@/components/profile/TodaysUpsetPredictions';
 import { NotificationPreferences } from '@/components/profile/NotificationPreferences';
 import { Button } from '@/components/ui/button';
 import { Loader2, LogOut, Upload, CreditCard, Crown, User, Settings } from 'lucide-react';
@@ -216,6 +217,11 @@ const Profile = () => {
         {/* Smart Betting Calendar */}
         <div className="mt-4">
           <BettingCalendarCard userId={user!.id} />
+        </div>
+
+        {/* Today's Upset Predictions */}
+        <div className="mt-4">
+          <TodaysUpsetPredictions userId={user!.id} />
         </div>
 
         {/* Upset Tracker */}

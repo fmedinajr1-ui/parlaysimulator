@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { FeedCard } from '@/components/FeedCard';
-import { Target, TrendingUp, Trophy, Zap, BarChart3 } from 'lucide-react';
+import { Target, TrendingUp, Trophy, Zap, BarChart3, Sparkles, ChevronRight } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import { Link } from 'react-router-dom';
 
 interface UpsetPattern {
   team: string;
@@ -48,6 +49,17 @@ interface UpsetTrackerCardProps {
   userId: string;
 }
 
+interface QuickPrediction {
+  gameId: string;
+  sport: string;
+  homeTeam: string;
+  awayTeam: string;
+  underdog: string;
+  underdogOdds: number;
+  upsetScore: number;
+  confidence: 'high' | 'medium' | 'low';
+}
+
 const SPORT_EMOJIS: Record<string, string> = {
   'NFL': '🏈',
   'NBA': '🏀',
@@ -64,9 +76,12 @@ const SPORT_EMOJIS: Record<string, string> = {
 export function UpsetTrackerCard({ userId }: UpsetTrackerCardProps) {
   const [data, setData] = useState<UpsetData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [quickPredictions, setQuickPredictions] = useState<QuickPrediction[]>([]);
+  const [predictionsLoading, setPredictionsLoading] = useState(true);
 
   useEffect(() => {
     fetchUpsetData();
+    fetchQuickPredictions();
   }, [userId]);
 
   const fetchUpsetData = async () => {
@@ -88,6 +103,34 @@ export function UpsetTrackerCard({ userId }: UpsetTrackerCardProps) {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const fetchQuickPredictions = async () => {
+    try {
+      const { data: result, error } = await supabase.functions.invoke('predict-upsets', {
+        body: { userId }
+      });
+
+      if (error) throw error;
+      setQuickPredictions((result.predictions || []).slice(0, 3));
+    } catch (error) {
+      console.error('Error fetching predictions:', error);
+    } finally {
+      setPredictionsLoading(false);
+    }
+  };
+
+  const SPORT_EMOJIS_LOCAL: Record<string, string> = {
+    'NFL': '🏈',
+    'NBA': '🏀',
+    'NHL': '🏒',
+    'NCAAB': '🏀',
+  };
+
+  const getScoreColor = (score: number) => {
+    if (score >= 60) return 'text-green-400';
+    if (score >= 35) return 'text-yellow-400';
+    return 'text-muted-foreground';
   };
 
   const formatOdds = (odds: number) => {
@@ -142,6 +185,60 @@ export function UpsetTrackerCard({ userId }: UpsetTrackerCardProps) {
           Underdog Wins
         </Badge>
       </div>
+
+      {/* Today's Quick Alerts */}
+      {!predictionsLoading && quickPredictions.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-sm font-medium text-purple-400">
+              <Sparkles className="w-4 h-4" />
+              <span>TODAY'S ALERTS</span>
+            </div>
+            <Link 
+              to="/suggestions" 
+              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              See All <ChevronRight className="w-3 h-3" />
+            </Link>
+          </div>
+          
+          <div className="space-y-2">
+            {quickPredictions.map((pred) => (
+              <div 
+                key={pred.gameId}
+                className="flex items-center justify-between p-2 rounded-lg bg-purple-500/10 border border-purple-500/20"
+              >
+                <div className="flex items-center gap-2 flex-1 min-w-0">
+                  <span className="text-sm">{SPORT_EMOJIS_LOCAL[pred.sport] || '🎯'}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-medium text-foreground truncate">
+                      {pred.underdog} <span className="text-orange-400">+{pred.underdogOdds}</span>
+                    </p>
+                    <p className="text-[10px] text-muted-foreground truncate">
+                      vs {pred.underdog === pred.homeTeam ? pred.awayTeam : pred.homeTeam}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className={`text-lg font-bold ${getScoreColor(pred.upsetScore)}`}>
+                    {pred.upsetScore}
+                  </div>
+                  <Badge 
+                    variant="outline" 
+                    className={`text-[9px] ${
+                      pred.confidence === 'high' ? 'border-green-500/30 text-green-400' :
+                      pred.confidence === 'medium' ? 'border-yellow-500/30 text-yellow-400' :
+                      'border-gray-500/30 text-gray-400'
+                    }`}
+                  >
+                    {pred.confidence}
+                  </Badge>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Summary Stats */}
       <div className="grid grid-cols-3 gap-3">
