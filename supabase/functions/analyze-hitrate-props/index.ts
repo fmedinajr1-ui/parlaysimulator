@@ -216,29 +216,108 @@ async function fetchPlayerStats(playerName: string, sport: string, propType: str
   return [];
 }
 
-// Calculate hit rate
+// Calculate hit rate with streak analysis
 function calculateHitRate(gameLogs: any[], line: number) {
   let overHits = 0, underHits = 0;
-  gameLogs.forEach(g => {
-    if (g.stat_value > line) overHits++;
-    else if (g.stat_value < line) underHits++;
+  let currentStreak = 0;
+  let streakDirection: 'over' | 'under' | null = null;
+  let maxStreak = 0;
+  
+  // Sort by date (most recent first) for streak calculation
+  const sortedLogs = [...gameLogs].sort((a, b) => 
+    new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime()
+  );
+  
+  sortedLogs.forEach((g, idx) => {
+    const value = g.stat_value ?? 0;
+    const isOver = value > line;
+    const isUnder = value < line;
+    
+    if (isOver) {
+      overHits++;
+      if (streakDirection === 'over') {
+        currentStreak++;
+      } else {
+        streakDirection = 'over';
+        currentStreak = 1;
+      }
+    } else if (isUnder) {
+      underHits++;
+      if (streakDirection === 'under') {
+        currentStreak++;
+      } else {
+        streakDirection = 'under';
+        currentStreak = 1;
+      }
+    }
+    
+    maxStreak = Math.max(maxStreak, currentStreak);
   });
+  
   const total = gameLogs.length;
+  
+  // Weight recent games more heavily (last 3 games worth 1.5x)
+  let weightedOverHits = 0;
+  let weightedUnderHits = 0;
+  let totalWeight = 0;
+  
+  sortedLogs.forEach((g, idx) => {
+    const weight = idx < 3 ? 1.5 : 1.0;
+    const value = g.stat_value ?? 0;
+    
+    if (value > line) weightedOverHits += weight;
+    else if (value < line) weightedUnderHits += weight;
+    totalWeight += weight;
+  });
+  
   return {
     overHits,
     underHits,
     hitRateOver: total > 0 ? overHits / total : 0,
-    hitRateUnder: total > 0 ? underHits / total : 0
+    hitRateUnder: total > 0 ? underHits / total : 0,
+    weightedOverRate: totalWeight > 0 ? weightedOverHits / totalWeight : 0,
+    weightedUnderRate: totalWeight > 0 ? weightedUnderHits / totalWeight : 0,
+    currentStreak,
+    streakDirection,
+    maxStreak
   };
 }
 
-// Calculate confidence score
-function calculateConfidence(gameLogs: any[], line: number, hitRate: number): number {
+// Calculate confidence score with trend analysis
+function calculateConfidence(gameLogs: any[], line: number, hitRate: number, hitRateData: any): number {
   if (gameLogs.length === 0) return 0;
+  
   let confidence = hitRate * 100;
-  const margins = gameLogs.map(g => Math.abs((g.stat_value || 0) - line));
+  
+  // Margin analysis - how much do they typically beat/miss the line?
+  const margins = gameLogs.map(g => (g.stat_value || 0) - line);
   const avgMargin = margins.reduce((a, b) => a + b, 0) / margins.length;
-  confidence += Math.min(avgMargin / Math.max(line, 1) * 20, 15);
+  const absAvgMargin = Math.abs(avgMargin);
+  
+  // Boost for consistently beating/missing by a good margin
+  confidence += Math.min(absAvgMargin / Math.max(line, 1) * 20, 15);
+  
+  // Streak bonus (3+ games in a row = +10%)
+  if (hitRateData.currentStreak >= 3) {
+    confidence += 10;
+  } else if (hitRateData.currentStreak >= 2) {
+    confidence += 5;
+  }
+  
+  // Weighted recent games bonus
+  const weightedRate = hitRateData.streakDirection === 'over' 
+    ? hitRateData.weightedOverRate 
+    : hitRateData.weightedUnderRate;
+  
+  if (weightedRate > hitRate) {
+    confidence += 5; // Trending in the right direction
+  }
+  
+  // Sample size penalty for fewer games
+  if (gameLogs.length < 5) {
+    confidence *= 0.9;
+  }
+  
   return Math.min(Math.round(confidence), 100);
 }
 
@@ -336,17 +415,31 @@ serve(async (req) => {
                 const gameLogs = await fetchPlayerStats(playerName, sport, market.key, supabase);
                 if (gameLogs.length < 3) continue;
 
-                const { overHits, underHits, hitRateOver, hitRateUnder } = calculateHitRate(gameLogs, line);
+                const hitRateData = calculateHitRate(gameLogs, line);
+                const { overHits, underHits, hitRateOver, hitRateUnder, weightedOverRate, weightedUnderRate, currentStreak, streakDirection } = hitRateData;
                 
                 let recommendedSide: string | null = null;
                 let bestHitRate = 0;
                 
-                if (hitRateOver >= minHitRate) {
+                // Use weighted rates for better recency weighting
+                const effectiveOverRate = (hitRateOver + weightedOverRate) / 2;
+                const effectiveUnderRate = (hitRateUnder + weightedUnderRate) / 2;
+                
+                if (effectiveOverRate >= minHitRate) {
                   recommendedSide = 'over';
-                  bestHitRate = hitRateOver;
-                } else if (hitRateUnder >= minHitRate) {
+                  bestHitRate = effectiveOverRate;
+                } else if (effectiveUnderRate >= minHitRate) {
                   recommendedSide = 'under';
-                  bestHitRate = hitRateUnder;
+                  bestHitRate = effectiveUnderRate;
+                }
+                
+                // Bonus: If on a streak matching recommended side, lower the threshold
+                if (!recommendedSide && currentStreak >= 3 && streakDirection) {
+                  const streakRate = streakDirection === 'over' ? hitRateOver : hitRateUnder;
+                  if (streakRate >= minHitRate - 0.10) {
+                    recommendedSide = streakDirection;
+                    bestHitRate = streakRate;
+                  }
                 }
 
                 if (recommendedSide) {
@@ -364,7 +457,7 @@ serve(async (req) => {
                     hit_rate_under: Math.round(hitRateUnder * 100) / 100,
                     game_logs: gameLogs,
                     recommended_side: recommendedSide,
-                    confidence_score: calculateConfidence(gameLogs, line, bestHitRate),
+                    confidence_score: calculateConfidence(gameLogs, line, bestHitRate, hitRateData),
                     event_id: event.id,
                     game_description: `${event.away_team} @ ${event.home_team}`,
                     bookmaker: bookmaker.key,

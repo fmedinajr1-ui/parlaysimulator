@@ -325,8 +325,8 @@ async function processOddsInBackground(
         console.log(`[Background] Saved ${batch.length} game line snapshots for ${sport}`);
       }
 
-      // OPTIMIZED: Fetch player props for NBA only, max 2 games
-      if (sport === 'NBA' && includePlayerProps) {
+      // OPTIMIZED: Fetch player props for NBA and NFL, max 2 games each
+      if ((sport === 'NBA' || sport === 'NFL') && includePlayerProps) {
         const now = new Date();
         const sixHoursFromNow = new Date(now.getTime() + 6 * 60 * 60 * 1000);
         
@@ -337,7 +337,7 @@ async function processOddsInBackground(
           })
           .slice(0, 2); // LIMIT: Only process 2 games max
 
-        console.log(`[Background] Processing player props for ${upcomingEvents.length} NBA games (max 2)`);
+        console.log(`[Background] Processing player props for ${upcomingEvents.length} ${sport} games (max 2)`);
 
         for (const event of upcomingEvents) {
           try {
@@ -564,51 +564,85 @@ serve(async (req) => {
   }
 });
 
-// Consolidate movements to determine ONE final pick per event/market
+// Consolidate movements to determine ONE final pick per event/market - IMPROVED to prevent duplicates
 function consolidateMovements(movements: LineMovement[]): LineMovement[] {
-  const groups = new Map<string, LineMovement[]>();
+  // Group by event + market (not bookmaker) for cross-book consensus
+  const eventMarketGroups = new Map<string, LineMovement[]>();
   
   for (const movement of movements) {
-    const key = `${movement.event_id}_${movement.market_type}_${movement.bookmaker}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key)!.push(movement);
+    const key = `${movement.event_id}_${movement.market_type}`;
+    if (!eventMarketGroups.has(key)) eventMarketGroups.set(key, []);
+    eventMarketGroups.get(key)!.push(movement);
   }
   
   const consolidatedMovements: LineMovement[] = [];
+  const seenEventMarkets = new Set<string>();
   
-  for (const [key, groupMovements] of groups) {
-    if (groupMovements.length <= 1) {
-      const m = groupMovements[0];
-      let finalPick = m.outcome_name;
+  for (const [eventMarketKey, groupMovements] of eventMarketGroups) {
+    // Skip if we've already processed this event/market
+    if (seenEventMarkets.has(eventMarketKey)) continue;
+    seenEventMarkets.add(eventMarketKey);
+    
+    // Separate movements by direction (positive vs negative price_change)
+    const overMoves = groupMovements.filter(m => m.outcome_name.toLowerCase().includes('over') || m.price_change > 0);
+    const underMoves = groupMovements.filter(m => m.outcome_name.toLowerCase().includes('under') || m.price_change < 0);
+    
+    // Check if both sides moved (market adjustment / trap)
+    const bothSidesMoved = overMoves.length > 0 && underMoves.length > 0;
+    
+    // Find the strongest signal by confidence and movement size
+    const sorted = [...groupMovements].sort((a, b) => {
+      // Prioritize by: 1) authenticity confidence, 2) price change magnitude
+      const confA = a.authenticity_confidence || 0;
+      const confB = b.authenticity_confidence || 0;
+      if (confA !== confB) return confB - confA;
+      return Math.abs(b.price_change) - Math.abs(a.price_change);
+    });
+    
+    const primary = sorted[0];
+    
+    // If both sides moved equally, mark as trap/uncertain - don't create duplicate picks
+    if (bothSidesMoved) {
+      const avgOverMove = overMoves.reduce((sum, m) => sum + Math.abs(m.price_change), 0) / (overMoves.length || 1);
+      const avgUnderMove = underMoves.reduce((sum, m) => sum + Math.abs(m.price_change), 0) / (underMoves.length || 1);
       
-      if (m.movement_authenticity === 'fake') {
-        m.recommendation_reason = `FADE ${m.outcome_name} - ${m.recommendation_reason || 'Market adjustment detected'}`;
+      // If movements are similar, it's market adjustment - skip or mark as trap
+      if (Math.abs(avgOverMove - avgUnderMove) < 5) {
+        primary.movement_authenticity = 'fake';
+        primary.recommendation = 'caution';
+        primary.recommendation_reason = `AVOID - Both sides moved similarly (market adjustment)`;
+        primary.final_pick = 'NO_PICK';
+        primary.is_primary_record = true;
+        primary.authenticity_confidence = Math.max((primary.authenticity_confidence || 0.5) - 0.3, 0.1);
+        consolidatedMovements.push(primary);
+        continue;
       }
       
-      consolidatedMovements.push({
-        ...m,
-        final_pick: finalPick,
-        is_primary_record: true
-      });
+      // Otherwise, pick the side with stronger movement
+      const strongerSide = avgOverMove > avgUnderMove ? overMoves[0] : underMoves[0];
+      strongerSide.final_pick = strongerSide.outcome_name;
+      strongerSide.recommendation_reason = `BET ${strongerSide.outcome_name} - Stronger movement (${Math.round(Math.max(avgOverMove, avgUnderMove))} pts vs ${Math.round(Math.min(avgOverMove, avgUnderMove))} pts)`;
+      strongerSide.is_primary_record = true;
+      consolidatedMovements.push(strongerSide);
       continue;
     }
     
-    const sorted = [...groupMovements].sort((a, b) => 
-      Math.abs(b.price_change) - Math.abs(a.price_change)
-    );
-    
-    const primary = sorted[0];
-    const secondary = sorted[1];
-    
+    // Single-sided movement - good signal
     let finalPick: string;
     let updatedReason = primary.recommendation_reason || '';
     
-    if (primary.movement_authenticity === 'real') {
+    if (primary.movement_authenticity === 'real' && (primary.authenticity_confidence || 0) >= 0.5) {
       finalPick = primary.outcome_name;
       updatedReason = `BET ${finalPick} - ${updatedReason}`;
     } else if (primary.movement_authenticity === 'fake') {
-      finalPick = secondary?.outcome_name || `Opposite of ${primary.outcome_name}`;
-      updatedReason = `FADE ${primary.outcome_name}, BET ${finalPick} - ${updatedReason}`;
+      // Get the opposite side for fade
+      const oppositeSide = primary.outcome_name.toLowerCase().includes('over') ? 'Under' : 'Over';
+      finalPick = `FADE to ${oppositeSide}`;
+      updatedReason = `FADE ${primary.outcome_name} - ${updatedReason}`;
+    } else if ((primary.authenticity_confidence || 0) < 0.4) {
+      // Low confidence - don't recommend
+      finalPick = 'CAUTION';
+      updatedReason = `Low confidence (${Math.round((primary.authenticity_confidence || 0) * 100)}%) - ${updatedReason}`;
     } else {
       finalPick = primary.outcome_name;
       updatedReason = `Consider ${finalPick} - ${updatedReason}`;
@@ -712,6 +746,12 @@ function processEventOddsBatched(
   }
 }
 
+// Sport-specific prop markets for tracking
+const SPORT_PROP_MARKETS: Record<string, string[]> = {
+  'NBA': ['player_points', 'player_assists'],
+  'NFL': ['player_pass_yds', 'player_rush_yds', 'player_reception_yds'],
+};
+
 // OPTIMIZED: Fetch player props with batched snapshot lookup
 async function processPlayerPropsOptimized(
   event: OddsEvent,
@@ -721,10 +761,12 @@ async function processPlayerPropsOptimized(
   snapshotsToInsert: any[],
   allMovements: LineMovement[]
 ) {
-  // Only fetch the 2 key markets
-  const propsUrl = `https://api.the-odds-api.com/v4/sports/basketball_nba/events/${event.id}/odds?apiKey=${apiKey}&regions=us&markets=${PLAYER_PROP_MARKETS.join(',')}&oddsFormat=american`;
+  // Get sport-specific markets
+  const propMarkets = SPORT_PROP_MARKETS[sport] || PLAYER_PROP_MARKETS;
+  const sportKey = SPORT_KEYS[sport];
+  const propsUrl = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${event.id}/odds?apiKey=${apiKey}&regions=us&markets=${propMarkets.join(',')}&oddsFormat=american`;
   
-  console.log(`[Props] Fetching ${PLAYER_PROP_MARKETS.join(', ')} for: ${event.away_team} @ ${event.home_team}`);
+  console.log(`[Props] Fetching ${propMarkets.join(', ')} for: ${event.away_team} @ ${event.home_team}`);
   
   const propsResponse = await fetch(propsUrl);
   
@@ -751,7 +793,7 @@ async function processPlayerPropsOptimized(
     }
 
     for (const market of bookmaker.markets) {
-      if (!PLAYER_PROP_MARKETS.includes(market.key)) continue;
+      if (!propMarkets.includes(market.key)) continue;
 
       for (const outcome of market.outcomes) {
         const playerName = outcome.description || 'Unknown Player';

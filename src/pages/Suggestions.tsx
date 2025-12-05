@@ -811,20 +811,20 @@ const Suggestions = () => {
 
             {/* Enhanced Filters */}
             {showFilters && (
-              <Card className="bg-card/50 border-border/50">
+              <Card className="bg-card/50 border-border/50 relative z-50">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm font-display">FILTERS</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {/* Sport & Risk Row */}
                   <div className="grid grid-cols-2 gap-3">
-                    <div>
+                    <div className="relative z-50">
                       <label className="text-xs text-muted-foreground mb-1 block">Sport</label>
-                      <Select value={sportFilter} onValueChange={setSportFilter}>
+                      <Select value={sportFilter} onValueChange={(value) => setSportFilter(value)}>
                         <SelectTrigger className="h-9">
-                          <SelectValue />
+                          <SelectValue placeholder="Select sport" />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent className="z-[100]">
                           <SelectItem value="All">All Sports</SelectItem>
                           <SelectItem value="Football">🏈 Football (NFL/NCAAF)</SelectItem>
                           <SelectItem value="Basketball">🏀 Basketball (NBA/NCAAB)</SelectItem>
@@ -834,13 +834,13 @@ const Suggestions = () => {
                         </SelectContent>
                       </Select>
                     </div>
-                    <div>
+                    <div className="relative z-50">
                       <label className="text-xs text-muted-foreground mb-1 block">Risk Level</label>
-                      <Select value={riskFilter} onValueChange={setRiskFilter}>
+                      <Select value={riskFilter} onValueChange={(value) => setRiskFilter(value)}>
                         <SelectTrigger className="h-9">
-                          <SelectValue />
+                          <SelectValue placeholder="Select risk" />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent className="z-[100]">
                           <SelectItem value="All">All Risks</SelectItem>
                           <SelectItem value="Hybrid">🧬 Hybrid Formula</SelectItem>
                           <SelectItem value="Very Low (60%+)">🛡️ Very Low (60%+)</SelectItem>
@@ -854,26 +854,26 @@ const Suggestions = () => {
 
                   {/* Bet Type & Leg Count Row */}
                   <div className="grid grid-cols-2 gap-3">
-                    <div>
+                    <div className="relative z-40">
                       <label className="text-xs text-muted-foreground mb-1 block">Bet Type</label>
-                      <Select value={betTypeFilter} onValueChange={setBetTypeFilter}>
+                      <Select value={betTypeFilter} onValueChange={(value) => setBetTypeFilter(value)}>
                         <SelectTrigger className="h-9">
-                          <SelectValue />
+                          <SelectValue placeholder="Select type" />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent className="z-[100]">
                           {BET_TYPES.map(type => (
                             <SelectItem key={type} value={type}>{type}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                     </div>
-                    <div>
+                    <div className="relative z-40">
                       <label className="text-xs text-muted-foreground mb-1 block">Leg Count</label>
-                      <Select value={legCountFilter} onValueChange={setLegCountFilter}>
+                      <Select value={legCountFilter} onValueChange={(value) => setLegCountFilter(value)}>
                         <SelectTrigger className="h-9">
-                          <SelectValue />
+                          <SelectValue placeholder="Select count" />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent className="z-[100]">
                           {LEG_COUNTS.map(opt => (
                             <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
                           ))}
