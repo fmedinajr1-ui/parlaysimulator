@@ -4,6 +4,7 @@ import { FeedCard, FeedCardHeader } from "@/components/FeedCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TrendingUp, TrendingDown, AlertTriangle, Filter, Zap, RefreshCw, Target } from "lucide-react";
+import { SharpAccuracyTracker } from "@/components/sharp/SharpAccuracyTracker";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatDistanceToNow } from "date-fns";
 import { AppShell } from "@/components/layout/AppShell";
@@ -211,6 +212,9 @@ export default function SharpMoney() {
             <StatItem label="Fades" value={stats.fades} size="sm" />
           </StatsGrid>
         </StatsCard>
+
+        {/* Accuracy Tracker */}
+        <SharpAccuracyTracker />
 
         {/* Sport Tabs - Horizontal scroll */}
         <SportTabs
