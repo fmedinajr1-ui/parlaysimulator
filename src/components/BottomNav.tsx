@@ -1,4 +1,4 @@
-import { Home, BarChart3, User, Shield, Sparkles, Activity, WifiOff, Zap } from "lucide-react";
+import { Home, BarChart3, User, Shield, Sparkles, WifiOff, Zap } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { useAdminRole } from "@/hooks/useAdminRole";
@@ -15,35 +15,33 @@ const baseNavItems = [
 export function BottomNav() {
   const location = useLocation();
   const { isAdmin } = useAdminRole();
-  const { isOnline, isStandalone } = usePWA();
+  const { isOnline } = usePWA();
 
-  // For admins, replace Sharp with Admin to keep 5 items max
   const navItems = isAdmin 
     ? [
-        baseNavItems[0], // Home
-        baseNavItems[1], // Analyze  
+        baseNavItems[0],
+        baseNavItems[1],
         { icon: Shield, label: "Admin", path: "/admin" },
-        baseNavItems[3], // Picks
-        baseNavItems[4], // Profile
+        baseNavItems[3],
+        baseNavItems[4],
       ]
     : baseNavItems;
 
   return (
     <nav className={cn(
       "fixed bottom-0 left-0 right-0 z-50",
-      "bg-card backdrop-blur-xl border-t border-border",
-      "safe-area-bottom touch-pan-y",
-      "supports-[position:sticky]:sticky"
+      "bg-card/95 backdrop-blur-xl border-t border-border/50",
+      "safe-area-bottom touch-pan-y"
     )}>
       {/* Offline indicator */}
       {!isOnline && (
-        <div className="flex items-center justify-center gap-2 py-1 bg-neon-orange/20 text-neon-orange text-xs">
+        <div className="flex items-center justify-center gap-2 py-1.5 bg-neon-orange/10 text-neon-orange text-xs font-medium">
           <WifiOff className="w-3 h-3" />
-          <span>Offline - Some features may be limited</span>
+          <span>Offline mode</span>
         </div>
       )}
       
-      <div className="flex items-center justify-around py-1.5 px-2 max-w-lg mx-auto">
+      <div className="flex items-center justify-around py-2 px-1 max-w-lg mx-auto">
         {navItems.map((item) => {
           const isActive = location.pathname === item.path;
           const Icon = item.icon;
@@ -53,24 +51,35 @@ export function BottomNav() {
               key={item.path}
               to={item.path}
               className={cn(
-                "flex flex-col items-center justify-center gap-0.5 py-2 px-4",
-                "min-h-[52px] min-w-[64px] rounded-xl",
-                "transition-all duration-150 active:scale-95",
+                "relative flex flex-col items-center justify-center gap-1",
+                "min-h-[56px] min-w-[64px] rounded-2xl",
+                "transition-all duration-200 active:scale-90",
                 "touch-target no-select",
                 isActive 
                   ? "text-primary" 
-                  : "text-muted-foreground hover:text-foreground active:bg-muted/50"
+                  : "text-muted-foreground hover:text-foreground"
               )}
             >
-              <Icon 
-                className={cn(
-                  "w-6 h-6 transition-all duration-150", 
-                  isActive && "text-primary drop-shadow-[0_0_10px_hsl(var(--primary))]"
-                )} 
-              />
+              {/* Active indicator - FanDuel style underline */}
+              {isActive && (
+                <div className="absolute -top-0.5 left-1/2 -translate-x-1/2 w-8 h-1 rounded-full bg-primary shadow-lg shadow-primary/50" />
+              )}
+              
+              <div className={cn(
+                "relative flex items-center justify-center w-10 h-10 rounded-xl transition-all duration-200",
+                isActive && "bg-primary/10"
+              )}>
+                <Icon 
+                  className={cn(
+                    "w-6 h-6 transition-all duration-200", 
+                    isActive && "text-primary scale-110"
+                  )} 
+                />
+              </div>
+              
               <span className={cn(
-                "text-[10px] font-medium transition-colors",
-                isActive && "text-primary"
+                "text-[10px] font-semibold tracking-wide transition-colors",
+                isActive ? "text-primary" : "text-muted-foreground"
               )}>
                 {item.label}
               </span>

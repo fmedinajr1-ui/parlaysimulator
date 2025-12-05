@@ -13,8 +13,11 @@ import { BettingCalendarCard } from '@/components/profile/BettingCalendarCard';
 import { UpsetTrackerCard } from '@/components/profile/UpsetTrackerCard';
 import { NotificationPreferences } from '@/components/profile/NotificationPreferences';
 import { Button } from '@/components/ui/button';
-import { Loader2, LogOut, Upload, CreditCard, Crown } from 'lucide-react';
+import { Loader2, LogOut, Upload, CreditCard, Crown, User, Settings } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
+import { AppShell } from '@/components/layout/AppShell';
+import { MobileHeader } from '@/components/layout/MobileHeader';
+import { FeedCard } from '@/components/FeedCard';
 
 interface Profile {
   username: string | null;
@@ -113,57 +116,64 @@ const Profile = () => {
   }
 
   return (
-    <div className="min-h-dvh bg-background pb-nav-safe overflow-x-safe">
-      <main className="max-w-lg mx-auto px-3 py-4">
-        {/* Subscription Status & Actions */}
-        <div className="flex items-center justify-between mb-4">
-          {(isSubscribed || isAdmin) ? (
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary/10 border border-primary/20">
-                <Crown className="w-4 h-4 text-primary" />
-                <span className="text-sm font-medium text-primary">
-                  {isAdmin ? 'Admin' : 'Pro'}
-                </span>
+    <AppShell noPadding>
+      <MobileHeader 
+        title="Profile"
+        icon={<User className="w-5 h-5" />}
+        rightAction={
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            onClick={handleSignOut}
+            className="h-9 w-9 text-muted-foreground"
+          >
+            <LogOut className="w-4 h-4" />
+          </Button>
+        }
+      />
+
+      <div className="px-4 py-4 space-y-4">
+        {/* Subscription Badge */}
+        <FeedCard variant="highlight" className="py-3">
+          <div className="flex items-center justify-between">
+            {(isSubscribed || isAdmin) ? (
+              <div className="flex items-center gap-3">
+                <div className="icon-container">
+                  <Crown className="w-5 h-5" />
+                </div>
+                <div>
+                  <p className="font-semibold text-foreground">
+                    {isAdmin ? 'Admin Access' : 'Pro Member'}
+                  </p>
+                  {subscriptionEnd && !isAdmin && (
+                    <p className="text-xs text-muted-foreground">
+                      Renews {new Date(subscriptionEnd).toLocaleDateString()}
+                    </p>
+                  )}
+                </div>
               </div>
-              {subscriptionEnd && !isAdmin && (
-                <span className="text-xs text-muted-foreground">
-                  Renews {new Date(subscriptionEnd).toLocaleDateString()}
-                </span>
-              )}
-            </div>
-          ) : (
-            <Button
-              onClick={startCheckout}
-              className="gradient-fire text-foreground"
-              size="sm"
-            >
-              <Crown className="w-4 h-4 mr-2" />
-              Upgrade to Pro - $5/mo
-            </Button>
-          )}
-          <div className="flex items-center gap-2 ml-auto">
-            {isSubscribed && !isAdmin && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={openCustomerPortal}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <CreditCard className="w-4 h-4 mr-2" />
-                Manage Subscription
-              </Button>
+            ) : (
+              <div className="flex items-center gap-3">
+                <div className="icon-container bg-neon-orange/10 text-neon-orange">
+                  <Crown className="w-5 h-5" />
+                </div>
+                <div>
+                  <p className="font-semibold text-foreground">Free Plan</p>
+                  <p className="text-xs text-muted-foreground">Upgrade for unlimited access</p>
+                </div>
+              </div>
             )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleSignOut}
-              className="text-muted-foreground hover:text-foreground"
-            >
-              <LogOut className="w-4 h-4 mr-2" />
-              Sign out
-            </Button>
+            {!isSubscribed && !isAdmin ? (
+              <Button onClick={startCheckout} size="sm" className="gradient-fire">
+                Upgrade
+              </Button>
+            ) : isSubscribed && !isAdmin ? (
+              <Button variant="outline" size="sm" onClick={openCustomerPortal}>
+                <Settings className="w-4 h-4" />
+              </Button>
+            ) : null}
           </div>
-        </div>
+        </FeedCard>
 
         {/* Profile Header */}
         <ProfileHeader 
@@ -226,16 +236,16 @@ const Profile = () => {
         </div>
 
         {/* CTA */}
-        <div className="mt-8 text-center">
-          <Link to="/upload">
-            <Button variant="neon" size="lg" className="font-display">
-              <Upload className="w-4 h-4 mr-2" />
+        <div className="mt-6 mb-4">
+          <Link to="/upload" className="block">
+            <Button variant="neon" size="lg" className="w-full font-display h-14 text-lg">
+              <Upload className="w-5 h-5 mr-2" />
               UPLOAD A SLIP
             </Button>
           </Link>
         </div>
-      </main>
-    </div>
+      </div>
+    </AppShell>
   );
 };
 
