@@ -10,6 +10,7 @@ import { Loader2, RefreshCw, Target, Zap, TrendingUp, AlertCircle } from "lucide
 import { useToast } from "@/hooks/use-toast";
 
 const HIT_RATE_OPTIONS = [
+  { value: 0.4, label: "40%+" },
   { value: 0.5, label: "50%+" },
   { value: 0.6, label: "60%+" },
   { value: 0.7, label: "70%+" },
@@ -21,7 +22,8 @@ const getHitRateBadgeClass = (rate: number) => {
   if (rate >= 0.8) return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'; // Excellent
   if (rate >= 0.7) return 'bg-neon-yellow/20 text-neon-yellow border-neon-yellow/30'; // Good
   if (rate >= 0.6) return 'bg-amber-500/20 text-amber-400 border-amber-500/30'; // Above average
-  return 'bg-orange-500/20 text-orange-400 border-orange-500/30'; // Moderate (50-60%)
+  if (rate >= 0.5) return 'bg-orange-500/20 text-orange-400 border-orange-500/30'; // Moderate (50-60%)
+  return 'bg-red-500/20 text-red-400 border-red-500/30'; // Lower (40-50%)
 };
 
 export function HitRatePicks() {
