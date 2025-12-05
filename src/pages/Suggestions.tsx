@@ -42,8 +42,11 @@ import {
   Zap,
   ThumbsUp,
   ThumbsDown,
-  Battery
+  Battery,
+  HelpCircle
 } from "lucide-react";
+import { HintTooltip } from "@/components/tutorial/HintTooltip";
+import { useHints } from "@/hooks/useHints";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { createLeg, simulateParlay } from "@/lib/parlay-calculator";
@@ -130,6 +133,7 @@ const Suggestions = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
   const { isSubscribed, isAdmin, startCheckout } = useSubscription();
+  const { shouldShowHint, dismissHint } = useHints();
   
   const [suggestions, setSuggestions] = useState<SuggestedParlay[]>([]);
   const [filteredSuggestions, setFilteredSuggestions] = useState<SuggestedParlay[]>([]);
@@ -612,10 +616,18 @@ const Suggestions = () => {
     <div className="min-h-dvh bg-background pb-nav-safe overflow-x-safe">
       <main className="max-w-lg mx-auto px-3 py-4">
         {/* Header */}
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-4 relative">
           <div className="flex items-center gap-2">
             <Sparkles className="w-6 h-6 text-primary" />
             <h1 className="text-xl font-display text-foreground">AI SUGGESTIONS</h1>
+            {shouldShowHint('suggestions-swipe') && (
+              <HintTooltip
+                id="suggestions-swipe"
+                message="Browse personalized parlay suggestions based on your betting history. Use filters to find low-risk options or hybrid picks."
+                position="bottom"
+                onDismiss={() => dismissHint('suggestions-swipe')}
+              />
+            )}
           </div>
           <div className="flex items-center gap-2">
             {(activeTab === "suggestions" || activeTab === "sharp-props") && (

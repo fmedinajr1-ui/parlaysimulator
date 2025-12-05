@@ -259,6 +259,7 @@ const OddsMovement = () => {
             <OddsMovementCard 
               sportFilter={selectedSport !== "all" ? selectedSport : undefined} 
               delay={0}
+              limit={15}
             />
           </TabsContent>
 
@@ -267,6 +268,7 @@ const OddsMovement = () => {
               sportFilter={selectedSport !== "all" ? selectedSport : undefined}
               showSharpOnly
               delay={0}
+              limit={10}
             />
           </TabsContent>
 

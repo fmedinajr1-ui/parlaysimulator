@@ -36,13 +36,15 @@ interface OddsMovementCardProps {
   compact?: boolean;
   sportFilter?: string;
   showSharpOnly?: boolean;
+  limit?: number;
 }
 
 export function OddsMovementCard({ 
   delay = 0, 
   compact = false, 
   sportFilter,
-  showSharpOnly = false
+  showSharpOnly = false,
+  limit
 }: OddsMovementCardProps) {
   const [movements, setMovements] = useState<LineMovement[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -50,11 +52,12 @@ export function OddsMovementCard({
 
   const fetchMovements = async () => {
     try {
+      const effectiveLimit = limit ?? (compact ? 5 : 15);
       let query = (supabase as any)
         .from('line_movements')
         .select('*')
         .order('detected_at', { ascending: false })
-        .limit(compact ? 5 : 15);
+        .limit(effectiveLimit);
 
       if (showSharpOnly) {
         query = query.eq('is_sharp_action', true);
