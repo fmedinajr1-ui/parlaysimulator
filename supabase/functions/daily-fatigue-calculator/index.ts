@@ -370,6 +370,28 @@ Deno.serve(async (req) => {
         if (upsertError) {
           console.error(`Error upserting fatigue for ${game.homeTeam} vs ${game.awayTeam}:`, upsertError);
         } else {
+          // Track edges with 15+ differential
+          const differential = Math.abs(homeFatigue.fatigue_score - awayFatigue.fatigue_score);
+          if (differential >= 15) {
+            const recommendedSide = homeFatigue.fatigue_score < awayFatigue.fatigue_score ? 'home' : 'away';
+            
+            await supabase
+              .from('fatigue_edge_tracking')
+              .upsert({
+                event_id: game.eventId,
+                game_date: today,
+                home_team: game.homeTeam,
+                away_team: game.awayTeam,
+                fatigue_differential: differential,
+                recommended_side: recommendedSide,
+                recommended_angle: angle,
+                home_fatigue_score: homeFatigue.fatigue_score,
+                away_fatigue_score: awayFatigue.fatigue_score,
+              }, {
+                onConflict: 'event_id',
+              });
+          }
+          
           results.push({
             game: `${game.awayTeam} @ ${game.homeTeam}`,
             homeFatigue: homeFatigue.fatigue_score,
