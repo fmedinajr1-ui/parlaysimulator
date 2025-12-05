@@ -47,10 +47,18 @@ export function BottomNav() {
           const isActive = location.pathname === item.path;
           const Icon = item.icon;
 
+          const handleClick = (e: React.MouseEvent) => {
+            if (isActive) {
+              e.preventDefault();
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+          };
+
           return (
             <Link
               key={item.path}
               to={item.path}
+              onClick={handleClick}
               className={cn(
                 "relative flex flex-col items-center justify-center gap-0.5",
                 "flex-1 h-full max-w-[80px]",
