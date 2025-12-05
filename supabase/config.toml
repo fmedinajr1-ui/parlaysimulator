@@ -95,3 +95,6 @@ verify_jwt = false
 
 [functions.data-pipeline-orchestrator]
 verify_jwt = false
+
+[functions.nba-fatigue-engine]
+verify_jwt = false

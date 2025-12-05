@@ -380,6 +380,190 @@ export type Database = {
         }
         Relationships: []
       }
+      nba_fatigue_scores: {
+        Row: {
+          assists_adjustment_pct: number
+          betting_edge_summary: string | null
+          blocks_adjustment_pct: number
+          created_at: string
+          event_id: string
+          fatigue_category: string
+          fatigue_score: number
+          game_date: string
+          game_time: string
+          id: string
+          is_altitude_game: boolean
+          is_back_to_back: boolean
+          is_early_start: boolean
+          is_four_in_six: boolean
+          is_home: boolean
+          is_road_back_to_back: boolean
+          is_three_in_four: boolean
+          ml_adjustment_pct: number
+          opponent: string
+          points_adjustment_pct: number
+          rebounds_adjustment_pct: number
+          recommended_angle: string | null
+          spread_adjustment: number
+          team_name: string
+          three_pt_adjustment_pct: number
+          timezone_changes: number
+          travel_miles: number
+          updated_at: string
+        }
+        Insert: {
+          assists_adjustment_pct?: number
+          betting_edge_summary?: string | null
+          blocks_adjustment_pct?: number
+          created_at?: string
+          event_id: string
+          fatigue_category?: string
+          fatigue_score?: number
+          game_date: string
+          game_time: string
+          id?: string
+          is_altitude_game?: boolean
+          is_back_to_back?: boolean
+          is_early_start?: boolean
+          is_four_in_six?: boolean
+          is_home: boolean
+          is_road_back_to_back?: boolean
+          is_three_in_four?: boolean
+          ml_adjustment_pct?: number
+          opponent: string
+          points_adjustment_pct?: number
+          rebounds_adjustment_pct?: number
+          recommended_angle?: string | null
+          spread_adjustment?: number
+          team_name: string
+          three_pt_adjustment_pct?: number
+          timezone_changes?: number
+          travel_miles?: number
+          updated_at?: string
+        }
+        Update: {
+          assists_adjustment_pct?: number
+          betting_edge_summary?: string | null
+          blocks_adjustment_pct?: number
+          created_at?: string
+          event_id?: string
+          fatigue_category?: string
+          fatigue_score?: number
+          game_date?: string
+          game_time?: string
+          id?: string
+          is_altitude_game?: boolean
+          is_back_to_back?: boolean
+          is_early_start?: boolean
+          is_four_in_six?: boolean
+          is_home?: boolean
+          is_road_back_to_back?: boolean
+          is_three_in_four?: boolean
+          ml_adjustment_pct?: number
+          opponent?: string
+          points_adjustment_pct?: number
+          rebounds_adjustment_pct?: number
+          recommended_angle?: string | null
+          spread_adjustment?: number
+          team_name?: string
+          three_pt_adjustment_pct?: number
+          timezone_changes?: number
+          travel_miles?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "nba_fatigue_scores_team_name_fkey"
+            columns: ["team_name"]
+            isOneToOne: false
+            referencedRelation: "nba_team_locations"
+            referencedColumns: ["team_name"]
+          },
+        ]
+      }
+      nba_schedule_cache: {
+        Row: {
+          created_at: string
+          game_date: string
+          game_time: string
+          id: string
+          is_home: boolean
+          opponent: string
+          team_name: string
+          venue_city: string
+        }
+        Insert: {
+          created_at?: string
+          game_date: string
+          game_time: string
+          id?: string
+          is_home: boolean
+          opponent: string
+          team_name: string
+          venue_city: string
+        }
+        Update: {
+          created_at?: string
+          game_date?: string
+          game_time?: string
+          id?: string
+          is_home?: boolean
+          opponent?: string
+          team_name?: string
+          venue_city?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "nba_schedule_cache_team_name_fkey"
+            columns: ["team_name"]
+            isOneToOne: false
+            referencedRelation: "nba_team_locations"
+            referencedColumns: ["team_name"]
+          },
+        ]
+      }
+      nba_team_locations: {
+        Row: {
+          altitude_feet: number
+          arena: string
+          city: string
+          conference: string
+          created_at: string
+          division: string
+          id: string
+          latitude: number
+          longitude: number
+          team_name: string
+          timezone: string
+        }
+        Insert: {
+          altitude_feet?: number
+          arena: string
+          city: string
+          conference: string
+          created_at?: string
+          division: string
+          id?: string
+          latitude: number
+          longitude: number
+          team_name: string
+          timezone: string
+        }
+        Update: {
+          altitude_feet?: number
+          arena?: string
+          city?: string
+          conference?: string
+          created_at?: string
+          division?: string
+          id?: string
+          latitude?: number
+          longitude?: number
+          team_name?: string
+          timezone?: string
+        }
+        Relationships: []
+      }
       notification_preferences: {
         Row: {
           created_at: string
