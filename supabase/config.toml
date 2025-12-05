@@ -101,3 +101,6 @@ verify_jwt = false
 
 [functions.daily-fatigue-calculator]
 verify_jwt = false
+
+[functions.verify-fatigue-outcomes]
+verify_jwt = false
