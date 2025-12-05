@@ -113,6 +113,22 @@ serve(async (req) => {
     
     console.log('🌅 Starting morning props scanner...');
     
+    // Fetch existing hit rate data to cross-reference with juiced props
+    const { data: hitRateData } = await supabase
+      .from('player_prop_hitrates')
+      .select('player_name, prop_type, hit_rate_over, hit_rate_under, recommended_side, confidence_score')
+      .gte('analyzed_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+    
+    // Build lookup map for hit rate cross-referencing
+    const hitRateMap = new Map<string, any>();
+    if (hitRateData) {
+      for (const hr of hitRateData) {
+        const key = `${hr.player_name.toLowerCase()}_${hr.prop_type}`;
+        hitRateMap.set(key, hr);
+      }
+    }
+    console.log(`Loaded ${hitRateMap.size} hit rate records for cross-reference`);
+    
   // Sports to scan for player props - NBA, Football, Hockey only
   const sportsToScan = [
     'basketball_nba',           // NBA player props
@@ -201,6 +217,21 @@ serve(async (req) => {
                     
                     // Only include props with juice on the OVER
                     if (isJuiced && juiceDirection === 'over') {
+                      // Cross-reference with hit rate data
+                      const hitRateKey = `${playerName.toLowerCase()}_${market}`;
+                      const playerHitRate = hitRateMap.get(hitRateKey);
+                      
+                      // If we have hit rate data showing under is better, flag this as potential trap
+                      let isTrap = false;
+                      let trapReason = '';
+                      
+                      if (playerHitRate) {
+                        if (playerHitRate.recommended_side === 'under' && playerHitRate.hit_rate_under >= 0.6) {
+                          isTrap = true;
+                          trapReason = `Hit rate favors UNDER (${Math.round(playerHitRate.hit_rate_under * 100)}%)`;
+                        }
+                      }
+                      
                       allJuicedProps.push({
                         event_id: event.id,
                         sport: mapSportDisplay(sport),
@@ -215,6 +246,8 @@ serve(async (req) => {
                         juice_level: juiceLevel,
                         juice_direction: juiceDirection,
                         juice_amount: juiceAmount,
+                        is_morning_trap: isTrap,
+                        trap_reason: trapReason || undefined,
                       });
                     }
                   }

@@ -277,6 +277,41 @@ serve(async (req) => {
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
+    // Step 0: CLEANUP - Deactivate expired suggestions and delete old ones
+    console.log('Cleaning up old suggestions...');
+    const cleanupTime = new Date();
+    
+    // Deactivate expired suggestions for this user
+    const { error: deactivateError } = await supabase
+      .from('suggested_parlays')
+      .update({ is_active: false })
+      .lt('expires_at', cleanupTime.toISOString())
+      .eq('is_active', true);
+    
+    if (deactivateError) {
+      console.error('Error deactivating expired suggestions:', deactivateError);
+    }
+    
+    // Delete very old suggestions (older than 7 days)
+    const sevenDaysAgo = new Date(cleanupTime.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const { error: deleteError } = await supabase
+      .from('suggested_parlays')
+      .delete()
+      .lt('expires_at', sevenDaysAgo.toISOString());
+    
+    if (deleteError) {
+      console.error('Error deleting old suggestions:', deleteError);
+    } else {
+      console.log('Cleaned up old suggestions');
+    }
+    
+    // Also clean up old line movements (older than 3 days)
+    const threeDaysAgo = new Date(cleanupTime.getTime() - 3 * 24 * 60 * 60 * 1000);
+    await supabase
+      .from('line_movements')
+      .delete()
+      .lt('detected_at', threeDaysAgo.toISOString());
+
     // Step 1: Fetch AI suggestion accuracy metrics for learning
     console.log('Fetching AI accuracy metrics for learning...');
     const { data: accuracyMetrics, error: accuracyError } = await supabase
