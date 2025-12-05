@@ -16,6 +16,7 @@ import { SharpMoneyAlerts } from "@/components/results/SharpMoneyAlerts";
 import { TrapAvoidanceCard } from "@/components/results/TrapAvoidanceCard";
 import { ParlayHealthCard } from "@/components/results/ParlayHealthCard";
 import { ParlayOptimizer } from "@/components/results/ParlayOptimizer";
+import { FatigueImpactCard } from "@/components/results/FatigueImpactCard";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, RotateCcw, Save, Loader2, LogIn } from "lucide-react";
 import { ParlaySimulation, ParlayAnalysis } from "@/types/parlay";
@@ -438,6 +439,13 @@ const Results = () => {
             legs={simulation.legs}
             legAnalyses={aiAnalysis?.legAnalyses}
             delay={200}
+          />
+
+          {/* NBA Fatigue Impact */}
+          <FatigueImpactCard 
+            legs={simulation.legs}
+            legAnalyses={aiAnalysis?.legAnalyses}
+            delay={205}
           />
 
           {/* Historical Insights - only show if user is logged in */}
