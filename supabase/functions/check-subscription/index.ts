@@ -12,6 +12,9 @@ const logStep = (step: string, details?: any) => {
   console.log(`[CHECK-SUBSCRIPTION] ${step}${detailsStr}`);
 };
 
+// Odds Tracker Pro price ID
+const ODDS_TRACKER_PRICE_ID = "price_1Sb7Tk9D6r1PTCBBmJ3jYBxo";
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -39,6 +42,7 @@ serve(async (req) => {
         isAdmin: false,
         canScan: true,
         scansRemaining: 3,
+        hasOddsAccess: false,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,
@@ -56,6 +60,7 @@ serve(async (req) => {
         isAdmin: false,
         canScan: true,
         scansRemaining: 3,
+        hasOddsAccess: false,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,
@@ -80,11 +85,23 @@ serve(async (req) => {
         isAdmin: true,
         canScan: true,
         scansRemaining: -1,
+        hasOddsAccess: true, // Admins have full odds access
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,
       });
     }
+
+    // Check if user is in approved_odds_users table
+    const { data: approvedUser } = await supabaseClient
+      .from('approved_odds_users')
+      .select('is_active')
+      .eq('email', (user.email || '').toLowerCase())
+      .eq('is_active', true)
+      .maybeSingle();
+
+    const isApprovedOddsUser = !!approvedUser;
+    logStep("Approved odds user check", { isApprovedOddsUser });
 
     // Check Stripe subscription
     const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
@@ -92,6 +109,7 @@ serve(async (req) => {
 
     let isSubscribed = false;
     let subscriptionEnd = null;
+    let hasOddsSubscription = false;
 
     if (customers.data.length > 0) {
       const customerId = customers.data[0].id;
@@ -100,13 +118,19 @@ serve(async (req) => {
       const subscriptions = await stripe.subscriptions.list({
         customer: customerId,
         status: "active",
-        limit: 1,
+        limit: 10,
       });
 
       if (subscriptions.data.length > 0) {
         isSubscribed = true;
         subscriptionEnd = new Date(subscriptions.data[0].current_period_end * 1000).toISOString();
         logStep("Active subscription found", { subscriptionEnd });
+        
+        // Check if user has Odds Tracker Pro subscription
+        hasOddsSubscription = subscriptions.data.some((sub: any) => 
+          sub.items.data.some((item: any) => item.price.id === ODDS_TRACKER_PRICE_ID)
+        );
+        logStep("Odds Tracker subscription check", { hasOddsSubscription });
         
         // Update local subscription record
         await supabaseClient.from('subscriptions').upsert({
@@ -120,6 +144,9 @@ serve(async (req) => {
       }
     }
 
+    // Determine odds access: approved user OR has odds subscription
+    const hasOddsAccess = isApprovedOddsUser || hasOddsSubscription;
+
     // If subscribed, unlimited access
     if (isSubscribed) {
       return new Response(JSON.stringify({
@@ -128,6 +155,7 @@ serve(async (req) => {
         canScan: true,
         scansRemaining: -1,
         subscriptionEnd,
+        hasOddsAccess,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,
@@ -145,7 +173,7 @@ serve(async (req) => {
     const scansRemaining = Math.max(0, 3 - scanCount);
     const canScan = scansRemaining > 0;
 
-    logStep("Free user scan status", { scanCount, scansRemaining, canScan });
+    logStep("Free user scan status", { scanCount, scansRemaining, canScan, hasOddsAccess });
 
     return new Response(JSON.stringify({
       subscribed: false,
@@ -153,6 +181,7 @@ serve(async (req) => {
       canScan,
       scansRemaining,
       scanCount,
+      hasOddsAccess,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 200,

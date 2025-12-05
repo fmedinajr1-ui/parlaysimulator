@@ -5,12 +5,17 @@ import { SharpMoneyAlerts } from "@/components/results/SharpMoneyAlerts";
 import { LineHistoryChart } from "@/components/odds/LineHistoryChart";
 import { PushNotificationToggle } from "@/components/odds/PushNotificationToggle";
 import { JuicedPropsCard } from "@/components/suggestions/JuicedPropsCard";
+import { OddsPaywall } from "@/components/odds/OddsPaywall";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Activity, Zap, TrendingUp, RefreshCw, ChevronLeft, Flame, ShoppingCart } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { Activity, Zap, TrendingUp, RefreshCw, ChevronLeft, Flame, ShoppingCart, Loader2 } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { useSubscription } from "@/hooks/useSubscription";
+import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
+import { WolfAvatar } from "@/components/avatars/WolfAvatar";
 
 const SPORTS = [
   { value: "all", label: "All Sports" },
@@ -30,10 +35,31 @@ interface Stats {
 
 const OddsMovement = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const { user } = useAuth();
+  const { hasOddsAccess, isLoading: subLoading, isAdmin, checkSubscription } = useSubscription();
+  const { toast } = useToast();
+  
   const [selectedSport, setSelectedSport] = useState("all");
   const [stats, setStats] = useState<Stats>({ totalMovements: 0, sharpAlerts: 0, avgPriceChange: 0 });
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+
+  // Handle checkout success/cancel
+  useEffect(() => {
+    if (searchParams.get('success') === 'true') {
+      toast({
+        title: 'Welcome to Odds Tracker Pro!',
+        description: 'Your subscription is now active.',
+      });
+      checkSubscription();
+    } else if (searchParams.get('canceled') === 'true') {
+      toast({
+        title: 'Checkout canceled',
+        description: 'No changes were made to your account.',
+      });
+    }
+  }, [searchParams]);
 
   const fetchStats = async () => {
     try {
@@ -56,7 +82,6 @@ const OddsMovement = () => {
         ? movements.reduce((sum: number, m: any) => sum + Math.abs(m.price_change), 0) / movements.length 
         : 0;
 
-      // Get the most recent detected_at timestamp
       if (movements.length > 0) {
         const mostRecent = movements.reduce((latest: any, m: any) => 
           new Date(m.detected_at) > new Date(latest.detected_at) ? m : latest
@@ -75,8 +100,10 @@ const OddsMovement = () => {
   };
 
   useEffect(() => {
-    fetchStats();
-  }, [selectedSport]);
+    if (hasOddsAccess || isAdmin) {
+      fetchStats();
+    }
+  }, [selectedSport, hasOddsAccess, isAdmin]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -92,6 +119,37 @@ const OddsMovement = () => {
     }
   };
 
+  // Show loading state
+  if (subLoading) {
+    return (
+      <div className="min-h-dvh bg-background flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  // Show paywall if user doesn't have access
+  if (!hasOddsAccess && !isAdmin) {
+    return (
+      <div className="min-h-dvh bg-background pb-nav-safe">
+        <div className="flex items-center gap-3 p-4 border-b border-border">
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            onClick={() => navigate(-1)}
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </Button>
+          <div>
+            <h1 className="text-xl font-display text-foreground">ODDS TRACKER</h1>
+            <p className="text-xs text-muted-foreground">Premium Feature</p>
+          </div>
+        </div>
+        <OddsPaywall onSubscribe={() => checkSubscription()} />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-dvh bg-background pb-nav-safe touch-pan-y overflow-x-safe">
       <main className="max-w-4xl mx-auto px-3 py-4">
@@ -105,9 +163,12 @@ const OddsMovement = () => {
           >
             <ChevronLeft className="w-5 h-5" />
           </Button>
-          <div className="flex-1">
-            <h1 className="text-3xl font-display text-foreground">ODDS MOVEMENT</h1>
-            <p className="text-sm text-muted-foreground">Track line shifts & sharp money in real-time</p>
+          <div className="flex items-center gap-3 flex-1">
+            <WolfAvatar size="md" variant="alpha" />
+            <div>
+              <h1 className="text-2xl font-display text-foreground">ODDS TRACKER PRO</h1>
+              <p className="text-xs text-muted-foreground">Track line shifts & sharp money</p>
+            </div>
           </div>
           <Button 
             variant="outline" 
@@ -147,7 +208,7 @@ const OddsMovement = () => {
         <div className="grid grid-cols-3 gap-3 mb-6">
           <div className="bg-card rounded-xl p-4 border border-border">
             <div className="flex items-center gap-2 mb-1">
-              <Activity className="w-4 h-4 text-neon-purple" />
+              <Activity className="w-4 h-4 text-primary" />
               <span className="text-xs text-muted-foreground uppercase">24h Moves</span>
             </div>
             <p className="text-2xl font-display text-foreground">{stats.totalMovements}</p>
@@ -176,7 +237,7 @@ const OddsMovement = () => {
         {/* Main Content Tabs */}
         <Tabs defaultValue="movements" className="space-y-4">
           <TabsList className="grid w-full grid-cols-4 bg-card">
-            <TabsTrigger value="movements" className="data-[state=active]:bg-neon-purple/20">
+            <TabsTrigger value="movements" className="data-[state=active]:bg-primary/20">
               <Activity className="w-4 h-4 mr-1" />
               <span className="hidden sm:inline">All</span>
             </TabsTrigger>

@@ -98,6 +98,36 @@ export type Database = {
         }
         Relationships: []
       }
+      approved_odds_users: {
+        Row: {
+          approved_at: string | null
+          approved_by: string | null
+          created_at: string | null
+          email: string
+          id: string
+          is_active: boolean | null
+          notes: string | null
+        }
+        Insert: {
+          approved_at?: string | null
+          approved_by?: string | null
+          created_at?: string | null
+          email: string
+          id?: string
+          is_active?: boolean | null
+          notes?: string | null
+        }
+        Update: {
+          approved_at?: string | null
+          approved_by?: string | null
+          created_at?: string | null
+          email?: string
+          id?: string
+          is_active?: boolean | null
+          notes?: string | null
+        }
+        Relationships: []
+      }
       email_subscribers: {
         Row: {
           email: string
@@ -981,6 +1011,7 @@ export type Database = {
           avatar_url: string | null
           bio: string | null
           created_at: string
+          hints_enabled: boolean | null
           id: string
           instagram_handle: string | null
           lifetime_degenerate_score: number
@@ -998,6 +1029,7 @@ export type Database = {
           avatar_url?: string | null
           bio?: string | null
           created_at?: string
+          hints_enabled?: boolean | null
           id?: string
           instagram_handle?: string | null
           lifetime_degenerate_score?: number
@@ -1015,6 +1047,7 @@ export type Database = {
           avatar_url?: string | null
           bio?: string | null
           created_at?: string
+          hints_enabled?: boolean | null
           id?: string
           instagram_handle?: string | null
           lifetime_degenerate_score?: number

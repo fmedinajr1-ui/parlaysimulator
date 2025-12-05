@@ -53,12 +53,18 @@ export default {
         },
         neon: {
           green: "hsl(var(--neon-green))",
+          blue: "hsl(var(--neon-blue))",
           purple: "hsl(var(--neon-purple))",
           pink: "hsl(var(--neon-pink))",
           yellow: "hsl(var(--neon-yellow))",
           orange: "hsl(var(--neon-orange))",
           red: "hsl(var(--neon-red))",
           cyan: "hsl(var(--neon-cyan))",
+        },
+        farm: {
+          dog: "hsl(var(--farm-dog))",
+          wolf: "hsl(var(--farm-wolf))",
+          gold: "hsl(var(--farm-gold))",
         },
         sidebar: {
           DEFAULT: "hsl(var(--sidebar-background))",
@@ -106,6 +112,14 @@ export default {
           "50%": { transform: "scale(1.3) rotate(10deg)" },
           "100%": { transform: "scale(1) rotate(0deg)", opacity: "1" },
         },
+        "wolf-prowl": {
+          "0%, 100%": { transform: "translateX(0)" },
+          "50%": { transform: "translateX(2px)" },
+        },
+        "dog-wag": {
+          "0%, 100%": { transform: "rotate(-5deg)" },
+          "50%": { transform: "rotate(5deg)" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
@@ -114,6 +128,8 @@ export default {
         "bounce-in": "bounce-in 0.6s cubic-bezier(0.68, -0.55, 0.265, 1.55)",
         "pulse-glow": "pulse-glow 2s ease-in-out infinite",
         "emoji-bounce": "emoji-bounce 0.6s ease-out",
+        "wolf-prowl": "wolf-prowl 1s ease-in-out infinite",
+        "dog-wag": "dog-wag 0.3s ease-in-out infinite",
       },
     },
   },

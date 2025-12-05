@@ -6,38 +6,41 @@
 
 @layer base {
   :root {
-    --background: 240 15% 6%;
+    /* FanDuel-inspired deep dark theme */
+    --background: 220 20% 4%;
     --foreground: 0 0% 98%;
 
-    --card: 240 12% 10%;
+    --card: 220 15% 8%;
     --card-foreground: 0 0% 98%;
 
-    --popover: 240 12% 10%;
+    --popover: 220 15% 8%;
     --popover-foreground: 0 0% 98%;
 
-    --primary: 142 70% 50%;
-    --primary-foreground: 240 15% 6%;
+    /* FanDuel Blue as primary */
+    --primary: 207 100% 50%;
+    --primary-foreground: 220 20% 4%;
 
     --secondary: 280 70% 60%;
     --secondary-foreground: 0 0% 98%;
 
-    --muted: 240 10% 18%;
-    --muted-foreground: 240 5% 60%;
+    --muted: 220 12% 16%;
+    --muted-foreground: 220 8% 55%;
 
-    --accent: 45 100% 55%;
-    --accent-foreground: 240 15% 6%;
+    --accent: 145 100% 45%;
+    --accent-foreground: 220 20% 4%;
 
     --destructive: 0 80% 55%;
     --destructive-foreground: 0 0% 98%;
 
-    --border: 240 10% 20%;
-    --input: 240 10% 20%;
-    --ring: 142 70% 50%;
+    --border: 220 12% 18%;
+    --input: 220 12% 18%;
+    --ring: 207 100% 50%;
 
     --radius: 1rem;
 
-    /* Custom colors */
-    --neon-green: 142 70% 50%;
+    /* FanDuel-inspired neon colors */
+    --neon-green: 145 100% 45%;
+    --neon-blue: 207 100% 50%;
     --neon-purple: 280 70% 60%;
     --neon-pink: 320 80% 60%;
     --neon-yellow: 45 100% 55%;
@@ -45,14 +48,22 @@
     --neon-red: 0 80% 55%;
     --neon-cyan: 185 80% 55%;
 
+    /* Parlay Farm theme colors */
+    --farm-dog: 30 70% 50%;
+    --farm-wolf: 220 40% 60%;
+    --farm-gold: 45 100% 50%;
+
     /* Gradients */
     --gradient-neon: linear-gradient(135deg, hsl(var(--neon-green)), hsl(var(--neon-cyan)));
     --gradient-fire: linear-gradient(135deg, hsl(var(--neon-orange)), hsl(var(--neon-red)));
     --gradient-purple: linear-gradient(135deg, hsl(var(--neon-purple)), hsl(var(--neon-pink)));
     --gradient-gold: linear-gradient(135deg, hsl(var(--neon-yellow)), hsl(var(--neon-orange)));
+    --gradient-wolf: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--farm-wolf)));
+    --gradient-dog: linear-gradient(135deg, hsl(var(--farm-dog)), hsl(var(--neon-orange)));
 
     /* Shadows */
     --glow-green: 0 0 20px hsl(var(--neon-green) / 0.5);
+    --glow-blue: 0 0 20px hsl(var(--primary) / 0.5);
     --glow-purple: 0 0 20px hsl(var(--neon-purple) / 0.5);
     --glow-pink: 0 0 20px hsl(var(--neon-pink) / 0.5);
 
@@ -60,14 +71,14 @@
     --font-display: 'Bebas Neue', sans-serif;
     --font-body: 'DM Sans', sans-serif;
 
-    --sidebar-background: 240 15% 6%;
+    --sidebar-background: 220 20% 4%;
     --sidebar-foreground: 0 0% 98%;
-    --sidebar-primary: 142 70% 50%;
-    --sidebar-primary-foreground: 240 15% 6%;
-    --sidebar-accent: 240 10% 18%;
+    --sidebar-primary: 207 100% 50%;
+    --sidebar-primary-foreground: 220 20% 4%;
+    --sidebar-accent: 220 12% 16%;
     --sidebar-accent-foreground: 0 0% 98%;
-    --sidebar-border: 240 10% 20%;
-    --sidebar-ring: 142 70% 50%;
+    --sidebar-border: 220 12% 18%;
+    --sidebar-ring: 207 100% 50%;
   }
 }
 
