@@ -53,6 +53,7 @@ export default function SharpMoney() {
   const [sportFilter, setSportFilter] = useState<string>("all");
   const [recommendationFilter, setRecommendationFilter] = useState<string>("all");
   const [authenticityFilter, setAuthenticityFilter] = useState<string>("all");
+  const [confidenceFilter, setConfidenceFilter] = useState<string>("all");
 
   useEffect(() => {
     fetchMovements();
@@ -148,6 +149,14 @@ export default function SharpMoney() {
       if (authenticityFilter === "fake" && m.movement_authenticity !== "fake") return false;
     }
     
+    // Confidence filter
+    if (confidenceFilter !== "all") {
+      const confidence = m.authenticity_confidence ?? 0;
+      if (confidenceFilter === "60" && confidence < 0.6) return false;
+      if (confidenceFilter === "70" && confidence < 0.7) return false;
+      if (confidenceFilter === "80" && confidence < 0.8) return false;
+    }
+    
     return true;
   });
 
@@ -158,6 +167,7 @@ export default function SharpMoney() {
     sharp: movements.filter(m => m.is_sharp_action).length,
     picks: movements.filter(m => getRecommendation(m).type === 'pick').length,
     fades: movements.filter(m => getRecommendation(m).type === 'fade').length,
+    highConfidence: movements.filter(m => (m.authenticity_confidence ?? 0) >= 0.6).length,
   };
 
   const sportTabs = [
@@ -232,6 +242,13 @@ export default function SharpMoney() {
             onClick={() => setAuthenticityFilter(authenticityFilter === "sharp" ? "all" : "sharp")}
             variant="warning"
           />
+          <QuickFilter 
+            label="60%+" 
+            icon="🎯" 
+            active={confidenceFilter === "60"}
+            onClick={() => setConfidenceFilter(confidenceFilter === "60" ? "all" : "60")}
+            variant="default"
+          />
         </div>
 
         {/* Filters */}
@@ -242,7 +259,7 @@ export default function SharpMoney() {
               <span className="uppercase tracking-wider">Filters</span>
             </div>
             
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div>
                 <label className="text-xs text-muted-foreground uppercase mb-1 block">Sport</label>
                 <Select value={sportFilter} onValueChange={setSportFilter}>
@@ -287,9 +304,24 @@ export default function SharpMoney() {
                   </SelectContent>
                 </Select>
               </div>
+              
+              <div>
+                <label className="text-xs text-muted-foreground uppercase mb-1 block">Confidence</label>
+                <Select value={confidenceFilter} onValueChange={setConfidenceFilter}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All</SelectItem>
+                    <SelectItem value="60">🎯 60%+</SelectItem>
+                    <SelectItem value="70">🔥 70%+</SelectItem>
+                    <SelectItem value="80">💎 80%+</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
             
-            {(sportFilter !== "all" || recommendationFilter !== "all" || authenticityFilter !== "all") && (
+            {(sportFilter !== "all" || recommendationFilter !== "all" || authenticityFilter !== "all" || confidenceFilter !== "all") && (
               <Button 
                 variant="outline" 
                 size="sm" 
@@ -297,6 +329,7 @@ export default function SharpMoney() {
                   setSportFilter("all");
                   setRecommendationFilter("all");
                   setAuthenticityFilter("all");
+                  setConfidenceFilter("all");
                 }}
               >
                 Clear Filters
