@@ -71,6 +71,7 @@ export default function SharpMoney() {
   const [recommendationFilter, setRecommendationFilter] = useState<string>("all");
   const [authenticityFilter, setAuthenticityFilter] = useState<string>("all");
   const [confidenceFilter, setConfidenceFilter] = useState<string>("all");
+  const [fatigueEdgeFilter, setFatigueEdgeFilter] = useState<boolean>(false);
 
   useEffect(() => {
     fetchMovements();
@@ -243,6 +244,15 @@ export default function SharpMoney() {
     return { type: 'caution', label: 'CAUTION' };
   };
 
+  // Check if movement has fatigue edge (15+ differential)
+  const hasFatigueEdge = (movement: LineMovement) => {
+    if (movement.sport !== 'basketball_nba') return false;
+    const scores = fatigueData.get(movement.event_id);
+    if (!scores || scores.length < 2) return false;
+    const fatigueDiff = Math.abs(scores[0].fatigue_score - scores[1].fatigue_score);
+    return fatigueDiff >= 15;
+  };
+
   // Filter movements
   const filteredMovements = movements.filter(m => {
     if (sportFilter !== "all" && m.sport !== sportFilter) return false;
@@ -266,6 +276,9 @@ export default function SharpMoney() {
       if (confidenceFilter === "80" && confidence < 0.8) return false;
     }
     
+    // Fatigue edge filter
+    if (fatigueEdgeFilter && !hasFatigueEdge(m)) return false;
+    
     return true;
   });
 
@@ -277,6 +290,7 @@ export default function SharpMoney() {
     picks: movements.filter(m => getRecommendation(m).type === 'pick').length,
     fades: movements.filter(m => getRecommendation(m).type === 'fade').length,
     highConfidence: movements.filter(m => (m.authenticity_confidence ?? 0) >= 0.6).length,
+    fatigueEdge: movements.filter(m => hasFatigueEdge(m)).length,
   };
 
   const sportTabs = [
@@ -358,6 +372,13 @@ export default function SharpMoney() {
             variant="warning"
           />
           <QuickFilter 
+            label={`Fatigue Edge${stats.fatigueEdge > 0 ? ` (${stats.fatigueEdge})` : ''}`}
+            icon="🔋" 
+            active={fatigueEdgeFilter}
+            onClick={() => setFatigueEdgeFilter(!fatigueEdgeFilter)}
+            variant="default"
+          />
+          <QuickFilter 
             label="60%+" 
             icon="🎯" 
             active={confidenceFilter === "60"}
@@ -436,7 +457,7 @@ export default function SharpMoney() {
               </div>
             </div>
             
-            {(sportFilter !== "all" || recommendationFilter !== "all" || authenticityFilter !== "all" || confidenceFilter !== "all") && (
+            {(sportFilter !== "all" || recommendationFilter !== "all" || authenticityFilter !== "all" || confidenceFilter !== "all" || fatigueEdgeFilter) && (
               <Button 
                 variant="outline" 
                 size="sm" 
@@ -445,6 +466,7 @@ export default function SharpMoney() {
                   setRecommendationFilter("all");
                   setAuthenticityFilter("all");
                   setConfidenceFilter("all");
+                  setFatigueEdgeFilter(false);
                 }}
               >
                 Clear Filters
