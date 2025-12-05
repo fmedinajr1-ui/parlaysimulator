@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { FeedCard, FeedCardHeader } from "@/components/FeedCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { TrendingUp, TrendingDown, AlertTriangle, Filter, Zap, RefreshCw, Target } from "lucide-react";
+import { TrendingUp, TrendingDown, AlertTriangle, Filter, Zap, RefreshCw, Target, Battery, BatteryLow, BatteryWarning } from "lucide-react";
 import { SharpAccuracyTracker } from "@/components/sharp/SharpAccuracyTracker";
 import { PersonalSharpTracker } from "@/components/sharp/PersonalSharpTracker";
 import { FollowButton } from "@/components/sharp/FollowButton";
@@ -36,6 +36,19 @@ interface LineMovement {
   authenticity_confidence: number | null;
   detected_at: string;
   commence_time: string | null;
+  event_id: string;
+}
+
+interface FatigueData {
+  event_id: string;
+  team_name: string;
+  fatigue_score: number;
+  fatigue_category: string;
+  is_back_to_back: boolean;
+  travel_miles: number;
+  recommended_angle: string | null;
+  spread_adjustment: number;
+  points_adjustment_pct: number;
 }
 
 const recommendationColors = {
@@ -52,6 +65,7 @@ const recommendationEmojis = {
 
 export default function SharpMoney() {
   const [movements, setMovements] = useState<LineMovement[]>([]);
+  const [fatigueData, setFatigueData] = useState<Map<string, FatigueData[]>>(new Map());
   const [loading, setLoading] = useState(true);
   const [sportFilter, setSportFilter] = useState<string>("all");
   const [recommendationFilter, setRecommendationFilter] = useState<string>("all");
@@ -60,6 +74,7 @@ export default function SharpMoney() {
 
   useEffect(() => {
     fetchMovements();
+    fetchFatigueData();
     
     // Subscribe to real-time updates
     const channel = supabase
@@ -98,6 +113,97 @@ export default function SharpMoney() {
       setLoading(false);
     }
   }, []);
+
+  const fetchFatigueData = useCallback(async () => {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const { data, error } = await supabase
+        .from('nba_fatigue_scores')
+        .select('*')
+        .eq('game_date', today);
+
+      if (error) throw error;
+      
+      // Group by event_id
+      const fatigueMap = new Map<string, FatigueData[]>();
+      (data || []).forEach((score: FatigueData) => {
+        const existing = fatigueMap.get(score.event_id) || [];
+        existing.push(score);
+        fatigueMap.set(score.event_id, existing);
+      });
+      setFatigueData(fatigueMap);
+    } catch (error) {
+      console.error('Error fetching fatigue data:', error);
+    }
+  }, []);
+
+  // Get fatigue edge for a movement
+  const getFatigueEdge = (movement: LineMovement) => {
+    if (movement.sport !== 'basketball_nba') return null;
+    
+    const scores = fatigueData.get(movement.event_id);
+    if (!scores || scores.length < 2) return null;
+
+    // Find the team mentioned in the outcome/description
+    const description = `${movement.description} ${movement.outcome_name}`.toLowerCase();
+    
+    const team1 = scores[0];
+    const team2 = scores[1];
+    
+    const fatigueDiff = Math.abs(team1.fatigue_score - team2.fatigue_score);
+    if (fatigueDiff < 15) return null; // Not significant enough
+    
+    const tiredTeam = team1.fatigue_score > team2.fatigue_score ? team1 : team2;
+    const freshTeam = team1.fatigue_score > team2.fatigue_score ? team2 : team1;
+    
+    // Check if movement aligns with fatigue edge
+    const tiredTeamInDescription = description.includes(tiredTeam.team_name.toLowerCase().split(' ').pop() || '');
+    const freshTeamInDescription = description.includes(freshTeam.team_name.toLowerCase().split(' ').pop() || '');
+    
+    // For player props (OVER/UNDER)
+    const isOver = description.includes('over');
+    const isUnder = description.includes('under');
+    
+    let alignment: 'aligned' | 'opposed' | 'neutral' = 'neutral';
+    let reason = '';
+    
+    if (tiredTeamInDescription) {
+      if (isUnder) {
+        alignment = 'aligned';
+        reason = `${tiredTeam.team_name} is fatigued (${tiredTeam.fatigue_category}) - UNDER aligns`;
+      } else if (isOver) {
+        alignment = 'opposed';
+        reason = `${tiredTeam.team_name} is fatigued - OVER conflicts`;
+      }
+    } else if (freshTeamInDescription) {
+      if (isOver) {
+        alignment = 'aligned';
+        reason = `${freshTeam.team_name} is fresh vs tired opponent - OVER aligns`;
+      } else if (isUnder) {
+        alignment = 'opposed';
+        reason = `${freshTeam.team_name} is fresh - UNDER conflicts`;
+      }
+    }
+    
+    // For spread/ML bets
+    if (!isOver && !isUnder) {
+      if (freshTeamInDescription) {
+        alignment = 'aligned';
+        reason = `${freshTeam.team_name} (Fresh) vs ${tiredTeam.team_name} (${tiredTeam.fatigue_category})`;
+      } else if (tiredTeamInDescription) {
+        alignment = 'opposed';
+        reason = `Betting on fatigued ${tiredTeam.team_name} (${tiredTeam.fatigue_category})`;
+      }
+    }
+    
+    return {
+      alignment,
+      reason,
+      tiredTeam,
+      freshTeam,
+      fatigueDiff,
+    };
+  };
 
   // Pull to refresh
   const { isRefreshing, pullProgress, containerRef, handlers } = usePullToRefresh({
@@ -361,6 +467,7 @@ export default function SharpMoney() {
             {filteredMovements.map((movement, idx) => {
               const rec = getRecommendation(movement);
               const priceUp = movement.price_change > 0;
+              const fatigueEdge = getFatigueEdge(movement);
               
               return (
                 <FeedCard key={movement.id} delay={Math.min(200 + idx * 50, 800)}>
@@ -381,6 +488,19 @@ export default function SharpMoney() {
                               SHARP
                             </Badge>
                           )}
+                          {/* Fatigue Edge Badge */}
+                          {fatigueEdge && fatigueEdge.alignment === 'aligned' && (
+                            <Badge className="text-xs bg-neon-cyan/20 text-neon-cyan border-neon-cyan/30">
+                              <BatteryLow className="w-3 h-3 mr-1" />
+                              FATIGUE EDGE
+                            </Badge>
+                          )}
+                          {fatigueEdge && fatigueEdge.alignment === 'opposed' && (
+                            <Badge className="text-xs bg-orange-500/20 text-orange-400 border-orange-500/30">
+                              <BatteryWarning className="w-3 h-3 mr-1" />
+                              FATIGUE CONFLICT
+                            </Badge>
+                          )}
                         </div>
                         <p className="font-medium text-foreground text-sm leading-tight">
                           {movement.description}
@@ -399,6 +519,38 @@ export default function SharpMoney() {
                         </div>
                       </div>
                     </div>
+                    
+                    {/* Fatigue Edge Info */}
+                    {fatigueEdge && (
+                      <div className={`p-2 rounded-lg border ${
+                        fatigueEdge.alignment === 'aligned' 
+                          ? 'bg-neon-cyan/10 border-neon-cyan/30' 
+                          : fatigueEdge.alignment === 'opposed'
+                          ? 'bg-orange-500/10 border-orange-500/30'
+                          : 'bg-muted/50 border-border/50'
+                      }`}>
+                        <div className="flex items-center gap-2">
+                          <Battery className={`w-4 h-4 ${
+                            fatigueEdge.alignment === 'aligned' ? 'text-neon-cyan' : 
+                            fatigueEdge.alignment === 'opposed' ? 'text-orange-400' : 'text-muted-foreground'
+                          }`} />
+                          <div className="flex-1">
+                            <p className={`text-xs font-medium ${
+                              fatigueEdge.alignment === 'aligned' ? 'text-neon-cyan' : 
+                              fatigueEdge.alignment === 'opposed' ? 'text-orange-400' : 'text-muted-foreground'
+                            }`}>
+                              {fatigueEdge.alignment === 'aligned' ? '✓ Sharp + Fatigue Aligned' : 
+                               fatigueEdge.alignment === 'opposed' ? '⚠ Fatigue Conflicts' : 'Fatigue Info'}
+                            </p>
+                            <p className="text-[10px] text-muted-foreground">{fatigueEdge.reason}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-xs font-bold text-foreground">+{fatigueEdge.fatigueDiff} pts</p>
+                            <p className="text-[10px] text-muted-foreground">differential</p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     
                     {/* Price Movement */}
                     <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">

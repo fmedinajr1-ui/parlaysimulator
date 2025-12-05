@@ -3,7 +3,7 @@ import { FeedCard } from "../FeedCard";
 import { supabase } from "@/integrations/supabase/client";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
-import { Zap, TrendingUp, TrendingDown, Clock } from "lucide-react";
+import { Zap, TrendingUp, TrendingDown, Clock, BatteryLow } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
 interface SharpAlert {
@@ -22,6 +22,14 @@ interface SharpAlert {
   clv_direction?: 'positive' | 'negative' | 'neutral';
   movement_authenticity?: string;
   recommendation?: string;
+  event_id: string;
+}
+
+interface FatigueData {
+  event_id: string;
+  team_name: string;
+  fatigue_score: number;
+  fatigue_category: string;
 }
 
 interface SharpMoneyAlertsProps {
@@ -31,6 +39,7 @@ interface SharpMoneyAlertsProps {
 
 export function SharpMoneyAlerts({ delay = 0, limit = 5 }: SharpMoneyAlertsProps) {
   const [alerts, setAlerts] = useState<SharpAlert[]>([]);
+  const [fatigueData, setFatigueData] = useState<Map<string, FatigueData[]>>(new Map());
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -56,7 +65,30 @@ export function SharpMoneyAlerts({ delay = 0, limit = 5 }: SharpMoneyAlertsProps
       }
     };
 
+    const fetchFatigueData = async () => {
+      try {
+        const today = new Date().toISOString().split('T')[0];
+        const { data, error } = await supabase
+          .from('nba_fatigue_scores')
+          .select('event_id, team_name, fatigue_score, fatigue_category')
+          .eq('game_date', today);
+
+        if (error) return;
+        
+        const fatigueMap = new Map<string, FatigueData[]>();
+        (data || []).forEach((score: FatigueData) => {
+          const existing = fatigueMap.get(score.event_id) || [];
+          existing.push(score);
+          fatigueMap.set(score.event_id, existing);
+        });
+        setFatigueData(fatigueMap);
+      } catch (err) {
+        console.error('Failed to fetch fatigue data:', err);
+      }
+    };
+
     fetchAlerts();
+    fetchFatigueData();
 
     // Subscribe to realtime updates
     const channel = supabase
@@ -79,6 +111,21 @@ export function SharpMoneyAlerts({ delay = 0, limit = 5 }: SharpMoneyAlertsProps
       supabase.removeChannel(channel);
     };
   }, [limit]);
+
+  const hasFatigueEdge = (alert: SharpAlert) => {
+    if (alert.sport !== 'basketball_nba') return false;
+    const scores = fatigueData.get(alert.event_id);
+    if (!scores || scores.length < 2) return false;
+    const fatigueDiff = Math.abs(scores[0].fatigue_score - scores[1].fatigue_score);
+    return fatigueDiff >= 15;
+  };
+
+  const getFatigueInfo = (alert: SharpAlert) => {
+    const scores = fatigueData.get(alert.event_id);
+    if (!scores || scores.length < 2) return null;
+    const tiredTeam = scores[0].fatigue_score > scores[1].fatigue_score ? scores[0] : scores[1];
+    return tiredTeam;
+  };
 
   const formatOdds = (price: number) => {
     return price > 0 ? `+${price}` : `${price}`;
@@ -123,13 +170,27 @@ export function SharpMoneyAlerts({ delay = 0, limit = 5 }: SharpMoneyAlertsProps
       </div>
 
       <div className="space-y-2">
-        {alerts.map((alert) => (
+        {alerts.map((alert) => {
+          const fatigueEdge = hasFatigueEdge(alert);
+          const fatigueInfo = getFatigueInfo(alert);
+          
+          return (
           <div 
             key={alert.id}
-            className="p-2 rounded-lg bg-neon-yellow/10 border border-neon-yellow/20 relative"
+            className={`p-2 rounded-lg relative ${
+              fatigueEdge 
+                ? 'bg-gradient-to-r from-neon-yellow/10 to-neon-cyan/10 border border-neon-cyan/30' 
+                : 'bg-neon-yellow/10 border border-neon-yellow/20'
+            }`}
           >
             {/* Pending/Final Status Badge */}
-            <div className="absolute top-1 right-1">
+            <div className="absolute top-1 right-1 flex items-center gap-1">
+              {fatigueEdge && (
+                <Badge className="text-[9px] px-1 py-0 bg-neon-cyan/20 text-neon-cyan border-neon-cyan/30">
+                  <BatteryLow className="w-2.5 h-2.5 mr-0.5" />
+                  FATIGUE
+                </Badge>
+              )}
               {alert.determination_status === 'pending' ? (
                 <Badge variant="outline" className="text-[9px] px-1 py-0 border-dashed">
                   ⏳ PENDING
@@ -143,7 +204,7 @@ export function SharpMoneyAlerts({ delay = 0, limit = 5 }: SharpMoneyAlertsProps
 
             <div className="flex items-center justify-between gap-2 mt-4">
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1 mb-0.5">
+                <div className="flex items-center gap-1 mb-0.5 flex-wrap">
                   <Badge variant="outline" className="text-[10px] px-1 py-0">
                     {alert.sport}
                   </Badge>
@@ -165,6 +226,11 @@ export function SharpMoneyAlerts({ delay = 0, limit = 5 }: SharpMoneyAlertsProps
                 <p className="text-[10px] text-muted-foreground truncate">
                   {alert.outcome_name}
                 </p>
+                {fatigueInfo && (
+                  <p className="text-[9px] text-neon-cyan mt-0.5">
+                    ⚡ {fatigueInfo.team_name} {fatigueInfo.fatigue_category}
+                  </p>
+                )}
               </div>
               
               <div className="text-right shrink-0">
@@ -203,7 +269,7 @@ export function SharpMoneyAlerts({ delay = 0, limit = 5 }: SharpMoneyAlertsProps
               </p>
             )}
           </div>
-        ))}
+        )})}
       </div>
     </FeedCard>
   );
