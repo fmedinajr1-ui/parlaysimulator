@@ -564,7 +564,7 @@ serve(async (req) => {
   }
 });
 
-// Consolidate movements to determine ONE final pick per event/market - IMPROVED to prevent duplicates
+// Consolidate movements to determine ONE final pick per event/market - FIXED to ensure only ONE pick per h2h game
 function consolidateMovements(movements: LineMovement[]): LineMovement[] {
   // Group by event + market (not bookmaker) for cross-book consensus
   const eventMarketGroups = new Map<string, LineMovement[]>();
@@ -576,23 +576,39 @@ function consolidateMovements(movements: LineMovement[]): LineMovement[] {
   }
   
   const consolidatedMovements: LineMovement[] = [];
-  const seenEventMarkets = new Set<string>();
+  const processedEvents = new Set<string>();
   
   for (const [eventMarketKey, groupMovements] of eventMarketGroups) {
-    // Skip if we've already processed this event/market
-    if (seenEventMarkets.has(eventMarketKey)) continue;
-    seenEventMarkets.add(eventMarketKey);
+    // Skip if already processed
+    if (processedEvents.has(eventMarketKey)) continue;
+    processedEvents.add(eventMarketKey);
     
-    // Separate movements by direction (positive vs negative price_change)
-    const overMoves = groupMovements.filter(m => m.outcome_name.toLowerCase().includes('over') || m.price_change > 0);
-    const underMoves = groupMovements.filter(m => m.outcome_name.toLowerCase().includes('under') || m.price_change < 0);
+    const marketType = groupMovements[0]?.market_type;
+    
+    // SPECIAL HANDLING FOR H2H (MONEYLINE) MARKETS - ONLY ONE PICK PER GAME
+    if (marketType === 'h2h') {
+      const result = consolidateH2HMarket(groupMovements);
+      if (result) {
+        consolidatedMovements.push(result);
+      }
+      continue;
+    }
+    
+    // For totals/spreads - separate by Over/Under
+    const overMoves = groupMovements.filter(m => 
+      m.outcome_name.toLowerCase().includes('over') || 
+      (m.price_change > 0 && !m.outcome_name.toLowerCase().includes('under'))
+    );
+    const underMoves = groupMovements.filter(m => 
+      m.outcome_name.toLowerCase().includes('under') || 
+      (m.price_change < 0 && !m.outcome_name.toLowerCase().includes('over'))
+    );
     
     // Check if both sides moved (market adjustment / trap)
     const bothSidesMoved = overMoves.length > 0 && underMoves.length > 0;
     
     // Find the strongest signal by confidence and movement size
     const sorted = [...groupMovements].sort((a, b) => {
-      // Prioritize by: 1) authenticity confidence, 2) price change magnitude
       const confA = a.authenticity_confidence || 0;
       const confB = b.authenticity_confidence || 0;
       if (confA !== confB) return confB - confA;
@@ -601,24 +617,24 @@ function consolidateMovements(movements: LineMovement[]): LineMovement[] {
     
     const primary = sorted[0];
     
-    // If both sides moved equally, mark as trap/uncertain - don't create duplicate picks
+    // If both sides moved equally, mark as trap/uncertain
     if (bothSidesMoved) {
       const avgOverMove = overMoves.reduce((sum, m) => sum + Math.abs(m.price_change), 0) / (overMoves.length || 1);
       const avgUnderMove = underMoves.reduce((sum, m) => sum + Math.abs(m.price_change), 0) / (underMoves.length || 1);
       
-      // If movements are similar, it's market adjustment - skip or mark as trap
+      // If movements are similar, it's market adjustment
       if (Math.abs(avgOverMove - avgUnderMove) < 5) {
         primary.movement_authenticity = 'fake';
         primary.recommendation = 'caution';
         primary.recommendation_reason = `AVOID - Both sides moved similarly (market adjustment)`;
-        primary.final_pick = 'NO_PICK';
+        primary.final_pick = 'AVOID';
         primary.is_primary_record = true;
         primary.authenticity_confidence = Math.max((primary.authenticity_confidence || 0.5) - 0.3, 0.1);
         consolidatedMovements.push(primary);
         continue;
       }
       
-      // Otherwise, pick the side with stronger movement
+      // Pick the side with stronger movement
       const strongerSide = avgOverMove > avgUnderMove ? overMoves[0] : underMoves[0];
       strongerSide.final_pick = strongerSide.outcome_name;
       strongerSide.recommendation_reason = `BET ${strongerSide.outcome_name} - Stronger movement (${Math.round(Math.max(avgOverMove, avgUnderMove))} pts vs ${Math.round(Math.min(avgOverMove, avgUnderMove))} pts)`;
@@ -635,12 +651,10 @@ function consolidateMovements(movements: LineMovement[]): LineMovement[] {
       finalPick = primary.outcome_name;
       updatedReason = `BET ${finalPick} - ${updatedReason}`;
     } else if (primary.movement_authenticity === 'fake') {
-      // Get the opposite side for fade
       const oppositeSide = primary.outcome_name.toLowerCase().includes('over') ? 'Under' : 'Over';
       finalPick = `FADE to ${oppositeSide}`;
       updatedReason = `FADE ${primary.outcome_name} - ${updatedReason}`;
     } else if ((primary.authenticity_confidence || 0) < 0.4) {
-      // Low confidence - don't recommend
       finalPick = 'CAUTION';
       updatedReason = `Low confidence (${Math.round((primary.authenticity_confidence || 0) * 100)}%) - ${updatedReason}`;
     } else {
@@ -657,6 +671,116 @@ function consolidateMovements(movements: LineMovement[]): LineMovement[] {
   }
   
   return consolidatedMovements;
+}
+
+// Special consolidation for H2H (moneyline) markets - ensures only ONE pick per game
+function consolidateH2HMarket(movements: LineMovement[]): LineMovement | null {
+  if (movements.length === 0) return null;
+  
+  // Group by team name (outcome)
+  const teamMoves = new Map<string, LineMovement[]>();
+  for (const m of movements) {
+    if (!teamMoves.has(m.outcome_name)) teamMoves.set(m.outcome_name, []);
+    teamMoves.get(m.outcome_name)!.push(m);
+  }
+  
+  // Calculate average movement strength per team
+  const teamStrengths: Array<{ team: string; avgMove: number; bestMove: LineMovement; confidence: number; isReal: boolean }> = [];
+  
+  for (const [team, moves] of teamMoves) {
+    const avgMove = moves.reduce((sum, m) => sum + Math.abs(m.price_change), 0) / moves.length;
+    const bestMove = moves.sort((a, b) => (b.authenticity_confidence || 0) - (a.authenticity_confidence || 0))[0];
+    const avgConfidence = moves.reduce((sum, m) => sum + (m.authenticity_confidence || 0.5), 0) / moves.length;
+    const realCount = moves.filter(m => m.movement_authenticity === 'real').length;
+    
+    teamStrengths.push({
+      team,
+      avgMove,
+      bestMove,
+      confidence: avgConfidence,
+      isReal: realCount > moves.length / 2
+    });
+  }
+  
+  // If only one team moved, use that
+  if (teamStrengths.length === 1) {
+    const single = teamStrengths[0];
+    const primary = single.bestMove;
+    
+    if (single.isReal && single.confidence >= 0.5) {
+      primary.final_pick = single.team;
+      primary.recommendation = 'pick';
+      primary.recommendation_reason = `BET ${single.team} - Sharp action detected, single-side movement`;
+    } else if (!single.isReal) {
+      // Get opponent name from description
+      const desc = primary.description;
+      const teams = desc.split(' @ ');
+      const opponent = teams.find(t => t !== single.team) || 'opponent';
+      primary.final_pick = opponent;
+      primary.recommendation = 'fade';
+      primary.recommendation_reason = `FADE ${single.team}, BET ${opponent} - Trap movement detected`;
+    } else {
+      primary.final_pick = single.team;
+      primary.recommendation = 'caution';
+      primary.recommendation_reason = `Consider ${single.team} - Mixed signals`;
+    }
+    
+    primary.is_primary_record = true;
+    return primary;
+  }
+  
+  // Both teams moved - compare and pick ONE or mark as AVOID
+  const [team1, team2] = teamStrengths.sort((a, b) => b.avgMove - a.avgMove);
+  const moveDiff = team1.avgMove - team2.avgMove;
+  
+  // If movements are very similar, AVOID the game entirely
+  if (moveDiff < 3) {
+    const primary = team1.bestMove;
+    primary.final_pick = 'AVOID';
+    primary.recommendation = 'caution';
+    primary.movement_authenticity = 'fake';
+    primary.recommendation_reason = `AVOID THIS GAME - Both ${team1.team} and ${team2.team} moved similarly (likely market adjustment)`;
+    primary.is_primary_record = true;
+    primary.authenticity_confidence = 0.2;
+    return primary;
+  }
+  
+  // Significant difference - pick the stronger side or fade the weaker
+  const stronger = team1;
+  const weaker = team2;
+  const primary = stronger.bestMove;
+  
+  if (stronger.isReal && stronger.confidence >= 0.5) {
+    // Real sharp action on stronger side
+    primary.final_pick = stronger.team;
+    primary.recommendation = 'pick';
+    primary.recommendation_reason = `BET ${stronger.team} - Stronger sharp movement (${Math.round(stronger.avgMove)} pts vs ${Math.round(weaker.avgMove)} pts)`;
+  } else if (!stronger.isReal && weaker.isReal) {
+    // Fade the fake move, bet the real one
+    primary.final_pick = weaker.team;
+    primary.recommendation = 'fade';
+    primary.recommendation_reason = `BET ${weaker.team} - FADE trap on ${stronger.team}`;
+  } else if (!stronger.isReal && !weaker.isReal) {
+    // Both look fake - avoid or pick the lesser trap
+    if (stronger.avgMove > weaker.avgMove + 5) {
+      primary.final_pick = weaker.team;
+      primary.recommendation = 'fade';
+      primary.recommendation_reason = `FADE ${stronger.team}, lean ${weaker.team} - Bigger trap detected`;
+    } else {
+      primary.final_pick = 'AVOID';
+      primary.recommendation = 'caution';
+      primary.recommendation_reason = `AVOID - Both sides show trap patterns`;
+      primary.authenticity_confidence = 0.2;
+    }
+  } else {
+    // Default to stronger movement
+    primary.final_pick = stronger.team;
+    primary.recommendation = (stronger.confidence >= 0.5) ? 'pick' : 'caution';
+    primary.recommendation_reason = `Consider ${stronger.team} - Stronger movement detected`;
+  }
+  
+  primary.is_primary_record = true;
+  return primary;
 }
 
 // OPTIMIZED: Process game line odds with in-memory snapshot lookup (no DB calls)
