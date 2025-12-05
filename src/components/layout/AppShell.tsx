@@ -10,11 +10,11 @@ interface AppShellProps {
 export function AppShell({ children, className, noPadding = false }: AppShellProps) {
   return (
     <div className={cn(
-      "min-h-dvh bg-background pb-nav-safe overflow-x-safe scroll-smooth-ios",
+      "min-h-dvh flex flex-col bg-background",
       className
     )}>
       <main className={cn(
-        "max-w-lg mx-auto",
+        "flex-1 flex flex-col max-w-lg mx-auto w-full pb-[88px]",
         !noPadding && "px-4 py-4"
       )}>
         {children}
