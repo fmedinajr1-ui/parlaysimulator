@@ -41,7 +41,8 @@ import {
   AlertTriangle,
   Zap,
   ThumbsUp,
-  ThumbsDown
+  ThumbsDown,
+  Battery
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -54,6 +55,15 @@ interface SuggestedLeg {
   sport: string;
   betType: string;
   eventTime: string;
+  fatigueEdge?: string;
+  fatigueScore?: number;
+  fatigueBoost?: boolean;
+  hybridBreakdown?: {
+    sharp: number;
+    user: number;
+    ai: number;
+    fatigue?: number;
+  };
 }
 
 interface SuggestedParlay {
@@ -68,6 +78,7 @@ interface SuggestedParlay {
   created_at: string;
   is_hybrid?: boolean;
   hybrid_scores?: any;
+  has_fatigue_edge?: boolean;
 }
 
 interface UserPattern {
@@ -134,6 +145,7 @@ const Suggestions = () => {
   const [betTypeFilter, setBetTypeFilter] = useState("All");
   const [legCountFilter, setLegCountFilter] = useState("any");
   const [oddsRange, setOddsRange] = useState<[number, number]>([-500, 2000]);
+  const [fatigueEdgeFilter, setFatigueEdgeFilter] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [optimizerOpen, setOptimizerOpen] = useState(false);
   const [selectedParlayForOptimization, setSelectedParlayForOptimization] = useState<SuggestedParlay | null>(null);
@@ -148,7 +160,7 @@ const Suggestions = () => {
 
   useEffect(() => {
     applyFilters();
-  }, [suggestions, sportFilter, riskFilter, betTypeFilter, legCountFilter, oddsRange]);
+  }, [suggestions, sportFilter, riskFilter, betTypeFilter, legCountFilter, oddsRange, fatigueEdgeFilter]);
 
   const fetchSuggestions = async () => {
     if (!user) return;
@@ -395,6 +407,15 @@ const Suggestions = () => {
       s.total_odds >= oddsRange[0] && s.total_odds <= oddsRange[1]
     );
 
+    // Fatigue edge filter - show only suggestions with fatigue-aligned legs
+    if (fatigueEdgeFilter) {
+      filtered = filtered.filter(s => 
+        s.has_fatigue_edge || 
+        s.legs.some(leg => leg.fatigueBoost) ||
+        s.suggestion_reason.includes('fatigue')
+      );
+    }
+
     setFilteredSuggestions(filtered);
   };
 
@@ -515,6 +536,7 @@ const Suggestions = () => {
     setBetTypeFilter("All");
     setLegCountFilter("any");
     setOddsRange([-500, 2000]);
+    setFatigueEdgeFilter(false);
   };
 
   const activeFilterCount = [
@@ -523,6 +545,7 @@ const Suggestions = () => {
     betTypeFilter !== "All",
     legCountFilter !== "any",
     oddsRange[0] !== -500 || oddsRange[1] !== 2000,
+    fatigueEdgeFilter,
   ].filter(Boolean).length;
 
   // Not logged in
@@ -904,7 +927,26 @@ const Suggestions = () => {
                     />
                   </div>
 
-                  <Button 
+                  {/* Fatigue Edge Toggle */}
+                  <div className="flex items-center justify-between p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/20">
+                    <div className="flex items-center gap-2">
+                      <Battery className="w-4 h-4 text-yellow-400" />
+                      <div>
+                        <span className="text-sm font-medium">Fatigue Edge</span>
+                        <p className="text-xs text-muted-foreground">NBA picks with fatigue advantage</p>
+                      </div>
+                    </div>
+                    <Button
+                      variant={fatigueEdgeFilter ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setFatigueEdgeFilter(!fatigueEdgeFilter)}
+                      className={fatigueEdgeFilter ? "bg-yellow-500 hover:bg-yellow-600" : ""}
+                    >
+                      {fatigueEdgeFilter ? "ON" : "OFF"}
+                    </Button>
+                  </div>
+
+                  <Button
                     variant="ghost" 
                     size="sm" 
                     className="w-full"

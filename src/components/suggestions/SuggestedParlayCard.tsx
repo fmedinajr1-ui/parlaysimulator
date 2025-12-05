@@ -21,11 +21,15 @@ interface SuggestedLeg {
     sharp: number;
     user: number;
     ai: number;
+    fatigue?: number;
   };
   recommendation?: string;
   bestBook?: string;
   lineEdge?: number;
   availableAt?: string[];
+  fatigueEdge?: string;
+  fatigueScore?: number;
+  fatigueBoost?: boolean;
 }
 
 interface FatigueInfo {
@@ -339,13 +343,47 @@ export function SuggestedParlayCard({
                   />
                 </div>
                 
+                {/* Fatigue Edge Indicator */}
+                {leg.fatigueEdge && (
+                  <div className={cn(
+                    "mt-2 p-2 rounded border flex items-center gap-2",
+                    leg.fatigueBoost 
+                      ? "bg-yellow-500/10 border-yellow-500/30" 
+                      : "bg-orange-500/10 border-orange-500/30"
+                  )}>
+                    <Battery className={cn(
+                      "w-4 h-4",
+                      leg.fatigueBoost ? "text-yellow-400" : "text-orange-400"
+                    )} />
+                    <span className={cn(
+                      "text-xs",
+                      leg.fatigueBoost ? "text-yellow-400" : "text-orange-400"
+                    )}>
+                      {leg.fatigueEdge}
+                    </span>
+                    {leg.fatigueBoost && (
+                      <Badge variant="outline" className="text-xs bg-yellow-500/20 text-yellow-400 border-yellow-500/30 ml-auto">
+                        +BOOST
+                      </Badge>
+                    )}
+                  </div>
+                )}
+                
                 {/* Hybrid Score Breakdown */}
                 {leg.hybridScore && leg.hybridBreakdown && (
                   <div className="mt-2 p-2 bg-neon-purple/10 rounded border border-neon-purple/20">
-                    <div className="flex justify-between text-xs mb-2">
+                    <div className="flex flex-wrap justify-between text-xs mb-2 gap-1">
                       <span className="text-muted-foreground">Sharp: {leg.hybridBreakdown.sharp}/40</span>
                       <span className="text-muted-foreground">User: {leg.hybridBreakdown.user}/35</span>
                       <span className="text-muted-foreground">AI: {leg.hybridBreakdown.ai}/25</span>
+                      {leg.hybridBreakdown.fatigue !== undefined && leg.hybridBreakdown.fatigue !== 0 && (
+                        <span className={cn(
+                          "font-medium",
+                          leg.hybridBreakdown.fatigue > 0 ? "text-yellow-400" : "text-orange-400"
+                        )}>
+                          Fatigue: {leg.hybridBreakdown.fatigue > 0 ? '+' : ''}{leg.hybridBreakdown.fatigue}
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
                       <Progress value={leg.hybridScore} className="h-2" />

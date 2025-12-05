@@ -131,11 +131,15 @@ interface SuggestionLeg {
   betType: string;
   eventTime: string;
   hybridScore?: number;
-  hybridBreakdown?: { sharp: number; user: number; ai: number };
+  hybridBreakdown?: { sharp: number; user: number; ai: number; fatigue: number };
   recommendation?: string;
   bestBook?: string;
   lineEdge?: number;
   availableAt?: string[];
+  fatigueEdge?: string;
+  fatigueScore?: number;
+  fatigueBoost?: boolean;
+  eventId?: string;
 }
 
 // Sport key mapping for The Odds API
@@ -2527,8 +2531,12 @@ serve(async (req) => {
                     sharp: score.sharpScore,
                     user: score.userPatternScore,
                     ai: score.aiAccuracyScore,
+                    fatigue: score.fatigueScore,
                   },
                   recommendation: score.recommendation,
+                  fatigueEdge: score.fatigueEdge,
+                  fatigueScore: score.fatigueScore,
+                  fatigueBoost: score.fatigueScore >= 10,
                 },
                 hybridScore: score,
               });
@@ -2568,8 +2576,12 @@ serve(async (req) => {
                       sharp: score.sharpScore,
                       user: score.userPatternScore,
                       ai: score.aiAccuracyScore,
+                      fatigue: score.fatigueScore,
                     },
                     recommendation: score.recommendation,
+                    fatigueEdge: score.fatigueEdge,
+                    fatigueScore: score.fatigueScore,
+                    fatigueBoost: score.fatigueScore >= 10,
                   },
                   hybridScore: score,
                 });
@@ -2621,28 +2633,40 @@ serve(async (req) => {
           hybridLegs.reduce((sum, leg) => sum + (leg.hybridScore || 0), 0) / hybridLegs.length
         );
         
+        // Check for fatigue alignment
+        const fatigueAlignedLegs = hybridLegs.filter(leg => leg.fatigueBoost);
+        const hasFatigueEdge = fatigueAlignedLegs.length > 0;
+        const fatigueBoostAmount = fatigueAlignedLegs.length * 0.02; // 2% confidence boost per fatigue-aligned leg
+        
         // Build hybrid scores for storage
         const hybridScoresData = hybridLegs.map(leg => ({
           description: leg.description,
           hybridScore: leg.hybridScore,
           breakdown: leg.hybridBreakdown,
           recommendation: leg.recommendation,
+          fatigueEdge: leg.fatigueEdge,
+          fatigueScore: leg.fatigueScore,
         }));
+        
+        const fatigueNote = hasFatigueEdge 
+          ? ` 🔋 ${fatigueAlignedLegs.length} leg${fatigueAlignedLegs.length > 1 ? 's' : ''} with fatigue edge!`
+          : '';
         
         suggestions.unshift({
           legs: hybridLegs,
           total_odds: totalOdds,
           combined_probability: hybridProb,
-          suggestion_reason: `🧬 HYBRID PARLAY: ${hybridLegs.length} legs where Sharp Money + Your History + AI Data ALL align. Avg score: ${avgHybridScore}/100. Top-scoring picks only!`,
+          suggestion_reason: `🧬 HYBRID PARLAY: ${hybridLegs.length} legs where Sharp Money + Your History + AI Data ALL align. Avg score: ${avgHybridScore}/100.${fatigueNote}`,
           sport: hybridLegs[0].sport,
-          confidence_score: Math.min(avgHybridScore / 100 * 1.1, 0.95),
+          confidence_score: Math.min((avgHybridScore / 100 * 1.1) + fatigueBoostAmount, 0.98),
           expires_at: new Date(now.getTime() + 18 * 60 * 60 * 1000).toISOString(),
           is_data_driven: true,
           is_hybrid: true,
           hybrid_scores: hybridScoresData,
+          has_fatigue_edge: hasFatigueEdge,
         });
         
-        console.log(`Created HYBRID PARLAY with ${hybridLegs.length} legs, avg hybrid score: ${avgHybridScore}`);
+        console.log(`Created HYBRID PARLAY with ${hybridLegs.length} legs, avg hybrid score: ${avgHybridScore}, fatigue edges: ${fatigueAlignedLegs.length}`);
       }
     }
 
