@@ -19,6 +19,7 @@ import Suggestions from "./pages/Suggestions";
 import OddsMovement from "./pages/OddsMovement";
 import SharpMoney from "./pages/SharpMoney";
 import LineShopping from "./pages/LineShopping";
+import NBAFatigue from "./pages/NBAFatigue";
 import Install from "./pages/Install";
 import NotFound from "./pages/NotFound";
 
@@ -42,6 +43,7 @@ function AnimatedRoutes() {
         <Route path="/odds" element={<OddsMovement />} />
         <Route path="/sharp" element={<SharpMoney />} />
         <Route path="/line-shopping" element={<LineShopping />} />
+        <Route path="/nba-fatigue" element={<NBAFatigue />} />
         <Route path="/install" element={<Install />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
