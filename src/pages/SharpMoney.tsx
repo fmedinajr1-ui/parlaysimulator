@@ -5,6 +5,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TrendingUp, TrendingDown, AlertTriangle, Filter, Zap, RefreshCw, Target } from "lucide-react";
 import { SharpAccuracyTracker } from "@/components/sharp/SharpAccuracyTracker";
+import { PersonalSharpTracker } from "@/components/sharp/PersonalSharpTracker";
+import { FollowButton } from "@/components/sharp/FollowButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatDistanceToNow } from "date-fns";
 import { AppShell } from "@/components/layout/AppShell";
@@ -215,6 +217,9 @@ export default function SharpMoney() {
 
         {/* Accuracy Tracker */}
         <SharpAccuracyTracker />
+
+        {/* Personal Record Tracker */}
+        <PersonalSharpTracker />
 
         {/* Sport Tabs - Horizontal scroll */}
         <SportTabs
@@ -488,10 +493,13 @@ export default function SharpMoney() {
                       </div>
                     )}
                     
-                    {/* Timestamp */}
-                    <p className="text-xs text-muted-foreground">
-                      {formatDistanceToNow(new Date(movement.detected_at), { addSuffix: true })}
-                    </p>
+                    {/* Follow Button and Timestamp */}
+                    <div className="flex items-center justify-between pt-2 border-t border-border/30">
+                      <FollowButton movementId={movement.id} />
+                      <p className="text-xs text-muted-foreground">
+                        {formatDistanceToNow(new Date(movement.detected_at), { addSuffix: true })}
+                      </p>
+                    </div>
                   </div>
                 </FeedCard>
               );
