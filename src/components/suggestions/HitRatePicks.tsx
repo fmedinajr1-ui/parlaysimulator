@@ -6,8 +6,56 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, RefreshCw, Target, Zap, TrendingUp, AlertCircle } from "lucide-react";
+import { Loader2, RefreshCw, Target, Zap, TrendingUp, TrendingDown, Minus, AlertCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+
+// Calculate trend from game logs (recent games vs older games)
+const calculateTrend = (gameLogs: any[], line: number, side: 'over' | 'under'): 'up' | 'down' | 'neutral' => {
+  if (!gameLogs || gameLogs.length < 4) return 'neutral';
+  
+  // Split into recent (last 2) and older (rest) games
+  const recentGames = gameLogs.slice(0, 2);
+  const olderGames = gameLogs.slice(2);
+  
+  if (olderGames.length === 0) return 'neutral';
+  
+  // Calculate hit rates for each period
+  const recentHits = recentGames.filter((g: any) => 
+    side === 'over' ? g.value > line : g.value < line
+  ).length / recentGames.length;
+  
+  const olderHits = olderGames.filter((g: any) => 
+    side === 'over' ? g.value > line : g.value < line
+  ).length / olderGames.length;
+  
+  const diff = recentHits - olderHits;
+  
+  if (diff > 0.15) return 'up';
+  if (diff < -0.15) return 'down';
+  return 'neutral';
+};
+
+const getTrendIcon = (trend: 'up' | 'down' | 'neutral') => {
+  switch (trend) {
+    case 'up':
+      return <TrendingUp className="h-3.5 w-3.5 text-neon-green" />;
+    case 'down':
+      return <TrendingDown className="h-3.5 w-3.5 text-red-400" />;
+    default:
+      return <Minus className="h-3.5 w-3.5 text-muted-foreground" />;
+  }
+};
+
+const getTrendLabel = (trend: 'up' | 'down' | 'neutral') => {
+  switch (trend) {
+    case 'up':
+      return 'Hot streak';
+    case 'down':
+      return 'Cooling off';
+    default:
+      return 'Stable';
+  }
+};
 
 const HIT_RATE_OPTIONS = [
   { value: 0.4, label: "40%+" },
@@ -246,13 +294,30 @@ export function HitRatePicks() {
               const hits = prop.recommended_side === 'over' 
                 ? prop.over_hits 
                 : prop.under_hits;
+              const trend = calculateTrend(
+                prop.game_logs || [], 
+                prop.current_line, 
+                prop.recommended_side
+              );
               
               return (
                 <Card key={prop.id} className="bg-card/60 border-border/30">
                   <CardContent className="py-3">
                     <div className="flex items-center justify-between">
                       <div>
-                        <div className="font-medium">{prop.player_name}</div>
+                        <div className="font-medium flex items-center gap-2">
+                          {prop.player_name}
+                          <span className="flex items-center gap-1 text-xs">
+                            {getTrendIcon(trend)}
+                            <span className={
+                              trend === 'up' ? 'text-neon-green' : 
+                              trend === 'down' ? 'text-red-400' : 
+                              'text-muted-foreground'
+                            }>
+                              {getTrendLabel(trend)}
+                            </span>
+                          </span>
+                        </div>
                         <div className="text-sm text-muted-foreground">
                           {prop.recommended_side.toUpperCase()} {prop.current_line}{' '}
                           {PROP_LABELS[prop.prop_type] || prop.prop_type}
