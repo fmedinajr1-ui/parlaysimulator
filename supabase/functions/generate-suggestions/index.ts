@@ -82,9 +82,28 @@ interface HybridScore {
   aiAccuracyScore: number;  // 0-25 points from AI track record
   calibrationScore: number; // 0-15 points from calibration factors
   strategyScore: number;    // 0-10 points from strategy performance
-  totalScore: number;       // 0-125 combined, normalized to 0-100
+  fatigueScore: number;     // -20 to +20 points from NBA fatigue differential
+  totalScore: number;       // 0-145 combined, normalized to 0-100
   recommendation: 'STRONG_PICK' | 'PICK' | 'NEUTRAL' | 'FADE' | 'STRONG_FADE';
   calibratedProbability?: number;
+  fatigueEdge?: string;     // Description of fatigue advantage
+}
+
+interface FatigueData {
+  team_name: string;
+  opponent: string;
+  fatigue_score: number;
+  fatigue_category: string;
+  ml_adjustment_pct: number;
+  spread_adjustment: number;
+  points_adjustment_pct: number;
+  rebounds_adjustment_pct: number;
+  assists_adjustment_pct: number;
+  three_pt_adjustment_pct: number;
+  blocks_adjustment_pct: number;
+  betting_edge_summary: string | null;
+  recommended_angle: string | null;
+  event_id: string;
 }
 
 interface CalibrationFactor {
@@ -390,6 +409,106 @@ serve(async (req) => {
       for (const strat of strategyPerformance) {
         strategyMap[strat.strategy_name] = strat;
       }
+    }
+
+    // Fetch NBA fatigue scores for today's games
+    console.log('Fetching NBA fatigue scores...');
+    const today = new Date().toISOString().split('T')[0];
+    const { data: fatigueScores, error: fatigueError } = await supabase
+      .from('nba_fatigue_scores')
+      .select('*')
+      .eq('game_date', today);
+    
+    if (fatigueError) {
+      console.error('Error fetching fatigue scores:', fatigueError);
+    }
+    console.log(`Loaded ${fatigueScores?.length || 0} NBA fatigue scores for today`);
+    
+    // Build fatigue lookup map by team name
+    const fatigueMap: Record<string, FatigueData> = {};
+    if (fatigueScores) {
+      for (const score of fatigueScores) {
+        fatigueMap[score.team_name.toLowerCase()] = score;
+        // Also map common abbreviations and variations
+        const teamAbbr = getTeamAbbreviation(score.team_name);
+        if (teamAbbr) fatigueMap[teamAbbr.toLowerCase()] = score;
+      }
+    }
+    
+    // Helper to get team abbreviation
+    function getTeamAbbreviation(teamName: string): string | null {
+      const abbrevMap: Record<string, string> = {
+        'Atlanta Hawks': 'ATL', 'Boston Celtics': 'BOS', 'Brooklyn Nets': 'BKN',
+        'Charlotte Hornets': 'CHA', 'Chicago Bulls': 'CHI', 'Cleveland Cavaliers': 'CLE',
+        'Dallas Mavericks': 'DAL', 'Denver Nuggets': 'DEN', 'Detroit Pistons': 'DET',
+        'Golden State Warriors': 'GSW', 'Houston Rockets': 'HOU', 'Indiana Pacers': 'IND',
+        'LA Clippers': 'LAC', 'Los Angeles Clippers': 'LAC', 'Los Angeles Lakers': 'LAL',
+        'LA Lakers': 'LAL', 'Memphis Grizzlies': 'MEM', 'Miami Heat': 'MIA',
+        'Milwaukee Bucks': 'MIL', 'Minnesota Timberwolves': 'MIN', 'New Orleans Pelicans': 'NOP',
+        'New York Knicks': 'NYK', 'Oklahoma City Thunder': 'OKC', 'Orlando Magic': 'ORL',
+        'Philadelphia 76ers': 'PHI', 'Phoenix Suns': 'PHX', 'Portland Trail Blazers': 'POR',
+        'Sacramento Kings': 'SAC', 'San Antonio Spurs': 'SAS', 'Toronto Raptors': 'TOR',
+        'Utah Jazz': 'UTA', 'Washington Wizards': 'WAS'
+      };
+      return abbrevMap[teamName] || null;
+    }
+    
+    // Helper to find fatigue data for a team from description
+    function findFatigueForTeam(description: string): FatigueData | null {
+      const descLower = description.toLowerCase();
+      for (const [key, fatigue] of Object.entries(fatigueMap)) {
+        if (descLower.includes(key)) {
+          return fatigue;
+        }
+      }
+      return null;
+    }
+    
+    // Helper to calculate fatigue differential between two teams
+    function calculateFatigueDifferential(team1: string, team2: string): { 
+      differential: number; 
+      advantage: string; 
+      details: string;
+      edgeTeam: FatigueData | null;
+    } {
+      const fatigue1 = fatigueMap[team1.toLowerCase()];
+      const fatigue2 = fatigueMap[team2.toLowerCase()];
+      
+      if (!fatigue1 && !fatigue2) {
+        return { differential: 0, advantage: 'none', details: '', edgeTeam: null };
+      }
+      
+      const score1 = fatigue1?.fatigue_score || 0;
+      const score2 = fatigue2?.fatigue_score || 0;
+      const differential = score2 - score1; // Positive = team1 is fresher
+      
+      let advantage = 'none';
+      let details = '';
+      let edgeTeam: FatigueData | null = null;
+      
+      if (Math.abs(differential) >= 20) {
+        if (differential > 0) {
+          advantage = team1;
+          edgeTeam = fatigue1 || null;
+          details = `${team1} is MUCH fresher (${score1} vs ${score2} fatigue)`;
+        } else {
+          advantage = team2;
+          edgeTeam = fatigue2 || null;
+          details = `${team2} is MUCH fresher (${score2} vs ${score1} fatigue)`;
+        }
+      } else if (Math.abs(differential) >= 10) {
+        if (differential > 0) {
+          advantage = team1;
+          edgeTeam = fatigue1 || null;
+          details = `${team1} has fatigue edge (${score1} vs ${score2})`;
+        } else {
+          advantage = team2;
+          edgeTeam = fatigue2 || null;
+          details = `${team2} has fatigue edge (${score2} vs ${score1})`;
+        }
+      }
+      
+      return { differential: Math.abs(differential), advantage, details, edgeTeam };
     }
 
     // Helper to get calibration factor
@@ -845,9 +964,9 @@ serve(async (req) => {
       return sportMatches || betTypeMatches || oddsInRange;
     };
 
-    // HYBRID SCORE FORMULA: Combines sharp money + user patterns + AI accuracy + calibration + strategy
+    // HYBRID SCORE FORMULA: Combines sharp money + user patterns + AI accuracy + calibration + strategy + fatigue
     const calculateHybridScore = (
-      leg: { sport: string; betType: string; odds: number; description: string; eventId?: string; impliedProbability?: number },
+      leg: { sport: string; betType: string; odds: number; description: string; eventId?: string; impliedProbability?: number; homeTeam?: string; awayTeam?: string },
       sharpAlerts: any[],
       userPattern: EnhancedUserPattern,
       accuracyMap: Record<string, AccuracyMetric>,
@@ -858,6 +977,8 @@ serve(async (req) => {
       let aiAccuracyScore = 0;
       let calibrationScore = 0;
       let strategyScore = 0;
+      let fatigueScore = 0;
+      let fatigueEdge: string | undefined;
 
       // SHARP SCORE (0-40 points)
       const matchingSharp = sharpAlerts.find(alert => 
@@ -957,13 +1078,90 @@ serve(async (req) => {
         else if (strat.roi_percentage < -10) strategyScore -= 3;
       }
 
+      // FATIGUE SCORE (-20 to +20 points) - NBA only
+      if (leg.sport === 'NBA' || leg.sport === 'basketball_nba') {
+        // Extract team names from description
+        const descLower = leg.description.toLowerCase();
+        
+        // Find fatigue data for the team in this leg
+        const teamFatigue = findFatigueForTeam(leg.description);
+        
+        if (teamFatigue) {
+          // Check if we're betting ON this team (ML) or related prop
+          const bettingOnTeam = descLower.includes(teamFatigue.team_name.toLowerCase());
+          const opponentFatigue = fatigueMap[teamFatigue.opponent.toLowerCase()];
+          
+          if (opponentFatigue) {
+            const differential = opponentFatigue.fatigue_score - teamFatigue.fatigue_score;
+            
+            // If betting ON a team, we want THEM to be fresh (low fatigue) and opponent tired (high fatigue)
+            if (bettingOnTeam) {
+              if (differential >= 30) {
+                fatigueScore += 20; // HUGE edge - opponent is exhausted
+                fatigueEdge = `🔥 ${teamFatigue.team_name} has MAJOR fatigue edge (${differential}pt differential)`;
+              } else if (differential >= 20) {
+                fatigueScore += 15; // Big edge
+                fatigueEdge = `💪 ${teamFatigue.team_name} is much fresher (${differential}pt edge)`;
+              } else if (differential >= 10) {
+                fatigueScore += 8; // Moderate edge
+                fatigueEdge = `${teamFatigue.team_name} has fatigue advantage`;
+              } else if (differential <= -20) {
+                fatigueScore -= 15; // We're betting on the tired team
+                fatigueEdge = `⚠️ ${teamFatigue.team_name} is FATIGUED vs fresh opponent`;
+              } else if (differential <= -10) {
+                fatigueScore -= 8; // Moderate disadvantage
+                fatigueEdge = `${teamFatigue.team_name} is more tired than opponent`;
+              }
+            }
+          } else {
+            // No opponent data, just look at our team's fatigue
+            if (teamFatigue.fatigue_score >= 60) {
+              fatigueScore -= 10; // High fatigue = bad
+              fatigueEdge = `⚠️ ${teamFatigue.team_name} fatigue: ${teamFatigue.fatigue_category}`;
+            } else if (teamFatigue.fatigue_score <= 20) {
+              fatigueScore += 5; // Fresh team = good
+              fatigueEdge = `${teamFatigue.team_name} is well-rested`;
+            }
+          }
+          
+          // Player prop adjustments - factor in team fatigue for prop bets
+          if (leg.betType.includes('player_') || leg.betType.includes('prop')) {
+            // Points, 3PT, efficiency suffer most from fatigue
+            if (leg.betType.includes('points') || leg.betType.includes('threes')) {
+              if (teamFatigue.fatigue_score >= 50) {
+                const isOver = descLower.includes('over');
+                if (isOver) {
+                  fatigueScore -= 8; // Penalize OVER on tired team
+                  fatigueEdge = `📉 Fatigue hurts scoring - consider UNDER`;
+                } else {
+                  fatigueScore += 5; // Boost UNDER on tired team
+                  fatigueEdge = `Fatigue favors UNDER`;
+                }
+              }
+            }
+            // Rebounds also affected
+            if (leg.betType.includes('rebounds')) {
+              if (teamFatigue.fatigue_score >= 50) {
+                const isOver = descLower.includes('over');
+                if (isOver) {
+                  fatigueScore -= 6;
+                  fatigueEdge = `Fatigue impacts rebounding effort`;
+                } else {
+                  fatigueScore += 4;
+                }
+              }
+            }
+          }
+        }
+      }
+
       // Calculate calibrated probability
       const impliedProb = leg.impliedProbability || americanToImplied(leg.odds);
       const calibratedProbability = getCalibratedProbability(impliedProb, leg.sport, leg.betType, leg.odds);
 
-      // Normalized total score (max 125 -> normalize to 100)
-      const rawTotal = sharpScore + userPatternScore + aiAccuracyScore + calibrationScore + strategyScore;
-      const totalScore = Math.max(0, Math.min(100, (rawTotal / 125) * 100));
+      // Normalized total score (max 145 with fatigue -> normalize to 100)
+      const rawTotal = sharpScore + userPatternScore + aiAccuracyScore + calibrationScore + strategyScore + fatigueScore;
+      const totalScore = Math.max(0, Math.min(100, (rawTotal / 145) * 100));
 
       // Determine recommendation
       let recommendation: HybridScore['recommendation'];
@@ -979,9 +1177,11 @@ serve(async (req) => {
         aiAccuracyScore: Math.round(aiAccuracyScore),
         calibrationScore: Math.round(calibrationScore),
         strategyScore: Math.round(strategyScore),
+        fatigueScore: Math.round(fatigueScore),
         totalScore: Math.round(totalScore), 
         recommendation,
         calibratedProbability,
+        fatigueEdge,
       };
     };
 
