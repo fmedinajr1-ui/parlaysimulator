@@ -106,7 +106,7 @@ const Auth = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-dvh bg-background pb-nav-safe">
       <div className="max-w-md mx-auto px-4 py-8">
         {/* Back button */}
         <Link to="/" className="inline-flex items-center gap-2 text-muted-foreground hover:text-foreground mb-8">
