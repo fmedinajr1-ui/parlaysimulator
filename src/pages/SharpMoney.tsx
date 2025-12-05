@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { FeedCard, FeedCardHeader } from "@/components/FeedCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { TrendingUp, TrendingDown, AlertTriangle, Filter, Zap, RefreshCw } from "lucide-react";
+import { TrendingUp, TrendingDown, AlertTriangle, Filter, Zap, RefreshCw, Target } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatDistanceToNow } from "date-fns";
 import { AppShell } from "@/components/layout/AppShell";
@@ -428,9 +428,43 @@ export default function SharpMoney() {
                       </div>
                     )}
                     
+                    {/* Confidence Meter */}
+                    {movement.authenticity_confidence !== null && (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-muted-foreground uppercase flex items-center gap-1">
+                            <Target className="w-3 h-3" />
+                            Confidence
+                          </span>
+                          <span className={`text-sm font-bold ${
+                            movement.authenticity_confidence >= 0.8 ? 'text-neon-green' :
+                            movement.authenticity_confidence >= 0.6 ? 'text-neon-yellow' :
+                            'text-neon-red'
+                          }`}>
+                            {(movement.authenticity_confidence * 100).toFixed(0)}%
+                          </span>
+                        </div>
+                        <div className="h-2 bg-muted rounded-full overflow-hidden">
+                          <div 
+                            className={`h-full rounded-full transition-all duration-500 ${
+                              movement.authenticity_confidence >= 0.8 ? 'bg-neon-green' :
+                              movement.authenticity_confidence >= 0.6 ? 'bg-neon-yellow' :
+                              'bg-neon-red'
+                            }`}
+                            style={{ width: `${movement.authenticity_confidence * 100}%` }}
+                          />
+                        </div>
+                        <div className="flex justify-between text-[10px] text-muted-foreground">
+                          <span>Low</span>
+                          <span>Medium</span>
+                          <span>High</span>
+                        </div>
+                      </div>
+                    )}
+                    
                     {/* Sharp Signals */}
                     {movement.sharp_indicator && (
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-xs text-muted-foreground uppercase">Signals:</span>
                         <Badge variant="outline" className="text-xs">
                           {movement.sharp_indicator}
@@ -446,11 +480,6 @@ export default function SharpMoney() {
                           >
                             {movement.movement_authenticity.toUpperCase()}
                           </Badge>
-                        )}
-                        {movement.authenticity_confidence !== null && (
-                          <span className="text-xs text-muted-foreground">
-                            {(movement.authenticity_confidence * 100).toFixed(0)}% confidence
-                          </span>
                         )}
                       </div>
                     )}
