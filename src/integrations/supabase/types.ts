@@ -1272,6 +1272,50 @@ export type Database = {
         }
         Relationships: []
       }
+      user_sharp_follows: {
+        Row: {
+          created_at: string
+          followed_at: string
+          id: string
+          line_movement_id: string
+          outcome_correct: boolean | null
+          outcome_verified: boolean | null
+          stake: number | null
+          user_id: string
+          verified_at: string | null
+        }
+        Insert: {
+          created_at?: string
+          followed_at?: string
+          id?: string
+          line_movement_id: string
+          outcome_correct?: boolean | null
+          outcome_verified?: boolean | null
+          stake?: number | null
+          user_id: string
+          verified_at?: string | null
+        }
+        Update: {
+          created_at?: string
+          followed_at?: string
+          id?: string
+          line_movement_id?: string
+          outcome_correct?: boolean | null
+          outcome_verified?: boolean | null
+          stake?: number | null
+          user_id?: string
+          verified_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_sharp_follows_line_movement_id_fkey"
+            columns: ["line_movement_id"]
+            isOneToOne: false
+            referencedRelation: "line_movements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -1470,6 +1514,20 @@ export type Database = {
           wins: number
         }[]
       }
+      get_user_sharp_performance: {
+        Args: { p_user_id: string }
+        Returns: {
+          by_confidence: Json
+          by_recommendation: Json
+          pending: number
+          recent_results: Json
+          total_follows: number
+          total_losses: number
+          total_verified: number
+          total_wins: number
+          win_rate: number
+        }[]
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -1479,6 +1537,7 @@ export type Database = {
       }
       increment_scan_count: { Args: { p_user_id: string }; Returns: undefined }
       is_collaborator: { Args: { _user_id: string }; Returns: boolean }
+      sync_sharp_follow_outcomes: { Args: never; Returns: undefined }
       update_strategy_performance: { Args: never; Returns: undefined }
     }
     Enums: {
