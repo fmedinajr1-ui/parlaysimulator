@@ -380,7 +380,12 @@
 
 /* Bottom navigation safe area - accounts for home indicator */
 .pb-nav-safe {
-  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 80px);
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 88px);
+}
+
+/* Safe padding bottom - matches nav height */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 /* Prevent horizontal overflow on all screens */
@@ -541,7 +546,7 @@ button, [role="button"], a {
 /* Landscape mode adjustments */
 @media screen and (orientation: landscape) and (max-height: 500px) {
   .pb-nav-safe {
-    padding-bottom: 60px;
+    padding-bottom: 72px;
   }
   
   .header-compact h1 {
