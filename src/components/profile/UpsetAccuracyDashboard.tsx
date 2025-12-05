@@ -2,11 +2,13 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { FeedCard } from '@/components/FeedCard';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
+import { toast } from 'sonner';
 import { 
   Trophy, Target, TrendingUp, BarChart3, 
-  CheckCircle2, XCircle, Clock, Zap
+  CheckCircle2, XCircle, Clock, Zap, RefreshCw
 } from 'lucide-react';
 
 interface AccuracyData {
@@ -45,10 +47,28 @@ export function UpsetAccuracyDashboard() {
   const [accuracy, setAccuracy] = useState<AccuracyData | null>(null);
   const [recentPredictions, setRecentPredictions] = useState<RecentPrediction[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
     fetchAccuracyData();
   }, []);
+
+  const handleRefreshAccuracy = async () => {
+    setIsRefreshing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('verify-upset-outcomes');
+      
+      if (error) throw error;
+      
+      toast.success(`Verified ${data?.verified || 0} predictions`);
+      await fetchAccuracyData();
+    } catch (error) {
+      console.error('Error refreshing accuracy:', error);
+      toast.error('Failed to refresh accuracy');
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   const fetchAccuracyData = async () => {
     try {
@@ -118,10 +138,16 @@ export function UpsetAccuracyDashboard() {
           <Trophy className="w-5 h-5 text-yellow-500" />
           <h3 className="font-display text-lg font-bold text-foreground">AI ACCURACY</h3>
         </div>
-        <Badge variant="outline" className="text-xs border-yellow-500/30 text-yellow-400">
-          <BarChart3 className="w-3 h-3 mr-1" />
-          Predictions
-        </Badge>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleRefreshAccuracy}
+          disabled={isRefreshing}
+          className="h-8 px-2 text-xs text-yellow-400 hover:text-yellow-300 hover:bg-yellow-500/10"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 mr-1 ${isRefreshing ? 'animate-spin' : ''}`} />
+          {isRefreshing ? 'Checking...' : 'Refresh'}
+        </Button>
       </div>
 
       {hasData ? (
