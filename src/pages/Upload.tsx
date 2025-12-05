@@ -10,7 +10,9 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { PaywallModal } from "@/components/PaywallModal";
 import { QuickCheckResults } from "@/components/upload/QuickCheckResults";
 import { UploadOptimizer } from "@/components/upload/UploadOptimizer";
-import { Plus, Upload as UploadIcon, Flame, X, Loader2, Sparkles, CheckCircle2, Clock, Pencil, CalendarIcon, Crown, Image, Shield } from "lucide-react";
+import { Plus, Upload as UploadIcon, Flame, X, Loader2, Sparkles, CheckCircle2, Clock, Pencil, CalendarIcon, Crown, Image, Shield, HelpCircle } from "lucide-react";
+import { HintTooltip } from "@/components/tutorial/HintTooltip";
+import { useHints } from "@/hooks/useHints";
 import { Progress } from "@/components/ui/progress";
 import { createLeg, simulateParlay, americanToDecimal } from "@/lib/parlay-calculator";
 import { ParlayLeg } from "@/types/parlay";
@@ -58,6 +60,7 @@ const Upload = () => {
   const [searchParams] = useSearchParams();
   const { user } = useAuth();
   const { isSubscribed, isAdmin, canScan, scansRemaining, incrementScan, startCheckout, checkSubscription } = useSubscription();
+  const { shouldShowHint, dismissHint } = useHints();
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [legs, setLegs] = useState<LegInput[]>([
@@ -563,14 +566,22 @@ const Upload = () => {
       />
 
       <main className="max-w-lg mx-auto px-3 py-4">
-        {/* Header */}
-        <div className="text-center mb-5">
+        {/* Header with Hint */}
+        <div className="text-center mb-5 relative">
           <h1 className="font-display text-3xl text-gradient-fire mb-1">
             🎟️ ENTER YOUR SLIP
           </h1>
           <p className="text-muted-foreground text-sm">
             Add your legs and prepare for judgment.
           </p>
+          {shouldShowHint('upload-intro') && (
+            <HintTooltip
+              id="upload-intro"
+              message="Upload a screenshot of your parlay slip or manually enter your legs. Our AI will extract the details and analyze your bet."
+              position="bottom"
+              onDismiss={() => dismissHint('upload-intro')}
+            />
+          )}
         </div>
 
         {/* Scan Counter / Pro Badge */}
