@@ -354,6 +354,39 @@ Provide analysis in this JSON format:
       }
     }
 
+    // Save predictions to database for tracking
+    const today = new Date().toISOString().split('T')[0];
+    for (const pred of upsetPredictions) {
+      try {
+        await supabase
+          .from('upset_predictions')
+          .upsert({
+            game_id: pred.gameId,
+            sport: pred.sport,
+            home_team: pred.homeTeam,
+            away_team: pred.awayTeam,
+            underdog: pred.underdog,
+            underdog_odds: pred.underdogOdds,
+            favorite: pred.favorite,
+            favorite_odds: pred.favoriteOdds,
+            upset_score: pred.upsetScore,
+            confidence: pred.confidence,
+            signals: pred.signals,
+            ai_reasoning: pred.aiReasoning,
+            commence_time: pred.commenceTime,
+            prediction_date: today
+          }, { 
+            onConflict: 'game_id,prediction_date',
+            ignoreDuplicates: true 
+          });
+      } catch (e) {
+        console.error('Error saving prediction:', e);
+      }
+    }
+
+    // Get accuracy stats
+    const { data: accuracyData } = await supabase.rpc('get_upset_accuracy_summary');
+
     // Calculate summary
     const summary = {
       totalGames: upsetPredictions.length,
@@ -371,6 +404,7 @@ Provide analysis in this JSON format:
     return new Response(JSON.stringify({
       predictions: upsetPredictions,
       summary,
+      accuracy: accuracyData?.[0] || null,
       analyzedAt: new Date().toISOString()
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

@@ -12,6 +12,7 @@ import { AISuggestionsCard } from '@/components/profile/AISuggestionsCard';
 import { BettingCalendarCard } from '@/components/profile/BettingCalendarCard';
 import { UpsetTrackerCard } from '@/components/profile/UpsetTrackerCard';
 import { TodaysUpsetPredictions } from '@/components/profile/TodaysUpsetPredictions';
+import { UpsetAccuracyDashboard } from '@/components/profile/UpsetAccuracyDashboard';
 import { NotificationPreferences } from '@/components/profile/NotificationPreferences';
 import { Button } from '@/components/ui/button';
 import { Loader2, LogOut, Upload, CreditCard, Crown, User, Settings } from 'lucide-react';
@@ -222,6 +223,11 @@ const Profile = () => {
         {/* Today's Upset Predictions */}
         <div className="mt-4">
           <TodaysUpsetPredictions userId={user!.id} />
+        </div>
+
+        {/* Upset Prediction Accuracy */}
+        <div className="mt-4">
+          <UpsetAccuracyDashboard />
         </div>
 
         {/* Upset Tracker */}

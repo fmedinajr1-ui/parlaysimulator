@@ -1251,6 +1251,75 @@ export type Database = {
           },
         ]
       }
+      upset_predictions: {
+        Row: {
+          ai_reasoning: string | null
+          away_team: string
+          commence_time: string
+          confidence: string
+          favorite: string
+          favorite_odds: number
+          game_completed: boolean | null
+          game_id: string
+          home_team: string
+          id: string
+          predicted_at: string
+          prediction_date: string
+          signals: Json | null
+          sport: string
+          underdog: string
+          underdog_odds: number
+          upset_score: number
+          verified_at: string | null
+          was_upset: boolean | null
+          winner: string | null
+        }
+        Insert: {
+          ai_reasoning?: string | null
+          away_team: string
+          commence_time: string
+          confidence?: string
+          favorite: string
+          favorite_odds: number
+          game_completed?: boolean | null
+          game_id: string
+          home_team: string
+          id?: string
+          predicted_at?: string
+          prediction_date?: string
+          signals?: Json | null
+          sport: string
+          underdog: string
+          underdog_odds: number
+          upset_score: number
+          verified_at?: string | null
+          was_upset?: boolean | null
+          winner?: string | null
+        }
+        Update: {
+          ai_reasoning?: string | null
+          away_team?: string
+          commence_time?: string
+          confidence?: string
+          favorite?: string
+          favorite_odds?: number
+          game_completed?: boolean | null
+          game_id?: string
+          home_team?: string
+          id?: string
+          predicted_at?: string
+          prediction_date?: string
+          signals?: Json | null
+          sport?: string
+          underdog?: string
+          underdog_odds?: number
+          upset_score?: number
+          verified_at?: string | null
+          was_upset?: boolean | null
+          winner?: string | null
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           created_at: string | null
@@ -1500,6 +1569,31 @@ export type Database = {
           total_suggestions_followed: number
           total_won: number
           win_rate: number
+        }[]
+      }
+      get_upset_accuracy_summary: {
+        Args: never
+        Returns: {
+          by_sport: Json
+          correct_predictions: number
+          high_confidence_accuracy: number
+          low_confidence_accuracy: number
+          medium_confidence_accuracy: number
+          overall_accuracy: number
+          total_predictions: number
+          verified_predictions: number
+        }[]
+      }
+      get_upset_prediction_accuracy: {
+        Args: never
+        Returns: {
+          accuracy_rate: number
+          avg_upset_score: number
+          confidence: string
+          correct_predictions: number
+          sport: string
+          total_predictions: number
+          verified_predictions: number
         }[]
       }
       get_user_betting_stats: {
