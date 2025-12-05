@@ -7,6 +7,7 @@ import { SuggestionPerformanceCard } from "@/components/suggestions/SuggestionPe
 import { SuggestionHistoryFeed } from "@/components/suggestions/SuggestionHistoryFeed";
 import { StrategyPerformanceCard } from "@/components/suggestions/StrategyPerformanceCard";
 import { CalibrationDashboard } from "@/components/results/CalibrationDashboard";
+import { TodaysFatigueGames } from "@/components/fatigue";
 import { JuicedPropsCard } from "@/components/suggestions/JuicedPropsCard";
 import { HitRatePicks } from "@/components/suggestions/HitRatePicks";
 import { SuggestedParlayOptimizer } from "@/components/suggestions/SuggestedParlayOptimizer";
@@ -655,6 +656,9 @@ const Suggestions = () => {
 
             {/* AI Calibration Dashboard */}
             <CalibrationDashboard compact />
+
+            {/* NBA Fatigue Analysis */}
+            <TodaysFatigueGames />
 
             {/* AI Learning Insights Banner */}
             {learningInsights && (learningInsights.bestPatterns.length > 0 || learningInsights.avoidPatterns.length > 0) && (

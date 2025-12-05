@@ -1,8 +1,10 @@
+import { useState, useEffect } from 'react';
+import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Sparkles, TrendingUp, Clock, ChevronRight, Target, Layers, User, BarChart3, Shield, Activity, AlertTriangle, Zap, Minus } from "lucide-react";
+import { Sparkles, TrendingUp, Clock, ChevronRight, Target, Layers, User, BarChart3, Shield, Activity, AlertTriangle, Zap, Minus, Battery } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
 import { createLeg, simulateParlay } from "@/lib/parlay-calculator";
@@ -26,6 +28,13 @@ interface SuggestedLeg {
   availableAt?: string[];
 }
 
+interface FatigueInfo {
+  teamName: string;
+  fatigueScore: number;
+  fatigueCategory: string;
+  hasFatigueEdge: boolean;
+}
+
 interface SuggestedParlayCardProps {
   legs: SuggestedLeg[];
   totalOdds: number;
@@ -36,6 +45,7 @@ interface SuggestedParlayCardProps {
   expiresAt: string;
   isDataDriven?: boolean;
   isHybrid?: boolean;
+  fatigueInfo?: FatigueInfo[];
 }
 
 // Helper to extract movement bucket from suggestion reason or signals
@@ -114,8 +124,13 @@ export function SuggestedParlayCard({
   expiresAt,
   isDataDriven,
   isHybrid,
+  fatigueInfo,
 }: SuggestedParlayCardProps) {
   const navigate = useNavigate();
+  
+  // Check if NBA game with fatigue edge
+  const hasNBAFatigueEdge = sport === 'NBA' && fatigueInfo?.some(f => f.hasFatigueEdge);
+  const maxFatigue = fatigueInfo?.reduce((max, f) => f.fatigueScore > max ? f.fatigueScore : max, 0) || 0;
 
   const getRiskLabel = (prob: number) => {
     if (prob >= 0.25) return { label: "Low Risk", color: "text-neon-green bg-neon-green/10" };
@@ -192,6 +207,17 @@ export function SuggestedParlayCard({
             </Badge>
           </div>
           <div className="flex items-center gap-1 flex-wrap">
+            {/* Fatigue Indicator for NBA */}
+            {sport === 'NBA' && hasNBAFatigueEdge && (
+              <Badge 
+                variant="outline" 
+                className="text-xs bg-yellow-500/20 text-yellow-400 border-yellow-500/30"
+                title={`Max fatigue: ${maxFatigue}`}
+              >
+                <Battery className="w-3 h-3 mr-1" />
+                Fatigue Edge
+              </Badge>
+            )}
             {/* Movement Bucket Indicator */}
             {movementBucket && (
               <Badge 
