@@ -14,12 +14,14 @@ import { UpsetTrackerCard } from '@/components/profile/UpsetTrackerCard';
 import { TodaysUpsetPredictions } from '@/components/profile/TodaysUpsetPredictions';
 import { UpsetAccuracyDashboard } from '@/components/profile/UpsetAccuracyDashboard';
 import { NotificationPreferences } from '@/components/profile/NotificationPreferences';
+import { TutorialToggle } from '@/components/tutorial/TutorialToggle';
 import { Button } from '@/components/ui/button';
-import { Loader2, LogOut, Upload, CreditCard, Crown, User, Settings } from 'lucide-react';
+import { Loader2, LogOut, Upload, CreditCard, Crown, User, Settings, Dog } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { MobileHeader } from '@/components/layout/MobileHeader';
 import { FeedCard } from '@/components/FeedCard';
+import { DogAvatar } from '@/components/avatars/DogAvatar';
 
 interface Profile {
   username: string | null;
@@ -241,6 +243,14 @@ const Profile = () => {
             <NotificationPreferences />
           </div>
         )}
+
+        {/* Hints & Tutorial Settings */}
+        <div className="mt-4">
+          <FeedCard>
+            <h3 className="font-display text-lg mb-3">App Preferences</h3>
+            <TutorialToggle />
+          </FeedCard>
+        </div>
 
         {/* Parlay History */}
         <div className="mt-4">

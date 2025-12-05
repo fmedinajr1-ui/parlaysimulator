@@ -17,11 +17,11 @@ export default defineConfig(({ mode }) => ({
       registerType: "autoUpdate",
       includeAssets: ["favicon.ico", "pwa-192x192.png", "pwa-512x512.png"],
       manifest: {
-        name: "Parlay Simulator - Social Degen Edition",
-        short_name: "Parlay Sim",
-        description: "Upload your parlay slip, get roasted by AI, and discover your true degen score.",
-        theme_color: "#0f1015",
-        background_color: "#0f1015",
+        name: "Parlay Farm - Track Sharps, Tail Winners",
+        short_name: "Parlay Farm",
+        description: "Upload your parlay slip, get AI analysis, track sharp money movements, and discover winning strategies.",
+        theme_color: "#0a0c10",
+        background_color: "#0a0c10",
         display: "standalone",
         orientation: "portrait",
         scope: "/",
@@ -50,13 +50,13 @@ export default defineConfig(({ mode }) => ({
             icons: [{ src: "pwa-192x192.png", sizes: "192x192" }]
           },
           {
-            name: "AI Suggestions",
-            short_name: "Suggestions",
+            name: "AI Picks",
+            short_name: "Picks",
             url: "/suggestions",
             icons: [{ src: "pwa-192x192.png", sizes: "192x192" }]
           },
           {
-            name: "Odds Movement",
+            name: "Track Odds",
             short_name: "Odds",
             url: "/odds",
             icons: [{ src: "pwa-192x192.png", sizes: "192x192" }]

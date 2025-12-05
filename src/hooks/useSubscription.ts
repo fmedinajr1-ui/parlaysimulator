@@ -9,6 +9,7 @@ interface SubscriptionState {
   canScan: boolean;
   scansRemaining: number;
   subscriptionEnd: string | null;
+  hasOddsAccess: boolean;
 }
 
 export function useSubscription() {
@@ -20,6 +21,7 @@ export function useSubscription() {
     canScan: true,
     scansRemaining: 3,
     subscriptionEnd: null,
+    hasOddsAccess: false,
   });
 
   const checkSubscription = useCallback(async () => {
@@ -31,6 +33,7 @@ export function useSubscription() {
         canScan: true,
         scansRemaining: 3,
         subscriptionEnd: null,
+        hasOddsAccess: false,
       });
       return;
     }
@@ -51,6 +54,7 @@ export function useSubscription() {
         canScan: data.canScan ?? true,
         scansRemaining: data.scansRemaining ?? 3,
         subscriptionEnd: data.subscriptionEnd || null,
+        hasOddsAccess: data.hasOddsAccess || false,
       });
     } catch (err) {
       console.error('Error checking subscription:', err);
