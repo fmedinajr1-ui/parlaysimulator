@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Crown, TrendingUp, TrendingDown, DollarSign, Percent, Trophy, Target } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { MonteCarloVisualization } from './MonteCarloVisualization';
+import { FatigueImpactCard } from './FatigueImpactCard';
 
 interface ComparisonDashboardProps {
   comparisonResult: ComparisonResult;
@@ -182,6 +183,9 @@ export function ComparisonDashboard({ comparisonResult }: ComparisonDashboardPro
           );
         })}
       </div>
+
+      {/* Fatigue Impact Analysis */}
+      <FatigueImpactCard simulations={simulations} />
 
       {/* Monte Carlo Simulation */}
       <MonteCarloVisualization simulations={simulations} />
