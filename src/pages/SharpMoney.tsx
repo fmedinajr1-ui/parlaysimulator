@@ -1,11 +1,16 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { FeedCard } from "@/components/FeedCard";
+import { FeedCard, FeedCardHeader } from "@/components/FeedCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { TrendingUp, TrendingDown, AlertTriangle, Filter, Zap } from "lucide-react";
+import { TrendingUp, TrendingDown, AlertTriangle, Filter, Zap, RefreshCw } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatDistanceToNow } from "date-fns";
+import { AppShell } from "@/components/layout/AppShell";
+import { MobileHeader } from "@/components/layout/MobileHeader";
+import { SportTabs, QuickFilter } from "@/components/ui/sport-tabs";
+import { StatsCard, StatItem, StatsGrid } from "@/components/ui/stats-card";
+import { SkeletonList } from "@/components/ui/skeleton-card";
 
 interface LineMovement {
   id: string;
@@ -148,41 +153,71 @@ export default function SharpMoney() {
     fades: movements.filter(m => getRecommendation(m).type === 'fade').length,
   };
 
-  return (
-    <div className="min-h-screen bg-background pb-24">
-      <div className="container max-w-4xl mx-auto px-4 py-6 space-y-6">
-        {/* Header */}
-        <div className="space-y-2">
-          <h1 className="text-4xl font-black text-foreground flex items-center gap-2">
-            <Zap className="w-8 h-8 text-neon-yellow" />
-            Sharp Money
-          </h1>
-          <p className="text-muted-foreground">
-            Real-time line movements with PICK/FADE recommendations
-          </p>
-        </div>
+  const sportTabs = [
+    { id: "all", label: "All", count: stats.total },
+    ...uniqueSports.map(sport => ({ id: sport, label: sport }))
+  ];
 
-        {/* Stats */}
-        <FeedCard delay={0}>
-          <div className="grid grid-cols-4 gap-4">
-            <div className="text-center">
-              <p className="text-2xl font-bold text-foreground">{stats.total}</p>
-              <p className="text-xs text-muted-foreground uppercase">Total Moves</p>
-            </div>
-            <div className="text-center">
-              <p className="text-2xl font-bold text-neon-yellow">{stats.sharp}</p>
-              <p className="text-xs text-muted-foreground uppercase">Sharp</p>
-            </div>
-            <div className="text-center">
-              <p className="text-2xl font-bold text-neon-green">{stats.picks}</p>
-              <p className="text-xs text-muted-foreground uppercase">Picks</p>
-            </div>
-            <div className="text-center">
-              <p className="text-2xl font-bold text-neon-red">{stats.fades}</p>
-              <p className="text-xs text-muted-foreground uppercase">Fades</p>
-            </div>
-          </div>
-        </FeedCard>
+  return (
+    <AppShell noPadding>
+      <MobileHeader 
+        title="Sharp Money"
+        subtitle="Real-time PICK/FADE signals"
+        icon={<Zap className="w-6 h-6 text-neon-yellow" />}
+        rightAction={
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            onClick={fetchMovements}
+            className="h-9 w-9"
+          >
+            <RefreshCw className="w-4 h-4" />
+          </Button>
+        }
+      />
+
+      <div className="px-4 py-4 space-y-4">
+        {/* Stats Grid - FanDuel style */}
+        <StatsCard variant="glass">
+          <StatsGrid columns={4}>
+            <StatItem label="Moves" value={stats.total} size="sm" />
+            <StatItem label="Sharp" value={stats.sharp} size="sm" />
+            <StatItem label="Picks" value={stats.picks} size="sm" />
+            <StatItem label="Fades" value={stats.fades} size="sm" />
+          </StatsGrid>
+        </StatsCard>
+
+        {/* Sport Tabs - Horizontal scroll */}
+        <SportTabs
+          tabs={sportTabs}
+          activeTab={sportFilter}
+          onTabChange={setSportFilter}
+        />
+
+        {/* Quick Filters */}
+        <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
+          <QuickFilter 
+            label="Picks" 
+            icon="✅" 
+            active={recommendationFilter === "pick"}
+            onClick={() => setRecommendationFilter(recommendationFilter === "pick" ? "all" : "pick")}
+            variant="success"
+          />
+          <QuickFilter 
+            label="Fades" 
+            icon="❌" 
+            active={recommendationFilter === "fade"}
+            onClick={() => setRecommendationFilter(recommendationFilter === "fade" ? "all" : "fade")}
+            variant="danger"
+          />
+          <QuickFilter 
+            label="Sharp Only" 
+            icon="⚡" 
+            active={authenticityFilter === "sharp"}
+            onClick={() => setAuthenticityFilter(authenticityFilter === "sharp" ? "all" : "sharp")}
+            variant="warning"
+          />
+        </div>
 
         {/* Filters */}
         <FeedCard delay={100}>
@@ -257,11 +292,7 @@ export default function SharpMoney() {
 
         {/* Movements Feed */}
         {loading ? (
-          <FeedCard delay={200}>
-            <div className="text-center py-8 text-muted-foreground">
-              Loading movements...
-            </div>
-          </FeedCard>
+          <SkeletonList count={5} variant="bet" />
         ) : filteredMovements.length === 0 ? (
           <FeedCard delay={200}>
             <div className="text-center py-8 text-muted-foreground">
@@ -387,6 +418,6 @@ export default function SharpMoney() {
           </div>
         )}
       </div>
-    </div>
+    </AppShell>
   );
 }

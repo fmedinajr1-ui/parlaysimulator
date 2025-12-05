@@ -1,41 +1,38 @@
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
-import { Sparkles } from "lucide-react";
+import { Sparkles, ArrowRight } from "lucide-react";
 
 export function HeroBanner() {
   return (
-    <div className="relative overflow-hidden rounded-2xl sm:rounded-3xl p-4 sm:p-6 md:p-8 mb-4 sm:mb-6">
-      {/* Background gradient */}
-      <div className="absolute inset-0 bg-gradient-to-br from-neon-purple/20 via-background to-neon-green/10 -z-10" />
+    <div className="relative overflow-hidden rounded-2xl p-5 mb-5">
+      {/* Background gradient - simplified */}
+      <div className="absolute inset-0 bg-gradient-to-br from-neon-purple/15 via-background to-neon-green/10 -z-10" />
       
-      {/* Animated glow orbs - scaled for mobile */}
-      <div className="absolute top-0 left-1/4 w-16 sm:w-24 md:w-32 h-16 sm:h-24 md:h-32 bg-neon-purple/30 rounded-full blur-2xl sm:blur-3xl animate-pulse" />
-      <div className="absolute bottom-0 right-1/4 w-20 sm:w-32 md:w-40 h-20 sm:h-32 md:h-40 bg-neon-green/20 rounded-full blur-2xl sm:blur-3xl animate-pulse" style={{ animationDelay: '1s' }} />
+      {/* Animated glow orbs - subtler */}
+      <div className="absolute top-0 left-1/4 w-20 h-20 bg-neon-purple/20 rounded-full blur-2xl animate-pulse" />
+      <div className="absolute bottom-0 right-1/4 w-24 h-24 bg-neon-green/15 rounded-full blur-2xl animate-pulse" style={{ animationDelay: '1s' }} />
       
-      {/* Floating emojis - repositioned for mobile */}
-      <div className="absolute top-2 sm:top-4 left-2 sm:left-8 text-lg sm:text-2xl animate-bounce opacity-70 sm:opacity-100" style={{ animationDelay: '0.5s' }}>🎰</div>
-      <div className="absolute top-6 sm:top-12 right-2 sm:right-10 text-base sm:text-xl animate-bounce opacity-70 sm:opacity-100" style={{ animationDelay: '1s' }}>💸</div>
-      <div className="absolute bottom-4 sm:bottom-8 left-1 sm:left-6 text-lg sm:text-2xl animate-bounce opacity-70 sm:opacity-100" style={{ animationDelay: '1.5s' }}>🎟️</div>
-      <div className="absolute bottom-8 sm:bottom-12 right-1 sm:right-8 text-base sm:text-xl animate-bounce opacity-70 sm:opacity-100" style={{ animationDelay: '0.8s' }}>🔥</div>
-      
-      <div className="relative z-10 text-center px-2 sm:px-0">
-        <div className="inline-flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-1 sm:py-1.5 rounded-full bg-neon-purple/20 border border-neon-purple/30 mb-3 sm:mb-4">
-          <Sparkles className="w-3 h-3 sm:w-4 sm:h-4 text-neon-purple" />
-          <span className="text-xs sm:text-sm text-neon-purple font-medium">AI-Powered Analysis</span>
+      <div className="relative z-10 text-center">
+        {/* AI Badge */}
+        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 mb-4">
+          <Sparkles className="w-3.5 h-3.5 text-primary" />
+          <span className="text-xs text-primary font-medium">AI-Powered Analysis</span>
         </div>
         
-        <h1 className="font-display text-fluid-hero tracking-wide mb-2 sm:mb-3">
-          <span className="text-gradient-fire">🔥 PARLAY SIMULATOR</span>
+        {/* Title - More compact */}
+        <h1 className="font-display text-3xl sm:text-4xl tracking-wide mb-2">
+          <span className="text-gradient-fire">PARLAY SIMULATOR</span>
         </h1>
-        <p className="font-display text-fluid-hero-sub text-gradient-purple mb-2 sm:mb-4">
-          SOCIAL DEGEN MODE 🔥
+        
+        <p className="text-muted-foreground text-sm mb-5 max-w-xs mx-auto">
+          Upload your slip, get AI analysis, win smarter 🎯
         </p>
-        <p className="text-muted-foreground text-fluid-body mb-4 sm:mb-6 max-w-xs sm:max-w-md mx-auto leading-relaxed">
-          Upload your slip… get roasted… get enlightened. 😈
-        </p>
+        
+        {/* CTA Button */}
         <Link to="/upload">
-          <Button variant="neon" size="lg" className="font-display text-base sm:text-lg md:text-xl tracking-wider touch-target">
-            🎟️ UPLOAD SLIP
+          <Button variant="neon" size="lg" className="font-display text-lg tracking-wider touch-target-lg h-12 px-8">
+            GET STARTED
+            <ArrowRight className="w-5 h-5 ml-2" />
           </Button>
         </Link>
       </div>

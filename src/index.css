@@ -614,3 +614,199 @@ button, [role="button"], a {
     transform: none;
   }
 }
+
+/* ===== FANDUEL-INSPIRED MOBILE ENHANCEMENTS ===== */
+
+/* Enhanced card hover/active states */
+.card-interactive {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.card-interactive:active {
+  transform: scale(0.98);
+}
+
+/* Badge pill styles */
+.badge-pill {
+  @apply rounded-full px-2.5 py-1 text-xs font-semibold;
+}
+
+/* Recommendation badges */
+.badge-pick {
+  @apply bg-neon-green/20 text-neon-green border border-neon-green/30;
+}
+
+.badge-fade {
+  @apply bg-neon-red/20 text-neon-red border border-neon-red/30;
+}
+
+.badge-caution {
+  @apply bg-neon-yellow/20 text-neon-yellow border border-neon-yellow/30;
+}
+
+/* Enhanced bottom nav with indicator */
+.nav-indicator {
+  @apply absolute -top-0.5 left-1/2 -translate-x-1/2;
+  width: 2rem;
+  height: 0.25rem;
+  border-radius: 9999px;
+  background: hsl(var(--primary));
+  box-shadow: 0 0 10px hsl(var(--primary) / 0.5);
+}
+
+/* Stats display grid */
+.stats-grid-4 {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+}
+
+.stats-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+}
+
+@media screen and (max-width: 375px) {
+  .stats-grid-4 {
+    gap: 0.5rem;
+  }
+  
+  .stats-grid-3 {
+    gap: 0.5rem;
+  }
+}
+
+/* Price movement indicators */
+.price-up {
+  @apply text-neon-green;
+}
+
+.price-down {
+  @apply text-neon-red;
+}
+
+/* FanDuel-style floating action button */
+.fab {
+  @apply fixed bottom-24 right-4 z-40;
+  @apply w-14 h-14 rounded-full;
+  @apply flex items-center justify-center;
+  @apply bg-primary text-primary-foreground;
+  @apply shadow-lg shadow-primary/30;
+  @apply active:scale-95 transition-transform;
+}
+
+/* Enhanced scroll areas */
+.scroll-snap-x {
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+}
+
+.scroll-snap-item {
+  scroll-snap-align: start;
+}
+
+/* Pull to refresh indicator */
+.pull-indicator {
+  @apply absolute top-0 left-1/2 -translate-x-1/2 -translate-y-full;
+  @apply w-8 h-8 rounded-full bg-primary/10;
+  @apply flex items-center justify-center;
+  transition: transform 0.2s ease-out;
+}
+
+/* Glass morphism card */
+.card-glass {
+  background: hsl(var(--card) / 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* Subtle card divider */
+.card-divider {
+  @apply border-b border-border/30 py-3;
+}
+
+.card-divider:last-child {
+  @apply border-0 pb-0;
+}
+
+/* Enhanced touch feedback */
+@media (hover: none) {
+  .touch-feedback:active {
+    background-color: hsl(var(--muted) / 0.5);
+  }
+}
+
+/* Staggered animation helper */
+.stagger-1 { animation-delay: 50ms; }
+.stagger-2 { animation-delay: 100ms; }
+.stagger-3 { animation-delay: 150ms; }
+.stagger-4 { animation-delay: 200ms; }
+.stagger-5 { animation-delay: 250ms; }
+
+/* Enhanced section headers */
+.section-header {
+  @apply flex items-center gap-2 mb-3;
+  @apply text-xs font-semibold uppercase tracking-wider text-muted-foreground;
+}
+
+/* Improved odds display */
+.odds-display {
+  @apply font-mono font-bold text-lg;
+}
+
+.odds-positive {
+  @apply text-neon-green;
+}
+
+.odds-negative {
+  @apply text-foreground;
+}
+
+/* Quick action buttons */
+.quick-action {
+  @apply flex items-center justify-center gap-2;
+  @apply px-4 py-3 rounded-xl;
+  @apply bg-muted/50 text-foreground;
+  @apply font-medium text-sm;
+  @apply transition-all duration-200;
+  @apply active:scale-95 active:bg-muted;
+}
+
+/* Enhanced skeleton shimmer */
+@keyframes enhanced-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    hsl(var(--muted)) 0%,
+    hsl(var(--muted-foreground) / 0.08) 50%,
+    hsl(var(--muted)) 100%
+  );
+  background-size: 200% 100%;
+  animation: enhanced-shimmer 1.5s ease-in-out infinite;
+}
+
+/* Better icon containers */
+.icon-container {
+  @apply w-10 h-10 rounded-xl flex items-center justify-center;
+  @apply bg-primary/10 text-primary;
+}
+
+.icon-container-sm {
+  @apply w-8 h-8 rounded-lg flex items-center justify-center;
+  @apply bg-primary/10 text-primary;
+}
+
+/* Compact list items */
+.list-item-compact {
+  @apply flex items-center gap-3 py-3;
+  @apply border-b border-border/30 last:border-0;
+}
