@@ -125,6 +125,72 @@ export type Database = {
         }
         Relationships: []
       }
+      fatigue_edge_tracking: {
+        Row: {
+          actual_spread: number | null
+          actual_total: number | null
+          away_fatigue_score: number
+          away_team: string
+          created_at: string
+          event_id: string
+          fatigue_differential: number
+          game_date: string
+          game_result: string | null
+          home_fatigue_score: number
+          home_team: string
+          id: string
+          recommended_angle: string | null
+          recommended_side: string
+          recommended_side_won: boolean | null
+          spread_covered: boolean | null
+          total_result: string | null
+          updated_at: string
+          verified_at: string | null
+        }
+        Insert: {
+          actual_spread?: number | null
+          actual_total?: number | null
+          away_fatigue_score: number
+          away_team: string
+          created_at?: string
+          event_id: string
+          fatigue_differential: number
+          game_date: string
+          game_result?: string | null
+          home_fatigue_score: number
+          home_team: string
+          id?: string
+          recommended_angle?: string | null
+          recommended_side: string
+          recommended_side_won?: boolean | null
+          spread_covered?: boolean | null
+          total_result?: string | null
+          updated_at?: string
+          verified_at?: string | null
+        }
+        Update: {
+          actual_spread?: number | null
+          actual_total?: number | null
+          away_fatigue_score?: number
+          away_team?: string
+          created_at?: string
+          event_id?: string
+          fatigue_differential?: number
+          game_date?: string
+          game_result?: string | null
+          home_fatigue_score?: number
+          home_team?: string
+          id?: string
+          recommended_angle?: string | null
+          recommended_side?: string
+          recommended_side_won?: boolean | null
+          spread_covered?: boolean | null
+          total_result?: string | null
+          updated_at?: string
+          verified_at?: string | null
+        }
+        Relationships: []
+      }
       hitrate_parlays: {
         Row: {
           combined_probability: number
@@ -1644,6 +1710,19 @@ export type Database = {
           calibration_factor: number
           confidence_level: string
           sample_size: number
+        }[]
+      }
+      get_fatigue_edge_accuracy: {
+        Args: never
+        Returns: {
+          avg_differential: number
+          differential_bucket: string
+          losses: number
+          roi_percentage: number
+          total_games: number
+          verified_games: number
+          win_rate: number
+          wins: number
         }[]
       }
       get_leaderboard_stats: {

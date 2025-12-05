@@ -17,6 +17,7 @@ import {
 import { format } from "date-fns";
 import { Link } from "react-router-dom";
 import { FatigueMeter } from "@/components/fatigue/FatigueMeter";
+import { FatigueEdgeROI } from "@/components/fatigue/FatigueEdgeROI";
 
 interface FatigueScore {
   id: string;
@@ -207,6 +208,9 @@ export default function NBAFatigue() {
               <StatItem label="Red Alert" value={stats.redAlertTeams} size="sm" />
             </StatsGrid>
           </StatsCard>
+
+          {/* ROI Tracker */}
+          <FatigueEdgeROI />
 
           {/* Quick Legend */}
           <FeedCard delay={100}>
