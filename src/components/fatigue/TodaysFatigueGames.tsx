@@ -9,10 +9,11 @@ import { FatigueBreakdown } from './FatigueBreakdown';
 import { PropImpactTable } from './PropImpactTable';
 import { 
   Zap, Target, TrendingUp, TrendingDown, 
-  ChevronDown, ChevronUp, RefreshCw, Calendar
+  ChevronDown, ChevronUp, RefreshCw, Calendar, ExternalLink
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
+import { Link } from 'react-router-dom';
 
 interface GameFatigue {
   eventId: string;
@@ -121,14 +122,22 @@ export const TodaysFatigueGames = () => {
               {games.length} games
             </Badge>
           </CardTitle>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={fetchTodaysGames}
-            className="h-8"
-          >
-            <RefreshCw className="w-3 h-3" />
-          </Button>
+          <div className="flex items-center gap-1">
+            <Link to="/nba-fatigue">
+              <Button variant="ghost" size="sm" className="h-8 text-xs">
+                View All
+                <ExternalLink className="w-3 h-3 ml-1" />
+              </Button>
+            </Link>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={fetchTodaysGames}
+              className="h-8"
+            >
+              <RefreshCw className="w-3 h-3" />
+            </Button>
+          </div>
         </div>
         
         {edgeGames.length > 0 && (
