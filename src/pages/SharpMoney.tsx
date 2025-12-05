@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { FeedCard, FeedCardHeader } from "@/components/FeedCard";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +11,8 @@ import { MobileHeader } from "@/components/layout/MobileHeader";
 import { SportTabs, QuickFilter } from "@/components/ui/sport-tabs";
 import { StatsCard, StatItem, StatsGrid } from "@/components/ui/stats-card";
 import { SkeletonList } from "@/components/ui/skeleton-card";
+import { usePullToRefresh } from "@/hooks/usePullToRefresh";
+import { PullToRefreshContainer } from "@/components/ui/pull-to-refresh";
 
 interface LineMovement {
   id: string;
@@ -76,7 +78,7 @@ export default function SharpMoney() {
     };
   }, []);
 
-  const fetchMovements = async () => {
+  const fetchMovements = useCallback(async () => {
     try {
       const { data, error } = await supabase
         .from('line_movements')
@@ -91,7 +93,12 @@ export default function SharpMoney() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  // Pull to refresh
+  const { isRefreshing, pullProgress, containerRef, handlers } = usePullToRefresh({
+    onRefresh: fetchMovements,
+  });
 
   const formatOdds = (odds: number) => {
     return odds > 0 ? `+${odds}` : `${odds}`;
@@ -169,14 +176,22 @@ export default function SharpMoney() {
             variant="ghost" 
             size="icon" 
             onClick={fetchMovements}
+            disabled={isRefreshing}
             className="h-9 w-9"
           >
-            <RefreshCw className="w-4 h-4" />
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
           </Button>
         }
       />
 
-      <div className="px-4 py-4 space-y-4">
+      <PullToRefreshContainer
+        containerRef={containerRef}
+        handlers={handlers}
+        pullProgress={pullProgress}
+        isRefreshing={isRefreshing}
+        className="flex-1 overflow-y-auto"
+      >
+        <div className="px-4 py-4 space-y-4">
         {/* Stats Grid - FanDuel style */}
         <StatsCard variant="glass">
           <StatsGrid columns={4}>
@@ -417,7 +432,8 @@ export default function SharpMoney() {
             })}
           </div>
         )}
-      </div>
+        </div>
+      </PullToRefreshContainer>
     </AppShell>
   );
 }
