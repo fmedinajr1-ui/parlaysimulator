@@ -128,6 +128,60 @@ export type Database = {
         }
         Relationships: []
       }
+      bdl_player_cache: {
+        Row: {
+          bdl_player_id: number | null
+          college: string | null
+          country: string | null
+          created_at: string | null
+          draft_number: number | null
+          draft_round: number | null
+          draft_year: number | null
+          height: string | null
+          id: string
+          jersey_number: string | null
+          last_updated: string | null
+          player_name: string
+          position: string | null
+          team_name: string | null
+          weight: string | null
+        }
+        Insert: {
+          bdl_player_id?: number | null
+          college?: string | null
+          country?: string | null
+          created_at?: string | null
+          draft_number?: number | null
+          draft_round?: number | null
+          draft_year?: number | null
+          height?: string | null
+          id?: string
+          jersey_number?: string | null
+          last_updated?: string | null
+          player_name: string
+          position?: string | null
+          team_name?: string | null
+          weight?: string | null
+        }
+        Update: {
+          bdl_player_id?: number | null
+          college?: string | null
+          country?: string | null
+          created_at?: string | null
+          draft_number?: number | null
+          draft_round?: number | null
+          draft_year?: number | null
+          height?: string | null
+          id?: string
+          jersey_number?: string | null
+          last_updated?: string | null
+          player_name?: string
+          position?: string | null
+          team_name?: string | null
+          weight?: string | null
+        }
+        Relationships: []
+      }
       cron_job_history: {
         Row: {
           completed_at: string | null

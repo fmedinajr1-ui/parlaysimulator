@@ -119,3 +119,6 @@ verify_jwt = false
 
 [functions.pvs-data-ingestion]
 verify_jwt = false
+
+[functions.nba-stats-fetcher]
+verify_jwt = false
