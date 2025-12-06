@@ -1,9 +1,10 @@
 import { FeedCard } from "@/components/FeedCard";
 import { ParlayLeg, LegAnalysis } from "@/types/parlay";
 import { Badge } from "@/components/ui/badge";
-import { TrendingUp, TrendingDown, Minus, AlertTriangle, CheckCircle, Brain, Loader2, UserX } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, AlertTriangle, CheckCircle, Brain, Loader2, UserX, Activity } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { InjuryAlertBadge } from "./InjuryAlertBadge";
+import { UsageProjectionCard } from "./UsageProjectionCard";
 
 interface LegIntelligenceCardProps {
   legs: ParlayLeg[];
@@ -178,6 +179,16 @@ export function LegIntelligenceCard({ legs, legAnalyses, isLoading, delay = 0 }:
                             <InjuryAlertBadge key={i} injury={injury} compact />
                           ))}
                         </div>
+                      </div>
+                    )}
+
+                    {/* Usage Projection for Player Props */}
+                    {analysis.usageProjection && (
+                      <div className="mt-3">
+                        <UsageProjectionCard 
+                          projection={analysis.usageProjection} 
+                          legDescription={leg.description}
+                        />
                       </div>
                     )}
                   </>

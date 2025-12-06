@@ -16,6 +16,23 @@ export interface InjuryAlert {
   impactLevel: 'critical' | 'high' | 'medium' | 'low';
 }
 
+export interface UsageProjection {
+  playerName: string;
+  propType: string;
+  line: number;
+  projectedMinutes: { min: number; max: number; avg: number };
+  requiredRate: number;
+  historicalRate: number;
+  efficiencyMargin: number;
+  recentGames: { date: string; value: number; minutes: number }[];
+  hitRate: { hits: number; total: number; percentage: number };
+  paceImpact: number;
+  fatigueImpact: number;
+  opponentDefenseRank: number | null;
+  verdict: 'FAVORABLE' | 'NEUTRAL' | 'UNFAVORABLE';
+  verdictReason: string;
+}
+
 export interface LegAnalysis {
   sport: string;
   betType: 'moneyline' | 'spread' | 'total' | 'player_prop' | 'other';
@@ -35,6 +52,7 @@ export interface LegAnalysis {
   sharpSignals?: string[];
   sharpConfidence?: number;
   sharpFinalPick?: string;
+  usageProjection?: UsageProjection;
 }
 
 export interface CorrelatedLegPair {
