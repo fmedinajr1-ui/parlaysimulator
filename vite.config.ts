@@ -102,10 +102,31 @@ export default defineConfig(({ mode }) => ({
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
-    dedupe: ["react", "react-dom", "react-router-dom", "@tanstack/react-query"],
+    dedupe: [
+      "react", 
+      "react-dom", 
+      "react-router-dom", 
+      "@tanstack/react-query",
+      "@radix-ui/react-slot",
+      "scheduler"
+    ],
   },
   optimizeDeps: {
-    include: ["react", "react-dom", "react-router-dom", "@tanstack/react-query"],
-    force: true,
+    include: [
+      "react", 
+      "react-dom", 
+      "react-router-dom", 
+      "@tanstack/react-query"
+    ],
+    exclude: [],
+    esbuildOptions: {
+      target: 'esnext',
+    },
+  },
+  build: {
+    commonjsOptions: {
+      include: [/node_modules/],
+      transformMixedEsModules: true,
+    },
   },
 }));
