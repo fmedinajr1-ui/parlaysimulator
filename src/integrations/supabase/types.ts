@@ -1669,10 +1669,101 @@ export type Database = {
           },
         ]
       }
+      unified_props: {
+        Row: {
+          bookmaker: string
+          category: string
+          commence_time: string
+          composite_score: number | null
+          confidence: number | null
+          created_at: string
+          current_line: number
+          event_id: string
+          fatigue_score: number | null
+          game_description: string
+          hit_rate_score: number | null
+          id: string
+          is_active: boolean | null
+          outcome: string | null
+          over_price: number | null
+          player_name: string
+          prop_type: string
+          recommendation: string | null
+          recommended_side: string | null
+          settled_at: string | null
+          sharp_money_score: number | null
+          signal_sources: Json | null
+          sport: string
+          trap_score: number | null
+          under_price: number | null
+          updated_at: string
+          upset_score: number | null
+        }
+        Insert: {
+          bookmaker: string
+          category?: string
+          commence_time: string
+          composite_score?: number | null
+          confidence?: number | null
+          created_at?: string
+          current_line: number
+          event_id: string
+          fatigue_score?: number | null
+          game_description: string
+          hit_rate_score?: number | null
+          id?: string
+          is_active?: boolean | null
+          outcome?: string | null
+          over_price?: number | null
+          player_name: string
+          prop_type: string
+          recommendation?: string | null
+          recommended_side?: string | null
+          settled_at?: string | null
+          sharp_money_score?: number | null
+          signal_sources?: Json | null
+          sport: string
+          trap_score?: number | null
+          under_price?: number | null
+          updated_at?: string
+          upset_score?: number | null
+        }
+        Update: {
+          bookmaker?: string
+          category?: string
+          commence_time?: string
+          composite_score?: number | null
+          confidence?: number | null
+          created_at?: string
+          current_line?: number
+          event_id?: string
+          fatigue_score?: number | null
+          game_description?: string
+          hit_rate_score?: number | null
+          id?: string
+          is_active?: boolean | null
+          outcome?: string | null
+          over_price?: number | null
+          player_name?: string
+          prop_type?: string
+          recommendation?: string | null
+          recommended_side?: string | null
+          settled_at?: string | null
+          sharp_money_score?: number | null
+          signal_sources?: Json | null
+          sport?: string
+          trap_score?: number | null
+          under_price?: number | null
+          updated_at?: string
+          upset_score?: number | null
+        }
+        Relationships: []
+      }
       upset_predictions: {
         Row: {
           ai_reasoning: string | null
           away_team: string
+          calibration_factor: number | null
           commence_time: string
           confidence: string
           favorite: string
@@ -1683,6 +1774,7 @@ export type Database = {
           id: string
           predicted_at: string
           prediction_date: string
+          signal_sources: Json | null
           signals: Json | null
           sport: string
           underdog: string
@@ -1695,6 +1787,7 @@ export type Database = {
         Insert: {
           ai_reasoning?: string | null
           away_team: string
+          calibration_factor?: number | null
           commence_time: string
           confidence?: string
           favorite: string
@@ -1705,6 +1798,7 @@ export type Database = {
           id?: string
           predicted_at?: string
           prediction_date?: string
+          signal_sources?: Json | null
           signals?: Json | null
           sport: string
           underdog: string
@@ -1717,6 +1811,7 @@ export type Database = {
         Update: {
           ai_reasoning?: string | null
           away_team?: string
+          calibration_factor?: number | null
           commence_time?: string
           confidence?: string
           favorite?: string
@@ -1727,6 +1822,7 @@ export type Database = {
           id?: string
           predicted_at?: string
           prediction_date?: string
+          signal_sources?: Json | null
           signals?: Json | null
           sport?: string
           underdog?: string
@@ -2112,6 +2208,7 @@ export type Database = {
       is_collaborator: { Args: { _user_id: string }; Returns: boolean }
       sync_sharp_follow_outcomes: { Args: never; Returns: undefined }
       update_strategy_performance: { Args: never; Returns: undefined }
+      update_upset_calibration: { Args: never; Returns: undefined }
     }
     Enums: {
       app_role: "admin" | "moderator" | "user" | "collaborator"
