@@ -31,6 +31,23 @@ interface CalibrationFactor {
   sample_size: number;
 }
 
+interface UsageProjection {
+  playerName: string;
+  propType: string;
+  line: number;
+  projectedMinutes: { min: number; max: number; avg: number };
+  requiredRate: number;
+  historicalRate: number;
+  efficiencyMargin: number;
+  recentGames: { date: string; value: number; minutes: number }[];
+  hitRate: { hits: number; total: number; percentage: number };
+  paceImpact: number;
+  fatigueImpact: number;
+  opponentDefenseRank: number | null;
+  verdict: 'FAVORABLE' | 'NEUTRAL' | 'UNFAVORABLE';
+  verdictReason: string;
+}
+
 interface LegAnalysis {
   sport: string;
   betType: 'moneyline' | 'spread' | 'total' | 'player_prop' | 'other';
@@ -50,6 +67,7 @@ interface LegAnalysis {
   sharpSignals?: string[];
   sharpConfidence?: number;
   sharpFinalPick?: string;
+  usageProjection?: UsageProjection;
 }
 
 interface HistoricalContext {
@@ -519,6 +537,57 @@ Return ONLY valid JSON, no other text.`;
         correlatedLegs: [],
         overallAssessment: 'Analysis unavailable - proceed with caution'
       };
+    }
+
+    // Enrich player props with usage projections
+    if (analysis.legAnalyses) {
+      const usagePromises = analysis.legAnalyses.map(async (legAnalysis: any, idx: number) => {
+        if (legAnalysis.betType === 'player_prop' && legAnalysis.player) {
+          try {
+            // Parse prop type and line from description
+            const desc = legs[idx]?.description?.toLowerCase() || '';
+            let propType = 'points';
+            let line = 0;
+
+            // Extract prop type
+            if (desc.includes('point') || desc.includes('pts')) propType = 'points';
+            else if (desc.includes('rebound') || desc.includes('reb')) propType = 'rebounds';
+            else if (desc.includes('assist') || desc.includes('ast')) propType = 'assists';
+            else if (desc.includes('three') || desc.includes('3pt') || desc.includes('3-pt')) propType = 'threes';
+            else if (desc.includes('block') || desc.includes('blk')) propType = 'blocks';
+            else if (desc.includes('steal') || desc.includes('stl')) propType = 'steals';
+
+            // Extract line value
+            const lineMatch = desc.match(/(?:over|under|o|u)\s*(\d+\.?\d*)/i);
+            if (lineMatch) {
+              line = parseFloat(lineMatch[1]);
+            }
+
+            if (line > 0) {
+              console.log(`Fetching usage projection for ${legAnalysis.player} - ${propType} ${line}`);
+              
+              const usageResponse = await supabase.functions.invoke('calculate-player-usage', {
+                body: {
+                  playerName: legAnalysis.player,
+                  propType,
+                  line,
+                  opponent: legAnalysis.team || undefined
+                }
+              });
+
+              if (usageResponse.data && !usageResponse.error) {
+                legAnalysis.usageProjection = usageResponse.data;
+                console.log(`Usage projection added for ${legAnalysis.player}: ${usageResponse.data.verdict}`);
+              }
+            }
+          } catch (usageError) {
+            console.error(`Error fetching usage for ${legAnalysis.player}:`, usageError);
+          }
+        }
+        return legAnalysis;
+      });
+
+      await Promise.all(usagePromises);
     }
 
     return new Response(JSON.stringify(analysis), {

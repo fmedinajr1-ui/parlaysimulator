@@ -125,3 +125,6 @@ verify_jwt = false
 
 [functions.send-juiced-picks-email]
 verify_jwt = false
+
+[functions.calculate-player-usage]
+verify_jwt = false

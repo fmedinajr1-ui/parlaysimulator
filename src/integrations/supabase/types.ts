@@ -1336,6 +1336,63 @@ export type Database = {
         }
         Relationships: []
       }
+      player_usage_metrics: {
+        Row: {
+          ast_per_min: number
+          avg_assists: number
+          avg_minutes: number
+          avg_points: number
+          avg_rebounds: number
+          calculated_at: string
+          created_at: string
+          games_analyzed: number
+          id: string
+          player_name: string
+          pts_per_min: number
+          reb_per_min: number
+          recent_game_logs: Json | null
+          sport: string
+          updated_at: string
+          usage_trend: string | null
+        }
+        Insert: {
+          ast_per_min?: number
+          avg_assists?: number
+          avg_minutes?: number
+          avg_points?: number
+          avg_rebounds?: number
+          calculated_at?: string
+          created_at?: string
+          games_analyzed?: number
+          id?: string
+          player_name: string
+          pts_per_min?: number
+          reb_per_min?: number
+          recent_game_logs?: Json | null
+          sport?: string
+          updated_at?: string
+          usage_trend?: string | null
+        }
+        Update: {
+          ast_per_min?: number
+          avg_assists?: number
+          avg_minutes?: number
+          avg_points?: number
+          avg_rebounds?: number
+          calculated_at?: string
+          created_at?: string
+          games_analyzed?: number
+          id?: string
+          player_name?: string
+          pts_per_min?: number
+          reb_per_min?: number
+          recent_game_logs?: Json | null
+          sport?: string
+          updated_at?: string
+          usage_trend?: string | null
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
