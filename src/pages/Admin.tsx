@@ -32,6 +32,7 @@ import { CollaboratorManager } from '@/components/admin/CollaboratorManager';
 import { ApprovedUsersManager } from '@/components/admin/ApprovedUsersManager';
 import { MasterAccuracyDashboard } from '@/components/admin/accuracy/MasterAccuracyDashboard';
 import { SharpRecalibrationPanel } from '@/components/admin/SharpRecalibrationPanel';
+import { CalibrationFactorsPanel } from '@/components/admin/CalibrationFactorsPanel';
 
 interface ParlayData {
   id: string;
@@ -297,6 +298,7 @@ export default function Admin() {
           {/* Sharp Money Tab */}
           <TabsContent value="sharp-money" className="mt-4 space-y-4">
             <SharpRecalibrationPanel />
+            <CalibrationFactorsPanel />
             <SharpMoneyPanel />
           </TabsContent>
 
