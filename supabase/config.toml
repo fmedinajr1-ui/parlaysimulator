@@ -104,3 +104,6 @@ verify_jwt = false
 
 [functions.verify-fatigue-outcomes]
 verify_jwt = false
+
+[functions.recalibrate-sharp-signals]
+verify_jwt = false
