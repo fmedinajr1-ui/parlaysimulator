@@ -1,0 +1,132 @@
+import { useState, useEffect } from 'react';
+import { supabase } from '@/integrations/supabase/client';
+import { Loader2, RefreshCw } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { useToast } from '@/hooks/use-toast';
+import { AccuracyGradeCard } from './AccuracyGradeCard';
+import { CategoryBreakdown } from './CategoryBreakdown';
+import { AccuracyRecommendations } from './AccuracyRecommendations';
+import { 
+  AccuracyData, 
+  calculateCompositeScore, 
+  CompositeScore 
+} from '@/lib/accuracy-calculator';
+
+export function MasterAccuracyDashboard() {
+  const [isLoading, setIsLoading] = useState(true);
+  const [compositeScore, setCompositeScore] = useState<CompositeScore | null>(null);
+  const { toast } = useToast();
+
+  useEffect(() => {
+    fetchAccuracyData();
+  }, []);
+
+  const fetchAccuracyData = async () => {
+    setIsLoading(true);
+    try {
+      const { data, error } = await supabase.rpc('get_unified_accuracy_stats');
+
+      if (error) {
+        console.error('Error fetching accuracy stats:', error);
+        toast({
+          title: "Error",
+          description: "Failed to load accuracy data",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      if (data && data.length > 0) {
+        const typedData: AccuracyData[] = data.map((item: Record<string, unknown>) => ({
+          category: item.category as string,
+          subcategory: item.subcategory as string,
+          total_predictions: item.total_predictions as number,
+          verified_predictions: item.verified_predictions as number,
+          correct_predictions: item.correct_predictions as number,
+          accuracy_rate: Number(item.accuracy_rate),
+          sample_confidence: item.sample_confidence as string
+        }));
+
+        const score = calculateCompositeScore(typedData);
+        setCompositeScore(score);
+      } else {
+        setCompositeScore({
+          overallGrade: 'N/A',
+          overallAccuracy: 0,
+          totalVerified: 0,
+          gradeColor: 'text-muted-foreground',
+          categories: [],
+          bestPerformers: [],
+          worstPerformers: [],
+          recommendations: []
+        });
+      }
+    } catch (err) {
+      console.error('Exception fetching accuracy data:', err);
+      toast({
+        title: "Error",
+        description: "Failed to load accuracy data",
+        variant: "destructive"
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!compositeScore) {
+    return (
+      <div className="text-center py-12 text-muted-foreground">
+        No accuracy data available
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header with refresh */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-display text-foreground">PARLAY FARM AI ACCURACY</h2>
+          <p className="text-sm text-muted-foreground">
+            Unified accuracy rating across all prediction systems
+          </p>
+        </div>
+        <Button 
+          variant="outline" 
+          size="sm" 
+          onClick={fetchAccuracyData}
+          disabled={isLoading}
+        >
+          <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+          Refresh
+        </Button>
+      </div>
+
+      {/* Main Grade Card */}
+      <AccuracyGradeCard 
+        grade={compositeScore.overallGrade}
+        accuracy={compositeScore.overallAccuracy}
+        totalVerified={compositeScore.totalVerified}
+        gradeColor={compositeScore.gradeColor}
+      />
+
+      {/* Category Breakdown */}
+      <CategoryBreakdown categories={compositeScore.categories} />
+
+      {/* Recommendations */}
+      <AccuracyRecommendations 
+        recommendations={compositeScore.recommendations}
+        bestPerformers={compositeScore.bestPerformers}
+        worstPerformers={compositeScore.worstPerformers}
+      />
+    </div>
+  );
+}

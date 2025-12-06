@@ -1867,6 +1867,18 @@ export type Database = {
           win_rate: number
         }[]
       }
+      get_unified_accuracy_stats: {
+        Args: never
+        Returns: {
+          accuracy_rate: number
+          category: string
+          correct_predictions: number
+          sample_confidence: string
+          subcategory: string
+          total_predictions: number
+          verified_predictions: number
+        }[]
+      }
       get_upset_accuracy_summary: {
         Args: never
         Returns: {
