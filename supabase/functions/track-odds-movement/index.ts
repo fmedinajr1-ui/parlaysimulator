@@ -101,11 +101,40 @@ const MARKET_LABELS: Record<string, string> = {
   'totals': 'Total'
 };
 
+// Calibration factors loaded from database
+interface CalibrationFactors {
+  PICK_THRESHOLD: number;
+  FADE_THRESHOLD: number;
+  MIN_BOOKS_CONSENSUS: number;
+  [key: string]: number;
+}
+
+// Default calibration factors (used if database fetch fails)
+const DEFAULT_CALIBRATION: CalibrationFactors = {
+  PICK_THRESHOLD: 3,
+  FADE_THRESHOLD: 4,
+  MIN_BOOKS_CONSENSUS: 2,
+  WEIGHT_REVERSE_LINE_MOVEMENT: 3,
+  WEIGHT_STEAM_MOVE: 3,
+  WEIGHT_SHARP_TIMING: 2,
+  WEIGHT_PROFESSIONAL_SIZING: 2,
+  WEIGHT_MULTI_BOOK_CONSENSUS: 2,
+  WEIGHT_CLOSING_LINE_VALUE: 2,
+  WEIGHT_LATE_MONEY_SWEET_SPOT: 2,
+  WEIGHT_SIGNIFICANT_PRICE_MOVE: 1,
+  WEIGHT_MODERATE_PRICE_MOVE: 1,
+  WEIGHT_EARLY_MORNING_MOVE: -2,
+  WEIGHT_SINGLE_BOOK_ONLY: -2,
+  WEIGHT_BOTH_SIDES_MOVING: -1,
+  WEIGHT_SMALL_MOVE: -1,
+};
+
 // FIXED: Analyze sharp movement with improved scoring thresholds
 function analyzeSharpMovement(
   movement: LineMovement,
   allRecentMovements: LineMovement[],
-  hoursToGame: number
+  hoursToGame: number,
+  calibration: CalibrationFactors = DEFAULT_CALIBRATION
 ): SharpAnalysis {
   const signals: string[] = [];
   let realScore = 0;
@@ -215,9 +244,13 @@ function analyzeSharpMovement(
   let recommendation: 'pick' | 'fade' | 'caution';
   let reason: string;
   
-  // FIXED: Higher thresholds for PICK, better FADE logic
-  // PICK: Need strong evidence (realScore >= fakeScore + 3) AND book consensus
-  if (realScore >= fakeScore + 3 && booksConsensus >= 2 && !signals.includes('EARLY_MORNING_MOVE')) {
+  // Use calibration factors for thresholds
+  const pickThreshold = calibration.PICK_THRESHOLD || 3;
+  const fadeThreshold = calibration.FADE_THRESHOLD || 4;
+  const minBooksConsensus = calibration.MIN_BOOKS_CONSENSUS || 2;
+  
+  // PICK: Need strong evidence AND book consensus (uses calibrated thresholds)
+  if (realScore >= fakeScore + pickThreshold && booksConsensus >= minBooksConsensus && !signals.includes('EARLY_MORNING_MOVE')) {
     authenticity = 'real';
     recommendation = 'pick';
     const keySignals = signals.filter(s => 
@@ -226,8 +259,8 @@ function analyzeSharpMovement(
     );
     reason = `Strong professional action. ${keySignals.join(', ').replace(/_/g, ' ')}`;
   } 
-  // FADE: Only when there's STRONG evidence of trap (fakeScore >= realScore + 4)
-  else if (fakeScore >= realScore + 4 && signals.some(s => 
+  // FADE: Only when there's STRONG evidence of trap (uses calibrated threshold)
+  else if (fakeScore >= realScore + fadeThreshold && signals.some(s => 
     ['BOTH_SIDES_MOVED', 'PRICE_ONLY_MOVE_TRAP', 'SINGLE_BOOK_DIVERGENCE'].includes(s)
   )) {
     authenticity = 'fake';
@@ -238,7 +271,7 @@ function analyzeSharpMovement(
     );
     reason = `Likely trap - bet opposite side. ${keySignals.join(', ').replace(/_/g, ' ')}`;
   } 
-  // DEFAULT: Caution for everything else (was causing bad FADE recommendations)
+  // DEFAULT: Caution for everything else
   else {
     authenticity = 'uncertain';
     recommendation = 'caution';
@@ -290,6 +323,31 @@ async function fetchExistingSnapshots(
   return snapshotMap;
 }
 
+// Load calibration factors from database
+async function loadCalibrationFactors(supabase: any): Promise<CalibrationFactors> {
+  try {
+    const { data, error } = await supabase
+      .from('sharp_signal_calibration')
+      .select('factor_key, factor_value');
+    
+    if (error) {
+      console.error('[Calibration] Error loading factors:', error);
+      return DEFAULT_CALIBRATION;
+    }
+    
+    const factors = { ...DEFAULT_CALIBRATION };
+    for (const row of data || []) {
+      factors[row.factor_key] = Number(row.factor_value);
+    }
+    
+    console.log('[Calibration] Loaded factors from database:', Object.keys(factors).length);
+    return factors;
+  } catch (err) {
+    console.error('[Calibration] Failed to load:', err);
+    return DEFAULT_CALIBRATION;
+  }
+}
+
 // OPTIMIZED: Background processing with batched operations
 async function processOddsInBackground(
   sports: string[],
@@ -299,6 +357,9 @@ async function processOddsInBackground(
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
   const ODDS_API_KEY = Deno.env.get('THE_ODDS_API_KEY')!;
+
+  // Load calibration factors at the start of processing
+  const calibration = await loadCalibrationFactors(supabase);
 
   const allMovements: LineMovement[] = [];
   const snapshotsToInsert: any[] = [];
@@ -390,7 +451,7 @@ async function processOddsInBackground(
     }
   }
 
-  // Analyze and insert movements
+  // Analyze and insert movements using calibrated factors
   const now = new Date();
   const analyzedMovements = allMovements.map(m => {
     if (m.is_sharp_action) {
@@ -398,7 +459,7 @@ async function processOddsInBackground(
         ? (new Date(m.commence_time).getTime() - now.getTime()) / (1000 * 60 * 60)
         : 24;
       
-      const analysis = analyzeSharpMovement(m, allMovements, hoursToGame);
+      const analysis = analyzeSharpMovement(m, allMovements, hoursToGame, calibration);
       
       return {
         ...m,

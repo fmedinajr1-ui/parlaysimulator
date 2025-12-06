@@ -259,6 +259,29 @@ serve(async (req) => {
       calibrationFactors
     };
 
+    // Save calibration factors to database
+    const factorsToSave = Object.entries(calibrationFactors);
+    let savedCount = 0;
+    
+    for (const [key, value] of factorsToSave) {
+      const signalMatch = key.match(/^WEIGHT_(.+)$/);
+      const signalName = signalMatch ? signalMatch[1] : null;
+      const signalStat = signalName ? signalAccuracy.find(s => s.signal === signalName) : null;
+      
+      const { error: upsertError } = await supabase
+        .from('sharp_signal_calibration')
+        .upsert({
+          factor_key: key,
+          factor_value: value,
+          last_accuracy: signalStat?.accuracy || null,
+          sample_size: signalStat?.total || 0,
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'factor_key' });
+      
+      if (!upsertError) savedCount++;
+    }
+
+    console.log(`[RECALIBRATE] Saved ${savedCount}/${factorsToSave.length} calibration factors to database`);
     console.log('[RECALIBRATE] Calibration complete:', JSON.stringify(result, null, 2));
 
     return new Response(JSON.stringify({
@@ -269,7 +292,8 @@ serve(async (req) => {
         pickAccuracy: pickAccuracy.toFixed(1) + '%',
         fadeAccuracy: fadeAccuracy.toFixed(1) + '%',
         suggestionsCount: suggestions.length
-      }
+      },
+      savedFactors: savedCount
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });

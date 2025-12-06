@@ -1228,6 +1228,39 @@ export type Database = {
         }
         Relationships: []
       }
+      sharp_signal_calibration: {
+        Row: {
+          created_at: string
+          description: string | null
+          factor_key: string
+          factor_value: number
+          id: string
+          last_accuracy: number | null
+          sample_size: number | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          factor_key: string
+          factor_value?: number
+          id?: string
+          last_accuracy?: number | null
+          sample_size?: number | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          factor_key?: string
+          factor_value?: number
+          id?: string
+          last_accuracy?: number | null
+          sample_size?: number | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       strategy_performance: {
         Row: {
           avg_odds: number
