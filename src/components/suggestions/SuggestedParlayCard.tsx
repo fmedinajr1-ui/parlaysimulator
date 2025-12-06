@@ -5,6 +5,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Sparkles, TrendingUp, Clock, ChevronRight, Target, Layers, User, BarChart3, Shield, Activity, AlertTriangle, Zap, Minus, Battery } from "lucide-react";
+import { DogAvatar } from "@/components/avatars/DogAvatar";
+import { WolfAvatar } from "@/components/avatars/WolfAvatar";
 import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
 import { createLeg, simulateParlay } from "@/lib/parlay-calculator";
@@ -204,7 +206,18 @@ export function SuggestedParlayCard({
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-primary" />
+            {/* Dog for regular picks, Wolf for sharp/hybrid picks */}
+            {isHybridSuggestion || movementBucket?.bucket === 'large' || movementBucket?.bucket === 'extreme' ? (
+              <WolfAvatar 
+                size="sm" 
+                variant={isHybridSuggestion ? 'alpha' : 'default'} 
+              />
+            ) : (
+              <DogAvatar 
+                size="sm" 
+                variant={isDataDrivenSuggestion ? 'winner' : 'default'} 
+              />
+            )}
             <CardTitle className="text-sm font-display">{sport} PARLAY</CardTitle>
             <Badge variant="outline" className="text-xs">
               {legs.length} legs
