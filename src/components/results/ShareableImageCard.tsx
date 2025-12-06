@@ -206,7 +206,7 @@ export const ShareableImageCard = forwardRef<HTMLDivElement, ShareableImageCardP
               className="text-xs"
               style={{ color: "hsl(0 0% 45%)" }}
             >
-              @parlaysim
+              parlaysimulator.com
             </div>
           </div>
         </div>
