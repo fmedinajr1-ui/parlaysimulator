@@ -31,6 +31,18 @@ export interface CompositeScore {
   bestPerformers: { name: string; accuracy: number; grade: string }[];
   worstPerformers: { name: string; accuracy: number; grade: string }[];
   recommendations: { type: 'trust' | 'caution' | 'avoid' | 'needs_data'; message: string }[];
+  trends: TrendData[];
+  overallTrend: { direction: string; change: number };
+}
+
+export interface TrendData {
+  category: string;
+  current_period_accuracy: number;
+  current_period_verified: number;
+  previous_period_accuracy: number;
+  previous_period_verified: number;
+  trend_direction: string;
+  trend_change: number;
 }
 
 const CATEGORY_DISPLAY_NAMES: Record<string, { name: string; icon: string }> = {
@@ -113,7 +125,7 @@ export function aggregateCategoryStats(data: AccuracyData[]): CategoryStats[] {
   return categories.sort((a, b) => b.verifiedPredictions - a.verifiedPredictions);
 }
 
-export function calculateCompositeScore(data: AccuracyData[]): CompositeScore {
+export function calculateCompositeScore(data: AccuracyData[], trends: TrendData[] = []): CompositeScore {
   const categories = aggregateCategoryStats(data);
   
   // Calculate weighted average (weight by verified predictions)
@@ -175,6 +187,22 @@ export function calculateCompositeScore(data: AccuracyData[]): CompositeScore {
   // Sort recommendations by type priority
   const typePriority = { avoid: 0, caution: 1, trust: 2, needs_data: 3 };
   recommendations.sort((a, b) => typePriority[a.type] - typePriority[b.type]);
+
+  // Calculate overall trend from trends data
+  let overallTrend = { direction: 'stable', change: 0 };
+  if (trends.length > 0) {
+    const validTrends = trends.filter(t => t.trend_direction !== 'insufficient');
+    if (validTrends.length > 0) {
+      const weightedChange = validTrends.reduce((sum, t) => sum + (t.trend_change * t.current_period_verified), 0);
+      const totalWeight = validTrends.reduce((sum, t) => sum + t.current_period_verified, 0);
+      const avgChange = totalWeight > 0 ? weightedChange / totalWeight : 0;
+      
+      overallTrend = {
+        direction: avgChange > 2 ? 'up' : avgChange < -2 ? 'down' : 'stable',
+        change: Math.round(avgChange * 10) / 10
+      };
+    }
+  }
   
   return {
     overallGrade,
@@ -184,6 +212,8 @@ export function calculateCompositeScore(data: AccuracyData[]): CompositeScore {
     categories,
     bestPerformers,
     worstPerformers,
-    recommendations
+    recommendations,
+    trends,
+    overallTrend
   };
 }
