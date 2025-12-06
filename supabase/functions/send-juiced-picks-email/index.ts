@@ -166,7 +166,7 @@ serve(async (req) => {
 
     console.log(`Found ${subscribers.length} eligible subscribers`);
 
-    const appUrl = Deno.env.get("APP_URL") || "https://parlayfarmer.lovable.app";
+    const appUrl = Deno.env.get("APP_URL") || "https://parlaysimulator.com";
     const emailHtml = generateEmailHtml(picks, appUrl);
     
     let sentCount = 0;
