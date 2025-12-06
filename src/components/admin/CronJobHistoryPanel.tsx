@@ -2,10 +2,12 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Clock, CheckCircle, XCircle, Loader2, Timer } from "lucide-react";
+import { Clock, CheckCircle, XCircle, Loader2, Timer, RefreshCw } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
-
+import { useState } from "react";
+import { useToast } from "@/hooks/use-toast";
 interface CronJobHistory {
   id: string;
   job_name: string;
@@ -18,7 +20,10 @@ interface CronJobHistory {
 }
 
 export function CronJobHistoryPanel() {
-  const { data: history, isLoading } = useQuery({
+  const [isTriggering, setIsTriggering] = useState(false);
+  const { toast } = useToast();
+
+  const { data: history, isLoading, refetch } = useQuery({
     queryKey: ['cron-job-history'],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -30,8 +35,33 @@ export function CronJobHistoryPanel() {
       if (error) throw error;
       return data as CronJobHistory[];
     },
-    refetchInterval: 30000 // Refresh every 30 seconds
+    refetchInterval: 30000
   });
+
+  const handleTriggerRecalibration = async () => {
+    setIsTriggering(true);
+    try {
+      const { error } = await supabase.functions.invoke('recalibrate-sharp-signals');
+      
+      if (error) throw error;
+      
+      toast({
+        title: "Recalibration triggered",
+        description: "Sharp signal recalibration has been started.",
+      });
+      
+      // Refetch after a short delay to see the new entry
+      setTimeout(() => refetch(), 1000);
+    } catch (err) {
+      toast({
+        title: "Recalibration failed",
+        description: err instanceof Error ? err.message : "Failed to trigger recalibration",
+        variant: "destructive",
+      });
+    } finally {
+      setIsTriggering(false);
+    }
+  };
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -116,6 +146,20 @@ export function CronJobHistoryPanel() {
           <Badge variant="outline" className="ml-auto text-xs">
             Last {history.length} runs
           </Badge>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleTriggerRecalibration}
+            disabled={isTriggering}
+            className="ml-2"
+          >
+            {isTriggering ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            <span className="ml-1">Run Now</span>
+          </Button>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
