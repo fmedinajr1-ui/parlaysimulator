@@ -25,6 +25,34 @@ interface UsageProjectionCardProps {
   legDescription: string;
 }
 
+// Calculate confidence score from projection data
+const calculateConfidenceScore = (projection: UsageProjection): number => {
+  let score = 50;
+  
+  // Hit rate contribution (40% weight)
+  if (projection.hitRate.percentage >= 70) score += 20;
+  else if (projection.hitRate.percentage >= 60) score += 12;
+  else if (projection.hitRate.percentage >= 50) score += 5;
+  else if (projection.hitRate.percentage < 40) score -= 10;
+  
+  // Efficiency margin (30% weight)
+  if (projection.efficiencyMargin >= 10) score += 15;
+  else if (projection.efficiencyMargin >= 5) score += 10;
+  else if (projection.efficiencyMargin >= 0) score += 5;
+  else if (projection.efficiencyMargin < -10) score -= 10;
+  
+  // Verdict boost (20% weight)
+  if (projection.verdict === 'FAVORABLE') score += 10;
+  else if (projection.verdict === 'UNFAVORABLE') score -= 10;
+  
+  // Pace/fatigue adjustments (10% weight)
+  if (projection.paceImpact > 0) score += 3;
+  if (projection.fatigueImpact > 0) score += 3;
+  if (projection.fatigueImpact < -5) score -= 5;
+  
+  return Math.max(0, Math.min(100, score));
+};
+
 export function UsageProjectionCard({ projection, legDescription }: UsageProjectionCardProps) {
   const getVerdictConfig = (verdict: string) => {
     switch (verdict) {
@@ -67,6 +95,17 @@ export function UsageProjectionCard({ projection, legDescription }: UsageProject
     return typeMap[type.toLowerCase()] || type.toUpperCase();
   };
 
+  const confidenceScore = calculateConfidenceScore(projection);
+  
+  const getConfidenceLabel = (score: number) => {
+    if (score >= 75) return { label: 'ELITE', color: 'text-green-400', ringColor: 'text-green-500' };
+    if (score >= 60) return { label: 'HIGH', color: 'text-green-400', ringColor: 'text-green-500' };
+    if (score >= 45) return { label: 'MEDIUM', color: 'text-yellow-400', ringColor: 'text-yellow-500' };
+    return { label: 'LOW', color: 'text-red-400', ringColor: 'text-red-500' };
+  };
+  
+  const confidenceConfig = getConfidenceLabel(confidenceScore);
+
   return (
     <Card className={`border ${verdictConfig.bg}`}>
       <CardHeader className="pb-2">
@@ -75,10 +114,36 @@ export function UsageProjectionCard({ projection, legDescription }: UsageProject
             <Activity className="h-4 w-4 text-primary" />
             Usage Projection
           </CardTitle>
-          <Badge variant="outline" className={`${verdictConfig.color} border-current`}>
-            <VerdictIcon className="h-3 w-3 mr-1" />
-            {verdictConfig.label}
-          </Badge>
+          <div className="flex items-center gap-2">
+            {/* Mini confidence gauge */}
+            <div className="relative w-10 h-10">
+              <svg className="w-full h-full -rotate-90" viewBox="0 0 36 36">
+                <path
+                  className="text-muted/30"
+                  stroke="currentColor"
+                  strokeWidth="3"
+                  fill="none"
+                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                />
+                <path
+                  className={confidenceConfig.ringColor}
+                  stroke="currentColor"
+                  strokeWidth="3"
+                  strokeLinecap="round"
+                  fill="none"
+                  strokeDasharray={`${confidenceScore}, 100`}
+                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                />
+              </svg>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <span className={`text-[10px] font-bold ${confidenceConfig.color}`}>{confidenceScore}%</span>
+              </div>
+            </div>
+            <Badge variant="outline" className={`${verdictConfig.color} border-current`}>
+              <VerdictIcon className="h-3 w-3 mr-1" />
+              {verdictConfig.label}
+            </Badge>
+          </div>
         </div>
         <p className="text-xs text-muted-foreground truncate">{legDescription}</p>
       </CardHeader>

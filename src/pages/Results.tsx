@@ -17,6 +17,8 @@ import { TrapAvoidanceCard } from "@/components/results/TrapAvoidanceCard";
 import { ParlayHealthCard } from "@/components/results/ParlayHealthCard";
 import { ParlayOptimizer } from "@/components/results/ParlayOptimizer";
 import { FatigueImpactCard } from "@/components/results/FatigueImpactCard";
+import { UsageAnalysisSection } from "@/components/results/UsageAnalysisSection";
+import { DoubleDownCard } from "@/components/results/DoubleDownCard";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, RotateCcw, Save, Loader2, LogIn } from "lucide-react";
 import { ParlaySimulation, ParlayAnalysis } from "@/types/parlay";
@@ -403,6 +405,22 @@ const Results = () => {
             delay={120}
           />
 
+          {/* Double Down Recommendation */}
+          <DoubleDownCard
+            legs={simulation.legs}
+            legAnalyses={aiAnalysis?.legAnalyses}
+            stake={simulation.stake}
+            delay={125}
+          />
+
+          {/* Usage Analysis Section - NEW PROMINENT PLACEMENT */}
+          <UsageAnalysisSection
+            legs={simulation.legs}
+            legAnalyses={aiAnalysis?.legAnalyses}
+            isLoading={isLoadingAnalysis}
+            delay={130}
+          />
+
           {/* Parlay Optimizer */}
           <ParlayOptimizer 
             legs={simulation.legs}
@@ -410,7 +428,7 @@ const Results = () => {
             stake={simulation.stake}
             combinedProbability={simulation.combinedProbability}
             potentialPayout={simulation.potentialPayout}
-            delay={130}
+            delay={135}
           />
 
           {/* Trap Avoidance Card - Show at top if traps detected */}

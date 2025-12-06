@@ -541,7 +541,11 @@ Return ONLY valid JSON, no other text.`;
 
     // Enrich player props with usage projections
     if (analysis.legAnalyses) {
+      console.log(`Processing ${analysis.legAnalyses.length} legs for usage projections...`);
+      
       const usagePromises = analysis.legAnalyses.map(async (legAnalysis: any, idx: number) => {
+        console.log(`Leg ${idx}: betType=${legAnalysis.betType}, player=${legAnalysis.player}`);
+        
         if (legAnalysis.betType === 'player_prop' && legAnalysis.player) {
           try {
             // Parse prop type and line from description
@@ -557,11 +561,14 @@ Return ONLY valid JSON, no other text.`;
             else if (desc.includes('block') || desc.includes('blk')) propType = 'blocks';
             else if (desc.includes('steal') || desc.includes('stl')) propType = 'steals';
 
-            // Extract line value
-            const lineMatch = desc.match(/(?:over|under|o|u)\s*(\d+\.?\d*)/i);
+            // Extract line value - improved regex
+            const lineMatch = desc.match(/(?:over|under|o|u)\s*(\d+\.?\d*)/i) || 
+                             desc.match(/(\d+\.?\d*)\s*(?:pts?|points?|reb|rebounds?|ast|assists?|3pm?|blocks?|blk|steals?|stl)/i);
             if (lineMatch) {
               line = parseFloat(lineMatch[1]);
             }
+
+            console.log(`Leg ${idx} parsed: player=${legAnalysis.player}, propType=${propType}, line=${line}`);
 
             if (line > 0) {
               console.log(`Fetching usage projection for ${legAnalysis.player} - ${propType} ${line}`);
@@ -585,19 +592,28 @@ Return ONLY valid JSON, no other text.`;
               if (usageResponse.ok) {
                 const usageData = await usageResponse.json();
                 legAnalysis.usageProjection = usageData;
-                console.log(`Usage projection added for ${legAnalysis.player}: ${usageData.verdict}`);
+                console.log(`✅ Usage projection added for ${legAnalysis.player}: verdict=${usageData.verdict}, hitRate=${usageData.hitRate?.percentage}%`);
               } else {
-                console.error(`Usage projection failed for ${legAnalysis.player}: ${usageResponse.status}`);
+                const errorText = await usageResponse.text();
+                console.error(`❌ Usage projection failed for ${legAnalysis.player}: ${usageResponse.status} - ${errorText}`);
               }
+            } else {
+              console.log(`⚠️ Could not extract line from description: ${desc}`);
             }
           } catch (usageError) {
-            console.error(`Error fetching usage for ${legAnalysis.player}:`, usageError);
+            console.error(`❌ Error fetching usage for ${legAnalysis.player}:`, usageError);
           }
+        } else {
+          console.log(`Leg ${idx}: Skipping - not a player_prop or no player identified`);
         }
         return legAnalysis;
       });
 
       await Promise.all(usagePromises);
+      
+      // Log summary
+      const propsWithUsage = analysis.legAnalyses.filter((la: any) => la.usageProjection).length;
+      console.log(`📊 Usage projection summary: ${propsWithUsage}/${analysis.legAnalyses.length} legs enriched`);
     }
 
     return new Response(JSON.stringify(analysis), {
