@@ -116,3 +116,6 @@ verify_jwt = false
 
 [functions.verify-unified-outcomes]
 verify_jwt = false
+
+[functions.pvs-data-ingestion]
+verify_jwt = false
