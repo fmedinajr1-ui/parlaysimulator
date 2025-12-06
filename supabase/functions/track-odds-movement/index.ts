@@ -101,7 +101,7 @@ const MARKET_LABELS: Record<string, string> = {
   'totals': 'Total'
 };
 
-// Analyze sharp movement to determine if it's real or fake
+// FIXED: Analyze sharp movement with improved scoring thresholds
 function analyzeSharpMovement(
   movement: LineMovement,
   allRecentMovements: LineMovement[],
@@ -111,6 +111,7 @@ function analyzeSharpMovement(
   let realScore = 0;
   let fakeScore = 0;
   
+  // Check if opposite side also moved (strong trap indicator)
   const oppositeMoved = allRecentMovements.find(m => 
     m.event_id === movement.event_id && 
     m.market_type === movement.market_type &&
@@ -120,13 +121,14 @@ function analyzeSharpMovement(
   );
   
   if (oppositeMoved) {
-    fakeScore += 3;
+    fakeScore += 4; // INCREASED from 3 - both sides moving is a strong trap signal
     signals.push('BOTH_SIDES_MOVED');
   } else {
     realScore += 2;
     signals.push('SINGLE_SIDE_MOVEMENT');
   }
   
+  // Multi-book consensus is crucial for real sharp action
   const sameDirectionBooks = allRecentMovements.filter(m =>
     m.event_id === movement.event_id &&
     m.outcome_name === movement.outcome_name &&
@@ -136,62 +138,73 @@ function analyzeSharpMovement(
   
   const booksConsensus = sameDirectionBooks.length + 1;
   
-  if (booksConsensus >= 2) {
+  if (booksConsensus >= 3) {
+    realScore += 5; // Strong multi-book consensus
+    signals.push('STRONG_MULTI_BOOK_CONSENSUS');
+  } else if (booksConsensus >= 2) {
     realScore += 3;
     signals.push('MULTI_BOOK_CONSENSUS');
   } else if (booksConsensus === 1) {
-    fakeScore += 1;
+    fakeScore += 2; // INCREASED - single book divergence is concerning
     signals.push('SINGLE_BOOK_DIVERGENCE');
   }
   
+  // Price-only moves without line change are often traps
   if (Math.abs(movement.price_change) >= 8 && 
       (!movement.point_change || Math.abs(movement.point_change) < 0.5)) {
-    fakeScore += 3;
+    fakeScore += 4; // INCREASED from 3
     signals.push('PRICE_ONLY_MOVE_TRAP');
   }
   
+  // Line AND juice moving together without opposite side = strong real signal
   if (movement.point_change && Math.abs(movement.point_change) >= 0.5 &&
       Math.abs(movement.price_change) >= 5 && !oppositeMoved) {
-    realScore += 3;
+    realScore += 4; // INCREASED from 3
     signals.push('LINE_AND_JUICE_CONFIRMED');
   }
   
+  // Line AND juice with opposite side = market adjustment
   if (movement.point_change && Math.abs(movement.point_change) >= 0.5 &&
       Math.abs(movement.price_change) >= 5 && oppositeMoved) {
-    fakeScore += 2;
+    fakeScore += 3; // INCREASED from 2
     signals.push('MARKET_ADJUSTMENT');
   }
   
+  // TIMING IS CRITICAL - late money is the sweet spot
   if (hoursToGame >= 1 && hoursToGame <= 3) {
-    realScore += 3;
+    realScore += 4; // INCREASED - late money sweet spot is very important
     signals.push('LATE_MONEY_SWEET_SPOT');
   } else if (hoursToGame < 1) {
-    realScore += 1;
+    realScore += 2; // Very late money is still good
     signals.push('VERY_LATE_MONEY');
   } else if (hoursToGame >= 8) {
-    fakeScore += 2;
+    fakeScore += 3; // INCREASED - early morning moves are often traps
     signals.push('EARLY_MORNING_MOVE');
   } else if (hoursToGame >= 4) {
+    fakeScore += 1; // Moderate timing is slightly negative
     signals.push('MODERATE_TIMING');
   }
   
+  // Steam moves need consensus to be trusted
   if (Math.abs(movement.price_change) >= 15) {
     if (booksConsensus >= 2) {
-      realScore += 2;
+      realScore += 3;
       signals.push('STEAM_MOVE_CONFIRMED');
     } else {
-      fakeScore += 2;
+      fakeScore += 3; // INCREASED - steam without consensus is suspicious
       signals.push('STEAM_MOVE_NO_CONSENSUS');
     }
   }
   
+  // Player props get a small bonus
   if (movement.player_name) {
     realScore += 1;
     signals.push('PLAYER_PROP');
   }
   
+  // Heavy favorites shortening is often public money, not sharp
   if (movement.new_price < -200 && movement.price_change < -5) {
-    fakeScore += 2;
+    fakeScore += 3; // INCREASED from 2
     signals.push('HEAVY_FAVORITE_SHORTENING');
   }
   
@@ -202,24 +215,34 @@ function analyzeSharpMovement(
   let recommendation: 'pick' | 'fade' | 'caution';
   let reason: string;
   
-  if (realScore >= fakeScore + 2) {
+  // FIXED: Higher thresholds for PICK, better FADE logic
+  // PICK: Need strong evidence (realScore >= fakeScore + 3) AND book consensus
+  if (realScore >= fakeScore + 3 && booksConsensus >= 2 && !signals.includes('EARLY_MORNING_MOVE')) {
     authenticity = 'real';
     recommendation = 'pick';
     const keySignals = signals.filter(s => 
-      ['MULTI_BOOK_CONSENSUS', 'SINGLE_SIDE_MOVEMENT', 'LATE_MONEY', 'PRICE_WITHOUT_LINE_CHANGE', 'STEAM_MOVE'].includes(s)
+      ['MULTI_BOOK_CONSENSUS', 'STRONG_MULTI_BOOK_CONSENSUS', 'SINGLE_SIDE_MOVEMENT', 
+       'LATE_MONEY_SWEET_SPOT', 'LINE_AND_JUICE_CONFIRMED', 'STEAM_MOVE_CONFIRMED'].includes(s)
     );
     reason = `Strong professional action. ${keySignals.join(', ').replace(/_/g, ' ')}`;
-  } else if (fakeScore >= realScore + 2) {
+  } 
+  // FADE: Only when there's STRONG evidence of trap (fakeScore >= realScore + 4)
+  else if (fakeScore >= realScore + 4 && signals.some(s => 
+    ['BOTH_SIDES_MOVED', 'PRICE_ONLY_MOVE_TRAP', 'SINGLE_BOOK_DIVERGENCE'].includes(s)
+  )) {
     authenticity = 'fake';
     recommendation = 'fade';
     const keySignals = signals.filter(s => 
-      ['BOTH_SIDES_MOVED', 'EARLY_MOVEMENT', 'SINGLE_BOOK_DIVERGENCE', 'HEAVY_FAVORITE_SHORTENING'].includes(s)
+      ['BOTH_SIDES_MOVED', 'PRICE_ONLY_MOVE_TRAP', 'SINGLE_BOOK_DIVERGENCE', 
+       'HEAVY_FAVORITE_SHORTENING', 'EARLY_MORNING_MOVE'].includes(s)
     );
-    reason = `Likely market adjustment or trap. ${keySignals.join(', ').replace(/_/g, ' ')}`;
-  } else {
+    reason = `Likely trap - bet opposite side. ${keySignals.join(', ').replace(/_/g, ' ')}`;
+  } 
+  // DEFAULT: Caution for everything else (was causing bad FADE recommendations)
+  else {
     authenticity = 'uncertain';
     recommendation = 'caution';
-    reason = `Mixed signals - proceed with caution. ${signals.slice(0, 2).join(', ').replace(/_/g, ' ')}`;
+    reason = `Mixed signals - proceed with caution. ${signals.slice(0, 3).join(', ').replace(/_/g, ' ')}`;
   }
   
   return { 
