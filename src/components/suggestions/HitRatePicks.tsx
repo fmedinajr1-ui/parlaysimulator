@@ -472,7 +472,7 @@ export function HitRatePicks() {
   );
 }
 
-// Extracted PropCard component for cleaner rendering
+// PropCard component for rendering individual props
 function PropCard({ prop, PROP_LABELS }: { prop: any; PROP_LABELS: Record<string, string> }) {
   const bestHitRate = prop.recommended_side === 'over' 
     ? prop.hit_rate_over 
