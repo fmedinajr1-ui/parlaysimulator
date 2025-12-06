@@ -673,6 +673,141 @@ export type Database = {
           },
         ]
       }
+      nba_injury_reports: {
+        Row: {
+          affects_rotation: boolean | null
+          created_at: string
+          game_date: string
+          id: string
+          impact_level: string | null
+          injury_type: string | null
+          player_name: string
+          status: string
+          team_name: string
+          updated_at: string
+        }
+        Insert: {
+          affects_rotation?: boolean | null
+          created_at?: string
+          game_date: string
+          id?: string
+          impact_level?: string | null
+          injury_type?: string | null
+          player_name: string
+          status?: string
+          team_name: string
+          updated_at?: string
+        }
+        Update: {
+          affects_rotation?: boolean | null
+          created_at?: string
+          game_date?: string
+          id?: string
+          impact_level?: string | null
+          injury_type?: string | null
+          player_name?: string
+          status?: string
+          team_name?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      nba_opponent_defense_stats: {
+        Row: {
+          assists_allowed_avg: number | null
+          blocks_allowed_avg: number | null
+          created_at: string
+          defense_rank: number
+          defense_rating: number
+          id: string
+          points_allowed_avg: number | null
+          rebounds_allowed_avg: number | null
+          stat_category: string
+          team_name: string
+          threes_allowed_avg: number | null
+          updated_at: string
+        }
+        Insert: {
+          assists_allowed_avg?: number | null
+          blocks_allowed_avg?: number | null
+          created_at?: string
+          defense_rank?: number
+          defense_rating?: number
+          id?: string
+          points_allowed_avg?: number | null
+          rebounds_allowed_avg?: number | null
+          stat_category: string
+          team_name: string
+          threes_allowed_avg?: number | null
+          updated_at?: string
+        }
+        Update: {
+          assists_allowed_avg?: number | null
+          blocks_allowed_avg?: number | null
+          created_at?: string
+          defense_rank?: number
+          defense_rating?: number
+          id?: string
+          points_allowed_avg?: number | null
+          rebounds_allowed_avg?: number | null
+          stat_category?: string
+          team_name?: string
+          threes_allowed_avg?: number | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      nba_player_game_logs: {
+        Row: {
+          assists: number | null
+          blocks: number | null
+          created_at: string
+          game_date: string
+          id: string
+          is_home: boolean | null
+          minutes_played: number | null
+          opponent: string
+          player_name: string
+          points: number | null
+          rebounds: number | null
+          steals: number | null
+          threes_made: number | null
+          turnovers: number | null
+        }
+        Insert: {
+          assists?: number | null
+          blocks?: number | null
+          created_at?: string
+          game_date: string
+          id?: string
+          is_home?: boolean | null
+          minutes_played?: number | null
+          opponent: string
+          player_name: string
+          points?: number | null
+          rebounds?: number | null
+          steals?: number | null
+          threes_made?: number | null
+          turnovers?: number | null
+        }
+        Update: {
+          assists?: number | null
+          blocks?: number | null
+          created_at?: string
+          game_date?: string
+          id?: string
+          is_home?: boolean | null
+          minutes_played?: number | null
+          opponent?: string
+          player_name?: string
+          points?: number | null
+          rebounds?: number | null
+          steals?: number | null
+          threes_made?: number | null
+          turnovers?: number | null
+        }
+        Relationships: []
+      }
       nba_schedule_cache: {
         Row: {
           created_at: string
@@ -753,6 +888,39 @@ export type Database = {
           longitude?: number
           team_name?: string
           timezone?: string
+        }
+        Relationships: []
+      }
+      nba_team_pace_projections: {
+        Row: {
+          created_at: string
+          id: string
+          pace_rank: number
+          pace_rating: number
+          possessions_per_game: number | null
+          team_name: string
+          tempo_factor: number | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          pace_rank?: number
+          pace_rating?: number
+          possessions_per_game?: number | null
+          team_name: string
+          tempo_factor?: number | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          pace_rank?: number
+          pace_rating?: number
+          possessions_per_game?: number | null
+          team_name?: string
+          tempo_factor?: number | null
+          updated_at?: string
         }
         Relationships: []
       }
@@ -1201,6 +1369,42 @@ export type Database = {
           sports_filter?: string[] | null
           updated_at?: string
           user_id?: string | null
+        }
+        Relationships: []
+      }
+      pvs_parlays: {
+        Row: {
+          combined_probability: number | null
+          combined_pvs_score: number | null
+          created_at: string
+          expires_at: string
+          id: string
+          is_active: boolean | null
+          legs: Json
+          parlay_type: string
+          total_odds: number | null
+        }
+        Insert: {
+          combined_probability?: number | null
+          combined_pvs_score?: number | null
+          created_at?: string
+          expires_at: string
+          id?: string
+          is_active?: boolean | null
+          legs?: Json
+          parlay_type?: string
+          total_odds?: number | null
+        }
+        Update: {
+          combined_probability?: number | null
+          combined_pvs_score?: number | null
+          created_at?: string
+          expires_at?: string
+          id?: string
+          is_active?: boolean | null
+          legs?: Json
+          parlay_type?: string
+          total_odds?: number | null
         }
         Relationships: []
       }
@@ -1688,6 +1892,16 @@ export type Database = {
           over_price: number | null
           player_name: string
           prop_type: string
+          pvs_accuracy_score: number | null
+          pvs_confidence_score: number | null
+          pvs_final_score: number | null
+          pvs_injury_tax: number | null
+          pvs_matchup_score: number | null
+          pvs_minutes_score: number | null
+          pvs_pace_score: number | null
+          pvs_sharp_score: number | null
+          pvs_tier: string | null
+          pvs_value_score: number | null
           recommendation: string | null
           recommended_side: string | null
           settled_at: string | null
@@ -1695,6 +1909,8 @@ export type Database = {
           signal_sources: Json | null
           sport: string
           trap_score: number | null
+          true_line: number | null
+          true_line_diff: number | null
           under_price: number | null
           updated_at: string
           upset_score: number | null
@@ -1717,6 +1933,16 @@ export type Database = {
           over_price?: number | null
           player_name: string
           prop_type: string
+          pvs_accuracy_score?: number | null
+          pvs_confidence_score?: number | null
+          pvs_final_score?: number | null
+          pvs_injury_tax?: number | null
+          pvs_matchup_score?: number | null
+          pvs_minutes_score?: number | null
+          pvs_pace_score?: number | null
+          pvs_sharp_score?: number | null
+          pvs_tier?: string | null
+          pvs_value_score?: number | null
           recommendation?: string | null
           recommended_side?: string | null
           settled_at?: string | null
@@ -1724,6 +1950,8 @@ export type Database = {
           signal_sources?: Json | null
           sport: string
           trap_score?: number | null
+          true_line?: number | null
+          true_line_diff?: number | null
           under_price?: number | null
           updated_at?: string
           upset_score?: number | null
@@ -1746,6 +1974,16 @@ export type Database = {
           over_price?: number | null
           player_name?: string
           prop_type?: string
+          pvs_accuracy_score?: number | null
+          pvs_confidence_score?: number | null
+          pvs_final_score?: number | null
+          pvs_injury_tax?: number | null
+          pvs_matchup_score?: number | null
+          pvs_minutes_score?: number | null
+          pvs_pace_score?: number | null
+          pvs_sharp_score?: number | null
+          pvs_tier?: string | null
+          pvs_value_score?: number | null
           recommendation?: string | null
           recommended_side?: string | null
           settled_at?: string | null
@@ -1753,6 +1991,8 @@ export type Database = {
           signal_sources?: Json | null
           sport?: string
           trap_score?: number | null
+          true_line?: number | null
+          true_line_diff?: number | null
           under_price?: number | null
           updated_at?: string
           upset_score?: number | null
