@@ -122,3 +122,6 @@ verify_jwt = false
 
 [functions.nba-stats-fetcher]
 verify_jwt = false
+
+[functions.send-juiced-picks-email]
+verify_jwt = false

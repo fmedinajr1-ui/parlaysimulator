@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Bell, BellOff, Loader2, Mail, Sparkles, Check } from "lucide-react";
+import { Bell, BellOff, Loader2, Mail, Sparkles, Check, Target } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -21,6 +21,7 @@ export function NotificationPreferences() {
   const [hasPrefs, setHasPrefs] = useState(false);
   
   const [emailNotifications, setEmailNotifications] = useState(true);
+  const [juicedPicksEmail, setJuicedPicksEmail] = useState(true);
   const [minConfidence, setMinConfidence] = useState(0.5);
   const [favoriteSports, setFavoriteSports] = useState<string[]>([]);
   const [email, setEmail] = useState("");
@@ -47,7 +48,10 @@ export function NotificationPreferences() {
       if (data) {
         setHasPrefs(true);
         setEmailNotifications(data.email_notifications);
+        setJuicedPicksEmail(data.juiced_picks_email ?? true);
         setMinConfidence(data.min_confidence_threshold);
+        setFavoriteSports(data.favorite_sports || []);
+        setEmail(data.email);
         setFavoriteSports(data.favorite_sports || []);
         setEmail(data.email);
       } else {
@@ -70,6 +74,7 @@ export function NotificationPreferences() {
         user_id: user.id,
         email: email || user.email,
         email_notifications: emailNotifications,
+        juiced_picks_email: juicedPicksEmail,
         min_confidence_threshold: minConfidence,
         favorite_sports: favoriteSports,
       };
@@ -167,6 +172,26 @@ export function NotificationPreferences() {
 
         {emailNotifications && (
           <>
+            {/* Juiced Props Final Picks Toggle */}
+            <div className="flex items-center justify-between pt-2 pb-2 border-b border-border/30">
+              <div className="flex items-center gap-3">
+                <Target className="w-5 h-5 text-primary" />
+                <div>
+                  <Label htmlFor="juiced-picks-email" className="text-sm font-medium">
+                    Final Picks Alerts
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Get email when final picks are locked (30-90 min before games)
+                  </p>
+                </div>
+              </div>
+              <Switch
+                id="juiced-picks-email"
+                checked={juicedPicksEmail}
+                onCheckedChange={setJuicedPicksEmail}
+              />
+            </div>
+
             {/* Confidence Threshold */}
             <div className="space-y-2 pt-2">
               <div className="flex items-center justify-between">

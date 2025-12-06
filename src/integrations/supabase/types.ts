@@ -985,6 +985,8 @@ export type Database = {
           email_notifications: boolean
           favorite_sports: string[] | null
           id: string
+          juiced_picks_email: boolean
+          last_juiced_email_at: string | null
           last_notified_at: string | null
           min_confidence_threshold: number
           updated_at: string
@@ -996,6 +998,8 @@ export type Database = {
           email_notifications?: boolean
           favorite_sports?: string[] | null
           id?: string
+          juiced_picks_email?: boolean
+          last_juiced_email_at?: string | null
           last_notified_at?: string | null
           min_confidence_threshold?: number
           updated_at?: string
@@ -1007,6 +1011,8 @@ export type Database = {
           email_notifications?: boolean
           favorite_sports?: string[] | null
           id?: string
+          juiced_picks_email?: boolean
+          last_juiced_email_at?: string | null
           last_notified_at?: string | null
           min_confidence_threshold?: number
           updated_at?: string

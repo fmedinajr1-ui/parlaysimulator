@@ -360,6 +360,38 @@ serve(async (req) => {
       console.log(`📱 Sent ${Math.min(lockedPicks.length, 5)} final pick notifications`);
     }
     
+    // Send email notifications for locked picks (minimum 3 picks)
+    if (lockedPicks.length >= 3) {
+      try {
+        // Build full pick data for email
+        const emailPicks = (propsToLock as JuicedProp[])
+          .filter(p => lockedPicks.some(lp => lp.id === p.id))
+          .map(p => {
+            const locked = lockedPicks.find(lp => lp.id === p.id)!;
+            return {
+              player_name: p.player_name,
+              prop_type: p.prop_type,
+              line: p.line,
+              final_pick: locked.pick.toLowerCase(),
+              over_price: p.over_price,
+              under_price: p.under_price,
+              final_pick_reason: locked.reason,
+              final_pick_confidence: locked.confidence,
+              sport: p.sport,
+              game_description: p.game_description,
+              commence_time: p.commence_time,
+            };
+          });
+        
+        await supabase.functions.invoke('send-juiced-picks-email', {
+          body: { picks: emailPicks },
+        });
+        console.log(`📧 Triggered email notifications for ${emailPicks.length} picks`);
+      } catch (emailError) {
+        console.error('Failed to send email notifications:', emailError);
+      }
+    }
+    
     return new Response(JSON.stringify({
       success: true,
       message: `Locked ${lockedPicks.length} final picks`,
