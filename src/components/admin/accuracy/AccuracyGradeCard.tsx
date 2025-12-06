@@ -1,7 +1,7 @@
 import { Card, CardContent } from '@/components/ui/card';
 import { WolfAvatar } from '@/components/avatars/WolfAvatar';
 import { DogAvatar } from '@/components/avatars/DogAvatar';
-import { TrendingUp, AlertTriangle } from 'lucide-react';
+import { TrendingUp, TrendingDown, Minus, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface AccuracyGradeCardProps {
@@ -9,17 +9,32 @@ interface AccuracyGradeCardProps {
   accuracy: number;
   totalVerified: number;
   gradeColor: string;
+  overallTrend?: { direction: string; change: number };
 }
 
 export function AccuracyGradeCard({ 
   grade, 
   accuracy, 
   totalVerified, 
-  gradeColor 
+  gradeColor,
+  overallTrend 
 }: AccuracyGradeCardProps) {
   const isHighPerformer = ['A+', 'A', 'B+'].includes(grade);
   const breakeven = 52.4;
   const vsBreakeven = accuracy - breakeven;
+  
+  const getTrendIcon = () => {
+    if (!overallTrend || overallTrend.direction === 'stable') {
+      return <Minus className="w-4 h-4" />;
+    }
+    if (overallTrend.direction === 'up') {
+      return <TrendingUp className="w-4 h-4" />;
+    }
+    if (overallTrend.direction === 'down') {
+      return <TrendingDown className="w-4 h-4" />;
+    }
+    return null;
+  };
   
   return (
     <Card className={cn(
@@ -54,6 +69,21 @@ export function AccuracyGradeCard({
         <div className="text-sm text-muted-foreground mb-4">
           {totalVerified.toLocaleString()} verified predictions
         </div>
+        
+        {/* Trend indicator */}
+        {overallTrend && overallTrend.direction !== 'insufficient' && (
+          <div className={cn(
+            "flex items-center justify-center gap-1 text-sm font-medium mb-3 px-3 py-1.5 rounded-full mx-auto w-fit",
+            overallTrend.direction === 'up' && "bg-green-500/10 text-green-500",
+            overallTrend.direction === 'down' && "bg-red-500/10 text-red-500",
+            overallTrend.direction === 'stable' && "bg-muted text-muted-foreground"
+          )}>
+            {getTrendIcon()}
+            <span>
+              {overallTrend.change >= 0 ? '+' : ''}{overallTrend.change.toFixed(1)}% vs last 30 days
+            </span>
+          </div>
+        )}
         
         {/* vs Breakeven */}
         {grade !== 'N/A' && (

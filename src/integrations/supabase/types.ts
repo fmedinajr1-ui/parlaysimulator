@@ -1682,6 +1682,18 @@ export type Database = {
           is_sharp: boolean
         }[]
       }
+      get_accuracy_trends: {
+        Args: never
+        Returns: {
+          category: string
+          current_period_accuracy: number
+          current_period_verified: number
+          previous_period_accuracy: number
+          previous_period_verified: number
+          trend_change: number
+          trend_direction: string
+        }[]
+      }
       get_ai_accuracy_stats: {
         Args: never
         Returns: {

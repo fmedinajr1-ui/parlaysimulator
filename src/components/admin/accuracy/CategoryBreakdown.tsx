@@ -1,9 +1,9 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { CategoryStats } from '@/lib/accuracy-calculator';
+import { CategoryStats, TrendData } from '@/lib/accuracy-calculator';
 import { cn } from '@/lib/utils';
-import { ChevronRight, AlertCircle } from 'lucide-react';
+import { AlertCircle, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import {
   Accordion,
   AccordionContent,
@@ -13,14 +13,49 @@ import {
 
 interface CategoryBreakdownProps {
   categories: CategoryStats[];
+  trends?: TrendData[];
 }
 
-export function CategoryBreakdown({ categories }: CategoryBreakdownProps) {
+export function CategoryBreakdown({ categories, trends = [] }: CategoryBreakdownProps) {
+  // Create a map for quick trend lookup
+  const trendMap = new Map(trends.map(t => [t.category, t]));
+
+  const getTrendBadge = (category: string) => {
+    const trend = trendMap.get(category);
+    if (!trend || trend.trend_direction === 'insufficient') {
+      return null;
+    }
+
+    if (trend.trend_direction === 'up') {
+      return (
+        <Badge variant="outline" className="text-xs border-green-500/50 text-green-500 gap-1">
+          <TrendingUp className="w-3 h-3" />
+          +{trend.trend_change.toFixed(1)}%
+        </Badge>
+      );
+    }
+    if (trend.trend_direction === 'down') {
+      return (
+        <Badge variant="outline" className="text-xs border-red-500/50 text-red-500 gap-1">
+          <TrendingDown className="w-3 h-3" />
+          {trend.trend_change.toFixed(1)}%
+        </Badge>
+      );
+    }
+    return (
+      <Badge variant="outline" className="text-xs border-muted-foreground/50 text-muted-foreground gap-1">
+        <Minus className="w-3 h-3" />
+        Stable
+      </Badge>
+    );
+  };
+
   return (
     <Card>
       <CardHeader className="pb-3">
         <CardTitle className="text-base font-display flex items-center gap-2">
           📊 CATEGORY BREAKDOWN
+          <span className="text-xs font-normal text-muted-foreground">(30-day trends)</span>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
@@ -43,6 +78,7 @@ export function CategoryBreakdown({ categories }: CategoryBreakdownProps) {
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
+                    {getTrendBadge(cat.category)}
                     <div className="text-right">
                       <span className={cn("text-lg font-bold", cat.gradeColor)}>
                         {cat.grade}
@@ -56,6 +92,18 @@ export function CategoryBreakdown({ categories }: CategoryBreakdownProps) {
               </AccordionTrigger>
               <AccordionContent className="pb-4">
                 <div className="space-y-3 pt-2">
+                  {/* Trend details */}
+                  {trendMap.has(cat.category) && trendMap.get(cat.category)!.trend_direction !== 'insufficient' && (
+                    <div className="flex items-center justify-between text-xs p-2 rounded-lg bg-background/50">
+                      <span className="text-muted-foreground">30-Day Trend</span>
+                      <div className="flex items-center gap-2">
+                        <span>Last 30d: {trendMap.get(cat.category)!.current_period_accuracy.toFixed(1)}%</span>
+                        <span className="text-muted-foreground">vs</span>
+                        <span>Prev 30d: {trendMap.get(cat.category)!.previous_period_accuracy.toFixed(1)}%</span>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Progress bar */}
                   <div className="space-y-1">
                     <div className="flex justify-between text-xs text-muted-foreground">
