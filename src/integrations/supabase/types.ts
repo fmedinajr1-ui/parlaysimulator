@@ -128,6 +128,39 @@ export type Database = {
         }
         Relationships: []
       }
+      cron_job_history: {
+        Row: {
+          completed_at: string | null
+          duration_ms: number | null
+          error_message: string | null
+          id: string
+          job_name: string
+          result: Json | null
+          started_at: string
+          status: string
+        }
+        Insert: {
+          completed_at?: string | null
+          duration_ms?: number | null
+          error_message?: string | null
+          id?: string
+          job_name: string
+          result?: Json | null
+          started_at?: string
+          status?: string
+        }
+        Update: {
+          completed_at?: string | null
+          duration_ms?: number | null
+          error_message?: string | null
+          id?: string
+          job_name?: string
+          result?: Json | null
+          started_at?: string
+          status?: string
+        }
+        Relationships: []
+      }
       email_subscribers: {
         Row: {
           email: string

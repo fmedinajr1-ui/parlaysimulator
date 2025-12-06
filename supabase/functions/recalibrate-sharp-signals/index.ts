@@ -41,11 +41,28 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const startTime = Date.now();
+  const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  const supabase = createClient(supabaseUrl, supabaseKey);
+  
+  // Create cron job history record
+  let historyId: string | null = null;
   try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const { data: historyRecord } = await supabase
+      .from('cron_job_history')
+      .insert({
+        job_name: 'recalibrate-sharp-signals',
+        status: 'running'
+      })
+      .select('id')
+      .single();
+    historyId = historyRecord?.id || null;
+  } catch (e) {
+    console.log('[RECALIBRATE] Could not create history record:', e);
+  }
 
+  try {
     console.log('[RECALIBRATE] Starting sharp signal recalibration...');
 
     // Fetch all verified line movements with outcomes
@@ -63,6 +80,19 @@ serve(async (req) => {
     console.log(`[RECALIBRATE] Analyzing ${movements?.length || 0} verified movements`);
 
     if (!movements || movements.length < 10) {
+      // Update history with insufficient data result
+      if (historyId) {
+        await supabase
+          .from('cron_job_history')
+          .update({
+            status: 'completed',
+            completed_at: new Date().toISOString(),
+            duration_ms: Date.now() - startTime,
+            result: { message: 'Insufficient data', dataCount: movements?.length || 0 }
+          })
+          .eq('id', historyId);
+      }
+      
       return new Response(JSON.stringify({
         success: false,
         message: 'Insufficient data for recalibration (need at least 10 verified movements)',
@@ -284,15 +314,31 @@ serve(async (req) => {
     console.log(`[RECALIBRATE] Saved ${savedCount}/${factorsToSave.length} calibration factors to database`);
     console.log('[RECALIBRATE] Calibration complete:', JSON.stringify(result, null, 2));
 
+    const summary = {
+      totalMovements: movements.length,
+      pickAccuracy: pickAccuracy.toFixed(1) + '%',
+      fadeAccuracy: fadeAccuracy.toFixed(1) + '%',
+      suggestionsCount: suggestions.length,
+      savedFactors: savedCount
+    };
+
+    // Update history with success
+    if (historyId) {
+      await supabase
+        .from('cron_job_history')
+        .update({
+          status: 'completed',
+          completed_at: new Date().toISOString(),
+          duration_ms: Date.now() - startTime,
+          result: summary
+        })
+        .eq('id', historyId);
+    }
+
     return new Response(JSON.stringify({
       success: true,
       result,
-      summary: {
-        totalMovements: movements.length,
-        pickAccuracy: pickAccuracy.toFixed(1) + '%',
-        fadeAccuracy: fadeAccuracy.toFixed(1) + '%',
-        suggestionsCount: suggestions.length
-      },
+      summary,
       savedFactors: savedCount
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -301,6 +347,20 @@ serve(async (req) => {
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error('[RECALIBRATE] Error:', error);
+    
+    // Update history with error
+    if (historyId) {
+      await supabase
+        .from('cron_job_history')
+        .update({
+          status: 'failed',
+          completed_at: new Date().toISOString(),
+          duration_ms: Date.now() - startTime,
+          error_message: errorMessage
+        })
+        .eq('id', historyId);
+    }
+    
     return new Response(JSON.stringify({
       success: false,
       error: errorMessage
