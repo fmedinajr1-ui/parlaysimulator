@@ -34,6 +34,7 @@ import { MasterAccuracyDashboard } from '@/components/admin/accuracy/MasterAccur
 import { SharpRecalibrationPanel } from '@/components/admin/SharpRecalibrationPanel';
 import { CalibrationFactorsPanel } from '@/components/admin/CalibrationFactorsPanel';
 import { CronJobHistoryPanel } from '@/components/admin/CronJobHistoryPanel';
+import { HitRateAccuracyPanel } from '@/components/admin/HitRateAccuracyPanel';
 
 interface ParlayData {
   id: string;
@@ -287,8 +288,9 @@ export default function Admin() {
           </TabsList>
 
           {/* Accuracy Tab */}
-          <TabsContent value="accuracy" className="mt-4">
+          <TabsContent value="accuracy" className="mt-4 space-y-4">
             <MasterAccuracyDashboard />
+            <HitRateAccuracyPanel />
           </TabsContent>
 
           {/* AI Learning Tab */}
