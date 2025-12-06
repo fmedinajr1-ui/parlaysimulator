@@ -17,6 +17,7 @@ serve(async (req) => {
     const oddsApiKey = Deno.env.get('THE_ODDS_API_KEY')!;
     
     const supabase = createClient(supabaseUrl, supabaseKey);
+    const startTime = Date.now();
 
     // Get unverified predictions where game time has passed
     const { data: pendingPredictions, error: fetchError } = await supabase
@@ -29,7 +30,7 @@ serve(async (req) => {
 
     if (fetchError) throw fetchError;
     
-    console.log(`Found ${pendingPredictions?.length || 0} predictions to verify`);
+    console.log(`[VerifyUpsets] Found ${pendingPredictions?.length || 0} predictions to verify`);
 
     if (!pendingPredictions || pendingPredictions.length === 0) {
       return new Response(JSON.stringify({
@@ -58,6 +59,7 @@ serve(async (req) => {
 
     let verifiedCount = 0;
     let correctCount = 0;
+    const confidenceResults: Record<string, { total: number; correct: number }> = {};
 
     // Fetch scores for each sport
     for (const [sport, predictions] of Object.entries(sportGroups)) {
@@ -92,6 +94,13 @@ serve(async (req) => {
           // Check if underdog won (upset)
           const wasUpset = winner === pred.underdog;
 
+          // Track by confidence level
+          if (!confidenceResults[pred.confidence]) {
+            confidenceResults[pred.confidence] = { total: 0, correct: 0 };
+          }
+          confidenceResults[pred.confidence].total++;
+          if (wasUpset) confidenceResults[pred.confidence].correct++;
+
           // Update prediction record
           const { error: updateError } = await supabase
             .from('upset_predictions')
@@ -106,28 +115,65 @@ serve(async (req) => {
           if (!updateError) {
             verifiedCount++;
             if (wasUpset) correctCount++;
-            console.log(`Verified: ${pred.home_team} vs ${pred.away_team} - Winner: ${winner}, Upset: ${wasUpset}`);
+            console.log(`[VerifyUpsets] Verified: ${pred.home_team} vs ${pred.away_team} - Winner: ${winner}, Upset: ${wasUpset}, Confidence: ${pred.confidence}`);
           }
         }
       } catch (e) {
-        console.error(`Error fetching scores for ${sport}:`, e);
+        console.error(`[VerifyUpsets] Error fetching scores for ${sport}:`, e);
+      }
+    }
+
+    // Update calibration factors for upset predictions
+    await supabase.rpc('update_upset_calibration');
+
+    // Update AI performance metrics for upset predictions
+    for (const [confidence, results] of Object.entries(confidenceResults)) {
+      if (results.total > 0) {
+        await supabase.from('ai_performance_metrics').upsert({
+          sport: 'upset_tracker',
+          bet_type: 'moneyline',
+          confidence_level: confidence,
+          total_predictions: results.total,
+          correct_predictions: results.correct,
+          accuracy_rate: (results.correct / results.total) * 100,
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'sport,bet_type,confidence_level' });
       }
     }
 
     // Get updated accuracy stats
     const { data: accuracyData } = await supabase.rpc('get_upset_accuracy_summary');
 
+    const duration = Date.now() - startTime;
+
+    // Log to cron history
+    await supabase.from('cron_job_history').insert({
+      job_name: 'verify-upset-outcomes',
+      status: 'completed',
+      started_at: new Date(startTime).toISOString(),
+      completed_at: new Date().toISOString(),
+      duration_ms: duration,
+      result: { 
+        verified: verifiedCount, 
+        upsets: correctCount,
+        byConfidence: confidenceResults,
+        accuracy: accuracyData?.[0] || null
+      }
+    });
+
     return new Response(JSON.stringify({
       message: `Verified ${verifiedCount} predictions`,
       verified: verifiedCount,
       upsets: correctCount,
-      accuracy: accuracyData?.[0] || null
+      accuracyByConfidence: confidenceResults,
+      overallAccuracy: accuracyData?.[0] || null,
+      duration
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
   } catch (error: unknown) {
-    console.error('Error in verify-upset-outcomes:', error);
+    console.error('[VerifyUpsets] Error:', error);
     return new Response(JSON.stringify({ 
       error: error instanceof Error ? error.message : 'Unknown error'
     }), {

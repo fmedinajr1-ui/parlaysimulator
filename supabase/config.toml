@@ -110,3 +110,9 @@ verify_jwt = false
 
 [functions.verify-hitrate-outcomes]
 verify_jwt = false
+
+[functions.unified-props-engine]
+verify_jwt = false
+
+[functions.verify-unified-outcomes]
+verify_jwt = false
