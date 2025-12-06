@@ -45,6 +45,7 @@ export function SharpRecalibrationPanel() {
     pickAccuracy: string;
     fadeAccuracy: string;
     suggestionsCount: number;
+    savedFactors?: number;
   } | null>(null);
 
   const runRecalibration = async () => {
@@ -56,10 +57,10 @@ export function SharpRecalibrationPanel() {
       
       if (data.success) {
         setResult(data.result);
-        setSummary(data.summary);
+        setSummary({ ...data.summary, savedFactors: data.savedFactors });
         toast({
           title: "Recalibration Complete",
-          description: `Analyzed ${data.summary.totalMovements} movements with ${data.summary.suggestionsCount} suggestions`
+          description: `Analyzed ${data.summary.totalMovements} movements, saved ${data.savedFactors || 0} factors`
         });
       } else {
         toast({
@@ -128,7 +129,7 @@ export function SharpRecalibrationPanel() {
 
           {/* Summary Stats */}
           {summary && (
-            <div className="grid grid-cols-4 gap-2 pt-2">
+            <div className="grid grid-cols-5 gap-2 pt-2">
               <div className="text-center p-2 bg-muted rounded">
                 <p className="text-lg font-bold">{summary.totalMovements}</p>
                 <p className="text-xs text-muted-foreground">Analyzed</p>
@@ -148,6 +149,10 @@ export function SharpRecalibrationPanel() {
               <div className="text-center p-2 bg-muted rounded">
                 <p className="text-lg font-bold text-primary">{summary.suggestionsCount}</p>
                 <p className="text-xs text-muted-foreground">Suggestions</p>
+              </div>
+              <div className="text-center p-2 bg-muted rounded">
+                <p className="text-lg font-bold text-green-500">{summary.savedFactors || 0}</p>
+                <p className="text-xs text-muted-foreground">Saved</p>
               </div>
             </div>
           )}
