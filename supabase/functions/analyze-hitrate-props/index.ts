@@ -27,6 +27,7 @@ const PROP_TO_STAT_MAP: Record<string, Record<string, string>> = {
     'player_rebounds': 'REB',
     'player_assists': 'AST',
     'player_threes': 'FG3M',
+    'player_points_rebounds_assists': 'PRA',
   },
   americanfootball_nfl: {
     'player_pass_tds': 'passing_touchdowns',
@@ -62,7 +63,6 @@ async function loadNBAPlayersCache(): Promise<boolean> {
   try {
     console.log('[NBA] Loading players list...');
     const url = 'https://stats.nba.com/stats/commonallplayers?IsOnlyCurrentSeason=1&LeagueID=00&Season=2024-25';
-    // Use longer timeout for initial load (25 seconds)
     const response = await fetchWithTimeout(url, { headers: NBA_STATS_HEADERS }, 25000);
     
     if (!response.ok) {
@@ -149,6 +149,7 @@ async function fetchNBAGameLogs(playerId: string): Promise<any[]> {
         REB: row[idx.reb] || 0,
         AST: row[idx.ast] || 0,
         FG3M: row[idx.fg3m] || 0,
+        PRA: (row[idx.pts] || 0) + (row[idx.reb] || 0) + (row[idx.ast] || 0),
       }
     }));
   } catch {
@@ -206,7 +207,7 @@ async function fetchPlayerStats(playerName: string, sport: string, propType: str
       ignoreDuplicates: true
     });
     
-    return gameLogs.map((game, idx) => ({
+    return gameLogs.map((game) => ({
       date: game.date,
       stat_value: game.stats[statKey] || 0,
       opponent: game.opponent
@@ -216,7 +217,7 @@ async function fetchPlayerStats(playerName: string, sport: string, propType: str
   return [];
 }
 
-// Calculate hit rate with streak analysis
+// Calculate hit rate with X/5 streak pattern detection
 function calculateHitRate(gameLogs: any[], line: number) {
   let overHits = 0, underHits = 0;
   let currentStreak = 0;
@@ -228,6 +229,9 @@ function calculateHitRate(gameLogs: any[], line: number) {
     new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime()
   );
   
+  // Calculate per-game results for X/5 pattern
+  const gameResults: Array<'over' | 'under' | 'push'> = [];
+  
   sortedLogs.forEach((g, idx) => {
     const value = g.stat_value ?? 0;
     const isOver = value > line;
@@ -235,6 +239,7 @@ function calculateHitRate(gameLogs: any[], line: number) {
     
     if (isOver) {
       overHits++;
+      gameResults.push('over');
       if (streakDirection === 'over') {
         currentStreak++;
       } else {
@@ -243,18 +248,59 @@ function calculateHitRate(gameLogs: any[], line: number) {
       }
     } else if (isUnder) {
       underHits++;
+      gameResults.push('under');
       if (streakDirection === 'under') {
         currentStreak++;
       } else {
         streakDirection = 'under';
         currentStreak = 1;
       }
+    } else {
+      gameResults.push('push');
     }
     
     maxStreak = Math.max(maxStreak, currentStreak);
   });
   
   const total = gameLogs.length;
+  const gamesFor5Pattern = Math.min(5, total);
+  
+  // Calculate X/5 hit pattern
+  const last5 = gameResults.slice(0, 5);
+  const overIn5 = last5.filter(r => r === 'over').length;
+  const underIn5 = last5.filter(r => r === 'under').length;
+  
+  // Determine hit streak label (e.g., "5/5", "4/5")
+  let hitStreak = '';
+  let isPerfectStreak = false;
+  
+  if (gamesFor5Pattern >= 5) {
+    if (overIn5 === 5) {
+      hitStreak = '5/5';
+      isPerfectStreak = true;
+    } else if (underIn5 === 5) {
+      hitStreak = '5/5';
+      isPerfectStreak = true;
+    } else if (overIn5 >= 4) {
+      hitStreak = `${overIn5}/5`;
+    } else if (underIn5 >= 4) {
+      hitStreak = `${underIn5}/5`;
+    } else if (overIn5 >= 3) {
+      hitStreak = `${overIn5}/5`;
+    } else if (underIn5 >= 3) {
+      hitStreak = `${underIn5}/5`;
+    } else if (overIn5 >= 2) {
+      hitStreak = `${overIn5}/5`;
+    } else if (underIn5 >= 2) {
+      hitStreak = `${underIn5}/5`;
+    } else {
+      hitStreak = `${Math.max(overIn5, underIn5)}/5`;
+    }
+  } else if (gamesFor5Pattern >= 3) {
+    const maxHits = Math.max(overIn5, underIn5);
+    hitStreak = `${maxHits}/${gamesFor5Pattern}`;
+    isPerfectStreak = maxHits === gamesFor5Pattern;
+  }
   
   // Weight recent games more heavily (last 3 games worth 1.5x)
   let weightedOverHits = 0;
@@ -279,7 +325,12 @@ function calculateHitRate(gameLogs: any[], line: number) {
     weightedUnderRate: totalWeight > 0 ? weightedUnderHits / totalWeight : 0,
     currentStreak,
     streakDirection,
-    maxStreak
+    maxStreak,
+    hitStreak,
+    isPerfectStreak,
+    overIn5,
+    underIn5,
+    gameResults: last5,
   };
 }
 
@@ -297,11 +348,22 @@ function calculateConfidence(gameLogs: any[], line: number, hitRate: number, hit
   // Boost for consistently beating/missing by a good margin
   confidence += Math.min(absAvgMargin / Math.max(line, 1) * 20, 15);
   
-  // Streak bonus (3+ games in a row = +10%)
-  if (hitRateData.currentStreak >= 3) {
+  // Perfect streak bonus (5/5 = +15%, 4/5 = +10%)
+  if (hitRateData.isPerfectStreak) {
+    confidence += 15;
+  } else if (hitRateData.hitStreak === '4/5') {
     confidence += 10;
-  } else if (hitRateData.currentStreak >= 2) {
+  } else if (hitRateData.hitStreak === '3/5') {
     confidence += 5;
+  }
+  
+  // Current streak bonus (3+ games in a row)
+  if (hitRateData.currentStreak >= 4) {
+    confidence += 10;
+  } else if (hitRateData.currentStreak >= 3) {
+    confidence += 7;
+  } else if (hitRateData.currentStreak >= 2) {
+    confidence += 3;
   }
   
   // Weighted recent games bonus
@@ -315,7 +377,9 @@ function calculateConfidence(gameLogs: any[], line: number, hitRate: number, hit
   
   // Sample size penalty for fewer games
   if (gameLogs.length < 5) {
-    confidence *= 0.9;
+    confidence *= 0.85;
+  } else if (gameLogs.length < 4) {
+    confidence *= 0.75;
   }
   
   return Math.min(Math.round(confidence), 100);
@@ -334,9 +398,15 @@ serve(async (req) => {
     const THE_ODDS_API_KEY = Deno.env.get('THE_ODDS_API_KEY')!;
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
     
-    const { sports = ['basketball_nba'], limit = 20, minHitRate = 0.75 } = await req.json().catch(() => ({}));
+    // Default to NBA, allow lower hit rates for X/5 pattern display
+    const { 
+      sports = ['basketball_nba'], 
+      limit = 30, 
+      minHitRate = 0.4,  // Lowered to show 2/5+ patterns
+      streakFilter = null  // Optional: "5/5", "4/5", "3/5", "2/5"
+    } = await req.json().catch(() => ({}));
 
-    console.log(`[HitRate] Starting analysis for ${sports.join(', ')} (limit: ${limit})`);
+    console.log(`[HitRate] Starting analysis for ${sports.join(', ')} (limit: ${limit}, minHitRate: ${minHitRate})`);
 
     // Pre-load NBA players cache if needed
     let nbaAvailable = true;
@@ -362,21 +432,23 @@ serve(async (req) => {
         const events = await eventsRes.json();
         const now = new Date();
         
-        // Filter upcoming events (next 24h), limit to 3
+        // Filter upcoming events (next 24h), limit to 4 for NBA
         const upcomingEvents = events
           .filter((e: any) => {
             const hours = (new Date(e.commence_time).getTime() - now.getTime()) / 3600000;
             return hours > 0 && hours <= 24;
           })
-          .slice(0, 3);
+          .slice(0, sport === 'basketball_nba' ? 4 : 3);
 
         console.log(`[HitRate] ${sport}: ${upcomingEvents.length} upcoming events`);
 
         for (const event of upcomingEvents) {
           if (propsChecked >= limit) break;
           
-          // Fetch props (limit markets)
-          const markets = sport === 'basketball_nba' ? 'player_points,player_rebounds' : 'player_points';
+          // Expanded NBA markets for X/5 pattern analysis
+          const markets = sport === 'basketball_nba' 
+            ? 'player_points,player_rebounds,player_assists,player_threes' 
+            : 'player_points';
           const propsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${THE_ODDS_API_KEY}&regions=us&markets=${markets}&oddsFormat=american`;
           
           try {
@@ -399,8 +471,9 @@ serve(async (req) => {
                 playerOutcomes[name].push(outcome);
               }
 
-              // Process players (batch of 5 at a time)
-              const players = Object.entries(playerOutcomes).slice(0, 10);
+              // Process more players for NBA
+              const maxPlayers = sport === 'basketball_nba' ? 15 : 10;
+              const players = Object.entries(playerOutcomes).slice(0, maxPlayers);
               
               for (const [playerName, outcomes] of players) {
                 if (propsChecked >= limit) break;
@@ -416,7 +489,11 @@ serve(async (req) => {
                 if (gameLogs.length < 3) continue;
 
                 const hitRateData = calculateHitRate(gameLogs, line);
-                const { overHits, underHits, hitRateOver, hitRateUnder, weightedOverRate, weightedUnderRate, currentStreak, streakDirection } = hitRateData;
+                const { 
+                  overHits, underHits, hitRateOver, hitRateUnder, 
+                  weightedOverRate, weightedUnderRate, 
+                  hitStreak, isPerfectStreak, overIn5, underIn5
+                } = hitRateData;
                 
                 let recommendedSide: string | null = null;
                 let bestHitRate = 0;
@@ -425,21 +502,18 @@ serve(async (req) => {
                 const effectiveOverRate = (hitRateOver + weightedOverRate) / 2;
                 const effectiveUnderRate = (hitRateUnder + weightedUnderRate) / 2;
                 
-                if (effectiveOverRate >= minHitRate) {
+                // Determine recommended side based on hit rate
+                if (effectiveOverRate >= minHitRate && effectiveOverRate > effectiveUnderRate) {
                   recommendedSide = 'over';
                   bestHitRate = effectiveOverRate;
-                } else if (effectiveUnderRate >= minHitRate) {
+                } else if (effectiveUnderRate >= minHitRate && effectiveUnderRate > effectiveOverRate) {
                   recommendedSide = 'under';
                   bestHitRate = effectiveUnderRate;
                 }
                 
-                // Bonus: If on a streak matching recommended side, lower the threshold
-                if (!recommendedSide && currentStreak >= 3 && streakDirection) {
-                  const streakRate = streakDirection === 'over' ? hitRateOver : hitRateUnder;
-                  if (streakRate >= minHitRate - 0.10) {
-                    recommendedSide = streakDirection;
-                    bestHitRate = streakRate;
-                  }
+                // Check if it matches the streak filter (if provided)
+                if (streakFilter && hitStreak !== streakFilter) {
+                  continue;
                 }
 
                 if (recommendedSide) {
@@ -463,7 +537,9 @@ serve(async (req) => {
                     bookmaker: bookmaker.key,
                     commence_time: event.commence_time,
                     analyzed_at: new Date().toISOString(),
-                    expires_at: event.commence_time
+                    expires_at: event.commence_time,
+                    hit_streak: hitStreak,
+                    is_perfect_streak: isPerfectStreak,
                   };
 
                   await supabase.from('player_prop_hitrates').upsert(propData, {
@@ -471,7 +547,8 @@ serve(async (req) => {
                   });
 
                   analyzedProps.push(propData);
-                  console.log(`✓ ${playerName} ${market.key} ${line}: ${recommendedSide.toUpperCase()} ${Math.round(bestHitRate * 100)}%`);
+                  const streakEmoji = isPerfectStreak ? '🔥' : hitStreak.startsWith('4') ? '⚡' : '';
+                  console.log(`✓ ${playerName} ${market.key} ${line}: ${recommendedSide.toUpperCase()} ${hitStreak} ${streakEmoji} (${Math.round(bestHitRate * 100)}%)`);
                 }
               }
             }
@@ -487,22 +564,29 @@ serve(async (req) => {
     const duration = Date.now() - startTime;
     console.log(`[HitRate] Complete: ${analyzedProps.length} props found in ${duration}ms`);
 
+    // Group props by streak pattern for response
+    const byStreak = {
+      '5/5': analyzedProps.filter(p => p.hit_streak === '5/5'),
+      '4/5': analyzedProps.filter(p => p.hit_streak === '4/5'),
+      '3/5': analyzedProps.filter(p => p.hit_streak === '3/5'),
+      '2/5': analyzedProps.filter(p => p.hit_streak === '2/5'),
+    };
+
     return new Response(JSON.stringify({
       success: true,
       analyzed: analyzedProps.length,
       propsChecked,
       duration,
+      byStreak,
       props: analyzedProps
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
 
   } catch (error) {
-    console.error('[HitRate] Fatal error:', error);
-    return new Response(JSON.stringify({
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-      duration: Date.now() - startTime
+    console.error('Error in analyze-hitrate-props:', error);
+    return new Response(JSON.stringify({ 
+      error: error instanceof Error ? error.message : 'Unknown error' 
     }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }

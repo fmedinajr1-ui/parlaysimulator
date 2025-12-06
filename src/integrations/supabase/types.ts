@@ -226,6 +226,7 @@ export type Database = {
           combined_probability: number
           created_at: string
           expires_at: string
+          hit_streak: string | null
           id: string
           is_active: boolean | null
           legs: Json
@@ -240,6 +241,7 @@ export type Database = {
           combined_probability: number
           created_at?: string
           expires_at: string
+          hit_streak?: string | null
           id?: string
           is_active?: boolean | null
           legs?: Json
@@ -254,6 +256,7 @@ export type Database = {
           combined_probability?: number
           created_at?: string
           expires_at?: string
+          hit_streak?: string | null
           id?: string
           is_active?: boolean | null
           legs?: Json
@@ -912,7 +915,9 @@ export type Database = {
           games_analyzed: number
           hit_rate_over: number
           hit_rate_under: number
+          hit_streak: string | null
           id: string
+          is_perfect_streak: boolean | null
           over_hits: number
           over_price: number | null
           player_name: string
@@ -935,7 +940,9 @@ export type Database = {
           games_analyzed?: number
           hit_rate_over?: number
           hit_rate_under?: number
+          hit_streak?: string | null
           id?: string
+          is_perfect_streak?: boolean | null
           over_hits?: number
           over_price?: number | null
           player_name: string
@@ -958,7 +965,9 @@ export type Database = {
           games_analyzed?: number
           hit_rate_over?: number
           hit_rate_under?: number
+          hit_streak?: string | null
           id?: string
+          is_perfect_streak?: boolean | null
           over_hits?: number
           over_price?: number | null
           player_name?: string
