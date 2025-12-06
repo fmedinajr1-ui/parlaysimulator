@@ -566,18 +566,28 @@ Return ONLY valid JSON, no other text.`;
             if (line > 0) {
               console.log(`Fetching usage projection for ${legAnalysis.player} - ${propType} ${line}`);
               
-              const usageResponse = await supabase.functions.invoke('calculate-player-usage', {
-                body: {
+              // Use direct HTTP call instead of supabase.functions.invoke()
+              const functionUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/calculate-player-usage`;
+              const usageResponse = await fetch(functionUrl, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+                },
+                body: JSON.stringify({
                   playerName: legAnalysis.player,
                   propType,
                   line,
                   opponent: legAnalysis.team || undefined
-                }
+                })
               });
 
-              if (usageResponse.data && !usageResponse.error) {
-                legAnalysis.usageProjection = usageResponse.data;
-                console.log(`Usage projection added for ${legAnalysis.player}: ${usageResponse.data.verdict}`);
+              if (usageResponse.ok) {
+                const usageData = await usageResponse.json();
+                legAnalysis.usageProjection = usageData;
+                console.log(`Usage projection added for ${legAnalysis.player}: ${usageData.verdict}`);
+              } else {
+                console.error(`Usage projection failed for ${legAnalysis.player}: ${usageResponse.status}`);
               }
             }
           } catch (usageError) {
