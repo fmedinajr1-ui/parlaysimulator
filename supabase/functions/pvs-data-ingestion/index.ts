@@ -8,7 +8,6 @@ const corsHeaders = {
 
 // NBA Teams with their defensive and pace ratings (2024-25 approximations)
 const NBA_TEAM_STATS = {
-  // Format: [defense_rating, defense_rank, pace_rating, pace_rank, points_allowed, rebounds_allowed, assists_allowed, threes_allowed, blocks_allowed]
   "Boston Celtics": [106.5, 2, 101.2, 12, 108.2, 42.1, 24.5, 12.8, 4.2],
   "Oklahoma City Thunder": [107.2, 3, 99.8, 18, 109.5, 43.2, 23.8, 13.1, 5.1],
   "Cleveland Cavaliers": [108.1, 5, 98.5, 22, 110.2, 41.8, 24.1, 12.5, 4.8],
@@ -41,39 +40,60 @@ const NBA_TEAM_STATS = {
   "Portland Trail Blazers": [116.2, 29, 100.8, 14, 118.2, 44.8, 27.2, 15.1, 3.2],
 };
 
-// Sample player averages for generating game logs
-const PLAYER_AVERAGES: Record<string, Record<string, number>> = {
-  "LeBron James": { points: 25.5, rebounds: 7.8, assists: 8.2, threes: 2.1, blocks: 0.6, steals: 1.2, minutes: 35.2 },
-  "Anthony Davis": { points: 24.8, rebounds: 12.5, assists: 3.2, threes: 0.5, blocks: 2.2, steals: 1.3, minutes: 34.8 },
-  "Stephen Curry": { points: 26.2, rebounds: 4.5, assists: 5.8, threes: 4.8, blocks: 0.2, steals: 0.8, minutes: 32.5 },
-  "Kevin Durant": { points: 27.5, rebounds: 6.8, assists: 5.2, threes: 2.2, blocks: 1.2, steals: 0.9, minutes: 36.2 },
-  "Giannis Antetokounmpo": { points: 30.5, rebounds: 11.8, assists: 6.5, threes: 0.8, blocks: 1.2, steals: 1.1, minutes: 35.5 },
-  "Luka Doncic": { points: 33.2, rebounds: 9.2, assists: 9.5, threes: 4.1, blocks: 0.5, steals: 1.5, minutes: 37.2 },
-  "Jayson Tatum": { points: 26.8, rebounds: 8.2, assists: 4.8, threes: 3.2, blocks: 0.7, steals: 1.1, minutes: 36.1 },
-  "Nikola Jokic": { points: 26.5, rebounds: 12.2, assists: 9.2, threes: 1.2, blocks: 0.8, steals: 1.5, minutes: 34.5 },
-  "Joel Embiid": { points: 34.2, rebounds: 11.2, assists: 5.8, threes: 1.5, blocks: 1.8, steals: 1.2, minutes: 33.8 },
-  "Shai Gilgeous-Alexander": { points: 31.5, rebounds: 5.5, assists: 6.2, threes: 2.0, blocks: 1.0, steals: 2.0, minutes: 34.2 },
-  "Donovan Mitchell": { points: 26.5, rebounds: 5.2, assists: 6.5, threes: 3.5, blocks: 0.4, steals: 1.8, minutes: 35.5 },
-  "Tyrese Haliburton": { points: 20.2, rebounds: 4.0, assists: 10.8, threes: 3.2, blocks: 0.3, steals: 1.2, minutes: 33.2 },
-  "De'Aaron Fox": { points: 26.8, rebounds: 4.8, assists: 6.0, threes: 2.2, blocks: 0.4, steals: 2.0, minutes: 35.8 },
-  "Ja Morant": { points: 25.2, rebounds: 5.8, assists: 8.2, threes: 1.8, blocks: 0.3, steals: 1.1, minutes: 32.5 },
-  "Anthony Edwards": { points: 25.8, rebounds: 5.5, assists: 5.2, threes: 3.2, blocks: 0.6, steals: 1.5, minutes: 35.2 },
-  "Trae Young": { points: 25.5, rebounds: 3.0, assists: 10.5, threes: 2.8, blocks: 0.1, steals: 1.2, minutes: 34.8 },
-  "Devin Booker": { points: 27.2, rebounds: 4.5, assists: 6.8, threes: 2.5, blocks: 0.3, steals: 1.0, minutes: 36.5 },
-  "Kyrie Irving": { points: 25.8, rebounds: 5.0, assists: 5.5, threes: 3.0, blocks: 0.4, steals: 1.2, minutes: 35.2 },
-  "James Harden": { points: 18.5, rebounds: 5.8, assists: 9.2, threes: 2.5, blocks: 0.5, steals: 1.2, minutes: 34.5 },
-  "Kawhi Leonard": { points: 23.8, rebounds: 6.2, assists: 3.8, threes: 1.8, blocks: 0.8, steals: 1.5, minutes: 32.8 },
-  "Paul George": { points: 22.5, rebounds: 5.5, assists: 4.2, threes: 2.8, blocks: 0.4, steals: 1.5, minutes: 33.5 },
-  "Damian Lillard": { points: 25.2, rebounds: 4.5, assists: 7.0, threes: 3.5, blocks: 0.2, steals: 1.0, minutes: 35.2 },
-  "Karl-Anthony Towns": { points: 22.5, rebounds: 8.5, assists: 3.2, threes: 2.0, blocks: 0.8, steals: 0.8, minutes: 33.2 },
-  "Rudy Gobert": { points: 14.2, rebounds: 12.8, assists: 1.5, threes: 0.0, blocks: 2.2, steals: 0.8, minutes: 31.5 },
-  "Bam Adebayo": { points: 19.5, rebounds: 10.2, assists: 4.5, threes: 0.2, blocks: 1.0, steals: 1.2, minutes: 34.2 },
-  "Julius Randle": { points: 24.2, rebounds: 9.5, assists: 5.0, threes: 1.8, blocks: 0.5, steals: 0.8, minutes: 35.8 },
-  "Pascal Siakam": { points: 21.8, rebounds: 7.2, assists: 4.2, threes: 1.2, blocks: 0.6, steals: 0.8, minutes: 35.2 },
-  "Domantas Sabonis": { points: 19.8, rebounds: 13.5, assists: 8.2, threes: 0.8, blocks: 0.5, steals: 1.0, minutes: 35.5 },
-  "Jalen Brunson": { points: 28.5, rebounds: 3.8, assists: 6.8, threes: 2.2, blocks: 0.2, steals: 0.9, minutes: 35.8 },
-  "Cade Cunningham": { points: 22.8, rebounds: 4.5, assists: 7.5, threes: 2.2, blocks: 0.3, steals: 1.0, minutes: 34.2 },
+// Fallback player templates for mock data
+const POSITION_TEMPLATES: Record<string, Record<string, number>> = {
+  GUARD: { points: 18.5, rebounds: 4.2, assists: 6.5, threes: 2.8, blocks: 0.4, steals: 1.2, minutes: 32.5 },
+  FORWARD: { points: 16.8, rebounds: 6.5, assists: 3.2, threes: 1.5, blocks: 0.7, steals: 1.0, minutes: 30.5 },
+  CENTER: { points: 13.5, rebounds: 10.2, assists: 2.0, threes: 0.3, blocks: 1.5, steals: 0.8, minutes: 28.5 },
+  SWING: { points: 15.5, rebounds: 5.0, assists: 3.5, threes: 1.8, blocks: 0.5, steals: 1.0, minutes: 28.0 },
 };
+
+function getPlayerTemplate(playerName: string): Record<string, number> {
+  // Simple heuristic based on common name patterns
+  const name = playerName.toLowerCase();
+  
+  // Known star players override
+  if (name.includes('jokic') || name.includes('embiid') || name.includes('gobert') || 
+      name.includes('adebayo') || name.includes('towns') || name.includes('sabonis')) {
+    return POSITION_TEMPLATES.CENTER;
+  }
+  
+  if (name.includes('curry') || name.includes('young') || name.includes('morant') ||
+      name.includes('lillard') || name.includes('haliburton') || name.includes('fox') ||
+      name.includes('mitchell') || name.includes('brunson') || name.includes('irving')) {
+    return POSITION_TEMPLATES.GUARD;
+  }
+  
+  if (name.includes('james') || name.includes('durant') || name.includes('tatum') ||
+      name.includes('giannis') || name.includes('leonard') || name.includes('george') ||
+      name.includes('siakam') || name.includes('randle')) {
+    return POSITION_TEMPLATES.FORWARD;
+  }
+  
+  // Default to swing player template for unknowns
+  return POSITION_TEMPLATES.SWING;
+}
+
+async function tryLiveFetch(supabase: any): Promise<{ success: boolean; results?: any }> {
+  try {
+    console.log('[PVS Data Ingestion] Attempting live BDL API fetch...');
+    
+    const { data, error } = await supabase.functions.invoke('nba-stats-fetcher', {
+      body: { mode: 'sync' },
+    });
+    
+    if (error) {
+      console.error('[PVS Data Ingestion] Live fetch failed:', error);
+      return { success: false };
+    }
+    
+    console.log('[PVS Data Ingestion] Live fetch results:', data);
+    return { success: true, results: data };
+  } catch (error) {
+    console.error('[PVS Data Ingestion] Live fetch exception:', error);
+    return { success: false };
+  }
+}
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -91,6 +111,41 @@ serve(async (req) => {
     const startTime = Date.now();
 
     console.log(`[PVS Data Ingestion] Starting with mode: ${mode}`);
+
+    // NEW: Try live BDL API first if mode is 'live' or 'all'
+    if (mode === 'live' || mode === 'all') {
+      const liveResult = await tryLiveFetch(supabase);
+      
+      if (liveResult.success) {
+        results.liveData = liveResult.results;
+        console.log('[PVS Data Ingestion] Live data fetched successfully');
+        
+        // If live mode only, return early
+        if (mode === 'live') {
+          const duration = Date.now() - startTime;
+          
+          await supabase.from('cron_job_history').insert({
+            job_name: 'pvs-data-ingestion',
+            status: 'completed',
+            started_at: new Date(startTime).toISOString(),
+            completed_at: new Date().toISOString(),
+            duration_ms: duration,
+            result: { ...results, mode: 'live' },
+          });
+          
+          return new Response(JSON.stringify({
+            success: true,
+            duration,
+            results: { ...results, mode: 'live' },
+          }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+      } else {
+        console.log('[PVS Data Ingestion] Live fetch failed, falling back to mock data');
+        results.liveDataFailed = true;
+      }
+    }
 
     // 1. Ingest opponent defense stats
     if (mode === 'all' || mode === 'defense') {
@@ -150,17 +205,33 @@ serve(async (req) => {
       }
     }
 
-    // 3. Generate sample player game logs
-    if (mode === 'all' || mode === 'gamelogs') {
+    // 3. Generate game logs for players from unified_props (dynamic seeding)
+    if (mode === 'all' || mode === 'gamelogs' || mode === 'sync_players') {
       console.log('[PVS Data Ingestion] Generating player game logs...');
+      
+      // Get unique player names from unified_props
+      const { data: propsData, error: propsError } = await supabase
+        .from('unified_props')
+        .select('player_name')
+        .eq('sport', 'basketball_nba')
+        .gte('created_at', new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString());
+      
+      const playerNames: string[] = propsData 
+        ? [...new Set(propsData.map(p => p.player_name))]
+        : [];
+      
+      console.log(`[PVS Data Ingestion] Found ${playerNames.length} unique players from props`);
+      
       const gameLogRecords = [];
       const teams = Object.keys(NBA_TEAM_STATS);
       
-      for (const [playerName, averages] of Object.entries(PLAYER_AVERAGES)) {
+      for (const playerName of playerNames) {
+        const template = getPlayerTemplate(playerName);
+        
         // Generate 10 game logs for each player with unique dates
         for (let i = 0; i < 10; i++) {
           const gameDate = new Date();
-          gameDate.setDate(gameDate.getDate() - (i * 3)); // Unique date per game (every 3 days)
+          gameDate.setDate(gameDate.getDate() - (i * 2 + 1)); // Unique date per game
           
           const opponent = teams[Math.floor(Math.random() * teams.length)];
           const variance = () => 0.7 + Math.random() * 0.6; // 70%-130% of average
@@ -170,31 +241,34 @@ serve(async (req) => {
             game_date: gameDate.toISOString().split('T')[0],
             opponent: opponent,
             is_home: Math.random() > 0.5,
-            points: Math.round(averages.points * variance()),
-            rebounds: Math.round(averages.rebounds * variance()),
-            assists: Math.round(averages.assists * variance()),
-            threes_made: Math.max(0, Math.round(averages.threes * variance())),
-            blocks: Math.max(0, Math.round(averages.blocks * variance() * 2) / 2),
-            steals: Math.max(0, Math.round(averages.steals * variance() * 2) / 2),
+            points: Math.round(template.points * variance()),
+            rebounds: Math.round(template.rebounds * variance()),
+            assists: Math.round(template.assists * variance()),
+            threes_made: Math.max(0, Math.round(template.threes * variance())),
+            blocks: Math.max(0, Math.round(template.blocks * variance() * 2) / 2),
+            steals: Math.max(0, Math.round(template.steals * variance() * 2) / 2),
             turnovers: Math.round(2 + Math.random() * 3),
-            minutes_played: Math.round(averages.minutes * (0.85 + Math.random() * 0.3)),
+            minutes_played: Math.round(template.minutes * (0.85 + Math.random() * 0.3)),
           });
         }
       }
 
-      // Use upsert to handle duplicates
-      const { error: gameLogError } = await supabase
-        .from('nba_player_game_logs')
-        .upsert(gameLogRecords, { 
-          onConflict: 'player_name,game_date',
-          ignoreDuplicates: false 
-        });
+      if (gameLogRecords.length > 0) {
+        const { error: gameLogError } = await supabase
+          .from('nba_player_game_logs')
+          .upsert(gameLogRecords, { 
+            onConflict: 'player_name,game_date',
+            ignoreDuplicates: false 
+          });
 
-      if (gameLogError) {
-        console.error('[PVS Data Ingestion] Game logs error:', gameLogError);
-        results.gamelogs = { error: gameLogError.message };
+        if (gameLogError) {
+          console.error('[PVS Data Ingestion] Game logs error:', gameLogError);
+          results.gamelogs = { error: gameLogError.message };
+        } else {
+          results.gamelogs = { inserted: gameLogRecords.length, players: playerNames.length };
+        }
       } else {
-        results.gamelogs = { inserted: gameLogRecords.length };
+        results.gamelogs = { inserted: 0, message: 'No players found in unified_props' };
       }
     }
 
