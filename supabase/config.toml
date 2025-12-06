@@ -107,3 +107,6 @@ verify_jwt = false
 
 [functions.recalibrate-sharp-signals]
 verify_jwt = false
+
+[functions.verify-hitrate-outcomes]
+verify_jwt = false

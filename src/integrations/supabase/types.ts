@@ -254,8 +254,57 @@ export type Database = {
         }
         Relationships: []
       }
+      hitrate_accuracy_metrics: {
+        Row: {
+          avg_actual_probability: number
+          avg_predicted_probability: number
+          calibration_factor: number
+          created_at: string
+          id: string
+          prop_type: string | null
+          sport: string | null
+          strategy_type: string
+          total_lost: number
+          total_parlays: number
+          total_won: number
+          updated_at: string
+          win_rate: number
+        }
+        Insert: {
+          avg_actual_probability?: number
+          avg_predicted_probability?: number
+          calibration_factor?: number
+          created_at?: string
+          id?: string
+          prop_type?: string | null
+          sport?: string | null
+          strategy_type: string
+          total_lost?: number
+          total_parlays?: number
+          total_won?: number
+          updated_at?: string
+          win_rate?: number
+        }
+        Update: {
+          avg_actual_probability?: number
+          avg_predicted_probability?: number
+          calibration_factor?: number
+          created_at?: string
+          id?: string
+          prop_type?: string | null
+          sport?: string | null
+          strategy_type?: string
+          total_lost?: number
+          total_parlays?: number
+          total_won?: number
+          updated_at?: string
+          win_rate?: number
+        }
+        Relationships: []
+      }
       hitrate_parlays: {
         Row: {
+          actual_win_rate: number | null
           combined_probability: number
           created_at: string
           expires_at: string
@@ -264,6 +313,9 @@ export type Database = {
           is_active: boolean | null
           legs: Json
           min_hit_rate: number
+          outcome: string | null
+          result_details: Json | null
+          settled_at: string | null
           sharp_analysis: Json | null
           sharp_optimized: boolean | null
           sport: string | null
@@ -271,6 +323,7 @@ export type Database = {
           total_odds: number
         }
         Insert: {
+          actual_win_rate?: number | null
           combined_probability: number
           created_at?: string
           expires_at: string
@@ -279,6 +332,9 @@ export type Database = {
           is_active?: boolean | null
           legs?: Json
           min_hit_rate?: number
+          outcome?: string | null
+          result_details?: Json | null
+          settled_at?: string | null
           sharp_analysis?: Json | null
           sharp_optimized?: boolean | null
           sport?: string | null
@@ -286,6 +342,7 @@ export type Database = {
           total_odds: number
         }
         Update: {
+          actual_win_rate?: number | null
           combined_probability?: number
           created_at?: string
           expires_at?: string
@@ -294,6 +351,9 @@ export type Database = {
           is_active?: boolean | null
           legs?: Json
           min_hit_rate?: number
+          outcome?: string | null
+          result_details?: Json | null
+          settled_at?: string | null
           sharp_analysis?: Json | null
           sharp_optimized?: boolean | null
           sport?: string | null
@@ -1843,6 +1903,30 @@ export type Database = {
           verified_games: number
           win_rate: number
           wins: number
+        }[]
+      }
+      get_hitrate_accuracy_stats: {
+        Args: never
+        Returns: {
+          calibration_needed: string
+          predicted_vs_actual: number
+          sport: string
+          strategy_type: string
+          total_lost: number
+          total_parlays: number
+          total_won: number
+          win_rate: number
+        }[]
+      }
+      get_hitrate_prop_accuracy: {
+        Args: never
+        Returns: {
+          avg_hit_rate: number
+          leg_win_rate: number
+          lost_legs: number
+          prop_type: string
+          total_legs: number
+          won_legs: number
         }[]
       }
       get_leaderboard_stats: {
