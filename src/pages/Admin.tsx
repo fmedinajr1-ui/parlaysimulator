@@ -21,7 +21,8 @@ import {
   TrendingUp,
   Calculator,
   Users,
-  Eye
+  Eye,
+  BarChart3
 } from 'lucide-react';
 import { AILearningDashboard } from '@/components/admin/AILearningDashboard';
 import { SharpMoneyPanel } from '@/components/admin/SharpMoneyPanel';
@@ -29,6 +30,7 @@ import SharpLineCalculator from '@/components/admin/SharpLineCalculator';
 import { MovementAccuracyDashboard } from '@/components/admin/MovementAccuracyDashboard';
 import { CollaboratorManager } from '@/components/admin/CollaboratorManager';
 import { ApprovedUsersManager } from '@/components/admin/ApprovedUsersManager';
+import { MasterAccuracyDashboard } from '@/components/admin/accuracy/MasterAccuracyDashboard';
 
 interface ParlayData {
   id: string;
@@ -54,7 +56,7 @@ export default function Admin() {
   const [parlays, setParlays] = useState<ParlayData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSettling, setIsSettling] = useState(false);
-  const [activeTab, setActiveTab] = useState('ai-learning');
+  const [activeTab, setActiveTab] = useState('accuracy');
   const [selectedParlays, setSelectedParlays] = useState<Set<string>>(new Set());
   const [isBatchSettling, setIsBatchSettling] = useState(false);
 
@@ -246,7 +248,11 @@ export default function Admin() {
       <div className="p-4 space-y-4">
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-7">
+          <TabsList className="grid w-full grid-cols-8">
+            <TabsTrigger value="accuracy" className="text-xs">
+              <BarChart3 className="w-3 h-3 mr-1" />
+              Acc
+            </TabsTrigger>
             <TabsTrigger value="ai-learning" className="text-xs">
               <Brain className="w-3 h-3 mr-1" />
               AI
@@ -276,6 +282,11 @@ export default function Admin() {
               Parlays
             </TabsTrigger>
           </TabsList>
+
+          {/* Accuracy Tab */}
+          <TabsContent value="accuracy" className="mt-4">
+            <MasterAccuracyDashboard />
+          </TabsContent>
 
           {/* AI Learning Tab */}
           <TabsContent value="ai-learning" className="mt-4">
