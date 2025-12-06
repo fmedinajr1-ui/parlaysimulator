@@ -50,7 +50,21 @@ serve(async (req) => {
     const response = await fetch(url);
     
     if (!response.ok) {
-      console.error('API response not ok:', response.status, await response.text());
+      const errorText = await response.text();
+      console.error('API response not ok:', response.status, errorText);
+      
+      // Handle 404 gracefully - event may have expired or completed
+      if (response.status === 404) {
+        return new Response(JSON.stringify({ 
+          success: true, 
+          found: false,
+          message: 'Event not found - game may have started or completed',
+          searched: { player_name, prop_type, bookmaker, event_id }
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      
       throw new Error(`Failed to fetch odds: ${response.status}`);
     }
 
