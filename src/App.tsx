@@ -22,6 +22,7 @@ import LineShopping from "./pages/LineShopping";
 import NBAFatigue from "./pages/NBAFatigue";
 import Install from "./pages/Install";
 import NotFound from "./pages/NotFound";
+import PVSCalculator from "./pages/PVSCalculator";
 
 const queryClient = new QueryClient();
 
@@ -45,6 +46,7 @@ function AnimatedRoutes() {
         <Route path="/line-shopping" element={<LineShopping />} />
         <Route path="/nba-fatigue" element={<NBAFatigue />} />
         <Route path="/install" element={<Install />} />
+        <Route path="/pvs-calculator" element={<PVSCalculator />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </PageTransition>
