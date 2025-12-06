@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { SuggestedParlayCard } from "./SuggestedParlayCard";
+import { DoubleDownSuggestion } from "./DoubleDownSuggestion";
 import { Button } from "@/components/ui/button";
 import { Loader2, Sparkles, RefreshCw, Lock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -184,20 +185,25 @@ export function SuggestedParlays() {
           <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
         </div>
       ) : suggestions.length > 0 ? (
-        <div className="grid gap-4 md:grid-cols-2">
-          {suggestions.map((suggestion) => (
-            <SuggestedParlayCard
-              key={suggestion.id}
-              legs={suggestion.legs}
-              totalOdds={suggestion.total_odds}
-              combinedProbability={suggestion.combined_probability}
-              suggestionReason={suggestion.suggestion_reason}
-              sport={suggestion.sport}
-              confidenceScore={suggestion.confidence_score}
-              expiresAt={suggestion.expires_at}
-              isHybrid={suggestion.is_hybrid}
-            />
-          ))}
+        <div className="space-y-4">
+          {/* Double Down Pick at top */}
+          <DoubleDownSuggestion suggestions={suggestions} />
+          
+          <div className="grid gap-4 md:grid-cols-2">
+            {suggestions.map((suggestion) => (
+              <SuggestedParlayCard
+                key={suggestion.id}
+                legs={suggestion.legs}
+                totalOdds={suggestion.total_odds}
+                combinedProbability={suggestion.combined_probability}
+                suggestionReason={suggestion.suggestion_reason}
+                sport={suggestion.sport}
+                confidenceScore={suggestion.confidence_score}
+                expiresAt={suggestion.expires_at}
+                isHybrid={suggestion.is_hybrid}
+              />
+            ))}
+          </div>
         </div>
       ) : (
         <div className="bg-card/50 border border-border/50 rounded-xl p-6 text-center">
