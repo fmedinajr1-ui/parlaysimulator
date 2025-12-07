@@ -98,7 +98,7 @@ export function PVSParlayBuilder({ selectedProps, onRemove, onClear }: PVSParlay
                       <PVSTierBadge tier={prop.pvs_tier} size="sm" showEmoji={false} />
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      {prop.recommended_side.toUpperCase()} {prop.current_line} {formatPropType(prop.prop_type)}
+                      {prop.recommended_side?.toUpperCase() || 'N/A'} {prop.current_line} {formatPropType(prop.prop_type)}
                     </div>
                   </div>
                   
