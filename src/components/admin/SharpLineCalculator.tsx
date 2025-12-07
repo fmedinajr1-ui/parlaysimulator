@@ -403,7 +403,7 @@ export default function SharpLineCalculator() {
     }
   };
 
-  const handleFetchAllOdds = async () => {
+  const handleFetchAllOdds = useCallback(async () => {
     const pendingProps = trackedProps.filter(p => p.status === 'pending' && p.event_id);
     
     if (pendingProps.length === 0) {
@@ -469,7 +469,7 @@ export default function SharpLineCalculator() {
     } else {
       toast.error(`Failed to fetch all ${failCount} props`);
     }
-  };
+  }, [trackedProps]);
 
   const handleAnalyzeAll = useCallback(async () => {
     const propsToAnalyze = trackedProps.filter(
@@ -538,7 +538,7 @@ export default function SharpLineCalculator() {
   useEffect(() => {
     fetchAllOddsRef.current = handleFetchAllOdds;
     analyzeAllRef.current = handleAnalyzeAll;
-  }, [trackedProps, handleAnalyzeAll]);
+  }, [handleFetchAllOdds, handleAnalyzeAll]);
 
   const handleDeleteProp = async (id: string) => {
     try {
