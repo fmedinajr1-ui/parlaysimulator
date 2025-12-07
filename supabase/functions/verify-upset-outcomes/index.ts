@@ -59,7 +59,8 @@ serve(async (req) => {
 
     let verifiedCount = 0;
     let correctCount = 0;
-    const confidenceResults: Record<string, { total: number; correct: number }> = {};
+    const confidenceResults: Record<string, { total: number; correct: number; roiSum: number }> = {};
+    const scoreRangeResults: Record<string, { total: number; correct: number }> = {};
 
     // Fetch scores for each sport
     for (const [sport, predictions] of Object.entries(sportGroups)) {
@@ -96,10 +97,26 @@ serve(async (req) => {
 
           // Track by confidence level
           if (!confidenceResults[pred.confidence]) {
-            confidenceResults[pred.confidence] = { total: 0, correct: 0 };
+            confidenceResults[pred.confidence] = { total: 0, correct: 0, roiSum: 0 };
           }
           confidenceResults[pred.confidence].total++;
-          if (wasUpset) confidenceResults[pred.confidence].correct++;
+          if (wasUpset) {
+            confidenceResults[pred.confidence].correct++;
+            // Calculate ROI based on underdog odds (assuming -110 standard)
+            const odds = pred.underdog_odds || 200;
+            const profit = odds > 0 ? odds / 100 : 100 / Math.abs(odds);
+            confidenceResults[pred.confidence].roiSum += profit;
+          } else {
+            confidenceResults[pred.confidence].roiSum -= 1; // Lost the bet
+          }
+
+          // Track by upset score range
+          const scoreRange = pred.upset_score >= 60 ? '60-100' : pred.upset_score >= 30 ? '30-59' : '0-29';
+          if (!scoreRangeResults[scoreRange]) {
+            scoreRangeResults[scoreRange] = { total: 0, correct: 0 };
+          }
+          scoreRangeResults[scoreRange].total++;
+          if (wasUpset) scoreRangeResults[scoreRange].correct++;
 
           // Update prediction record
           const { error: updateError } = await supabase
@@ -115,7 +132,7 @@ serve(async (req) => {
           if (!updateError) {
             verifiedCount++;
             if (wasUpset) correctCount++;
-            console.log(`[VerifyUpsets] Verified: ${pred.home_team} vs ${pred.away_team} - Winner: ${winner}, Upset: ${wasUpset}, Confidence: ${pred.confidence}`);
+            console.log(`[VerifyUpsets] Verified: ${pred.home_team} vs ${pred.away_team} - Winner: ${winner}, Upset: ${wasUpset}, Score: ${pred.upset_score}, Confidence: ${pred.confidence}`);
           }
         }
       } catch (e) {
@@ -123,8 +140,12 @@ serve(async (req) => {
       }
     }
 
-    // Update calibration factors for upset predictions
-    await supabase.rpc('update_upset_calibration');
+    // Update calibration factors for upset predictions using new function
+    try {
+      await supabase.rpc('update_upset_calibration');
+    } catch (e) {
+      console.error('[VerifyUpsets] Error updating calibration:', e);
+    }
 
     // Update AI performance metrics for upset predictions
     for (const [confidence, results] of Object.entries(confidenceResults)) {
@@ -136,6 +157,7 @@ serve(async (req) => {
           total_predictions: results.total,
           correct_predictions: results.correct,
           accuracy_rate: (results.correct / results.total) * 100,
+          profit_units: results.roiSum,
           updated_at: new Date().toISOString()
         }, { onConflict: 'sport,bet_type,confidence_level' });
       }
@@ -157,6 +179,7 @@ serve(async (req) => {
         verified: verifiedCount, 
         upsets: correctCount,
         byConfidence: confidenceResults,
+        byScoreRange: scoreRangeResults,
         accuracy: accuracyData?.[0] || null
       }
     });
@@ -166,6 +189,7 @@ serve(async (req) => {
       verified: verifiedCount,
       upsets: correctCount,
       accuracyByConfidence: confidenceResults,
+      accuracyByScoreRange: scoreRangeResults,
       overallAccuracy: accuracyData?.[0] || null,
       duration
     }), {

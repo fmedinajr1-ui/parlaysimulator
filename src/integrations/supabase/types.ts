@@ -418,6 +418,7 @@ export type Database = {
       }
       juiced_props: {
         Row: {
+          actual_value: number | null
           bookmaker: string
           commence_time: string
           created_at: string | null
@@ -435,13 +436,16 @@ export type Database = {
           line: number
           morning_scan_time: string | null
           opening_over_price: number | null
+          outcome: string | null
           over_price: number
           player_name: string
           prop_type: string
           sport: string
           under_price: number
+          verified_at: string | null
         }
         Insert: {
+          actual_value?: number | null
           bookmaker: string
           commence_time: string
           created_at?: string | null
@@ -459,13 +463,16 @@ export type Database = {
           line: number
           morning_scan_time?: string | null
           opening_over_price?: number | null
+          outcome?: string | null
           over_price: number
           player_name: string
           prop_type: string
           sport: string
           under_price: number
+          verified_at?: string | null
         }
         Update: {
+          actual_value?: number | null
           bookmaker?: string
           commence_time?: string
           created_at?: string | null
@@ -483,11 +490,64 @@ export type Database = {
           line?: number
           morning_scan_time?: string | null
           opening_over_price?: number | null
+          outcome?: string | null
           over_price?: number
           player_name?: string
           prop_type?: string
           sport?: string
           under_price?: number
+          verified_at?: string | null
+        }
+        Relationships: []
+      }
+      juiced_props_accuracy_metrics: {
+        Row: {
+          avg_juice_amount: number
+          created_at: string
+          id: string
+          juice_direction: string
+          juice_level: string
+          prop_type: string | null
+          roi_percentage: number
+          sport: string | null
+          total_lost: number
+          total_picks: number
+          total_push: number
+          total_won: number
+          updated_at: string
+          win_rate: number
+        }
+        Insert: {
+          avg_juice_amount?: number
+          created_at?: string
+          id?: string
+          juice_direction: string
+          juice_level: string
+          prop_type?: string | null
+          roi_percentage?: number
+          sport?: string | null
+          total_lost?: number
+          total_picks?: number
+          total_push?: number
+          total_won?: number
+          updated_at?: string
+          win_rate?: number
+        }
+        Update: {
+          avg_juice_amount?: number
+          created_at?: string
+          id?: string
+          juice_direction?: string
+          juice_level?: string
+          prop_type?: string | null
+          roi_percentage?: number
+          sport?: string | null
+          total_lost?: number
+          total_picks?: number
+          total_push?: number
+          total_won?: number
+          updated_at?: string
+          win_rate?: number
         }
         Relationships: []
       }
@@ -2116,6 +2176,57 @@ export type Database = {
         }
         Relationships: []
       }
+      upset_calibration_factors: {
+        Row: {
+          accuracy_rate: number
+          avg_odds: number
+          calibration_factor: number
+          confidence_level: string
+          correct_predictions: number
+          created_at: string
+          expected_accuracy: number
+          id: string
+          roi_percentage: number
+          score_range_max: number
+          score_range_min: number
+          sport: string
+          total_predictions: number
+          updated_at: string
+        }
+        Insert: {
+          accuracy_rate?: number
+          avg_odds?: number
+          calibration_factor?: number
+          confidence_level: string
+          correct_predictions?: number
+          created_at?: string
+          expected_accuracy?: number
+          id?: string
+          roi_percentage?: number
+          score_range_max?: number
+          score_range_min?: number
+          sport: string
+          total_predictions?: number
+          updated_at?: string
+        }
+        Update: {
+          accuracy_rate?: number
+          avg_odds?: number
+          calibration_factor?: number
+          confidence_level?: string
+          correct_predictions?: number
+          created_at?: string
+          expected_accuracy?: number
+          id?: string
+          roi_percentage?: number
+          score_range_max?: number
+          score_range_min?: number
+          sport?: string
+          total_predictions?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       upset_predictions: {
         Row: {
           ai_reasoning: string | null
@@ -2343,6 +2454,19 @@ export type Database = {
           calibration_factor: number
           confidence_level: string
           sample_size: number
+        }[]
+      }
+      get_complete_accuracy_summary: {
+        Args: never
+        Returns: {
+          accuracy_rate: number
+          category: string
+          correct_predictions: number
+          roi_percentage: number
+          sample_confidence: string
+          system_name: string
+          total_predictions: number
+          verified_predictions: number
         }[]
       }
       get_fatigue_edge_accuracy: {

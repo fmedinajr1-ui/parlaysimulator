@@ -128,3 +128,12 @@ verify_jwt = false
 
 [functions.calculate-player-usage]
 verify_jwt = false
+
+[functions.verify-juiced-outcomes]
+verify_jwt = false
+
+[functions.create-odds-checkout]
+verify_jwt = false
+
+[functions.record-trap-pattern]
+verify_jwt = false
