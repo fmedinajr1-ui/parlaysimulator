@@ -35,6 +35,7 @@ import { SharpRecalibrationPanel } from '@/components/admin/SharpRecalibrationPa
 import { CalibrationFactorsPanel } from '@/components/admin/CalibrationFactorsPanel';
 import { CronJobHistoryPanel } from '@/components/admin/CronJobHistoryPanel';
 import { HitRateAccuracyPanel } from '@/components/admin/HitRateAccuracyPanel';
+import { UnifiedAccuracyDashboard } from '@/components/admin/UnifiedAccuracyDashboard';
 
 interface ParlayData {
   id: string;
@@ -289,6 +290,7 @@ export default function Admin() {
 
           {/* Accuracy Tab */}
           <TabsContent value="accuracy" className="mt-4 space-y-4">
+            <UnifiedAccuracyDashboard />
             <MasterAccuracyDashboard />
             <HitRateAccuracyPanel />
           </TabsContent>
