@@ -798,7 +798,7 @@ async function distributeToCategories(supabase: any, props: UnifiedProp[]): Prom
       event_id: p.event_id
     }));
 
-    await supabase.from('hitrate_parlays').upsert({
+    await supabase.from('hitrate_parlays').insert({
       legs: parlayLegs,
       combined_probability: parlayLegs.reduce((acc, leg) => acc * leg.hit_rate, 1),
       total_odds: 400,
