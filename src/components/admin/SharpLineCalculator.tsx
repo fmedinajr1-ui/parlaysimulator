@@ -77,6 +77,11 @@ export default function SharpLineCalculator() {
   const [fetchingAll, setFetchingAll] = useState(false);
   const [fetchProgress, setFetchProgress] = useState({ current: 0, total: 0 });
 
+  // Auto-analyze state
+  const [autoAnalyze, setAutoAnalyze] = useState(false);
+  const [analyzingAll, setAnalyzingAll] = useState(false);
+  const [analyzeProgress, setAnalyzeProgress] = useState({ current: 0, total: 0 });
+
   // Search, Filter & Sort state
   const [searchQuery, setSearchQuery] = useState('');
   const [sportFilter, setSportFilter] = useState('all');
@@ -143,6 +148,9 @@ export default function SharpLineCalculator() {
   }, [trackedProps, searchQuery, sportFilter, statusFilter, recFilter, propTypeFilter, sortField, sortDirection]);
 
   const pendingFilteredProps = filteredAndSortedProps.filter(p => p.status === 'pending' && p.event_id);
+  const propsReadyToAnalyze = filteredAndSortedProps.filter(
+    p => p.current_over_price && p.current_under_price && !p.ai_recommendation
+  );
 
   useEffect(() => {
     fetchTrackedProps();
@@ -150,6 +158,7 @@ export default function SharpLineCalculator() {
 
   // Auto-refresh ref to avoid stale closures
   const fetchAllOddsRef = useRef<(() => Promise<void>) | null>(null);
+  const analyzeAllRef = useRef<(() => Promise<void>) | null>(null);
 
   // Auto-refresh effect
   useEffect(() => {
@@ -179,6 +188,12 @@ export default function SharpLineCalculator() {
         toast.info('Auto-refreshing odds...');
         await fetchAllOddsRef.current();
         setLastRefresh(new Date());
+        
+        // Auto-analyze after fetching if enabled
+        if (autoAnalyze && analyzeAllRef.current) {
+          toast.info('Auto-analyzing props...');
+          await analyzeAllRef.current();
+        }
       }
     }, refreshInterval * 1000);
 
@@ -186,7 +201,7 @@ export default function SharpLineCalculator() {
       clearInterval(countdownInterval);
       clearInterval(refreshTimer);
     };
-  }, [autoRefresh, refreshInterval, trackedProps.length]);
+  }, [autoRefresh, refreshInterval, trackedProps.length, autoAnalyze]);
 
   const fetchTrackedProps = async () => {
     try {
@@ -456,10 +471,74 @@ export default function SharpLineCalculator() {
     }
   };
 
-  // Keep ref updated for auto-refresh
+  const handleAnalyzeAll = useCallback(async () => {
+    const propsToAnalyze = trackedProps.filter(
+      p => p.current_over_price && p.current_under_price && !p.ai_recommendation
+    );
+    
+    if (propsToAnalyze.length === 0) {
+      toast.info('No props ready to analyze');
+      return;
+    }
+
+    setAnalyzingAll(true);
+    setAnalyzeProgress({ current: 0, total: propsToAnalyze.length });
+
+    let successCount = 0;
+    let failCount = 0;
+
+    for (let i = 0; i < propsToAnalyze.length; i++) {
+      const prop = propsToAnalyze[i];
+      setAnalyzeProgress({ current: i + 1, total: propsToAnalyze.length });
+
+      try {
+        const { error } = await supabase.functions.invoke('analyze-sharp-line', {
+          body: {
+            id: prop.id,
+            opening_line: prop.opening_line,
+            opening_over_price: prop.opening_over_price,
+            opening_under_price: prop.opening_under_price,
+            current_line: prop.current_line || prop.opening_line,
+            current_over_price: prop.current_over_price,
+            current_under_price: prop.current_under_price,
+            sport: prop.sport,
+            prop_type: prop.prop_type,
+            commence_time: prop.commence_time
+          }
+        });
+
+        if (error) {
+          failCount++;
+        } else {
+          successCount++;
+        }
+      } catch (err) {
+        console.error(`Error analyzing ${prop.player_name}:`, err);
+        failCount++;
+      }
+
+      // Rate limit delay
+      if (i < propsToAnalyze.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+
+    setAnalyzingAll(false);
+    setAnalyzeProgress({ current: 0, total: 0 });
+    fetchTrackedProps();
+
+    if (successCount > 0) {
+      toast.success(`Analyzed ${successCount} props${failCount > 0 ? `, ${failCount} failed` : ''}`);
+    } else if (failCount > 0) {
+      toast.error(`Failed to analyze ${failCount} props`);
+    }
+  }, [trackedProps]);
+
+  // Keep refs updated for auto-refresh
   useEffect(() => {
     fetchAllOddsRef.current = handleFetchAllOdds;
-  }, [trackedProps]);
+    analyzeAllRef.current = handleAnalyzeAll;
+  }, [trackedProps, handleAnalyzeAll]);
 
   const handleDeleteProp = async (id: string) => {
     try {
@@ -684,36 +763,64 @@ export default function SharpLineCalculator() {
             </Card>
           ) : (
             <>
-              {/* Fetch All Button & Auto-Refresh */}
+              {/* Fetch All & Analyze All Controls */}
               <Card className="bg-primary/5 border-primary/20">
                 <CardContent className="py-3 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm">
-                      <span className="font-medium">{pendingFilteredProps.length}</span>
-                      <span className="text-muted-foreground"> pending props ready to fetch</span>
+                  {/* Action Buttons Row */}
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex flex-col gap-1 text-sm">
+                      <div>
+                        <span className="font-medium">{pendingFilteredProps.length}</span>
+                        <span className="text-muted-foreground"> pending to fetch</span>
+                      </div>
+                      <div>
+                        <span className="font-medium text-primary">{propsReadyToAnalyze.length}</span>
+                        <span className="text-muted-foreground"> ready to analyze</span>
+                      </div>
                     </div>
-                    <Button 
-                      onClick={handleFetchAllOdds} 
-                      disabled={fetchingAll || pendingFilteredProps.length === 0}
-                      size="sm"
-                    >
-                      {fetchingAll ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Fetching {fetchProgress.current}/{fetchProgress.total}...
-                        </>
-                      ) : (
-                        <>
-                          <RefreshCw className="w-4 h-4 mr-2" />
-                          Fetch All Odds
-                        </>
-                      )}
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Button 
+                        onClick={handleFetchAllOdds} 
+                        disabled={fetchingAll || analyzingAll || pendingFilteredProps.length === 0}
+                        size="sm"
+                        variant="outline"
+                      >
+                        {fetchingAll ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            {fetchProgress.current}/{fetchProgress.total}
+                          </>
+                        ) : (
+                          <>
+                            <RefreshCw className="w-4 h-4 mr-2" />
+                            Fetch All
+                          </>
+                        )}
+                      </Button>
+                      <Button 
+                        onClick={handleAnalyzeAll} 
+                        disabled={analyzingAll || fetchingAll || propsReadyToAnalyze.length === 0}
+                        size="sm"
+                      >
+                        {analyzingAll ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            {analyzeProgress.current}/{analyzeProgress.total}
+                          </>
+                        ) : (
+                          <>
+                            <Brain className="w-4 h-4 mr-2" />
+                            Analyze All
+                          </>
+                        )}
+                      </Button>
+                    </div>
                   </div>
                   
-                  {/* Auto-Refresh Controls */}
-                  <div className="flex items-center justify-between border-t border-border pt-3">
-                    <div className="flex items-center gap-3">
+                  {/* Auto-Refresh & Auto-Analyze Controls */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
+                    <div className="flex flex-wrap items-center gap-4">
+                      {/* Auto-Refresh Toggle */}
                       <div className="flex items-center gap-2">
                         {autoRefresh ? (
                           <Timer className="w-4 h-4 text-green-500" />
@@ -747,11 +854,30 @@ export default function SharpLineCalculator() {
                           </SelectContent>
                         </Select>
                       )}
+
+                      {/* Auto-Analyze Toggle */}
+                      <div className="flex items-center gap-2 border-l border-border pl-4">
+                        {autoAnalyze ? (
+                          <Brain className="w-4 h-4 text-primary" />
+                        ) : (
+                          <Brain className="w-4 h-4 text-muted-foreground" />
+                        )}
+                        <Label htmlFor="auto-analyze" className="text-sm cursor-pointer">
+                          Auto-analyze
+                        </Label>
+                        <Switch
+                          id="auto-analyze"
+                          checked={autoAnalyze}
+                          onCheckedChange={setAutoAnalyze}
+                          disabled={!autoRefresh}
+                        />
+                      </div>
                     </div>
                     
                     {autoRefresh && (
                       <div className="text-xs text-muted-foreground">
-                        Next refresh in <span className="font-mono text-foreground">{nextRefreshIn}s</span>
+                        Next in <span className="font-mono text-foreground">{nextRefreshIn}s</span>
+                        {autoAnalyze && <span className="text-primary ml-1">+ analyze</span>}
                         {lastRefresh && (
                           <span className="ml-2">
                             (Last: {lastRefresh.toLocaleTimeString()})
