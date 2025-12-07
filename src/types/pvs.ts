@@ -120,3 +120,25 @@ export const PVS_SCORE_COMPONENTS = [
   { key: 'pvs_pace_score', label: 'Pace', weight: 0.10, description: 'Game pace projection' },
   { key: 'pvs_minutes_score', label: 'Minutes', weight: 0.10, description: 'Role and minutes stability' },
 ] as const;
+
+export interface UsageProjection {
+  playerName: string;
+  propType: string;
+  line: number;
+  gamesAnalyzed: number;
+  avgMinutes: number;
+  historicalRate: number;
+  requiredRate: number;
+  efficiencyMargin: number;
+  hitRate: number;
+  projectedStats: {
+    minMinutes: number;
+    maxMinutes: number;
+    projectedValue: number;
+    confidenceInterval: [number, number];
+  };
+  opponentFactor: number;
+  fatigueFactor: number;
+  verdict: 'FAVORABLE' | 'NEUTRAL' | 'UNFAVORABLE';
+  gameLogs?: any[];
+}
