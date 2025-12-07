@@ -52,7 +52,7 @@ const PROP_TYPES = [
 
 const BOOKMAKERS = ['draftkings', 'fanduel', 'betmgm', 'caesars', 'pointsbet', 'bet365'];
 
-export default function SharpLineCalculator() {
+const SharpLineCalculator = () => {
   const [trackedProps, setTrackedProps] = useState<TrackedProp[]>([]);
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState<string | null>(null);
@@ -1295,4 +1295,6 @@ export default function SharpLineCalculator() {
       </Tabs>
     </div>
   );
-}
+};
+
+export default SharpLineCalculator;
