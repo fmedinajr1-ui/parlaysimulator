@@ -199,14 +199,14 @@ export const ShareableImageCard = forwardRef<HTMLDivElement, ShareableImageCardP
                   color: "hsl(0 0% 60%)",
                 }}
               >
-                PARLAY SIMULATOR
+                PARLAY FARM
               </span>
             </div>
             <div 
               className="text-xs"
               style={{ color: "hsl(0 0% 45%)" }}
             >
-              parlaysimulator.com
+              parlayfarm.com
             </div>
           </div>
         </div>

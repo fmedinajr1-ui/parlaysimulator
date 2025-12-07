@@ -90,7 +90,7 @@ export function PWAInstallPrompt() {
         
         <div className="flex-1 min-w-0">
           <h3 className="font-semibold text-foreground text-sm mb-1">
-            Install Parlay Simulator
+            Install Parlay Farm
           </h3>
           <p className="text-xs text-muted-foreground mb-3">
             {isIOS 

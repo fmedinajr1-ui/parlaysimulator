@@ -1,6 +1,6 @@
-// Service Worker for PWA - Parlay Simulator
+// Service Worker for PWA - Parlay Farm
 
-const CACHE_NAME = 'parlay-sim-v1';
+const CACHE_NAME = 'parlay-farm-v1';
 const OFFLINE_URL = '/';
 
 // Assets to cache immediately on install
@@ -101,7 +101,7 @@ self.addEventListener('push', (event) => {
   console.log('[SW] Push notification received:', event);
   
   let data = {
-    title: 'Parlay Simulator',
+    title: 'Parlay Farm',
     body: 'You have a new notification!',
     icon: '/pwa-192x192.png',
     badge: '/pwa-192x192.png',

@@ -75,7 +75,7 @@ export function ShareableMeme({
   };
 
   const handleTwitterShare = async () => {
-    const shareText = `🎟️ My ${legCount}-leg parlay has a ${pct.toFixed(1)}% chance to hit\n\n${tier.emoji} ${tier.label}\n\n${roast ? `"${roast}"\n\n` : ""}Roasted by Parlay Simulator 🔥`;
+    const shareText = `🎟️ My ${legCount}-leg parlay has a ${pct.toFixed(1)}% chance to hit\n\n${tier.emoji} ${tier.label}\n\n${roast ? `"${roast}"\n\n` : ""}Roasted by Parlay Farm 🔥`;
     
     // Generate image for user to download first
     await generateImage();
@@ -106,7 +106,7 @@ export function ShareableMeme({
   };
 
   const handleNativeShare = async () => {
-    const shareText = `🎟️ My ${legCount}-leg parlay has a ${pct.toFixed(1)}% chance to hit\n\n${tier.emoji} ${tier.label}\n\n${roast ? `"${roast}"\n\n` : ""}Roasted by Parlay Simulator 🔥`;
+    const shareText = `🎟️ My ${legCount}-leg parlay has a ${pct.toFixed(1)}% chance to hit\n\n${tier.emoji} ${tier.label}\n\n${roast ? `"${roast}"\n\n` : ""}Roasted by Parlay Farm 🔥`;
     
     if (navigator.share) {
       try {
@@ -119,13 +119,13 @@ export function ShareableMeme({
           const file = new File([blob], "parlay-score.png", { type: "image/png" });
           
           await navigator.share({
-            title: "Parlay Simulator Results",
+            title: "Parlay Farm Results",
             text: shareText,
             files: [file],
           });
         } else {
           await navigator.share({
-            title: "Parlay Simulator Results",
+            title: "Parlay Farm Results",
             text: shareText,
           });
         }
@@ -202,7 +202,7 @@ export function ShareableMeme({
         
         <div className="mt-4 pt-4 border-t border-border/30">
           <p className="text-xs text-muted-foreground">
-            🔥 Roasted by Parlay Simulator
+            🔥 Roasted by Parlay Farm
           </p>
         </div>
       </div>

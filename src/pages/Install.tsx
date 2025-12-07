@@ -87,7 +87,7 @@ const Install = () => {
             </div>
             <h1 className="text-2xl font-display text-foreground mb-2">APP INSTALLED!</h1>
             <p className="text-muted-foreground mb-6">
-              You're running Parlay Simulator as an installed app. Enjoy the full experience!
+              You're running Parlay Farm as an installed app. Enjoy the full experience!
             </p>
             <Badge className="bg-neon-green/20 text-neon-green border-neon-green/30">
               <CheckCircle className="w-3 h-3 mr-1" />
@@ -120,7 +120,7 @@ const Install = () => {
             className="w-full h-14 text-lg font-semibold mb-6 gradient-fire"
           >
             <Download className="w-5 h-5 mr-2" />
-            Install Parlay Simulator
+            Install Parlay Farm
           </Button>
         ) : isIOS ? (
           <Card className="bg-card/50 border-border/50 mb-6">
