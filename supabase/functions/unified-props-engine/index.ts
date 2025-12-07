@@ -446,6 +446,14 @@ function calculateBaseScores(params: BaseScoreParams): {
       recommendedSide = hitRateData.hit_rate_over > hitRateData.hit_rate_under ? 'over' : 'under';
     }
   }
+  
+  // Fallback: determine recommended side from price differential if not set
+  if (!recommendedSide && params.overPrice && params.underPrice) {
+    // If over is more juiced (more negative), under is recommended; vice versa
+    const overJuice = params.overPrice < 0 ? Math.abs(params.overPrice) : 100 - params.overPrice;
+    const underJuice = params.underPrice < 0 ? Math.abs(params.underPrice) : 100 - params.underPrice;
+    recommendedSide = overJuice > underJuice ? 'under' : 'over';
+  }
 
   // Determine category
   let category = 'uncategorized';

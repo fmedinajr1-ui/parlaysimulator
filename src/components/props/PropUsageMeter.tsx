@@ -12,13 +12,23 @@ interface PropUsageMeterProps {
 
 export function PropUsageMeter({ projection, propType, line }: PropUsageMeterProps) {
   // Early return if projection data is incomplete
-  if (!projection || !projection.projectedStats) {
+  if (!projection) {
     return (
       <div className="p-4 text-center text-muted-foreground text-sm">
         Usage data unavailable for this prop
       </div>
     );
   }
+
+  // Normalize the projection data structure - API returns projectedMinutes, component expects projectedStats
+  const projectedStats = projection.projectedStats || (projection as any).projectedMinutes 
+    ? {
+        minMinutes: projection.projectedStats?.minMinutes ?? (projection as any).projectedMinutes?.min ?? 0,
+        maxMinutes: projection.projectedStats?.maxMinutes ?? (projection as any).projectedMinutes?.max ?? 0
+      }
+    : null;
+
+  const avgMinutes = projection.avgMinutes ?? (projection as any).projectedMinutes?.avg ?? 0;
 
   const getVerdictConfig = (verdict: string) => {
     switch (verdict) {
@@ -49,10 +59,16 @@ export function PropUsageMeter({ projection, propType, line }: PropUsageMeterPro
   const verdictConfig = getVerdictConfig(projection.verdict || 'NEUTRAL');
   const VerdictIcon = verdictConfig.icon;
   
-  const hitRate = projection.hitRate ?? 0;
+  const rawHitRate: unknown = projection.hitRate;
+  let hitRate = 0;
+  if (rawHitRate !== null && rawHitRate !== undefined) {
+    if (typeof rawHitRate === 'object' && rawHitRate !== null && 'percentage' in rawHitRate) {
+      hitRate = (rawHitRate as { percentage: number }).percentage / 100;
+    } else if (typeof rawHitRate === 'number') {
+      hitRate = rawHitRate;
+    }
+  }
   const efficiencyMargin = projection.efficiencyMargin ?? 0;
-  const avgMinutes = projection.avgMinutes ?? 0;
-  const projectedStats = projection.projectedStats ?? { minMinutes: 0, maxMinutes: 0 };
   
   const confidencePercent = Math.min(100, Math.max(0, 
     (hitRate * 100 + (efficiencyMargin > 0 ? 30 : 0)) / 1.3
