@@ -40,6 +40,19 @@ interface UnifiedProp {
   confidence: number;
   category: string;
   signal_sources: string[];
+  // PVS-specific fields
+  pvs_value_score: number;
+  pvs_matchup_score: number;
+  pvs_minutes_score: number;
+  pvs_pace_score: number;
+  pvs_accuracy_score: number;
+  pvs_sharp_score: number;
+  pvs_injury_tax: number;
+  pvs_confidence_score: number;
+  pvs_final_score: number;
+  pvs_tier: string;
+  true_line: number | null;
+  true_line_diff: number | null;
 }
 
 serve(async (req) => {
@@ -55,16 +68,31 @@ serve(async (req) => {
   try {
     const { sports = ['basketball_nba', 'hockey_nhl'] } = await req.json().catch(() => ({}));
     
-    console.log('[UnifiedEngine] Starting unified props analysis for:', sports);
+    console.log('[UnifiedEngine] Starting unified props analysis with PVS scoring for:', sports);
     const startTime = Date.now();
 
-    // Fetch existing data for analysis
-    const [hitRates, lineMovements, trapPatterns, fatigueScores] = await Promise.all([
+    // Fetch all supporting data for PVS calculations
+    const [hitRates, lineMovements, trapPatterns, fatigueScores, defenseStats, paceStats, gameLogs, injuryReports] = await Promise.all([
       supabase.from('player_prop_hitrates').select('*').gte('expires_at', new Date().toISOString()),
       supabase.from('line_movements').select('*').eq('is_primary_record', true).gte('detected_at', new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()),
       supabase.from('trap_patterns').select('*').limit(500),
-      supabase.from('nba_fatigue_scores').select('*').gte('game_date', new Date().toISOString().split('T')[0])
+      supabase.from('nba_fatigue_scores').select('*').gte('game_date', new Date().toISOString().split('T')[0]),
+      supabase.from('nba_opponent_defense_stats').select('*'),
+      supabase.from('nba_team_pace_projections').select('*'),
+      supabase.from('nba_player_game_logs').select('*').order('game_date', { ascending: false }).limit(1000),
+      supabase.from('nba_injury_reports').select('*').gte('game_date', new Date().toISOString().split('T')[0])
     ]);
+
+    console.log('[UnifiedEngine] Loaded supporting data:', {
+      hitRates: hitRates.data?.length || 0,
+      lineMovements: lineMovements.data?.length || 0,
+      trapPatterns: trapPatterns.data?.length || 0,
+      fatigueScores: fatigueScores.data?.length || 0,
+      defenseStats: defenseStats.data?.length || 0,
+      paceStats: paceStats.data?.length || 0,
+      gameLogs: gameLogs.data?.length || 0,
+      injuryReports: injuryReports.data?.length || 0
+    });
 
     // Build lookup maps for efficient scoring
     const hitRateMap = new Map<string, any>();
@@ -89,6 +117,32 @@ serve(async (req) => {
       fatigueMap.set(fs.team_name, fs);
     });
 
+    // Build defense stats map by team
+    const defenseMap = new Map<string, any>();
+    (defenseStats.data || []).forEach(ds => {
+      defenseMap.set(ds.team_name, ds);
+    });
+
+    // Build pace stats map by team
+    const paceMap = new Map<string, any>();
+    (paceStats.data || []).forEach(ps => {
+      paceMap.set(ps.team_name, ps);
+    });
+
+    // Build game logs map by player
+    const gameLogsMap = new Map<string, any[]>();
+    (gameLogs.data || []).forEach(gl => {
+      const key = gl.player_name;
+      if (!gameLogsMap.has(key)) gameLogsMap.set(key, []);
+      gameLogsMap.get(key)!.push(gl);
+    });
+
+    // Build injury map by player
+    const injuryMap = new Map<string, any>();
+    (injuryReports.data || []).forEach(ir => {
+      injuryMap.set(ir.player_name, ir);
+    });
+
     const unifiedProps: UnifiedProp[] = [];
     let totalPropsAnalyzed = 0;
 
@@ -98,7 +152,10 @@ serve(async (req) => {
         // Fetch events
         const eventsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events?apiKey=${oddsApiKey}`;
         const eventsRes = await fetch(eventsUrl);
-        if (!eventsRes.ok) continue;
+        if (!eventsRes.ok) {
+          console.log(`[UnifiedEngine] Failed to fetch events for ${sport}:`, eventsRes.status);
+          continue;
+        }
         
         const events = await eventsRes.json();
         const upcomingEvents = events.filter((e: any) => {
@@ -106,11 +163,13 @@ serve(async (req) => {
           const now = new Date();
           const hoursUntil = (commenceTime.getTime() - now.getTime()) / (1000 * 60 * 60);
           return hoursUntil > 0 && hoursUntil < 48;
-        }).slice(0, 5); // Limit to 5 events per sport to manage API usage
+        }).slice(0, 8); // Limit to 8 events per sport
+
+        console.log(`[UnifiedEngine] Processing ${upcomingEvents.length} events for ${sport}`);
 
         for (const event of upcomingEvents) {
           // Fetch props for this event
-          for (const market of PROP_MARKETS.slice(0, 3)) { // Limit markets
+          for (const market of PROP_MARKETS.slice(0, 6)) { // Process 6 markets
             try {
               const propsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${oddsApiKey}&regions=us&markets=${market}&oddsFormat=american`;
               const propsRes = await fetch(propsUrl);
@@ -148,8 +207,8 @@ serve(async (req) => {
                     const overPrice = outcomes.over?.price || null;
                     const underPrice = outcomes.under?.price || null;
 
-                    // Calculate scores
-                    const scores = calculateScores({
+                    // Calculate base scores
+                    const baseScores = calculateBaseScores({
                       playerName,
                       propType: propMarket.key,
                       eventId: event.id,
@@ -166,6 +225,26 @@ serve(async (req) => {
                       bookmaker: bookmaker.key
                     });
 
+                    // Calculate PVS scores
+                    const pvsScores = calculatePVSScores({
+                      playerName,
+                      propType: propMarket.key,
+                      line,
+                      overPrice,
+                      underPrice,
+                      homeTeam: event.home_team,
+                      awayTeam: event.away_team,
+                      hitRateMap,
+                      sharpMovementMap,
+                      defenseMap,
+                      paceMap,
+                      gameLogsMap,
+                      injuryMap,
+                      fatigueMap,
+                      trapSignatures,
+                      bookmaker: bookmaker.key
+                    });
+
                     unifiedProps.push({
                       event_id: event.id,
                       sport,
@@ -177,7 +256,8 @@ serve(async (req) => {
                       current_line: line,
                       over_price: overPrice,
                       under_price: underPrice,
-                      ...scores
+                      ...baseScores,
+                      ...pvsScores
                     });
                   }
                 }
@@ -191,6 +271,8 @@ serve(async (req) => {
         console.error(`[UnifiedEngine] Error processing sport ${sport}:`, err);
       }
     }
+
+    console.log(`[UnifiedEngine] Analyzed ${totalPropsAnalyzed} props, created ${unifiedProps.length} unified props`);
 
     // Upsert to database
     if (unifiedProps.length > 0) {
@@ -209,6 +291,9 @@ serve(async (req) => {
     // Categorize and distribute props
     const categoryCounts = await distributeToCategories(supabase, unifiedProps);
 
+    // Create PVS-based parlays
+    await createPVSParlays(supabase, unifiedProps);
+
     const duration = Date.now() - startTime;
     
     // Log to cron history
@@ -222,18 +307,20 @@ serve(async (req) => {
         totalPropsAnalyzed,
         unifiedPropsCreated: unifiedProps.length,
         categoryCounts,
-        sports
+        sports,
+        pvsEnabled: true
       }
     });
 
-    console.log(`[UnifiedEngine] Completed in ${duration}ms. Analyzed ${totalPropsAnalyzed} props, created ${unifiedProps.length} unified props`);
+    console.log(`[UnifiedEngine] Completed in ${duration}ms with PVS scoring`);
 
     return new Response(JSON.stringify({
       success: true,
       totalPropsAnalyzed,
       unifiedPropsCreated: unifiedProps.length,
       categoryCounts,
-      duration
+      duration,
+      pvsEnabled: true
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
@@ -248,7 +335,7 @@ serve(async (req) => {
   }
 });
 
-interface ScoreParams {
+interface BaseScoreParams {
   playerName: string;
   propType: string;
   eventId: string;
@@ -265,7 +352,7 @@ interface ScoreParams {
   bookmaker: string;
 }
 
-function calculateScores(params: ScoreParams): {
+function calculateBaseScores(params: BaseScoreParams): {
   hit_rate_score: number;
   sharp_money_score: number;
   upset_score: number;
@@ -340,7 +427,7 @@ function calculateScores(params: ScoreParams): {
   const compositeScore = (
     hitRateScore * 0.35 +
     sharpMoneyScore * 0.25 +
-    (100 - trapScore) * 0.15 + // Invert trap (low trap = good)
+    (100 - trapScore) * 0.15 +
     fatigueScore * 0.15 +
     upsetScore * 0.10
   );
@@ -355,7 +442,6 @@ function calculateScores(params: ScoreParams): {
     signalSources.push('fade_signal');
   } else if (hitRateScore >= 80 || sharpMoneyScore >= 50) {
     recommendation = 'pick';
-    // Determine side based on hit rate or sharp money direction
     if (hitRateData) {
       recommendedSide = hitRateData.hit_rate_over > hitRateData.hit_rate_under ? 'over' : 'under';
     }
@@ -390,6 +476,251 @@ function calculateScores(params: ScoreParams): {
   };
 }
 
+interface PVSScoreParams {
+  playerName: string;
+  propType: string;
+  line: number;
+  overPrice: number | null;
+  underPrice: number | null;
+  homeTeam: string;
+  awayTeam: string;
+  hitRateMap: Map<string, any>;
+  sharpMovementMap: Map<string, any[]>;
+  defenseMap: Map<string, any>;
+  paceMap: Map<string, any>;
+  gameLogsMap: Map<string, any[]>;
+  injuryMap: Map<string, any>;
+  fatigueMap: Map<string, any>;
+  trapSignatures: Set<string>;
+  bookmaker: string;
+}
+
+function calculatePVSScores(params: PVSScoreParams): {
+  pvs_value_score: number;
+  pvs_matchup_score: number;
+  pvs_minutes_score: number;
+  pvs_pace_score: number;
+  pvs_accuracy_score: number;
+  pvs_sharp_score: number;
+  pvs_injury_tax: number;
+  pvs_confidence_score: number;
+  pvs_final_score: number;
+  pvs_tier: string;
+  true_line: number | null;
+  true_line_diff: number | null;
+} {
+  let valueScore = 50; // Default middle value
+  let matchupScore = 50;
+  let minutesScore = 50;
+  let paceScore = 50;
+  let accuracyScore = 50;
+  let sharpScore = 50;
+  let injuryTax = 0;
+
+  // 1. VALUE SCORE (0-100): Based on odds line differential and implied probability edge
+  if (params.overPrice && params.underPrice) {
+    // Calculate implied probabilities
+    const overProb = params.overPrice > 0 
+      ? 100 / (params.overPrice + 100) 
+      : Math.abs(params.overPrice) / (Math.abs(params.overPrice) + 100);
+    const underProb = params.underPrice > 0 
+      ? 100 / (params.underPrice + 100) 
+      : Math.abs(params.underPrice) / (Math.abs(params.underPrice) + 100);
+    
+    // Total probability over 1 indicates juice - find the edge
+    const totalProb = overProb + underProb;
+    const noVigOverProb = overProb / totalProb;
+    const noVigUnderProb = underProb / totalProb;
+    
+    // Value is higher when one side has clear edge (prob difference)
+    const probDiff = Math.abs(noVigOverProb - noVigUnderProb);
+    valueScore = Math.min(100, 50 + probDiff * 100);
+  }
+
+  // 2. MATCHUP SCORE (0-100): Based on opponent defense stats
+  const opponentTeam = params.homeTeam; // Assume player is on away team for now
+  const defenseData = params.defenseMap.get(opponentTeam);
+  if (defenseData) {
+    // Map prop type to defensive stat
+    const propToStat: Record<string, string> = {
+      'player_points': 'points_allowed_avg',
+      'player_rebounds': 'rebounds_allowed_avg',
+      'player_assists': 'assists_allowed_avg',
+      'player_threes': 'threes_allowed_avg',
+      'player_blocks': 'blocks_allowed_avg'
+    };
+    
+    const statKey = propToStat[params.propType];
+    if (statKey && defenseData[statKey]) {
+      // Higher defense rating = easier matchup = higher score
+      // Defense rank 1-30, lower is better defense
+      const defenseRank = defenseData.defense_rank || 15;
+      matchupScore = Math.min(100, Math.max(0, (defenseRank / 30) * 100));
+    }
+  }
+
+  // 3. MINUTES SCORE (0-100): Based on player game logs and minutes consistency
+  const playerLogs = params.gameLogsMap.get(params.playerName) || [];
+  if (playerLogs.length >= 3) {
+    const recentLogs = playerLogs.slice(0, 10);
+    const avgMinutes = recentLogs.reduce((sum, log) => sum + (log.minutes_played || 0), 0) / recentLogs.length;
+    const minutesVariance = recentLogs.reduce((sum, log) => sum + Math.pow((log.minutes_played || 0) - avgMinutes, 2), 0) / recentLogs.length;
+    const stdDev = Math.sqrt(minutesVariance);
+    
+    // Low variance = high consistency = high score
+    // Also boost if avg minutes is high (more opportunity)
+    const consistencyScore = Math.max(0, 100 - stdDev * 10);
+    const volumeBonus = Math.min(20, avgMinutes - 20); // Bonus for 20+ minutes
+    minutesScore = Math.min(100, consistencyScore + Math.max(0, volumeBonus));
+    
+    // Calculate true line based on recent performance
+    const propToStat: Record<string, string> = {
+      'player_points': 'points',
+      'player_rebounds': 'rebounds',
+      'player_assists': 'assists',
+      'player_threes': 'threes_made',
+      'player_blocks': 'blocks',
+      'player_steals': 'steals'
+    };
+    
+    const statKey = propToStat[params.propType];
+    if (statKey) {
+      const avgStat = recentLogs.reduce((sum, log) => sum + (log[statKey] || 0), 0) / recentLogs.length;
+      // Could set true_line here if needed
+    }
+  }
+
+  // 4. PACE SCORE (0-100): Based on team pace projections
+  const homePace = params.paceMap.get(params.homeTeam);
+  const awayPace = params.paceMap.get(params.awayTeam);
+  if (homePace || awayPace) {
+    const avgPaceRating = ((homePace?.pace_rating || 100) + (awayPace?.pace_rating || 100)) / 2;
+    // Higher pace = more possessions = higher scores = higher score for overs
+    // Pace rating typically 95-110, normalize to 0-100
+    paceScore = Math.min(100, Math.max(0, (avgPaceRating - 90) * 5));
+    
+    // Consider tempo factor
+    const avgTempo = ((homePace?.tempo_factor || 1) + (awayPace?.tempo_factor || 1)) / 2;
+    paceScore = paceScore * avgTempo;
+  }
+
+  // 5. ACCURACY SCORE (0-100): Based on historical hit rates
+  const hitRateKey = `${params.playerName}:${params.propType}`;
+  const hitRateData = params.hitRateMap.get(hitRateKey);
+  if (hitRateData) {
+    const maxHitRate = Math.max(hitRateData.hit_rate_over || 0, hitRateData.hit_rate_under || 0);
+    accuracyScore = maxHitRate * 100;
+    
+    // Bonus for perfect streaks
+    if (hitRateData.is_perfect_streak) {
+      accuracyScore = Math.min(100, accuracyScore + 10);
+    }
+    
+    // Confidence score bonus for large sample size
+    if (hitRateData.games_analyzed >= 10) {
+      accuracyScore = Math.min(100, accuracyScore + 5);
+    }
+  }
+
+  // 6. SHARP SCORE (0-100): Based on sharp money indicators
+  // Check for sharp movements on this player
+  let sharpMovementCount = 0;
+  for (const [eventId, movements] of params.sharpMovementMap) {
+    const playerMovements = movements.filter(m => 
+      m.player_name?.toLowerCase() === params.playerName.toLowerCase() && 
+      m.is_sharp_action
+    );
+    sharpMovementCount += playerMovements.length;
+  }
+  sharpScore = Math.min(100, 50 + sharpMovementCount * 15);
+
+  // 7. INJURY TAX (0-100): Penalty if player is injured
+  const injuryData = params.injuryMap.get(params.playerName);
+  if (injuryData) {
+    const statusPenalties: Record<string, number> = {
+      'out': 100,
+      'doubtful': 80,
+      'questionable': 40,
+      'probable': 10,
+      'available': 0
+    };
+    injuryTax = statusPenalties[injuryData.status?.toLowerCase()] || 0;
+    
+    // Additional penalty based on impact level
+    if (injuryData.impact_level === 'high') {
+      injuryTax = Math.min(100, injuryTax + 20);
+    } else if (injuryData.impact_level === 'medium') {
+      injuryTax = Math.min(100, injuryTax + 10);
+    }
+  }
+
+  // Check for trap patterns
+  const trapSig = `basketball_nba:${params.propType}:${params.bookmaker}`;
+  if (params.trapSignatures.has(trapSig)) {
+    // Reduce all scores if this is a trap pattern
+    valueScore = valueScore * 0.7;
+    sharpScore = Math.max(0, sharpScore - 30);
+  }
+
+  // Calculate confidence score (average of key metrics)
+  const confidenceScore = (
+    valueScore * 0.2 +
+    matchupScore * 0.15 +
+    minutesScore * 0.15 +
+    paceScore * 0.1 +
+    accuracyScore * 0.25 +
+    sharpScore * 0.15
+  );
+
+  // FINAL PVS SCORE: Weighted combination minus injury tax
+  const rawFinalScore = (
+    valueScore * 0.20 +
+    matchupScore * 0.20 +
+    minutesScore * 0.15 +
+    paceScore * 0.10 +
+    accuracyScore * 0.20 +
+    sharpScore * 0.15
+  );
+  
+  // Apply injury tax as a reduction
+  const finalScore = Math.max(0, rawFinalScore - (injuryTax * 0.10));
+
+  // Determine PVS Tier based on final score
+  let tier: string;
+  if (finalScore >= 85) {
+    tier = 'GOD_TIER';
+  } else if (finalScore >= 70) {
+    tier = 'HIGH_VALUE';
+  } else if (finalScore >= 55) {
+    tier = 'MED_VOLATILITY';
+  } else if (finalScore >= 40) {
+    tier = 'RISKY';
+  } else {
+    tier = 'FADE';
+  }
+
+  // Override tier if trap pattern detected
+  const trapSigCheck = `basketball_nba:${params.propType}:${params.bookmaker}`;
+  if (params.trapSignatures.has(trapSigCheck) && tier !== 'FADE') {
+    tier = 'FADE';
+  }
+
+  return {
+    pvs_value_score: Math.round(valueScore * 100) / 100,
+    pvs_matchup_score: Math.round(matchupScore * 100) / 100,
+    pvs_minutes_score: Math.round(minutesScore * 100) / 100,
+    pvs_pace_score: Math.round(paceScore * 100) / 100,
+    pvs_accuracy_score: Math.round(accuracyScore * 100) / 100,
+    pvs_sharp_score: Math.round(sharpScore * 100) / 100,
+    pvs_injury_tax: Math.round(injuryTax * 100) / 100,
+    pvs_confidence_score: Math.round(confidenceScore * 100) / 100,
+    pvs_final_score: Math.round(finalScore * 100) / 100,
+    pvs_tier: tier,
+    true_line: null, // Can be calculated from game logs
+    true_line_diff: null
+  };
+}
+
 async function distributeToCategories(supabase: any, props: UnifiedProp[]): Promise<Record<string, number>> {
   const counts: Record<string, number> = {
     hitrate: 0,
@@ -421,7 +752,7 @@ async function distributeToCategories(supabase: any, props: UnifiedProp[]): Prom
     await supabase.from('hitrate_parlays').upsert({
       legs: parlayLegs,
       combined_probability: parlayLegs.reduce((acc, leg) => acc * leg.hit_rate, 1),
-      total_odds: 400, // Placeholder
+      total_odds: 400,
       strategy_type: 'unified_pipeline',
       min_hit_rate: 0.8,
       expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
@@ -466,4 +797,97 @@ async function distributeToCategories(supabase: any, props: UnifiedProp[]): Prom
   }
 
   return counts;
+}
+
+async function createPVSParlays(supabase: any, props: UnifiedProp[]): Promise<void> {
+  // Filter to only high-quality PVS props
+  const pvsProps = props
+    .filter(p => p.pvs_final_score >= 60 && p.pvs_tier !== 'FADE')
+    .sort((a, b) => b.pvs_final_score - a.pvs_final_score);
+
+  if (pvsProps.length < 2) {
+    console.log('[UnifiedEngine] Not enough high-quality PVS props for parlays');
+    return;
+  }
+
+  // Create "Safe 2-Leg" parlay from GOD_TIER and HIGH_VALUE props
+  const safeLegProps = pvsProps.filter(p => p.pvs_tier === 'GOD_TIER' || p.pvs_tier === 'HIGH_VALUE').slice(0, 2);
+  if (safeLegProps.length === 2) {
+    const safeLegs = safeLegProps.map(p => ({
+      player_name: p.player_name,
+      prop_type: p.prop_type,
+      line: p.current_line,
+      side: p.recommended_side || 'over',
+      pvs_score: p.pvs_final_score,
+      tier: p.pvs_tier,
+      game: p.game_description,
+      event_id: p.event_id
+    }));
+
+    await supabase.from('pvs_parlays').upsert({
+      parlay_type: 'safe_2leg',
+      legs: safeLegs,
+      combined_pvs_score: safeLegs.reduce((sum, leg) => sum + leg.pvs_score, 0) / safeLegs.length,
+      combined_probability: safeLegProps.reduce((acc, p) => acc * (p.pvs_confidence_score / 100), 1),
+      total_odds: 250,
+      expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      is_active: true
+    }, { onConflict: 'parlay_type' });
+  }
+
+  // Create "Value 3-Leg" parlay from HIGH_VALUE and MED_VOLATILITY props
+  const valueLegProps = pvsProps.filter(p => p.pvs_tier === 'HIGH_VALUE' || p.pvs_tier === 'MED_VOLATILITY').slice(0, 3);
+  if (valueLegProps.length === 3) {
+    const valueLegs = valueLegProps.map(p => ({
+      player_name: p.player_name,
+      prop_type: p.prop_type,
+      line: p.current_line,
+      side: p.recommended_side || 'over',
+      pvs_score: p.pvs_final_score,
+      tier: p.pvs_tier,
+      game: p.game_description,
+      event_id: p.event_id
+    }));
+
+    await supabase.from('pvs_parlays').upsert({
+      parlay_type: 'value_3leg',
+      legs: valueLegs,
+      combined_pvs_score: valueLegs.reduce((sum, leg) => sum + leg.pvs_score, 0) / valueLegs.length,
+      combined_probability: valueLegProps.reduce((acc, p) => acc * (p.pvs_confidence_score / 100), 1),
+      total_odds: 450,
+      expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      is_active: true
+    }, { onConflict: 'parlay_type' });
+  }
+
+  // Create "Degen 4-Leg" parlay from mixed tiers with high scores
+  const degenLegProps = pvsProps.slice(0, 4);
+  if (degenLegProps.length === 4) {
+    const degenLegs = degenLegProps.map(p => ({
+      player_name: p.player_name,
+      prop_type: p.prop_type,
+      line: p.current_line,
+      side: p.recommended_side || 'over',
+      pvs_score: p.pvs_final_score,
+      tier: p.pvs_tier,
+      game: p.game_description,
+      event_id: p.event_id
+    }));
+
+    await supabase.from('pvs_parlays').upsert({
+      parlay_type: 'degen_4leg',
+      legs: degenLegs,
+      combined_pvs_score: degenLegs.reduce((sum, leg) => sum + leg.pvs_score, 0) / degenLegs.length,
+      combined_probability: degenLegProps.reduce((acc, p) => acc * (p.pvs_confidence_score / 100), 1),
+      total_odds: 800,
+      expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      is_active: true
+    }, { onConflict: 'parlay_type' });
+  }
+
+  console.log('[UnifiedEngine] Created PVS parlays:', {
+    safe2Leg: safeLegProps.length === 2,
+    value3Leg: valueLegProps.length === 3,
+    degen4Leg: degenLegProps.length === 4
+  });
 }

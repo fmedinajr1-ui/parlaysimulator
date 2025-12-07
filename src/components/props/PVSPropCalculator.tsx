@@ -50,9 +50,24 @@ export function PVSPropCalculator() {
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
-      await supabase.functions.invoke('unified-props-engine', {
+      // Step 1: Run data ingestion to refresh supporting data (defense, pace, game logs)
+      console.log('[PVS] Running data ingestion...');
+      await supabase.functions.invoke('pvs-data-ingestion', {
+        body: { mode: 'all' }
+      });
+      
+      // Step 2: Run unified props engine with PVS calculations
+      console.log('[PVS] Running unified props engine with PVS scoring...');
+      const { data, error } = await supabase.functions.invoke('unified-props-engine', {
         body: { sports: ['basketball_nba'] }
       });
+      
+      if (error) {
+        console.error('[PVS] Engine error:', error);
+      } else {
+        console.log('[PVS] Engine result:', data);
+      }
+      
       await refetch();
     } catch (error) {
       console.error('Error refreshing props:', error);
