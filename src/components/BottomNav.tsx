@@ -21,9 +21,10 @@ export function BottomNav() {
     ? [
         baseNavItems[0],
         baseNavItems[1],
+        baseNavItems[2],
+        baseNavItems[3],
         { icon: Calculator, label: "PVS", path: "/pvs-calculator" },
         { icon: Shield, label: "Admin", path: "/admin" },
-        baseNavItems[4],
       ]
     : baseNavItems;
 
