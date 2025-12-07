@@ -1,4 +1,4 @@
-import { Home, BarChart3, User, Shield, Sparkles, WifiOff, TrendingUp, Dog } from "lucide-react";
+import { Home, BarChart3, User, Shield, Sparkles, WifiOff, TrendingUp, Calculator } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { useAdminRole } from "@/hooks/useAdminRole";
@@ -21,8 +21,8 @@ export function BottomNav() {
     ? [
         baseNavItems[0],
         baseNavItems[1],
+        { icon: Calculator, label: "PVS", path: "/pvs-calculator" },
         { icon: Shield, label: "Admin", path: "/admin" },
-        baseNavItems[3],
         baseNavItems[4],
       ]
     : baseNavItems;
