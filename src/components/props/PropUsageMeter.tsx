@@ -11,6 +11,15 @@ interface PropUsageMeterProps {
 }
 
 export function PropUsageMeter({ projection, propType, line }: PropUsageMeterProps) {
+  // Early return if projection data is incomplete
+  if (!projection || !projection.projectedStats) {
+    return (
+      <div className="p-4 text-center text-muted-foreground text-sm">
+        Usage data unavailable for this prop
+      </div>
+    );
+  }
+
   const getVerdictConfig = (verdict: string) => {
     switch (verdict) {
       case 'FAVORABLE':
@@ -37,11 +46,16 @@ export function PropUsageMeter({ projection, propType, line }: PropUsageMeterPro
     }
   };
 
-  const verdictConfig = getVerdictConfig(projection.verdict);
+  const verdictConfig = getVerdictConfig(projection.verdict || 'NEUTRAL');
   const VerdictIcon = verdictConfig.icon;
   
+  const hitRate = projection.hitRate ?? 0;
+  const efficiencyMargin = projection.efficiencyMargin ?? 0;
+  const avgMinutes = projection.avgMinutes ?? 0;
+  const projectedStats = projection.projectedStats ?? { minMinutes: 0, maxMinutes: 0 };
+  
   const confidencePercent = Math.min(100, Math.max(0, 
-    (projection.hitRate * 100 + (projection.efficiencyMargin > 0 ? 30 : 0)) / 1.3
+    (hitRate * 100 + (efficiencyMargin > 0 ? 30 : 0)) / 1.3
   ));
   
   const getConfidenceColor = (percent: number) => {
@@ -77,20 +91,20 @@ export function PropUsageMeter({ projection, propType, line }: PropUsageMeterPro
           <div>
             <div className={cn("font-semibold flex items-center gap-1", verdictConfig.color)}>
               <VerdictIcon className="h-4 w-4" />
-              {projection.verdict} USAGE
+              {projection.verdict || 'NEUTRAL'} USAGE
             </div>
             <div className="text-xs text-muted-foreground">
-              {projection.efficiencyMargin >= 10 
+              {efficiencyMargin >= 10 
                 ? 'High efficiency buffer detected'
-                : projection.efficiencyMargin >= 0
+                : efficiencyMargin >= 0
                 ? 'Adequate efficiency margin'
                 : 'Low efficiency margin'}
             </div>
           </div>
         </div>
         <Badge variant="outline" className={cn("font-mono", verdictConfig.color)}>
-          {projection.hitRate >= 0.8 ? '🔥' : projection.hitRate >= 0.6 ? '✅' : '⚠️'} 
-          {' '}{(projection.hitRate * 100).toFixed(0)}% hit
+          {hitRate >= 0.8 ? '🔥' : hitRate >= 0.6 ? '✅' : '⚠️'} 
+          {' '}{(hitRate * 100).toFixed(0)}% hit
         </Badge>
       </div>
 
@@ -102,25 +116,25 @@ export function PropUsageMeter({ projection, propType, line }: PropUsageMeterPro
             Projected Minutes
           </span>
           <span className="font-mono text-foreground">
-            {projection.projectedStats.minMinutes.toFixed(0)} - {projection.projectedStats.maxMinutes.toFixed(0)} min
+            {projectedStats.minMinutes?.toFixed(0) ?? 0} - {projectedStats.maxMinutes?.toFixed(0) ?? 0} min
           </span>
         </div>
         <div className="relative h-2 bg-muted rounded-full overflow-hidden">
           <div 
             className="absolute h-full bg-primary/30 rounded-full"
             style={{ 
-              left: `${(projection.projectedStats.minMinutes / 48) * 100}%`,
-              width: `${((projection.projectedStats.maxMinutes - projection.projectedStats.minMinutes) / 48) * 100}%`
+              left: `${((projectedStats.minMinutes ?? 0) / 48) * 100}%`,
+              width: `${(((projectedStats.maxMinutes ?? 0) - (projectedStats.minMinutes ?? 0)) / 48) * 100}%`
             }}
           />
           <div 
             className="absolute h-full w-1 bg-primary rounded-full"
-            style={{ left: `${(projection.avgMinutes / 48) * 100}%` }}
+            style={{ left: `${(avgMinutes / 48) * 100}%` }}
           />
         </div>
         <div className="flex justify-between text-[10px] text-muted-foreground">
           <span>0</span>
-          <span className="text-primary font-mono">avg: {projection.avgMinutes.toFixed(1)}</span>
+          <span className="text-primary font-mono">avg: {avgMinutes.toFixed(1)}</span>
           <span>48</span>
         </div>
       </div>
@@ -133,7 +147,7 @@ export function PropUsageMeter({ projection, propType, line }: PropUsageMeterPro
             Required Rate
           </div>
           <div className="font-mono font-semibold text-sm text-foreground">
-            {projection.requiredRate.toFixed(2)}/min
+            {(projection.requiredRate ?? 0).toFixed(2)}/min
           </div>
         </div>
         <div className="p-2 rounded-lg bg-muted/30 border border-border/30">
@@ -142,7 +156,7 @@ export function PropUsageMeter({ projection, propType, line }: PropUsageMeterPro
             Historical Rate
           </div>
           <div className="font-mono font-semibold text-sm text-foreground">
-            {projection.historicalRate.toFixed(2)}/min
+            {(projection.historicalRate ?? 0).toFixed(2)}/min
           </div>
         </div>
       </div>
@@ -154,12 +168,12 @@ export function PropUsageMeter({ projection, propType, line }: PropUsageMeterPro
           variant="outline" 
           className={cn(
             "font-mono",
-            projection.efficiencyMargin >= 10 ? "text-emerald-400 border-emerald-500/30" :
-            projection.efficiencyMargin >= 0 ? "text-yellow-400 border-yellow-500/30" :
+            efficiencyMargin >= 10 ? "text-emerald-400 border-emerald-500/30" :
+            efficiencyMargin >= 0 ? "text-yellow-400 border-yellow-500/30" :
             "text-red-400 border-red-500/30"
           )}
         >
-          {projection.efficiencyMargin >= 0 ? '+' : ''}{projection.efficiencyMargin.toFixed(1)}%
+          {efficiencyMargin >= 0 ? '+' : ''}{efficiencyMargin.toFixed(1)}%
         </Badge>
       </div>
 
