@@ -207,25 +207,7 @@ serve(async (req) => {
                     const overPrice = outcomes.over?.price || null;
                     const underPrice = outcomes.under?.price || null;
 
-                    // Calculate base scores
-                    const baseScores = calculateBaseScores({
-                      playerName,
-                      propType: propMarket.key,
-                      eventId: event.id,
-                      sport,
-                      line,
-                      overPrice,
-                      underPrice,
-                      hitRateMap,
-                      sharpMovementMap,
-                      trapSignatures,
-                      fatigueMap,
-                      homeTeam: event.home_team,
-                      awayTeam: event.away_team,
-                      bookmaker: bookmaker.key
-                    });
-
-                    // Calculate PVS scores
+                    // Calculate PVS scores first (includes true_line calculation)
                     const pvsScores = calculatePVSScores({
                       playerName,
                       propType: propMarket.key,
@@ -243,6 +225,26 @@ serve(async (req) => {
                       fatigueMap,
                       trapSignatures,
                       bookmaker: bookmaker.key
+                    });
+
+                    // Calculate base scores
+                    const baseScores = calculateBaseScores({
+                      playerName,
+                      propType: propMarket.key,
+                      eventId: event.id,
+                      sport,
+                      line,
+                      overPrice,
+                      underPrice,
+                      hitRateMap,
+                      sharpMovementMap,
+                      trapSignatures,
+                      fatigueMap,
+                      homeTeam: event.home_team,
+                      awayTeam: event.away_team,
+                      bookmaker: bookmaker.key,
+                      gameLogsMap,
+                      trueLine: pvsScores.true_line
                     });
 
                     unifiedProps.push({
@@ -350,6 +352,8 @@ interface BaseScoreParams {
   homeTeam: string;
   awayTeam: string;
   bookmaker: string;
+  gameLogsMap: Map<string, any[]>;
+  trueLine: number | null;
 }
 
 function calculateBaseScores(params: BaseScoreParams): {
@@ -447,12 +451,46 @@ function calculateBaseScores(params: BaseScoreParams): {
     }
   }
   
-  // Fallback: determine recommended side from price differential if not set
+  // Priority 1: Use true line comparison from PVS calculation
+  if (!recommendedSide && params.trueLine !== null) {
+    recommendedSide = params.trueLine > params.line ? 'over' : 'under';
+    signalSources.push('true_line_analysis');
+  }
+  
+  // Priority 2: Use game logs to determine if player averages above or below line
+  if (!recommendedSide) {
+    const playerLogs = params.gameLogsMap.get(params.playerName) || [];
+    if (playerLogs.length >= 3) {
+      const propToStat: Record<string, string> = {
+        'player_points': 'points',
+        'player_rebounds': 'rebounds',
+        'player_assists': 'assists',
+        'player_threes': 'threes_made',
+        'player_blocks': 'blocks',
+        'player_steals': 'steals'
+      };
+      const statKey = propToStat[params.propType];
+      if (statKey) {
+        const recentLogs = playerLogs.slice(0, 10);
+        const avgStat = recentLogs.reduce((sum, log) => sum + (log[statKey] || 0), 0) / recentLogs.length;
+        recommendedSide = avgStat > params.line ? 'over' : 'under';
+        signalSources.push('game_log_average');
+      }
+    }
+  }
+  
+  // Priority 3: Fallback to price differential
   if (!recommendedSide && params.overPrice && params.underPrice) {
-    // If over is more juiced (more negative), under is recommended; vice versa
     const overJuice = params.overPrice < 0 ? Math.abs(params.overPrice) : 100 - params.overPrice;
     const underJuice = params.underPrice < 0 ? Math.abs(params.underPrice) : 100 - params.underPrice;
     recommendedSide = overJuice > underJuice ? 'under' : 'over';
+    signalSources.push('price_differential_fallback');
+  }
+  
+  // Final fallback: default to over
+  if (!recommendedSide) {
+    recommendedSide = 'over';
+    signalSources.push('default_over');
   }
 
   // Determine category
@@ -568,6 +606,7 @@ function calculatePVSScores(params: PVSScoreParams): {
   }
 
   // 3. MINUTES SCORE (0-100): Based on player game logs and minutes consistency
+  let trueLine: number | null = null;
   const playerLogs = params.gameLogsMap.get(params.playerName) || [];
   if (playerLogs.length >= 3) {
     const recentLogs = playerLogs.slice(0, 10);
@@ -594,7 +633,7 @@ function calculatePVSScores(params: PVSScoreParams): {
     const statKey = propToStat[params.propType];
     if (statKey) {
       const avgStat = recentLogs.reduce((sum, log) => sum + (log[statKey] || 0), 0) / recentLogs.length;
-      // Could set true_line here if needed
+      trueLine = Math.round(avgStat * 10) / 10; // Round to 1 decimal
     }
   }
 
@@ -713,6 +752,8 @@ function calculatePVSScores(params: PVSScoreParams): {
     tier = 'FADE';
   }
 
+  const trueLineDiff = trueLine !== null ? trueLine - params.line : null;
+
   return {
     pvs_value_score: Math.round(valueScore * 100) / 100,
     pvs_matchup_score: Math.round(matchupScore * 100) / 100,
@@ -724,8 +765,8 @@ function calculatePVSScores(params: PVSScoreParams): {
     pvs_confidence_score: Math.round(confidenceScore * 100) / 100,
     pvs_final_score: Math.round(finalScore * 100) / 100,
     pvs_tier: tier,
-    true_line: null, // Can be calculated from game logs
-    true_line_diff: null
+    true_line: trueLine,
+    true_line_diff: trueLineDiff !== null ? Math.round(trueLineDiff * 10) / 10 : null
   };
 }
 
@@ -808,26 +849,42 @@ async function distributeToCategories(supabase: any, props: UnifiedProp[]): Prom
 }
 
 async function createPVSParlays(supabase: any, props: UnifiedProp[]): Promise<void> {
-  // Filter to only high-quality PVS props
+  // Filter to only quality PVS props - RELAXED threshold to >= 50
   const pvsProps = props
-    .filter(p => p.pvs_final_score >= 60 && p.pvs_tier !== 'FADE')
+    .filter(p => p.pvs_final_score >= 50 && p.pvs_tier !== 'FADE')
     .sort((a, b) => b.pvs_final_score - a.pvs_final_score);
 
+  console.log('[UnifiedEngine] PVS props available for parlays:', pvsProps.length);
+  console.log('[UnifiedEngine] Tier distribution:', {
+    godTier: pvsProps.filter(p => p.pvs_tier === 'GOD_TIER').length,
+    highValue: pvsProps.filter(p => p.pvs_tier === 'HIGH_VALUE').length,
+    medVolatility: pvsProps.filter(p => p.pvs_tier === 'MED_VOLATILITY').length
+  });
+
   if (pvsProps.length < 2) {
-    console.log('[UnifiedEngine] Not enough high-quality PVS props for parlays');
+    console.log('[UnifiedEngine] Not enough PVS props for parlays');
     return;
   }
 
-  // Create "Safe 2-Leg" parlay from GOD_TIER and HIGH_VALUE props
-  const safeLegProps = pvsProps.filter(p => p.pvs_tier === 'GOD_TIER' || p.pvs_tier === 'HIGH_VALUE').slice(0, 2);
-  if (safeLegProps.length === 2) {
-    const safeLegs = safeLegProps.map(p => ({
+  // Create "Safe 2-Leg" parlay - NOW INCLUDES MED_VOLATILITY with score >= 60
+  const safeLegProps = pvsProps
+    .filter(p => p.pvs_tier === 'GOD_TIER' || p.pvs_tier === 'HIGH_VALUE' || (p.pvs_tier === 'MED_VOLATILITY' && p.pvs_final_score >= 60))
+    .slice(0, 2);
+  
+  // Fallback: if not enough high-quality, use top 2 props with score >= 55
+  const actualSafeProps = safeLegProps.length >= 2 
+    ? safeLegProps 
+    : pvsProps.filter(p => p.pvs_final_score >= 55).slice(0, 2);
+
+  if (actualSafeProps.length >= 2) {
+    const safeLegs = actualSafeProps.map(p => ({
       player_name: p.player_name,
       prop_type: p.prop_type,
       line: p.current_line,
       side: p.recommended_side || 'over',
       pvs_score: p.pvs_final_score,
-      tier: p.pvs_tier,
+      pvs_tier: p.pvs_tier,
+      odds: p.recommended_side === 'over' ? p.over_price : p.under_price,
       game: p.game_description,
       event_id: p.event_id
     }));
@@ -836,23 +893,25 @@ async function createPVSParlays(supabase: any, props: UnifiedProp[]): Promise<vo
       parlay_type: 'safe_2leg',
       legs: safeLegs,
       combined_pvs_score: safeLegs.reduce((sum, leg) => sum + leg.pvs_score, 0) / safeLegs.length,
-      combined_probability: safeLegProps.reduce((acc, p) => acc * (p.pvs_confidence_score / 100), 1),
+      combined_probability: actualSafeProps.reduce((acc, p) => acc * Math.max(0.4, p.pvs_confidence_score / 100), 1),
       total_odds: 250,
       expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       is_active: true
     }, { onConflict: 'parlay_type' });
+    console.log('[UnifiedEngine] Created safe_2leg parlay');
   }
 
-  // Create "Value 3-Leg" parlay from HIGH_VALUE and MED_VOLATILITY props
-  const valueLegProps = pvsProps.filter(p => p.pvs_tier === 'HIGH_VALUE' || p.pvs_tier === 'MED_VOLATILITY').slice(0, 3);
-  if (valueLegProps.length === 3) {
+  // Create "Value 3-Leg" parlay - RELAXED to include any prop >= 50 score
+  const valueLegProps = pvsProps.filter(p => p.pvs_final_score >= 50).slice(0, 3);
+  if (valueLegProps.length >= 3) {
     const valueLegs = valueLegProps.map(p => ({
       player_name: p.player_name,
       prop_type: p.prop_type,
       line: p.current_line,
       side: p.recommended_side || 'over',
       pvs_score: p.pvs_final_score,
-      tier: p.pvs_tier,
+      pvs_tier: p.pvs_tier,
+      odds: p.recommended_side === 'over' ? p.over_price : p.under_price,
       game: p.game_description,
       event_id: p.event_id
     }));
@@ -861,23 +920,25 @@ async function createPVSParlays(supabase: any, props: UnifiedProp[]): Promise<vo
       parlay_type: 'value_3leg',
       legs: valueLegs,
       combined_pvs_score: valueLegs.reduce((sum, leg) => sum + leg.pvs_score, 0) / valueLegs.length,
-      combined_probability: valueLegProps.reduce((acc, p) => acc * (p.pvs_confidence_score / 100), 1),
+      combined_probability: valueLegProps.reduce((acc, p) => acc * Math.max(0.35, p.pvs_confidence_score / 100), 1),
       total_odds: 450,
       expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       is_active: true
     }, { onConflict: 'parlay_type' });
+    console.log('[UnifiedEngine] Created value_3leg parlay');
   }
 
-  // Create "Degen 4-Leg" parlay from mixed tiers with high scores
+  // Create "Degen 4-Leg" parlay from top 4 props
   const degenLegProps = pvsProps.slice(0, 4);
-  if (degenLegProps.length === 4) {
+  if (degenLegProps.length >= 4) {
     const degenLegs = degenLegProps.map(p => ({
       player_name: p.player_name,
       prop_type: p.prop_type,
       line: p.current_line,
       side: p.recommended_side || 'over',
       pvs_score: p.pvs_final_score,
-      tier: p.pvs_tier,
+      pvs_tier: p.pvs_tier,
+      odds: p.recommended_side === 'over' ? p.over_price : p.under_price,
       game: p.game_description,
       event_id: p.event_id
     }));
@@ -886,11 +947,12 @@ async function createPVSParlays(supabase: any, props: UnifiedProp[]): Promise<vo
       parlay_type: 'degen_4leg',
       legs: degenLegs,
       combined_pvs_score: degenLegs.reduce((sum, leg) => sum + leg.pvs_score, 0) / degenLegs.length,
-      combined_probability: degenLegProps.reduce((acc, p) => acc * (p.pvs_confidence_score / 100), 1),
+      combined_probability: degenLegProps.reduce((acc, p) => acc * Math.max(0.3, p.pvs_confidence_score / 100), 1),
       total_odds: 800,
       expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       is_active: true
     }, { onConflict: 'parlay_type' });
+    console.log('[UnifiedEngine] Created degen_4leg parlay');
   }
 
   console.log('[UnifiedEngine] Created PVS parlays:', {

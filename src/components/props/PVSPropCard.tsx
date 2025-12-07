@@ -136,18 +136,24 @@ export function PVSPropCard({ prop, isSelected = false, onSelect }: PVSPropCardP
 
         {/* Recommended Side */}
         <div className="flex items-center gap-2">
-          {prop.recommended_side && (
-            <Badge 
-              className={cn(
-                "font-semibold",
-                prop.recommended_side === 'over' 
-                  ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" 
-                  : "bg-red-500/20 text-red-400 border-red-500/30"
-              )}
-            >
-              {prop.recommended_side === 'over' ? '▲' : '▼'} {prop.recommended_side.toUpperCase()} {prop.current_line}
-            </Badge>
-          )}
+          <Badge 
+            className={cn(
+              "font-semibold",
+              prop.recommended_side === 'over' 
+                ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" 
+                : prop.recommended_side === 'under'
+                  ? "bg-red-500/20 text-red-400 border-red-500/30"
+                  : "bg-muted text-muted-foreground border-border"
+            )}
+          >
+            {prop.recommended_side === 'over' ? (
+              <>▲ OVER {prop.current_line}</>
+            ) : prop.recommended_side === 'under' ? (
+              <>▼ UNDER {prop.current_line}</>
+            ) : (
+              <>— No Pick</>
+            )}
+          </Badge>
           
           {prop.pvs_injury_tax > 0 && (
             <Badge variant="destructive" className="text-xs">
