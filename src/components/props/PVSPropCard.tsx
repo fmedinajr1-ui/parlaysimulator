@@ -3,12 +3,14 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { ChevronDown, ChevronUp, Plus, Check, TrendingUp, TrendingDown } from "lucide-react";
+import { ChevronDown, ChevronUp, Plus, Check, TrendingUp, TrendingDown, Activity, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { PVSProp, PVS_SCORE_COMPONENTS } from "@/types/pvs";
+import { PVSProp, PVS_SCORE_COMPONENTS, UsageProjection } from "@/types/pvs";
 import { PVSTierBadge } from "./PVSTierBadge";
 import { PVSScoreBar } from "./PVSScoreBar";
-
+import { PropUsageMeter } from "./PropUsageMeter";
+import { supabase } from "@/integrations/supabase/client";
+import { Skeleton } from "@/components/ui/skeleton";
 interface PVSPropCardProps {
   prop: PVSProp;
   isSelected?: boolean;
@@ -17,6 +19,43 @@ interface PVSPropCardProps {
 
 export function PVSPropCard({ prop, isSelected = false, onSelect }: PVSPropCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isUsageExpanded, setIsUsageExpanded] = useState(false);
+  const [usageData, setUsageData] = useState<UsageProjection | null>(null);
+  const [isLoadingUsage, setIsLoadingUsage] = useState(false);
+  const [usageError, setUsageError] = useState<string | null>(null);
+
+  const fetchUsageData = async () => {
+    if (usageData || isLoadingUsage) return;
+    
+    setIsLoadingUsage(true);
+    setUsageError(null);
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('calculate-player-usage', {
+        body: {
+          playerName: prop.player_name,
+          propType: prop.prop_type,
+          line: prop.current_line,
+          opponent: prop.game_description?.split(' @ ')?.[1] || prop.game_description?.split(' vs ')?.[1] || null
+        }
+      });
+
+      if (error) throw error;
+      setUsageData(data);
+    } catch (err: any) {
+      console.error('Error fetching usage data:', err);
+      setUsageError('Usage data unavailable');
+    } finally {
+      setIsLoadingUsage(false);
+    }
+  };
+
+  const handleUsageToggle = (open: boolean) => {
+    setIsUsageExpanded(open);
+    if (open) {
+      fetchUsageData();
+    }
+  };
 
   const getFinalScoreColor = (score: number) => {
     if (score >= 85) return 'text-emerald-400';
@@ -169,6 +208,43 @@ export function PVSPropCard({ prop, isSelected = false, onSelect }: PVSPropCardP
                 </div>
               </div>
             </div>
+          </CollapsibleContent>
+        </Collapsible>
+
+        {/* Usage Analysis Section */}
+        <Collapsible open={isUsageExpanded} onOpenChange={handleUsageToggle}>
+          <CollapsibleTrigger asChild>
+            <Button variant="ghost" size="sm" className="w-full justify-between text-muted-foreground hover:text-foreground">
+              <span className="text-xs flex items-center gap-1">
+                <Activity className="h-3 w-3" />
+                Usage Analysis
+              </span>
+              {isUsageExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            {isLoadingUsage && (
+              <div className="space-y-3 pt-2">
+                <Skeleton className="h-20 w-full" />
+                <Skeleton className="h-8 w-full" />
+                <div className="grid grid-cols-2 gap-3">
+                  <Skeleton className="h-16 w-full" />
+                  <Skeleton className="h-16 w-full" />
+                </div>
+              </div>
+            )}
+            {usageError && (
+              <div className="text-center py-4 text-sm text-muted-foreground">
+                {usageError}
+              </div>
+            )}
+            {usageData && (
+              <PropUsageMeter 
+                projection={usageData} 
+                propType={prop.prop_type}
+                line={prop.current_line}
+              />
+            )}
           </CollapsibleContent>
         </Collapsible>
 
