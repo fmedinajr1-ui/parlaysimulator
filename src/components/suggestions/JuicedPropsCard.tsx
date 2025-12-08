@@ -19,10 +19,12 @@ import {
   CheckCircle2,
   Brain,
   Sparkles,
-  Shield
+  Shield,
+  Plus
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { AddToParlayButton } from "@/components/parlay/AddToParlayButton";
 
 interface JuicedProp {
   id: string;
@@ -489,18 +491,34 @@ const PropCard = ({ prop, isLocked }: { prop: JuicedProp; isLocked: boolean }) =
           )}
         </div>
         
-        <div className="text-right shrink-0">
+        <div className="flex flex-col items-end gap-2 shrink-0">
           <div className="flex items-center gap-1 text-muted-foreground">
             <Clock className="w-3 h-3" />
             <span className="text-xs">{formatTime(prop.commence_time)}</span>
           </div>
           {isLocked && prop.final_pick_time && (
-            <p className="text-xs text-neon-green mt-1">
+            <p className="text-xs text-neon-green">
               Locked {formatTime(prop.final_pick_time)}
             </p>
           )}
           {!isLocked && (
-            <p className="text-xs text-muted-foreground mt-1">{prop.bookmaker}</p>
+            <p className="text-xs text-muted-foreground">{prop.bookmaker}</p>
+          )}
+          {(isLocked && prop.final_pick) && (
+            <AddToParlayButton
+              description={`${prop.player_name} ${prop.final_pick.toUpperCase()} ${prop.line} ${prop.prop_type}`}
+              odds={prop.final_pick === 'over' ? prop.over_price : prop.under_price}
+              source="juiced"
+              playerName={prop.player_name}
+              propType={prop.prop_type}
+              line={prop.line}
+              side={prop.final_pick as 'over' | 'under'}
+              sport={prop.sport}
+              eventId={prop.event_id}
+              confidenceScore={prop.final_pick_confidence ? prop.final_pick_confidence * 100 : undefined}
+              sourceData={{ juiceLevel: prop.juice_level, pvsTier: prop.unified_pvs_tier }}
+              variant="compact"
+            />
           )}
         </div>
       </div>

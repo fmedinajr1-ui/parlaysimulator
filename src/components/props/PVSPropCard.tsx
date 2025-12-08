@@ -9,8 +9,10 @@ import { PVSProp, PVS_SCORE_COMPONENTS, UsageProjection } from "@/types/pvs";
 import { PVSTierBadge } from "./PVSTierBadge";
 import { PVSScoreBar } from "./PVSScoreBar";
 import { PropUsageMeter } from "./PropUsageMeter";
+import { AddToParlayButton } from "@/components/parlay/AddToParlayButton";
 import { supabase } from "@/integrations/supabase/client";
 import { Skeleton } from "@/components/ui/skeleton";
+
 interface PVSPropCardProps {
   prop: PVSProp;
   isSelected?: boolean;
@@ -257,26 +259,20 @@ export function PVSPropCard({ prop, isSelected = false, onSelect }: PVSPropCardP
         </Collapsible>
 
         {/* Add to Parlay Button */}
-        {onSelect && (
-          <Button
-            variant={isSelected ? "secondary" : "default"}
-            size="sm"
-            className="w-full"
-            onClick={() => onSelect(prop)}
-          >
-            {isSelected ? (
-              <>
-                <Check className="h-4 w-4 mr-1" />
-                Added to Parlay
-              </>
-            ) : (
-              <>
-                <Plus className="h-4 w-4 mr-1" />
-                Add to Parlay
-              </>
-            )}
-          </Button>
-        )}
+        <AddToParlayButton
+          description={`${prop.player_name} ${prop.recommended_side === 'over' ? 'Over' : 'Under'} ${prop.current_line} ${formatPropType(prop.prop_type)}`}
+          odds={prop.recommended_side === 'over' ? (prop.over_price || -110) : (prop.under_price || -110)}
+          source="pvs"
+          playerName={prop.player_name}
+          propType={prop.prop_type}
+          line={prop.current_line}
+          side={prop.recommended_side === 'over' ? 'over' : prop.recommended_side === 'under' ? 'under' : undefined}
+          sport={prop.sport}
+          eventId={prop.event_id}
+          confidenceScore={prop.pvs_final_score}
+          sourceData={{ pvsTier: prop.pvs_tier, pvsScore: prop.pvs_final_score }}
+          className="w-full"
+        />
       </CardContent>
     </Card>
   );
