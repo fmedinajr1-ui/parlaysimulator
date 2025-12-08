@@ -8,8 +8,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { Plus, RefreshCw, Target, TrendingUp, TrendingDown, AlertTriangle, Check, X, Loader2, Brain, Scan, Search, ArrowUpDown, ArrowUp, ArrowDown, Timer, TimerOff, Clock } from 'lucide-react';
+import { Plus, RefreshCw, Target, TrendingUp, TrendingDown, AlertTriangle, Check, X, Loader2, Brain, Scan, Search, ArrowUpDown, ArrowUp, ArrowDown, Timer, TimerOff, Clock, Zap } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
+import { GodModePressureGauge } from './GodModePressureGauge';
+import { ConsensusHeatmap } from './ConsensusHeatmap';
 
 type SortField = 'player_name' | 'ai_confidence' | 'movement' | 'created_at' | 'last_updated';
 type SortDirection = 'asc' | 'desc';
@@ -1214,22 +1216,15 @@ const SharpLineCalculator = () => {
                     </div>
                   )}
 
-                  {/* AI Analysis */}
+                  {/* AI Analysis - GOD MODE */}
                   {prop.ai_reasoning && (
-                    <div className="p-4 rounded-lg bg-primary/5 border border-primary/20 space-y-3">
+                    <div className="p-4 rounded-lg bg-primary/5 border border-primary/20 space-y-4">
                       <div className="flex items-center justify-between flex-wrap gap-2">
                         <div className="flex items-center gap-2">
-                          <Brain className="w-5 h-5 text-primary" />
-                          <span className="font-semibold">AI Analysis</span>
+                          <Zap className="w-5 h-5 text-primary" />
+                          <span className="font-semibold">GOD MODE Analysis</span>
                         </div>
                         <div className="flex items-center gap-2 flex-wrap">
-                          {/* Calibration Badge */}
-                          {prop.ai_reasoning?.includes('[Calibration:') && (
-                            <Badge variant="outline" className="bg-purple-500/20 text-purple-400 border-purple-500/30">
-                              <Target className="w-3 h-3 mr-1" />
-                              Calibrated
-                            </Badge>
-                          )}
                           {prop.ai_confidence && (
                             <Badge variant="outline">
                               {Math.round(prop.ai_confidence * 100)}% confidence
@@ -1240,23 +1235,55 @@ const SharpLineCalculator = () => {
                       <p className="text-sm">{prop.ai_reasoning}</p>
                       
                       {prop.ai_signals && (() => {
-                        const signals = prop.ai_signals as { sharp?: string[]; trap?: string[]; calibrationApplied?: boolean; strategyBoost?: number };
+                        const signals = prop.ai_signals as {
+                          godMode?: boolean;
+                          sharpPressure?: number;
+                          trapPressure?: number;
+                          marketNoise?: number;
+                          eventVolatilityModifier?: number;
+                          nmes?: number;
+                          sharpProbability?: number;
+                          trapProbability?: number;
+                          godModeScore?: number;
+                          consensusRatio?: number;
+                          consensusStrength?: string;
+                          sharpSignals?: Array<{ name: string; baseWeight: number; contextMultiplier: number; finalWeight: number; description: string; isActive: boolean }>;
+                          trapSignals?: Array<{ name: string; baseWeight: number; severityModifier: number; finalWeight: number; description: string; isActive: boolean }>;
+                          sharp?: string[];
+                          trap?: string[];
+                        };
+                        
+                        // GOD MODE display
+                        if (signals.godMode && signals.sharpPressure !== undefined) {
+                          return (
+                            <div className="space-y-4">
+                              <GodModePressureGauge
+                                sharpPressure={signals.sharpPressure}
+                                trapPressure={signals.trapPressure || 0}
+                                marketNoise={signals.marketNoise || 0}
+                                eventVolatilityModifier={signals.eventVolatilityModifier || 1}
+                                nmes={signals.nmes || 0}
+                                sharpProbability={signals.sharpProbability || 0.5}
+                                trapProbability={signals.trapProbability || 0.5}
+                                godModeScore={signals.godModeScore || 0}
+                                recommendation={prop.ai_recommendation as 'pick' | 'fade' | 'caution' || 'caution'}
+                              />
+                              
+                              {signals.sharpSignals && signals.trapSignals && (
+                                <ConsensusHeatmap
+                                  consensusRatio={signals.consensusRatio || 0.5}
+                                  consensusStrength={signals.consensusStrength || 'weak'}
+                                  sharpSignals={signals.sharpSignals}
+                                  trapSignals={signals.trapSignals}
+                                />
+                              )}
+                            </div>
+                          );
+                        }
+                        
+                        // Legacy display for old analyses
                         return (
                           <div className="space-y-2">
-                            {/* Calibration Info */}
-                            {signals.calibrationApplied && (
-                              <div className="flex items-center gap-2 p-2 rounded bg-purple-500/10 border border-purple-500/20">
-                                <Target className="w-4 h-4 text-purple-400" />
-                                <span className="text-xs text-purple-400">
-                                  AI calibration applied based on historical accuracy data
-                                  {signals.strategyBoost && signals.strategyBoost !== 0 && (
-                                    <span className="ml-2">
-                                      • Strategy boost: {signals.strategyBoost > 0 ? '+' : ''}{signals.strategyBoost.toFixed(1)}
-                                    </span>
-                                  )}
-                                </span>
-                              </div>
-                            )}
                             {signals.sharp && signals.sharp.length > 0 && (
                               <div>
                                 <p className="text-xs text-green-400 font-semibold mb-1">✅ Sharp Signals</p>
