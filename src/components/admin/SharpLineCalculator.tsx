@@ -8,7 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { Plus, RefreshCw, Target, TrendingUp, TrendingDown, AlertTriangle, Check, X, Loader2, Brain, Scan, Search, ArrowUpDown, ArrowUp, ArrowDown, Timer, TimerOff, Clock, Zap } from 'lucide-react';
+import { Plus, RefreshCw, Target, TrendingUp, TrendingDown, AlertTriangle, Check, X, Loader2, Brain, Scan, Search, ArrowUpDown, ArrowUp, ArrowDown, Timer, TimerOff, Clock, Zap, ShoppingCart } from 'lucide-react';
+import { useParlayBuilder } from '@/contexts/ParlayBuilderContext';
 import { Switch } from '@/components/ui/switch';
 import { GodModePressureGauge } from './GodModePressureGauge';
 import { ConsensusHeatmap } from './ConsensusHeatmap';
@@ -55,6 +56,7 @@ const PROP_TYPES = [
 const BOOKMAKERS = ['draftkings', 'fanduel', 'betmgm', 'caesars', 'pointsbet', 'bet365'];
 
 const SharpLineCalculator = () => {
+  const { addLeg, hasLeg } = useParlayBuilder();
   const [trackedProps, setTrackedProps] = useState<TrackedProp[]>([]);
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState<string | null>(null);
@@ -1213,6 +1215,49 @@ const SharpLineCalculator = () => {
                         )}
                         Analyze
                       </Button>
+                      {prop.ai_recommendation && (() => {
+                        const desc = `${prop.player_name} ${prop.ai_direction?.toUpperCase() || 'OVER'} ${prop.current_line || prop.opening_line} ${prop.prop_type}`;
+                        const odds = prop.ai_direction === 'over' 
+                          ? (prop.current_over_price || prop.opening_over_price)
+                          : (prop.current_under_price || prop.opening_under_price);
+                        const isAdded = hasLeg(desc);
+                        
+                        return (
+                          <Button
+                            size="sm"
+                            variant={isAdded ? "outline" : "secondary"}
+                            disabled={isAdded}
+                            onClick={() => {
+                              if (!isAdded) {
+                                addLeg({
+                                  description: desc,
+                                  odds,
+                                  source: 'sharp',
+                                  playerName: prop.player_name,
+                                  propType: prop.prop_type,
+                                  line: prop.current_line || prop.opening_line,
+                                  side: (prop.ai_direction as 'over' | 'under') || 'over',
+                                  sport: prop.sport,
+                                  eventId: prop.event_id || undefined,
+                                  confidenceScore: prop.ai_confidence || undefined,
+                                });
+                              }
+                            }}
+                          >
+                            {isAdded ? (
+                              <>
+                                <Check className="w-4 h-4 mr-2" />
+                                Added
+                              </>
+                            ) : (
+                              <>
+                                <ShoppingCart className="w-4 h-4 mr-2" />
+                                Add to Parlay
+                              </>
+                            )}
+                          </Button>
+                        );
+                      })()}
                     </div>
                   )}
 

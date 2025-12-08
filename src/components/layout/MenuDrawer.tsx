@@ -22,7 +22,8 @@ import { Separator } from "@/components/ui/separator";
 const menuItems = [
   { icon: Sparkles, label: "AI Picks", path: "/suggestions", description: "Smart betting suggestions" },
   { icon: Flame, label: "God Mode Upsets", path: "/god-mode", description: "AI upset predictions" },
-  { icon: Zap, label: "Sharp Money", path: "/sharp", description: "Track sharp action" },
+  { icon: Zap, label: "GOD MODE Tracker", path: "/god-mode-tracker", description: "Sharp vs Vegas intel" },
+  { icon: Activity, label: "Sharp Money", path: "/sharp", description: "Track sharp action" },
   { icon: Activity, label: "NBA Fatigue", path: "/nba-fatigue", description: "Team fatigue analysis" },
   { icon: GitCompare, label: "Compare Parlays", path: "/compare", description: "Head-to-head comparison" },
   { icon: Search, label: "Line Shopping", path: "/line-shopping", description: "Find best odds" },
