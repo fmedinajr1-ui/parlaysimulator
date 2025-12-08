@@ -27,6 +27,24 @@ interface JuicedProp extends PlayerProp {
   opening_over_price?: number;
   is_morning_trap?: boolean;
   trap_reason?: string;
+  // Unified intelligence data
+  unified_composite_score?: number;
+  unified_pvs_tier?: string;
+  unified_recommendation?: string;
+  unified_confidence?: number;
+  unified_trap_score?: number;
+  used_unified_intelligence?: boolean;
+}
+
+interface UnifiedProp {
+  event_id: string;
+  player_name: string;
+  prop_type: string;
+  composite_score: number;
+  pvs_tier: string;
+  recommended_side: string;
+  confidence: number;
+  trap_score: number;
 }
 
 // Detect juice on a prop
@@ -99,6 +117,31 @@ function mapPropType(market: string): string {
   return propMap[market] || market.replace('player_', '').replace(/_/g, ' ');
 }
 
+// Normalize player name for matching
+function normalizePlayerName(name: string): string {
+  return name.toLowerCase().trim().replace(/[^a-z\s]/g, '');
+}
+
+// Normalize prop type for matching
+function normalizePropType(propType: string): string {
+  // Map display names back to unified prop types
+  const reverseMap: Record<string, string> = {
+    'points': 'player_points',
+    'rebounds': 'player_rebounds',
+    'assists': 'player_assists',
+    '3-pointers': 'player_threes',
+    'pra': 'player_points_rebounds_assists',
+    'pass tds': 'player_pass_tds',
+    'pass yards': 'player_pass_yds',
+    'rush yards': 'player_rush_yds',
+    'receptions': 'player_receptions',
+    'goals': 'player_goals',
+    'shots': 'player_shots_on_goal',
+    'pp points': 'player_power_play_points',
+  };
+  return reverseMap[propType.toLowerCase()] || propType.toLowerCase();
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -111,7 +154,7 @@ serve(async (req) => {
     
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
     
-    console.log('🌅 Starting morning props scanner...');
+    console.log('🌅 Starting morning props scanner with Unified Intelligence...');
     
     // Fetch existing hit rate data to cross-reference with juiced props
     const { data: hitRateData } = await supabase
@@ -119,15 +162,32 @@ serve(async (req) => {
       .select('player_name, prop_type, hit_rate_over, hit_rate_under, recommended_side, confidence_score')
       .gte('analyzed_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
     
+    // Fetch unified props for cross-reference
+    const { data: unifiedPropsData } = await supabase
+      .from('unified_props')
+      .select('event_id, player_name, prop_type, composite_score, pvs_tier, recommended_side, confidence, trap_score')
+      .eq('is_active', true)
+      .gte('commence_time', new Date().toISOString());
+    
     // Build lookup map for hit rate cross-referencing
     const hitRateMap = new Map<string, any>();
     if (hitRateData) {
       for (const hr of hitRateData) {
-        const key = `${hr.player_name.toLowerCase()}_${hr.prop_type}`;
+        const key = `${normalizePlayerName(hr.player_name)}_${hr.prop_type}`;
         hitRateMap.set(key, hr);
       }
     }
     console.log(`Loaded ${hitRateMap.size} hit rate records for cross-reference`);
+    
+    // Build lookup map for unified props
+    const unifiedPropsMap = new Map<string, UnifiedProp>();
+    if (unifiedPropsData) {
+      for (const up of unifiedPropsData) {
+        const key = `${normalizePlayerName(up.player_name)}_${up.prop_type}`;
+        unifiedPropsMap.set(key, up as UnifiedProp);
+      }
+    }
+    console.log(`🧠 Loaded ${unifiedPropsMap.size} unified props for intelligence cross-reference`);
     
   // Sports to scan for player props - NBA, Football, Hockey only
   const sportsToScan = [
@@ -153,6 +213,8 @@ serve(async (req) => {
     const now = new Date();
     const endOfDay = new Date(now);
     endOfDay.setHours(23, 59, 59, 999);
+    
+    let unifiedMatchCount = 0;
     
     // Scan each sport
     for (const sport of sportsToScan) {
@@ -218,8 +280,12 @@ serve(async (req) => {
                     // Only include props with juice on the OVER
                     if (isJuiced && juiceDirection === 'over') {
                       // Cross-reference with hit rate data
-                      const hitRateKey = `${playerName.toLowerCase()}_${market}`;
+                      const hitRateKey = `${normalizePlayerName(playerName)}_${market}`;
                       const playerHitRate = hitRateMap.get(hitRateKey);
+                      
+                      // Cross-reference with unified props for intelligence
+                      const unifiedKey = `${normalizePlayerName(playerName)}_${market}`;
+                      const unifiedProp = unifiedPropsMap.get(unifiedKey);
                       
                       // If we have hit rate data showing under is better, flag this as potential trap
                       let isTrap = false;
@@ -232,7 +298,15 @@ serve(async (req) => {
                         }
                       }
                       
-                      allJuicedProps.push({
+                      // Also check unified trap score
+                      if (unifiedProp && unifiedProp.trap_score >= 60) {
+                        isTrap = true;
+                        trapReason = trapReason 
+                          ? `${trapReason} | Unified trap score: ${unifiedProp.trap_score}`
+                          : `Unified trap score: ${unifiedProp.trap_score}`;
+                      }
+                      
+                      const juicedProp: JuicedProp = {
                         event_id: event.id,
                         sport: mapSportDisplay(sport),
                         game_description: `${event.away_team} @ ${event.home_team}`,
@@ -248,7 +322,22 @@ serve(async (req) => {
                         juice_amount: juiceAmount,
                         is_morning_trap: isTrap,
                         trap_reason: trapReason || undefined,
-                      });
+                      };
+                      
+                      // Add unified intelligence data if available
+                      if (unifiedProp) {
+                        juicedProp.unified_composite_score = unifiedProp.composite_score;
+                        juicedProp.unified_pvs_tier = unifiedProp.pvs_tier;
+                        juicedProp.unified_recommendation = unifiedProp.recommended_side;
+                        juicedProp.unified_confidence = unifiedProp.confidence;
+                        juicedProp.unified_trap_score = unifiedProp.trap_score;
+                        juicedProp.used_unified_intelligence = true;
+                        unifiedMatchCount++;
+                      } else {
+                        juicedProp.used_unified_intelligence = false;
+                      }
+                      
+                      allJuicedProps.push(juicedProp);
                     }
                   }
                 }
@@ -267,6 +356,7 @@ serve(async (req) => {
     }
     
     console.log(`🔥 Found ${allJuicedProps.length} juiced over props`);
+    console.log(`🧠 ${unifiedMatchCount} props matched with Unified Intelligence data`);
     
     // Sort by juice level (heavy first) and insert into database
     const sortedProps = allJuicedProps.sort((a, b) => {
@@ -310,8 +400,13 @@ serve(async (req) => {
           juice_direction: prop.juice_direction,
           juice_amount: prop.juice_amount,
           is_locked: false,
-          // Morning trap flagging for AI knowledge
-          // These will be faded by lock-final-picks
+          // Unified intelligence columns
+          unified_composite_score: prop.unified_composite_score,
+          unified_pvs_tier: prop.unified_pvs_tier,
+          unified_recommendation: prop.unified_recommendation,
+          unified_confidence: prop.unified_confidence,
+          unified_trap_score: prop.unified_trap_score,
+          used_unified_intelligence: prop.used_unified_intelligence || false,
         };
       });
       
@@ -322,13 +417,14 @@ serve(async (req) => {
       if (insertError) {
         console.error('Error inserting juiced props:', insertError);
       } else {
-        console.log(`✅ Inserted ${insertData.length} juiced props`);
+        console.log(`✅ Inserted ${insertData.length} juiced props (${unifiedMatchCount} with unified intelligence)`);
       }
     }
     
     // Send morning notification if we found juiced props
     if (sortedProps.length > 0) {
       const heavyCount = sortedProps.filter(p => p.juice_level === 'heavy').length;
+      const withUnifiedCount = sortedProps.filter(p => p.used_unified_intelligence).length;
       
       try {
         await supabase.functions.invoke('send-push-notification', {
@@ -337,11 +433,13 @@ serve(async (req) => {
             data: {
               total: sortedProps.length,
               heavy: heavyCount,
+              withUnified: withUnifiedCount,
               topProps: sortedProps.slice(0, 3).map(p => ({
                 player: p.player_name,
                 prop: p.prop_type,
                 line: p.line,
                 over_price: p.over_price,
+                pvs_tier: p.unified_pvs_tier || 'N/A',
               })),
             },
           },
@@ -354,13 +452,14 @@ serve(async (req) => {
     
     return new Response(JSON.stringify({
       success: true,
-      message: `Found ${sortedProps.length} juiced over props`,
+      message: `Found ${sortedProps.length} juiced over props (${unifiedMatchCount} with unified intelligence)`,
       props: sortedProps.slice(0, 20), // Return top 20 for preview
       stats: {
         total: sortedProps.length,
         heavy: sortedProps.filter(p => p.juice_level === 'heavy').length,
         moderate: sortedProps.filter(p => p.juice_level === 'moderate').length,
         light: sortedProps.filter(p => p.juice_level === 'light').length,
+        withUnifiedIntelligence: unifiedMatchCount,
       },
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

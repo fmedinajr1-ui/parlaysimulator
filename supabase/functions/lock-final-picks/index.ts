@@ -23,6 +23,13 @@ interface JuicedProp {
   bookmaker: string;
   commence_time: string;
   morning_scan_time?: string;
+  // Unified intelligence columns
+  unified_composite_score?: number;
+  unified_pvs_tier?: string;
+  unified_recommendation?: string;
+  unified_confidence?: number;
+  unified_trap_score?: number;
+  used_unified_intelligence?: boolean;
 }
 
 interface FinalPickDecision {
@@ -33,11 +40,20 @@ interface FinalPickDecision {
 
 // AI BETTING KNOWLEDGE RULES
 const AI_BETTING_RULES = {
-  FOLLOW: ['LINE_AND_JUICE_MOVED', 'LATE_MONEY_SWEET_SPOT', 'INJURY_UNDER', 'MULTI_BOOK_CONSENSUS'],
-  FADE: ['EARLY_MORNING_OVER', 'PRICE_ONLY_MOVE', 'FAKE_SHARP_TAG', 'STEAM_MOVE_NO_CONSENSUS'],
+  FOLLOW: ['LINE_AND_JUICE_MOVED', 'LATE_MONEY_SWEET_SPOT', 'INJURY_UNDER', 'MULTI_BOOK_CONSENSUS', 'PVS_S_TIER', 'PVS_A_TIER'],
+  FADE: ['EARLY_MORNING_OVER', 'PRICE_ONLY_MOVE', 'FAKE_SHARP_TAG', 'STEAM_MOVE_NO_CONSENSUS', 'HIGH_TRAP_SCORE', 'PVS_D_TIER'],
 };
 
-// Decision matrix for final picks
+// PVS Tier confidence multipliers
+const PVS_TIER_MULTIPLIERS: Record<string, number> = {
+  'S': 1.20,
+  'A': 1.12,
+  'B': 1.05,
+  'C': 0.95,
+  'D': 0.85,
+};
+
+// Decision matrix for final picks - Now with Unified Intelligence
 function determineFinalPick(
   prop: JuicedProp,
   currentOverPrice: number,
@@ -60,21 +76,62 @@ function determineFinalPick(
   const overPriceChange = currentOverPrice - prop.over_price;
   const steamMove = Math.abs(overPriceChange) >= 15;
   
+  // 🧠 UNIFIED INTELLIGENCE ANALYSIS
+  const hasUnified = prop.used_unified_intelligence && prop.unified_composite_score !== undefined;
+  const unifiedComposite = prop.unified_composite_score || 0;
+  const unifiedPvsTier = prop.unified_pvs_tier || 'C';
+  const unifiedRecommendation = prop.unified_recommendation;
+  const unifiedConfidence = prop.unified_confidence || 0;
+  const unifiedTrapScore = prop.unified_trap_score || 0;
+  
+  // Get PVS tier multiplier
+  const pvsMultiplier = PVS_TIER_MULTIPLIERS[unifiedPvsTier] || 1.0;
+  
+  // 🚨 HIGH TRAP SCORE - Strong fade signal from unified intelligence
+  if (hasUnified && unifiedTrapScore >= 70) {
+    const pick: 'over' | 'under' = originalJuiceOnOver ? 'under' : 'over';
+    return {
+      pick,
+      reason: `🚨 High trap score (${unifiedTrapScore}) from Unified AI - Fading`,
+      confidence: Math.min(0.82, 0.70 * pvsMultiplier),
+    };
+  }
+  
+  // 🎯 S/A TIER PVS with unified recommendation agreement
+  if (hasUnified && (unifiedPvsTier === 'S' || unifiedPvsTier === 'A') && unifiedComposite >= 70) {
+    const unifiedPick = unifiedRecommendation === 'over' ? 'over' : 'under';
+    return {
+      pick: unifiedPick,
+      reason: `🧠 ${unifiedPvsTier}-Tier PVS (${unifiedComposite.toFixed(0)}) | Unified AI: ${unifiedPick.toUpperCase()}`,
+      confidence: Math.min(0.85, 0.75 * pvsMultiplier),
+    };
+  }
+  
   // ✅ RULE: Follow unders with injury signals
   if (hasInjurySignal) {
+    let confidence = 0.72;
+    if (hasUnified && unifiedRecommendation === 'under') {
+      confidence *= pvsMultiplier;
+    }
     return {
       pick: 'under',
-      reason: '🏥 Injury signal detected - lean Under',
-      confidence: 0.72,
+      reason: `🏥 Injury signal detected - lean Under${hasUnified ? ` | PVS: ${unifiedPvsTier}` : ''}`,
+      confidence: Math.min(0.85, confidence),
     };
   }
   
   // ❌ RULE: Fade early morning overs (public trap)
   if (isMorningTrap && prop.juice_direction === 'over') {
+    let confidence = 0.68;
+    // Boost confidence if unified also says under or has trap score
+    if (hasUnified) {
+      if (unifiedRecommendation === 'under') confidence += 0.08;
+      if (unifiedTrapScore >= 40) confidence += 0.05;
+    }
     return {
       pick: 'under',
-      reason: '🌅 Fading early morning over - likely public trap',
-      confidence: 0.68,
+      reason: `🌅 Fading early morning over - likely public trap${hasUnified ? ` | Trap: ${unifiedTrapScore}` : ''}`,
+      confidence: Math.min(0.82, confidence),
     };
   }
   
@@ -89,88 +146,135 @@ function determineFinalPick(
   
   // ❌ RULE: Fade price-only moves (trap)
   if (hasPriceOnlyTrap && !hasConfirmedSharp) {
+    let confidence = 0.65;
+    if (hasUnified && unifiedTrapScore >= 50) confidence += 0.08;
     return {
       pick: originalJuiceOnOver ? 'under' : 'over',
-      reason: '❌ Fading price-only move - no line confirmation',
-      confidence: 0.65,
+      reason: `❌ Fading price-only move - no line confirmation${hasUnified ? ` | Trap: ${unifiedTrapScore}` : ''}`,
+      confidence: Math.min(0.78, confidence),
     };
   }
   
-  // Decision matrix
+  // 🧠 UNIFIED INTELLIGENCE: Use composite score for borderline decisions
+  if (hasUnified && unifiedComposite >= 65 && !steamMove) {
+    const unifiedPick = unifiedRecommendation === 'over' ? 'over' : 'under';
+    // Check if unified agrees with sharp signals
+    const unifiedAgreesWithSharp = 
+      (unifiedPick === 'over' && hasSharpOnOver) || 
+      (unifiedPick === 'under' && hasSharpOnUnder);
+    
+    if (unifiedAgreesWithSharp) {
+      return {
+        pick: unifiedPick,
+        reason: `🧠 Unified AI (${unifiedComposite.toFixed(0)}) + Sharp agree: ${unifiedPick.toUpperCase()} | ${unifiedPvsTier}-Tier`,
+        confidence: Math.min(0.82, 0.72 * pvsMultiplier),
+      };
+    }
+  }
+  
+  // Decision matrix - now with PVS multiplier
   if (juiceReversed) {
+    let confidence = 0.68;
+    if (hasUnified) confidence *= pvsMultiplier;
     return {
       pick: originalJuiceOnOver ? 'over' : 'under',
-      reason: '🔄 Steam reversed - Value on original side',
-      confidence: 0.68,
+      reason: `🔄 Steam reversed - Value on original side${hasUnified ? ` | PVS: ${unifiedPvsTier}` : ''}`,
+      confidence: Math.min(0.80, confidence),
     };
   }
   
   if (juiceLevel === 'heavy') {
     if (hasSharpOnUnder && !hasSharpOnOver) {
-      const confidence = isLateMoneyWindow ? 0.78 : 0.75;
+      let confidence = isLateMoneyWindow ? 0.78 : 0.75;
+      if (hasUnified && unifiedRecommendation === 'under') confidence *= pvsMultiplier;
       return {
         pick: 'under',
-        reason: `🎯 Sharp money fading heavy public Over${isLateMoneyWindow ? ' | 🕐 1-3hr window' : ''}`,
-        confidence,
+        reason: `🎯 Sharp money fading heavy public Over${isLateMoneyWindow ? ' | 🕐 1-3hr window' : ''}${hasUnified ? ` | PVS: ${unifiedPvsTier}` : ''}`,
+        confidence: Math.min(0.85, confidence),
       };
     }
     if (hasSharpOnOver && hasConfirmedSharp) {
+      let confidence = 0.72;
+      if (hasUnified && unifiedRecommendation === 'over' && unifiedPvsTier !== 'D') {
+        confidence *= pvsMultiplier;
+      }
       return {
         pick: 'over',
-        reason: '💰 Sharp confirmation with line+juice move - Follow the money',
-        confidence: 0.72,
+        reason: `💰 Sharp confirmation with line+juice move - Follow the money${hasUnified ? ` | PVS: ${unifiedPvsTier}` : ''}`,
+        confidence: Math.min(0.82, confidence),
       };
     }
+    let confidence = 0.65;
+    if (hasUnified) confidence *= pvsMultiplier;
     return {
       pick: 'under',
-      reason: '📉 Fading heavy public action - Line moved too far',
-      confidence: 0.65,
+      reason: `📉 Fading heavy public action - Line moved too far${hasUnified ? ` | PVS: ${unifiedPvsTier}` : ''}`,
+      confidence: Math.min(0.75, confidence),
     };
   }
   
   if (juiceLevel === 'moderate') {
     if (hasSharpOnUnder) {
-      const confidence = isLateMoneyWindow ? 0.73 : 0.70;
+      let confidence = isLateMoneyWindow ? 0.73 : 0.70;
+      if (hasUnified && unifiedRecommendation === 'under') confidence *= pvsMultiplier;
       return {
         pick: 'under',
-        reason: `⚡ Sharp money on Under${isLateMoneyWindow ? ' | 🕐 1-3hr window' : ''}`,
-        confidence,
+        reason: `⚡ Sharp money on Under${isLateMoneyWindow ? ' | 🕐 1-3hr window' : ''}${hasUnified ? ` | PVS: ${unifiedPvsTier}` : ''}`,
+        confidence: Math.min(0.82, confidence),
       };
     }
     if (hasSharpOnOver && steamMove && hasConfirmedSharp) {
+      let confidence = 0.68;
+      if (hasUnified && unifiedRecommendation === 'over') confidence *= pvsMultiplier;
       return {
         pick: 'over',
-        reason: '🔥 Confirmed steam move with sharp action',
-        confidence: 0.68,
+        reason: `🔥 Confirmed steam move with sharp action${hasUnified ? ` | PVS: ${unifiedPvsTier}` : ''}`,
+        confidence: Math.min(0.78, confidence),
       };
     }
+    let confidence = 0.60;
+    if (hasUnified) confidence *= pvsMultiplier;
     return {
       pick: 'under',
-      reason: '📊 Fading moderate public juice',
-      confidence: 0.60,
+      reason: `📊 Fading moderate public juice${hasUnified ? ` | PVS: ${unifiedPvsTier}` : ''}`,
+      confidence: Math.min(0.72, confidence),
     };
   }
   
   // Light juice
   if (hasSharpOnUnder) {
+    let confidence = isLateMoneyWindow ? 0.65 : 0.62;
+    if (hasUnified && unifiedRecommendation === 'under') confidence *= pvsMultiplier;
     return {
       pick: 'under',
-      reason: '💡 Sharp action on Under',
-      confidence: isLateMoneyWindow ? 0.65 : 0.62,
+      reason: `💡 Sharp action on Under${hasUnified ? ` | PVS: ${unifiedPvsTier}` : ''}`,
+      confidence: Math.min(0.75, confidence),
     };
   }
   if (hasSharpOnOver && hasConfirmedSharp) {
+    let confidence = 0.60;
+    if (hasUnified && unifiedRecommendation === 'over') confidence *= pvsMultiplier;
     return {
       pick: 'over',
-      reason: '💡 Confirmed sharp action on Over',
-      confidence: 0.60,
+      reason: `💡 Confirmed sharp action on Over${hasUnified ? ` | PVS: ${unifiedPvsTier}` : ''}`,
+      confidence: Math.min(0.72, confidence),
+    };
+  }
+  
+  // Default - use unified if available
+  if (hasUnified && unifiedComposite >= 55) {
+    const unifiedPick = unifiedRecommendation === 'over' ? 'over' : 'under';
+    return {
+      pick: unifiedPick,
+      reason: `🧠 Unified AI lean: ${unifiedPick.toUpperCase()} (${unifiedComposite.toFixed(0)}) | ${unifiedPvsTier}-Tier`,
+      confidence: Math.min(0.68, 0.55 * pvsMultiplier),
     };
   }
   
   return {
     pick: 'under',
-    reason: '⚖️ Slight lean to Under - fading public',
-    confidence: 0.55,
+    reason: `⚖️ Slight lean to Under - fading public${hasUnified ? ` | PVS: ${unifiedPvsTier}` : ''}`,
+    confidence: hasUnified ? 0.55 * pvsMultiplier : 0.55,
   };
 }
 
@@ -186,7 +290,7 @@ serve(async (req) => {
     
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
     
-    console.log('🔒 Starting final picks lock...');
+    console.log('🔒 Starting final picks lock with Unified Intelligence...');
     
     const now = new Date();
     const thirtyMinsFromNow = new Date(now.getTime() + 30 * 60 * 1000);
@@ -217,6 +321,10 @@ serve(async (req) => {
       });
     }
     
+    // Count props with unified intelligence
+    const withUnifiedCount = propsToLock.filter((p: any) => p.used_unified_intelligence).length;
+    console.log(`🧠 ${withUnifiedCount}/${propsToLock.length} props have Unified Intelligence data`);
+    
     const lockedPicks: Array<{
       id: string;
       player: string;
@@ -226,6 +334,8 @@ serve(async (req) => {
       odds: number;
       reason: string;
       confidence: number;
+      usedUnified: boolean;
+      pvsTier?: string;
     }> = [];
     
     // Check for sharp money on related line movements
@@ -286,7 +396,7 @@ serve(async (req) => {
       const currentOverPrice = prop.over_price;
       const currentUnderPrice = prop.under_price;
       
-      // Determine final pick with enhanced rules
+      // Determine final pick with enhanced rules + Unified Intelligence
       const decision = determineFinalPick(
         prop,
         currentOverPrice,
@@ -327,9 +437,12 @@ serve(async (req) => {
         odds: pickOdds,
         reason: decision.reason,
         confidence: decision.confidence,
+        usedUnified: prop.used_unified_intelligence || false,
+        pvsTier: prop.unified_pvs_tier,
       });
       
-      console.log(`🔒 Locked: ${prop.player_name} ${decision.pick.toUpperCase()} ${prop.line} ${prop.prop_type} (${Math.round(decision.confidence * 100)}%)`);
+      const unifiedTag = prop.used_unified_intelligence ? ` | 🧠 ${prop.unified_pvs_tier}-Tier` : '';
+      console.log(`🔒 Locked: ${prop.player_name} ${decision.pick.toUpperCase()} ${prop.line} ${prop.prop_type} (${Math.round(decision.confidence * 100)}%)${unifiedTag}`);
     }
     
     // Send push notifications for locked picks
@@ -347,6 +460,8 @@ serve(async (req) => {
                 odds: pick.odds,
                 reason: pick.reason,
                 confidence: pick.confidence,
+                pvsTier: pick.pvsTier,
+                usedUnified: pick.usedUnified,
               },
             },
           });
@@ -380,6 +495,8 @@ serve(async (req) => {
               sport: p.sport,
               game_description: p.game_description,
               commence_time: p.commence_time,
+              pvs_tier: p.unified_pvs_tier,
+              used_unified: p.used_unified_intelligence,
             };
           });
         
@@ -392,10 +509,13 @@ serve(async (req) => {
       }
     }
     
+    const unifiedLockedCount = lockedPicks.filter(p => p.usedUnified).length;
+    
     return new Response(JSON.stringify({
       success: true,
-      message: `Locked ${lockedPicks.length} final picks`,
+      message: `Locked ${lockedPicks.length} final picks (${unifiedLockedCount} with Unified Intelligence)`,
       locked: lockedPicks.length,
+      withUnifiedIntelligence: unifiedLockedCount,
       picks: lockedPicks,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
