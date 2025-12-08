@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { 
   Menu, 
@@ -11,11 +11,10 @@ import {
   Calculator,
   Shield,
   Users,
-  X,
   ChevronRight
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useAdminRole } from "@/hooks/useAdminRole";
+import { supabase } from "@/integrations/supabase/client";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Separator } from "@/components/ui/separator";
 
@@ -36,8 +35,42 @@ const adminItems = [
 
 export function MenuDrawer() {
   const [open, setOpen] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const location = useLocation();
-  const { isAdmin } = useAdminRole();
+
+  // Check admin role directly without using the hook to avoid context issues
+  useEffect(() => {
+    const checkAdminRole = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.user) {
+          setIsAdmin(false);
+          return;
+        }
+
+        const { data } = await supabase
+          .from('user_roles')
+          .select('role')
+          .eq('user_id', session.user.id)
+          .eq('role', 'admin')
+          .maybeSingle();
+
+        setIsAdmin(!!data);
+      } catch (err) {
+        console.error('Error checking admin role:', err);
+        setIsAdmin(false);
+      }
+    };
+
+    checkAdminRole();
+
+    // Subscribe to auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
+      checkAdminRole();
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
 
   const isActive = (path: string) => location.pathname === path;
 
