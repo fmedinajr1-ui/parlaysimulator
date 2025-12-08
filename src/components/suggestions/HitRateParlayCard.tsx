@@ -75,12 +75,12 @@ export function HitRateParlayCard({ parlay, onRunSharpAnalysis }: HitRateParlayC
   };
 
   const getHitRateDisplay = (leg: HitRateLeg) => {
-    const hits = leg.recommended_side === 'over' ? leg.over_hits : leg.under_hits;
+    const hits = leg.recommended_side?.toLowerCase() === 'over' ? leg.over_hits : leg.under_hits;
     return `${hits}/${leg.games_analyzed}`;
   };
 
   const renderHitStreak = (leg: HitRateLeg) => {
-    const hits = leg.recommended_side === 'over' ? leg.over_hits : leg.under_hits;
+    const hits = leg.recommended_side?.toLowerCase() === 'over' ? leg.over_hits : leg.under_hits;
     const total = leg.games_analyzed;
     
     return (
@@ -158,7 +158,7 @@ export function HitRateParlayCard({ parlay, onRunSharpAnalysis }: HitRateParlayC
                 </div>
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <span>
-                    {leg.recommended_side.toUpperCase()} {leg.line} {PROP_LABELS[leg.prop_type] || leg.prop_type}
+                    {(leg.recommended_side || 'OVER').toUpperCase()} {leg.line} {PROP_LABELS[leg.prop_type] || leg.prop_type}
                   </span>
                   <span className="font-mono">{formatOdds(leg.price)}</span>
                 </div>
@@ -185,7 +185,7 @@ export function HitRateParlayCard({ parlay, onRunSharpAnalysis }: HitRateParlayC
                 <div className="text-xs text-muted-foreground mb-2">Last {leg.games_analyzed} Games:</div>
                 <div className="space-y-1">
                   {leg.game_logs.map((game: any, gi: number) => {
-                    const hitLine = leg.recommended_side === 'over' 
+                    const hitLine = leg.recommended_side?.toLowerCase() === 'over' 
                       ? game.stat_value > leg.line 
                       : game.stat_value < leg.line;
                     
