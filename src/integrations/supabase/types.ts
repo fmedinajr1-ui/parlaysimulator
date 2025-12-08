@@ -1317,14 +1317,22 @@ export type Database = {
           hit_streak: string | null
           id: string
           is_perfect_streak: boolean | null
+          last_5_avg: number | null
+          last_5_results: Json | null
+          opponent_name: string | null
           over_hits: number
           over_price: number | null
           player_name: string
+          projected_value: number | null
+          projection_margin: number | null
           prop_type: string
           recommended_side: string | null
           sport: string
           under_hits: number
           under_price: number | null
+          vs_opponent_avg: number | null
+          vs_opponent_games: number | null
+          vs_opponent_hit_rate: number | null
         }
         Insert: {
           analyzed_at?: string
@@ -1342,14 +1350,22 @@ export type Database = {
           hit_streak?: string | null
           id?: string
           is_perfect_streak?: boolean | null
+          last_5_avg?: number | null
+          last_5_results?: Json | null
+          opponent_name?: string | null
           over_hits?: number
           over_price?: number | null
           player_name: string
+          projected_value?: number | null
+          projection_margin?: number | null
           prop_type: string
           recommended_side?: string | null
           sport: string
           under_hits?: number
           under_price?: number | null
+          vs_opponent_avg?: number | null
+          vs_opponent_games?: number | null
+          vs_opponent_hit_rate?: number | null
         }
         Update: {
           analyzed_at?: string
@@ -1367,14 +1383,22 @@ export type Database = {
           hit_streak?: string | null
           id?: string
           is_perfect_streak?: boolean | null
+          last_5_avg?: number | null
+          last_5_results?: Json | null
+          opponent_name?: string | null
           over_hits?: number
           over_price?: number | null
           player_name?: string
+          projected_value?: number | null
+          projection_margin?: number | null
           prop_type?: string
           recommended_side?: string | null
           sport?: string
           under_hits?: number
           under_price?: number | null
+          vs_opponent_avg?: number | null
+          vs_opponent_games?: number | null
+          vs_opponent_hit_rate?: number | null
         }
         Relationships: []
       }
