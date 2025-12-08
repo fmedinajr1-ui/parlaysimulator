@@ -6,8 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, RefreshCw, Target, Zap, TrendingUp, TrendingDown, Minus, AlertCircle, Flame } from "lucide-react";
+import { Loader2, RefreshCw, Target, Zap, TrendingUp, TrendingDown, Minus, AlertCircle, Flame, Plus } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { AddToParlayButton } from "@/components/parlay/AddToParlayButton";
 
 // Calculate trend from game logs (recent games vs older games)
 const calculateTrend = (gameLogs: any[], line: number, side: 'over' | 'under'): 'up' | 'down' | 'neutral' => {
@@ -522,13 +523,29 @@ function PropCard({ prop, PROP_LABELS }: { prop: any; PROP_LABELS: Record<string
               {prop.game_description}
             </div>
           </div>
-          <div className="text-right">
-            <Badge className={getHitRateBadgeClass(bestHitRate)}>
-              {hits}/{prop.games_analyzed} ({Math.round(bestHitRate * 100)}%)
-            </Badge>
-            <div className="text-xs text-muted-foreground mt-1">
-              {prop.confidence_score}% confident
+          <div className="flex items-center gap-2">
+            <div className="text-right">
+              <Badge className={getHitRateBadgeClass(bestHitRate)}>
+                {hits}/{prop.games_analyzed} ({Math.round(bestHitRate * 100)}%)
+              </Badge>
+              <div className="text-xs text-muted-foreground mt-1">
+                {prop.confidence_score}% confident
+              </div>
             </div>
+            <AddToParlayButton
+              description={`${prop.player_name} ${prop.recommended_side.toUpperCase()} ${prop.current_line} ${PROP_LABELS[prop.prop_type] || prop.prop_type}`}
+              odds={prop.recommended_side === 'over' ? (prop.over_price || -110) : (prop.under_price || -110)}
+              source="hitrate"
+              playerName={prop.player_name}
+              propType={prop.prop_type}
+              line={prop.current_line}
+              side={prop.recommended_side}
+              sport={prop.sport}
+              eventId={prop.event_id}
+              confidenceScore={prop.confidence_score}
+              sourceData={{ hitRate: bestHitRate, streak: prop.hit_streak }}
+              variant="icon"
+            />
           </div>
         </div>
         
@@ -600,4 +617,3 @@ function PropCard({ prop, PROP_LABELS }: { prop: any; PROP_LABELS: Record<string
     </Card>
   );
 }
-

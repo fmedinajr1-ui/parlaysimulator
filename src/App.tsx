@@ -4,9 +4,11 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { ParlayBuilderProvider } from "@/contexts/ParlayBuilderContext";
 import { PWAInstallPrompt } from "@/components/PWAInstallPrompt";
 import { PageTransition } from "@/components/PageTransition";
 import { BottomNav } from "@/components/BottomNav";
+import { UniversalParlayBuilder } from "@/components/parlay/UniversalParlayBuilder";
 import Index from "./pages/Index";
 import Upload from "./pages/Upload";
 import Results from "./pages/Results";
@@ -58,13 +60,16 @@ const App = () => {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <AuthProvider>
-          <TooltipProvider>
-            <Toaster />
-            <Sonner />
-            <AnimatedRoutes />
-            <BottomNav />
-            <PWAInstallPrompt />
-          </TooltipProvider>
+          <ParlayBuilderProvider>
+            <TooltipProvider>
+              <Toaster />
+              <Sonner />
+              <AnimatedRoutes />
+              <UniversalParlayBuilder />
+              <BottomNav />
+              <PWAInstallPrompt />
+            </TooltipProvider>
+          </ParlayBuilderProvider>
         </AuthProvider>
       </BrowserRouter>
     </QueryClientProvider>

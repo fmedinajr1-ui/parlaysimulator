@@ -16,9 +16,11 @@ import {
   Shield,
   Activity,
   RefreshCw,
-  Info
+  Info,
+  Plus
 } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
+import { AddToParlayButton } from '@/components/parlay/AddToParlayButton';
 
 interface DetectedSignal {
   type: 'sharp' | 'trap';
@@ -231,6 +233,25 @@ function MovementCard({ movement }: { movement: LineMovementV2 }) {
             </div>
           </CollapsibleContent>
         </Collapsible>
+
+        {/* Add to Parlay - Only for Sharp picks */}
+        {label === 'SHARP' && (
+          <div className="mt-3 pt-3 border-t">
+            <AddToParlayButton
+              description={`${movement.description} - ${movement.outcome_name}`}
+              odds={movement.new_price}
+              source="sharp"
+              sport={movement.sport}
+              confidenceScore={movement.sharp_probability}
+              sourceData={{ 
+                sharpEdgeScore: movement.sharp_edge_score, 
+                sharpProbability: movement.sharp_probability,
+                recommendation: movement.recommendation 
+              }}
+              className="w-full"
+            />
+          </div>
+        )}
 
         {/* Metadata Footer */}
         <div className="flex items-center justify-between mt-3 pt-3 border-t text-xs text-muted-foreground">

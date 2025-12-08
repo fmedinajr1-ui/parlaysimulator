@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSubscription } from '@/hooks/useSubscription';
+import { useParlayBuilder } from '@/contexts/ParlayBuilderContext';
 import { ProfileHeader } from '@/components/profile/ProfileHeader';
 import { SocialLinks } from '@/components/profile/SocialLinks';
 import { DegenStats } from '@/components/profile/DegenStats';
@@ -16,12 +17,14 @@ import { UpsetAccuracyDashboard } from '@/components/profile/UpsetAccuracyDashbo
 import { NotificationPreferences } from '@/components/profile/NotificationPreferences';
 import { TutorialToggle } from '@/components/tutorial/TutorialToggle';
 import { Button } from '@/components/ui/button';
-import { Loader2, LogOut, Upload, CreditCard, Crown, User, Settings, Dog } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Loader2, LogOut, Upload, CreditCard, Crown, User, Settings, Dog, Target, LineChart, GitCompare, Trash2 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { MobileHeader } from '@/components/layout/MobileHeader';
 import { FeedCard } from '@/components/FeedCard';
 import { DogAvatar } from '@/components/avatars/DogAvatar';
+import { SOURCE_LABELS } from '@/types/universal-parlay';
 
 interface Profile {
   username: string | null;
@@ -39,6 +42,7 @@ interface Profile {
 const Profile = () => {
   const { user, isLoading: authLoading, signOut } = useAuth();
   const { isSubscribed, isAdmin, subscriptionEnd, openCustomerPortal, startCheckout } = useSubscription();
+  const { legs, legCount, combinedOdds, winProbability, analyzeParlay, compareParlay, clearParlay } = useParlayBuilder();
   const navigate = useNavigate();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -178,6 +182,56 @@ const Profile = () => {
             ) : null}
           </div>
         </FeedCard>
+
+        {/* Active Parlay Builder */}
+        {legCount > 0 && (
+          <FeedCard className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/30">
+            <div className="flex items-center gap-2 mb-3">
+              <Target className="w-5 h-5 text-primary" />
+              <h3 className="font-display text-lg">Active Parlay</h3>
+              <Badge className="ml-auto">{legCount} legs</Badge>
+            </div>
+            
+            <div className="flex flex-wrap gap-1 mb-3">
+              {Object.entries(
+                legs.reduce((acc, leg) => {
+                  acc[leg.source] = (acc[leg.source] || 0) + 1;
+                  return acc;
+                }, {} as Record<string, number>)
+              ).map(([source, count]) => (
+                <Badge key={source} variant="outline" className="text-xs">
+                  {SOURCE_LABELS[source as keyof typeof SOURCE_LABELS]?.emoji} {count} {SOURCE_LABELS[source as keyof typeof SOURCE_LABELS]?.label}
+                </Badge>
+              ))}
+            </div>
+
+            <div className="flex justify-between text-sm mb-3">
+              <span className="text-muted-foreground">Combined Odds</span>
+              <span className="font-bold text-primary">
+                {combinedOdds > 0 ? `+${combinedOdds}` : combinedOdds}
+              </span>
+            </div>
+            <div className="flex justify-between text-sm mb-4">
+              <span className="text-muted-foreground">Win Probability</span>
+              <span className="font-bold">{winProbability.toFixed(1)}%</span>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              <Button size="sm" variant="outline" onClick={analyzeParlay}>
+                <LineChart className="h-3 w-3 mr-1" />
+                Analyze
+              </Button>
+              <Button size="sm" variant="outline" onClick={compareParlay}>
+                <GitCompare className="h-3 w-3 mr-1" />
+                Compare
+              </Button>
+              <Button size="sm" variant="destructive" onClick={clearParlay}>
+                <Trash2 className="h-3 w-3 mr-1" />
+                Clear
+              </Button>
+            </div>
+          </FeedCard>
+        )}
 
         {/* Profile Header */}
         <ProfileHeader 
