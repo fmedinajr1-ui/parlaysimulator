@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { UniversalLeg, ParlaySource } from '@/types/universal-parlay';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { ParlaySimulation, DegenerateLevel } from '@/types/parlay';
 
 interface ParlayBuilderContextType {
   legs: UniversalLeg[];
@@ -198,9 +199,37 @@ export const ParlayBuilderProvider = ({ children }: { children: ReactNode }) => 
       return;
     }
 
-    // Store parlay data for Results page to pick up
-    sessionStorage.setItem('analyze-parlay', JSON.stringify(legs));
-    navigate('/results');
+    // Build simulation object that Results page expects
+    const combinedProb = calculateWinProbability(legs) / 100;
+    const degLevel: DegenerateLevel = combinedProb < 0.01 ? 'LOAN_NEEDED' 
+      : combinedProb < 0.05 ? 'LOTTERY_TICKET'
+      : combinedProb < 0.15 ? 'SWEAT_SEASON'
+      : combinedProb < 0.30 ? 'NOT_TERRIBLE'
+      : 'RESPECTABLE';
+    
+    const decimalOdds = legs.reduce((acc, leg) => acc * americanToDecimal(leg.odds), 1);
+    const totalOddsAmerican = calculateCombinedOdds(legs);
+    
+    const simulation: ParlaySimulation = {
+      legs: legs.map((leg, index) => ({
+        id: leg.id || `leg-${index}`,
+        description: leg.description,
+        odds: leg.odds,
+        impliedProbability: americanToImplied(leg.odds),
+        riskLevel: americanToImplied(leg.odds) > 0.6 ? 'low' as const : 
+                   americanToImplied(leg.odds) > 0.4 ? 'medium' as const : 'high' as const,
+      })),
+      stake: 10,
+      totalOdds: totalOddsAmerican,
+      potentialPayout: 10 * decimalOdds,
+      combinedProbability: combinedProb,
+      degenerateLevel: degLevel,
+      trashTalk: [],
+      expectedValue: (combinedProb * 10 * decimalOdds) - 10,
+      simulationHighlights: [],
+    };
+
+    navigate('/results', { state: { simulation } });
   }, [legs, navigate, toast]);
 
   const compareParlay = useCallback(() => {

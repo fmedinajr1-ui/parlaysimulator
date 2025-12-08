@@ -114,8 +114,8 @@ export const UniversalParlayBuilder = () => {
                 </div>
 
                 {/* Legs List */}
-                <ScrollArea className="max-h-48 px-3">
-                  <div className="space-y-2 pb-2">
+                <ScrollArea className="max-h-60">
+                  <div className="space-y-2 px-3 pb-2">
                     {legs.map(leg => (
                       <ParlayLegCard
                         key={leg.id}
