@@ -37,7 +37,14 @@ serve(async (req) => {
 
     // Fetch current odds and events
     const oddsApiKey = Deno.env.get('ODDS_API_KEY');
-    const sports = sport ? [sport] : ['basketball_nba', 'americanfootball_nfl', 'baseball_mlb', 'icehockey_nhl'];
+    const sports = sport ? [sport] : [
+      'basketball_nba',
+      'basketball_ncaab',
+      'americanfootball_nfl',
+      'americanfootball_ncaaf',
+      'icehockey_nhl',
+      'baseball_mlb'
+    ];
     
     const allPredictions: any[] = [];
     
@@ -360,7 +367,9 @@ function calculateMonteCarloBoost(underdogOdds: number, sport: string) {
   // Sport-specific chaos factor
   const sportChaosFactors: Record<string, number> = {
     'basketball_nba': 1.15,
+    'basketball_ncaab': 1.25, // College basketball has more upsets
     'americanfootball_nfl': 1.20,
+    'americanfootball_ncaaf': 1.30, // College football has even more upsets
     'baseball_mlb': 1.10,
     'icehockey_nhl': 1.12
   };

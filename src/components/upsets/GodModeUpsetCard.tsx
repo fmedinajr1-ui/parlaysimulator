@@ -37,9 +37,20 @@ export function GodModeUpsetCard({ prediction, className }: GodModeUpsetCardProp
   const handleAddToParlay = () => {
     if (!isAdded) {
       addLeg({
-        description: `${prediction.underdog} ML`,
+        description: `${prediction.underdog} ML vs ${prediction.favorite}`,
         odds: prediction.underdog_odds,
-        source: 'godmode' as any
+        source: 'godmode',
+        sport: prediction.sport,
+        eventId: prediction.event_id,
+        confidenceScore: prediction.final_upset_score,
+        sourceData: {
+          upsetProbability: prediction.upset_probability,
+          confidence: prediction.confidence,
+          riskLevel: prediction.risk_level,
+          chaosModeActive: prediction.chaos_mode_active,
+          sharpPct: prediction.sharp_pct,
+          chessEv: prediction.chess_ev
+        }
       });
     }
   };
