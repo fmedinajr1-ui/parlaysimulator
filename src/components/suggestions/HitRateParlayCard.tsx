@@ -66,7 +66,8 @@ const SPORT_COLORS: Record<string, string> = {
 export function HitRateParlayCard({ parlay, onRunSharpAnalysis }: HitRateParlayCardProps) {
   const [expandedLeg, setExpandedLeg] = useState<number | null>(null);
 
-  const formatOdds = (odds: number) => {
+  const formatOdds = (odds: number | undefined | null) => {
+    if (odds === undefined || odds === null) return '-110';
     return odds > 0 ? `+${odds}` : odds.toString();
   };
 
