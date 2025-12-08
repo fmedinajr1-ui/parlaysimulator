@@ -4,6 +4,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { 
   Flame, 
   Lock, 
@@ -15,7 +17,9 @@ import {
   Target,
   AlertCircle,
   CheckCircle2,
-  Zap
+  Brain,
+  Sparkles,
+  Shield
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
@@ -41,6 +45,13 @@ interface JuicedProp {
   commence_time: string;
   bookmaker: string;
   morning_scan_time: string;
+  // Unified Intelligence fields
+  unified_composite_score: number | null;
+  unified_pvs_tier: string | null;
+  unified_recommendation: string | null;
+  unified_confidence: number | null;
+  unified_trap_score: number | null;
+  used_unified_intelligence: boolean | null;
 }
 
 const formatOdds = (odds: number) => odds > 0 ? `+${odds}` : odds.toString();
@@ -65,12 +76,37 @@ const getConfidenceColor = (confidence: number) => {
   return 'text-neon-orange';
 };
 
+const getPVSTierConfig = (tier: string | null) => {
+  switch (tier) {
+    case 'ELITE_PICK':
+      return { label: 'S', color: 'bg-neon-green text-background', description: 'Elite Pick' };
+    case 'STRONG_LEAN':
+      return { label: 'A', color: 'bg-neon-purple text-white', description: 'Strong Lean' };
+    case 'MODERATE_EDGE':
+      return { label: 'B', color: 'bg-neon-blue text-white', description: 'Moderate Edge' };
+    case 'SLIGHT_EDGE':
+      return { label: 'C', color: 'bg-neon-yellow text-background', description: 'Slight Edge' };
+    case 'MED_VOLATILITY':
+      return { label: 'D', color: 'bg-neon-orange text-background', description: 'Medium Volatility' };
+    case 'HIGH_RISK':
+      return { label: 'F', color: 'bg-neon-red text-white', description: 'High Risk' };
+    default:
+      return null;
+  }
+};
+
+const isHighConfidenceTier = (tier: string | null): boolean => {
+  return tier === 'ELITE_PICK' || tier === 'STRONG_LEAN';
+};
+
 export const JuicedPropsCard = () => {
   const { toast } = useToast();
   const [props, setProps] = useState<JuicedProp[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isScanning, setIsScanning] = useState(false);
   const [activeTab, setActiveTab] = useState<'pending' | 'locked'>('pending');
+  const [showOnlyUnified, setShowOnlyUnified] = useState(false);
+  const [showOnlyHighTier, setShowOnlyHighTier] = useState(false);
 
   const fetchJuicedProps = async () => {
     try {
@@ -137,8 +173,27 @@ export const JuicedPropsCard = () => {
     }
   };
 
-  const pendingProps = props.filter(p => !p.is_locked);
-  const lockedProps = props.filter(p => p.is_locked);
+  // Filter props based on unified intelligence settings
+  const filterProps = (propList: JuicedProp[]) => {
+    let filtered = propList;
+    
+    if (showOnlyUnified) {
+      filtered = filtered.filter(p => p.used_unified_intelligence);
+    }
+    
+    if (showOnlyHighTier) {
+      filtered = filtered.filter(p => isHighConfidenceTier(p.unified_pvs_tier));
+    }
+    
+    return filtered;
+  };
+
+  const pendingProps = filterProps(props.filter(p => !p.is_locked));
+  const lockedProps = filterProps(props.filter(p => p.is_locked));
+
+  // Stats for unified intelligence
+  const totalUnified = props.filter(p => p.used_unified_intelligence).length;
+  const highTierCount = props.filter(p => isHighConfidenceTier(p.unified_pvs_tier)).length;
 
   if (isLoading) {
     return (
@@ -178,6 +233,50 @@ export const JuicedPropsCard = () => {
             {isScanning ? 'Scanning...' : 'Scan Now'}
           </Button>
         </div>
+
+        {/* Unified Intelligence Filters */}
+        <div className="mt-4 p-3 bg-background/50 rounded-lg border border-border">
+          <div className="flex items-center gap-2 mb-3">
+            <Brain className="w-4 h-4 text-neon-purple" />
+            <span className="text-sm font-semibold">Unified Intelligence Filters</span>
+            {totalUnified > 0 && (
+              <Badge variant="outline" className="ml-auto text-xs bg-neon-purple/10 text-neon-purple border-neon-purple/30">
+                {totalUnified} AI-backed
+              </Badge>
+            )}
+          </div>
+          
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-6">
+            <div className="flex items-center gap-2">
+              <Switch
+                id="unified-filter"
+                checked={showOnlyUnified}
+                onCheckedChange={setShowOnlyUnified}
+              />
+              <Label htmlFor="unified-filter" className="text-sm cursor-pointer flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-neon-purple" />
+                Show only AI-backed
+              </Label>
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <Switch
+                id="high-tier-filter"
+                checked={showOnlyHighTier}
+                onCheckedChange={setShowOnlyHighTier}
+              />
+              <Label htmlFor="high-tier-filter" className="text-sm cursor-pointer flex items-center gap-1.5">
+                <Shield className="w-3.5 h-3.5 text-neon-green" />
+                A/S Tier Only
+                {highTierCount > 0 && (
+                  <Badge className="ml-1 text-[10px] px-1.5 py-0 bg-neon-green/20 text-neon-green border-neon-green/30">
+                    {highTierCount}
+                  </Badge>
+                )}
+              </Label>
+            </div>
+          </div>
+        </div>
       </CardHeader>
 
       <CardContent className="p-0">
@@ -197,63 +296,19 @@ export const JuicedPropsCard = () => {
             {pendingProps.length === 0 ? (
               <div className="p-8 text-center">
                 <AlertCircle className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
-                <p className="text-muted-foreground">No juiced props found</p>
-                <p className="text-xs text-muted-foreground mt-1">Run a morning scan to find today's action</p>
+                <p className="text-muted-foreground">
+                  {showOnlyUnified || showOnlyHighTier ? 'No matching props found' : 'No juiced props found'}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {showOnlyUnified || showOnlyHighTier 
+                    ? 'Try adjusting your filters' 
+                    : 'Run a morning scan to find today\'s action'}
+                </p>
               </div>
             ) : (
               <div className="divide-y divide-border">
                 {pendingProps.map((prop) => (
-                  <div key={prop.id} className="p-4 hover:bg-muted/20 transition-colors">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <Badge variant="outline" className="text-xs">
-                            {prop.sport}
-                          </Badge>
-                          <Badge variant="outline" className={cn("text-xs", getJuiceLevelColor(prop.juice_level))}>
-                            {prop.juice_level.toUpperCase()} JUICE
-                          </Badge>
-                        </div>
-                        
-                        <h4 className="font-semibold text-foreground truncate">
-                          {prop.player_name}
-                        </h4>
-                        <p className="text-sm text-muted-foreground">
-                          {prop.prop_type} | {prop.game_description}
-                        </p>
-                        
-                        <div className="flex items-center gap-4 mt-2">
-                          <div className="flex items-center gap-1">
-                            <TrendingUp className="w-3 h-3 text-neon-red" />
-                            <span className="text-sm">
-                              O {prop.line} <span className="font-mono text-neon-red">{formatOdds(prop.over_price)}</span>
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <TrendingDown className="w-3 h-3 text-neon-green" />
-                            <span className="text-sm">
-                              U {prop.line} <span className="font-mono text-neon-green">{formatOdds(prop.under_price)}</span>
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                      
-                      <div className="text-right shrink-0">
-                        <div className="flex items-center gap-1 text-muted-foreground">
-                          <Clock className="w-3 h-3" />
-                          <span className="text-xs">{formatTime(prop.commence_time)}</span>
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-1">{prop.bookmaker}</p>
-                      </div>
-                    </div>
-                    
-                    <div className="mt-3 p-2 bg-muted/30 rounded-lg flex items-center gap-2">
-                      <Clock className="w-4 h-4 text-neon-yellow" />
-                      <span className="text-xs text-muted-foreground">
-                        Final pick locks ~30 min before game
-                      </span>
-                    </div>
-                  </div>
+                  <PropCard key={prop.id} prop={prop} isLocked={false} />
                 ))}
               </div>
             )}
@@ -263,71 +318,19 @@ export const JuicedPropsCard = () => {
             {lockedProps.length === 0 ? (
               <div className="p-8 text-center">
                 <Lock className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
-                <p className="text-muted-foreground">No final picks yet</p>
-                <p className="text-xs text-muted-foreground mt-1">Picks lock 30 min before game time</p>
+                <p className="text-muted-foreground">
+                  {showOnlyUnified || showOnlyHighTier ? 'No matching picks found' : 'No final picks yet'}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {showOnlyUnified || showOnlyHighTier 
+                    ? 'Try adjusting your filters' 
+                    : 'Picks lock 30 min before game time'}
+                </p>
               </div>
             ) : (
               <div className="divide-y divide-border">
                 {lockedProps.map((prop) => (
-                  <div key={prop.id} className="p-4 bg-gradient-to-r from-neon-green/5 to-transparent">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <Badge className="bg-neon-green/20 text-neon-green border-neon-green/30 text-xs gap-1">
-                            <CheckCircle2 className="w-3 h-3" />
-                            LOCKED
-                          </Badge>
-                          <Badge variant="outline" className="text-xs">
-                            {prop.sport}
-                          </Badge>
-                        </div>
-                        
-                        <h4 className="font-semibold text-foreground truncate">
-                          {prop.player_name}
-                        </h4>
-                        <p className="text-sm text-muted-foreground">
-                          {prop.prop_type} | {prop.game_description}
-                        </p>
-                        
-                        {/* Final Pick Display */}
-                        <div className="mt-3 p-3 bg-card rounded-lg border border-neon-green/30">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <Target className="w-5 h-5 text-neon-green" />
-                              <span className="font-display text-lg text-neon-green">
-                                {prop.final_pick?.toUpperCase()} {prop.line}
-                              </span>
-                              <span className="font-mono text-foreground">
-                                {formatOdds(prop.final_pick === 'over' ? prop.over_price : prop.under_price)}
-                              </span>
-                            </div>
-                            {prop.final_pick_confidence && (
-                              <div className={cn("text-sm font-semibold", getConfidenceColor(prop.final_pick_confidence))}>
-                                {Math.round(prop.final_pick_confidence * 100)}%
-                              </div>
-                            )}
-                          </div>
-                          {prop.final_pick_reason && (
-                            <p className="text-xs text-muted-foreground mt-2">
-                              {prop.final_pick_reason}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                      
-                      <div className="text-right shrink-0">
-                        <div className="flex items-center gap-1 text-muted-foreground">
-                          <Clock className="w-3 h-3" />
-                          <span className="text-xs">{formatTime(prop.commence_time)}</span>
-                        </div>
-                        {prop.final_pick_time && (
-                          <p className="text-xs text-neon-green mt-1">
-                            Locked {formatTime(prop.final_pick_time)}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  </div>
+                  <PropCard key={prop.id} prop={prop} isLocked={true} />
                 ))}
               </div>
             )}
@@ -351,21 +354,156 @@ export const JuicedPropsCard = () => {
                 <p className="text-xs text-muted-foreground">Moderate</p>
               </div>
               <div>
-                <p className="text-lg font-display text-neon-yellow">
-                  {props.filter(p => p.juice_level === 'light').length}
+                <p className="text-lg font-display text-neon-purple">
+                  {totalUnified}
                 </p>
-                <p className="text-xs text-muted-foreground">Light</p>
+                <p className="text-xs text-muted-foreground">AI-Backed</p>
               </div>
               <div>
                 <p className="text-lg font-display text-neon-green">
-                  {lockedProps.length}
+                  {highTierCount}
                 </p>
-                <p className="text-xs text-muted-foreground">Locked</p>
+                <p className="text-xs text-muted-foreground">A/S Tier</p>
               </div>
             </div>
           </div>
         )}
       </CardContent>
     </Card>
+  );
+};
+
+// Separate PropCard component for cleaner code
+const PropCard = ({ prop, isLocked }: { prop: JuicedProp; isLocked: boolean }) => {
+  const tierConfig = getPVSTierConfig(prop.unified_pvs_tier);
+  
+  return (
+    <div className={cn(
+      "p-4 hover:bg-muted/20 transition-colors",
+      isLocked && "bg-gradient-to-r from-neon-green/5 to-transparent"
+    )}>
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            {isLocked && (
+              <Badge className="bg-neon-green/20 text-neon-green border-neon-green/30 text-xs gap-1">
+                <CheckCircle2 className="w-3 h-3" />
+                LOCKED
+              </Badge>
+            )}
+            <Badge variant="outline" className="text-xs">
+              {prop.sport}
+            </Badge>
+            <Badge variant="outline" className={cn("text-xs", getJuiceLevelColor(prop.juice_level))}>
+              {prop.juice_level.toUpperCase()} JUICE
+            </Badge>
+            
+            {/* Unified Intelligence Badge */}
+            {prop.used_unified_intelligence && tierConfig && (
+              <Badge className={cn("text-xs gap-1 font-bold", tierConfig.color)}>
+                <Brain className="w-3 h-3" />
+                {tierConfig.label}
+              </Badge>
+            )}
+          </div>
+          
+          <h4 className="font-semibold text-foreground truncate">
+            {prop.player_name}
+          </h4>
+          <p className="text-sm text-muted-foreground">
+            {prop.prop_type} | {prop.game_description}
+          </p>
+          
+          {/* Unified Intelligence Details */}
+          {prop.used_unified_intelligence && (
+            <div className="mt-2 flex items-center gap-3 text-xs">
+              {prop.unified_composite_score && (
+                <span className="text-neon-purple">
+                  Score: {prop.unified_composite_score.toFixed(1)}
+                </span>
+              )}
+              {prop.unified_recommendation && (
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                  {prop.unified_recommendation}
+                </Badge>
+              )}
+              {prop.unified_trap_score !== null && prop.unified_trap_score > 0.5 && (
+                <span className="text-neon-red flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3" />
+                  Trap: {Math.round(prop.unified_trap_score * 100)}%
+                </span>
+              )}
+            </div>
+          )}
+          
+          <div className="flex items-center gap-4 mt-2">
+            <div className="flex items-center gap-1">
+              <TrendingUp className="w-3 h-3 text-neon-red" />
+              <span className="text-sm">
+                O {prop.line} <span className="font-mono text-neon-red">{formatOdds(prop.over_price)}</span>
+              </span>
+            </div>
+            <div className="flex items-center gap-1">
+              <TrendingDown className="w-3 h-3 text-neon-green" />
+              <span className="text-sm">
+                U {prop.line} <span className="font-mono text-neon-green">{formatOdds(prop.under_price)}</span>
+              </span>
+            </div>
+          </div>
+
+          {/* Final Pick Display for locked props */}
+          {isLocked && prop.final_pick && (
+            <div className="mt-3 p-3 bg-card rounded-lg border border-neon-green/30">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Target className="w-5 h-5 text-neon-green" />
+                  <span className="font-display text-lg text-neon-green">
+                    {prop.final_pick.toUpperCase()} {prop.line}
+                  </span>
+                  <span className="font-mono text-foreground">
+                    {formatOdds(prop.final_pick === 'over' ? prop.over_price : prop.under_price)}
+                  </span>
+                </div>
+                {prop.final_pick_confidence && (
+                  <div className={cn("text-sm font-semibold", getConfidenceColor(prop.final_pick_confidence))}>
+                    {Math.round(prop.final_pick_confidence * 100)}%
+                  </div>
+                )}
+              </div>
+              {prop.final_pick_reason && (
+                <p className="text-xs text-muted-foreground mt-2">
+                  {prop.final_pick_reason}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Pending pick message */}
+          {!isLocked && (
+            <div className="mt-3 p-2 bg-muted/30 rounded-lg flex items-center gap-2">
+              <Clock className="w-4 h-4 text-neon-yellow" />
+              <span className="text-xs text-muted-foreground">
+                Final pick locks ~30 min before game
+              </span>
+            </div>
+          )}
+        </div>
+        
+        <div className="text-right shrink-0">
+          <div className="flex items-center gap-1 text-muted-foreground">
+            <Clock className="w-3 h-3" />
+            <span className="text-xs">{formatTime(prop.commence_time)}</span>
+          </div>
+          {isLocked && prop.final_pick_time && (
+            <p className="text-xs text-neon-green mt-1">
+              Locked {formatTime(prop.final_pick_time)}
+            </p>
+          )}
+          {!isLocked && (
+            <p className="text-xs text-muted-foreground mt-1">{prop.bookmaker}</p>
+          )}
+        </div>
+      </div>
+    </div>
   );
 };
