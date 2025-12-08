@@ -87,7 +87,7 @@ export function GodModeUpsetCard({ prediction, className }: GodModeUpsetCardProp
       animate={{ opacity: 1, y: 0 }}
     >
       <Card className={cn(
-        'relative overflow-hidden transition-all',
+        'relative overflow-hidden transition-all min-w-[320px]',
         prediction.chaos_mode_active && 'ring-2 ring-purple-500/50',
         prediction.confidence === 'high' && 'ring-2 ring-chart-2/50',
         className
@@ -104,8 +104,8 @@ export function GodModeUpsetCard({ prediction, className }: GodModeUpsetCardProp
         <CardHeader className="relative pb-2">
           <div className="flex items-start justify-between gap-2">
             <div className="flex-1">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
-                <span className="uppercase">{prediction.sport.replace('_', ' ')}</span>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+                <span className="uppercase truncate max-w-[120px]" title={prediction.sport.replace('_', ' ')}>{prediction.sport.replace('americanfootball_', '').replace('basketball_', '').toUpperCase()}</span>
                 <span>•</span>
                 <span>{format(new Date(prediction.commence_time), 'MMM d, h:mm a')}</span>
               </div>
@@ -163,24 +163,24 @@ export function GodModeUpsetCard({ prediction, className }: GodModeUpsetCardProp
           />
 
           {/* Key stats */}
-          <div className="grid grid-cols-3 gap-2">
-            <div className="rounded-lg bg-muted/50 p-2 text-center">
-              <div className="text-lg font-bold text-chart-2">
+          <div className="grid grid-cols-3 gap-3">
+            <div className="rounded-lg bg-muted/50 p-3 text-center min-w-0">
+              <div className="text-xl font-bold text-chart-2">
                 {Math.round(prediction.upset_probability)}%
               </div>
-              <div className="text-xs text-muted-foreground">Upset Prob</div>
+              <div className="text-xs text-muted-foreground whitespace-nowrap">Upset Prob</div>
             </div>
-            <div className="rounded-lg bg-muted/50 p-2 text-center">
-              <div className="text-lg font-bold text-chart-1">
+            <div className="rounded-lg bg-muted/50 p-3 text-center min-w-0">
+              <div className="text-xl font-bold text-chart-1">
                 {Math.round(prediction.sharp_pct)}%
               </div>
-              <div className="text-xs text-muted-foreground">Sharp %</div>
+              <div className="text-xs text-muted-foreground whitespace-nowrap">Sharp %</div>
             </div>
-            <div className="rounded-lg bg-muted/50 p-2 text-center">
-              <div className="text-lg font-bold text-chart-4">
+            <div className="rounded-lg bg-muted/50 p-3 text-center min-w-0">
+              <div className="text-xl font-bold text-chart-4">
                 {Math.round(prediction.chess_ev)}
               </div>
-              <div className="text-xs text-muted-foreground">CHESS EV</div>
+              <div className="text-xs text-muted-foreground whitespace-nowrap">CHESS EV</div>
             </div>
           </div>
 
@@ -260,19 +260,19 @@ export function GodModeUpsetCard({ prediction, className }: GodModeUpsetCardProp
             <Button
               variant={isAdded ? 'secondary' : 'default'}
               size="sm"
-              className="flex-1 gap-2"
+              className="flex-1 gap-2 whitespace-nowrap"
               onClick={handleAddToParlay}
               disabled={isAdded}
             >
-              <Plus className="h-4 w-4" />
-              {isAdded ? 'Added to Parlay' : 'Add to Parlay'}
+              <Plus className="h-4 w-4 shrink-0" />
+              <span className="truncate">{isAdded ? 'Added' : 'Add to Parlay'}</span>
             </Button>
 
             <Button
               variant="ghost"
               size="sm"
               onClick={() => setExpanded(!expanded)}
-              className="gap-1"
+              className="gap-1 shrink-0"
             >
               {expanded ? (
                 <>Less <ChevronUp className="h-4 w-4" /></>
