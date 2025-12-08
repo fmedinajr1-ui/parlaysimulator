@@ -149,3 +149,6 @@ verify_jwt = false
 
 [functions.verify-god-mode-outcomes]
 verify_jwt = false
+
+[functions.auto-refresh-sharp-tracker]
+verify_jwt = false
