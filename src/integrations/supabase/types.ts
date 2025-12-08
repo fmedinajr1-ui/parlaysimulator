@@ -308,6 +308,168 @@ export type Database = {
         }
         Relationships: []
       }
+      god_mode_accuracy_metrics: {
+        Row: {
+          accuracy_rate: number
+          avg_upset_score: number
+          chaos_mode_active: boolean
+          confidence_level: string
+          correct_predictions: number
+          created_at: string
+          id: string
+          roi_percentage: number
+          sport: string | null
+          total_predictions: number
+          updated_at: string
+        }
+        Insert: {
+          accuracy_rate?: number
+          avg_upset_score?: number
+          chaos_mode_active?: boolean
+          confidence_level: string
+          correct_predictions?: number
+          created_at?: string
+          id?: string
+          roi_percentage?: number
+          sport?: string | null
+          total_predictions?: number
+          updated_at?: string
+        }
+        Update: {
+          accuracy_rate?: number
+          avg_upset_score?: number
+          chaos_mode_active?: boolean
+          confidence_level?: string
+          correct_predictions?: number
+          created_at?: string
+          id?: string
+          roi_percentage?: number
+          sport?: string | null
+          total_predictions?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      god_mode_upset_predictions: {
+        Row: {
+          ai_reasoning: string | null
+          away_team: string
+          chaos_mode_active: boolean
+          chaos_percentage: number
+          chess_ev: number
+          commence_time: string
+          confidence: string
+          created_at: string
+          event_id: string
+          favorite: string
+          favorite_odds: number
+          final_upset_score: number
+          game_completed: boolean
+          historical_day_boost: number
+          home_court_advantage: number
+          home_team: string
+          id: string
+          is_live: boolean
+          last_odds_update: string | null
+          monte_carlo_boost: number
+          odds_change_direction: string | null
+          parlay_impact: Json
+          previous_odds: number | null
+          reasons: Json
+          risk_level: number
+          sharp_pct: number
+          signals: Json
+          sport: string
+          suggestion: string
+          trap_on_favorite: boolean
+          underdog: string
+          underdog_odds: number
+          updated_at: string
+          upset_probability: number
+          upset_value_score: number
+          verified_at: string | null
+          was_upset: boolean | null
+        }
+        Insert: {
+          ai_reasoning?: string | null
+          away_team: string
+          chaos_mode_active?: boolean
+          chaos_percentage?: number
+          chess_ev?: number
+          commence_time: string
+          confidence?: string
+          created_at?: string
+          event_id: string
+          favorite: string
+          favorite_odds: number
+          final_upset_score?: number
+          game_completed?: boolean
+          historical_day_boost?: number
+          home_court_advantage?: number
+          home_team: string
+          id?: string
+          is_live?: boolean
+          last_odds_update?: string | null
+          monte_carlo_boost?: number
+          odds_change_direction?: string | null
+          parlay_impact?: Json
+          previous_odds?: number | null
+          reasons?: Json
+          risk_level?: number
+          sharp_pct?: number
+          signals?: Json
+          sport: string
+          suggestion?: string
+          trap_on_favorite?: boolean
+          underdog: string
+          underdog_odds: number
+          updated_at?: string
+          upset_probability?: number
+          upset_value_score?: number
+          verified_at?: string | null
+          was_upset?: boolean | null
+        }
+        Update: {
+          ai_reasoning?: string | null
+          away_team?: string
+          chaos_mode_active?: boolean
+          chaos_percentage?: number
+          chess_ev?: number
+          commence_time?: string
+          confidence?: string
+          created_at?: string
+          event_id?: string
+          favorite?: string
+          favorite_odds?: number
+          final_upset_score?: number
+          game_completed?: boolean
+          historical_day_boost?: number
+          home_court_advantage?: number
+          home_team?: string
+          id?: string
+          is_live?: boolean
+          last_odds_update?: string | null
+          monte_carlo_boost?: number
+          odds_change_direction?: string | null
+          parlay_impact?: Json
+          previous_odds?: number | null
+          reasons?: Json
+          risk_level?: number
+          sharp_pct?: number
+          signals?: Json
+          sport?: string
+          suggestion?: string
+          trap_on_favorite?: boolean
+          underdog?: string
+          underdog_odds?: number
+          updated_at?: string
+          upset_probability?: number
+          upset_value_score?: number
+          verified_at?: string | null
+          was_upset?: boolean | null
+        }
+        Relationships: []
+      }
       hitrate_accuracy_metrics: {
         Row: {
           avg_actual_probability: number
@@ -413,6 +575,54 @@ export type Database = {
           sport?: string | null
           strategy_type?: string
           total_odds?: number
+        }
+        Relationships: []
+      }
+      home_court_advantage_stats: {
+        Row: {
+          avg_home_margin: number
+          away_upset_rate: number
+          created_at: string
+          home_cover_rate: number
+          home_over_rate: number
+          home_upset_rate: number
+          home_win_rate: number
+          id: string
+          sample_size: number
+          sport: string
+          team_name: string
+          updated_at: string
+          venue_name: string | null
+        }
+        Insert: {
+          avg_home_margin?: number
+          away_upset_rate?: number
+          created_at?: string
+          home_cover_rate?: number
+          home_over_rate?: number
+          home_upset_rate?: number
+          home_win_rate?: number
+          id?: string
+          sample_size?: number
+          sport: string
+          team_name: string
+          updated_at?: string
+          venue_name?: string | null
+        }
+        Update: {
+          avg_home_margin?: number
+          away_upset_rate?: number
+          created_at?: string
+          home_cover_rate?: number
+          home_over_rate?: number
+          home_upset_rate?: number
+          home_win_rate?: number
+          id?: string
+          sample_size?: number
+          sport?: string
+          team_name?: string
+          updated_at?: string
+          venue_name?: string | null
         }
         Relationships: []
       }
