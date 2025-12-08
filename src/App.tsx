@@ -25,6 +25,7 @@ import NBAFatigue from "./pages/NBAFatigue";
 import Install from "./pages/Install";
 import NotFound from "./pages/NotFound";
 import PVSCalculator from "./pages/PVSCalculator";
+import GodModeUpsets from "./pages/GodModeUpsets";
 
 const queryClient = new QueryClient();
 
@@ -49,6 +50,7 @@ function AnimatedRoutes() {
         <Route path="/nba-fatigue" element={<NBAFatigue />} />
         <Route path="/install" element={<Install />} />
         <Route path="/pvs-calculator" element={<PVSCalculator />} />
+        <Route path="/god-mode" element={<GodModeUpsets />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </PageTransition>

@@ -140,3 +140,12 @@ verify_jwt = false
 
 [functions.sharp-engine-v2]
 verify_jwt = false
+
+[functions.god-mode-upset-engine]
+verify_jwt = false
+
+[functions.stream-live-odds]
+verify_jwt = false
+
+[functions.verify-god-mode-outcomes]
+verify_jwt = false
