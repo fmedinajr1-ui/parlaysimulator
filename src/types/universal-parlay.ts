@@ -1,4 +1,4 @@
-export type ParlaySource = 'pvs' | 'sharp' | 'hitrate' | 'juiced' | 'suggestions' | 'manual';
+export type ParlaySource = 'pvs' | 'sharp' | 'hitrate' | 'juiced' | 'suggestions' | 'manual' | 'godmode';
 
 export interface UniversalLeg {
   id: string;
@@ -28,4 +28,5 @@ export const SOURCE_LABELS: Record<ParlaySource, { label: string; emoji: string;
   juiced: { label: 'Juiced', emoji: '🍊', color: 'text-orange-500' },
   suggestions: { label: 'AI Pick', emoji: '🤖', color: 'text-purple-500' },
   manual: { label: 'Manual', emoji: '✏️', color: 'text-muted-foreground' },
+  godmode: { label: 'God Mode', emoji: '🔮', color: 'text-purple-500' },
 };

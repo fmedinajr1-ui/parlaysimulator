@@ -25,7 +25,12 @@ export const ParlayLegCard = ({ leg, onRemove }: ParlayLegCardProps) => {
           </span>
           {leg.sport && (
             <span className="text-[10px] text-muted-foreground uppercase">
-              {leg.sport}
+              {leg.sport.replace('_', ' ')}
+            </span>
+          )}
+          {leg.confidenceScore && leg.source === 'godmode' && (
+            <span className="text-[10px] font-medium text-purple-400">
+              {Math.round(leg.confidenceScore)}% score
             </span>
           )}
         </div>

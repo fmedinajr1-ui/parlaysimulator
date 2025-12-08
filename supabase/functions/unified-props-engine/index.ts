@@ -8,8 +8,11 @@ const corsHeaders = {
 
 const SPORT_KEYS: Record<string, string> = {
   'basketball_nba': 'NBA',
+  'basketball_ncaab': 'NCAAB',
   'hockey_nhl': 'NHL',
+  'icehockey_nhl': 'NHL',
   'americanfootball_nfl': 'NFL',
+  'americanfootball_ncaaf': 'NCAAF',
 };
 
 const PROP_MARKETS = [
@@ -66,7 +69,7 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, supabaseKey);
 
   try {
-    const { sports = ['basketball_nba', 'hockey_nhl'] } = await req.json().catch(() => ({}));
+    const { sports = ['basketball_nba', 'basketball_ncaab', 'hockey_nhl', 'americanfootball_nfl', 'americanfootball_ncaaf'] } = await req.json().catch(() => ({}));
     
     console.log('[UnifiedEngine] Starting unified props analysis with PVS scoring for:', sports);
     const startTime = Date.now();
