@@ -235,7 +235,7 @@ export function PVSPropCalculator() {
       {/* Main Content */}
       <div className="flex flex-col lg:flex-row gap-6">
         {/* Props Grid */}
-        <div className="order-2 lg:order-1 flex-1 space-y-4 min-w-0">
+        <div className="order-2 lg:order-1 flex-1 space-y-4 min-w-0 overflow-hidden">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold">
               Props ({filteredProps.length})
@@ -246,7 +246,7 @@ export function PVSPropCalculator() {
           </div>
 
           {isLoading ? (
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-4 xl:grid-cols-2">
               {[...Array(6)].map((_, i) => (
                 <Skeleton key={i} className="h-64" />
               ))}
@@ -269,7 +269,7 @@ export function PVSPropCalculator() {
               </CardContent>
             </Card>
           ) : (
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-4 xl:grid-cols-2">
               {filteredProps.map(prop => (
                 <PVSPropCard
                   key={prop.id}

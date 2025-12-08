@@ -82,7 +82,7 @@ export function PVSPropCard({ prop, isSelected = false, onSelect }: PVSPropCardP
 
   return (
     <Card className={cn(
-      "transition-all duration-200 border-border/50 hover:border-primary/50",
+      "transition-all duration-200 border-border/50 hover:border-primary/50 overflow-hidden",
       isSelected && "border-primary ring-1 ring-primary/30"
     )}>
       <CardHeader className="p-4 pb-2">
