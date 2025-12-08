@@ -137,3 +137,6 @@ verify_jwt = false
 
 [functions.record-trap-pattern]
 verify_jwt = false
+
+[functions.sharp-engine-v2]
+verify_jwt = false

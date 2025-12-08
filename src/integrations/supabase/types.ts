@@ -581,7 +581,9 @@ export type Database = {
           created_at: string
           description: string
           detected_at: string
+          detected_signals: Json | null
           determination_status: string | null
+          engine_version: string | null
           event_id: string
           final_determination_time: string | null
           final_pick: string | null
@@ -593,6 +595,7 @@ export type Database = {
           market_type: string
           movement_authenticity: string | null
           movement_type: string
+          movement_weight: number | null
           new_point: number | null
           new_price: number
           old_point: number | null
@@ -609,8 +612,13 @@ export type Database = {
           price_change: number
           recommendation: string | null
           recommendation_reason: string | null
+          sharp_edge_score: number | null
           sharp_indicator: string | null
+          sharp_pressure: number | null
+          sharp_probability: number | null
           sport: string
+          time_weight: number | null
+          trap_pressure: number | null
           trap_score: number | null
           verified_at: string | null
         }
@@ -625,7 +633,9 @@ export type Database = {
           created_at?: string
           description: string
           detected_at?: string
+          detected_signals?: Json | null
           determination_status?: string | null
+          engine_version?: string | null
           event_id: string
           final_determination_time?: string | null
           final_pick?: string | null
@@ -637,6 +647,7 @@ export type Database = {
           market_type: string
           movement_authenticity?: string | null
           movement_type?: string
+          movement_weight?: number | null
           new_point?: number | null
           new_price: number
           old_point?: number | null
@@ -653,8 +664,13 @@ export type Database = {
           price_change: number
           recommendation?: string | null
           recommendation_reason?: string | null
+          sharp_edge_score?: number | null
           sharp_indicator?: string | null
+          sharp_pressure?: number | null
+          sharp_probability?: number | null
           sport: string
+          time_weight?: number | null
+          trap_pressure?: number | null
           trap_score?: number | null
           verified_at?: string | null
         }
@@ -669,7 +685,9 @@ export type Database = {
           created_at?: string
           description?: string
           detected_at?: string
+          detected_signals?: Json | null
           determination_status?: string | null
+          engine_version?: string | null
           event_id?: string
           final_determination_time?: string | null
           final_pick?: string | null
@@ -681,6 +699,7 @@ export type Database = {
           market_type?: string
           movement_authenticity?: string | null
           movement_type?: string
+          movement_weight?: number | null
           new_point?: number | null
           new_price?: number
           old_point?: number | null
@@ -697,8 +716,13 @@ export type Database = {
           price_change?: number
           recommendation?: string | null
           recommendation_reason?: string | null
+          sharp_edge_score?: number | null
           sharp_indicator?: string | null
+          sharp_pressure?: number | null
+          sharp_probability?: number | null
           sport?: string
+          time_weight?: number | null
+          trap_pressure?: number | null
           trap_score?: number | null
           verified_at?: string | null
         }
@@ -1648,6 +1672,36 @@ export type Database = {
           last_scan_at?: string | null
           scan_count?: number | null
           user_id?: string
+        }
+        Relationships: []
+      }
+      sharp_engine_config: {
+        Row: {
+          category: string | null
+          config_key: string
+          config_value: number
+          created_at: string | null
+          description: string | null
+          id: string
+          updated_at: string | null
+        }
+        Insert: {
+          category?: string | null
+          config_key: string
+          config_value: number
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          updated_at?: string | null
+        }
+        Update: {
+          category?: string | null
+          config_key?: string
+          config_value?: number
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          updated_at?: string | null
         }
         Relationships: []
       }
