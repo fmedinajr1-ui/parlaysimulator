@@ -1,32 +1,19 @@
-import { Home, BarChart3, User, Shield, Sparkles, WifiOff, TrendingUp, Calculator } from "lucide-react";
+import { Home, BarChart3, User, TrendingUp, WifiOff } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
-import { useAdminRole } from "@/hooks/useAdminRole";
 import { usePWA } from "@/hooks/usePWA";
+import { MenuDrawer } from "@/components/layout/MenuDrawer";
 
-const baseNavItems = [
+const navItems = [
   { icon: Home, label: "Home", path: "/" },
   { icon: BarChart3, label: "Analyze", path: "/upload" },
   { icon: TrendingUp, label: "Odds", path: "/odds" },
-  { icon: Sparkles, label: "Picks", path: "/suggestions" },
   { icon: User, label: "Profile", path: "/profile" },
 ];
 
 export function BottomNav() {
   const location = useLocation();
-  const { isAdmin } = useAdminRole();
   const { isOnline } = usePWA();
-
-  const navItems = isAdmin 
-    ? [
-        baseNavItems[0],
-        baseNavItems[1],
-        baseNavItems[2],
-        baseNavItems[3],
-        { icon: Calculator, label: "PVS", path: "/pvs-calculator" },
-        { icon: Shield, label: "Admin", path: "/admin" },
-      ]
-    : baseNavItems;
 
   return (
     <nav className={cn(
@@ -96,6 +83,9 @@ export function BottomNav() {
             </Link>
           );
         })}
+        
+        {/* Hamburger Menu */}
+        <MenuDrawer />
       </div>
     </nav>
   );
