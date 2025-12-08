@@ -51,7 +51,7 @@ export function PVSParlayBuilder({ selectedProps, onRemove, onClear }: PVSParlay
   };
 
   return (
-    <Card className="sticky top-4 border-primary/30">
+    <Card className="border-primary/30">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-2 text-lg">

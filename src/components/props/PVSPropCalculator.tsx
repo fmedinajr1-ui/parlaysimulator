@@ -233,9 +233,9 @@ export function PVSPropCalculator() {
       </Card>
 
       {/* Main Content */}
-      <div className="grid gap-6 lg:grid-cols-[1fr_350px]">
+      <div className="flex flex-col lg:flex-row gap-6">
         {/* Props Grid */}
-        <div className="space-y-4">
+        <div className="order-2 lg:order-1 flex-1 space-y-4 min-w-0">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold">
               Props ({filteredProps.length})
@@ -283,12 +283,14 @@ export function PVSPropCalculator() {
         </div>
 
         {/* Parlay Builder Sidebar */}
-        <div className="lg:order-last order-first">
-          <PVSParlayBuilder
-            selectedProps={selectedProps}
-            onRemove={handleRemoveProp}
-            onClear={() => setSelectedProps([])}
-          />
+        <div className="order-1 lg:order-2 w-full lg:w-[350px] flex-shrink-0">
+          <div className="lg:sticky lg:top-4">
+            <PVSParlayBuilder
+              selectedProps={selectedProps}
+              onRemove={handleRemoveProp}
+              onClear={() => setSelectedProps([])}
+            />
+          </div>
         </div>
       </div>
     </div>
