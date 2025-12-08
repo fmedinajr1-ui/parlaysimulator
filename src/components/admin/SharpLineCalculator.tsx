@@ -847,7 +847,7 @@ const SharpLineCalculator = () => {
                           value={refreshInterval.toString()} 
                           onValueChange={(v) => setRefreshInterval(parseInt(v))}
                         >
-                          <SelectTrigger className="w-[100px] h-8">
+                          <SelectTrigger className="w-[110px] h-8">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -855,6 +855,11 @@ const SharpLineCalculator = () => {
                             <SelectItem value="60">1 min</SelectItem>
                             <SelectItem value="120">2 min</SelectItem>
                             <SelectItem value="300">5 min</SelectItem>
+                            <SelectItem value="1800">30 min</SelectItem>
+                            <SelectItem value="3600">1 hour</SelectItem>
+                            <SelectItem value="7200">2 hours</SelectItem>
+                            <SelectItem value="10800">3 hours</SelectItem>
+                            <SelectItem value="21600">6 hours</SelectItem>
                           </SelectContent>
                         </Select>
                       )}
@@ -880,7 +885,14 @@ const SharpLineCalculator = () => {
                     
                     {autoRefresh && (
                       <div className="text-xs text-muted-foreground">
-                        Next in <span className="font-mono text-foreground">{nextRefreshIn}s</span>
+                        Next in <span className="font-mono text-foreground">
+                          {nextRefreshIn >= 3600 
+                            ? `${Math.floor(nextRefreshIn / 3600)}h ${Math.floor((nextRefreshIn % 3600) / 60)}m`
+                            : nextRefreshIn >= 60 
+                              ? `${Math.floor(nextRefreshIn / 60)}m ${nextRefreshIn % 60}s`
+                              : `${nextRefreshIn}s`
+                          }
+                        </span>
                         {autoAnalyze && <span className="text-primary ml-1">+ analyze</span>}
                         {lastRefresh && (
                           <span className="ml-2">
@@ -1278,6 +1290,56 @@ const SharpLineCalculator = () => {
                         </div>
                       </div>
                       <p className="text-sm">{prop.ai_reasoning}</p>
+                      
+                      {/* Prominent Add to Parlay Button in GOD MODE Section */}
+                      {prop.ai_recommendation && (() => {
+                        const desc = `${prop.player_name} ${prop.ai_direction?.toUpperCase() || 'OVER'} ${prop.current_line || prop.opening_line} ${prop.prop_type}`;
+                        const odds = prop.ai_direction === 'over' 
+                          ? (prop.current_over_price || prop.opening_over_price)
+                          : (prop.current_under_price || prop.opening_under_price);
+                        const isAdded = hasLeg(desc);
+                        const recColor = prop.ai_recommendation === 'pick' 
+                          ? 'bg-green-600 hover:bg-green-700 text-white' 
+                          : prop.ai_recommendation === 'fade' 
+                            ? 'bg-red-600 hover:bg-red-700 text-white'
+                            : 'bg-yellow-600 hover:bg-yellow-700 text-white';
+                        
+                        return (
+                          <Button
+                            className={`w-full mt-2 ${isAdded ? 'bg-muted text-muted-foreground' : recColor}`}
+                            size="lg"
+                            disabled={isAdded}
+                            onClick={() => {
+                              if (!isAdded) {
+                                addLeg({
+                                  description: desc,
+                                  odds,
+                                  source: 'sharp',
+                                  playerName: prop.player_name,
+                                  propType: prop.prop_type,
+                                  line: prop.current_line || prop.opening_line,
+                                  side: (prop.ai_direction as 'over' | 'under') || 'over',
+                                  sport: prop.sport,
+                                  eventId: prop.event_id || undefined,
+                                  confidenceScore: prop.ai_confidence || undefined,
+                                });
+                              }
+                            }}
+                          >
+                            {isAdded ? (
+                              <>
+                                <Check className="w-5 h-5 mr-2" />
+                                Added to Parlay
+                              </>
+                            ) : (
+                              <>
+                                <ShoppingCart className="w-5 h-5 mr-2" />
+                                {prop.ai_recommendation === 'pick' ? '✅ PICK' : prop.ai_recommendation === 'fade' ? '🚫 FADE' : '⚠️ CAUTION'} - Add {prop.ai_direction?.toUpperCase() || 'OVER'} to Parlay
+                              </>
+                            )}
+                          </Button>
+                        );
+                      })()}
                       
                       {prop.ai_signals && (() => {
                         const signals = prop.ai_signals as {
