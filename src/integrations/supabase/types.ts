@@ -442,6 +442,12 @@ export type Database = {
           prop_type: string
           sport: string
           under_price: number
+          unified_composite_score: number | null
+          unified_confidence: number | null
+          unified_pvs_tier: string | null
+          unified_recommendation: string | null
+          unified_trap_score: number | null
+          used_unified_intelligence: boolean | null
           verified_at: string | null
         }
         Insert: {
@@ -469,6 +475,12 @@ export type Database = {
           prop_type: string
           sport: string
           under_price: number
+          unified_composite_score?: number | null
+          unified_confidence?: number | null
+          unified_pvs_tier?: string | null
+          unified_recommendation?: string | null
+          unified_trap_score?: number | null
+          used_unified_intelligence?: boolean | null
           verified_at?: string | null
         }
         Update: {
@@ -496,6 +508,12 @@ export type Database = {
           prop_type?: string
           sport?: string
           under_price?: number
+          unified_composite_score?: number | null
+          unified_confidence?: number | null
+          unified_pvs_tier?: string | null
+          unified_recommendation?: string | null
+          unified_trap_score?: number | null
+          used_unified_intelligence?: boolean | null
           verified_at?: string | null
         }
         Relationships: []
