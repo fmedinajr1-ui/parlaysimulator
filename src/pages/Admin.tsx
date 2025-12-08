@@ -36,6 +36,8 @@ import { CalibrationFactorsPanel } from '@/components/admin/CalibrationFactorsPa
 import { CronJobHistoryPanel } from '@/components/admin/CronJobHistoryPanel';
 import { HitRateAccuracyPanel } from '@/components/admin/HitRateAccuracyPanel';
 import { UnifiedAccuracyDashboard } from '@/components/admin/UnifiedAccuracyDashboard';
+import { SharpEngineV2Card } from '@/components/sharp/SharpEngineV2Card';
+import { SharpEngineConfigPanel } from '@/components/admin/SharpEngineConfigPanel';
 
 interface ParlayData {
   id: string;
@@ -302,6 +304,8 @@ export default function Admin() {
 
           {/* Sharp Money Tab */}
           <TabsContent value="sharp-money" className="mt-4 space-y-4">
+            <SharpEngineConfigPanel />
+            <SharpEngineV2Card limit={20} />
             <SharpRecalibrationPanel />
             <CronJobHistoryPanel />
             <CalibrationFactorsPanel />
