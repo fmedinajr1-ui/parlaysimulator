@@ -472,7 +472,7 @@ export function HitRatePicks() {
   );
 }
 
-// PropCard component for rendering individual props
+// PropCard component for rendering individual props with enhanced data
 function PropCard({ prop, PROP_LABELS }: { prop: any; PROP_LABELS: Record<string, string> }) {
   const bestHitRate = prop.recommended_side === 'over' 
     ? prop.hit_rate_over 
@@ -487,9 +487,13 @@ function PropCard({ prop, PROP_LABELS }: { prop: any; PROP_LABELS: Record<string
   );
   const streakEmoji = getStreakEmoji(prop.hit_streak, prop.is_perfect_streak);
   
+  // Get last 5 results for mini visualization
+  const last5Results = prop.last_5_results || prop.game_logs?.slice(0, 5) || [];
+  
   return (
     <Card className="bg-card/60 border-border/30">
-      <CardContent className="py-3">
+      <CardContent className="py-3 space-y-2">
+        {/* Header Row */}
         <div className="flex items-center justify-between">
           <div className="flex-1">
             <div className="font-medium flex items-center gap-2 flex-wrap">
@@ -527,6 +531,71 @@ function PropCard({ prop, PROP_LABELS }: { prop: any; PROP_LABELS: Record<string
             </div>
           </div>
         </div>
+        
+        {/* Enhanced Stats Row */}
+        <div className="flex flex-wrap gap-2 pt-1 border-t border-border/20">
+          {/* Last 5 Avg */}
+          {prop.last_5_avg !== undefined && (
+            <div className="flex items-center gap-1 text-xs">
+              <span className="text-muted-foreground">Last 5:</span>
+              <span className={prop.last_5_avg > prop.current_line ? 'text-neon-green font-medium' : 'text-red-400 font-medium'}>
+                {prop.last_5_avg}
+              </span>
+            </div>
+          )}
+          
+          {/* VS Opponent */}
+          {prop.vs_opponent_games > 0 && (
+            <div className="flex items-center gap-1 text-xs">
+              <span className="text-muted-foreground">VS Team:</span>
+              <span className={prop.vs_opponent_avg > prop.current_line ? 'text-neon-green font-medium' : 'text-amber-400 font-medium'}>
+                {prop.vs_opponent_avg?.toFixed(1)} ({prop.vs_opponent_games}g)
+              </span>
+            </div>
+          )}
+          
+          {/* Projected Value */}
+          {prop.projected_value !== undefined && (
+            <div className="flex items-center gap-1 text-xs">
+              <span className="text-muted-foreground">Proj:</span>
+              <span className={prop.projection_margin > 0 ? 'text-neon-green font-medium' : 'text-red-400 font-medium'}>
+                {prop.projected_value}
+                {prop.projection_margin !== undefined && (
+                  <span className="ml-1">
+                    ({prop.projection_margin > 0 ? '+' : ''}{prop.projection_margin})
+                  </span>
+                )}
+              </span>
+            </div>
+          )}
+        </div>
+        
+        {/* Last 5 Games Mini Chart */}
+        {last5Results.length > 0 && (
+          <div className="flex items-center gap-1 pt-1">
+            <span className="text-xs text-muted-foreground mr-1">Games:</span>
+            {last5Results.slice(0, 5).map((game: any, idx: number) => {
+              const value = game.stat_value || game.value || 0;
+              const hitLine = value > prop.current_line;
+              return (
+                <div
+                  key={idx}
+                  className={`w-6 h-6 rounded text-[10px] flex items-center justify-center font-medium ${
+                    hitLine 
+                      ? 'bg-neon-green/20 text-neon-green border border-neon-green/30' 
+                      : 'bg-red-500/20 text-red-400 border border-red-500/30'
+                  }`}
+                  title={`${game.opponent || ''}: ${value}`}
+                >
+                  {Math.round(value)}
+                </div>
+              );
+            })}
+            <span className="text-xs text-muted-foreground ml-1">
+              (Line: {prop.current_line})
+            </span>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
