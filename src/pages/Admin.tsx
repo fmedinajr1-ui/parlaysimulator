@@ -4,11 +4,11 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAdminRole } from '@/hooks/useAdminRole';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { 
   FileText, 
   Loader2, 
@@ -22,7 +22,11 @@ import {
   Calculator,
   Users,
   Eye,
-  BarChart3
+  BarChart3,
+  ChevronRight,
+  Settings,
+  Clock,
+  Target
 } from 'lucide-react';
 import { AILearningDashboard } from '@/components/admin/AILearningDashboard';
 import { SharpMoneyPanel } from '@/components/admin/SharpMoneyPanel';
@@ -54,6 +58,60 @@ interface ParlayData {
   event_start_time: string | null;
 }
 
+type AdminSection = 
+  | 'overview'
+  | 'accuracy' 
+  | 'ai-learning' 
+  | 'sharp-engine' 
+  | 'movement' 
+  | 'users' 
+  | 'parlays';
+
+const sectionConfig = [
+  {
+    id: 'accuracy' as AdminSection,
+    title: 'Analytics & Accuracy',
+    description: 'Track prediction performance and calibration',
+    icon: BarChart3,
+    color: 'text-blue-500'
+  },
+  {
+    id: 'ai-learning' as AdminSection,
+    title: 'AI & Learning',
+    description: 'Machine learning insights and performance',
+    icon: Brain,
+    color: 'text-purple-500'
+  },
+  {
+    id: 'sharp-engine' as AdminSection,
+    title: 'Sharp Money Engine',
+    description: 'Configure and monitor sharp action detection',
+    icon: Zap,
+    color: 'text-yellow-500'
+  },
+  {
+    id: 'movement' as AdminSection,
+    title: 'Movement Analysis',
+    description: 'Line movement tracking and accuracy',
+    icon: TrendingUp,
+    color: 'text-green-500'
+  },
+  {
+    id: 'users' as AdminSection,
+    title: 'User Management',
+    description: 'Collaborators and access control',
+    icon: Users,
+    color: 'text-orange-500'
+  },
+  {
+    id: 'parlays' as AdminSection,
+    title: 'Parlay Management',
+    description: 'Settle and manage user parlays',
+    icon: FileText,
+    color: 'text-pink-500'
+  },
+];
+
 export default function Admin() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -63,7 +121,7 @@ export default function Admin() {
   const [parlays, setParlays] = useState<ParlayData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSettling, setIsSettling] = useState(false);
-  const [activeTab, setActiveTab] = useState('accuracy');
+  const [activeSection, setActiveSection] = useState<AdminSection>('overview');
   const [selectedParlays, setSelectedParlays] = useState<Set<string>>(new Set());
   const [isBatchSettling, setIsBatchSettling] = useState(false);
 
@@ -242,114 +300,139 @@ export default function Admin() {
   const settledParlays = parlays.filter(p => p.is_settled).length;
   const pendingParlays = parlays.filter(p => !p.is_settled).length;
 
-  return (
-    <div className="min-h-dvh bg-background pb-nav-safe">
-      {/* Header */}
-      <div className="bg-card border-b border-border p-4">
-        <div className="flex items-center gap-2">
-          <Shield className="w-6 h-6 text-primary" />
-          <h1 className="font-display text-xl text-foreground">ADMIN PANEL</h1>
+  // Overview Section - Card Grid
+  if (activeSection === 'overview') {
+    return (
+      <div className="min-h-dvh bg-background pb-nav-safe">
+        {/* Header */}
+        <div className="bg-card border-b border-border p-6">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-xl bg-primary/10">
+              <Shield className="w-6 h-6 text-primary" />
+            </div>
+            <div>
+              <h1 className="font-display text-xl text-foreground">Admin Panel</h1>
+              <p className="text-sm text-muted-foreground">System management and analytics</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-6 space-y-6">
+          {/* Quick Stats */}
+          <div className="grid grid-cols-3 gap-3">
+            <Card className="bg-card/50">
+              <CardContent className="p-4 text-center">
+                <p className="text-2xl font-bold text-foreground">{totalParlays}</p>
+                <p className="text-xs text-muted-foreground">Total Parlays</p>
+              </CardContent>
+            </Card>
+            <Card className="bg-card/50">
+              <CardContent className="p-4 text-center">
+                <p className="text-2xl font-bold text-green-500">{settledParlays}</p>
+                <p className="text-xs text-muted-foreground">Settled</p>
+              </CardContent>
+            </Card>
+            <Card className="bg-card/50">
+              <CardContent className="p-4 text-center">
+                <p className="text-2xl font-bold text-yellow-500">{pendingParlays}</p>
+                <p className="text-xs text-muted-foreground">Pending</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Section Navigation Cards */}
+          <div className="space-y-3">
+            <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+              Admin Sections
+            </h2>
+            <div className="grid gap-3">
+              {sectionConfig.map((section) => (
+                <Card 
+                  key={section.id}
+                  className="cursor-pointer hover:bg-muted/30 transition-colors active:scale-[0.99]"
+                  onClick={() => setActiveSection(section.id)}
+                >
+                  <CardContent className="p-4 flex items-center gap-4">
+                    <div className={`p-3 rounded-xl bg-muted/50 ${section.color}`}>
+                      <section.icon className="w-5 h-5" />
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="font-medium text-foreground">{section.title}</h3>
+                      <p className="text-sm text-muted-foreground">{section.description}</p>
+                    </div>
+                    <ChevronRight className="w-5 h-5 text-muted-foreground" />
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
+    );
+  }
 
-      <div className="p-4 space-y-4">
-        {/* Tabs */}
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-8">
-            <TabsTrigger value="accuracy" className="text-xs">
-              <BarChart3 className="w-3 h-3 mr-1" />
-              Acc
-            </TabsTrigger>
-            <TabsTrigger value="ai-learning" className="text-xs">
-              <Brain className="w-3 h-3 mr-1" />
-              AI
-            </TabsTrigger>
-            <TabsTrigger value="sharp-money" className="text-xs">
-              <Zap className="w-3 h-3 mr-1" />
-              Sharp
-            </TabsTrigger>
-            <TabsTrigger value="movement" className="text-xs">
-              <TrendingUp className="w-3 h-3 mr-1" />
-              Move
-            </TabsTrigger>
-            <TabsTrigger value="sharp-calc" className="text-xs">
-              <Calculator className="w-3 h-3 mr-1" />
-              Calc
-            </TabsTrigger>
-            <TabsTrigger value="collab" className="text-xs">
-              <Users className="w-3 h-3 mr-1" />
-              Collab
-            </TabsTrigger>
-            <TabsTrigger value="odds-access" className="text-xs">
-              <Eye className="w-3 h-3 mr-1" />
-              Odds
-            </TabsTrigger>
-            <TabsTrigger value="parlays" className="text-xs">
-              <FileText className="w-3 h-3 mr-1" />
-              Parlays
-            </TabsTrigger>
-          </TabsList>
-
-          {/* Accuracy Tab */}
-          <TabsContent value="accuracy" className="mt-4 space-y-4">
+  // Sub-section Views
+  const renderSectionContent = () => {
+    switch (activeSection) {
+      case 'accuracy':
+        return (
+          <div className="space-y-6">
             <UnifiedAccuracyDashboard />
             <MasterAccuracyDashboard />
             <HitRateAccuracyPanel />
-          </TabsContent>
-
-          {/* AI Learning Tab */}
-          <TabsContent value="ai-learning" className="mt-4">
-            <AILearningDashboard />
-          </TabsContent>
-
-          {/* Sharp Money Tab */}
-          <TabsContent value="sharp-money" className="mt-4 space-y-4">
+          </div>
+        );
+      
+      case 'ai-learning':
+        return <AILearningDashboard />;
+      
+      case 'sharp-engine':
+        return (
+          <div className="space-y-6">
             <SharpEngineConfigPanel />
             <SharpEngineV2Card limit={20} />
             <SharpRecalibrationPanel />
             <CronJobHistoryPanel />
             <CalibrationFactorsPanel />
             <SharpMoneyPanel />
-          </TabsContent>
-
-          {/* Movement Accuracy Tab */}
-          <TabsContent value="movement" className="mt-4">
+          </div>
+        );
+      
+      case 'movement':
+        return (
+          <div className="space-y-6">
             <MovementAccuracyDashboard />
-          </TabsContent>
-
-          {/* Sharp Line Calculator Tab */}
-          <TabsContent value="sharp-calc" className="mt-4">
             <SharpLineCalculator />
-          </TabsContent>
-
-          {/* Collaborator Management Tab */}
-          <TabsContent value="collab" className="mt-4">
+          </div>
+        );
+      
+      case 'users':
+        return (
+          <div className="space-y-6">
             <CollaboratorManager />
-          </TabsContent>
-
-          {/* Odds Access Management Tab */}
-          <TabsContent value="odds-access" className="mt-4">
             <ApprovedUsersManager />
-          </TabsContent>
-
-          {/* Parlays Tab */}
-          <TabsContent value="parlays" className="space-y-4 mt-4">
+          </div>
+        );
+      
+      case 'parlays':
+        return (
+          <div className="space-y-4">
             {/* Stats */}
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-3 gap-3">
               <Card>
-                <CardContent className="p-3 text-center">
+                <CardContent className="p-4 text-center">
                   <p className="text-2xl font-bold">{totalParlays}</p>
                   <p className="text-xs text-muted-foreground">Total</p>
                 </CardContent>
               </Card>
               <Card>
-                <CardContent className="p-3 text-center">
+                <CardContent className="p-4 text-center">
                   <p className="text-2xl font-bold text-green-500">{settledParlays}</p>
                   <p className="text-xs text-muted-foreground">Settled</p>
                 </CardContent>
               </Card>
               <Card>
-                <CardContent className="p-3 text-center">
+                <CardContent className="p-4 text-center">
                   <p className="text-2xl font-bold text-yellow-500">{pendingParlays}</p>
                   <p className="text-xs text-muted-foreground">Pending</p>
                 </CardContent>
@@ -361,6 +444,7 @@ export default function Admin() {
               onClick={handleRunAutoSettle} 
               disabled={isSettling}
               className="w-full"
+              size="lg"
             >
               {isSettling ? (
                 <>
@@ -378,14 +462,14 @@ export default function Admin() {
             {/* Batch Selection Controls */}
             {pendingParlays > 0 && (
               <Card className="bg-muted/50">
-                <CardContent className="p-3">
+                <CardContent className="p-4">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-3">
                       <Checkbox 
                         checked={selectedParlays.size === pendingParlaysList.length && pendingParlaysList.length > 0}
                         onCheckedChange={handleSelectAll}
                       />
-                      <span className="text-sm">Select All Pending ({pendingParlays})</span>
+                      <span className="text-sm font-medium">Select All Pending ({pendingParlays})</span>
                     </div>
                     {selectedParlays.size > 0 && (
                       <Button 
@@ -404,8 +488,8 @@ export default function Admin() {
             {/* Batch Action Bar */}
             {selectedParlays.size > 0 && (
               <Card className="sticky top-0 z-10 border-primary/50 shadow-lg">
-                <CardContent className="p-3">
-                  <div className="flex items-center justify-between gap-2">
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between gap-3">
                     <span className="text-sm font-medium">
                       {selectedParlays.size} selected
                     </span>
@@ -452,7 +536,7 @@ export default function Admin() {
                   className={selectedParlays.has(parlay.id) ? 'ring-2 ring-primary' : ''}
                 >
                   <CardContent className="p-4">
-                    <div className="flex gap-3">
+                    <div className="flex gap-4">
                       {!parlay.is_settled && (
                         <div className="pt-1">
                           <Checkbox
@@ -462,9 +546,9 @@ export default function Admin() {
                         </div>
                       )}
                       <div className="flex-1">
-                        <div className="flex justify-between items-start mb-2">
+                        <div className="flex justify-between items-start mb-3">
                           <div>
-                            <p className="text-sm font-medium">{parlay.username || 'Anonymous'}</p>
+                            <p className="font-medium">{parlay.username || 'Anonymous'}</p>
                             <p className="text-xs text-muted-foreground">
                               {new Date(parlay.created_at).toLocaleDateString()}
                             </p>
@@ -477,7 +561,7 @@ export default function Admin() {
                             <Badge variant="outline">Pending</Badge>
                           )}
                         </div>
-                        <div className="text-xs space-y-1 mb-3">
+                        <div className="text-sm space-y-1 mb-4">
                           <p>{parlay.legs?.length || 0} legs • ${Number(parlay.stake).toFixed(2)} stake</p>
                           <p className="text-muted-foreground">
                             Potential: ${Number(parlay.potential_payout).toFixed(2)} • 
@@ -488,18 +572,18 @@ export default function Admin() {
                           <div className="flex gap-2">
                             <Button 
                               size="sm" 
-                              variant="outline"
+                              variant="outline" 
                               onClick={() => handleManualSettle(parlay.id, true)}
-                              className="flex-1"
+                              className="flex-1 border-green-500 text-green-500 hover:bg-green-500/10"
                             >
                               <CheckCircle className="w-3 h-3 mr-1" />
                               Won
                             </Button>
                             <Button 
                               size="sm" 
-                              variant="outline"
+                              variant="outline" 
                               onClick={() => handleManualSettle(parlay.id, false)}
-                              className="flex-1"
+                              className="flex-1 border-red-500 text-red-500 hover:bg-red-500/10"
                             >
                               <XCircle className="w-3 h-3 mr-1" />
                               Lost
@@ -512,8 +596,45 @@ export default function Admin() {
                 </Card>
               ))}
             </div>
-          </TabsContent>
-        </Tabs>
+          </div>
+        );
+      
+      default:
+        return null;
+    }
+  };
+
+  const currentSection = sectionConfig.find(s => s.id === activeSection);
+
+  return (
+    <div className="min-h-dvh bg-background pb-nav-safe">
+      {/* Header with Back Button */}
+      <div className="bg-card border-b border-border p-4">
+        <div className="flex items-center gap-3">
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={() => setActiveSection('overview')}
+            className="p-2 h-auto"
+          >
+            <ChevronRight className="w-5 h-5 rotate-180" />
+          </Button>
+          {currentSection && (
+            <div className="flex items-center gap-3">
+              <div className={`p-2 rounded-lg bg-muted/50 ${currentSection.color}`}>
+                <currentSection.icon className="w-5 h-5" />
+              </div>
+              <div>
+                <h1 className="font-display text-lg text-foreground">{currentSection.title}</h1>
+                <p className="text-xs text-muted-foreground">{currentSection.description}</p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="p-4">
+        {renderSectionContent()}
       </div>
     </div>
   );
