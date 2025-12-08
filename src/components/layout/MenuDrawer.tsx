@@ -11,7 +11,8 @@ import {
   Calculator,
   Shield,
   Users,
-  ChevronRight
+  ChevronRight,
+  Flame
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
@@ -20,6 +21,7 @@ import { Separator } from "@/components/ui/separator";
 
 const menuItems = [
   { icon: Sparkles, label: "AI Picks", path: "/suggestions", description: "Smart betting suggestions" },
+  { icon: Flame, label: "God Mode Upsets", path: "/god-mode", description: "AI upset predictions" },
   { icon: Zap, label: "Sharp Money", path: "/sharp", description: "Track sharp action" },
   { icon: Activity, label: "NBA Fatigue", path: "/nba-fatigue", description: "Team fatigue analysis" },
   { icon: GitCompare, label: "Compare Parlays", path: "/compare", description: "Head-to-head comparison" },
