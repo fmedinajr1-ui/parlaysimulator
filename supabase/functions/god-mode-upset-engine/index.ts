@@ -36,7 +36,7 @@ serve(async (req) => {
     console.log(`[God Mode Engine] Starting analysis for sport: ${sport || 'all'}`);
 
     // Fetch current odds and events
-    const oddsApiKey = Deno.env.get('ODDS_API_KEY');
+    const oddsApiKey = Deno.env.get('THE_ODDS_API_KEY');
     const sports = sport ? [sport] : [
       'basketball_nba',
       'basketball_ncaab',

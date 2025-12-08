@@ -16,7 +16,7 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
     
-    const oddsApiKey = Deno.env.get('ODDS_API_KEY');
+    const oddsApiKey = Deno.env.get('THE_ODDS_API_KEY');
     
     if (!oddsApiKey) {
       throw new Error('ODDS_API_KEY not configured');
