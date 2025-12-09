@@ -1,4 +1,7 @@
-import React, { createContext, useContext, useState, useCallback, ReactNode, useEffect } from 'react';
+// ParlayBuilderContext - Universal Parlay Builder State Management
+import * as React from 'react';
+import { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { UniversalLeg, ParlaySource } from '@/types/universal-parlay';
 import { supabase } from '@/integrations/supabase/client';
