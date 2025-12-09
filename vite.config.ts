@@ -102,8 +102,6 @@ export default defineConfig(({ mode }) => ({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
-      "react": path.resolve(__dirname, "./node_modules/react"),
-      "react-dom": path.resolve(__dirname, "./node_modules/react-dom"),
     },
     dedupe: [
       "react", 
@@ -121,11 +119,6 @@ export default defineConfig(({ mode }) => ({
       "react-router-dom", 
       "@tanstack/react-query"
     ],
-    exclude: [],
-    esbuildOptions: {
-      target: 'esnext',
-    },
-    force: true,
   },
   build: {
     commonjsOptions: {
