@@ -232,23 +232,34 @@ export function PVSPropCalculator() {
         </CardContent>
       </Card>
 
-      {/* Main Content */}
-      <div className="flex flex-col lg:flex-row gap-6">
-        {/* Props Grid */}
-        <div className="order-2 lg:order-1 flex-1 space-y-4 min-w-0 overflow-hidden">
-          <div className="flex items-center justify-between">
+      {/* Main Content - Two Column Layout */}
+      <div className="main-layout">
+        {/* Parlay Builder - Takes remaining space on desktop */}
+        <div className="parlay-builder">
+          <div className="lg:sticky lg:top-4">
+            <PVSParlayBuilder
+              selectedProps={selectedProps}
+              onRemove={handleRemoveProp}
+              onClear={() => setSelectedProps([])}
+            />
+          </div>
+        </div>
+
+        {/* Props Sidebar - Fixed width on desktop */}
+        <div className="sidebar">
+          <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold">
               Props ({filteredProps.length})
             </h2>
             <div className="text-sm text-muted-foreground">
-              Sorted by PVS Score
+              Sorted by PVS
             </div>
           </div>
 
           {isLoading ? (
-            <div className="grid gap-4 xl:grid-cols-2">
+            <div className="space-y-4">
               {[...Array(6)].map((_, i) => (
-                <Skeleton key={i} className="h-64" />
+                <Skeleton key={i} className="h-64 w-full" />
               ))}
             </div>
           ) : filteredProps.length === 0 ? (
@@ -269,7 +280,7 @@ export function PVSPropCalculator() {
               </CardContent>
             </Card>
           ) : (
-            <div className="grid gap-4 xl:grid-cols-2">
+            <div className="space-y-4">
               {filteredProps.map(prop => (
                 <PVSPropCard
                   key={prop.id}
@@ -280,17 +291,6 @@ export function PVSPropCalculator() {
               ))}
             </div>
           )}
-        </div>
-
-        {/* Parlay Builder Sidebar */}
-        <div className="order-1 lg:order-2 w-full lg:w-[350px] flex-shrink-0">
-          <div className="lg:sticky lg:top-4">
-            <PVSParlayBuilder
-              selectedProps={selectedProps}
-              onRemove={handleRemoveProp}
-              onClear={() => setSelectedProps([])}
-            />
-          </div>
         </div>
       </div>
     </div>
