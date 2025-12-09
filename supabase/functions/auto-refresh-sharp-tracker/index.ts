@@ -98,11 +98,11 @@ Deno.serve(async (req) => {
 
     // Step 2: Fetch current odds for each prop (with fallback)
     for (const prop of (pendingProps || []) as TrackedProp[]) {
-      try {
-        let hasCurrentOdds = false;
-        
-        // Try to fetch current odds if event_id exists
-        if (prop.event_id) {
+      let hasCurrentOdds = false;
+      
+      // Try to fetch current odds if event_id exists (wrapped in its own try-catch)
+      if (prop.event_id) {
+        try {
           const { data: oddsData, error: oddsError } = await supabase.functions.invoke("fetch-current-odds", {
             body: {
               event_id: prop.event_id,
@@ -113,9 +113,8 @@ Deno.serve(async (req) => {
             },
           });
 
-          // Add null safety check for oddsData.odds
+          // Check for success with valid odds data
           if (!oddsError && oddsData?.success && oddsData?.odds?.over_price != null) {
-            // Update the database with current odds
             await supabase
               .from("sharp_line_tracker")
               .update({
@@ -133,14 +132,18 @@ Deno.serve(async (req) => {
             hasCurrentOdds = true;
             fetchSuccess++;
           }
+        } catch (oddsErr) {
+          // Log but continue to fallback - don't fail the whole prop
+          console.log(`[AUTO-REFRESH] Odds fetch failed for ${prop.player_name}, will try fallback`);
         }
+      }
+      
+      // FALLBACK: Runs if no current odds were fetched (always runs, not inside try block)
+      if (!hasCurrentOdds && useOpeningFallback && 
+          prop.opening_over_price != null && prop.opening_under_price != null) {
+        console.log(`[AUTO-REFRESH] Using opening odds fallback for ${prop.player_name}`);
         
-        // Use opening odds as fallback if enabled, no current odds, AND opening odds exist
-        if (!hasCurrentOdds && useOpeningFallback && 
-            prop.opening_over_price != null && prop.opening_under_price != null) {
-          console.log(`[AUTO-REFRESH] Using opening odds fallback for ${prop.player_name}`);
-          
-          // Update with opening odds as current
+        try {
           await supabase
             .from("sharp_line_tracker")
             .update({
@@ -157,20 +160,19 @@ Deno.serve(async (req) => {
           prop.current_line = prop.opening_line;
           hasCurrentOdds = true;
           fallbackUsed++;
+        } catch (fallbackErr) {
+          console.error(`[AUTO-REFRESH] Fallback update failed for ${prop.player_name}:`, fallbackErr);
         }
+      }
 
-        if (hasCurrentOdds) {
-          propsToAnalyze.push(prop);
-        } else {
-          fetchFail++;
-        }
-
-        // Rate limit delay
-        await new Promise((resolve) => setTimeout(resolve, 200));
-      } catch (err) {
-        console.error(`[AUTO-REFRESH] Error processing ${prop.player_name}:`, err);
+      if (hasCurrentOdds) {
+        propsToAnalyze.push(prop);
+      } else {
         fetchFail++;
       }
+
+      // Rate limit delay
+      await new Promise((resolve) => setTimeout(resolve, 200));
     }
 
     console.log(`[AUTO-REFRESH] Fetch complete: ${fetchSuccess} fresh, ${fallbackUsed} fallback, ${fetchFail} failed`);
