@@ -83,8 +83,17 @@ export function GodModePropCard({ prop }: GodModePropCardProps) {
   const nmes = signals?.nmes || 0;
 
   const formatPrice = (price: number | null | undefined) => {
-    if (!price) return '--';
+    if (price === null || price === undefined) return '--';
     return price > 0 ? `+${price}` : price.toString();
+  };
+
+  const formatPropType = (propType: string) => {
+    return propType
+      .replace(/_/g, ' ')
+      .replace(/player /gi, '')
+      .split(' ')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(' ');
   };
 
   const getRecommendationStyles = (rec: string | null) => {
@@ -116,41 +125,67 @@ export function GodModePropCard({ prop }: GodModePropCardProps) {
         <CardHeader className="pb-2">
           <div className="flex items-start justify-between gap-2">
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <Badge variant="outline" className="text-xs">
-                  {prop.sport === 'basketball_nba' ? 'NBA' : 'NFL'}
+              {/* Badges Row - Sport and Bookmaker */}
+              <div className="flex items-center gap-2 flex-wrap mb-2">
+                <Badge variant="outline" className="text-xs font-medium">
+                  {prop.sport === 'basketball_nba' ? 'NBA' : prop.sport === 'americanfootball_nfl' ? 'NFL' : prop.sport.toUpperCase()}
                 </Badge>
-                <span className="text-xs text-muted-foreground">{prop.bookmaker}</span>
+                {prop.ai_recommendation && (
+                  <Badge className={cn("text-xs", recStyles.bg, recStyles.text, recStyles.border)}>
+                    <RecIcon className="w-3 h-3 mr-1" />
+                    {prop.ai_recommendation.toUpperCase()}
+                  </Badge>
+                )}
+                {prop.ai_direction && (
+                  <Badge variant="secondary" className="text-xs font-mono">
+                    {prop.ai_direction.toUpperCase()}
+                  </Badge>
+                )}
+                <span className="text-xs text-muted-foreground ml-auto">{prop.bookmaker}</span>
               </div>
-              <h3 className="font-semibold text-lg mt-1 truncate">
-                {prop.player_name} - {prop.prop_type.toUpperCase()} {prop.current_line || prop.opening_line}
+              
+              {/* Player Name - Prominent */}
+              <h3 className="font-bold text-xl text-foreground">
+                {prop.player_name || 'Unknown Player'}
               </h3>
-              <p className="text-sm text-muted-foreground truncate">{prop.game_description}</p>
+              
+              {/* Prop Type and Line - Clear display */}
+              <div className="flex items-center gap-2 mt-1">
+                <Badge variant="outline" className="text-sm font-semibold bg-primary/10 border-primary/30 text-primary">
+                  {formatPropType(prop.prop_type)} {prop.ai_direction?.toUpperCase() || 'O'} {prop.current_line || prop.opening_line}
+                </Badge>
+              </div>
+              
+              {/* Game Description */}
+              <p className="text-sm text-muted-foreground mt-2 truncate">{prop.game_description}</p>
             </div>
-            
-            {prop.ai_recommendation && (
-              <Badge className={cn("shrink-0", recStyles.bg, recStyles.text, recStyles.border)}>
-                <RecIcon className="w-3 h-3 mr-1" />
-                {prop.ai_recommendation.toUpperCase()} {prop.ai_direction?.toUpperCase()}
-              </Badge>
-            )}
           </div>
         </CardHeader>
 
         <CardContent className="space-y-4">
-          {/* Odds Comparison */}
+          {/* Odds Comparison with Line Values */}
           <div className="grid grid-cols-2 gap-3">
-            <div className="p-2 rounded-lg bg-muted/30 text-center">
+            <div className="p-3 rounded-lg bg-muted/30 text-center">
               <p className="text-xs text-muted-foreground mb-1">Opening</p>
-              <p className="font-mono text-sm">
-                O {formatPrice(prop.opening_over_price)} / U {formatPrice(prop.opening_under_price)}
+              <p className="font-mono text-lg font-bold text-foreground">
+                {prop.opening_line}
               </p>
+              <div className="flex justify-center gap-2 mt-1">
+                <span className="text-xs font-mono text-green-500">O {formatPrice(prop.opening_over_price)}</span>
+                <span className="text-xs text-muted-foreground">/</span>
+                <span className="text-xs font-mono text-red-400">U {formatPrice(prop.opening_under_price)}</span>
+              </div>
             </div>
-            <div className="p-2 rounded-lg bg-muted/30 text-center">
+            <div className="p-3 rounded-lg bg-muted/30 text-center">
               <p className="text-xs text-muted-foreground mb-1">Current</p>
-              <p className="font-mono text-sm">
-                O {formatPrice(prop.current_over_price)} / U {formatPrice(prop.current_under_price)}
+              <p className="font-mono text-lg font-bold text-foreground">
+                {prop.current_line ?? prop.opening_line}
               </p>
+              <div className="flex justify-center gap-2 mt-1">
+                <span className="text-xs font-mono text-green-500">O {formatPrice(prop.current_over_price ?? prop.opening_over_price)}</span>
+                <span className="text-xs text-muted-foreground">/</span>
+                <span className="text-xs font-mono text-red-400">U {formatPrice(prop.current_under_price ?? prop.opening_under_price)}</span>
+              </div>
             </div>
           </div>
 
