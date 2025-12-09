@@ -33,15 +33,15 @@ Deno.serve(async (req) => {
   const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const supabase = createClient(supabaseUrl, supabaseKey);
 
-  // Parse request body for options
-  let useOpeningFallback = false;
-  let batchSize = 20;
+  // Parse request body for options - increased defaults for faster processing
+  let useOpeningFallback = true;
+  let batchSize = 50;
   let prioritizeUpcoming = true;
   
   try {
     const body = await req.json();
-    useOpeningFallback = body?.useOpeningFallback ?? false;
-    batchSize = body?.batchSize ?? 20;
+    useOpeningFallback = body?.useOpeningFallback ?? true;
+    batchSize = body?.batchSize ?? 50;
     prioritizeUpcoming = body?.prioritizeUpcoming ?? true;
   } catch {
     // No body provided, use defaults
