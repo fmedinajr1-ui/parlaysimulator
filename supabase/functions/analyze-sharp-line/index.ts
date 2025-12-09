@@ -7,8 +7,8 @@ const corsHeaders = {
 };
 
 // ============================================================================
-// SHARP VS VEGAS: GOD MODE ENGINE
-// Pressure Intelligence Framework
+// SHARP VS VEGAS: GOD MODE ENGINE V2
+// Pressure Intelligence Framework with Unified Intelligence
 // ============================================================================
 
 interface AnalysisInput {
@@ -22,6 +22,18 @@ interface AnalysisInput {
   sport: string;
   prop_type: string;
   commence_time?: string;
+  player_name?: string;
+}
+
+interface UnifiedPropData {
+  pvs_final_score: number | null;
+  pvs_tier: string | null;
+  composite_score: number | null;
+  trap_score: number | null;
+  fatigue_score: number | null;
+  hit_rate_score: number | null;
+  confidence: number | null;
+  recommendation: string | null;
 }
 
 interface SharpSignal {
@@ -72,6 +84,17 @@ interface GodModeResult {
   consensusRatio: number;
   consensusStrength: string;
   
+  // Unified Intelligence
+  unifiedIntelligence?: {
+    pvsScore: number | null;
+    pvsTier: string | null;
+    compositeScore: number | null;
+    trapScore: number | null;
+    fatigueScore: number | null;
+    hitRateScore: number | null;
+    fatigueImpact: number | null;
+  };
+  
   // Reasoning
   reasoning: string;
   explanation: string[];
@@ -121,6 +144,16 @@ const SHARP_SIGNALS = {
     base: 20, 
     getMultiplier: (lineStatic: boolean) => lineStatic ? 1.15 : 1.0,
     description: 'Single side movement only'
+  },
+  PVS_GOD_TIER: {
+    base: 35,
+    getMultiplier: (pvsScore: number) => pvsScore >= 85 ? 1.30 : pvsScore >= 75 ? 1.15 : 1.0,
+    description: 'PVS GOD_TIER or HIGH_VALUE alignment'
+  },
+  HIT_RATE_STREAK: {
+    base: 25,
+    getMultiplier: (hitRate: number) => hitRate >= 0.8 ? 1.25 : hitRate >= 0.7 ? 1.10 : 1.0,
+    description: 'Strong hit rate pattern'
   }
 };
 
@@ -158,6 +191,16 @@ const TRAP_SIGNALS = {
     base: 16, 
     getSeverity: () => 1.00,
     description: 'Very early action > 6 hours'
+  },
+  HIGH_TRAP_SCORE: {
+    base: 30,
+    getSeverity: (trapScore: number) => trapScore >= 70 ? 1.40 : trapScore >= 50 ? 1.20 : 1.0,
+    description: 'Unified engine trap detection'
+  },
+  FATIGUE_DISADVANTAGE: {
+    base: 20,
+    getSeverity: (fatigueScore: number) => fatigueScore >= 40 ? 1.25 : 1.0,
+    description: 'High fatigue detected'
   }
 };
 
@@ -174,7 +217,8 @@ function calculateSharpPressure(
   booksAligned: number,
   currentOverPrice: number,
   injuryUncertain: boolean,
-  publicOverPct: number
+  publicOverPct: number,
+  unifiedData?: UnifiedPropData | null
 ): { total: number; signals: SharpSignal[] } {
   const signals: SharpSignal[] = [];
   let totalPressure = 0;
@@ -296,6 +340,36 @@ function calculateSharpPressure(
   });
   totalPressure += singleWeight;
 
+  // 9. PVS GOD TIER (from unified intelligence)
+  const pvsScore = unifiedData?.pvs_final_score || 0;
+  const isPvsHigh = pvsScore >= 70 || unifiedData?.pvs_tier === 'GOD_TIER' || unifiedData?.pvs_tier === 'HIGH_VALUE';
+  const pvsMultiplier = SHARP_SIGNALS.PVS_GOD_TIER.getMultiplier(pvsScore);
+  const pvsWeight = isPvsHigh ? SHARP_SIGNALS.PVS_GOD_TIER.base * pvsMultiplier : 0;
+  signals.push({
+    name: 'PVS_GOD_TIER',
+    baseWeight: SHARP_SIGNALS.PVS_GOD_TIER.base,
+    contextMultiplier: pvsMultiplier,
+    finalWeight: pvsWeight,
+    description: SHARP_SIGNALS.PVS_GOD_TIER.description,
+    isActive: isPvsHigh
+  });
+  totalPressure += pvsWeight;
+
+  // 10. Hit Rate Streak
+  const hitRateScore = unifiedData?.hit_rate_score || 0;
+  const isHitRateStrong = hitRateScore >= 70;
+  const hitRateMultiplier = SHARP_SIGNALS.HIT_RATE_STREAK.getMultiplier(hitRateScore / 100);
+  const hitRateWeight = isHitRateStrong ? SHARP_SIGNALS.HIT_RATE_STREAK.base * hitRateMultiplier : 0;
+  signals.push({
+    name: 'HIT_RATE_STREAK',
+    baseWeight: SHARP_SIGNALS.HIT_RATE_STREAK.base,
+    contextMultiplier: hitRateMultiplier,
+    finalWeight: hitRateWeight,
+    description: SHARP_SIGNALS.HIT_RATE_STREAK.description,
+    isActive: isHitRateStrong
+  });
+  totalPressure += hitRateWeight;
+
   return { total: totalPressure, signals };
 }
 
@@ -306,7 +380,8 @@ function calculateTrapPressure(
   hoursToGame: number,
   currentOverPrice: number,
   currentUnderPrice: number,
-  openingOverPrice: number
+  openingOverPrice: number,
+  unifiedData?: UnifiedPropData | null
 ): { total: number; signals: TrapSignal[] } {
   const signals: TrapSignal[] = [];
   let totalPressure = 0;
@@ -396,12 +471,41 @@ function calculateTrapPressure(
   });
   totalPressure += earlyWeight;
 
+  // 7. High Trap Score (from unified intelligence)
+  const trapScore = unifiedData?.trap_score || 0;
+  const isHighTrap = trapScore >= 40;
+  const trapSeverity = TRAP_SIGNALS.HIGH_TRAP_SCORE.getSeverity(trapScore);
+  const trapWeight = isHighTrap ? TRAP_SIGNALS.HIGH_TRAP_SCORE.base * trapSeverity : 0;
+  signals.push({
+    name: 'HIGH_TRAP_SCORE',
+    baseWeight: TRAP_SIGNALS.HIGH_TRAP_SCORE.base,
+    severityModifier: trapSeverity,
+    finalWeight: trapWeight,
+    description: TRAP_SIGNALS.HIGH_TRAP_SCORE.description,
+    isActive: isHighTrap
+  });
+  totalPressure += trapWeight;
+
+  // 8. Fatigue Disadvantage
+  const fatigueScore = unifiedData?.fatigue_score || 0;
+  const isFatigued = fatigueScore >= 30;
+  const fatigueSeverity = TRAP_SIGNALS.FATIGUE_DISADVANTAGE.getSeverity(fatigueScore);
+  const fatigueWeight = isFatigued ? TRAP_SIGNALS.FATIGUE_DISADVANTAGE.base * fatigueSeverity : 0;
+  signals.push({
+    name: 'FATIGUE_DISADVANTAGE',
+    baseWeight: TRAP_SIGNALS.FATIGUE_DISADVANTAGE.base,
+    severityModifier: fatigueSeverity,
+    finalWeight: fatigueWeight,
+    description: TRAP_SIGNALS.FATIGUE_DISADVANTAGE.description,
+    isActive: isFatigued
+  });
+  totalPressure += fatigueWeight;
+
   return { total: totalPressure, signals };
 }
 
 function calculateMarketNoise(avgJuiceChange: number, consensusRatio: number): number {
-  // NP = NoiseWeight × (1 − ConsensusRatio)
-  if (avgJuiceChange >= 10) return 0; // Significant movement = not noise
+  if (avgJuiceChange >= 10) return 0;
   const noiseWeight = avgJuiceChange;
   return noiseWeight * (1 - consensusRatio);
 }
@@ -412,19 +516,19 @@ function calculateEventVolatilityModifier(context: {
   publicImbalance: number;
   lowLimitWindow: boolean;
   chaosDayDetected: boolean;
+  fatigueScore?: number;
 }): number {
-  // EVM = 1 + volatilityFactor (Range: 1.00 → 1.40)
   let volatility = 0;
   if (context.injuryUncertainty) volatility += 0.10;
   if (context.backToBackFatigue) volatility += 0.08;
   if (context.publicImbalance > 70) volatility += 0.07;
   if (context.lowLimitWindow) volatility += 0.05;
   if (context.chaosDayDetected) volatility += 0.10;
+  if (context.fatigueScore && context.fatigueScore >= 30) volatility += 0.05;
   return Math.min(1.40, 1 + volatility);
 }
 
 function calculateSharpProbability(nmes: number): number {
-  // Logistic function: SharpProb = 1 / (1 + e^(− NMES / 22))
   return 1 / (1 + Math.exp(-nmes / 22));
 }
 
@@ -433,12 +537,16 @@ function calculateStrategyBoost(context: {
   isParlayAnchor: boolean;
   highVolatility: boolean;
   trapProbHigh: boolean;
+  pvsGodTier: boolean;
+  hitRateStrong: boolean;
 }): number {
   let boost = 0;
   if (context.alignsWithCHESSEV) boost += 10;
   if (context.isParlayAnchor) boost += 15;
   if (context.highVolatility) boost -= 10;
   if (context.trapProbHigh) boost -= 20;
+  if (context.pvsGodTier) boost += 12;
+  if (context.hitRateStrong) boost += 8;
   return boost;
 }
 
@@ -457,15 +565,12 @@ function determineRecommendation(
   sharpPressure: number,
   trapPressure: number
 ): 'pick' | 'fade' | 'caution' {
-  // 🟢 SHARP PICK
   if (sharpProb >= 0.62 && nmes >= 35 && cr >= 0.60 && activeTrapSignals === 0) {
     return 'pick';
   }
-  // 🔴 FADE
   if (sharpProb <= 0.35 && nmes <= -25 && trapPressure > sharpPressure && activeTrapSignals >= 2) {
     return 'fade';
   }
-  // ⚠️ CAUTION
   return 'caution';
 }
 
@@ -477,7 +582,8 @@ function buildExplanation(
   nmes: number,
   sharpProb: number,
   trapProb: number,
-  godModeScore: number
+  godModeScore: number,
+  unifiedData?: UnifiedPropData | null
 ): string[] {
   const explanations: string[] = [];
   
@@ -501,6 +607,19 @@ function buildExplanation(
     explanations.push(`NMES in neutral zone: ${nmes.toFixed(1)}`);
   }
   
+  // Add unified intelligence context
+  if (unifiedData) {
+    if (unifiedData.pvs_tier) {
+      explanations.push(`PVS Tier: ${unifiedData.pvs_tier}`);
+    }
+    if (unifiedData.fatigue_score && unifiedData.fatigue_score > 20) {
+      explanations.push(`⚡ Fatigue Impact: ${unifiedData.fatigue_score.toFixed(0)}`);
+    }
+    if (unifiedData.trap_score && unifiedData.trap_score > 30) {
+      explanations.push(`🪤 Trap Risk: ${unifiedData.trap_score.toFixed(0)}`);
+    }
+  }
+  
   explanations.push(`GOD MODE Score: ${godModeScore.toFixed(1)}`);
   
   return explanations;
@@ -517,11 +636,47 @@ serve(async (req) => {
 
   try {
     const input: AnalysisInput = await req.json();
-    console.log('[GOD MODE Engine] Analyzing:', input);
+    console.log('[GOD MODE Engine V2] Analyzing:', input);
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // Fetch unified intelligence data
+    let unifiedData: UnifiedPropData | null = null;
+    let fatigueData: { fatigue_score: number } | null = null;
+    
+    if (input.player_name) {
+      // Try to get unified props data
+      const { data: unifiedProps } = await supabase
+        .from('unified_props')
+        .select('pvs_final_score, pvs_tier, composite_score, trap_score, fatigue_score, hit_rate_score, confidence, recommendation')
+        .eq('player_name', input.player_name)
+        .eq('prop_type', input.prop_type)
+        .eq('is_active', true)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (unifiedProps) {
+        unifiedData = unifiedProps as UnifiedPropData;
+        console.log('[GOD MODE Engine V2] Found unified data:', unifiedData);
+      }
+
+      // Try to get fatigue data for NBA
+      if (input.sport === 'basketball_nba') {
+        const { data: fatigue } = await supabase
+          .from('nba_fatigue_scores')
+          .select('fatigue_score')
+          .gte('game_date', new Date().toISOString().split('T')[0])
+          .limit(1)
+          .single();
+
+        if (fatigue) {
+          fatigueData = fatigue;
+        }
+      }
+    }
 
     // Calculate movement metrics
     const lineChange = input.current_line - input.opening_line;
@@ -570,13 +725,13 @@ serve(async (req) => {
     }
 
     // Detect context signals
-    const injuryUncertain = false; // Would need injury data
-    const backToBackFatigue = false; // Would need schedule data
-    const publicOverPct = 50; // Would need public betting data
+    const injuryUncertain = false;
+    const backToBackFatigue = (unifiedData?.fatigue_score || 0) > 25 || (fatigueData?.fatigue_score || 0) > 25;
+    const publicOverPct = 50;
     const publicImbalance = Math.abs(publicOverPct - 50);
     const lowLimitWindow = hoursToGame < 1;
     const dayOfWeek = new Date().getDay();
-    const chaosDayDetected = dayOfWeek === 6 || dayOfWeek === 4; // Saturday or Thursday
+    const chaosDayDetected = dayOfWeek === 6 || dayOfWeek === 4;
 
     // ========== CALCULATE SHARP PRESSURE (SP) ==========
     const sharpResult = calculateSharpPressure(
@@ -588,7 +743,8 @@ serve(async (req) => {
       booksAligned,
       input.current_over_price,
       injuryUncertain,
-      publicOverPct
+      publicOverPct,
+      unifiedData
     );
     const sharpPressure = sharpResult.total;
     const sharpSignals = sharpResult.signals;
@@ -601,7 +757,8 @@ serve(async (req) => {
       hoursToGame,
       input.current_over_price,
       input.current_under_price,
-      input.opening_over_price
+      input.opening_over_price,
+      unifiedData
     );
     const trapPressure = trapResult.total;
     const trapSignals = trapResult.signals;
@@ -615,7 +772,8 @@ serve(async (req) => {
       backToBackFatigue,
       publicImbalance,
       lowLimitWindow,
-      chaosDayDetected
+      chaosDayDetected,
+      fatigueScore: unifiedData?.fatigue_score || fatigueData?.fatigue_score
     });
 
     // ========== CALCULATE NET MARKET EDGE SCORE (NMES) ==========
@@ -627,11 +785,16 @@ serve(async (req) => {
     const neutralProbability = Math.max(0, 1 - Math.abs(sharpProbability - 0.5) * 2);
 
     // ========== CALCULATE STRATEGY BOOST ==========
+    const pvsGodTier = unifiedData?.pvs_tier === 'GOD_TIER' || (unifiedData?.pvs_final_score || 0) >= 80;
+    const hitRateStrong = (unifiedData?.hit_rate_score || 0) >= 75;
+    
     const strategyBoost = calculateStrategyBoost({
       alignsWithCHESSEV: nmes > 20,
       isParlayAnchor: sharpProbability >= 0.65,
       highVolatility: eventVolatilityModifier > 1.25,
-      trapProbHigh: trapProbability > 0.65
+      trapProbHigh: trapProbability > 0.65,
+      pvsGodTier,
+      hitRateStrong
     });
 
     // ========== FINAL GOD MODE SCORE ==========
@@ -673,6 +836,19 @@ serve(async (req) => {
       confidence = 0.35 + Math.abs(nmes) / 150;
     }
 
+    // Boost confidence if unified data aligns
+    if (unifiedData && unifiedData.recommendation) {
+      const unifiedAligns = 
+        (recommendation === 'pick' && unifiedData.recommendation === 'over' && direction === 'over') ||
+        (recommendation === 'pick' && unifiedData.recommendation === 'under' && direction === 'under') ||
+        (recommendation === 'fade' && unifiedData.recommendation === 'over' && direction === 'under') ||
+        (recommendation === 'fade' && unifiedData.recommendation === 'under' && direction === 'over');
+      
+      if (unifiedAligns) {
+        confidence = Math.min(0.95, confidence + 0.08);
+      }
+    }
+
     // ========== BUILD EXPLANATION ==========
     const explanation = buildExplanation(
       recommendation,
@@ -682,31 +858,37 @@ serve(async (req) => {
       nmes,
       sharpProbability,
       trapProbability,
-      godModeScore
+      godModeScore,
+      unifiedData
     );
 
     // Build reasoning summary
     let reasoning = '';
     if (recommendation === 'pick') {
-      reasoning = `🟢 GOD MODE: SHARP PICK on ${direction.toUpperCase()}. `;
+      reasoning = `🟢 GOD MODE V2: SHARP PICK on ${direction.toUpperCase()}. `;
       reasoning += `SP=${sharpPressure.toFixed(0)}, TP=${trapPressure.toFixed(0)}, NMES=${nmes.toFixed(1)}. `;
       reasoning += `Sharp probability: ${(sharpProbability * 100).toFixed(0)}%. `;
-      const activeSharp = sharpSignals.filter(s => s.isActive).slice(0, 2);
+      const activeSharp = sharpSignals.filter(s => s.isActive).slice(0, 3);
       if (activeSharp.length > 0) {
         reasoning += `Signals: ${activeSharp.map(s => s.name).join(', ')}. `;
       }
     } else if (recommendation === 'fade') {
-      reasoning = `🔴 GOD MODE: FADE detected - bet ${direction.toUpperCase()}. `;
+      reasoning = `🔴 GOD MODE V2: FADE detected - bet ${direction.toUpperCase()}. `;
       reasoning += `SP=${sharpPressure.toFixed(0)}, TP=${trapPressure.toFixed(0)}, NMES=${nmes.toFixed(1)}. `;
       reasoning += `Trap probability: ${(trapProbability * 100).toFixed(0)}%. `;
-      const activeTrap = trapSignals.filter(s => s.isActive).slice(0, 2);
+      const activeTrap = trapSignals.filter(s => s.isActive).slice(0, 3);
       if (activeTrap.length > 0) {
         reasoning += `Traps: ${activeTrap.map(s => s.name).join(', ')}. `;
       }
     } else {
-      reasoning = `⚠️ GOD MODE: CAUTION - lean ${direction.toUpperCase()}. `;
+      reasoning = `⚠️ GOD MODE V2: CAUTION - lean ${direction.toUpperCase()}. `;
       reasoning += `SP=${sharpPressure.toFixed(0)}, TP=${trapPressure.toFixed(0)}, NMES=${nmes.toFixed(1)}. `;
       reasoning += `Mixed signals, confidence ${(confidence * 100).toFixed(0)}%. `;
+    }
+    
+    // Add unified intelligence to reasoning
+    if (unifiedData?.pvs_tier) {
+      reasoning += `PVS: ${unifiedData.pvs_tier}. `;
     }
     reasoning += `GOD MODE Score: ${godModeScore.toFixed(1)}`;
 
@@ -728,11 +910,20 @@ serve(async (req) => {
       trapSignals,
       consensusRatio,
       consensusStrength: determineConsensusStrength(consensusRatio),
+      unifiedIntelligence: unifiedData ? {
+        pvsScore: unifiedData.pvs_final_score,
+        pvsTier: unifiedData.pvs_tier,
+        compositeScore: unifiedData.composite_score,
+        trapScore: unifiedData.trap_score,
+        fatigueScore: unifiedData.fatigue_score,
+        hitRateScore: unifiedData.hit_rate_score,
+        fatigueImpact: fatigueData?.fatigue_score || null
+      } : undefined,
       reasoning,
       explanation
     };
 
-    console.log('[GOD MODE Engine] Result:', {
+    console.log('[GOD MODE Engine V2] Result:', {
       SP: sharpPressure,
       TP: trapPressure,
       NP: marketNoise,
@@ -740,7 +931,8 @@ serve(async (req) => {
       NMES: nmes,
       SharpProb: sharpProbability,
       GodModeScore: godModeScore,
-      Recommendation: recommendation
+      Recommendation: recommendation,
+      UnifiedIntel: !!unifiedData
     });
 
     // Update the database record with GOD MODE analysis
@@ -753,6 +945,7 @@ serve(async (req) => {
         ai_reasoning: result.reasoning,
         ai_signals: {
           godMode: true,
+          version: 'v2',
           sharpPressure: result.sharpPressure,
           trapPressure: result.trapPressure,
           marketNoise: result.marketNoise,
@@ -766,14 +959,15 @@ serve(async (req) => {
           strategyBoost: result.strategyBoost,
           sharpSignals: result.sharpSignals,
           trapSignals: result.trapSignals,
-          explanation: result.explanation
+          explanation: result.explanation,
+          unifiedIntelligence: result.unifiedIntelligence
         },
         status: 'analyzed'
       })
       .eq('id', input.id);
 
     if (updateError) {
-      console.error('[GOD MODE Engine] Error updating record:', updateError);
+      console.error('[GOD MODE Engine V2] Error updating record:', updateError);
     }
 
     return new Response(JSON.stringify(result), {
@@ -781,7 +975,7 @@ serve(async (req) => {
     });
 
   } catch (error) {
-    console.error('[GOD MODE Engine] Error:', error);
+    console.error('[GOD MODE Engine V2] Error:', error);
     return new Response(JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

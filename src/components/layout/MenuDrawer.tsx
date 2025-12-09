@@ -21,6 +21,7 @@ import { Separator } from "@/components/ui/separator";
 
 const menuItems = [
   { icon: Sparkles, label: "AI Picks", path: "/suggestions", description: "Smart betting suggestions" },
+  { icon: Flame, label: "Hit Rate", path: "/hitrate", description: "X/5 streak patterns" },
   { icon: Flame, label: "God Mode Upsets", path: "/god-mode", description: "AI upset predictions" },
   { icon: Zap, label: "GOD MODE Tracker", path: "/god-mode-tracker", description: "Sharp vs Vegas intel" },
   { icon: Activity, label: "Sharp Money", path: "/sharp", description: "Track sharp action" },
