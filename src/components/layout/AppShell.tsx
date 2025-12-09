@@ -1,5 +1,7 @@
 import { ReactNode } from "react";
-import { cn } from "@/lib/utils";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { DesktopLayout } from "./DesktopLayout";
+import { MobileLayout } from "./MobileLayout";
 
 interface AppShellProps {
   children: ReactNode;
@@ -8,17 +10,21 @@ interface AppShellProps {
 }
 
 export function AppShell({ children, className, noPadding = false }: AppShellProps) {
-  return (
-    <div className={cn(
-      "min-h-dvh flex flex-col bg-background",
-      className
-    )}>
-      <main className={cn(
-        "flex-1 flex flex-col max-w-lg mx-auto w-full pb-[88px]",
-        !noPadding && "px-4 py-4"
-      )}>
+  const isMobile = useIsMobile();
+
+  // Show mobile layout on mobile devices
+  if (isMobile) {
+    return (
+      <MobileLayout className={className} noPadding={noPadding}>
         {children}
-      </main>
-    </div>
+      </MobileLayout>
+    );
+  }
+
+  // Show desktop layout with sidebar on larger screens
+  return (
+    <DesktopLayout className={className} noPadding={noPadding}>
+      {children}
+    </DesktopLayout>
   );
 }
