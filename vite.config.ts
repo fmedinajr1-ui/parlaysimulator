@@ -4,18 +4,11 @@ import path from "path";
 import { componentTagger } from "lovable-tagger";
 import { VitePWA } from "vite-plugin-pwa";
 
-// Force cache bust - v20251209
-const CACHE_VERSION = Date.now();
-
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
     port: 8080,
-    // Force fresh modules in dev
-    hmr: {
-      overlay: true,
-    },
   },
   plugins: [
     react(),
@@ -72,8 +65,7 @@ export default defineConfig(({ mode }) => ({
       },
       workbox: {
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
-        globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
-        // Skip caching JS files to prevent stale React
+        globPatterns: ["**/*.{css,html,ico,png,svg,woff2}"],
         navigateFallback: null,
         runtimeCaching: [
           {
@@ -112,50 +104,8 @@ export default defineConfig(({ mode }) => ({
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
-    // Force single copy of React packages
-    dedupe: [
-      "react", 
-      "react-dom", 
-      "react-router-dom", 
-      "@tanstack/react-query",
-      "framer-motion"
-    ],
   },
   optimizeDeps: {
-    // Force re-bundle on every server start
     force: true,
-    // Pre-bundle all React-related deps together
-    include: [
-      "react", 
-      "react-dom", 
-      "react-dom/client",
-      "react-router-dom", 
-      "@tanstack/react-query",
-      "framer-motion"
-    ],
-    // Ensure consistent React resolution
-    esbuildOptions: {
-      // Force consistent JSX runtime
-      jsx: "automatic",
-    },
-  },
-  build: {
-    // Single vendor chunk for React ecosystem
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          'react-vendor': [
-            'react', 
-            'react-dom', 
-            'react-router-dom',
-            '@tanstack/react-query'
-          ],
-        },
-      },
-    },
-    commonjsOptions: {
-      include: [/node_modules/],
-      transformMixedEsModules: true,
-    },
   },
 }));
