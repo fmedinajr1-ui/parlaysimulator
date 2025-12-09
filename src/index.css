@@ -826,3 +826,43 @@ button, [role="button"], a {
   @apply flex items-center gap-3 py-3;
   @apply border-b border-border/30 last:border-0;
 }
+
+/* PVS Calculator Layout Stability */
+.main-layout {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 24px !important;
+  width: 100% !important;
+  max-width: 1400px !important;
+  margin: 0 auto !important;
+}
+
+@media (min-width: 1024px) {
+  .main-layout {
+    flex-direction: row !important;
+  }
+}
+
+.sidebar {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  order: 2;
+}
+
+@media (min-width: 1024px) {
+  .sidebar {
+    width: 320px !important;
+    max-width: 320px !important;
+    flex-shrink: 0 !important;
+    order: 2;
+  }
+}
+
+.parlay-builder {
+  flex: 1 !important;
+  min-width: 0 !important;
+  width: 100%;
+  order: 1;
+}
