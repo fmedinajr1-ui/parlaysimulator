@@ -40,7 +40,7 @@ export function PVSPropCard({ prop, isSelected = false, onSelect }: PVSPropCardP
   return (
     <div 
       className={cn(
-        "prop-card",
+        "prop-card w-full max-w-full self-stretch",
         isSelected && "ring-1 ring-[#00ff8c]/50"
       )}
     >

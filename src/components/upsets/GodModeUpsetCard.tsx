@@ -87,7 +87,7 @@ export function GodModeUpsetCard({ prediction, className }: GodModeUpsetCardProp
       animate={{ opacity: 1, y: 0 }}
     >
       <Card className={cn(
-        'relative overflow-hidden transition-all w-full',
+        'relative overflow-hidden transition-all w-full max-w-full self-stretch',
         prediction.chaos_mode_active && 'ring-2 ring-purple-500/50',
         prediction.confidence === 'high' && 'ring-2 ring-chart-2/50',
         className

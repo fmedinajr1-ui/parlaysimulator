@@ -282,7 +282,7 @@ export function GodModeDashboard() {
           </Button>
         </Card>
       ) : (
-        <div className="grid gap-6 grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3">
+        <div className="flex flex-col gap-5 w-full items-stretch">
           <AnimatePresence mode="popLayout">
             {filteredPredictions.map((prediction, index) => (
               <motion.div
@@ -292,6 +292,7 @@ export function GodModeDashboard() {
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.9 }}
                 transition={{ delay: index * 0.05 }}
+                className="w-full self-stretch"
               >
                 <GodModeUpsetCard prediction={prediction} />
               </motion.div>

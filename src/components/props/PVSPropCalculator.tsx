@@ -218,7 +218,7 @@ export function PVSPropCalculator() {
               </button>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="flex flex-col gap-5 w-full items-stretch">
               {filteredProps.map(prop => (
                 <PVSPropCard
                   key={prop.id}
