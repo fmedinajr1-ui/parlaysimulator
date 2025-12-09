@@ -102,6 +102,9 @@ export default defineConfig(({ mode }) => ({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      react: path.resolve("./node_modules/react"),
+      "react-dom": path.resolve("./node_modules/react-dom"),
+      "react-router-dom": path.resolve("./node_modules/react-router-dom"),
     },
     dedupe: [
       "react", 
@@ -119,8 +122,21 @@ export default defineConfig(({ mode }) => ({
       "react-router-dom", 
       "@tanstack/react-query"
     ],
+    esbuildOptions: {
+      define: {
+        global: 'globalThis'
+      }
+    }
   },
   build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          react: ['react', 'react-dom', 'react-router-dom'],
+          query: ['@tanstack/react-query'],
+        }
+      }
+    },
     commonjsOptions: {
       include: [/node_modules/],
       transformMixedEsModules: true,
