@@ -290,7 +290,7 @@ serve(async (req) => {
     
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
     
-    console.log('🔒 Starting final picks lock with Unified Intelligence...');
+    console.log('🔒 Starting final picks lock with Unified Intelligence + Season Standings...');
     
     const now = new Date();
     const thirtyMinsFromNow = new Date(now.getTime() + 30 * 60 * 1000);
@@ -325,6 +325,44 @@ serve(async (req) => {
     const withUnifiedCount = propsToLock.filter((p: any) => p.used_unified_intelligence).length;
     console.log(`🧠 ${withUnifiedCount}/${propsToLock.length} props have Unified Intelligence data`);
     
+    // Fetch season standings for trap favorite detection
+    const { data: standings } = await supabase
+      .from('team_season_standings')
+      .select('team_name, wins, losses, win_pct');
+    
+    // Build standings map
+    const standingsMap = new Map<string, { wins: number; losses: number; winPct: number }>();
+    (standings || []).forEach((s: any) => {
+      standingsMap.set(s.team_name.toLowerCase(), { wins: s.wins, losses: s.losses, winPct: s.win_pct });
+    });
+    console.log(`📊 Loaded ${standingsMap.size} team standings for trap detection`);
+    
+    // Helper to check for trap favorite
+    function checkTrapFavorite(gameDescription: string): { isTrap: boolean; warning: string | null; homeRecord: string | null; awayRecord: string | null } {
+      // Parse "Away @ Home" format
+      const match = gameDescription.match(/(.+)\s+@\s+(.+)/);
+      if (!match) return { isTrap: false, warning: null, homeRecord: null, awayRecord: null };
+      
+      const awayTeam = match[1].trim().toLowerCase();
+      const homeTeam = match[2].trim().toLowerCase();
+      
+      const homeStanding = standingsMap.get(homeTeam);
+      const awayStanding = standingsMap.get(awayTeam);
+      
+      const homeRecord = homeStanding ? `${homeStanding.wins}-${homeStanding.losses}` : null;
+      const awayRecord = awayStanding ? `${awayStanding.wins}-${awayStanding.losses}` : null;
+      
+      if (!homeStanding || !awayStanding) return { isTrap: false, warning: null, homeRecord, awayRecord };
+      
+      // Trap: home team is typically favored but has worse record
+      const isTrap = awayStanding.winPct > homeStanding.winPct + 0.1;
+      const warning = isTrap 
+        ? `⚠️ TRAP: ${match[2].trim()} favored but ${homeRecord} vs ${awayRecord}`
+        : null;
+      
+      return { isTrap, warning, homeRecord, awayRecord };
+    }
+    
     const lockedPicks: Array<{
       id: string;
       player: string;
@@ -336,6 +374,7 @@ serve(async (req) => {
       confidence: number;
       usedUnified: boolean;
       pvsTier?: string;
+      trapFavorite?: boolean;
     }> = [];
     
     // Check for sharp money on related line movements
@@ -396,6 +435,9 @@ serve(async (req) => {
       const currentOverPrice = prop.over_price;
       const currentUnderPrice = prop.under_price;
       
+      // Check for trap favorite based on season standings
+      const trapCheck = checkTrapFavorite(prop.game_description);
+      
       // Determine final pick with enhanced rules + Unified Intelligence
       const decision = determineFinalPick(
         prop,
@@ -409,13 +451,22 @@ serve(async (req) => {
         sharpSignals
       );
       
+      // Apply trap favorite penalty
+      let adjustedConfidence = decision.confidence;
+      let adjustedReason = decision.reason;
+      if (trapCheck.isTrap) {
+        adjustedConfidence *= 0.85; // Reduce confidence by 15%
+        adjustedReason += ` | ${trapCheck.warning}`;
+        console.log(`⚠️ Trap favorite detected for ${prop.player_name}: ${trapCheck.warning}`);
+      }
+      
       // Update the database
       const { error: updateError } = await supabase
         .from('juiced_props')
         .update({
           final_pick: decision.pick,
-          final_pick_reason: decision.reason,
-          final_pick_confidence: decision.confidence,
+          final_pick_reason: adjustedReason,
+          final_pick_confidence: adjustedConfidence,
           final_pick_time: now.toISOString(),
           is_locked: true,
         })
@@ -435,14 +486,16 @@ serve(async (req) => {
         line: prop.line,
         pick: decision.pick.toUpperCase(),
         odds: pickOdds,
-        reason: decision.reason,
-        confidence: decision.confidence,
+        reason: adjustedReason,
+        confidence: adjustedConfidence,
         usedUnified: prop.used_unified_intelligence || false,
         pvsTier: prop.unified_pvs_tier,
+        trapFavorite: trapCheck.isTrap,
       });
       
       const unifiedTag = prop.used_unified_intelligence ? ` | 🧠 ${prop.unified_pvs_tier}-Tier` : '';
-      console.log(`🔒 Locked: ${prop.player_name} ${decision.pick.toUpperCase()} ${prop.line} ${prop.prop_type} (${Math.round(decision.confidence * 100)}%)${unifiedTag}`);
+      const trapTag = trapCheck.isTrap ? ' | ⚠️ TRAP' : '';
+      console.log(`🔒 Locked: ${prop.player_name} ${decision.pick.toUpperCase()} ${prop.line} ${prop.prop_type} (${Math.round(adjustedConfidence * 100)}%)${unifiedTag}${trapTag}`);
     }
     
     // Send push notifications for locked picks

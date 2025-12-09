@@ -35,6 +35,10 @@ interface SuggestedLeg {
   fatigueEdge?: string;
   fatigueScore?: number;
   fatigueBoost?: boolean;
+  // Season standings fields
+  homeTeamRecord?: string;
+  awayTeamRecord?: string;
+  isTrapFavorite?: boolean;
 }
 
 interface FatigueInfo {
@@ -380,6 +384,31 @@ export function SuggestedParlayCard({
                     {leg.fatigueBoost && (
                       <Badge variant="outline" className="text-xs bg-yellow-500/20 text-yellow-400 border-yellow-500/30 ml-auto">
                         +BOOST
+                      </Badge>
+                    )}
+                  </div>
+                )}
+                
+                {/* Team Records Display for NBA/NFL legs */}
+                {(leg.sport === 'NBA' || leg.sport === 'NFL') && (leg.homeTeamRecord || leg.awayTeamRecord) && (
+                  <div className={cn(
+                    "mt-2 p-2 rounded border flex items-center gap-2",
+                    leg.isTrapFavorite 
+                      ? "bg-red-500/10 border-red-500/30" 
+                      : "bg-muted/50 border-border/50"
+                  )}>
+                    <BarChart3 className={cn(
+                      "w-4 h-4",
+                      leg.isTrapFavorite ? "text-red-400" : "text-muted-foreground"
+                    )} />
+                    <span className="text-xs text-muted-foreground">
+                      {leg.awayTeamRecord && `Away: ${leg.awayTeamRecord}`}
+                      {leg.awayTeamRecord && leg.homeTeamRecord && ' • '}
+                      {leg.homeTeamRecord && `Home: ${leg.homeTeamRecord}`}
+                    </span>
+                    {leg.isTrapFavorite && (
+                      <Badge variant="outline" className="text-xs bg-red-500/20 text-red-400 border-red-500/30 ml-auto">
+                        TRAP
                       </Badge>
                     )}
                   </div>
