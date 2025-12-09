@@ -64,7 +64,7 @@ export default defineConfig(({ mode }) => ({
         ]
       },
       workbox: {
-        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5 MiB limit
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
         runtimeCaching: [
           {
@@ -102,41 +102,16 @@ export default defineConfig(({ mode }) => ({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
-      react: path.resolve("./node_modules/react"),
-      "react-dom": path.resolve("./node_modules/react-dom"),
-      "react-router-dom": path.resolve("./node_modules/react-router-dom"),
     },
-    dedupe: [
-      "react", 
-      "react-dom", 
-      "react-router-dom", 
-      "@tanstack/react-query",
-      "@radix-ui/react-slot",
-      "scheduler"
-    ],
+    dedupe: ["react", "react-dom"],
   },
   optimizeDeps: {
-    include: [
-      "react", 
-      "react-dom", 
-      "react-router-dom", 
-      "@tanstack/react-query",
-      "scheduler"
-    ],
-    force: true,
-    esbuildOptions: {
-      define: {
-        global: 'globalThis'
-      }
-    }
+    include: ["react", "react-dom", "react-router-dom", "@tanstack/react-query"],
   },
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          react: ['react', 'react-dom', 'react-router-dom'],
-          query: ['@tanstack/react-query'],
-        }
+        manualChunks: undefined,
       }
     },
     commonjsOptions: {
