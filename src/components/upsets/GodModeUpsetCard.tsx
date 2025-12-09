@@ -102,53 +102,50 @@ export function GodModeUpsetCard({ prediction, className }: GodModeUpsetCardProp
         )}
 
         <CardHeader className="relative pb-2">
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex-1">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
-                <span className="uppercase truncate max-w-[120px]" title={prediction.sport.replace('_', ' ')}>{prediction.sport.replace('americanfootball_', '').replace('basketball_', '').toUpperCase()}</span>
+          <div className="flex flex-col items-center text-center gap-3">
+            <UpsetScoreGauge score={prediction.final_upset_score} size="md" />
+
+            <div className="space-y-1">
+              <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
+                <span className="uppercase" title={prediction.sport.replace('_', ' ')}>
+                  {prediction.sport.replace('americanfootball_', '').replace('basketball_', '').toUpperCase()}
+                </span>
                 <span>•</span>
                 <span>{format(new Date(prediction.commence_time), 'MMM d, h:mm a')}</span>
               </div>
 
-              <div className="flex items-center gap-2">
-                <h3 className="text-lg font-bold text-foreground">
-                  {prediction.underdog}
-                </h3>
-                <span className="text-xl font-bold text-chart-2">
-                  {formatOdds(prediction.underdog_odds)}
-                </span>
-              </div>
+              <h3 className="text-lg font-bold text-foreground">
+                {prediction.underdog} <span className="text-chart-2">{formatOdds(prediction.underdog_odds)}</span>
+              </h3>
 
               <p className="text-sm text-muted-foreground">
                 vs {prediction.favorite} ({formatOdds(prediction.favorite_odds)})
               </p>
             </div>
 
-            <UpsetScoreGauge score={prediction.final_upset_score} size="sm" />
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 mt-3">
-            {getSuggestionBadge()}
-            <Badge className={getConfidenceColor(prediction.confidence)}>
-              {prediction.confidence.toUpperCase()}
-            </Badge>
-            <Badge variant="outline" className="gap-1">
-              <Shield className="h-3 w-3" />
-              Risk {prediction.risk_level}/5
-            </Badge>
-            {prediction.trap_on_favorite && (
-              <Badge className="bg-destructive/20 text-destructive gap-1">
-                <AlertTriangle className="h-3 w-3" />
-                TRAP
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {getSuggestionBadge()}
+              <Badge className={getConfidenceColor(prediction.confidence)}>
+                {prediction.confidence.toUpperCase()}
               </Badge>
-            )}
-            {prediction.chaos_mode_active && (
-              <ChaosModeIndicator 
-                chaosPercentage={prediction.chaos_percentage} 
-                isActive={true} 
-                variant="compact" 
-              />
-            )}
+              <Badge variant="outline" className="gap-1">
+                <Shield className="h-3 w-3" />
+                Risk {prediction.risk_level}/5
+              </Badge>
+              {prediction.trap_on_favorite && (
+                <Badge className="bg-destructive/20 text-destructive gap-1">
+                  <AlertTriangle className="h-3 w-3" />
+                  TRAP
+                </Badge>
+              )}
+              {prediction.chaos_mode_active && (
+                <ChaosModeIndicator 
+                  chaosPercentage={prediction.chaos_percentage} 
+                  isActive={true} 
+                  variant="compact" 
+                />
+              )}
+            </div>
           </div>
         </CardHeader>
 
