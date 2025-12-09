@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, RefreshCw, Target, Zap, TrendingUp, TrendingDown, Minus, AlertCircle, Flame, Plus } from "lucide-react";
+import { Loader2, RefreshCw, Target, Zap, TrendingUp, TrendingDown, Minus, AlertCircle, Flame, Plus, BarChart3, Shield, Thermometer } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { AddToParlayButton } from "@/components/parlay/AddToParlayButton";
 
@@ -81,6 +81,43 @@ const HIT_RATE_OPTIONS = [
   { value: 0.8, label: "80%+" },
 ];
 
+// Line value filter options
+const LINE_VALUE_OPTIONS = [
+  { value: "all", label: "All Lines" },
+  { value: "excellent", label: "💎 Excellent Value" },
+  { value: "good", label: "✨ Good Value" },
+  { value: "consistent", label: "📊 Consistent Players" },
+  { value: "hot", label: "🔥 Trending Up" },
+];
+
+// Get line value badge styling
+const getLineValueBadgeClass = (label: string | null) => {
+  switch (label) {
+    case 'excellent':
+      return 'bg-neon-green/20 text-neon-green border-neon-green/30';
+    case 'good':
+      return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30';
+    case 'poor':
+      return 'bg-red-500/20 text-red-400 border-red-500/30';
+    default:
+      return 'bg-muted/30 text-muted-foreground border-border/30';
+  }
+};
+
+// Get consistency badge styling  
+const getConsistencyBadgeClass = (score: number) => {
+  if (score >= 70) return 'bg-neon-green/20 text-neon-green border-neon-green/30';
+  if (score >= 50) return 'bg-neon-yellow/20 text-neon-yellow border-neon-yellow/30';
+  return 'bg-orange-500/20 text-orange-400 border-orange-500/30';
+};
+
+// Get season trend styling
+const getSeasonTrendBadge = (trend: string | null, pct: number | null) => {
+  if (trend === 'hot') return { class: 'bg-neon-green/20 text-neon-green', icon: TrendingUp, label: 'Hot' };
+  if (trend === 'cold') return { class: 'bg-red-500/20 text-red-400', icon: TrendingDown, label: 'Cold' };
+  return { class: 'bg-muted/30 text-muted-foreground', icon: Minus, label: 'Stable' };
+};
+
 const getHitRateBadgeClass = (rate: number) => {
   if (rate >= 0.9) return 'bg-neon-green/20 text-neon-green border-neon-green/30';
   if (rate >= 0.8) return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30';
@@ -111,9 +148,11 @@ export function HitRatePicks() {
   const queryClient = useQueryClient();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isBuilding, setIsBuilding] = useState(false);
+  const [isCalcStats, setIsCalcStats] = useState(false);
   const [hitRateThreshold, setHitRateThreshold] = useState(0.6);
   const [streakFilter, setStreakFilter] = useState("all");
   const [sportFilter, setSportFilter] = useState("basketball_nba");
+  const [lineValueFilter, setLineValueFilter] = useState("all");
 
   // Fetch existing hit rate parlays
   const { data: parlays, isLoading: parlaysLoading } = useQuery({
@@ -134,7 +173,7 @@ export function HitRatePicks() {
 
   // Fetch individual high hit-rate props with filters
   const { data: props, isLoading: propsLoading } = useQuery({
-    queryKey: ['hitrate-props', hitRateThreshold, streakFilter, sportFilter],
+    queryKey: ['hitrate-props', hitRateThreshold, streakFilter, sportFilter, lineValueFilter],
     queryFn: async () => {
       let query = supabase
         .from('player_prop_hitrates')
@@ -142,7 +181,7 @@ export function HitRatePicks() {
         .or(`hit_rate_over.gte.${hitRateThreshold},hit_rate_under.gte.${hitRateThreshold}`)
         .gt('expires_at', new Date().toISOString())
         .order('confidence_score', { ascending: false })
-        .limit(30);
+        .limit(50);
       
       // Apply sport filter
       if (sportFilter !== 'all') {
@@ -154,12 +193,46 @@ export function HitRatePicks() {
         query = query.eq('hit_streak', streakFilter);
       }
       
+      // Apply line value filter
+      if (lineValueFilter === 'excellent') {
+        query = query.eq('line_value_label', 'excellent');
+      } else if (lineValueFilter === 'good') {
+        query = query.or('line_value_label.eq.excellent,line_value_label.eq.good');
+      } else if (lineValueFilter === 'consistent') {
+        query = query.gte('consistency_score', 65);
+      } else if (lineValueFilter === 'hot') {
+        query = query.eq('trend_direction', 'hot');
+      }
+      
       const { data, error } = await query;
       
       if (error) throw error;
       return data || [];
     }
   });
+
+  // Calculate season stats
+  const calculateSeasonStats = async () => {
+    setIsCalcStats(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('calculate-season-stats');
+      if (error) throw error;
+      
+      toast({
+        title: "Season Stats Updated",
+        description: `Processed ${data.playersUpdated} players`,
+      });
+    } catch (error) {
+      console.error('Error calculating season stats:', error);
+      toast({
+        title: "Stats Calculation Failed",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive"
+      });
+    } finally {
+      setIsCalcStats(false);
+    }
+  };
 
   // Analyze props mutation
   const analyzeProps = async () => {
@@ -261,10 +334,10 @@ export function HitRatePicks() {
     <div className="space-y-6">
       {/* Filter Controls */}
       <div className="flex flex-col gap-3">
-        {/* Row 1: Sport and Streak Filters */}
+        {/* Row 1: Sport, Streak, and Line Value Filters */}
         <div className="flex flex-wrap gap-2 items-center">
           <Select value={sportFilter} onValueChange={setSportFilter}>
-            <SelectTrigger className="w-32 bg-background border-border">
+            <SelectTrigger className="w-28 bg-background border-border">
               <SelectValue />
             </SelectTrigger>
             <SelectContent className="bg-popover border-border">
@@ -277,11 +350,24 @@ export function HitRatePicks() {
           </Select>
 
           <Select value={streakFilter} onValueChange={setStreakFilter}>
-            <SelectTrigger className="w-36 bg-background border-border">
+            <SelectTrigger className="w-32 bg-background border-border">
               <SelectValue />
             </SelectTrigger>
             <SelectContent className="bg-popover border-border">
               {STREAK_OPTIONS.map(opt => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select value={lineValueFilter} onValueChange={setLineValueFilter}>
+            <SelectTrigger className="w-40 bg-background border-border">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-popover border-border">
+              {LINE_VALUE_OPTIONS.map(opt => (
                 <SelectItem key={opt.value} value={opt.value}>
                   {opt.label}
                 </SelectItem>
@@ -310,7 +396,21 @@ export function HitRatePicks() {
         </div>
 
         {/* Row 2: Action Buttons */}
-        <div className="flex gap-3">
+        <div className="flex gap-2 flex-wrap">
+          <Button
+            onClick={calculateSeasonStats}
+            disabled={isCalcStats}
+            variant="outline"
+            size="sm"
+            className="border-neon-yellow/30 text-neon-yellow hover:bg-neon-yellow/10"
+          >
+            {isCalcStats ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <BarChart3 className="h-4 w-4 mr-2" />
+            )}
+            Update Season Stats
+          </Button>
           <Button
             onClick={analyzeProps}
             disabled={isAnalyzing}
@@ -473,7 +573,7 @@ export function HitRatePicks() {
   );
 }
 
-// PropCard component for rendering individual props with enhanced data
+// PropCard component for rendering individual props with enhanced season data
 function PropCard({ prop, PROP_LABELS }: { prop: any; PROP_LABELS: Record<string, string> }) {
   const bestHitRate = prop.recommended_side === 'over' 
     ? prop.hit_rate_over 
@@ -491,6 +591,10 @@ function PropCard({ prop, PROP_LABELS }: { prop: any; PROP_LABELS: Record<string
   // Get last 5 results for mini visualization
   const last5Results = prop.last_5_results || prop.game_logs?.slice(0, 5) || [];
   
+  // Season trend badge data
+  const seasonTrendData = getSeasonTrendBadge(prop.trend_direction, prop.season_trend_pct);
+  const SeasonTrendIcon = seasonTrendData.icon;
+  
   return (
     <Card className="bg-card/60 border-border/30">
       <CardContent className="py-3 space-y-2">
@@ -504,16 +608,15 @@ function PropCard({ prop, PROP_LABELS }: { prop: any; PROP_LABELS: Record<string
                   {prop.hit_streak} {streakEmoji}
                 </Badge>
               )}
-              <span className="flex items-center gap-1 text-xs">
-                {getTrendIcon(trend)}
-                <span className={
-                  trend === 'up' ? 'text-neon-green' : 
-                  trend === 'down' ? 'text-red-400' : 
-                  'text-muted-foreground'
-                }>
-                  {getTrendLabel(trend)}
-                </span>
-              </span>
+              {/* Line Value Badge */}
+              {prop.line_value_label && prop.line_value_label !== 'neutral' && (
+                <Badge className={getLineValueBadgeClass(prop.line_value_label)}>
+                  {prop.line_value_label === 'excellent' && '💎'}
+                  {prop.line_value_label === 'good' && '✨'}
+                  {prop.line_value_label === 'poor' && '⚠️'}
+                  {prop.line_vs_season_pct > 0 ? '+' : ''}{prop.line_vs_season_pct}%
+                </Badge>
+              )}
             </div>
             <div className="text-sm text-muted-foreground">
               {prop.recommended_side.toUpperCase()} {prop.current_line}{' '}
@@ -549,6 +652,63 @@ function PropCard({ prop, PROP_LABELS }: { prop: any; PROP_LABELS: Record<string
           </div>
         </div>
         
+        {/* Season Intelligence Row */}
+        {(prop.season_avg || prop.consistency_score || prop.trend_direction) && (
+          <div className="flex flex-wrap gap-2 pt-1.5 pb-1 border-t border-border/20">
+            {/* Season Average vs Line */}
+            {prop.season_avg && (
+              <div className="flex items-center gap-1.5 text-xs bg-muted/30 rounded px-2 py-0.5">
+                <BarChart3 className="h-3 w-3 text-primary" />
+                <span className="text-muted-foreground">Season:</span>
+                <span className={prop.season_avg > prop.current_line 
+                  ? (prop.recommended_side === 'over' ? 'text-neon-green font-medium' : 'text-amber-400 font-medium')
+                  : (prop.recommended_side === 'under' ? 'text-neon-green font-medium' : 'text-amber-400 font-medium')
+                }>
+                  {prop.season_avg}
+                </span>
+                <span className="text-muted-foreground/70">({prop.season_games_played}g)</span>
+              </div>
+            )}
+            
+            {/* Consistency Score */}
+            {prop.consistency_score && prop.consistency_score !== 50 && (
+              <div className="flex items-center gap-1.5 text-xs">
+                <Shield className="h-3 w-3 text-primary" />
+                <Badge className={getConsistencyBadgeClass(prop.consistency_score)} variant="outline">
+                  {prop.consistency_score >= 70 ? 'Very Consistent' : prop.consistency_score >= 50 ? 'Consistent' : 'Variable'}
+                </Badge>
+              </div>
+            )}
+            
+            {/* Season Trend */}
+            {prop.trend_direction && prop.trend_direction !== 'stable' && (
+              <div className={`flex items-center gap-1 text-xs rounded px-2 py-0.5 ${seasonTrendData.class}`}>
+                <SeasonTrendIcon className="h-3 w-3" />
+                <span>{seasonTrendData.label}</span>
+                {prop.season_trend_pct !== undefined && (
+                  <span>({prop.season_trend_pct > 0 ? '+' : ''}{prop.season_trend_pct}%)</span>
+                )}
+              </div>
+            )}
+            
+            {/* Opponent Defense Rank */}
+            {prop.opponent_defense_rank && (
+              <div className="flex items-center gap-1 text-xs">
+                <Thermometer className="h-3 w-3 text-muted-foreground" />
+                <span className={
+                  prop.opponent_defense_rank <= 10 
+                    ? 'text-red-400' 
+                    : prop.opponent_defense_rank >= 20 
+                      ? 'text-neon-green' 
+                      : 'text-muted-foreground'
+                }>
+                  DEF #{prop.opponent_defense_rank}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+        
         {/* Enhanced Stats Row */}
         <div className="flex flex-wrap gap-2 pt-1 border-t border-border/20">
           {/* Last 5 Avg */}
@@ -582,6 +742,16 @@ function PropCard({ prop, PROP_LABELS }: { prop: any; PROP_LABELS: Record<string
                     ({prop.projection_margin > 0 ? '+' : ''}{prop.projection_margin})
                   </span>
                 )}
+              </span>
+            </div>
+          )}
+          
+          {/* Home/Away Adjustment */}
+          {prop.home_away_adjustment !== undefined && prop.home_away_adjustment !== 0 && (
+            <div className="flex items-center gap-1 text-xs">
+              <span className="text-muted-foreground">H/A Adj:</span>
+              <span className={prop.home_away_adjustment > 0 ? 'text-neon-green font-medium' : 'text-red-400 font-medium'}>
+                {prop.home_away_adjustment > 0 ? '+' : ''}{prop.home_away_adjustment}
               </span>
             </div>
           )}

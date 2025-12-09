@@ -1603,19 +1603,26 @@ export type Database = {
           bookmaker: string | null
           commence_time: string | null
           confidence_score: number | null
+          consistency_score: number | null
           current_line: number
           event_id: string | null
           expires_at: string | null
+          fatigue_impact: number | null
           game_description: string | null
           game_logs: Json | null
           games_analyzed: number
           hit_rate_over: number
           hit_rate_under: number
           hit_streak: string | null
+          home_away_adjustment: number | null
           id: string
           is_perfect_streak: boolean | null
           last_5_avg: number | null
           last_5_results: Json | null
+          line_value_label: string | null
+          line_value_score: number | null
+          line_vs_season_pct: number | null
+          opponent_defense_rank: number | null
           opponent_name: string | null
           over_hits: number
           over_price: number | null
@@ -1624,7 +1631,12 @@ export type Database = {
           projection_margin: number | null
           prop_type: string
           recommended_side: string | null
+          rest_days_factor: number | null
+          season_avg: number | null
+          season_games_played: number | null
+          season_trend_pct: number | null
           sport: string
+          trend_direction: string | null
           under_hits: number
           under_price: number | null
           vs_opponent_avg: number | null
@@ -1636,19 +1648,26 @@ export type Database = {
           bookmaker?: string | null
           commence_time?: string | null
           confidence_score?: number | null
+          consistency_score?: number | null
           current_line: number
           event_id?: string | null
           expires_at?: string | null
+          fatigue_impact?: number | null
           game_description?: string | null
           game_logs?: Json | null
           games_analyzed?: number
           hit_rate_over?: number
           hit_rate_under?: number
           hit_streak?: string | null
+          home_away_adjustment?: number | null
           id?: string
           is_perfect_streak?: boolean | null
           last_5_avg?: number | null
           last_5_results?: Json | null
+          line_value_label?: string | null
+          line_value_score?: number | null
+          line_vs_season_pct?: number | null
+          opponent_defense_rank?: number | null
           opponent_name?: string | null
           over_hits?: number
           over_price?: number | null
@@ -1657,7 +1676,12 @@ export type Database = {
           projection_margin?: number | null
           prop_type: string
           recommended_side?: string | null
+          rest_days_factor?: number | null
+          season_avg?: number | null
+          season_games_played?: number | null
+          season_trend_pct?: number | null
           sport: string
+          trend_direction?: string | null
           under_hits?: number
           under_price?: number | null
           vs_opponent_avg?: number | null
@@ -1669,19 +1693,26 @@ export type Database = {
           bookmaker?: string | null
           commence_time?: string | null
           confidence_score?: number | null
+          consistency_score?: number | null
           current_line?: number
           event_id?: string | null
           expires_at?: string | null
+          fatigue_impact?: number | null
           game_description?: string | null
           game_logs?: Json | null
           games_analyzed?: number
           hit_rate_over?: number
           hit_rate_under?: number
           hit_streak?: string | null
+          home_away_adjustment?: number | null
           id?: string
           is_perfect_streak?: boolean | null
           last_5_avg?: number | null
           last_5_results?: Json | null
+          line_value_label?: string | null
+          line_value_score?: number | null
+          line_vs_season_pct?: number | null
+          opponent_defense_rank?: number | null
           opponent_name?: string | null
           over_hits?: number
           over_price?: number | null
@@ -1690,12 +1721,143 @@ export type Database = {
           projection_margin?: number | null
           prop_type?: string
           recommended_side?: string | null
+          rest_days_factor?: number | null
+          season_avg?: number | null
+          season_games_played?: number | null
+          season_trend_pct?: number | null
           sport?: string
+          trend_direction?: string | null
           under_hits?: number
           under_price?: number | null
           vs_opponent_avg?: number | null
           vs_opponent_games?: number | null
           vs_opponent_hit_rate?: number | null
+        }
+        Relationships: []
+      }
+      player_season_stats: {
+        Row: {
+          assists_std_dev: number
+          avg_assists: number
+          avg_blocks: number
+          avg_minutes: number
+          avg_points: number
+          avg_rebounds: number
+          avg_steals: number
+          avg_threes: number
+          away_avg_assists: number
+          away_avg_points: number
+          away_avg_rebounds: number
+          away_avg_threes: number
+          away_games: number
+          b2b_avg_points: number
+          b2b_games: number
+          consistency_score: number
+          created_at: string
+          games_played: number
+          home_avg_assists: number
+          home_avg_points: number
+          home_avg_rebounds: number
+          home_avg_threes: number
+          home_games: number
+          id: string
+          last_10_avg_assists: number
+          last_10_avg_points: number
+          last_10_avg_rebounds: number
+          last_10_avg_threes: number
+          player_name: string
+          points_std_dev: number
+          rebounds_std_dev: number
+          rest_avg_points: number
+          rest_games: number
+          season: string
+          sport: string
+          team_name: string | null
+          threes_std_dev: number
+          trend_direction: string
+          updated_at: string
+        }
+        Insert: {
+          assists_std_dev?: number
+          avg_assists?: number
+          avg_blocks?: number
+          avg_minutes?: number
+          avg_points?: number
+          avg_rebounds?: number
+          avg_steals?: number
+          avg_threes?: number
+          away_avg_assists?: number
+          away_avg_points?: number
+          away_avg_rebounds?: number
+          away_avg_threes?: number
+          away_games?: number
+          b2b_avg_points?: number
+          b2b_games?: number
+          consistency_score?: number
+          created_at?: string
+          games_played?: number
+          home_avg_assists?: number
+          home_avg_points?: number
+          home_avg_rebounds?: number
+          home_avg_threes?: number
+          home_games?: number
+          id?: string
+          last_10_avg_assists?: number
+          last_10_avg_points?: number
+          last_10_avg_rebounds?: number
+          last_10_avg_threes?: number
+          player_name: string
+          points_std_dev?: number
+          rebounds_std_dev?: number
+          rest_avg_points?: number
+          rest_games?: number
+          season?: string
+          sport?: string
+          team_name?: string | null
+          threes_std_dev?: number
+          trend_direction?: string
+          updated_at?: string
+        }
+        Update: {
+          assists_std_dev?: number
+          avg_assists?: number
+          avg_blocks?: number
+          avg_minutes?: number
+          avg_points?: number
+          avg_rebounds?: number
+          avg_steals?: number
+          avg_threes?: number
+          away_avg_assists?: number
+          away_avg_points?: number
+          away_avg_rebounds?: number
+          away_avg_threes?: number
+          away_games?: number
+          b2b_avg_points?: number
+          b2b_games?: number
+          consistency_score?: number
+          created_at?: string
+          games_played?: number
+          home_avg_assists?: number
+          home_avg_points?: number
+          home_avg_rebounds?: number
+          home_avg_threes?: number
+          home_games?: number
+          id?: string
+          last_10_avg_assists?: number
+          last_10_avg_points?: number
+          last_10_avg_rebounds?: number
+          last_10_avg_threes?: number
+          player_name?: string
+          points_std_dev?: number
+          rebounds_std_dev?: number
+          rest_avg_points?: number
+          rest_games?: number
+          season?: string
+          sport?: string
+          team_name?: string | null
+          threes_std_dev?: number
+          trend_direction?: string
+          updated_at?: string
         }
         Relationships: []
       }
