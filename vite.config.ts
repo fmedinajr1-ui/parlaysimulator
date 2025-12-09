@@ -120,8 +120,10 @@ export default defineConfig(({ mode }) => ({
       "react", 
       "react-dom", 
       "react-router-dom", 
-      "@tanstack/react-query"
+      "@tanstack/react-query",
+      "scheduler"
     ],
+    force: true,
     esbuildOptions: {
       define: {
         global: 'globalThis'
