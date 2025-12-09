@@ -158,3 +158,6 @@ verify_jwt = false
 
 [functions.detect-extreme-movements]
 verify_jwt = false
+
+[functions.seed-historical-fatigue]
+verify_jwt = false
