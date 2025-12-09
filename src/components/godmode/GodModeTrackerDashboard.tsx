@@ -54,7 +54,8 @@ export function GodModeTrackerDashboard() {
         .from('sharp_line_tracker')
         .select('*')
         .not('ai_recommendation', 'is', null)
-        .order('created_at', { ascending: false });
+        .gte('commence_time', new Date().toISOString())
+        .order('commence_time', { ascending: true });
 
       if (error) throw error;
       setProps((data || []) as unknown as TrackedProp[]);
@@ -72,7 +73,8 @@ export function GodModeTrackerDashboard() {
         .from('sharp_line_tracker')
         .select('*', { count: 'exact', head: true })
         .is('ai_recommendation', null)
-        .eq('status', 'pending');
+        .eq('status', 'pending')
+        .gte('commence_time', new Date().toISOString());
 
       if (error) throw error;
       setPendingCount(count || 0);
@@ -119,13 +121,19 @@ export function GodModeTrackerDashboard() {
     toast.info('Running GOD MODE analysis...', { duration: 5000 });
     
     try {
-      const { data, error } = await supabase.functions.invoke('auto-refresh-sharp-tracker');
+      const { data, error } = await supabase.functions.invoke('auto-refresh-sharp-tracker', {
+        body: {
+          useOpeningFallback: true,
+          batchSize: 50,
+          prioritizeUpcoming: true
+        }
+      });
       
       if (error) throw error;
       
       await Promise.all([fetchAnalyzedProps(), fetchPendingCount()]);
       
-      const analyzed = data?.analyzed_count || 0;
+      const analyzed = data?.analyze?.success || 0;
       toast.success(`Analysis complete! ${analyzed} props analyzed`);
     } catch (error) {
       console.error('Error generating data:', error);
