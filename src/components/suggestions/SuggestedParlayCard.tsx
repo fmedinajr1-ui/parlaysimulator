@@ -10,7 +10,8 @@ import { WolfAvatar } from "@/components/avatars/WolfAvatar";
 import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
 import { createLeg, simulateParlay } from "@/lib/parlay-calculator";
-
+import { FatigueDifferentialBadge } from "@/components/fatigue/FatigueDifferentialBadge";
+import { extractTeamsFromDescription } from "@/hooks/useFatigueData";
 interface SuggestedLeg {
   description: string;
   odds: number;
@@ -381,6 +382,20 @@ export function SuggestedParlayCard({
                     )}
                   </div>
                 )}
+                
+                {/* Real-time Fatigue Differential for NBA legs */}
+                {leg.sport === 'NBA' && (() => {
+                  const teams = extractTeamsFromDescription(leg.description);
+                  if (teams) {
+                    return (
+                      <FatigueDifferentialBadge 
+                        homeTeam={teams.team2} 
+                        awayTeam={teams.team1} 
+                      />
+                    );
+                  }
+                  return null;
+                })()}
                 
                 {/* Hybrid Score Breakdown */}
                 {leg.hybridScore && leg.hybridBreakdown && (
