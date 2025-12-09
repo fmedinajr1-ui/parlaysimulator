@@ -125,114 +125,108 @@ serve(async (req) => {
 
     const parlays: any[] = [];
 
-    // Build 5/5 streak parlay if we have enough
-    if (perfectProps.length >= 2) {
-      // Select from different events
-      const selectedLegs: any[] = [];
+    // Check how many unique events we have
+    const uniqueEvents = new Set(props.map(p => p.event_id || p.game_description));
+    const singleGameMode = uniqueEvents.size === 1;
+    
+    console.log(`Unique events: ${uniqueEvents.size}, Single game mode: ${singleGameMode}`);
+
+    // Helper to select legs - allows same-game legs if only one game available
+    const selectLegs = (sourceProps: any[], max: number): any[] => {
+      const selected: any[] = [];
+      const usedPlayers = new Set<string>();
       const usedEvents = new Set<string>();
-
-      for (const prop of perfectProps.sort((a, b) => b.confidence_score - a.confidence_score)) {
-        const eventKey = prop.event_id || prop.game_description;
-        if (!usedEvents.has(eventKey) && selectedLegs.length < maxLegs) {
-          selectedLegs.push(prop);
-          usedEvents.add(eventKey);
-        }
-      }
-
-      if (selectedLegs.length >= 2) {
-        const { decimalOdds, americanOdds } = calculateParlayOdds(selectedLegs);
-        const combinedProb = calculateCombinedProbability(selectedLegs);
-
-        const parlay = {
-          legs: selectedLegs.map(leg => ({
-            player_name: leg.player_name,
-            prop_type: leg.prop_type,
-            line: leg.current_line,
-            recommended_side: leg.recommended_side,
-            price: leg.recommended_side === 'over' ? leg.over_price : leg.under_price,
-            hit_rate: leg.recommended_side === 'over' ? leg.hit_rate_over : leg.hit_rate_under,
-            games_analyzed: leg.games_analyzed,
-            over_hits: leg.over_hits,
-            under_hits: leg.under_hits,
-            game_logs: leg.game_logs,
-            confidence_score: leg.confidence_score,
-            sport: leg.sport,
-            game_description: leg.game_description,
-            event_id: leg.event_id,
-            commence_time: leg.commence_time
-          })),
-          combined_probability: Math.round(combinedProb * 10000) / 100,
-          total_odds: americanOdds,
-          min_hit_rate: 1.0,
-          strategy_type: '5/5_streak',
-          sharp_optimized: false,
-          sport: selectedLegs.length === 1 ? selectedLegs[0].sport : 'mixed',
-          expires_at: selectedLegs.reduce((min, leg) => 
-            new Date(leg.commence_time) < new Date(min) ? leg.commence_time : min, 
-            selectedLegs[0].commence_time
-          )
-        };
-
-        parlays.push(parlay);
-      }
-    }
-
-    // Build 4/5+ consistent parlay
-    if (consistentProps.length >= 2) {
-      const selectedLegs: any[] = [];
-      const usedEvents = new Set<string>();
-
-      // Prioritize by hit rate, then confidence
-      const sorted = consistentProps.sort((a, b) => {
+      
+      const sorted = sourceProps.sort((a, b) => {
         const hitRateA = a.recommended_side === 'over' ? a.hit_rate_over : a.hit_rate_under;
         const hitRateB = b.recommended_side === 'over' ? b.hit_rate_over : b.hit_rate_under;
         if (hitRateB !== hitRateA) return hitRateB - hitRateA;
         return b.confidence_score - a.confidence_score;
       });
-
+      
       for (const prop of sorted) {
+        if (selected.length >= max) break;
+        
         const eventKey = prop.event_id || prop.game_description;
-        if (!usedEvents.has(eventKey) && selectedLegs.length < maxLegs) {
-          selectedLegs.push(prop);
-          usedEvents.add(eventKey);
-        }
+        const playerKey = `${prop.player_name}-${prop.prop_type}`;
+        
+        // Always avoid same player+prop combo
+        if (usedPlayers.has(playerKey)) continue;
+        
+        // In multi-game mode, avoid same event
+        if (!singleGameMode && usedEvents.has(eventKey)) continue;
+        
+        selected.push(prop);
+        usedPlayers.add(playerKey);
+        usedEvents.add(eventKey);
       }
+      
+      return selected;
+    };
 
+    // Build parlay from legs
+    const buildParlay = (legs: any[], strategyType: string, minRate: number): any => {
+      const { decimalOdds, americanOdds } = calculateParlayOdds(legs);
+      const combinedProb = calculateCombinedProbability(legs);
+      
+      return {
+        legs: legs.map(leg => ({
+          player_name: leg.player_name,
+          prop_type: leg.prop_type,
+          line: leg.current_line,
+          recommended_side: leg.recommended_side,
+          price: leg.recommended_side === 'over' ? leg.over_price : leg.under_price,
+          hit_rate: leg.recommended_side === 'over' ? leg.hit_rate_over : leg.hit_rate_under,
+          games_analyzed: leg.games_analyzed,
+          over_hits: leg.over_hits,
+          under_hits: leg.under_hits,
+          game_logs: leg.game_logs,
+          confidence_score: leg.confidence_score,
+          sport: leg.sport,
+          game_description: leg.game_description,
+          event_id: leg.event_id,
+          commence_time: leg.commence_time
+        })),
+        combined_probability: Math.round(combinedProb * 10000) / 100,
+        total_odds: americanOdds,
+        min_hit_rate: minRate,
+        strategy_type: strategyType,
+        sharp_optimized: false,
+        sport: legs.length === 1 ? legs[0].sport : (new Set(legs.map(l => l.sport)).size === 1 ? legs[0].sport : 'mixed'),
+        expires_at: legs.reduce((min, leg) => 
+          new Date(leg.commence_time) < new Date(min) ? leg.commence_time : min, 
+          legs[0].commence_time
+        )
+      };
+    };
+
+    // Build 5/5 streak parlay if we have enough
+    if (perfectProps.length >= 2) {
+      const selectedLegs = selectLegs(perfectProps, maxLegs);
+      
       if (selectedLegs.length >= 2) {
-        const { decimalOdds, americanOdds } = calculateParlayOdds(selectedLegs);
-        const combinedProb = calculateCombinedProbability(selectedLegs);
+        parlays.push(buildParlay(selectedLegs, '5/5_streak', 1.0));
+        console.log(`Built 5/5_streak parlay with ${selectedLegs.length} legs`);
+      }
+    }
 
-        const parlay = {
-          legs: selectedLegs.map(leg => ({
-            player_name: leg.player_name,
-            prop_type: leg.prop_type,
-            line: leg.current_line,
-            recommended_side: leg.recommended_side,
-            price: leg.recommended_side === 'over' ? leg.over_price : leg.under_price,
-            hit_rate: leg.recommended_side === 'over' ? leg.hit_rate_over : leg.hit_rate_under,
-            games_analyzed: leg.games_analyzed,
-            over_hits: leg.over_hits,
-            under_hits: leg.under_hits,
-            game_logs: leg.game_logs,
-            confidence_score: leg.confidence_score,
-            sport: leg.sport,
-            game_description: leg.game_description,
-            event_id: leg.event_id,
-            commence_time: leg.commence_time
-          })),
-          combined_probability: Math.round(combinedProb * 10000) / 100,
-          total_odds: americanOdds,
-          min_hit_rate: minHitRate,
-          strategy_type: 'consistent',
-          sharp_optimized: false,
-          sport: selectedLegs.length === 1 ? selectedLegs[0].sport : 'mixed',
-          expires_at: selectedLegs.reduce((min, leg) => 
-            new Date(leg.commence_time) < new Date(min) ? leg.commence_time : min, 
-            selectedLegs[0].commence_time
-          )
-        };
-
-        parlays.push(parlay);
+    // Build consistent parlay
+    if (consistentProps.length >= 2) {
+      const selectedLegs = selectLegs(consistentProps, maxLegs);
+      
+      if (selectedLegs.length >= 2) {
+        // Avoid duplicating if same legs as 5/5 parlay
+        const existingLegKeys = parlays.length > 0 
+          ? new Set(parlays[0].legs.map((l: any) => `${l.player_name}-${l.prop_type}`))
+          : new Set();
+        
+        const isDuplicate = selectedLegs.length === parlays[0]?.legs?.length &&
+          selectedLegs.every(leg => existingLegKeys.has(`${leg.player_name}-${leg.prop_type}`));
+        
+        if (!isDuplicate) {
+          parlays.push(buildParlay(selectedLegs, 'consistent', minHitRate));
+          console.log(`Built consistent parlay with ${selectedLegs.length} legs`);
+        }
       }
     }
 
