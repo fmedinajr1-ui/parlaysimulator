@@ -118,9 +118,22 @@ export function GodModeTrackerDashboard() {
 
   const handleGenerateData = async () => {
     setGenerating(true);
-    toast.info('Running GOD MODE analysis...', { duration: 5000 });
+    toast.info('Scanning for fresh props and running analysis...', { duration: 8000 });
     
     try {
+      // Step 1: First scan for fresh props from today's games
+      console.log('[GOD MODE] Scanning for fresh props...');
+      const { error: scanError } = await supabase.functions.invoke('scan-opening-lines', {
+        body: { sports: ['NBA', 'NFL'] }
+      });
+      
+      if (scanError) {
+        console.error('[GOD MODE] Scan error:', scanError);
+        // Continue anyway - we might have existing props to analyze
+      }
+      
+      // Step 2: Run analysis on upcoming game props
+      console.log('[GOD MODE] Running analysis...');
       const { data, error } = await supabase.functions.invoke('auto-refresh-sharp-tracker', {
         body: {
           useOpeningFallback: true,
@@ -134,7 +147,8 @@ export function GodModeTrackerDashboard() {
       await Promise.all([fetchAnalyzedProps(), fetchPendingCount()]);
       
       const analyzed = data?.analyze?.success || 0;
-      toast.success(`Analysis complete! ${analyzed} props analyzed`);
+      const scanned = data?.fetch?.total || 0;
+      toast.success(`Complete! Scanned ${scanned} props, analyzed ${analyzed}`);
     } catch (error) {
       console.error('Error generating data:', error);
       toast.error('Failed to run analysis');
