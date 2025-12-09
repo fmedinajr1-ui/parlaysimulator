@@ -1,7 +1,10 @@
 import React from "react";
 import { Zap, Sparkles, TrendingUp } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { PVSProp, PVS_TIER_CONFIG } from "@/types/pvs";
 import { SelectedPropCard } from "./SelectedPropCard";
+import { createLeg, simulateParlay } from "@/lib/parlay-calculator";
+import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
 interface PVSParlayBuilderProps {
@@ -11,6 +14,9 @@ interface PVSParlayBuilderProps {
 }
 
 export function PVSParlayBuilder({ selectedProps, onRemove, onClear }: PVSParlayBuilderProps) {
+  const navigate = useNavigate();
+  const { toast } = useToast();
+
   const calculateCombinedOdds = () => {
     if (selectedProps.length === 0) return 0;
     
@@ -42,6 +48,30 @@ export function PVSParlayBuilder({ selectedProps, onRemove, onClear }: PVSParlay
     } else {
       return 100 + (100 / Math.abs(odds)) * 100;
     }
+  };
+
+  const handleGenerateSimulation = () => {
+    if (selectedProps.length === 0) {
+      toast({
+        title: "No props selected",
+        description: "Add some props to your parlay first",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    // Convert PVSProp to ParlayLeg format
+    const parlayLegs = selectedProps.map(prop => {
+      const odds = prop.recommended_side === 'over' ? prop.over_price : prop.under_price;
+      const description = `${prop.player_name} ${prop.recommended_side?.toUpperCase()} ${prop.current_line} ${prop.prop_type}`;
+      return createLeg(description, odds || -110);
+    });
+
+    // Run simulation (using $10 stake as default)
+    const simulation = simulateParlay(parlayLegs, 10);
+    
+    // Navigate to Results page with the simulation
+    navigate('/results', { state: { simulation } });
   };
 
   const combinedOdds = calculateCombinedOdds();
@@ -152,7 +182,9 @@ export function PVSParlayBuilder({ selectedProps, onRemove, onClear }: PVSParlay
             </div>
 
             {/* Generate Button */}
-            <button className="w-full py-4 rounded-xl font-bold text-black text-lg flex items-center justify-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98]"
+            <button 
+              onClick={handleGenerateSimulation}
+              className="w-full py-4 rounded-xl font-bold text-black text-lg flex items-center justify-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98]"
               style={{ background: 'linear-gradient(135deg, #00ff8c, #00d97e)' }}
             >
               <TrendingUp className="h-5 w-5" />
