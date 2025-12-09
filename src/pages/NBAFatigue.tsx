@@ -77,6 +77,7 @@ export default function NBAFatigue() {
   const [games, setGames] = useState<GameWithFatigue[]>([]);
   const [loading, setLoading] = useState(true);
   const [calculating, setCalculating] = useState(false);
+  const [seeding, setSeeding] = useState(false);
 
   const fetchFatigueData = useCallback(async () => {
     try {
@@ -162,6 +163,31 @@ export default function NBAFatigue() {
     }
   };
 
+  const seedHistoricalData = async () => {
+    setSeeding(true);
+    try {
+      toast.info('Seeding historical data... This may take a minute.');
+      const { data, error } = await supabase.functions.invoke('seed-historical-fatigue', {
+        body: {}
+      });
+      
+      if (error) throw error;
+      
+      if (data?.success) {
+        toast.success(
+          `Seeded ${data.gamesProcessed} games! Found ${data.edgesFound} edges (${data.edgeStats?.winRate}% win rate, ${data.edgeStats?.roi}% ROI)`
+        );
+      } else {
+        toast.error('Failed to seed historical data');
+      }
+    } catch (error) {
+      console.error('Error seeding historical data:', error);
+      toast.error('Failed to seed historical data');
+    } finally {
+      setSeeding(false);
+    }
+  };
+
   const { isRefreshing, pullProgress, containerRef, handlers } = usePullToRefresh({
     onRefresh: fetchFatigueData,
   });
@@ -239,26 +265,46 @@ export default function NBAFatigue() {
             </p>
           </FeedCard>
 
-          {/* Calculate Button */}
-          {games.length === 0 && !loading && (
+          {/* Action Buttons */}
+          <div className="flex gap-2">
+            {games.length === 0 && !loading && (
+              <Button 
+                onClick={calculateFatigue} 
+                disabled={calculating || seeding}
+                className="flex-1"
+              >
+                {calculating ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                    Calculating...
+                  </>
+                ) : (
+                  <>
+                    <Zap className="w-4 h-4 mr-2" />
+                    Calculate Today's Fatigue
+                  </>
+                )}
+              </Button>
+            )}
             <Button 
-              onClick={calculateFatigue} 
-              disabled={calculating}
-              className="w-full"
+              onClick={seedHistoricalData} 
+              disabled={seeding || calculating}
+              variant="outline"
+              className={games.length === 0 && !loading ? "flex-1" : "w-full"}
             >
-              {calculating ? (
+              {seeding ? (
                 <>
                   <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                  Calculating...
+                  Seeding Historical Data...
                 </>
               ) : (
                 <>
-                  <Zap className="w-4 h-4 mr-2" />
-                  Calculate Today's Fatigue Scores
+                  <TrendingUp className="w-4 h-4 mr-2" />
+                  Seed Historical Data
                 </>
               )}
             </Button>
-          )}
+          </div>
 
           {/* Games List */}
           {loading ? (
