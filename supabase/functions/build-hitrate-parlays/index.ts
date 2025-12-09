@@ -109,17 +109,19 @@ serve(async (req) => {
       propsByEvent[eventKey].push(prop);
     }
 
-    // Strategy 1: 5/5 Streak Parlay (only perfect hit rates)
+    // Strategy 1: 5/5 Streak Parlay (only perfect hit rates - 100%)
     const perfectProps = props.filter(p => {
       const bestHitRate = p.recommended_side === 'over' ? p.hit_rate_over : p.hit_rate_under;
       return bestHitRate >= 1.0;
     });
 
-    // Strategy 2: 4/5+ Consistent Parlay (80%+ hit rates)
+    // Strategy 2: Consistent Parlay (uses minHitRate threshold from request)
     const consistentProps = props.filter(p => {
       const bestHitRate = p.recommended_side === 'over' ? p.hit_rate_over : p.hit_rate_under;
-      return bestHitRate >= 0.8;
+      return bestHitRate >= minHitRate;
     });
+
+    console.log(`Perfect props (100%): ${perfectProps.length}, Consistent props (>=${minHitRate * 100}%): ${consistentProps.length}`);
 
     const parlays: any[] = [];
 
@@ -220,8 +222,8 @@ serve(async (req) => {
           })),
           combined_probability: Math.round(combinedProb * 10000) / 100,
           total_odds: americanOdds,
-          min_hit_rate: 0.8,
-          strategy_type: '4/5_consistent',
+          min_hit_rate: minHitRate,
+          strategy_type: 'consistent',
           sharp_optimized: false,
           sport: selectedLegs.length === 1 ? selectedLegs[0].sport : 'mixed',
           expires_at: selectedLegs.reduce((min, leg) => 
