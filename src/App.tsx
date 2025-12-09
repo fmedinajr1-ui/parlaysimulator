@@ -27,6 +27,7 @@ import NotFound from "./pages/NotFound";
 import PVSCalculator from "./pages/PVSCalculator";
 import GodModeUpsets from "./pages/GodModeUpsets";
 import GodModeDashboard from "./pages/GodModeDashboard";
+import HitRate from "./pages/HitRate";
 
 const queryClient = new QueryClient();
 
@@ -53,6 +54,7 @@ function AnimatedRoutes() {
         <Route path="/pvs-calculator" element={<PVSCalculator />} />
         <Route path="/god-mode" element={<GodModeUpsets />} />
         <Route path="/god-mode-tracker" element={<GodModeDashboard />} />
+        <Route path="/hitrate" element={<HitRate />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </PageTransition>

@@ -33,7 +33,22 @@ Deno.serve(async (req) => {
   const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const supabase = createClient(supabaseUrl, supabaseKey);
 
+  // Parse request body for options
+  let useOpeningFallback = false;
+  let batchSize = 20;
+  let prioritizeUpcoming = true;
+  
+  try {
+    const body = await req.json();
+    useOpeningFallback = body?.useOpeningFallback ?? false;
+    batchSize = body?.batchSize ?? 20;
+    prioritizeUpcoming = body?.prioritizeUpcoming ?? true;
+  } catch {
+    // No body provided, use defaults
+  }
+
   console.log("[AUTO-REFRESH] Starting automated refresh and analyze job...");
+  console.log(`[AUTO-REFRESH] Options: fallback=${useOpeningFallback}, batch=${batchSize}, prioritize=${prioritizeUpcoming}`);
 
   // Log job start
   const { data: jobRecord, error: jobError } = await supabase
@@ -51,133 +66,190 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // Step 1: Fetch all pending props with event IDs
-    const { data: pendingProps, error: fetchError } = await supabase
+    // Step 1: Fetch all pending props, prioritize upcoming games
+    let query = supabase
       .from("sharp_line_tracker")
       .select("*")
-      .eq("status", "pending")
-      .not("event_id", "is", null);
+      .eq("status", "pending");
+    
+    if (prioritizeUpcoming) {
+      // Get games starting in next 24 hours first
+      const next24Hours = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+      query = query.lte("commence_time", next24Hours);
+    }
+    
+    query = query.limit(batchSize);
+
+    const { data: pendingProps, error: fetchError } = await query;
 
     if (fetchError) {
       throw new Error(`Failed to fetch pending props: ${fetchError.message}`);
     }
 
-    console.log(`[AUTO-REFRESH] Found ${pendingProps?.length || 0} pending props to refresh`);
+    console.log(`[AUTO-REFRESH] Found ${pendingProps?.length || 0} pending props to process`);
 
     let fetchSuccess = 0;
     let fetchFail = 0;
-    const updatedProps: TrackedProp[] = [];
+    let fallbackUsed = 0;
+    const propsToAnalyze: TrackedProp[] = [];
 
-    // Step 2: Fetch current odds for each prop
+    // Step 2: Fetch current odds for each prop (with fallback)
     for (const prop of (pendingProps || []) as TrackedProp[]) {
       try {
-        const { data: oddsData, error: oddsError } = await supabase.functions.invoke("fetch-current-odds", {
-          body: {
-            event_id: prop.event_id,
-            sport: prop.sport,
-            player_name: prop.player_name,
-            prop_type: prop.prop_type,
-            bookmaker: prop.bookmaker,
-          },
-        });
+        let hasCurrentOdds = false;
+        
+        // Try to fetch current odds if event_id exists
+        if (prop.event_id) {
+          const { data: oddsData, error: oddsError } = await supabase.functions.invoke("fetch-current-odds", {
+            body: {
+              event_id: prop.event_id,
+              sport: prop.sport,
+              player_name: prop.player_name,
+              prop_type: prop.prop_type,
+              bookmaker: prop.bookmaker,
+            },
+          });
 
-        if (oddsError || !oddsData?.success) {
-          console.log(`[AUTO-REFRESH] Failed to fetch odds for ${prop.player_name}: ${oddsError?.message || oddsData?.error}`);
-          fetchFail++;
-          continue;
+          if (!oddsError && oddsData?.success) {
+            // Update the database with current odds
+            await supabase
+              .from("sharp_line_tracker")
+              .update({
+                current_over_price: oddsData.odds.over_price,
+                current_under_price: oddsData.odds.under_price,
+                current_line: oddsData.odds.line,
+                last_updated: new Date().toISOString(),
+                status: "updated",
+              })
+              .eq("id", prop.id);
+
+            prop.current_over_price = oddsData.odds.over_price;
+            prop.current_under_price = oddsData.odds.under_price;
+            prop.current_line = oddsData.odds.line;
+            hasCurrentOdds = true;
+            fetchSuccess++;
+          }
+        }
+        
+        // Use opening odds as fallback if enabled and no current odds
+        if (!hasCurrentOdds && useOpeningFallback) {
+          console.log(`[AUTO-REFRESH] Using opening odds fallback for ${prop.player_name}`);
+          
+          // Update with opening odds as current
+          await supabase
+            .from("sharp_line_tracker")
+            .update({
+              current_over_price: prop.opening_over_price,
+              current_under_price: prop.opening_under_price,
+              current_line: prop.opening_line,
+              last_updated: new Date().toISOString(),
+              status: "fallback",
+            })
+            .eq("id", prop.id);
+
+          prop.current_over_price = prop.opening_over_price;
+          prop.current_under_price = prop.opening_under_price;
+          prop.current_line = prop.opening_line;
+          hasCurrentOdds = true;
+          fallbackUsed++;
         }
 
-        // Update the database
-        const { error: updateError } = await supabase
-          .from("sharp_line_tracker")
-          .update({
-            current_over_price: oddsData.odds.over_price,
-            current_under_price: oddsData.odds.under_price,
-            current_line: oddsData.odds.line,
-            last_updated: new Date().toISOString(),
-            status: "updated",
-          })
-          .eq("id", prop.id);
-
-        if (updateError) {
-          console.log(`[AUTO-REFRESH] Failed to update ${prop.player_name}: ${updateError.message}`);
-          fetchFail++;
+        if (hasCurrentOdds) {
+          propsToAnalyze.push(prop);
         } else {
-          fetchSuccess++;
-          updatedProps.push({
-            ...prop,
-            current_over_price: oddsData.odds.over_price,
-            current_under_price: oddsData.odds.under_price,
-            current_line: oddsData.odds.line,
-          });
+          fetchFail++;
         }
 
         // Rate limit delay
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        await new Promise((resolve) => setTimeout(resolve, 200));
       } catch (err) {
         console.error(`[AUTO-REFRESH] Error processing ${prop.player_name}:`, err);
         fetchFail++;
       }
     }
 
-    console.log(`[AUTO-REFRESH] Fetch complete: ${fetchSuccess} success, ${fetchFail} failed`);
+    console.log(`[AUTO-REFRESH] Fetch complete: ${fetchSuccess} fresh, ${fallbackUsed} fallback, ${fetchFail} failed`);
 
-    // Step 3: Get all props ready to analyze (including just updated ones)
-    const { data: propsToAnalyze, error: analyzeQueryError } = await supabase
+    // Step 3: Get additional props ready for analysis (already have current odds but not analyzed)
+    const { data: existingPropsToAnalyze } = await supabase
       .from("sharp_line_tracker")
       .select("*")
       .not("current_over_price", "is", null)
       .not("current_under_price", "is", null)
-      .is("ai_recommendation", null);
+      .is("ai_recommendation", null)
+      .limit(batchSize);
 
-    if (analyzeQueryError) {
-      console.error("[AUTO-REFRESH] Failed to query props for analysis:", analyzeQueryError);
-    }
+    const allPropsToAnalyze = [
+      ...propsToAnalyze,
+      ...(existingPropsToAnalyze || []).filter(
+        (p) => !propsToAnalyze.some((x) => x.id === p.id)
+      ),
+    ].slice(0, batchSize);
 
-    console.log(`[AUTO-REFRESH] Found ${propsToAnalyze?.length || 0} props ready to analyze`);
+    console.log(`[AUTO-REFRESH] Total ${allPropsToAnalyze.length} props ready to analyze`);
 
     let analyzeSuccess = 0;
     let analyzeFail = 0;
 
-    // Step 4: Analyze each prop
-    for (const prop of (propsToAnalyze || []) as TrackedProp[]) {
-      try {
-        const { error: analyzeError } = await supabase.functions.invoke("analyze-sharp-line", {
-          body: {
-            id: prop.id,
-            opening_line: prop.opening_line,
-            opening_over_price: prop.opening_over_price,
-            opening_under_price: prop.opening_under_price,
-            current_line: prop.current_line || prop.opening_line,
-            current_over_price: prop.current_over_price,
-            current_under_price: prop.current_under_price,
-            sport: prop.sport,
-            prop_type: prop.prop_type,
-            commence_time: prop.commence_time,
-          },
-        });
+    // Step 4: Analyze props in parallel batches
+    const analyzeBatchSize = 5;
+    for (let i = 0; i < allPropsToAnalyze.length; i += analyzeBatchSize) {
+      const batch = allPropsToAnalyze.slice(i, i + analyzeBatchSize);
+      
+      const results = await Promise.allSettled(
+        batch.map(async (prop: TrackedProp) => {
+          const { error: analyzeError } = await supabase.functions.invoke("analyze-sharp-line", {
+            body: {
+              id: prop.id,
+              opening_line: prop.opening_line,
+              opening_over_price: prop.opening_over_price,
+              opening_under_price: prop.opening_under_price,
+              current_line: prop.current_line || prop.opening_line,
+              current_over_price: prop.current_over_price,
+              current_under_price: prop.current_under_price,
+              sport: prop.sport,
+              prop_type: prop.prop_type,
+              commence_time: prop.commence_time,
+              player_name: prop.player_name,
+            },
+          });
 
-        if (analyzeError) {
-          console.log(`[AUTO-REFRESH] Failed to analyze ${prop.player_name}: ${analyzeError.message}`);
-          analyzeFail++;
-        } else {
+          if (analyzeError) {
+            throw new Error(analyzeError.message);
+          }
+          return prop.player_name;
+        })
+      );
+
+      for (const result of results) {
+        if (result.status === "fulfilled") {
           analyzeSuccess++;
+        } else {
+          analyzeFail++;
+          console.error("[AUTO-REFRESH] Analysis failed:", result.reason);
         }
-
-        // Rate limit delay
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      } catch (err) {
-        console.error(`[AUTO-REFRESH] Error analyzing ${prop.player_name}:`, err);
-        analyzeFail++;
       }
+
+      // Small delay between batches
+      await new Promise((resolve) => setTimeout(resolve, 300));
     }
 
     console.log(`[AUTO-REFRESH] Analyze complete: ${analyzeSuccess} success, ${analyzeFail} failed`);
 
     const duration = Date.now() - startTime;
     const result = {
-      fetch: { success: fetchSuccess, failed: fetchFail, total: pendingProps?.length || 0 },
-      analyze: { success: analyzeSuccess, failed: analyzeFail, total: propsToAnalyze?.length || 0 },
+      fetch: { 
+        success: fetchSuccess, 
+        fallback: fallbackUsed,
+        failed: fetchFail, 
+        total: pendingProps?.length || 0 
+      },
+      analyze: { 
+        success: analyzeSuccess, 
+        failed: analyzeFail, 
+        total: allPropsToAnalyze.length 
+      },
+      options: { useOpeningFallback, batchSize, prioritizeUpcoming },
       duration_ms: duration,
     };
 
