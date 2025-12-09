@@ -68,16 +68,20 @@ export function PVSParlayBuilder({ selectedProps, onRemove, onClear }: PVSParlay
 
       {/* Empty State */}
       {selectedProps.length === 0 ? (
-        <div className="flex-1 flex flex-col items-center justify-center text-center py-12">
-          <div className="w-16 h-16 rounded-full bg-[#00ff8c]/10 flex items-center justify-center mb-4">
-            <Zap className="h-8 w-8 text-[#00ff8c]" />
+        <div className="flex-1 flex items-center justify-center min-h-[400px]">
+          <div className="flex flex-col sm:flex-row items-center gap-6 text-center sm:text-left">
+            <div className="w-20 h-20 rounded-full bg-[#00ff8c]/10 flex items-center justify-center flex-shrink-0">
+              <Zap className="h-10 w-10 text-[#00ff8c]" />
+            </div>
+            <div>
+              <h3 className="text-xl font-semibold text-white mb-2">
+                Build Your Perfect Parlay
+              </h3>
+              <p className="text-sm text-gray-400 max-w-[280px]">
+                Select props from the sidebar to add them here. GOD TIER props have the highest win probability.
+              </p>
+            </div>
           </div>
-          <h3 className="text-lg font-semibold text-white mb-2">
-            Add props to build your parlay
-          </h3>
-          <p className="text-sm text-gray-400 max-w-[200px]">
-            Select GOD TIER props for the best results
-          </p>
         </div>
       ) : (
         <>

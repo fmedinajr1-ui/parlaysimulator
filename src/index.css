@@ -918,20 +918,32 @@ button, [role="button"], a {
   color: white;
 }
 
-/* Main Layout - Two Column */
+/* Main Layout - Two Column: Parlay Builder LEFT, Sidebar RIGHT */
 .main-layout {
   display: flex !important;
   flex-direction: row !important;
-  gap: 28px !important;
+  gap: 24px !important;
   width: 100% !important;
   min-height: 600px;
 }
 
-/* Sidebar (LEFT) - Props List */
+/* Parlay Builder (LEFT - Main Area) */
+.parlay-builder {
+  flex: 1 !important;
+  min-width: 400px !important;
+  background: #1b1b1b;
+  border-radius: 16px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  order: 1;
+}
+
+/* Sidebar (RIGHT) - Props List */
 .sidebar {
-  width: 280px !important;
-  max-width: 280px !important;
-  min-width: 280px !important;
+  width: 320px !important;
+  max-width: 320px !important;
+  min-width: 320px !important;
   overflow-y: auto;
   overflow-x: hidden;
   background: #111;
@@ -943,17 +955,26 @@ button, [role="button"], a {
   gap: 12px;
   flex-shrink: 0 !important;
   max-height: calc(100vh - 300px);
+  order: 2;
 }
 
-/* Parlay Builder (RIGHT) */
-.parlay-builder {
-  flex: 1 !important;
-  min-width: 0 !important;
-  background: #1b1b1b;
-  border-radius: 16px;
-  padding: 24px;
-  display: flex;
-  flex-direction: column;
+/* Mobile: Stack columns */
+@media (max-width: 768px) {
+  .main-layout {
+    flex-direction: column !important;
+  }
+  .parlay-builder {
+    min-width: 0 !important;
+    width: 100% !important;
+    order: 1;
+  }
+  .sidebar {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    max-height: none;
+    order: 2;
+  }
 }
 
 /* Prop Card */

@@ -174,9 +174,18 @@ export function PVSPropCalculator() {
         </select>
       </div>
 
-      {/* Main Layout */}
+      {/* Main Layout - Parlay Builder LEFT, Props Sidebar RIGHT */}
       <div className="main-layout">
-        {/* Sidebar - Props List */}
+        {/* Parlay Builder (LEFT - Main Area) */}
+        <div className="parlay-builder">
+          <PVSParlayBuilder
+            selectedProps={selectedProps}
+            onRemove={handleRemoveProp}
+            onClear={() => setSelectedProps([])}
+          />
+        </div>
+
+        {/* Sidebar - Props List (RIGHT) */}
         <div className="sidebar">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-white">
@@ -220,15 +229,6 @@ export function PVSPropCalculator() {
               ))}
             </div>
           )}
-        </div>
-
-        {/* Parlay Builder */}
-        <div className="parlay-builder">
-          <PVSParlayBuilder
-            selectedProps={selectedProps}
-            onRemove={handleRemoveProp}
-            onClear={() => setSelectedProps([])}
-          />
         </div>
       </div>
     </div>
