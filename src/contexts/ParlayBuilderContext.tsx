@@ -1,7 +1,5 @@
 // ParlayBuilderContext - Universal Parlay Builder State Management
-import * as React from 'react';
-import { createContext, useContext, useState, useCallback, useEffect } from 'react';
-import type { ReactNode } from 'react';
+import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { UniversalLeg, ParlaySource } from '@/types/universal-parlay';
 import { supabase } from '@/integrations/supabase/client';
@@ -25,7 +23,7 @@ interface ParlayBuilderContextType {
   hasLeg: (description: string) => boolean;
 }
 
-const ParlayBuilderContext = createContext<ParlayBuilderContextType | undefined>(undefined);
+const ParlayBuilderContext = React.createContext<ParlayBuilderContextType | undefined>(undefined);
 
 const STORAGE_KEY = 'universal-parlay-builder';
 
@@ -63,14 +61,14 @@ function calculateWinProbability(legs: UniversalLeg[]): number {
   return legs.reduce((acc, leg) => acc * americanToImplied(leg.odds), 1) * 100;
 }
 
-export const ParlayBuilderProvider = ({ children }: { children: ReactNode }) => {
-  const [legs, setLegs] = useState<UniversalLeg[]>([]);
-  const [isExpanded, setIsExpanded] = useState(false);
+export const ParlayBuilderProvider = ({ children }: { children: React.ReactNode }) => {
+  const [legs, setLegs] = React.useState<UniversalLeg[]>([]);
+  const [isExpanded, setIsExpanded] = React.useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
 
   // Load from localStorage on mount
-  useEffect(() => {
+  React.useEffect(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
@@ -83,7 +81,7 @@ export const ParlayBuilderProvider = ({ children }: { children: ReactNode }) => 
   }, []);
 
   // Save to localStorage on change
-  useEffect(() => {
+  React.useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ legs }));
     } catch (e) {
@@ -91,7 +89,7 @@ export const ParlayBuilderProvider = ({ children }: { children: ReactNode }) => 
     }
   }, [legs]);
 
-  const addLeg = useCallback((leg: Omit<UniversalLeg, 'id' | 'addedAt'>) => {
+  const addLeg = React.useCallback((leg: Omit<UniversalLeg, 'id' | 'addedAt'>) => {
     const newLeg: UniversalLeg = {
       ...leg,
       id: crypto.randomUUID(),
@@ -107,11 +105,11 @@ export const ParlayBuilderProvider = ({ children }: { children: ReactNode }) => 
     });
   }, [toast]);
 
-  const removeLeg = useCallback((id: string) => {
+  const removeLeg = React.useCallback((id: string) => {
     setLegs(prev => prev.filter(leg => leg.id !== id));
   }, []);
 
-  const clearParlay = useCallback(() => {
+  const clearParlay = React.useCallback(() => {
     setLegs([]);
     setIsExpanded(false);
     toast({
@@ -120,15 +118,15 @@ export const ParlayBuilderProvider = ({ children }: { children: ReactNode }) => 
     });
   }, [toast]);
 
-  const toggleExpanded = useCallback(() => {
+  const toggleExpanded = React.useCallback(() => {
     setIsExpanded(prev => !prev);
   }, []);
 
-  const hasLeg = useCallback((description: string) => {
+  const hasLeg = React.useCallback((description: string) => {
     return legs.some(leg => leg.description.toLowerCase() === description.toLowerCase());
   }, [legs]);
 
-  const saveParlay = useCallback(async (stake: number): Promise<boolean> => {
+  const saveParlay = React.useCallback(async (stake: number): Promise<boolean> => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       
@@ -192,7 +190,7 @@ export const ParlayBuilderProvider = ({ children }: { children: ReactNode }) => 
     }
   }, [legs, toast, clearParlay]);
 
-  const analyzeParlay = useCallback(() => {
+  const analyzeParlay = React.useCallback(() => {
     if (legs.length === 0) {
       toast({
         title: "No Legs",
@@ -235,7 +233,7 @@ export const ParlayBuilderProvider = ({ children }: { children: ReactNode }) => 
     navigate('/results', { state: { simulation } });
   }, [legs, navigate, toast]);
 
-  const compareParlay = useCallback(() => {
+  const compareParlay = React.useCallback(() => {
     if (legs.length === 0) {
       toast({
         title: "No Legs",
@@ -278,7 +276,7 @@ export const ParlayBuilderProvider = ({ children }: { children: ReactNode }) => 
 };
 
 export const useParlayBuilder = () => {
-  const context = useContext(ParlayBuilderContext);
+  const context = React.useContext(ParlayBuilderContext);
   if (context === undefined) {
     throw new Error('useParlayBuilder must be used within a ParlayBuilderProvider');
   }
