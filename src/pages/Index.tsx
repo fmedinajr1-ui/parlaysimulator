@@ -1,4 +1,4 @@
-import { useCallback, memo } from "react";
+import React from "react";
 import { HeroBanner } from "@/components/HeroBanner";
 import { ExampleCarousel } from "@/components/ExampleCarousel";
 import { HowItWorks } from "@/components/HowItWorks";
@@ -15,7 +15,7 @@ import { Link } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
 import { Zap, BarChart3, Sparkles } from "lucide-react";
 
-const QuickAction = memo(({ to, icon: Icon, label, iconClass }: { 
+const QuickAction = React.memo(({ to, icon: Icon, label, iconClass }: { 
   to: string; 
   icon: React.ElementType; 
   label: string;
@@ -38,7 +38,7 @@ QuickAction.displayName = 'QuickAction';
 const Index = () => {
   const { lightTap, success } = useHapticFeedback();
 
-  const handleRefresh = useCallback(async () => {
+  const handleRefresh = React.useCallback(async () => {
     // Simulate refresh - in real app would refetch data
     await new Promise(resolve => setTimeout(resolve, 1000));
     success();
