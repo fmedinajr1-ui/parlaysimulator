@@ -6,11 +6,12 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// God Mode weights
+// God Mode weights - updated with record differential
 const WEIGHTS = {
-  SHARP_PCT: 0.35,
-  CHESS_EV: 0.25,
-  UPSET_VALUE: 0.20,
+  SHARP_PCT: 0.30,
+  CHESS_EV: 0.20,
+  UPSET_VALUE: 0.15,
+  RECORD_DIFF: 0.15, // NEW: Season record differential
   HOME_COURT: 0.05,
   HISTORICAL_DAY: 0.05,
   MONTE_CARLO: 0.10
@@ -146,15 +147,17 @@ async function analyzeEvent(supabase: any, event: any, sport: string) {
   const sharpPct = await calculateSharpPct(supabase, eventId, underdog, bookmakers);
   const chessEv = await calculateCHESSEV(supabase, sport, underdog, favorite);
   const upsetValueScore = calculateUpsetValueScore(underdogOdds, sharpPct);
+  const recordDiffScore = await calculateRecordDifferential(supabase, sport, underdog, favorite);
   const homeCourtAdvantage = await calculateHomeCourtAdvantage(supabase, sport, home_team, isHomeUnderdog);
   const historicalDayBoost = calculateHistoricalDayBoost(new Date(commence_time));
   const monteCarloBoost = calculateMonteCarloBoost(underdogOdds, sport);
 
-  // Calculate final upset score
+  // Calculate final upset score with record differential
   const finalUpsetScore = Math.min(100, Math.max(0,
     (sharpPct * WEIGHTS.SHARP_PCT) +
     (chessEv * WEIGHTS.CHESS_EV) +
     (upsetValueScore * WEIGHTS.UPSET_VALUE) +
+    (recordDiffScore * WEIGHTS.RECORD_DIFF) +
     (homeCourtAdvantage * WEIGHTS.HOME_COURT) +
     (historicalDayBoost * WEIGHTS.HISTORICAL_DAY) +
     (monteCarloBoost * WEIGHTS.MONTE_CARLO)
@@ -173,11 +176,11 @@ async function analyzeEvent(supabase: any, event: any, sport: string) {
   const riskLevel = calculateRiskLevel(adjustedUpsetScore, underdogOdds);
   const suggestion = determineSuggestion(adjustedUpsetScore, confidence, underdogOdds);
 
-  // Build signals array
-  const signals = buildSignals(sharpPct, chessEv, upsetValueScore, homeCourtAdvantage, historicalDayBoost, monteCarloBoost);
+  // Build signals array with record differential
+  const signals = buildSignals(sharpPct, chessEv, upsetValueScore, recordDiffScore, homeCourtAdvantage, historicalDayBoost, monteCarloBoost);
   
-  // Detect trap on favorite
-  const trapOnFavorite = sharpPct >= 60 && upsetValueScore >= 50;
+  // Detect trap on favorite - enhanced with record check
+  const trapOnFavorite = (sharpPct >= 60 && upsetValueScore >= 50) || recordDiffScore >= 70;
 
   // Generate reasons
   const reasons = generateReasons(signals, chaosModeActive, trapOnFavorite, underdogOdds);
@@ -443,7 +446,64 @@ function determineSuggestion(upsetScore: number, confidence: string, underdogOdd
   return 'avoid';
 }
 
-function buildSignals(sharpPct: number, chessEv: number, upsetValue: number, homeCourt: number, dayBoost: number, monteCarlo: number) {
+// NEW: Calculate record differential between underdog and favorite
+async function calculateRecordDifferential(supabase: any, sport: string, underdog: string, favorite: string): Promise<number> {
+  try {
+    // Map sport key to standings sport
+    const sportMap: Record<string, string> = {
+      'basketball_nba': 'NBA',
+      'americanfootball_nfl': 'NFL',
+      'basketball_ncaab': 'NCAAB',
+      'americanfootball_ncaaf': 'NCAAF'
+    };
+    const standingsSport = sportMap[sport] || sport;
+
+    const { data: standings } = await supabase
+      .from('team_season_standings')
+      .select('team_name, win_pct, wins, losses, point_differential')
+      .eq('sport', standingsSport);
+
+    if (!standings || standings.length === 0) {
+      return 50; // Neutral if no data
+    }
+
+    // Find team standings (flexible matching)
+    const findTeam = (teamName: string) => {
+      return standings.find((s: any) => 
+        s.team_name.toLowerCase().includes(teamName.split(' ').pop()?.toLowerCase() || '') ||
+        teamName.toLowerCase().includes(s.team_name.split(' ').pop()?.toLowerCase() || '')
+      );
+    };
+
+    const underdogStanding = findTeam(underdog);
+    const favoriteStanding = findTeam(favorite);
+
+    if (!underdogStanding || !favoriteStanding) {
+      return 50; // Neutral if can't find teams
+    }
+
+    // Calculate score based on record differential
+    // High score = underdog has BETTER record than favorite (trap favorite!)
+    const winPctDiff = (underdogStanding.win_pct || 0.5) - (favoriteStanding.win_pct || 0.5);
+    
+    // Scale to 0-100 where:
+    // 100 = underdog has significantly better record (major trap)
+    // 50 = equal records
+    // 0 = favorite has much better record (legitimate favorite)
+    const recordScore = 50 + (winPctDiff * 100);
+
+    // Add point differential bonus
+    const pdDiff = (underdogStanding.point_differential || 0) - (favoriteStanding.point_differential || 0);
+    const pdBonus = Math.min(15, Math.max(-15, pdDiff / 2));
+
+    return Math.min(100, Math.max(0, recordScore + pdBonus));
+  } catch (error) {
+    console.error('[God Mode] Record differential error:', error);
+    return 50;
+  }
+}
+
+function buildSignals(sharpPct: number, chessEv: number, upsetValue: number, recordDiff: number, homeCourt: number, dayBoost: number, monteCarlo: number) {
   return [
     {
       name: 'Sharp Money',
@@ -468,6 +528,14 @@ function buildSignals(sharpPct: number, chessEv: number, upsetValue: number, hom
       contribution: upsetValue * WEIGHTS.UPSET_VALUE,
       description: upsetValue >= 60 ? 'Strong line mispricing' : upsetValue >= 40 ? 'Moderate value detected' : 'Limited value',
       isActive: upsetValue >= 50
+    },
+    {
+      name: 'Record Edge',
+      value: recordDiff,
+      weight: WEIGHTS.RECORD_DIFF,
+      contribution: recordDiff * WEIGHTS.RECORD_DIFF,
+      description: recordDiff >= 70 ? '⚠️ TRAP: Underdog has better record!' : recordDiff >= 55 ? 'Underdog record undervalued' : 'Favorite record justified',
+      isActive: recordDiff >= 55
     },
     {
       name: 'Home Court',

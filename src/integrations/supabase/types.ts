@@ -242,6 +242,69 @@ export type Database = {
         }
         Relationships: []
       }
+      extreme_movement_alerts: {
+        Row: {
+          alert_level: string
+          bookmaker: string | null
+          commence_time: string | null
+          created_at: string | null
+          current_price: number | null
+          description: string
+          direction: string | null
+          event_id: string
+          id: string
+          is_trap_indicator: boolean | null
+          movement_percentage: number | null
+          movement_type: string
+          opening_price: number | null
+          player_name: string | null
+          prop_type: string | null
+          reasons: Json | null
+          sport: string
+          total_movement: number
+        }
+        Insert: {
+          alert_level: string
+          bookmaker?: string | null
+          commence_time?: string | null
+          created_at?: string | null
+          current_price?: number | null
+          description: string
+          direction?: string | null
+          event_id: string
+          id?: string
+          is_trap_indicator?: boolean | null
+          movement_percentage?: number | null
+          movement_type: string
+          opening_price?: number | null
+          player_name?: string | null
+          prop_type?: string | null
+          reasons?: Json | null
+          sport: string
+          total_movement: number
+        }
+        Update: {
+          alert_level?: string
+          bookmaker?: string | null
+          commence_time?: string | null
+          created_at?: string | null
+          current_price?: number | null
+          description?: string
+          direction?: string | null
+          event_id?: string
+          id?: string
+          is_trap_indicator?: boolean | null
+          movement_percentage?: number | null
+          movement_type?: string
+          opening_price?: number | null
+          player_name?: string | null
+          prop_type?: string | null
+          reasons?: Json | null
+          sport?: string
+          total_movement?: number
+        }
+        Relationships: []
+      }
       fatigue_edge_tracking: {
         Row: {
           actual_spread: number | null
@@ -2277,6 +2340,78 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      team_season_standings: {
+        Row: {
+          away_record: string | null
+          conference: string | null
+          conference_rank: number | null
+          created_at: string | null
+          division: string | null
+          division_rank: number | null
+          home_record: string | null
+          id: string
+          last_10: string | null
+          losses: number | null
+          point_differential: number | null
+          points_against: number | null
+          points_for: number | null
+          season: string
+          sport: string
+          streak: string | null
+          team_name: string
+          ties: number | null
+          updated_at: string | null
+          win_pct: number | null
+          wins: number | null
+        }
+        Insert: {
+          away_record?: string | null
+          conference?: string | null
+          conference_rank?: number | null
+          created_at?: string | null
+          division?: string | null
+          division_rank?: number | null
+          home_record?: string | null
+          id?: string
+          last_10?: string | null
+          losses?: number | null
+          point_differential?: number | null
+          points_against?: number | null
+          points_for?: number | null
+          season: string
+          sport: string
+          streak?: string | null
+          team_name: string
+          ties?: number | null
+          updated_at?: string | null
+          win_pct?: number | null
+          wins?: number | null
+        }
+        Update: {
+          away_record?: string | null
+          conference?: string | null
+          conference_rank?: number | null
+          created_at?: string | null
+          division?: string | null
+          division_rank?: number | null
+          home_record?: string | null
+          id?: string
+          last_10?: string | null
+          losses?: number | null
+          point_differential?: number | null
+          points_against?: number | null
+          points_for?: number | null
+          season?: string
+          sport?: string
+          streak?: string | null
+          team_name?: string
+          ties?: number | null
+          updated_at?: string | null
+          win_pct?: number | null
+          wins?: number | null
+        }
+        Relationships: []
       }
       trap_patterns: {
         Row: {
