@@ -10,9 +10,8 @@ import { WolfAvatar } from "@/components/avatars/WolfAvatar";
 import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
 import { createLeg, simulateParlay } from "@/lib/parlay-calculator";
-import { FatigueDifferentialBadge } from "@/components/fatigue/FatigueDifferentialBadge";
-import { extractTeamsFromDescription } from "@/hooks/useFatigueData";
-import { TrapFavoriteAlert } from "@/components/alerts/TrapFavoriteAlert";
+import { FatigueDifferentialWrapper } from "@/components/fatigue/FatigueDifferentialWrapper";
+import { TrapFavoriteAlertWrapper } from "@/components/alerts/TrapFavoriteAlertWrapper";
 import { ExtremeMovementBadge } from "@/components/alerts/ExtremeMovementBadge";
 interface SuggestedLeg {
   description: string;
@@ -415,18 +414,9 @@ export function SuggestedParlayCard({
                 )}
                 
                 {/* Real-time Fatigue Differential for NBA legs */}
-                {leg.sport === 'NBA' && (() => {
-                  const teams = extractTeamsFromDescription(leg.description);
-                  if (teams) {
-                    return (
-                      <FatigueDifferentialBadge 
-                        homeTeam={teams.team2} 
-                        awayTeam={teams.team1} 
-                      />
-                    );
-                  }
-                  return null;
-                })()}
+                {leg.sport === 'NBA' && (
+                  <FatigueDifferentialWrapper description={leg.description} />
+                )}
                 
                 {/* Hybrid Score Breakdown */}
                 {leg.hybridScore && leg.hybridBreakdown && (
@@ -477,20 +467,12 @@ export function SuggestedParlayCard({
         </div>
 
         {/* Trap Favorite Alert for NBA/NFL */}
-        {(sport === 'NBA' || sport === 'NFL') && legs.length > 0 && (() => {
-          // Try to extract teams from the first leg description for trap detection
-          const teams = extractTeamsFromDescription(legs[0].description);
-          if (teams) {
-            return (
-              <TrapFavoriteAlert
-                favoriteTeam={teams.team2}
-                underdogTeam={teams.team1}
-                sport={sport as 'NBA' | 'NFL'}
-              />
-            );
-          }
-          return null;
-        })()}
+        {(sport === 'NBA' || sport === 'NFL') && legs.length > 0 && (
+          <TrapFavoriteAlertWrapper
+            description={legs[0].description}
+            sport={sport as 'NBA' | 'NFL'}
+          />
+        )}
 
         {/* Extreme Movement Alert */}
         {legs.length > 0 && (

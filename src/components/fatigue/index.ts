@@ -4,3 +4,4 @@ export { PropImpactTable } from './PropImpactTable';
 export { FatigueScoreCard } from './FatigueScoreCard';
 export { TodaysFatigueGames } from './TodaysFatigueGames';
 export { FatigueDifferentialBadge } from './FatigueDifferentialBadge';
+export { FatigueDifferentialWrapper } from './FatigueDifferentialWrapper';
