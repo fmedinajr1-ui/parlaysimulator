@@ -3,7 +3,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { UniversalLeg, ParlaySource } from '@/types/universal-parlay';
 import { supabase } from '@/integrations/supabase/client';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from '@/hooks/use-toast';
 import { ParlaySimulation, DegenerateLevel } from '@/types/parlay';
 
 interface ParlayBuilderContextType {
@@ -64,7 +64,6 @@ function calculateWinProbability(legs: UniversalLeg[]): number {
 export const ParlayBuilderProvider = ({ children }: { children: React.ReactNode }) => {
   const [legs, setLegs] = React.useState<UniversalLeg[]>([]);
   const [isExpanded, setIsExpanded] = React.useState(false);
-  const { toast } = useToast();
   const navigate = useNavigate();
 
   // Load from localStorage on mount
@@ -103,7 +102,7 @@ export const ParlayBuilderProvider = ({ children }: { children: React.ReactNode 
       title: "Added to Parlay",
       description: leg.description,
     });
-  }, [toast]);
+  }, []);
 
   const removeLeg = React.useCallback((id: string) => {
     setLegs(prev => prev.filter(leg => leg.id !== id));
@@ -116,7 +115,7 @@ export const ParlayBuilderProvider = ({ children }: { children: React.ReactNode 
       title: "Parlay Cleared",
       description: "All legs have been removed",
     });
-  }, [toast]);
+  }, []);
 
   const toggleExpanded = React.useCallback(() => {
     setIsExpanded(prev => !prev);
@@ -188,7 +187,7 @@ export const ParlayBuilderProvider = ({ children }: { children: React.ReactNode 
       });
       return false;
     }
-  }, [legs, toast, clearParlay]);
+  }, [legs, clearParlay]);
 
   const analyzeParlay = React.useCallback(() => {
     if (legs.length === 0) {
@@ -231,7 +230,7 @@ export const ParlayBuilderProvider = ({ children }: { children: React.ReactNode 
     };
 
     navigate('/results', { state: { simulation } });
-  }, [legs, navigate, toast]);
+  }, [legs, navigate]);
 
   const compareParlay = React.useCallback(() => {
     if (legs.length === 0) {
@@ -246,7 +245,7 @@ export const ParlayBuilderProvider = ({ children }: { children: React.ReactNode 
     // Store parlay data for Compare page to pick up
     sessionStorage.setItem('compare-parlay', JSON.stringify(legs));
     navigate('/compare');
-  }, [legs, navigate, toast]);
+  }, [legs, navigate]);
 
   const combinedOdds = calculateCombinedOdds(legs);
   const winProbability = calculateWinProbability(legs);
