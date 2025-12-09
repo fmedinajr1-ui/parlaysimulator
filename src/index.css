@@ -102,6 +102,19 @@
     -webkit-overflow-scrolling: touch;
   }
 
+  /* GPU-accelerated scrolling */
+  .scroll-optimized {
+    will-change: transform;
+    transform: translateZ(0);
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Content visibility for off-screen content */
+  .content-visibility-auto {
+    content-visibility: auto;
+    contain-intrinsic-size: 0 500px;
+  }
+
   h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-display);
     letter-spacing: 0.02em;
