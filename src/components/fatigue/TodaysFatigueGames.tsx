@@ -9,11 +9,12 @@ import { FatigueBreakdown } from './FatigueBreakdown';
 import { PropImpactTable } from './PropImpactTable';
 import { 
   Zap, Target, TrendingUp, TrendingDown, 
-  ChevronDown, ChevronUp, RefreshCw, Calendar, ExternalLink
+  ChevronDown, ChevronUp, RefreshCw, Calendar, ExternalLink, Trophy, AlertTriangle
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { Link } from 'react-router-dom';
+import { getPredictionData, isSweetSpot, isHighRisk } from '@/lib/fatigue-predictions';
 
 interface GameFatigue {
   eventId: string;
@@ -188,15 +189,28 @@ export const TodaysFatigueGames = () => {
                 </div>
                 
                 <div className="flex items-center gap-2">
-                  {hasEdge && (
-                    <Badge 
-                      variant="outline" 
-                      className="text-xs bg-green-500/20 text-green-400 border-green-500/30"
-                    >
-                      <Target className="w-3 h-3 mr-1" />
-                      {favoredTeam?.team_name?.split(' ').pop()}
-                    </Badge>
-                  )}
+                  {hasEdge && (() => {
+                    const prediction = getPredictionData(game.fatigueDifferential);
+                    const isBest = isSweetSpot(game.fatigueDifferential);
+                    const isRisky = isHighRisk(game.fatigueDifferential);
+                    
+                    return (
+                      <>
+                        <Badge 
+                          variant="outline" 
+                          className={`text-xs ${isBest ? 'bg-neon-green/20 text-neon-green border-neon-green/30' : isRisky ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' : 'bg-green-500/20 text-green-400 border-green-500/30'}`}
+                        >
+                          {isBest && <Trophy className="w-3 h-3 mr-1" />}
+                          {isRisky && <AlertTriangle className="w-3 h-3 mr-1" />}
+                          {!isBest && !isRisky && <Target className="w-3 h-3 mr-1" />}
+                          {favoredTeam?.team_name?.split(' ').pop()}
+                        </Badge>
+                        <Badge variant="outline" className={`text-[10px] ${isBest ? 'border-neon-green/50 text-neon-green' : isRisky ? 'border-amber-500/50 text-amber-400' : 'border-border text-muted-foreground'}`}>
+                          {prediction?.winRate}%
+                        </Badge>
+                      </>
+                    );
+                  })()}
                   {isExpanded ? (
                     <ChevronUp className="w-4 h-4 text-muted-foreground" />
                   ) : (
@@ -234,24 +248,43 @@ export const TodaysFatigueGames = () => {
               {/* Expanded Content */}
               {isExpanded && (
                 <div className="mt-4 pt-4 border-t border-border/50 space-y-4">
-                  {/* Edge Summary */}
-                  {hasEdge && favoredTeam && (
-                    <div className="p-2 bg-green-500/10 border border-green-500/20 rounded-lg">
-                      <div className="flex items-center gap-2 text-green-400 text-sm">
-                        {awayTeam && homeTeam && awayTeam.fatigue_score > homeTeam.fatigue_score ? (
-                          <TrendingUp className="w-4 h-4" />
-                        ) : (
-                          <TrendingDown className="w-4 h-4" />
+                  {/* Edge Summary with Historical Accuracy */}
+                  {hasEdge && favoredTeam && (() => {
+                    const prediction = getPredictionData(game.fatigueDifferential);
+                    const isBest = isSweetSpot(game.fatigueDifferential);
+                    const isRisky = isHighRisk(game.fatigueDifferential);
+                    
+                    return (
+                      <div className={`p-2 rounded-lg border ${isBest ? 'bg-neon-green/10 border-neon-green/20' : isRisky ? 'bg-amber-500/10 border-amber-500/20' : 'bg-green-500/10 border-green-500/20'}`}>
+                        <div className={`flex items-center justify-between text-sm ${isBest ? 'text-neon-green' : isRisky ? 'text-amber-400' : 'text-green-400'}`}>
+                          <div className="flex items-center gap-2">
+                            {isBest ? <Trophy className="w-4 h-4" /> : isRisky ? <AlertTriangle className="w-4 h-4" /> : awayTeam && homeTeam && awayTeam.fatigue_score > homeTeam.fatigue_score ? (
+                              <TrendingUp className="w-4 h-4" />
+                            ) : (
+                              <TrendingDown className="w-4 h-4" />
+                            )}
+                            <span className="font-medium">
+                              Lean {favoredTeam.team_name} ({game.fatigueDifferential}pt edge)
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-xs">{prediction?.winRate}%</span>
+                            <span className={`text-xs ${prediction && prediction.roi > 0 ? '' : 'text-red-400'}`}>
+                              {prediction && prediction.roi > 0 ? '+' : ''}{prediction?.roi}% ROI
+                            </span>
+                          </div>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {favoredTeam.recommended_angle}
+                        </p>
+                        {isRisky && (
+                          <p className="text-[10px] text-amber-400/80 mt-1">
+                            ⚠️ 30+ differential historically underperforms. Consider 20-29 range.
+                          </p>
                         )}
-                        <span className="font-medium">
-                          Lean {favoredTeam.team_name} ({game.fatigueDifferential}pt edge)
-                        </span>
                       </div>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {favoredTeam.recommended_angle}
-                      </p>
-                    </div>
-                  )}
+                    );
+                  })()}
 
                   {/* Away Team Details */}
                   {awayTeam && (
