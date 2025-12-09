@@ -11,6 +11,7 @@ import { BottomNav } from "@/components/BottomNav";
 import { UniversalParlayBuilder } from "@/components/parlay/UniversalParlayBuilder";
 import { PageSkeleton } from "@/components/ui/page-skeleton";
 import { AnimatePresence, motion } from "framer-motion";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 // Lazy load all pages for code splitting
 const Index = lazy(() => import("./pages/Index"));
@@ -95,6 +96,21 @@ function AnimatedRoutes() {
   );
 }
 
+function AppContent() {
+  const isMobile = useIsMobile();
+  
+  return (
+    <>
+      <Toaster />
+      <Sonner />
+      <AnimatedRoutes />
+      <UniversalParlayBuilder />
+      {isMobile && <BottomNav />}
+      <PWAInstallPrompt />
+    </>
+  );
+}
+
 const App = () => {
   return (
     <QueryClientProvider client={queryClient}>
@@ -102,12 +118,7 @@ const App = () => {
         <AuthProvider>
           <ParlayBuilderProvider>
             <TooltipProvider>
-              <Toaster />
-              <Sonner />
-              <AnimatedRoutes />
-              <UniversalParlayBuilder />
-              <BottomNav />
-              <PWAInstallPrompt />
+              <AppContent />
             </TooltipProvider>
           </ParlayBuilderProvider>
         </AuthProvider>
