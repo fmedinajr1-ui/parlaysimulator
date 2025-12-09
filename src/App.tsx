@@ -61,7 +61,7 @@ function AnimatedRoutes() {
   );
 }
 
-const App = () => { 
+const App = () => {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
