@@ -1,3 +1,4 @@
+import React from "react";
 import { Zap, Sparkles, TrendingUp } from "lucide-react";
 import { PVSProp, PVS_TIER_CONFIG } from "@/types/pvs";
 import { SelectedPropCard } from "./SelectedPropCard";
