@@ -1,4 +1,4 @@
-import React, { lazy, Suspense } from "react";
+import React from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -13,25 +13,25 @@ import { PageSkeleton } from "@/components/ui/page-skeleton";
 import { AnimatePresence, motion } from "framer-motion";
 
 // Lazy load all pages for code splitting
-const Index = lazy(() => import("./pages/Index"));
-const Upload = lazy(() => import("./pages/Upload"));
-const Results = lazy(() => import("./pages/Results"));
-const Profile = lazy(() => import("./pages/Profile"));
-const Auth = lazy(() => import("./pages/Auth"));
-const Admin = lazy(() => import("./pages/Admin"));
-const Collaborate = lazy(() => import("./pages/Collaborate"));
-const Compare = lazy(() => import("./pages/Compare"));
-const Suggestions = lazy(() => import("./pages/Suggestions"));
-const OddsMovement = lazy(() => import("./pages/OddsMovement"));
-const SharpMoney = lazy(() => import("./pages/SharpMoney"));
-const LineShopping = lazy(() => import("./pages/LineShopping"));
-const NBAFatigue = lazy(() => import("./pages/NBAFatigue"));
-const Install = lazy(() => import("./pages/Install"));
-const NotFound = lazy(() => import("./pages/NotFound"));
-const PVSCalculator = lazy(() => import("./pages/PVSCalculator"));
-const GodModeUpsets = lazy(() => import("./pages/GodModeUpsets"));
-const GodModeDashboard = lazy(() => import("./pages/GodModeDashboard"));
-const HitRate = lazy(() => import("./pages/HitRate"));
+const Index = React.lazy(() => import("./pages/Index"));
+const Upload = React.lazy(() => import("./pages/Upload"));
+const Results = React.lazy(() => import("./pages/Results"));
+const Profile = React.lazy(() => import("./pages/Profile"));
+const Auth = React.lazy(() => import("./pages/Auth"));
+const Admin = React.lazy(() => import("./pages/Admin"));
+const Collaborate = React.lazy(() => import("./pages/Collaborate"));
+const Compare = React.lazy(() => import("./pages/Compare"));
+const Suggestions = React.lazy(() => import("./pages/Suggestions"));
+const OddsMovement = React.lazy(() => import("./pages/OddsMovement"));
+const SharpMoney = React.lazy(() => import("./pages/SharpMoney"));
+const LineShopping = React.lazy(() => import("./pages/LineShopping"));
+const NBAFatigue = React.lazy(() => import("./pages/NBAFatigue"));
+const Install = React.lazy(() => import("./pages/Install"));
+const NotFound = React.lazy(() => import("./pages/NotFound"));
+const PVSCalculator = React.lazy(() => import("./pages/PVSCalculator"));
+const GodModeUpsets = React.lazy(() => import("./pages/GodModeUpsets"));
+const GodModeDashboard = React.lazy(() => import("./pages/GodModeDashboard"));
+const HitRate = React.lazy(() => import("./pages/HitRate"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -67,7 +67,7 @@ function AnimatedRoutes() {
         variants={pageVariants}
         transition={pageTransition}
       >
-        <Suspense fallback={<PageSkeleton variant="dashboard" />}>
+        <React.Suspense fallback={<PageSkeleton variant="dashboard" />}>
           <Routes location={location}>
             <Route path="/" element={<Index />} />
             <Route path="/upload" element={<Upload />} />
@@ -89,7 +89,7 @@ function AnimatedRoutes() {
             <Route path="/hitrate" element={<HitRate />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
-        </Suspense>
+        </React.Suspense>
       </motion.div>
     </AnimatePresence>
   );
