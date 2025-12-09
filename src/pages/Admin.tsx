@@ -24,8 +24,10 @@ import {
   Eye,
   BarChart3,
   ChevronRight,
+  ChevronLeft,
   Settings,
   Clock,
+  ArrowLeft,
   Target
 } from 'lucide-react';
 import { AILearningDashboard } from '@/components/admin/AILearningDashboard';
@@ -305,8 +307,16 @@ export default function Admin() {
     return (
       <div className="min-h-dvh bg-background pb-nav-safe">
         {/* Header */}
-        <div className="bg-card border-b border-border p-6">
+        <div className="bg-card border-b border-border p-4">
           <div className="flex items-center gap-3">
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={() => navigate(-1)}
+              className="p-2 h-auto"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </Button>
             <div className="p-2 rounded-xl bg-primary/10">
               <Shield className="w-6 h-6 text-primary" />
             </div>
@@ -617,7 +627,7 @@ export default function Admin() {
             onClick={() => setActiveSection('overview')}
             className="p-2 h-auto"
           >
-            <ChevronRight className="w-5 h-5 rotate-180" />
+            <ArrowLeft className="w-5 h-5" />
           </Button>
           {currentSection && (
             <div className="flex items-center gap-3">
