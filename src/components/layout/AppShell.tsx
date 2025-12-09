@@ -1,5 +1,4 @@
-import { ReactNode } from "react";
-import { useIsMobile } from "@/hooks/use-mobile";
+import React, { ReactNode } from "react";
 import { DesktopLayout } from "./DesktopLayout";
 import { MobileLayout } from "./MobileLayout";
 
@@ -10,9 +9,16 @@ interface AppShellProps {
 }
 
 export function AppShell({ children, className, noPadding = false }: AppShellProps) {
-  const isMobile = useIsMobile();
+  const [isMobile, setIsMobile] = React.useState(false);
+  
+  React.useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    checkMobile();
+    const mql = window.matchMedia("(max-width: 767px)");
+    mql.addEventListener("change", checkMobile);
+    return () => mql.removeEventListener("change", checkMobile);
+  }, []);
 
-  // Show mobile layout on mobile devices
   if (isMobile) {
     return (
       <MobileLayout className={className} noPadding={noPadding}>
@@ -21,7 +27,6 @@ export function AppShell({ children, className, noPadding = false }: AppShellPro
     );
   }
 
-  // Show desktop layout with sidebar on larger screens
   return (
     <DesktopLayout className={className} noPadding={noPadding}>
       {children}
