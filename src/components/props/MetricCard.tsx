@@ -1,3 +1,4 @@
+import React from "react";
 import { cn } from "@/lib/utils";
 import { PVSTier } from "@/types/pvs";
 import { Trophy, Star, AlertTriangle, XCircle, Skull, Sparkles } from "lucide-react";

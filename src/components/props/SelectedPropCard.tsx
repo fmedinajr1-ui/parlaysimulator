@@ -1,3 +1,4 @@
+import React from "react";
 import { X } from "lucide-react";
 import { PVSProp, PVS_TIER_CONFIG } from "@/types/pvs";
 import { cn } from "@/lib/utils";

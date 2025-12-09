@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import React, { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Search, RefreshCw, Trophy } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
