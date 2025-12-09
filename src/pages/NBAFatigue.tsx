@@ -12,13 +12,14 @@ import { PullToRefreshContainer } from "@/components/ui/pull-to-refresh";
 import { 
   Battery, BatteryLow, BatteryWarning, BatteryFull, 
   RefreshCw, TrendingUp, TrendingDown, Plane, Clock, Mountain,
-  Target, Zap, ChevronRight
+  Target, Zap, ChevronRight, Trophy, AlertTriangle, Flame
 } from "lucide-react";
 import { format } from "date-fns";
 import { Link } from "react-router-dom";
 import { FatigueMeter } from "@/components/fatigue/FatigueMeter";
 import { FatigueEdgeROI } from "@/components/fatigue/FatigueEdgeROI";
 import { toast } from "sonner";
+import { getPredictionData, isSweetSpot, isHighRisk, getConfidenceBgColor } from "@/lib/fatigue-predictions";
 
 interface FatigueScore {
   id: string;
@@ -306,6 +307,72 @@ export default function NBAFatigue() {
             </Button>
           </div>
 
+          {/* Best Bets Section - 20-29 Sweet Spot */}
+          {!loading && games.filter(g => isSweetSpot(g.fatigueDiff)).length > 0 && (
+            <FeedCard delay={150}>
+              <div className="flex items-center gap-2 mb-3">
+                <div className="p-1.5 rounded-full bg-neon-green/20">
+                  <Flame className="w-4 h-4 text-neon-green" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-neon-green">Best Bets Today</p>
+                  <p className="text-[10px] text-muted-foreground">20-29 differential sweet spot • 55% win rate • +5.6% ROI</p>
+                </div>
+              </div>
+              <div className="space-y-2">
+                {games.filter(g => isSweetSpot(g.fatigueDiff)).map((game) => {
+                  const edgeTeamData = game.edgeTeam === 'home' ? game.home_team : game.away_team;
+                  const prediction = getPredictionData(game.fatigueDiff);
+                  
+                  return (
+                    <div 
+                      key={`best-${game.event_id}`}
+                      className="p-3 rounded-lg bg-gradient-to-r from-neon-green/10 to-neon-cyan/10 border border-neon-green/30"
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <Trophy className="w-4 h-4 text-neon-green" />
+                          <span className="text-sm font-medium text-foreground">
+                            {game.away_team.team_name} @ {game.home_team.team_name}
+                          </span>
+                        </div>
+                        <Badge className="bg-neon-green/20 text-neon-green border-neon-green/30 text-[10px]">
+                          +{game.fatigueDiff} EDGE
+                        </Badge>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground">Lean:</span>
+                          <span className="text-sm font-semibold text-neon-green">{edgeTeamData.team_name}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className="text-[10px] border-neon-green/50 text-neon-green">
+                            {prediction?.winRate}% conf
+                          </Badge>
+                          <Badge variant="outline" className="text-[10px] border-neon-cyan/50 text-neon-cyan">
+                            +{prediction?.roi}% ROI
+                          </Badge>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </FeedCard>
+          )}
+
+          {/* 30+ Warning Section */}
+          {!loading && games.filter(g => isHighRisk(g.fatigueDiff)).length > 0 && (
+            <FeedCard delay={175}>
+              <div className="flex items-center gap-2 p-2 rounded-lg bg-amber-500/10 border border-amber-500/30">
+                <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                <p className="text-xs text-amber-400">
+                  <span className="font-medium">Caution:</span> Games with 30+ differential historically underperform (51.4% win rate, -1.9% ROI). Stick to 20-29 range.
+                </p>
+              </div>
+            </FeedCard>
+          )}
+
           {/* Games List */}
           {loading ? (
             <SkeletonList count={4} variant="bet" />
@@ -329,12 +396,25 @@ export default function NBAFatigue() {
                           <Clock className="w-3 h-3 mr-1" />
                           {formatGameTime(game.home_team.game_time)}
                         </Badge>
-                        {game.fatigueDiff >= 15 && (
-                          <Badge className="text-xs bg-neon-cyan/20 text-neon-cyan border-neon-cyan/30">
-                            <Target className="w-3 h-3 mr-1" />
-                            EDGE +{game.fatigueDiff}
-                          </Badge>
-                        )}
+                        {game.fatigueDiff >= 15 && (() => {
+                          const prediction = getPredictionData(game.fatigueDiff);
+                          const isBest = isSweetSpot(game.fatigueDiff);
+                          const isRisky = isHighRisk(game.fatigueDiff);
+                          
+                          return (
+                            <div className="flex items-center gap-1">
+                              <Badge className={`text-xs ${getConfidenceBgColor(game.fatigueDiff)} ${isBest ? 'text-neon-green' : isRisky ? 'text-amber-400' : 'text-muted-foreground'}`}>
+                                {isBest && <Trophy className="w-3 h-3 mr-1" />}
+                                {isRisky && <AlertTriangle className="w-3 h-3 mr-1" />}
+                                {!isBest && !isRisky && <Target className="w-3 h-3 mr-1" />}
+                                {isBest ? 'BEST BET' : isRisky ? 'HIGH RISK' : 'EDGE'} +{game.fatigueDiff}
+                              </Badge>
+                              <Badge variant="outline" className={`text-[10px] ${isBest ? 'border-neon-green/50 text-neon-green' : isRisky ? 'border-amber-500/50 text-amber-400' : 'border-border text-muted-foreground'}`}>
+                                {prediction?.winRate}%
+                              </Badge>
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
 
