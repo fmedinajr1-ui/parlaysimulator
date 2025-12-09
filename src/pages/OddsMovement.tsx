@@ -1,16 +1,18 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, memo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { OddsMovementCard } from "@/components/results/OddsMovementCard";
-import { SharpMoneyAlerts } from "@/components/results/SharpMoneyAlerts";
 import { LineHistoryChart } from "@/components/odds/LineHistoryChart";
 import { PushNotificationToggle } from "@/components/odds/PushNotificationToggle";
 import { JuicedPropsCard } from "@/components/suggestions/JuicedPropsCard";
 import { OddsPaywall } from "@/components/odds/OddsPaywall";
+import { MobileHeader } from "@/components/layout/MobileHeader";
+import { PullToRefreshContainer, PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
+import { usePullToRefresh } from "@/hooks/usePullToRefresh";
+import { useHapticFeedback } from "@/hooks/useHapticFeedback";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Activity, Zap, TrendingUp, RefreshCw, ChevronLeft, Flame, ShoppingCart, Loader2 } from "lucide-react";
+import { Activity, Zap, TrendingUp, RefreshCw, Flame, ShoppingCart, Loader2 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useSubscription } from "@/hooks/useSubscription";
 import { useAuth } from "@/contexts/AuthContext";
@@ -33,12 +35,30 @@ interface Stats {
   avgPriceChange: number;
 }
 
+const StatCard = memo(({ icon: Icon, label, value, className }: { 
+  icon: React.ElementType; 
+  label: string; 
+  value: number; 
+  className?: string;
+}) => (
+  <div className={`bg-card rounded-xl p-4 border border-border active:scale-95 transition-transform ${className}`}>
+    <div className="flex items-center gap-2 mb-1">
+      <Icon className="w-4 h-4" />
+      <span className="text-xs text-muted-foreground uppercase">{label}</span>
+    </div>
+    <p className="text-2xl font-display">{value}</p>
+  </div>
+));
+
+StatCard.displayName = 'StatCard';
+
 const OddsMovement = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { user } = useAuth();
   const { hasOddsAccess, isLoading: subLoading, isAdmin, checkSubscription } = useSubscription();
   const { toast } = useToast();
+  const { lightTap, success } = useHapticFeedback();
   
   const [selectedSport, setSelectedSport] = useState("all");
   const [stats, setStats] = useState<Stats>({ totalMovements: 0, sharpAlerts: 0, avgPriceChange: 0 });
@@ -61,7 +81,7 @@ const OddsMovement = () => {
     }
   }, [searchParams]);
 
-  const fetchStats = async () => {
+  const fetchStats = useCallback(async () => {
     try {
       let query = supabase
         .from('line_movements')
@@ -97,27 +117,34 @@ const OddsMovement = () => {
     } catch (err) {
       console.error('Failed to fetch stats:', err);
     }
-  };
+  }, [selectedSport]);
 
   useEffect(() => {
     if (hasOddsAccess || isAdmin) {
       fetchStats();
     }
-  }, [selectedSport, hasOddsAccess, isAdmin]);
+  }, [selectedSport, hasOddsAccess, isAdmin, fetchStats]);
 
-  const handleRefresh = async () => {
+  const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
+    lightTap();
     try {
       await supabase.functions.invoke('track-odds-movement', {
         body: { sports: ['NBA', 'NFL', 'NCAAB'], action: 'fetch' }
       });
       await fetchStats();
+      success();
     } catch (err) {
       console.error('Failed to refresh:', err);
     } finally {
       setIsRefreshing(false);
     }
-  };
+  }, [fetchStats, lightTap, success]);
+
+  const { pullProgress, containerRef, handlers } = usePullToRefresh({
+    onRefresh: handleRefresh,
+    threshold: 80,
+  });
 
   // Show loading state
   if (subLoading) {
@@ -132,172 +159,183 @@ const OddsMovement = () => {
   if (!hasOddsAccess && !isAdmin) {
     return (
       <div className="min-h-dvh bg-background pb-nav-safe">
-        <div className="flex items-center gap-3 p-4 border-b border-border">
-          <Button 
-            variant="ghost" 
-            size="icon" 
-            onClick={() => navigate(-1)}
-          >
-            <ChevronLeft className="w-5 h-5" />
-          </Button>
-          <div>
-            <h1 className="text-xl font-display text-foreground">ODDS TRACKER</h1>
-            <p className="text-xs text-muted-foreground">Premium Feature</p>
-          </div>
-        </div>
+        <MobileHeader 
+          title="ODDS TRACKER" 
+          subtitle="Premium Feature"
+          showBack
+        />
         <OddsPaywall onSubscribe={() => checkSubscription()} />
       </div>
     );
   }
 
   return (
-    <div className="min-h-dvh bg-background pb-nav-safe touch-pan-y overflow-x-safe">
-      <main className="max-w-4xl mx-auto px-3 py-4">
-        {/* Header */}
-        <div className="flex items-center gap-3 mb-6">
-          <Button 
-            variant="ghost" 
-            size="icon" 
-            onClick={() => navigate(-1)}
-            className="shrink-0"
-          >
-            <ChevronLeft className="w-5 h-5" />
-          </Button>
-          <div className="flex items-center gap-3 flex-1">
-            <WolfAvatar size="md" variant="alpha" />
-            <div>
-              <h1 className="text-2xl font-display text-foreground">ODDS TRACKER PRO</h1>
-              <p className="text-xs text-muted-foreground">Track line shifts & sharp money</p>
-            </div>
+    <div className="min-h-dvh bg-background pb-nav-safe">
+      <MobileHeader 
+        title="ODDS TRACKER PRO"
+        subtitle="Track line shifts & sharp money"
+        icon={<WolfAvatar size="sm" variant="alpha" />}
+        showBack
+        rightAction={
+          <div className="flex gap-2">
+            <Button 
+              variant="outline" 
+              size="icon" 
+              onClick={() => { lightTap(); navigate('/line-shopping'); }}
+              className="h-9 w-9"
+            >
+              <ShoppingCart className="w-4 h-4" />
+            </Button>
+            <Button 
+              variant="outline" 
+              size="icon" 
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              className="h-9 w-9"
+            >
+              <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            </Button>
           </div>
-          <Button 
-            variant="outline" 
-            size="icon" 
-            onClick={() => navigate('/line-shopping')}
-            className="mr-2"
-          >
-            <ShoppingCart className="w-4 h-4" />
-          </Button>
-          <Button 
-            variant="outline" 
-            size="icon" 
-            onClick={handleRefresh}
-            disabled={isRefreshing}
-          >
-            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-          </Button>
-        </div>
+        }
+      />
 
-        {/* Sport Filter */}
-        <div className="mb-6">
-          <Select value={selectedSport} onValueChange={setSelectedSport}>
-            <SelectTrigger className="w-full md:w-48 bg-card border-border">
-              <SelectValue placeholder="Select sport" />
-            </SelectTrigger>
-            <SelectContent>
-              {SPORTS.map((sport) => (
-                <SelectItem key={sport.value} value={sport.value}>
-                  {sport.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+      <PullToRefreshIndicator 
+        pullProgress={pullProgress} 
+        isRefreshing={isRefreshing} 
+        threshold={80} 
+      />
 
-        {/* Stats Cards */}
-        <div className="grid grid-cols-3 gap-3 mb-6">
-          <div className="bg-card rounded-xl p-4 border border-border">
-            <div className="flex items-center gap-2 mb-1">
-              <Activity className="w-4 h-4 text-primary" />
-              <span className="text-xs text-muted-foreground uppercase">24h Moves</span>
-            </div>
-            <p className="text-2xl font-display text-foreground">{stats.totalMovements}</p>
+      <div 
+        ref={containerRef}
+        {...handlers}
+        className="scroll-optimized"
+        style={{ transform: `translateY(${Math.min(pullProgress * 0.5, 40)}px)` }}
+      >
+        <main className="max-w-4xl mx-auto px-3 py-4">
+          {/* Sport Filter */}
+          <div className="mb-6">
+            <Select value={selectedSport} onValueChange={(v) => { lightTap(); setSelectedSport(v); }}>
+              <SelectTrigger className="w-full md:w-48 bg-card border-border">
+                <SelectValue placeholder="Select sport" />
+              </SelectTrigger>
+              <SelectContent>
+                {SPORTS.map((sport) => (
+                  <SelectItem key={sport.value} value={sport.value}>
+                    {sport.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-          <div className="bg-card rounded-xl p-4 border border-neon-yellow/30">
-            <div className="flex items-center gap-2 mb-1">
-              <Zap className="w-4 h-4 text-neon-yellow" />
-              <span className="text-xs text-muted-foreground uppercase">Sharp</span>
-            </div>
-            <p className="text-2xl font-display text-neon-yellow">{stats.sharpAlerts}</p>
-          </div>
-          <div className="bg-card rounded-xl p-4 border border-border">
-            <div className="flex items-center gap-2 mb-1">
-              <TrendingUp className="w-4 h-4 text-neon-green" />
-              <span className="text-xs text-muted-foreground uppercase">Avg Δ</span>
-            </div>
-            <p className="text-2xl font-display text-foreground">{stats.avgPriceChange}</p>
-          </div>
-        </div>
 
-        {/* Push Notification Settings */}
-        <div className="mb-6">
-          <PushNotificationToggle />
-        </div>
-
-        {/* Main Content Tabs */}
-        <Tabs defaultValue="movements" className="space-y-4">
-          <TabsList className="grid w-full grid-cols-4 bg-card">
-            <TabsTrigger value="movements" className="data-[state=active]:bg-primary/20">
-              <Activity className="w-4 h-4 mr-1" />
-              <span className="hidden sm:inline">All</span>
-            </TabsTrigger>
-            <TabsTrigger value="sharp" className="data-[state=active]:bg-neon-yellow/20">
-              <Zap className="w-4 h-4 mr-1" />
-              <span className="hidden sm:inline">Sharp</span>
-            </TabsTrigger>
-            <TabsTrigger value="juiced" className="data-[state=active]:bg-neon-orange/20">
-              <Flame className="w-4 h-4 mr-1" />
-              <span className="hidden sm:inline">Props</span>
-            </TabsTrigger>
-            <TabsTrigger value="charts" className="data-[state=active]:bg-neon-green/20">
-              <TrendingUp className="w-4 h-4 mr-1" />
-              <span className="hidden sm:inline">Charts</span>
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="movements" className="space-y-4">
-            <OddsMovementCard 
-              sportFilter={selectedSport !== "all" ? selectedSport : undefined} 
-              delay={0}
-              limit={15}
+          {/* Stats Cards */}
+          <div className="grid grid-cols-3 gap-3 mb-6">
+            <StatCard 
+              icon={Activity} 
+              label="24h Moves" 
+              value={stats.totalMovements}
+              className="text-foreground"
             />
-          </TabsContent>
-
-          <TabsContent value="sharp" className="space-y-4">
-            <OddsMovementCard 
-              sportFilter={selectedSport !== "all" ? selectedSport : undefined}
-              showSharpOnly
-              delay={0}
-              limit={10}
+            <StatCard 
+              icon={Zap} 
+              label="Sharp" 
+              value={stats.sharpAlerts}
+              className="border-neon-yellow/30 text-neon-yellow"
             />
-          </TabsContent>
-
-          <TabsContent value="juiced" className="space-y-4">
-            <JuicedPropsCard />
-          </TabsContent>
-
-          <TabsContent value="charts" className="space-y-4">
-            <LineHistoryChart 
-              sportFilter={selectedSport !== "all" ? selectedSport : undefined}
+            <StatCard 
+              icon={TrendingUp} 
+              label="Avg Δ" 
+              value={stats.avgPriceChange}
+              className="text-foreground"
             />
-          </TabsContent>
-        </Tabs>
-
-        {/* Real-time indicator */}
-        <div className="mt-6 flex flex-col items-center gap-2">
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-neon-green animate-pulse" />
-            <span className="text-xs text-muted-foreground">
-              Auto-updates every 8 hours • Data from FanDuel, DraftKings, BetMGM & Caesars
-            </span>
           </div>
-          {lastUpdated && (
-            <span className="text-xs text-muted-foreground/70">
-              Last updated: {lastUpdated.toLocaleString()}
-            </span>
-          )}
-        </div>
-      </main>
+
+          {/* Push Notification Settings */}
+          <div className="mb-6">
+            <PushNotificationToggle />
+          </div>
+
+          {/* Main Content Tabs */}
+          <Tabs defaultValue="movements" className="space-y-4">
+            <TabsList className="grid w-full grid-cols-4 bg-card">
+              <TabsTrigger 
+                value="movements" 
+                className="data-[state=active]:bg-primary/20"
+                onClick={lightTap}
+              >
+                <Activity className="w-4 h-4 mr-1" />
+                <span className="hidden sm:inline">All</span>
+              </TabsTrigger>
+              <TabsTrigger 
+                value="sharp" 
+                className="data-[state=active]:bg-neon-yellow/20"
+                onClick={lightTap}
+              >
+                <Zap className="w-4 h-4 mr-1" />
+                <span className="hidden sm:inline">Sharp</span>
+              </TabsTrigger>
+              <TabsTrigger 
+                value="juiced" 
+                className="data-[state=active]:bg-neon-orange/20"
+                onClick={lightTap}
+              >
+                <Flame className="w-4 h-4 mr-1" />
+                <span className="hidden sm:inline">Props</span>
+              </TabsTrigger>
+              <TabsTrigger 
+                value="charts" 
+                className="data-[state=active]:bg-neon-green/20"
+                onClick={lightTap}
+              >
+                <TrendingUp className="w-4 h-4 mr-1" />
+                <span className="hidden sm:inline">Charts</span>
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="movements" className="space-y-4 content-visibility-auto">
+              <OddsMovementCard 
+                sportFilter={selectedSport !== "all" ? selectedSport : undefined} 
+                delay={0}
+                limit={15}
+              />
+            </TabsContent>
+
+            <TabsContent value="sharp" className="space-y-4 content-visibility-auto">
+              <OddsMovementCard 
+                sportFilter={selectedSport !== "all" ? selectedSport : undefined}
+                showSharpOnly
+                delay={0}
+                limit={10}
+              />
+            </TabsContent>
+
+            <TabsContent value="juiced" className="space-y-4 content-visibility-auto">
+              <JuicedPropsCard />
+            </TabsContent>
+
+            <TabsContent value="charts" className="space-y-4 content-visibility-auto">
+              <LineHistoryChart 
+                sportFilter={selectedSport !== "all" ? selectedSport : undefined}
+              />
+            </TabsContent>
+          </Tabs>
+
+          {/* Real-time indicator */}
+          <div className="mt-6 flex flex-col items-center gap-2">
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-neon-green animate-pulse" />
+              <span className="text-xs text-muted-foreground">
+                Auto-updates every 8 hours • Data from FanDuel, DraftKings, BetMGM & Caesars
+              </span>
+            </div>
+            {lastUpdated && (
+              <span className="text-xs text-muted-foreground/70">
+                Last updated: {lastUpdated.toLocaleString()}
+              </span>
+            )}
+          </div>
+        </main>
+      </div>
     </div>
   );
 };
