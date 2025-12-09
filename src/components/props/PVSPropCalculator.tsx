@@ -1,28 +1,28 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Search, Filter, RefreshCw, Trophy, Star, AlertTriangle, XCircle, Skull, Sparkles } from "lucide-react";
+import { Search, RefreshCw, Trophy } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { PVSProp, PVSTier, PVS_TIER_CONFIG } from "@/types/pvs";
+import { PVSProp, PVSTier } from "@/types/pvs";
 import { PVSPropCard } from "./PVSPropCard";
 import { PVSParlayBuilder } from "./PVSParlayBuilder";
-import { PVSAutoParlays } from "./PVSAutoParlays";
+import { MetricCard } from "./MetricCard";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
-const TIER_ICONS: Record<PVSTier, React.ReactNode> = {
-  GOD_TIER: <Trophy className="h-4 w-4" />,
-  HIGH_VALUE: <Star className="h-4 w-4" />,
-  MED_VOLATILITY: <AlertTriangle className="h-4 w-4" />,
-  RISKY: <XCircle className="h-4 w-4" />,
-  FADE: <Skull className="h-4 w-4" />,
-  uncategorized: <Sparkles className="h-4 w-4" />
-};
+const PROP_TYPE_OPTIONS = [
+  { value: 'all', label: 'All Props' },
+  { value: 'player_points', label: 'Points' },
+  { value: 'player_rebounds', label: 'Rebounds' },
+  { value: 'player_assists', label: 'Assists' },
+  { value: 'player_threes', label: '3PT' },
+  { value: 'player_steals', label: 'Steals' },
+  { value: 'player_blocks', label: 'Blocks' },
+  { value: 'player_points_rebounds_assists', label: 'PRA' },
+  { value: 'player_turnovers', label: 'Turnovers' },
+  { value: 'player_fantasy_score', label: 'Fantasy' },
+];
+
+const TIERS: PVSTier[] = ['GOD_TIER', 'HIGH_VALUE', 'MED_VOLATILITY', 'RISKY', 'FADE', 'uncategorized'];
 
 export function PVSPropCalculator() {
   const [searchQuery, setSearchQuery] = useState("");
@@ -50,13 +50,11 @@ export function PVSPropCalculator() {
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
-      // Step 1: Run data ingestion to refresh supporting data (defense, pace, game logs)
       console.log('[PVS] Running data ingestion...');
       await supabase.functions.invoke('pvs-data-ingestion', {
         body: { mode: 'all' }
       });
       
-      // Step 2: Run unified props engine with PVS calculations
       console.log('[PVS] Running unified props engine with PVS scoring...');
       const { data, error } = await supabase.functions.invoke('unified-props-engine', {
         body: { sports: ['basketball_nba'] }
@@ -85,24 +83,18 @@ export function PVSPropCalculator() {
         prop.game_description.toLowerCase().includes(searchQuery.toLowerCase());
       
       const matchesTier = selectedTier === "all" || prop.pvs_tier === selectedTier;
-      
       const matchesPropType = selectedPropType === "all" || prop.prop_type === selectedPropType;
       
       return matchesSearch && matchesTier && matchesPropType;
     });
   }, [props, searchQuery, selectedTier, selectedPropType]);
 
-  const propTypes = useMemo(() => {
-    if (!props) return [];
-    return [...new Set(props.map(p => p.prop_type))];
-  }, [props]);
-
   const tierCounts = useMemo(() => {
-    if (!props) return {};
+    if (!props) return {} as Record<PVSTier, number>;
     return props.reduce((acc, prop) => {
       acc[prop.pvs_tier] = (acc[prop.pvs_tier] || 0) + 1;
       return acc;
-    }, {} as Record<string, number>);
+    }, {} as Record<PVSTier, number>);
   }, [props]);
 
   const handleSelectProp = (prop: PVSProp) => {
@@ -119,168 +111,105 @@ export function PVSPropCalculator() {
     setSelectedProps(prev => prev.filter(p => p.id !== prop.id));
   };
 
-  const formatPropType = (propType: string) => {
-    return propType
-      .replace('player_', '')
-      .replace(/_/g, ' ')
-      .split(' ')
-      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(' ');
-  };
-
   return (
-    <div className="space-y-6">
+    <div className="app-wrapper">
       {/* Header */}
       <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Trophy className="h-6 w-6 text-primary" />
+          <h1 className="text-2xl font-bold flex items-center gap-2 text-white">
+            <Trophy className="h-6 w-6 text-[#00ff8c]" />
             PVS Calculator
           </h1>
-          <p className="text-muted-foreground text-sm mt-1">
+          <p className="text-gray-400 text-sm mt-1">
             Perfect Parlay Leg Score • AI-Powered NBA Prop Analysis
           </p>
         </div>
         
-        <Button 
-          onClick={handleRefresh} 
+        <button
+          onClick={handleRefresh}
           disabled={isRefreshing}
-          variant="outline"
-          className="flex items-center gap-2"
+          className="flex items-center gap-2 px-4 py-2 rounded-xl border border-white/20 text-white hover:bg-white/5 transition-colors disabled:opacity-50"
         >
           <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
           {isRefreshing ? "Analyzing..." : "Refresh Props"}
-        </Button>
+        </button>
       </div>
 
-      {/* Auto-Generated Parlays */}
-      <section>
-        <h2 className="text-lg font-semibold mb-3 flex items-center gap-2">
-          <Sparkles className="h-5 w-5 text-primary" />
-          AI-Generated Parlays
-        </h2>
-        <PVSAutoParlays />
-      </section>
-
-      {/* Tier Stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
-        {(Object.keys(PVS_TIER_CONFIG) as PVSTier[]).map(tier => (
-          <Card 
+      {/* Metrics Row */}
+      <div className="metrics-row">
+        {TIERS.map(tier => (
+          <MetricCard
             key={tier}
-            className={cn(
-              "cursor-pointer transition-all border-2",
-              selectedTier === tier 
-                ? "border-primary bg-primary/5" 
-                : "border-transparent hover:border-primary/30",
-              PVS_TIER_CONFIG[tier].bgColor
-            )}
+            tier={tier}
+            count={tierCounts[tier] || 0}
+            isSelected={selectedTier === tier}
             onClick={() => setSelectedTier(selectedTier === tier ? "all" : tier)}
-          >
-            <CardContent className="p-3 text-center">
-              <div className={cn("text-2xl font-bold", PVS_TIER_CONFIG[tier].color)}>
-                {tierCounts[tier] || 0}
-              </div>
-              <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">
-                {TIER_ICONS[tier]}
-                {tier.replace('_', ' ')}
-              </div>
-            </CardContent>
-          </Card>
+          />
         ))}
       </div>
 
-      {/* Filters */}
-      <Card>
-        <CardContent className="p-4">
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search player or game..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9"
-              />
-            </div>
-            
-            <Select value={selectedPropType} onValueChange={setSelectedPropType}>
-              <SelectTrigger className="w-full sm:w-48">
-                <Filter className="h-4 w-4 mr-2" />
-                <SelectValue placeholder="Prop Type" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Prop Types</SelectItem>
-                {propTypes.map(type => (
-                  <SelectItem key={type} value={type}>
-                    {formatPropType(type)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            {selectedTier !== "all" && (
-              <Button 
-                variant="outline" 
-                onClick={() => setSelectedTier("all")}
-                className="flex items-center gap-1"
-              >
-                Clear Filter
-                <Badge variant="secondary" className="ml-1">{selectedTier.replace('_', ' ')}</Badge>
-              </Button>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Main Content - Two Column Layout */}
-      <div className="main-layout">
-        {/* Parlay Builder - Takes remaining space on desktop */}
-        <div className="parlay-builder">
-          <div className="lg:sticky lg:top-4">
-            <PVSParlayBuilder
-              selectedProps={selectedProps}
-              onRemove={handleRemoveProp}
-              onClear={() => setSelectedProps([])}
-            />
-          </div>
+      {/* Search + Filter Row */}
+      <div className="search-filter-row">
+        <div className="relative flex-1">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
+          <input
+            type="text"
+            placeholder="Search player or game..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="search-player-bar pl-11"
+          />
         </div>
+        
+        <select
+          value={selectedPropType}
+          onChange={(e) => setSelectedPropType(e.target.value)}
+          className="prop-type-filter"
+        >
+          {PROP_TYPE_OPTIONS.map(option => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </div>
 
-        {/* Props Sidebar - Fixed width on desktop */}
+      {/* Main Layout */}
+      <div className="main-layout">
+        {/* Sidebar - Props List */}
         <div className="sidebar">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold">
+            <h2 className="text-lg font-semibold text-white">
               Props ({filteredProps.length})
             </h2>
-            <div className="text-sm text-muted-foreground">
+            <span className="text-xs text-gray-500">
               Sorted by PVS
-            </div>
+            </span>
           </div>
 
           {isLoading ? (
-            <div className="space-y-4">
+            <div className="space-y-3">
               {[...Array(6)].map((_, i) => (
-                <Skeleton key={i} className="h-64 w-full" />
+                <Skeleton key={i} className="h-36 w-full bg-[#222]" />
               ))}
             </div>
           ) : filteredProps.length === 0 ? (
-            <Card className="border-dashed">
-              <CardContent className="py-12 text-center text-muted-foreground">
-                <Search className="h-10 w-10 mx-auto mb-2 opacity-50" />
-                <p>No props found matching your filters</p>
-                <Button 
-                  variant="link" 
-                  onClick={() => {
-                    setSearchQuery("");
-                    setSelectedTier("all");
-                    setSelectedPropType("all");
-                  }}
-                >
-                  Clear all filters
-                </Button>
-              </CardContent>
-            </Card>
+            <div className="text-center py-12 text-gray-500">
+              <Search className="h-8 w-8 mx-auto mb-2 opacity-50" />
+              <p className="text-sm">No props found</p>
+              <button
+                onClick={() => {
+                  setSearchQuery("");
+                  setSelectedTier("all");
+                  setSelectedPropType("all");
+                }}
+                className="text-[#00ff8c] text-sm mt-2 hover:underline"
+              >
+                Clear filters
+              </button>
+            </div>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-3">
               {filteredProps.map(prop => (
                 <PVSPropCard
                   key={prop.id}
@@ -291,6 +220,15 @@ export function PVSPropCalculator() {
               ))}
             </div>
           )}
+        </div>
+
+        {/* Parlay Builder */}
+        <div className="parlay-builder">
+          <PVSParlayBuilder
+            selectedProps={selectedProps}
+            onRemove={handleRemoveProp}
+            onClear={() => setSelectedProps([])}
+          />
         </div>
       </div>
     </div>
