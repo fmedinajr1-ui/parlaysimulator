@@ -12,6 +12,8 @@ import { useNavigate } from "react-router-dom";
 import { createLeg, simulateParlay } from "@/lib/parlay-calculator";
 import { FatigueDifferentialBadge } from "@/components/fatigue/FatigueDifferentialBadge";
 import { extractTeamsFromDescription } from "@/hooks/useFatigueData";
+import { TrapFavoriteAlert } from "@/components/alerts/TrapFavoriteAlert";
+import { ExtremeMovementBadge } from "@/components/alerts/ExtremeMovementBadge";
 interface SuggestedLeg {
   description: string;
   odds: number;
@@ -444,6 +446,27 @@ export function SuggestedParlayCard({
             </p>
           </div>
         </div>
+
+        {/* Trap Favorite Alert for NBA/NFL */}
+        {(sport === 'NBA' || sport === 'NFL') && legs.length > 0 && (() => {
+          // Try to extract teams from the first leg description for trap detection
+          const teams = extractTeamsFromDescription(legs[0].description);
+          if (teams) {
+            return (
+              <TrapFavoriteAlert
+                favoriteTeam={teams.team2}
+                underdogTeam={teams.team1}
+                sport={sport as 'NBA' | 'NFL'}
+              />
+            );
+          }
+          return null;
+        })()}
+
+        {/* Extreme Movement Alert */}
+        {legs.length > 0 && (
+          <ExtremeMovementBadge description={legs[0].description} />
+        )}
 
         {/* Reason */}
         <div className="bg-primary/5 rounded-lg p-2 border border-primary/10">

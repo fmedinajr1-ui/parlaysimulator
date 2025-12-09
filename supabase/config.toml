@@ -152,3 +152,9 @@ verify_jwt = false
 
 [functions.auto-refresh-sharp-tracker]
 verify_jwt = false
+
+[functions.fetch-season-standings]
+verify_jwt = false
+
+[functions.detect-extreme-movements]
+verify_jwt = false
