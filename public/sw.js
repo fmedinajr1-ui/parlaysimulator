@@ -1,6 +1,7 @@
-// Service Worker for PWA - Parlay Farm
+// Service Worker for PWA - Parlay Farm - v20251209
+// Force cache bust on version change
 
-const CACHE_NAME = 'parlay-farm-v1';
+const CACHE_NAME = 'parlay-farm-v20251209';
 const OFFLINE_URL = '/';
 
 // Assets to cache immediately on install
@@ -12,38 +13,37 @@ const PRECACHE_ASSETS = [
   '/pwa-512x512.png'
 ];
 
-// Install event - cache essential assets
+// Install event - skip waiting to activate immediately
 self.addEventListener('install', (event) => {
-  console.log('[SW] Installing service worker...');
-  
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => {
-        console.log('[SW] Caching app shell');
-        return cache.addAll(PRECACHE_ASSETS);
-      })
-      .then(() => self.skipWaiting())
-  );
+  console.log('[SW] Installing service worker v20251209...');
+  self.skipWaiting();
 });
 
-// Activate event - clean up old caches
+// Activate event - clean up ALL old caches and claim clients
 self.addEventListener('activate', (event) => {
-  console.log('[SW] Activating service worker...');
+  console.log('[SW] Activating service worker v20251209...');
   
   event.waitUntil(
     caches.keys()
       .then((cacheNames) => {
         return Promise.all(
-          cacheNames
-            .filter((cacheName) => cacheName !== CACHE_NAME)
-            .map((cacheName) => caches.delete(cacheName))
+          cacheNames.map((cacheName) => {
+            // Delete ALL caches to force fresh content
+            if (cacheName !== CACHE_NAME) {
+              console.log('[SW] Deleting old cache:', cacheName);
+              return caches.delete(cacheName);
+            }
+          })
         );
       })
-      .then(() => self.clients.claim())
+      .then(() => {
+        console.log('[SW] Claiming all clients');
+        return self.clients.claim();
+      })
   );
 });
 
-// Fetch event - serve from cache, fallback to network
+// Fetch event - NETWORK FIRST for JS to avoid stale React chunks
 self.addEventListener('fetch', (event) => {
   // Skip cross-origin requests
   if (!event.request.url.startsWith(self.location.origin)) {
@@ -54,6 +54,17 @@ self.addEventListener('fetch', (event) => {
   if (event.request.url.includes('/functions/') || 
       event.request.url.includes('supabase.co') ||
       event.request.url.includes('the-odds-api.com')) {
+    return;
+  }
+  
+  // NETWORK FIRST for JavaScript files to prevent stale React chunks
+  if (event.request.url.includes('.js') || 
+      event.request.url.includes('.tsx') || 
+      event.request.url.includes('.vite')) {
+    event.respondWith(
+      fetch(event.request)
+        .catch(() => caches.match(event.request))
+    );
     return;
   }
 
