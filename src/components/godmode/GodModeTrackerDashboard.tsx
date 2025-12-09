@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { GodModePropCard } from './GodModePropCard';
-import { Zap, Target, X, AlertTriangle, Search, RefreshCw, Loader2, TrendingUp } from 'lucide-react';
+import { Zap, Target, X, AlertTriangle, Search, RefreshCw, Loader2, TrendingUp, Satellite, Database, Clock } from 'lucide-react';
 import { toast } from 'sonner';
 import { motion } from 'framer-motion';
 
@@ -38,8 +38,11 @@ interface TrackedProp {
 
 export function GodModeTrackerDashboard() {
   const [props, setProps] = useState<TrackedProp[]>([]);
+  const [pendingCount, setPendingCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [scanning, setScanning] = useState(false);
   
   const [searchQuery, setSearchQuery] = useState('');
   const [sportFilter, setSportFilter] = useState('all');
@@ -63,8 +66,24 @@ export function GodModeTrackerDashboard() {
     }
   };
 
+  const fetchPendingCount = async () => {
+    try {
+      const { count, error } = await supabase
+        .from('sharp_line_tracker')
+        .select('*', { count: 'exact', head: true })
+        .is('ai_recommendation', null)
+        .eq('status', 'pending');
+
+      if (error) throw error;
+      setPendingCount(count || 0);
+    } catch (error) {
+      console.error('Error fetching pending count:', error);
+    }
+  };
+
   useEffect(() => {
     fetchAnalyzedProps();
+    fetchPendingCount();
 
     // Real-time subscription
     const channel = supabase
@@ -78,6 +97,7 @@ export function GodModeTrackerDashboard() {
         },
         () => {
           fetchAnalyzedProps();
+          fetchPendingCount();
         }
       )
       .subscribe();
@@ -89,9 +109,51 @@ export function GodModeTrackerDashboard() {
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    await fetchAnalyzedProps();
+    await Promise.all([fetchAnalyzedProps(), fetchPendingCount()]);
     setRefreshing(false);
     toast.success('Refreshed');
+  };
+
+  const handleGenerateData = async () => {
+    setGenerating(true);
+    toast.info('Running GOD MODE analysis...', { duration: 5000 });
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('auto-refresh-sharp-tracker');
+      
+      if (error) throw error;
+      
+      await Promise.all([fetchAnalyzedProps(), fetchPendingCount()]);
+      
+      const analyzed = data?.analyzed_count || 0;
+      toast.success(`Analysis complete! ${analyzed} props analyzed`);
+    } catch (error) {
+      console.error('Error generating data:', error);
+      toast.error('Failed to run analysis');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleScanProps = async () => {
+    setScanning(true);
+    toast.info('Scanning for new props...', { duration: 5000 });
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('scan-opening-lines');
+      
+      if (error) throw error;
+      
+      await fetchPendingCount();
+      
+      const added = data?.added_count || 0;
+      toast.success(`Scan complete! ${added} new props found`);
+    } catch (error) {
+      console.error('Error scanning props:', error);
+      toast.error('Failed to scan props');
+    } finally {
+      setScanning(false);
+    }
   };
 
   const filteredProps = props.filter(prop => {
@@ -134,7 +196,7 @@ export function GodModeTrackerDashboard() {
       <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary/20 via-primary/10 to-background border border-primary/20 p-6">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-primary/10 via-transparent to-transparent" />
         <div className="relative">
-          <div className="flex items-center gap-3 mb-2">
+          <div className="flex items-center gap-3 mb-4">
             <div className="p-2 rounded-xl bg-primary/20">
               <Zap className="w-6 h-6 text-primary" />
             </div>
@@ -142,6 +204,45 @@ export function GodModeTrackerDashboard() {
               <h1 className="text-2xl font-bold font-display">GOD MODE Tracker</h1>
               <p className="text-muted-foreground">Sharp vs Vegas - Real-Time Intelligence</p>
             </div>
+          </div>
+
+          {/* Pending Props Banner */}
+          {pendingCount > 0 && (
+            <div className="flex items-center gap-2 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20 mb-4">
+              <Clock className="w-4 h-4 text-yellow-400" />
+              <span className="text-sm text-yellow-400 font-medium">
+                {pendingCount} props pending analysis
+              </span>
+            </div>
+          )}
+
+          {/* Action Buttons */}
+          <div className="flex flex-wrap gap-3">
+            <Button 
+              onClick={handleGenerateData} 
+              disabled={generating}
+              className="bg-primary hover:bg-primary/90"
+            >
+              {generating ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Database className="w-4 h-4 mr-2" />
+              )}
+              {generating ? 'Analyzing...' : 'Generate Fresh Data'}
+            </Button>
+            
+            <Button 
+              variant="outline" 
+              onClick={handleScanProps} 
+              disabled={scanning}
+            >
+              {scanning ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Satellite className="w-4 h-4 mr-2" />
+              )}
+              {scanning ? 'Scanning...' : 'Scan New Props'}
+            </Button>
           </div>
         </div>
       </div>
