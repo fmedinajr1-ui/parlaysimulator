@@ -117,7 +117,7 @@ export function GodModePropCard({ prop }: GodModePropCardProps) {
       transition={{ duration: 0.3 }}
     >
       <Card className={cn(
-        "overflow-hidden border transition-all hover:shadow-lg w-full max-w-full",
+        "overflow-hidden border transition-all hover:shadow-lg w-full max-w-full self-stretch",
         prop.ai_recommendation === 'pick' && "border-green-500/30 bg-green-500/5",
         prop.ai_recommendation === 'fade' && "border-red-500/30 bg-red-500/5",
         prop.ai_recommendation === 'caution' && "border-yellow-500/30 bg-yellow-500/5"

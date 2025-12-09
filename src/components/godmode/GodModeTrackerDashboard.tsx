@@ -397,14 +397,14 @@ export function GodModeTrackerDashboard() {
               </CardContent>
             </Card>
           ) : (
-            <div className="flex flex-col gap-4 w-full">
+            <div className="flex flex-col gap-5 w-full items-stretch">
               {filteredProps.map((prop, index) => (
                 <motion.div
                   key={prop.id}
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: index * 0.03 }}
-                  className="w-full"
+                  className="w-full self-stretch"
                 >
                   <GodModePropCard prop={prop} />
                 </motion.div>
@@ -414,14 +414,14 @@ export function GodModeTrackerDashboard() {
         </TabsContent>
 
         <TabsContent value="picks" className="mt-4">
-          <div className="flex flex-col gap-4 w-full">
+          <div className="flex flex-col gap-5 w-full items-stretch">
             {pickProps.map((prop, index) => (
               <motion.div
                 key={prop.id}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: index * 0.03 }}
-                className="w-full"
+                className="w-full self-stretch"
               >
                 <GodModePropCard prop={prop} />
               </motion.div>
@@ -437,14 +437,14 @@ export function GodModeTrackerDashboard() {
         </TabsContent>
 
         <TabsContent value="fades" className="mt-4">
-          <div className="flex flex-col gap-4 w-full">
+          <div className="flex flex-col gap-5 w-full items-stretch">
             {fadeProps.map((prop, index) => (
               <motion.div
                 key={prop.id}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: index * 0.03 }}
-                className="w-full"
+                className="w-full self-stretch"
               >
                 <GodModePropCard prop={prop} />
               </motion.div>
@@ -460,11 +460,11 @@ export function GodModeTrackerDashboard() {
         </TabsContent>
 
         <TabsContent value="caution" className="mt-4">
-          <div className="flex flex-col gap-4 w-full">
+          <div className="flex flex-col gap-5 w-full items-stretch">
             {cautionProps.map((prop, index) => (
               <motion.div
                 key={prop.id}
-                className="w-full"
+                className="w-full self-stretch"
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: index * 0.05 }}
