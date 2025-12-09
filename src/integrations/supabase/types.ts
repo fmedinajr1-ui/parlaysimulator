@@ -2493,6 +2493,8 @@ export type Database = {
       }
       unified_props: {
         Row: {
+          away_team_record: string | null
+          away_team_win_pct: number | null
           bookmaker: string
           category: string
           commence_time: string
@@ -2504,8 +2506,11 @@ export type Database = {
           fatigue_score: number | null
           game_description: string
           hit_rate_score: number | null
+          home_team_record: string | null
+          home_team_win_pct: number | null
           id: string
           is_active: boolean | null
+          is_trap_favorite: boolean | null
           outcome: string | null
           over_price: number | null
           player_name: string
@@ -2522,6 +2527,8 @@ export type Database = {
           pvs_value_score: number | null
           recommendation: string | null
           recommended_side: string | null
+          record_differential: number | null
+          record_score: number | null
           settled_at: string | null
           sharp_money_score: number | null
           signal_sources: Json | null
@@ -2534,6 +2541,8 @@ export type Database = {
           upset_score: number | null
         }
         Insert: {
+          away_team_record?: string | null
+          away_team_win_pct?: number | null
           bookmaker: string
           category?: string
           commence_time: string
@@ -2545,8 +2554,11 @@ export type Database = {
           fatigue_score?: number | null
           game_description: string
           hit_rate_score?: number | null
+          home_team_record?: string | null
+          home_team_win_pct?: number | null
           id?: string
           is_active?: boolean | null
+          is_trap_favorite?: boolean | null
           outcome?: string | null
           over_price?: number | null
           player_name: string
@@ -2563,6 +2575,8 @@ export type Database = {
           pvs_value_score?: number | null
           recommendation?: string | null
           recommended_side?: string | null
+          record_differential?: number | null
+          record_score?: number | null
           settled_at?: string | null
           sharp_money_score?: number | null
           signal_sources?: Json | null
@@ -2575,6 +2589,8 @@ export type Database = {
           upset_score?: number | null
         }
         Update: {
+          away_team_record?: string | null
+          away_team_win_pct?: number | null
           bookmaker?: string
           category?: string
           commence_time?: string
@@ -2586,8 +2602,11 @@ export type Database = {
           fatigue_score?: number | null
           game_description?: string
           hit_rate_score?: number | null
+          home_team_record?: string | null
+          home_team_win_pct?: number | null
           id?: string
           is_active?: boolean | null
+          is_trap_favorite?: boolean | null
           outcome?: string | null
           over_price?: number | null
           player_name?: string
@@ -2604,6 +2623,8 @@ export type Database = {
           pvs_value_score?: number | null
           recommendation?: string | null
           recommended_side?: string | null
+          record_differential?: number | null
+          record_score?: number | null
           settled_at?: string | null
           sharp_money_score?: number | null
           signal_sources?: Json | null

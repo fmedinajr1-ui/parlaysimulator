@@ -56,6 +56,14 @@ interface UnifiedProp {
   pvs_tier: string;
   true_line: number | null;
   true_line_diff: number | null;
+  // Season standings fields
+  home_team_win_pct: number | null;
+  away_team_win_pct: number | null;
+  record_differential: number;
+  is_trap_favorite: boolean;
+  home_team_record: string | null;
+  away_team_record: string | null;
+  record_score: number;
 }
 
 serve(async (req) => {
@@ -74,8 +82,8 @@ serve(async (req) => {
     console.log('[UnifiedEngine] Starting unified props analysis with PVS scoring for:', sports);
     const startTime = Date.now();
 
-    // Fetch all supporting data for PVS calculations
-    const [hitRates, lineMovements, trapPatterns, fatigueScores, defenseStats, paceStats, gameLogs, injuryReports] = await Promise.all([
+    // Fetch all supporting data for PVS calculations including season standings
+    const [hitRates, lineMovements, trapPatterns, fatigueScores, defenseStats, paceStats, gameLogs, injuryReports, seasonStandings] = await Promise.all([
       supabase.from('player_prop_hitrates').select('*').gte('expires_at', new Date().toISOString()),
       supabase.from('line_movements').select('*').eq('is_primary_record', true).gte('detected_at', new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()),
       supabase.from('trap_patterns').select('*').limit(500),
@@ -83,7 +91,8 @@ serve(async (req) => {
       supabase.from('nba_opponent_defense_stats').select('*'),
       supabase.from('nba_team_pace_projections').select('*'),
       supabase.from('nba_player_game_logs').select('*').order('game_date', { ascending: false }).limit(1000),
-      supabase.from('nba_injury_reports').select('*').gte('game_date', new Date().toISOString().split('T')[0])
+      supabase.from('nba_injury_reports').select('*').gte('game_date', new Date().toISOString().split('T')[0]),
+      supabase.from('team_season_standings').select('*')
     ]);
 
     console.log('[UnifiedEngine] Loaded supporting data:', {
@@ -94,7 +103,8 @@ serve(async (req) => {
       defenseStats: defenseStats.data?.length || 0,
       paceStats: paceStats.data?.length || 0,
       gameLogs: gameLogs.data?.length || 0,
-      injuryReports: injuryReports.data?.length || 0
+      injuryReports: injuryReports.data?.length || 0,
+      seasonStandings: seasonStandings.data?.length || 0
     });
 
     // Build lookup maps for efficient scoring
@@ -145,6 +155,89 @@ serve(async (req) => {
     (injuryReports.data || []).forEach(ir => {
       injuryMap.set(ir.player_name, ir);
     });
+
+    // Build standings map by team name (normalized)
+    const standingsMap = new Map<string, any>();
+    (seasonStandings.data || []).forEach(s => {
+      standingsMap.set(s.team_name.toLowerCase(), s);
+      // Also add common abbreviations
+      const abbrev = getTeamAbbrev(s.team_name);
+      if (abbrev) standingsMap.set(abbrev.toLowerCase(), s);
+    });
+
+    // Helper to get team abbreviation
+    function getTeamAbbrev(teamName: string): string | null {
+      const abbrevMap: Record<string, string> = {
+        'Atlanta Hawks': 'ATL', 'Boston Celtics': 'BOS', 'Brooklyn Nets': 'BKN',
+        'Charlotte Hornets': 'CHA', 'Chicago Bulls': 'CHI', 'Cleveland Cavaliers': 'CLE',
+        'Dallas Mavericks': 'DAL', 'Denver Nuggets': 'DEN', 'Detroit Pistons': 'DET',
+        'Golden State Warriors': 'GSW', 'Houston Rockets': 'HOU', 'Indiana Pacers': 'IND',
+        'LA Clippers': 'LAC', 'Los Angeles Clippers': 'LAC', 'Los Angeles Lakers': 'LAL',
+        'LA Lakers': 'LAL', 'Memphis Grizzlies': 'MEM', 'Miami Heat': 'MIA',
+        'Milwaukee Bucks': 'MIL', 'Minnesota Timberwolves': 'MIN', 'New Orleans Pelicans': 'NOP',
+        'New York Knicks': 'NYK', 'Oklahoma City Thunder': 'OKC', 'Orlando Magic': 'ORL',
+        'Philadelphia 76ers': 'PHI', 'Phoenix Suns': 'PHX', 'Portland Trail Blazers': 'POR',
+        'Sacramento Kings': 'SAC', 'San Antonio Spurs': 'SAS', 'Toronto Raptors': 'TOR',
+        'Utah Jazz': 'UTA', 'Washington Wizards': 'WAS',
+        // NFL teams
+        'Arizona Cardinals': 'ARI', 'Atlanta Falcons': 'ATL', 'Baltimore Ravens': 'BAL',
+        'Buffalo Bills': 'BUF', 'Carolina Panthers': 'CAR', 'Chicago Bears': 'CHI',
+        'Cincinnati Bengals': 'CIN', 'Cleveland Browns': 'CLE', 'Dallas Cowboys': 'DAL',
+        'Denver Broncos': 'DEN', 'Detroit Lions': 'DET', 'Green Bay Packers': 'GB',
+        'Houston Texans': 'HOU', 'Indianapolis Colts': 'IND', 'Jacksonville Jaguars': 'JAX',
+        'Kansas City Chiefs': 'KC', 'Las Vegas Raiders': 'LV', 'Los Angeles Chargers': 'LAC',
+        'Los Angeles Rams': 'LAR', 'Miami Dolphins': 'MIA', 'Minnesota Vikings': 'MIN',
+        'New England Patriots': 'NE', 'New Orleans Saints': 'NO', 'New York Giants': 'NYG',
+        'New York Jets': 'NYJ', 'Philadelphia Eagles': 'PHI', 'Pittsburgh Steelers': 'PIT',
+        'San Francisco 49ers': 'SF', 'Seattle Seahawks': 'SEA', 'Tampa Bay Buccaneers': 'TB',
+        'Tennessee Titans': 'TEN', 'Washington Commanders': 'WAS'
+      };
+      return abbrevMap[teamName] || null;
+    }
+
+    // Helper to calculate record score and trap favorite status
+    function calculateRecordScore(homeTeam: string, awayTeam: string): {
+      recordScore: number;
+      isTrapFavorite: boolean;
+      homeWinPct: number | null;
+      awayWinPct: number | null;
+      homeRecord: string | null;
+      awayRecord: string | null;
+      recordDifferential: number;
+    } {
+      const homeStanding = standingsMap.get(homeTeam.toLowerCase());
+      const awayStanding = standingsMap.get(awayTeam.toLowerCase());
+      
+      const homeWinPct = homeStanding?.win_pct || null;
+      const awayWinPct = awayStanding?.win_pct || null;
+      const homeRecord = homeStanding ? `${homeStanding.wins}-${homeStanding.losses}` : null;
+      const awayRecord = awayStanding ? `${awayStanding.wins}-${awayStanding.losses}` : null;
+      
+      if (homeWinPct === null || awayWinPct === null) {
+        return { recordScore: 50, isTrapFavorite: false, homeWinPct, awayWinPct, homeRecord, awayRecord, recordDifferential: 0 };
+      }
+      
+      const recordDiff = Math.abs(homeWinPct - awayWinPct);
+      
+      // Record score: higher when there's a big differential (upset potential)
+      // Score 50 = even, 100 = huge differential
+      const recordScore = 50 + (recordDiff * 50);
+      
+      // Trap favorite: when the favored team (by market) has worse record
+      // We can't know market favorite here, so we flag if away team has significantly better record
+      // (typically home team is favored, so if away is better, it's a potential trap)
+      const isTrapFavorite = awayWinPct > homeWinPct + 0.1;
+      
+      return { 
+        recordScore: Math.min(100, recordScore), 
+        isTrapFavorite, 
+        homeWinPct, 
+        awayWinPct, 
+        homeRecord, 
+        awayRecord,
+        recordDifferential: recordDiff
+      };
+    }
 
     const unifiedProps: UnifiedProp[] = [];
     let totalPropsAnalyzed = 0;
@@ -230,7 +323,12 @@ serve(async (req) => {
                       bookmaker: bookmaker.key
                     });
 
-                    // Calculate base scores
+                    // Calculate record score for NBA/NFL
+                    const recordData = (sport === 'basketball_nba' || sport === 'americanfootball_nfl')
+                      ? calculateRecordScore(event.home_team, event.away_team)
+                      : { recordScore: 50, isTrapFavorite: false, homeWinPct: null, awayWinPct: null, homeRecord: null, awayRecord: null, recordDifferential: 0 };
+
+                    // Calculate base scores with record data
                     const baseScores = calculateBaseScores({
                       playerName,
                       propType: propMarket.key,
@@ -247,7 +345,9 @@ serve(async (req) => {
                       awayTeam: event.away_team,
                       bookmaker: bookmaker.key,
                       gameLogsMap,
-                      trueLine: pvsScores.true_line
+                      trueLine: pvsScores.true_line,
+                      recordScore: recordData.recordScore,
+                      isTrapFavorite: recordData.isTrapFavorite
                     });
 
                     unifiedProps.push({
@@ -262,7 +362,15 @@ serve(async (req) => {
                       over_price: overPrice,
                       under_price: underPrice,
                       ...baseScores,
-                      ...pvsScores
+                      ...pvsScores,
+                      // Season standings data
+                      home_team_win_pct: recordData.homeWinPct,
+                      away_team_win_pct: recordData.awayWinPct,
+                      record_differential: recordData.recordDifferential,
+                      is_trap_favorite: recordData.isTrapFavorite,
+                      home_team_record: recordData.homeRecord,
+                      away_team_record: recordData.awayRecord,
+                      record_score: recordData.recordScore
                     });
                   }
                 }
@@ -357,6 +465,8 @@ interface BaseScoreParams {
   bookmaker: string;
   gameLogsMap: Map<string, any[]>;
   trueLine: number | null;
+  recordScore?: number;
+  isTrapFavorite?: boolean;
 }
 
 function calculateBaseScores(params: BaseScoreParams): {
@@ -430,13 +540,24 @@ function calculateBaseScores(params: BaseScoreParams): {
     }
   }
 
-  // Calculate composite score (weighted)
+  // Get record score (default 50 if not provided)
+  const recordScore = params.recordScore || 50;
+  const isTrapFavorite = params.isTrapFavorite || false;
+
+  // Add trap favorite to trap score if applicable
+  if (isTrapFavorite) {
+    trapScore = Math.min(100, trapScore + 25);
+    signalSources.push('trap_favorite');
+  }
+
+  // Calculate composite score (weighted) - now includes record score
   const compositeScore = (
-    hitRateScore * 0.35 +
-    sharpMoneyScore * 0.25 +
+    hitRateScore * 0.30 +       // Reduced from 0.35
+    sharpMoneyScore * 0.20 +    // Reduced from 0.25
     (100 - trapScore) * 0.15 +
-    fatigueScore * 0.15 +
-    upsetScore * 0.10
+    fatigueScore * 0.10 +       // Reduced from 0.15
+    upsetScore * 0.10 +
+    recordScore * 0.15          // NEW: Season record differential
   );
 
   // Determine recommendation
