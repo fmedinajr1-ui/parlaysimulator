@@ -18,6 +18,7 @@ import { format } from "date-fns";
 import { Link } from "react-router-dom";
 import { FatigueMeter } from "@/components/fatigue/FatigueMeter";
 import { FatigueEdgeROI } from "@/components/fatigue/FatigueEdgeROI";
+import { toast } from "sonner";
 
 interface FatigueScore {
   id: string;
@@ -139,13 +140,23 @@ export default function NBAFatigue() {
   const calculateFatigue = async () => {
     setCalculating(true);
     try {
-      const { error } = await supabase.functions.invoke('nba-fatigue-engine', {
-        body: { action: 'get-today' }
+      const { data, error } = await supabase.functions.invoke('daily-fatigue-calculator', {
+        body: {}
       });
+      
       if (error) throw error;
+      
+      const gamesProcessed = data?.gamesProcessed || 0;
+      if (gamesProcessed > 0) {
+        toast.success(`Calculated fatigue for ${gamesProcessed} games`);
+      } else {
+        toast.info('No NBA games scheduled for today');
+      }
+      
       await fetchFatigueData();
     } catch (error) {
       console.error('Error calculating fatigue:', error);
+      toast.error('Failed to calculate fatigue scores');
     } finally {
       setCalculating(false);
     }
