@@ -66,11 +66,14 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // Step 1: Fetch all pending props, prioritize upcoming games
+    const now = new Date().toISOString();
+    
+    // Step 1: Fetch pending props for UPCOMING games only
     let query = supabase
       .from("sharp_line_tracker")
       .select("*")
-      .eq("status", "pending");
+      .eq("status", "pending")
+      .gte("commence_time", now); // Only future games
     
     if (prioritizeUpcoming) {
       // Get games starting in next 24 hours first
@@ -78,7 +81,7 @@ Deno.serve(async (req) => {
       query = query.lte("commence_time", next24Hours);
     }
     
-    query = query.limit(batchSize);
+    query = query.order("commence_time", { ascending: true }).limit(batchSize);
 
     const { data: pendingProps, error: fetchError } = await query;
 
@@ -86,7 +89,7 @@ Deno.serve(async (req) => {
       throw new Error(`Failed to fetch pending props: ${fetchError.message}`);
     }
 
-    console.log(`[AUTO-REFRESH] Found ${pendingProps?.length || 0} pending props to process`);
+    console.log(`[AUTO-REFRESH] Found ${pendingProps?.length || 0} pending props for upcoming games`);
 
     let fetchSuccess = 0;
     let fetchFail = 0;
@@ -110,7 +113,8 @@ Deno.serve(async (req) => {
             },
           });
 
-          if (!oddsError && oddsData?.success) {
+          // Add null safety check for oddsData.odds
+          if (!oddsError && oddsData?.success && oddsData?.odds?.over_price != null) {
             // Update the database with current odds
             await supabase
               .from("sharp_line_tracker")
@@ -131,8 +135,9 @@ Deno.serve(async (req) => {
           }
         }
         
-        // Use opening odds as fallback if enabled and no current odds
-        if (!hasCurrentOdds && useOpeningFallback) {
+        // Use opening odds as fallback if enabled, no current odds, AND opening odds exist
+        if (!hasCurrentOdds && useOpeningFallback && 
+            prop.opening_over_price != null && prop.opening_under_price != null) {
           console.log(`[AUTO-REFRESH] Using opening odds fallback for ${prop.player_name}`);
           
           // Update with opening odds as current
@@ -171,12 +176,15 @@ Deno.serve(async (req) => {
     console.log(`[AUTO-REFRESH] Fetch complete: ${fetchSuccess} fresh, ${fallbackUsed} fallback, ${fetchFail} failed`);
 
     // Step 3: Get additional props ready for analysis (already have current odds but not analyzed)
+    // Only get props for upcoming games
     const { data: existingPropsToAnalyze } = await supabase
       .from("sharp_line_tracker")
       .select("*")
       .not("current_over_price", "is", null)
       .not("current_under_price", "is", null)
       .is("ai_recommendation", null)
+      .gte("commence_time", now)
+      .order("commence_time", { ascending: true })
       .limit(batchSize);
 
     const allPropsToAnalyze = [
