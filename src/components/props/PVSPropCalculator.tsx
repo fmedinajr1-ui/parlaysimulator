@@ -74,10 +74,28 @@ export function PVSPropCalculator() {
     }
   };
 
-  const filteredProps = useMemo(() => {
+  // Deduplicate props by player_name + prop_type + current_line, keeping the best odds/highest PVS score
+  const deduplicatedProps = useMemo(() => {
     if (!props) return [];
     
-    return props.filter(prop => {
+    const propMap = new Map<string, PVSProp>();
+    
+    for (const prop of props) {
+      const key = `${prop.player_name}-${prop.prop_type}-${prop.current_line}`;
+      const existing = propMap.get(key);
+      
+      if (!existing || (prop.pvs_final_score || 0) > (existing.pvs_final_score || 0)) {
+        propMap.set(key, prop);
+      }
+    }
+    
+    return Array.from(propMap.values());
+  }, [props]);
+
+  const filteredProps = useMemo(() => {
+    if (!deduplicatedProps) return [];
+    
+    return deduplicatedProps.filter(prop => {
       const matchesSearch = searchQuery === "" || 
         prop.player_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         prop.game_description.toLowerCase().includes(searchQuery.toLowerCase());
@@ -87,15 +105,15 @@ export function PVSPropCalculator() {
       
       return matchesSearch && matchesTier && matchesPropType;
     });
-  }, [props, searchQuery, selectedTier, selectedPropType]);
+  }, [deduplicatedProps, searchQuery, selectedTier, selectedPropType]);
 
   const tierCounts = useMemo(() => {
-    if (!props) return {} as Record<PVSTier, number>;
-    return props.reduce((acc, prop) => {
+    if (!deduplicatedProps) return {} as Record<PVSTier, number>;
+    return deduplicatedProps.reduce((acc, prop) => {
       acc[prop.pvs_tier] = (acc[prop.pvs_tier] || 0) + 1;
       return acc;
     }, {} as Record<PVSTier, number>);
-  }, [props]);
+  }, [deduplicatedProps]);
 
   const handleSelectProp = (prop: PVSProp) => {
     setSelectedProps(prev => {

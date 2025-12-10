@@ -1,6 +1,5 @@
 import { ReactNode, useState, useEffect, useCallback } from "react";
 import { DesktopSidebar } from "./DesktopSidebar";
-import { DesktopBottomNav } from "./DesktopBottomNav";
 import { cn } from "@/lib/utils";
 
 interface DesktopLayoutProps {
@@ -41,7 +40,7 @@ export function DesktopLayout({ children, className, noPadding = false }: Deskto
       <DesktopSidebar collapsed={collapsed} onToggle={toggleSidebar} />
       
       <main className={cn(
-        "flex-1 flex flex-col min-h-screen overflow-x-hidden pb-20",
+        "flex-1 flex flex-col min-h-screen overflow-x-hidden",
         !noPadding && "p-6",
         className
       )}>
@@ -49,8 +48,6 @@ export function DesktopLayout({ children, className, noPadding = false }: Deskto
           {children}
         </div>
       </main>
-
-      <DesktopBottomNav />
     </div>
   );
 }
