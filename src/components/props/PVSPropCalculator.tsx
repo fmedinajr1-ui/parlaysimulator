@@ -38,12 +38,14 @@ export function PVSPropCalculator() {
   const { data: props, isLoading, refetch } = useQuery({
     queryKey: ['pvs-props'],
     queryFn: async () => {
+      const now = new Date().toISOString();
       const { data, error } = await supabase
         .from('unified_props')
         .select('*')
         .eq('sport', 'basketball_nba')
         .eq('is_active', true)
         .gt('pvs_final_score', 0)
+        .gt('commence_time', now) // Only upcoming games
         .order('pvs_final_score', { ascending: false });
 
       if (error) throw error;
@@ -51,10 +53,30 @@ export function PVSPropCalculator() {
     }
   });
 
+  // Cleanup old props by marking them inactive
+  const cleanupOldProps = async () => {
+    const now = new Date().toISOString();
+    const { error, count } = await supabase
+      .from('unified_props')
+      .update({ is_active: false })
+      .lt('commence_time', now)
+      .eq('is_active', true);
+    
+    if (error) {
+      console.error('[PVS] Cleanup error:', error);
+    } else {
+      console.log(`[PVS] Deactivated ${count || 0} old props`);
+    }
+    return count || 0;
+  };
+
   const handleScanProps = async () => {
     setIsScanning(true);
     try {
+      // First cleanup old props
+      const cleanedCount = await cleanupOldProps();
       console.log('[PVS] Scanning for new props from The Odds API...');
+      
       const { data, error } = await supabase.functions.invoke('pvs-data-ingestion', {
         body: { mode: 'all' }
       });
@@ -63,7 +85,16 @@ export function PVSPropCalculator() {
         console.error('[PVS] Scan error:', error);
         toast.error('Failed to scan props');
       } else {
-        toast.success(`Scanned ${data?.propsIngested || 0} new props`);
+        const games = data?.gamesFound || [];
+        const propsCount = data?.propsIngested || 0;
+        
+        if (games.length > 0) {
+          toast.success(`Found ${propsCount} props for ${games.length} games`, {
+            description: games.slice(0, 3).join(', ') + (games.length > 3 ? '...' : '')
+          });
+        } else {
+          toast.success(`Scanned ${propsCount} props${cleanedCount > 0 ? `, cleaned ${cleanedCount} old` : ''}`);
+        }
         await refetch();
       }
     } catch (error) {
