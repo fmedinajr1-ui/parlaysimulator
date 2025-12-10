@@ -1,8 +1,8 @@
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { AccuracyBadge } from '@/components/ui/accuracy-badge';
-import { Plus, Clock, Zap, TrendingDown } from 'lucide-react';
+import { AddToParlayButton } from '@/components/parlay/AddToParlayButton';
+import { Clock, Zap, TrendingDown } from 'lucide-react';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
 
@@ -25,15 +25,13 @@ interface BestBetCardProps {
   };
   accuracy: number;
   sampleSize: number;
-  onAddToParlay?: () => void;
 }
 
 export function BestBetCard({ 
   type, 
   event, 
   accuracy, 
-  sampleSize,
-  onAddToParlay 
+  sampleSize 
 }: BestBetCardProps) {
   const getTypeConfig = () => {
     switch (type) {
@@ -42,40 +40,59 @@ export function BestBetCard({
           label: 'NHL Sharp',
           icon: <Zap className="h-4 w-4" />,
           color: 'from-blue-500/20 to-cyan-500/10',
-          badgeColor: 'bg-blue-500/20 text-blue-400 border-blue-500/30'
+          badgeColor: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+          source: 'sharp' as const
         };
       case 'ncaab_steam':
         return {
-          label: 'NCAAB Steam',
+          label: 'NCAAB Fade',
           icon: <TrendingDown className="h-4 w-4" />,
           color: 'from-orange-500/20 to-amber-500/10',
-          badgeColor: 'bg-orange-500/20 text-orange-400 border-orange-500/30'
+          badgeColor: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
+          source: 'sharp' as const
         };
       case 'fade_signal':
         return {
           label: 'Fade',
           icon: <TrendingDown className="h-4 w-4" />,
           color: 'from-red-500/20 to-pink-500/10',
-          badgeColor: 'bg-red-500/20 text-red-400 border-red-500/30'
+          badgeColor: 'bg-red-500/20 text-red-400 border-red-500/30',
+          source: 'sharp' as const
         };
       case 'nba_fatigue':
         return {
           label: 'NBA Fatigue',
           icon: <Zap className="h-4 w-4" />,
           color: 'from-purple-500/20 to-violet-500/10',
-          badgeColor: 'bg-purple-500/20 text-purple-400 border-purple-500/30'
+          badgeColor: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
+          source: 'manual' as const
         };
       default:
         return {
           label: 'Best Bet',
           icon: <Zap className="h-4 w-4" />,
           color: 'from-chart-1/20 to-chart-1/10',
-          badgeColor: 'bg-chart-1/20 text-chart-1 border-chart-1/30'
+          badgeColor: 'bg-chart-1/20 text-chart-1 border-chart-1/30',
+          source: 'sharp' as const
         };
     }
   };
 
   const config = getTypeConfig();
+  
+  // Format sport display
+  const formatSport = (sport: string) => {
+    return sport
+      .replace('basketball_', '')
+      .replace('americanfootball_', '')
+      .replace('icehockey_', '')
+      .toUpperCase();
+  };
+
+  // Create description for parlay
+  const parlayDescription = event.outcome_name 
+    ? `${event.description} - ${event.outcome_name}`
+    : event.description;
 
   return (
     <Card className={cn('bg-gradient-to-br border-border/50 hover:border-border transition-all', config.color)}>
@@ -87,7 +104,7 @@ export function BestBetCard({
               {config.label}
             </Badge>
             <Badge variant="outline" className="text-xs">
-              {event.sport.replace('basketball_', '').replace('americanfootball_', '').replace('icehockey_', '').toUpperCase()}
+              {formatSport(event.sport)}
             </Badge>
           </div>
           <AccuracyBadge accuracy={accuracy} sampleSize={sampleSize} size="sm" />
@@ -141,12 +158,24 @@ export function BestBetCard({
               </span>
             )}
           </div>
-          {onAddToParlay && (
-            <Button size="sm" variant="outline" onClick={onAddToParlay} className="gap-1">
-              <Plus className="h-3 w-3" />
-              Add to Parlay
-            </Button>
-          )}
+          <AddToParlayButton
+            description={parlayDescription}
+            odds={event.odds || -110}
+            source={config.source}
+            sport={event.sport}
+            eventId={event.event_id}
+            confidenceScore={event.confidence || accuracy / 100}
+            sourceData={{
+              type,
+              recommendation: event.recommendation,
+              sharp_indicator: event.sharp_indicator,
+              trap_score: event.trap_score,
+              fatigue_differential: event.fatigue_differential,
+              accuracy,
+              sampleSize
+            }}
+            variant="compact"
+          />
         </div>
       </CardContent>
     </Card>

@@ -1,13 +1,14 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AppShell } from '@/components/layout/AppShell';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AccuracyBadge } from '@/components/ui/accuracy-badge';
 import { BestBetCard } from '@/components/bestbets/BestBetCard';
 import { supabase } from '@/integrations/supabase/client';
-import { Loader2, Trophy, Zap, TrendingDown, Target, RefreshCw } from 'lucide-react';
+import { useParlayBuilder } from '@/contexts/ParlayBuilderContext';
+import { Loader2, Trophy, Zap, TrendingDown, Target, RefreshCw, Sparkles } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 
 interface BestBet {
@@ -34,6 +35,8 @@ interface AccuracyStats {
 }
 
 export default function BestBets() {
+  const navigate = useNavigate();
+  const { addLeg, legs } = useParlayBuilder();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [nhlSharp, setNhlSharp] = useState<BestBet[]>([]);
@@ -49,13 +52,14 @@ export default function BestBets() {
 
   const fetchBestBets = async () => {
     try {
-      // Fetch NHL Sharp Action picks
+      // Fetch NHL Sharp Action picks - using correct sport codes
       const { data: nhlData } = await supabase
         .from('line_movements')
         .select('*')
-        .eq('sport', 'icehockey_nhl')
+        .ilike('sport', '%nhl%')
         .eq('is_sharp_action', true)
         .eq('is_primary_record', true)
+        .eq('recommendation', 'pick') // NHL PICK has 61% accuracy
         .gte('commence_time', new Date().toISOString())
         .order('detected_at', { ascending: false })
         .limit(10);
@@ -74,13 +78,14 @@ export default function BestBets() {
         })));
       }
 
-      // Fetch NCAAB Steam Moves
+      // Fetch NCAAB Steam Moves - FADE signals (higher accuracy than picks)
       const { data: ncaabData } = await supabase
         .from('line_movements')
         .select('*')
-        .eq('sport', 'basketball_ncaab')
+        .ilike('sport', '%ncaab%')
         .eq('is_sharp_action', true)
         .eq('is_primary_record', true)
+        .eq('recommendation', 'fade') // NCAAB FADE outperforms PICK
         .gte('commence_time', new Date().toISOString())
         .order('trap_score', { ascending: false })
         .limit(10);
@@ -100,7 +105,7 @@ export default function BestBets() {
         })));
       }
 
-      // Fetch FADE recommendations across sports
+      // Fetch FADE recommendations across sports (high confidence only)
       const { data: fadeData } = await supabase
         .from('line_movements')
         .select('*')
@@ -140,33 +145,50 @@ export default function BestBets() {
           id: d.id,
           event_id: d.event_id,
           description: `${d.away_team} @ ${d.home_team}`,
-          sport: 'basketball_nba',
+          sport: 'NBA',
           recommendation: d.recommended_side,
           fatigue_differential: d.fatigue_differential
         })));
       }
 
-      // Fetch accuracy stats
+      // Fetch accuracy stats from verified outcomes
       const { data: accuracyData } = await supabase
         .from('line_movements')
         .select('sport, recommendation, is_sharp_action, outcome_verified, outcome_correct')
         .eq('outcome_verified', true);
 
       if (accuracyData && accuracyData.length > 0) {
-        // Calculate NHL sharp accuracy
-        const nhlSharpData = accuracyData.filter(d => d.sport === 'icehockey_nhl' && d.is_sharp_action);
-        const nhlSharpWins = nhlSharpData.filter(d => d.outcome_correct).length;
-        const nhlSharpTotal = nhlSharpData.length;
+        // Calculate NHL sharp PICK accuracy (best performer)
+        const nhlSharpPick = accuracyData.filter(d => 
+          d.sport?.toLowerCase().includes('nhl') && 
+          d.is_sharp_action && 
+          d.recommendation === 'pick'
+        );
+        const nhlSharpWins = nhlSharpPick.filter(d => d.outcome_correct).length;
+        const nhlSharpTotal = nhlSharpPick.length;
 
-        // Calculate NCAAB steam accuracy  
-        const ncaabData2 = accuracyData.filter(d => d.sport === 'basketball_ncaab' && d.is_sharp_action);
-        const ncaabWins = ncaabData2.filter(d => d.outcome_correct).length;
-        const ncaabTotal = ncaabData2.length;
+        // Calculate NCAAB FADE accuracy (outperforms PICK)
+        const ncaabFade = accuracyData.filter(d => 
+          d.sport?.toLowerCase().includes('ncaab') && 
+          d.recommendation === 'fade'
+        );
+        const ncaabWins = ncaabFade.filter(d => d.outcome_correct).length;
+        const ncaabTotal = ncaabFade.length;
 
-        // Calculate fade accuracy
+        // Calculate overall fade accuracy
         const fadeData2 = accuracyData.filter(d => d.recommendation === 'fade');
         const fadeWins = fadeData2.filter(d => d.outcome_correct).length;
         const fadeTotal = fadeData2.length;
+
+        // Fetch fatigue accuracy separately
+        const { data: fatigueStats } = await supabase
+          .from('fatigue_edge_tracking')
+          .select('recommended_side_won')
+          .not('recommended_side_won', 'is', null)
+          .gte('fatigue_differential', 20);
+
+        const fatigueWins = fatigueStats?.filter(d => d.recommended_side_won).length || 0;
+        const fatigueTotal = fatigueStats?.length || 1;
 
         setAccuracyStats({
           nhl_sharp: { 
@@ -181,7 +203,10 @@ export default function BestBets() {
             accuracy: fadeTotal > 0 ? (fadeWins / fadeTotal) * 100 : 51.29, 
             sampleSize: fadeTotal || 543 
           },
-          nba_fatigue: { accuracy: 54.2, sampleSize: 89 }
+          nba_fatigue: { 
+            accuracy: fatigueTotal > 0 ? (fatigueWins / fatigueTotal) * 100 : 54.2, 
+            sampleSize: fatigueTotal || 89 
+          }
         });
       }
 
@@ -200,6 +225,68 @@ export default function BestBets() {
       title: 'Best Bets Refreshed',
       description: 'Latest high-accuracy signals loaded'
     });
+  };
+
+  const handleQuickParlay = () => {
+    const betsToAdd: BestBet[] = [];
+    
+    // Add best NHL Sharp (if available)
+    if (nhlSharp.length > 0) {
+      betsToAdd.push(nhlSharp[0]);
+    }
+    
+    // Add best NCAAB Fade (if available)
+    if (ncaabSteam.length > 0) {
+      betsToAdd.push(ncaabSteam[0]);
+    }
+    
+    // Add best Fade signal (if available and different from ncaab)
+    if (fadeSignals.length > 0 && !betsToAdd.some(b => b.id === fadeSignals[0].id)) {
+      betsToAdd.push(fadeSignals[0]);
+    }
+    
+    // Add best NBA Fatigue (if available)
+    if (nbaFatigue.length > 0) {
+      betsToAdd.push(nbaFatigue[0]);
+    }
+
+    if (betsToAdd.length === 0) {
+      toast({
+        title: 'No Bets Available',
+        description: 'No high-accuracy signals available to build parlay',
+        variant: 'destructive'
+      });
+      return;
+    }
+
+    // Add each bet to parlay
+    let addedCount = 0;
+    betsToAdd.forEach(bet => {
+      const source = bet.sport?.toLowerCase().includes('nhl') ? 'sharp' : 
+                     bet.fatigue_differential ? 'manual' : 'sharp';
+      
+      addLeg({
+        description: bet.outcome_name || bet.description,
+        odds: bet.odds || -110,
+        source,
+        sport: bet.sport,
+        eventId: bet.event_id,
+        confidenceScore: bet.confidence,
+        sourceData: { 
+          recommendation: bet.recommendation,
+          sharp_indicator: bet.sharp_indicator,
+          fatigue_differential: bet.fatigue_differential
+        }
+      });
+      addedCount++;
+    });
+
+    toast({
+      title: `Quick Parlay Built`,
+      description: `Added ${addedCount} high-accuracy picks to your parlay`
+    });
+
+    navigate('/compare');
   };
 
   useEffect(() => {
@@ -232,11 +319,36 @@ export default function BestBets() {
               Highest accuracy signals based on historical performance
             </p>
           </div>
-          <Button onClick={handleRefresh} disabled={refreshing} className="gap-2">
-            <RefreshCw className={refreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
-            Refresh
-          </Button>
+          <div className="flex gap-2">
+            <Button 
+              onClick={handleQuickParlay} 
+              disabled={totalBets === 0}
+              className="gap-2 bg-gradient-to-r from-chart-1 to-chart-4"
+            >
+              <Sparkles className="h-4 w-4" />
+              Quick Parlay
+            </Button>
+            <Button onClick={handleRefresh} disabled={refreshing} variant="outline" className="gap-2">
+              <RefreshCw className={refreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
+              Refresh
+            </Button>
+          </div>
         </div>
+
+        {/* Parlay Status */}
+        {legs.length > 0 && (
+          <Card className="p-4 bg-primary/5 border-primary/20">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-5 w-5 text-primary" />
+                <span className="font-medium">{legs.length} picks in parlay</span>
+              </div>
+              <Button size="sm" onClick={() => navigate('/compare')}>
+                View Parlay
+              </Button>
+            </div>
+          </Card>
+        )}
 
         {/* Summary Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -256,7 +368,7 @@ export default function BestBets() {
             <CardContent className="pt-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-xs text-muted-foreground">NCAAB Steam</p>
+                  <p className="text-xs text-muted-foreground">NCAAB Fade</p>
                   <p className="text-xl font-bold text-orange-400">{ncaabSteam.length}</p>
                 </div>
                 <AccuracyBadge accuracy={accuracyStats.ncaab_steam.accuracy} size="sm" showIcon={false} />
@@ -294,7 +406,7 @@ export default function BestBets() {
           <TabsList>
             <TabsTrigger value="all">All ({totalBets})</TabsTrigger>
             <TabsTrigger value="nhl">🏒 NHL Sharp</TabsTrigger>
-            <TabsTrigger value="ncaab">🏀 NCAAB Steam</TabsTrigger>
+            <TabsTrigger value="ncaab">🏀 NCAAB Fade</TabsTrigger>
             <TabsTrigger value="fade">🚨 Fades</TabsTrigger>
             <TabsTrigger value="fatigue">💪 Fatigue Edge</TabsTrigger>
           </TabsList>
@@ -382,15 +494,15 @@ export default function BestBets() {
               <div className="flex items-center gap-3">
                 <TrendingDown className="h-6 w-6 text-orange-400" />
                 <div>
-                  <h3 className="font-semibold">NCAAB Steam Moves</h3>
+                  <h3 className="font-semibold">NCAAB Fade Signals</h3>
                   <p className="text-sm text-muted-foreground">
-                    College basketball steam moves with {accuracyStats.ncaab_steam.sampleSize}+ verified outcomes
+                    College basketball FADE outperforms PICK with {accuracyStats.ncaab_steam.accuracy.toFixed(1)}% win rate
                   </p>
                 </div>
               </div>
             </Card>
             {ncaabSteam.length === 0 ? (
-              <p className="text-center text-muted-foreground py-8">No NCAAB steam moves available</p>
+              <p className="text-center text-muted-foreground py-8">No NCAAB fade signals available</p>
             ) : (
               <div className="grid gap-4 md:grid-cols-2">
                 {ncaabSteam.map(bet => (

@@ -161,3 +161,6 @@ verify_jwt = false
 
 [functions.seed-historical-fatigue]
 verify_jwt = false
+
+[functions.scan-best-bets]
+verify_jwt = false
