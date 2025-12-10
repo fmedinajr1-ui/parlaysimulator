@@ -1,7 +1,7 @@
-// Service Worker for PWA - Parlay Farm - v20251209
+// Service Worker for PWA - Parlay Farm - v20251210
 // Force cache bust on version change
 
-const CACHE_NAME = 'parlay-farm-v20251209';
+const CACHE_NAME = 'parlay-farm-v20251210';
 const OFFLINE_URL = '/';
 
 // Assets to cache immediately on install
@@ -15,13 +15,13 @@ const PRECACHE_ASSETS = [
 
 // Install event - skip waiting to activate immediately
 self.addEventListener('install', (event) => {
-  console.log('[SW] Installing service worker v20251209...');
+  console.log('[SW] Installing service worker v20251210...');
   self.skipWaiting();
 });
 
 // Activate event - clean up ALL old caches and claim clients
 self.addEventListener('activate', (event) => {
-  console.log('[SW] Activating service worker v20251209...');
+  console.log('[SW] Activating service worker v20251210...');
   
   event.waitUntil(
     caches.keys()
