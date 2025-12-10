@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Search, RefreshCw, Trophy } from "lucide-react";
+import { Search, RefreshCw, Trophy, Scan, BarChart3, Sparkles } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { PVSProp, PVSTier } from "@/types/pvs";
 import { PVSPropCard } from "./PVSPropCard";
@@ -8,6 +8,7 @@ import { PVSParlayBuilder } from "./PVSParlayBuilder";
 import { MetricCard } from "./MetricCard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
 const PROP_TYPE_OPTIONS = [
   { value: 'all', label: 'All Props' },
@@ -29,6 +30,9 @@ export function PVSPropCalculator() {
   const [selectedTier, setSelectedTier] = useState<PVSTier | "all">("all");
   const [selectedPropType, setSelectedPropType] = useState<string>("all");
   const [selectedProps, setSelectedProps] = useState<PVSProp[]>([]);
+  const [isScanning, setIsScanning] = useState(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const { data: props, isLoading, refetch } = useQuery({
@@ -47,32 +51,88 @@ export function PVSPropCalculator() {
     }
   });
 
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
+  const handleScanProps = async () => {
+    setIsScanning(true);
     try {
-      console.log('[PVS] Running data ingestion...');
-      await supabase.functions.invoke('pvs-data-ingestion', {
+      console.log('[PVS] Scanning for new props from The Odds API...');
+      const { data, error } = await supabase.functions.invoke('pvs-data-ingestion', {
         body: { mode: 'all' }
       });
       
+      if (error) {
+        console.error('[PVS] Scan error:', error);
+        toast.error('Failed to scan props');
+      } else {
+        toast.success(`Scanned ${data?.propsIngested || 0} new props`);
+        await refetch();
+      }
+    } catch (error) {
+      console.error('Error scanning props:', error);
+      toast.error('Error scanning props');
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  const handleAnalyze = async () => {
+    setIsAnalyzing(true);
+    try {
       console.log('[PVS] Running unified props engine with PVS scoring...');
       const { data, error } = await supabase.functions.invoke('unified-props-engine', {
         body: { sports: ['basketball_nba'] }
       });
       
       if (error) {
-        console.error('[PVS] Engine error:', error);
+        console.error('[PVS] Analyze error:', error);
+        toast.error('Failed to analyze props');
       } else {
-        console.log('[PVS] Engine result:', data);
+        toast.success(`Analyzed ${data?.totalPropsAnalyzed || 0} props with PVS scoring`);
+        await refetch();
       }
-      
-      await refetch();
     } catch (error) {
-      console.error('Error refreshing props:', error);
+      console.error('Error analyzing props:', error);
+      toast.error('Error analyzing props');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const handleGenerate = async () => {
+    setIsGenerating(true);
+    try {
+      console.log('[PVS] Generating AI-powered parlays...');
+      const { data, error } = await supabase.functions.invoke('build-hitrate-parlays', {
+        body: { sport: 'basketball_nba' }
+      });
+      
+      if (error) {
+        console.error('[PVS] Generate error:', error);
+        toast.error('Failed to generate parlays');
+      } else {
+        toast.success(`Generated ${data?.parlaysCreated || 0} AI parlays`);
+      }
+    } catch (error) {
+      console.error('Error generating parlays:', error);
+      toast.error('Error generating parlays');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await refetch();
+      toast.success('Data refreshed');
+    } catch (error) {
+      console.error('Error refreshing:', error);
+      toast.error('Error refreshing data');
     } finally {
       setIsRefreshing(false);
     }
   };
+
+  const isAnyLoading = isScanning || isAnalyzing || isGenerating || isRefreshing;
 
   // Deduplicate props by player_name + prop_type + current_line, keeping the best odds/highest PVS score
   const deduplicatedProps = useMemo(() => {
@@ -132,25 +192,57 @@ export function PVSPropCalculator() {
   return (
     <div className="app-wrapper">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2 text-white">
-            <Trophy className="h-6 w-6 text-[#00ff8c]" />
-            PVS Calculator
-          </h1>
-          <p className="text-gray-400 text-sm mt-1">
-            Perfect Parlay Leg Score • AI-Powered NBA Prop Analysis
-          </p>
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold flex items-center gap-2 text-white">
+              <Trophy className="h-6 w-6 text-[#00ff8c]" />
+              PVS Calculator
+            </h1>
+            <p className="text-gray-400 text-sm mt-1">
+              Perfect Parlay Leg Score • AI-Powered NBA Prop Analysis
+            </p>
+          </div>
         </div>
         
-        <button
-          onClick={handleRefresh}
-          disabled={isRefreshing}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl border border-white/20 text-white hover:bg-white/5 transition-colors disabled:opacity-50"
-        >
-          <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
-          {isRefreshing ? "Analyzing..." : "Refresh Props"}
-        </button>
+        {/* Action Buttons Row */}
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={handleScanProps}
+            disabled={isAnyLoading}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#00ff8c]/10 border border-[#00ff8c]/30 text-[#00ff8c] hover:bg-[#00ff8c]/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Scan className={cn("h-4 w-4", isScanning && "animate-pulse")} />
+            {isScanning ? "Scanning..." : "Scan Props"}
+          </button>
+          
+          <button
+            onClick={handleAnalyze}
+            disabled={isAnyLoading}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-400 hover:bg-blue-500/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <BarChart3 className={cn("h-4 w-4", isAnalyzing && "animate-pulse")} />
+            {isAnalyzing ? "Analyzing..." : "Analyze"}
+          </button>
+          
+          <button
+            onClick={handleGenerate}
+            disabled={isAnyLoading}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-purple-500/10 border border-purple-500/30 text-purple-400 hover:bg-purple-500/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Sparkles className={cn("h-4 w-4", isGenerating && "animate-spin")} />
+            {isGenerating ? "Generating..." : "Generate"}
+          </button>
+          
+          <button
+            onClick={handleRefresh}
+            disabled={isAnyLoading}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl border border-white/20 text-white hover:bg-white/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
+            {isRefreshing ? "Refreshing..." : "Refresh"}
+          </button>
+        </div>
       </div>
 
       {/* Metrics Row */}
