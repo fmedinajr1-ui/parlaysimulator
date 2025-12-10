@@ -1,5 +1,3 @@
-import { useCallback } from 'react';
-
 type HapticPattern = 'light' | 'medium' | 'heavy' | 'success' | 'warning' | 'error' | 'selection';
 
 const patterns: Record<HapticPattern, number | number[]> = {
@@ -12,29 +10,26 @@ const patterns: Record<HapticPattern, number | number[]> = {
   selection: 5,
 };
 
-export function useHapticFeedback() {
-  const vibrate = useCallback((pattern: HapticPattern = 'light') => {
-    if ('vibrate' in navigator) {
+// Simple vibrate function - no hooks needed
+const vibrate = (pattern: HapticPattern = 'light') => {
+  try {
+    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
       navigator.vibrate(patterns[pattern]);
     }
-  }, []);
+  } catch {
+    // Silently fail if vibration not supported
+  }
+};
 
-  const lightTap = useCallback(() => vibrate('light'), [vibrate]);
-  const mediumTap = useCallback(() => vibrate('medium'), [vibrate]);
-  const heavyTap = useCallback(() => vibrate('heavy'), [vibrate]);
-  const success = useCallback(() => vibrate('success'), [vibrate]);
-  const warning = useCallback(() => vibrate('warning'), [vibrate]);
-  const error = useCallback(() => vibrate('error'), [vibrate]);
-  const selection = useCallback(() => vibrate('selection'), [vibrate]);
-
+export function useHapticFeedback() {
   return {
     vibrate,
-    lightTap,
-    mediumTap,
-    heavyTap,
-    success,
-    warning,
-    error,
-    selection,
+    lightTap: () => vibrate('light'),
+    mediumTap: () => vibrate('medium'),
+    heavyTap: () => vibrate('heavy'),
+    success: () => vibrate('success'),
+    warning: () => vibrate('warning'),
+    error: () => vibrate('error'),
+    selection: () => vibrate('selection'),
   };
 }

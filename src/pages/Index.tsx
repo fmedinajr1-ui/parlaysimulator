@@ -17,12 +17,12 @@ import { Link } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
 import { Zap, BarChart3, Sparkles, Trophy } from "lucide-react";
 
-const QuickAction = React.memo(({ to, icon: Icon, label, iconClass }: { 
+function QuickAction({ to, icon: Icon, label, iconClass }: { 
   to: string; 
   icon: React.ElementType; 
   label: string;
   iconClass?: string;
-}) => {
+}) {
   const { lightTap } = useHapticFeedback();
   
   return (
@@ -33,9 +33,7 @@ const QuickAction = React.memo(({ to, icon: Icon, label, iconClass }: {
       </div>
     </Link>
   );
-});
-
-QuickAction.displayName = 'QuickAction';
+}
 
 const Index = () => {
   const { lightTap, success } = useHapticFeedback();
