@@ -164,3 +164,6 @@ verify_jwt = false
 
 [functions.scan-best-bets]
 verify_jwt = false
+
+[functions.calculate-line-value]
+verify_jwt = false

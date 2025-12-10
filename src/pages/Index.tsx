@@ -7,6 +7,8 @@ import { SampleParlayButton } from "@/components/SampleParlayButton";
 import { SuggestedParlays } from "@/components/suggestions/SuggestedParlays";
 import { OddsMovementCard } from "@/components/results/OddsMovementCard";
 import { CompareTeaser } from "@/components/CompareTeaser";
+import { HistoricalInsights } from "@/components/suggestions/HistoricalInsights";
+import { SmartBettingEdge } from "@/components/suggestions/SmartBettingEdge";
 import { PullToRefreshContainer, PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
 import { useHapticFeedback } from "@/hooks/useHapticFeedback";
@@ -94,6 +96,16 @@ const Index = () => {
         {/* AI Suggested Parlays */}
         <div className="mb-5 content-visibility-auto">
           <SuggestedParlays />
+        </div>
+
+        {/* Historical Trends */}
+        <div className="mb-5 content-visibility-auto">
+          <HistoricalInsights compact />
+        </div>
+
+        {/* Smart Betting Edge */}
+        <div className="mb-5 content-visibility-auto">
+          <SmartBettingEdge compact />
         </div>
 
         {/* Live Line Movements */}

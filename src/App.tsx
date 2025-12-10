@@ -33,6 +33,7 @@ const GodModeUpsets = React.lazy(() => import("./pages/GodModeUpsets"));
 const GodModeDashboard = React.lazy(() => import("./pages/GodModeDashboard"));
 const HitRate = React.lazy(() => import("./pages/HitRate"));
 const BestBets = React.lazy(() => import("./pages/BestBets"));
+const SharpComparison = React.lazy(() => import("./pages/SharpComparison"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -89,6 +90,7 @@ function AnimatedRoutes() {
             <Route path="/god-mode-tracker" element={<GodModeDashboard />} />
             <Route path="/hitrate" element={<HitRate />} />
             <Route path="/best-bets" element={<BestBets />} />
+            <Route path="/sharp-comparison" element={<SharpComparison />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </React.Suspense>
