@@ -173,8 +173,18 @@ async function analyzeEvent(supabase: any, event: any, sport: string) {
 
   // Classify confidence
   const confidence = classifyConfidence(adjustedUpsetScore, sharpPct, chessEv);
-  const riskLevel = calculateRiskLevel(adjustedUpsetScore, underdogOdds);
-  const suggestion = determineSuggestion(adjustedUpsetScore, confidence, underdogOdds);
+  
+  // Apply confidence-based weighting to final score
+  // High confidence predictions get boosted, low confidence get penalized
+  let confidenceAdjustedScore = adjustedUpsetScore;
+  if (confidence === 'high') {
+    confidenceAdjustedScore = Math.min(100, adjustedUpsetScore * 1.15);
+  } else if (confidence === 'low') {
+    confidenceAdjustedScore = adjustedUpsetScore * 0.7;
+  }
+  
+  const riskLevel = calculateRiskLevel(confidenceAdjustedScore, underdogOdds);
+  const suggestion = determineSuggestion(confidenceAdjustedScore, confidence, underdogOdds);
 
   // Build signals array with record differential
   const signals = buildSignals(sharpPct, chessEv, upsetValueScore, recordDiffScore, homeCourtAdvantage, historicalDayBoost, monteCarloBoost);
@@ -198,7 +208,8 @@ async function analyzeEvent(supabase: any, event: any, sport: string) {
     favorite,
     favorite_odds: favoriteOdds,
     commence_time,
-    final_upset_score: Math.round(adjustedUpsetScore * 10) / 10,
+    // Use confidence-adjusted score for final output
+    final_upset_score: Math.round(confidenceAdjustedScore * 10) / 10,
     upset_probability: Math.round(upsetProbability * 10) / 10,
     sharp_pct: Math.round(sharpPct * 10) / 10,
     chess_ev: Math.round(chessEv * 10) / 10,

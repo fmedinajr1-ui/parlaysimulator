@@ -182,6 +182,51 @@ export type Database = {
         }
         Relationships: []
       }
+      best_bets_log: {
+        Row: {
+          accuracy_at_time: number | null
+          created_at: string | null
+          description: string | null
+          event_id: string
+          id: string
+          odds: number | null
+          outcome: boolean | null
+          prediction: string
+          sample_size_at_time: number | null
+          signal_type: string
+          sport: string
+          verified_at: string | null
+        }
+        Insert: {
+          accuracy_at_time?: number | null
+          created_at?: string | null
+          description?: string | null
+          event_id: string
+          id?: string
+          odds?: number | null
+          outcome?: boolean | null
+          prediction: string
+          sample_size_at_time?: number | null
+          signal_type: string
+          sport: string
+          verified_at?: string | null
+        }
+        Update: {
+          accuracy_at_time?: number | null
+          created_at?: string | null
+          description?: string | null
+          event_id?: string
+          id?: string
+          odds?: number | null
+          outcome?: boolean | null
+          prediction?: string
+          sample_size_at_time?: number | null
+          signal_type?: string
+          sport?: string
+          verified_at?: string | null
+        }
+        Relationships: []
+      }
       cron_job_history: {
         Row: {
           completed_at: string | null
