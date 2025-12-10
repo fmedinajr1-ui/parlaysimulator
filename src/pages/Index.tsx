@@ -13,7 +13,7 @@ import { useHapticFeedback } from "@/hooks/useHapticFeedback";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
-import { Zap, BarChart3, Sparkles } from "lucide-react";
+import { Zap, BarChart3, Sparkles, Trophy } from "lucide-react";
 
 const QuickAction = React.memo(({ to, icon: Icon, label, iconClass }: { 
   to: string; 
@@ -71,6 +71,7 @@ const Index = () => {
             <QuickAction to="/upload" icon={BarChart3} label="Analyze" iconClass="text-primary" />
             <QuickAction to="/sharp" icon={Zap} label="Sharp Money" iconClass="text-neon-yellow" />
             <QuickAction to="/suggestions" icon={Sparkles} label="AI Picks" iconClass="text-neon-purple" />
+            <QuickAction to="/best-bets" icon={Trophy} label="Best Bets" iconClass="text-chart-4" />
           </div>
         </div>
 

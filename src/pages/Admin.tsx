@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { AILearningDashboard } from '@/components/admin/AILearningDashboard';
 import { SharpMoneyPanel } from '@/components/admin/SharpMoneyPanel';
+import { GodModeDashboard } from '@/components/upsets/GodModeDashboard';
 import SharpLineCalculator from '@/components/admin/SharpLineCalculator';
 import { MovementAccuracyDashboard } from '@/components/admin/MovementAccuracyDashboard';
 import { CollaboratorManager } from '@/components/admin/CollaboratorManager';
@@ -67,7 +68,8 @@ type AdminSection =
   | 'sharp-engine' 
   | 'movement' 
   | 'users' 
-  | 'parlays';
+  | 'parlays'
+  | 'god-mode';
 
 const sectionConfig = [
   {
@@ -111,6 +113,13 @@ const sectionConfig = [
     description: 'Settle and manage user parlays',
     icon: FileText,
     color: 'text-pink-500'
+  },
+  {
+    id: 'god-mode' as AdminSection,
+    title: 'God Mode Dashboard',
+    description: 'Upset predictions and chaos mode analysis',
+    icon: Target,
+    color: 'text-purple-500'
   },
 ];
 
@@ -423,6 +432,9 @@ export default function Admin() {
             <ApprovedUsersManager />
           </div>
         );
+      
+      case 'god-mode':
+        return <GodModeDashboard />;
       
       case 'parlays':
         return (
