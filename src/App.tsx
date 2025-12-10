@@ -45,14 +45,11 @@ const queryClient = new QueryClient({
 });
 
 const pageVariants = {
-  initial: { opacity: 0, y: 8 },
-  animate: { opacity: 1, y: 0 },
-  exit: { opacity: 0, y: -8 },
+  initial: { opacity: 0 },
+  animate: { opacity: 1 },
 };
 
 const pageTransition = {
-  type: "tween" as const,
-  ease: [0.25, 0.1, 0.25, 1] as const,
   duration: 0.15,
 };
 
@@ -60,12 +57,11 @@ function AnimatedRoutes() {
   const location = useLocation();
   
   return (
-    <AnimatePresence mode="wait" initial={false}>
+    <AnimatePresence initial={false}>
       <motion.div
         key={location.pathname}
         initial="initial"
         animate="animate"
-        exit="exit"
         variants={pageVariants}
         transition={pageTransition}
       >
