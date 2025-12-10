@@ -167,3 +167,6 @@ verify_jwt = false
 
 [functions.calculate-line-value]
 verify_jwt = false
+
+[functions.ai-best-bets-engine]
+verify_jwt = false
