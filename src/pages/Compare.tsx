@@ -10,7 +10,8 @@ import { createLeg, simulateParlay, americanToDecimal } from '@/lib/parlay-calcu
 import { ParlayLeg, ParlaySimulation } from '@/types/parlay';
 import { toast } from '@/hooks/use-toast';
 import { useTutorial } from '@/hooks/useTutorial';
-import { Plus, Scale, Loader2, RotateCcw, HelpCircle } from 'lucide-react';
+import { Plus, Scale, Loader2, RotateCcw, HelpCircle, Home } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 interface SlotState {
   id: string;
@@ -207,6 +208,13 @@ const Compare = () => {
         {/* Header - compact for mobile */}
         <div className="text-center mb-4 header-compact">
           <div className="flex items-center justify-center gap-2">
+            <Link 
+              to="/" 
+              className="p-1.5 text-muted-foreground hover:text-foreground transition-colors"
+              aria-label="Go home"
+            >
+              <Home className="w-5 h-5" />
+            </Link>
             <h1 className="font-display text-2xl sm:text-3xl text-gradient-fire">
               ⚖️ COMPARE PARLAYS
             </h1>
