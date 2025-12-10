@@ -4,7 +4,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
+import { AccuracyBadge } from '@/components/ui/accuracy-badge';
 import { 
   Zap, 
   RefreshCw, 
@@ -12,14 +14,22 @@ import {
   Target, 
   AlertTriangle,
   Activity,
-  Loader2
+  Loader2,
+  Filter
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from '@/hooks/use-toast';
 import { GodModeUpsetCard } from './GodModeUpsetCard';
 import { ChaosModeIndicator } from './ChaosModeIndicator';
 import { UpsetScoreGauge } from './UpsetScoreGauge';
 import type { GodModeUpsetPrediction, GodModeAccuracyMetrics } from '@/types/god-mode';
+
+// Accuracy stats by confidence level
+const CONFIDENCE_ACCURACY: Record<string, { accuracy: number; sampleSize: number }> = {
+  high: { accuracy: 38.46, sampleSize: 26 },
+  medium: { accuracy: 24.63, sampleSize: 67 },
+  low: { accuracy: 15.2, sampleSize: 125 }
+};
 
 export function GodModeDashboard() {
   const [predictions, setPredictions] = useState<GodModeUpsetPrediction[]>([]);
@@ -27,7 +37,7 @@ export function GodModeDashboard() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedSport, setSelectedSport] = useState('all');
-  const { toast } = useToast();
+  const [hideLowestConfidence, setHideLowestConfidence] = useState(true);
 
   // Fetch predictions
   const fetchPredictions = async () => {
@@ -154,13 +164,16 @@ export function GodModeDashboard() {
     };
   }, []);
 
-  // Filter predictions by sport
-  const filteredPredictions = selectedSport === 'all' 
-    ? predictions 
-    : predictions.filter(p => p.sport === selectedSport);
+  // Filter predictions by sport and confidence
+  const filteredPredictions = predictions.filter(p => {
+    const sportMatch = selectedSport === 'all' || p.sport === selectedSport;
+    const confidenceMatch = !hideLowestConfidence || p.confidence !== 'low';
+    return sportMatch && confidenceMatch;
+  });
 
   // Stats
   const highConfidence = filteredPredictions.filter(p => p.confidence === 'high');
+  const mediumConfidence = filteredPredictions.filter(p => p.confidence === 'medium');
   const chaosGames = filteredPredictions.filter(p => p.chaos_mode_active);
   const globalChaos = chaosGames.length >= 3;
   const avgChaos = chaosGames.length > 0 
@@ -243,30 +256,65 @@ export function GodModeDashboard() {
       </div>
 
       {/* Controls */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <Tabs value={selectedSport} onValueChange={setSelectedSport}>
-          <TabsList>
-            <TabsTrigger value="all">All Sports</TabsTrigger>
-            {sports.map(sport => (
-              <TabsTrigger key={sport} value={sport}>
-                {sport.replace('basketball_', '').replace('americanfootball_', '').toUpperCase()}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <Tabs value={selectedSport} onValueChange={setSelectedSport}>
+            <TabsList>
+              <TabsTrigger value="all">All Sports</TabsTrigger>
+              {sports.map(sport => (
+                <TabsTrigger key={sport} value={sport}>
+                  {sport.replace('basketball_', '').replace('americanfootball_', '').toUpperCase()}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
 
-        <Button 
-          onClick={runEngine} 
-          disabled={refreshing}
-          className="gap-2"
-        >
-          {refreshing ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <RefreshCw className="h-4 w-4" />
-          )}
-          Refresh Analysis
-        </Button>
+          <Button 
+            onClick={runEngine} 
+            disabled={refreshing}
+            className="gap-2"
+          >
+            {refreshing ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            Refresh Analysis
+          </Button>
+        </div>
+
+        {/* Confidence Filter */}
+        <Card className="p-3 bg-muted/30">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Filter className="h-4 w-4 text-muted-foreground" />
+              <div className="flex items-center gap-2">
+                <Switch 
+                  id="hide-low" 
+                  checked={hideLowestConfidence}
+                  onCheckedChange={setHideLowestConfidence}
+                />
+                <Label htmlFor="hide-low" className="text-sm cursor-pointer">
+                  Hide low confidence predictions
+                </Label>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 text-xs">
+              <div className="flex items-center gap-1.5">
+                <Badge variant="outline" className="bg-chart-2/20 text-chart-2 border-chart-2/30">High</Badge>
+                <span className="text-muted-foreground">{CONFIDENCE_ACCURACY.high.accuracy}%</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Badge variant="outline" className="bg-chart-4/20 text-chart-4 border-chart-4/30">Med</Badge>
+                <span className="text-muted-foreground">{CONFIDENCE_ACCURACY.medium.accuracy}%</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Badge variant="outline" className="bg-muted text-muted-foreground">Low</Badge>
+                <span className="text-muted-foreground">{CONFIDENCE_ACCURACY.low.accuracy}%</span>
+              </div>
+            </div>
+          </div>
+        </Card>
       </div>
 
       {/* Predictions Grid */}

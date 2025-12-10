@@ -32,6 +32,7 @@ const PVSCalculator = React.lazy(() => import("./pages/PVSCalculator"));
 const GodModeUpsets = React.lazy(() => import("./pages/GodModeUpsets"));
 const GodModeDashboard = React.lazy(() => import("./pages/GodModeDashboard"));
 const HitRate = React.lazy(() => import("./pages/HitRate"));
+const BestBets = React.lazy(() => import("./pages/BestBets"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -87,6 +88,7 @@ function AnimatedRoutes() {
             <Route path="/god-mode" element={<GodModeUpsets />} />
             <Route path="/god-mode-tracker" element={<GodModeDashboard />} />
             <Route path="/hitrate" element={<HitRate />} />
+            <Route path="/best-bets" element={<BestBets />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </React.Suspense>

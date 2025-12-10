@@ -1,0 +1,154 @@
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { AccuracyBadge } from '@/components/ui/accuracy-badge';
+import { Plus, Clock, Zap, TrendingDown } from 'lucide-react';
+import { format } from 'date-fns';
+import { cn } from '@/lib/utils';
+
+interface BestBetCardProps {
+  type: 'nhl_sharp' | 'ncaab_steam' | 'fade_signal' | 'nba_fatigue';
+  event: {
+    id: string;
+    event_id: string;
+    description: string;
+    sport: string;
+    commence_time?: string;
+    recommendation: string;
+    confidence?: number;
+    odds?: number;
+    player_name?: string;
+    outcome_name?: string;
+    sharp_indicator?: string;
+    trap_score?: number;
+    fatigue_differential?: number;
+  };
+  accuracy: number;
+  sampleSize: number;
+  onAddToParlay?: () => void;
+}
+
+export function BestBetCard({ 
+  type, 
+  event, 
+  accuracy, 
+  sampleSize,
+  onAddToParlay 
+}: BestBetCardProps) {
+  const getTypeConfig = () => {
+    switch (type) {
+      case 'nhl_sharp':
+        return {
+          label: 'NHL Sharp',
+          icon: <Zap className="h-4 w-4" />,
+          color: 'from-blue-500/20 to-cyan-500/10',
+          badgeColor: 'bg-blue-500/20 text-blue-400 border-blue-500/30'
+        };
+      case 'ncaab_steam':
+        return {
+          label: 'NCAAB Steam',
+          icon: <TrendingDown className="h-4 w-4" />,
+          color: 'from-orange-500/20 to-amber-500/10',
+          badgeColor: 'bg-orange-500/20 text-orange-400 border-orange-500/30'
+        };
+      case 'fade_signal':
+        return {
+          label: 'Fade',
+          icon: <TrendingDown className="h-4 w-4" />,
+          color: 'from-red-500/20 to-pink-500/10',
+          badgeColor: 'bg-red-500/20 text-red-400 border-red-500/30'
+        };
+      case 'nba_fatigue':
+        return {
+          label: 'NBA Fatigue',
+          icon: <Zap className="h-4 w-4" />,
+          color: 'from-purple-500/20 to-violet-500/10',
+          badgeColor: 'bg-purple-500/20 text-purple-400 border-purple-500/30'
+        };
+      default:
+        return {
+          label: 'Best Bet',
+          icon: <Zap className="h-4 w-4" />,
+          color: 'from-chart-1/20 to-chart-1/10',
+          badgeColor: 'bg-chart-1/20 text-chart-1 border-chart-1/30'
+        };
+    }
+  };
+
+  const config = getTypeConfig();
+
+  return (
+    <Card className={cn('bg-gradient-to-br border-border/50 hover:border-border transition-all', config.color)}>
+      <CardHeader className="pb-2">
+        <div className="flex items-start justify-between">
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className={cn('gap-1 border', config.badgeColor)}>
+              {config.icon}
+              {config.label}
+            </Badge>
+            <Badge variant="outline" className="text-xs">
+              {event.sport.replace('basketball_', '').replace('americanfootball_', '').replace('icehockey_', '').toUpperCase()}
+            </Badge>
+          </div>
+          <AccuracyBadge accuracy={accuracy} sampleSize={sampleSize} size="sm" />
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div>
+          <p className="font-semibold text-foreground">{event.description}</p>
+          {event.player_name && (
+            <p className="text-sm text-muted-foreground">{event.player_name}</p>
+          )}
+          {event.outcome_name && (
+            <p className="text-sm font-medium text-chart-1">{event.outcome_name}</p>
+          )}
+        </div>
+
+        <div className="flex items-center gap-4 text-xs text-muted-foreground">
+          {event.commence_time && (
+            <div className="flex items-center gap-1">
+              <Clock className="h-3 w-3" />
+              {format(new Date(event.commence_time), 'MMM d, h:mm a')}
+            </div>
+          )}
+          {event.sharp_indicator && (
+            <div className="flex items-center gap-1">
+              <Zap className="h-3 w-3 text-chart-4" />
+              {event.sharp_indicator}
+            </div>
+          )}
+          {event.fatigue_differential && (
+            <Badge variant="secondary" className="text-xs">
+              Fatigue Diff: +{event.fatigue_differential}
+            </Badge>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between pt-2 border-t border-border/50">
+          <div className="flex items-center gap-2">
+            <Badge 
+              variant={event.recommendation === 'fade' ? 'destructive' : 'default'}
+              className="uppercase text-xs"
+            >
+              {event.recommendation}
+            </Badge>
+            {event.odds && (
+              <span className={cn(
+                'font-mono font-semibold',
+                event.odds > 0 ? 'text-chart-2' : 'text-foreground'
+              )}>
+                {event.odds > 0 ? '+' : ''}{event.odds}
+              </span>
+            )}
+          </div>
+          {onAddToParlay && (
+            <Button size="sm" variant="outline" onClick={onAddToParlay} className="gap-1">
+              <Plus className="h-3 w-3" />
+              Add to Parlay
+            </Button>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
