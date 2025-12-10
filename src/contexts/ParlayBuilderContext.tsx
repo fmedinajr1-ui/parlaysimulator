@@ -20,6 +20,7 @@ interface ParlayBuilderContextType {
   saveParlay: (stake: number) => Promise<boolean>;
   analyzeParlay: () => void;
   compareParlay: () => void;
+  compareToSharps: () => void;
   hasLeg: (description: string) => boolean;
 }
 
@@ -247,6 +248,21 @@ export const ParlayBuilderProvider = ({ children }: { children: React.ReactNode 
     navigate('/compare');
   }, [legs, navigate]);
 
+  const compareToSharps = React.useCallback(() => {
+    if (legs.length === 0) {
+      toast({
+        title: "No Legs",
+        description: "Add some picks to your parlay first",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Store parlay data for Sharp Comparison page
+    sessionStorage.setItem('sharp-compare-parlay', JSON.stringify(legs));
+    navigate('/sharp-comparison');
+  }, [legs, navigate]);
+
   const combinedOdds = calculateCombinedOdds(legs);
   const winProbability = calculateWinProbability(legs);
 
@@ -266,6 +282,7 @@ export const ParlayBuilderProvider = ({ children }: { children: React.ReactNode 
         saveParlay,
         analyzeParlay,
         compareParlay,
+        compareToSharps,
         hasLeg,
       }}
     >

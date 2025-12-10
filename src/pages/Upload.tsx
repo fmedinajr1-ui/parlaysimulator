@@ -10,7 +10,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { PaywallModal } from "@/components/PaywallModal";
 import { QuickCheckResults } from "@/components/upload/QuickCheckResults";
 import { UploadOptimizer } from "@/components/upload/UploadOptimizer";
-import { Plus, Upload as UploadIcon, Flame, X, Loader2, Sparkles, CheckCircle2, Clock, Pencil, CalendarIcon, Crown, Image, Shield, HelpCircle } from "lucide-react";
+import { MobileHeader } from "@/components/layout/MobileHeader";
+import { Plus, Upload as UploadIcon, Flame, X, Loader2, Sparkles, CheckCircle2, Clock, Pencil, CalendarIcon, Crown, Image, Shield, HelpCircle, Home } from "lucide-react";
 import { HintTooltip } from "@/components/tutorial/HintTooltip";
 import { useHints } from "@/hooks/useHints";
 import { Progress } from "@/components/ui/progress";
@@ -546,6 +547,23 @@ const Upload = () => {
 
   return (
     <div className="min-h-dvh bg-background pb-nav-safe touch-pan-y overflow-x-safe">
+      {/* Mobile Header with Home Navigation */}
+      <MobileHeader
+        title="Enter Your Slip"
+        subtitle="Add your legs and get analyzed"
+        showBack
+        rightAction={
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => navigate('/')}
+            className="h-9 w-9"
+          >
+            <Home className="h-5 w-5" />
+          </Button>
+        }
+      />
+
       {/* Hidden File Input */}
       <input
         ref={fileInputRef}
@@ -566,23 +584,17 @@ const Upload = () => {
       />
 
       <main className="max-w-lg mx-auto px-3 py-4">
-        {/* Header with Hint */}
-        <div className="text-center mb-5 relative">
-          <h1 className="font-display text-3xl text-gradient-fire mb-1">
-            🎟️ ENTER YOUR SLIP
-          </h1>
-          <p className="text-muted-foreground text-sm">
-            Add your legs and prepare for judgment.
-          </p>
-          {shouldShowHint('upload-intro') && (
+        {/* Hint for new users */}
+        {shouldShowHint('upload-intro') && (
+          <div className="mb-4">
             <HintTooltip
               id="upload-intro"
               message="Upload a screenshot of your parlay slip or manually enter your legs. Our AI will extract the details and analyze your bet."
               position="bottom"
               onDismiss={() => dismissHint('upload-intro')}
             />
-          )}
-        </div>
+          </div>
+        )}
 
         {/* Scan Counter / Pro Badge */}
         {user && (

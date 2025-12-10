@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronUp, ChevronDown, Trash2, LineChart, GitCompare, Save, Target } from 'lucide-react';
+import { ChevronUp, ChevronDown, Trash2, LineChart, GitCompare, Save, Target, Shield } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
@@ -23,6 +23,7 @@ export const UniversalParlayBuilder = () => {
     saveParlay,
     analyzeParlay,
     compareParlay,
+    compareToSharps,
   } = useParlayBuilder();
 
   const [stake, setStake] = useState<string>('10');
@@ -171,39 +172,48 @@ export const UniversalParlayBuilder = () => {
                 </div>
 
                 {/* Actions */}
-                <div className="p-3 grid grid-cols-4 gap-2 border-t border-border/50">
+                <div className="p-3 grid grid-cols-5 gap-1.5 border-t border-border/50">
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-9 text-xs"
+                    className="h-9 text-[10px] px-1"
                     onClick={analyzeParlay}
                   >
-                    <LineChart className="h-3 w-3 mr-1" />
+                    <LineChart className="h-3 w-3 mr-0.5" />
                     Analyze
                   </Button>
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-9 text-xs"
+                    className="h-9 text-[10px] px-1"
                     onClick={compareParlay}
                   >
-                    <GitCompare className="h-3 w-3 mr-1" />
+                    <GitCompare className="h-3 w-3 mr-0.5" />
                     Compare
                   </Button>
                   <Button
                     size="sm"
+                    variant="outline"
+                    className="h-9 text-[10px] px-1 text-primary border-primary/50"
+                    onClick={compareToSharps}
+                  >
+                    <Shield className="h-3 w-3 mr-0.5" />
+                    Sharps
+                  </Button>
+                  <Button
+                    size="sm"
                     variant="default"
-                    className="h-9 text-xs"
+                    className="h-9 text-[10px] px-1"
                     onClick={handleSave}
                     disabled={isSaving || stakeNum <= 0}
                   >
-                    <Save className="h-3 w-3 mr-1" />
+                    <Save className="h-3 w-3 mr-0.5" />
                     Save
                   </Button>
                   <Button
                     size="sm"
                     variant="destructive"
-                    className="h-9 text-xs"
+                    className="h-9 text-[10px] px-1"
                     onClick={clearParlay}
                   >
                     <Trash2 className="h-3 w-3" />
