@@ -19,10 +19,31 @@ interface JuicedProp {
   juice_direction: string;
 }
 
-// Map prop types to stat types
+// Map prop types to stat types - FIXED to match actual database values
 const PROP_TO_STAT_MAP: Record<string, string> = {
+  // Primary mappings (actual database prop_type values)
+  'Points': 'points',
+  'Rebounds': 'rebounds', 
+  'Assists': 'assists',
+  '3-Pointers': 'threes_made',
+  'Blocks': 'blocks',
+  'Steals': 'steals',
+  'Turnovers': 'turnovers',
+  'Pts+Reb+Ast': 'pra',
+  'Pts+Reb': 'pr',
+  'Pts+Ast': 'pa',
+  'Reb+Ast': 'ra',
+  // Alternative formats
+  'points': 'points',
+  'rebounds': 'rebounds',
+  'assists': 'assists',
+  'threes': 'threes_made',
+  'blocks': 'blocks',
+  'steals': 'steals',
+  'turnovers': 'turnovers',
+  // Legacy mappings (backwards compatibility)
   'player_points': 'points',
-  'player_rebounds': 'rebounds', 
+  'player_rebounds': 'rebounds',
   'player_assists': 'assists',
   'player_threes': 'threes_made',
   'player_blocks': 'blocks',
@@ -32,6 +53,12 @@ const PROP_TO_STAT_MAP: Record<string, string> = {
   'player_points_rebounds': 'pr',
   'player_points_assists': 'pa',
   'player_rebounds_assists': 'ra',
+  // NFL props
+  'Rush Yards': 'rush_yards',
+  'Pass TDs': 'pass_tds',
+  'Pass Yards': 'pass_yards',
+  'Receiving Yards': 'receiving_yards',
+  'Receptions': 'receptions',
 };
 
 // Normalize player names for matching
@@ -63,7 +90,7 @@ serve(async (req) => {
       .eq('outcome', 'pending')
       .lt('commence_time', new Date().toISOString())
       .order('commence_time', { ascending: true })
-      .limit(50);
+      .limit(100);
 
     if (fetchError) throw fetchError;
 
@@ -82,48 +109,76 @@ serve(async (req) => {
     let wonCount = 0;
     let lostCount = 0;
     let pushCount = 0;
+    let notFoundCount = 0;
 
     for (const prop of pendingProps as JuicedProp[]) {
       const statType = PROP_TO_STAT_MAP[prop.prop_type];
       if (!statType) {
-        console.log(`[VerifyJuiced] Unknown prop type: ${prop.prop_type}`);
+        console.log(`[VerifyJuiced] Unknown prop type: "${prop.prop_type}" for ${prop.player_name}`);
+        notFoundCount++;
         continue;
       }
 
       const normalizedName = normalizePlayerName(prop.player_name);
+      const nameParts = normalizedName.split(' ');
+      const firstName = nameParts[0] || '';
+      const lastName = nameParts[nameParts.length - 1] || '';
+
+      console.log(`[VerifyJuiced] Processing: ${prop.player_name} (${normalizedName}) - ${prop.prop_type} -> ${statType}`);
 
       // Try to find player stats from cache
       let actualValue: number | null = null;
 
+      // Get game date range (±1 day to handle timezone differences)
+      const gameDate = new Date(prop.commence_time);
+      const startDate = new Date(gameDate.getTime() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      const endDate = new Date(gameDate.getTime() + 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      const exactDate = gameDate.toISOString().split('T')[0];
+
       // Check player_stats_cache first
       const { data: statsCache } = await supabase
         .from('player_stats_cache')
-        .select('stat_value')
-        .ilike('player_name', `%${normalizedName.split(' ')[0]}%`)
-        .ilike('player_name', `%${normalizedName.split(' ').pop()}%`)
+        .select('stat_value, player_name')
+        .ilike('player_name', `%${firstName}%`)
+        .ilike('player_name', `%${lastName}%`)
         .eq('stat_type', statType)
-        .gte('game_date', new Date(new Date(prop.commence_time).getTime() - 24 * 60 * 60 * 1000).toISOString().split('T')[0])
-        .lte('game_date', new Date(new Date(prop.commence_time).getTime() + 24 * 60 * 60 * 1000).toISOString().split('T')[0])
+        .gte('game_date', startDate)
+        .lte('game_date', endDate)
         .limit(1);
 
       if (statsCache && statsCache.length > 0) {
         actualValue = statsCache[0].stat_value;
+        console.log(`[VerifyJuiced] Found in player_stats_cache: ${statsCache[0].player_name} = ${actualValue}`);
       }
 
-      // Check NBA game logs as fallback
-      if (actualValue === null && prop.sport.includes('basketball')) {
-        const gameDate = new Date(prop.commence_time).toISOString().split('T')[0];
-        
-        const { data: gameLogs } = await supabase
+      // Check NBA game logs as fallback for basketball
+      if (actualValue === null && (prop.sport.includes('basketball') || prop.sport.includes('NBA'))) {
+        // Try exact date first
+        let { data: gameLogs } = await supabase
           .from('nba_player_game_logs')
           .select('*')
-          .ilike('player_name', `%${normalizedName.split(' ')[0]}%`)
-          .ilike('player_name', `%${normalizedName.split(' ').pop()}%`)
-          .eq('game_date', gameDate)
+          .ilike('player_name', `%${firstName}%`)
+          .ilike('player_name', `%${lastName}%`)
+          .eq('game_date', exactDate)
           .limit(1);
+
+        // If no exact match, try date range
+        if (!gameLogs || gameLogs.length === 0) {
+          const { data: rangeGameLogs } = await supabase
+            .from('nba_player_game_logs')
+            .select('*')
+            .ilike('player_name', `%${firstName}%`)
+            .ilike('player_name', `%${lastName}%`)
+            .gte('game_date', startDate)
+            .lte('game_date', endDate)
+            .limit(1);
+          gameLogs = rangeGameLogs;
+        }
 
         if (gameLogs && gameLogs.length > 0) {
           const log = gameLogs[0];
+          console.log(`[VerifyJuiced] Found in nba_player_game_logs: ${log.player_name} on ${log.game_date}`);
+          
           switch (statType) {
             case 'points': actualValue = log.points; break;
             case 'rebounds': actualValue = log.rebounds; break;
@@ -141,7 +196,8 @@ serve(async (req) => {
       }
 
       if (actualValue === null) {
-        console.log(`[VerifyJuiced] No stats found for ${prop.player_name} - ${prop.prop_type}`);
+        console.log(`[VerifyJuiced] No stats found for ${prop.player_name} - ${prop.prop_type} (date: ${exactDate})`);
+        notFoundCount++;
         continue;
       }
 
@@ -151,7 +207,7 @@ serve(async (req) => {
       if (actualValue === prop.line) {
         outcome = 'push';
         pushCount++;
-      } else if (prop.final_pick === 'over') {
+      } else if (prop.final_pick === 'over' || prop.final_pick === 'Over') {
         outcome = actualValue > prop.line ? 'won' : 'lost';
       } else {
         outcome = actualValue < prop.line ? 'won' : 'lost';
@@ -172,7 +228,9 @@ serve(async (req) => {
 
       if (!updateError) {
         verifiedCount++;
-        console.log(`[VerifyJuiced] Verified: ${prop.player_name} ${prop.prop_type} - Line: ${prop.line}, Actual: ${actualValue}, Pick: ${prop.final_pick}, Outcome: ${outcome}`);
+        console.log(`[VerifyJuiced] ✅ Verified: ${prop.player_name} ${prop.prop_type} - Line: ${prop.line}, Actual: ${actualValue}, Pick: ${prop.final_pick}, Outcome: ${outcome}`);
+      } else {
+        console.error(`[VerifyJuiced] Update error for ${prop.id}:`, updateError);
       }
     }
 
@@ -230,9 +288,12 @@ serve(async (req) => {
         won: wonCount,
         lost: lostCount,
         push: pushCount,
+        notFound: notFoundCount,
         winRate: verifiedCount > 0 ? Math.round((wonCount / (verifiedCount - pushCount)) * 1000) / 10 : 0
       }
     });
+
+    console.log(`[VerifyJuiced] Summary: Verified=${verifiedCount}, Won=${wonCount}, Lost=${lostCount}, Push=${pushCount}, NotFound=${notFoundCount}`);
 
     return new Response(JSON.stringify({
       message: `Verified ${verifiedCount} juiced props`,
@@ -240,6 +301,7 @@ serve(async (req) => {
       won: wonCount,
       lost: lostCount,
       push: pushCount,
+      notFound: notFoundCount,
       winRate: verifiedCount > 0 ? Math.round((wonCount / (verifiedCount - pushCount)) * 1000) / 10 : 0,
       duration
     }), {
