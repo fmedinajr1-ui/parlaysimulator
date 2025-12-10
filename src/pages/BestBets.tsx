@@ -4,13 +4,16 @@ import { useNavigate } from 'react-router-dom';
 import { AppShell } from '@/components/layout/AppShell';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AccuracyBadge } from '@/components/ui/accuracy-badge';
 import { BestBetCard } from '@/components/bestbets/BestBetCard';
+import { AddToParlayButton } from '@/components/parlay/AddToParlayButton';
 import { supabase } from '@/integrations/supabase/client';
 import { useParlayBuilder } from '@/contexts/ParlayBuilderContext';
 import { Loader2, Trophy, Zap, TrendingDown, Target, RefreshCw, Sparkles } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
+import { cn } from '@/lib/utils';
 
 interface BestBet {
   id: string;
@@ -26,6 +29,10 @@ interface BestBet {
   sharp_indicator?: string;
   trap_score?: number;
   fatigue_differential?: number;
+  ai_confidence?: number;
+  composite_score?: number;
+  ai_reasoning?: string;
+  signals?: string[];
 }
 
 interface AccuracyStats {
@@ -35,21 +42,86 @@ interface AccuracyStats {
   nba_fatigue: { accuracy: number; sampleSize: number };
 }
 
+interface AIBestBet {
+  id: string;
+  event_id: string;
+  description: string;
+  sport: string;
+  recommendation: string;
+  commence_time?: string;
+  outcome_name?: string;
+  odds?: number;
+  historical_accuracy: number;
+  ai_confidence: number;
+  composite_score: number;
+  ai_reasoning?: string;
+  signals: string[];
+}
+
 export default function BestBets() {
   const navigate = useNavigate();
   const { addLeg, legs } = useParlayBuilder();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
   const [nhlSharp, setNhlSharp] = useState<BestBet[]>([]);
   const [ncaabSteam, setNcaabSteam] = useState<BestBet[]>([]);
   const [fadeSignals, setFadeSignals] = useState<BestBet[]>([]);
   const [nbaFatigue, setNbaFatigue] = useState<BestBet[]>([]);
+  const [aiBestBets, setAiBestBets] = useState<AIBestBet[]>([]);
   const [accuracyStats, setAccuracyStats] = useState<AccuracyStats>({
     nhl_sharp: { accuracy: 61.11, sampleSize: 36 },
     ncaab_steam: { accuracy: 52.31, sampleSize: 1279 },
     fade_signal: { accuracy: 51.29, sampleSize: 543 },
     nba_fatigue: { accuracy: 54.2, sampleSize: 89 }
   });
+
+  const fetchAIBestBets = async () => {
+    setAiLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('ai-best-bets-engine');
+      
+      if (error) throw error;
+      
+      if (data?.bestBets) {
+        setAiBestBets(data.bestBets);
+        
+        // Update accuracy stats from real data
+        if (data.accuracyData) {
+          const acc = data.accuracyData;
+          setAccuracyStats(prev => ({
+            ...prev,
+            nhl_sharp: { 
+              accuracy: acc.nhl_pick?.accuracy || prev.nhl_sharp.accuracy, 
+              sampleSize: acc.nhl_pick?.total || prev.nhl_sharp.sampleSize 
+            },
+            ncaab_steam: { 
+              accuracy: acc.ncaab_fade?.accuracy || prev.ncaab_steam.accuracy, 
+              sampleSize: acc.ncaab_fade?.total || prev.ncaab_steam.sampleSize 
+            },
+            fade_signal: { 
+              accuracy: acc.nba_fade?.accuracy || prev.fade_signal.accuracy, 
+              sampleSize: acc.nba_fade?.total || prev.fade_signal.sampleSize 
+            },
+          }));
+        }
+        
+        toast({
+          title: 'AI Analysis Complete',
+          description: `Found ${data.bestBets.length} high-confidence picks`
+        });
+      }
+    } catch (error) {
+      console.error('AI best bets error:', error);
+      toast({
+        title: 'AI Analysis Error',
+        description: 'Could not fetch AI-powered picks',
+        variant: 'destructive'
+      });
+    } finally {
+      setAiLoading(false);
+    }
+  };
 
   const fetchBestBets = async () => {
     try {
@@ -403,14 +475,158 @@ export default function BestBets() {
         </div>
 
         {/* Tabs for categories */}
-        <Tabs defaultValue="all" className="space-y-4">
-          <TabsList>
+        <Tabs defaultValue="ai" className="space-y-4">
+          <TabsList className="flex-wrap h-auto gap-1">
+            <TabsTrigger value="ai" className="gap-1">
+              <Sparkles className="h-3 w-3" />
+              AI Picks
+            </TabsTrigger>
             <TabsTrigger value="all">All ({totalBets})</TabsTrigger>
             <TabsTrigger value="nhl">🏒 NHL Sharp</TabsTrigger>
             <TabsTrigger value="ncaab">🏀 NCAAB Fade</TabsTrigger>
             <TabsTrigger value="fade">🚨 Fades</TabsTrigger>
             <TabsTrigger value="fatigue">💪 Fatigue Edge</TabsTrigger>
           </TabsList>
+
+          <TabsContent value="ai" className="space-y-4">
+            <Card className="p-4 bg-gradient-to-r from-chart-1/10 to-chart-4/10 border-chart-1/30">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Sparkles className="h-6 w-6 text-chart-1" />
+                  <div>
+                    <h3 className="font-semibold">AI-Powered Best Bets</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Machine learning analysis based on verified accuracy data
+                    </p>
+                  </div>
+                </div>
+                <Button 
+                  onClick={fetchAIBestBets} 
+                  disabled={aiLoading}
+                  variant="outline"
+                  className="gap-2"
+                >
+                  {aiLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-4 w-4" />
+                  )}
+                  {aiLoading ? 'Analyzing...' : 'Get AI Picks'}
+                </Button>
+              </div>
+            </Card>
+
+            {aiBestBets.length === 0 ? (
+              <Card className="p-8 text-center">
+                <Sparkles className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
+                <h3 className="text-lg font-semibold">No AI Picks Yet</h3>
+                <p className="text-muted-foreground mb-4">Click "Get AI Picks" to run the AI analysis engine</p>
+                <Button onClick={fetchAIBestBets} disabled={aiLoading}>
+                  {aiLoading ? 'Analyzing...' : 'Run AI Analysis'}
+                </Button>
+              </Card>
+            ) : (
+              <div className="space-y-4">
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                  {aiBestBets.map((bet, index) => (
+                    <Card 
+                      key={bet.id} 
+                      className={cn(
+                        "bg-gradient-to-br border-border/50 hover:border-border transition-all",
+                        index === 0 ? "from-chart-4/20 to-chart-1/10 border-chart-4/30" :
+                        index < 3 ? "from-chart-1/15 to-chart-2/5" : "from-muted/10 to-background"
+                      )}
+                    >
+                      <CardContent className="pt-4 space-y-3">
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-center gap-2">
+                            {index === 0 && (
+                              <Badge className="bg-chart-4/20 text-chart-4 border-chart-4/30">
+                                #1 Pick
+                              </Badge>
+                            )}
+                            <Badge variant="outline" className="text-xs">
+                              {bet.sport.split('_').pop()?.toUpperCase()}
+                            </Badge>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-xs text-muted-foreground">AI Confidence</div>
+                            <div className={cn(
+                              "font-bold",
+                              bet.ai_confidence >= 0.6 ? "text-chart-2" :
+                              bet.ai_confidence >= 0.5 ? "text-chart-4" : "text-muted-foreground"
+                            )}>
+                              {(bet.ai_confidence * 100).toFixed(0)}%
+                            </div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <p className="font-semibold">{bet.description}</p>
+                          {bet.outcome_name && (
+                            <p className="text-sm text-chart-1">{bet.outcome_name}</p>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap gap-1">
+                          <Badge 
+                            variant={bet.recommendation === 'fade' ? 'destructive' : 'default'}
+                            className="text-xs uppercase"
+                          >
+                            {bet.recommendation}
+                          </Badge>
+                          <Badge variant="secondary" className="text-xs">
+                            {bet.historical_accuracy.toFixed(1)}% verified
+                          </Badge>
+                          {bet.odds && (
+                            <Badge variant="outline" className="text-xs font-mono">
+                              {bet.odds > 0 ? '+' : ''}{bet.odds}
+                            </Badge>
+                          )}
+                        </div>
+
+                        {bet.signals.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {bet.signals.slice(0, 3).map((signal, i) => (
+                              <span key={i} className="text-xs text-muted-foreground bg-muted/50 px-2 py-0.5 rounded">
+                                {signal}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {bet.ai_reasoning && (
+                          <p className="text-xs text-muted-foreground italic border-t border-border/50 pt-2">
+                            "{bet.ai_reasoning}"
+                          </p>
+                        )}
+
+                        <div className="flex justify-end pt-2">
+                          <AddToParlayButton
+                            description={bet.outcome_name || bet.description}
+                            odds={bet.odds || -110}
+                            source="sharp"
+                            sport={bet.sport}
+                            eventId={bet.event_id}
+                            confidenceScore={bet.ai_confidence}
+                            sourceData={{
+                              type: 'ai_pick',
+                              recommendation: bet.recommendation,
+                              ai_confidence: bet.ai_confidence,
+                              historical_accuracy: bet.historical_accuracy,
+                              composite_score: bet.composite_score,
+                              signals: bet.signals
+                            }}
+                            variant="compact"
+                          />
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              </div>
+            )}
+          </TabsContent>
 
           <TabsContent value="all" className="space-y-4">
             {totalBets === 0 ? (

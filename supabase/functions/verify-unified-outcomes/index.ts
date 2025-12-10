@@ -6,6 +6,40 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Map prop types to stat columns in nba_player_game_logs
+const PROP_TO_STAT_MAP: Record<string, string> = {
+  // Exact database prop_type values
+  'Points': 'points',
+  'Rebounds': 'rebounds', 
+  'Assists': 'assists',
+  '3-Pointers': 'threes_made',
+  'Blocks': 'blocks',
+  'Steals': 'steals',
+  'Turnovers': 'turnovers',
+  // Legacy/alternative formats
+  'player_points': 'points',
+  'player_rebounds': 'rebounds',
+  'player_assists': 'assists',
+  'player_threes': 'threes_made',
+  'player_blocks': 'blocks',
+  'player_steals': 'steals',
+  'player_goals': 'goals',
+  'player_shots_on_goal': 'shots',
+  // Combined props (need special handling)
+  'Pts+Reb+Ast': 'pra',
+  'Pts+Reb': 'pr',
+  'Pts+Ast': 'pa',
+  'Reb+Ast': 'ra',
+};
+
+function normalizePlayerName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -36,60 +70,161 @@ serve(async (req) => {
     let verified = 0;
     let won = 0;
     let lost = 0;
+    let notFound = 0;
 
-    // Group by event for efficient API calls
-    const eventGroups = new Map<string, typeof pendingProps>();
     for (const prop of pendingProps || []) {
-      if (!eventGroups.has(prop.event_id)) {
-        eventGroups.set(prop.event_id, []);
-      }
-      eventGroups.get(prop.event_id)!.push(prop);
-    }
-
-    // Fetch player stats and verify outcomes
-    for (const [eventId, props] of eventGroups) {
       try {
-        // Check if game is completed via player stats cache
-        for (const prop of props) {
-          const { data: stats } = await supabase
-            .from('player_stats_cache')
-            .select('*')
-            .ilike('player_name', `%${prop.player_name.split(' ').pop()}%`)
-            .eq('stat_type', mapPropToStatType(prop.prop_type))
-            .gte('game_date', new Date(prop.commence_time).toISOString().split('T')[0])
-            .lte('game_date', new Date(new Date(prop.commence_time).getTime() + 24 * 60 * 60 * 1000).toISOString().split('T')[0])
-            .limit(1);
+        const propType = prop.prop_type;
+        const statColumn = PROP_TO_STAT_MAP[propType];
+        
+        if (!statColumn) {
+          console.log(`[VerifyUnified] Unknown prop type: ${propType}`);
+          continue;
+        }
 
-          if (stats && stats.length > 0) {
-            const actualValue = stats[0].stat_value;
-            const line = prop.current_line;
-            const side = prop.recommended_side;
+        const playerName = prop.player_name;
+        const normalizedName = normalizePlayerName(playerName);
+        const nameParts = normalizedName.split(' ');
+        const lastName = nameParts[nameParts.length - 1];
+        const firstName = nameParts[0];
 
-            let isWin = false;
-            if (side === 'over') {
-              isWin = actualValue > line;
-            } else if (side === 'under') {
-              isWin = actualValue < line;
-            }
+        // Calculate game date range
+        const propDate = new Date(prop.commence_time);
+        const startDate = new Date(propDate);
+        startDate.setDate(startDate.getDate() - 1);
+        const endDate = new Date(propDate);
+        endDate.setDate(endDate.getDate() + 1);
 
-            const outcome = isWin ? 'won' : 'lost';
+        // Try to find player stats from nba_player_game_logs
+        let actualValue: number | null = null;
+
+        // Handle combined props
+        if (statColumn === 'pra') {
+          const { data: logs } = await supabase
+            .from('nba_player_game_logs')
+            .select('points, rebounds, assists')
+            .or(`player_name.ilike.%${lastName}%,player_name.ilike.%${firstName}%`)
+            .gte('game_date', startDate.toISOString().split('T')[0])
+            .lte('game_date', endDate.toISOString().split('T')[0])
+            .limit(5);
+
+          if (logs && logs.length > 0) {
+            const matchedLog = logs.find(log => 
+              normalizePlayerName(log.player_name || '').includes(lastName)
+            ) || logs[0];
+            actualValue = (matchedLog.points || 0) + (matchedLog.rebounds || 0) + (matchedLog.assists || 0);
+          }
+        } else if (statColumn === 'pr') {
+          const { data: logs } = await supabase
+            .from('nba_player_game_logs')
+            .select('points, rebounds')
+            .or(`player_name.ilike.%${lastName}%,player_name.ilike.%${firstName}%`)
+            .gte('game_date', startDate.toISOString().split('T')[0])
+            .lte('game_date', endDate.toISOString().split('T')[0])
+            .limit(5);
+
+          if (logs && logs.length > 0) {
+            const matchedLog = logs.find(log => 
+              normalizePlayerName(log.player_name || '').includes(lastName)
+            ) || logs[0];
+            actualValue = (matchedLog.points || 0) + (matchedLog.rebounds || 0);
+          }
+        } else if (statColumn === 'pa') {
+          const { data: logs } = await supabase
+            .from('nba_player_game_logs')
+            .select('points, assists')
+            .or(`player_name.ilike.%${lastName}%,player_name.ilike.%${firstName}%`)
+            .gte('game_date', startDate.toISOString().split('T')[0])
+            .lte('game_date', endDate.toISOString().split('T')[0])
+            .limit(5);
+
+          if (logs && logs.length > 0) {
+            const matchedLog = logs.find(log => 
+              normalizePlayerName(log.player_name || '').includes(lastName)
+            ) || logs[0];
+            actualValue = (matchedLog.points || 0) + (matchedLog.assists || 0);
+          }
+        } else if (statColumn === 'ra') {
+          const { data: logs } = await supabase
+            .from('nba_player_game_logs')
+            .select('rebounds, assists')
+            .or(`player_name.ilike.%${lastName}%,player_name.ilike.%${firstName}%`)
+            .gte('game_date', startDate.toISOString().split('T')[0])
+            .lte('game_date', endDate.toISOString().split('T')[0])
+            .limit(5);
+
+          if (logs && logs.length > 0) {
+            const matchedLog = logs.find(log => 
+              normalizePlayerName(log.player_name || '').includes(lastName)
+            ) || logs[0];
+            actualValue = (matchedLog.rebounds || 0) + (matchedLog.assists || 0);
+          }
+        } else {
+          // Single stat - select all relevant columns
+          const { data: logs } = await supabase
+            .from('nba_player_game_logs')
+            .select('player_name, points, rebounds, assists, blocks, steals, turnovers, threes_made')
+            .or(`player_name.ilike.%${lastName}%,player_name.ilike.%${firstName}%`)
+            .gte('game_date', startDate.toISOString().split('T')[0])
+            .lte('game_date', endDate.toISOString().split('T')[0])
+            .limit(5);
+
+          if (logs && logs.length > 0) {
+            const matchedLog = logs.find((log: any) => 
+              normalizePlayerName(log.player_name || '').includes(lastName)
+            ) || logs[0];
             
-            await supabase
-              .from('unified_props')
-              .update({
-                outcome,
-                settled_at: new Date().toISOString(),
-                is_active: false
-              })
-              .eq('id', prop.id);
-
-            verified++;
-            if (isWin) won++;
-            else lost++;
+            // Map stat column to actual value
+            const statMap: Record<string, string> = {
+              'points': 'points',
+              'rebounds': 'rebounds',
+              'assists': 'assists',
+              'blocks': 'blocks',
+              'steals': 'steals',
+              'turnovers': 'turnovers',
+              'threes_made': 'threes_made'
+            };
+            
+            const actualColumn = statMap[statColumn] || statColumn;
+            actualValue = (matchedLog as any)[actualColumn];
           }
         }
+
+        if (actualValue === null) {
+          notFound++;
+          console.log(`[VerifyUnified] No stats found for ${playerName} (${propType})`);
+          continue;
+        }
+
+        const line = prop.current_line;
+        const side = prop.recommended_side;
+
+        let isWin = false;
+        if (side === 'over') {
+          isWin = actualValue > line;
+        } else if (side === 'under') {
+          isWin = actualValue < line;
+        }
+
+        const outcome = isWin ? 'won' : 'lost';
+        
+        console.log(`[VerifyUnified] ${playerName} ${propType}: ${actualValue} vs ${line} (${side}) = ${outcome}`);
+
+        await supabase
+          .from('unified_props')
+          .update({
+            outcome,
+            settled_at: new Date().toISOString(),
+            is_active: false
+          })
+          .eq('id', prop.id);
+
+        verified++;
+        if (isWin) won++;
+        else lost++;
+
       } catch (err) {
-        console.error(`[VerifyUnified] Error verifying event ${eventId}:`, err);
+        console.error(`[VerifyUnified] Error verifying prop ${prop.id}:`, err);
       }
     }
 
@@ -97,7 +232,11 @@ serve(async (req) => {
     await updateCalibration(supabase);
 
     // Also run upset calibration
-    await supabase.rpc('update_upset_calibration');
+    try {
+      await supabase.rpc('update_upset_calibration');
+    } catch (e) {
+      console.log('[VerifyUnified] Upset calibration RPC error (non-fatal):', e);
+    }
 
     const duration = Date.now() - startTime;
 
@@ -108,16 +247,17 @@ serve(async (req) => {
       started_at: new Date(startTime).toISOString(),
       completed_at: new Date().toISOString(),
       duration_ms: duration,
-      result: { verified, won, lost, winRate: verified > 0 ? (won / verified * 100).toFixed(1) : 0 }
+      result: { verified, won, lost, notFound, winRate: verified > 0 ? (won / verified * 100).toFixed(1) : 0 }
     });
 
-    console.log(`[VerifyUnified] Completed. Verified: ${verified}, Won: ${won}, Lost: ${lost}`);
+    console.log(`[VerifyUnified] Completed. Verified: ${verified}, Won: ${won}, Lost: ${lost}, Not Found: ${notFound}`);
 
     return new Response(JSON.stringify({
       success: true,
       verified,
       won,
       lost,
+      notFound,
       winRate: verified > 0 ? (won / verified * 100).toFixed(1) : 0,
       duration
     }), {
@@ -133,20 +273,6 @@ serve(async (req) => {
     });
   }
 });
-
-function mapPropToStatType(propType: string): string {
-  const mapping: Record<string, string> = {
-    'player_points': 'points',
-    'player_rebounds': 'rebounds',
-    'player_assists': 'assists',
-    'player_threes': 'threes',
-    'player_blocks': 'blocks',
-    'player_steals': 'steals',
-    'player_goals': 'goals',
-    'player_shots_on_goal': 'shots'
-  };
-  return mapping[propType] || propType;
-}
 
 async function updateCalibration(supabase: any): Promise<void> {
   try {
