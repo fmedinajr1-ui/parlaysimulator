@@ -22,16 +22,16 @@ serve(async (req) => {
       );
     }
 
-    const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
-    if (!OPENAI_API_KEY) {
-      console.error("OPENAI_API_KEY is not configured");
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    if (!LOVABLE_API_KEY) {
+      console.error("LOVABLE_API_KEY is not configured");
       return new Response(
         JSON.stringify({ error: "AI service not configured" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    console.log("Processing betting slip image with OpenAI...");
+    console.log("Processing betting slip image with Lovable AI (gemini-2.5-pro for vision)...");
 
     const systemPrompt = `You are an expert at reading betting slips and sports betting parlays. 
 Your job is to extract parlay information from betting slip images.
@@ -79,14 +79,14 @@ Rules:
 - Keep leg descriptions concise
 - If you cannot read the image clearly or it's not a betting slip, return: {"legs": [], "totalOdds": null, "stake": null, "potentialPayout": null, "earliestGameTime": null}`;
 
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        Authorization: `Bearer ${LOVABLE_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
+        model: "google/gemini-2.5-pro",
         messages: [
           { role: "system", content: systemPrompt },
           {
@@ -105,13 +105,12 @@ Rules:
             ]
           }
         ],
-        max_tokens: 2000,
       }),
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("OpenAI API error:", response.status, errorText);
+      console.error("Lovable AI Gateway error:", response.status, errorText);
       
       if (response.status === 429) {
         return new Response(
@@ -119,9 +118,9 @@ Rules:
           { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-      if (response.status === 402 || response.status === 401) {
+      if (response.status === 402) {
         return new Response(
-          JSON.stringify({ error: "AI service error. Please check API key configuration." }),
+          JSON.stringify({ error: "AI usage limit reached. Please add credits to your workspace." }),
           { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
@@ -135,7 +134,7 @@ Rules:
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content || "{}";
     
-    console.log("OpenAI response:", content);
+    console.log("Lovable AI response:", content);
 
     // Parse the JSON from the response
     let result = { legs: [], totalOdds: null, stake: null, potentialPayout: null, earliestGameTime: null };
