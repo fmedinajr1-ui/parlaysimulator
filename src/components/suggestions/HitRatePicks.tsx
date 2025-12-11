@@ -306,6 +306,32 @@ export function HitRatePicks() {
     }
   };
 
+  // Dismiss parlay
+  const dismissParlay = async (parlayId: string) => {
+    try {
+      const { error } = await supabase
+        .from('hitrate_parlays')
+        .update({ is_active: false })
+        .eq('id', parlayId);
+      
+      if (error) throw error;
+      
+      toast({
+        title: "Parlay Dismissed",
+        description: "Parlay has been removed from your feed"
+      });
+      
+      queryClient.invalidateQueries({ queryKey: ['hitrate-parlays'] });
+    } catch (error) {
+      console.error('Error dismissing parlay:', error);
+      toast({
+        title: "Error",
+        description: "Failed to dismiss parlay",
+        variant: "destructive"
+      });
+    }
+  };
+
   const isLoading = parlaysLoading || propsLoading;
 
   const formatHitRate = (rate: number) => `${Math.round(rate * 100)}%`;
@@ -480,6 +506,7 @@ export function HitRatePicks() {
               <HitRateParlayCard 
                 key={parlay.id} 
                 parlay={parlay}
+                onDismiss={dismissParlay}
                 onRunSharpAnalysis={async () => {
                   toast({
                     title: "Running Sharp Analysis...",

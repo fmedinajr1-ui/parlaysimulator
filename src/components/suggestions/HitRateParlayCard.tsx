@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { TrendingUp, Target, Zap, ChevronDown, ChevronUp, Trophy } from "lucide-react";
+import { TrendingUp, Target, Zap, ChevronDown, ChevronUp, Trophy, X } from "lucide-react";
 import { useState } from "react";
 
 interface HitRateLeg {
@@ -38,6 +38,7 @@ interface HitRateParlay {
 interface HitRateParlayCardProps {
   parlay: HitRateParlay;
   onRunSharpAnalysis?: (parlayId: string) => void;
+  onDismiss?: (parlayId: string) => void;
 }
 
 const PROP_LABELS: Record<string, string> = {
@@ -63,7 +64,7 @@ const SPORT_COLORS: Record<string, string> = {
   'mixed': 'bg-purple-500/20 text-purple-300 border-purple-500/30'
 };
 
-export function HitRateParlayCard({ parlay, onRunSharpAnalysis }: HitRateParlayCardProps) {
+export function HitRateParlayCard({ parlay, onRunSharpAnalysis, onDismiss }: HitRateParlayCardProps) {
   const [expandedLeg, setExpandedLeg] = useState<number | null>(null);
 
   const formatOdds = (odds: number | undefined | null) => {
@@ -128,6 +129,19 @@ export function HitRateParlayCard({ parlay, onRunSharpAnalysis }: HitRateParlayC
                 <Zap className="h-3 w-3 mr-1" />
                 Sharp
               </Badge>
+            )}
+            {onDismiss && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDismiss(parlay.id);
+                }}
+              >
+                <X className="h-4 w-4" />
+              </Button>
             )}
           </div>
         </div>
