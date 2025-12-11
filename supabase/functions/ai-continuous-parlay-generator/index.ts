@@ -6,19 +6,35 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-interface SignalAccuracy {
-  signal: string;
-  accuracy: number;
-  sampleSize: number;
+interface FormulaWeight {
+  formula_name: string;
+  engine_source: string;
+  current_weight: number;
+  current_accuracy: number;
+  total_picks: number;
 }
 
-interface StrategyWeights {
-  [key: string]: number;
+interface PickCandidate {
+  description: string;
+  odds: number;
+  event_id: string;
+  sport: string;
+  engine_source: string;
+  formula_name: string;
+  formula_scores: Record<string, number>;
+  combined_score: number;
+  commence_time: string;
 }
 
-interface LearnedPatterns {
-  winning: string[];
-  losing: string[];
+interface GeneratedParlay {
+  legs: PickCandidate[];
+  strategy_used: string;
+  signals_used: string[];
+  total_odds: number;
+  confidence_score: number;
+  formula_breakdown: Record<string, number>;
+  source_engines: string[];
+  sport: string;
 }
 
 serve(async (req) => {
@@ -29,327 +45,599 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
-    
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    console.log('Starting AI parlay generation...');
+    console.log('🤖 Starting Enhanced AI Parlay Generator - 50+ Daily Parlays');
+
+    // Get current formula weights
+    const { data: formulaWeights } = await supabase
+      .from('ai_formula_performance')
+      .select('*');
+
+    const weightMap = new Map<string, FormulaWeight>();
+    (formulaWeights || []).forEach((fw: FormulaWeight) => {
+      weightMap.set(`${fw.formula_name}_${fw.engine_source}`, fw);
+    });
+
+    // Fetch picks from ALL 7 engines in parallel
+    const [
+      sharpPicks,
+      pvsPicks,
+      hitratePicks,
+      juicedPicks,
+      godmodePicks,
+      fatiguePicks,
+      bestBetsPicks
+    ] = await Promise.all([
+      fetchSharpPicks(supabase, weightMap),
+      fetchPVSPicks(supabase, weightMap),
+      fetchHitratePicks(supabase, weightMap),
+      fetchJuicedPicks(supabase, weightMap),
+      fetchGodmodePicks(supabase, weightMap),
+      fetchFatiguePicks(supabase, weightMap),
+      fetchBestBetsPicks(supabase, weightMap)
+    ]);
+
+    console.log(`📊 Picks fetched - Sharp: ${sharpPicks.length}, PVS: ${pvsPicks.length}, HitRate: ${hitratePicks.length}, Juiced: ${juicedPicks.length}, GodMode: ${godmodePicks.length}, Fatigue: ${fatiguePicks.length}, BestBets: ${bestBetsPicks.length}`);
+
+    // Combine all picks
+    const allPicks: PickCandidate[] = [
+      ...sharpPicks,
+      ...pvsPicks,
+      ...hitratePicks,
+      ...juicedPicks,
+      ...godmodePicks,
+      ...fatiguePicks,
+      ...bestBetsPicks
+    ];
 
     // Get current learning progress
-    const { data: progressData } = await supabase
+    const { data: learningProgress } = await supabase
       .from('ai_learning_progress')
       .select('*')
       .order('generation_round', { ascending: false })
-      .limit(1)
-      .single();
+      .limit(1);
 
-    const currentRound = (progressData?.generation_round || 0) + 1;
-    const currentAccuracy = progressData?.current_accuracy || 0;
-    const strategyWeights: StrategyWeights = progressData?.strategy_weights || {
-      nhl_pick: 1.0,
-      nba_fade: 1.0,
-      ncaab_fade: 1.0,
-      hit_streak: 1.0,
-      sharp_money: 1.0,
-      fatigue_edge: 1.0
+    const currentRound = (learningProgress?.[0]?.generation_round || 0) + 1;
+    const currentAccuracy = learningProgress?.[0]?.current_accuracy || 0;
+
+    // Generate 50+ parlays distributed across sports
+    const targetParlays = {
+      basketball_nba: 18,
+      basketball_ncaab: 12,
+      icehockey_nhl: 12,
+      americanfootball_nfl: 5,
+      americanfootball_ncaaf: 5
     };
-    const learnedPatterns: LearnedPatterns = progressData?.learned_patterns || { winning: [], losing: [] };
 
-    // Fetch current signal accuracies from various tables
-    const signalAccuracies: SignalAccuracy[] = [];
+    const generatedParlays: GeneratedParlay[] = [];
 
-    // Get sharp money accuracy
-    const { data: sharpData } = await supabase
-      .from('line_movements')
-      .select('outcome_correct, recommendation')
-      .eq('outcome_verified', true)
-      .eq('is_primary_record', true);
-
-    if (sharpData && sharpData.length > 0) {
-      const pickMovements = sharpData.filter(m => m.recommendation === 'pick');
-      const fadeMovements = sharpData.filter(m => m.recommendation === 'fade');
+    // Generate parlays for each sport
+    for (const [sport, target] of Object.entries(targetParlays)) {
+      const sportPicks = allPicks.filter(p => 
+        p.sport === sport || 
+        p.sport?.includes(sport.split('_')[0]) ||
+        (sport.includes('basketball') && p.sport?.includes('nba')) ||
+        (sport.includes('icehockey') && p.sport?.includes('nhl'))
+      );
+      const crossSportPicks = allPicks.filter(p => p.sport !== sport);
       
-      if (pickMovements.length >= 5) {
-        const pickWins = pickMovements.filter(m => m.outcome_correct).length;
-        signalAccuracies.push({
-          signal: 'sharp_pick',
-          accuracy: (pickWins / pickMovements.length) * 100,
-          sampleSize: pickMovements.length
-        });
-      }
-      
-      if (fadeMovements.length >= 5) {
-        const fadeWins = fadeMovements.filter(m => m.outcome_correct).length;
-        signalAccuracies.push({
-          signal: 'sharp_fade',
-          accuracy: (fadeWins / fadeMovements.length) * 100,
-          sampleSize: fadeMovements.length
-        });
-      }
+      const sportParlays = generateOptimalParlays(sportPicks, crossSportPicks, target, sport);
+      generatedParlays.push(...sportParlays);
     }
 
-    // Get hit rate accuracy
-    const { data: hitRateData } = await supabase
-      .from('hitrate_parlays')
-      .select('outcome, strategy_type')
-      .neq('outcome', 'pending');
-
-    if (hitRateData && hitRateData.length >= 5) {
-      const wins = hitRateData.filter(h => h.outcome === 'won').length;
-      signalAccuracies.push({
-        signal: 'hit_streak',
-        accuracy: (wins / hitRateData.length) * 100,
-        sampleSize: hitRateData.length
-      });
+    // Generate mixed-sport parlays for remaining slots
+    const remainingTarget = Math.max(0, 52 - generatedParlays.length);
+    if (remainingTarget > 0) {
+      const mixedParlays = generateMixedSportParlays(allPicks, remainingTarget);
+      generatedParlays.push(...mixedParlays);
     }
 
-    // Get fatigue edge accuracy
-    const { data: fatigueData } = await supabase
-      .from('fatigue_edge_tracking')
-      .select('recommended_side_won')
-      .not('recommended_side_won', 'is', null);
+    console.log(`🎯 Generated ${generatedParlays.length} parlays`);
 
-    if (fatigueData && fatigueData.length >= 5) {
-      const wins = fatigueData.filter(f => f.recommended_side_won).length;
-      signalAccuracies.push({
-        signal: 'fatigue_edge',
-        accuracy: (wins / fatigueData.length) * 100,
-        sampleSize: fatigueData.length
-      });
-    }
+    // Save parlays to database
+    const parlaysToInsert = generatedParlays.map(parlay => ({
+      generation_round: currentRound,
+      strategy_used: parlay.strategy_used,
+      signals_used: parlay.signals_used,
+      legs: parlay.legs.map(leg => ({
+        description: leg.description,
+        odds: leg.odds,
+        event_id: leg.event_id,
+        sport: leg.sport,
+        engine_source: leg.engine_source,
+        formula_name: leg.formula_name,
+        formula_scores: leg.formula_scores
+      })),
+      total_odds: parlay.total_odds,
+      confidence_score: parlay.confidence_score,
+      accuracy_at_generation: currentAccuracy,
+      formula_breakdown: parlay.formula_breakdown,
+      source_engines: parlay.source_engines,
+      leg_sources: parlay.legs.map(leg => ({
+        description: leg.description,
+        engine: leg.engine_source,
+        formula: leg.formula_name,
+        scores: leg.formula_scores
+      })),
+      sport: parlay.sport,
+      outcome: 'pending'
+    }));
 
-    // Get god mode upset accuracy
-    const { data: upsetData } = await supabase
-      .from('god_mode_upset_predictions')
-      .select('was_upset, confidence')
-      .eq('game_completed', true);
-
-    if (upsetData && upsetData.length >= 5) {
-      const wins = upsetData.filter(u => u.was_upset).length;
-      signalAccuracies.push({
-        signal: 'upset_pick',
-        accuracy: (wins / upsetData.length) * 100,
-        sampleSize: upsetData.length
-      });
-    }
-
-    console.log('Signal accuracies:', signalAccuracies);
-
-    // Build prompt for AI to generate optimal parlays
-    const signalSummary = signalAccuracies.map(s => 
-      `- ${s.signal}: ${s.accuracy.toFixed(1)}% accuracy (${s.sampleSize} samples)`
-    ).join('\n');
-
-    const weightsSummary = Object.entries(strategyWeights)
-      .map(([k, v]) => `- ${k}: ${(v as number).toFixed(2)}x weight`)
-      .join('\n');
-
-    const patternsSummary = `
-Winning patterns: ${learnedPatterns.winning.slice(0, 5).join(', ') || 'None yet'}
-Losing patterns: ${learnedPatterns.losing.slice(0, 5).join(', ') || 'None yet'}
-    `.trim();
-
-    // Generate parlays using Lovable AI if available
-    let generatedParlays: any[] = [];
-
-    if (lovableApiKey) {
-      try {
-        const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${lovableApiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'google/gemini-2.5-flash',
-            messages: [
-              {
-                role: 'system',
-                content: `You are an expert sports betting AI focused on generating profitable 2-3 leg parlays. 
-Your goal is to reach 65% accuracy. Current accuracy: ${currentAccuracy.toFixed(1)}%.
-
-CURRENT SIGNAL PERFORMANCE:
-${signalSummary || 'No signals tracked yet'}
-
-STRATEGY WEIGHTS (higher = more reliable):
-${weightsSummary}
-
-LEARNED PATTERNS:
-${patternsSummary}
-
-Generate exactly 3 parlays based on the strongest signals. Each parlay should have 2-3 legs.
-Focus on signals with >55% accuracy. Avoid combining signals from the same game.`
-              },
-              {
-                role: 'user',
-                content: 'Generate 3 optimal parlays for today based on the signal performance data. Return as JSON array.'
-              }
-            ],
-            tools: [
-              {
-                type: 'function',
-                function: {
-                  name: 'generate_parlays',
-                  description: 'Generate optimal parlays based on signal data',
-                  parameters: {
-                    type: 'object',
-                    properties: {
-                      parlays: {
-                        type: 'array',
-                        items: {
-                          type: 'object',
-                          properties: {
-                            strategy: { type: 'string', description: 'Combined strategy name e.g. sharp_pick+fatigue_edge' },
-                            signals: { type: 'array', items: { type: 'string' } },
-                            legs: {
-                              type: 'array',
-                              items: {
-                                type: 'object',
-                                properties: {
-                                  description: { type: 'string' },
-                                  odds: { type: 'number' },
-                                  signal_source: { type: 'string' }
-                                },
-                                required: ['description', 'odds', 'signal_source']
-                              }
-                            },
-                            confidence: { type: 'number', description: 'Confidence score 0-100' },
-                            reasoning: { type: 'string' }
-                          },
-                          required: ['strategy', 'signals', 'legs', 'confidence', 'reasoning']
-                        }
-                      }
-                    },
-                    required: ['parlays']
-                  }
-                }
-              }
-            ],
-            tool_choice: { type: 'function', function: { name: 'generate_parlays' } }
-          }),
-        });
-
-        if (aiResponse.ok) {
-          const aiData = await aiResponse.json();
-          const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
-          if (toolCall?.function?.arguments) {
-            const parsed = JSON.parse(toolCall.function.arguments);
-            generatedParlays = parsed.parlays || [];
-          }
-        } else {
-          console.error('AI response error:', await aiResponse.text());
-        }
-      } catch (aiError) {
-        console.error('AI generation error:', aiError);
-      }
-    }
-
-    // Fallback: Generate parlays based on best signals if AI fails
-    if (generatedParlays.length === 0) {
-      const topSignals = signalAccuracies
-        .filter(s => s.accuracy >= 50 && s.sampleSize >= 5)
-        .sort((a, b) => b.accuracy - a.accuracy)
-        .slice(0, 3);
-
-      generatedParlays = [
-        {
-          strategy: topSignals.map(s => s.signal).join('+') || 'baseline',
-          signals: topSignals.map(s => s.signal),
-          legs: [
-            { description: 'AI Generated Leg 1 - Top Signal Pick', odds: -110, signal_source: topSignals[0]?.signal || 'baseline' },
-            { description: 'AI Generated Leg 2 - Secondary Signal', odds: -115, signal_source: topSignals[1]?.signal || 'baseline' }
-          ],
-          confidence: topSignals.length > 0 ? topSignals[0].accuracy : 50,
-          reasoning: `Generated from ${topSignals.length} signals with combined weight`
-        }
-      ];
-    }
-
-    // Save generated parlays
-    const insertedParlays = [];
-    for (const parlay of generatedParlays) {
-      const totalOdds = parlay.legs.reduce((acc: number, leg: any) => {
-        const decimal = leg.odds > 0 ? (leg.odds / 100) + 1 : (100 / Math.abs(leg.odds)) + 1;
-        return acc * decimal;
-      }, 1);
-
-      const { data: inserted, error: insertError } = await supabase
+    if (parlaysToInsert.length > 0) {
+      const { error: insertError } = await supabase
         .from('ai_generated_parlays')
-        .insert({
-          generation_round: currentRound,
-          strategy_used: parlay.strategy,
-          signals_used: parlay.signals,
-          legs: parlay.legs,
-          total_odds: totalOdds,
-          confidence_score: parlay.confidence,
-          accuracy_at_generation: currentAccuracy,
-          ai_reasoning: parlay.reasoning
-        })
-        .select()
-        .single();
+        .insert(parlaysToInsert);
 
-      if (!insertError && inserted) {
-        insertedParlays.push(inserted);
-      } else {
-        console.error('Insert error:', insertError);
+      if (insertError) {
+        console.error('Error inserting parlays:', insertError);
       }
     }
 
-    // Update or create learning progress
-    const { data: existingProgress } = await supabase
-      .from('ai_learning_progress')
-      .select('*')
-      .eq('generation_round', currentRound)
-      .single();
+    // Update learning progress
+    await supabase.from('ai_learning_progress').insert({
+      generation_round: currentRound,
+      parlays_generated: generatedParlays.length,
+      current_accuracy: currentAccuracy,
+      strategy_weights: Object.fromEntries(
+        Array.from(weightMap.entries()).map(([k, v]) => [k, v.current_weight])
+      ),
+      learned_patterns: {
+        winning: [],
+        losing: [],
+        engines_used: [...new Set(generatedParlays.flatMap(p => p.source_engines))]
+      }
+    });
 
-    if (existingProgress) {
-      await supabase
-        .from('ai_learning_progress')
-        .update({
-          parlays_generated: existingProgress.parlays_generated + insertedParlays.length,
-          strategy_weights: strategyWeights
-        })
-        .eq('id', existingProgress.id);
-    } else {
-      // Check for milestone
-      const isMilestone = [55, 60, 65].includes(Math.floor(currentAccuracy));
-      const milestoneReached = isMilestone ? `${Math.floor(currentAccuracy)}%` : null;
+    // Log sport distribution
+    const sportDistribution: Record<string, number> = {};
+    generatedParlays.forEach(p => {
+      sportDistribution[p.sport] = (sportDistribution[p.sport] || 0) + 1;
+    });
 
-      await supabase
-        .from('ai_learning_progress')
-        .insert({
-          generation_round: currentRound,
-          parlays_generated: insertedParlays.length,
-          parlays_settled: 0,
-          wins: 0,
-          losses: 0,
-          current_accuracy: currentAccuracy,
-          strategy_weights: strategyWeights,
-          learned_patterns: learnedPatterns,
-          is_milestone: isMilestone,
-          milestone_reached: milestoneReached
-        });
-    }
-
-    console.log(`Generated ${insertedParlays.length} parlays for round ${currentRound}`);
+    console.log('📈 Sport Distribution:', sportDistribution);
 
     return new Response(JSON.stringify({
       success: true,
-      round: currentRound,
-      parlaysGenerated: insertedParlays.length,
-      parlays: insertedParlays,
-      currentAccuracy
+      generation_round: currentRound,
+      parlays_generated: generatedParlays.length,
+      sport_distribution: sportDistribution,
+      picks_by_engine: {
+        sharp: sharpPicks.length,
+        pvs: pvsPicks.length,
+        hitrate: hitratePicks.length,
+        juiced: juicedPicks.length,
+        godmode: godmodePicks.length,
+        fatigue: fatiguePicks.length,
+        bestbets: bestBetsPicks.length
+      }
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
 
   } catch (error) {
-    console.error('Error in AI parlay generator:', error);
-    return new Response(JSON.stringify({ 
-      error: error instanceof Error ? error.message : 'Unknown error' 
-    }), {
+    console.error('AI Parlay Generator Error:', error);
+    return new Response(JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
   }
 });
+
+// Fetch sharp engine picks (both pick and fade signals)
+async function fetchSharpPicks(supabase: any, weightMap: Map<string, FormulaWeight>): Promise<PickCandidate[]> {
+  const picks: PickCandidate[] = [];
+  
+  // Get sharp PICK signals (SES >= 30)
+  const { data: sharpPicks } = await supabase
+    .from('line_movements')
+    .select('*')
+    .gte('sharp_edge_score', 30)
+    .eq('recommendation', 'pick')
+    .eq('is_primary_record', true)
+    .gte('commence_time', new Date().toISOString())
+    .order('sharp_edge_score', { ascending: false })
+    .limit(25);
+
+  for (const pick of sharpPicks || []) {
+    const weight = weightMap.get('sharp_ses_30+_sharp')?.current_weight || 1.0;
+    picks.push({
+      description: `${pick.description} (Sharp PICK - SES ${pick.sharp_edge_score?.toFixed(0)})`,
+      odds: pick.new_price || -110,
+      event_id: pick.event_id,
+      sport: pick.sport,
+      engine_source: 'sharp',
+      formula_name: 'sharp_ses_30+',
+      formula_scores: {
+        sharp_edge_score: pick.sharp_edge_score || 0,
+        authenticity_confidence: pick.authenticity_confidence || 0.5,
+        trap_score: pick.trap_score || 0
+      },
+      combined_score: (pick.sharp_edge_score || 0) * weight,
+      commence_time: pick.commence_time
+    });
+  }
+
+  // Get sharp FADE signals (high trap score)
+  const { data: fadePicks } = await supabase
+    .from('line_movements')
+    .select('*')
+    .gte('trap_score', 50)
+    .eq('recommendation', 'fade')
+    .eq('is_primary_record', true)
+    .gte('commence_time', new Date().toISOString())
+    .order('trap_score', { ascending: false })
+    .limit(25);
+
+  for (const pick of fadePicks || []) {
+    const weight = weightMap.get('sharp_fade_30-_sharp')?.current_weight || 1.0;
+    picks.push({
+      description: `${pick.description} (Sharp FADE - Trap ${pick.trap_score?.toFixed(0)}%)`,
+      odds: pick.new_price || -110,
+      event_id: pick.event_id,
+      sport: pick.sport,
+      engine_source: 'sharp',
+      formula_name: 'sharp_fade_30-',
+      formula_scores: {
+        sharp_edge_score: pick.sharp_edge_score || 0,
+        trap_score: pick.trap_score || 0,
+        trap_pressure: pick.trap_pressure || 0
+      },
+      combined_score: (pick.trap_score || 0) * weight,
+      commence_time: pick.commence_time
+    });
+  }
+
+  return picks;
+}
+
+// Fetch PVS calculator picks
+async function fetchPVSPicks(supabase: any, weightMap: Map<string, FormulaWeight>): Promise<PickCandidate[]> {
+  const picks: PickCandidate[] = [];
+  
+  const { data: pvsProps } = await supabase
+    .from('unified_props')
+    .select('*')
+    .gte('pvs_final_score', 70)
+    .gte('commence_time', new Date().toISOString())
+    .order('pvs_final_score', { ascending: false })
+    .limit(30);
+
+  for (const prop of pvsProps || []) {
+    const isPVS80 = (prop.pvs_final_score || 0) >= 80;
+    const formulaName = isPVS80 ? 'pvs_final_80+' : 'pvs_final_70+';
+    const weight = weightMap.get(`${formulaName}_pvs`)?.current_weight || 1.0;
+    
+    picks.push({
+      description: `${prop.player_name} ${prop.pvs_recommendation} ${prop.line} ${prop.prop_type} (PVS ${prop.pvs_final_score?.toFixed(0)})`,
+      odds: prop.pvs_recommendation === 'OVER' ? (prop.over_price || -110) : (prop.under_price || -110),
+      event_id: prop.event_id || '',
+      sport: prop.sport,
+      engine_source: 'pvs',
+      formula_name: formulaName,
+      formula_scores: {
+        pvs_final_score: prop.pvs_final_score || 0,
+        pvs_tier: prop.pvs_tier === 'ELITE' ? 100 : prop.pvs_tier === 'STRONG' ? 80 : 60,
+        composite_score: prop.composite_score || 0
+      },
+      combined_score: (prop.pvs_final_score || 0) * weight,
+      commence_time: prop.commence_time
+    });
+  }
+
+  return picks;
+}
+
+// Fetch hit rate picks
+async function fetchHitratePicks(supabase: any, weightMap: Map<string, FormulaWeight>): Promise<PickCandidate[]> {
+  const picks: PickCandidate[] = [];
+  
+  const { data: hitrates } = await supabase
+    .from('player_prop_hitrates')
+    .select('*')
+    .gte('hit_rate_over', 0.75)
+    .gte('games_analyzed', 5)
+    .order('hit_rate_over', { ascending: false })
+    .limit(30);
+
+  for (const hr of hitrates || []) {
+    const isPerfect = hr.hit_streak === '5/5';
+    const formulaName = isPerfect ? 'hitrate_5_5' : 'hitrate_4_5';
+    const weight = weightMap.get(`${formulaName}_hitrate`)?.current_weight || 1.0;
+    const hitRate = Math.max(hr.hit_rate_over || 0, hr.hit_rate_under || 0);
+    const side = (hr.hit_rate_over || 0) > (hr.hit_rate_under || 0) ? 'Over' : 'Under';
+    
+    picks.push({
+      description: `${hr.player_name} ${side} ${hr.current_line} ${hr.prop_type} (${(hitRate * 100).toFixed(0)}% Hit Rate${hr.hit_streak ? ` - ${hr.hit_streak}` : ''})`,
+      odds: side === 'Over' ? (hr.over_price || -110) : (hr.under_price || -110),
+      event_id: hr.event_id || '',
+      sport: hr.sport,
+      engine_source: 'hitrate',
+      formula_name: formulaName,
+      formula_scores: {
+        hit_rate: hitRate,
+        games_analyzed: hr.games_analyzed || 0,
+        consistency_score: hr.consistency_score || 0
+      },
+      combined_score: hitRate * 100 * weight,
+      commence_time: hr.commence_time || new Date().toISOString()
+    });
+  }
+
+  return picks;
+}
+
+// Fetch juiced props picks
+async function fetchJuicedPicks(supabase: any, weightMap: Map<string, FormulaWeight>): Promise<PickCandidate[]> {
+  const picks: PickCandidate[] = [];
+  
+  const { data: juiced } = await supabase
+    .from('juiced_props')
+    .select('*')
+    .not('final_pick', 'is', null)
+    .in('juice_level', ['extreme', 'heavy'])
+    .gte('commence_time', new Date().toISOString())
+    .order('juice_amount', { ascending: false })
+    .limit(25);
+
+  for (const prop of juiced || []) {
+    const isExtreme = prop.juice_level === 'extreme';
+    const formulaName = isExtreme ? 'juiced_extreme' : 'juiced_heavy';
+    const weight = weightMap.get(`${formulaName}_juiced`)?.current_weight || 1.0;
+    
+    picks.push({
+      description: `${prop.player_name} ${prop.final_pick} ${prop.line} ${prop.prop_type} (Juiced ${prop.juice_level} - ${prop.juice_amount}¢)`,
+      odds: prop.final_pick === 'OVER' ? prop.over_price : prop.under_price,
+      event_id: prop.event_id,
+      sport: prop.sport,
+      engine_source: 'juiced',
+      formula_name: formulaName,
+      formula_scores: {
+        juice_amount: prop.juice_amount || 0,
+        juice_direction: prop.juice_direction === 'over' ? 1 : -1,
+        unified_confidence: prop.unified_confidence || 0
+      },
+      combined_score: (prop.juice_amount || 0) * weight,
+      commence_time: prop.commence_time
+    });
+  }
+
+  return picks;
+}
+
+// Fetch god mode upset picks
+async function fetchGodmodePicks(supabase: any, weightMap: Map<string, FormulaWeight>): Promise<PickCandidate[]> {
+  const picks: PickCandidate[] = [];
+  
+  const { data: upsets } = await supabase
+    .from('god_mode_upset_predictions')
+    .select('*')
+    .in('confidence', ['high', 'medium'])
+    .gte('final_upset_score', 50)
+    .eq('game_completed', false)
+    .gte('commence_time', new Date().toISOString())
+    .order('final_upset_score', { ascending: false })
+    .limit(20);
+
+  for (const upset of upsets || []) {
+    const isHigh = upset.confidence === 'high' && (upset.final_upset_score || 0) >= 65;
+    const formulaName = isHigh ? 'godmode_high_65+' : 'godmode_medium_50+';
+    const weight = weightMap.get(`${formulaName}_godmode`)?.current_weight || 1.0;
+    
+    picks.push({
+      description: `${upset.underdog} ML vs ${upset.favorite} (GodMode ${upset.final_upset_score?.toFixed(0)} - ${upset.confidence})`,
+      odds: upset.underdog_odds,
+      event_id: upset.event_id,
+      sport: upset.sport,
+      engine_source: 'godmode',
+      formula_name: formulaName,
+      formula_scores: {
+        final_upset_score: upset.final_upset_score || 0,
+        chess_ev: upset.chess_ev || 0,
+        sharp_pct: upset.sharp_pct || 0,
+        chaos_percentage: upset.chaos_percentage || 0
+      },
+      combined_score: (upset.final_upset_score || 0) * weight,
+      commence_time: upset.commence_time
+    });
+  }
+
+  return picks;
+}
+
+// Fetch fatigue edge picks
+async function fetchFatiguePicks(supabase: any, weightMap: Map<string, FormulaWeight>): Promise<PickCandidate[]> {
+  const picks: PickCandidate[] = [];
+  
+  const today = new Date().toISOString().split('T')[0];
+  
+  const { data: fatigue } = await supabase
+    .from('fatigue_edge_tracking')
+    .select('*')
+    .gte('fatigue_differential', 20)
+    .gte('game_date', today)
+    .is('recommended_side_won', null)
+    .order('fatigue_differential', { ascending: false })
+    .limit(15);
+
+  for (const game of fatigue || []) {
+    const isHighDiff = (game.fatigue_differential || 0) >= 30;
+    const formulaName = isHighDiff ? 'fatigue_diff_30+' : 'fatigue_diff_20+';
+    const weight = weightMap.get(`${formulaName}_fatigue`)?.current_weight || 1.0;
+    
+    picks.push({
+      description: `${game.recommended_side} (Fatigue Edge +${game.fatigue_differential} - ${game.recommended_angle || 'spread'})`,
+      odds: -110,
+      event_id: game.event_id,
+      sport: 'basketball_nba',
+      engine_source: 'fatigue',
+      formula_name: formulaName,
+      formula_scores: {
+        fatigue_differential: game.fatigue_differential || 0,
+        home_fatigue: game.home_fatigue_score || 0,
+        away_fatigue: game.away_fatigue_score || 0
+      },
+      combined_score: (game.fatigue_differential || 0) * weight,
+      commence_time: game.game_date
+    });
+  }
+
+  return picks;
+}
+
+// Fetch best bets picks
+async function fetchBestBetsPicks(supabase: any, weightMap: Map<string, FormulaWeight>): Promise<PickCandidate[]> {
+  const picks: PickCandidate[] = [];
+  
+  const today = new Date().toISOString().split('T')[0];
+  
+  const { data: bestBets } = await supabase
+    .from('best_bets_log')
+    .select('*')
+    .gte('created_at', today)
+    .is('outcome', null)
+    .gte('accuracy_at_time', 55)
+    .order('accuracy_at_time', { ascending: false })
+    .limit(15);
+
+  for (const bet of bestBets || []) {
+    const weight = weightMap.get('bestbets_high_accuracy_bestbets')?.current_weight || 1.0;
+    
+    picks.push({
+      description: `${bet.description || bet.prediction} (Best Bet - ${bet.signal_type} ${(bet.accuracy_at_time || 0).toFixed(0)}%)`,
+      odds: bet.odds || -110,
+      event_id: bet.event_id,
+      sport: bet.sport,
+      engine_source: 'bestbets',
+      formula_name: 'bestbets_high_accuracy',
+      formula_scores: {
+        accuracy_at_time: bet.accuracy_at_time || 0,
+        sample_size: bet.sample_size_at_time || 0
+      },
+      combined_score: (bet.accuracy_at_time || 0) * weight,
+      commence_time: bet.created_at
+    });
+  }
+
+  return picks;
+}
+
+// Generate optimal parlays for a specific sport
+function generateOptimalParlays(
+  sportPicks: PickCandidate[],
+  crossSportPicks: PickCandidate[],
+  target: number,
+  sport: string
+): GeneratedParlay[] {
+  const parlays: GeneratedParlay[] = [];
+  
+  const sortedPicks = [...sportPicks].sort((a, b) => b.combined_score - a.combined_score);
+  
+  // Generate 2-leg parlays
+  for (let i = 0; i < Math.min(sortedPicks.length, target * 2); i++) {
+    for (let j = i + 1; j < Math.min(sortedPicks.length, target * 2); j++) {
+      if (parlays.length >= target) break;
+      
+      const pick1 = sortedPicks[i];
+      const pick2 = sortedPicks[j];
+      
+      if (pick1.event_id === pick2.event_id) continue;
+      
+      const sameEngine = pick1.engine_source === pick2.engine_source;
+      if (sameEngine && Math.random() > 0.3) continue;
+      
+      const parlay = createParlay([pick1, pick2], sport);
+      parlays.push(parlay);
+    }
+    if (parlays.length >= target) break;
+  }
+
+  // Generate 3-leg parlays if needed
+  if (sortedPicks.length >= 3 && parlays.length < target) {
+    for (let i = 0; i < Math.min(sortedPicks.length - 2, 10); i++) {
+      for (let j = i + 1; j < Math.min(sortedPicks.length - 1, 10); j++) {
+        for (let k = j + 1; k < Math.min(sortedPicks.length, 10); k++) {
+          if (parlays.length >= target) break;
+          
+          const pick1 = sortedPicks[i];
+          const pick2 = sortedPicks[j];
+          const pick3 = sortedPicks[k];
+          
+          const eventIds = new Set([pick1.event_id, pick2.event_id, pick3.event_id]);
+          if (eventIds.size < 3) continue;
+          
+          const parlay = createParlay([pick1, pick2, pick3], sport);
+          parlays.push(parlay);
+        }
+      }
+    }
+  }
+
+  return parlays;
+}
+
+// Generate mixed sport parlays
+function generateMixedSportParlays(allPicks: PickCandidate[], target: number): GeneratedParlay[] {
+  const parlays: GeneratedParlay[] = [];
+  const sortedPicks = [...allPicks].sort((a, b) => b.combined_score - a.combined_score);
+  
+  for (let i = 0; i < Math.min(sortedPicks.length, target * 3); i++) {
+    for (let j = i + 1; j < Math.min(sortedPicks.length, target * 3); j++) {
+      if (parlays.length >= target) break;
+      
+      const pick1 = sortedPicks[i];
+      const pick2 = sortedPicks[j];
+      
+      if (pick1.sport === pick2.sport && Math.random() > 0.5) continue;
+      if (pick1.event_id === pick2.event_id) continue;
+      
+      const parlay = createParlay([pick1, pick2], 'mixed');
+      parlays.push(parlay);
+    }
+    if (parlays.length >= target) break;
+  }
+
+  return parlays;
+}
+
+// Create a parlay from picks
+function createParlay(picks: PickCandidate[], sport: string): GeneratedParlay {
+  let totalOddsDecimal = 1;
+  for (const pick of picks) {
+    const decimal = pick.odds > 0 ? (pick.odds / 100) + 1 : (100 / Math.abs(pick.odds)) + 1;
+    totalOddsDecimal *= decimal;
+  }
+  
+  const totalOdds = totalOddsDecimal >= 2 
+    ? Math.round((totalOddsDecimal - 1) * 100)
+    : Math.round(-100 / (totalOddsDecimal - 1));
+
+  const avgScore = picks.reduce((sum, p) => sum + p.combined_score, 0) / picks.length;
+  const confidenceScore = Math.min(100, avgScore);
+
+  const formulaBreakdown: Record<string, number> = {};
+  picks.forEach(pick => {
+    Object.entries(pick.formula_scores).forEach(([key, value]) => {
+      if (!formulaBreakdown[key]) formulaBreakdown[key] = 0;
+      formulaBreakdown[key] += value as number;
+    });
+  });
+  Object.keys(formulaBreakdown).forEach(key => {
+    formulaBreakdown[key] = Math.round((formulaBreakdown[key] / picks.length) * 100) / 100;
+  });
+
+  const sourceEngines = [...new Set(picks.map(p => p.engine_source))];
+  const signalsUsed = [...new Set(picks.map(p => p.formula_name))];
+  const strategyUsed = signalsUsed.join('+');
+
+  return {
+    legs: picks,
+    strategy_used: strategyUsed,
+    signals_used: signalsUsed,
+    total_odds: totalOdds,
+    confidence_score: confidenceScore,
+    formula_breakdown: formulaBreakdown,
+    source_engines: sourceEngines,
+    sport
+  };
+}
