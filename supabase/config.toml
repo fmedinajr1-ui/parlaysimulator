@@ -176,3 +176,6 @@ verify_jwt = false
 
 [functions.ai-best-bets-engine]
 verify_jwt = false
+
+[functions.nhl-stats-fetcher]
+verify_jwt = false
