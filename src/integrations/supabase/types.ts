@@ -1049,12 +1049,67 @@ export type Database = {
         }
         Relationships: []
       }
+      juiced_prop_movement_history: {
+        Row: {
+          cumulative_over_moves: number | null
+          cumulative_under_moves: number | null
+          id: string
+          juiced_prop_id: string | null
+          line: number
+          movement_direction: string | null
+          over_price: number
+          player_name: string
+          price_delta: number | null
+          prop_type: string
+          snapshot_time: string | null
+          under_price: number
+        }
+        Insert: {
+          cumulative_over_moves?: number | null
+          cumulative_under_moves?: number | null
+          id?: string
+          juiced_prop_id?: string | null
+          line: number
+          movement_direction?: string | null
+          over_price: number
+          player_name: string
+          price_delta?: number | null
+          prop_type: string
+          snapshot_time?: string | null
+          under_price: number
+        }
+        Update: {
+          cumulative_over_moves?: number | null
+          cumulative_under_moves?: number | null
+          id?: string
+          juiced_prop_id?: string | null
+          line?: number
+          movement_direction?: string | null
+          over_price?: number
+          player_name?: string
+          price_delta?: number | null
+          prop_type?: string
+          snapshot_time?: string | null
+          under_price?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "juiced_prop_movement_history_juiced_prop_id_fkey"
+            columns: ["juiced_prop_id"]
+            isOneToOne: false
+            referencedRelation: "juiced_props"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       juiced_props: {
         Row: {
           actual_value: number | null
           bookmaker: string
           commence_time: string
+          consistent_direction_moves: number | null
           created_at: string | null
+          dominant_movement_direction: string | null
           event_id: string
           final_pick: string | null
           final_pick_confidence: number | null
@@ -1068,12 +1123,14 @@ export type Database = {
           juice_level: string
           line: number
           morning_scan_time: string | null
+          movement_consistency_score: number | null
           opening_over_price: number | null
           outcome: string | null
           over_price: number
           player_name: string
           prop_type: string
           sport: string
+          total_movement_snapshots: number | null
           under_price: number
           unified_composite_score: number | null
           unified_confidence: number | null
@@ -1087,7 +1144,9 @@ export type Database = {
           actual_value?: number | null
           bookmaker: string
           commence_time: string
+          consistent_direction_moves?: number | null
           created_at?: string | null
+          dominant_movement_direction?: string | null
           event_id: string
           final_pick?: string | null
           final_pick_confidence?: number | null
@@ -1101,12 +1160,14 @@ export type Database = {
           juice_level: string
           line: number
           morning_scan_time?: string | null
+          movement_consistency_score?: number | null
           opening_over_price?: number | null
           outcome?: string | null
           over_price: number
           player_name: string
           prop_type: string
           sport: string
+          total_movement_snapshots?: number | null
           under_price: number
           unified_composite_score?: number | null
           unified_confidence?: number | null
@@ -1120,7 +1181,9 @@ export type Database = {
           actual_value?: number | null
           bookmaker?: string
           commence_time?: string
+          consistent_direction_moves?: number | null
           created_at?: string | null
+          dominant_movement_direction?: string | null
           event_id?: string
           final_pick?: string | null
           final_pick_confidence?: number | null
@@ -1134,12 +1197,14 @@ export type Database = {
           juice_level?: string
           line?: number
           morning_scan_time?: string | null
+          movement_consistency_score?: number | null
           opening_over_price?: number | null
           outcome?: string | null
           over_price?: number
           player_name?: string
           prop_type?: string
           sport?: string
+          total_movement_snapshots?: number | null
           under_price?: number
           unified_composite_score?: number | null
           unified_confidence?: number | null

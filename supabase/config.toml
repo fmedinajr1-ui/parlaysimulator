@@ -185,3 +185,6 @@ verify_jwt = false
 
 [functions.calculate-season-stats]
 verify_jwt = false
+
+[functions.track-juiced-prop-movement]
+verify_jwt = false
