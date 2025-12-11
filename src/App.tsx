@@ -35,6 +35,7 @@ const HitRate = React.lazy(() => import("./pages/HitRate"));
 const BestBets = React.lazy(() => import("./pages/BestBets"));
 const SharpComparison = React.lazy(() => import("./pages/SharpComparison"));
 
+// QueryClient with optimized defaults
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
