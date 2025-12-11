@@ -135,19 +135,26 @@ serve(async (req) => {
           
           console.log(`[NFL Stats] Processing ${awayTeamAbbrev} @ ${homeTeamAbbrev} (${gameDate})`);
           
-          // Get player stats from boxscore
+          // Get player stats from boxscore - ESPN has different structure
           const boxscore = boxData.boxscore;
-          if (!boxscore?.players) {
-            console.log(`[NFL Stats] No player stats for game ${gameId}`);
+          
+          // Debug: log the structure
+          console.log(`[NFL Stats] Boxscore keys: ${boxscore ? Object.keys(boxscore).join(', ') : 'no boxscore'}`);
+          
+          if (!boxscore?.players || !Array.isArray(boxscore.players)) {
+            console.log(`[NFL Stats] No player stats array for game ${gameId}`);
             continue;
           }
           
+          console.log(`[NFL Stats] Found ${boxscore.players.length} team stat blocks`);
+          
           // Process each team's players
           for (const teamStats of boxscore.players) {
-            const teamId = teamStats.team?.id;
-            const teamAbbrev = teamStats.team?.abbreviation || getTeamAbbrev(parseInt(teamId));
+            const teamAbbrev = teamStats.team?.abbreviation || 'UNK';
             const isHome = teamAbbrev === homeTeamAbbrev;
             const opponent = isHome ? awayTeamAbbrev : homeTeamAbbrev;
+            
+            console.log(`[NFL Stats] Processing team ${teamAbbrev} with ${teamStats.statistics?.length || 0} stat categories`);
             
             // Process statistics categories
             const passingStats: Record<string, any> = {};
