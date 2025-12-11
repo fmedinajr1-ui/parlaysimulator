@@ -31,7 +31,7 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { daysBack = 30, teamAbbrev } = await req.json().catch(() => ({}));
+  const { daysBack = 60, teamAbbrev } = await req.json().catch(() => ({}));
     
     console.log(`Fetching NHL stats for last ${daysBack} days`);
     
@@ -68,8 +68,8 @@ serve(async (req) => {
     
     console.log(`Found ${gameIds.length} completed games to process`);
     
-    // Process up to 50 games for comprehensive data
-    const gamesToProcess = gameIds.slice(0, 50);
+    // Process up to 100 games for comprehensive data
+    const gamesToProcess = gameIds.slice(0, 100);
     
     for (const gameId of gamesToProcess) {
       try {
