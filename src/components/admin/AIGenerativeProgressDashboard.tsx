@@ -20,7 +20,9 @@ import {
   BarChart3,
   Layers,
   Activity,
-  Sparkles
+  Sparkles,
+  PlayCircle,
+  History
 } from 'lucide-react';
 import { AIProgressGauge } from './AIProgressGauge';
 import { AILearnedPatterns } from './AILearnedPatterns';
@@ -76,13 +78,25 @@ interface FormulaPerformance {
   compound_formulas: Json;
 }
 
+interface SettlementJob {
+  id: string;
+  job_name: string;
+  status: string;
+  started_at: string;
+  completed_at: string | null;
+  duration_ms: number | null;
+  result: Json;
+}
+
 export function AIGenerativeProgressDashboard() {
   const [parlays, setParlays] = useState<AIGeneratedParlay[]>([]);
   const [learningProgress, setLearningProgress] = useState<AILearningProgress | null>(null);
   const [formulaPerformance, setFormulaPerformance] = useState<FormulaPerformance[]>([]);
+  const [settlementJobs, setSettlementJobs] = useState<SettlementJob[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isLearning, setIsLearning] = useState(false);
+  const [isSettling, setIsSettling] = useState(false);
   const [filter, setFilter] = useState<'all' | 'pending' | 'won' | 'lost'>('all');
 
   useEffect(() => {
@@ -113,7 +127,7 @@ export function AIGenerativeProgressDashboard() {
   const fetchData = async () => {
     setIsLoading(true);
     
-    const [parlayRes, progressRes, formulaRes] = await Promise.all([
+    const [parlayRes, progressRes, formulaRes, settlementRes] = await Promise.all([
       supabase
         .from('ai_generated_parlays')
         .select('*')
@@ -127,12 +141,19 @@ export function AIGenerativeProgressDashboard() {
       supabase
         .from('ai_formula_performance')
         .select('*')
-        .order('current_accuracy', { ascending: false })
+        .order('current_accuracy', { ascending: false }),
+      supabase
+        .from('cron_job_history')
+        .select('*')
+        .eq('job_name', 'auto-settle-ai-parlays')
+        .order('started_at', { ascending: false })
+        .limit(10)
     ]);
 
     if (parlayRes.data) setParlays(parlayRes.data as AIGeneratedParlay[]);
     if (progressRes.data && progressRes.data.length > 0) setLearningProgress(progressRes.data[0] as AILearningProgress);
     if (formulaRes.data) setFormulaPerformance(formulaRes.data as FormulaPerformance[]);
+    if (settlementRes.data) setSettlementJobs(settlementRes.data as SettlementJob[]);
     
     setIsLoading(false);
   };
@@ -163,6 +184,19 @@ export function AIGenerativeProgressDashboard() {
       toast.error('Learning cycle failed: ' + (error as Error).message);
     }
     setIsLearning(false);
+  };
+
+  const handleRunSettlement = async () => {
+    setIsSettling(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('auto-settle-ai-parlays');
+      if (error) throw error;
+      toast.success(`Settlement complete! ${data?.settled || 0} parlays settled (${data?.won || 0}W/${data?.lost || 0}L)`);
+      fetchData();
+    } catch (error) {
+      toast.error('Settlement failed: ' + (error as Error).message);
+    }
+    setIsSettling(false);
   };
 
   const filteredParlays = parlays.filter(p => {
@@ -202,6 +236,10 @@ export function AIGenerativeProgressDashboard() {
     });
   });
 
+  // Get last settlement info
+  const lastSettlement = settlementJobs[0];
+  const lastSettlementResult = lastSettlement?.result as any;
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-8">
@@ -223,7 +261,7 @@ export function AIGenerativeProgressDashboard() {
               <div>
                 <CardTitle className="text-xl">AI Parlay Training System</CardTitle>
                 <p className="text-sm text-muted-foreground">
-                  50+ daily parlays • Auto-learning • Formula optimization
+                  50+ daily parlays • Auto-learning • Auto-settlement
                 </p>
               </div>
             </div>
@@ -263,15 +301,76 @@ export function AIGenerativeProgressDashboard() {
               <div className="flex gap-2">
                 <Button onClick={handleGenerate} disabled={isGenerating} className="flex-1 bg-cyan-600 hover:bg-cyan-700">
                   {isGenerating ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Zap className="w-4 h-4 mr-2" />}
-                  Generate 50+ Parlays
+                  Generate
                 </Button>
-                <Button onClick={handleRunLearningCycle} disabled={isLearning} variant="outline" className="flex-1">
+                <Button onClick={handleRunSettlement} disabled={isSettling} variant="outline" className="flex-1">
+                  {isSettling ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <PlayCircle className="w-4 h-4 mr-2" />}
+                  Settle
+                </Button>
+                <Button onClick={handleRunLearningCycle} disabled={isLearning} variant="outline">
                   {isLearning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
                   Learn
                 </Button>
               </div>
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Settlement Status Card */}
+      <Card className="bg-card/50 border-primary/20">
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <History className="w-5 h-5" />
+            Auto-Settlement Status
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+            <div className="text-center">
+              <p className="text-2xl font-bold text-yellow-500">{stats.pending}</p>
+              <p className="text-xs text-muted-foreground">Pending</p>
+            </div>
+            <div className="text-center">
+              <p className="text-2xl font-bold">{lastSettlementResult?.settled || 0}</p>
+              <p className="text-xs text-muted-foreground">Last Settled</p>
+            </div>
+            <div className="text-center">
+              <p className="text-2xl font-bold text-green-500">{lastSettlementResult?.won || 0}</p>
+              <p className="text-xs text-muted-foreground">Last Won</p>
+            </div>
+            <div className="text-center">
+              <p className="text-2xl font-bold text-red-500">{lastSettlementResult?.lost || 0}</p>
+              <p className="text-xs text-muted-foreground">Last Lost</p>
+            </div>
+            <div className="text-center">
+              <p className="text-sm font-medium">
+                {lastSettlement ? new Date(lastSettlement.started_at).toLocaleString() : 'Never'}
+              </p>
+              <p className="text-xs text-muted-foreground">Last Run</p>
+            </div>
+          </div>
+          
+          {lastSettlement && (
+            <div className="mt-4 flex items-center justify-between text-sm">
+              <div className="flex items-center gap-2">
+                <Badge variant={lastSettlement.status === 'completed' ? 'default' : 'secondary'}>
+                  {lastSettlement.status}
+                </Badge>
+                {lastSettlement.duration_ms && (
+                  <span className="text-muted-foreground">
+                    {(lastSettlement.duration_ms / 1000).toFixed(1)}s
+                  </span>
+                )}
+              </div>
+              {lastSettlementResult?.learningTriggered && (
+                <Badge variant="outline" className="text-cyan-500 border-cyan-500/50">
+                  <Brain className="w-3 h-3 mr-1" />
+                  Learning Updated
+                </Badge>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -340,6 +439,10 @@ export function AIGenerativeProgressDashboard() {
             <Activity className="w-4 h-4" />
             Formula Performance
           </TabsTrigger>
+          <TabsTrigger value="settlement" className="gap-2">
+            <History className="w-4 h-4" />
+            Settlement History
+          </TabsTrigger>
           <TabsTrigger value="engines" className="gap-2">
             <Layers className="w-4 h-4" />
             Engine Stats
@@ -396,6 +499,84 @@ export function AIGenerativeProgressDashboard() {
                       <Progress value={formula.current_accuracy} className="h-2 mt-2" />
                     </div>
                   ))}
+                </div>
+              </ScrollArea>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="settlement">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <History className="w-5 h-5" />
+                Settlement Job History
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ScrollArea className="h-[400px]">
+                <div className="space-y-3">
+                  {settlementJobs.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <History className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                      <p>No settlement jobs yet. Click "Settle" to run!</p>
+                    </div>
+                  ) : (
+                    settlementJobs.map((job) => {
+                      const result = job.result as any;
+                      return (
+                        <Card key={job.id} className="bg-muted/30">
+                          <CardContent className="p-4">
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center gap-2">
+                                <Badge variant={job.status === 'completed' ? 'default' : job.status === 'failed' ? 'destructive' : 'secondary'}>
+                                  {job.status}
+                                </Badge>
+                                <span className="text-sm text-muted-foreground">
+                                  {new Date(job.started_at).toLocaleString()}
+                                </span>
+                              </div>
+                              {job.duration_ms && (
+                                <span className="text-sm text-muted-foreground">
+                                  {(job.duration_ms / 1000).toFixed(1)}s
+                                </span>
+                              )}
+                            </div>
+                            {result && (
+                              <div className="grid grid-cols-5 gap-2 text-sm">
+                                <div className="text-center">
+                                  <p className="font-bold">{result.processed || 0}</p>
+                                  <p className="text-xs text-muted-foreground">Processed</p>
+                                </div>
+                                <div className="text-center">
+                                  <p className="font-bold">{result.settled || 0}</p>
+                                  <p className="text-xs text-muted-foreground">Settled</p>
+                                </div>
+                                <div className="text-center">
+                                  <p className="font-bold text-green-500">{result.won || 0}</p>
+                                  <p className="text-xs text-muted-foreground">Won</p>
+                                </div>
+                                <div className="text-center">
+                                  <p className="font-bold text-red-500">{result.lost || 0}</p>
+                                  <p className="text-xs text-muted-foreground">Lost</p>
+                                </div>
+                                <div className="text-center">
+                                  <p className="font-bold text-yellow-500">{result.stillPending || 0}</p>
+                                  <p className="text-xs text-muted-foreground">Pending</p>
+                                </div>
+                              </div>
+                            )}
+                            {result?.learningTriggered && (
+                              <div className="mt-2 flex items-center gap-1 text-xs text-cyan-500">
+                                <Brain className="w-3 h-3" />
+                                Learning engine updated
+                              </div>
+                            )}
+                          </CardContent>
+                        </Card>
+                      );
+                    })
+                  )}
                 </div>
               </ScrollArea>
             </CardContent>
@@ -485,7 +666,7 @@ export function AIGenerativeProgressDashboard() {
                   {filteredParlays.length === 0 ? (
                     <div className="text-center py-8 text-muted-foreground">
                       <Sparkles className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                      <p>No parlays yet. Click "Generate 50+ Parlays" to start!</p>
+                      <p>No parlays yet. Click "Generate" to start!</p>
                     </div>
                   ) : (
                     filteredParlays.slice(0, 50).map((parlay) => {
@@ -542,9 +723,16 @@ export function AIGenerativeProgressDashboard() {
                               </div>
                             )}
 
-                            <p className="text-xs text-muted-foreground mt-2">
-                              {new Date(parlay.created_at).toLocaleString()}
-                            </p>
+                            <div className="flex items-center justify-between mt-2">
+                              <p className="text-xs text-muted-foreground">
+                                {new Date(parlay.created_at).toLocaleString()}
+                              </p>
+                              {parlay.settled_at && (
+                                <p className="text-xs text-green-500">
+                                  Settled: {new Date(parlay.settled_at).toLocaleString()}
+                                </p>
+                              )}
+                            </div>
                           </CardContent>
                         </Card>
                       );
