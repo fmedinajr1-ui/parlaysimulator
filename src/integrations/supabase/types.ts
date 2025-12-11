@@ -59,18 +59,76 @@ export type Database = {
         }
         Relationships: []
       }
+      ai_formula_performance: {
+        Row: {
+          compound_formulas: Json | null
+          created_at: string | null
+          current_accuracy: number | null
+          current_weight: number | null
+          engine_source: string
+          formula_name: string
+          id: string
+          last_loss_streak: number | null
+          last_win_streak: number | null
+          losses: number | null
+          optimal_threshold: number | null
+          sport_breakdown: Json | null
+          total_picks: number | null
+          updated_at: string | null
+          wins: number | null
+        }
+        Insert: {
+          compound_formulas?: Json | null
+          created_at?: string | null
+          current_accuracy?: number | null
+          current_weight?: number | null
+          engine_source: string
+          formula_name: string
+          id?: string
+          last_loss_streak?: number | null
+          last_win_streak?: number | null
+          losses?: number | null
+          optimal_threshold?: number | null
+          sport_breakdown?: Json | null
+          total_picks?: number | null
+          updated_at?: string | null
+          wins?: number | null
+        }
+        Update: {
+          compound_formulas?: Json | null
+          created_at?: string | null
+          current_accuracy?: number | null
+          current_weight?: number | null
+          engine_source?: string
+          formula_name?: string
+          id?: string
+          last_loss_streak?: number | null
+          last_win_streak?: number | null
+          losses?: number | null
+          optimal_threshold?: number | null
+          sport_breakdown?: Json | null
+          total_picks?: number | null
+          updated_at?: string | null
+          wins?: number | null
+        }
+        Relationships: []
+      }
       ai_generated_parlays: {
         Row: {
           accuracy_at_generation: number | null
           ai_reasoning: string | null
           confidence_score: number
           created_at: string
+          formula_breakdown: Json | null
           generation_round: number
           id: string
+          leg_sources: Json | null
           legs: Json
           outcome: string
           settled_at: string | null
           signals_used: string[]
+          source_engines: string[] | null
+          sport: string | null
           strategy_used: string
           total_odds: number
         }
@@ -79,12 +137,16 @@ export type Database = {
           ai_reasoning?: string | null
           confidence_score?: number
           created_at?: string
+          formula_breakdown?: Json | null
           generation_round?: number
           id?: string
+          leg_sources?: Json | null
           legs?: Json
           outcome?: string
           settled_at?: string | null
           signals_used?: string[]
+          source_engines?: string[] | null
+          sport?: string | null
           strategy_used: string
           total_odds?: number
         }
@@ -93,12 +155,16 @@ export type Database = {
           ai_reasoning?: string | null
           confidence_score?: number
           created_at?: string
+          formula_breakdown?: Json | null
           generation_round?: number
           id?: string
+          leg_sources?: Json | null
           legs?: Json
           outcome?: string
           settled_at?: string | null
           signals_used?: string[]
+          source_engines?: string[] | null
+          sport?: string | null
           strategy_used?: string
           total_odds?: number
         }
