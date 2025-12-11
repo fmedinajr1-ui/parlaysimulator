@@ -39,6 +39,9 @@ verify_jwt = false
 [functions.auto-settle-parlays]
 verify_jwt = false
 
+[functions.auto-settle-ai-parlays]
+verify_jwt = false
+
 [functions.create-checkout]
 verify_jwt = false
 
