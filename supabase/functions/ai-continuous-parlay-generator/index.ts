@@ -24,6 +24,7 @@ interface PickCandidate {
   formula_scores: Record<string, number>;
   combined_score: number;
   commence_time: string;
+  game_description?: string;
 }
 
 interface GeneratedParlay {
@@ -190,7 +191,9 @@ serve(async (req) => {
         sport: leg.sport,
         engine_source: leg.engine_source,
         formula_name: leg.formula_name,
-        formula_scores: leg.formula_scores
+        formula_scores: leg.formula_scores,
+        commence_time: leg.commence_time,
+        game_description: leg.game_description
       })),
       total_odds: parlay.total_odds,
       confidence_score: parlay.confidence_score,
@@ -297,7 +300,8 @@ async function fetchSharpPicks(supabase: any, weightMap: Map<string, FormulaWeig
         trap_score: pick.trap_score || 0
       },
       combined_score: (pick.sharp_edge_score || 0) * weight,
-      commence_time: pick.commence_time
+      commence_time: pick.commence_time,
+      game_description: pick.description?.split(' (')[0] || pick.description
     });
   }
 
@@ -327,7 +331,8 @@ async function fetchSharpPicks(supabase: any, weightMap: Map<string, FormulaWeig
         trap_pressure: pick.trap_pressure || 0
       },
       combined_score: (pick.trap_score || 0) * weight,
-      commence_time: pick.commence_time
+      commence_time: pick.commence_time,
+      game_description: pick.description?.split(' (')[0] || pick.description
     });
   }
 
@@ -364,7 +369,8 @@ async function fetchPVSPicks(supabase: any, weightMap: Map<string, FormulaWeight
         composite_score: prop.composite_score || 0
       },
       combined_score: (prop.pvs_final_score || 0) * weight,
-      commence_time: prop.commence_time
+      commence_time: prop.commence_time,
+      game_description: prop.game_description
     });
   }
 
@@ -403,7 +409,8 @@ async function fetchHitratePicks(supabase: any, weightMap: Map<string, FormulaWe
         consistency_score: hr.consistency_score || 0
       },
       combined_score: hitRate * 100 * weight,
-      commence_time: hr.commence_time || new Date().toISOString()
+      commence_time: hr.commence_time || new Date().toISOString(),
+      game_description: hr.game_description
     });
   }
 
@@ -441,7 +448,8 @@ async function fetchJuicedPicks(supabase: any, weightMap: Map<string, FormulaWei
         unified_confidence: prop.unified_confidence || 0
       },
       combined_score: (prop.juice_amount || 0) * weight,
-      commence_time: prop.commence_time
+      commence_time: prop.commence_time,
+      game_description: prop.game_description
     });
   }
 
@@ -481,7 +489,8 @@ async function fetchGodmodePicks(supabase: any, weightMap: Map<string, FormulaWe
         chaos_percentage: upset.chaos_percentage || 0
       },
       combined_score: (upset.final_upset_score || 0) * weight,
-      commence_time: upset.commence_time
+      commence_time: upset.commence_time,
+      game_description: `${upset.away_team} @ ${upset.home_team}`
     });
   }
 
@@ -521,7 +530,8 @@ async function fetchFatiguePicks(supabase: any, weightMap: Map<string, FormulaWe
         away_fatigue: game.away_fatigue_score || 0
       },
       combined_score: (game.fatigue_differential || 0) * weight,
-      commence_time: game.game_date
+      commence_time: game.game_date,
+      game_description: `${game.away_team} @ ${game.home_team}`
     });
   }
 
@@ -558,7 +568,8 @@ async function fetchBestBetsPicks(supabase: any, weightMap: Map<string, FormulaW
         sample_size: bet.sample_size_at_time || 0
       },
       combined_score: (bet.accuracy_at_time || 0) * weight,
-      commence_time: bet.created_at
+      commence_time: bet.created_at,
+      game_description: bet.description?.split(' (')[0] || bet.description
     });
   }
 
