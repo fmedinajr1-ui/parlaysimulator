@@ -6,6 +6,17 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+interface LossPattern {
+  description: string;
+  line?: number;
+  actual_value?: number;
+  miss_amount?: number;
+  sport: string;
+  engine_source: string;
+  formula_name: string;
+  timestamp: string;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -16,11 +27,15 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { action, parlayId, outcome, userId, legs } = await req.json();
+    const { action, parlayId, outcome, userId, legs, legResults } = await req.json();
 
     console.log('🧠 AI Learning Engine - Action:', action);
 
-    // NEW ACTIONS for formula learning
+    // Enhanced settlement with loss analysis
+    if (action === 'process_settlement_with_analysis') {
+      return await processSettlementWithAnalysis(supabase, parlayId, outcome, legResults);
+    }
+
     if (action === 'process_settlement') {
       return await processSettlement(supabase, parlayId, outcome);
     }
@@ -38,23 +53,42 @@ serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
+
+    if (action === 'update_avoid_patterns') {
+      const result = await updateAvoidPatterns(supabase);
+      return new Response(JSON.stringify(result), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
+    if (action === 'cross_engine_analysis') {
+      const result = await analyzeCrossEnginePerformance(supabase);
+      return new Response(JSON.stringify(result), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
     
     if (action === 'full_learning_cycle') {
+      console.log('🔄 Starting full learning cycle...');
       const settleResult = await processAllPendingSettlements(supabase);
       const weightsResult = await recalculateAllWeights(supabase);
-      const compoundResult = await discoverCompoundFormulas(supabase);
+      const compoundResult = await updateCompoundFormulas(supabase);
+      const avoidResult = await updateAvoidPatterns(supabase);
+      const crossEngineResult = await analyzeCrossEnginePerformance(supabase);
       
       return new Response(JSON.stringify({
         success: true,
         settlements: settleResult,
         weights_updated: weightsResult,
-        compound_formulas: compoundResult
+        compound_formulas: compoundResult,
+        avoid_patterns: avoidResult,
+        cross_engine: crossEngineResult
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
 
-    // EXISTING ACTIONS for user stats (backward compatibility)
+    // Existing actions for backward compatibility
     if (action === 'get_user_stats') {
       const { data: userStats, error } = await supabase
         .rpc('get_user_betting_stats', { p_user_id: userId });
@@ -130,7 +164,337 @@ serve(async (req) => {
   }
 });
 
-// Process a single parlay settlement
+// Enhanced settlement with detailed loss analysis
+async function processSettlementWithAnalysis(
+  supabase: any, 
+  parlayId: string, 
+  outcome: 'won' | 'lost',
+  legResults?: Array<{ description: string; outcome: string; actualValue?: number; line?: number }>
+) {
+  console.log(`📊 Processing settlement with analysis for parlay ${parlayId} - ${outcome}`);
+
+  const { data: parlay, error } = await supabase
+    .from('ai_generated_parlays')
+    .select('*')
+    .eq('id', parlayId)
+    .single();
+
+  if (error || !parlay) {
+    return new Response(JSON.stringify({ error: 'Parlay not found' }), {
+      status: 404,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  }
+
+  // Update parlay outcome
+  await supabase
+    .from('ai_generated_parlays')
+    .update({ outcome, settled_at: new Date().toISOString() })
+    .eq('id', parlayId);
+
+  const legs = parlay.legs || [];
+  const isWin = outcome === 'won';
+  const lossPatterns: LossPattern[] = [];
+
+  for (let i = 0; i < legs.length; i++) {
+    const leg = legs[i];
+    const legResult = legResults?.[i];
+    const formulaName = leg.formula_name;
+    const engineSource = leg.engine_source;
+    const sport = leg.sport || parlay.sport;
+
+    if (!formulaName || !engineSource) continue;
+
+    const { data: formula } = await supabase
+      .from('ai_formula_performance')
+      .select('*')
+      .eq('formula_name', formulaName)
+      .eq('engine_source', engineSource)
+      .single();
+
+    // Determine individual leg outcome
+    const legWon = legResult?.outcome === 'won';
+    const legLost = legResult?.outcome === 'lost';
+
+    // Track loss patterns for analysis
+    if (legLost && legResult) {
+      const lossPattern: LossPattern = {
+        description: leg.description,
+        line: legResult.line,
+        actual_value: legResult.actualValue,
+        miss_amount: legResult.actualValue && legResult.line 
+          ? Math.abs(legResult.actualValue - legResult.line) 
+          : undefined,
+        sport,
+        engine_source: engineSource,
+        formula_name: formulaName,
+        timestamp: new Date().toISOString()
+      };
+      lossPatterns.push(lossPattern);
+
+      // Check for avoid pattern (3+ similar losses)
+      await checkAndCreateAvoidPattern(supabase, lossPattern);
+    }
+
+    if (formula) {
+      const newWins = formula.wins + (isWin ? 1 : 0);
+      const newLosses = formula.losses + (isWin ? 0 : 1);
+      const newTotal = formula.total_picks + 1;
+      const newAccuracy = newTotal > 0 ? (newWins / newTotal) * 100 : 0;
+
+      // Update sport breakdown
+      const sportBreakdown = formula.sport_breakdown || {};
+      if (!sportBreakdown[sport]) {
+        sportBreakdown[sport] = { wins: 0, losses: 0, accuracy: 0 };
+      }
+      sportBreakdown[sport].wins += isWin ? 1 : 0;
+      sportBreakdown[sport].losses += isWin ? 0 : 1;
+      const sportTotal = sportBreakdown[sport].wins + sportBreakdown[sport].losses;
+      sportBreakdown[sport].accuracy = sportTotal > 0 ? (sportBreakdown[sport].wins / sportTotal) * 100 : 0;
+
+      // Update loss patterns
+      const existingLossPatterns = formula.loss_patterns || [];
+      const updatedLossPatterns = [
+        ...existingLossPatterns,
+        ...lossPatterns.filter(lp => lp.formula_name === formulaName)
+      ].slice(-50); // Keep last 50 loss patterns
+
+      await supabase
+        .from('ai_formula_performance')
+        .update({
+          total_picks: newTotal,
+          wins: newWins,
+          losses: newLosses,
+          current_accuracy: Math.round(newAccuracy * 100) / 100,
+          last_win_streak: isWin ? (formula.last_win_streak + 1) : 0,
+          last_loss_streak: isWin ? 0 : (formula.last_loss_streak + 1),
+          sport_breakdown: sportBreakdown,
+          loss_patterns: updatedLossPatterns
+        })
+        .eq('id', formula.id);
+
+      console.log(`✅ Updated ${formulaName}: ${newAccuracy.toFixed(1)}% (${newWins}W-${newLosses}L)`);
+    } else {
+      // Create new formula entry
+      await supabase
+        .from('ai_formula_performance')
+        .insert({
+          formula_name: formulaName,
+          engine_source: engineSource,
+          total_picks: 1,
+          wins: isWin ? 1 : 0,
+          losses: isWin ? 0 : 1,
+          current_accuracy: isWin ? 100 : 0,
+          current_weight: 1.0,
+          last_win_streak: isWin ? 1 : 0,
+          last_loss_streak: isWin ? 0 : 1,
+          sport_breakdown: { [sport]: { wins: isWin ? 1 : 0, losses: isWin ? 0 : 1, accuracy: isWin ? 100 : 0 } },
+          loss_patterns: !isWin ? lossPatterns.filter(lp => lp.formula_name === formulaName) : []
+        });
+    }
+  }
+
+  // Update compound formulas
+  await updateCompoundFormulaForParlay(supabase, parlay, isWin);
+
+  // Update cross-engine performance
+  await updateCrossEngineForParlay(supabase, parlay, isWin);
+
+  // Update learning progress
+  await updateLearningProgress(supabase, isWin);
+
+  // Instantly recalculate weights after each settlement
+  await recalculateAllWeights(supabase);
+
+  return new Response(JSON.stringify({
+    success: true,
+    parlay_id: parlayId,
+    outcome,
+    formulas_updated: legs.length,
+    loss_patterns_recorded: lossPatterns.length
+  }), {
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+  });
+}
+
+// Check and create avoid patterns based on repeated losses
+async function checkAndCreateAvoidPattern(supabase: any, lossPattern: LossPattern) {
+  const patternKey = `${lossPattern.formula_name}_${lossPattern.sport}`;
+  
+  // Check if pattern already exists
+  const { data: existing } = await supabase
+    .from('ai_avoid_patterns')
+    .select('*')
+    .eq('pattern_type', 'formula_sport')
+    .eq('pattern_key', patternKey)
+    .single();
+
+  if (existing) {
+    const newLossCount = existing.loss_count + 1;
+    const newTotal = existing.total_count + 1;
+    const newAccuracy = ((newTotal - newLossCount) / newTotal) * 100;
+
+    await supabase
+      .from('ai_avoid_patterns')
+      .update({
+        loss_count: newLossCount,
+        total_count: newTotal,
+        accuracy_rate: Math.round(newAccuracy * 100) / 100,
+        last_loss_at: new Date().toISOString(),
+        is_active: newLossCount >= 3 && newAccuracy < 40, // Activate avoid if 3+ losses and <40% accuracy
+        avoid_reason: newLossCount >= 3 ? `${newLossCount} losses with ${newAccuracy.toFixed(1)}% accuracy` : null
+      })
+      .eq('id', existing.id);
+  } else {
+    await supabase
+      .from('ai_avoid_patterns')
+      .insert({
+        pattern_type: 'formula_sport',
+        pattern_key: patternKey,
+        description: lossPattern.description,
+        sport: lossPattern.sport,
+        engine_source: lossPattern.engine_source,
+        formula_name: lossPattern.formula_name,
+        loss_count: 1,
+        total_count: 1,
+        accuracy_rate: 0,
+        last_loss_at: new Date().toISOString(),
+        is_active: false
+      });
+  }
+}
+
+// Update compound formula tracking
+async function updateCompoundFormulaForParlay(supabase: any, parlay: any, isWin: boolean) {
+  const formulas = (parlay.legs || [])
+    .map((l: any) => l.formula_name)
+    .filter(Boolean)
+    .sort()
+    .join('+');
+  
+  if (!formulas) return;
+
+  const { data: existing } = await supabase
+    .from('ai_compound_formulas')
+    .select('*')
+    .eq('combination', formulas)
+    .single();
+
+  const sport = parlay.sport;
+
+  if (existing) {
+    const newWins = existing.wins + (isWin ? 1 : 0);
+    const newLosses = existing.losses + (isWin ? 0 : 1);
+    const newTotal = existing.total_picks + 1;
+    const newAccuracy = (newWins / newTotal) * 100;
+    
+    const sports = existing.sports || [];
+    if (!sports.includes(sport)) sports.push(sport);
+
+    await supabase
+      .from('ai_compound_formulas')
+      .update({
+        wins: newWins,
+        losses: newLosses,
+        total_picks: newTotal,
+        accuracy_rate: Math.round(newAccuracy * 100) / 100,
+        sports,
+        last_win_at: isWin ? new Date().toISOString() : existing.last_win_at,
+        last_loss_at: !isWin ? new Date().toISOString() : existing.last_loss_at,
+        is_preferred: newAccuracy >= 55 && newTotal >= 5
+      })
+      .eq('id', existing.id);
+  } else {
+    await supabase
+      .from('ai_compound_formulas')
+      .insert({
+        combination: formulas,
+        wins: isWin ? 1 : 0,
+        losses: isWin ? 0 : 1,
+        total_picks: 1,
+        accuracy_rate: isWin ? 100 : 0,
+        sports: [sport],
+        last_win_at: isWin ? new Date().toISOString() : null,
+        last_loss_at: !isWin ? new Date().toISOString() : null,
+        is_preferred: false
+      });
+  }
+}
+
+// Update cross-engine performance tracking
+async function updateCrossEngineForParlay(supabase: any, parlay: any, isWin: boolean) {
+  const legs = parlay.legs || [];
+  const engines = [...new Set(legs.map((l: any) => l.engine_source).filter(Boolean))] as string[];
+  const sport = parlay.sport;
+
+  // Compare each pair of engines
+  for (let i = 0; i < engines.length; i++) {
+    for (let j = i + 1; j < engines.length; j++) {
+      const engineA = engines[i] < engines[j] ? engines[i] : engines[j];
+      const engineB = engines[i] < engines[j] ? engines[j] : engines[i];
+
+      const { data: existing } = await supabase
+        .from('ai_cross_engine_performance')
+        .select('*')
+        .eq('engine_a', engineA)
+        .eq('engine_b', engineB)
+        .eq('sport', sport)
+        .single();
+
+      if (existing) {
+        await supabase
+          .from('ai_cross_engine_performance')
+          .update({
+            both_wins: existing.both_wins + (isWin ? 1 : 0),
+            both_losses: existing.both_losses + (isWin ? 0 : 1),
+            total_comparisons: existing.total_comparisons + 1,
+            preference_score: ((existing.both_wins + (isWin ? 1 : 0)) / (existing.total_comparisons + 1)) * 100
+          })
+          .eq('id', existing.id);
+      } else {
+        await supabase
+          .from('ai_cross_engine_performance')
+          .insert({
+            engine_a: engineA,
+            engine_b: engineB,
+            sport,
+            both_wins: isWin ? 1 : 0,
+            both_losses: isWin ? 0 : 1,
+            total_comparisons: 1,
+            preference_score: isWin ? 100 : 0
+          });
+      }
+    }
+  }
+}
+
+// Update learning progress
+async function updateLearningProgress(supabase: any, isWin: boolean) {
+  const { data: latestProgress } = await supabase
+    .from('ai_learning_progress')
+    .select('*')
+    .order('generation_round', { ascending: false })
+    .limit(1);
+
+  if (latestProgress && latestProgress.length > 0) {
+    const progress = latestProgress[0];
+    const newWins = (progress.wins || 0) + (isWin ? 1 : 0);
+    const newLosses = (progress.losses || 0) + (isWin ? 0 : 1);
+    const total = newWins + newLosses;
+    
+    await supabase
+      .from('ai_learning_progress')
+      .update({
+        parlays_settled: (progress.parlays_settled || 0) + 1,
+        wins: newWins,
+        losses: newLosses,
+        current_accuracy: total > 0 ? Math.round((newWins / total) * 100 * 10) / 10 : 0
+      })
+      .eq('id', progress.id);
+  }
+}
+
+// Original processSettlement function
 async function processSettlement(supabase: any, parlayId: string, outcome: 'won' | 'lost') {
   console.log(`📊 Processing settlement for parlay ${parlayId} - ${outcome}`);
 
@@ -143,7 +507,7 @@ async function processSettlement(supabase: any, parlayId: string, outcome: 'won'
   if (error || !parlay) {
     return new Response(JSON.stringify({ error: 'Parlay not found' }), {
       status: 404,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
   }
 
@@ -216,29 +580,11 @@ async function processSettlement(supabase: any, parlayId: string, outcome: 'won'
     }
   }
 
-  // Update learning progress
-  const { data: latestProgress } = await supabase
-    .from('ai_learning_progress')
-    .select('*')
-    .order('generation_round', { ascending: false })
-    .limit(1);
+  // Update compound formulas
+  await updateCompoundFormulaForParlay(supabase, parlay, isWin);
 
-  if (latestProgress && latestProgress.length > 0) {
-    const progress = latestProgress[0];
-    const newWins = (progress.wins || 0) + (isWin ? 1 : 0);
-    const newLosses = (progress.losses || 0) + (isWin ? 0 : 1);
-    const total = newWins + newLosses;
-    
-    await supabase
-      .from('ai_learning_progress')
-      .update({
-        parlays_settled: (progress.parlays_settled || 0) + 1,
-        wins: newWins,
-        losses: newLosses,
-        current_accuracy: total > 0 ? Math.round((newWins / total) * 100 * 10) / 10 : 0
-      })
-      .eq('id', progress.id);
-  }
+  // Update learning progress
+  await updateLearningProgress(supabase, isWin);
 
   return new Response(JSON.stringify({
     success: true,
@@ -246,7 +592,7 @@ async function processSettlement(supabase: any, parlayId: string, outcome: 'won'
     outcome,
     formulas_updated: legs.length
   }), {
-    headers: { 'Content-Type': 'application/json' }
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' }
   });
 }
 
@@ -303,6 +649,9 @@ async function processAllPendingSettlements(supabase: any) {
       }
     }
 
+    // Update compound formulas
+    await updateCompoundFormulaForParlay(supabase, parlay, isWin);
+
     await supabase
       .from('ai_generated_parlays')
       .update({ settled_at: new Date().toISOString() })
@@ -325,11 +674,12 @@ async function recalculateAllWeights(supabase: any) {
   let updated = 0;
 
   for (const formula of formulas || []) {
-    if (formula.total_picks < 5) continue;
+    if (formula.total_picks < 3) continue;
 
     const accuracy = formula.current_accuracy;
     let newWeight = 1.0;
 
+    // Weight based on accuracy
     if (accuracy >= 65) {
       newWeight = 1.0 + ((accuracy - 50) / 100) * 1.5;
     } else if (accuracy >= 55) {
@@ -342,18 +692,26 @@ async function recalculateAllWeights(supabase: any) {
       newWeight = Math.max(0.2, accuracy / 100);
     }
 
+    // Streak adjustments
     if (formula.last_win_streak >= 5) {
       newWeight *= 1.15;
-    } else if (formula.last_loss_streak >= 5) {
-      newWeight *= 0.85;
+    } else if (formula.last_win_streak >= 3) {
+      newWeight *= 1.08;
+    }
+    
+    if (formula.last_loss_streak >= 5) {
+      newWeight *= 0.75;
+    } else if (formula.last_loss_streak >= 3) {
+      newWeight *= 0.88;
     }
 
-    const sampleConfidence = Math.min(1, formula.total_picks / 50);
+    // Sample size confidence
+    const sampleConfidence = Math.min(1, formula.total_picks / 30);
     newWeight = 1.0 + (newWeight - 1.0) * sampleConfidence;
     newWeight = Math.max(0.2, Math.min(2.5, newWeight));
     newWeight = Math.round(newWeight * 100) / 100;
 
-    if (Math.abs(newWeight - formula.current_weight) > 0.05) {
+    if (Math.abs(newWeight - formula.current_weight) > 0.03) {
       await supabase
         .from('ai_formula_performance')
         .update({ current_weight: newWeight })
@@ -366,9 +724,9 @@ async function recalculateAllWeights(supabase: any) {
   return { weights_updated: updated };
 }
 
-// Discover compound formula combinations
-async function discoverCompoundFormulas(supabase: any) {
-  console.log('🔬 Discovering compound formulas');
+// Update compound formulas based on historical data
+async function updateCompoundFormulas(supabase: any) {
+  console.log('🔬 Updating compound formulas');
 
   const { data: winningParlays } = await supabase
     .from('ai_generated_parlays')
@@ -380,7 +738,7 @@ async function discoverCompoundFormulas(supabase: any) {
     .select('*')
     .eq('outcome', 'lost');
 
-  const combinations: Record<string, { wins: number; losses: number }> = {};
+  const combinations: Record<string, { wins: number; losses: number; sports: Set<string> }> = {};
 
   for (const parlay of winningParlays || []) {
     const formulas = (parlay.legs || [])
@@ -390,8 +748,9 @@ async function discoverCompoundFormulas(supabase: any) {
       .join('+');
     
     if (formulas) {
-      if (!combinations[formulas]) combinations[formulas] = { wins: 0, losses: 0 };
+      if (!combinations[formulas]) combinations[formulas] = { wins: 0, losses: 0, sports: new Set() };
       combinations[formulas].wins++;
+      combinations[formulas].sports.add(parlay.sport);
     }
   }
 
@@ -403,33 +762,165 @@ async function discoverCompoundFormulas(supabase: any) {
       .join('+');
     
     if (formulas) {
-      if (!combinations[formulas]) combinations[formulas] = { wins: 0, losses: 0 };
+      if (!combinations[formulas]) combinations[formulas] = { wins: 0, losses: 0, sports: new Set() };
       combinations[formulas].losses++;
+      combinations[formulas].sports.add(parlay.sport);
     }
   }
 
-  const goodCombinations: Array<{ combination: string; accuracy: number; sample_size: number }> = [];
-  
+  let updated = 0;
   for (const [combo, stats] of Object.entries(combinations)) {
     const total = stats.wins + stats.losses;
-    if (total >= 5) {
+    if (total >= 3) {
       const accuracy = (stats.wins / total) * 100;
-      if (accuracy >= 55) {
-        goodCombinations.push({
+      
+      await supabase
+        .from('ai_compound_formulas')
+        .upsert({
           combination: combo,
-          accuracy: Math.round(accuracy * 10) / 10,
-          sample_size: total
-        });
+          wins: stats.wins,
+          losses: stats.losses,
+          total_picks: total,
+          accuracy_rate: Math.round(accuracy * 100) / 100,
+          sports: Array.from(stats.sports),
+          is_preferred: accuracy >= 55 && total >= 5
+        }, { onConflict: 'combination' });
+      
+      updated++;
+    }
+  }
+
+  console.log(`📊 Updated ${updated} compound formulas`);
+  return { combinations_updated: updated };
+}
+
+// Discover compound formula combinations (legacy)
+async function discoverCompoundFormulas(supabase: any) {
+  return await updateCompoundFormulas(supabase);
+}
+
+// Update avoid patterns based on loss analysis
+async function updateAvoidPatterns(supabase: any) {
+  console.log('🚫 Updating avoid patterns');
+
+  const { data: formulas } = await supabase
+    .from('ai_formula_performance')
+    .select('*')
+    .not('loss_patterns', 'is', null);
+
+  let patternsUpdated = 0;
+
+  for (const formula of formulas || []) {
+    const lossPatterns = formula.loss_patterns || [];
+    if (lossPatterns.length < 3) continue;
+
+    // Group losses by sport
+    const sportLosses: Record<string, number> = {};
+    for (const pattern of lossPatterns) {
+      const sport = pattern.sport || 'unknown';
+      sportLosses[sport] = (sportLosses[sport] || 0) + 1;
+    }
+
+    // Create avoid patterns for sports with 3+ losses
+    for (const [sport, count] of Object.entries(sportLosses)) {
+      if (count >= 3) {
+        const patternKey = `${formula.formula_name}_${sport}`;
+        const accuracy = formula.current_accuracy || 0;
+        
+        await supabase
+          .from('ai_avoid_patterns')
+          .upsert({
+            pattern_type: 'formula_sport',
+            pattern_key: patternKey,
+            description: `${formula.formula_name} in ${sport}`,
+            sport,
+            engine_source: formula.engine_source,
+            formula_name: formula.formula_name,
+            loss_count: count,
+            total_count: formula.total_picks,
+            accuracy_rate: accuracy,
+            is_active: count >= 3 && accuracy < 45,
+            avoid_reason: `${count} losses in ${sport} with ${accuracy.toFixed(1)}% accuracy`
+          }, { onConflict: 'pattern_type,pattern_key' });
+        
+        patternsUpdated++;
       }
     }
   }
 
-  goodCombinations.sort((a, b) => b.accuracy - a.accuracy);
+  // Deactivate old patterns that have improved
+  const { data: activePatterns } = await supabase
+    .from('ai_avoid_patterns')
+    .select('*')
+    .eq('is_active', true);
 
-  console.log(`📊 Found ${goodCombinations.length} high-performing combinations`);
+  for (const pattern of activePatterns || []) {
+    const { data: formula } = await supabase
+      .from('ai_formula_performance')
+      .select('current_accuracy')
+      .eq('formula_name', pattern.formula_name)
+      .eq('engine_source', pattern.engine_source)
+      .single();
 
-  return {
-    combinations_discovered: goodCombinations.length,
-    top_combinations: goodCombinations.slice(0, 5)
-  };
+    if (formula && formula.current_accuracy >= 50) {
+      await supabase
+        .from('ai_avoid_patterns')
+        .update({ is_active: false, avoid_reason: 'Performance improved' })
+        .eq('id', pattern.id);
+    }
+  }
+
+  console.log(`🚫 Updated ${patternsUpdated} avoid patterns`);
+  return { patterns_updated: patternsUpdated };
+}
+
+// Analyze cross-engine performance
+async function analyzeCrossEnginePerformance(supabase: any) {
+  console.log('🔄 Analyzing cross-engine performance');
+
+  const { data: parlays } = await supabase
+    .from('ai_generated_parlays')
+    .select('*')
+    .in('outcome', ['won', 'lost']);
+
+  const crossEngine: Record<string, { wins: number; losses: number; sport: string }> = {};
+
+  for (const parlay of parlays || []) {
+    const legs = parlay.legs || [];
+    const engines = [...new Set(legs.map((l: any) => l.engine_source).filter(Boolean))] as string[];
+    const isWin = parlay.outcome === 'won';
+    const sport = parlay.sport;
+
+    for (let i = 0; i < engines.length; i++) {
+      for (let j = i + 1; j < engines.length; j++) {
+        const key = [engines[i], engines[j]].sort().join('_') + '_' + sport;
+        if (!crossEngine[key]) crossEngine[key] = { wins: 0, losses: 0, sport };
+        crossEngine[key].wins += isWin ? 1 : 0;
+        crossEngine[key].losses += isWin ? 0 : 1;
+      }
+    }
+  }
+
+  let updated = 0;
+  for (const [key, stats] of Object.entries(crossEngine)) {
+    const [engineA, engineB, sport] = key.split('_');
+    const total = stats.wins + stats.losses;
+    if (total >= 3) {
+      await supabase
+        .from('ai_cross_engine_performance')
+        .upsert({
+          engine_a: engineA,
+          engine_b: engineB,
+          sport: stats.sport,
+          both_wins: stats.wins,
+          both_losses: stats.losses,
+          total_comparisons: total,
+          preference_score: Math.round((stats.wins / total) * 100 * 100) / 100
+        }, { onConflict: 'engine_a,engine_b,event_type,sport' });
+      updated++;
+    }
+  }
+
+  console.log(`🔄 Updated ${updated} cross-engine records`);
+  return { cross_engine_updated: updated };
 }

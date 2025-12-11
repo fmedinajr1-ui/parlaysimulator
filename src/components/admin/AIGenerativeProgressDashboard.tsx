@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { AIProgressGauge } from './AIProgressGauge';
 import { AILearnedPatterns } from './AILearnedPatterns';
+import { AILearningInsights } from './AILearningInsights';
 import { Json } from '@/integrations/supabase/types';
 
 interface AIGeneratedParlay {
@@ -656,6 +657,10 @@ export function AIGenerativeProgressDashboard() {
             Parlays
           </TabsTrigger>
           <TabsTrigger value="patterns">Patterns</TabsTrigger>
+          <TabsTrigger value="insights" className="gap-2">
+            <Brain className="w-4 h-4" />
+            Learning Insights
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="formulas">
@@ -960,6 +965,10 @@ export function AIGenerativeProgressDashboard() {
               weights={(learningProgress.strategy_weights as Record<string, number>) || {}}
             />
           )}
+        </TabsContent>
+
+        <TabsContent value="insights">
+          <AILearningInsights />
         </TabsContent>
       </Tabs>
     </div>
