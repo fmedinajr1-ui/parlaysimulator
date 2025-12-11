@@ -1713,6 +1713,159 @@ export type Database = {
         }
         Relationships: []
       }
+      nfl_player_game_logs: {
+        Row: {
+          attempts: number | null
+          completions: number | null
+          created_at: string
+          game_date: string
+          id: string
+          interceptions: number | null
+          is_home: boolean | null
+          opponent: string
+          passing_tds: number | null
+          passing_yards: number | null
+          player_name: string
+          receiving_tds: number | null
+          receiving_yards: number | null
+          receptions: number | null
+          rushing_tds: number | null
+          rushing_yards: number | null
+          targets: number | null
+          team: string | null
+        }
+        Insert: {
+          attempts?: number | null
+          completions?: number | null
+          created_at?: string
+          game_date: string
+          id?: string
+          interceptions?: number | null
+          is_home?: boolean | null
+          opponent: string
+          passing_tds?: number | null
+          passing_yards?: number | null
+          player_name: string
+          receiving_tds?: number | null
+          receiving_yards?: number | null
+          receptions?: number | null
+          rushing_tds?: number | null
+          rushing_yards?: number | null
+          targets?: number | null
+          team?: string | null
+        }
+        Update: {
+          attempts?: number | null
+          completions?: number | null
+          created_at?: string
+          game_date?: string
+          id?: string
+          interceptions?: number | null
+          is_home?: boolean | null
+          opponent?: string
+          passing_tds?: number | null
+          passing_yards?: number | null
+          player_name?: string
+          receiving_tds?: number | null
+          receiving_yards?: number | null
+          receptions?: number | null
+          rushing_tds?: number | null
+          rushing_yards?: number | null
+          targets?: number | null
+          team?: string | null
+        }
+        Relationships: []
+      }
+      nfl_player_season_stats: {
+        Row: {
+          away_passing_yards_avg: number | null
+          away_receptions_avg: number | null
+          away_rushing_yards_avg: number | null
+          consistency_score: number | null
+          created_at: string
+          games_played: number | null
+          home_passing_yards_avg: number | null
+          home_receptions_avg: number | null
+          home_rushing_yards_avg: number | null
+          id: string
+          last10_passing_yards_avg: number | null
+          last10_receptions_avg: number | null
+          last10_rushing_yards_avg: number | null
+          passing_tds_avg: number | null
+          passing_yards_avg: number | null
+          passing_yards_std: number | null
+          player_name: string
+          position: string | null
+          receiving_yards_avg: number | null
+          receiving_yards_std: number | null
+          receptions_avg: number | null
+          receptions_std: number | null
+          rushing_yards_avg: number | null
+          rushing_yards_std: number | null
+          team: string | null
+          trend_direction: string | null
+          updated_at: string
+        }
+        Insert: {
+          away_passing_yards_avg?: number | null
+          away_receptions_avg?: number | null
+          away_rushing_yards_avg?: number | null
+          consistency_score?: number | null
+          created_at?: string
+          games_played?: number | null
+          home_passing_yards_avg?: number | null
+          home_receptions_avg?: number | null
+          home_rushing_yards_avg?: number | null
+          id?: string
+          last10_passing_yards_avg?: number | null
+          last10_receptions_avg?: number | null
+          last10_rushing_yards_avg?: number | null
+          passing_tds_avg?: number | null
+          passing_yards_avg?: number | null
+          passing_yards_std?: number | null
+          player_name: string
+          position?: string | null
+          receiving_yards_avg?: number | null
+          receiving_yards_std?: number | null
+          receptions_avg?: number | null
+          receptions_std?: number | null
+          rushing_yards_avg?: number | null
+          rushing_yards_std?: number | null
+          team?: string | null
+          trend_direction?: string | null
+          updated_at?: string
+        }
+        Update: {
+          away_passing_yards_avg?: number | null
+          away_receptions_avg?: number | null
+          away_rushing_yards_avg?: number | null
+          consistency_score?: number | null
+          created_at?: string
+          games_played?: number | null
+          home_passing_yards_avg?: number | null
+          home_receptions_avg?: number | null
+          home_rushing_yards_avg?: number | null
+          id?: string
+          last10_passing_yards_avg?: number | null
+          last10_receptions_avg?: number | null
+          last10_rushing_yards_avg?: number | null
+          passing_tds_avg?: number | null
+          passing_yards_avg?: number | null
+          passing_yards_std?: number | null
+          player_name?: string
+          position?: string | null
+          receiving_yards_avg?: number | null
+          receiving_yards_std?: number | null
+          receptions_avg?: number | null
+          receptions_std?: number | null
+          rushing_yards_avg?: number | null
+          rushing_yards_std?: number | null
+          team?: string | null
+          trend_direction?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       nhl_player_game_logs: {
         Row: {
           assists: number | null

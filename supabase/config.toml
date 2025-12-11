@@ -179,3 +179,9 @@ verify_jwt = false
 
 [functions.nhl-stats-fetcher]
 verify_jwt = false
+
+[functions.nfl-stats-fetcher]
+verify_jwt = false
+
+[functions.calculate-season-stats]
+verify_jwt = false
