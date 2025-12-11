@@ -14,6 +14,60 @@ export type Database = {
   }
   public: {
     Tables: {
+      ai_avoid_patterns: {
+        Row: {
+          accuracy_rate: number | null
+          avoid_reason: string | null
+          created_at: string | null
+          description: string | null
+          engine_source: string | null
+          formula_name: string | null
+          id: string
+          is_active: boolean | null
+          last_loss_at: string | null
+          loss_count: number | null
+          pattern_key: string
+          pattern_type: string
+          sport: string | null
+          total_count: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          accuracy_rate?: number | null
+          avoid_reason?: string | null
+          created_at?: string | null
+          description?: string | null
+          engine_source?: string | null
+          formula_name?: string | null
+          id?: string
+          is_active?: boolean | null
+          last_loss_at?: string | null
+          loss_count?: number | null
+          pattern_key: string
+          pattern_type: string
+          sport?: string | null
+          total_count?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          accuracy_rate?: number | null
+          avoid_reason?: string | null
+          created_at?: string | null
+          description?: string | null
+          engine_source?: string | null
+          formula_name?: string | null
+          id?: string
+          is_active?: boolean | null
+          last_loss_at?: string | null
+          loss_count?: number | null
+          pattern_key?: string
+          pattern_type?: string
+          sport?: string | null
+          total_count?: number | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       ai_calibration_factors: {
         Row: {
           actual_win_rate: number
@@ -59,6 +113,105 @@ export type Database = {
         }
         Relationships: []
       }
+      ai_compound_formulas: {
+        Row: {
+          accuracy_rate: number | null
+          avg_odds: number | null
+          combination: string
+          created_at: string | null
+          id: string
+          is_preferred: boolean | null
+          last_loss_at: string | null
+          last_win_at: string | null
+          losses: number | null
+          roi_percentage: number | null
+          sports: Json | null
+          total_picks: number | null
+          updated_at: string | null
+          wins: number | null
+        }
+        Insert: {
+          accuracy_rate?: number | null
+          avg_odds?: number | null
+          combination: string
+          created_at?: string | null
+          id?: string
+          is_preferred?: boolean | null
+          last_loss_at?: string | null
+          last_win_at?: string | null
+          losses?: number | null
+          roi_percentage?: number | null
+          sports?: Json | null
+          total_picks?: number | null
+          updated_at?: string | null
+          wins?: number | null
+        }
+        Update: {
+          accuracy_rate?: number | null
+          avg_odds?: number | null
+          combination?: string
+          created_at?: string | null
+          id?: string
+          is_preferred?: boolean | null
+          last_loss_at?: string | null
+          last_win_at?: string | null
+          losses?: number | null
+          roi_percentage?: number | null
+          sports?: Json | null
+          total_picks?: number | null
+          updated_at?: string | null
+          wins?: number | null
+        }
+        Relationships: []
+      }
+      ai_cross_engine_performance: {
+        Row: {
+          both_losses: number | null
+          both_wins: number | null
+          created_at: string | null
+          engine_a: string
+          engine_a_wins: number | null
+          engine_b: string
+          engine_b_wins: number | null
+          event_type: string | null
+          id: string
+          preference_score: number | null
+          sport: string | null
+          total_comparisons: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          both_losses?: number | null
+          both_wins?: number | null
+          created_at?: string | null
+          engine_a: string
+          engine_a_wins?: number | null
+          engine_b: string
+          engine_b_wins?: number | null
+          event_type?: string | null
+          id?: string
+          preference_score?: number | null
+          sport?: string | null
+          total_comparisons?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          both_losses?: number | null
+          both_wins?: number | null
+          created_at?: string | null
+          engine_a?: string
+          engine_a_wins?: number | null
+          engine_b?: string
+          engine_b_wins?: number | null
+          event_type?: string | null
+          id?: string
+          preference_score?: number | null
+          sport?: string | null
+          total_comparisons?: number | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       ai_formula_performance: {
         Row: {
           compound_formulas: Json | null
@@ -70,6 +223,7 @@ export type Database = {
           id: string
           last_loss_streak: number | null
           last_win_streak: number | null
+          loss_patterns: Json | null
           losses: number | null
           optimal_threshold: number | null
           sport_breakdown: Json | null
@@ -87,6 +241,7 @@ export type Database = {
           id?: string
           last_loss_streak?: number | null
           last_win_streak?: number | null
+          loss_patterns?: Json | null
           losses?: number | null
           optimal_threshold?: number | null
           sport_breakdown?: Json | null
@@ -104,6 +259,7 @@ export type Database = {
           id?: string
           last_loss_streak?: number | null
           last_win_streak?: number | null
+          loss_patterns?: Json | null
           losses?: number | null
           optimal_threshold?: number | null
           sport_breakdown?: Json | null

@@ -59,6 +59,27 @@ serve(async (req) => {
       weightMap.set(`${fw.formula_name}_${fw.engine_source}`, fw);
     });
 
+    // Fetch avoid patterns (patterns to skip)
+    const { data: avoidPatterns } = await supabase
+      .from('ai_avoid_patterns')
+      .select('*')
+      .eq('is_active', true);
+
+    const avoidSet = new Set((avoidPatterns || []).map((p: any) => p.pattern_key));
+    console.log(`🚫 Active avoid patterns: ${avoidSet.size}`);
+
+    // Fetch preferred compound formulas
+    const { data: preferredCombos } = await supabase
+      .from('ai_compound_formulas')
+      .select('*')
+      .eq('is_preferred', true)
+      .gte('accuracy_rate', 55)
+      .order('accuracy_rate', { ascending: false })
+      .limit(10);
+
+    const preferredComboSet = new Set((preferredCombos || []).map((c: any) => c.combination));
+    console.log(`⭐ Preferred formula combos: ${preferredComboSet.size}`);
+
     // Fetch picks from ALL 7 engines in parallel
     const [
       sharpPicks,
@@ -81,7 +102,7 @@ serve(async (req) => {
     console.log(`📊 Picks fetched - Sharp: ${sharpPicks.length}, PVS: ${pvsPicks.length}, HitRate: ${hitratePicks.length}, Juiced: ${juicedPicks.length}, GodMode: ${godmodePicks.length}, Fatigue: ${fatiguePicks.length}, BestBets: ${bestBetsPicks.length}`);
 
     // Combine all picks
-    const allPicks: PickCandidate[] = [
+    let allPicks: PickCandidate[] = [
       ...sharpPicks,
       ...pvsPicks,
       ...hitratePicks,
@@ -90,6 +111,28 @@ serve(async (req) => {
       ...fatiguePicks,
       ...bestBetsPicks
     ];
+
+    // Filter out picks matching avoid patterns
+    const originalCount = allPicks.length;
+    allPicks = allPicks.filter(pick => {
+      const patternKey = `${pick.formula_name}_${pick.sport}`;
+      return !avoidSet.has(patternKey);
+    });
+    const filteredCount = originalCount - allPicks.length;
+    if (filteredCount > 0) {
+      console.log(`🚫 Filtered out ${filteredCount} picks based on avoid patterns`);
+    }
+
+    // Boost scores for picks from preferred combos
+    allPicks = allPicks.map(pick => {
+      const isInPreferredCombo = Array.from(preferredComboSet).some(combo => 
+        (combo as string).includes(pick.formula_name)
+      );
+      if (isInPreferredCombo) {
+        return { ...pick, combined_score: pick.combined_score * 1.15 };
+      }
+      return pick;
+    });
 
     // Get current learning progress
     const { data: learningProgress } = await supabase
@@ -122,14 +165,14 @@ serve(async (req) => {
       );
       const crossSportPicks = allPicks.filter(p => p.sport !== sport);
       
-      const sportParlays = generateOptimalParlays(sportPicks, crossSportPicks, target, sport);
+      const sportParlays = generateOptimalParlays(sportPicks, crossSportPicks, target, sport, preferredComboSet);
       generatedParlays.push(...sportParlays);
     }
 
     // Generate mixed-sport parlays for remaining slots
     const remainingTarget = Math.max(0, 52 - generatedParlays.length);
     if (remainingTarget > 0) {
-      const mixedParlays = generateMixedSportParlays(allPicks, remainingTarget);
+      const mixedParlays = generateMixedSportParlays(allPicks, remainingTarget, preferredComboSet);
       generatedParlays.push(...mixedParlays);
     }
 
@@ -527,11 +570,33 @@ function generateOptimalParlays(
   sportPicks: PickCandidate[],
   crossSportPicks: PickCandidate[],
   target: number,
-  sport: string
+  sport: string,
+  preferredCombos: Set<string> = new Set()
 ): GeneratedParlay[] {
   const parlays: GeneratedParlay[] = [];
   
   const sortedPicks = [...sportPicks].sort((a, b) => b.combined_score - a.combined_score);
+  
+  // First prioritize preferred formula combinations
+  if (preferredCombos.size > 0) {
+    for (const combo of preferredCombos) {
+      if (parlays.length >= target * 0.3) break; // 30% from preferred combos
+      
+      const formulas = (combo as string).split('+');
+      const matchingPicks = sortedPicks.filter(p => formulas.includes(p.formula_name));
+      
+      if (matchingPicks.length >= 2) {
+        const uniqueEvents = new Set(matchingPicks.map(p => p.event_id));
+        if (uniqueEvents.size >= 2) {
+          const selectedPicks = matchingPicks.slice(0, 2);
+          if (selectedPicks[0].event_id !== selectedPicks[1]?.event_id) {
+            const parlay = createParlay(selectedPicks, sport);
+            parlays.push(parlay);
+          }
+        }
+      }
+    }
+  }
   
   // Generate 2-leg parlays
   for (let i = 0; i < Math.min(sortedPicks.length, target * 2); i++) {
@@ -577,7 +642,11 @@ function generateOptimalParlays(
 }
 
 // Generate mixed sport parlays
-function generateMixedSportParlays(allPicks: PickCandidate[], target: number): GeneratedParlay[] {
+function generateMixedSportParlays(
+  allPicks: PickCandidate[], 
+  target: number,
+  preferredCombos: Set<string> = new Set()
+): GeneratedParlay[] {
   const parlays: GeneratedParlay[] = [];
   const sortedPicks = [...allPicks].sort((a, b) => b.combined_score - a.combined_score);
   
@@ -591,8 +660,14 @@ function generateMixedSportParlays(allPicks: PickCandidate[], target: number): G
       if (pick1.sport === pick2.sport && Math.random() > 0.5) continue;
       if (pick1.event_id === pick2.event_id) continue;
       
-      const parlay = createParlay([pick1, pick2], 'mixed');
-      parlays.push(parlay);
+      // Boost priority for preferred combos
+      const combo = [pick1.formula_name, pick2.formula_name].sort().join('+');
+      const isPreferred = preferredCombos.has(combo);
+      
+      if (isPreferred || Math.random() > 0.3) {
+        const parlay = createParlay([pick1, pick2], 'mixed');
+        parlays.push(parlay);
+      }
     }
     if (parlays.length >= target) break;
   }
