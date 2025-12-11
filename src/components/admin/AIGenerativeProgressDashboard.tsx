@@ -961,12 +961,24 @@ export function AIGenerativeProgressDashboard() {
                             
                             <p className="text-xs text-cyan-500 font-medium mb-2">{parlay.strategy_used}</p>
 
-                            <div className="space-y-1">
+                            <div className="space-y-2">
                               {legs.slice(0, 3).map((leg: any, idx: number) => (
-                                <div key={idx} className="flex items-center gap-2 text-sm">
-                                  <Badge variant="outline" className="text-xs">{leg.engine_source || '?'}</Badge>
-                                  <span className="truncate flex-1">{leg.description}</span>
-                                  <span className="font-mono text-xs">{leg.odds > 0 ? '+' : ''}{leg.odds}</span>
+                                <div key={idx} className="flex flex-col gap-1 text-sm border-b border-border/30 pb-2 last:border-0">
+                                  {leg.game_description && (
+                                    <span className="text-xs text-muted-foreground font-medium">{leg.game_description}</span>
+                                  )}
+                                  {leg.commence_time && (
+                                    <span className="text-xs text-cyan-500">
+                                      {new Date(leg.commence_time).toLocaleString('en-US', { 
+                                        month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+                                      })}
+                                    </span>
+                                  )}
+                                  <div className="flex items-center gap-2">
+                                    <Badge variant="outline" className="text-xs">{leg.engine_source || '?'}</Badge>
+                                    <span className="truncate flex-1">{leg.description}</span>
+                                    <span className="font-mono text-xs">{leg.odds > 0 ? '+' : ''}{leg.odds}</span>
+                                  </div>
                                 </div>
                               ))}
                               {legs.length > 3 && (
