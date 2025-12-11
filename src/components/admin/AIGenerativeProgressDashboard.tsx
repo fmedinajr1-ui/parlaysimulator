@@ -109,6 +109,13 @@ interface SettledParlayDetail {
   strategy: string;
 }
 
+interface LearningResults {
+  weights_updated?: { weights_updated: number };
+  avoid_patterns?: { patterns_updated: number; patterns_deactivated: number };
+  compound_formulas?: { formulas_updated: number };
+  cross_engine?: { comparisons_updated: number };
+}
+
 interface SettlementProgress {
   isRunning: boolean;
   status: string;
@@ -117,6 +124,7 @@ interface SettlementProgress {
   lost: number;
   stillPending: number;
   settledDetails: SettledParlayDetail[];
+  learningResults?: LearningResults;
 }
 
 export function AIGenerativeProgressDashboard() {
@@ -237,6 +245,8 @@ export function AIGenerativeProgressDashboard() {
       
       if (error) throw error;
       
+      const learningResults = data?.learningResults as LearningResults | undefined;
+      
       setSettlementProgress({
         isRunning: false,
         status: 'Complete',
@@ -244,10 +254,17 @@ export function AIGenerativeProgressDashboard() {
         won: data?.won || 0,
         lost: data?.lost || 0,
         stillPending: data?.stillPending || 0,
-        settledDetails: data?.settledDetails || []
+        settledDetails: data?.settledDetails || [],
+        learningResults
       });
       
-      toast.success(`Settlement complete! ${data?.settled || 0} parlays (${data?.won || 0}W/${data?.lost || 0}L)`);
+      // Build combined toast message
+      const settlementMsg = `${data?.settled || 0} parlays (${data?.won || 0}W/${data?.lost || 0}L)`;
+      const learningMsg = learningResults 
+        ? ` • ${learningResults.weights_updated?.weights_updated || 0} weights • ${learningResults.avoid_patterns?.patterns_updated || 0} patterns`
+        : '';
+      
+      toast.success(`Settled ${settlementMsg}${learningMsg}`);
       fetchData();
     } catch (error) {
       setSettlementProgress(null);
@@ -424,6 +441,34 @@ export function AIGenerativeProgressDashboard() {
                   <p className="text-xs text-muted-foreground">Pending</p>
                 </div>
               </div>
+              
+              {/* Learning Results */}
+              {settlementProgress.learningResults && !settlementProgress.isRunning && (
+                <div className="bg-cyan-500/10 rounded-lg p-3 border border-cyan-500/20">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Brain className="w-4 h-4 text-cyan-500" />
+                    <span className="text-sm font-medium">AI Learning Updated</span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-2 text-center text-xs">
+                    <div>
+                      <p className="font-bold text-cyan-500">{settlementProgress.learningResults.weights_updated?.weights_updated || 0}</p>
+                      <p className="text-muted-foreground">Weights</p>
+                    </div>
+                    <div>
+                      <p className="font-bold text-orange-500">{settlementProgress.learningResults.avoid_patterns?.patterns_updated || 0}</p>
+                      <p className="text-muted-foreground">Patterns</p>
+                    </div>
+                    <div>
+                      <p className="font-bold text-purple-500">{settlementProgress.learningResults.compound_formulas?.formulas_updated || 0}</p>
+                      <p className="text-muted-foreground">Formulas</p>
+                    </div>
+                    <div>
+                      <p className="font-bold text-green-500">{settlementProgress.learningResults.cross_engine?.comparisons_updated || 0}</p>
+                      <p className="text-muted-foreground">Cross-Engine</p>
+                    </div>
+                  </div>
+                </div>
+              )}
               
               {/* Detailed Leg Results */}
               {settlementProgress.settledDetails.length > 0 && (

@@ -584,14 +584,22 @@ serve(async (req) => {
       }
     }
 
-    // Run full learning cycle if we settled any parlays
+    // Run full learning cycle if we settled any parlays and capture results
+    let learningResults: any = null;
     if (results.settled > 0) {
       try {
-        await supabase.functions.invoke('ai-learning-engine', {
+        console.log('🧠 Starting full learning cycle...');
+        const { data: learnData, error: learnError } = await supabase.functions.invoke('ai-learning-engine', {
           body: { action: 'full_learning_cycle' }
         });
-        results.learningTriggered = true;
-        console.log('🧠 Learning cycle triggered');
+        
+        if (learnError) {
+          console.error('Learning cycle error:', learnError);
+        } else {
+          learningResults = learnData;
+          results.learningTriggered = true;
+          console.log('🧠 Learning cycle complete:', JSON.stringify(learnData, null, 2));
+        }
       } catch (learnError) {
         console.error('Full learning cycle error:', learnError);
       }
@@ -607,15 +615,20 @@ serve(async (req) => {
       result: {
         ...results,
         force_mode: force,
-        settledDetails: results.settledDetails.slice(0, 10) // Limit stored details
+        settledDetails: results.settledDetails.slice(0, 10),
+        learningResults
       }
     });
 
     console.log(`\n✅ Settlement complete: ${results.settled} settled, ${results.won}W/${results.lost}L, ${results.stillPending} still pending`);
+    if (learningResults) {
+      console.log(`🧠 Learning: ${learningResults.weights_updated?.weights_updated || 0} weights updated, ${learningResults.avoid_patterns?.patterns_updated || 0} avoid patterns, ${learningResults.compound_formulas?.formulas_updated || 0} compound formulas`);
+    }
 
     return new Response(JSON.stringify({
       success: true,
       ...results,
+      learningResults,
       duration_ms: duration
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
