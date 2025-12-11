@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, RefreshCw, Target, Zap, TrendingUp, TrendingDown, Minus, AlertCircle, Flame, Plus, BarChart3, Shield, Thermometer } from "lucide-react";
+import { Loader2, RefreshCw, Target, Zap, TrendingUp, TrendingDown, Minus, AlertCircle, Flame, Plus, BarChart3, Shield, Thermometer, Snowflake } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { AddToParlayButton } from "@/components/parlay/AddToParlayButton";
 
@@ -149,6 +149,7 @@ export function HitRatePicks() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isBuilding, setIsBuilding] = useState(false);
   const [isCalcStats, setIsCalcStats] = useState(false);
+  const [isNhlFetching, setIsNhlFetching] = useState(false);
   const [hitRateThreshold, setHitRateThreshold] = useState(0.6);
   const [streakFilter, setStreakFilter] = useState("all");
   const [sportFilter, setSportFilter] = useState("basketball_nba");
@@ -231,6 +232,31 @@ export function HitRatePicks() {
       });
     } finally {
       setIsCalcStats(false);
+    }
+  };
+
+  // Fetch NHL stats
+  const fetchNhlStats = async () => {
+    setIsNhlFetching(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('nhl-stats-fetcher', {
+        body: { daysBack: 14 }
+      });
+      if (error) throw error;
+      
+      toast({
+        title: "NHL Stats Updated",
+        description: data.message || `Fetched ${data.playersInserted} player logs`,
+      });
+    } catch (error) {
+      console.error('Error fetching NHL stats:', error);
+      toast({
+        title: "NHL Stats Fetch Failed",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive"
+      });
+    } finally {
+      setIsNhlFetching(false);
     }
   };
 
@@ -435,7 +461,21 @@ export function HitRatePicks() {
             ) : (
               <BarChart3 className="h-4 w-4 mr-2" />
             )}
-            Update Season Stats
+            NBA Stats
+          </Button>
+          <Button
+            onClick={fetchNhlStats}
+            disabled={isNhlFetching}
+            variant="outline"
+            size="sm"
+            className="border-cyan-400/30 text-cyan-400 hover:bg-cyan-400/10"
+          >
+            {isNhlFetching ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <Snowflake className="h-4 w-4 mr-2" />
+            )}
+            NHL Stats
           </Button>
           <Button
             onClick={analyzeProps}
