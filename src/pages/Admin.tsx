@@ -28,7 +28,8 @@ import {
   Settings,
   Clock,
   ArrowLeft,
-  Target
+  Target,
+  Sparkles
 } from 'lucide-react';
 import { AILearningDashboard } from '@/components/admin/AILearningDashboard';
 import { SharpMoneyPanel } from '@/components/admin/SharpMoneyPanel';
@@ -45,6 +46,7 @@ import { HitRateAccuracyPanel } from '@/components/admin/HitRateAccuracyPanel';
 import { UnifiedAccuracyDashboard } from '@/components/admin/UnifiedAccuracyDashboard';
 import { SharpEngineV2Card } from '@/components/sharp/SharpEngineV2Card';
 import { SharpEngineConfigPanel } from '@/components/admin/SharpEngineConfigPanel';
+import { AIGenerativeProgressDashboard } from '@/components/admin/AIGenerativeProgressDashboard';
 
 interface ParlayData {
   id: string;
@@ -65,6 +67,7 @@ type AdminSection =
   | 'overview'
   | 'accuracy' 
   | 'ai-learning' 
+  | 'ai-generator'
   | 'sharp-engine' 
   | 'movement' 
   | 'users' 
@@ -72,6 +75,13 @@ type AdminSection =
   | 'god-mode';
 
 const sectionConfig = [
+  {
+    id: 'ai-generator' as AdminSection,
+    title: 'AI Parlay Generator',
+    description: 'Self-learning parlay generation toward 65% accuracy',
+    icon: Sparkles,
+    color: 'text-cyan-500'
+  },
   {
     id: 'accuracy' as AdminSection,
     title: 'Analytics & Accuracy',
@@ -404,6 +414,9 @@ export default function Admin() {
       
       case 'ai-learning':
         return <AILearningDashboard />;
+      
+      case 'ai-generator':
+        return <AIGenerativeProgressDashboard />;
       
       case 'sharp-engine':
         return (

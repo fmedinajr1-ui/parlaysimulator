@@ -1,5 +1,8 @@
 project_id = "pajakaqphlxoqjtrxzmi"
 
+[functions.ai-continuous-parlay-generator]
+verify_jwt = false
+
 [functions.predict-upsets]
 verify_jwt = false
 
