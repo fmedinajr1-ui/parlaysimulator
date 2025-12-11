@@ -8,7 +8,8 @@ const corsHeaders = {
 
 const SPORT_KEYS: Record<string, string> = {
   'basketball_nba': 'basketball_nba',
-  'americanfootball_nfl': 'americanfootball_nfl'
+  'americanfootball_nfl': 'americanfootball_nfl',
+  'icehockey_nhl': 'icehockey_nhl'
 };
 
 const NBA_MARKETS = [
@@ -27,6 +28,14 @@ const NFL_MARKETS = [
   'player_anytime_td',
   'player_pass_tds',
   'player_receptions'
+];
+
+const NHL_MARKETS = [
+  'player_points',
+  'player_assists',
+  'player_shots_on_goal',
+  'player_blocked_shots',
+  'player_power_play_points'
 ];
 
 serve(async (req) => {
@@ -78,7 +87,7 @@ serve(async (req) => {
       console.log(`${relevantEvents.length} events are in the target window (4-24 hours out)`);
 
       // Select markets based on sport
-      const marketsToScan = sport === 'americanfootball_nfl' ? NFL_MARKETS : NBA_MARKETS;
+      const marketsToScan = sport === 'americanfootball_nfl' ? NFL_MARKETS : sport === 'icehockey_nhl' ? NHL_MARKETS : NBA_MARKETS;
 
       // For each relevant event, fetch player props
       for (const event of relevantEvents.slice(0, 5)) { // Limit to 5 events per sport
