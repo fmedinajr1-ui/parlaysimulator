@@ -1713,6 +1713,60 @@ export type Database = {
         }
         Relationships: []
       }
+      nhl_player_game_logs: {
+        Row: {
+          assists: number | null
+          blocked_shots: number | null
+          created_at: string
+          game_date: string
+          goals: number | null
+          id: string
+          is_home: boolean | null
+          minutes_played: number | null
+          opponent: string
+          penalty_minutes: number | null
+          player_name: string
+          plus_minus: number | null
+          points: number | null
+          power_play_points: number | null
+          shots_on_goal: number | null
+        }
+        Insert: {
+          assists?: number | null
+          blocked_shots?: number | null
+          created_at?: string
+          game_date: string
+          goals?: number | null
+          id?: string
+          is_home?: boolean | null
+          minutes_played?: number | null
+          opponent: string
+          penalty_minutes?: number | null
+          player_name: string
+          plus_minus?: number | null
+          points?: number | null
+          power_play_points?: number | null
+          shots_on_goal?: number | null
+        }
+        Update: {
+          assists?: number | null
+          blocked_shots?: number | null
+          created_at?: string
+          game_date?: string
+          goals?: number | null
+          id?: string
+          is_home?: boolean | null
+          minutes_played?: number | null
+          opponent?: string
+          penalty_minutes?: number | null
+          player_name?: string
+          plus_minus?: number | null
+          points?: number | null
+          power_play_points?: number | null
+          shots_on_goal?: number | null
+        }
+        Relationships: []
+      }
       notification_preferences: {
         Row: {
           created_at: string
