@@ -438,6 +438,7 @@ async function fetchJuicedPicks(supabase: any, weightMap: Map<string, FormulaWei
     .select('*')
     .not('final_pick', 'is', null)
     .in('juice_level', ['extreme', 'heavy'])
+    .gte('unified_confidence', 0.70)  // 70% confidence minimum for juiced props
     .gte('commence_time', new Date().toISOString())
     .order('juice_amount', { ascending: false })
     .limit(25);

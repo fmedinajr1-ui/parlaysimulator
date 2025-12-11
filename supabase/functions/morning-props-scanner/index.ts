@@ -211,8 +211,7 @@ serve(async (req) => {
     
     const allJuicedProps: JuicedProp[] = [];
     const now = new Date();
-    const endOfDay = new Date(now);
-    endOfDay.setHours(23, 59, 59, 999);
+    const next24Hours = new Date(now.getTime() + 24 * 60 * 60 * 1000);
     
     let unifiedMatchCount = 0;
     
@@ -221,7 +220,7 @@ serve(async (req) => {
       console.log(`📊 Scanning ${sport} for juiced props...`);
       
       try {
-        // Get events for today
+        // Get events for next 24 hours
         const eventsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events?apiKey=${oddsApiKey}`;
         const eventsResponse = await fetch(eventsUrl);
         
@@ -231,15 +230,15 @@ serve(async (req) => {
         }
         
         const events = await eventsResponse.json();
-        const todayEvents = events.filter((e: any) => {
+        const upcomingEvents = events.filter((e: any) => {
           const eventTime = new Date(e.commence_time);
-          return eventTime >= now && eventTime <= endOfDay;
+          return eventTime >= now && eventTime <= next24Hours;
         });
         
-        console.log(`Found ${todayEvents.length} events for ${sport} today`);
+        console.log(`Found ${upcomingEvents.length} events for ${sport} in next 24h`);
         
         // For each event, get player props
-        for (const event of todayEvents.slice(0, 5)) { // Limit to 5 events per sport to save API calls
+        for (const event of upcomingEvents.slice(0, 5)) { // Limit to 5 events per sport to save API calls
           for (const market of propMarkets) {
             try {
               const oddsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${oddsApiKey}&regions=us&markets=${market}&oddsFormat=american`;
