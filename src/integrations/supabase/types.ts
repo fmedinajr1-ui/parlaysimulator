@@ -59,6 +59,99 @@ export type Database = {
         }
         Relationships: []
       }
+      ai_generated_parlays: {
+        Row: {
+          accuracy_at_generation: number | null
+          ai_reasoning: string | null
+          confidence_score: number
+          created_at: string
+          generation_round: number
+          id: string
+          legs: Json
+          outcome: string
+          settled_at: string | null
+          signals_used: string[]
+          strategy_used: string
+          total_odds: number
+        }
+        Insert: {
+          accuracy_at_generation?: number | null
+          ai_reasoning?: string | null
+          confidence_score?: number
+          created_at?: string
+          generation_round?: number
+          id?: string
+          legs?: Json
+          outcome?: string
+          settled_at?: string | null
+          signals_used?: string[]
+          strategy_used: string
+          total_odds?: number
+        }
+        Update: {
+          accuracy_at_generation?: number | null
+          ai_reasoning?: string | null
+          confidence_score?: number
+          created_at?: string
+          generation_round?: number
+          id?: string
+          legs?: Json
+          outcome?: string
+          settled_at?: string | null
+          signals_used?: string[]
+          strategy_used?: string
+          total_odds?: number
+        }
+        Relationships: []
+      }
+      ai_learning_progress: {
+        Row: {
+          created_at: string
+          current_accuracy: number
+          generation_round: number
+          id: string
+          is_milestone: boolean
+          learned_patterns: Json
+          losses: number
+          milestone_reached: string | null
+          parlays_generated: number
+          parlays_settled: number
+          strategy_weights: Json
+          target_accuracy: number
+          wins: number
+        }
+        Insert: {
+          created_at?: string
+          current_accuracy?: number
+          generation_round: number
+          id?: string
+          is_milestone?: boolean
+          learned_patterns?: Json
+          losses?: number
+          milestone_reached?: string | null
+          parlays_generated?: number
+          parlays_settled?: number
+          strategy_weights?: Json
+          target_accuracy?: number
+          wins?: number
+        }
+        Update: {
+          created_at?: string
+          current_accuracy?: number
+          generation_round?: number
+          id?: string
+          is_milestone?: boolean
+          learned_patterns?: Json
+          losses?: number
+          milestone_reached?: string | null
+          parlays_generated?: number
+          parlays_settled?: number
+          strategy_weights?: Json
+          target_accuracy?: number
+          wins?: number
+        }
+        Relationships: []
+      }
       ai_performance_metrics: {
         Row: {
           accuracy_rate: number
