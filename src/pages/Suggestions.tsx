@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSubscription } from "@/hooks/useSubscription";
 import { useNavigate } from "react-router-dom";
+import { MobileHeader } from "@/components/layout/MobileHeader";
 import { SuggestionPerformanceCard } from "@/components/suggestions/SuggestionPerformanceCard";
 import { SuggestionHistoryFeed } from "@/components/suggestions/SuggestionHistoryFeed";
 import { StrategyPerformanceCard } from "@/components/suggestions/StrategyPerformanceCard";
@@ -556,6 +557,11 @@ const Suggestions = () => {
   if (!user) {
     return (
       <div className="min-h-dvh bg-background pb-nav-safe overflow-x-safe">
+        <MobileHeader 
+          title="AI SUGGESTIONS"
+          icon={<Sparkles className="w-6 h-6 text-primary" />}
+          showBack={true}
+        />
         <main className="max-w-lg mx-auto px-3 py-4">
           <div className="text-center py-12">
             <Lock className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
@@ -572,6 +578,11 @@ const Suggestions = () => {
   if (!isSubscribed && !isAdmin) {
     return (
       <div className="min-h-dvh bg-background pb-nav-safe overflow-x-safe">
+        <MobileHeader 
+          title="AI SUGGESTIONS"
+          icon={<Sparkles className="w-6 h-6 text-primary" />}
+          showBack={true}
+        />
         <main className="max-w-lg mx-auto px-3 py-4">
           <div className="text-center py-8">
             <div className="w-16 h-16 rounded-full bg-gradient-to-br from-primary/20 to-primary/10 flex items-center justify-center mx-auto mb-4">
@@ -614,358 +625,172 @@ const Suggestions = () => {
 
   return (
     <div className="min-h-dvh bg-background pb-nav-safe overflow-x-safe">
+      <MobileHeader 
+        title="AI SUGGESTIONS"
+        icon={<Sparkles className="w-6 h-6 text-primary" />}
+        showBack={true}
+        rightAction={
+          <div className="flex items-center gap-2">
+            {activeTab === "suggestions" && (
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setShowFilters(!showFilters)}
+                className={cn("h-9 w-9", activeFilterCount > 0 && "border-primary")}
+              >
+                <Filter className="w-4 h-4" />
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={generateSuggestions}
+              disabled={isGenerating}
+              className="h-9 w-9"
+            >
+              {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            </Button>
+          </div>
+        }
+      />
       <main className="max-w-lg mx-auto px-3 py-4">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-4 relative">
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-6 h-6 text-primary" />
-            <h1 className="text-xl font-display text-foreground">AI SUGGESTIONS</h1>
-            {shouldShowHint('suggestions-swipe') && (
-              <HintTooltip
-                id="suggestions-swipe"
-                message="Browse personalized parlay suggestions based on your betting history. Use filters to find low-risk options or hybrid picks."
-                position="bottom"
-                onDismiss={() => dismissHint('suggestions-swipe')}
-              />
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {(activeTab === "suggestions" || activeTab === "sharp-props") && (
-              <>
-                {activeTab === "suggestions" && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setShowFilters(!showFilters)}
-                    className={cn(activeFilterCount > 0 && "border-primary")}
-                  >
-                    <Filter className="w-4 h-4" />
-                    {activeFilterCount > 0 && (
-                      <Badge variant="secondary" className="ml-1 h-5 w-5 p-0 text-xs">
-                        {activeFilterCount}
-                      </Badge>
-                    )}
-                  </Button>
-                )}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={generateSuggestions}
-                  disabled={isGenerating}
-                >
-                  {isGenerating ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <RefreshCw className="w-4 h-4" />
-                  )}
-                </Button>
-              </>
-            )}
-          </div>
-        </div>
+        {shouldShowHint('suggestions-swipe') && (
+          <HintTooltip
+            id="suggestions-swipe"
+            message="Browse personalized parlay suggestions based on your betting history. Use filters to find low-risk options or hybrid picks."
+            position="bottom"
+            onDismiss={() => dismissHint('suggestions-swipe')}
+          />
+        )}
 
-        {/* Tabs */}
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-4">
-          <TabsList className="grid w-full grid-cols-4">
-            <TabsTrigger value="suggestions" className="flex items-center gap-1 text-xs">
-              <Sparkles className="w-3 h-3" />
+        {/* Tab Navigation */}
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          <TabsList className="grid w-full grid-cols-4 bg-muted/50 mb-4">
+            <TabsTrigger value="suggestions" className="text-xs">
+              <Sparkles className="w-3 h-3 mr-1" />
               All
             </TabsTrigger>
-            <TabsTrigger value="hitrate" className="flex items-center gap-1 text-xs">
-              <Target className="w-3 h-3" />
+            <TabsTrigger value="hitrate" className="text-xs">
+              <Target className="w-3 h-3 mr-1" />
               Hit Rate
             </TabsTrigger>
-            <TabsTrigger value="sharp-props" className="flex items-center gap-1 text-xs">
-              <Zap className="w-3 h-3" />
+            <TabsTrigger value="sharp-props" className="text-xs">
+              <Zap className="w-3 h-3 mr-1" />
               Sharp
             </TabsTrigger>
-            <TabsTrigger value="history" className="flex items-center gap-1 text-xs">
-              <History className="w-3 h-3" />
+            <TabsTrigger value="history" className="text-xs">
+              <History className="w-3 h-3 mr-1" />
               History
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="suggestions" className="mt-4 space-y-4">
-            {/* AI Suggestion Performance Stats */}
-            <SuggestionPerformanceCard />
-
-            {/* AI Calibration Dashboard */}
-            <CalibrationDashboard compact />
-
-            {/* NBA Fatigue Analysis */}
-            <TodaysFatigueGames />
-
-            {/* AI Learning Insights Banner */}
-            {learningInsights && (learningInsights.bestPatterns.length > 0 || learningInsights.avoidPatterns.length > 0) && (
-              <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-display flex items-center gap-2">
-                    <Lightbulb className="w-4 h-4 text-primary" />
-                    AI LEARNING INSIGHTS
-                    <Badge variant="secondary" className="text-xs ml-auto">
-                      {learningInsights.totalBets} bets • {learningInsights.overallWinRate}% win rate
-                    </Badge>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {/* Best Patterns */}
-                  {learningInsights.bestPatterns.length > 0 && (
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
-                        <CheckCircle className="w-3 h-3 text-neon-green" />
-                        AI is focusing on (your winning patterns):
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {learningInsights.bestPatterns.map((pattern, idx) => (
-                          <Badge 
-                            key={idx} 
-                            variant="outline" 
-                            className="bg-neon-green/10 text-neon-green border-neon-green/30"
-                          >
-                            {pattern.sport} ({pattern.winRate}% • {pattern.record})
-                          </Badge>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Avoid Patterns */}
-                  {learningInsights.avoidPatterns.length > 0 && (
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
-                        <XCircle className="w-3 h-3 text-neon-red" />
-                        AI is avoiding (learned from losses):
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {learningInsights.avoidPatterns.map((pattern, idx) => (
-                          <Badge 
-                            key={idx} 
-                            variant="outline" 
-                            className="bg-neon-red/10 text-neon-red border-neon-red/30"
-                          >
-                            {pattern.sport} ({pattern.winRate}% • {pattern.record})
-                          </Badge>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {learningInsights.message && (
-                    <div className="flex items-start gap-2 p-2 rounded bg-muted/30 border border-border/30">
-                      <Brain className="w-4 h-4 text-primary shrink-0 mt-0.5" />
-                      <p className="text-xs text-muted-foreground italic">
-                        {learningInsights.message}
-                      </p>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            )}
-
-            {/* User Pattern Analytics */}
-            {userPattern && (
-              <Card className="bg-card/50 border-border/50">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-display flex items-center gap-2">
-                    <Brain className="w-4 h-4 text-primary" />
-                    YOUR BETTING PROFILE
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="bg-muted/30 rounded-lg p-3">
-                      <p className="text-xs text-muted-foreground mb-1">Favorite Sports</p>
-                      <div className="flex flex-wrap gap-1">
-                        {userPattern.favorite_sports.length > 0 ? (
-                          userPattern.favorite_sports.map(sport => (
-                            <Badge key={sport} variant="secondary" className="text-xs">
-                              {sport}
-                            </Badge>
-                          ))
-                        ) : (
-                          <span className="text-xs text-muted-foreground">No data yet</span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="bg-muted/30 rounded-lg p-3">
-                      <p className="text-xs text-muted-foreground mb-1">Preferred Bet Types</p>
-                      <div className="flex flex-wrap gap-1">
-                        {userPattern.favorite_bet_types.length > 0 ? (
-                          userPattern.favorite_bet_types.map(type => (
-                            <Badge key={type} variant="secondary" className="text-xs capitalize">
-                              {type.replace('_', ' ')}
-                            </Badge>
-                          ))
-                        ) : (
-                          <span className="text-xs text-muted-foreground">No data yet</span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {Object.keys(userPattern.win_rate_by_sport).length > 0 && (
-                    <div className="bg-muted/30 rounded-lg p-3">
-                      <p className="text-xs text-muted-foreground mb-2">Win Rate by Sport</p>
-                      <div className="space-y-2">
-                        {Object.entries(userPattern.win_rate_by_sport)
-                          .sort((a, b) => b[1] - a[1])
-                          .slice(0, 3)
-                          .map(([sport, rate]) => (
-                            <div key={sport} className="flex items-center justify-between">
-                              <span className="text-sm">{sport}</span>
-                              <div className="flex items-center gap-2">
-                                <div className="w-24 h-2 bg-muted rounded-full overflow-hidden">
-                                  <div 
-                                    className={cn(
-                                      "h-full rounded-full",
-                                      rate >= 0.5 ? "bg-neon-green" : "bg-neon-orange"
-                                    )}
-                                    style={{ width: `${rate * 100}%` }}
-                                  />
-                                </div>
-                                <span className={cn(
-                                  "text-xs font-medium",
-                                  rate >= 0.5 ? "text-neon-green" : "text-neon-orange"
-                                )}>
-                                  {(rate * 100).toFixed(0)}%
-                                </span>
-                              </div>
-                            </div>
-                          ))}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="bg-primary/5 rounded-lg p-3 border border-primary/10">
-                    <div className="flex items-start gap-2">
-                      <BarChart3 className="w-4 h-4 text-primary shrink-0 mt-0.5" />
-                      <p className="text-xs text-muted-foreground">
-                        Suggestions are tailored to your betting patterns. The more you bet, the smarter the recommendations become.
-                      </p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Enhanced Filters */}
+          {/* All Suggestions Tab */}
+          <TabsContent value="suggestions" className="space-y-4">
+            {/* Filter section for suggestions */}
             {showFilters && (
-              <Card className="bg-card/50 border-border/50 relative z-50">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-display">FILTERS</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {/* Sport & Risk Row */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="relative z-50">
-                      <label className="text-xs text-muted-foreground mb-1 block">Sport</label>
-                      <Select value={sportFilter} onValueChange={(value) => setSportFilter(value)}>
-                        <SelectTrigger className="h-9">
-                          <SelectValue placeholder="Select sport" />
-                        </SelectTrigger>
-                        <SelectContent className="z-[100]">
-                          <SelectItem value="All">All Sports</SelectItem>
-                          <SelectItem value="Football">🏈 Football (NFL/NCAAF)</SelectItem>
-                          <SelectItem value="Basketball">🏀 Basketball (NBA/NCAAB)</SelectItem>
-                          <SelectItem value="Hockey">🏒 Hockey (NHL)</SelectItem>
-                          <SelectItem value="Baseball">⚾ Baseball (MLB)</SelectItem>
-                          <SelectItem value="Soccer">⚽ Soccer</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="relative z-50">
-                      <label className="text-xs text-muted-foreground mb-1 block">Risk Level</label>
-                      <Select value={riskFilter} onValueChange={(value) => setRiskFilter(value)}>
-                        <SelectTrigger className="h-9">
-                          <SelectValue placeholder="Select risk" />
-                        </SelectTrigger>
-                        <SelectContent className="z-[100]">
-                          <SelectItem value="All">All Risks</SelectItem>
-                          <SelectItem value="Hybrid">🧬 Hybrid Formula</SelectItem>
-                          <SelectItem value="Very Low (60%+)">🛡️ Very Low (60%+)</SelectItem>
-                          <SelectItem value="Low (50%+)">🟢 Low (50%+)</SelectItem>
-                          <SelectItem value="Medium">🟡 Medium (10-25%)</SelectItem>
-                          <SelectItem value="High">🔴 High (&lt;10%)</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
+              <Card className="bg-card/50 border-border/50">
+                <CardContent className="p-3 space-y-3">
+                  <div className="flex flex-wrap gap-2">
+                    <Select value={sportFilter} onValueChange={setSportFilter}>
+                      <SelectTrigger className="w-[140px] h-9 bg-background">
+                        <SelectValue placeholder="Sport" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {SPORTS.map(s => (
+                          <SelectItem key={s} value={s}>{s}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    
+                    <Select value={riskFilter} onValueChange={setRiskFilter}>
+                      <SelectTrigger className="w-[140px] h-9 bg-background">
+                        <SelectValue placeholder="Risk" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {RISK_LEVELS.map(r => (
+                          <SelectItem key={r} value={r}>{r}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
-
-                  {/* Bet Type & Leg Count Row */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="relative z-40">
-                      <label className="text-xs text-muted-foreground mb-1 block">Bet Type</label>
-                      <Select value={betTypeFilter} onValueChange={(value) => setBetTypeFilter(value)}>
-                        <SelectTrigger className="h-9">
-                          <SelectValue placeholder="Select type" />
-                        </SelectTrigger>
-                        <SelectContent className="z-[100]">
-                          {BET_TYPES.map(type => (
-                            <SelectItem key={type} value={type}>{type}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="relative z-40">
-                      <label className="text-xs text-muted-foreground mb-1 block">Leg Count</label>
-                      <Select value={legCountFilter} onValueChange={(value) => setLegCountFilter(value)}>
-                        <SelectTrigger className="h-9">
-                          <SelectValue placeholder="Select count" />
-                        </SelectTrigger>
-                        <SelectContent className="z-[100]">
-                          {LEG_COUNTS.map(opt => (
-                            <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-
-                  {/* Odds Range */}
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <label className="text-xs text-muted-foreground">Odds Range</label>
-                      <span className="text-xs text-muted-foreground">
-                        {formatOdds(oddsRange[0])} to {formatOdds(oddsRange[1])}
-                      </span>
-                    </div>
-                    <Slider
-                      value={oddsRange}
-                      onValueChange={(value) => setOddsRange(value as [number, number])}
-                      min={-500}
-                      max={5000}
-                      step={50}
-                      className="w-full"
-                    />
-                  </div>
-
-                  {/* Fatigue Edge Toggle */}
-                  <div className="flex items-center justify-between p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/20">
-                    <div className="flex items-center gap-2">
-                      <Battery className="w-4 h-4 text-yellow-400" />
-                      <div>
-                        <span className="text-sm font-medium">Fatigue Edge</span>
-                        <p className="text-xs text-muted-foreground">NBA picks with fatigue advantage</p>
-                      </div>
-                    </div>
+                  
+                  <div className="flex items-center justify-between">
                     <Button
-                      variant={fatigueEdgeFilter ? "default" : "outline"}
+                      variant={fatigueEdgeFilter ? "secondary" : "outline"}
                       size="sm"
                       onClick={() => setFatigueEdgeFilter(!fatigueEdgeFilter)}
-                      className={fatigueEdgeFilter ? "bg-yellow-500 hover:bg-yellow-600" : ""}
+                      className="text-xs"
                     >
-                      {fatigueEdgeFilter ? "ON" : "OFF"}
+                      <Battery className="w-3 h-3 mr-1" />
+                      Fatigue Edge
                     </Button>
+                    
+                    {activeFilterCount > 0 && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={resetFilters}
+                        className="text-xs text-muted-foreground"
+                      >
+                        Clear ({activeFilterCount})
+                      </Button>
+                    )}
                   </div>
+                </CardContent>
+              </Card>
+            )}
 
-                  <Button
-                    variant="ghost" 
-                    size="sm" 
-                    className="w-full"
-                    onClick={resetFilters}
-                  >
-                    Reset Filters
-                  </Button>
+            {/* Performance Stats */}
+            <SuggestionPerformanceCard />
+            
+            {/* Calibration */}
+            <CalibrationDashboard />
+            
+            {/* Fatigue Analysis */}
+            <TodaysFatigueGames />
+
+            {/* Learning Insights */}
+            {learningInsights && (
+              <Card className="bg-gradient-to-br from-primary/5 to-transparent border-primary/20">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Brain className="w-4 h-4 text-primary" />
+                    AI Learning Insights
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Overall Record</span>
+                    <span className="font-mono">{learningInsights.totalWins}-{learningInsights.totalLosses} ({learningInsights.overallWinRate}%)</span>
+                  </div>
+                  
+                  {learningInsights.bestPatterns.length > 0 && (
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">Best Performing:</p>
+                      <div className="flex flex-wrap gap-1">
+                        {learningInsights.bestPatterns.map((p, i) => (
+                          <Badge key={i} variant="outline" className="text-xs bg-neon-green/10 text-neon-green border-neon-green/30">
+                            <ThumbsUp className="w-3 h-3 mr-1" />
+                            {p.sport} {p.winRate}%
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {learningInsights.avoidPatterns.length > 0 && (
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">AI Avoiding:</p>
+                      <div className="flex flex-wrap gap-1">
+                        {learningInsights.avoidPatterns.map((p, i) => (
+                          <Badge key={i} variant="outline" className="text-xs bg-red-500/10 text-red-400 border-red-500/30">
+                            <ThumbsDown className="w-3 h-3 mr-1" />
+                            {p.sport} {p.winRate}%
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             )}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { HitRateParlayCard } from "./HitRateParlayCard";
@@ -154,6 +154,7 @@ export function HitRatePicks() {
   const [streakFilter, setStreakFilter] = useState("all");
   const [sportFilter, setSportFilter] = useState("basketball_nba");
   const [lineValueFilter, setLineValueFilter] = useState("all");
+  const hasAutoFetched = useRef(false);
 
   // Fetch existing hit rate parlays
   const { data: parlays, isLoading: parlaysLoading } = useQuery({
@@ -211,6 +212,14 @@ export function HitRatePicks() {
       return data || [];
     }
   });
+
+  // Auto-fetch props when component mounts if none exist
+  useEffect(() => {
+    if (!propsLoading && (!props || props.length === 0) && !hasAutoFetched.current && !isAnalyzing) {
+      hasAutoFetched.current = true;
+      analyzeProps();
+    }
+  }, [propsLoading, props]);
 
   // Calculate season stats
   const calculateSeasonStats = async () => {
