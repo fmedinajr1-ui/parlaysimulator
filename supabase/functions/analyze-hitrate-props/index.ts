@@ -7,14 +7,23 @@ const corsHeaders = {
 };
 
 // Map prop types to database columns and season stats fields
-const PROP_TO_COLUMN: Record<string, string> = {
-  'player_points': 'points',
-  'player_rebounds': 'rebounds',
-  'player_assists': 'assists',
-  'player_threes': 'threes_made',
-  'player_blocks': 'blocks',
-  'player_steals': 'steals',
-  'player_points_rebounds_assists': 'pra',
+const PROP_TO_COLUMN: Record<string, Record<string, string>> = {
+  'basketball_nba': {
+    'player_points': 'points',
+    'player_rebounds': 'rebounds',
+    'player_assists': 'assists',
+    'player_threes': 'threes_made',
+    'player_blocks': 'blocks',
+    'player_steals': 'steals',
+    'player_points_rebounds_assists': 'pra',
+  },
+  'icehockey_nhl': {
+    'player_points': 'points',
+    'player_assists': 'assists',
+    'player_shots_on_goal': 'shots_on_goal',
+    'player_blocked_shots': 'blocked_shots',
+    'player_power_play_points': 'power_play_points',
+  }
 };
 
 const PROP_TO_SEASON_AVG: Record<string, string> = {
@@ -24,6 +33,9 @@ const PROP_TO_SEASON_AVG: Record<string, string> = {
   'player_threes': 'avg_threes',
   'player_blocks': 'avg_blocks',
   'player_steals': 'avg_steals',
+  'player_shots_on_goal': 'avg_shots_on_goal',
+  'player_blocked_shots': 'avg_blocked_shots',
+  'player_power_play_points': 'avg_power_play_points',
 };
 
 const PROP_TO_SEASON_STD: Record<string, string> = {
@@ -54,6 +66,18 @@ const PROP_TO_LAST10_AVG: Record<string, string> = {
   'player_threes': 'last_10_avg_threes',
 };
 
+// Sport-specific markets
+const SPORT_MARKETS: Record<string, string[]> = {
+  'basketball_nba': ['player_points', 'player_rebounds', 'player_assists', 'player_threes'],
+  'icehockey_nhl': ['player_points', 'player_assists', 'player_shots_on_goal', 'player_blocked_shots', 'player_power_play_points'],
+};
+
+// Sport-specific game logs tables
+const SPORT_GAME_LOGS_TABLE: Record<string, string> = {
+  'basketball_nba': 'nba_player_game_logs',
+  'icehockey_nhl': 'nhl_player_game_logs',
+};
+
 function normalizeTeamName(name: string): string {
   return name.toLowerCase().replace(/\./g, '').replace(/\s+/g, ' ').trim();
 }
@@ -64,13 +88,13 @@ function extractOpponent(gameDescription: string): string {
   return normalizeTeamName(gameDescription);
 }
 
-async function fetchSeasonStats(playerName: string, supabase: any): Promise<any | null> {
+async function fetchSeasonStats(playerName: string, sport: string, supabase: any): Promise<any | null> {
   const lastName = playerName.split(' ').slice(-1)[0];
   const { data } = await supabase
     .from('player_season_stats')
     .select('*')
     .ilike('player_name', `%${lastName}%`)
-    .eq('sport', 'basketball_nba')
+    .eq('sport', sport)
     .order('games_played', { ascending: false })
     .limit(1);
   return data?.[0] || null;
@@ -102,14 +126,16 @@ function calculateLineValue(line: number, seasonAvg: number, stdDev: number, isH
   return { score, label, pct: Math.round(lineVsSeasonPct * 10) / 10 };
 }
 
-async function fetchPlayerStatsFromDB(playerName: string, propType: string, supabase: any, limit = 10): Promise<any[]> {
-  const column = PROP_TO_COLUMN[propType];
+async function fetchPlayerStatsFromDB(playerName: string, propType: string, sport: string, supabase: any, limit = 10): Promise<any[]> {
+  const sportColumns = PROP_TO_COLUMN[sport] || PROP_TO_COLUMN['basketball_nba'];
+  const column = sportColumns[propType];
   if (!column) return [];
+  const tableName = SPORT_GAME_LOGS_TABLE[sport] || 'nba_player_game_logs';
   const selectColumns = propType === 'player_points_rebounds_assists'
     ? 'game_date, opponent, points, rebounds, assists, minutes_played'
     : `game_date, opponent, ${column}, minutes_played`;
   const { data: gameLogs } = await supabase
-    .from('nba_player_game_logs')
+    .from(tableName)
     .select(selectColumns)
     .ilike('player_name', `%${playerName.split(' ').slice(-1)[0]}%`)
     .order('game_date', { ascending: false })
@@ -123,11 +149,13 @@ async function fetchPlayerStatsFromDB(playerName: string, propType: string, supa
   }));
 }
 
-async function fetchVsOpponentStats(playerName: string, opponent: string, propType: string, supabase: any): Promise<any[]> {
-  const column = PROP_TO_COLUMN[propType];
+async function fetchVsOpponentStats(playerName: string, opponent: string, propType: string, sport: string, supabase: any): Promise<any[]> {
+  const sportColumns = PROP_TO_COLUMN[sport] || PROP_TO_COLUMN['basketball_nba'];
+  const column = sportColumns[propType];
   if (!column) return [];
+  const tableName = SPORT_GAME_LOGS_TABLE[sport] || 'nba_player_game_logs';
   const { data: vsGames } = await supabase
-    .from('nba_player_game_logs')
+    .from(tableName)
     .select('*')
     .ilike('player_name', `%${playerName.split(' ').slice(-1)[0]}%`)
     .ilike('opponent', `%${opponent.split(' ').pop()}%`)
@@ -188,19 +216,30 @@ serve(async (req) => {
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const THE_ODDS_API_KEY = Deno.env.get('THE_ODDS_API_KEY')!;
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-    const { sports = ['basketball_nba'], limit = 30, minHitRate = 0.4, streakFilter = null } = await req.json().catch(() => ({}));
-    console.log(`[HitRate] Starting analysis with season data...`);
+    const { sports = ['basketball_nba', 'icehockey_nhl'], limit = 30, minHitRate = 0.4, streakFilter = null } = await req.json().catch(() => ({}));
+    console.log(`[HitRate] Starting analysis for sports: ${sports.join(', ')}...`);
     const analyzedProps: any[] = [];
     let propsChecked = 0;
     for (const sport of sports) {
-      if (propsChecked >= limit || sport !== 'basketball_nba') continue;
+      if (propsChecked >= limit) continue;
+      // Skip unsupported sports
+      if (!SPORT_MARKETS[sport]) {
+        console.log(`[HitRate] Skipping unsupported sport: ${sport}`);
+        continue;
+      }
       const eventsRes = await fetch(`https://api.the-odds-api.com/v4/sports/${sport}/events?apiKey=${THE_ODDS_API_KEY}`);
-      if (!eventsRes.ok) continue;
+      if (!eventsRes.ok) {
+        console.log(`[HitRate] Failed to fetch events for ${sport}: ${eventsRes.status}`);
+        continue;
+      }
       const events = await eventsRes.json();
+      console.log(`[HitRate] Found ${events.length} events for ${sport}`);
       const upcomingEvents = events.filter((e: any) => { const h = (new Date(e.commence_time).getTime() - Date.now()) / 3600000; return h > 0 && h <= 24; }).slice(0, 6);
+      console.log(`[HitRate] ${upcomingEvents.length} events in the next 24 hours for ${sport}`);
       for (const event of upcomingEvents) {
         if (propsChecked >= limit) break;
-        const propsRes = await fetch(`https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${THE_ODDS_API_KEY}&regions=us&markets=player_points,player_rebounds,player_assists,player_threes&oddsFormat=american`);
+        const markets = SPORT_MARKETS[sport].join(',');
+        const propsRes = await fetch(`https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${THE_ODDS_API_KEY}&regions=us&markets=${markets}&oddsFormat=american`);
         if (!propsRes.ok) continue;
         const propsData = await propsRes.json();
         const bookmaker = propsData.bookmakers?.[0];
@@ -218,9 +257,9 @@ serve(async (req) => {
             if (!over || !under) continue;
             const line = over.point || 0;
             propsChecked++;
-            const last5Games = await fetchPlayerStatsFromDB(playerName, market.key, supabase, 10);
+            const last5Games = await fetchPlayerStatsFromDB(playerName, market.key, sport, supabase, 10);
             if (last5Games.length < 3) continue;
-            const vsOpponentGames = await fetchVsOpponentStats(playerName, opponent, market.key, supabase);
+            const vsOpponentGames = await fetchVsOpponentStats(playerName, opponent, market.key, sport, supabase);
             const analysis = calculateEnhancedHitRate(last5Games, vsOpponentGames, line);
             const overRate = analysis.overIn5 / Math.min(5, analysis.last5Results.length);
             const underRate = analysis.underIn5 / Math.min(5, analysis.last5Results.length);
@@ -229,8 +268,8 @@ serve(async (req) => {
             else if (underRate >= minHitRate && underRate > overRate) recommendedSide = 'under';
             if (streakFilter && analysis.hitStreak !== streakFilter) continue;
             if (recommendedSide) {
-              const seasonStats = await fetchSeasonStats(playerName, supabase);
-              const opponentDefenseRank = await fetchOpponentDefenseRank(opponent, supabase);
+              const seasonStats = await fetchSeasonStats(playerName, sport, supabase);
+              const opponentDefenseRank = sport === 'basketball_nba' ? await fetchOpponentDefenseRank(opponent, supabase) : null;
               let seasonAvg: number | null = null, lineValue = { score: 50, label: 'neutral', pct: 0 }, consistencyScore = 50, seasonTrendPct = 0, trendDirection = 'stable', homeAwayAdjustment = 0;
               if (seasonStats) {
                 seasonAvg = seasonStats[PROP_TO_SEASON_AVG[market.key]] || null;
