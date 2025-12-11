@@ -259,7 +259,9 @@ serve(async (req) => {
             const line = over.point || 0;
             propsChecked++;
             const last5Games = await fetchPlayerStatsFromDB(playerName, market.key, sport, supabase, 10);
-            if (last5Games.length < 3) continue;
+            // NHL needs less history since season is shorter - allow 2 games minimum
+            const minGamesRequired = sport === 'icehockey_nhl' ? 2 : 3;
+            if (last5Games.length < minGamesRequired) continue;
             const vsOpponentGames = await fetchVsOpponentStats(playerName, opponent, market.key, sport, supabase);
             const analysis = calculateEnhancedHitRate(last5Games, vsOpponentGames, line);
             const overRate = analysis.overIn5 / Math.min(5, analysis.last5Results.length);
