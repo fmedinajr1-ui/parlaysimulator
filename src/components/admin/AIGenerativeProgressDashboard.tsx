@@ -23,7 +23,11 @@ import {
   Sparkles,
   PlayCircle,
   History,
-  AlertCircle
+  AlertCircle,
+  Download,
+  Trash2,
+  FileJson,
+  FileSpreadsheet
 } from 'lucide-react';
 import { AIProgressGauge } from './AIProgressGauge';
 import { AILearnedPatterns } from './AILearnedPatterns';
@@ -138,9 +142,12 @@ export function AIGenerativeProgressDashboard() {
   const [isSettling, setIsSettling] = useState(false);
   const [filter, setFilter] = useState<'all' | 'pending' | 'won' | 'lost'>('all');
   const [settlementProgress, setSettlementProgress] = useState<SettlementProgress | null>(null);
+  const [staleParlays, setStaleParlays] = useState(0);
+  const [isPurging, setIsPurging] = useState(false);
 
   useEffect(() => {
     fetchData();
+    fetchStaleCount();
     
     const parlayChannel = supabase
       .channel('ai_parlays_changes')
@@ -273,6 +280,108 @@ export function AIGenerativeProgressDashboard() {
     setIsSettling(false);
   };
 
+  // Fetch count of stale parlays (>48 hours old, still pending)
+  const fetchStaleCount = async () => {
+    const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    const { count } = await supabase
+      .from('ai_generated_parlays')
+      .select('*', { count: 'exact', head: true })
+      .eq('outcome', 'pending')
+      .lt('created_at', cutoff);
+    setStaleParlays(count || 0);
+  };
+
+  // Purge stale parlays by marking them as 'expired'
+  const handlePurgeStaleParlays = async () => {
+    setIsPurging(true);
+    try {
+      const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+      
+      const { data, error } = await supabase
+        .from('ai_generated_parlays')
+        .update({ 
+          outcome: 'expired',
+          settled_at: new Date().toISOString(),
+          ai_reasoning: 'Marked as expired - unable to settle after 48 hours'
+        })
+        .eq('outcome', 'pending')
+        .lt('created_at', cutoff)
+        .select('id');
+      
+      if (error) throw error;
+      
+      toast.success(`Purged ${data?.length || 0} stale parlays (marked as expired)`);
+      fetchData();
+      fetchStaleCount();
+    } catch (error) {
+      toast.error('Failed to purge: ' + (error as Error).message);
+    }
+    setIsPurging(false);
+  };
+
+  // Export helper functions
+  const convertToCSV = (data: any[]) => {
+    if (data.length === 0) return '';
+    const headers = Object.keys(data[0]).join(',');
+    const rows = data.map(row => 
+      Object.values(row).map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')
+    );
+    return [headers, ...rows].join('\n');
+  };
+
+  const downloadFile = (content: string, filename: string, type: string) => {
+    const blob = new Blob([content], { type });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportCSV = () => {
+    const exportData = parlays.map(p => ({
+      id: p.id,
+      round: p.generation_round,
+      strategy: p.strategy_used,
+      sport: p.sport || 'unknown',
+      engines: (p.source_engines || []).join(' | '),
+      legs: Array.isArray(p.legs) ? (p.legs as any[]).map((l: any) => l.description || l.player || '').join(' | ') : '',
+      total_odds: p.total_odds,
+      confidence: p.confidence_score,
+      outcome: p.outcome,
+      created_at: p.created_at,
+      settled_at: p.settled_at || ''
+    }));
+    
+    const csv = convertToCSV(exportData);
+    downloadFile(csv, `ai-parlays-export-${new Date().toISOString().split('T')[0]}.csv`, 'text/csv');
+    toast.success(`Exported ${exportData.length} parlays to CSV`);
+  };
+
+  const handleExportJSON = () => {
+    const exportPayload = {
+      exportedAt: new Date().toISOString(),
+      summary: {
+        totalParlays: parlays.length,
+        pending: stats.pending,
+        won: stats.won,
+        lost: stats.lost,
+        winRate: parseFloat(winRate),
+        sportDistribution,
+        engineContribution,
+        currentRound: learningProgress?.generation_round || 0,
+        targetAccuracy: learningProgress?.target_accuracy || 65
+      },
+      parlays: parlays,
+      formulas: formulaPerformance
+    };
+    
+    const json = JSON.stringify(exportPayload, null, 2);
+    downloadFile(json, `ai-parlays-full-export-${new Date().toISOString().split('T')[0]}.json`, 'application/json');
+    toast.success(`Exported full dataset to JSON`);
+  };
+
   const filteredParlays = parlays.filter(p => {
     if (filter === 'all') return true;
     return p.outcome === filter;
@@ -372,27 +481,56 @@ export function AIGenerativeProgressDashboard() {
                 </div>
               </div>
 
-              <div className="flex gap-2">
-                <Button onClick={handleGenerate} disabled={isGenerating} className="flex-1 bg-cyan-600 hover:bg-cyan-700">
-                  {isGenerating ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Zap className="w-4 h-4 mr-2" />}
-                  Generate
-                </Button>
-                <Button onClick={() => handleRunSettlement(false)} disabled={isSettling} variant="outline" className="flex-1">
-                  {isSettling ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Clock className="w-4 h-4 mr-2" />}
-                  Auto
-                </Button>
-                <Button 
-                  onClick={() => handleRunSettlement(true)} 
-                  disabled={isSettling} 
-                  className="flex-1 bg-orange-600 hover:bg-orange-700"
-                >
-                  {isSettling ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <PlayCircle className="w-4 h-4 mr-2" />}
-                  Force Settle
-                </Button>
-                <Button onClick={handleRunLearningCycle} disabled={isLearning} variant="outline">
-                  {isLearning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
-                  Learn
-                </Button>
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <Button onClick={handleGenerate} disabled={isGenerating} className="flex-1 bg-cyan-600 hover:bg-cyan-700">
+                    {isGenerating ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Zap className="w-4 h-4 mr-2" />}
+                    Generate
+                  </Button>
+                  <Button onClick={() => handleRunSettlement(false)} disabled={isSettling} variant="outline" className="flex-1">
+                    {isSettling ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Clock className="w-4 h-4 mr-2" />}
+                    Auto
+                  </Button>
+                  <Button 
+                    onClick={() => handleRunSettlement(true)} 
+                    disabled={isSettling} 
+                    className="flex-1 bg-orange-600 hover:bg-orange-700"
+                  >
+                    {isSettling ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <PlayCircle className="w-4 h-4 mr-2" />}
+                    Force Settle
+                  </Button>
+                  <Button onClick={handleRunLearningCycle} disabled={isLearning} variant="outline">
+                    {isLearning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+                    Learn
+                  </Button>
+                </div>
+                
+                {/* Data Management Row */}
+                <div className="flex gap-2 pt-2 border-t border-border/50">
+                  <Button onClick={handleExportCSV} variant="outline" size="sm">
+                    <FileSpreadsheet className="w-4 h-4 mr-2" />
+                    Export CSV
+                  </Button>
+                  <Button onClick={handleExportJSON} variant="outline" size="sm">
+                    <FileJson className="w-4 h-4 mr-2" />
+                    Export JSON
+                  </Button>
+                  {staleParlays > 0 && (
+                    <Button 
+                      onClick={handlePurgeStaleParlays} 
+                      disabled={isPurging}
+                      variant="destructive" 
+                      size="sm"
+                    >
+                      {isPurging ? (
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      ) : (
+                        <Trash2 className="w-4 h-4 mr-2" />
+                      )}
+                      Purge {staleParlays} Stale ({'>'}48h)
+                    </Button>
+                  )}
+                </div>
               </div>
             </div>
           </div>
