@@ -216,7 +216,7 @@ serve(async (req) => {
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const THE_ODDS_API_KEY = Deno.env.get('THE_ODDS_API_KEY')!;
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-    const { sports = ['basketball_nba', 'icehockey_nhl'], limit = 30, minHitRate = 0.4, streakFilter = null } = await req.json().catch(() => ({}));
+    const { sports = ['basketball_nba', 'icehockey_nhl'], limit = 200, minHitRate = 0.4, streakFilter = null } = await req.json().catch(() => ({}));
     console.log(`[HitRate] Starting analysis for sports: ${sports.join(', ')}...`);
     const analyzedProps: any[] = [];
     let propsChecked = 0;
@@ -234,7 +234,8 @@ serve(async (req) => {
       }
       const events = await eventsRes.json();
       console.log(`[HitRate] Found ${events.length} events for ${sport}`);
-      const upcomingEvents = events.filter((e: any) => { const h = (new Date(e.commence_time).getTime() - Date.now()) / 3600000; return h > 0 && h <= 24; }).slice(0, 6);
+      // Get ALL games within next 24 hours (no limit)
+      const upcomingEvents = events.filter((e: any) => { const h = (new Date(e.commence_time).getTime() - Date.now()) / 3600000; return h > 0 && h <= 24; });
       console.log(`[HitRate] ${upcomingEvents.length} events in the next 24 hours for ${sport}`);
       for (const event of upcomingEvents) {
         if (propsChecked >= limit) break;
@@ -250,7 +251,7 @@ serve(async (req) => {
           if (propsChecked >= limit) break;
           const playerOutcomes: Record<string, any[]> = {};
           for (const outcome of market.outcomes || []) { if (outcome.description) { if (!playerOutcomes[outcome.description]) playerOutcomes[outcome.description] = []; playerOutcomes[outcome.description].push(outcome); } }
-          for (const [playerName, outcomes] of Object.entries(playerOutcomes).slice(0, 12)) {
+          for (const [playerName, outcomes] of Object.entries(playerOutcomes).slice(0, 20)) {
             if (propsChecked >= limit) break;
             const over = (outcomes as any[]).find((o: any) => o.name === 'Over');
             const under = (outcomes as any[]).find((o: any) => o.name === 'Under');
