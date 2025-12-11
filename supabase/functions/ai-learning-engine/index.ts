@@ -26,11 +26,17 @@ serve(async (req) => {
     }
     
     if (action === 'recalculate_weights') {
-      return await recalculateAllWeights(supabase);
+      const result = await recalculateAllWeights(supabase);
+      return new Response(JSON.stringify(result), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
     }
     
     if (action === 'discover_compound_formulas') {
-      return await discoverCompoundFormulas(supabase);
+      const result = await discoverCompoundFormulas(supabase);
+      return new Response(JSON.stringify(result), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
     }
     
     if (action === 'full_learning_cycle') {
@@ -43,9 +49,6 @@ serve(async (req) => {
         settlements: settleResult,
         weights_updated: weightsResult,
         compound_formulas: compoundResult
-      }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
