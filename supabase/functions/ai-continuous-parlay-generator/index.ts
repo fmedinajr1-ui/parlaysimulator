@@ -50,6 +50,17 @@ serve(async (req) => {
 
     console.log('🤖 Starting Enhanced AI Parlay Generator - 50+ Daily Parlays');
 
+    // Clean up old parlays (older than 24 hours)
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { count: deletedCount } = await supabase
+      .from('ai_generated_parlays')
+      .delete()
+      .lt('created_at', twentyFourHoursAgo);
+    
+    if (deletedCount && deletedCount > 0) {
+      console.log(`🧹 Cleaned up ${deletedCount} old parlays`);
+    }
+
     // Get current formula weights
     const { data: formulaWeights } = await supabase
       .from('ai_formula_performance')
@@ -386,6 +397,7 @@ async function fetchHitratePicks(supabase: any, weightMap: Map<string, FormulaWe
     .select('*')
     .gte('hit_rate_over', 0.75)
     .gte('games_analyzed', 5)
+    .gte('commence_time', new Date().toISOString())
     .order('hit_rate_over', { ascending: false })
     .limit(30);
 
