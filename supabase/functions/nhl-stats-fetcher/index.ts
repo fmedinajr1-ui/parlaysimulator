@@ -31,12 +31,13 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { daysBack = 14, teamAbbrev } = await req.json().catch(() => ({}));
+    const { daysBack = 30, teamAbbrev } = await req.json().catch(() => ({}));
     
     console.log(`Fetching NHL stats for last ${daysBack} days`);
     
     let playersInserted = 0;
     let gamesProcessed = 0;
+    let totalPlayersFound = 0;
     const errors: string[] = [];
 
     // Get recent games from NHL schedule
@@ -67,8 +68,8 @@ serve(async (req) => {
     
     console.log(`Found ${gameIds.length} completed games to process`);
     
-    // Process games (limit to 15 for faster response)
-    const gamesToProcess = gameIds.slice(0, 15);
+    // Process up to 50 games for comprehensive data
+    const gamesToProcess = gameIds.slice(0, 50);
     
     for (const gameId of gamesToProcess) {
       try {
@@ -76,7 +77,7 @@ serve(async (req) => {
         const boxRes = await fetch(boxscoreUrl);
         
         if (!boxRes.ok) {
-          console.log(`Failed to fetch boxscore for game ${gameId}`);
+          console.log(`Failed to fetch boxscore for game ${gameId}: ${boxRes.status}`);
           continue;
         }
         
@@ -86,11 +87,24 @@ serve(async (req) => {
         const homeTeam = boxData.homeTeam?.abbrev || '';
         const awayTeam = boxData.awayTeam?.abbrev || '';
         
-        // Process home team players
-        const homePlayers = boxData.playerByGameStats?.homeTeam?.forwards || [];
+        // Process home team players (forwards, defense, and goalies)
+        const homeForwards = boxData.playerByGameStats?.homeTeam?.forwards || [];
         const homeDefense = boxData.playerByGameStats?.homeTeam?.defense || [];
+        const homeGoalies = boxData.playerByGameStats?.homeTeam?.goalies || [];
         
-        for (const player of [...homePlayers, ...homeDefense]) {
+        // Process away team players
+        const awayForwards = boxData.playerByGameStats?.awayTeam?.forwards || [];
+        const awayDefense = boxData.playerByGameStats?.awayTeam?.defense || [];
+        const awayGoalies = boxData.playerByGameStats?.awayTeam?.goalies || [];
+        
+        const homePlayersAll = [...homeForwards, ...homeDefense];
+        const awayPlayersAll = [...awayForwards, ...awayDefense];
+        
+        console.log(`Game ${gameId} (${awayTeam}@${homeTeam} on ${gameDate}): Home=${homePlayersAll.length} skaters, Away=${awayPlayersAll.length} skaters`);
+        totalPlayersFound += homePlayersAll.length + awayPlayersAll.length;
+        
+        // Process home team skaters
+        for (const player of homePlayersAll) {
           if (!player.name?.default) continue;
           
           const playerLog = {
@@ -117,13 +131,11 @@ serve(async (req) => {
             });
           
           if (!error) playersInserted++;
+          else console.log(`Error inserting ${player.name.default}: ${error.message}`);
         }
         
-        // Process away team players
-        const awayPlayers = boxData.playerByGameStats?.awayTeam?.forwards || [];
-        const awayDefense = boxData.playerByGameStats?.awayTeam?.defense || [];
-        
-        for (const player of [...awayPlayers, ...awayDefense]) {
+        // Process away team skaters
+        for (const player of awayPlayersAll) {
           if (!player.name?.default) continue;
           
           const playerLog = {
@@ -150,12 +162,13 @@ serve(async (req) => {
             });
           
           if (!error) playersInserted++;
+          else console.log(`Error inserting ${player.name.default}: ${error.message}`);
         }
         
         gamesProcessed++;
         
         // Minimal delay for rate limiting
-        await new Promise(resolve => setTimeout(resolve, 50));
+        await new Promise(resolve => setTimeout(resolve, 100));
         
       } catch (gameError) {
         console.error(`Error processing game ${gameId}:`, gameError);
@@ -163,15 +176,17 @@ serve(async (req) => {
       }
     }
 
-    console.log(`NHL Stats Fetch Complete: ${gamesProcessed} games, ${playersInserted} player logs`);
+    console.log(`NHL Stats Fetch Complete: ${gamesProcessed} games, ${totalPlayersFound} players found, ${playersInserted} logs inserted`);
 
     return new Response(
       JSON.stringify({
         success: true,
         gamesProcessed,
         playersInserted,
+        totalPlayersFound,
+        daysBack,
         errors: errors.slice(0, 5),
-        message: `Fetched ${playersInserted} player game logs from ${gamesProcessed} NHL games`
+        message: `Fetched ${playersInserted} player game logs from ${gamesProcessed} NHL games (${daysBack} day lookback)`
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
