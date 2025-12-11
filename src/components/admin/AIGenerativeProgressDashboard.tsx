@@ -22,7 +22,8 @@ import {
   Activity,
   Sparkles,
   PlayCircle,
-  History
+  History,
+  AlertCircle
 } from 'lucide-react';
 import { AIProgressGauge } from './AIProgressGauge';
 import { AILearnedPatterns } from './AILearnedPatterns';
@@ -88,6 +89,35 @@ interface SettlementJob {
   result: Json;
 }
 
+interface LegResult {
+  legIndex: number;
+  description: string;
+  outcome: 'won' | 'lost' | 'pending' | 'push';
+  settlementMethod: string;
+  actualValue?: number;
+  line?: number;
+  score?: { home: number; away: number };
+  dataSource?: string;
+}
+
+interface SettledParlayDetail {
+  id: string;
+  outcome: string;
+  totalOdds: number;
+  legs: LegResult[];
+  strategy: string;
+}
+
+interface SettlementProgress {
+  isRunning: boolean;
+  status: string;
+  settled: number;
+  won: number;
+  lost: number;
+  stillPending: number;
+  settledDetails: SettledParlayDetail[];
+}
+
 export function AIGenerativeProgressDashboard() {
   const [parlays, setParlays] = useState<AIGeneratedParlay[]>([]);
   const [learningProgress, setLearningProgress] = useState<AILearningProgress | null>(null);
@@ -98,6 +128,7 @@ export function AIGenerativeProgressDashboard() {
   const [isLearning, setIsLearning] = useState(false);
   const [isSettling, setIsSettling] = useState(false);
   const [filter, setFilter] = useState<'all' | 'pending' | 'won' | 'lost'>('all');
+  const [settlementProgress, setSettlementProgress] = useState<SettlementProgress | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -186,14 +217,39 @@ export function AIGenerativeProgressDashboard() {
     setIsLearning(false);
   };
 
-  const handleRunSettlement = async () => {
+  const handleRunSettlement = async (force: boolean = false) => {
     setIsSettling(true);
+    setSettlementProgress({
+      isRunning: true,
+      status: force ? 'Force settling all pending parlays...' : 'Settling parlays (4hr+ old)...',
+      settled: 0,
+      won: 0,
+      lost: 0,
+      stillPending: 0,
+      settledDetails: []
+    });
+    
     try {
-      const { data, error } = await supabase.functions.invoke('auto-settle-ai-parlays');
+      const { data, error } = await supabase.functions.invoke('auto-settle-ai-parlays', {
+        body: { force }
+      });
+      
       if (error) throw error;
-      toast.success(`Settlement complete! ${data?.settled || 0} parlays settled (${data?.won || 0}W/${data?.lost || 0}L)`);
+      
+      setSettlementProgress({
+        isRunning: false,
+        status: 'Complete',
+        settled: data?.settled || 0,
+        won: data?.won || 0,
+        lost: data?.lost || 0,
+        stillPending: data?.stillPending || 0,
+        settledDetails: data?.settledDetails || []
+      });
+      
+      toast.success(`Settlement complete! ${data?.settled || 0} parlays (${data?.won || 0}W/${data?.lost || 0}L)`);
       fetchData();
     } catch (error) {
+      setSettlementProgress(null);
       toast.error('Settlement failed: ' + (error as Error).message);
     }
     setIsSettling(false);
@@ -303,9 +359,17 @@ export function AIGenerativeProgressDashboard() {
                   {isGenerating ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Zap className="w-4 h-4 mr-2" />}
                   Generate
                 </Button>
-                <Button onClick={handleRunSettlement} disabled={isSettling} variant="outline" className="flex-1">
+                <Button onClick={() => handleRunSettlement(false)} disabled={isSettling} variant="outline" className="flex-1">
+                  {isSettling ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Clock className="w-4 h-4 mr-2" />}
+                  Auto
+                </Button>
+                <Button 
+                  onClick={() => handleRunSettlement(true)} 
+                  disabled={isSettling} 
+                  className="flex-1 bg-orange-600 hover:bg-orange-700"
+                >
                   {isSettling ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <PlayCircle className="w-4 h-4 mr-2" />}
-                  Settle
+                  Force Settle
                 </Button>
                 <Button onClick={handleRunLearningCycle} disabled={isLearning} variant="outline">
                   {isLearning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
@@ -316,6 +380,141 @@ export function AIGenerativeProgressDashboard() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Real-Time Settlement Progress */}
+      {settlementProgress && (
+        <Card className={`border-2 ${settlementProgress.isRunning ? 'border-cyan-500/50 bg-cyan-500/5' : settlementProgress.won > settlementProgress.lost ? 'border-green-500/50 bg-green-500/5' : 'border-red-500/50 bg-red-500/5'}`}>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-lg">
+              {settlementProgress.isRunning ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin text-cyan-500" />
+                  Settlement in Progress
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-5 h-5 text-green-500" />
+                  Settlement Complete
+                </>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {/* Progress Status */}
+              <p className="text-sm text-muted-foreground">{settlementProgress.status}</p>
+              
+              {/* Stats Grid */}
+              <div className="grid grid-cols-4 gap-4 text-center">
+                <div className="bg-background/50 rounded-lg p-3">
+                  <p className="text-2xl font-bold">{settlementProgress.settled}</p>
+                  <p className="text-xs text-muted-foreground">Settled</p>
+                </div>
+                <div className="bg-background/50 rounded-lg p-3">
+                  <p className="text-2xl font-bold text-green-500">{settlementProgress.won}</p>
+                  <p className="text-xs text-muted-foreground">Won</p>
+                </div>
+                <div className="bg-background/50 rounded-lg p-3">
+                  <p className="text-2xl font-bold text-red-500">{settlementProgress.lost}</p>
+                  <p className="text-xs text-muted-foreground">Lost</p>
+                </div>
+                <div className="bg-background/50 rounded-lg p-3">
+                  <p className="text-2xl font-bold text-yellow-500">{settlementProgress.stillPending}</p>
+                  <p className="text-xs text-muted-foreground">Pending</p>
+                </div>
+              </div>
+              
+              {/* Detailed Leg Results */}
+              {settlementProgress.settledDetails.length > 0 && (
+                <div className="space-y-3">
+                  <p className="text-sm font-medium">Leg-by-Leg Results:</p>
+                  <ScrollArea className="h-[300px]">
+                    <div className="space-y-3">
+                      {settlementProgress.settledDetails.map((parlay) => (
+                        <Card key={parlay.id} className="bg-muted/30">
+                          <CardContent className="p-3">
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center gap-2">
+                                <Badge variant={parlay.outcome === 'won' ? 'default' : 'destructive'}>
+                                  {parlay.outcome === 'won' && <CheckCircle2 className="w-3 h-3 mr-1" />}
+                                  {parlay.outcome === 'lost' && <XCircle className="w-3 h-3 mr-1" />}
+                                  {parlay.outcome.toUpperCase()}
+                                </Badge>
+                                <span className="text-xs text-muted-foreground">{parlay.strategy}</span>
+                              </div>
+                              <span className="font-mono font-bold text-sm">
+                                {parlay.totalOdds > 0 ? '+' : ''}{parlay.totalOdds}
+                              </span>
+                            </div>
+                            
+                            <div className="space-y-2">
+                              {parlay.legs.map((leg, idx) => (
+                                <div 
+                                  key={idx} 
+                                  className={`text-sm border-l-2 pl-2 ${
+                                    leg.outcome === 'won' ? 'border-green-500' : 
+                                    leg.outcome === 'lost' ? 'border-red-500' : 
+                                    leg.outcome === 'push' ? 'border-yellow-500' : 'border-muted'
+                                  }`}
+                                >
+                                  <div className="flex items-start justify-between gap-2">
+                                    <span className="truncate flex-1 text-xs">{leg.description}</span>
+                                    <div className="flex items-center gap-1">
+                                      {leg.outcome === 'won' && <CheckCircle2 className="w-3 h-3 text-green-500" />}
+                                      {leg.outcome === 'lost' && <XCircle className="w-3 h-3 text-red-500" />}
+                                      {leg.outcome === 'pending' && <Clock className="w-3 h-3 text-yellow-500" />}
+                                      {leg.outcome === 'push' && <AlertCircle className="w-3 h-3 text-yellow-500" />}
+                                    </div>
+                                  </div>
+                                  
+                                  {/* Show actual stats vs line */}
+                                  {leg.actualValue !== undefined && (
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                      Actual: <span className="font-mono font-medium">{leg.actualValue}</span> vs Line: <span className="font-mono">{leg.line}</span>
+                                      {leg.dataSource && <span className="ml-2 opacity-70">({leg.dataSource})</span>}
+                                    </p>
+                                  )}
+                                  
+                                  {/* Show game score */}
+                                  {leg.score && (
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                      Final Score: <span className="font-mono font-medium">{leg.score.home} - {leg.score.away}</span>
+                                      {leg.dataSource && <span className="ml-2 opacity-70">({leg.dataSource})</span>}
+                                    </p>
+                                  )}
+                                  
+                                  {/* Show settlement method if no data */}
+                                  {!leg.actualValue && !leg.score && leg.settlementMethod && (
+                                    <p className="text-xs text-muted-foreground mt-1 opacity-70">
+                                      Method: {leg.settlementMethod}
+                                    </p>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                </div>
+              )}
+              
+              {/* Dismiss button */}
+              {!settlementProgress.isRunning && (
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => setSettlementProgress(null)}
+                  className="w-full"
+                >
+                  Dismiss
+                </Button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Settlement Status Card */}
       <Card className="bg-card/50 border-primary/20">
@@ -361,6 +560,11 @@ export function AIGenerativeProgressDashboard() {
                   <span className="text-muted-foreground">
                     {(lastSettlement.duration_ms / 1000).toFixed(1)}s
                   </span>
+                )}
+                {lastSettlementResult?.force_mode && (
+                  <Badge variant="outline" className="text-orange-500 border-orange-500/50">
+                    Force Mode
+                  </Badge>
                 )}
               </div>
               {lastSettlementResult?.learningTriggered && (
@@ -535,6 +739,11 @@ export function AIGenerativeProgressDashboard() {
                                 <span className="text-sm text-muted-foreground">
                                   {new Date(job.started_at).toLocaleString()}
                                 </span>
+                                {result?.force_mode && (
+                                  <Badge variant="outline" className="text-orange-500 border-orange-500/50 text-xs">
+                                    Force
+                                  </Badge>
+                                )}
                               </div>
                               {job.duration_ms && (
                                 <span className="text-sm text-muted-foreground">
