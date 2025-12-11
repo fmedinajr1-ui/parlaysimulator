@@ -1,3 +1,4 @@
+// PWA hook - Progressive Web App installation and status
 import { useState, useEffect } from 'react';
 
 interface PWAStatus {

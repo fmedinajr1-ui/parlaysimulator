@@ -1,3 +1,4 @@
+// Admin role hook - checks if user has admin permissions
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
