@@ -67,8 +67,10 @@ serve(async (req) => {
     
     console.log(`Found ${gameIds.length} completed games to process`);
     
-    // Process each game's boxscore
-    for (const gameId of gameIds.slice(0, 30)) { // Limit to 30 games for performance
+    // Process games (limit to 15 for faster response)
+    const gamesToProcess = gameIds.slice(0, 15);
+    
+    for (const gameId of gamesToProcess) {
       try {
         const boxscoreUrl = `https://api-web.nhle.com/v1/gamecenter/${gameId}/boxscore`;
         const boxRes = await fetch(boxscoreUrl);
@@ -152,8 +154,8 @@ serve(async (req) => {
         
         gamesProcessed++;
         
-        // Rate limiting
-        await new Promise(resolve => setTimeout(resolve, 200));
+        // Minimal delay for rate limiting
+        await new Promise(resolve => setTimeout(resolve, 50));
         
       } catch (gameError) {
         console.error(`Error processing game ${gameId}:`, gameError);
