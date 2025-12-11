@@ -331,7 +331,7 @@ export default function Admin() {
             <Button 
               variant="ghost" 
               size="sm" 
-              onClick={() => navigate(-1)}
+              onClick={() => navigate('/')}
               className="p-2 h-auto"
             >
               <ArrowLeft className="w-5 h-5" />
