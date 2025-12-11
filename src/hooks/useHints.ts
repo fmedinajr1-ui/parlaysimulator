@@ -1,3 +1,4 @@
+// Hints hook - user hint and tutorial state management
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';

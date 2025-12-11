@@ -1,3 +1,4 @@
+// Haptic feedback hook - mobile vibration patterns
 type HapticPattern = 'light' | 'medium' | 'heavy' | 'success' | 'warning' | 'error' | 'selection';
 
 const patterns: Record<HapticPattern, number | number[]> = {

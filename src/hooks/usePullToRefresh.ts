@@ -1,3 +1,4 @@
+// Pull to refresh hook - mobile gesture handling
 import { useState, useCallback, useRef, useEffect } from 'react';
 
 interface UsePullToRefreshOptions {

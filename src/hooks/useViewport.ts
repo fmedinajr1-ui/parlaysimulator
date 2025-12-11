@@ -1,3 +1,4 @@
+// Viewport hook - device size and safe area detection
 import { useState, useEffect } from 'react';
 
 interface ViewportInfo {
