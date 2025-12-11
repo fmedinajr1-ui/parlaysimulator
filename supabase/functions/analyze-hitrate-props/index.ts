@@ -23,6 +23,16 @@ const PROP_TO_COLUMN: Record<string, Record<string, string>> = {
     'player_shots_on_goal': 'shots_on_goal',
     'player_blocked_shots': 'blocked_shots',
     'player_power_play_points': 'power_play_points',
+  },
+  'americanfootball_nfl': {
+    'player_pass_yds': 'passing_yards',
+    'player_rush_yds': 'rushing_yards',
+    'player_receptions': 'receptions',
+    'player_reception_yds': 'receiving_yards',
+    'player_pass_tds': 'passing_tds',
+    'player_rush_attempts': 'attempts',
+    'player_pass_completions': 'completions',
+    'player_interceptions': 'interceptions',
   }
 };
 
@@ -36,6 +46,12 @@ const PROP_TO_SEASON_AVG: Record<string, string> = {
   'player_shots_on_goal': 'avg_shots_on_goal',
   'player_blocked_shots': 'avg_blocked_shots',
   'player_power_play_points': 'avg_power_play_points',
+  // NFL mappings
+  'player_pass_yds': 'passing_yards_avg',
+  'player_rush_yds': 'rushing_yards_avg',
+  'player_receptions': 'receptions_avg',
+  'player_reception_yds': 'receiving_yards_avg',
+  'player_pass_tds': 'passing_tds_avg',
 };
 
 const PROP_TO_SEASON_STD: Record<string, string> = {
@@ -43,6 +59,11 @@ const PROP_TO_SEASON_STD: Record<string, string> = {
   'player_rebounds': 'rebounds_std_dev',
   'player_assists': 'assists_std_dev',
   'player_threes': 'threes_std_dev',
+  // NFL mappings
+  'player_pass_yds': 'passing_yards_std',
+  'player_rush_yds': 'rushing_yards_std',
+  'player_receptions': 'receptions_std',
+  'player_reception_yds': 'receiving_yards_std',
 };
 
 const PROP_TO_HOME_AVG: Record<string, string> = {
@@ -50,6 +71,10 @@ const PROP_TO_HOME_AVG: Record<string, string> = {
   'player_rebounds': 'home_avg_rebounds',
   'player_assists': 'home_avg_assists',
   'player_threes': 'home_avg_threes',
+  // NFL mappings
+  'player_pass_yds': 'home_passing_yards_avg',
+  'player_rush_yds': 'home_rushing_yards_avg',
+  'player_receptions': 'home_receptions_avg',
 };
 
 const PROP_TO_AWAY_AVG: Record<string, string> = {
@@ -57,6 +82,10 @@ const PROP_TO_AWAY_AVG: Record<string, string> = {
   'player_rebounds': 'away_avg_rebounds',
   'player_assists': 'away_avg_assists',
   'player_threes': 'away_avg_threes',
+  // NFL mappings
+  'player_pass_yds': 'away_passing_yards_avg',
+  'player_rush_yds': 'away_rushing_yards_avg',
+  'player_receptions': 'away_receptions_avg',
 };
 
 const PROP_TO_LAST10_AVG: Record<string, string> = {
@@ -64,18 +93,31 @@ const PROP_TO_LAST10_AVG: Record<string, string> = {
   'player_rebounds': 'last_10_avg_rebounds',
   'player_assists': 'last_10_avg_assists',
   'player_threes': 'last_10_avg_threes',
+  // NFL mappings
+  'player_pass_yds': 'last10_passing_yards_avg',
+  'player_rush_yds': 'last10_rushing_yards_avg',
+  'player_receptions': 'last10_receptions_avg',
 };
 
 // Sport-specific markets
 const SPORT_MARKETS: Record<string, string[]> = {
   'basketball_nba': ['player_points', 'player_rebounds', 'player_assists', 'player_threes'],
   'icehockey_nhl': ['player_points', 'player_assists', 'player_shots_on_goal', 'player_blocked_shots', 'player_power_play_points'],
+  'americanfootball_nfl': ['player_pass_yds', 'player_rush_yds', 'player_receptions', 'player_reception_yds', 'player_pass_tds'],
 };
 
 // Sport-specific game logs tables
 const SPORT_GAME_LOGS_TABLE: Record<string, string> = {
   'basketball_nba': 'nba_player_game_logs',
   'icehockey_nhl': 'nhl_player_game_logs',
+  'americanfootball_nfl': 'nfl_player_game_logs',
+};
+
+// Sport-specific season stats tables
+const SPORT_SEASON_STATS_TABLE: Record<string, string> = {
+  'basketball_nba': 'player_season_stats',
+  'icehockey_nhl': 'player_season_stats',
+  'americanfootball_nfl': 'nfl_player_season_stats',
 };
 
 function normalizeTeamName(name: string): string {
@@ -90,8 +132,21 @@ function extractOpponent(gameDescription: string): string {
 
 async function fetchSeasonStats(playerName: string, sport: string, supabase: any): Promise<any | null> {
   const lastName = playerName.split(' ').slice(-1)[0];
+  const tableName = SPORT_SEASON_STATS_TABLE[sport] || 'player_season_stats';
+  
+  if (sport === 'americanfootball_nfl') {
+    // NFL uses a different table structure
+    const { data } = await supabase
+      .from(tableName)
+      .select('*')
+      .ilike('player_name', `%${lastName}%`)
+      .order('games_played', { ascending: false })
+      .limit(1);
+    return data?.[0] || null;
+  }
+  
   const { data } = await supabase
-    .from('player_season_stats')
+    .from(tableName)
     .select('*')
     .ilike('player_name', `%${lastName}%`)
     .eq('sport', sport)
@@ -216,7 +271,7 @@ serve(async (req) => {
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const THE_ODDS_API_KEY = Deno.env.get('THE_ODDS_API_KEY')!;
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-    const { sports = ['basketball_nba', 'icehockey_nhl'], limit = 200, minHitRate = 0.4, streakFilter = null } = await req.json().catch(() => ({}));
+    const { sports = ['basketball_nba', 'icehockey_nhl', 'americanfootball_nfl'], limit = 200, minHitRate = 0.4, streakFilter = null } = await req.json().catch(() => ({}));
     console.log(`[HitRate] Starting analysis for sports: ${sports.join(', ')}...`);
     const analyzedProps: any[] = [];
     let propsChecked = 0;
