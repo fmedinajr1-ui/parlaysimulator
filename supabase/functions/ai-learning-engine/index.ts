@@ -75,6 +75,7 @@ serve(async (req) => {
       const compoundResult = await updateCompoundFormulas(supabase);
       const avoidResult = await updateAvoidPatterns(supabase);
       const crossEngineResult = await analyzeCrossEnginePerformance(supabase);
+      const syncResult = await syncLearningProgressFromSettled(supabase);
       
       return new Response(JSON.stringify({
         success: true,
@@ -82,8 +83,17 @@ serve(async (req) => {
         weights_updated: weightsResult,
         compound_formulas: compoundResult,
         avoid_patterns: avoidResult,
-        cross_engine: crossEngineResult
+        cross_engine: crossEngineResult,
+        learning_progress_synced: syncResult
       }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // Sync learning progress from settled parlays
+    if (action === 'sync_learning_progress') {
+      const result = await syncLearningProgressFromSettled(supabase);
+      return new Response(JSON.stringify(result), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
@@ -300,8 +310,8 @@ async function processSettlementWithAnalysis(
   // Update cross-engine performance
   await updateCrossEngineForParlay(supabase, parlay, isWin);
 
-  // Update learning progress
-  await updateLearningProgress(supabase, isWin);
+  // Update learning progress with parlay for pattern extraction
+  await updateLearningProgress(supabase, isWin, parlay);
 
   // Instantly recalculate weights after each settlement
   await recalculateAllWeights(supabase);
@@ -469,7 +479,7 @@ async function updateCrossEngineForParlay(supabase: any, parlay: any, isWin: boo
 }
 
 // Update learning progress
-async function updateLearningProgress(supabase: any, isWin: boolean) {
+async function updateLearningProgress(supabase: any, isWin: boolean, parlay?: any) {
   const { data: latestProgress } = await supabase
     .from('ai_learning_progress')
     .select('*')
@@ -482,16 +492,157 @@ async function updateLearningProgress(supabase: any, isWin: boolean) {
     const newLosses = (progress.losses || 0) + (isWin ? 0 : 1);
     const total = newWins + newLosses;
     
+    // Extract pattern from parlay for learned_patterns
+    const learnedPatterns = progress.learned_patterns || { winning: [], losing: [] };
+    
+    if (parlay) {
+      const patternDescription = extractPatternFromParlay(parlay);
+      if (patternDescription) {
+        if (isWin) {
+          learnedPatterns.winning = [patternDescription, ...(learnedPatterns.winning || [])].slice(0, 20);
+        } else {
+          learnedPatterns.losing = [patternDescription, ...(learnedPatterns.losing || [])].slice(0, 20);
+        }
+      }
+    }
+    
     await supabase
       .from('ai_learning_progress')
       .update({
         parlays_settled: (progress.parlays_settled || 0) + 1,
         wins: newWins,
         losses: newLosses,
-        current_accuracy: total > 0 ? Math.round((newWins / total) * 100 * 10) / 10 : 0
+        current_accuracy: total > 0 ? Math.round((newWins / total) * 100 * 10) / 10 : 0,
+        learned_patterns: learnedPatterns
       })
       .eq('id', progress.id);
   }
+}
+
+// Extract pattern description from a parlay
+function extractPatternFromParlay(parlay: any): string | null {
+  if (!parlay) return null;
+  
+  const legs = parlay.legs || [];
+  const strategy = parlay.strategy_used || 'unknown';
+  const sport = parlay.sport || 'mixed';
+  const sourceEngines = parlay.source_engines || [];
+  const signals = parlay.signals_used || [];
+  
+  // Build pattern description
+  const legDescriptions = legs.slice(0, 3).map((leg: any) => {
+    const formula = leg.formula_name || leg.description?.split(' ')[0] || 'pick';
+    return formula;
+  }).join(' + ');
+  
+  const engineStr = sourceEngines.length > 0 ? sourceEngines.join('/') : 'ai';
+  const signalStr = signals.length > 0 ? signals.slice(0, 2).join(', ') : '';
+  
+  let pattern = `[${sport.toUpperCase()}] ${strategy} - ${legDescriptions}`;
+  if (engineStr) pattern += ` (${engineStr})`;
+  if (signalStr) pattern += ` | Signals: ${signalStr}`;
+  
+  return pattern;
+}
+
+// Sync learning progress from all settled parlays
+async function syncLearningProgressFromSettled(supabase: any) {
+  console.log('🔄 Syncing learning progress from settled parlays...');
+  
+  // Get actual counts from ai_generated_parlays
+  const { data: wonParlays, error: wonError } = await supabase
+    .from('ai_generated_parlays')
+    .select('*')
+    .eq('outcome', 'won')
+    .order('settled_at', { ascending: false })
+    .limit(50);
+  
+  const { data: lostParlays, error: lostError } = await supabase
+    .from('ai_generated_parlays')
+    .select('*')
+    .eq('outcome', 'lost')
+    .order('settled_at', { ascending: false })
+    .limit(50);
+  
+  if (wonError || lostError) {
+    console.error('Error fetching settled parlays:', wonError || lostError);
+    return { success: false, error: 'Failed to fetch settled parlays' };
+  }
+  
+  const totalWins = wonParlays?.length || 0;
+  const totalLosses = lostParlays?.length || 0;
+  const totalSettled = totalWins + totalLosses;
+  
+  // Extract patterns from recent settled parlays
+  const winningPatterns: string[] = [];
+  const losingPatterns: string[] = [];
+  
+  for (const parlay of (wonParlays || []).slice(0, 20)) {
+    const pattern = extractPatternFromParlay(parlay);
+    if (pattern) winningPatterns.push(pattern);
+  }
+  
+  for (const parlay of (lostParlays || []).slice(0, 20)) {
+    const pattern = extractPatternFromParlay(parlay);
+    if (pattern) losingPatterns.push(pattern);
+  }
+  
+  // Get latest learning progress entry
+  const { data: latestProgress } = await supabase
+    .from('ai_learning_progress')
+    .select('*')
+    .order('generation_round', { ascending: false })
+    .limit(1);
+  
+  const learnedPatterns = {
+    winning: winningPatterns,
+    losing: losingPatterns
+  };
+  
+  const accuracy = totalSettled > 0 ? Math.round((totalWins / totalSettled) * 100 * 10) / 10 : 0;
+  
+  if (latestProgress && latestProgress.length > 0) {
+    // Update existing progress
+    await supabase
+      .from('ai_learning_progress')
+      .update({
+        wins: totalWins,
+        losses: totalLosses,
+        parlays_settled: totalSettled,
+        current_accuracy: accuracy,
+        learned_patterns: learnedPatterns
+      })
+      .eq('id', latestProgress[0].id);
+    
+    console.log(`✅ Updated learning progress: ${totalWins}W-${totalLosses}L (${accuracy}%)`);
+    console.log(`📚 Synced ${winningPatterns.length} winning patterns, ${losingPatterns.length} losing patterns`);
+  } else {
+    // Create new progress entry if none exists
+    await supabase
+      .from('ai_learning_progress')
+      .insert({
+        generation_round: 1,
+        wins: totalWins,
+        losses: totalLosses,
+        parlays_settled: totalSettled,
+        parlays_generated: totalSettled,
+        current_accuracy: accuracy,
+        learned_patterns: learnedPatterns,
+        target_accuracy: 65,
+        is_milestone: false
+      });
+    
+    console.log(`✅ Created new learning progress: ${totalWins}W-${totalLosses}L (${accuracy}%)`);
+  }
+  
+  return {
+    success: true,
+    wins: totalWins,
+    losses: totalLosses,
+    accuracy,
+    winning_patterns: winningPatterns.length,
+    losing_patterns: losingPatterns.length
+  };
 }
 
 // Original processSettlement function
@@ -583,8 +734,8 @@ async function processSettlement(supabase: any, parlayId: string, outcome: 'won'
   // Update compound formulas
   await updateCompoundFormulaForParlay(supabase, parlay, isWin);
 
-  // Update learning progress
-  await updateLearningProgress(supabase, isWin);
+  // Update learning progress with parlay for pattern extraction
+  await updateLearningProgress(supabase, isWin, parlay);
 
   return new Response(JSON.stringify({
     success: true,
