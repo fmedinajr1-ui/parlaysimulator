@@ -1307,6 +1307,26 @@ export function AIGenerativeProgressDashboard() {
               </div>
             </CardHeader>
             <CardContent>
+              {/* Confidence Tier Legend */}
+              <div className="flex items-center gap-4 mb-3 p-2 rounded bg-background/40 text-xs">
+                <span className="text-muted-foreground font-medium">Tiers:</span>
+                <div className="flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-purple-500" />
+                  <span className="text-purple-400">Elite (80-95%)</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-green-500" />
+                  <span className="text-green-400">Strong (65-79%)</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-yellow-500" />
+                  <span className="text-yellow-400">Moderate (50-64%)</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-red-500" />
+                  <span className="text-red-400">Speculative (35-49%)</span>
+                </div>
+              </div>
               <ScrollArea className="h-[400px]">
                 <div className="space-y-3">
                   {filteredParlays.length === 0 ? (
@@ -1317,11 +1337,23 @@ export function AIGenerativeProgressDashboard() {
                   ) : (
                     filteredParlays.slice(0, 50).map((parlay) => {
                       const legs = Array.isArray(parlay.legs) ? parlay.legs : [];
+                      
+                      // Confidence tier calculation
+                      const conf = parlay.confidence_score;
+                      const confTier = conf >= 80 ? { label: 'Elite', color: 'bg-purple-500/20 text-purple-400 border-purple-500/30', icon: '🔥' }
+                        : conf >= 65 ? { label: 'Strong', color: 'bg-green-500/20 text-green-400 border-green-500/30', icon: '✅' }
+                        : conf >= 50 ? { label: 'Moderate', color: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30', icon: '⚡' }
+                        : { label: 'Speculative', color: 'bg-red-500/20 text-red-400 border-red-500/30', icon: '⚠️' };
+                      
+                      // Get confidence breakdown from formula_breakdown if available
+                      const breakdown = parlay.formula_breakdown as Record<string, number> | null;
+                      const hasConfBreakdown = breakdown && '_conf_normalized' in breakdown;
+                      
                       return (
                         <Card key={parlay.id} className="bg-muted/30">
                           <CardContent className="p-4">
                             <div className="flex items-start justify-between mb-2">
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2 flex-wrap">
                                 <Badge variant={
                                   parlay.outcome === 'won' ? 'default' :
                                   parlay.outcome === 'lost' ? 'destructive' : 'secondary'
@@ -1330,6 +1362,10 @@ export function AIGenerativeProgressDashboard() {
                                   {parlay.outcome === 'lost' && <XCircle className="w-3 h-3 mr-1" />}
                                   {parlay.outcome === 'pending' && <Clock className="w-3 h-3 mr-1" />}
                                   {parlay.outcome.toUpperCase()}
+                                </Badge>
+                                {/* Confidence Tier Badge */}
+                                <Badge variant="outline" className={`text-xs border ${confTier.color}`}>
+                                  {confTier.icon} {confTier.label}
                                 </Badge>
                                 <span className="text-xs text-muted-foreground">#{parlay.generation_round}</span>
                                 {parlay.sport && (
@@ -1342,9 +1378,33 @@ export function AIGenerativeProgressDashboard() {
                                 <span className="font-mono font-bold">
                                   {parlay.total_odds > 0 ? '+' : ''}{parlay.total_odds}
                                 </span>
-                                <p className="text-xs text-muted-foreground">{parlay.confidence_score.toFixed(0)}% conf</p>
+                                <p className="text-xs font-semibold" style={{ color: conf >= 80 ? '#a855f7' : conf >= 65 ? '#22c55e' : conf >= 50 ? '#eab308' : '#ef4444' }}>
+                                  {conf.toFixed(0)}% conf
+                                </p>
                               </div>
                             </div>
+                            
+                            {/* Confidence Breakdown (if available from new funnel) */}
+                            {hasConfBreakdown && (
+                              <div className="grid grid-cols-4 gap-1 mb-2 p-2 rounded bg-background/40 text-xs">
+                                <div className="text-center">
+                                  <p className="font-bold text-blue-400">{breakdown['_conf_normalized']}%</p>
+                                  <p className="text-muted-foreground text-[10px]">Norm</p>
+                                </div>
+                                <div className="text-center">
+                                  <p className="font-bold text-green-400">{breakdown['_conf_historical']}%</p>
+                                  <p className="text-muted-foreground text-[10px]">History</p>
+                                </div>
+                                <div className="text-center">
+                                  <p className="font-bold text-orange-400">{breakdown['_conf_risk']}%</p>
+                                  <p className="text-muted-foreground text-[10px]">Risk</p>
+                                </div>
+                                <div className="text-center">
+                                  <p className="font-bold text-purple-400">{breakdown['_conf_probability']}%</p>
+                                  <p className="text-muted-foreground text-[10px]">Prob</p>
+                                </div>
+                              </div>
+                            )}
                             
                             <p className="text-xs text-cyan-500 font-medium mb-2">{parlay.strategy_used}</p>
 
