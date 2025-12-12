@@ -33,6 +33,48 @@ export interface UsageProjection {
   verdictReason: string;
 }
 
+export interface UnifiedPropData {
+  pvsScore: number;
+  pvsTier: string;
+  hitRateScore: number;
+  trapScore: number;
+  fatigueScore: number;
+  recommendation: string;
+  confidence: number;
+  sharpMoneyScore: number;
+}
+
+export interface UpsetData {
+  upsetScore: number;
+  isTrapFavorite: boolean;
+  suggestion: string;
+  confidence: string;
+  chaosModeActive: boolean;
+}
+
+export interface JuiceData {
+  juiceLevel: string;
+  juiceDirection: string;
+  juiceAmount: number;
+  finalPick: string;
+  movementConsistency: number;
+}
+
+export interface FatigueData {
+  fatigueScore: number;
+  fatigueCategory: string;
+  recommendedAngle: string;
+  isBackToBack: boolean;
+  travelMiles: number;
+}
+
+export interface EngineConsensus {
+  agreeingEngines: string[];
+  disagreingEngines: string[];
+  consensusScore: number;
+  totalEngines: number;
+}
+
 export interface LegAnalysis {
   sport: string;
   betType: 'moneyline' | 'spread' | 'total' | 'player_prop' | 'other';
@@ -53,6 +95,13 @@ export interface LegAnalysis {
   sharpConfidence?: number;
   sharpFinalPick?: string;
   usageProjection?: UsageProjection;
+  // New enhanced data from all engines
+  unifiedPropData?: UnifiedPropData;
+  upsetData?: UpsetData;
+  juiceData?: JuiceData;
+  fatigueData?: FatigueData;
+  engineConsensus?: EngineConsensus;
+  avoidPatterns?: string[];
 }
 
 export interface CorrelatedLegPair {

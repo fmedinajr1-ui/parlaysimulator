@@ -48,6 +48,48 @@ interface UsageProjection {
   verdictReason: string;
 }
 
+interface UnifiedPropData {
+  pvsScore: number;
+  pvsTier: string;
+  hitRateScore: number;
+  trapScore: number;
+  fatigueScore: number;
+  recommendation: string;
+  confidence: number;
+  sharpMoneyScore: number;
+}
+
+interface UpsetData {
+  upsetScore: number;
+  isTrapFavorite: boolean;
+  suggestion: string;
+  confidence: string;
+  chaosModeActive: boolean;
+}
+
+interface JuiceData {
+  juiceLevel: string;
+  juiceDirection: string;
+  juiceAmount: number;
+  finalPick: string;
+  movementConsistency: number;
+}
+
+interface FatigueData {
+  fatigueScore: number;
+  fatigueCategory: string;
+  recommendedAngle: string;
+  isBackToBack: boolean;
+  travelMiles: number;
+}
+
+interface EngineConsensus {
+  agreeingEngines: string[];
+  disagreingEngines: string[];
+  consensusScore: number;
+  totalEngines: number;
+}
+
 interface LegAnalysis {
   sport: string;
   betType: 'moneyline' | 'spread' | 'total' | 'player_prop' | 'other';
@@ -68,6 +110,12 @@ interface LegAnalysis {
   sharpConfidence?: number;
   sharpFinalPick?: string;
   usageProjection?: UsageProjection;
+  unifiedPropData?: UnifiedPropData;
+  upsetData?: UpsetData;
+  juiceData?: JuiceData;
+  fatigueData?: FatigueData;
+  engineConsensus?: EngineConsensus;
+  avoidPatterns?: string[];
 }
 
 interface HistoricalContext {
@@ -324,19 +372,80 @@ serve(async (req) => {
 
     // Fetch recent line movements (last 6 hours)
     let lineMovements: any[] = [];
+    let unifiedProps: any[] = [];
+    let godModeUpsets: any[] = [];
+    let juicedProps: any[] = [];
+    let fatigueScores: any[] = [];
+    let avoidPatterns: any[] = [];
+    let formulaPerformance: any[] = [];
+    
     try {
       const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
-      const { data: movementData } = await supabase
-        .from('line_movements')
-        .select('*')
-        .gte('detected_at', sixHoursAgo)
-        .order('detected_at', { ascending: false })
-        .limit(100);
+      const today = new Date().toISOString().split('T')[0];
       
-      lineMovements = movementData || [];
-      console.log(`Loaded ${lineMovements.length} recent line movements`);
-    } catch (movementError) {
-      console.error('Error fetching line movements:', movementError);
+      // Fetch all engine data in parallel
+      const [
+        movementResult,
+        unifiedResult,
+        godModeResult,
+        juicedResult,
+        fatigueResult,
+        avoidResult,
+        formulaResult
+      ] = await Promise.all([
+        supabase
+          .from('line_movements')
+          .select('*')
+          .gte('detected_at', sixHoursAgo)
+          .order('detected_at', { ascending: false })
+          .limit(100),
+        supabase
+          .from('unified_props')
+          .select('*')
+          .gte('commence_time', new Date().toISOString())
+          .not('recommendation', 'is', null)
+          .limit(500),
+        supabase
+          .from('god_mode_upset_predictions')
+          .select('*')
+          .gte('commence_time', new Date().toISOString())
+          .eq('game_completed', false)
+          .limit(100),
+        supabase
+          .from('juiced_props')
+          .select('*')
+          .gte('commence_time', new Date().toISOString())
+          .not('final_pick', 'is', null)
+          .limit(200),
+        supabase
+          .from('nba_fatigue_scores')
+          .select('*')
+          .eq('game_date', today)
+          .limit(60),
+        supabase
+          .from('ai_avoid_patterns')
+          .select('*')
+          .eq('is_active', true)
+          .limit(100),
+        supabase
+          .from('ai_formula_performance')
+          .select('*')
+          .gte('total_picks', 10)
+          .order('current_accuracy', { ascending: false })
+          .limit(20)
+      ]);
+      
+      lineMovements = movementResult.data || [];
+      unifiedProps = unifiedResult.data || [];
+      godModeUpsets = godModeResult.data || [];
+      juicedProps = juicedResult.data || [];
+      fatigueScores = fatigueResult.data || [];
+      avoidPatterns = avoidResult.data || [];
+      formulaPerformance = formulaResult.data || [];
+      
+      console.log(`Loaded engine data: ${lineMovements.length} movements, ${unifiedProps.length} unified props, ${godModeUpsets.length} upsets, ${juicedProps.length} juiced, ${fatigueScores.length} fatigue, ${avoidPatterns.length} avoid patterns, ${formulaPerformance.length} formulas`);
+    } catch (dataError) {
+      console.error('Error fetching engine data:', dataError);
     }
 
     // Pre-process sharp data for each leg using deterministic matching
@@ -537,21 +646,213 @@ Return ONLY valid JSON, no other text.`;
       };
     }
 
-    // Enrich player props with usage projections
+    // Helper functions for matching legs to engine data
+    function matchUnifiedProp(playerName: string, propDesc: string, props: any[]): any | null {
+      const playerLower = playerName.toLowerCase();
+      const descLower = propDesc.toLowerCase();
+      return props.find(p => 
+        p.player_name?.toLowerCase().includes(playerLower) ||
+        playerLower.includes(p.player_name?.toLowerCase() || '')
+      ) || null;
+    }
+
+    function matchUpset(teams: string[], upsets: any[]): any | null {
+      return upsets.find(u => 
+        teams.some(t => 
+          u.home_team?.toLowerCase().includes(t.toLowerCase()) ||
+          u.away_team?.toLowerCase().includes(t.toLowerCase()) ||
+          t.toLowerCase().includes(u.home_team?.toLowerCase() || '') ||
+          t.toLowerCase().includes(u.away_team?.toLowerCase() || '')
+        )
+      ) || null;
+    }
+
+    function matchJuicedProp(playerName: string, props: any[]): any | null {
+      const playerLower = playerName.toLowerCase();
+      return props.find(p => 
+        p.player_name?.toLowerCase().includes(playerLower) ||
+        playerLower.includes(p.player_name?.toLowerCase() || '')
+      ) || null;
+    }
+
+    function matchFatigue(team: string, scores: any[]): any | null {
+      const teamLower = team.toLowerCase();
+      return scores.find(f => 
+        f.team_name?.toLowerCase().includes(teamLower) ||
+        teamLower.includes(f.team_name?.toLowerCase() || '')
+      ) || null;
+    }
+
+    function checkAvoidPatterns(desc: string, patterns: any[]): string[] {
+      const descLower = desc.toLowerCase();
+      return patterns
+        .filter(p => {
+          const key = p.pattern_key?.toLowerCase() || '';
+          const patternType = p.pattern_type?.toLowerCase() || '';
+          return descLower.includes(key) || descLower.includes(patternType);
+        })
+        .map(p => p.avoid_reason || p.description || p.pattern_key);
+    }
+
+    function calculateEngineConsensus(legDesc: string, legPlayer: string | undefined, legTeam: string | undefined, allData: {
+      unifiedProp: any,
+      upset: any,
+      juiced: any,
+      sharpData: any,
+      fatigueData: any
+    }, formulas: any[]): EngineConsensus {
+      const agreeing: string[] = [];
+      const disagreeing: string[] = [];
+
+      // Check unified props recommendation
+      if (allData.unifiedProp?.recommendation) {
+        if (['strong_over', 'lean_over', 'strong_pick', 'lean_pick'].includes(allData.unifiedProp.recommendation)) {
+          agreeing.push('Unified Props');
+        } else if (['strong_under', 'lean_under', 'strong_fade', 'lean_fade'].includes(allData.unifiedProp.recommendation)) {
+          disagreeing.push('Unified Props');
+        }
+      }
+
+      // Check God Mode upset
+      if (allData.upset?.suggestion) {
+        if (allData.upset.suggestion === 'bet') {
+          agreeing.push('God Mode');
+        } else if (allData.upset.suggestion === 'avoid' || allData.upset.trap_on_favorite) {
+          disagreeing.push('God Mode');
+        }
+      }
+
+      // Check juiced props
+      if (allData.juiced?.final_pick) {
+        agreeing.push('Juiced Props');
+      }
+
+      // Check sharp data
+      if (allData.sharpData?.recommendation === 'pick') {
+        agreeing.push('Sharp Money');
+      } else if (allData.sharpData?.recommendation === 'fade') {
+        disagreeing.push('Sharp Money');
+      }
+
+      // Check fatigue
+      if (allData.fatigueData) {
+        if (allData.fatigueData.fatigue_score <= 20) {
+          agreeing.push('Fatigue Engine');
+        } else if (allData.fatigueData.fatigue_score >= 40) {
+          disagreeing.push('Fatigue Engine');
+        }
+      }
+
+      const totalEngines = agreeing.length + disagreeing.length;
+      const consensusScore = totalEngines > 0 ? agreeing.length / totalEngines : 0.5;
+
+      return { agreeingEngines: agreeing, disagreingEngines: disagreeing, consensusScore, totalEngines };
+    }
+
+    // Enrich all legs with engine data
     if (analysis.legAnalyses) {
-      console.log(`Processing ${analysis.legAnalyses.length} legs for usage projections...`);
+      console.log(`Processing ${analysis.legAnalyses.length} legs for engine enrichment...`);
       
-      const usagePromises = analysis.legAnalyses.map(async (legAnalysis: any, idx: number) => {
-        console.log(`Leg ${idx}: betType=${legAnalysis.betType}, player=${legAnalysis.player}`);
+      const enrichmentPromises = analysis.legAnalyses.map(async (legAnalysis: any, idx: number) => {
+        const legDesc = legs[idx]?.description || '';
+        console.log(`Leg ${idx}: betType=${legAnalysis.betType}, player=${legAnalysis.player}, team=${legAnalysis.team}`);
         
+        // Match to unified props (for player props)
+        if (legAnalysis.player && unifiedProps.length > 0) {
+          const matchedUnified = matchUnifiedProp(legAnalysis.player, legDesc, unifiedProps);
+          if (matchedUnified) {
+            legAnalysis.unifiedPropData = {
+              pvsScore: matchedUnified.pvs_final_score || 0,
+              pvsTier: matchedUnified.pvs_tier || 'unrated',
+              hitRateScore: matchedUnified.hit_rate_score || 0,
+              trapScore: matchedUnified.trap_score || 0,
+              fatigueScore: matchedUnified.fatigue_score || 0,
+              recommendation: matchedUnified.recommendation || 'neutral',
+              confidence: matchedUnified.confidence || 0.5,
+              sharpMoneyScore: matchedUnified.sharp_money_score || 0
+            };
+            console.log(`✅ Unified prop matched for ${legAnalysis.player}: tier=${matchedUnified.pvs_tier}, rec=${matchedUnified.recommendation}`);
+          }
+        }
+
+        // Match to God Mode upsets (for moneyline/spread)
+        if (['moneyline', 'spread'].includes(legAnalysis.betType) && godModeUpsets.length > 0) {
+          const teams = [legAnalysis.team, legDesc].filter(Boolean);
+          const matchedUpset = matchUpset(teams, godModeUpsets);
+          if (matchedUpset) {
+            legAnalysis.upsetData = {
+              upsetScore: matchedUpset.final_upset_score || 0,
+              isTrapFavorite: matchedUpset.trap_on_favorite || false,
+              suggestion: matchedUpset.suggestion || 'avoid',
+              confidence: matchedUpset.confidence || 'low',
+              chaosModeActive: matchedUpset.chaos_mode_active || false
+            };
+            console.log(`✅ God Mode matched for ${legAnalysis.team}: score=${matchedUpset.final_upset_score}, trap=${matchedUpset.trap_on_favorite}`);
+          }
+        }
+
+        // Match to juiced props
+        if (legAnalysis.player && juicedProps.length > 0) {
+          const matchedJuiced = matchJuicedProp(legAnalysis.player, juicedProps);
+          if (matchedJuiced) {
+            legAnalysis.juiceData = {
+              juiceLevel: matchedJuiced.juice_level || 'normal',
+              juiceDirection: matchedJuiced.juice_direction || 'neutral',
+              juiceAmount: matchedJuiced.juice_amount || 0,
+              finalPick: matchedJuiced.final_pick || 'none',
+              movementConsistency: matchedJuiced.movement_consistency_score || 0
+            };
+            console.log(`✅ Juiced prop matched for ${legAnalysis.player}: level=${matchedJuiced.juice_level}, pick=${matchedJuiced.final_pick}`);
+          }
+        }
+
+        // Match to fatigue scores (for NBA legs)
+        if (legAnalysis.team && legAnalysis.sport?.toUpperCase() === 'NBA' && fatigueScores.length > 0) {
+          const matchedFatigue = matchFatigue(legAnalysis.team, fatigueScores);
+          if (matchedFatigue) {
+            legAnalysis.fatigueData = {
+              fatigueScore: matchedFatigue.fatigue_score || 0,
+              fatigueCategory: matchedFatigue.fatigue_category || 'Fresh',
+              recommendedAngle: matchedFatigue.recommended_angle || 'none',
+              isBackToBack: matchedFatigue.is_back_to_back || false,
+              travelMiles: matchedFatigue.travel_miles || 0
+            };
+            console.log(`✅ Fatigue matched for ${legAnalysis.team}: score=${matchedFatigue.fatigue_score}, category=${matchedFatigue.fatigue_category}`);
+          }
+        }
+
+        // Check avoid patterns
+        if (avoidPatterns.length > 0) {
+          const matchedPatterns = checkAvoidPatterns(legDesc, avoidPatterns);
+          if (matchedPatterns.length > 0) {
+            legAnalysis.avoidPatterns = matchedPatterns;
+            console.log(`⚠️ Avoid patterns matched for leg ${idx}: ${matchedPatterns.join(', ')}`);
+          }
+        }
+
+        // Calculate engine consensus
+        const sharpData = legSharpData.find(d => d.legIndex === idx);
+        legAnalysis.engineConsensus = calculateEngineConsensus(
+          legDesc,
+          legAnalysis.player,
+          legAnalysis.team,
+          {
+            unifiedProp: legAnalysis.unifiedPropData ? unifiedProps.find(p => p.player_name?.toLowerCase() === legAnalysis.player?.toLowerCase()) : null,
+            upset: legAnalysis.upsetData ? godModeUpsets.find(u => u.home_team?.toLowerCase().includes(legAnalysis.team?.toLowerCase() || '')) : null,
+            juiced: legAnalysis.juiceData ? juicedProps.find(j => j.player_name?.toLowerCase() === legAnalysis.player?.toLowerCase()) : null,
+            sharpData: sharpData?.hasSharpData ? sharpData : null,
+            fatigueData: legAnalysis.fatigueData ? fatigueScores.find(f => f.team_name?.toLowerCase().includes(legAnalysis.team?.toLowerCase() || '')) : null
+          },
+          formulaPerformance
+        );
+
+        // Also fetch usage projection for player props (existing logic)
         if (legAnalysis.betType === 'player_prop' && legAnalysis.player) {
           try {
-            // Parse prop type and line from description
             const desc = legs[idx]?.description?.toLowerCase() || '';
             let propType = 'points';
             let line = 0;
 
-            // Extract prop type
             if (desc.includes('point') || desc.includes('pts')) propType = 'points';
             else if (desc.includes('rebound') || desc.includes('reb')) propType = 'rebounds';
             else if (desc.includes('assist') || desc.includes('ast')) propType = 'assists';
@@ -559,19 +860,13 @@ Return ONLY valid JSON, no other text.`;
             else if (desc.includes('block') || desc.includes('blk')) propType = 'blocks';
             else if (desc.includes('steal') || desc.includes('stl')) propType = 'steals';
 
-            // Extract line value - improved regex
             const lineMatch = desc.match(/(?:over|under|o|u)\s*(\d+\.?\d*)/i) || 
                              desc.match(/(\d+\.?\d*)\s*(?:pts?|points?|reb|rebounds?|ast|assists?|3pm?|blocks?|blk|steals?|stl)/i);
             if (lineMatch) {
               line = parseFloat(lineMatch[1]);
             }
 
-            console.log(`Leg ${idx} parsed: player=${legAnalysis.player}, propType=${propType}, line=${line}`);
-
             if (line > 0) {
-              console.log(`Fetching usage projection for ${legAnalysis.player} - ${propType} ${line}`);
-              
-              // Use direct HTTP call instead of supabase.functions.invoke()
               const functionUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/calculate-player-usage`;
               const usageResponse = await fetch(functionUrl, {
                 method: 'POST',
@@ -590,28 +885,30 @@ Return ONLY valid JSON, no other text.`;
               if (usageResponse.ok) {
                 const usageData = await usageResponse.json();
                 legAnalysis.usageProjection = usageData;
-                console.log(`✅ Usage projection added for ${legAnalysis.player}: verdict=${usageData.verdict}, hitRate=${usageData.hitRate?.percentage}%`);
-              } else {
-                const errorText = await usageResponse.text();
-                console.error(`❌ Usage projection failed for ${legAnalysis.player}: ${usageResponse.status} - ${errorText}`);
+                console.log(`✅ Usage projection added for ${legAnalysis.player}`);
               }
-            } else {
-              console.log(`⚠️ Could not extract line from description: ${desc}`);
             }
           } catch (usageError) {
             console.error(`❌ Error fetching usage for ${legAnalysis.player}:`, usageError);
           }
-        } else {
-          console.log(`Leg ${idx}: Skipping - not a player_prop or no player identified`);
         }
+
         return legAnalysis;
       });
 
-      await Promise.all(usagePromises);
+      await Promise.all(enrichmentPromises);
       
-      // Log summary
-      const propsWithUsage = analysis.legAnalyses.filter((la: any) => la.usageProjection).length;
-      console.log(`📊 Usage projection summary: ${propsWithUsage}/${analysis.legAnalyses.length} legs enriched`);
+      // Log enrichment summary
+      const stats = {
+        unified: analysis.legAnalyses.filter((la: any) => la.unifiedPropData).length,
+        upset: analysis.legAnalyses.filter((la: any) => la.upsetData).length,
+        juiced: analysis.legAnalyses.filter((la: any) => la.juiceData).length,
+        fatigue: analysis.legAnalyses.filter((la: any) => la.fatigueData).length,
+        usage: analysis.legAnalyses.filter((la: any) => la.usageProjection).length,
+        avoid: analysis.legAnalyses.filter((la: any) => la.avoidPatterns?.length > 0).length,
+        consensus: analysis.legAnalyses.filter((la: any) => la.engineConsensus?.totalEngines > 0).length
+      };
+      console.log(`📊 Engine enrichment summary: unified=${stats.unified}, upset=${stats.upset}, juiced=${stats.juiced}, fatigue=${stats.fatigue}, usage=${stats.usage}, avoid=${stats.avoid}, consensus=${stats.consensus}`);
     }
 
     return new Response(JSON.stringify(analysis), {
