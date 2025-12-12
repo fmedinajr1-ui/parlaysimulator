@@ -167,7 +167,7 @@ serve(async (req) => {
 
     const generatedParlays: GeneratedParlay[] = [];
 
-    // Generate parlays for each sport
+    // Generate parlays for each sport (now passing weightMap for confidence calculation)
     for (const [sport, target] of Object.entries(targetParlays)) {
       const sportPicks = allPicks.filter(p => 
         p.sport === sport || 
@@ -177,14 +177,14 @@ serve(async (req) => {
       );
       const crossSportPicks = allPicks.filter(p => p.sport !== sport);
       
-      const sportParlays = generateOptimalParlays(sportPicks, crossSportPicks, target, sport, preferredComboSet);
+      const sportParlays = generateOptimalParlays(sportPicks, crossSportPicks, target, sport, preferredComboSet, weightMap);
       generatedParlays.push(...sportParlays);
     }
 
     // Generate mixed-sport parlays for remaining slots
     const remainingTarget = Math.max(0, 52 - generatedParlays.length);
     if (remainingTarget > 0) {
-      const mixedParlays = generateMixedSportParlays(allPicks, remainingTarget, preferredComboSet);
+      const mixedParlays = generateMixedSportParlays(allPicks, remainingTarget, preferredComboSet, weightMap);
       generatedParlays.push(...mixedParlays);
     }
 
@@ -595,7 +595,8 @@ function generateOptimalParlays(
   crossSportPicks: PickCandidate[],
   target: number,
   sport: string,
-  preferredCombos: Set<string> = new Set()
+  preferredCombos: Set<string> = new Set(),
+  weightMap?: Map<string, FormulaWeight>
 ): GeneratedParlay[] {
   const parlays: GeneratedParlay[] = [];
   
@@ -614,7 +615,7 @@ function generateOptimalParlays(
         if (uniqueEvents.size >= 2) {
           const selectedPicks = matchingPicks.slice(0, 2);
           if (selectedPicks[0].event_id !== selectedPicks[1]?.event_id) {
-            const parlay = createParlay(selectedPicks, sport);
+            const parlay = createParlay(selectedPicks, sport, weightMap);
             parlays.push(parlay);
           }
         }
@@ -635,7 +636,7 @@ function generateOptimalParlays(
       const sameEngine = pick1.engine_source === pick2.engine_source;
       if (sameEngine && Math.random() > 0.3) continue;
       
-      const parlay = createParlay([pick1, pick2], sport);
+      const parlay = createParlay([pick1, pick2], sport, weightMap);
       parlays.push(parlay);
     }
     if (parlays.length >= target) break;
@@ -655,7 +656,7 @@ function generateOptimalParlays(
           const eventIds = new Set([pick1.event_id, pick2.event_id, pick3.event_id]);
           if (eventIds.size < 3) continue;
           
-          const parlay = createParlay([pick1, pick2, pick3], sport);
+          const parlay = createParlay([pick1, pick2, pick3], sport, weightMap);
           parlays.push(parlay);
         }
       }
@@ -669,7 +670,8 @@ function generateOptimalParlays(
 function generateMixedSportParlays(
   allPicks: PickCandidate[], 
   target: number,
-  preferredCombos: Set<string> = new Set()
+  preferredCombos: Set<string> = new Set(),
+  weightMap?: Map<string, FormulaWeight>
 ): GeneratedParlay[] {
   const parlays: GeneratedParlay[] = [];
   const sortedPicks = [...allPicks].sort((a, b) => b.combined_score - a.combined_score);
@@ -689,7 +691,7 @@ function generateMixedSportParlays(
       const isPreferred = preferredCombos.has(combo);
       
       if (isPreferred || Math.random() > 0.3) {
-        const parlay = createParlay([pick1, pick2], 'mixed');
+        const parlay = createParlay([pick1, pick2], 'mixed', weightMap);
         parlays.push(parlay);
       }
     }
@@ -699,8 +701,120 @@ function generateMixedSportParlays(
   return parlays;
 }
 
-// Create a parlay from picks
-function createParlay(picks: PickCandidate[], sport: string): GeneratedParlay {
+// ============================================
+// 4-STAGE CONFIDENCE FUNNEL
+// ============================================
+
+// Stage 1: Normalize engine scores to 0-1 scale
+function normalizeEngineScore(pick: PickCandidate): number {
+  const engine = pick.engine_source;
+  const scores = pick.formula_scores;
+  
+  switch (engine) {
+    case 'hitrate':
+      // HitRate: 60-100% → 0.0-1.0
+      const hitRate = (scores.hit_rate as number) || 0.75;
+      return Math.max(0, Math.min(1, (hitRate - 0.6) / 0.4));
+    
+    case 'pvs':
+      // PVS: 50-100 → 0.0-1.0
+      const pvsScore = (scores.pvs_final_score as number) || 70;
+      return Math.max(0, Math.min(1, (pvsScore - 50) / 50));
+    
+    case 'sharp':
+      // Sharp: SES 20-50+ → 0.4-1.0
+      const sesScore = (scores.sharp_edge_score as number) || 30;
+      return Math.max(0.4, Math.min(1, sesScore / 50));
+    
+    case 'juiced':
+      // Juiced: juice amount 10-50+ → 0.4-1.0
+      const juiceAmount = (scores.juice_amount as number) || 20;
+      return Math.max(0.4, Math.min(1, juiceAmount / 50));
+    
+    case 'godmode':
+      // GodMode: upset score 40-80% → 0.4-1.0
+      const upsetScore = pick.combined_score / 100;
+      return Math.max(0.4, Math.min(1, upsetScore));
+    
+    case 'fatigue':
+      // Fatigue: differential 5-20+ → 0.4-1.0
+      const differential = (scores.fatigue_differential as number) || 10;
+      return Math.max(0.4, Math.min(1, differential / 20));
+    
+    case 'bestbets':
+      // BestBets: accuracy 55-85% → 0.5-1.0
+      const accuracy = (scores.accuracy_at_time as number) || 65;
+      return Math.max(0.5, Math.min(1, (accuracy - 55) / 30));
+    
+    default:
+      return 0.5; // Default baseline
+  }
+}
+
+// Stage 2: Get historical accuracy for formula (weakest link principle)
+function getFormulaAccuracyFactor(picks: PickCandidate[], weightMap: Map<string, FormulaWeight>): number {
+  let lowestAccuracy = 1.0;
+  
+  for (const pick of picks) {
+    const key = `${pick.formula_name}_${pick.engine_source}`;
+    const formula = weightMap.get(key);
+    
+    if (formula && formula.total_picks && formula.total_picks >= 5) {
+      const accuracy = formula.current_accuracy / 100; // Convert from percentage
+      lowestAccuracy = Math.min(lowestAccuracy, accuracy);
+    } else {
+      // New formula with no data - use baseline 50%
+      lowestAccuracy = Math.min(lowestAccuracy, 0.50);
+    }
+  }
+  
+  return lowestAccuracy;
+}
+
+// Stage 3: Risk penalty based on total odds
+function getRiskPenaltyFactor(totalOdds: number): number {
+  const absOdds = Math.abs(totalOdds);
+  
+  if (totalOdds < 0) {
+    // Favorites: no penalty for low risk
+    return 1.0;
+  } else if (absOdds <= 200) {
+    // Standard 2-leg range: no penalty
+    return 1.0;
+  } else if (absOdds <= 400) {
+    // Getting risky
+    return 0.85;
+  } else if (absOdds <= 700) {
+    // Long shot territory
+    return 0.70;
+  } else {
+    // Lottery ticket
+    return 0.50;
+  }
+}
+
+// Stage 4: Combined probability from implied odds
+function getCombinedProbability(picks: PickCandidate[]): number {
+  let combinedProb = 1.0;
+  
+  for (const pick of picks) {
+    const odds = pick.odds;
+    let impliedProb: number;
+    
+    if (odds < 0) {
+      impliedProb = Math.abs(odds) / (Math.abs(odds) + 100);
+    } else {
+      impliedProb = 100 / (odds + 100);
+    }
+    
+    combinedProb *= impliedProb;
+  }
+  
+  return combinedProb;
+}
+
+// Create a parlay from picks with 4-stage confidence funnel
+function createParlay(picks: PickCandidate[], sport: string, weightMap?: Map<string, FormulaWeight>): GeneratedParlay {
   let totalOddsDecimal = 1;
   for (const pick of picks) {
     const decimal = pick.odds > 0 ? (pick.odds / 100) + 1 : (100 / Math.abs(pick.odds)) + 1;
@@ -711,8 +825,35 @@ function createParlay(picks: PickCandidate[], sport: string): GeneratedParlay {
     ? Math.round((totalOddsDecimal - 1) * 100)
     : Math.round(-100 / (totalOddsDecimal - 1));
 
-  const avgScore = picks.reduce((sum, p) => sum + p.combined_score, 0) / picks.length;
-  const confidenceScore = Math.min(100, avgScore);
+  // ============================================
+  // 4-STAGE CONFIDENCE CALCULATION
+  // ============================================
+  
+  // Stage 1: Normalized Engine Scores (25% weight)
+  const normalizedScores = picks.map(p => normalizeEngineScore(p));
+  const avgNormalizedScore = normalizedScores.reduce((sum, s) => sum + s, 0) / normalizedScores.length;
+  
+  // Stage 2: Historical Accuracy (30% weight) - use baseline if no weightMap
+  const historicalAccuracy = weightMap 
+    ? getFormulaAccuracyFactor(picks, weightMap)
+    : 0.55; // Default baseline
+  
+  // Stage 3: Risk Penalty (20% weight)
+  const riskFactor = getRiskPenaltyFactor(totalOdds);
+  
+  // Stage 4: Combined Probability (25% weight)
+  const combinedProbability = getCombinedProbability(picks);
+  
+  // Calculate weighted confidence score
+  const rawConfidence = (
+    (avgNormalizedScore * 0.25) +
+    (historicalAccuracy * 0.30) +
+    (riskFactor * 0.20) +
+    (combinedProbability * 0.25)
+  ) * 100;
+  
+  // Clamp to 35-95% range (never 0% or 100%)
+  const confidenceScore = Math.max(35, Math.min(95, Math.round(rawConfidence)));
 
   const formulaBreakdown: Record<string, number> = {};
   picks.forEach(pick => {
@@ -724,6 +865,12 @@ function createParlay(picks: PickCandidate[], sport: string): GeneratedParlay {
   Object.keys(formulaBreakdown).forEach(key => {
     formulaBreakdown[key] = Math.round((formulaBreakdown[key] / picks.length) * 100) / 100;
   });
+  
+  // Add confidence breakdown to formula_breakdown for transparency
+  formulaBreakdown['_conf_normalized'] = Math.round(avgNormalizedScore * 100);
+  formulaBreakdown['_conf_historical'] = Math.round(historicalAccuracy * 100);
+  formulaBreakdown['_conf_risk'] = Math.round(riskFactor * 100);
+  formulaBreakdown['_conf_probability'] = Math.round(combinedProbability * 100);
 
   const sourceEngines = [...new Set(picks.map(p => p.engine_source))];
   const signalsUsed = [...new Set(picks.map(p => p.formula_name))];
