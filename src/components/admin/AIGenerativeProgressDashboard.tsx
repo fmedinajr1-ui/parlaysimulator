@@ -118,6 +118,7 @@ interface LearningResults {
   avoid_patterns?: { patterns_updated: number; patterns_deactivated: number };
   compound_formulas?: { formulas_updated: number };
   cross_engine?: { comparisons_updated: number };
+  sync_results?: { wins: number; losses: number; accuracy: number; winning_patterns: number; losing_patterns: number };
 }
 
 interface SettlementProgress {
@@ -249,7 +250,7 @@ export function AIGenerativeProgressDashboard() {
     setIsSyncing(false);
   };
 
-  const handleRunSettlement = async (force: boolean = false) => {
+  const handleRunSettlement = async (force: boolean = false, autoSync: boolean = false) => {
     setIsSettling(true);
     setSettlementProgress({
       isRunning: true,
@@ -268,7 +269,21 @@ export function AIGenerativeProgressDashboard() {
       
       if (error) throw error;
       
-      const learningResults = data?.learningResults as LearningResults | undefined;
+      let learningResults = data?.learningResults as LearningResults | undefined;
+      
+      // If autoSync is enabled, also run sync to update learning progress
+      if (autoSync && (data?.settled || 0) > 0) {
+        setSettlementProgress(prev => prev ? { ...prev, status: 'Syncing learning progress...' } : null);
+        const { data: syncData } = await supabase.functions.invoke('ai-learning-engine', {
+          body: { action: 'sync_learning_progress' }
+        });
+        if (syncData) {
+          learningResults = {
+            ...learningResults,
+            sync_results: syncData
+          };
+        }
+      }
       
       setSettlementProgress({
         isRunning: false,
@@ -286,8 +301,9 @@ export function AIGenerativeProgressDashboard() {
       const learningMsg = learningResults 
         ? ` • ${learningResults.weights_updated?.weights_updated || 0} weights • ${learningResults.avoid_patterns?.patterns_updated || 0} patterns`
         : '';
+      const syncMsg = autoSync && learningResults?.sync_results ? ` • Synced ${learningResults.sync_results.wins}W-${learningResults.sync_results.losses}L` : '';
       
-      toast.success(`Settled ${settlementMsg}${learningMsg}`);
+      toast.success(`Settled ${settlementMsg}${learningMsg}${syncMsg}`);
       fetchData();
     } catch (error) {
       setSettlementProgress(null);
@@ -510,10 +526,18 @@ export function AIGenerativeProgressDashboard() {
                   <Button 
                     onClick={() => handleRunSettlement(true)} 
                     disabled={isSettling} 
-                    className="flex-1 bg-orange-600 hover:bg-orange-700"
+                    className="bg-orange-600 hover:bg-orange-700"
                   >
                     {isSettling ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <PlayCircle className="w-4 h-4 mr-2" />}
-                    Force Settle
+                    Force
+                  </Button>
+                  <Button 
+                    onClick={() => handleRunSettlement(true, true)} 
+                    disabled={isSettling} 
+                    className="bg-gradient-to-r from-orange-600 to-purple-600 hover:from-orange-700 hover:to-purple-700"
+                  >
+                    {isSettling ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Zap className="w-4 h-4 mr-2" />}
+                    Force+Sync
                   </Button>
                   <Button onClick={handleRunLearningCycle} disabled={isLearning} variant="outline">
                     {isLearning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
