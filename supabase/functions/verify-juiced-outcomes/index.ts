@@ -83,12 +83,17 @@ serve(async (req) => {
     const startTime = Date.now();
 
     // Get juiced props that need verification (have final_pick, game time passed, not verified)
+    // Extended lookback to 7 days to catch any missed verifications
+    const cutoffTime = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    
     const { data: pendingProps, error: fetchError } = await supabase
       .from('juiced_props')
       .select('*')
       .not('final_pick', 'is', null)
-      .eq('outcome', 'pending')
+      .or('outcome.is.null,outcome.eq.pending')
+      .is('verified_at', null)
       .lt('commence_time', new Date().toISOString())
+      .gt('commence_time', cutoffTime)
       .order('commence_time', { ascending: true })
       .limit(100);
 

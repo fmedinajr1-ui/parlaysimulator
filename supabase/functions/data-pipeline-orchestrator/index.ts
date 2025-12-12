@@ -67,8 +67,8 @@ serve(async (req) => {
       // Step 1b: Scan for juiced props (morning scanner for additional juice detection)
       await runFunction('morning-props-scanner', { sports: ['basketball_nba', 'hockey_nhl', 'americanfootball_nfl'] });
       
-      // Step 1c: Calculate NBA fatigue scores
-      await runFunction('nba-fatigue-engine', {});
+      // Step 1c: Calculate NBA fatigue scores for today's games
+      await runFunction('daily-fatigue-calculator', {});
       
       // Step 1d: Track odds movements for sharp money detection
       await runFunction('track-odds-movement', { sports: ['basketball_nba', 'hockey_nhl'] });
@@ -109,10 +109,16 @@ serve(async (req) => {
       // Step 4d: Verify upset prediction outcomes
       await runFunction('verify-upset-outcomes', {});
       
-      // Step 4e: Auto-settle user parlays
+      // Step 4e: Verify God Mode upset predictions
+      await runFunction('verify-god-mode-outcomes', {});
+      
+      // Step 4f: Verify juiced props outcomes
+      await runFunction('verify-juiced-outcomes', {});
+      
+      // Step 4g: Auto-settle user parlays
       await runFunction('auto-settle-parlays', {});
       
-      // Step 4f: Verify fatigue edge outcomes
+      // Step 4h: Verify fatigue edge outcomes
       await runFunction('verify-fatigue-outcomes', {});
     }
 

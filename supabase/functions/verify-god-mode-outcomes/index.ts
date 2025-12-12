@@ -20,15 +20,17 @@ serve(async (req) => {
 
     console.log('[Verify God Mode] Starting outcome verification...');
 
-    // Fetch unverified predictions from past 48 hours
-    const cutoffTime = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    // Fetch ALL unverified predictions where game time has passed (extended to 7 days)
+    const cutoffTime = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     
     const { data: unverified, error: fetchError } = await supabase
       .from('god_mode_upset_predictions')
       .select('*')
       .eq('game_completed', false)
       .lt('commence_time', new Date().toISOString())
-      .gt('commence_time', cutoffTime);
+      .gt('commence_time', cutoffTime)
+      .order('commence_time', { ascending: true })
+      .limit(100);
 
     if (fetchError) throw fetchError;
 
