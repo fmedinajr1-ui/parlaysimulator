@@ -549,29 +549,42 @@ function extractPatternFromParlay(parlay: any): string | null {
 async function syncLearningProgressFromSettled(supabase: any) {
   console.log('🔄 Syncing learning progress from settled parlays...');
   
-  // Get actual counts from ai_generated_parlays
-  const { data: wonParlays, error: wonError } = await supabase
+  // Get accurate counts using count queries first
+  const { count: wonCount, error: wonCountError } = await supabase
+    .from('ai_generated_parlays')
+    .select('*', { count: 'exact', head: true })
+    .eq('outcome', 'won');
+  
+  const { count: lostCount, error: lostCountError } = await supabase
+    .from('ai_generated_parlays')
+    .select('*', { count: 'exact', head: true })
+    .eq('outcome', 'lost');
+  
+  if (wonCountError || lostCountError) {
+    console.error('Error counting settled parlays:', wonCountError || lostCountError);
+    return { success: false, error: 'Failed to count settled parlays' };
+  }
+  
+  const totalWins = wonCount || 0;
+  const totalLosses = lostCount || 0;
+  const totalSettled = totalWins + totalLosses;
+  
+  console.log(`📊 Found ${totalWins} wins, ${totalLosses} losses from database`);
+  
+  // Fetch recent parlays for pattern extraction (limit 30 each for patterns)
+  const { data: wonParlays } = await supabase
     .from('ai_generated_parlays')
     .select('*')
     .eq('outcome', 'won')
     .order('settled_at', { ascending: false })
-    .limit(50);
+    .limit(30);
   
-  const { data: lostParlays, error: lostError } = await supabase
+  const { data: lostParlays } = await supabase
     .from('ai_generated_parlays')
     .select('*')
     .eq('outcome', 'lost')
     .order('settled_at', { ascending: false })
-    .limit(50);
-  
-  if (wonError || lostError) {
-    console.error('Error fetching settled parlays:', wonError || lostError);
-    return { success: false, error: 'Failed to fetch settled parlays' };
-  }
-  
-  const totalWins = wonParlays?.length || 0;
-  const totalLosses = lostParlays?.length || 0;
-  const totalSettled = totalWins + totalLosses;
+    .limit(30);
   
   // Extract patterns from recent settled parlays
   const winningPatterns: string[] = [];
