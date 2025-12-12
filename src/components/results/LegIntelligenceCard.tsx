@@ -1,12 +1,15 @@
+import { useState } from "react";
 import { FeedCard } from "@/components/FeedCard";
 import { ParlayLeg, LegAnalysis } from "@/types/parlay";
 import { Badge } from "@/components/ui/badge";
-import { TrendingUp, TrendingDown, Minus, AlertTriangle, CheckCircle, Brain, Loader2, UserX, Activity, Zap, Target, Flame, AlertOctagon } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, AlertTriangle, CheckCircle, Brain, Loader2, UserX, Activity, Zap, Target, Flame, AlertOctagon, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { InjuryAlertBadge } from "./InjuryAlertBadge";
 import { UsageProjectionCard } from "./UsageProjectionCard";
 import { EngineConsensusCard } from "./EngineConsensusCard";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { MobileDetailDrawer } from "@/components/ui/mobile-detail-drawer";
+import { useHapticFeedback } from "@/hooks/useHapticFeedback";
 
 interface LegIntelligenceCardProps {
   legs: ParlayLeg[];
@@ -58,15 +61,30 @@ const getRecommendationStyle = (rec: string) => {
 };
 
 export function LegIntelligenceCard({ legs, legAnalyses, isLoading, delay = 0 }: LegIntelligenceCardProps) {
+  const isMobile = useIsMobile();
+  const { lightTap } = useHapticFeedback();
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
+  const [detailDrawer, setDetailDrawer] = useState<{ open: boolean; title: string; content: React.ReactNode } | null>(null);
+
+  const toggleSection = (key: string) => {
+    lightTap();
+    setExpandedSections(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const openDetailDrawer = (title: string, content: React.ReactNode) => {
+    lightTap();
+    setDetailDrawer({ open: true, title, content });
+  };
+
   return (
     <FeedCard 
       variant="full-bleed" 
       className="slide-up"
       style={{ animationDelay: `${delay}ms` }}
     >
-      <div className="flex items-center gap-2 mb-4">
-        <Brain className="w-5 h-5 text-neon-purple" />
-        <h3 className="font-display text-lg text-foreground">LEG INTELLIGENCE</h3>
+      <div className="flex items-center gap-2 mb-3 sm:mb-4">
+        <Brain className="w-4 h-4 sm:w-5 sm:h-5 text-neon-purple" />
+        <h3 className="font-display text-base sm:text-lg text-foreground">LEG INTELLIGENCE</h3>
         {isLoading && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
       </div>
 
@@ -150,59 +168,71 @@ export function LegIntelligenceCard({ legs, legAnalyses, isLoading, delay = 0 }:
                       </div>
                     )}
 
-                    {/* Unified Props Data */}
+                    {/* Unified Props Data - Mobile Optimized */}
                     {analysis.unifiedPropData && (
                       <div className="mb-2 p-2 rounded-lg bg-gradient-to-r from-neon-blue/10 to-transparent border border-neon-blue/20">
                         <div className="flex items-center justify-between mb-2">
                           <div className="flex items-center gap-2">
-                            <Target className="w-4 h-4 text-neon-blue" />
-                            <span className="text-xs font-semibold text-neon-blue">UNIFIED PROPS</span>
+                            <Target className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-neon-blue" />
+                            <span className="text-[10px] sm:text-xs font-semibold text-neon-blue">UNIFIED PROPS</span>
                           </div>
-                          <Badge className={cn("text-xs", getPVSTierStyle(analysis.unifiedPropData.pvsTier))}>
+                          <Badge className={cn("text-[10px] sm:text-xs", getPVSTierStyle(analysis.unifiedPropData.pvsTier))}>
                             Tier {analysis.unifiedPropData.pvsTier}
                           </Badge>
                         </div>
-                        <div className="grid grid-cols-4 gap-2 text-xs">
-                          <TooltipProvider>
-                            <Tooltip>
-                              <TooltipTrigger>
-                                <div className="text-center">
-                                  <div className="text-muted-foreground">PVS</div>
-                                  <div className="font-mono font-bold">{analysis.unifiedPropData.pvsScore.toFixed(0)}</div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                          <button 
+                            onClick={() => isMobile && openDetailDrawer('Player Value Score', 
+                              <div className="space-y-2">
+                                <div className="text-2xl font-bold">{analysis.unifiedPropData.pvsScore.toFixed(0)}</div>
+                                <p className="text-sm text-muted-foreground">Player Value Score analyzes matchups, recent performance, and statistical projections.</p>
+                              </div>
+                            )}
+                            className="text-center p-1.5 rounded-md bg-card/50 active:bg-card/80 transition-colors"
+                          >
+                            <div className="text-[10px] sm:text-xs text-muted-foreground">PVS</div>
+                            <div className="font-mono font-bold text-sm sm:text-base">{analysis.unifiedPropData.pvsScore.toFixed(0)}</div>
+                          </button>
+                          <button 
+                            onClick={() => isMobile && openDetailDrawer('Hit Rate Score',
+                              <div className="space-y-2">
+                                <div className="text-2xl font-bold">{analysis.unifiedPropData.hitRateScore.toFixed(0)}</div>
+                                <p className="text-sm text-muted-foreground">Historical success rate of similar props based on player patterns and game context.</p>
+                              </div>
+                            )}
+                            className="text-center p-1.5 rounded-md bg-card/50 active:bg-card/80 transition-colors"
+                          >
+                            <div className="text-[10px] sm:text-xs text-muted-foreground">Hit%</div>
+                            <div className="font-mono font-bold text-sm sm:text-base">{analysis.unifiedPropData.hitRateScore.toFixed(0)}</div>
+                          </button>
+                          <button 
+                            onClick={() => isMobile && openDetailDrawer('Sharp Money Score',
+                              <div className="space-y-2">
+                                <div className="text-2xl font-bold">{analysis.unifiedPropData.sharpMoneyScore.toFixed(0)}</div>
+                                <p className="text-sm text-muted-foreground">Tracks where professional bettors are placing their money based on line movements.</p>
+                              </div>
+                            )}
+                            className="text-center p-1.5 rounded-md bg-card/50 active:bg-card/80 transition-colors"
+                          >
+                            <div className="text-[10px] sm:text-xs text-muted-foreground">Sharp</div>
+                            <div className="font-mono font-bold text-sm sm:text-base">{analysis.unifiedPropData.sharpMoneyScore.toFixed(0)}</div>
+                          </button>
+                          <button 
+                            onClick={() => isMobile && openDetailDrawer('Trap Risk Score',
+                              <div className="space-y-2">
+                                <div className={cn("text-2xl font-bold", analysis.unifiedPropData.trapScore > 50 ? "text-neon-red" : "text-foreground")}>
+                                  {analysis.unifiedPropData.trapScore.toFixed(0)}
                                 </div>
-                              </TooltipTrigger>
-                              <TooltipContent>Player Value Score</TooltipContent>
-                            </Tooltip>
-                            <Tooltip>
-                              <TooltipTrigger>
-                                <div className="text-center">
-                                  <div className="text-muted-foreground">Hit%</div>
-                                  <div className="font-mono font-bold">{analysis.unifiedPropData.hitRateScore.toFixed(0)}</div>
-                                </div>
-                              </TooltipTrigger>
-                              <TooltipContent>Historical Hit Rate Score</TooltipContent>
-                            </Tooltip>
-                            <Tooltip>
-                              <TooltipTrigger>
-                                <div className="text-center">
-                                  <div className="text-muted-foreground">Sharp</div>
-                                  <div className="font-mono font-bold">{analysis.unifiedPropData.sharpMoneyScore.toFixed(0)}</div>
-                                </div>
-                              </TooltipTrigger>
-                              <TooltipContent>Sharp Money Score</TooltipContent>
-                            </Tooltip>
-                            <Tooltip>
-                              <TooltipTrigger>
-                                <div className="text-center">
-                                  <div className="text-muted-foreground">Trap</div>
-                                  <div className={cn("font-mono font-bold", analysis.unifiedPropData.trapScore > 50 ? "text-neon-red" : "text-foreground")}>
-                                    {analysis.unifiedPropData.trapScore.toFixed(0)}
-                                  </div>
-                                </div>
-                              </TooltipTrigger>
-                              <TooltipContent>Trap Risk Score (lower is better)</TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
+                                <p className="text-sm text-muted-foreground">Trap Risk Score - lower is better. High scores indicate potential trap plays.</p>
+                              </div>
+                            )}
+                            className="text-center p-1.5 rounded-md bg-card/50 active:bg-card/80 transition-colors"
+                          >
+                            <div className="text-[10px] sm:text-xs text-muted-foreground">Trap</div>
+                            <div className={cn("font-mono font-bold text-sm sm:text-base", analysis.unifiedPropData.trapScore > 50 ? "text-neon-red" : "text-foreground")}>
+                              {analysis.unifiedPropData.trapScore.toFixed(0)}
+                            </div>
+                          </button>
                         </div>
                         <div className="mt-2 text-xs">
                           <span className="text-muted-foreground">Rec: </span>
@@ -461,6 +491,18 @@ export function LegIntelligenceCard({ legs, legAnalyses, isLoading, delay = 0 }:
             );
           })}
         </div>
+      )}
+
+      {/* Mobile Detail Drawer */}
+      {detailDrawer && (
+        <MobileDetailDrawer
+          open={detailDrawer.open}
+          onOpenChange={(open) => !open && setDetailDrawer(null)}
+          title={detailDrawer.title}
+          icon={<Target className="h-5 w-5 text-neon-blue" />}
+        >
+          {detailDrawer.content}
+        </MobileDetailDrawer>
       )}
     </FeedCard>
   );
