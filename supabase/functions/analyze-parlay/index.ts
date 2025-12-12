@@ -83,11 +83,20 @@ interface FatigueData {
   travelMiles: number;
 }
 
+interface EngineSignal {
+  engine: string;
+  status: 'agree' | 'disagree' | 'neutral' | 'no_data';
+  score: number | null;
+  reason: string;
+  confidence?: number;
+}
+
 interface EngineConsensus {
   agreeingEngines: string[];
   disagreingEngines: string[];
   consensusScore: number;
   totalEngines: number;
+  engineSignals?: EngineSignal[];
 }
 
 interface LegAnalysis {
@@ -378,12 +387,14 @@ serve(async (req) => {
     let fatigueScores: any[] = [];
     let avoidPatterns: any[] = [];
     let formulaPerformance: any[] = [];
+    let bestBetsLog: any[] = [];
+    let hitrateProps: any[] = [];
     
     try {
       const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
       const today = new Date().toISOString().split('T')[0];
       
-      // Fetch all engine data in parallel
+      // Fetch all engine data in parallel (9 data sources)
       const [
         movementResult,
         unifiedResult,
@@ -391,7 +402,9 @@ serve(async (req) => {
         juicedResult,
         fatigueResult,
         avoidResult,
-        formulaResult
+        formulaResult,
+        bestBetsResult,
+        hitrateResult
       ] = await Promise.all([
         supabase
           .from('line_movements')
@@ -432,7 +445,18 @@ serve(async (req) => {
           .select('*')
           .gte('total_picks', 10)
           .order('current_accuracy', { ascending: false })
-          .limit(20)
+          .limit(20),
+        supabase
+          .from('best_bets_log')
+          .select('*')
+          .gte('created_at', sixHoursAgo)
+          .limit(100),
+        supabase
+          .from('hitrate_parlays')
+          .select('*')
+          .eq('is_active', true)
+          .gte('expires_at', new Date().toISOString())
+          .limit(100)
       ]);
       
       lineMovements = movementResult.data || [];
@@ -442,8 +466,10 @@ serve(async (req) => {
       fatigueScores = fatigueResult.data || [];
       avoidPatterns = avoidResult.data || [];
       formulaPerformance = formulaResult.data || [];
+      bestBetsLog = bestBetsResult.data || [];
+      hitrateProps = hitrateResult.data || [];
       
-      console.log(`Loaded engine data: ${lineMovements.length} movements, ${unifiedProps.length} unified props, ${godModeUpsets.length} upsets, ${juicedProps.length} juiced, ${fatigueScores.length} fatigue, ${avoidPatterns.length} avoid patterns, ${formulaPerformance.length} formulas`);
+      console.log(`Loaded engine data: ${lineMovements.length} movements, ${unifiedProps.length} unified, ${godModeUpsets.length} upsets, ${juicedProps.length} juiced, ${fatigueScores.length} fatigue, ${avoidPatterns.length} avoid, ${formulaPerformance.length} formulas, ${bestBetsLog.length} bestBets, ${hitrateProps.length} hitrate`);
     } catch (dataError) {
       console.error('Error fetching engine data:', dataError);
     }
@@ -699,54 +725,148 @@ Return ONLY valid JSON, no other text.`;
       upset: any,
       juiced: any,
       sharpData: any,
-      fatigueData: any
+      fatigueData: any,
+      bestBet: any,
+      hitrateData: any
     }, formulas: any[]): EngineConsensus {
       const agreeing: string[] = [];
       const disagreeing: string[] = [];
+      const engineSignals: EngineSignal[] = [];
 
-      // Check unified props recommendation
-      if (allData.unifiedProp?.recommendation) {
-        if (['strong_over', 'lean_over', 'strong_pick', 'lean_pick'].includes(allData.unifiedProp.recommendation)) {
-          agreeing.push('Unified Props');
-        } else if (['strong_under', 'lean_under', 'strong_fade', 'lean_fade'].includes(allData.unifiedProp.recommendation)) {
-          disagreeing.push('Unified Props');
-        }
+      // 1. Sharp Money Engine
+      if (allData.sharpData?.recommendation) {
+        const isAgree = allData.sharpData.recommendation === 'pick';
+        const isDisagree = allData.sharpData.recommendation === 'fade';
+        engineSignals.push({
+          engine: 'sharp',
+          status: isAgree ? 'agree' : isDisagree ? 'disagree' : 'neutral',
+          score: allData.sharpData.confidence || null,
+          reason: allData.sharpData.reason || (isAgree ? 'Sharp money detected' : isDisagree ? 'Trap movement detected' : 'Mixed signals'),
+          confidence: allData.sharpData.confidence
+        });
+        if (isAgree) agreeing.push('Sharp');
+        else if (isDisagree) disagreeing.push('Sharp');
+      } else {
+        engineSignals.push({ engine: 'sharp', status: 'no_data', score: null, reason: 'No sharp data available' });
       }
 
-      // Check God Mode upset
-      if (allData.upset?.suggestion) {
-        if (allData.upset.suggestion === 'bet') {
-          agreeing.push('God Mode');
-        } else if (allData.upset.suggestion === 'avoid' || allData.upset.trap_on_favorite) {
-          disagreeing.push('God Mode');
-        }
+      // 2. PVS Engine (from unified props)
+      if (allData.unifiedProp?.pvs_final_score !== undefined) {
+        const pvsScore = allData.unifiedProp.pvs_final_score;
+        const pvsTier = allData.unifiedProp.pvs_tier || '';
+        const isAgree = ['S', 'A'].includes(pvsTier.toUpperCase()) || pvsScore >= 65;
+        const isDisagree = ['D', 'F'].includes(pvsTier.toUpperCase()) || pvsScore <= 35;
+        engineSignals.push({
+          engine: 'pvs',
+          status: isAgree ? 'agree' : isDisagree ? 'disagree' : 'neutral',
+          score: pvsScore,
+          reason: `PVS Tier ${pvsTier.toUpperCase()} (${pvsScore.toFixed(0)}%)`,
+          confidence: allData.unifiedProp.confidence ? allData.unifiedProp.confidence * 100 : undefined
+        });
+        if (isAgree) agreeing.push('PVS');
+        else if (isDisagree) disagreeing.push('PVS');
+      } else {
+        engineSignals.push({ engine: 'pvs', status: 'no_data', score: null, reason: 'No PVS data available' });
       }
 
-      // Check juiced props
+      // 3. Hit Rate Engine (from unified props or hitrate_parlays)
+      const hitRateScore = allData.unifiedProp?.hit_rate_score || allData.hitrateData?.combined_probability;
+      if (hitRateScore !== undefined) {
+        const hrPct = hitRateScore * (hitRateScore > 1 ? 1 : 100);
+        const isAgree = hrPct >= 65;
+        const isDisagree = hrPct <= 40;
+        engineSignals.push({
+          engine: 'hitrate',
+          status: isAgree ? 'agree' : isDisagree ? 'disagree' : 'neutral',
+          score: hrPct,
+          reason: isAgree ? `High hit rate: ${hrPct.toFixed(0)}%` : isDisagree ? `Low hit rate: ${hrPct.toFixed(0)}%` : `Moderate: ${hrPct.toFixed(0)}%`
+        });
+        if (isAgree) agreeing.push('HitRate');
+        else if (isDisagree) disagreeing.push('HitRate');
+      } else {
+        engineSignals.push({ engine: 'hitrate', status: 'no_data', score: null, reason: 'No hit rate data available' });
+      }
+
+      // 4. Juiced Props Engine
       if (allData.juiced?.final_pick) {
-        agreeing.push('Juiced Props');
+        const descLower = legDesc.toLowerCase();
+        const juiceDirection = allData.juiced.juice_direction?.toLowerCase() || '';
+        const isOver = descLower.includes('over') || descLower.includes(' o ');
+        const isUnder = descLower.includes('under') || descLower.includes(' u ');
+        const juiceMatchesBet = (isOver && juiceDirection === 'over') || (isUnder && juiceDirection === 'under');
+        const juiceOppositesBet = (isOver && juiceDirection === 'under') || (isUnder && juiceDirection === 'over');
+        
+        engineSignals.push({
+          engine: 'juiced',
+          status: juiceMatchesBet ? 'agree' : juiceOppositesBet ? 'disagree' : 'neutral',
+          score: juiceDirection === 'over' ? 1 : juiceDirection === 'under' ? -1 : 0,
+          reason: `Juice direction: ${juiceDirection.toUpperCase()} (${allData.juiced.juice_level})`
+        });
+        if (juiceMatchesBet) agreeing.push('Juiced');
+        else if (juiceOppositesBet) disagreeing.push('Juiced');
+      } else {
+        engineSignals.push({ engine: 'juiced', status: 'no_data', score: null, reason: 'No juice data available' });
       }
 
-      // Check sharp data
-      if (allData.sharpData?.recommendation === 'pick') {
-        agreeing.push('Sharp Money');
-      } else if (allData.sharpData?.recommendation === 'fade') {
-        disagreeing.push('Sharp Money');
+      // 5. God Mode Engine
+      if (allData.upset?.suggestion) {
+        const isAgree = allData.upset.suggestion === 'bet';
+        const isDisagree = allData.upset.suggestion === 'avoid' || allData.upset.trap_on_favorite;
+        engineSignals.push({
+          engine: 'godmode',
+          status: isAgree ? 'agree' : isDisagree ? 'disagree' : 'neutral',
+          score: allData.upset.final_upset_score || null,
+          reason: isDisagree && allData.upset.trap_on_favorite ? 'Trap favorite detected' : `Suggestion: ${allData.upset.suggestion}`,
+          confidence: allData.upset.confidence ? (allData.upset.confidence === 'high' ? 80 : allData.upset.confidence === 'medium' ? 60 : 40) : undefined
+        });
+        if (isAgree) agreeing.push('GodMode');
+        else if (isDisagree) disagreeing.push('GodMode');
+      } else {
+        engineSignals.push({ engine: 'godmode', status: 'no_data', score: null, reason: 'No God Mode data available' });
       }
 
-      // Check fatigue
-      if (allData.fatigueData) {
-        if (allData.fatigueData.fatigue_score <= 20) {
-          agreeing.push('Fatigue Engine');
-        } else if (allData.fatigueData.fatigue_score >= 40) {
-          disagreeing.push('Fatigue Engine');
-        }
+      // 6. Fatigue Engine
+      if (allData.fatigueData?.fatigue_score !== undefined) {
+        const fatigueScore = allData.fatigueData.fatigue_score;
+        const isAgree = fatigueScore <= 20; // Low fatigue = good for player props
+        const isDisagree = fatigueScore >= 50; // High fatigue = bad
+        engineSignals.push({
+          engine: 'fatigue',
+          status: isAgree ? 'agree' : isDisagree ? 'disagree' : 'neutral',
+          score: 100 - fatigueScore, // Invert so higher = better
+          reason: `Fatigue: ${allData.fatigueData.fatigue_category || (fatigueScore <= 20 ? 'Fresh' : fatigueScore >= 50 ? 'Tired' : 'Moderate')}`
+        });
+        if (isAgree) agreeing.push('Fatigue');
+        else if (isDisagree) disagreeing.push('Fatigue');
+      } else {
+        engineSignals.push({ engine: 'fatigue', status: 'no_data', score: null, reason: 'No fatigue data available' });
       }
 
-      const totalEngines = agreeing.length + disagreeing.length;
-      const consensusScore = totalEngines > 0 ? agreeing.length / totalEngines : 0.5;
+      // 7. Best Bets Engine
+      if (allData.bestBet) {
+        const isPick = allData.bestBet.prediction?.toLowerCase().includes('pick') || allData.bestBet.signal_type?.includes('best');
+        engineSignals.push({
+          engine: 'bestbets',
+          status: isPick ? 'agree' : 'neutral',
+          score: isPick ? 1 : 0,
+          reason: isPick ? `Best bet pick: ${allData.bestBet.signal_type}` : 'Listed but not top pick',
+          confidence: allData.bestBet.accuracy_at_time ? allData.bestBet.accuracy_at_time * 100 : undefined
+        });
+        if (isPick) agreeing.push('BestBets');
+      } else {
+        engineSignals.push({ engine: 'bestbets', status: 'no_data', score: null, reason: 'Not in best bets' });
+      }
 
-      return { agreeingEngines: agreeing, disagreingEngines: disagreeing, consensusScore, totalEngines };
+      const totalEngines = 7;
+      const consensusScore = agreeing.length;
+
+      return { 
+        agreeingEngines: agreeing, 
+        disagreingEngines: disagreeing, 
+        consensusScore, 
+        totalEngines,
+        engineSignals 
+      };
     }
 
     // Enrich all legs with engine data
@@ -832,6 +952,22 @@ Return ONLY valid JSON, no other text.`;
 
         // Calculate engine consensus
         const sharpData = legSharpData.find(d => d.legIndex === idx);
+        
+        // Match to best bets
+        const matchedBestBet = bestBetsLog.find(b => 
+          legDesc.toLowerCase().includes(b.description?.toLowerCase() || '') ||
+          (legAnalysis.player && b.description?.toLowerCase().includes(legAnalysis.player.toLowerCase()))
+        );
+        
+        // Match to hitrate parlays
+        const matchedHitrate = hitrateProps.find(h => {
+          const legs = h.legs as any[];
+          return legs?.some(l => 
+            legDesc.toLowerCase().includes(l.description?.toLowerCase() || '') ||
+            (legAnalysis.player && l.player_name?.toLowerCase().includes(legAnalysis.player.toLowerCase()))
+          );
+        });
+        
         legAnalysis.engineConsensus = calculateEngineConsensus(
           legDesc,
           legAnalysis.player,
@@ -841,7 +977,9 @@ Return ONLY valid JSON, no other text.`;
             upset: legAnalysis.upsetData ? godModeUpsets.find(u => u.home_team?.toLowerCase().includes(legAnalysis.team?.toLowerCase() || '')) : null,
             juiced: legAnalysis.juiceData ? juicedProps.find(j => j.player_name?.toLowerCase() === legAnalysis.player?.toLowerCase()) : null,
             sharpData: sharpData?.hasSharpData ? sharpData : null,
-            fatigueData: legAnalysis.fatigueData ? fatigueScores.find(f => f.team_name?.toLowerCase().includes(legAnalysis.team?.toLowerCase() || '')) : null
+            fatigueData: legAnalysis.fatigueData ? fatigueScores.find(f => f.team_name?.toLowerCase().includes(legAnalysis.team?.toLowerCase() || '')) : null,
+            bestBet: matchedBestBet || null,
+            hitrateData: matchedHitrate || null
           },
           formulaPerformance
         );
