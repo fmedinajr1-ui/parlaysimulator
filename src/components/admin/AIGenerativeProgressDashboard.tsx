@@ -183,12 +183,32 @@ export function AIGenerativeProgressDashboard() {
   const fetchData = async () => {
     setIsLoading(true);
     
-    const [parlayRes, progressRes, formulaRes, settlementRes] = await Promise.all([
+    // Fetch parlays by outcome type to ensure won/lost are always visible
+    const [pendingRes, wonRes, lostRes, expiredRes, progressRes, formulaRes, settlementRes] = await Promise.all([
       supabase
         .from('ai_generated_parlays')
         .select('*')
+        .eq('outcome', 'pending')
+        .order('created_at', { ascending: false })
+        .limit(200),
+      supabase
+        .from('ai_generated_parlays')
+        .select('*')
+        .eq('outcome', 'won')
         .order('created_at', { ascending: false })
         .limit(100),
+      supabase
+        .from('ai_generated_parlays')
+        .select('*')
+        .eq('outcome', 'lost')
+        .order('created_at', { ascending: false })
+        .limit(100),
+      supabase
+        .from('ai_generated_parlays')
+        .select('*')
+        .eq('outcome', 'expired')
+        .order('created_at', { ascending: false })
+        .limit(50),
       supabase
         .from('ai_learning_progress')
         .select('*')
@@ -206,7 +226,15 @@ export function AIGenerativeProgressDashboard() {
         .limit(10)
     ]);
 
-    if (parlayRes.data) setParlays(parlayRes.data as AIGeneratedParlay[]);
+    // Combine all parlays and sort by created_at
+    const allParlays = [
+      ...(pendingRes.data || []),
+      ...(wonRes.data || []),
+      ...(lostRes.data || []),
+      ...(expiredRes.data || [])
+    ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+    setParlays(allParlays as AIGeneratedParlay[]);
     if (progressRes.data && progressRes.data.length > 0) setLearningProgress(progressRes.data[0] as AILearningProgress);
     if (formulaRes.data) setFormulaPerformance(formulaRes.data as FormulaPerformance[]);
     if (settlementRes.data) setSettlementJobs(settlementRes.data as SettlementJob[]);
