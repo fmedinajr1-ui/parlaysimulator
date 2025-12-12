@@ -140,6 +140,7 @@ export function AIGenerativeProgressDashboard() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isLearning, setIsLearning] = useState(false);
   const [isSettling, setIsSettling] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [filter, setFilter] = useState<'all' | 'pending' | 'won' | 'lost'>('all');
   const [settlementProgress, setSettlementProgress] = useState<SettlementProgress | null>(null);
   const [staleParlays, setStaleParlays] = useState(0);
@@ -231,6 +232,21 @@ export function AIGenerativeProgressDashboard() {
       toast.error('Learning cycle failed: ' + (error as Error).message);
     }
     setIsLearning(false);
+  };
+
+  const handleSyncLearningProgress = async () => {
+    setIsSyncing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('ai-learning-engine', {
+        body: { action: 'sync_learning_progress' }
+      });
+      if (error) throw error;
+      toast.success(`Synced ${data?.wins || 0}W-${data?.losses || 0}L (${data?.accuracy || 0}%) • ${data?.winning_patterns || 0} winning patterns, ${data?.losing_patterns || 0} losing patterns`);
+      fetchData();
+    } catch (error) {
+      toast.error('Sync failed: ' + (error as Error).message);
+    }
+    setIsSyncing(false);
   };
 
   const handleRunSettlement = async (force: boolean = false) => {
@@ -502,6 +518,10 @@ export function AIGenerativeProgressDashboard() {
                   <Button onClick={handleRunLearningCycle} disabled={isLearning} variant="outline">
                     {isLearning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
                     Learn
+                  </Button>
+                  <Button onClick={handleSyncLearningProgress} disabled={isSyncing} variant="outline" className="bg-purple-500/10 hover:bg-purple-500/20 border-purple-500/30">
+                    {isSyncing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <History className="w-4 h-4 mr-2" />}
+                    Sync
                   </Button>
                 </div>
                 
