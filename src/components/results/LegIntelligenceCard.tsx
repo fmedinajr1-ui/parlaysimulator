@@ -1,10 +1,11 @@
 import { FeedCard } from "@/components/FeedCard";
 import { ParlayLeg, LegAnalysis } from "@/types/parlay";
 import { Badge } from "@/components/ui/badge";
-import { TrendingUp, TrendingDown, Minus, AlertTriangle, CheckCircle, Brain, Loader2, UserX, Activity, Zap, Target, Flame, Shield, Users, AlertOctagon } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, AlertTriangle, CheckCircle, Brain, Loader2, UserX, Activity, Zap, Target, Flame, AlertOctagon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { InjuryAlertBadge } from "./InjuryAlertBadge";
 import { UsageProjectionCard } from "./UsageProjectionCard";
+import { EngineConsensusCard } from "./EngineConsensusCard";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface LegIntelligenceCardProps {
@@ -122,34 +123,29 @@ export function LegIntelligenceCard({ legs, legAnalyses, isLoading, delay = 0 }:
 
                 {analysis && (
                   <>
-                    {/* Engine Consensus Row */}
-                    {analysis.engineConsensus && analysis.engineConsensus.totalEngines > 0 && (
+                    {/* Engine Consensus Card */}
+                    {analysis.engineConsensus && analysis.engineConsensus.engineSignals && analysis.engineConsensus.engineSignals.length > 0 && (
+                      <div className="mb-3">
+                        <EngineConsensusCard 
+                          consensus={analysis.engineConsensus}
+                          legDescription={leg.description}
+                        />
+                      </div>
+                    )}
+                    
+                    {/* Fallback for old consensus format */}
+                    {analysis.engineConsensus && (!analysis.engineConsensus.engineSignals || analysis.engineConsensus.engineSignals.length === 0) && analysis.engineConsensus.totalEngines > 0 && (
                       <div className="mb-2 p-2 rounded-lg bg-gradient-to-r from-neon-purple/10 to-transparent border border-neon-purple/20">
                         <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <Users className="w-4 h-4 text-neon-purple" />
-                            <span className="text-xs font-semibold text-neon-purple">ENGINE CONSENSUS</span>
-                          </div>
+                          <span className="text-xs font-semibold text-neon-purple">ENGINE CONSENSUS</span>
                           <Badge className={cn(
                             "text-xs",
-                            analysis.engineConsensus.consensusScore >= 0.7 ? "bg-neon-green/20 text-neon-green" :
-                            analysis.engineConsensus.consensusScore >= 0.4 ? "bg-neon-yellow/20 text-neon-yellow" :
+                            (analysis.engineConsensus.consensusScore / analysis.engineConsensus.totalEngines) >= 0.7 ? "bg-neon-green/20 text-neon-green" :
+                            (analysis.engineConsensus.consensusScore / analysis.engineConsensus.totalEngines) >= 0.4 ? "bg-neon-yellow/20 text-neon-yellow" :
                             "bg-neon-red/20 text-neon-red"
                           )}>
-                            {Math.round(analysis.engineConsensus.consensusScore * 100)}% agree
+                            {analysis.engineConsensus.consensusScore}/{analysis.engineConsensus.totalEngines} agree
                           </Badge>
-                        </div>
-                        <div className="flex flex-wrap gap-1 mt-2">
-                          {analysis.engineConsensus.agreeingEngines.map((engine, i) => (
-                            <Badge key={`agree-${i}`} variant="outline" className="text-xs bg-neon-green/10 text-neon-green border-neon-green/30">
-                              ✓ {engine}
-                            </Badge>
-                          ))}
-                          {analysis.engineConsensus.disagreingEngines.map((engine, i) => (
-                            <Badge key={`disagree-${i}`} variant="outline" className="text-xs bg-neon-red/10 text-neon-red border-neon-red/30">
-                              ✗ {engine}
-                            </Badge>
-                          ))}
                         </div>
                       </div>
                     )}

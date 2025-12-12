@@ -68,11 +68,20 @@ export interface FatigueData {
   travelMiles: number;
 }
 
+export interface EngineSignal {
+  engine: string;
+  status: 'agree' | 'disagree' | 'neutral' | 'no_data';
+  score: number | null;
+  reason: string;
+  confidence?: number;
+}
+
 export interface EngineConsensus {
   agreeingEngines: string[];
   disagreingEngines: string[];
   consensusScore: number;
   totalEngines: number;
+  engineSignals?: EngineSignal[];
 }
 
 export interface LegAnalysis {
