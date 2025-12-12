@@ -1,10 +1,11 @@
 import { FeedCard } from "@/components/FeedCard";
 import { ParlayLeg, LegAnalysis } from "@/types/parlay";
 import { Badge } from "@/components/ui/badge";
-import { TrendingUp, TrendingDown, Minus, AlertTriangle, CheckCircle, Brain, Loader2, UserX, Activity } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, AlertTriangle, CheckCircle, Brain, Loader2, UserX, Activity, Zap, Target, Flame, Shield, Users, AlertOctagon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { InjuryAlertBadge } from "./InjuryAlertBadge";
 import { UsageProjectionCard } from "./UsageProjectionCard";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface LegIntelligenceCardProps {
   legs: ParlayLeg[];
@@ -31,6 +32,28 @@ const getConfidenceBadge = (level: string) => {
     low: 'bg-neon-red/20 text-neon-red border-neon-red/30',
   };
   return styles[level as keyof typeof styles] || styles.medium;
+};
+
+const getPVSTierStyle = (tier: string) => {
+  const styles: Record<string, string> = {
+    'S': 'bg-gradient-to-r from-neon-green/30 to-neon-green/10 text-neon-green border-neon-green/50',
+    'A': 'bg-neon-green/20 text-neon-green border-neon-green/30',
+    'B': 'bg-neon-yellow/20 text-neon-yellow border-neon-yellow/30',
+    'C': 'bg-neon-orange/20 text-neon-orange border-neon-orange/30',
+    'D': 'bg-neon-red/20 text-neon-red border-neon-red/30',
+    'F': 'bg-neon-red/30 text-neon-red border-neon-red/50',
+  };
+  return styles[tier?.toUpperCase()] || 'bg-muted text-muted-foreground';
+};
+
+const getRecommendationStyle = (rec: string) => {
+  if (!rec) return 'text-muted-foreground';
+  const recLower = rec.toLowerCase();
+  if (recLower.includes('strong_over') || recLower.includes('strong_pick')) return 'text-neon-green font-bold';
+  if (recLower.includes('lean_over') || recLower.includes('lean_pick')) return 'text-neon-green';
+  if (recLower.includes('strong_under') || recLower.includes('strong_fade')) return 'text-neon-red font-bold';
+  if (recLower.includes('lean_under') || recLower.includes('lean_fade')) return 'text-neon-red';
+  return 'text-neon-yellow';
 };
 
 export function LegIntelligenceCard({ legs, legAnalyses, isLoading, delay = 0 }: LegIntelligenceCardProps) {
@@ -99,6 +122,245 @@ export function LegIntelligenceCard({ legs, legAnalyses, isLoading, delay = 0 }:
 
                 {analysis && (
                   <>
+                    {/* Engine Consensus Row */}
+                    {analysis.engineConsensus && analysis.engineConsensus.totalEngines > 0 && (
+                      <div className="mb-2 p-2 rounded-lg bg-gradient-to-r from-neon-purple/10 to-transparent border border-neon-purple/20">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Users className="w-4 h-4 text-neon-purple" />
+                            <span className="text-xs font-semibold text-neon-purple">ENGINE CONSENSUS</span>
+                          </div>
+                          <Badge className={cn(
+                            "text-xs",
+                            analysis.engineConsensus.consensusScore >= 0.7 ? "bg-neon-green/20 text-neon-green" :
+                            analysis.engineConsensus.consensusScore >= 0.4 ? "bg-neon-yellow/20 text-neon-yellow" :
+                            "bg-neon-red/20 text-neon-red"
+                          )}>
+                            {Math.round(analysis.engineConsensus.consensusScore * 100)}% agree
+                          </Badge>
+                        </div>
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {analysis.engineConsensus.agreeingEngines.map((engine, i) => (
+                            <Badge key={`agree-${i}`} variant="outline" className="text-xs bg-neon-green/10 text-neon-green border-neon-green/30">
+                              ✓ {engine}
+                            </Badge>
+                          ))}
+                          {analysis.engineConsensus.disagreingEngines.map((engine, i) => (
+                            <Badge key={`disagree-${i}`} variant="outline" className="text-xs bg-neon-red/10 text-neon-red border-neon-red/30">
+                              ✗ {engine}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Unified Props Data */}
+                    {analysis.unifiedPropData && (
+                      <div className="mb-2 p-2 rounded-lg bg-gradient-to-r from-neon-blue/10 to-transparent border border-neon-blue/20">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <Target className="w-4 h-4 text-neon-blue" />
+                            <span className="text-xs font-semibold text-neon-blue">UNIFIED PROPS</span>
+                          </div>
+                          <Badge className={cn("text-xs", getPVSTierStyle(analysis.unifiedPropData.pvsTier))}>
+                            Tier {analysis.unifiedPropData.pvsTier}
+                          </Badge>
+                        </div>
+                        <div className="grid grid-cols-4 gap-2 text-xs">
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger>
+                                <div className="text-center">
+                                  <div className="text-muted-foreground">PVS</div>
+                                  <div className="font-mono font-bold">{analysis.unifiedPropData.pvsScore.toFixed(0)}</div>
+                                </div>
+                              </TooltipTrigger>
+                              <TooltipContent>Player Value Score</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger>
+                                <div className="text-center">
+                                  <div className="text-muted-foreground">Hit%</div>
+                                  <div className="font-mono font-bold">{analysis.unifiedPropData.hitRateScore.toFixed(0)}</div>
+                                </div>
+                              </TooltipTrigger>
+                              <TooltipContent>Historical Hit Rate Score</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger>
+                                <div className="text-center">
+                                  <div className="text-muted-foreground">Sharp</div>
+                                  <div className="font-mono font-bold">{analysis.unifiedPropData.sharpMoneyScore.toFixed(0)}</div>
+                                </div>
+                              </TooltipTrigger>
+                              <TooltipContent>Sharp Money Score</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger>
+                                <div className="text-center">
+                                  <div className="text-muted-foreground">Trap</div>
+                                  <div className={cn("font-mono font-bold", analysis.unifiedPropData.trapScore > 50 ? "text-neon-red" : "text-foreground")}>
+                                    {analysis.unifiedPropData.trapScore.toFixed(0)}
+                                  </div>
+                                </div>
+                              </TooltipTrigger>
+                              <TooltipContent>Trap Risk Score (lower is better)</TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        </div>
+                        <div className="mt-2 text-xs">
+                          <span className="text-muted-foreground">Rec: </span>
+                          <span className={getRecommendationStyle(analysis.unifiedPropData.recommendation)}>
+                            {analysis.unifiedPropData.recommendation.replace(/_/g, ' ').toUpperCase()}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Upset Data */}
+                    {analysis.upsetData && (
+                      <div className={cn(
+                        "mb-2 p-2 rounded-lg border",
+                        analysis.upsetData.isTrapFavorite 
+                          ? "bg-gradient-to-r from-neon-red/20 to-transparent border-neon-red/40" 
+                          : "bg-gradient-to-r from-neon-orange/10 to-transparent border-neon-orange/20"
+                      )}>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Zap className={cn("w-4 h-4", analysis.upsetData.isTrapFavorite ? "text-neon-red" : "text-neon-orange")} />
+                            <span className={cn("text-xs font-semibold", analysis.upsetData.isTrapFavorite ? "text-neon-red" : "text-neon-orange")}>
+                              {analysis.upsetData.isTrapFavorite ? "⚠️ TRAP FAVORITE" : "GOD MODE"}
+                            </span>
+                          </div>
+                          <Badge className={cn(
+                            "text-xs",
+                            analysis.upsetData.confidence === 'high' ? "bg-neon-green/20 text-neon-green" :
+                            analysis.upsetData.confidence === 'medium' ? "bg-neon-yellow/20 text-neon-yellow" :
+                            "bg-neon-red/20 text-neon-red"
+                          )}>
+                            {analysis.upsetData.confidence}
+                          </Badge>
+                        </div>
+                        <div className="flex items-center justify-between mt-2 text-xs">
+                          <div>
+                            <span className="text-muted-foreground">Upset Score: </span>
+                            <span className="font-mono font-bold">{analysis.upsetData.upsetScore.toFixed(0)}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Suggestion: </span>
+                            <span className={cn(
+                              "font-bold",
+                              analysis.upsetData.suggestion === 'bet' ? "text-neon-green" : "text-neon-red"
+                            )}>
+                              {analysis.upsetData.suggestion.toUpperCase()}
+                            </span>
+                          </div>
+                          {analysis.upsetData.chaosModeActive && (
+                            <Badge variant="outline" className="text-xs bg-neon-purple/20 text-neon-purple">
+                              CHAOS MODE
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Juice Data */}
+                    {analysis.juiceData && (
+                      <div className="mb-2 p-2 rounded-lg bg-gradient-to-r from-neon-yellow/10 to-transparent border border-neon-yellow/20">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Flame className="w-4 h-4 text-neon-yellow" />
+                            <span className="text-xs font-semibold text-neon-yellow">JUICED PROP</span>
+                          </div>
+                          <Badge className={cn(
+                            "text-xs",
+                            analysis.juiceData.juiceLevel === 'heavy' ? "bg-neon-green/20 text-neon-green" :
+                            analysis.juiceData.juiceLevel === 'moderate' ? "bg-neon-yellow/20 text-neon-yellow" :
+                            "bg-muted text-muted-foreground"
+                          )}>
+                            {analysis.juiceData.juiceLevel} juice
+                          </Badge>
+                        </div>
+                        <div className="flex items-center justify-between mt-2 text-xs">
+                          <div>
+                            <span className="text-muted-foreground">Direction: </span>
+                            <span className="font-bold">{analysis.juiceData.juiceDirection.toUpperCase()}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Amount: </span>
+                            <span className="font-mono">{analysis.juiceData.juiceAmount.toFixed(0)}¢</span>
+                          </div>
+                          {analysis.juiceData.finalPick && (
+                            <div>
+                              <span className="text-muted-foreground">Pick: </span>
+                              <span className="text-neon-green font-bold">{analysis.juiceData.finalPick.toUpperCase()}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Fatigue Data */}
+                    {analysis.fatigueData && (
+                      <div className={cn(
+                        "mb-2 p-2 rounded-lg border",
+                        analysis.fatigueData.fatigueScore >= 40 
+                          ? "bg-gradient-to-r from-neon-red/10 to-transparent border-neon-red/20" 
+                          : "bg-gradient-to-r from-neon-cyan/10 to-transparent border-neon-cyan/20"
+                      )}>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Activity className={cn("w-4 h-4", analysis.fatigueData.fatigueScore >= 40 ? "text-neon-red" : "text-neon-cyan")} />
+                            <span className={cn("text-xs font-semibold", analysis.fatigueData.fatigueScore >= 40 ? "text-neon-red" : "text-neon-cyan")}>
+                              FATIGUE: {analysis.fatigueData.fatigueCategory}
+                            </span>
+                          </div>
+                          <Badge className={cn(
+                            "text-xs",
+                            analysis.fatigueData.fatigueScore < 20 ? "bg-neon-green/20 text-neon-green" :
+                            analysis.fatigueData.fatigueScore < 40 ? "bg-neon-yellow/20 text-neon-yellow" :
+                            "bg-neon-red/20 text-neon-red"
+                          )}>
+                            Score: {analysis.fatigueData.fatigueScore}
+                          </Badge>
+                        </div>
+                        <div className="flex items-center gap-4 mt-2 text-xs">
+                          {analysis.fatigueData.isBackToBack && (
+                            <Badge variant="outline" className="text-xs bg-neon-red/10 text-neon-red border-neon-red/30">
+                              B2B
+                            </Badge>
+                          )}
+                          {analysis.fatigueData.travelMiles > 1000 && (
+                            <span className="text-muted-foreground">
+                              Travel: {Math.round(analysis.fatigueData.travelMiles)} mi
+                            </span>
+                          )}
+                          {analysis.fatigueData.recommendedAngle && analysis.fatigueData.recommendedAngle !== 'none' && (
+                            <span className="text-neon-cyan">
+                              Angle: {analysis.fatigueData.recommendedAngle}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Avoid Patterns Warning */}
+                    {analysis.avoidPatterns && analysis.avoidPatterns.length > 0 && (
+                      <div className="mb-2 p-2 rounded-lg bg-gradient-to-r from-neon-red/20 to-transparent border border-neon-red/40">
+                        <div className="flex items-center gap-2 mb-1">
+                          <AlertOctagon className="w-4 h-4 text-neon-red" />
+                          <span className="text-xs font-semibold text-neon-red">⚠️ AVOID PATTERN DETECTED</span>
+                        </div>
+                        <ul className="space-y-0.5">
+                          {analysis.avoidPatterns.map((pattern, i) => (
+                            <li key={i} className="text-xs text-neon-red/80 pl-4">
+                              • {pattern}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
                     {/* Insights */}
                     {analysis.insights.length > 0 && (
                       <div className="mb-2">
