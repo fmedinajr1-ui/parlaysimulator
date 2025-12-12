@@ -9,12 +9,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Skeleton } from "@/components/ui/skeleton";
 
 const SPORTS = [
-  { value: "basketball_nba", label: "NBA" },
-  { value: "americanfootball_nfl", label: "NFL" },
-  { value: "basketball_ncaab", label: "NCAAB" },
-  { value: "americanfootball_ncaaf", label: "NCAAF" },
-  { value: "icehockey_nhl", label: "NHL" },
-  { value: "baseball_mlb", label: "MLB" },
+  { value: "NBA", label: "NBA" },
+  { value: "NFL", label: "NFL" },
+  { value: "NCAAB", label: "NCAAB" },
+  { value: "NCAAF", label: "NCAAF" },
+  { value: "NHL", label: "NHL" },
+  { value: "MLB", label: "MLB" },
 ];
 
 const MARKET_TYPES = [
@@ -31,7 +31,7 @@ interface GameOption {
 
 const LineShopping = () => {
   const navigate = useNavigate();
-  const [selectedSport, setSelectedSport] = useState("basketball_nba");
+  const [selectedSport, setSelectedSport] = useState("NBA");
   const [selectedMarket, setSelectedMarket] = useState("spreads");
   const [selectedGame, setSelectedGame] = useState<string>("");
   const [games, setGames] = useState<GameOption[]>([]);
