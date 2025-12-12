@@ -52,8 +52,8 @@ interface FinalPickDecision {
   skip: boolean;
 }
 
-// MINIMUM CONFIDENCE THRESHOLD - 80%
-const MIN_CONFIDENCE_THRESHOLD = 0.80;
+// MINIMUM CONFIDENCE THRESHOLD - 65% (lowered from 80% to allow more picks)
+const MIN_CONFIDENCE_THRESHOLD = 0.65;
 
 // AI BETTING KNOWLEDGE RULES
 const AI_BETTING_RULES = {
@@ -323,19 +323,19 @@ function determineFinalPick(
   if (finalConfidence < MIN_CONFIDENCE_THRESHOLD) {
     return {
       pick: null,
-      reason: `⏭️ Below 80% threshold (${(finalConfidence * 100).toFixed(0)}%) | ${reasons.slice(0, 2).join(' | ')}`,
+      reason: `⏭️ Below 65% threshold (${(finalConfidence * 100).toFixed(0)}%) | ${reasons.slice(0, 2).join(' | ')}`,
       confidence: finalConfidence,
       skip: true,
     };
   }
   
-  // Check for inconsistent movement - require higher confidence
+  // Check for inconsistent movement - require higher confidence (70% instead of 85%)
   if (!movementAnalysis.isConsistent && totalSnapshots >= 3) {
-    // Inconsistent movement detected - need even higher confidence
-    if (finalConfidence < 0.85) {
+    // Inconsistent movement detected - need slightly higher confidence
+    if (finalConfidence < 0.70) {
       return {
         pick: null,
-        reason: `⏭️ Inconsistent day movement (${mcs.toFixed(0)}% MCS) - need 85%+ | ${reasons[0] || ''}`,
+        reason: `⏭️ Inconsistent day movement (${mcs.toFixed(0)}% MCS) - need 70%+ | ${reasons[0] || ''}`,
         confidence: finalConfidence,
         skip: true,
       };
@@ -366,19 +366,19 @@ serve(async (req) => {
     
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
     
-    console.log('🔒 Starting final picks lock with 80% Confidence Threshold + Movement Consistency...');
+    console.log('🔒 Starting final picks lock with 65% Confidence Threshold + Movement Consistency...');
     
     const now = new Date();
-    const thirtyMinsFromNow = new Date(now.getTime() + 30 * 60 * 1000);
-    const ninetyMinsFromNow = new Date(now.getTime() + 90 * 60 * 1000);
+    const fifteenMinsFromNow = new Date(now.getTime() + 15 * 60 * 1000);
+    const threeHoursFromNow = new Date(now.getTime() + 180 * 60 * 1000);
     
-    // Get unlocked juiced props where game starts in 30-90 minutes
+    // Get unlocked juiced props where game starts in 15-180 minutes (expanded from 30-90)
     const { data: propsToLock, error: fetchError } = await supabase
       .from('juiced_props')
       .select('*')
       .eq('is_locked', false)
-      .gte('commence_time', thirtyMinsFromNow.toISOString())
-      .lte('commence_time', ninetyMinsFromNow.toISOString());
+      .gte('commence_time', fifteenMinsFromNow.toISOString())
+      .lte('commence_time', threeHoursFromNow.toISOString());
     
     if (fetchError) {
       console.error('Error fetching props:', fetchError);
