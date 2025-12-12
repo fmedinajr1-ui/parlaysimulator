@@ -567,6 +567,79 @@ button, [role="button"], a {
   overscroll-behavior: contain;
 }
 
+/* ===== COMPACT CARD SYSTEM ===== */
+
+/* Compact card base */
+.compact-card {
+  @apply p-2 rounded-lg border border-border/30 bg-card/80;
+}
+
+.compact-card-mini {
+  @apply py-1 px-2 rounded-md inline-flex items-center gap-1;
+}
+
+/* Compact grid - 2 cols mobile, 4 cols desktop */
+.compact-grid {
+  @apply grid grid-cols-2 gap-2;
+}
+
+@media screen and (min-width: 640px) {
+  .compact-grid {
+    @apply grid-cols-4;
+  }
+}
+
+/* Pill display for mini mode */
+.data-pill {
+  @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-card/80 border border-border/30;
+}
+
+/* Touch expand indicator */
+.touch-expand {
+  @apply relative active:bg-white/5 transition-colors;
+}
+
+/* Compact data item */
+.compact-data-item {
+  @apply flex flex-col items-center p-2 rounded-lg border transition-all;
+  @apply active:scale-95 cursor-pointer;
+  min-height: 44px;
+}
+
+/* Mobile card dense - tighter spacing */
+.mobile-card-dense {
+  @apply p-2 gap-2;
+}
+
+@media screen and (min-width: 640px) {
+  .mobile-card-dense {
+    @apply p-4 gap-3;
+  }
+}
+
+/* Scroll snap for horizontal scrolling */
+.scroll-snap-x {
+  @apply flex overflow-x-auto gap-2;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.scroll-snap-x::-webkit-scrollbar {
+  display: none;
+}
+
+.scroll-snap-x > * {
+  scroll-snap-align: start;
+  flex-shrink: 0;
+}
+
+/* Enhanced touch targets */
+.touch-target-lg {
+  min-height: 48px;
+  min-width: 48px;
+}
+
 /* Landscape mode adjustments */
 @media screen and (orientation: landscape) and (max-height: 500px) {
   .pb-nav-safe {
