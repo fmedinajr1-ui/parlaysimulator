@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ChevronLeft, TrendingUp, RefreshCw } from "lucide-react";
+import { ChevronLeft, TrendingUp, RefreshCw, Home } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { LineComparisonTable } from "@/components/odds/LineComparisonTable";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -102,10 +102,10 @@ const LineShopping = () => {
           <Button 
             variant="ghost" 
             size="icon" 
-            onClick={() => navigate(-1)}
+            onClick={() => navigate('/')}
             className="shrink-0"
           >
-            <ChevronLeft className="w-5 h-5" />
+            <Home className="w-5 h-5" />
           </Button>
           <div className="flex-1">
             <h1 className="text-3xl font-display text-foreground">LINE SHOPPING</h1>
