@@ -146,10 +146,17 @@ export function AIGenerativeProgressDashboard() {
   const [settlementProgress, setSettlementProgress] = useState<SettlementProgress | null>(null);
   const [staleParlays, setStaleParlays] = useState(0);
   const [isPurging, setIsPurging] = useState(false);
+  const [pendingBreakdown, setPendingBreakdown] = useState<{
+    scheduled: number;
+    inProgress: number;
+    mixed: number;
+    readyToSettle: number;
+  }>({ scheduled: 0, inProgress: 0, mixed: 0, readyToSettle: 0 });
 
   useEffect(() => {
     fetchData();
     fetchStaleCount();
+    fetchPendingBreakdown();
     
     const parlayChannel = supabase
       .channel('ai_parlays_changes')
@@ -321,6 +328,63 @@ export function AIGenerativeProgressDashboard() {
       .eq('outcome', 'pending')
       .lt('created_at', cutoff);
     setStaleParlays(count || 0);
+  };
+
+  // Fetch pending parlays breakdown by game status
+  const fetchPendingBreakdown = async () => {
+    const { data: pendingParlays } = await supabase
+      .from('ai_generated_parlays')
+      .select('id, legs, created_at')
+      .eq('outcome', 'pending');
+
+    if (!pendingParlays) return;
+
+    const now = new Date();
+    const fourHoursAgo = new Date(now.getTime() - 4 * 60 * 60 * 1000);
+    
+    let scheduled = 0;
+    let inProgress = 0;
+    let mixed = 0;
+    let readyToSettle = 0;
+
+    pendingParlays.forEach(parlay => {
+      const legs = parlay.legs as any[];
+      if (!Array.isArray(legs) || legs.length === 0) return;
+
+      let allScheduled = true;
+      let allCompleted = true;
+      let anyInProgress = false;
+
+      legs.forEach(leg => {
+        const commenceTime = new Date(leg.commence_time || leg.commenceTime || parlay.created_at);
+        const gameEndEstimate = new Date(commenceTime.getTime() + 3 * 60 * 60 * 1000); // ~3 hours for game
+
+        if (commenceTime > now) {
+          // Game hasn't started
+          allCompleted = false;
+        } else if (now < gameEndEstimate) {
+          // Game likely in progress
+          allScheduled = false;
+          allCompleted = false;
+          anyInProgress = true;
+        } else {
+          // Game likely completed
+          allScheduled = false;
+        }
+      });
+
+      if (allScheduled) {
+        scheduled++;
+      } else if (allCompleted) {
+        readyToSettle++;
+      } else if (anyInProgress && !allScheduled) {
+        inProgress++;
+      } else {
+        mixed++;
+      }
+    });
+
+    setPendingBreakdown({ scheduled, inProgress, mixed, readyToSettle });
   };
 
   // Purge stale parlays by marking them as 'expired'
@@ -740,6 +804,119 @@ export function AIGenerativeProgressDashboard() {
                 </Button>
               )}
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Pending Parlays Breakdown */}
+      {stats.pending > 0 && (
+        <Card className="bg-card/50 border-yellow-500/20">
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Clock className="w-5 h-5 text-yellow-500" />
+                Pending Parlays Breakdown
+              </CardTitle>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={fetchPendingBreakdown}
+                className="h-8 w-8 p-0"
+              >
+                <RefreshCw className="w-4 h-4" />
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-4 gap-4 text-center">
+              <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3">
+                <p className="text-2xl font-bold text-blue-500">{pendingBreakdown.scheduled}</p>
+                <p className="text-xs text-muted-foreground">Scheduled</p>
+                <p className="text-[10px] text-muted-foreground opacity-70">Games not started</p>
+              </div>
+              <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3">
+                <p className="text-2xl font-bold text-purple-500">{pendingBreakdown.mixed}</p>
+                <p className="text-xs text-muted-foreground">Mixed</p>
+                <p className="text-[10px] text-muted-foreground opacity-70">Some games pending</p>
+              </div>
+              <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-3">
+                <p className="text-2xl font-bold text-orange-500">{pendingBreakdown.inProgress}</p>
+                <p className="text-xs text-muted-foreground">In Progress</p>
+                <p className="text-[10px] text-muted-foreground opacity-70">Games ongoing</p>
+              </div>
+              <div className={`rounded-lg p-3 ${pendingBreakdown.readyToSettle > 0 ? 'bg-green-500/10 border-2 border-green-500/50' : 'bg-green-500/10 border border-green-500/20'}`}>
+                <p className={`text-2xl font-bold ${pendingBreakdown.readyToSettle > 0 ? 'text-green-400' : 'text-green-500'}`}>
+                  {pendingBreakdown.readyToSettle}
+                </p>
+                <p className="text-xs text-muted-foreground">Ready to Settle</p>
+                <p className="text-[10px] text-muted-foreground opacity-70">All games done</p>
+              </div>
+            </div>
+            
+            {/* Progress Bar */}
+            <div className="mt-4 space-y-2">
+              <div className="flex h-3 rounded-full overflow-hidden bg-muted">
+                {pendingBreakdown.scheduled > 0 && (
+                  <div 
+                    className="bg-blue-500 transition-all" 
+                    style={{ width: `${(pendingBreakdown.scheduled / stats.pending) * 100}%` }}
+                  />
+                )}
+                {pendingBreakdown.mixed > 0 && (
+                  <div 
+                    className="bg-purple-500 transition-all" 
+                    style={{ width: `${(pendingBreakdown.mixed / stats.pending) * 100}%` }}
+                  />
+                )}
+                {pendingBreakdown.inProgress > 0 && (
+                  <div 
+                    className="bg-orange-500 transition-all" 
+                    style={{ width: `${(pendingBreakdown.inProgress / stats.pending) * 100}%` }}
+                  />
+                )}
+                {pendingBreakdown.readyToSettle > 0 && (
+                  <div 
+                    className="bg-green-500 transition-all" 
+                    style={{ width: `${(pendingBreakdown.readyToSettle / stats.pending) * 100}%` }}
+                  />
+                )}
+              </div>
+              <div className="flex justify-between text-[10px] text-muted-foreground">
+                <span className="flex items-center gap-1">
+                  <div className="w-2 h-2 rounded-full bg-blue-500" /> Scheduled
+                </span>
+                <span className="flex items-center gap-1">
+                  <div className="w-2 h-2 rounded-full bg-purple-500" /> Mixed
+                </span>
+                <span className="flex items-center gap-1">
+                  <div className="w-2 h-2 rounded-full bg-orange-500" /> In Progress
+                </span>
+                <span className="flex items-center gap-1">
+                  <div className="w-2 h-2 rounded-full bg-green-500" /> Ready
+                </span>
+              </div>
+            </div>
+            
+            {/* Alert if ready to settle */}
+            {pendingBreakdown.readyToSettle > 0 && (
+              <div className="mt-4 bg-green-500/10 border border-green-500/30 rounded-lg p-3 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-green-500" />
+                  <span className="text-sm text-green-400">
+                    {pendingBreakdown.readyToSettle} parlay{pendingBreakdown.readyToSettle > 1 ? 's' : ''} ready to settle!
+                  </span>
+                </div>
+                <Button 
+                  onClick={() => handleRunSettlement(true, true)} 
+                  disabled={isSettling}
+                  size="sm"
+                  className="bg-green-600 hover:bg-green-700"
+                >
+                  {isSettling ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Zap className="w-4 h-4 mr-1" />}
+                  Force+Sync
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
