@@ -28,11 +28,13 @@ import {
   Trash2,
   FileJson,
   FileSpreadsheet,
-  ShieldCheck
+  ShieldCheck,
+  Database
 } from 'lucide-react';
 import { AIProgressGauge } from './AIProgressGauge';
 import { AILearnedPatterns } from './AILearnedPatterns';
 import { AILearningInsights } from './AILearningInsights';
+import { ManualStatsEntry } from './ManualStatsEntry';
 import { Json } from '@/integrations/supabase/types';
 
 interface AIGeneratedParlay {
@@ -1340,7 +1342,7 @@ export function AIGenerativeProgressDashboard() {
                   className="bg-green-600 hover:bg-green-700"
                 >
                   {isSettling ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Zap className="w-4 h-4 mr-1" />}
-                  Force+Sync
+                  Settle & Learn
                 </Button>
               </div>
             )}
@@ -1491,6 +1493,10 @@ export function AIGenerativeProgressDashboard() {
           <TabsTrigger value="insights" className="gap-2">
             <Brain className="w-4 h-4" />
             Learning Insights
+          </TabsTrigger>
+          <TabsTrigger value="stats" className="gap-2">
+            <Database className="w-4 h-4" />
+            Stats Data
           </TabsTrigger>
         </TabsList>
 
@@ -1872,6 +1878,24 @@ export function AIGenerativeProgressDashboard() {
 
         <TabsContent value="insights">
           <AILearningInsights />
+        </TabsContent>
+
+        <TabsContent value="stats">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <ManualStatsEntry onStatsAdded={fetchData} />
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <Database className="h-4 w-4" />
+                  Stats Status
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm text-muted-foreground">
+                <p>Missing stats for Dec 10-13 games are blocking settlement.</p>
+                <p className="mt-2">Use "Fetch Missing Stats (API)" to pull from BallDontLie, or manually enter player stats to enable settlement.</p>
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
       </Tabs>
     </div>
