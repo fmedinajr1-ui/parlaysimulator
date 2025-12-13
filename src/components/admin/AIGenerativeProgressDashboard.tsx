@@ -150,7 +150,7 @@ interface VerificationResult {
 }
 
 interface VerificationSummary {
-  totalSettled: number;
+  totalVerified: number;
   correctlySettled: number;
   incorrectlySettled: number;
   unverifiable: number;
@@ -159,6 +159,13 @@ interface VerificationSummary {
     nba: string;
     nfl: string;
     nhl: string;
+  };
+  pendingAnalysis?: {
+    total: number;
+    missingStats: number;
+    gameNotStarted: number;
+    readyToSettle: number;
+    missingStatsDetails?: Array<{ player: string; gameDate: string; sport: string }>;
   };
 }
 
@@ -195,6 +202,8 @@ export function AIGenerativeProgressDashboard() {
   } | null>(null);
   const [isRefreshingStats, setIsRefreshingStats] = useState(false);
   const [refreshProgress, setRefreshProgress] = useState<string>('');
+  const [isAnalyzingPending, setIsAnalyzingPending] = useState(false);
+  const [pendingAnalysisResults, setPendingAnalysisResults] = useState<VerificationSummary | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -512,7 +521,9 @@ export function AIGenerativeProgressDashboard() {
     setIsVerifying(true);
     setVerificationResults(null);
     try {
-      const { data, error } = await supabase.functions.invoke('verify-ai-parlay-settlements');
+      const { data, error } = await supabase.functions.invoke('verify-ai-parlay-settlements', {
+        body: { include_pending: false }
+      });
       if (error) throw error;
       
       if (data?.success) {
@@ -521,7 +532,7 @@ export function AIGenerativeProgressDashboard() {
           results: data.results
         });
         toast.success(
-          `Verified ${data.summary.totalSettled} parlays: ${data.summary.correctlySettled} correct, ${data.summary.incorrectlySettled} incorrect, ${data.summary.unverifiable} unverifiable`
+          `Verified ${data.summary.totalVerified} parlays: ${data.summary.correctlySettled} correct, ${data.summary.incorrectlySettled} incorrect`
         );
       } else {
         throw new Error(data?.error || 'Verification failed');
@@ -530,6 +541,31 @@ export function AIGenerativeProgressDashboard() {
       toast.error('Verification failed: ' + (error as Error).message);
     }
     setIsVerifying(false);
+  };
+
+  // Analyze pending parlays to see which are ready to settle
+  const handleAnalyzePending = async () => {
+    setIsAnalyzingPending(true);
+    setPendingAnalysisResults(null);
+    try {
+      const { data, error } = await supabase.functions.invoke('verify-ai-parlay-settlements', {
+        body: { include_pending: true, limit: 300 }
+      });
+      if (error) throw error;
+      
+      if (data?.success && data.summary?.pendingAnalysis) {
+        setPendingAnalysisResults(data.summary);
+        const pa = data.summary.pendingAnalysis;
+        toast.success(
+          `Analyzed ${pa.total} pending: ${pa.readyToSettle} ready to settle, ${pa.missingStats} missing stats`
+        );
+      } else {
+        throw new Error(data?.error || 'Analysis failed');
+      }
+    } catch (error) {
+      toast.error('Analysis failed: ' + (error as Error).message);
+    }
+    setIsAnalyzingPending(false);
   };
 
   // Refresh stats and then settle parlays
@@ -875,6 +911,20 @@ export function AIGenerativeProgressDashboard() {
                     )}
                     Verify Settlements
                   </Button>
+                  <Button 
+                    onClick={handleAnalyzePending} 
+                    disabled={isAnalyzingPending}
+                    variant="outline" 
+                    size="sm"
+                    className="bg-purple-500/10 hover:bg-purple-500/20 border-purple-500/30"
+                  >
+                    {isAnalyzingPending ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Activity className="w-4 h-4 mr-2" />
+                    )}
+                    Analyze Pending
+                  </Button>
                 </div>
               </div>
             </div>
@@ -896,7 +946,7 @@ export function AIGenerativeProgressDashboard() {
               {/* Summary Stats */}
               <div className="grid grid-cols-4 gap-4 text-center">
                 <div className="bg-background/50 rounded-lg p-3">
-                  <p className="text-2xl font-bold">{verificationResults.summary.totalSettled}</p>
+                  <p className="text-2xl font-bold">{verificationResults.summary.totalVerified}</p>
                   <p className="text-xs text-muted-foreground">Total Verified</p>
                 </div>
                 <div className="bg-background/50 rounded-lg p-3">
@@ -972,6 +1022,89 @@ export function AIGenerativeProgressDashboard() {
               
               <Button 
                 onClick={() => setVerificationResults(null)} 
+                variant="outline" 
+                size="sm" 
+                className="w-full"
+              >
+                Dismiss
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Pending Analysis Results */}
+      {pendingAnalysisResults && pendingAnalysisResults.pendingAnalysis && (
+        <Card className="border-2 border-purple-500/50 bg-purple-500/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Activity className="w-5 h-5 text-purple-500" />
+              Pending Parlay Analysis
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {/* Summary Stats */}
+              <div className="grid grid-cols-4 gap-4 text-center">
+                <div className="bg-background/50 rounded-lg p-3">
+                  <p className="text-2xl font-bold">{pendingAnalysisResults.pendingAnalysis.total}</p>
+                  <p className="text-xs text-muted-foreground">Total Pending</p>
+                </div>
+                <div className="bg-background/50 rounded-lg p-3">
+                  <p className="text-2xl font-bold text-green-500">{pendingAnalysisResults.pendingAnalysis.readyToSettle}</p>
+                  <p className="text-xs text-muted-foreground">Ready to Settle</p>
+                </div>
+                <div className="bg-background/50 rounded-lg p-3">
+                  <p className="text-2xl font-bold text-yellow-500">{pendingAnalysisResults.pendingAnalysis.missingStats}</p>
+                  <p className="text-xs text-muted-foreground">Missing Stats</p>
+                </div>
+                <div className="bg-background/50 rounded-lg p-3">
+                  <p className="text-2xl font-bold text-blue-500">{pendingAnalysisResults.pendingAnalysis.gameNotStarted}</p>
+                  <p className="text-xs text-muted-foreground">Game Not Started</p>
+                </div>
+              </div>
+              
+              {/* Insight */}
+              {pendingAnalysisResults.pendingAnalysis.readyToSettle > 0 && (
+                <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3">
+                  <p className="text-sm text-green-500 font-medium">
+                    ✅ {pendingAnalysisResults.pendingAnalysis.readyToSettle} parlays have all stats available and can be settled now!
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Run "Force+Sync" to settle these parlays.
+                  </p>
+                </div>
+              )}
+              
+              {pendingAnalysisResults.pendingAnalysis.missingStats > 0 && (
+                <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3">
+                  <p className="text-sm text-yellow-500 font-medium">
+                    ⚠️ {pendingAnalysisResults.pendingAnalysis.missingStats} parlays are waiting for player stats to be fetched.
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    The BallDontLie API may not have stats for recent games yet. Stats are typically available 2-6 hours after game completion.
+                  </p>
+                </div>
+              )}
+              
+              {/* Stats Freshness */}
+              <div className="bg-muted/30 rounded-lg p-3">
+                <p className="text-sm font-medium mb-2">Latest Stats Available:</p>
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div>
+                    <span className="text-muted-foreground">NBA:</span> {pendingAnalysisResults.latestStatsAvailable.nba}
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">NFL:</span> {pendingAnalysisResults.latestStatsAvailable.nfl}
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">NHL:</span> {pendingAnalysisResults.latestStatsAvailable.nhl}
+                  </div>
+                </div>
+              </div>
+              
+              <Button 
+                onClick={() => setPendingAnalysisResults(null)} 
                 variant="outline" 
                 size="sm" 
                 className="w-full"

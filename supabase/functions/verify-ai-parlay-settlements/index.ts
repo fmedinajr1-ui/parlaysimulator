@@ -93,20 +93,25 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    console.log('🔍 Starting parlay settlement verification...');
+    // Parse request body for options
+    const { include_pending = false, limit = 500 } = await req.json().catch(() => ({}));
+    
+    console.log(`🔍 Starting parlay verification (include_pending: ${include_pending})...`);
 
-    // Get all settled parlays
-    const { data: settledParlays, error: parlaysError } = await supabase
+    // Get parlays based on mode
+    const outcomes = include_pending ? ['won', 'lost', 'pending'] : ['won', 'lost'];
+    const { data: parlaysToVerify, error: parlaysError } = await supabase
       .from('ai_generated_parlays')
       .select('*')
-      .in('outcome', ['won', 'lost'])
-      .order('settled_at', { ascending: false });
+      .in('outcome', outcomes)
+      .order('created_at', { ascending: false })
+      .limit(limit);
 
     if (parlaysError) {
       throw new Error(`Failed to fetch parlays: ${parlaysError.message}`);
     }
 
-    console.log(`📊 Found ${settledParlays?.length || 0} settled parlays to verify`);
+    console.log(`📊 Found ${parlaysToVerify?.length || 0} parlays to verify`);
 
     // Get all player stats for reference
     const { data: nbaStats } = await supabase
@@ -134,9 +139,20 @@ serve(async (req) => {
     const verificationResults: VerificationResult[] = [];
     let correctCount = 0;
     let incorrectCount = 0;
-    let pendingCount = 0;
+    let unverifiableCount = 0;
+    
+    // Track pending analysis
+    const pendingAnalysis = {
+      total: 0,
+      missingStats: 0,
+      gameNotStarted: 0,
+      readyToSettle: 0,
+      missingStatsDetails: [] as Array<{ player: string; gameDate: string; sport: string }>
+    };
 
-    for (const parlay of settledParlays || []) {
+    for (const parlay of parlaysToVerify || []) {
+      const isPendingParlay = parlay.outcome === 'pending';
+      if (isPendingParlay) pendingAnalysis.total++;
       const legs = Array.isArray(parlay.legs) ? parlay.legs : [];
       const legDetails: VerificationResult['legDetails'] = [];
       let allLegsVerifiable = true;
@@ -245,18 +261,33 @@ serve(async (req) => {
 
       if (!allLegsVerifiable) {
         verifiedOutcome = null;
-        reason = 'Some legs have no stats for their game date - cannot verify';
-        pendingCount++;
+        if (isPendingParlay) {
+          reason = 'Pending - missing stats for some legs';
+          pendingAnalysis.missingStats++;
+        } else {
+          reason = 'Some legs have no stats for their game date - cannot verify';
+        }
+        unverifiableCount++;
       } else if (anyLegLost) {
         verifiedOutcome = 'lost';
-        isCorrect = parlay.outcome === 'lost';
-        reason = isCorrect ? 'Correctly marked as lost' : `INCORRECT: Was marked as ${parlay.outcome} but should be lost`;
-        if (isCorrect) correctCount++; else incorrectCount++;
+        if (isPendingParlay) {
+          reason = 'READY TO SETTLE: Should be marked LOST';
+          pendingAnalysis.readyToSettle++;
+        } else {
+          isCorrect = parlay.outcome === 'lost';
+          reason = isCorrect ? 'Correctly marked as lost' : `INCORRECT: Was marked as ${parlay.outcome} but should be lost`;
+          if (isCorrect) correctCount++; else incorrectCount++;
+        }
       } else if (allLegsWon) {
         verifiedOutcome = 'won';
-        isCorrect = parlay.outcome === 'won';
-        reason = isCorrect ? 'Correctly marked as won' : `INCORRECT: Was marked as ${parlay.outcome} but should be won`;
-        if (isCorrect) correctCount++; else incorrectCount++;
+        if (isPendingParlay) {
+          reason = 'READY TO SETTLE: Should be marked WON';
+          pendingAnalysis.readyToSettle++;
+        } else {
+          isCorrect = parlay.outcome === 'won';
+          reason = isCorrect ? 'Correctly marked as won' : `INCORRECT: Was marked as ${parlay.outcome} but should be won`;
+          if (isCorrect) correctCount++; else incorrectCount++;
+        }
       }
 
       verificationResults.push({
@@ -271,18 +302,19 @@ serve(async (req) => {
 
     // Summary
     const summary = {
-      totalSettled: settledParlays?.length || 0,
+      totalVerified: parlaysToVerify?.length || 0,
       correctlySettled: correctCount,
       incorrectlySettled: incorrectCount,
-      unverifiable: pendingCount,
-      accuracyRate: settledParlays?.length 
+      unverifiable: unverifiableCount,
+      accuracyRate: (correctCount + incorrectCount) > 0
         ? ((correctCount / (correctCount + incorrectCount)) * 100).toFixed(1) + '%'
         : 'N/A',
       latestStatsAvailable: {
         nba: latestNbaDate,
         nfl: latestNflDate,
         nhl: latestNhlDate
-      }
+      },
+      pendingAnalysis: include_pending ? pendingAnalysis : undefined
     };
 
     console.log('✅ Verification complete:', JSON.stringify(summary, null, 2));
