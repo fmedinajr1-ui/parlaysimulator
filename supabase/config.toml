@@ -191,3 +191,6 @@ verify_jwt = false
 
 [functions.verify-ai-parlay-settlements]
 verify_jwt = false
+
+[functions.backfill-player-stats]
+verify_jwt = false
