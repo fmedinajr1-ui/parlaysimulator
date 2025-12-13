@@ -142,6 +142,9 @@ function normalizePropType(propType: string): string {
   return reverseMap[propType.toLowerCase()] || propType.toLowerCase();
 }
 
+const DAILY_LIMIT = 50;
+const MIN_CONFIDENCE = 0.8;
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -156,17 +159,50 @@ serve(async (req) => {
     
     console.log('🌅 Starting morning props scanner with Unified Intelligence...');
     
+    // Check daily limit - how many props already scanned today
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    
+    const { count: todayCount } = await supabase
+      .from('juiced_props')
+      .select('id', { count: 'exact', head: true })
+      .gte('morning_scan_time', todayStart.toISOString());
+    
+    const propsToday = todayCount || 0;
+    const remainingLimit = Math.max(0, DAILY_LIMIT - propsToday);
+    
+    console.log(`📊 Daily limit check: ${propsToday}/${DAILY_LIMIT} props today, ${remainingLimit} remaining`);
+    
+    if (remainingLimit === 0) {
+      console.log('⛔ Daily limit of 50 props reached');
+      return new Response(
+        JSON.stringify({
+          success: true,
+          message: 'Daily limit of 50 props reached',
+          stats: {
+            total: 0,
+            propsToday,
+            dailyLimit: DAILY_LIMIT,
+            remainingToday: 0,
+            limitReached: true,
+          }
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
     // Fetch existing hit rate data to cross-reference with juiced props
     const { data: hitRateData } = await supabase
       .from('player_prop_hitrates')
       .select('player_name, prop_type, hit_rate_over, hit_rate_under, recommended_side, confidence_score')
       .gte('analyzed_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
     
-    // Fetch unified props for cross-reference
+    // Fetch unified props for cross-reference - only 80%+ confidence
     const { data: unifiedPropsData } = await supabase
       .from('unified_props')
       .select('event_id, player_name, prop_type, composite_score, pvs_tier, recommended_side, confidence, trap_score')
       .eq('is_active', true)
+      .gte('confidence', MIN_CONFIDENCE)
       .gte('commence_time', new Date().toISOString());
     
     // Build lookup map for hit rate cross-referencing
@@ -179,7 +215,7 @@ serve(async (req) => {
     }
     console.log(`Loaded ${hitRateMap.size} hit rate records for cross-reference`);
     
-    // Build lookup map for unified props
+    // Build lookup map for unified props (80%+ confidence only)
     const unifiedPropsMap = new Map<string, UnifiedProp>();
     if (unifiedPropsData) {
       for (const up of unifiedPropsData) {
@@ -187,15 +223,29 @@ serve(async (req) => {
         unifiedPropsMap.set(key, up as UnifiedProp);
       }
     }
-    console.log(`🧠 Loaded ${unifiedPropsMap.size} unified props for intelligence cross-reference`);
+    console.log(`🧠 Loaded ${unifiedPropsMap.size} unified props with 80%+ confidence`);
     
-  // Sports to scan for player props - NBA, Football, Hockey only
-  const sportsToScan = [
-    'basketball_nba',           // NBA player props
-    'americanfootball_nfl',     // NFL player props
-    'americanfootball_ncaaf',   // College football player props
-    'icehockey_nhl',            // NHL player props
-  ];
+    // Track already scanned props today for deduplication
+    const { data: existingProps } = await supabase
+      .from('juiced_props')
+      .select('player_name, prop_type, event_id')
+      .gte('morning_scan_time', todayStart.toISOString());
+    
+    const existingPropsSet = new Set<string>();
+    if (existingProps) {
+      for (const ep of existingProps) {
+        const key = `${normalizePlayerName(ep.player_name)}_${ep.prop_type}_${ep.event_id}`;
+        existingPropsSet.add(key);
+      }
+    }
+    console.log(`📋 ${existingPropsSet.size} props already scanned today`);
+    
+    // Sports to scan - NBA, NFL, NHL only (no NCAAF)
+    const sportsToScan = [
+      'basketball_nba',
+      'americanfootball_nfl',
+      'icehockey_nhl',
+    ];
     
     // Player prop markets to check
     const propMarkets = [
@@ -276,15 +326,32 @@ serve(async (req) => {
                     
                     const { juiceLevel, juiceDirection, juiceAmount, isJuiced } = detectJuice(overPrice, underPrice);
                     
-                    // Only include props with juice on the OVER
+                    // Only include props with juice on the OVER and 80%+ unified confidence
                     if (isJuiced && juiceDirection === 'over') {
+                      // Cross-reference with unified props for intelligence (80%+ confidence required)
+                      const unifiedKey = `${normalizePlayerName(playerName)}_${market}`;
+                      const unifiedProp = unifiedPropsMap.get(unifiedKey);
+                      
+                      // SKIP if no unified data with 80%+ confidence
+                      if (!unifiedProp || unifiedProp.confidence < MIN_CONFIDENCE) {
+                        continue;
+                      }
+                      
+                      // Check for deduplication
+                      const dedupeKey = `${normalizePlayerName(playerName)}_${market}_${event.id}`;
+                      if (existingPropsSet.has(dedupeKey)) {
+                        continue;
+                      }
+                      
+                      // Check if we've hit the remaining limit
+                      if (allJuicedProps.length >= remainingLimit) {
+                        console.log(`⛔ Reached remaining limit of ${remainingLimit} props`);
+                        break;
+                      }
+                      
                       // Cross-reference with hit rate data
                       const hitRateKey = `${normalizePlayerName(playerName)}_${market}`;
                       const playerHitRate = hitRateMap.get(hitRateKey);
-                      
-                      // Cross-reference with unified props for intelligence
-                      const unifiedKey = `${normalizePlayerName(playerName)}_${market}`;
-                      const unifiedProp = unifiedPropsMap.get(unifiedKey);
                       
                       // If we have hit rate data showing under is better, flag this as potential trap
                       let isTrap = false;
@@ -298,7 +365,7 @@ serve(async (req) => {
                       }
                       
                       // Also check unified trap score
-                      if (unifiedProp && unifiedProp.trap_score >= 60) {
+                      if (unifiedProp.trap_score >= 60) {
                         isTrap = true;
                         trapReason = trapReason 
                           ? `${trapReason} | Unified trap score: ${unifiedProp.trap_score}`
@@ -321,20 +388,18 @@ serve(async (req) => {
                         juice_amount: juiceAmount,
                         is_morning_trap: isTrap,
                         trap_reason: trapReason || undefined,
+                        // Always has unified data since we require 80%+ confidence
+                        unified_composite_score: unifiedProp.composite_score,
+                        unified_pvs_tier: unifiedProp.pvs_tier,
+                        unified_recommendation: unifiedProp.recommended_side,
+                        unified_confidence: unifiedProp.confidence,
+                        unified_trap_score: unifiedProp.trap_score,
+                        used_unified_intelligence: true,
                       };
                       
-                      // Add unified intelligence data if available
-                      if (unifiedProp) {
-                        juicedProp.unified_composite_score = unifiedProp.composite_score;
-                        juicedProp.unified_pvs_tier = unifiedProp.pvs_tier;
-                        juicedProp.unified_recommendation = unifiedProp.recommended_side;
-                        juicedProp.unified_confidence = unifiedProp.confidence;
-                        juicedProp.unified_trap_score = unifiedProp.trap_score;
-                        juicedProp.used_unified_intelligence = true;
-                        unifiedMatchCount++;
-                      } else {
-                        juicedProp.used_unified_intelligence = false;
-                      }
+                      // Add to deduplication set
+                      existingPropsSet.add(dedupeKey);
+                      unifiedMatchCount++;
                       
                       allJuicedProps.push(juicedProp);
                     }
@@ -354,60 +419,49 @@ serve(async (req) => {
       }
     }
     
-    console.log(`🔥 Found ${allJuicedProps.length} juiced over props`);
-    console.log(`🧠 ${unifiedMatchCount} props matched with Unified Intelligence data`);
+    console.log(`🔥 Found ${allJuicedProps.length} juiced over props (80%+ confidence)`);
+    console.log(`🧠 All ${unifiedMatchCount} props have Unified Intelligence data`);
     
-    // Sort by juice level (heavy first) and insert into database
+    // Sort by confidence (highest first), then juice level
     const sortedProps = allJuicedProps.sort((a, b) => {
+      // First by confidence (descending)
+      const confDiff = (b.unified_confidence || 0) - (a.unified_confidence || 0);
+      if (confDiff !== 0) return confDiff;
+      // Then by juice level
       const levelOrder = { heavy: 0, moderate: 1, light: 2 };
       return levelOrder[a.juice_level] - levelOrder[b.juice_level];
     });
     
-    // Clear old props from today and insert new ones
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
+    // Limit to remaining daily limit
+    const propsToInsert = sortedProps.slice(0, remainingLimit);
     
-    await supabase
-      .from('juiced_props')
-      .delete()
-      .gte('morning_scan_time', todayStart.toISOString())
-      .eq('is_locked', false);
+    // Insert new juiced props
+    const insertedCount = propsToInsert.length;
     
-    // Insert new juiced props with morning trap detection
-    // ❌ RULE: Early morning overs (before 10 AM ET) are potential traps
-    const currentHourUTC = now.getUTCHours();
-    const isEarlyMorning = currentHourUTC < 15; // Before 10 AM ET (UTC-5)
-    
-    if (sortedProps.length > 0) {
-      const insertData = sortedProps.map(prop => {
-        // Check if this is a morning over trap
-        const hoursToGame = (new Date(prop.commence_time).getTime() - now.getTime()) / (1000 * 60 * 60);
-        const isMorningTrap = isEarlyMorning && prop.juice_direction === 'over' && hoursToGame > 6;
-        
-        return {
-          event_id: prop.event_id,
-          sport: prop.sport,
-          game_description: prop.game_description,
-          player_name: prop.player_name,
-          prop_type: prop.prop_type,
-          line: prop.line,
-          over_price: prop.over_price,
-          under_price: prop.under_price,
-          bookmaker: prop.bookmaker,
-          commence_time: prop.commence_time,
-          juice_level: prop.juice_level,
-          juice_direction: prop.juice_direction,
-          juice_amount: prop.juice_amount,
-          is_locked: false,
-          // Unified intelligence columns
-          unified_composite_score: prop.unified_composite_score,
-          unified_pvs_tier: prop.unified_pvs_tier,
-          unified_recommendation: prop.unified_recommendation,
-          unified_confidence: prop.unified_confidence,
-          unified_trap_score: prop.unified_trap_score,
-          used_unified_intelligence: prop.used_unified_intelligence || false,
-        };
-      });
+    if (insertedCount > 0) {
+      const insertData = propsToInsert.map(prop => ({
+        event_id: prop.event_id,
+        sport: prop.sport,
+        game_description: prop.game_description,
+        player_name: prop.player_name,
+        prop_type: prop.prop_type,
+        line: prop.line,
+        over_price: prop.over_price,
+        under_price: prop.under_price,
+        bookmaker: prop.bookmaker,
+        commence_time: prop.commence_time,
+        juice_level: prop.juice_level,
+        juice_direction: prop.juice_direction,
+        juice_amount: prop.juice_amount,
+        is_locked: false,
+        // Unified intelligence columns - all props have 80%+ confidence
+        unified_composite_score: prop.unified_composite_score,
+        unified_pvs_tier: prop.unified_pvs_tier,
+        unified_recommendation: prop.unified_recommendation,
+        unified_confidence: prop.unified_confidence,
+        unified_trap_score: prop.unified_trap_score,
+        used_unified_intelligence: true,
+      }));
       
       const { error: insertError } = await supabase
         .from('juiced_props')
@@ -416,29 +470,33 @@ serve(async (req) => {
       if (insertError) {
         console.error('Error inserting juiced props:', insertError);
       } else {
-        console.log(`✅ Inserted ${insertData.length} juiced props (${unifiedMatchCount} with unified intelligence)`);
+        console.log(`✅ Inserted ${insertedCount} high-confidence juiced props`);
       }
     }
     
+    const finalPropsToday = propsToday + insertedCount;
+    
     // Send morning notification if we found juiced props
-    if (sortedProps.length > 0) {
-      const heavyCount = sortedProps.filter(p => p.juice_level === 'heavy').length;
-      const withUnifiedCount = sortedProps.filter(p => p.used_unified_intelligence).length;
+    if (insertedCount > 0) {
+      const heavyCount = propsToInsert.filter(p => p.juice_level === 'heavy').length;
       
       try {
         await supabase.functions.invoke('send-push-notification', {
           body: {
             action: 'notify_morning_juice',
             data: {
-              total: sortedProps.length,
+              total: insertedCount,
               heavy: heavyCount,
-              withUnified: withUnifiedCount,
-              topProps: sortedProps.slice(0, 3).map(p => ({
+              withUnified: insertedCount, // All props have 80%+ confidence now
+              propsToday: finalPropsToday,
+              dailyLimit: DAILY_LIMIT,
+              topProps: propsToInsert.slice(0, 3).map(p => ({
                 player: p.player_name,
                 prop: p.prop_type,
                 line: p.line,
                 over_price: p.over_price,
                 pvs_tier: p.unified_pvs_tier || 'N/A',
+                confidence: Math.round((p.unified_confidence || 0) * 100),
               })),
             },
           },
@@ -451,14 +509,19 @@ serve(async (req) => {
     
     return new Response(JSON.stringify({
       success: true,
-      message: `Found ${sortedProps.length} juiced over props (${unifiedMatchCount} with unified intelligence)`,
-      props: sortedProps.slice(0, 20), // Return top 20 for preview
+      message: `Found ${insertedCount} high-confidence props (${finalPropsToday}/${DAILY_LIMIT} today)`,
+      props: propsToInsert.slice(0, 20),
       stats: {
-        total: sortedProps.length,
-        heavy: sortedProps.filter(p => p.juice_level === 'heavy').length,
-        moderate: sortedProps.filter(p => p.juice_level === 'moderate').length,
-        light: sortedProps.filter(p => p.juice_level === 'light').length,
-        withUnifiedIntelligence: unifiedMatchCount,
+        total: insertedCount,
+        propsToday: finalPropsToday,
+        dailyLimit: DAILY_LIMIT,
+        remainingToday: Math.max(0, DAILY_LIMIT - finalPropsToday),
+        limitReached: finalPropsToday >= DAILY_LIMIT,
+        heavy: propsToInsert.filter(p => p.juice_level === 'heavy').length,
+        moderate: propsToInsert.filter(p => p.juice_level === 'moderate').length,
+        light: propsToInsert.filter(p => p.juice_level === 'light').length,
+        allHighConfidence: true,
+        minConfidence: MIN_CONFIDENCE,
       },
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

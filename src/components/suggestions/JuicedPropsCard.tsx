@@ -109,6 +109,7 @@ export const JuicedPropsCard = () => {
   const [activeTab, setActiveTab] = useState<'pending' | 'locked'>('pending');
   const [showOnlyUnified, setShowOnlyUnified] = useState(false);
   const [showOnlyHighTier, setShowOnlyHighTier] = useState(false);
+  const [dailyStats, setDailyStats] = useState<{ propsToday: number; dailyLimit: number; remainingToday: number } | null>(null);
 
   const fetchJuicedProps = async () => {
     try {
@@ -125,6 +126,20 @@ export const JuicedPropsCard = () => {
       if (error) throw error;
 
       setProps(data as JuicedProp[] || []);
+      
+      // Calculate daily stats from props scanned today
+      const { count: todayCount } = await supabase
+        .from('juiced_props')
+        .select('id', { count: 'exact', head: true })
+        .gte('morning_scan_time', todayStart.toISOString());
+      
+      const DAILY_LIMIT = 50;
+      const propsToday = todayCount || 0;
+      setDailyStats({
+        propsToday,
+        dailyLimit: DAILY_LIMIT,
+        remainingToday: Math.max(0, DAILY_LIMIT - propsToday),
+      });
     } catch (err) {
       console.error('Failed to fetch juiced props:', err);
     } finally {
@@ -151,15 +166,25 @@ export const JuicedPropsCard = () => {
   }, []);
 
   const runMorningScan = async () => {
+    if (dailyStats && dailyStats.remainingToday <= 0) {
+      toast({
+        title: "Daily Limit Reached",
+        description: "Maximum 50 props per day. Check back tomorrow!",
+        variant: "destructive",
+      });
+      return;
+    }
+    
     setIsScanning(true);
     try {
       const { data, error } = await supabase.functions.invoke('morning-props-scanner');
       
       if (error) throw error;
       
+      const stats = data.stats || {};
       toast({
         title: "Morning Scan Complete",
-        description: `Found ${data.stats?.total || 0} juiced over props`,
+        description: `Found ${stats.total || 0} props (${stats.propsToday || 0}/${stats.dailyLimit || 50} today)`,
       });
       
       await fetchJuicedProps();
@@ -217,23 +242,39 @@ export const JuicedPropsCard = () => {
             </div>
             <div>
               <CardTitle className="text-lg font-display">JUICED PROPS</CardTitle>
-              <p className="text-xs text-muted-foreground">Morning scan for public action</p>
+              <p className="text-xs text-muted-foreground">80%+ confidence • NBA/NFL/NHL only</p>
             </div>
           </div>
-          <Button 
-            variant="outline" 
-            size="sm"
-            onClick={runMorningScan}
-            disabled={isScanning}
-            className="gap-2"
-          >
-            {isScanning ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <RefreshCw className="w-4 h-4" />
+          <div className="flex items-center gap-2">
+            {/* Daily Limit Badge */}
+            {dailyStats && (
+              <Badge 
+                variant="outline" 
+                className={cn(
+                  "text-xs font-mono",
+                  dailyStats.remainingToday === 0 
+                    ? "bg-neon-red/10 text-neon-red border-neon-red/30" 
+                    : "bg-neon-green/10 text-neon-green border-neon-green/30"
+                )}
+              >
+                {dailyStats.propsToday}/{dailyStats.dailyLimit} today
+              </Badge>
             )}
-            {isScanning ? 'Scanning...' : 'Scan Now'}
-          </Button>
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={runMorningScan}
+              disabled={isScanning || (dailyStats?.remainingToday === 0)}
+              className="gap-2"
+            >
+              {isScanning ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
+              {isScanning ? 'Scanning...' : dailyStats?.remainingToday === 0 ? 'Limit Reached' : 'Scan Now'}
+            </Button>
+          </div>
         </div>
 
         {/* Unified Intelligence Filters */}
