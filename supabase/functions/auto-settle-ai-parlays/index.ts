@@ -15,6 +15,8 @@ interface LegResult {
   line?: number;
   score?: { home: number; away: number };
   dataSource?: string;
+  sport?: string;
+  pendingReason?: string;
 }
 
 interface GameResult {
@@ -22,8 +24,9 @@ interface GameResult {
   awayTeam: string;
   homeScore: number;
   awayScore: number;
-  status: 'completed' | 'in_progress' | 'scheduled';
+  status: 'completed' | 'in_progress' | 'scheduled' | 'final';
   winner?: string;
+  sport?: string;
 }
 
 interface SettledParlayDetail {
@@ -34,8 +37,60 @@ interface SettledParlayDetail {
   strategy: string;
 }
 
+// Normalize sport key from various formats
+function normalizeSportKey(sport: string): string {
+  if (!sport) return 'nba';
+  
+  const lower = sport.toLowerCase();
+  
+  // Direct mappings from API format to simple format
+  const mappings: Record<string, string> = {
+    'basketball_nba': 'nba',
+    'basketball_ncaab': 'ncaab',
+    'basketball_wnba': 'wnba',
+    'americanfootball_nfl': 'nfl',
+    'americanfootball_ncaaf': 'ncaaf',
+    'icehockey_nhl': 'nhl',
+    'baseball_mlb': 'mlb',
+    'mixed': 'all',
+  };
+  
+  return mappings[lower] || lower;
+}
+
+// Detect sport from leg description
+function detectSportFromDescription(description: string): string {
+  const desc = description.toLowerCase();
+  
+  // NFL teams
+  const nflTeams = ['chiefs', 'bills', 'ravens', 'dolphins', 'bengals', 'steelers', 'browns', 'texans', 'colts', 'jaguars', 'titans', 'broncos', 'chargers', 'raiders', 'cowboys', 'eagles', 'commanders', 'giants', 'lions', 'packers', 'vikings', 'bears', 'buccaneers', 'falcons', 'panthers', 'saints', '49ers', 'niners', 'seahawks', 'cardinals', 'rams', 'patriots', 'jets'];
+  if (nflTeams.some(team => desc.includes(team))) return 'nfl';
+  
+  // NBA teams
+  const nbaTeams = ['lakers', 'celtics', 'warriors', 'bucks', 'suns', 'heat', 'nuggets', '76ers', 'sixers', 'cavaliers', 'cavs', 'mavericks', 'mavs', 'thunder', 'timberwolves', 'wolves', 'knicks', 'kings', 'pacers', 'magic', 'rockets', 'pelicans', 'grizzlies', 'hawks', 'bulls', 'nets', 'raptors', 'spurs', 'blazers', 'jazz', 'pistons', 'hornets', 'wizards', 'clippers'];
+  if (nbaTeams.some(team => desc.includes(team))) return 'nba';
+  
+  // NHL teams
+  const nhlTeams = ['bruins', 'canadiens', 'maple leafs', 'sabres', 'panthers', 'lightning', 'penguins', 'capitals', 'rangers', 'islanders', 'devils', 'flyers', 'hurricanes', 'blue jackets', 'red wings', 'blackhawks', 'blues', 'predators', 'wild', 'jets', 'avalanche', 'stars', 'oilers', 'flames', 'canucks', 'kraken', 'sharks', 'ducks', 'golden knights', 'coyotes', 'kings'];
+  if (nhlTeams.some(team => desc.includes(team))) return 'nhl';
+  
+  // MLB teams
+  const mlbTeams = ['yankees', 'red sox', 'blue jays', 'orioles', 'rays', 'white sox', 'guardians', 'tigers', 'royals', 'twins', 'astros', 'rangers', 'mariners', 'angels', 'athletics', 'mets', 'braves', 'phillies', 'marlins', 'nationals', 'cubs', 'brewers', 'cardinals', 'reds', 'pirates', 'dodgers', 'giants', 'padres', 'diamondbacks', 'rockies'];
+  if (mlbTeams.some(team => desc.includes(team))) return 'mlb';
+  
+  // College football indicators
+  if (desc.includes('ncaaf') || desc.includes('college football') || desc.includes('cfb')) return 'ncaaf';
+  
+  // College basketball indicators
+  if (desc.includes('ncaab') || desc.includes('college basketball') || desc.includes('cbb')) return 'ncaab';
+  
+  // Default to NBA
+  return 'nba';
+}
+
 // Team name aliases for matching
 const teamAliases: Record<string, string[]> = {
+  // NBA
   'los angeles lakers': ['lakers', 'la lakers', 'los angeles lakers'],
   'golden state warriors': ['warriors', 'golden state', 'gsw'],
   'boston celtics': ['celtics', 'boston'],
@@ -66,6 +121,39 @@ const teamAliases: Record<string, string[]> = {
   'charlotte hornets': ['hornets', 'charlotte'],
   'washington wizards': ['wizards', 'washington'],
   'la clippers': ['clippers', 'la clippers', 'los angeles clippers'],
+  // NFL
+  'detroit lions': ['lions', 'detroit'],
+  'los angeles rams': ['rams', 'la rams'],
+  'kansas city chiefs': ['chiefs', 'kansas city', 'kc'],
+  'buffalo bills': ['bills', 'buffalo'],
+  'baltimore ravens': ['ravens', 'baltimore'],
+  'san francisco 49ers': ['49ers', 'niners', 'san francisco', 'sf'],
+  'green bay packers': ['packers', 'green bay', 'gb'],
+  'dallas cowboys': ['cowboys', 'dallas'],
+  'philadelphia eagles': ['eagles', 'philadelphia', 'philly'],
+  'miami dolphins': ['dolphins', 'miami'],
+  'cincinnati bengals': ['bengals', 'cincinnati'],
+  'pittsburgh steelers': ['steelers', 'pittsburgh'],
+  'new england patriots': ['patriots', 'pats', 'new england'],
+  'tampa bay buccaneers': ['buccaneers', 'bucs', 'tampa bay'],
+  'seattle seahawks': ['seahawks', 'seattle'],
+  'minnesota vikings': ['vikings', 'minnesota'],
+  'las vegas raiders': ['raiders', 'las vegas', 'vegas'],
+  'los angeles chargers': ['chargers', 'la chargers'],
+  'tennessee titans': ['titans', 'tennessee'],
+  'jacksonville jaguars': ['jaguars', 'jacksonville', 'jags'],
+  'denver broncos': ['broncos', 'denver'],
+  'new york giants': ['giants', 'ny giants'],
+  'new york jets': ['jets', 'ny jets'],
+  'arizona cardinals': ['cardinals', 'arizona'],
+  'atlanta falcons': ['falcons', 'atlanta'],
+  'carolina panthers': ['panthers', 'carolina'],
+  'new orleans saints': ['saints', 'new orleans'],
+  'cleveland browns': ['browns', 'cleveland'],
+  'indianapolis colts': ['colts', 'indianapolis', 'indy'],
+  'houston texans': ['texans', 'houston'],
+  'chicago bears': ['bears', 'chicago'],
+  'washington commanders': ['commanders', 'washington'],
 };
 
 function normalizeTeamName(name: string): string {
@@ -99,6 +187,8 @@ function parsePlayerProp(description: string): { playerName: string; side: strin
     /(.+?)\s+(Over|Under)\s+(\d+\.?\d*)\s+player_(pts|points|reb|rebounds|ast|assists|threes|blocks|steals)/i,
     // Handle variations with prop type before line
     /(.+?)\s+(pts|points|reb|rebounds|ast|assists)\s+(Over|Under)\s+(\d+\.?\d*)/i,
+    // NFL player props - passing/rushing/receiving yards
+    /(.+?)\s+(Over|Under)\s+(\d+\.?\d*)\s+(passing yards|rushing yards|receiving yards|receptions|completions|pass completions|touchdowns|tds)/i,
   ];
   
   for (const pattern of patterns) {
@@ -142,6 +232,12 @@ function normalizePropType(prop: string): string {
   if (lower === 'threes' || lower === '3pt') return 'threes_made';
   if (lower === 'blocks' || lower === 'blk') return 'blocks';
   if (lower === 'steals' || lower === 'stl') return 'steals';
+  if (lower === 'passing yards') return 'passing_yards';
+  if (lower === 'rushing yards') return 'rushing_yards';
+  if (lower === 'receiving yards') return 'receiving_yards';
+  if (lower === 'receptions') return 'receptions';
+  if (lower === 'completions' || lower === 'pass completions') return 'completions';
+  if (lower === 'touchdowns' || lower === 'tds') return 'touchdowns';
   return lower;
 }
 
@@ -156,6 +252,11 @@ function parseMoneyline(description: string): { team: string } | null {
   const oddsMatch = cleaned.match(/^(.+?)\s+([+-]\d+)$/);
   if (oddsMatch) {
     return { team: oddsMatch[1].trim() };
+  }
+  // Check for "Team upset" patterns from God Mode
+  const upsetMatch = cleaned.match(/(.+?)\s+(upset|edge|fatigue edge)/i);
+  if (upsetMatch) {
+    return { team: upsetMatch[1].trim() };
   }
   return null;
 }
@@ -182,116 +283,212 @@ function parseTotal(description: string): { side: string; total: number } | null
 
 async function fetchGameScores(supabase: any, sport: string, legDescriptions: string[]): Promise<GameResult[]> {
   try {
-    console.log(`📡 Fetching game scores for ${sport}...`);
+    const normalizedSport = normalizeSportKey(sport);
+    console.log(`📡 Fetching game scores for ${sport} (normalized: ${normalizedSport})...`);
+    
     const { data, error } = await supabase.functions.invoke('fetch-game-scores', {
-      body: { sport, legDescriptions }
+      body: { 
+        sport: normalizedSport, 
+        legDescriptions 
+      }
     });
+    
     if (error) throw error;
-    console.log(`✅ Got ${data?.games?.length || 0} games from fetch-game-scores`);
-    return data?.games || [];
+    
+    const games = data?.games || [];
+    console.log(`✅ Got ${games.length} games from fetch-game-scores for ${normalizedSport}`);
+    
+    // Normalize status field (API returns 'final', we need 'completed')
+    return games.map((g: any) => ({
+      ...g,
+      status: g.status === 'final' ? 'completed' : g.status
+    }));
   } catch (e) {
-    console.error('Error fetching game scores:', e);
+    console.error(`Error fetching game scores for ${sport}:`, e);
     return [];
   }
 }
 
-async function fetchPlayerStats(supabase: any, playerName: string, gameDate: string): Promise<any | null> {
+async function fetchAllSportsGames(supabase: any, legDescriptions: string[]): Promise<Record<string, GameResult[]>> {
+  const sports = ['nba', 'nfl', 'nhl', 'mlb', 'ncaaf', 'ncaab'];
+  const allGames: Record<string, GameResult[]> = {};
+  
+  console.log('📡 Fetching games for ALL sports (mixed parlay)...');
+  
+  // Fetch all sports in parallel
+  const results = await Promise.all(
+    sports.map(async sport => {
+      const games = await fetchGameScores(supabase, sport, legDescriptions);
+      return { sport, games };
+    })
+  );
+  
+  for (const { sport, games } of results) {
+    allGames[sport] = games;
+    console.log(`  - ${sport}: ${games.length} games`);
+  }
+  
+  return allGames;
+}
+
+async function fetchPlayerStats(supabase: any, playerName: string, gameDates: string[], sport: string): Promise<any | null> {
   // Extract last name for fuzzy matching
   const nameParts = playerName.split(' ');
   const lastName = nameParts[nameParts.length - 1];
   const firstName = nameParts[0];
   
-  console.log(`🔍 Searching stats for ${playerName} on ${gameDate}...`);
+  console.log(`🔍 Searching stats for ${playerName} on dates: ${gameDates.join(', ')} (${sport})...`);
   
-  // Try nba_player_game_logs first with various date formats
-  const { data: logs, error } = await supabase
-    .from('nba_player_game_logs')
-    .select('*')
-    .ilike('player_name', `%${lastName}%`)
-    .eq('game_date', gameDate)
-    .limit(5);
+  // Determine which table to query based on sport
+  const tableMap: Record<string, string> = {
+    'nba': 'nba_player_game_logs',
+    'nfl': 'nfl_player_game_logs',
+    'nhl': 'nhl_player_game_logs',
+  };
   
-  if (logs && logs.length > 0) {
-    // Find best match by first name
-    const bestMatch = logs.find((l: any) => 
-      l.player_name.toLowerCase().includes(firstName.toLowerCase())
-    ) || logs[0];
-    console.log(`✅ Found stats in game_logs: ${bestMatch.player_name} - ${bestMatch.points}pts, ${bestMatch.rebounds}reb, ${bestMatch.assists}ast`);
-    return bestMatch;
+  const tableName = tableMap[sport] || 'nba_player_game_logs';
+  
+  // Try each date
+  for (const gameDate of gameDates) {
+    const { data: logs, error } = await supabase
+      .from(tableName)
+      .select('*')
+      .ilike('player_name', `%${lastName}%`)
+      .eq('game_date', gameDate)
+      .limit(5);
+    
+    if (error) {
+      console.log(`⚠️ Error querying ${tableName}:`, error.message);
+      continue;
+    }
+    
+    if (logs && logs.length > 0) {
+      // Find best match by first name
+      const bestMatch = logs.find((l: any) => 
+        l.player_name.toLowerCase().includes(firstName.toLowerCase())
+      ) || logs[0];
+      console.log(`✅ Found stats in ${tableName}: ${bestMatch.player_name} on ${gameDate}`);
+      return bestMatch;
+    }
   }
   
   // Try player_stats_cache as fallback
-  const { data: cache } = await supabase
-    .from('player_stats_cache')
-    .select('*')
-    .ilike('player_name', `%${lastName}%`)
-    .eq('game_date', gameDate)
-    .limit(5);
-  
-  if (cache && cache.length > 0) {
-    const bestMatch = cache.find((c: any) => 
-      c.player_name.toLowerCase().includes(firstName.toLowerCase())
-    ) || cache[0];
-    console.log(`✅ Found stats in cache: ${bestMatch.player_name}`);
-    return bestMatch;
+  for (const gameDate of gameDates) {
+    const { data: cache } = await supabase
+      .from('player_stats_cache')
+      .select('*')
+      .ilike('player_name', `%${lastName}%`)
+      .eq('game_date', gameDate)
+      .limit(5);
+    
+    if (cache && cache.length > 0) {
+      const bestMatch = cache.find((c: any) => 
+        c.player_name.toLowerCase().includes(firstName.toLowerCase())
+      ) || cache[0];
+      console.log(`✅ Found stats in cache: ${bestMatch.player_name} on ${gameDate}`);
+      return bestMatch;
+    }
   }
   
-  console.log(`⚠️ No stats found for ${playerName} on ${gameDate}`);
+  console.log(`⚠️ No stats found for ${playerName} in any of dates: ${gameDates.join(', ')}`);
   return null;
 }
 
-async function evaluateLeg(supabase: any, leg: any, games: GameResult[], gameDates: string[]): Promise<LegResult> {
+async function evaluateLeg(
+  supabase: any, 
+  leg: any, 
+  allGames: Record<string, GameResult[]>, 
+  gameDates: string[],
+  defaultSport: string
+): Promise<LegResult> {
   const description = leg.description || '';
   const legIndex = leg.legIndex || 0;
   
-  console.log(`📋 Evaluating leg ${legIndex}: ${description.substring(0, 50)}...`);
+  // Detect sport from description
+  const detectedSport = detectSportFromDescription(description);
+  const sport = detectedSport !== 'nba' ? detectedSport : normalizeSportKey(defaultSport);
+  
+  // Get games for this sport
+  const games = allGames[sport] || allGames['nba'] || [];
+  
+  console.log(`📋 Evaluating leg ${legIndex}: ${description.substring(0, 60)}... (sport: ${sport}, games: ${games.length})`);
   
   // Check if it's a player prop
   const propData = parsePlayerProp(description);
   if (propData) {
     console.log(`🎯 Player prop detected: ${propData.playerName} ${propData.side} ${propData.line} ${propData.propType}`);
     
-    // Try each game date
-    for (const gameDate of gameDates) {
-      const stats = await fetchPlayerStats(supabase, propData.playerName, gameDate);
-      if (stats) {
-        const actualValue = stats[propData.propType] || 0;
-        const won = propData.side === 'over' ? actualValue > propData.line : actualValue < propData.line;
-        const push = actualValue === propData.line;
-        
-        console.log(`📊 Result: ${actualValue} ${propData.side === 'over' ? '>' : '<'} ${propData.line} = ${won ? 'WON' : push ? 'PUSH' : 'LOST'}`);
-        
-        return {
-          legIndex,
-          description,
-          outcome: push ? 'push' : won ? 'won' : 'lost',
-          settlementMethod: 'player_stats',
-          actualValue,
-          line: propData.line,
-          dataSource: `game_logs_${gameDate}`
-        };
-      }
+    const stats = await fetchPlayerStats(supabase, propData.playerName, gameDates, sport);
+    if (stats) {
+      const actualValue = stats[propData.propType] || 0;
+      const won = propData.side === 'over' ? actualValue > propData.line : actualValue < propData.line;
+      const push = actualValue === propData.line;
+      
+      console.log(`📊 Result: ${actualValue} ${propData.side === 'over' ? '>' : '<'} ${propData.line} = ${won ? 'WON' : push ? 'PUSH' : 'LOST'}`);
+      
+      return {
+        legIndex,
+        description,
+        outcome: push ? 'push' : won ? 'won' : 'lost',
+        settlementMethod: 'player_stats',
+        actualValue,
+        line: propData.line,
+        dataSource: `${sport}_game_logs`,
+        sport
+      };
     }
     
-    return { legIndex, description, outcome: 'pending', settlementMethod: 'player_prop_no_data', dataSource: 'none' };
+    return { 
+      legIndex, 
+      description, 
+      outcome: 'pending', 
+      settlementMethod: 'player_prop_no_data', 
+      dataSource: 'none',
+      sport,
+      pendingReason: `No stats found for ${propData.playerName} in ${sport}`
+    };
   }
   
   // Check if it's a moneyline bet
   const mlData = parseMoneyline(description);
   if (mlData) {
     const teamNorm = normalizeTeamName(mlData.team);
+    console.log(`🏈 Moneyline detected: ${mlData.team} (normalized: ${teamNorm})`);
+    
     const game = games.find(g => 
       normalizeTeamName(g.homeTeam) === teamNorm || 
       normalizeTeamName(g.awayTeam) === teamNorm
     );
     
-    if (!game || game.status !== 'completed') {
-      return { legIndex, description, outcome: 'pending', settlementMethod: 'moneyline_pending' };
+    if (!game) {
+      console.log(`⚠️ No game found for team: ${mlData.team}`);
+      return { 
+        legIndex, 
+        description, 
+        outcome: 'pending', 
+        settlementMethod: 'moneyline_no_game',
+        sport,
+        pendingReason: `No game found for ${mlData.team} in ${sport} (${games.length} games available)`
+      };
+    }
+    
+    if (game.status !== 'completed') {
+      console.log(`⏳ Game not completed: ${game.homeTeam} vs ${game.awayTeam} (${game.status})`);
+      return { 
+        legIndex, 
+        description, 
+        outcome: 'pending', 
+        settlementMethod: 'moneyline_game_not_complete',
+        sport,
+        pendingReason: `Game ${game.homeTeam} vs ${game.awayTeam} status: ${game.status}`
+      };
     }
     
     const teamWon = normalizeTeamName(game.winner || '') === teamNorm ||
       (normalizeTeamName(game.homeTeam) === teamNorm && game.homeScore > game.awayScore) ||
       (normalizeTeamName(game.awayTeam) === teamNorm && game.awayScore > game.homeScore);
+    
+    console.log(`📊 ML Result: ${game.homeTeam} ${game.homeScore} - ${game.awayScore} ${game.awayTeam} = ${teamWon ? 'WON' : 'LOST'}`);
     
     return {
       legIndex,
@@ -299,7 +496,8 @@ async function evaluateLeg(supabase: any, leg: any, games: GameResult[], gameDat
       outcome: teamWon ? 'won' : 'lost',
       settlementMethod: 'game_score',
       score: { home: game.homeScore, away: game.awayScore },
-      dataSource: 'espn_scores'
+      dataSource: `${sport}_scores`,
+      sport
     };
   }
   
@@ -313,7 +511,14 @@ async function evaluateLeg(supabase: any, leg: any, games: GameResult[], gameDat
     );
     
     if (!game || game.status !== 'completed') {
-      return { legIndex, description, outcome: 'pending', settlementMethod: 'spread_pending' };
+      return { 
+        legIndex, 
+        description, 
+        outcome: 'pending', 
+        settlementMethod: 'spread_pending',
+        sport,
+        pendingReason: game ? `Game status: ${game.status}` : `No game found for ${spreadData.team}`
+      };
     }
     
     const isHome = normalizeTeamName(game.homeTeam) === teamNorm;
@@ -330,7 +535,8 @@ async function evaluateLeg(supabase: any, leg: any, games: GameResult[], gameDat
       outcome: push ? 'push' : covered ? 'won' : 'lost',
       settlementMethod: 'spread_calculation',
       score: { home: game.homeScore, away: game.awayScore },
-      dataSource: 'espn_scores'
+      dataSource: `${sport}_scores`,
+      sport
     };
   }
   
@@ -341,7 +547,14 @@ async function evaluateLeg(supabase: any, leg: any, games: GameResult[], gameDat
     const game = games.find(g => g.status === 'completed');
     
     if (!game) {
-      return { legIndex, description, outcome: 'pending', settlementMethod: 'total_pending' };
+      return { 
+        legIndex, 
+        description, 
+        outcome: 'pending', 
+        settlementMethod: 'total_pending',
+        sport,
+        pendingReason: `No completed games found for totals`
+      };
     }
     
     const actualTotal = game.homeScore + game.awayScore;
@@ -355,12 +568,13 @@ async function evaluateLeg(supabase: any, leg: any, games: GameResult[], gameDat
       settlementMethod: 'total_calculation',
       actualValue: actualTotal,
       line: totalData.total,
-      dataSource: 'espn_scores'
+      dataSource: `${sport}_scores`,
+      sport
     };
   }
   
   // Fallback: check if description contains team-like info for upset/fatigue bets
-  const teamMatch = description.match(/(\w+(?:\s+\w+)*)\s+(ML|moneyline|upset|fatigue|edge)/i);
+  const teamMatch = description.match(/(\w+(?:\s+\w+)*)\s+(ML|moneyline|upset|fatigue|edge|value)/i);
   if (teamMatch) {
     const teamNorm = normalizeTeamName(teamMatch[1]);
     const game = games.find(g => 
@@ -378,12 +592,21 @@ async function evaluateLeg(supabase: any, leg: any, games: GameResult[], gameDat
         outcome: teamWon ? 'won' : 'lost',
         settlementMethod: 'team_outcome',
         score: { home: game.homeScore, away: game.awayScore },
-        dataSource: 'espn_scores'
+        dataSource: `${sport}_scores`,
+        sport
       };
     }
   }
   
-  return { legIndex, description, outcome: 'pending', settlementMethod: 'unable_to_parse', dataSource: 'none' };
+  return { 
+    legIndex, 
+    description, 
+    outcome: 'pending', 
+    settlementMethod: 'unable_to_parse', 
+    dataSource: 'none',
+    sport,
+    pendingReason: 'Could not parse bet type from description'
+  };
 }
 
 serve(async (req) => {
@@ -414,7 +637,7 @@ serve(async (req) => {
       .from('ai_generated_parlays')
       .select('*')
       .eq('outcome', 'pending')
-      .limit(100);
+      .limit(200); // Increased limit
     
     if (!force) {
       // Only apply 4-hour cutoff if not forcing
@@ -448,7 +671,12 @@ serve(async (req) => {
       stillPending: 0,
       errors: 0,
       learningTriggered: false,
-      settledDetails: [] as SettledParlayDetail[]
+      settledDetails: [] as SettledParlayDetail[],
+      diagnostics: {
+        sportBreakdown: {} as Record<string, number>,
+        pendingReasons: {} as Record<string, number>,
+        gamesFound: {} as Record<string, number>
+      }
     };
 
     // Group parlays by sport for efficient score fetching
@@ -457,32 +685,59 @@ serve(async (req) => {
       const sport = parlay.sport || 'basketball_nba';
       if (!parlaysBySport[sport]) parlaysBySport[sport] = [];
       parlaysBySport[sport].push(parlay);
+      
+      // Track sport breakdown
+      const normalizedSport = normalizeSportKey(sport);
+      results.diagnostics.sportBreakdown[normalizedSport] = (results.diagnostics.sportBreakdown[normalizedSport] || 0) + 1;
     }
 
-    // Calculate multiple game dates to check
-    const today = new Date().toISOString().split('T')[0];
-    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    const twoDaysAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString().split('T')[0];
-    const gameDates = [today, yesterday, twoDaysAgo];
+    console.log(`📊 Sport breakdown: ${JSON.stringify(results.diagnostics.sportBreakdown)}`);
 
-    // Process each sport group
-    for (const [sport, sportParlays] of Object.entries(parlaysBySport)) {
-      console.log(`\n🏀 Processing ${sportParlays.length} parlays for ${sport}...`);
-      
-      // Collect all leg descriptions for batch score fetching
-      const allDescriptions: string[] = [];
-      for (const parlay of sportParlays) {
-        const legs = Array.isArray(parlay.legs) ? parlay.legs : [];
-        legs.forEach((leg: any) => {
-          if (leg.description) allDescriptions.push(leg.description);
-        });
+    // Calculate multiple game dates to check - expand to 7 days for better coverage
+    const gameDates: string[] = [];
+    for (let i = 0; i < 7; i++) {
+      const date = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
+      gameDates.push(date.toISOString().split('T')[0]);
+    }
+    console.log(`📅 Checking dates: ${gameDates.join(', ')}`);
+
+    // Collect all leg descriptions for batch score fetching
+    const allDescriptions: string[] = [];
+    for (const parlay of pendingParlays) {
+      const legs = Array.isArray(parlay.legs) ? parlay.legs : [];
+      legs.forEach((leg: any) => {
+        if (leg.description) allDescriptions.push(leg.description);
+      });
+    }
+
+    // For mixed sport parlays or when we have diverse parlays, fetch all sports
+    const hasMixedSport = parlaysBySport['mixed'] || Object.keys(parlaysBySport).length > 2;
+    
+    let allGames: Record<string, GameResult[]> = {};
+    
+    if (hasMixedSport) {
+      // Fetch all sports
+      allGames = await fetchAllSportsGames(supabase, allDescriptions);
+    } else {
+      // Fetch only needed sports
+      for (const sport of Object.keys(parlaysBySport)) {
+        const normalizedSport = normalizeSportKey(sport);
+        allGames[normalizedSport] = await fetchGameScores(supabase, normalizedSport, allDescriptions);
       }
+    }
 
-      // Fetch game scores for this sport
-      const games = await fetchGameScores(supabase, sport, allDescriptions);
-      console.log(`📺 Fetched ${games.length} completed games for ${sport}`);
+    // Track games found
+    for (const [sport, games] of Object.entries(allGames)) {
+      results.diagnostics.gamesFound[sport] = games.length;
+      const completedGames = games.filter((g: GameResult) => g.status === 'completed').length;
+      console.log(`📺 ${sport}: ${games.length} total, ${completedGames} completed`);
+    }
 
-      // Process each parlay
+    // Process each parlay
+    for (const [sport, sportParlays] of Object.entries(parlaysBySport)) {
+      const normalizedSport = normalizeSportKey(sport);
+      console.log(`\n🏀 Processing ${sportParlays.length} parlays for ${sport} (normalized: ${normalizedSport})...`);
+
       for (const parlay of sportParlays) {
         results.processed++;
         
@@ -495,8 +750,14 @@ serve(async (req) => {
           // Evaluate each leg
           for (let i = 0; i < legs.length; i++) {
             const leg = { ...legs[i], legIndex: i };
-            const result = await evaluateLeg(supabase, leg, games, gameDates);
+            const result = await evaluateLeg(supabase, leg, allGames, gameDates, normalizedSport);
             legResults.push(result);
+            
+            // Track pending reasons
+            if (result.outcome === 'pending' && result.pendingReason) {
+              const reason = result.settlementMethod;
+              results.diagnostics.pendingReasons[reason] = (results.diagnostics.pendingReasons[reason] || 0) + 1;
+            }
           }
 
           // Determine parlay outcome
@@ -533,7 +794,7 @@ serve(async (req) => {
                 force_mode: force,
                 leg_results: legResults,
                 settlement_time: new Date().toISOString(),
-                games_used: games.length,
+                games_checked: Object.values(allGames).flat().length,
                 dates_checked: gameDates
               })
             };
@@ -621,6 +882,9 @@ serve(async (req) => {
     });
 
     console.log(`\n✅ Settlement complete: ${results.settled} settled, ${results.won}W/${results.lost}L, ${results.stillPending} still pending`);
+    console.log(`📊 Diagnostics: Sports=${JSON.stringify(results.diagnostics.sportBreakdown)}, Games=${JSON.stringify(results.diagnostics.gamesFound)}`);
+    console.log(`⏳ Pending reasons: ${JSON.stringify(results.diagnostics.pendingReasons)}`);
+    
     if (learningResults) {
       console.log(`🧠 Learning: ${learningResults.weights_updated?.weights_updated || 0} weights updated, ${learningResults.avoid_patterns?.patterns_updated || 0} avoid patterns, ${learningResults.compound_formulas?.formulas_updated || 0} compound formulas`);
     }
