@@ -836,96 +836,52 @@ export function AIGenerativeProgressDashboard() {
                 </div>
               )}
 
-              <div className="space-y-2">
-                <div className="flex gap-2">
-                  <Button onClick={handleGenerate} disabled={isGenerating} className="flex-1 bg-cyan-600 hover:bg-cyan-700">
-                    {isGenerating ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Zap className="w-4 h-4 mr-2" />}
-                    Generate
-                  </Button>
-                  <Button onClick={() => handleRunSettlement(false)} disabled={isSettling} variant="outline" className="flex-1">
-                    {isSettling ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Clock className="w-4 h-4 mr-2" />}
-                    Auto
-                  </Button>
-                  <Button 
-                    onClick={() => handleRunSettlement(true)} 
-                    disabled={isSettling} 
-                    className="bg-orange-600 hover:bg-orange-700"
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={handleGenerate} disabled={isGenerating} className="bg-cyan-600 hover:bg-cyan-700">
+                  {isGenerating ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Zap className="w-4 h-4 mr-2" />}
+                  Generate
+                </Button>
+                <Button 
+                  onClick={() => handleRunSettlement(true, true)} 
+                  disabled={isSettling} 
+                  className="bg-gradient-to-r from-orange-600 to-purple-600 hover:from-orange-700 hover:to-purple-700"
+                >
+                  {isSettling ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <PlayCircle className="w-4 h-4 mr-2" />}
+                  Settle & Learn
+                </Button>
+                {!dataFreshness.isStale && (
+                  <Button
+                    onClick={handleRefreshAndSettle}
+                    disabled={isRefreshingStats}
+                    variant="outline"
                   >
-                    {isSettling ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <PlayCircle className="w-4 h-4 mr-2" />}
-                    Force
-                  </Button>
-                  <Button 
-                    onClick={() => handleRunSettlement(true, true)} 
-                    disabled={isSettling} 
-                    className="bg-gradient-to-r from-orange-600 to-purple-600 hover:from-orange-700 hover:to-purple-700"
-                  >
-                    {isSettling ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Zap className="w-4 h-4 mr-2" />}
-                    Force+Sync
-                  </Button>
-                  <Button onClick={handleRunLearningCycle} disabled={isLearning} variant="outline">
-                    {isLearning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
-                    Learn
-                  </Button>
-                  <Button onClick={handleSyncLearningProgress} disabled={isSyncing} variant="outline" className="bg-purple-500/10 hover:bg-purple-500/20 border-purple-500/30">
-                    {isSyncing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <History className="w-4 h-4 mr-2" />}
-                    Sync
-                  </Button>
-                </div>
-                
-                {/* Data Management Row */}
-                <div className="flex gap-2 pt-2 border-t border-border/50">
-                  <Button onClick={handleExportCSV} variant="outline" size="sm">
-                    <FileSpreadsheet className="w-4 h-4 mr-2" />
-                    Export CSV
-                  </Button>
-                  <Button onClick={handleExportJSON} variant="outline" size="sm">
-                    <FileJson className="w-4 h-4 mr-2" />
-                    Export JSON
-                  </Button>
-                  {staleParlays > 0 && (
-                    <Button 
-                      onClick={handlePurgeStaleParlays} 
-                      disabled={isPurging}
-                      variant="destructive" 
-                      size="sm"
-                    >
-                      {isPurging ? (
+                    {isRefreshingStats ? (
+                      <>
                         <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      ) : (
-                        <Trash2 className="w-4 h-4 mr-2" />
-                      )}
-                      Purge {staleParlays} Stale ({'>'}48h)
-                    </Button>
-                  )}
+                        {refreshProgress || 'Refreshing...'}
+                      </>
+                    ) : (
+                      <>
+                        <Download className="w-4 h-4 mr-2" />
+                        Refresh Stats
+                      </>
+                    )}
+                  </Button>
+                )}
+                {staleParlays > 0 && (
                   <Button 
-                    onClick={handleVerifySettlements} 
-                    disabled={isVerifying}
-                    variant="outline" 
-                    size="sm"
-                    className="bg-blue-500/10 hover:bg-blue-500/20 border-blue-500/30"
+                    onClick={handlePurgeStaleParlays} 
+                    disabled={isPurging}
+                    variant="destructive"
                   >
-                    {isVerifying ? (
+                    {isPurging ? (
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                     ) : (
-                      <ShieldCheck className="w-4 h-4 mr-2" />
+                      <Trash2 className="w-4 h-4 mr-2" />
                     )}
-                    Verify Settlements
+                    Purge {staleParlays} Stale
                   </Button>
-                  <Button 
-                    onClick={handleAnalyzePending} 
-                    disabled={isAnalyzingPending}
-                    variant="outline" 
-                    size="sm"
-                    className="bg-purple-500/10 hover:bg-purple-500/20 border-purple-500/30"
-                  >
-                    {isAnalyzingPending ? (
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    ) : (
-                      <Activity className="w-4 h-4 mr-2" />
-                    )}
-                    Analyze Pending
-                  </Button>
-                </div>
+                )}
               </div>
             </div>
           </div>
