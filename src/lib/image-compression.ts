@@ -97,3 +97,30 @@ export function validateImageFile(file: File): { valid: boolean; error?: string 
 
   return { valid: true };
 }
+
+/**
+ * Validate any media file (image or video) before processing
+ */
+export function validateMediaFile(file: File): { valid: boolean; error?: string; isVideo: boolean } {
+  // Check for video
+  const videoTypes = ['video/mp4', 'video/quicktime', 'video/webm', 'video/x-m4v'];
+  const isVideo = videoTypes.includes(file.type) || file.name.match(/\.(mp4|mov|webm|m4v)$/i) !== null;
+  
+  if (isVideo) {
+    // Max 100MB for videos
+    if (file.size > 100 * 1024 * 1024) {
+      return { valid: false, error: 'Video too large. Max 100MB.', isVideo: true };
+    }
+    return { valid: true, isVideo: true };
+  }
+  
+  // Check for image
+  if (file.type.startsWith('image/')) {
+    if (file.size > 20 * 1024 * 1024) {
+      return { valid: false, error: 'Image too large. Max 20MB.', isVideo: false };
+    }
+    return { valid: true, isVideo: false };
+  }
+  
+  return { valid: false, error: 'Please upload an image or video file.', isVideo: false };
+}

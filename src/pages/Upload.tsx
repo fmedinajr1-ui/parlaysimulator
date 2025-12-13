@@ -11,7 +11,7 @@ import { PaywallModal } from "@/components/PaywallModal";
 import { QuickCheckResults } from "@/components/upload/QuickCheckResults";
 import { UploadOptimizer } from "@/components/upload/UploadOptimizer";
 import { MobileHeader } from "@/components/layout/MobileHeader";
-import { Plus, Upload as UploadIcon, Flame, X, Loader2, Sparkles, CheckCircle2, Clock, Pencil, CalendarIcon, Crown, Image, Shield, HelpCircle, Home } from "lucide-react";
+import { Plus, Upload as UploadIcon, Flame, X, Loader2, Sparkles, CheckCircle2, Clock, Pencil, CalendarIcon, Crown, Image, Shield, HelpCircle, Home, Video } from "lucide-react";
 import { HintTooltip } from "@/components/tutorial/HintTooltip";
 import { useHints } from "@/hooks/useHints";
 import { Progress } from "@/components/ui/progress";
@@ -22,7 +22,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import { useSubscription } from "@/hooks/useSubscription";
 import { useAuth } from "@/contexts/AuthContext";
-import { compressImage, validateImageFile } from "@/lib/image-compression";
+import { compressImage, validateMediaFile } from "@/lib/image-compression";
+import { extractFramesFromVideo, isVideoFile, type ExtractionProgress } from "@/lib/video-frame-extractor";
 
 // Calculate estimated per-leg odds when we only have total odds
 function calculateEstimatedLegOdds(totalOdds: number, numLegs: number): number {
@@ -84,6 +85,7 @@ const Upload = () => {
   const [showOptimizer, setShowOptimizer] = useState(false);
   const [originalLegs, setOriginalLegs] = useState<LegInput[] | null>(null);
   const [undoCountdown, setUndoCountdown] = useState<number>(0);
+  const [videoProgress, setVideoProgress] = useState<ExtractionProgress | null>(null);
 
   // Check for success/cancel params from Stripe checkout
   useEffect(() => {
@@ -331,10 +333,96 @@ const Upload = () => {
       return;
     }
 
-    // Validate and queue files
+    // Check if any file is a video
+    const videoFile = files.find(f => isVideoFile(f));
+    
+    if (videoFile) {
+      // Handle video file - extract frames and process
+      const validation = validateMediaFile(videoFile);
+      if (!validation.valid) {
+        toast({
+          title: "Invalid video",
+          description: validation.error,
+          variant: "destructive",
+        });
+        return;
+      }
+
+      setIsProcessing(true);
+      setVideoProgress({ stage: 'loading', currentFrame: 0, totalFrames: 0, message: 'Loading video...' });
+
+      try {
+        // Extract frames from video
+        const { frames } = await extractFramesFromVideo(videoFile, setVideoProgress);
+        
+        if (frames.length === 0) {
+          throw new Error("Could not extract frames from video");
+        }
+
+        setVideoProgress({ 
+          stage: 'extracting', 
+          currentFrame: 0, 
+          totalFrames: frames.length, 
+          message: 'Analyzing frames with AI...' 
+        });
+
+        // Send all frames to the edge function
+        const { data, error } = await supabase.functions.invoke('extract-parlay', {
+          body: { frames: frames.map(f => f.base64) }
+        });
+
+        if (error) throw new Error(error.message);
+        if (data?.error) throw new Error(data.error);
+
+        const extractedLegs = data?.legs || [];
+        
+        if (extractedLegs.length === 0) {
+          toast({
+            title: "No betting slip found",
+            description: `Scanned ${data?.framesProcessed || frames.length} frames but couldn't find parlay data. Try a clearer recording.`,
+            variant: "destructive",
+          });
+        } else {
+          // Set extracted legs
+          const legInputs: LegInput[] = extractedLegs.map((leg: any) => ({
+            id: crypto.randomUUID(),
+            description: leg.description || "",
+            odds: leg.odds?.replace('+', '') || "",
+          }));
+
+          setLegs(legInputs.length >= 2 ? legInputs : 
+            [...legInputs, { id: crypto.randomUUID(), description: "", odds: "" }]);
+
+          if (data?.totalOdds) setExtractedTotalOdds(parseInt(data.totalOdds.replace('+', '')));
+          if (data?.earliestGameTime) setExtractedGameTime(data.earliestGameTime);
+          if (data?.stake) setStake(data.stake.replace(/[$,]/g, ''));
+
+          toast({
+            title: `Extracted ${extractedLegs.length} legs from video! 🎬`,
+            description: `Found betting slip in ${data?.framesWithSlips || 1} of ${data?.framesProcessed || frames.length} frames`,
+          });
+
+          // Increment scan for free users
+          if (user && !isSubscribed && !isAdmin) await incrementScan();
+        }
+      } catch (err) {
+        console.error('Video processing error:', err);
+        toast({
+          title: "Video processing failed",
+          description: err instanceof Error ? err.message : "Unknown error",
+          variant: "destructive",
+        });
+      } finally {
+        setIsProcessing(false);
+        setVideoProgress(null);
+      }
+      return;
+    }
+
+    // Handle image files (existing logic)
     const newQueue: QueuedSlip[] = files
       .filter(file => {
-        const validation = validateImageFile(file);
+        const validation = validateMediaFile(file);
         if (!validation.valid) {
           toast({
             title: "Invalid file skipped",
@@ -343,7 +431,7 @@ const Upload = () => {
           });
           return false;
         }
-        return true;
+        return !validation.isVideo; // Only images in queue
       })
       .slice(0, 10) // Max 10 files at once
       .map(file => ({
@@ -568,7 +656,7 @@ const Upload = () => {
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*"
+        accept="image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm,.m4v"
         multiple
         onChange={handleFileInputChange}
         className="hidden"
@@ -653,11 +741,31 @@ const Upload = () => {
                   <Loader2 className="w-7 h-7 text-foreground animate-spin" />
                 </div>
                 <p className="font-semibold text-foreground mb-1">
-                  AI Scanning Your Slip...
+                  {videoProgress ? 'Processing Screen Recording...' : 'AI Scanning Your Slip...'}
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  Extracting your parlay legs
+                  {videoProgress ? videoProgress.message : 'Extracting your parlay legs'}
                 </p>
+                
+                {/* Video Progress */}
+                {videoProgress && (
+                  <div className="mt-4 space-y-2">
+                    <Progress 
+                      value={videoProgress.totalFrames > 0 
+                        ? (videoProgress.currentFrame / videoProgress.totalFrames) * 100 
+                        : 0
+                      } 
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {videoProgress.stage === 'extracting' 
+                        ? `Frame ${videoProgress.currentFrame}/${videoProgress.totalFrames}`
+                        : videoProgress.stage === 'complete'
+                          ? 'Analyzing with AI...'
+                          : 'Loading video...'
+                      }
+                    </p>
+                  </div>
+                )}
               </>
             ) : (
               <>
@@ -670,9 +778,13 @@ const Upload = () => {
                   <Sparkles className="w-4 h-4 text-neon-purple" />
                 </p>
                 <p className="text-sm text-muted-foreground mb-3">
-                  Upload photos and we'll extract your legs automatically
+                  Upload photos or screen recordings
                   <br />
-                  <span className="text-xs opacity-70">Supports multiple slips at once!</span>
+                  <span className="text-xs opacity-70 flex items-center justify-center gap-1">
+                    <Image className="w-3 h-3" /> Images
+                    <span className="mx-1">•</span>
+                    <Video className="w-3 h-3" /> MP4, MOV, WebM
+                  </span>
                 </p>
                 <Button 
                   variant="muted" 
@@ -688,7 +800,7 @@ const Upload = () => {
             )}
 
             {/* Queue Progress */}
-            {uploadQueue.length > 0 && isProcessing && (
+            {uploadQueue.length > 0 && isProcessing && !videoProgress && (
               <div className="mt-4 space-y-3">
                 <div className="flex items-center justify-between text-sm">
                   <span>Processing {processingIndex + 1} of {uploadQueue.length}</span>
