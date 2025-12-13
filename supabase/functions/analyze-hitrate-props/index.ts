@@ -184,18 +184,58 @@ function calculateLineValue(line: number, seasonAvg: number, stdDev: number, isH
 async function fetchPlayerStatsFromDB(playerName: string, propType: string, sport: string, supabase: any, limit = 10): Promise<any[]> {
   const sportColumns = PROP_TO_COLUMN[sport] || PROP_TO_COLUMN['basketball_nba'];
   const column = sportColumns[propType];
-  if (!column) return [];
+  if (!column) {
+    console.log(`[HitRate] No column mapping for propType: ${propType}`);
+    return [];
+  }
   const tableName = SPORT_GAME_LOGS_TABLE[sport] || 'nba_player_game_logs';
   const selectColumns = propType === 'player_points_rebounds_assists'
     ? 'game_date, opponent, points, rebounds, assists, minutes_played'
     : `game_date, opponent, ${column}, minutes_played`;
-  const { data: gameLogs } = await supabase
+  
+  // Try exact match first, then fall back to last name match
+  let gameLogs = null;
+  
+  // Exact match (most accurate)
+  const { data: exactMatch } = await supabase
     .from(tableName)
     .select(selectColumns)
-    .ilike('player_name', `%${playerName.split(' ').slice(-1)[0]}%`)
+    .ilike('player_name', playerName)
     .order('game_date', { ascending: false })
     .limit(limit);
-  if (!gameLogs || gameLogs.length === 0) return [];
+  
+  if (exactMatch && exactMatch.length > 0) {
+    gameLogs = exactMatch;
+    console.log(`[HitRate] Exact match found for ${playerName}: ${gameLogs.length} games`);
+  } else {
+    // Fall back to last name search but with first name initial check
+    const nameParts = playerName.split(' ');
+    const lastName = nameParts.slice(-1)[0];
+    const firstInitial = nameParts[0]?.[0];
+    
+    const { data: lastNameMatch } = await supabase
+      .from(tableName)
+      .select(selectColumns + ', player_name')
+      .ilike('player_name', `%${lastName}`)
+      .order('game_date', { ascending: false })
+      .limit(limit * 3); // Get more to filter
+    
+    if (lastNameMatch && lastNameMatch.length > 0) {
+      // Filter to players whose first name starts with the same letter
+      const filtered = lastNameMatch.filter((g: any) => {
+        const dbFirstInitial = g.player_name?.split(' ')[0]?.[0]?.toUpperCase();
+        return dbFirstInitial === firstInitial?.toUpperCase();
+      });
+      gameLogs = filtered.length > 0 ? filtered.slice(0, limit) : lastNameMatch.slice(0, limit);
+      console.log(`[HitRate] Last name match for ${playerName} (${lastName}): ${gameLogs.length} games`);
+    }
+  }
+  
+  if (!gameLogs || gameLogs.length === 0) {
+    console.log(`[HitRate] No games found for ${playerName}`);
+    return [];
+  }
+  
   return gameLogs.map((g: any) => ({
     date: g.game_date,
     opponent: g.opponent,
