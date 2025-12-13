@@ -326,14 +326,20 @@ serve(async (req) => {
                     
                     const { juiceLevel, juiceDirection, juiceAmount, isJuiced } = detectJuice(overPrice, underPrice);
                     
-                    // Only include props with juice on the OVER and 80%+ unified confidence
-                    if (isJuiced && juiceDirection === 'over') {
+                    // Include both OVER and UNDER juiced props with 80%+ unified confidence
+                    if (isJuiced) {
                       // Cross-reference with unified props for intelligence (80%+ confidence required)
                       const unifiedKey = `${normalizePlayerName(playerName)}_${market}`;
                       const unifiedProp = unifiedPropsMap.get(unifiedKey);
                       
                       // SKIP if no unified data with 80%+ confidence
                       if (!unifiedProp || unifiedProp.confidence < MIN_CONFIDENCE) {
+                        continue;
+                      }
+                      
+                      // SKIP if unified recommendation doesn't match juice direction
+                      const recommendationMatches = unifiedProp.recommended_side === juiceDirection;
+                      if (!recommendationMatches) {
                         continue;
                       }
                       
@@ -353,14 +359,20 @@ serve(async (req) => {
                       const hitRateKey = `${normalizePlayerName(playerName)}_${market}`;
                       const playerHitRate = hitRateMap.get(hitRateKey);
                       
-                      // If we have hit rate data showing under is better, flag this as potential trap
+                      // Flag as trap if hit rate disagrees with juice direction
                       let isTrap = false;
                       let trapReason = '';
                       
                       if (playerHitRate) {
-                        if (playerHitRate.recommended_side === 'under' && playerHitRate.hit_rate_under >= 0.6) {
+                        // If juice is on OVER but hit rate favors UNDER
+                        if (juiceDirection === 'over' && playerHitRate.recommended_side === 'under' && playerHitRate.hit_rate_under >= 0.6) {
                           isTrap = true;
                           trapReason = `Hit rate favors UNDER (${Math.round(playerHitRate.hit_rate_under * 100)}%)`;
+                        }
+                        // If juice is on UNDER but hit rate favors OVER
+                        if (juiceDirection === 'under' && playerHitRate.recommended_side === 'over' && playerHitRate.hit_rate_over >= 0.6) {
+                          isTrap = true;
+                          trapReason = `Hit rate favors OVER (${Math.round(playerHitRate.hit_rate_over * 100)}%)`;
                         }
                       }
                       
@@ -419,8 +431,8 @@ serve(async (req) => {
       }
     }
     
-    console.log(`🔥 Found ${allJuicedProps.length} juiced over props (80%+ confidence)`);
-    console.log(`🧠 All ${unifiedMatchCount} props have Unified Intelligence data`);
+    console.log(`🔥 Found ${allJuicedProps.length} juiced props (over & under, 80%+ confidence)`);
+    console.log(`🧠 All ${unifiedMatchCount} props have Unified Intelligence data (recommendation aligned)`);
     
     // Sort by confidence (highest first), then juice level
     const sortedProps = allJuicedProps.sort((a, b) => {
