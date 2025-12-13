@@ -332,20 +332,56 @@ serve(async (req) => {
       // Get ALL games within next 24 hours (no limit)
       const upcomingEvents = events.filter((e: any) => { const h = (new Date(e.commence_time).getTime() - Date.now()) / 3600000; return h > 0 && h <= 24; });
       console.log(`[HitRate] ${upcomingEvents.length} events in the next 24 hours for ${sport}`);
+      let eventsWithNoBookmakers = 0;
+      let eventsWithNoMarkets = 0;
+      let playersNotFound = 0;
+      let playersInsufficientGames = 0;
+      
       for (const event of upcomingEvents) {
         if (propsChecked >= limit) break;
         const markets = SPORT_MARKETS[sport].join(',');
+        console.log(`[HitRate] Fetching props for: ${event.home_team} vs ${event.away_team} (${event.id})`);
+        
         const propsRes = await fetch(`https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${THE_ODDS_API_KEY}&regions=us&markets=${markets}&oddsFormat=american`);
-        if (!propsRes.ok) continue;
+        
+        if (!propsRes.ok) {
+          console.log(`[HitRate] Props API failed: ${propsRes.status} ${propsRes.statusText}`);
+          continue;
+        }
+        
         const propsData = await propsRes.json();
+        console.log(`[HitRate] Bookmakers returned: ${propsData.bookmakers?.length || 0}`);
+        
         const bookmaker = propsData.bookmakers?.[0];
-        if (!bookmaker) continue;
+        if (!bookmaker) {
+          eventsWithNoBookmakers++;
+          console.log(`[HitRate] No bookmaker has props for this event`);
+          continue;
+        }
+        
+        console.log(`[HitRate] Using bookmaker: ${bookmaker.key}, markets: ${bookmaker.markets?.length || 0}`);
+        
+        if (!bookmaker.markets || bookmaker.markets.length === 0) {
+          eventsWithNoMarkets++;
+          console.log(`[HitRate] Bookmaker has no markets`);
+          continue;
+        }
+        
         const gameDescription = `${event.away_team} @ ${event.home_team}`;
         const opponent = extractOpponent(gameDescription);
-        for (const market of bookmaker.markets || []) {
+        
+        for (const market of bookmaker.markets) {
           if (propsChecked >= limit) break;
           const playerOutcomes: Record<string, any[]> = {};
-          for (const outcome of market.outcomes || []) { if (outcome.description) { if (!playerOutcomes[outcome.description]) playerOutcomes[outcome.description] = []; playerOutcomes[outcome.description].push(outcome); } }
+          for (const outcome of market.outcomes || []) { 
+            if (outcome.description) { 
+              if (!playerOutcomes[outcome.description]) playerOutcomes[outcome.description] = []; 
+              playerOutcomes[outcome.description].push(outcome); 
+            } 
+          }
+          
+          console.log(`[HitRate] Market ${market.key}: ${Object.keys(playerOutcomes).length} players`);
+          
           for (const [playerName, outcomes] of Object.entries(playerOutcomes).slice(0, 20)) {
             if (propsChecked >= limit) break;
             const over = (outcomes as any[]).find((o: any) => o.name === 'Over');
@@ -356,7 +392,11 @@ serve(async (req) => {
             const last5Games = await fetchPlayerStatsFromDB(playerName, market.key, sport, supabase, 10);
             // NHL needs less history since season is shorter - allow 2 games minimum
             const minGamesRequired = sport === 'icehockey_nhl' ? 2 : 3;
-            if (last5Games.length < minGamesRequired) continue;
+            if (last5Games.length < minGamesRequired) {
+              if (last5Games.length === 0) playersNotFound++;
+              else playersInsufficientGames++;
+              continue;
+            }
             const vsOpponentGames = await fetchVsOpponentStats(playerName, opponent, market.key, sport, supabase);
             const analysis = calculateEnhancedHitRate(last5Games, vsOpponentGames, line);
             const overRate = analysis.overIn5 / Math.min(5, analysis.last5Results.length);
@@ -413,8 +453,31 @@ serve(async (req) => {
       }
     }
     const duration = Date.now() - startTime;
+    
+    // Summary logging
+    console.log(`[HitRate] ========== SCAN COMPLETE ==========`);
+    console.log(`[HitRate] Props checked: ${propsChecked}`);
+    console.log(`[HitRate] Props that passed filters: ${analyzedProps.length}`);
+    console.log(`[HitRate] Duration: ${duration}ms`);
+    
     const byStreak = { '5/5': analyzedProps.filter(p => p.hit_streak === '5/5'), '4/5': analyzedProps.filter(p => p.hit_streak === '4/5'), '3/5': analyzedProps.filter(p => p.hit_streak === '3/5'), '2/5': analyzedProps.filter(p => p.hit_streak === '2/5') };
-    return new Response(JSON.stringify({ success: true, analyzed: analyzedProps.length, propsChecked, duration, byStreak, props: analyzedProps }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    
+    // Return with reason if no props
+    const noPropsReason = propsChecked === 0 
+      ? 'No player props available from bookmakers - they may not have posted props for upcoming games yet' 
+      : analyzedProps.length === 0 
+        ? 'Props were checked but none met the hit rate threshold' 
+        : null;
+    
+    return new Response(JSON.stringify({ 
+      success: true, 
+      analyzed: analyzedProps.length, 
+      propsChecked, 
+      duration, 
+      byStreak, 
+      props: analyzedProps,
+      noPropsReason
+    }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (error) {
     console.error('Error:', error);
     return new Response(JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
