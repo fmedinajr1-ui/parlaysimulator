@@ -20,6 +20,14 @@ const ESPN_ENDPOINTS: Record<string, string> = {
   'wnba': 'https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/scoreboard',
   'soccer': 'https://site.api.espn.com/apis/site/v2/sports/soccer/usa.1/scoreboard',
   'mls': 'https://site.api.espn.com/apis/site/v2/sports/soccer/usa.1/scoreboard',
+  // Also accept full API format keys
+  'americanfootball_nfl': 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard',
+  'basketball_nba': 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard',
+  'baseball_mlb': 'https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard',
+  'icehockey_nhl': 'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard',
+  'americanfootball_ncaaf': 'https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard',
+  'basketball_ncaab': 'https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard',
+  'basketball_wnba': 'https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/scoreboard',
 };
 
 // Sport key mapping for The Odds API
@@ -33,7 +41,34 @@ const ODDS_API_SPORTS: Record<string, string> = {
   'wnba': 'basketball_wnba',
   'soccer': 'soccer_usa_mls',
   'mls': 'soccer_usa_mls',
+  // Reverse mappings (API format to API format)
+  'americanfootball_nfl': 'americanfootball_nfl',
+  'basketball_nba': 'basketball_nba',
+  'baseball_mlb': 'baseball_mlb',
+  'icehockey_nhl': 'icehockey_nhl',
+  'americanfootball_ncaaf': 'americanfootball_ncaaf',
+  'basketball_ncaab': 'basketball_ncaab',
+  'basketball_wnba': 'basketball_wnba',
 };
+
+// Normalize sport key to simple format
+function normalizeSportKey(sport: string): string {
+  if (!sport) return 'nba';
+  const lower = sport.toLowerCase();
+  
+  const mappings: Record<string, string> = {
+    'basketball_nba': 'nba',
+    'basketball_ncaab': 'ncaab',
+    'basketball_wnba': 'wnba',
+    'americanfootball_nfl': 'nfl',
+    'americanfootball_ncaaf': 'ncaaf',
+    'icehockey_nhl': 'nhl',
+    'baseball_mlb': 'mlb',
+    'soccer_usa_mls': 'mls',
+  };
+  
+  return mappings[lower] || lower;
+}
 
 interface GameResult {
   eventId: string;
@@ -180,6 +215,7 @@ const TEAM_ALIASES: Record<string, string[]> = {
   'los angeles rams': ['rams', 'la rams'],
   'los angeles chargers': ['chargers', 'la chargers'],
   'las vegas raiders': ['raiders', 'lv raiders', 'vegas'],
+  'detroit lions': ['lions', 'detroit'],
   // MLB
   'new york yankees': ['yankees', 'ny yankees', 'nyy'],
   'new york mets': ['mets', 'ny mets', 'nym'],
@@ -254,11 +290,12 @@ async function fetchFromOddsAPI(sport: string): Promise<GameResult[]> {
     }
     
     const data: OddsAPIScore[] = await response.json();
-    console.log(`Odds API returned ${data.length} games for ${sport}`);
+    const normalizedSport = normalizeSportKey(sport);
+    console.log(`Odds API returned ${data.length} games for ${sport} (normalized: ${normalizedSport})`);
     
     return data.map(score => ({
       ...parseOddsAPIScore(score),
-      sport: sport.toLowerCase(),
+      sport: normalizedSport,
     }));
   } catch (err) {
     console.error(`Error fetching from Odds API:`, err);
@@ -268,7 +305,13 @@ async function fetchFromOddsAPI(sport: string): Promise<GameResult[]> {
 
 // Fetch scores from ESPN
 async function fetchFromESPN(sport: string, date?: string): Promise<GameResult[]> {
-  const endpoint = ESPN_ENDPOINTS[sport.toLowerCase()];
+  // Try both original sport key and normalized version
+  let endpoint = ESPN_ENDPOINTS[sport.toLowerCase()];
+  if (!endpoint) {
+    const normalizedSport = normalizeSportKey(sport);
+    endpoint = ESPN_ENDPOINTS[normalizedSport];
+  }
+  
   if (!endpoint) {
     console.log(`No ESPN endpoint for sport: ${sport}`);
     return [];
@@ -290,11 +333,12 @@ async function fetchFromESPN(sport: string, date?: string): Promise<GameResult[]
     const data = await response.json();
     const events = data.events || [];
     
-    console.log(`ESPN returned ${events.length} games for ${sport}`);
+    const normalizedSport = normalizeSportKey(sport);
+    console.log(`ESPN returned ${events.length} games for ${sport} (normalized: ${normalizedSport})`);
     
     return events.map((event: ESPNEvent) => ({
       ...parseESPNEvent(event),
-      sport: sport.toLowerCase(),
+      sport: normalizedSport,
     }));
   } catch (err) {
     console.error(`Error fetching from ESPN:`, err);
@@ -310,12 +354,16 @@ serve(async (req) => {
   try {
     const { sport, legDescriptions, date } = await req.json();
     
-    console.log(`Fetching scores for sport: ${sport || 'all'}, date: ${date || 'today'}, legs: ${legDescriptions?.length || 0}`);
+    const normalizedSport = sport ? normalizeSportKey(sport) : null;
+    
+    console.log(`Fetching scores for sport: ${sport || 'all'} (normalized: ${normalizedSport || 'all'}), date: ${date || 'today'}, legs: ${legDescriptions?.length || 0}`);
     
     const allGames: GameResult[] = [];
-    const sportsToCheck = sport 
-      ? [sport.toLowerCase()] 
+    const sportsToCheck = normalizedSport && normalizedSport !== 'all'
+      ? [normalizedSport] 
       : ['nba', 'nfl', 'mlb', 'nhl', 'ncaaf', 'ncaab'];
+    
+    console.log(`Sports to check: ${sportsToCheck.join(', ')}`);
     
     // Fetch from both APIs for better coverage
     for (const sportToCheck of sportsToCheck) {
@@ -323,17 +371,28 @@ serve(async (req) => {
       const oddsGames = await fetchFromOddsAPI(sportToCheck);
       allGames.push(...oddsGames);
       
-      // Also fetch from ESPN for more coverage
-      const espnGames = await fetchFromESPN(sportToCheck, date);
+      // Also fetch from ESPN for more coverage (multiple dates)
+      const datesToCheck = date ? [date] : [];
+      if (!date) {
+        // Check today and past 3 days
+        for (let i = 0; i < 4; i++) {
+          const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
+          datesToCheck.push(d.toISOString().split('T')[0]);
+        }
+      }
       
-      // Add ESPN games that aren't already in the list
-      for (const espnGame of espnGames) {
-        const existing = allGames.find(g => 
-          normalizeTeamName(g.homeTeam) === normalizeTeamName(espnGame.homeTeam) &&
-          normalizeTeamName(g.awayTeam) === normalizeTeamName(espnGame.awayTeam)
-        );
-        if (!existing) {
-          allGames.push(espnGame);
+      for (const checkDate of datesToCheck) {
+        const espnGames = await fetchFromESPN(sportToCheck, checkDate);
+        
+        // Add ESPN games that aren't already in the list
+        for (const espnGame of espnGames) {
+          const existing = allGames.find(g => 
+            normalizeTeamName(g.homeTeam) === normalizeTeamName(espnGame.homeTeam) &&
+            normalizeTeamName(g.awayTeam) === normalizeTeamName(espnGame.awayTeam)
+          );
+          if (!existing) {
+            allGames.push(espnGame);
+          }
         }
       }
     }
