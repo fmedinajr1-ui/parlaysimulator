@@ -200,3 +200,6 @@ verify_jwt = false
 
 [functions.fanduel-daily-parlay-builder]
 verify_jwt = false
+
+[functions.verify-fanduel-trap-outcomes]
+verify_jwt = false
