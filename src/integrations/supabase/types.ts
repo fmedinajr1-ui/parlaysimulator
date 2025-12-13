@@ -665,6 +665,150 @@ export type Database = {
         }
         Relationships: []
       }
+      fanduel_daily_parlay: {
+        Row: {
+          confidence_score: number | null
+          created_at: string | null
+          id: string
+          legs: Json
+          movement_analysis: Json | null
+          outcome: string | null
+          parlay_date: string
+          reasoning_summary: string | null
+          scans_completed: number | null
+          settled_at: string | null
+          target_odds: number | null
+          total_movements_analyzed: number | null
+          total_odds: number
+          trap_patterns_found: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          confidence_score?: number | null
+          created_at?: string | null
+          id?: string
+          legs?: Json
+          movement_analysis?: Json | null
+          outcome?: string | null
+          parlay_date: string
+          reasoning_summary?: string | null
+          scans_completed?: number | null
+          settled_at?: string | null
+          target_odds?: number | null
+          total_movements_analyzed?: number | null
+          total_odds?: number
+          trap_patterns_found?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          confidence_score?: number | null
+          created_at?: string | null
+          id?: string
+          legs?: Json
+          movement_analysis?: Json | null
+          outcome?: string | null
+          parlay_date?: string
+          reasoning_summary?: string | null
+          scans_completed?: number | null
+          settled_at?: string | null
+          target_odds?: number | null
+          total_movements_analyzed?: number | null
+          total_odds?: number
+          trap_patterns_found?: number | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      fanduel_trap_analysis: {
+        Row: {
+          commence_time: string | null
+          confidence_score: number | null
+          created_at: string | null
+          current_price: number | null
+          description: string | null
+          event_id: string
+          fade_the_public_pick: string | null
+          hourly_movements: Json | null
+          id: string
+          is_public_bait: boolean | null
+          market_type: string
+          movement_count: number | null
+          movement_direction: string | null
+          odds_for_fade: number | null
+          opening_price: number | null
+          opposite_side_also_moved: boolean | null
+          outcome_name: string
+          player_name: string | null
+          price_only_move: boolean | null
+          public_bait_reason: string | null
+          recommended_side: string | null
+          scan_date: string
+          scan_round: number
+          scanned_at: string | null
+          sport: string
+          total_movement: number | null
+          trap_score: number | null
+        }
+        Insert: {
+          commence_time?: string | null
+          confidence_score?: number | null
+          created_at?: string | null
+          current_price?: number | null
+          description?: string | null
+          event_id: string
+          fade_the_public_pick?: string | null
+          hourly_movements?: Json | null
+          id?: string
+          is_public_bait?: boolean | null
+          market_type: string
+          movement_count?: number | null
+          movement_direction?: string | null
+          odds_for_fade?: number | null
+          opening_price?: number | null
+          opposite_side_also_moved?: boolean | null
+          outcome_name: string
+          player_name?: string | null
+          price_only_move?: boolean | null
+          public_bait_reason?: string | null
+          recommended_side?: string | null
+          scan_date?: string
+          scan_round?: number
+          scanned_at?: string | null
+          sport: string
+          total_movement?: number | null
+          trap_score?: number | null
+        }
+        Update: {
+          commence_time?: string | null
+          confidence_score?: number | null
+          created_at?: string | null
+          current_price?: number | null
+          description?: string | null
+          event_id?: string
+          fade_the_public_pick?: string | null
+          hourly_movements?: Json | null
+          id?: string
+          is_public_bait?: boolean | null
+          market_type?: string
+          movement_count?: number | null
+          movement_direction?: string | null
+          odds_for_fade?: number | null
+          opening_price?: number | null
+          opposite_side_also_moved?: boolean | null
+          outcome_name?: string
+          player_name?: string | null
+          price_only_move?: boolean | null
+          public_bait_reason?: string | null
+          recommended_side?: string | null
+          scan_date?: string
+          scan_round?: number
+          scanned_at?: string | null
+          sport?: string
+          total_movement?: number | null
+          trap_score?: number | null
+        }
+        Relationships: []
+      }
       fatigue_edge_tracking: {
         Row: {
           actual_spread: number | null

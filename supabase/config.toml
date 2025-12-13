@@ -194,3 +194,9 @@ verify_jwt = false
 
 [functions.backfill-player-stats]
 verify_jwt = false
+
+[functions.fanduel-trap-scanner]
+verify_jwt = false
+
+[functions.fanduel-daily-parlay-builder]
+verify_jwt = false
