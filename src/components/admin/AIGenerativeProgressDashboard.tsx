@@ -193,6 +193,8 @@ export function AIGenerativeProgressDashboard() {
     summary: VerificationSummary;
     results: VerificationResult[];
   } | null>(null);
+  const [isRefreshingStats, setIsRefreshingStats] = useState(false);
+  const [refreshProgress, setRefreshProgress] = useState<string>('');
 
   useEffect(() => {
     fetchData();
@@ -530,6 +532,71 @@ export function AIGenerativeProgressDashboard() {
     setIsVerifying(false);
   };
 
+  // Refresh stats and then settle parlays
+  const handleRefreshAndSettle = async () => {
+    setIsRefreshingStats(true);
+    setRefreshProgress('Fetching fresh NBA stats...');
+    
+    try {
+      // Step 1: Fetch fresh NBA stats
+      const { data: nbaData, error: nbaError } = await supabase.functions.invoke('nba-stats-fetcher', {
+        body: { mode: 'sync' }
+      });
+      
+      if (nbaError) {
+        console.error('NBA stats error:', nbaError);
+        toast.error('NBA stats fetch failed, continuing with settlement...');
+      } else {
+        toast.success(`NBA: ${nbaData?.results?.statsInserted || 0} stats updated`);
+      }
+      
+      setRefreshProgress('Stats refreshed! Running settlement...');
+      
+      // Step 2: Run settlement with force mode
+      const { data: settleData, error: settleError } = await supabase.functions.invoke('auto-settle-ai-parlays', {
+        body: { force: true }
+      });
+      
+      if (settleError) throw settleError;
+      
+      // Step 3: Sync learning progress
+      setRefreshProgress('Syncing learning progress...');
+      const { data: syncData } = await supabase.functions.invoke('ai-learning-engine', {
+        body: { action: 'sync_learning_progress' }
+      });
+      
+      const learningResults: LearningResults = {
+        ...settleData?.learningResults,
+        sync_results: syncData
+      };
+      
+      setSettlementProgress({
+        isRunning: false,
+        status: 'Complete',
+        settled: settleData?.settled || 0,
+        won: settleData?.won || 0,
+        lost: settleData?.lost || 0,
+        stillPending: settleData?.stillPending || 0,
+        settledDetails: settleData?.settledDetails || [],
+        learningResults
+      });
+      
+      toast.success(
+        `Refreshed & Settled ${settleData?.settled || 0} parlays (${settleData?.won || 0}W/${settleData?.lost || 0}L)`
+      );
+      
+      fetchData();
+      fetchDataFreshness();
+      fetchPendingBreakdown();
+      
+    } catch (error) {
+      toast.error('Refresh & Settle failed: ' + (error as Error).message);
+    }
+    
+    setRefreshProgress('');
+    setIsRefreshingStats(false);
+  };
+
   // Export helper functions
   const convertToCSV = (data: any[]) => {
     if (data.length === 0) return '';
@@ -695,9 +762,29 @@ export function AIGenerativeProgressDashboard() {
               {/* Data Freshness Warning */}
               {dataFreshness.isStale && (
                 <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3">
-                  <div className="flex items-center gap-2 text-yellow-500">
-                    <AlertCircle className="w-4 h-4" />
-                    <span className="text-sm font-medium">Stale Player Stats</span>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-yellow-500">
+                      <AlertCircle className="w-4 h-4" />
+                      <span className="text-sm font-medium">Stale Player Stats</span>
+                    </div>
+                    <Button
+                      onClick={handleRefreshAndSettle}
+                      disabled={isRefreshingStats}
+                      size="sm"
+                      className="bg-green-600 hover:bg-green-700"
+                    >
+                      {isRefreshingStats ? (
+                        <>
+                          <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                          {refreshProgress || 'Refreshing...'}
+                        </>
+                      ) : (
+                        <>
+                          <Download className="w-3 h-3 mr-1" />
+                          Refresh & Settle
+                        </>
+                      )}
+                    </Button>
                   </div>
                   <div className="grid grid-cols-3 gap-2 mt-2 text-xs">
                     <div className={dataFreshness.nba < new Date().toISOString().split('T')[0] ? 'text-yellow-500' : 'text-green-500'}>
@@ -710,9 +797,6 @@ export function AIGenerativeProgressDashboard() {
                       NHL: {dataFreshness.nhl}
                     </div>
                   </div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Settlement will skip props until fresh data is available
-                  </p>
                 </div>
               )}
 
