@@ -287,14 +287,24 @@ export function HitRatePicks() {
 
       if (error) throw error;
 
-      const streakSummary = data.byStreak 
-        ? `5/5: ${data.byStreak['5/5']?.length || 0}, 4/5: ${data.byStreak['4/5']?.length || 0}`
-        : '';
+      // Handle no props scenario
+      if (data.noPropsReason) {
+        toast({
+          title: "No Props Available",
+          description: data.noPropsReason,
+        });
+      } else {
+        const streakSummary = data.byStreak 
+          ? `5/5: ${data.byStreak['5/5']?.length || 0}, 4/5: ${data.byStreak['4/5']?.length || 0}`
+          : '';
 
-      toast({
-        title: "Analysis Complete",
-        description: `Found ${data.analyzed} props. ${streakSummary}`,
-      });
+        toast({
+          title: "Analysis Complete",
+          description: data.analyzed > 0 
+            ? `Found ${data.analyzed} props. ${streakSummary}`
+            : `Checked ${data.propsChecked} props but none met threshold`,
+        });
+      }
 
       queryClient.invalidateQueries({ queryKey: ['hitrate-props'] });
     } catch (error) {
