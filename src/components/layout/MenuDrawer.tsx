@@ -12,7 +12,8 @@ import {
   Shield,
   Users,
   ChevronRight,
-  Flame
+  Flame,
+  ScanSearch
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
@@ -24,6 +25,7 @@ const menuItems = [
   { icon: Flame, label: "Hit Rate", path: "/hitrate", description: "X/5 streak patterns" },
   { icon: Flame, label: "God Mode Upsets", path: "/god-mode", description: "AI upset predictions" },
   { icon: Zap, label: "GOD MODE Tracker", path: "/god-mode-tracker", description: "Sharp vs Vegas intel" },
+  { icon: ScanSearch, label: "FanDuel Scanner", path: "/fanduel-traps", description: "Trap line detection" },
   { icon: Activity, label: "Sharp Money", path: "/sharp", description: "Track sharp action" },
   { icon: Activity, label: "NBA Fatigue", path: "/nba-fatigue", description: "Team fatigue analysis" },
   { icon: GitCompare, label: "Compare Parlays", path: "/compare", description: "Head-to-head comparison" },
