@@ -331,13 +331,25 @@ async function fetchAllSportsGames(supabase: any, legDescriptions: string[]): Pr
   return allGames;
 }
 
-async function fetchPlayerStats(supabase: any, playerName: string, gameDates: string[], sport: string): Promise<any | null> {
+// Returns stats with the date they're from for validation
+interface PlayerStatsResult {
+  stats: any;
+  statsDate: string;
+  source: string;
+}
+
+async function fetchPlayerStats(
+  supabase: any, 
+  playerName: string, 
+  targetGameDate: string, // Now expects ONLY the specific game date
+  sport: string
+): Promise<PlayerStatsResult | null> {
   // Extract last name for fuzzy matching
   const nameParts = playerName.split(' ');
   const lastName = nameParts[nameParts.length - 1];
   const firstName = nameParts[0];
   
-  console.log(`🔍 Searching stats for ${playerName} on dates: ${gameDates.join(', ')} (${sport})...`);
+  console.log(`🔍 Searching stats for ${playerName} on EXACT date: ${targetGameDate} (${sport})...`);
   
   // Determine which table to query based on sport
   const tableMap: Record<string, string> = {
@@ -348,49 +360,53 @@ async function fetchPlayerStats(supabase: any, playerName: string, gameDates: st
   
   const tableName = tableMap[sport] || 'nba_player_game_logs';
   
-  // Try each date
-  for (const gameDate of gameDates) {
-    const { data: logs, error } = await supabase
-      .from(tableName)
-      .select('*')
-      .ilike('player_name', `%${lastName}%`)
-      .eq('game_date', gameDate)
-      .limit(5);
-    
-    if (error) {
-      console.log(`⚠️ Error querying ${tableName}:`, error.message);
-      continue;
-    }
-    
-    if (logs && logs.length > 0) {
-      // Find best match by first name
-      const bestMatch = logs.find((l: any) => 
-        l.player_name.toLowerCase().includes(firstName.toLowerCase())
-      ) || logs[0];
-      console.log(`✅ Found stats in ${tableName}: ${bestMatch.player_name} on ${gameDate}`);
-      return bestMatch;
-    }
+  // ONLY query the exact game date - no fallback to other dates
+  const { data: logs, error } = await supabase
+    .from(tableName)
+    .select('*')
+    .ilike('player_name', `%${lastName}%`)
+    .eq('game_date', targetGameDate)
+    .limit(5);
+  
+  if (error) {
+    console.log(`⚠️ Error querying ${tableName}:`, error.message);
+    return null;
   }
   
-  // Try player_stats_cache as fallback
-  for (const gameDate of gameDates) {
-    const { data: cache } = await supabase
-      .from('player_stats_cache')
-      .select('*')
-      .ilike('player_name', `%${lastName}%`)
-      .eq('game_date', gameDate)
-      .limit(5);
-    
-    if (cache && cache.length > 0) {
-      const bestMatch = cache.find((c: any) => 
-        c.player_name.toLowerCase().includes(firstName.toLowerCase())
-      ) || cache[0];
-      console.log(`✅ Found stats in cache: ${bestMatch.player_name} on ${gameDate}`);
-      return bestMatch;
-    }
+  if (logs && logs.length > 0) {
+    // Find best match by first name
+    const bestMatch = logs.find((l: any) => 
+      l.player_name.toLowerCase().includes(firstName.toLowerCase())
+    ) || logs[0];
+    console.log(`✅ Found stats in ${tableName}: ${bestMatch.player_name} on ${targetGameDate}`);
+    return {
+      stats: bestMatch,
+      statsDate: targetGameDate,
+      source: tableName
+    };
   }
   
-  console.log(`⚠️ No stats found for ${playerName} in any of dates: ${gameDates.join(', ')}`);
+  // Try player_stats_cache as fallback for same date only
+  const { data: cache } = await supabase
+    .from('player_stats_cache')
+    .select('*')
+    .ilike('player_name', `%${lastName}%`)
+    .eq('game_date', targetGameDate)
+    .limit(5);
+  
+  if (cache && cache.length > 0) {
+    const bestMatch = cache.find((c: any) => 
+      c.player_name.toLowerCase().includes(firstName.toLowerCase())
+    ) || cache[0];
+    console.log(`✅ Found stats in cache: ${bestMatch.player_name} on ${targetGameDate}`);
+    return {
+      stats: bestMatch,
+      statsDate: targetGameDate,
+      source: 'player_stats_cache'
+    };
+  }
+  
+  console.log(`⚠️ No stats found for ${playerName} on ${targetGameDate} - data may not be available yet`);
   return null;
 }
 
@@ -411,20 +427,64 @@ async function evaluateLeg(
   // Get games for this sport
   const games = allGames[sport] || allGames['nba'] || [];
   
-  console.log(`📋 Evaluating leg ${legIndex}: ${description.substring(0, 60)}... (sport: ${sport}, games: ${games.length})`);
+  // Extract the EXACT game date from the leg's commence_time
+  const commenceTime = leg.commence_time || leg.commenceTime;
+  let targetGameDate: string | null = null;
+  
+  if (commenceTime) {
+    const gameDateTime = new Date(commenceTime);
+    targetGameDate = gameDateTime.toISOString().split('T')[0];
+    
+    // CRITICAL: Check if game has likely finished (at least 3 hours after start)
+    const now = new Date();
+    const hoursSinceStart = (now.getTime() - gameDateTime.getTime()) / (1000 * 60 * 60);
+    
+    if (hoursSinceStart < 3) {
+      console.log(`⏳ Game may still be in progress (started ${hoursSinceStart.toFixed(1)}h ago): ${description.substring(0, 50)}...`);
+      return { 
+        legIndex, 
+        description, 
+        outcome: 'pending', 
+        settlementMethod: 'game_in_progress', 
+        dataSource: 'none',
+        sport,
+        pendingReason: `Game started ${hoursSinceStart.toFixed(1)}h ago - likely still in progress`
+      };
+    }
+    
+    console.log(`📅 Target game date from commence_time: ${targetGameDate} (${hoursSinceStart.toFixed(1)}h ago)`);
+  } else {
+    console.log(`⚠️ No commence_time found for leg, using fallback dates`);
+  }
+  
+  console.log(`📋 Evaluating leg ${legIndex}: ${description.substring(0, 60)}... (sport: ${sport}, games: ${games.length}, gameDate: ${targetGameDate})`);
   
   // Check if it's a player prop
   const propData = parsePlayerProp(description);
   if (propData) {
     console.log(`🎯 Player prop detected: ${propData.playerName} ${propData.side} ${propData.line} ${propData.propType}`);
     
-    const stats = await fetchPlayerStats(supabase, propData.playerName, gameDates, sport);
-    if (stats) {
-      const actualValue = stats[propData.propType] || 0;
+    // Only fetch stats for the EXACT game date
+    if (!targetGameDate) {
+      return { 
+        legIndex, 
+        description, 
+        outcome: 'pending', 
+        settlementMethod: 'no_game_date', 
+        dataSource: 'none',
+        sport,
+        pendingReason: `No commence_time available to determine game date`
+      };
+    }
+    
+    const statsResult = await fetchPlayerStats(supabase, propData.playerName, targetGameDate, sport);
+    
+    if (statsResult) {
+      const actualValue = statsResult.stats[propData.propType] || 0;
       const won = propData.side === 'over' ? actualValue > propData.line : actualValue < propData.line;
       const push = actualValue === propData.line;
       
-      console.log(`📊 Result: ${actualValue} ${propData.side === 'over' ? '>' : '<'} ${propData.line} = ${won ? 'WON' : push ? 'PUSH' : 'LOST'}`);
+      console.log(`📊 Result: ${actualValue} ${propData.side === 'over' ? '>' : '<'} ${propData.line} = ${won ? 'WON' : push ? 'PUSH' : 'LOST'} (stats from ${statsResult.statsDate})`);
       
       return {
         legIndex,
@@ -433,7 +493,7 @@ async function evaluateLeg(
         settlementMethod: 'player_stats',
         actualValue,
         line: propData.line,
-        dataSource: `${sport}_game_logs`,
+        dataSource: `${statsResult.source}`,
         sport
       };
     }
@@ -445,7 +505,7 @@ async function evaluateLeg(
       settlementMethod: 'player_prop_no_data', 
       dataSource: 'none',
       sport,
-      pendingReason: `No stats found for ${propData.playerName} in ${sport}`
+      pendingReason: `No stats for ${propData.playerName} on ${targetGameDate} - stats not yet available`
     };
   }
   
@@ -675,9 +735,33 @@ serve(async (req) => {
       diagnostics: {
         sportBreakdown: {} as Record<string, number>,
         pendingReasons: {} as Record<string, number>,
-        gamesFound: {} as Record<string, number>
+        gamesFound: {} as Record<string, number>,
+        dataFreshness: {} as Record<string, string>,
+        staleDataWarning: false
       }
     };
+
+    // Check data freshness for each sport's player stats
+    const today = new Date().toISOString().split('T')[0];
+    const sportTables = ['nba_player_game_logs', 'nfl_player_game_logs', 'nhl_player_game_logs'];
+    
+    for (const table of sportTables) {
+      const { data: latestStats } = await supabase
+        .from(table)
+        .select('game_date')
+        .order('game_date', { ascending: false })
+        .limit(1);
+      
+      const latestDate = latestStats?.[0]?.game_date || 'none';
+      results.diagnostics.dataFreshness[table] = latestDate;
+      
+      if (latestDate !== 'none' && latestDate < today) {
+        console.log(`⚠️ STALE DATA WARNING: ${table} latest data is from ${latestDate}, today is ${today}`);
+        results.diagnostics.staleDataWarning = true;
+      } else {
+        console.log(`✅ ${table} data freshness: ${latestDate}`);
+      }
+    }
 
     // Group parlays by sport for efficient score fetching
     const parlaysBySport: Record<string, typeof pendingParlays> = {};
