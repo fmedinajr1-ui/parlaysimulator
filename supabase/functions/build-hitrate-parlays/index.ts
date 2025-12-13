@@ -239,8 +239,8 @@ serve(async (req) => {
         
         for (const leg of parlay.legs) {
           try {
-            // Check if this prop has any line movement data
-            const { data: movements } = await supabase
+            // Strategy 1: Check for exact player match
+            let { data: movements } = await supabase
               .from('line_movements')
               .select('*')
               .eq('player_name', leg.player_name)
@@ -248,15 +248,63 @@ serve(async (req) => {
               .order('detected_at', { ascending: false })
               .limit(1);
 
+            // Strategy 2: If no player match, check for event-level sharp data
+            if (!movements || movements.length === 0) {
+              const eventId = leg.event_id;
+              if (eventId) {
+                const { data: eventMovements } = await supabase
+                  .from('line_movements')
+                  .select('*')
+                  .eq('event_id', eventId)
+                  .eq('is_sharp_action', true)
+                  .order('detected_at', { ascending: false })
+                  .limit(3);
+
+                if (eventMovements && eventMovements.length > 0) {
+                  // Found sharp data for the same game
+                  movements = eventMovements;
+                  console.log(`Found ${eventMovements.length} event-level sharp movements for ${eventId}`);
+                }
+              }
+            }
+
+            // Strategy 3: Fuzzy player name match (try partial match)
+            if (!movements || movements.length === 0) {
+              const lastName = leg.player_name.split(' ').pop();
+              if (lastName && lastName.length >= 3) {
+                const { data: fuzzyMovements } = await supabase
+                  .from('line_movements')
+                  .select('*')
+                  .ilike('player_name', `%${lastName}%`)
+                  .eq('market_type', leg.prop_type)
+                  .order('detected_at', { ascending: false })
+                  .limit(1);
+
+                if (fuzzyMovements && fuzzyMovements.length > 0) {
+                  movements = fuzzyMovements;
+                  console.log(`Found fuzzy match for ${leg.player_name} -> ${fuzzyMovements[0].player_name}`);
+                }
+              }
+            }
+
             if (movements && movements.length > 0) {
               const movement = movements[0];
+              const matchType = movement.player_name === leg.player_name 
+                ? 'exact' 
+                : movement.event_id === leg.event_id 
+                  ? 'event' 
+                  : 'fuzzy';
+
               sharpResults.push({
                 player_name: leg.player_name,
                 prop_type: leg.prop_type,
                 is_sharp: movement.is_sharp_action,
                 recommendation: movement.recommendation,
                 movement_type: movement.movement_type,
-                price_change: movement.price_change
+                price_change: movement.price_change,
+                match_type: matchType,
+                matched_player: movement.player_name,
+                matched_description: movement.description
               });
 
               // Boost confidence if sharp action aligns with hit rate recommendation
@@ -272,6 +320,7 @@ serve(async (req) => {
 
         parlay.sharp_optimized = sharpResults.length > 0;
         parlay.sharp_analysis = sharpResults;
+        parlay.sharp_analysis_attempted = true; // Mark that we attempted analysis
       }
     }
 

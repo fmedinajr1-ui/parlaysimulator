@@ -1,8 +1,9 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { TrendingUp, Target, Zap, ChevronDown, ChevronUp, Trophy, X } from "lucide-react";
+import { TrendingUp, Target, Zap, ChevronDown, ChevronUp, Trophy, X, AlertCircle } from "lucide-react";
 import { useState } from "react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface HitRateLeg {
   player_name: string;
@@ -31,6 +32,7 @@ interface HitRateParlay {
   strategy_type: string;
   sharp_optimized: boolean;
   sharp_analysis?: any[];
+  sharp_analysis_attempted?: boolean;
   sport: string;
   expires_at: string;
 }
@@ -129,6 +131,21 @@ export function HitRateParlayCard({ parlay, onRunSharpAnalysis, onDismiss }: Hit
                 <Zap className="h-3 w-3 mr-1" />
                 Sharp
               </Badge>
+            )}
+            {parlay.sharp_analysis_attempted && !parlay.sharp_optimized && (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Badge variant="outline" className="bg-muted/50 text-muted-foreground border-muted-foreground/30">
+                      <AlertCircle className="h-3 w-3 mr-1" />
+                      No Sharp Data
+                    </Badge>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs">
+                    <p>No sharp money movements detected for these players/games. The parlay is still valid based on historical hit rates.</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             )}
             {onDismiss && (
               <Button
