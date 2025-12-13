@@ -719,8 +719,57 @@ export type Database = {
         }
         Relationships: []
       }
+      fanduel_trap_accuracy_metrics: {
+        Row: {
+          accuracy_rate: number | null
+          avg_odds: number | null
+          avg_trap_score: number | null
+          correct_predictions: number | null
+          created_at: string | null
+          id: string
+          roi_percentage: number | null
+          signal_type: string
+          sport: string
+          total_predictions: number | null
+          trap_type: string
+          updated_at: string | null
+          verified_predictions: number | null
+        }
+        Insert: {
+          accuracy_rate?: number | null
+          avg_odds?: number | null
+          avg_trap_score?: number | null
+          correct_predictions?: number | null
+          created_at?: string | null
+          id?: string
+          roi_percentage?: number | null
+          signal_type: string
+          sport: string
+          total_predictions?: number | null
+          trap_type: string
+          updated_at?: string | null
+          verified_predictions?: number | null
+        }
+        Update: {
+          accuracy_rate?: number | null
+          avg_odds?: number | null
+          avg_trap_score?: number | null
+          correct_predictions?: number | null
+          created_at?: string | null
+          id?: string
+          roi_percentage?: number | null
+          signal_type?: string
+          sport?: string
+          total_predictions?: number | null
+          trap_type?: string
+          updated_at?: string | null
+          verified_predictions?: number | null
+        }
+        Relationships: []
+      }
       fanduel_trap_analysis: {
         Row: {
+          actual_closing_price: number | null
           commence_time: string | null
           confidence_score: number | null
           created_at: string | null
@@ -728,6 +777,7 @@ export type Database = {
           description: string | null
           event_id: string
           fade_the_public_pick: string | null
+          fade_won: boolean | null
           hourly_movements: Json | null
           id: string
           is_public_bait: boolean | null
@@ -737,7 +787,9 @@ export type Database = {
           odds_for_fade: number | null
           opening_price: number | null
           opposite_side_also_moved: boolean | null
+          outcome: string | null
           outcome_name: string
+          outcome_verified_at: string | null
           player_name: string | null
           price_only_move: boolean | null
           public_bait_reason: string | null
@@ -745,11 +797,13 @@ export type Database = {
           scan_date: string
           scan_round: number
           scanned_at: string | null
+          signals_detected: string[] | null
           sport: string
           total_movement: number | null
           trap_score: number | null
         }
         Insert: {
+          actual_closing_price?: number | null
           commence_time?: string | null
           confidence_score?: number | null
           created_at?: string | null
@@ -757,6 +811,7 @@ export type Database = {
           description?: string | null
           event_id: string
           fade_the_public_pick?: string | null
+          fade_won?: boolean | null
           hourly_movements?: Json | null
           id?: string
           is_public_bait?: boolean | null
@@ -766,7 +821,9 @@ export type Database = {
           odds_for_fade?: number | null
           opening_price?: number | null
           opposite_side_also_moved?: boolean | null
+          outcome?: string | null
           outcome_name: string
+          outcome_verified_at?: string | null
           player_name?: string | null
           price_only_move?: boolean | null
           public_bait_reason?: string | null
@@ -774,11 +831,13 @@ export type Database = {
           scan_date?: string
           scan_round?: number
           scanned_at?: string | null
+          signals_detected?: string[] | null
           sport: string
           total_movement?: number | null
           trap_score?: number | null
         }
         Update: {
+          actual_closing_price?: number | null
           commence_time?: string | null
           confidence_score?: number | null
           created_at?: string | null
@@ -786,6 +845,7 @@ export type Database = {
           description?: string | null
           event_id?: string
           fade_the_public_pick?: string | null
+          fade_won?: boolean | null
           hourly_movements?: Json | null
           id?: string
           is_public_bait?: boolean | null
@@ -795,7 +855,9 @@ export type Database = {
           odds_for_fade?: number | null
           opening_price?: number | null
           opposite_side_also_moved?: boolean | null
+          outcome?: string | null
           outcome_name?: string
+          outcome_verified_at?: string | null
           player_name?: string | null
           price_only_move?: boolean | null
           public_bait_reason?: string | null
@@ -803,6 +865,7 @@ export type Database = {
           scan_date?: string
           scan_round?: number
           scanned_at?: string | null
+          signals_detected?: string[] | null
           sport?: string
           total_movement?: number | null
           trap_score?: number | null

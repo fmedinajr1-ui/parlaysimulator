@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -9,16 +9,16 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { 
   Target, 
-  TrendingUp, 
   AlertTriangle, 
-  Zap, 
   Clock,
   RefreshCw,
   Trophy,
-  ChevronRight,
   Loader2,
   BarChart3,
-  Eye
+  Eye,
+  TrendingUp,
+  CheckCircle2,
+  XCircle
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -43,6 +43,9 @@ interface TrapAnalysis {
   confidence_score: number;
   commence_time: string;
   scanned_at: string;
+  signals_detected?: string[];
+  outcome?: string;
+  fade_won?: boolean;
 }
 
 interface DailyParlay {
@@ -60,11 +63,20 @@ interface DailyParlay {
   outcome: string;
 }
 
+interface AccuracyMetric {
+  sport: string;
+  trap_type: string;
+  signal_type: string;
+  total_predictions: number;
+  correct_predictions: number;
+  accuracy_rate: number;
+  roi_percentage: number;
+}
+
 export default function FanDuelTraps() {
   const queryClient = useQueryClient();
   const today = new Date().toISOString().split('T')[0];
   
-  // Fetch trap analysis for today
   const { data: trapAnalysis, isLoading: loadingTraps } = useQuery({
     queryKey: ['fanduel-traps', today],
     queryFn: async () => {
@@ -77,10 +89,9 @@ export default function FanDuelTraps() {
       if (error) throw error;
       return data as TrapAnalysis[];
     },
-    refetchInterval: 60000 // Refresh every minute
+    refetchInterval: 60000
   });
   
-  // Fetch daily parlay
   const { data: dailyParlay, isLoading: loadingParlay } = useQuery({
     queryKey: ['fanduel-daily-parlay', today],
     queryFn: async () => {
@@ -95,8 +106,20 @@ export default function FanDuelTraps() {
     },
     refetchInterval: 60000
   });
+
+  const { data: accuracyMetrics } = useQuery({
+    queryKey: ['fanduel-accuracy'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('fanduel_trap_accuracy_metrics')
+        .select('*')
+        .order('total_predictions', { ascending: false });
+      
+      if (error) throw error;
+      return data as AccuracyMetric[];
+    }
+  });
   
-  // Run scanner mutation
   const runScanner = useMutation({
     mutationFn: async () => {
       const { data, error } = await supabase.functions.invoke('fanduel-trap-scanner');
@@ -113,7 +136,6 @@ export default function FanDuelTraps() {
     }
   });
   
-  // Build parlay mutation
   const buildParlay = useMutation({
     mutationFn: async () => {
       const { data, error } = await supabase.functions.invoke('fanduel-daily-parlay-builder');
@@ -136,6 +158,9 @@ export default function FanDuelTraps() {
   const highConfidenceTraps = trapAnalysis?.filter(t => t.trap_score >= 40) || [];
   const progressPercent = dailyParlay ? Math.min((dailyParlay.scans_completed / 24) * 100, 100) : 0;
   
+  const overallAccuracy = accuracyMetrics?.find(m => m.sport === 'all' && m.signal_type === 'all');
+  const sportAccuracy = accuracyMetrics?.filter(m => m.signal_type === 'all' && m.sport !== 'all') || [];
+  
   const getSportEmoji = (sport: string) => {
     if (sport.includes('basketball')) return '🏀';
     if (sport.includes('football')) return '🏈';
@@ -153,15 +178,14 @@ export default function FanDuelTraps() {
 
   return (
     <div className="container mx-auto p-4 space-y-6 pb-24">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Target className="h-6 w-6 text-primary" />
-            FanDuel Trap Detector
+            FanDuel Trap Detector V2
           </h1>
           <p className="text-muted-foreground text-sm">
-            Hourly analysis of FanDuel line movements to detect public traps
+            Enhanced trap detection with player props & outcome verification
           </p>
         </div>
         <div className="flex gap-2">
@@ -181,7 +205,7 @@ export default function FanDuelTraps() {
           <Button 
             size="sm"
             onClick={() => buildParlay.mutate()}
-            disabled={buildParlay.isPending || highConfidenceTraps.length < 3}
+            disabled={buildParlay.isPending || highConfidenceTraps.length < 2}
           >
             {buildParlay.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin mr-2" />
@@ -192,6 +216,49 @@ export default function FanDuelTraps() {
           </Button>
         </div>
       </div>
+
+      {/* Accuracy Dashboard */}
+      {overallAccuracy && overallAccuracy.total_predictions > 0 && (
+        <Card className="border-primary/30 bg-gradient-to-br from-primary/5 to-transparent">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <TrendingUp className="h-5 w-5 text-primary" />
+              Verified Accuracy
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-4 gap-4 text-center">
+              <div>
+                <div className="text-3xl font-bold text-primary">{overallAccuracy.accuracy_rate}%</div>
+                <div className="text-xs text-muted-foreground">Win Rate</div>
+              </div>
+              <div>
+                <div className={`text-3xl font-bold ${overallAccuracy.roi_percentage >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                  {overallAccuracy.roi_percentage > 0 ? '+' : ''}{overallAccuracy.roi_percentage}%
+                </div>
+                <div className="text-xs text-muted-foreground">ROI</div>
+              </div>
+              <div>
+                <div className="text-3xl font-bold">{overallAccuracy.correct_predictions}</div>
+                <div className="text-xs text-muted-foreground">Wins</div>
+              </div>
+              <div>
+                <div className="text-3xl font-bold">{overallAccuracy.total_predictions}</div>
+                <div className="text-xs text-muted-foreground">Total</div>
+              </div>
+            </div>
+            {sportAccuracy.length > 0 && (
+              <div className="mt-4 flex gap-2 flex-wrap">
+                {sportAccuracy.map(s => (
+                  <Badge key={s.sport} variant="outline" className="text-xs">
+                    {getSportEmoji(s.sport)} {s.accuracy_rate}% ({s.total_predictions})
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
       
       {/* Progress Card */}
       <Card>
@@ -252,7 +319,6 @@ export default function FanDuelTraps() {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            {/* Parlay Legs */}
             <div className="space-y-3">
               {dailyParlay.legs.map((leg: any, index: number) => (
                 <div 
@@ -264,32 +330,26 @@ export default function FanDuelTraps() {
                     <div>
                       <div className="font-medium text-sm">{leg.description}</div>
                       <div className="text-xs text-muted-foreground">{leg.fadePick}</div>
+                      {leg.signals && leg.signals.length > 0 && (
+                        <div className="flex gap-1 mt-1">
+                          {leg.signals.slice(0, 3).map((s: string) => (
+                            <Badge key={s} variant="outline" className="text-[10px] px-1 py-0">{s}</Badge>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
-                  <div className="text-right">
+                  <div className="text-right space-y-1">
                     <Badge variant="outline" className={getTrapScoreColor(leg.trapScore)}>
                       {leg.trapScore}
                     </Badge>
-                    <div className="text-sm font-medium mt-1">
+                    <div className="text-sm font-medium">
                       {leg.odds > 0 ? '+' : ''}{leg.odds}
                     </div>
                   </div>
                 </div>
               ))}
             </div>
-            
-            {/* Reasoning Summary */}
-            {dailyParlay.reasoning_summary && (
-              <div className="mt-4 p-4 bg-secondary/20 rounded-lg">
-                <h4 className="font-medium mb-2 flex items-center gap-2">
-                  <Eye className="h-4 w-4" />
-                  Analysis Summary
-                </h4>
-                <div className="text-sm text-muted-foreground whitespace-pre-wrap">
-                  {dailyParlay.reasoning_summary}
-                </div>
-              </div>
-            )}
           </CardContent>
         </Card>
       )}
@@ -297,15 +357,9 @@ export default function FanDuelTraps() {
       {/* Trap Analysis Tabs */}
       <Tabs defaultValue="high" className="space-y-4">
         <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="high">
-            High Traps ({highConfidenceTraps.length})
-          </TabsTrigger>
-          <TabsTrigger value="all">
-            All ({trapAnalysis?.length || 0})
-          </TabsTrigger>
-          <TabsTrigger value="live">
-            Live Feed
-          </TabsTrigger>
+          <TabsTrigger value="high">High ({highConfidenceTraps.length})</TabsTrigger>
+          <TabsTrigger value="all">All ({trapAnalysis?.length || 0})</TabsTrigger>
+          <TabsTrigger value="verified">Verified</TabsTrigger>
         </TabsList>
         
         <TabsContent value="high">
@@ -342,21 +396,31 @@ export default function FanDuelTraps() {
           </ScrollArea>
         </TabsContent>
         
-        <TabsContent value="live">
-          <Card>
-            <CardContent className="py-8 text-center text-muted-foreground">
-              <Clock className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p>Live feed updates every hour</p>
-              <p className="text-sm">Next scan in {60 - new Date().getMinutes()} minutes</p>
-            </CardContent>
-          </Card>
+        <TabsContent value="verified">
+          <ScrollArea className="h-[400px]">
+            <div className="space-y-3">
+              {trapAnalysis?.filter(t => t.outcome && t.outcome !== 'pending').length === 0 ? (
+                <Card>
+                  <CardContent className="py-8 text-center text-muted-foreground">
+                    <Clock className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                    <p>No verified outcomes yet</p>
+                    <p className="text-sm">Outcomes are verified after games complete</p>
+                  </CardContent>
+                </Card>
+              ) : (
+                trapAnalysis?.filter(t => t.outcome && t.outcome !== 'pending').map((trap) => (
+                  <TrapCard key={trap.id} trap={trap} showOutcome />
+                ))
+              )}
+            </div>
+          </ScrollArea>
         </TabsContent>
       </Tabs>
     </div>
   );
 }
 
-function TrapCard({ trap }: { trap: TrapAnalysis }) {
+function TrapCard({ trap, showOutcome = false }: { trap: TrapAnalysis; showOutcome?: boolean }) {
   const getSportEmoji = (sport: string) => {
     if (sport.includes('basketball')) return '🏀';
     if (sport.includes('football')) return '🏈';
@@ -387,14 +451,28 @@ function TrapCard({ trap }: { trap: TrapAnalysis }) {
                   {trap.fade_the_public_pick}
                 </div>
               )}
-              {trap.public_bait_reason && (
-                <div className="mt-1 text-xs text-muted-foreground">
-                  {trap.public_bait_reason}
+              {trap.signals_detected && trap.signals_detected.length > 0 && (
+                <div className="flex gap-1 mt-2 flex-wrap">
+                  {trap.signals_detected.map((signal) => (
+                    <Badge key={signal} variant="outline" className="text-[10px]">{signal}</Badge>
+                  ))}
                 </div>
               )}
             </div>
           </div>
           <div className="text-right space-y-2">
+            {showOutcome && trap.outcome !== 'pending' && (
+              <div className="flex items-center gap-1 justify-end">
+                {trap.fade_won ? (
+                  <CheckCircle2 className="h-4 w-4 text-green-500" />
+                ) : (
+                  <XCircle className="h-4 w-4 text-red-500" />
+                )}
+                <span className={trap.fade_won ? 'text-green-500 text-sm' : 'text-red-500 text-sm'}>
+                  {trap.fade_won ? 'WIN' : 'LOSS'}
+                </span>
+              </div>
+            )}
             <Badge className={getTrapScoreColor(trap.trap_score)}>
               {trap.trap_score}
             </Badge>
