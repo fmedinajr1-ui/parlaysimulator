@@ -22,7 +22,7 @@ interface PlayerStats {
   is_home: boolean;
 }
 
-// ESPN Player Stats Fetcher (backup source)
+// ESPN Player Stats Fetcher - uses dynamic label mapping
 async function fetchESPNGameBoxscores(gameDate: string): Promise<PlayerStats[]> {
   const stats: PlayerStats[] = [];
   
@@ -68,22 +68,60 @@ async function fetchESPNGameBoxscores(gameDate: string): Promise<PlayerStats[]> 
           const isHome = teamPlayers.team?.id === homeTeam.team?.id;
           const opponent = isHome ? awayTeam.team?.displayName : homeTeam.team?.displayName;
           
+          // Get the stat labels dynamically - this is the key fix!
+          const statLabels: string[] = teamPlayers.statistics?.[0]?.labels || [];
+          
+          // Create a mapping of stat name to index
+          const labelIndex: Record<string, number> = {};
+          statLabels.forEach((label: string, idx: number) => {
+            labelIndex[label.toUpperCase()] = idx;
+          });
+          
+          console.log(`[ESPN] Stat labels for ${teamPlayers.team?.displayName}:`, statLabels.join(', '));
+          
           for (const player of teamPlayers.statistics?.[0]?.athletes || []) {
             const statValues = player.stats || [];
             
-            // ESPN stat indices: MIN, FG, 3PT, FT, OREB, DREB, REB, AST, STL, BLK, TO, PF, +/-, PTS
-            const getStatNum = (idx: number) => parseInt(statValues[idx]?.split('-')?.[0]) || parseInt(statValues[idx]) || 0;
+            // Helper to get stat by label name (not hardcoded index)
+            const getStatByLabel = (label: string): number => {
+              const idx = labelIndex[label.toUpperCase()];
+              if (idx === undefined) return 0;
+              const val = statValues[idx];
+              if (!val) return 0;
+              // Handle formats like "5-10" (made-attempted) or just "5"
+              const parsed = parseInt(val.split('-')[0]);
+              return isNaN(parsed) ? 0 : parsed;
+            };
+            
+            const points = getStatByLabel('PTS');
+            const rebounds = getStatByLabel('REB');
+            const assists = getStatByLabel('AST');
+            const blocks = getStatByLabel('BLK');
+            const steals = getStatByLabel('STL');
+            const threesMade = getStatByLabel('3PT');
+            
+            // Validate - skip players with clearly invalid stats
+            if (points < 0 || rebounds < 0 || assists < 0) {
+              console.warn(`[ESPN] Skipping invalid stats for ${player.athlete?.displayName}: pts=${points}, reb=${rebounds}, ast=${assists}`);
+              continue;
+            }
+            
+            // Skip players who didn't play (0 minutes or DNP)
+            const minutes = getStatByLabel('MIN');
+            if (minutes === 0 && points === 0 && rebounds === 0 && assists === 0) {
+              continue;
+            }
             
             stats.push({
               player_name: player.athlete?.displayName || '',
               game_date: gameDate,
               opponent: opponent || 'Unknown',
-              points: getStatNum(13), // PTS
-              rebounds: getStatNum(6), // REB
-              assists: getStatNum(7), // AST
-              threes_made: parseInt(statValues[2]?.split('-')?.[0]) || 0, // 3PT made
-              blocks: getStatNum(9), // BLK
-              steals: getStatNum(8), // STL
+              points,
+              rebounds,
+              assists,
+              threes_made: threesMade,
+              blocks,
+              steals,
               is_home: isHome,
             });
           }
