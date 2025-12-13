@@ -56,29 +56,24 @@ const getTrendLabel = (trend: 'up' | 'down' | 'neutral') => {
   }
 };
 
-// X/5 streak filter options
+// X/5 streak filter options - Only 5/5 and 8/10
 const STREAK_OPTIONS = [
-  { value: "all", label: "All Patterns" },
+  { value: "all", label: "All (80%+)" },
   { value: "5/5", label: "🔥 5/5 Perfect" },
-  { value: "4/5", label: "⚡ 4/5 Strong" },
-  { value: "3/5", label: "✓ 3/5 Solid" },
-  { value: "2/5", label: "📊 2/5 Trending" },
 ];
 
-// Sport filter options (NBA first)
+// Sport filter - Always scans all 3, but can filter display
 const SPORT_OPTIONS = [
-  { value: "basketball_nba", label: "🏀 NBA" },
   { value: "all", label: "All Sports" },
+  { value: "basketball_nba", label: "🏀 NBA" },
   { value: "americanfootball_nfl", label: "🏈 NFL" },
   { value: "icehockey_nhl", label: "🏒 NHL" },
 ];
 
+// Only 80%+ hit rates
 const HIT_RATE_OPTIONS = [
-  { value: 0.4, label: "40%+" },
-  { value: 0.5, label: "50%+" },
-  { value: 0.6, label: "60%+" },
-  { value: 0.7, label: "70%+" },
-  { value: 0.8, label: "80%+" },
+  { value: 0.8, label: "80%+ (8/10)" },
+  { value: 1.0, label: "100% (5/5)" },
 ];
 
 // Line value filter options
@@ -150,10 +145,11 @@ export function HitRatePicks() {
   const [isBuilding, setIsBuilding] = useState(false);
   const [isCalcStats, setIsCalcStats] = useState(false);
   const [isNhlFetching, setIsNhlFetching] = useState(false);
-  const [hitRateThreshold, setHitRateThreshold] = useState(0.6);
+  const [hitRateThreshold, setHitRateThreshold] = useState(0.8); // Default to 80%
   const [streakFilter, setStreakFilter] = useState("all");
-  const [sportFilter, setSportFilter] = useState("basketball_nba");
+  const [sportFilter, setSportFilter] = useState("all"); // Default to all sports
   const [lineValueFilter, setLineValueFilter] = useState("all");
+  const [propsToday, setPropsToday] = useState(0);
   const hasAutoFetched = useRef(false);
 
   // Fetch existing hit rate parlays
@@ -269,40 +265,47 @@ export function HitRatePicks() {
     }
   };
 
-  // Analyze props mutation
+  // Analyze props mutation - always scans all 3 sports with strict filtering
   const analyzeProps = async () => {
     setIsAnalyzing(true);
     try {
-      const sports = sportFilter === 'all' 
-        ? ['basketball_nba', 'americanfootball_nfl', 'icehockey_nhl']
-        : [sportFilter];
-        
+      // Always scan all 3 sports (backend ignores sports param anyway)
       const { data, error } = await supabase.functions.invoke('analyze-hitrate-props', {
         body: { 
-          sports,
-          minHitRate: hitRateThreshold,
+          limit: 100,
+          minHitRate: 0.8, // Force 80% minimum
           streakFilter: streakFilter !== 'all' ? streakFilter : null,
         }
       });
 
       if (error) throw error;
 
-      // Handle no props scenario
-      if (data.noPropsReason) {
+      // Update daily props count
+      if (data.propsToday !== undefined) {
+        setPropsToday(data.propsToday);
+      }
+
+      // Handle daily limit reached
+      if (data.dailyLimitReached) {
+        toast({
+          title: "Daily Limit Reached",
+          description: `${data.propsToday}/100 props scanned today. Try again tomorrow.`,
+        });
+      } else if (data.noPropsReason) {
         toast({
           title: "No Props Available",
           description: data.noPropsReason,
         });
       } else {
         const streakSummary = data.byStreak 
-          ? `5/5: ${data.byStreak['5/5']?.length || 0}, 4/5: ${data.byStreak['4/5']?.length || 0}`
+          ? `🔥 5/5: ${data.byStreak['5/5']?.length || 0}`
           : '';
 
         toast({
           title: "Analysis Complete",
           description: data.analyzed > 0 
-            ? `Found ${data.analyzed} props. ${streakSummary}`
-            : `Checked ${data.propsChecked} props but none met threshold`,
+            ? `Found ${data.analyzed} props (${data.propsToday}/100 today). ${streakSummary}`
+            : `Checked ${data.propsChecked} props but none met 80%+ threshold`,
         });
       }
 
@@ -496,6 +499,11 @@ export function HitRatePicks() {
             )}
             NHL Stats
           </Button>
+          {/* Daily Props Counter */}
+          <Badge variant="outline" className="border-neon-purple/50 text-neon-purple px-3 py-1.5">
+            {propsToday}/100 today
+          </Badge>
+          
           <Button
             onClick={analyzeProps}
             disabled={isAnalyzing}

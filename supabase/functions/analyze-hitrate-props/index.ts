@@ -311,12 +311,44 @@ serve(async (req) => {
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const THE_ODDS_API_KEY = Deno.env.get('THE_ODDS_API_KEY')!;
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-    const { sports = ['basketball_nba', 'icehockey_nhl', 'americanfootball_nfl'], limit = 200, minHitRate = 0.4, streakFilter = null } = await req.json().catch(() => ({}));
-    console.log(`[HitRate] Starting analysis for sports: ${sports.join(', ')}...`);
+    
+    // Parse request body - ignore user-provided sports, always scan all 3
+    const { limit = 100, minHitRate = 0.8, streakFilter = null } = await req.json().catch(() => ({}));
+    
+    // Force all 3 sports regardless of request
+    const sports = ['basketball_nba', 'americanfootball_nfl', 'icehockey_nhl'];
+    
+    // Check daily limit - count props analyzed in last 24 hours
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { count: todayCount } = await supabase
+      .from('player_prop_hitrates')
+      .select('id', { count: 'exact', head: true })
+      .gte('analyzed_at', yesterday);
+    
+    const dailyLimit = 100;
+    const remainingLimit = Math.max(0, dailyLimit - (todayCount || 0));
+    
+    if (remainingLimit === 0) {
+      console.log('[HitRate] Daily limit of 100 props reached');
+      return new Response(JSON.stringify({ 
+        success: true, 
+        analyzed: 0, 
+        propsChecked: 0,
+        dailyLimitReached: true,
+        propsToday: todayCount,
+        noPropsReason: 'Daily limit of 100 props reached. Try again tomorrow.'
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+    
+    // Use the smaller of requested limit and remaining daily limit
+    const effectiveLimit = Math.min(limit, remainingLimit);
+    
+    console.log(`[HitRate] Starting analysis for sports: ${sports.join(', ')} (${todayCount || 0}/100 today, ${remainingLimit} remaining)...`);
     const analyzedProps: any[] = [];
     let propsChecked = 0;
+    
     for (const sport of sports) {
-      if (propsChecked >= limit) continue;
+      if (analyzedProps.length >= effectiveLimit) continue;
       // Skip unsupported sports
       if (!SPORT_MARKETS[sport]) {
         console.log(`[HitRate] Skipping unsupported sport: ${sport}`);
@@ -338,7 +370,7 @@ serve(async (req) => {
       let playersInsufficientGames = 0;
       
       for (const event of upcomingEvents) {
-        if (propsChecked >= limit) break;
+        if (analyzedProps.length >= effectiveLimit) break;
         const markets = SPORT_MARKETS[sport].join(',');
         console.log(`[HitRate] Fetching props for: ${event.home_team} vs ${event.away_team} (${event.id})`);
         
@@ -371,7 +403,7 @@ serve(async (req) => {
         const opponent = extractOpponent(gameDescription);
         
         for (const market of bookmaker.markets) {
-          if (propsChecked >= limit) break;
+          if (analyzedProps.length >= effectiveLimit) break;
           const playerOutcomes: Record<string, any[]> = {};
           for (const outcome of market.outcomes || []) { 
             if (outcome.description) { 
@@ -383,12 +415,30 @@ serve(async (req) => {
           console.log(`[HitRate] Market ${market.key}: ${Object.keys(playerOutcomes).length} players`);
           
           for (const [playerName, outcomes] of Object.entries(playerOutcomes).slice(0, 20)) {
-            if (propsChecked >= limit) break;
+            if (analyzedProps.length >= effectiveLimit) break;
             const over = (outcomes as any[]).find((o: any) => o.name === 'Over');
             const under = (outcomes as any[]).find((o: any) => o.name === 'Under');
             if (!over || !under) continue;
             const line = over.point || 0;
             propsChecked++;
+            
+            // Check for duplicate - skip if already analyzed in last 24 hours
+            const { data: existingProp } = await supabase
+              .from('player_prop_hitrates')
+              .select('id')
+              .eq('player_name', playerName)
+              .eq('sport', sport)
+              .eq('prop_type', market.key)
+              .eq('current_line', line)
+              .eq('event_id', event.id)
+              .gte('analyzed_at', yesterday)
+              .limit(1);
+            
+            if (existingProp && existingProp.length > 0) {
+              console.log(`[HitRate] Skipping duplicate: ${playerName} ${market.key} ${line}`);
+              continue;
+            }
+            
             const last5Games = await fetchPlayerStatsFromDB(playerName, market.key, sport, supabase, 10);
             // NHL needs less history since season is shorter - allow 2 games minimum
             const minGamesRequired = sport === 'icehockey_nhl' ? 2 : 3;
@@ -401,9 +451,24 @@ serve(async (req) => {
             const analysis = calculateEnhancedHitRate(last5Games, vsOpponentGames, line);
             const overRate = analysis.overIn5 / Math.min(5, analysis.last5Results.length);
             const underRate = analysis.underIn5 / Math.min(5, analysis.last5Results.length);
+            
+            // STRICT FILTERING: Only 5/5 perfect streaks OR 80%+ hit rate (8/10 with 10+ games)
+            const is5of5 = analysis.hitStreak === '5/5';
+            const has10GameSample = last5Games.length >= 10;
+            const is80Plus = (overRate >= 0.8 || underRate >= 0.8) && has10GameSample;
+            
+            if (!is5of5 && !is80Plus) {
+              continue; // Skip if doesn't meet strict criteria
+            }
+            
             let recommendedSide: string | null = null;
-            if (overRate >= minHitRate && overRate > underRate) recommendedSide = 'over';
-            else if (underRate >= minHitRate && underRate > overRate) recommendedSide = 'under';
+            if (overRate >= 0.8 && overRate > underRate) recommendedSide = 'over';
+            else if (underRate >= 0.8 && underRate > overRate) recommendedSide = 'under';
+            else if (is5of5) {
+              // For 5/5 streaks, use the streak direction
+              recommendedSide = analysis.overIn5 === 5 ? 'over' : 'under';
+            }
+            
             if (streakFilter && analysis.hitStreak !== streakFilter) continue;
             if (recommendedSide) {
               const seasonStats = await fetchSeasonStats(playerName, sport, supabase);
@@ -476,7 +541,10 @@ serve(async (req) => {
       duration, 
       byStreak, 
       props: analyzedProps,
-      noPropsReason
+      noPropsReason,
+      propsToday: (todayCount || 0) + analyzedProps.length,
+      dailyLimit: dailyLimit,
+      remainingToday: remainingLimit - analyzedProps.length
     }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (error) {
     console.error('Error:', error);
