@@ -16,7 +16,8 @@ import {
   Users,
   Flame,
   PanelLeftClose,
-  PanelLeft
+  PanelLeft,
+  ScanSearch
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
@@ -36,6 +37,7 @@ const featureItems = [
   { icon: Flame, label: "Hit Rate", path: "/hitrate" },
   { icon: Flame, label: "God Mode Upsets", path: "/god-mode" },
   { icon: Zap, label: "GOD MODE Tracker", path: "/god-mode-tracker" },
+  { icon: ScanSearch, label: "FanDuel Scanner", path: "/fanduel-traps" },
   { icon: Activity, label: "Sharp Money", path: "/sharp" },
   { icon: Activity, label: "NBA Fatigue", path: "/nba-fatigue" },
   { icon: GitCompare, label: "Compare Parlays", path: "/compare" },
