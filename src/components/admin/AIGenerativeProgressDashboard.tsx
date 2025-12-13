@@ -152,11 +152,18 @@ export function AIGenerativeProgressDashboard() {
     mixed: number;
     readyToSettle: number;
   }>({ scheduled: 0, inProgress: 0, mixed: 0, readyToSettle: 0 });
+  const [dataFreshness, setDataFreshness] = useState<{
+    nba: string;
+    nfl: string;
+    nhl: string;
+    isStale: boolean;
+  }>({ nba: '', nfl: '', nhl: '', isStale: false });
 
   useEffect(() => {
     fetchData();
     fetchStaleCount();
     fetchPendingBreakdown();
+    fetchDataFreshness();
     
     const parlayChannel = supabase
       .channel('ai_parlays_changes')
@@ -415,6 +422,26 @@ export function AIGenerativeProgressDashboard() {
     setPendingBreakdown({ scheduled, inProgress, mixed, readyToSettle });
   };
 
+  // Fetch data freshness for player stats tables
+  const fetchDataFreshness = async () => {
+    const today = new Date().toISOString().split('T')[0];
+    
+    const [nbaRes, nflRes, nhlRes] = await Promise.all([
+      supabase.from('nba_player_game_logs').select('game_date').order('game_date', { ascending: false }).limit(1),
+      supabase.from('nfl_player_game_logs').select('game_date').order('game_date', { ascending: false }).limit(1),
+      supabase.from('nhl_player_game_logs').select('game_date').order('game_date', { ascending: false }).limit(1)
+    ]);
+    
+    const nba = nbaRes.data?.[0]?.game_date || 'none';
+    const nfl = nflRes.data?.[0]?.game_date || 'none';
+    const nhl = nhlRes.data?.[0]?.game_date || 'none';
+    
+    // Check if any data is stale (older than today)
+    const isStale = (nba !== 'none' && nba < today) || (nfl !== 'none' && nfl < today) || (nhl !== 'none' && nhl < today);
+    
+    setDataFreshness({ nba, nfl, nhl, isStale });
+  };
+
   // Purge stale parlays by marking them as 'expired'
   const handlePurgeStaleParlays = async () => {
     setIsPurging(true);
@@ -604,6 +631,30 @@ export function AIGenerativeProgressDashboard() {
                   <p className="text-xs text-muted-foreground">Losses</p>
                 </div>
               </div>
+
+              {/* Data Freshness Warning */}
+              {dataFreshness.isStale && (
+                <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3">
+                  <div className="flex items-center gap-2 text-yellow-500">
+                    <AlertCircle className="w-4 h-4" />
+                    <span className="text-sm font-medium">Stale Player Stats</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 mt-2 text-xs">
+                    <div className={dataFreshness.nba < new Date().toISOString().split('T')[0] ? 'text-yellow-500' : 'text-green-500'}>
+                      NBA: {dataFreshness.nba}
+                    </div>
+                    <div className={dataFreshness.nfl < new Date().toISOString().split('T')[0] ? 'text-yellow-500' : 'text-green-500'}>
+                      NFL: {dataFreshness.nfl}
+                    </div>
+                    <div className={dataFreshness.nhl < new Date().toISOString().split('T')[0] ? 'text-yellow-500' : 'text-green-500'}>
+                      NHL: {dataFreshness.nhl}
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Settlement will skip props until fresh data is available
+                  </p>
+                </div>
+              )}
 
               <div className="space-y-2">
                 <div className="flex gap-2">
