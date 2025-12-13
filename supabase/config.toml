@@ -188,3 +188,6 @@ verify_jwt = false
 
 [functions.track-juiced-prop-movement]
 verify_jwt = false
+
+[functions.verify-ai-parlay-settlements]
+verify_jwt = false

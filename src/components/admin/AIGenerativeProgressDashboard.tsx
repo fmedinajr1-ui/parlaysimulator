@@ -27,7 +27,8 @@ import {
   Download,
   Trash2,
   FileJson,
-  FileSpreadsheet
+  FileSpreadsheet,
+  ShieldCheck
 } from 'lucide-react';
 import { AIProgressGauge } from './AIProgressGauge';
 import { AILearnedPatterns } from './AILearnedPatterns';
@@ -132,6 +133,35 @@ interface SettlementProgress {
   learningResults?: LearningResults;
 }
 
+interface VerificationResult {
+  parlayId: string;
+  originalOutcome: string;
+  verifiedOutcome: string | null;
+  isCorrect: boolean;
+  reason: string;
+  legDetails: Array<{
+    description: string;
+    originalResult: string;
+    verifiedResult: string | null;
+    statsDate: string | null;
+    gameDate: string | null;
+    hasValidStats: boolean;
+  }>;
+}
+
+interface VerificationSummary {
+  totalSettled: number;
+  correctlySettled: number;
+  incorrectlySettled: number;
+  unverifiable: number;
+  accuracyRate: string;
+  latestStatsAvailable: {
+    nba: string;
+    nfl: string;
+    nhl: string;
+  };
+}
+
 export function AIGenerativeProgressDashboard() {
   const [parlays, setParlays] = useState<AIGeneratedParlay[]>([]);
   const [learningProgress, setLearningProgress] = useState<AILearningProgress | null>(null);
@@ -158,6 +188,11 @@ export function AIGenerativeProgressDashboard() {
     nhl: string;
     isStale: boolean;
   }>({ nba: '', nfl: '', nhl: '', isStale: false });
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [verificationResults, setVerificationResults] = useState<{
+    summary: VerificationSummary;
+    results: VerificationResult[];
+  } | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -470,6 +505,31 @@ export function AIGenerativeProgressDashboard() {
     setIsPurging(false);
   };
 
+  // Verify all settled parlays
+  const handleVerifySettlements = async () => {
+    setIsVerifying(true);
+    setVerificationResults(null);
+    try {
+      const { data, error } = await supabase.functions.invoke('verify-ai-parlay-settlements');
+      if (error) throw error;
+      
+      if (data?.success) {
+        setVerificationResults({
+          summary: data.summary,
+          results: data.results
+        });
+        toast.success(
+          `Verified ${data.summary.totalSettled} parlays: ${data.summary.correctlySettled} correct, ${data.summary.incorrectlySettled} incorrect, ${data.summary.unverifiable} unverifiable`
+        );
+      } else {
+        throw new Error(data?.error || 'Verification failed');
+      }
+    } catch (error) {
+      toast.error('Verification failed: ' + (error as Error).message);
+    }
+    setIsVerifying(false);
+  };
+
   // Export helper functions
   const convertToCSV = (data: any[]) => {
     if (data.length === 0) return '';
@@ -717,12 +777,127 @@ export function AIGenerativeProgressDashboard() {
                       Purge {staleParlays} Stale ({'>'}48h)
                     </Button>
                   )}
+                  <Button 
+                    onClick={handleVerifySettlements} 
+                    disabled={isVerifying}
+                    variant="outline" 
+                    size="sm"
+                    className="bg-blue-500/10 hover:bg-blue-500/20 border-blue-500/30"
+                  >
+                    {isVerifying ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <ShieldCheck className="w-4 h-4 mr-2" />
+                    )}
+                    Verify Settlements
+                  </Button>
                 </div>
               </div>
             </div>
           </div>
         </CardContent>
       </Card>
+
+      {/* Verification Results */}
+      {verificationResults && (
+        <Card className="border-2 border-blue-500/50 bg-blue-500/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <ShieldCheck className="w-5 h-5 text-blue-500" />
+              Settlement Verification Results
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {/* Summary Stats */}
+              <div className="grid grid-cols-4 gap-4 text-center">
+                <div className="bg-background/50 rounded-lg p-3">
+                  <p className="text-2xl font-bold">{verificationResults.summary.totalSettled}</p>
+                  <p className="text-xs text-muted-foreground">Total Verified</p>
+                </div>
+                <div className="bg-background/50 rounded-lg p-3">
+                  <p className="text-2xl font-bold text-green-500">{verificationResults.summary.correctlySettled}</p>
+                  <p className="text-xs text-muted-foreground">Correct</p>
+                </div>
+                <div className="bg-background/50 rounded-lg p-3">
+                  <p className="text-2xl font-bold text-red-500">{verificationResults.summary.incorrectlySettled}</p>
+                  <p className="text-xs text-muted-foreground">Incorrect</p>
+                </div>
+                <div className="bg-background/50 rounded-lg p-3">
+                  <p className="text-2xl font-bold text-yellow-500">{verificationResults.summary.unverifiable}</p>
+                  <p className="text-xs text-muted-foreground">Unverifiable</p>
+                </div>
+              </div>
+              
+              {/* Accuracy Rate */}
+              <div className="bg-background/50 rounded-lg p-4 text-center">
+                <p className="text-4xl font-bold text-blue-500">{verificationResults.summary.accuracyRate}</p>
+                <p className="text-sm text-muted-foreground">Verification Accuracy</p>
+              </div>
+              
+              {/* Stats Freshness */}
+              <div className="bg-muted/30 rounded-lg p-3">
+                <p className="text-sm font-medium mb-2">Latest Stats Available:</p>
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div>
+                    <span className="text-muted-foreground">NBA:</span> {verificationResults.summary.latestStatsAvailable.nba}
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">NFL:</span> {verificationResults.summary.latestStatsAvailable.nfl}
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">NHL:</span> {verificationResults.summary.latestStatsAvailable.nhl}
+                  </div>
+                </div>
+              </div>
+              
+              {/* Incorrect Settlements List */}
+              {verificationResults.results.filter(r => !r.isCorrect && r.verifiedOutcome).length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-red-500">Incorrectly Settled ({verificationResults.results.filter(r => !r.isCorrect && r.verifiedOutcome).length}):</p>
+                  <ScrollArea className="h-[200px]">
+                    <div className="space-y-2">
+                      {verificationResults.results
+                        .filter(r => !r.isCorrect && r.verifiedOutcome)
+                        .map((result) => (
+                          <div key={result.parlayId} className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+                            <div className="flex items-center justify-between mb-2">
+                              <Badge variant="destructive">{result.originalOutcome} → {result.verifiedOutcome}</Badge>
+                              <span className="text-xs font-mono">{result.parlayId.slice(0, 8)}...</span>
+                            </div>
+                            <p className="text-xs text-muted-foreground">{result.reason}</p>
+                            <div className="mt-2 space-y-1">
+                              {result.legDetails.map((leg, idx) => (
+                                <div key={idx} className="text-xs flex items-center gap-2">
+                                  {leg.hasValidStats ? (
+                                    <CheckCircle2 className="w-3 h-3 text-green-500" />
+                                  ) : (
+                                    <XCircle className="w-3 h-3 text-red-500" />
+                                  )}
+                                  <span className="truncate flex-1">{leg.description.substring(0, 50)}...</span>
+                                  {leg.statsDate && <span className="text-muted-foreground">Stats: {leg.statsDate}</span>}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  </ScrollArea>
+                </div>
+              )}
+              
+              <Button 
+                onClick={() => setVerificationResults(null)} 
+                variant="outline" 
+                size="sm" 
+                className="w-full"
+              >
+                Dismiss
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Real-Time Settlement Progress */}
       {settlementProgress && (
