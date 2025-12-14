@@ -50,6 +50,7 @@ const queryClient = new QueryClient({
 const pageVariants = {
   initial: { opacity: 0 },
   animate: { opacity: 1 },
+  exit: { opacity: 0 },
 };
 
 const pageTransition = {
@@ -60,13 +61,15 @@ function AnimatedRoutes() {
   const location = useLocation();
   
   return (
-    <AnimatePresence initial={false}>
+    <AnimatePresence mode="wait" initial={false}>
       <motion.div
         key={location.pathname}
         initial="initial"
         animate="animate"
+        exit="exit"
         variants={pageVariants}
         transition={pageTransition}
+        style={{ pointerEvents: 'auto' }}
       >
         <React.Suspense fallback={<PageSkeleton variant="dashboard" />}>
           <Routes location={location}>
