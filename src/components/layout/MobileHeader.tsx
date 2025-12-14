@@ -27,7 +27,7 @@ export function MobileHeader({
 
   return (
     <header className={cn(
-      "pt-safe bg-background/95 backdrop-blur-xl z-40",
+      "pt-safe bg-background/95 backdrop-blur-xl z-50",
       sticky && "sticky top-0",
       className
     )}>
