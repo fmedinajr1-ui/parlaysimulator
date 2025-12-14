@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -18,7 +19,8 @@ import {
   Eye,
   TrendingUp,
   CheckCircle2,
-  XCircle
+  XCircle,
+  Home
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -74,6 +76,7 @@ interface AccuracyMetric {
 }
 
 export default function FanDuelTraps() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const today = new Date().toISOString().split('T')[0];
   
@@ -189,6 +192,14 @@ export default function FanDuelTraps() {
           </p>
         </div>
         <div className="flex gap-2">
+          <Button 
+            variant="outline" 
+            size="sm"
+            onClick={() => navigate('/')}
+          >
+            <Home className="h-4 w-4 mr-2" />
+            Home
+          </Button>
           <Button 
             variant="outline" 
             size="sm"
