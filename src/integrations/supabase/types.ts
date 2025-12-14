@@ -542,6 +542,51 @@ export type Database = {
         }
         Relationships: []
       }
+      calibration_buckets: {
+        Row: {
+          actual_avg: number
+          bucket_end: number
+          bucket_start: number
+          confidence_lower: number | null
+          confidence_upper: number | null
+          created_at: string
+          engine_name: string
+          id: string
+          predicted_avg: number
+          sample_count: number
+          sport: string | null
+          updated_at: string
+        }
+        Insert: {
+          actual_avg: number
+          bucket_end: number
+          bucket_start: number
+          confidence_lower?: number | null
+          confidence_upper?: number | null
+          created_at?: string
+          engine_name: string
+          id?: string
+          predicted_avg: number
+          sample_count?: number
+          sport?: string | null
+          updated_at?: string
+        }
+        Update: {
+          actual_avg?: number
+          bucket_end?: number
+          bucket_start?: number
+          confidence_lower?: number | null
+          confidence_upper?: number | null
+          created_at?: string
+          engine_name?: string
+          id?: string
+          predicted_avg?: number
+          sample_count?: number
+          sport?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       cron_job_history: {
         Row: {
           completed_at: string | null
@@ -599,6 +644,57 @@ export type Database = {
           source?: string | null
           subscribed_at?: string | null
           user_id?: string | null
+        }
+        Relationships: []
+      }
+      engine_brier_scores: {
+        Row: {
+          bet_type: string | null
+          brier_score: number
+          calibration_error: number | null
+          created_at: string
+          engine_name: string
+          id: string
+          log_loss: number | null
+          period_end: string
+          period_start: string
+          reliability_score: number | null
+          resolution_score: number | null
+          sample_size: number
+          sport: string | null
+          updated_at: string
+        }
+        Insert: {
+          bet_type?: string | null
+          brier_score?: number
+          calibration_error?: number | null
+          created_at?: string
+          engine_name: string
+          id?: string
+          log_loss?: number | null
+          period_end: string
+          period_start: string
+          reliability_score?: number | null
+          resolution_score?: number | null
+          sample_size?: number
+          sport?: string | null
+          updated_at?: string
+        }
+        Update: {
+          bet_type?: string | null
+          brier_score?: number
+          calibration_error?: number | null
+          created_at?: string
+          engine_name?: string
+          id?: string
+          log_loss?: number | null
+          period_end?: string
+          period_start?: string
+          reliability_score?: number | null
+          resolution_score?: number | null
+          sample_size?: number
+          sport?: string | null
+          updated_at?: string
         }
         Relationships: []
       }
@@ -1319,6 +1415,42 @@ export type Database = {
           team_name?: string
           updated_at?: string
           venue_name?: string | null
+        }
+        Relationships: []
+      }
+      isotonic_calibration: {
+        Row: {
+          bet_type: string | null
+          calibrated_probability: number
+          created_at: string
+          engine_name: string
+          id: string
+          raw_probability: number
+          sample_size: number | null
+          sport: string | null
+          updated_at: string
+        }
+        Insert: {
+          bet_type?: string | null
+          calibrated_probability: number
+          created_at?: string
+          engine_name: string
+          id?: string
+          raw_probability: number
+          sample_size?: number | null
+          sport?: string | null
+          updated_at?: string
+        }
+        Update: {
+          bet_type?: string | null
+          calibrated_probability?: number
+          created_at?: string
+          engine_name?: string
+          id?: string
+          raw_probability?: number
+          sample_size?: number | null
+          sport?: string | null
+          updated_at?: string
         }
         Relationships: []
       }
