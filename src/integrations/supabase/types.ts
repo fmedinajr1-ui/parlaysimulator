@@ -2413,6 +2413,51 @@ export type Database = {
           },
         ]
       }
+      parlay_leg_correlations: {
+        Row: {
+          confidence_interval_high: number | null
+          confidence_interval_low: number | null
+          correlation_coefficient: number
+          correlation_type: string
+          created_at: string
+          id: string
+          last_calculated_at: string | null
+          market_type_1: string
+          market_type_2: string
+          sample_size: number
+          sport: string
+          updated_at: string
+        }
+        Insert: {
+          confidence_interval_high?: number | null
+          confidence_interval_low?: number | null
+          correlation_coefficient?: number
+          correlation_type?: string
+          created_at?: string
+          id?: string
+          last_calculated_at?: string | null
+          market_type_1: string
+          market_type_2: string
+          sample_size?: number
+          sport: string
+          updated_at?: string
+        }
+        Update: {
+          confidence_interval_high?: number | null
+          confidence_interval_low?: number | null
+          correlation_coefficient?: number
+          correlation_type?: string
+          created_at?: string
+          id?: string
+          last_calculated_at?: string | null
+          market_type_1?: string
+          market_type_2?: string
+          sample_size?: number
+          sport?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       parlay_training_data: {
         Row: {
           ai_adjusted_probability: number | null
