@@ -1,6 +1,11 @@
 import { useState, useMemo } from 'react';
 import { ParlaySimulation } from '@/types/parlay';
 import { runComparativeSimulation, MonteCarloResult } from '@/lib/monte-carlo';
+import { 
+  runCorrelatedComparativeSimulation, 
+  CorrelatedMonteCarloResult,
+  CorrelatedComparisonResult 
+} from '@/lib/monte-carlo-correlated';
 import { FeedCard } from '@/components/FeedCard';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -17,7 +22,7 @@ import {
   Pie,
   Legend
 } from 'recharts';
-import { Dices, TrendingUp, Trophy, Loader2, RotateCcw, Zap, Flame } from 'lucide-react';
+import { Dices, TrendingUp, Trophy, Loader2, RotateCcw, Zap, Flame, Layers, Link2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { PercentileBreakdown } from './PercentileBreakdown';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -38,31 +43,45 @@ const WIN_COLOR = 'hsl(var(--neon-green))';
 
 export function MonteCarloVisualization({ simulations }: MonteCarloVisualizationProps) {
   const [isRunning, setIsRunning] = useState(false);
-  const [results, setResults] = useState<{
-    results: MonteCarloResult[];
-    comparisonData: { 
-      name: string; 
-      winRate: number; 
-      lossRate: number; 
-      expectedProfit: number; 
-      potentialWin: number; 
-      stake: number;
-      pureWinRate: number;
-      upsetImpact: number;
-    }[];
-    bestByWinRate: number;
-    bestByExpectedProfit: number;
-  } | null>(null);
+  const [useCorrelation, setUseCorrelation] = useState(true);
+  const [results, setResults] = useState<CorrelatedComparisonResult | null>(null);
   const [iterations, setIterations] = useState(100000);
   const isMobile = useIsMobile();
 
-  const runSimulation = () => {
+  const runSimulation = async () => {
     setIsRunning(true);
-    setTimeout(() => {
-      const simulationResults = runComparativeSimulation(simulations, iterations);
-      setResults(simulationResults);
+    try {
+      if (useCorrelation) {
+        const simulationResults = await runCorrelatedComparativeSimulation(simulations, iterations);
+        setResults(simulationResults);
+      } else {
+        // Fall back to non-correlated simulation
+        const basicResults = runComparativeSimulation(simulations, iterations);
+        // Convert to correlated format for unified display
+        setResults({
+          ...basicResults,
+          averageCorrelationImpact: 0,
+          results: basicResults.results.map(r => ({
+            ...r,
+            correlationMatrix: { matrix: [], legCount: 0, correlations: [], avgCorrelation: 0, maxCorrelation: 0, hasHighCorrelation: false },
+            independentWinRate: r.winRate,
+            correlatedWinRate: r.winRate,
+            correlationImpact: 0,
+            probabilityAdjustmentRatio: 1,
+          })),
+          comparisonData: basicResults.comparisonData.map(d => ({
+            ...d,
+            independentWinRate: d.winRate,
+            correlatedWinRate: d.winRate,
+            correlationImpact: 0,
+            avgCorrelation: 0,
+            hasHighCorrelation: false,
+          })),
+        } as CorrelatedComparisonResult);
+      }
+    } finally {
       setIsRunning(false);
-    }, 100);
+    }
   };
 
   const resetSimulation = () => {
@@ -107,6 +126,12 @@ export function MonteCarloVisualization({ simulations }: MonteCarloVisualization
           <h3 className="font-display text-sm text-primary">MONTE CARLO</h3>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {useCorrelation && (
+            <Badge variant="outline" className="text-[10px] bg-primary/10 text-primary border-primary/30">
+              <Layers className="w-2.5 h-2.5 mr-0.5" />
+              Correlated
+            </Badge>
+          )}
           <Badge variant="outline" className="text-[10px] bg-neon-orange/10 text-neon-orange border-neon-orange/30">
             <Zap className="w-2.5 h-2.5 mr-0.5" />
             Upsets
@@ -120,8 +145,44 @@ export function MonteCarloVisualization({ simulations }: MonteCarloVisualization
       {!results ? (
         <div className="space-y-4">
           <p className="text-xs sm:text-sm text-muted-foreground">
-            Run {iterations >= 1000 ? `${iterations/1000}K` : iterations} simulations with <span className="text-neon-orange font-medium">upset factors</span>.
+            Run {iterations >= 1000 ? `${iterations/1000}K` : iterations} simulations with <span className="text-primary font-medium">correlation modeling</span> and <span className="text-neon-orange font-medium">upset factors</span>.
           </p>
+          
+          {/* Correlation Toggle */}
+          <div className="flex items-center gap-2">
+            <Button
+              variant={useCorrelation ? "default" : "outline"}
+              size="sm"
+              onClick={() => setUseCorrelation(true)}
+              className={cn("text-xs flex-1", useCorrelation && "bg-primary")}
+            >
+              <Layers className="w-3 h-3 mr-1" />
+              With Correlations
+            </Button>
+            <Button
+              variant={!useCorrelation ? "default" : "outline"}
+              size="sm"
+              onClick={() => setUseCorrelation(false)}
+              className={cn("text-xs flex-1", !useCorrelation && "bg-primary")}
+            >
+              Independent
+            </Button>
+          </div>
+          
+          {/* Correlation Info */}
+          {useCorrelation && (
+            <div className="rounded-lg p-2.5 sm:p-3 bg-primary/10 border border-primary/20">
+              <div className="flex items-center gap-2 mb-2">
+                <Link2 className="w-4 h-4 text-primary" />
+                <span className="text-[10px] sm:text-xs font-medium text-primary">GAUSSIAN COPULA</span>
+              </div>
+              <div className="grid grid-cols-1 gap-1 text-[10px] sm:text-xs text-muted-foreground">
+                <span>• Models leg dependencies with Cholesky decomposition</span>
+                <span>• Uses research-backed correlation coefficients</span>
+                <span>• More accurate than naive independence assumption</span>
+              </div>
+            </div>
+          )}
           
           {/* Upset Factor Info - Condensed on mobile */}
           <div className="rounded-lg p-2.5 sm:p-3 bg-neon-orange/10 border border-neon-orange/20">
@@ -172,6 +233,50 @@ export function MonteCarloVisualization({ simulations }: MonteCarloVisualization
         </div>
       ) : (
         <div className="space-y-4 sm:space-y-6">
+          {/* Correlation Impact Summary */}
+          {useCorrelation && results.averageCorrelationImpact !== 0 && (
+            <div className="rounded-lg p-2.5 sm:p-3 bg-primary/10 border border-primary/20">
+              <div className="flex items-center gap-2 mb-2 sm:mb-3">
+                <Layers className="w-4 h-4 text-primary" />
+                <h4 className="text-xs sm:text-sm font-medium text-primary">Correlation Impact</h4>
+              </div>
+              <div className={cn(
+                "grid gap-2 sm:gap-3",
+                results.results.length <= 2 ? "grid-cols-2" : "grid-cols-2 sm:grid-cols-4"
+              )}>
+                {results.results.map((result, idx) => {
+                  const corrResult = result as CorrelatedMonteCarloResult;
+                  return (
+                    <div key={idx} className="text-center">
+                      <p className="text-[9px] sm:text-[10px] text-muted-foreground mb-0.5">P{idx + 1}</p>
+                      <div className="flex items-center justify-center gap-1">
+                        <span className="text-[10px] sm:text-xs text-muted-foreground">
+                          {corrResult.independentWinRate?.toFixed(1) || '—'}%
+                        </span>
+                        <span className="text-primary text-[10px] sm:text-xs">→</span>
+                        <span className="text-xs sm:text-sm font-bold text-primary">
+                          {corrResult.correlatedWinRate?.toFixed(1) || corrResult.winRate.toFixed(1)}%
+                        </span>
+                      </div>
+                      <Badge 
+                        className={cn(
+                          "text-[8px] sm:text-[10px] mt-0.5",
+                          (corrResult.correlationImpact || 0) > 0 
+                            ? "bg-neon-green/20 text-neon-green border-neon-green/30" 
+                            : (corrResult.correlationImpact || 0) < 0
+                            ? "bg-neon-orange/20 text-neon-orange border-neon-orange/30"
+                            : "bg-muted/20 text-muted-foreground"
+                        )}
+                      >
+                        {(corrResult.correlationImpact || 0) > 0 ? '+' : ''}{(corrResult.correlationImpact || 0).toFixed(2)}%
+                      </Badge>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Upset Stats Summary - Simplified on mobile */}
           <div className="rounded-lg p-2.5 sm:p-3 bg-neon-orange/10 border border-neon-orange/20">
             <div className="flex items-center gap-2 mb-2 sm:mb-3">
