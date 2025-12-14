@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { ProbabilityCard } from "@/components/results/ProbabilityCard";
 import { DegenerateMeter } from "@/components/results/DegenerateMeter";
 import { TrashTalkThread } from "@/components/results/TrashTalkThread";
@@ -19,6 +19,8 @@ import { ParlayOptimizer } from "@/components/results/ParlayOptimizer";
 import { FatigueImpactCard } from "@/components/results/FatigueImpactCard";
 import { UsageAnalysisSection } from "@/components/results/UsageAnalysisSection";
 import { DoubleDownCard } from "@/components/results/DoubleDownCard";
+import { KellyStakeCard } from "@/components/results/KellyStakeCard";
+import { VarianceWarningCard } from "@/components/results/VarianceWarningCard";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, RotateCcw, Save, Loader2, LogIn } from "lucide-react";
 import { ParlaySimulation, ParlayAnalysis } from "@/types/parlay";
@@ -512,6 +514,37 @@ const Results = () => {
             expectedValue={simulation.expectedValue}
             probability={simulation.combinedProbability}
             delay={350}
+          />
+
+          {/* Kelly Stake Recommendation */}
+          <KellyStakeCard
+            winProbability={simulation.combinedProbability}
+            americanOdds={simulation.legs.reduce((acc, leg) => {
+              // Approximate combined American odds from decimal
+              const combinedDecimal = simulation.potentialPayout / simulation.stake;
+              if (combinedDecimal >= 2) {
+                return (combinedDecimal - 1) * 100;
+              } else {
+                return -100 / (combinedDecimal - 1);
+              }
+            }, 0)}
+            userStake={simulation.stake}
+            delay={360}
+          />
+
+          {/* Variance Warning */}
+          <VarianceWarningCard
+            winProbability={simulation.combinedProbability}
+            americanOdds={(() => {
+              const combinedDecimal = simulation.potentialPayout / simulation.stake;
+              if (combinedDecimal >= 2) {
+                return (combinedDecimal - 1) * 100;
+              } else {
+                return -100 / (combinedDecimal - 1);
+              }
+            })()}
+            stake={simulation.stake}
+            delay={370}
           />
           
           <LegBreakdown 
