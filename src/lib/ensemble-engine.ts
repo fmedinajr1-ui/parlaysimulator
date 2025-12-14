@@ -295,6 +295,84 @@ export function extractSignalsFromAnalysis(legAnalysis: {
 }
 
 /**
+ * Extract signals from Best Bet data for ensemble processing
+ */
+export function extractBestBetSignals(
+  event: {
+    sharp_indicator?: string;
+    trap_score?: number;
+    fatigue_differential?: number;
+    confidence?: number;
+    recommendation?: string;
+  },
+  type: string
+): EngineSignal[] {
+  const signals: EngineSignal[] = [];
+
+  // Sharp Money signal
+  if (event.sharp_indicator) {
+    const isSharpPick = event.sharp_indicator.toLowerCase().includes('sharp') || 
+                        event.sharp_indicator.toLowerCase().includes('steam');
+    signals.push({
+      engineName: 'sharp_money',
+      recommendation: isSharpPick ? 'pick' : 'fade',
+      confidence: 0.7,
+      historicalAccuracy: 0.58,
+      sampleSize: 150
+    });
+  }
+
+  // Trap Scanner signal
+  if (event.trap_score !== undefined && event.trap_score > 0) {
+    const isTrap = event.trap_score >= 60;
+    signals.push({
+      engineName: 'trap_scanner',
+      recommendation: isTrap ? 'fade' : 'pick',
+      confidence: Math.min(event.trap_score / 100, 0.9),
+      historicalAccuracy: 0.54,
+      sampleSize: 80
+    });
+  }
+
+  // Fatigue Edge signal
+  if (event.fatigue_differential !== undefined && event.fatigue_differential > 0) {
+    signals.push({
+      engineName: 'fatigue',
+      recommendation: 'pick',
+      confidence: Math.min(0.5 + (event.fatigue_differential / 20), 0.85),
+      historicalAccuracy: 0.56,
+      sampleSize: 60
+    });
+  }
+
+  // Base confidence signal from the specific engine type
+  if (event.confidence !== undefined) {
+    const engineMap: Record<string, string> = {
+      'nhl_sharp': 'sharp_money',
+      'ncaab_steam': 'sharp_money',
+      'fade_signal': 'trap_scanner',
+      'nba_fatigue': 'fatigue'
+    };
+    
+    const engineName = engineMap[type] || 'hitrate';
+    const recommendation = event.recommendation === 'fade' ? 'fade' : 'pick';
+    
+    // Only add if not already present
+    if (!signals.find(s => s.engineName === engineName)) {
+      signals.push({
+        engineName,
+        recommendation,
+        confidence: event.confidence,
+        historicalAccuracy: 0.55,
+        sampleSize: 100
+      });
+    }
+  }
+
+  return signals;
+}
+
+/**
  * Aggregate ensemble results for multiple legs
  */
 export function aggregateParlayEnsemble(

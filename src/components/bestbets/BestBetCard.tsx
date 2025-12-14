@@ -1,7 +1,11 @@
+import { useMemo } from 'react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { AccuracyBadge } from '@/components/ui/accuracy-badge';
 import { AddToParlayButton } from '@/components/parlay/AddToParlayButton';
+import { MiniKellyIndicator } from './MiniKellyIndicator';
+import { MiniEnsembleScore } from './MiniEnsembleScore';
+import { extractBestBetSignals } from '@/lib/ensemble-engine';
 import { Clock, Zap, TrendingDown } from 'lucide-react';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
@@ -79,6 +83,20 @@ export function BestBetCard({
   };
 
   const config = getTypeConfig();
+
+  // Generate ensemble signals for this pick
+  const ensembleSignals = useMemo(() => {
+    return extractBestBetSignals({
+      sharp_indicator: event.sharp_indicator,
+      trap_score: event.trap_score,
+      fatigue_differential: event.fatigue_differential,
+      confidence: event.confidence,
+      recommendation: event.recommendation
+    }, type);
+  }, [event, type]);
+
+  // Calculate win probability from accuracy
+  const winProbability = accuracy / 100;
   
   // Format sport display
   const formatSport = (sport: string) => {
@@ -139,6 +157,15 @@ export function BestBetCard({
               Fatigue Diff: +{event.fatigue_differential}
             </Badge>
           )}
+        </div>
+
+        {/* Kelly & Ensemble Indicators */}
+        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-border/30">
+          <MiniKellyIndicator 
+            winProbability={winProbability}
+            americanOdds={event.odds || -110}
+          />
+          <MiniEnsembleScore signals={ensembleSignals} />
         </div>
 
         <div className="flex items-center justify-between pt-2 border-t border-border/50">
