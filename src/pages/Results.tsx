@@ -21,6 +21,7 @@ import { UsageAnalysisSection } from "@/components/results/UsageAnalysisSection"
 import { DoubleDownCard } from "@/components/results/DoubleDownCard";
 import { KellyStakeCard } from "@/components/results/KellyStakeCard";
 import { VarianceWarningCard } from "@/components/results/VarianceWarningCard";
+import { EnsembleConsensusCard } from "@/components/results/EnsembleConsensusCard";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, RotateCcw, Save, Loader2, LogIn } from "lucide-react";
 import { ParlaySimulation, ParlayAnalysis } from "@/types/parlay";
@@ -405,6 +406,13 @@ const Results = () => {
           <ParlayHealthCard 
             legAnalyses={aiAnalysis?.legAnalyses}
             delay={120}
+          />
+
+          {/* Ensemble Consensus - Phase 4 */}
+          <EnsembleConsensusCard
+            legs={simulation.legs}
+            legAnalyses={aiAnalysis?.legAnalyses}
+            delay={122}
           />
 
           {/* Double Down Recommendation */}
