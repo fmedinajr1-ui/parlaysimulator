@@ -35,6 +35,7 @@ const HitRate = React.lazy(() => import("./pages/HitRate"));
 const BestBets = React.lazy(() => import("./pages/BestBets"));
 const SharpComparison = React.lazy(() => import("./pages/SharpComparison"));
 const FanDuelTraps = React.lazy(() => import("./pages/FanDuelTraps"));
+const AllSportsTracker = React.lazy(() => import("./pages/AllSportsTracker"));
 
 // QueryClient with optimized defaults
 const queryClient = new QueryClient({
@@ -90,6 +91,7 @@ function AnimatedRoutes() {
             <Route path="/best-bets" element={<BestBets />} />
             <Route path="/sharp-comparison" element={<SharpComparison />} />
             <Route path="/fanduel-traps" element={<FanDuelTraps />} />
+            <Route path="/tracker" element={<AllSportsTracker />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </React.Suspense>

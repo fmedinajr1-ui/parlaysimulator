@@ -7,6 +7,7 @@ const corsHeaders = {
 };
 
 const BDL_API_BASE = "https://api.balldontlie.io/v1";
+const ESPN_NBA_API = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba";
 
 interface BDLPlayer {
   id: number;
@@ -66,7 +67,6 @@ async function fetchWithRateLimit(url: string, apiKey: string): Promise<Response
     },
   });
   
-  // Log rate limit info
   const remaining = response.headers.get('X-RateLimit-Remaining');
   const limit = response.headers.get('X-RateLimit-Limit');
   console.log(`[BDL API] Rate limit: ${remaining}/${limit} remaining`);
@@ -76,12 +76,9 @@ async function fetchWithRateLimit(url: string, apiKey: string): Promise<Response
 
 async function searchPlayer(playerName: string, apiKey: string): Promise<BDLPlayer | null> {
   try {
-    // Split name and search
     const parts = playerName.trim().split(' ');
-    const firstName = parts[0];
     const lastName = parts.slice(1).join(' ');
     
-    // Try exact search first
     const url = `${BDL_API_BASE}/players?search=${encodeURIComponent(playerName)}`;
     const response = await fetchWithRateLimit(url, apiKey);
     
@@ -93,21 +90,18 @@ async function searchPlayer(playerName: string, apiKey: string): Promise<BDLPlay
     const data = await response.json();
     
     if (data.data && data.data.length > 0) {
-      // Find best match
       const exactMatch = data.data.find((p: BDLPlayer) => 
         `${p.first_name} ${p.last_name}`.toLowerCase() === playerName.toLowerCase()
       );
       
       if (exactMatch) return exactMatch;
       
-      // Partial match on last name
       const lastNameMatch = data.data.find((p: BDLPlayer) => 
         p.last_name.toLowerCase() === lastName.toLowerCase()
       );
       
       if (lastNameMatch) return lastNameMatch;
       
-      // Return first result as fallback
       return data.data[0];
     }
     
@@ -157,22 +151,118 @@ async function fetchInjuries(apiKey: string): Promise<BDLInjury[]> {
   }
 }
 
-async function fetchActivePlayers(apiKey: string, page: number = 1): Promise<BDLPlayer[]> {
+// ESPN Backup fetcher - more reliable for recent games
+async function fetchESPNGameLogs(daysBack: number = 7): Promise<any[]> {
+  const gameLogRecords: any[] = [];
+  
   try {
-    const url = `${BDL_API_BASE}/players/active?per_page=100&page=${page}`;
-    const response = await fetchWithRateLimit(url, apiKey);
+    console.log(`[ESPN NBA] Fetching game logs for last ${daysBack} days...`);
     
-    if (!response.ok) {
-      console.error(`[BDL API] Active players fetch failed: ${response.status}`);
-      return [];
+    // Get recent games from ESPN scoreboard
+    const allGameIds: string[] = [];
+    
+    for (let dayOffset = 0; dayOffset < daysBack; dayOffset++) {
+      const targetDate = new Date();
+      targetDate.setDate(targetDate.getDate() - dayOffset);
+      const dateStr = targetDate.toISOString().split('T')[0].replace(/-/g, '');
+      
+      try {
+        const scoreboardUrl = `${ESPN_NBA_API}/scoreboard?dates=${dateStr}`;
+        const scoreboardRes = await fetch(scoreboardUrl);
+        
+        if (scoreboardRes.ok) {
+          const scoreboardData = await scoreboardRes.json();
+          const events = scoreboardData.events || [];
+          
+          for (const event of events) {
+            if (event.status?.type?.completed) {
+              allGameIds.push(event.id);
+            }
+          }
+        }
+      } catch (e) {
+        console.log(`[ESPN NBA] Error fetching day ${dayOffset}:`, e);
+      }
     }
     
-    const data = await response.json();
-    return data.data || [];
+    console.log(`[ESPN NBA] Found ${allGameIds.length} completed games`);
+    
+    // Process each game's boxscore (limit to 20 per run)
+    for (const gameId of allGameIds.slice(0, 20)) {
+      try {
+        const boxscoreUrl = `${ESPN_NBA_API}/summary?event=${gameId}`;
+        const boxRes = await fetch(boxscoreUrl);
+        
+        if (!boxRes.ok) continue;
+        
+        const boxData = await boxRes.json();
+        const gameDate = boxData.header?.competitions?.[0]?.date?.split('T')[0];
+        
+        if (!gameDate) continue;
+        
+        const homeTeam = boxData.header?.competitions?.[0]?.competitors?.find((c: any) => c.homeAway === 'home');
+        const awayTeam = boxData.header?.competitions?.[0]?.competitors?.find((c: any) => c.homeAway === 'away');
+        
+        const homeTeamName = homeTeam?.team?.displayName || 'Unknown';
+        const awayTeamName = awayTeam?.team?.displayName || 'Unknown';
+        
+        // Get player stats from boxscore
+        const boxscore = boxData.boxscore;
+        if (!boxscore?.players) continue;
+        
+        for (const teamStats of boxscore.players) {
+          const isHome = teamStats.team?.id === homeTeam?.team?.id;
+          const opponent = isHome ? awayTeamName : homeTeamName;
+          
+          for (const category of teamStats.statistics || []) {
+            if (category.name?.toLowerCase() !== 'starters' && category.name?.toLowerCase() !== 'bench') continue;
+            
+            for (const athlete of category.athletes || []) {
+              const playerName = athlete.athlete?.displayName;
+              if (!playerName) continue;
+              
+              const stats = athlete.stats || [];
+              // ESPN stats order: MIN, FG, 3PT, FT, OREB, DREB, REB, AST, STL, BLK, TO, PF, +/-, PTS
+              
+              let minutes = 0;
+              if (stats[0]) {
+                const minParts = stats[0].split(':');
+                minutes = parseInt(minParts[0]) || 0;
+              }
+              
+              const threeParts = (stats[2] || '0-0').split('-');
+              const threesMade = parseInt(threeParts[0]) || 0;
+              
+              gameLogRecords.push({
+                player_name: playerName,
+                game_date: gameDate,
+                opponent,
+                is_home: isHome,
+                points: parseInt(stats[13]) || 0,
+                rebounds: parseInt(stats[6]) || 0,
+                assists: parseInt(stats[7]) || 0,
+                threes_made: threesMade,
+                blocks: parseInt(stats[9]) || 0,
+                steals: parseInt(stats[8]) || 0,
+                turnovers: parseInt(stats[10]) || 0,
+                minutes_played: minutes,
+              });
+            }
+          }
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } catch (gameError) {
+        console.error(`[ESPN NBA] Error processing game ${gameId}:`, gameError);
+      }
+    }
+    
+    console.log(`[ESPN NBA] Extracted ${gameLogRecords.length} player game logs`);
   } catch (error) {
-    console.error(`[BDL API] Error fetching active players:`, error);
-    return [];
+    console.error('[ESPN NBA] Fatal error:', error);
   }
+  
+  return gameLogRecords;
 }
 
 serve(async (req) => {
@@ -184,211 +274,203 @@ serve(async (req) => {
   
   try {
     const apiKey = Deno.env.get('BALLDONTLIE_API_KEY');
-    if (!apiKey) {
-      throw new Error('BALLDONTLIE_API_KEY not configured');
-    }
-
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { mode = 'sync', playerNames = [] } = await req.json().catch(() => ({}));
+    const { mode = 'sync', playerNames = [], daysBack = 7, useESPN = true } = await req.json().catch(() => ({}));
     
-    console.log(`[NBA Stats Fetcher] Starting with mode: ${mode}, players: ${playerNames.length}`);
+    console.log(`[NBA Stats Fetcher] Starting with mode: ${mode}, players: ${playerNames.length}, useESPN: ${useESPN}`);
     
     const results: Record<string, any> = {
       playersMatched: 0,
       statsInserted: 0,
       injuriesInserted: 0,
+      espnRecords: 0,
+      bdlRecords: 0,
       errors: [],
     };
 
-    // Get unique players from unified_props if not provided
-    let playersToFetch: string[] = playerNames;
-    
-    if (mode === 'sync' && playersToFetch.length === 0) {
-      console.log('[NBA Stats Fetcher] Fetching unique players from unified_props...');
+    // First try ESPN (more reliable for recent data)
+    if (useESPN) {
+      console.log('[NBA Stats Fetcher] Fetching from ESPN API (primary)...');
+      const espnRecords = await fetchESPNGameLogs(daysBack);
       
-      const { data: propsData, error: propsError } = await supabase
-        .from('unified_props')
-        .select('player_name')
-        .eq('sport', 'basketball_nba')
-        .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
-      
-      if (propsError) {
-        console.error('[NBA Stats Fetcher] Error fetching props:', propsError);
-        results.errors.push(propsError.message);
-      } else if (propsData) {
-        playersToFetch = [...new Set(propsData.map(p => p.player_name))];
-        console.log(`[NBA Stats Fetcher] Found ${playersToFetch.length} unique players`);
+      if (espnRecords.length > 0) {
+        const { error: espnError } = await supabase
+          .from('nba_player_game_logs')
+          .upsert(espnRecords, { 
+            onConflict: 'player_name,game_date',
+            ignoreDuplicates: false 
+          });
+        
+        if (espnError) {
+          console.error('[NBA Stats Fetcher] ESPN insert error:', espnError);
+          results.errors.push(espnError.message);
+        } else {
+          results.espnRecords = espnRecords.length;
+          results.statsInserted += espnRecords.length;
+        }
       }
     }
 
-    // Check cache for existing player mappings
-    const { data: cachedPlayers } = await supabase
-      .from('bdl_player_cache')
-      .select('*')
-      .in('player_name', playersToFetch);
-
-    const cachedMap = new Map(cachedPlayers?.map(p => [p.player_name, p]) || []);
-    const uncachedPlayers = playersToFetch.filter(name => !cachedMap.has(name));
-    
-    console.log(`[NBA Stats Fetcher] Cached: ${cachedMap.size}, Uncached: ${uncachedPlayers.length}`);
-
-    // Search for uncached players
-    const newPlayerMappings: any[] = [];
-    
-    for (const playerName of uncachedPlayers) {
-      const player = await searchPlayer(playerName, apiKey);
+    // Fallback to BallDontLie if API key is available
+    if (apiKey) {
+      console.log('[NBA Stats Fetcher] Fetching from BallDontLie API (secondary)...');
       
-      if (player) {
-        newPlayerMappings.push({
-          player_name: playerName,
-          bdl_player_id: player.id,
-          position: player.position,
-          team_name: player.team?.full_name || null,
-          height: player.height,
-          weight: player.weight,
-          jersey_number: player.jersey_number,
-          college: player.college,
-          country: player.country,
-          draft_year: player.draft_year,
-          draft_round: player.draft_round,
-          draft_number: player.draft_number,
-          last_updated: new Date().toISOString(),
-        });
+      let playersToFetch: string[] = playerNames;
+      
+      if (mode === 'sync' && playersToFetch.length === 0) {
+        const { data: propsData, error: propsError } = await supabase
+          .from('unified_props')
+          .select('player_name')
+          .eq('sport', 'basketball_nba')
+          .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
         
-        results.playersMatched++;
-      } else {
-        console.log(`[NBA Stats Fetcher] No match found for: ${playerName}`);
-        results.errors.push(`No match for: ${playerName}`);
+        if (propsError) {
+          results.errors.push(propsError.message);
+        } else if (propsData) {
+          playersToFetch = [...new Set(propsData.map(p => p.player_name))];
+          console.log(`[NBA Stats Fetcher] Found ${playersToFetch.length} unique players from props`);
+        }
       }
-      
-      // Rate limiting delay (100ms between requests)
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
 
-    // Cache new player mappings
-    if (newPlayerMappings.length > 0) {
-      const { error: cacheError } = await supabase
-        .from('bdl_player_cache')
-        .upsert(newPlayerMappings, { onConflict: 'player_name' });
-      
-      if (cacheError) {
-        console.error('[NBA Stats Fetcher] Cache error:', cacheError);
-        results.errors.push(cacheError.message);
-      }
-    }
+      if (playersToFetch.length > 0) {
+        const { data: cachedPlayers } = await supabase
+          .from('bdl_player_cache')
+          .select('*')
+          .in('player_name', playersToFetch);
 
-    // Combine cached and new mappings
-    const allMappings = [
-      ...(cachedPlayers || []),
-      ...newPlayerMappings,
-    ];
-
-    // Fetch stats for all players with BDL IDs
-    const gameLogRecords: any[] = [];
-    
-    for (const mapping of allMappings) {
-      if (!mapping.bdl_player_id) continue;
-      
-      const stats = await fetchPlayerStats(mapping.bdl_player_id, apiKey, 10);
-      
-      for (const stat of stats) {
-        if (!stat.game?.date) continue;
+        const cachedMap = new Map(cachedPlayers?.map(p => [p.player_name, p]) || []);
+        const uncachedPlayers = playersToFetch.filter(name => !cachedMap.has(name));
         
-        const gameDate = stat.game.date.split('T')[0];
-        const isHome = stat.player?.team?.name === stat.game.home_team?.name;
-        const opponent = isHome ? stat.game.visitor_team?.name : stat.game.home_team?.name;
+        const newPlayerMappings: any[] = [];
         
-        // Parse minutes (format: "32:15" or "32")
-        let minutes = 0;
-        if (stat.min) {
-          const parts = stat.min.split(':');
-          minutes = parseInt(parts[0]) || 0;
-          if (parts[1]) {
-            minutes += parseInt(parts[1]) / 60;
+        for (const playerName of uncachedPlayers.slice(0, 20)) {
+          const player = await searchPlayer(playerName, apiKey);
+          
+          if (player) {
+            newPlayerMappings.push({
+              player_name: playerName,
+              bdl_player_id: player.id,
+              position: player.position,
+              team_name: player.team?.full_name || null,
+              height: player.height,
+              weight: player.weight,
+              jersey_number: player.jersey_number,
+              college: player.college,
+              country: player.country,
+              draft_year: player.draft_year,
+              draft_round: player.draft_round,
+              draft_number: player.draft_number,
+              last_updated: new Date().toISOString(),
+            });
+            results.playersMatched++;
+          }
+          
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+
+        if (newPlayerMappings.length > 0) {
+          await supabase
+            .from('bdl_player_cache')
+            .upsert(newPlayerMappings, { onConflict: 'player_name' });
+        }
+
+        const allMappings = [...(cachedPlayers || []), ...newPlayerMappings];
+        const gameLogRecords: any[] = [];
+        
+        for (const mapping of allMappings.slice(0, 30)) {
+          if (!mapping.bdl_player_id) continue;
+          
+          const stats = await fetchPlayerStats(mapping.bdl_player_id, apiKey, 10);
+          
+          for (const stat of stats) {
+            if (!stat.game?.date) continue;
+            
+            const gameDate = stat.game.date.split('T')[0];
+            const isHome = stat.player?.team?.name === stat.game.home_team?.name;
+            const opponent = isHome ? stat.game.visitor_team?.name : stat.game.home_team?.name;
+            
+            let minutes = 0;
+            if (stat.min) {
+              const parts = stat.min.split(':');
+              minutes = parseInt(parts[0]) || 0;
+            }
+            
+            gameLogRecords.push({
+              player_name: mapping.player_name,
+              game_date: gameDate,
+              opponent: opponent || 'Unknown',
+              is_home: isHome,
+              points: stat.pts || 0,
+              rebounds: stat.reb || 0,
+              assists: stat.ast || 0,
+              threes_made: stat.fg3m || 0,
+              blocks: stat.blk || 0,
+              steals: stat.stl || 0,
+              turnovers: stat.turnover || 0,
+              minutes_played: Math.round(minutes),
+            });
+          }
+          
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+
+        if (gameLogRecords.length > 0) {
+          const { error: logsError } = await supabase
+            .from('nba_player_game_logs')
+            .upsert(gameLogRecords, { 
+              onConflict: 'player_name,game_date',
+              ignoreDuplicates: false 
+            });
+          
+          if (logsError) {
+            results.errors.push(logsError.message);
+          } else {
+            results.bdlRecords = gameLogRecords.length;
+            results.statsInserted += gameLogRecords.length;
           }
         }
+      }
+
+      // Fetch injuries
+      if (mode === 'sync' || mode === 'injuries') {
+        const injuries = await fetchInjuries(apiKey);
+        const today = new Date().toISOString().split('T')[0];
         
-        gameLogRecords.push({
-          player_name: mapping.player_name,
-          game_date: gameDate,
-          opponent: opponent || 'Unknown',
-          is_home: isHome,
-          points: stat.pts || 0,
-          rebounds: stat.reb || 0,
-          assists: stat.ast || 0,
-          threes_made: stat.fg3m || 0,
-          blocks: stat.blk || 0,
-          steals: stat.stl || 0,
-          turnovers: stat.turnover || 0,
-          minutes_played: Math.round(minutes),
-        });
-      }
-      
-      // Rate limiting delay
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-
-    // Insert game logs
-    if (gameLogRecords.length > 0) {
-      const { error: logsError } = await supabase
-        .from('nba_player_game_logs')
-        .upsert(gameLogRecords, { 
-          onConflict: 'player_name,game_date',
-          ignoreDuplicates: false 
-        });
-      
-      if (logsError) {
-        console.error('[NBA Stats Fetcher] Game logs error:', logsError);
-        results.errors.push(logsError.message);
-      } else {
-        results.statsInserted = gameLogRecords.length;
-      }
-    }
-
-    // Fetch and insert injuries
-    if (mode === 'sync' || mode === 'injuries') {
-      console.log('[NBA Stats Fetcher] Fetching injury reports...');
-      
-      const injuries = await fetchInjuries(apiKey);
-      const today = new Date().toISOString().split('T')[0];
-      
-      // Delete existing injury reports for today
-      await supabase
-        .from('nba_injury_reports')
-        .delete()
-        .eq('game_date', today);
-      
-      const injuryRecords = injuries.map(inj => ({
-        player_name: `${inj.player.first_name} ${inj.player.last_name}`,
-        team_name: inj.player.team?.full_name || 'Unknown',
-        status: inj.status,
-        injury_type: inj.comment || 'Not specified',
-        impact_level: inj.status === 'Out' ? 'high' : inj.status === 'Day-To-Day' ? 'medium' : 'low',
-        affects_rotation: true,
-        game_date: today,
-      }));
-      
-      if (injuryRecords.length > 0) {
-        const { error: injError } = await supabase
+        await supabase
           .from('nba_injury_reports')
-          .insert(injuryRecords);
+          .delete()
+          .eq('game_date', today);
         
-        if (injError) {
-          console.error('[NBA Stats Fetcher] Injuries error:', injError);
-          results.errors.push(injError.message);
-        } else {
-          results.injuriesInserted = injuryRecords.length;
+        const injuryRecords = injuries.map(inj => ({
+          player_name: `${inj.player.first_name} ${inj.player.last_name}`,
+          team_name: inj.player.team?.full_name || 'Unknown',
+          status: inj.status,
+          injury_type: inj.comment || 'Not specified',
+          impact_level: inj.status === 'Out' ? 'high' : inj.status === 'Day-To-Day' ? 'medium' : 'low',
+          affects_rotation: true,
+          game_date: today,
+        }));
+        
+        if (injuryRecords.length > 0) {
+          const { error: injError } = await supabase
+            .from('nba_injury_reports')
+            .insert(injuryRecords);
+          
+          if (!injError) {
+            results.injuriesInserted = injuryRecords.length;
+          }
         }
       }
+    } else {
+      console.log('[NBA Stats Fetcher] No BDL API key configured, ESPN only');
     }
 
     const duration = Date.now() - startTime;
     console.log(`[NBA Stats Fetcher] Completed in ${duration}ms`, results);
 
-    // Log to cron history
     await supabase.from('cron_job_history').insert({
       job_name: 'nba-stats-fetcher',
       status: results.errors.length > 0 ? 'partial' : 'completed',
@@ -410,7 +492,6 @@ serve(async (req) => {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error('[NBA Stats Fetcher] Fatal error:', error);
     
-    // Log failure
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
     if (supabaseUrl && supabaseKey) {

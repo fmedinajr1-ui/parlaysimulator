@@ -602,6 +602,72 @@ export type Database = {
         }
         Relationships: []
       }
+      engine_live_tracker: {
+        Row: {
+          confidence: number | null
+          confidence_level: string | null
+          created_at: string | null
+          engine_name: string
+          event_id: string | null
+          game_time: string | null
+          id: string
+          line: number | null
+          odds: number | null
+          pick_description: string
+          player_name: string | null
+          prop_type: string | null
+          settled_at: string | null
+          side: string | null
+          signals: Json | null
+          sport: string
+          status: string | null
+          team_name: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          confidence?: number | null
+          confidence_level?: string | null
+          created_at?: string | null
+          engine_name: string
+          event_id?: string | null
+          game_time?: string | null
+          id?: string
+          line?: number | null
+          odds?: number | null
+          pick_description: string
+          player_name?: string | null
+          prop_type?: string | null
+          settled_at?: string | null
+          side?: string | null
+          signals?: Json | null
+          sport: string
+          status?: string | null
+          team_name?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          confidence?: number | null
+          confidence_level?: string | null
+          created_at?: string | null
+          engine_name?: string
+          event_id?: string | null
+          game_time?: string | null
+          id?: string
+          line?: number | null
+          odds?: number | null
+          pick_description?: string
+          player_name?: string | null
+          prop_type?: string | null
+          settled_at?: string | null
+          side?: string | null
+          signals?: Json | null
+          sport?: string
+          status?: string | null
+          team_name?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       extreme_movement_alerts: {
         Row: {
           alert_level: string
