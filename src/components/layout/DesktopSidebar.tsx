@@ -46,6 +46,7 @@ const featureItems = [
 ];
 
 const adminItems = [
+  { icon: Activity, label: "All-Sports Tracker", path: "/tracker" },
   { icon: Calculator, label: "PVS Calculator", path: "/pvs-calculator" },
   { icon: Shield, label: "Admin Panel", path: "/admin" },
   { icon: Users, label: "Collaborators", path: "/collaborate" },

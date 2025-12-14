@@ -34,6 +34,7 @@ const menuItems = [
 ];
 
 const adminItems = [
+  { icon: Activity, label: "All-Sports Tracker", path: "/tracker", description: "Real-time picks from all engines" },
   { icon: Calculator, label: "PVS Calculator", path: "/pvs-calculator", description: "Prop value scoring" },
   { icon: Shield, label: "Admin Panel", path: "/admin", description: "System management" },
   { icon: Users, label: "Collaborators", path: "/collaborate", description: "Team access" },
