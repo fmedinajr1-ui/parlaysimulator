@@ -203,3 +203,6 @@ verify_jwt = false
 
 [functions.verify-fanduel-trap-outcomes]
 verify_jwt = false
+
+[functions.unified-live-feed]
+verify_jwt = false
