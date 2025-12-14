@@ -47,6 +47,7 @@ import { UnifiedAccuracyDashboard } from '@/components/admin/UnifiedAccuracyDash
 import { SharpEngineV2Card } from '@/components/sharp/SharpEngineV2Card';
 import { SharpEngineConfigPanel } from '@/components/admin/SharpEngineConfigPanel';
 import { AIGenerativeProgressDashboard } from '@/components/admin/AIGenerativeProgressDashboard';
+import { AllSportsTracker } from '@/components/tracker/AllSportsTracker';
 
 interface ParlayData {
   id: string;
@@ -72,7 +73,8 @@ type AdminSection =
   | 'movement' 
   | 'users' 
   | 'parlays'
-  | 'god-mode';
+  | 'god-mode'
+  | 'tracker';
 
 const sectionConfig = [
   {
@@ -130,6 +132,13 @@ const sectionConfig = [
     description: 'Upset predictions and chaos mode analysis',
     icon: Target,
     color: 'text-purple-500'
+  },
+  {
+    id: 'tracker' as AdminSection,
+    title: 'All-Sports Tracker',
+    description: 'Real-time picks from all 8 engines',
+    icon: Eye,
+    color: 'text-emerald-500'
   },
 ];
 
@@ -448,6 +457,9 @@ export default function Admin() {
       
       case 'god-mode':
         return <GodModeDashboard />;
+      
+      case 'tracker':
+        return <AllSportsTracker />;
       
       case 'parlays':
         return (
