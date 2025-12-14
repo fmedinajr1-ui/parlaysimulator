@@ -4008,6 +4008,57 @@ export type Database = {
         }
         Relationships: []
       }
+      user_bankroll: {
+        Row: {
+          bankroll_amount: number | null
+          created_at: string | null
+          current_loss_streak: number | null
+          current_win_streak: number | null
+          default_unit_size: number | null
+          id: string
+          kelly_multiplier: number | null
+          max_bet_percent: number | null
+          peak_bankroll: number | null
+          total_bets: number | null
+          total_lost: number | null
+          total_won: number | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          bankroll_amount?: number | null
+          created_at?: string | null
+          current_loss_streak?: number | null
+          current_win_streak?: number | null
+          default_unit_size?: number | null
+          id?: string
+          kelly_multiplier?: number | null
+          max_bet_percent?: number | null
+          peak_bankroll?: number | null
+          total_bets?: number | null
+          total_lost?: number | null
+          total_won?: number | null
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          bankroll_amount?: number | null
+          created_at?: string | null
+          current_loss_streak?: number | null
+          current_win_streak?: number | null
+          default_unit_size?: number | null
+          id?: string
+          kelly_multiplier?: number | null
+          max_bet_percent?: number | null
+          peak_bankroll?: number | null
+          total_bets?: number | null
+          total_lost?: number | null
+          total_won?: number | null
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           created_at: string | null
