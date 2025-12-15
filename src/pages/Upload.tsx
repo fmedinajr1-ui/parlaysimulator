@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { PaywallModal } from "@/components/PaywallModal";
+import { PilotPaywallModal } from "@/components/PilotPaywallModal";
 import { QuickCheckResults } from "@/components/upload/QuickCheckResults";
 import { UploadOptimizer } from "@/components/upload/UploadOptimizer";
 import { MobileHeader } from "@/components/layout/MobileHeader";
@@ -21,6 +22,7 @@ import { toast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import { useSubscription } from "@/hooks/useSubscription";
+import { usePilotUser } from "@/hooks/usePilotUser";
 import { useAuth } from "@/contexts/AuthContext";
 import { compressImage, validateMediaFile } from "@/lib/image-compression";
 import { extractFramesFromVideo, isVideoFile, type ExtractionProgress } from "@/lib/video-frame-extractor";
@@ -62,6 +64,7 @@ const Upload = () => {
   const [searchParams] = useSearchParams();
   const { user } = useAuth();
   const { isSubscribed, isAdmin, canScan, scansRemaining, incrementScan, startCheckout, checkSubscription } = useSubscription();
+  const { isPilotUser, canScan: pilotCanScan, totalScansAvailable, decrementScan, purchaseScans, checkStatus: checkPilotStatus } = usePilotUser();
   const { shouldShowHint, dismissHint } = useHints();
   
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -78,6 +81,7 @@ const Upload = () => {
   const [editDate, setEditDate] = useState<Date | undefined>(undefined);
   const [editTime, setEditTime] = useState("19:00");
   const [showPaywall, setShowPaywall] = useState(false);
+  const [showPilotPaywall, setShowPilotPaywall] = useState(false);
   const [uploadQueue, setUploadQueue] = useState<QueuedSlip[]>([]);
   const [processingIndex, setProcessingIndex] = useState<number>(-1);
   const [isQuickChecking, setIsQuickChecking] = useState(false);
@@ -328,9 +332,17 @@ const Upload = () => {
 
   const handleFilesSelected = useCallback(async (files: File[]) => {
     // Check scan access for logged-in users
-    if (user && !canScan && !isSubscribed && !isAdmin) {
-      setShowPaywall(true);
-      return;
+    if (user && !isSubscribed && !isAdmin) {
+      // For pilot users, check pilot quota
+      if (isPilotUser && !pilotCanScan) {
+        setShowPilotPaywall(true);
+        return;
+      }
+      // For regular free users, check regular quota
+      if (!isPilotUser && !canScan) {
+        setShowPaywall(true);
+        return;
+      }
     }
 
     // Check if any file is a video
@@ -402,8 +414,14 @@ const Upload = () => {
             description: `Found betting slip in ${data?.framesWithSlips || 1} of ${data?.framesProcessed || frames.length} frames`,
           });
 
-          // Increment scan for free users
-          if (user && !isSubscribed && !isAdmin) await incrementScan();
+          // Decrement scan for users
+          if (user && !isSubscribed && !isAdmin) {
+            if (isPilotUser) {
+              await decrementScan('scan');
+            } else {
+              await incrementScan();
+            }
+          }
         }
       } catch (err) {
         console.error('Video processing error:', err);
@@ -496,8 +514,14 @@ const Upload = () => {
 
         successCount++;
 
-        // Increment scan for free users
-        if (user && !isSubscribed && !isAdmin) await incrementScan();
+        // Decrement scan for users
+        if (user && !isSubscribed && !isAdmin) {
+          if (isPilotUser) {
+            await decrementScan('scan');
+          } else {
+            await incrementScan();
+          }
+        }
 
       } catch (err) {
         setUploadQueue(prev => prev.map((item, idx) => 
@@ -669,6 +693,14 @@ const Upload = () => {
         onClose={() => setShowPaywall(false)}
         onSubscribe={startCheckout}
         scansUsed={3 - scansRemaining}
+      />
+
+      {/* Pilot Paywall Modal */}
+      <PilotPaywallModal
+        isOpen={showPilotPaywall}
+        onClose={() => setShowPilotPaywall(false)}
+        onPurchase={purchaseScans}
+        freeScansUsed={5}
       />
 
       <main className="max-w-lg mx-auto px-3 py-4">
