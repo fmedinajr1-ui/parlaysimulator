@@ -10,7 +10,8 @@ import {
   ConfidenceIntervalBadge, 
   SampleSizeWarning, 
   SampleSizeBadge,
-  HitRateCalibrationCard 
+  HitRateCalibrationCard,
+  StrategyROICard
 } from "@/components/hitrate";
 
 export default function HitRate() {
@@ -114,6 +115,9 @@ export default function HitRate() {
 
         {/* Calibration Card */}
         <HitRateCalibrationCard compact />
+
+        {/* Strategy ROI Performance */}
+        <StrategyROICard />
 
         {/* Accuracy by Strategy with Enhanced Confidence Display */}
         {accuracyMetrics && accuracyMetrics.length > 0 && (

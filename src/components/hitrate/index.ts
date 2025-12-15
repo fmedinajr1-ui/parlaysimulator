@@ -8,3 +8,6 @@ export {
   LegCorrelationIndicator 
 } from './CorrelationWarningBadge';
 export { EnhancedParlayAnalysis } from './EnhancedParlayAnalysis';
+export { ParlayEnsembleSummary } from './ParlayEnsembleSummary';
+export { StrategyROICard } from './StrategyROICard';
+export { ParlayKellyCalculator } from './ParlayKellyCalculator';
