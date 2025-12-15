@@ -1831,6 +1831,288 @@ export type Database = {
         }
         Relationships: []
       }
+      median_lock_backtest_results: {
+        Row: {
+          avg_confidence_score: number | null
+          avg_edge: number | null
+          avg_minutes: number | null
+          block_count: number | null
+          created_at: string | null
+          defense_bucket_stats: Json | null
+          home_away_stats: Json | null
+          id: string
+          juice_lag_win_rate: number | null
+          lock_count: number | null
+          lock_only_hit_rate: number | null
+          lock_strong_hit_rate: number | null
+          minutes_bucket_stats: Json | null
+          parameters: Json | null
+          run_date: string | null
+          shock_flag_rate: number | null
+          shock_pass_rate: number | null
+          slates_analyzed: number | null
+          slip_2_count: number | null
+          slip_2_hit_rate: number | null
+          slip_3_count: number | null
+          slip_3_hit_rate: number | null
+          strong_count: number | null
+          top_fail_reasons: Json | null
+          tuned_edge_min: number | null
+          tuned_hit_rate_min: number | null
+          tuned_minutes_floor: number | null
+        }
+        Insert: {
+          avg_confidence_score?: number | null
+          avg_edge?: number | null
+          avg_minutes?: number | null
+          block_count?: number | null
+          created_at?: string | null
+          defense_bucket_stats?: Json | null
+          home_away_stats?: Json | null
+          id?: string
+          juice_lag_win_rate?: number | null
+          lock_count?: number | null
+          lock_only_hit_rate?: number | null
+          lock_strong_hit_rate?: number | null
+          minutes_bucket_stats?: Json | null
+          parameters?: Json | null
+          run_date?: string | null
+          shock_flag_rate?: number | null
+          shock_pass_rate?: number | null
+          slates_analyzed?: number | null
+          slip_2_count?: number | null
+          slip_2_hit_rate?: number | null
+          slip_3_count?: number | null
+          slip_3_hit_rate?: number | null
+          strong_count?: number | null
+          top_fail_reasons?: Json | null
+          tuned_edge_min?: number | null
+          tuned_hit_rate_min?: number | null
+          tuned_minutes_floor?: number | null
+        }
+        Update: {
+          avg_confidence_score?: number | null
+          avg_edge?: number | null
+          avg_minutes?: number | null
+          block_count?: number | null
+          created_at?: string | null
+          defense_bucket_stats?: Json | null
+          home_away_stats?: Json | null
+          id?: string
+          juice_lag_win_rate?: number | null
+          lock_count?: number | null
+          lock_only_hit_rate?: number | null
+          lock_strong_hit_rate?: number | null
+          minutes_bucket_stats?: Json | null
+          parameters?: Json | null
+          run_date?: string | null
+          shock_flag_rate?: number | null
+          shock_pass_rate?: number | null
+          slates_analyzed?: number | null
+          slip_2_count?: number | null
+          slip_2_hit_rate?: number | null
+          slip_3_count?: number | null
+          slip_3_hit_rate?: number | null
+          strong_count?: number | null
+          top_fail_reasons?: Json | null
+          tuned_edge_min?: number | null
+          tuned_hit_rate_min?: number | null
+          tuned_minutes_floor?: number | null
+        }
+        Relationships: []
+      }
+      median_lock_candidates: {
+        Row: {
+          actual_value: number | null
+          adjusted_edge: number | null
+          block_reason: string | null
+          book_line: number
+          classification: string | null
+          confidence_score: number | null
+          consistency_score: number | null
+          created_at: string | null
+          current_price: number | null
+          defense_adjustment: number | null
+          event_id: string | null
+          failed_checks: Json | null
+          hit_rate: number | null
+          hit_rate_last_5: number | null
+          home_away_last_10: Json | null
+          id: string
+          is_shock_flagged: boolean | null
+          juice_lag_bonus: number | null
+          location: string | null
+          median_minutes: number | null
+          median_points: number | null
+          median_shots: number | null
+          median_usage: number | null
+          minutes_last_10: Json | null
+          minutes_shock: boolean | null
+          opening_price: number | null
+          opponent: string | null
+          opponent_defense_rank: number | null
+          outcome: string | null
+          passed_checks: Json | null
+          player_name: string
+          points_last_10: Json | null
+          prop_type: string
+          raw_edge: number | null
+          shock_passed_validation: boolean | null
+          shock_reasons: Json | null
+          shots_last_10: Json | null
+          shots_shock: boolean | null
+          slate_date: string
+          split_edge: number | null
+          team_name: string | null
+          teammates_out_count: number | null
+          updated_at: string | null
+          usage_last_10: Json | null
+          usage_shock: boolean | null
+          verified_at: string | null
+        }
+        Insert: {
+          actual_value?: number | null
+          adjusted_edge?: number | null
+          block_reason?: string | null
+          book_line: number
+          classification?: string | null
+          confidence_score?: number | null
+          consistency_score?: number | null
+          created_at?: string | null
+          current_price?: number | null
+          defense_adjustment?: number | null
+          event_id?: string | null
+          failed_checks?: Json | null
+          hit_rate?: number | null
+          hit_rate_last_5?: number | null
+          home_away_last_10?: Json | null
+          id?: string
+          is_shock_flagged?: boolean | null
+          juice_lag_bonus?: number | null
+          location?: string | null
+          median_minutes?: number | null
+          median_points?: number | null
+          median_shots?: number | null
+          median_usage?: number | null
+          minutes_last_10?: Json | null
+          minutes_shock?: boolean | null
+          opening_price?: number | null
+          opponent?: string | null
+          opponent_defense_rank?: number | null
+          outcome?: string | null
+          passed_checks?: Json | null
+          player_name: string
+          points_last_10?: Json | null
+          prop_type: string
+          raw_edge?: number | null
+          shock_passed_validation?: boolean | null
+          shock_reasons?: Json | null
+          shots_last_10?: Json | null
+          shots_shock?: boolean | null
+          slate_date: string
+          split_edge?: number | null
+          team_name?: string | null
+          teammates_out_count?: number | null
+          updated_at?: string | null
+          usage_last_10?: Json | null
+          usage_shock?: boolean | null
+          verified_at?: string | null
+        }
+        Update: {
+          actual_value?: number | null
+          adjusted_edge?: number | null
+          block_reason?: string | null
+          book_line?: number
+          classification?: string | null
+          confidence_score?: number | null
+          consistency_score?: number | null
+          created_at?: string | null
+          current_price?: number | null
+          defense_adjustment?: number | null
+          event_id?: string | null
+          failed_checks?: Json | null
+          hit_rate?: number | null
+          hit_rate_last_5?: number | null
+          home_away_last_10?: Json | null
+          id?: string
+          is_shock_flagged?: boolean | null
+          juice_lag_bonus?: number | null
+          location?: string | null
+          median_minutes?: number | null
+          median_points?: number | null
+          median_shots?: number | null
+          median_usage?: number | null
+          minutes_last_10?: Json | null
+          minutes_shock?: boolean | null
+          opening_price?: number | null
+          opponent?: string | null
+          opponent_defense_rank?: number | null
+          outcome?: string | null
+          passed_checks?: Json | null
+          player_name?: string
+          points_last_10?: Json | null
+          prop_type?: string
+          raw_edge?: number | null
+          shock_passed_validation?: boolean | null
+          shock_reasons?: Json | null
+          shots_last_10?: Json | null
+          shots_shock?: boolean | null
+          slate_date?: string
+          split_edge?: number | null
+          team_name?: string | null
+          teammates_out_count?: number | null
+          updated_at?: string | null
+          usage_last_10?: Json | null
+          usage_shock?: boolean | null
+          verified_at?: string | null
+        }
+        Relationships: []
+      }
+      median_lock_slips: {
+        Row: {
+          created_at: string | null
+          id: string
+          leg_ids: string[] | null
+          legs: Json
+          legs_hit: number | null
+          outcome: string | null
+          probability: number | null
+          slate_date: string
+          slip_score: number | null
+          slip_type: string
+          stake_tier: string | null
+          verified_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          leg_ids?: string[] | null
+          legs?: Json
+          legs_hit?: number | null
+          outcome?: string | null
+          probability?: number | null
+          slate_date: string
+          slip_score?: number | null
+          slip_type: string
+          stake_tier?: string | null
+          verified_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          leg_ids?: string[] | null
+          legs?: Json
+          legs_hit?: number | null
+          outcome?: string | null
+          probability?: number | null
+          slate_date?: string
+          slip_score?: number | null
+          slip_type?: string
+          stake_tier?: string | null
+          verified_at?: string | null
+        }
+        Relationships: []
+      }
       nba_fatigue_scores: {
         Row: {
           assists_adjustment_pct: number
@@ -2021,49 +2303,61 @@ export type Database = {
           assists: number | null
           blocks: number | null
           created_at: string
+          field_goals_attempted: number | null
           game_date: string
           id: string
           is_home: boolean | null
+          is_starter: boolean | null
           minutes_played: number | null
           opponent: string
           player_name: string
           points: number | null
           rebounds: number | null
           steals: number | null
+          teammates_out: Json | null
           threes_made: number | null
           turnovers: number | null
+          usage_rate: number | null
         }
         Insert: {
           assists?: number | null
           blocks?: number | null
           created_at?: string
+          field_goals_attempted?: number | null
           game_date: string
           id?: string
           is_home?: boolean | null
+          is_starter?: boolean | null
           minutes_played?: number | null
           opponent: string
           player_name: string
           points?: number | null
           rebounds?: number | null
           steals?: number | null
+          teammates_out?: Json | null
           threes_made?: number | null
           turnovers?: number | null
+          usage_rate?: number | null
         }
         Update: {
           assists?: number | null
           blocks?: number | null
           created_at?: string
+          field_goals_attempted?: number | null
           game_date?: string
           id?: string
           is_home?: boolean | null
+          is_starter?: boolean | null
           minutes_played?: number | null
           opponent?: string
           player_name?: string
           points?: number | null
           rebounds?: number | null
           steals?: number | null
+          teammates_out?: Json | null
           threes_made?: number | null
           turnovers?: number | null
+          usage_rate?: number | null
         }
         Relationships: []
       }
