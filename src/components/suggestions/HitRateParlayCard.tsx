@@ -1,9 +1,19 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { TrendingUp, Target, Zap, ChevronDown, ChevronUp, Trophy, X, AlertCircle } from "lucide-react";
-import { useState } from "react";
+import { TrendingUp, Target, Zap, ChevronDown, ChevronUp, Trophy, X, AlertCircle, Link2 } from "lucide-react";
+import { useState, useEffect, useMemo } from "react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { 
+  CorrelationWarningBadge, 
+  CorrelationProbabilityDisplay 
+} from "@/components/hitrate";
+import { 
+  buildCorrelationMatrix, 
+  calculateCorrelatedProbability,
+  CorrelationMatrix 
+} from "@/lib/correlation-engine";
+import { ParlayLeg } from "@/types/parlay";
 
 interface HitRateLeg {
   player_name: string;
@@ -68,14 +78,53 @@ const SPORT_COLORS: Record<string, string> = {
 
 export function HitRateParlayCard({ parlay, onRunSharpAnalysis, onDismiss }: HitRateParlayCardProps) {
   const [expandedLeg, setExpandedLeg] = useState<number | null>(null);
+  const [correlationMatrix, setCorrelationMatrix] = useState<CorrelationMatrix | null>(null);
+  const [correlatedResult, setCorrelatedResult] = useState<{
+    independentProbability: number;
+    correlatedProbability: number;
+    correlationImpact: number;
+  } | null>(null);
+
+  // Convert hit rate legs to ParlayLeg format for correlation analysis
+  const parlayLegs: ParlayLeg[] = useMemo(() => 
+    parlay.legs.map((leg, idx) => ({
+      id: `${parlay.id}-${idx}`,
+      description: `${leg.player_name} ${leg.recommended_side} ${leg.line} ${leg.prop_type}`,
+      odds: leg.price || -110,
+      sport: leg.sport,
+      isLocked: false,
+      impliedProbability: leg.hit_rate || 0.5,
+      riskLevel: 'medium' as const
+    })), [parlay.legs, parlay.id]
+  );
+
+  // Calculate leg probabilities from hit rates
+  const legProbabilities = useMemo(() => 
+    parlay.legs.map(leg => leg.hit_rate || 0.5), 
+    [parlay.legs]
+  );
+
+  // Run correlation analysis
+  useEffect(() => {
+    if (parlay.legs.length >= 2) {
+      buildCorrelationMatrix(parlayLegs, parlay.sport).then(matrix => {
+        setCorrelationMatrix(matrix);
+        
+        if (legProbabilities.length === parlayLegs.length) {
+          const result = calculateCorrelatedProbability(legProbabilities, matrix);
+          setCorrelatedResult({
+            independentProbability: result.independentProbability,
+            correlatedProbability: result.correlatedProbability,
+            correlationImpact: result.correlationImpact
+          });
+        }
+      });
+    }
+  }, [parlay.legs.length, parlay.sport]);
 
   const formatOdds = (odds: number | undefined | null) => {
     if (odds === undefined || odds === null) return '-110';
     return odds > 0 ? `+${odds}` : odds.toString();
-  };
-
-  const formatHitRate = (rate: number) => {
-    return `${Math.round(rate * 100)}%`;
   };
 
   const getHitRateDisplay = (leg: HitRateLeg) => {
@@ -114,6 +163,8 @@ export function HitRateParlayCard({ parlay, onRunSharpAnalysis, onDismiss }: Hit
     return `${Math.floor(hours / 24)}d`;
   };
 
+  const hasCorrelation = correlationMatrix?.hasHighCorrelation || false;
+
   return (
     <Card className="bg-card/80 backdrop-blur border-border/50 hover:border-primary/30 transition-all">
       <CardHeader className="pb-3">
@@ -131,6 +182,9 @@ export function HitRateParlayCard({ parlay, onRunSharpAnalysis, onDismiss }: Hit
                 <Zap className="h-3 w-3 mr-1" />
                 Sharp
               </Badge>
+            )}
+            {correlationMatrix && (
+              <CorrelationWarningBadge correlationMatrix={correlationMatrix} compact />
             )}
             {parlay.sharp_analysis_attempted && !parlay.sharp_optimized && (
               <TooltipProvider>
@@ -249,11 +303,34 @@ export function HitRateParlayCard({ parlay, onRunSharpAnalysis, onDismiss }: Hit
             <div className="text-sm text-muted-foreground">
               Combined Hit Rate Probability
             </div>
-            <div className="flex items-center gap-1">
-              <TrendingUp className="h-4 w-4 text-neon-green" />
-              <span className="font-bold text-neon-green">{parlay.combined_probability}%</span>
+            <div className="flex items-center gap-2">
+              {correlatedResult && hasCorrelation ? (
+                <CorrelationProbabilityDisplay
+                  independentProbability={correlatedResult.independentProbability}
+                  correlatedProbability={correlatedResult.correlatedProbability}
+                  correlationImpact={correlatedResult.correlationImpact}
+                />
+              ) : (
+                <div className="flex items-center gap-1">
+                  <TrendingUp className="h-4 w-4 text-neon-green" />
+                  <span className="font-bold text-neon-green">{parlay.combined_probability}%</span>
+                </div>
+              )}
             </div>
           </div>
+
+          {/* Correlation Warning Banner */}
+          {hasCorrelation && correlatedResult && correlatedResult.correlationImpact < -1 && (
+            <div className="mb-3 p-2 bg-orange-400/10 border border-orange-400/20 rounded-lg">
+              <div className="flex items-center gap-2 text-xs text-orange-400">
+                <Link2 className="h-3 w-3" />
+                <span>
+                  <strong>Correlation detected:</strong> Some legs are dependent. 
+                  True probability is {Math.abs(correlatedResult.correlationImpact).toFixed(1)}% lower than independent assumption.
+                </span>
+              </div>
+            </div>
+          )}
 
           {!parlay.sharp_optimized && onRunSharpAnalysis && (
             <Button 
