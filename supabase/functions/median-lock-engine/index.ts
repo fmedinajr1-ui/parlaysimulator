@@ -443,6 +443,7 @@ interface CandidateWithId extends MedianLockResult {
   playerName: string;
   teamName: string;
   eventId: string;
+  bookLine: number;
 }
 
 function generateCombinations<T>(arr: T[], size: number): T[][] {
@@ -577,7 +578,7 @@ serve(async (req) => {
       const processed = new Set<string>();
 
       for (const prop of propData || []) {
-        const key = `${prop.player_name}_${prop.prop_type}_${prop.line}`;
+        const key = `${prop.player_name}_${prop.prop_type}_${prop.current_line}`;
         if (processed.has(key)) continue;
         processed.add(key);
 
@@ -589,7 +590,7 @@ serve(async (req) => {
           playerName: prop.player_name,
           teamName: logs[0]?.team_abbreviation || 'UNK',
           propType: prop.prop_type,
-          bookLine: prop.line,
+          bookLine: prop.current_line,
           currentPrice: -110, // Default if not available
           openingPrice: -110,
           location: logs[0]?.is_home ? 'HOME' : 'AWAY',
@@ -614,6 +615,7 @@ serve(async (req) => {
           playerName: candidate.playerName,
           teamName: candidate.teamName,
           eventId: candidate.eventId,
+          bookLine: candidate.bookLine,
         });
       }
 
@@ -622,7 +624,7 @@ serve(async (req) => {
         player_name: r.playerName,
         team_name: r.teamName,
         prop_type: 'player_points',
-        book_line: 0, // Would need actual line
+        book_line: r.bookLine || 0,
         slate_date: targetDate,
         median_points: r.medianPoints,
         median_minutes: r.medianMinutes,
