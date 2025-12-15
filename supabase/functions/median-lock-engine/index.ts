@@ -578,7 +578,7 @@ serve(async (req) => {
       const processed = new Set<string>();
 
       for (const prop of propData || []) {
-        const key = `${prop.player_name}_${prop.prop_type}_${prop.current_line}`;
+        const key = `${prop.player_name}_${prop.prop_type}`;
         if (processed.has(key)) continue;
         processed.add(key);
 
@@ -623,7 +623,7 @@ serve(async (req) => {
       const candidatesToInsert = results.map(r => ({
         player_name: r.playerName,
         team_name: r.teamName,
-        prop_type: 'player_points',
+        prop_type: r.propType,
         book_line: r.bookLine || 0,
         slate_date: targetDate,
         median_points: r.medianPoints,
