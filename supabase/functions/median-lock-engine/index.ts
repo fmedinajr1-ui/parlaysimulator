@@ -19,8 +19,9 @@ interface PlayerPropCandidate {
   opponent: string;
   opponentDefenseRank: number;
   eventId: string;
+  recommendedSide: 'over' | 'under';
   
-  pointsLast10: number[];
+  statLast10: number[];  // The relevant stat for this prop type
   minutesLast10: number[];
   usageLast10: number[];
   shotsLast10: number[];
@@ -119,10 +120,23 @@ function stdDev(arr: number[]): number {
   return Math.sqrt(average(squareDiffs));
 }
 
-function calculateHitRate(values: number[], line: number): number {
+function calculateHitRate(values: number[], line: number, side: 'over' | 'under' = 'over'): number {
   if (values.length === 0) return 0;
-  const hits = values.filter(v => v >= line).length;
+  const hits = values.filter(v => side === 'over' ? v >= line : v < line).length;
   return hits / values.length;
+}
+
+// Helper to get correct stat based on prop type
+function getStatForPropType(log: any, propType: string): number {
+  switch (propType) {
+    case 'player_points': return log.points || 0;
+    case 'player_assists': return log.assists || 0;
+    case 'player_rebounds': return log.rebounds || 0;
+    case 'player_threes': return log.threes_made || 0;
+    case 'player_blocks': return log.blocks || 0;
+    case 'player_steals': return log.steals || 0;
+    default: return log.points || 0;
+  }
 }
 
 // ============ DEFENSE ADJUSTMENT ============
@@ -172,9 +186,9 @@ function detectUsageShock(candidate: PlayerPropCandidate, bookLine: number): Sho
   
   // If shock flagged, require secondary validation
   if (shockReasons.length > 0) {
-    const pointsLast5 = candidate.pointsLast10.slice(0, 5);
-    const hitRateLast5 = calculateHitRate(pointsLast5, bookLine);
-    const medianLast5 = median(pointsLast5);
+    const statLast5 = candidate.statLast10.slice(0, 5);
+    const hitRateLast5 = calculateHitRate(statLast5, bookLine);
+    const medianLast5 = median(statLast5);
     
     // Must have 60%+ hit rate in last 5 AND median exceeds line by 0.5+
     const passedValidation = hitRateLast5 >= 0.6 && (medianLast5 - bookLine) >= 0.5;
@@ -209,19 +223,22 @@ function evaluateCandidate(
   const failedChecks: string[] = [];
   
   // Compute basic medians
-  const medianPoints = median(candidate.pointsLast10);
+  const medianStat = median(candidate.statLast10);
   const medianMinutes = median(candidate.minutesLast10);
   const medianUsage = median(candidate.usageLast10);
   const medianShots = median(candidate.shotsLast10);
   
-  // Raw edge and hit rate
-  const rawEdge = medianPoints - candidate.bookLine;
-  const hitRate = calculateHitRate(candidate.pointsLast10, candidate.bookLine);
-  const hitRateLast5 = calculateHitRate(candidate.pointsLast10.slice(0, 5), candidate.bookLine);
+  // Raw edge and hit rate - bidirectional support
+  const side = candidate.recommendedSide;
+  const rawEdge = side === 'under' 
+    ? candidate.bookLine - medianStat  // UNDER: edge is how much below line
+    : medianStat - candidate.bookLine; // OVER: edge is how much above line
+  const hitRate = calculateHitRate(candidate.statLast10, candidate.bookLine, side);
+  const hitRateLast5 = calculateHitRate(candidate.statLast10.slice(0, 5), candidate.bookLine, side);
   
-  // Build base result
+  // Build base result (medianPoints stores the stat median for compatibility)
   const baseResult = {
-    medianPoints,
+    medianPoints: medianStat,
     medianMinutes,
     medianUsage,
     medianShots,
@@ -319,16 +336,18 @@ function evaluateCandidate(
   passedChecks.push(`Defense adjustment: ${defenseAdjustment >= 0 ? '+' : ''}${defenseAdjustment.toFixed(1)} (rank ${candidate.opponentDefenseRank})`);
   
   // === CHECK 4: Home/Away Split ===
-  const homePoints: number[] = [];
-  const awayPoints: number[] = [];
-  candidate.pointsLast10.forEach((p, i) => {
-    if (candidate.homeAwayLast10[i] === 'HOME') homePoints.push(p);
-    else awayPoints.push(p);
+  const homeStats: number[] = [];
+  const awayStats: number[] = [];
+  candidate.statLast10.forEach((p, i) => {
+    if (candidate.homeAwayLast10[i] === 'HOME') homeStats.push(p);
+    else awayStats.push(p);
   });
   
-  const relevantSplitPoints = candidate.location === 'HOME' ? homePoints : awayPoints;
-  const splitMedian = relevantSplitPoints.length > 0 ? median(relevantSplitPoints) : medianPoints;
-  const splitEdge = splitMedian - candidate.bookLine;
+  const relevantSplitStats = candidate.location === 'HOME' ? homeStats : awayStats;
+  const splitMedian = relevantSplitStats.length > 0 ? median(relevantSplitStats) : medianStat;
+  const splitEdge = side === 'under'
+    ? candidate.bookLine - splitMedian
+    : splitMedian - candidate.bookLine;
   
   if (splitEdge < config.splitEdgeMin) {
     failedChecks.push(`${candidate.location} split edge ${splitEdge.toFixed(1)} < ${config.splitEdgeMin}`);
@@ -360,7 +379,7 @@ function evaluateCandidate(
     passedChecks.push(`Juice lag bonus: +${juiceLagBonus} (price moved ${juiceDelta})`);
   }
   
-  // === CHECK 6: Shock Detection ===
+  // === CHECK 6: Shock Detection (uses statLast10 now) ===
   const shockResult = detectUsageShock(candidate, candidate.bookLine);
   
   if (shockResult.isShock && !shockResult.passedValidation) {
@@ -390,8 +409,8 @@ function evaluateCandidate(
   }
   
   // === CALCULATE FINAL SCORES ===
-  const pointsStdDev = stdDev(candidate.pointsLast10);
-  const consistencyScore = pointsStdDev > 0 ? medianPoints / pointsStdDev : medianPoints;
+  const statStdDev = stdDev(candidate.statLast10);
+  const consistencyScore = statStdDev > 0 ? medianStat / statStdDev : medianStat;
   
   // ConfidenceScore formula:
   // AdjustedEdge × 0.35 × 10 + HitRate × 40 + (MedianMinutes / 30) × 10 + ConsistencyScore × 8 + JuiceLagBonus × 5 - (ShockFlag ? 6 : 0)
@@ -603,7 +622,8 @@ serve(async (req) => {
           opponent: logs[0]?.opponent_abbreviation || 'UNK',
           opponentDefenseRank: 15, // Default to average
           eventId: prop.event_id || `${prop.player_name}_${targetDate}`,
-          pointsLast10: logs.map(l => l.points || 0),
+          recommendedSide: (prop.recommended_side || 'over') as 'over' | 'under',
+          statLast10: logs.map(l => getStatForPropType(l, prop.prop_type)),
           minutesLast10: logs.map(l => l.minutes_played || 0),
           usageLast10: logs.map(l => l.usage_rate || 25),
           shotsLast10: logs.map(l => l.field_goals_attempted || 10),
