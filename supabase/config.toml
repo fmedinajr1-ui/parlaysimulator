@@ -209,3 +209,9 @@ verify_jwt = false
 
 [functions.calculate-brier-scores]
 verify_jwt = false
+
+[functions.median-lock-engine]
+verify_jwt = false
+
+[functions.median-lock-backtest]
+verify_jwt = false
