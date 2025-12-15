@@ -3,8 +3,10 @@ import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { usePWA } from "@/hooks/usePWA";
 import { MenuDrawer } from "@/components/layout/MenuDrawer";
+import { usePilotUser } from "@/hooks/usePilotUser";
+import { PILOT_ALLOWED_ROUTES } from "@/components/PilotRouteGuard";
 
-const navItems = [
+const allNavItems = [
   { icon: Home, label: "Home", path: "/" },
   { icon: BarChart3, label: "Analyze", path: "/upload" },
   { icon: Wallet, label: "Kelly", path: "/kelly" },
@@ -14,6 +16,12 @@ const navItems = [
 export function BottomNav() {
   const location = useLocation();
   const { isOnline } = usePWA();
+  const { isPilotUser, isAdmin, isSubscribed } = usePilotUser();
+
+  // Filter nav items for pilot users
+  const navItems = (isPilotUser && !isAdmin && !isSubscribed)
+    ? allNavItems.filter(item => PILOT_ALLOWED_ROUTES.includes(item.path))
+    : allNavItems;
 
   return (
     <nav className={cn(
