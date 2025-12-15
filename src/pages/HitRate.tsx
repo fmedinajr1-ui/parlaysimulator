@@ -4,8 +4,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { Target, TrendingUp, Flame, Percent, Trophy } from "lucide-react";
+import { Target, TrendingUp, Flame, Percent, Trophy, Activity } from "lucide-react";
 import { Helmet } from "react-helmet";
+import { 
+  ConfidenceIntervalBadge, 
+  SampleSizeWarning, 
+  SampleSizeBadge,
+  HitRateCalibrationCard 
+} from "@/components/hitrate";
 
 export default function HitRate() {
   // Fetch accuracy metrics
@@ -31,8 +37,8 @@ export default function HitRate() {
   }, { totalParlays: 0, totalWon: 0, totalLost: 0 }) || { totalParlays: 0, totalWon: 0, totalLost: 0 };
 
   const overallWinRate = overallStats.totalParlays > 0 
-    ? ((overallStats.totalWon / overallStats.totalParlays) * 100).toFixed(1) 
-    : '0';
+    ? ((overallStats.totalWon / overallStats.totalParlays) * 100) 
+    : 0;
 
   return (
     <AppShell>
@@ -57,14 +63,18 @@ export default function HitRate() {
               </div>
             </div>
             
-            {/* Quick Stats */}
+            {/* Quick Stats with Confidence Intervals */}
             <div className="grid grid-cols-3 gap-3 mt-4">
               <div className="bg-background/60 backdrop-blur-sm rounded-xl p-3 border border-border/50">
                 <div className="flex items-center gap-2 text-muted-foreground mb-1">
                   <Flame className="h-4 w-4 text-neon-green" />
                   <span className="text-xs">Win Rate</span>
                 </div>
-                <p className="text-xl font-bold text-neon-green">{overallWinRate}%</p>
+                <ConfidenceIntervalBadge 
+                  winRate={overallWinRate} 
+                  sampleSize={overallStats.totalParlays}
+                  showInterval={overallStats.totalParlays > 0}
+                />
               </div>
               
               <div className="bg-background/60 backdrop-blur-sm rounded-xl p-3 border border-border/50">
@@ -80,19 +90,41 @@ export default function HitRate() {
                   <TrendingUp className="h-4 w-4 text-neon-purple" />
                   <span className="text-xs">Total</span>
                 </div>
-                <p className="text-xl font-bold">{overallStats.totalParlays}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-xl font-bold">{overallStats.totalParlays}</p>
+                  {overallStats.totalParlays > 0 && overallStats.totalParlays < 20 && (
+                    <Badge variant="outline" className="text-[10px] text-orange-400 border-orange-400/30">
+                      Low n
+                    </Badge>
+                  )}
+                </div>
               </div>
             </div>
+
+            {/* Sample Size Warning Banner */}
+            {overallStats.totalParlays > 0 && overallStats.totalParlays < 50 && (
+              <SampleSizeWarning 
+                sampleSize={overallStats.totalParlays} 
+                className="mt-4"
+                showProgressBar
+              />
+            )}
           </div>
         </div>
 
-        {/* Accuracy by Strategy */}
+        {/* Calibration Card */}
+        <HitRateCalibrationCard compact />
+
+        {/* Accuracy by Strategy with Enhanced Confidence Display */}
         {accuracyMetrics && accuracyMetrics.length > 0 && (
           <Card className="bg-card/60 border-border/50">
             <CardHeader className="pb-3">
               <CardTitle className="text-base flex items-center gap-2">
                 <Percent className="h-4 w-4 text-primary" />
                 Accuracy by Strategy
+                <Badge variant="secondary" className="text-[10px] ml-auto">
+                  With 95% CI
+                </Badge>
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -109,6 +141,7 @@ export default function HitRate() {
                       {metric.sport && (
                         <span className="text-xs text-muted-foreground">{metric.sport}</span>
                       )}
+                      <SampleSizeBadge sampleSize={metric.total_parlays || 0} />
                     </div>
                     <div className="flex items-center gap-4">
                       <div className="text-right">
@@ -117,21 +150,29 @@ export default function HitRate() {
                         </p>
                         <p className="text-xs text-muted-foreground">W/L</p>
                       </div>
-                      <Badge 
-                        className={
-                          metric.win_rate >= 60 
-                            ? 'bg-neon-green/20 text-neon-green border-neon-green/30' 
-                            : metric.win_rate >= 50 
-                              ? 'bg-neon-yellow/20 text-neon-yellow border-neon-yellow/30'
-                              : 'bg-red-500/20 text-red-400 border-red-500/30'
-                        }
-                      >
-                        {metric.win_rate?.toFixed(1)}%
-                      </Badge>
+                      <ConfidenceIntervalBadge 
+                        winRate={metric.win_rate || 0}
+                        sampleSize={metric.total_parlays || 0}
+                        compact
+                      />
                     </div>
                   </div>
                 ))}
               </div>
+              
+              {/* Calibration Summary */}
+              {accuracyMetrics.some(m => (m.total_parlays || 0) < 20) && (
+                <div className="mt-4 p-3 bg-orange-500/10 border border-orange-500/20 rounded-lg">
+                  <div className="flex items-start gap-2 text-xs text-orange-400">
+                    <Activity className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <strong>Note:</strong> Some strategies have small sample sizes. 
+                      The confidence intervals (±%) show the range where the true win rate likely falls. 
+                      Wider intervals indicate less certainty.
+                    </div>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         )}
