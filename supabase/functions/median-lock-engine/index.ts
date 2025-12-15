@@ -578,12 +578,17 @@ serve(async (req) => {
       const results: CandidateWithId[] = [];
       const processed = new Set<string>();
 
+      console.log(`Processing ${(propData || []).length} props for candidates`);
+      
       for (const prop of propData || []) {
         const key = `${prop.player_name}_${prop.prop_type}`;
         if (processed.has(key)) continue;
         processed.add(key);
 
-        const logs = playerLogs[prop.player_name]?.slice(0, 10) || [];
+        // Filter out zero-minute games (DNP/inactive) before slicing
+        const logs = (playerLogs[prop.player_name] || [])
+          .filter(l => (l.minutes_played || 0) > 0)
+          .slice(0, 10);
         if (logs.length < 5) continue;
 
         // Build candidate from available data
@@ -657,7 +662,7 @@ serve(async (req) => {
         const { error: insertError } = await supabase
           .from('median_lock_candidates')
           .upsert(candidatesToInsert, { 
-            onConflict: 'player_name,slate_date,prop_type',
+            onConflict: 'player_name,slate_date,prop_type,book_line',
             ignoreDuplicates: false 
           });
         
