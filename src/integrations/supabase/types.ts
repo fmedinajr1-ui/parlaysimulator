@@ -3036,6 +3036,33 @@ export type Database = {
         }
         Relationships: []
       }
+      phone_verification_codes: {
+        Row: {
+          attempts: number | null
+          code: string
+          created_at: string | null
+          expires_at: string
+          id: string
+          phone_number: string
+        }
+        Insert: {
+          attempts?: number | null
+          code: string
+          created_at?: string | null
+          expires_at?: string
+          id?: string
+          phone_number: string
+        }
+        Update: {
+          attempts?: number | null
+          code?: string
+          created_at?: string | null
+          expires_at?: string
+          id?: string
+          phone_number?: string
+        }
+        Relationships: []
+      }
       pilot_user_quotas: {
         Row: {
           created_at: string
@@ -3432,6 +3459,8 @@ export type Database = {
           id: string
           instagram_handle: string | null
           lifetime_degenerate_score: number
+          phone_number: string | null
+          phone_verified: boolean | null
           total_losses: number
           total_payout: number
           total_staked: number
@@ -3450,6 +3479,8 @@ export type Database = {
           id?: string
           instagram_handle?: string | null
           lifetime_degenerate_score?: number
+          phone_number?: string | null
+          phone_verified?: boolean | null
           total_losses?: number
           total_payout?: number
           total_staked?: number
@@ -3468,6 +3499,8 @@ export type Database = {
           id?: string
           instagram_handle?: string | null
           lifetime_degenerate_score?: number
+          phone_number?: string | null
+          phone_verified?: boolean | null
           total_losses?: number
           total_payout?: number
           total_staked?: number
@@ -4522,6 +4555,7 @@ export type Database = {
       }
       calculate_calibration_factors: { Args: never; Returns: undefined }
       check_scan_access: { Args: { p_user_id: string }; Returns: Json }
+      cleanup_expired_verification_codes: { Args: never; Returns: undefined }
       decrement_pilot_quota: {
         Args: { p_quota_type: string; p_user_id: string }
         Returns: Json

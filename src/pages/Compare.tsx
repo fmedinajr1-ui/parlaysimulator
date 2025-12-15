@@ -5,7 +5,6 @@ import { ComparisonDashboard } from '@/components/compare/ComparisonDashboard';
 import { QuickSelectHistory } from '@/components/compare/QuickSelectHistory';
 import { TutorialOverlay } from '@/components/tutorial/TutorialOverlay';
 import { PilotPaywallModal } from '@/components/PilotPaywallModal';
-import { PaywallModal } from '@/components/PaywallModal';
 import { compareTutorialSteps } from '@/components/tutorial/tutorialSteps';
 import { compareParlays, ComparisonResult } from '@/lib/comparison-utils';
 import { createLeg, simulateParlay, americanToDecimal } from '@/lib/parlay-calculator';
@@ -50,14 +49,13 @@ const createEmptySlot = (): SlotState => ({
 
 const Compare = () => {
   const { user } = useAuth();
-  const { isSubscribed, isAdmin, startCheckout } = useSubscription();
+  const { isSubscribed, isAdmin } = useSubscription();
   const { isPilotUser, freeComparesRemaining, decrementScan, purchaseScans } = usePilotUser();
   
   const [slots, setSlots] = useState<SlotState[]>([createEmptySlot(), createEmptySlot()]);
   const [isComparing, setIsComparing] = useState(false);
   const [comparisonResult, setComparisonResult] = useState<ComparisonResult | null>(null);
   const [historySlotIndex, setHistorySlotIndex] = useState<number | null>(null);
-  const [showPaywall, setShowPaywall] = useState(false);
   const [showPilotPaywall, setShowPilotPaywall] = useState(false);
   
   const { showTutorial, setShowTutorial, markComplete } = useTutorial('compare');
@@ -361,14 +359,7 @@ const Compare = () => {
         />
       )}
 
-      {/* Paywall Modals */}
-      <PaywallModal
-        isOpen={showPaywall}
-        onClose={() => setShowPaywall(false)}
-        onSubscribe={startCheckout}
-        scansUsed={3}
-      />
-
+      {/* Pilot Paywall Modal */}
       <PilotPaywallModal
         isOpen={showPilotPaywall}
         onClose={() => setShowPilotPaywall(false)}

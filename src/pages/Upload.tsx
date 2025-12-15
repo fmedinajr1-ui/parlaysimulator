@@ -91,21 +91,21 @@ const Upload = () => {
   const [undoCountdown, setUndoCountdown] = useState<number>(0);
   const [videoProgress, setVideoProgress] = useState<ExtractionProgress | null>(null);
 
-  // Check for success/cancel params from Stripe checkout
+  // Check for success/cancel params from purchase
   useEffect(() => {
-    if (searchParams.get('success') === 'true') {
+    if (searchParams.get('purchase') === 'success') {
       toast({
-        title: "Welcome to Pro! 🎉",
-        description: "You now have unlimited parlay scans.",
+        title: "Purchase successful! 🎉",
+        description: "Your scans have been added.",
       });
-      checkSubscription();
-    } else if (searchParams.get('canceled') === 'true') {
+      checkPilotStatus();
+    } else if (searchParams.get('purchase') === 'cancelled') {
       toast({
-        title: "Checkout canceled",
-        description: "No worries, you can upgrade anytime.",
+        title: "Purchase canceled",
+        description: "No charges were made.",
       });
     }
-  }, [searchParams, checkSubscription]);
+  }, [searchParams, checkPilotStatus]);
 
   // Handle optimized legs from Results page  
   useEffect(() => {
@@ -745,28 +745,7 @@ const Upload = () => {
                   Buy More
                 </Button>
               </>
-            ) : (
-              <>
-                <Badge 
-                  variant="outline" 
-                  className={cn(
-                    "gap-1",
-                    scansRemaining === 0 && "border-destructive/50 text-destructive"
-                  )}
-                >
-                  {scansRemaining}/3 Free Scans
-                </Badge>
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
-                  onClick={startCheckout}
-                  className="text-primary hover:text-primary/80 hover:bg-primary/10"
-                >
-                  <Crown className="w-4 h-4 mr-1" />
-                  Upgrade
-                </Button>
-              </>
-            )}
+            ) : null}
           </div>
         )}
 

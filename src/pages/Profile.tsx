@@ -22,12 +22,11 @@ import { PilotQuotaCard } from '@/components/PilotQuotaCard';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { Loader2, LogOut, Upload, CreditCard, Crown, User, Settings, Dog, Target, LineChart, GitCompare, Trash2, ChevronDown, Wallet, BarChart3, Zap, History, Lock } from 'lucide-react';
+import { Loader2, LogOut, Upload, Crown, User, Settings, Target, LineChart, GitCompare, Trash2, ChevronDown, BarChart3, Zap, History } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { MobileHeader } from '@/components/layout/MobileHeader';
 import { FeedCard } from '@/components/FeedCard';
-import { DogAvatar } from '@/components/avatars/DogAvatar';
 import { SOURCE_LABELS } from '@/types/universal-parlay';
 
 interface Profile {
@@ -45,8 +44,8 @@ interface Profile {
 
 const Profile = () => {
   const { user, isLoading: authLoading, signOut } = useAuth();
-  const { isSubscribed, isAdmin, subscriptionEnd, openCustomerPortal, startCheckout } = useSubscription();
-  const { isPilotUser, freeScansRemaining, freeComparesRemaining, paidScanBalance, purchaseScans, creditScans, checkStatus } = usePilotUser();
+  const { isSubscribed, isAdmin, subscriptionEnd, openCustomerPortal } = useSubscription();
+  const { isPilotUser, freeScansRemaining, freeComparesRemaining, paidScanBalance, purchaseScans, creditScans } = usePilotUser();
   const { legs, legCount, combinedOdds, winProbability, analyzeParlay, compareParlay, clearParlay } = useParlayBuilder();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -188,46 +187,30 @@ const Profile = () => {
           />
         )}
 
-        {/* Subscription Badge - Only for non-pilot users */}
-        {!isPilotUser && (
+        {/* Subscription Badge - Only for existing subscribers/admins */}
+        {(isSubscribed || isAdmin) && (
           <FeedCard variant="highlight" className="py-3">
             <div className="flex items-center justify-between">
-              {(isSubscribed || isAdmin) ? (
-                <div className="flex items-center gap-3">
-                  <div className="icon-container">
-                    <Crown className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <p className="font-semibold text-foreground">
-                      {isAdmin ? 'Admin Access' : 'Pro Member'}
+              <div className="flex items-center gap-3">
+                <div className="icon-container">
+                  <Crown className="w-5 h-5" />
+                </div>
+                <div>
+                  <p className="font-semibold text-foreground">
+                    {isAdmin ? 'Admin Access' : 'Pro Member'}
+                  </p>
+                  {subscriptionEnd && !isAdmin && (
+                    <p className="text-xs text-muted-foreground">
+                      Renews {new Date(subscriptionEnd).toLocaleDateString()}
                     </p>
-                    {subscriptionEnd && !isAdmin && (
-                      <p className="text-xs text-muted-foreground">
-                        Renews {new Date(subscriptionEnd).toLocaleDateString()}
-                      </p>
-                    )}
-                  </div>
+                  )}
                 </div>
-              ) : (
-                <div className="flex items-center gap-3">
-                  <div className="icon-container bg-neon-orange/10 text-neon-orange">
-                    <Crown className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <p className="font-semibold text-foreground">Free Plan</p>
-                    <p className="text-xs text-muted-foreground">Upgrade for unlimited access</p>
-                  </div>
-                </div>
-              )}
-              {!isSubscribed && !isAdmin ? (
-                <Button onClick={startCheckout} size="sm" className="gradient-fire">
-                  Upgrade
-                </Button>
-              ) : isSubscribed && !isAdmin ? (
+              </div>
+              {isSubscribed && !isAdmin && (
                 <Button variant="outline" size="sm" onClick={openCustomerPortal}>
                   <Settings className="w-4 h-4" />
                 </Button>
-              ) : null}
+              )}
             </div>
           </FeedCard>
         )}
