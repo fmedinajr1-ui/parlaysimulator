@@ -90,12 +90,12 @@ interface EngineConfig {
 }
 
 const DEFAULT_CONFIG: EngineConfig = {
-  edgeMin: 1.5,
-  hitRateMin: 0.80,
-  minutesFloor: 28,
-  minutesMin: 22,
-  splitEdgeMin: 1.0,
-  adjustedEdgeMin: 1.0,
+  edgeMin: 1.0,
+  hitRateMin: 0.70,
+  minutesFloor: 24,
+  minutesMin: 18,
+  splitEdgeMin: 0.5,
+  adjustedEdgeMin: 0.5,
 };
 
 // ============ UTILITY FUNCTIONS ============
@@ -598,7 +598,7 @@ serve(async (req) => {
           opponentDefenseRank: 15, // Default to average
           eventId: prop.event_id || `${prop.player_name}_${targetDate}`,
           pointsLast10: logs.map(l => l.points || 0),
-          minutesLast10: logs.map(l => parseFloat(l.minutes) || 0),
+          minutesLast10: logs.map(l => l.minutes_played || 0),
           usageLast10: logs.map(l => l.usage_rate || 25),
           shotsLast10: logs.map(l => l.field_goals_attempted || 10),
           homeAwayLast10: logs.map(l => l.is_home ? 'HOME' : 'AWAY') as ('HOME' | 'AWAY')[],
