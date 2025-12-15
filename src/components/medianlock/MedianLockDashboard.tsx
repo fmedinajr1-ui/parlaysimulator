@@ -282,7 +282,7 @@ export function MedianLockDashboard() {
                     <Target className="h-5 w-5 text-purple-400" />
                     2-Leg Slips
                   </h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div className="flex flex-col gap-4">
                     {twoLegSlips.map((slip, i) => (
                       <GreenSlipCard key={slip.id} slip={slip} rank={i + 1} />
                     ))}
@@ -295,7 +295,7 @@ export function MedianLockDashboard() {
                     <Zap className="h-5 w-5 text-orange-400" />
                     3-Leg Slips
                   </h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div className="flex flex-col gap-4">
                     {threeLegSlips.map((slip, i) => (
                       <GreenSlipCard key={slip.id} slip={slip} rank={i + 1} />
                     ))}
