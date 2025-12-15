@@ -373,6 +373,107 @@ export function extractBestBetSignals(
 }
 
 /**
+ * Extract signals from Hit Rate prop data
+ */
+export function extractHitRateSignals(prop: {
+  hit_rate_over?: number;
+  hit_rate_under?: number;
+  recommended_side?: string;
+  consistency_score?: number;
+  line_value_label?: string;
+  trend_direction?: string;
+  sharp_aligned?: boolean;
+  confidence_score?: number;
+  season_avg?: number;
+  current_line?: number;
+}): EngineSignal[] {
+  const signals: EngineSignal[] = [];
+  const side = prop.recommended_side || 'over';
+  const hitRate = side === 'over' ? (prop.hit_rate_over || 0) : (prop.hit_rate_under || 0);
+
+  // Hit Rate signal (primary)
+  if (hitRate > 0) {
+    signals.push({
+      engineName: 'hitrate',
+      recommendation: hitRate >= 0.7 ? 'pick' : hitRate >= 0.5 ? 'neutral' : 'fade',
+      confidence: hitRate,
+      reasoning: `${(hitRate * 100).toFixed(0)}% hit rate on ${side}`,
+      historicalAccuracy: 0.62,
+      sampleSize: 100
+    });
+  }
+
+  // Consistency signal
+  if (prop.consistency_score !== undefined) {
+    const isConsistent = prop.consistency_score >= 60;
+    signals.push({
+      engineName: 'correlation',
+      recommendation: isConsistent ? 'pick' : prop.consistency_score < 40 ? 'fade' : 'neutral',
+      confidence: prop.consistency_score / 100,
+      reasoning: `Consistency score: ${prop.consistency_score}%`,
+      historicalAccuracy: 0.55,
+      sampleSize: 80
+    });
+  }
+
+  // Line value signal
+  if (prop.line_value_label) {
+    const valueMap: Record<string, { rec: 'pick' | 'fade' | 'neutral'; conf: number }> = {
+      'excellent': { rec: 'pick', conf: 0.8 },
+      'good': { rec: 'pick', conf: 0.65 },
+      'neutral': { rec: 'neutral', conf: 0.5 },
+      'poor': { rec: 'fade', conf: 0.6 }
+    };
+    const value = valueMap[prop.line_value_label] || { rec: 'neutral', conf: 0.5 };
+    signals.push({
+      engineName: 'trap_scanner',
+      recommendation: value.rec,
+      confidence: value.conf,
+      reasoning: `Line value: ${prop.line_value_label}`,
+      historicalAccuracy: 0.54,
+      sampleSize: 60
+    });
+  }
+
+  // Trend signal
+  if (prop.trend_direction) {
+    const trendMap: Record<string, { rec: 'pick' | 'fade' | 'neutral'; conf: number }> = {
+      'hot': { rec: 'pick', conf: 0.7 },
+      'stable': { rec: 'neutral', conf: 0.5 },
+      'cold': { rec: 'fade', conf: 0.65 }
+    };
+    const trend = trendMap[prop.trend_direction] || { rec: 'neutral', conf: 0.5 };
+    signals.push({
+      engineName: 'fatigue',
+      recommendation: trend.rec,
+      confidence: trend.conf,
+      reasoning: `Player trend: ${prop.trend_direction}`,
+      historicalAccuracy: 0.56,
+      sampleSize: 50
+    });
+  }
+
+  // Season avg vs line signal
+  if (prop.season_avg !== undefined && prop.current_line !== undefined) {
+    const diff = prop.season_avg - prop.current_line;
+    const favorsOver = diff > 0;
+    const magnitude = Math.min(Math.abs(diff) / 5, 1);
+    
+    const isAligned = (favorsOver && side === 'over') || (!favorsOver && side === 'under');
+    signals.push({
+      engineName: 'monte_carlo',
+      recommendation: isAligned ? 'pick' : 'fade',
+      confidence: 0.5 + (magnitude * 0.3),
+      reasoning: `Season avg ${prop.season_avg} vs line ${prop.current_line}`,
+      historicalAccuracy: 0.52,
+      sampleSize: 120
+    });
+  }
+
+  return signals;
+}
+
+/**
  * Aggregate ensemble results for multiple legs
  */
 export function aggregateParlayEnsemble(

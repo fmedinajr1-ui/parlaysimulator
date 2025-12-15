@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { HitRateParlayCard } from "./HitRateParlayCard";
@@ -9,6 +9,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Loader2, RefreshCw, Target, Zap, TrendingUp, TrendingDown, Minus, AlertCircle, Flame, Plus, BarChart3, Shield, Thermometer, Snowflake } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { AddToParlayButton } from "@/components/parlay/AddToParlayButton";
+import { MiniEnsembleScore } from "@/components/bestbets/MiniEnsembleScore";
+import { MiniKellyIndicator } from "@/components/bestbets/MiniKellyIndicator";
+import { extractHitRateSignals } from "@/lib/ensemble-engine";
 
 // Calculate trend from game logs (recent games vs older games)
 const calculateTrend = (gameLogs: any[], line: number, side: 'over' | 'under'): 'up' | 'down' | 'neutral' => {
@@ -689,6 +692,24 @@ function PropCard({ prop, PROP_LABELS }: { prop: any; PROP_LABELS: Record<string
   const seasonTrendData = getSeasonTrendBadge(prop.trend_direction, prop.season_trend_pct);
   const SeasonTrendIcon = seasonTrendData.icon;
   
+  // Generate ensemble signals
+  const ensembleSignals = useMemo(() => extractHitRateSignals({
+    hit_rate_over: prop.hit_rate_over,
+    hit_rate_under: prop.hit_rate_under,
+    recommended_side: prop.recommended_side,
+    consistency_score: prop.consistency_score,
+    line_value_label: prop.line_value_label,
+    trend_direction: prop.trend_direction,
+    confidence_score: prop.confidence_score,
+    season_avg: prop.season_avg,
+    current_line: prop.current_line
+  }), [prop]);
+  
+  // Get odds for Kelly calculation
+  const propOdds = prop.recommended_side === 'over' 
+    ? (prop.over_price || -110) 
+    : (prop.under_price || -110);
+  
   return (
     <Card className="bg-card/60 border-border/30">
       <CardContent className="py-3 space-y-2">
@@ -717,8 +738,8 @@ function PropCard({ prop, PROP_LABELS }: { prop: any; PROP_LABELS: Record<string
               {PROP_LABELS[prop.prop_type] || prop.prop_type}
             </div>
             <div className="text-xs text-muted-foreground mt-1">
-              {prop.game_description}
-            </div>
+720:               {prop.game_description}
+721:             </div>
           </div>
           <div className="flex items-center gap-2">
             <div className="text-right">
@@ -731,7 +752,7 @@ function PropCard({ prop, PROP_LABELS }: { prop: any; PROP_LABELS: Record<string
             </div>
             <AddToParlayButton
               description={`${prop.player_name} ${prop.recommended_side.toUpperCase()} ${prop.current_line} ${PROP_LABELS[prop.prop_type] || prop.prop_type}`}
-              odds={prop.recommended_side === 'over' ? (prop.over_price || -110) : (prop.under_price || -110)}
+              odds={propOdds}
               source="hitrate"
               playerName={prop.player_name}
               propType={prop.prop_type}
@@ -744,6 +765,12 @@ function PropCard({ prop, PROP_LABELS }: { prop: any; PROP_LABELS: Record<string
               variant="icon"
             />
           </div>
+        </div>
+        
+        {/* Ensemble & Kelly Indicators Row */}
+        <div className="flex items-center gap-2 flex-wrap pt-1 border-t border-border/20">
+          <MiniEnsembleScore signals={ensembleSignals} />
+          <MiniKellyIndicator winProbability={bestHitRate} americanOdds={propOdds} />
         </div>
         
         {/* Season Intelligence Row */}
