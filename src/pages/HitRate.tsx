@@ -11,7 +11,10 @@ import {
   SampleSizeWarning, 
   SampleSizeBadge,
   HitRateCalibrationCard,
-  StrategyROICard
+  StrategyROICard,
+  RollingPerformanceChart,
+  RollingMetricsSummary,
+  PerformanceTrendCard
 } from "@/components/hitrate";
 
 export default function HitRate() {
@@ -110,8 +113,19 @@ export default function HitRate() {
                 showProgressBar
               />
             )}
+
+            {/* Rolling Metrics Summary in Hero */}
+            <div className="mt-4">
+              <RollingMetricsSummary compact />
+            </div>
           </div>
         </div>
+
+        {/* Rolling Performance Dashboard */}
+        <RollingPerformanceChart />
+
+        {/* Performance Trends */}
+        <PerformanceTrendCard />
 
         {/* Calibration Card */}
         <HitRateCalibrationCard compact />
