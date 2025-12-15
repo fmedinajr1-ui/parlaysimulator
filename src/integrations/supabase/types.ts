@@ -3036,6 +3036,36 @@ export type Database = {
         }
         Relationships: []
       }
+      pilot_user_quotas: {
+        Row: {
+          created_at: string
+          free_compares_remaining: number
+          free_scans_remaining: number
+          id: string
+          paid_scan_balance: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          free_compares_remaining?: number
+          free_scans_remaining?: number
+          id?: string
+          paid_scan_balance?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          free_compares_remaining?: number
+          free_scans_remaining?: number
+          id?: string
+          paid_scan_balance?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       player_prop_hitrates: {
         Row: {
           analyzed_at: string
@@ -4486,8 +4516,16 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      add_paid_scans: {
+        Args: { p_amount: number; p_user_id: string }
+        Returns: boolean
+      }
       calculate_calibration_factors: { Args: never; Returns: undefined }
       check_scan_access: { Args: { p_user_id: string }; Returns: Json }
+      decrement_pilot_quota: {
+        Args: { p_quota_type: string; p_user_id: string }
+        Returns: Json
+      }
       detect_sharp_money: {
         Args: { p_point_change?: number; p_price_change: number }
         Returns: {
@@ -4824,7 +4862,7 @@ export type Database = {
       update_upset_calibration: { Args: never; Returns: undefined }
     }
     Enums: {
-      app_role: "admin" | "moderator" | "user" | "collaborator"
+      app_role: "admin" | "moderator" | "user" | "collaborator" | "pilot"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -4952,7 +4990,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      app_role: ["admin", "moderator", "user", "collaborator"],
+      app_role: ["admin", "moderator", "user", "collaborator", "pilot"],
     },
   },
 } as const
