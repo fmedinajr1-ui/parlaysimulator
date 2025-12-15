@@ -724,6 +724,27 @@ const Upload = () => {
                 <Crown className="w-3 h-3" />
                 {isAdmin ? 'ADMIN' : 'PRO'} - Unlimited Scans
               </Badge>
+            ) : isPilotUser ? (
+              <>
+                <Badge 
+                  variant="outline" 
+                  className={cn(
+                    "gap-1",
+                    totalScansAvailable === 0 && "border-destructive/50 text-destructive"
+                  )}
+                >
+                  {totalScansAvailable} Scans Available
+                </Badge>
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={() => setShowPilotPaywall(true)}
+                  className="text-primary hover:text-primary/80 hover:bg-primary/10"
+                >
+                  <Crown className="w-4 h-4 mr-1" />
+                  Buy More
+                </Button>
+              </>
             ) : (
               <>
                 <Badge 
