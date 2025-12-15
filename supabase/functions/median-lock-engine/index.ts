@@ -577,12 +577,16 @@ serve(async (req) => {
 
       if (propError) throw propError;
 
-      // Fetch recent game logs
+      // Get unique player names from active props
+      const playerNames = [...new Set(propData?.map(p => p.player_name) || [])];
+      console.log(`Fetching game logs for ${playerNames.length} players with active props`);
+
+      // Fetch game logs ONLY for players with active props (avoids 1000 row limit issue)
       const { data: gameLogs, error: logsError } = await supabase
         .from('nba_player_game_logs')
         .select('*')
-        .order('game_date', { ascending: false })
-        .limit(5000);
+        .in('player_name', playerNames)
+        .order('game_date', { ascending: false });
 
       if (logsError) throw logsError;
 
