@@ -263,7 +263,15 @@ export function MedianLockDashboard() {
               <CardContent className="p-8 text-center">
                 <Sparkles className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
                 <p className="text-muted-foreground">No Green Slips generated yet</p>
-                <p className="text-sm text-muted-foreground mt-1">Run the engine to build optimal parlays</p>
+                <p className="text-sm text-muted-foreground mt-1">Generate optimal parlays from your locks & strong picks</p>
+                <Button 
+                  onClick={runEngine} 
+                  disabled={refreshing}
+                  className="mt-4 bg-gradient-to-r from-purple-500 to-pink-600"
+                >
+                  <Sparkles className={`h-4 w-4 mr-2 ${refreshing ? 'animate-pulse' : ''}`} />
+                  {refreshing ? 'Generating...' : 'Generate Green Slips'}
+                </Button>
               </CardContent>
             </Card>
           ) : (
