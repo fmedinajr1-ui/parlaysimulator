@@ -5,20 +5,25 @@ import {
   TrendingDown, 
   AlertTriangle, 
   Target,
-  Shield
+  Shield,
+  Wallet,
+  Info
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { Button } from "@/components/ui/button";
 import { 
   calculateKelly, 
   americanToDecimal, 
   compareToKelly,
+  validateKellyInputs,
   type KellyResult 
 } from "@/lib/kelly-calculator";
 import { useBankroll } from "@/hooks/useBankroll";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { useState, useMemo } from "react";
+import { Link } from "react-router-dom";
 
 interface KellyStakeCardProps {
   winProbability: number;
@@ -42,11 +47,12 @@ export function KellyStakeCard({
   const { settings, isLoading } = useBankroll();
   const [selectedMultiplier, setSelectedMultiplier] = useState(0.5);
 
-  const bankroll = settings?.bankrollAmount ?? 1000;
-  const decimalOdds = americanToDecimal(americanOdds);
+  const bankroll = settings?.bankrollAmount ?? 0;
+  const decimalOdds = americanOdds !== 0 ? americanToDecimal(americanOdds) : 0;
 
-  const kellyResult = useMemo<KellyResult>(() => {
-    return calculateKelly({
+  // Validate inputs
+  const validation = useMemo(() => {
+    return validateKellyInputs({
       winProbability,
       decimalOdds,
       bankroll,
@@ -55,12 +61,23 @@ export function KellyStakeCard({
     });
   }, [winProbability, decimalOdds, bankroll, selectedMultiplier, settings?.maxBetPercent]);
 
+  const kellyResult = useMemo<KellyResult | null>(() => {
+    if (!validation.isValid) return null;
+    return calculateKelly({
+      winProbability,
+      decimalOdds,
+      bankroll,
+      kellyMultiplier: selectedMultiplier,
+      maxBetPercent: settings?.maxBetPercent ?? 0.05
+    });
+  }, [validation.isValid, winProbability, decimalOdds, bankroll, selectedMultiplier, settings?.maxBetPercent]);
+
   const comparison = useMemo(() => {
-    if (userStake > 0) {
+    if (userStake > 0 && kellyResult) {
       return compareToKelly(userStake, kellyResult.recommendedStake);
     }
     return null;
-  }, [userStake, kellyResult.recommendedStake]);
+  }, [userStake, kellyResult]);
 
   const riskColorMap = {
     conservative: 'text-neon-green',
@@ -86,6 +103,65 @@ export function KellyStakeCard({
       </FeedCard>
     );
   }
+
+  // Show bankroll setup prompt if no bankroll
+  if (!bankroll || bankroll < 10) {
+    return (
+      <FeedCard delay={delay}>
+        <div className="flex items-center justify-between mb-4">
+          <p className="text-sm text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+            <Calculator className="w-4 h-4" />
+            Kelly Stake Calculator
+          </p>
+        </div>
+        <div className="text-center py-6">
+          <Wallet className="w-12 h-12 mx-auto mb-3 text-muted-foreground" />
+          <h3 className="font-semibold mb-2">Set Up Your Bankroll</h3>
+          <p className="text-sm text-muted-foreground mb-4">
+            Configure your bankroll to get personalized stake recommendations
+          </p>
+          <Link to="/kelly">
+            <Button>
+              <Wallet className="w-4 h-4 mr-2" />
+              Configure Bankroll
+            </Button>
+          </Link>
+        </div>
+      </FeedCard>
+    );
+  }
+
+  // Show validation errors
+  if (!validation.isValid) {
+    return (
+      <FeedCard delay={delay}>
+        <div className="flex items-center justify-between mb-4">
+          <p className="text-sm text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+            <Calculator className="w-4 h-4" />
+            Kelly Stake Calculator
+          </p>
+          <Badge variant="outline" className="text-amber-500 bg-amber-500/10">
+            INCOMPLETE DATA
+          </Badge>
+        </div>
+        <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20">
+          <div className="flex items-start gap-3">
+            <Info className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-medium text-amber-500">Missing Information</p>
+              <ul className="text-sm text-muted-foreground mt-2 space-y-1">
+                {validation.errors.map((error, i) => (
+                  <li key={i}>• {error}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+      </FeedCard>
+    );
+  }
+
+  if (!kellyResult) return null;
 
   return (
     <FeedCard delay={delay}>

@@ -12,25 +12,61 @@ import {
   Shield,
   Users,
   ChevronRight,
+  ChevronDown,
   Flame,
-  ScanSearch
+  ScanSearch,
+  Wallet,
+  TrendingUp,
+  BarChart3,
+  Target
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Separator } from "@/components/ui/separator";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
-const menuItems = [
-  { icon: Sparkles, label: "AI Picks", path: "/suggestions", description: "Smart betting suggestions" },
-  { icon: Flame, label: "Hit Rate", path: "/hitrate", description: "X/5 streak patterns" },
-  { icon: Flame, label: "God Mode Upsets", path: "/god-mode", description: "AI upset predictions" },
-  { icon: Zap, label: "GOD MODE Tracker", path: "/god-mode-tracker", description: "Sharp vs Vegas intel" },
-  { icon: ScanSearch, label: "FanDuel Scanner", path: "/fanduel-traps", description: "Trap line detection" },
-  { icon: Activity, label: "Sharp Money", path: "/sharp", description: "Track sharp action" },
-  { icon: Activity, label: "NBA Fatigue", path: "/nba-fatigue", description: "Team fatigue analysis" },
-  { icon: GitCompare, label: "Compare Parlays", path: "/compare", description: "Head-to-head comparison" },
-  { icon: Search, label: "Line Shopping", path: "/line-shopping", description: "Find best odds" },
-  { icon: Download, label: "Install App", path: "/install", description: "Get the mobile app" },
+const menuGroups = [
+  {
+    label: "Bankroll Tools",
+    icon: Wallet,
+    defaultOpen: true,
+    items: [
+      { icon: Wallet, label: "Kelly Calculator", path: "/kelly", description: "Optimal stake sizing" },
+      { icon: TrendingUp, label: "Odds Movement", path: "/odds", description: "Track line changes" },
+      { icon: Search, label: "Line Shopping", path: "/line-shopping", description: "Find best odds" },
+    ]
+  },
+  {
+    label: "Analysis Engines",
+    icon: Target,
+    defaultOpen: true,
+    items: [
+      { icon: Sparkles, label: "AI Picks", path: "/suggestions", description: "Smart betting suggestions" },
+      { icon: Flame, label: "Hit Rate", path: "/hitrate", description: "X/5 streak patterns" },
+      { icon: Activity, label: "Sharp Money", path: "/sharp", description: "Track sharp action" },
+      { icon: ScanSearch, label: "FanDuel Scanner", path: "/fanduel-traps", description: "Trap line detection" },
+    ]
+  },
+  {
+    label: "Trackers",
+    icon: BarChart3,
+    defaultOpen: false,
+    items: [
+      { icon: Flame, label: "God Mode Upsets", path: "/god-mode", description: "AI upset predictions" },
+      { icon: Zap, label: "GOD MODE Tracker", path: "/god-mode-tracker", description: "Sharp vs Vegas intel" },
+      { icon: Activity, label: "NBA Fatigue", path: "/nba-fatigue", description: "Team fatigue analysis" },
+    ]
+  },
+  {
+    label: "Utilities",
+    icon: Calculator,
+    defaultOpen: false,
+    items: [
+      { icon: GitCompare, label: "Compare Parlays", path: "/compare", description: "Head-to-head comparison" },
+      { icon: Download, label: "Install App", path: "/install", description: "Get the mobile app" },
+    ]
+  },
 ];
 
 const adminItems = [
@@ -43,7 +79,17 @@ const adminItems = [
 export function MenuDrawer() {
   const [open, setOpen] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const location = useLocation();
+
+  // Initialize open groups
+  useEffect(() => {
+    const initial: Record<string, boolean> = {};
+    menuGroups.forEach(group => {
+      initial[group.label] = group.defaultOpen;
+    });
+    setOpenGroups(initial);
+  }, []);
 
   // Check admin role directly without using the hook to avoid context issues
   useEffect(() => {
@@ -81,6 +127,13 @@ export function MenuDrawer() {
 
   const isActive = (path: string) => location.pathname === path;
 
+  const toggleGroup = (label: string) => {
+    setOpenGroups(prev => ({
+      ...prev,
+      [label]: !prev[label]
+    }));
+  };
+
   return (
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger asChild>
@@ -100,45 +153,61 @@ export function MenuDrawer() {
         </button>
       </SheetTrigger>
       
-      <SheetContent side="left" className="w-[300px] p-0 bg-background">
+      <SheetContent side="left" className="w-[300px] p-0 bg-background overflow-y-auto">
         <SheetHeader className="p-6 pb-4 border-b border-border">
           <SheetTitle className="text-left font-display text-lg">Menu</SheetTitle>
         </SheetHeader>
         
         <div className="flex flex-col py-2">
-          {/* Main Navigation */}
-          <div className="px-3 py-2">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 mb-2">
-              Features
-            </p>
-            {menuItems.map((item) => (
-              <Link
-                key={item.path}
-                to={item.path}
-                onClick={() => setOpen(false)}
-                className={cn(
-                  "flex items-center gap-3 px-3 py-3 rounded-lg transition-colors",
-                  "hover:bg-muted/50 active:bg-muted",
-                  isActive(item.path) && "bg-primary/10 text-primary"
-                )}
-              >
-                <item.icon className={cn(
-                  "w-5 h-5",
-                  isActive(item.path) ? "text-primary" : "text-muted-foreground"
-                )} />
-                <div className="flex-1">
-                  <p className={cn(
-                    "text-sm font-medium",
-                    isActive(item.path) && "text-primary"
-                  )}>
-                    {item.label}
-                  </p>
-                  <p className="text-xs text-muted-foreground">{item.description}</p>
+          {/* Grouped Navigation */}
+          {menuGroups.map((group) => (
+            <Collapsible 
+              key={group.label}
+              open={openGroups[group.label]} 
+              onOpenChange={() => toggleGroup(group.label)}
+              className="px-3 py-1"
+            >
+              <CollapsibleTrigger className="flex items-center justify-between w-full px-3 py-2 rounded-lg hover:bg-muted/50 transition-colors">
+                <div className="flex items-center gap-2">
+                  <group.icon className="w-4 h-4 text-primary" />
+                  <span className="text-sm font-medium">{group.label}</span>
                 </div>
-                <ChevronRight className="w-4 h-4 text-muted-foreground/50" />
-              </Link>
-            ))}
-          </div>
+                <ChevronDown className={cn(
+                  "w-4 h-4 text-muted-foreground transition-transform duration-200",
+                  openGroups[group.label] && "rotate-180"
+                )} />
+              </CollapsibleTrigger>
+              <CollapsibleContent className="pl-2 mt-1 space-y-0.5">
+                {group.items.map((item) => (
+                  <Link
+                    key={item.path}
+                    to={item.path}
+                    onClick={() => setOpen(false)}
+                    className={cn(
+                      "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors",
+                      "hover:bg-muted/50 active:bg-muted",
+                      isActive(item.path) && "bg-primary/10 text-primary"
+                    )}
+                  >
+                    <item.icon className={cn(
+                      "w-4 h-4",
+                      isActive(item.path) ? "text-primary" : "text-muted-foreground"
+                    )} />
+                    <div className="flex-1 min-w-0">
+                      <p className={cn(
+                        "text-sm font-medium truncate",
+                        isActive(item.path) && "text-primary"
+                      )}>
+                        {item.label}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate">{item.description}</p>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-muted-foreground/50 shrink-0" />
+                  </Link>
+                ))}
+              </CollapsibleContent>
+            </Collapsible>
+          ))}
           
           {/* Admin Section */}
           {isAdmin && (
