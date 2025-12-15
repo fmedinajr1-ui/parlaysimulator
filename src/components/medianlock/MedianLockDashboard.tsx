@@ -232,7 +232,7 @@ export function MedianLockDashboard() {
               </CardContent>
             </Card>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="flex flex-col gap-4">
               {locks.map((candidate) => (
                 <MedianLockCandidateCard key={candidate.id} candidate={candidate} />
               ))}
@@ -249,7 +249,7 @@ export function MedianLockDashboard() {
               </CardContent>
             </Card>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="flex flex-col gap-4">
               {strongs.map((candidate) => (
                 <MedianLockCandidateCard key={candidate.id} candidate={candidate} />
               ))}
@@ -324,7 +324,7 @@ export function MedianLockDashboard() {
                   </p>
                 </CardContent>
               </Card>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="flex flex-col gap-4">
                 {shockFlagged.map((candidate) => (
                   <MedianLockCandidateCard key={candidate.id} candidate={candidate} />
                 ))}
