@@ -4899,7 +4899,13 @@ export type Database = {
       update_upset_calibration: { Args: never; Returns: undefined }
     }
     Enums: {
-      app_role: "admin" | "moderator" | "user" | "collaborator" | "pilot"
+      app_role:
+        | "admin"
+        | "moderator"
+        | "user"
+        | "collaborator"
+        | "pilot"
+        | "full_access"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -5027,7 +5033,14 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      app_role: ["admin", "moderator", "user", "collaborator", "pilot"],
+      app_role: [
+        "admin",
+        "moderator",
+        "user",
+        "collaborator",
+        "pilot",
+        "full_access",
+      ],
     },
   },
 } as const
