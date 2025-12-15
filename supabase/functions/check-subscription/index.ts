@@ -40,6 +40,7 @@ serve(async (req) => {
       return new Response(JSON.stringify({
         subscribed: false,
         isAdmin: false,
+        isPilotUser: false,
         canScan: true,
         scansRemaining: 3,
         hasOddsAccess: false,
@@ -58,6 +59,7 @@ serve(async (req) => {
       return new Response(JSON.stringify({
         subscribed: false,
         isAdmin: false,
+        isPilotUser: false,
         canScan: true,
         scansRemaining: 3,
         hasOddsAccess: false,
@@ -70,22 +72,28 @@ serve(async (req) => {
     const user = userData.user;
     logStep("User authenticated", { userId: user.id, email: user.email });
 
-    // Check if user is admin
-    const { data: roleData } = await supabaseClient
+    // Check user roles (admin, pilot, etc.)
+    const { data: rolesData } = await supabaseClient
       .from('user_roles')
       .select('role')
-      .eq('user_id', user.id)
-      .eq('role', 'admin')
-      .maybeSingle();
+      .eq('user_id', user.id);
 
-    if (roleData) {
+    const roles = rolesData?.map(r => r.role) || [];
+    const isAdmin = roles.includes('admin');
+    const isPilotUser = roles.includes('pilot');
+
+    logStep("User roles", { roles, isAdmin, isPilotUser });
+
+    // Admin gets unlimited access
+    if (isAdmin) {
       logStep("User is admin, granting unlimited access");
       return new Response(JSON.stringify({
         subscribed: false,
         isAdmin: true,
+        isPilotUser: false,
         canScan: true,
         scansRemaining: -1,
-        hasOddsAccess: true, // Admins have full odds access
+        hasOddsAccess: true,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,
@@ -152,6 +160,7 @@ serve(async (req) => {
       return new Response(JSON.stringify({
         subscribed: true,
         isAdmin: false,
+        isPilotUser: false,
         canScan: true,
         scansRemaining: -1,
         subscriptionEnd,
@@ -162,7 +171,43 @@ serve(async (req) => {
       });
     }
 
-    // Check scan usage for free users
+    // PILOT USER FLOW
+    if (isPilotUser) {
+      const { data: quotaData } = await supabaseClient
+        .from('pilot_user_quotas')
+        .select('*')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (quotaData) {
+        const totalScansAvailable = quotaData.free_scans_remaining + quotaData.paid_scan_balance;
+        const canScan = totalScansAvailable > 0;
+
+        logStep("Pilot user quota status", { 
+          freeScansRemaining: quotaData.free_scans_remaining,
+          freeComparesRemaining: quotaData.free_compares_remaining,
+          paidScanBalance: quotaData.paid_scan_balance,
+          canScan 
+        });
+
+        return new Response(JSON.stringify({
+          subscribed: false,
+          isAdmin: false,
+          isPilotUser: true,
+          canScan,
+          scansRemaining: totalScansAvailable,
+          freeScansRemaining: quotaData.free_scans_remaining,
+          freeComparesRemaining: quotaData.free_compares_remaining,
+          paidScanBalance: quotaData.paid_scan_balance,
+          hasOddsAccess: false,
+        }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 200,
+        });
+      }
+    }
+
+    // Regular free user - check scan usage
     const { data: usageData } = await supabaseClient
       .from('scan_usage')
       .select('scan_count')
@@ -178,6 +223,7 @@ serve(async (req) => {
     return new Response(JSON.stringify({
       subscribed: false,
       isAdmin: false,
+      isPilotUser: false,
       canScan,
       scansRemaining,
       scanCount,

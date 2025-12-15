@@ -11,6 +11,7 @@ import { BottomNav } from "@/components/BottomNav";
 import { UniversalParlayBuilder } from "@/components/parlay/UniversalParlayBuilder";
 import { PageSkeleton } from "@/components/ui/page-skeleton";
 import { AnimatePresence, motion } from "framer-motion";
+import { PilotRouteGuard } from "@/components/PilotRouteGuard";
 
 // Lazy load all pages for code splitting
 const Index = React.lazy(() => import("./pages/Index"));
@@ -116,14 +117,14 @@ function AppContent() {
   }, []);
   
   return (
-    <>
+    <PilotRouteGuard>
       <Toaster />
       <Sonner />
       <AnimatedRoutes />
       <UniversalParlayBuilder />
       {isMobile && <BottomNav />}
       <PWAInstallPrompt />
-    </>
+    </PilotRouteGuard>
   );
 }
 

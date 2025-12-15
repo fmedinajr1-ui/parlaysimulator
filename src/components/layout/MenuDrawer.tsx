@@ -18,13 +18,15 @@ import {
   Wallet,
   TrendingUp,
   BarChart3,
-  Target
+  Target,
+  Lock
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Separator } from "@/components/ui/separator";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { PILOT_ALLOWED_ROUTES } from "@/components/PilotRouteGuard";
 
 const menuGroups = [
   {
@@ -79,6 +81,8 @@ const adminItems = [
 export function MenuDrawer() {
   const [open, setOpen] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isPilotUser, setIsPilotUser] = useState(false);
+  const [isSubscribed, setIsSubscribed] = useState(false);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const location = useLocation();
 
@@ -91,35 +95,49 @@ export function MenuDrawer() {
     setOpenGroups(initial);
   }, []);
 
-  // Check admin role directly without using the hook to avoid context issues
+  // Check user roles
   useEffect(() => {
-    const checkAdminRole = async () => {
+    const checkRoles = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session?.user) {
           setIsAdmin(false);
+          setIsPilotUser(false);
+          setIsSubscribed(false);
           return;
         }
 
-        const { data } = await supabase
+        // Check roles
+        const { data: rolesData } = await supabase
           .from('user_roles')
           .select('role')
+          .eq('user_id', session.user.id);
+
+        const roles = rolesData?.map(r => r.role) || [];
+        setIsAdmin(roles.includes('admin'));
+        setIsPilotUser(roles.includes('pilot'));
+
+        // Check subscription
+        const { data: subData } = await supabase
+          .from('subscriptions')
+          .select('status')
           .eq('user_id', session.user.id)
-          .eq('role', 'admin')
+          .eq('status', 'active')
           .maybeSingle();
 
-        setIsAdmin(!!data);
+        setIsSubscribed(!!subData);
       } catch (err) {
-        console.error('Error checking admin role:', err);
+        console.error('Error checking roles:', err);
         setIsAdmin(false);
+        setIsPilotUser(false);
+        setIsSubscribed(false);
       }
     };
 
-    checkAdminRole();
+    checkRoles();
 
-    // Subscribe to auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
-      checkAdminRole();
+      checkRoles();
     });
 
     return () => subscription.unsubscribe();
@@ -133,6 +151,15 @@ export function MenuDrawer() {
       [label]: !prev[label]
     }));
   };
+
+  // Filter menu groups for pilot users
+  const isPilotRestricted = isPilotUser && !isAdmin && !isSubscribed;
+  const filteredMenuGroups = isPilotRestricted
+    ? menuGroups.map(group => ({
+        ...group,
+        items: group.items.filter(item => PILOT_ALLOWED_ROUTES.includes(item.path))
+      })).filter(group => group.items.length > 0)
+    : menuGroups;
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
@@ -159,8 +186,21 @@ export function MenuDrawer() {
         </SheetHeader>
         
         <div className="flex flex-col py-2">
+          {/* Pilot User Notice */}
+          {isPilotRestricted && (
+            <div className="mx-3 mb-2 p-3 rounded-lg bg-primary/10 border border-primary/20">
+              <div className="flex items-center gap-2 text-sm">
+                <Lock className="w-4 h-4 text-primary" />
+                <span className="font-medium text-primary">Pilot Mode</span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Upgrade to unlock all features
+              </p>
+            </div>
+          )}
+
           {/* Grouped Navigation */}
-          {menuGroups.map((group) => (
+          {filteredMenuGroups.map((group) => (
             <Collapsible 
               key={group.label}
               open={openGroups[group.label]} 

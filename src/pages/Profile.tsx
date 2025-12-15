@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSubscription } from '@/hooks/useSubscription';
+import { usePilotUser } from '@/hooks/usePilotUser';
 import { useParlayBuilder } from '@/contexts/ParlayBuilderContext';
 import { ProfileHeader } from '@/components/profile/ProfileHeader';
 import { SocialLinks } from '@/components/profile/SocialLinks';
@@ -17,10 +18,11 @@ import { UpsetAccuracyDashboard } from '@/components/profile/UpsetAccuracyDashbo
 import { NotificationPreferences } from '@/components/profile/NotificationPreferences';
 import { TutorialToggle } from '@/components/tutorial/TutorialToggle';
 import { BankrollManager } from '@/components/bankroll/BankrollManager';
+import { PilotQuotaCard } from '@/components/PilotQuotaCard';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { Loader2, LogOut, Upload, CreditCard, Crown, User, Settings, Dog, Target, LineChart, GitCompare, Trash2, ChevronDown, Wallet, BarChart3, Zap, History } from 'lucide-react';
+import { Loader2, LogOut, Upload, CreditCard, Crown, User, Settings, Dog, Target, LineChart, GitCompare, Trash2, ChevronDown, Wallet, BarChart3, Zap, History, Lock } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { MobileHeader } from '@/components/layout/MobileHeader';
@@ -44,10 +46,43 @@ interface Profile {
 const Profile = () => {
   const { user, isLoading: authLoading, signOut } = useAuth();
   const { isSubscribed, isAdmin, subscriptionEnd, openCustomerPortal, startCheckout } = useSubscription();
+  const { isPilotUser, freeScansRemaining, freeComparesRemaining, paidScanBalance, purchaseScans, creditScans, checkStatus } = usePilotUser();
   const { legs, legCount, combinedOdds, winProbability, analyzeParlay, compareParlay, clearParlay } = useParlayBuilder();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Handle purchase success/cancelled from URL
+  useEffect(() => {
+    const purchase = searchParams.get('purchase');
+    const scans = searchParams.get('scans');
+    const restricted = searchParams.get('restricted');
+
+    if (purchase === 'success' && scans) {
+      const scanCount = parseInt(scans, 10);
+      creditScans(scanCount);
+      toast({
+        title: "Purchase Successful!",
+        description: `${scanCount} scans have been added to your account.`,
+      });
+      setSearchParams({});
+    } else if (purchase === 'cancelled') {
+      toast({
+        title: "Purchase Cancelled",
+        description: "No charges were made.",
+        variant: "destructive",
+      });
+      setSearchParams({});
+    } else if (restricted === 'true') {
+      toast({
+        title: "Feature Locked",
+        description: "Purchase more scans to unlock all features.",
+        variant: "destructive",
+      });
+      setSearchParams({});
+    }
+  }, [searchParams, setSearchParams, creditScans]);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -143,47 +178,59 @@ const Profile = () => {
       />
 
       <div className="px-4 py-4 space-y-4">
-        {/* Subscription Badge */}
-        <FeedCard variant="highlight" className="py-3">
-          <div className="flex items-center justify-between">
-            {(isSubscribed || isAdmin) ? (
-              <div className="flex items-center gap-3">
-                <div className="icon-container">
-                  <Crown className="w-5 h-5" />
-                </div>
-                <div>
-                  <p className="font-semibold text-foreground">
-                    {isAdmin ? 'Admin Access' : 'Pro Member'}
-                  </p>
-                  {subscriptionEnd && !isAdmin && (
-                    <p className="text-xs text-muted-foreground">
-                      Renews {new Date(subscriptionEnd).toLocaleDateString()}
+        {/* Pilot User Quota Card */}
+        {isPilotUser && !isAdmin && !isSubscribed && (
+          <PilotQuotaCard
+            freeScansRemaining={freeScansRemaining}
+            freeComparesRemaining={freeComparesRemaining}
+            paidScanBalance={paidScanBalance}
+            onPurchase={purchaseScans}
+          />
+        )}
+
+        {/* Subscription Badge - Only for non-pilot users */}
+        {!isPilotUser && (
+          <FeedCard variant="highlight" className="py-3">
+            <div className="flex items-center justify-between">
+              {(isSubscribed || isAdmin) ? (
+                <div className="flex items-center gap-3">
+                  <div className="icon-container">
+                    <Crown className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-foreground">
+                      {isAdmin ? 'Admin Access' : 'Pro Member'}
                     </p>
-                  )}
+                    {subscriptionEnd && !isAdmin && (
+                      <p className="text-xs text-muted-foreground">
+                        Renews {new Date(subscriptionEnd).toLocaleDateString()}
+                      </p>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div className="flex items-center gap-3">
-                <div className="icon-container bg-neon-orange/10 text-neon-orange">
-                  <Crown className="w-5 h-5" />
+              ) : (
+                <div className="flex items-center gap-3">
+                  <div className="icon-container bg-neon-orange/10 text-neon-orange">
+                    <Crown className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-foreground">Free Plan</p>
+                    <p className="text-xs text-muted-foreground">Upgrade for unlimited access</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="font-semibold text-foreground">Free Plan</p>
-                  <p className="text-xs text-muted-foreground">Upgrade for unlimited access</p>
-                </div>
-              </div>
-            )}
-            {!isSubscribed && !isAdmin ? (
-              <Button onClick={startCheckout} size="sm" className="gradient-fire">
-                Upgrade
-              </Button>
-            ) : isSubscribed && !isAdmin ? (
-              <Button variant="outline" size="sm" onClick={openCustomerPortal}>
-                <Settings className="w-4 h-4" />
-              </Button>
-            ) : null}
-          </div>
-        </FeedCard>
+              )}
+              {!isSubscribed && !isAdmin ? (
+                <Button onClick={startCheckout} size="sm" className="gradient-fire">
+                  Upgrade
+                </Button>
+              ) : isSubscribed && !isAdmin ? (
+                <Button variant="outline" size="sm" onClick={openCustomerPortal}>
+                  <Settings className="w-4 h-4" />
+                </Button>
+              ) : null}
+            </div>
+          </FeedCard>
+        )}
 
         {/* Active Parlay Builder */}
         {legCount > 0 && (
