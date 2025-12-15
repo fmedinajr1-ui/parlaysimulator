@@ -48,7 +48,7 @@ import { SharpEngineV2Card } from '@/components/sharp/SharpEngineV2Card';
 import { SharpEngineConfigPanel } from '@/components/admin/SharpEngineConfigPanel';
 import { AIGenerativeProgressDashboard } from '@/components/admin/AIGenerativeProgressDashboard';
 import { AllSportsTracker } from '@/components/tracker/AllSportsTracker';
-
+import { MedianLockBacktestPanel } from '@/components/medianlock';
 interface ParlayData {
   id: string;
   user_id: string;
@@ -74,7 +74,8 @@ type AdminSection =
   | 'users' 
   | 'parlays'
   | 'god-mode'
-  | 'tracker';
+  | 'tracker'
+  | 'medianlock';
 
 const sectionConfig = [
   {
@@ -139,6 +140,13 @@ const sectionConfig = [
     description: 'Real-time picks from all 8 engines',
     icon: Eye,
     color: 'text-emerald-500'
+  },
+  {
+    id: 'medianlock' as AdminSection,
+    title: 'MedianLock™ PRO',
+    description: 'Hit rate engine backtest & tuning',
+    icon: Target,
+    color: 'text-cyan-500'
   },
 ];
 
@@ -645,6 +653,9 @@ export default function Admin() {
             </div>
           </div>
         );
+
+      case 'medianlock':
+        return <MedianLockBacktestPanel />;
       
       default:
         return null;
