@@ -34,15 +34,18 @@ serve(async (req) => {
 
     const authHeader = req.headers.get("Authorization");
     
-    // If no auth header, return free tier status
+    // If no auth header, return restricted status (pilot mode)
     if (!authHeader) {
-      logStep("No auth header, returning free tier status");
+      logStep("No auth header, returning restricted pilot status");
       return new Response(JSON.stringify({
         subscribed: false,
         isAdmin: false,
-        isPilotUser: false,
+        isPilotUser: true,
         canScan: true,
-        scansRemaining: 3,
+        freeScansRemaining: 5,
+        freeComparesRemaining: 3,
+        paidScanBalance: 0,
+        scansRemaining: 5,
         hasOddsAccess: false,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -53,15 +56,18 @@ serve(async (req) => {
     const token = authHeader.replace("Bearer ", "");
     const { data: userData, error: userError } = await supabaseClient.auth.getUser(token);
     
-    // If auth error, return free tier status
+    // If auth error, return restricted status (pilot mode)
     if (userError || !userData.user?.email) {
-      logStep("Auth error or no user email, returning free tier status", { error: userError?.message });
+      logStep("Auth error or no user email, returning restricted pilot status", { error: userError?.message });
       return new Response(JSON.stringify({
         subscribed: false,
         isAdmin: false,
-        isPilotUser: false,
+        isPilotUser: true,
         canScan: true,
-        scansRemaining: 3,
+        freeScansRemaining: 5,
+        freeComparesRemaining: 3,
+        paidScanBalance: 0,
+        scansRemaining: 5,
         hasOddsAccess: false,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -72,7 +78,7 @@ serve(async (req) => {
     const user = userData.user;
     logStep("User authenticated", { userId: user.id, email: user.email });
 
-    // Check user roles (admin, pilot, etc.)
+    // Check user roles (admin, full_access, etc.)
     const { data: rolesData } = await supabaseClient
       .from('user_roles')
       .select('role')
@@ -80,9 +86,9 @@ serve(async (req) => {
 
     const roles = rolesData?.map(r => r.role) || [];
     const isAdmin = roles.includes('admin');
-    const isPilotUser = roles.includes('pilot');
+    const hasFullAccess = roles.includes('full_access');
 
-    logStep("User roles", { roles, isAdmin, isPilotUser });
+    logStep("User roles", { roles, isAdmin, hasFullAccess });
 
     // Admin gets unlimited access
     if (isAdmin) {
@@ -171,63 +177,93 @@ serve(async (req) => {
       });
     }
 
-    // PILOT USER FLOW
-    if (isPilotUser) {
-      const { data: quotaData } = await supabaseClient
-        .from('pilot_user_quotas')
-        .select('*')
-        .eq('user_id', user.id)
-        .maybeSingle();
-
-      if (quotaData) {
-        const totalScansAvailable = quotaData.free_scans_remaining + quotaData.paid_scan_balance;
-        const canScan = totalScansAvailable > 0;
-
-        logStep("Pilot user quota status", { 
-          freeScansRemaining: quotaData.free_scans_remaining,
-          freeComparesRemaining: quotaData.free_compares_remaining,
-          paidScanBalance: quotaData.paid_scan_balance,
-          canScan 
-        });
-
-        return new Response(JSON.stringify({
-          subscribed: false,
-          isAdmin: false,
-          isPilotUser: true,
-          canScan,
-          scansRemaining: totalScansAvailable,
-          freeScansRemaining: quotaData.free_scans_remaining,
-          freeComparesRemaining: quotaData.free_compares_remaining,
-          paidScanBalance: quotaData.paid_scan_balance,
-          hasOddsAccess: false,
-        }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-          status: 200,
-        });
-      }
+    // If user has full_access role (granted by admin), unlimited access
+    if (hasFullAccess) {
+      logStep("User has full_access role, granting unlimited access");
+      return new Response(JSON.stringify({
+        subscribed: false,
+        isAdmin: false,
+        isPilotUser: false,
+        canScan: true,
+        scansRemaining: -1,
+        hasOddsAccess,
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200,
+      });
     }
 
-    // Regular free user - check scan usage
-    const { data: usageData } = await supabaseClient
-      .from('scan_usage')
-      .select('scan_count')
+    // ========================================
+    // DEFAULT: ALL USERS ARE RESTRICTED (PILOT MODE)
+    // ========================================
+    logStep("User is restricted (pilot mode by default)");
+
+    // Check or create pilot quota for user
+    let { data: quotaData } = await supabaseClient
+      .from('pilot_user_quotas')
+      .select('*')
       .eq('user_id', user.id)
       .maybeSingle();
 
-    const scanCount = usageData?.scan_count || 0;
-    const scansRemaining = Math.max(0, 3 - scanCount);
-    const canScan = scansRemaining > 0;
+    // Auto-create quota if doesn't exist
+    if (!quotaData) {
+      logStep("Creating pilot quota for new user");
+      const { data: newQuota, error: createError } = await supabaseClient
+        .from('pilot_user_quotas')
+        .insert({
+          user_id: user.id,
+          free_scans_remaining: 5,
+          free_compares_remaining: 3,
+          paid_scan_balance: 0,
+        })
+        .select()
+        .single();
 
-    logStep("Free user scan status", { scanCount, scansRemaining, canScan, hasOddsAccess });
+      if (createError) {
+        logStep("Error creating quota", { error: createError.message });
+      } else {
+        quotaData = newQuota;
+      }
+    }
 
+    if (quotaData) {
+      const totalScansAvailable = quotaData.free_scans_remaining + quotaData.paid_scan_balance;
+      const canScan = totalScansAvailable > 0;
+
+      logStep("Pilot user quota status", { 
+        freeScansRemaining: quotaData.free_scans_remaining,
+        freeComparesRemaining: quotaData.free_compares_remaining,
+        paidScanBalance: quotaData.paid_scan_balance,
+        canScan 
+      });
+
+      return new Response(JSON.stringify({
+        subscribed: false,
+        isAdmin: false,
+        isPilotUser: true,
+        canScan,
+        scansRemaining: totalScansAvailable,
+        freeScansRemaining: quotaData.free_scans_remaining,
+        freeComparesRemaining: quotaData.free_compares_remaining,
+        paidScanBalance: quotaData.paid_scan_balance,
+        hasOddsAccess: false,
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200,
+      });
+    }
+
+    // Fallback - shouldn't reach here but return restricted status
     return new Response(JSON.stringify({
       subscribed: false,
       isAdmin: false,
-      isPilotUser: false,
-      canScan,
-      scansRemaining,
-      scanCount,
-      hasOddsAccess,
+      isPilotUser: true,
+      canScan: true,
+      freeScansRemaining: 5,
+      freeComparesRemaining: 3,
+      paidScanBalance: 0,
+      scansRemaining: 5,
+      hasOddsAccess: false,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 200,
