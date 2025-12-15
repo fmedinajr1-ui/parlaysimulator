@@ -594,8 +594,12 @@ serve(async (req) => {
         playerLogs[key].push(log);
       });
 
+      const playersWithLogs = Object.keys(playerLogs).length;
+      console.log(`Grouped ${gameLogs?.length || 0} game logs into ${playersWithLogs} unique players`);
+
       const results: CandidateWithId[] = [];
       const processed = new Set<string>();
+      let skippedLowGames = 0;
 
       console.log(`Processing ${(propData || []).length} props for candidates`);
       
@@ -608,7 +612,11 @@ serve(async (req) => {
         const logs = (playerLogs[prop.player_name] || [])
           .filter(l => (l.minutes_played || 0) > 0)
           .slice(0, 10);
-        if (logs.length < 5) continue;
+        if (logs.length < 5) {
+          skippedLowGames++;
+          console.log(`SKIP: ${prop.player_name} - only ${logs.length} valid games`);
+          continue;
+        }
 
         // Build candidate from available data
         const candidate: PlayerPropCandidate = {
@@ -635,6 +643,8 @@ serve(async (req) => {
 
         const result = evaluateCandidate(candidate, engineConfig);
         
+        console.log(`EVALUATED: ${prop.player_name} ${prop.prop_type} ${candidate.recommendedSide} - status=${result.status}, blockReason=${result.blockReason || 'none'}, edge=${result.adjustedEdge?.toFixed(2)}, hitRate=${(result.hitRate * 100).toFixed(1)}%`);
+        
         results.push({
           ...result,
           id: crypto.randomUUID(),
@@ -645,6 +655,11 @@ serve(async (req) => {
           bookLine: candidate.bookLine,
         });
       }
+
+      const lockCount = results.filter(r => r.status === 'LOCK').length;
+      const strongCount = results.filter(r => r.status === 'STRONG').length;
+      const blockCount = results.filter(r => r.status === 'BLOCK').length;
+      console.log(`Generated ${results.length} candidates: ${lockCount} LOCK, ${strongCount} STRONG, ${blockCount} BLOCK (skipped ${skippedLowGames} with <5 games)`);
 
       // Insert candidates into database
       const candidatesToInsert = results.map(r => ({
