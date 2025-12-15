@@ -4,14 +4,21 @@ import { ParlaySlot, LegInput } from '@/components/compare/ParlaySlot';
 import { ComparisonDashboard } from '@/components/compare/ComparisonDashboard';
 import { QuickSelectHistory } from '@/components/compare/QuickSelectHistory';
 import { TutorialOverlay } from '@/components/tutorial/TutorialOverlay';
+import { PilotPaywallModal } from '@/components/PilotPaywallModal';
+import { PaywallModal } from '@/components/PaywallModal';
 import { compareTutorialSteps } from '@/components/tutorial/tutorialSteps';
 import { compareParlays, ComparisonResult } from '@/lib/comparison-utils';
 import { createLeg, simulateParlay, americanToDecimal } from '@/lib/parlay-calculator';
 import { ParlayLeg, ParlaySimulation } from '@/types/parlay';
 import { toast } from '@/hooks/use-toast';
 import { useTutorial } from '@/hooks/useTutorial';
-import { Plus, Scale, Loader2, RotateCcw, HelpCircle, Home } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { useSubscription } from '@/hooks/useSubscription';
+import { usePilotUser } from '@/hooks/usePilotUser';
+import { Plus, Scale, Loader2, RotateCcw, HelpCircle, Home, Crown } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { Badge } from '@/components/ui/badge';
+import { cn } from '@/lib/utils';
 
 interface SlotState {
   id: string;
@@ -42,10 +49,16 @@ const createEmptySlot = (): SlotState => ({
 });
 
 const Compare = () => {
+  const { user } = useAuth();
+  const { isSubscribed, isAdmin, startCheckout } = useSubscription();
+  const { isPilotUser, freeComparesRemaining, decrementScan, purchaseScans } = usePilotUser();
+  
   const [slots, setSlots] = useState<SlotState[]>([createEmptySlot(), createEmptySlot()]);
   const [isComparing, setIsComparing] = useState(false);
   const [comparisonResult, setComparisonResult] = useState<ComparisonResult | null>(null);
   const [historySlotIndex, setHistorySlotIndex] = useState<number | null>(null);
+  const [showPaywall, setShowPaywall] = useState(false);
+  const [showPilotPaywall, setShowPilotPaywall] = useState(false);
   
   const { showTutorial, setShowTutorial, markComplete } = useTutorial('compare');
 
@@ -134,7 +147,7 @@ const Compare = () => {
     return simulateParlay(validLegs, stakeNum, slot.extractedTotalOdds ?? undefined);
   };
 
-  const handleCompare = useCallback(() => {
+  const handleCompare = useCallback(async () => {
     const filledSlots = slots.filter(s => s.status === 'filled');
     
     if (filledSlots.length < 2) {
@@ -144,6 +157,14 @@ const Compare = () => {
         variant: "destructive",
       });
       return;
+    }
+
+    // Check quota for pilot users
+    if (user && !isSubscribed && !isAdmin && isPilotUser) {
+      if (freeComparesRemaining <= 0) {
+        setShowPilotPaywall(true);
+        return;
+      }
     }
 
     setIsComparing(true);
@@ -171,6 +192,11 @@ const Compare = () => {
       const result = compareParlays(simulations);
       setComparisonResult(result);
 
+      // Decrement compare quota for pilot users
+      if (user && !isSubscribed && !isAdmin && isPilotUser) {
+        await decrementScan('compare');
+      }
+
       toast({
         title: "Comparison complete! 📊",
         description: `Analyzed ${simulations.length} parlays. Check out the results!`,
@@ -185,7 +211,7 @@ const Compare = () => {
     } finally {
       setIsComparing(false);
     }
-  }, [slots]);
+  }, [slots, user, isSubscribed, isAdmin, isPilotUser, freeComparesRemaining, decrementScan]);
 
   const handleReset = useCallback(() => {
     setSlots([createEmptySlot(), createEmptySlot()]);
@@ -229,6 +255,28 @@ const Compare = () => {
           <p className="text-muted-foreground text-sm">
             Add up to 4 parlays and find your best bet.
           </p>
+
+          {/* Quota Indicator */}
+          {user && (
+            <div className="flex justify-center items-center gap-2 mt-2">
+              {isSubscribed || isAdmin ? (
+                <Badge className="bg-primary/20 text-primary border-primary/30 gap-1">
+                  <Crown className="w-3 h-3" />
+                  {isAdmin ? 'ADMIN' : 'PRO'} - Unlimited
+                </Badge>
+              ) : isPilotUser ? (
+                <Badge 
+                  variant="outline" 
+                  className={cn(
+                    "gap-1",
+                    freeComparesRemaining === 0 && "border-destructive/50 text-destructive"
+                  )}
+                >
+                  {freeComparesRemaining} Compares Left
+                </Badge>
+              ) : null}
+            </div>
+          )}
         </div>
 
         {/* Parlay Slots - scrollable area */}
@@ -312,6 +360,21 @@ const Compare = () => {
           onClose={() => setHistorySlotIndex(null)}
         />
       )}
+
+      {/* Paywall Modals */}
+      <PaywallModal
+        isOpen={showPaywall}
+        onClose={() => setShowPaywall(false)}
+        onSubscribe={startCheckout}
+        scansUsed={3}
+      />
+
+      <PilotPaywallModal
+        isOpen={showPilotPaywall}
+        onClose={() => setShowPilotPaywall(false)}
+        onPurchase={purchaseScans}
+        freeScansUsed={5}
+      />
     </div>
   );
 };
