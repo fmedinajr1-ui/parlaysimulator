@@ -442,6 +442,7 @@ interface CandidateWithId extends MedianLockResult {
   id: string;
   playerName: string;
   teamName: string;
+  propType: string;
   eventId: string;
   bookLine: number;
 }
@@ -614,6 +615,7 @@ serve(async (req) => {
           id: crypto.randomUUID(),
           playerName: candidate.playerName,
           teamName: candidate.teamName,
+          propType: candidate.propType,
           eventId: candidate.eventId,
           bookLine: candidate.bookLine,
         });
