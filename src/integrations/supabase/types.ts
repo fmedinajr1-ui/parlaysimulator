@@ -2679,6 +2679,69 @@ export type Database = {
           },
         ]
       }
+      performance_snapshots: {
+        Row: {
+          brier_score: number | null
+          calibration_error: number | null
+          confidence_level: string | null
+          correct_predictions: number | null
+          created_at: string | null
+          engine_name: string
+          hit_rate: number | null
+          id: string
+          log_loss: number | null
+          roi_percentage: number | null
+          sample_size: number | null
+          snapshot_date: string
+          sport: string | null
+          total_predictions: number | null
+          total_profit: number | null
+          total_staked: number | null
+          updated_at: string | null
+          window_days: number
+        }
+        Insert: {
+          brier_score?: number | null
+          calibration_error?: number | null
+          confidence_level?: string | null
+          correct_predictions?: number | null
+          created_at?: string | null
+          engine_name: string
+          hit_rate?: number | null
+          id?: string
+          log_loss?: number | null
+          roi_percentage?: number | null
+          sample_size?: number | null
+          snapshot_date: string
+          sport?: string | null
+          total_predictions?: number | null
+          total_profit?: number | null
+          total_staked?: number | null
+          updated_at?: string | null
+          window_days: number
+        }
+        Update: {
+          brier_score?: number | null
+          calibration_error?: number | null
+          confidence_level?: string | null
+          correct_predictions?: number | null
+          created_at?: string | null
+          engine_name?: string
+          hit_rate?: number | null
+          id?: string
+          log_loss?: number | null
+          roi_percentage?: number | null
+          sample_size?: number | null
+          snapshot_date?: string
+          sport?: string | null
+          total_predictions?: number | null
+          total_profit?: number | null
+          total_staked?: number | null
+          updated_at?: string | null
+          window_days?: number
+        }
+        Relationships: []
+      }
       player_prop_hitrates: {
         Row: {
           analyzed_at: string
@@ -4311,6 +4374,24 @@ export type Database = {
           price_change: number
           sharp_indicator: string
           sport: string
+        }[]
+      }
+      get_rolling_performance_stats: {
+        Args: {
+          p_engine_name?: string
+          p_sport?: string
+          p_window_days?: number
+        }
+        Returns: {
+          avg_odds: number
+          correct_predictions: number
+          engine_name: string
+          hit_rate: number
+          roi_percentage: number
+          sample_confidence: string
+          sport: string
+          total_predictions: number
+          window_days: number
         }[]
       }
       get_similar_historical_patterns: {
