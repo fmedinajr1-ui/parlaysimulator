@@ -15,7 +15,8 @@ import { useHapticFeedback } from "@/hooks/useHapticFeedback";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
-import { Zap, BarChart3, Sparkles, Trophy } from "lucide-react";
+import { Zap, BarChart3, Sparkles, Trophy, Calculator, Lock } from "lucide-react";
+import { usePilotUser } from "@/hooks/usePilotUser";
 
 function QuickAction({ to, icon: Icon, label, iconClass }: { 
   to: string; 
@@ -37,9 +38,12 @@ function QuickAction({ to, icon: Icon, label, iconClass }: {
 
 const Index = () => {
   const { lightTap, success } = useHapticFeedback();
+  const { isPilotUser, isAdmin, isSubscribed, isLoading } = usePilotUser();
+  
+  // Pilot users who are NOT admin and NOT subscribed get restricted view
+  const isPilotRestricted = isPilotUser && !isAdmin && !isSubscribed;
 
   const handleRefresh = React.useCallback(async () => {
-    // Simulate refresh - in real app would refetch data
     await new Promise(resolve => setTimeout(resolve, 1000));
     success();
   }, [success]);
@@ -48,6 +52,17 @@ const Index = () => {
     onRefresh: handleRefresh,
     threshold: 80,
   });
+
+  // Quick actions based on user type
+  const quickActions = isPilotRestricted ? [
+    { to: "/upload", icon: BarChart3, label: "Analyze", iconClass: "text-primary" },
+    { to: "/kelly", icon: Calculator, label: "Kelly", iconClass: "text-chart-4" },
+  ] : [
+    { to: "/upload", icon: BarChart3, label: "Analyze", iconClass: "text-primary" },
+    { to: "/sharp", icon: Zap, label: "Sharp Money", iconClass: "text-neon-yellow" },
+    { to: "/suggestions", icon: Sparkles, label: "AI Picks", iconClass: "text-neon-purple" },
+    { to: "/best-bets", icon: Trophy, label: "Best Bets", iconClass: "text-chart-4" },
+  ];
 
   return (
     <AppShell className="pt-safe">
@@ -64,14 +79,31 @@ const Index = () => {
         style={{ transform: `translateY(${Math.min(pullProgress * 0.5, 40)}px)` }}
       >
         <HeroBanner />
+
+        {/* Pilot Mode Welcome Message */}
+        {isPilotRestricted && (
+          <div className="mb-5 p-4 rounded-lg bg-primary/10 border border-primary/20">
+            <h3 className="font-semibold text-primary flex items-center gap-2">
+              <Lock className="w-4 h-4" /> Pilot Mode Active
+            </h3>
+            <p className="text-sm text-muted-foreground mt-1">
+              Upload your parlays to get AI analysis. Contact admin for full access.
+            </p>
+          </div>
+        )}
         
         {/* Quick Actions - FanDuel style horizontal scroll */}
         <div className="mb-5">
           <div className="flex gap-3 overflow-x-auto scrollbar-hide pb-2 -mx-4 px-4 scroll-optimized">
-            <QuickAction to="/upload" icon={BarChart3} label="Analyze" iconClass="text-primary" />
-            <QuickAction to="/sharp" icon={Zap} label="Sharp Money" iconClass="text-neon-yellow" />
-            <QuickAction to="/suggestions" icon={Sparkles} label="AI Picks" iconClass="text-neon-purple" />
-            <QuickAction to="/best-bets" icon={Trophy} label="Best Bets" iconClass="text-chart-4" />
+            {quickActions.map((action) => (
+              <QuickAction 
+                key={action.to}
+                to={action.to} 
+                icon={action.icon} 
+                label={action.label} 
+                iconClass={action.iconClass} 
+              />
+            ))}
           </div>
         </div>
 
@@ -88,36 +120,41 @@ const Index = () => {
         {/* Example Cards */}
         <ExampleCarousel />
 
-        {/* Compare Parlays */}
-        <CompareTeaser />
+        {/* Premium Sections - Hidden for Pilot Users */}
+        {!isPilotRestricted && (
+          <>
+            {/* Compare Parlays */}
+            <CompareTeaser />
 
-        {/* AI Suggested Parlays */}
-        <div className="mb-5 content-visibility-auto">
-          <SuggestedParlays />
-        </div>
+            {/* AI Suggested Parlays */}
+            <div className="mb-5 content-visibility-auto">
+              <SuggestedParlays />
+            </div>
 
-        {/* Historical Trends */}
-        <div className="mb-5 content-visibility-auto">
-          <HistoricalInsights compact />
-        </div>
+            {/* Historical Trends */}
+            <div className="mb-5 content-visibility-auto">
+              <HistoricalInsights compact />
+            </div>
 
-        {/* Smart Betting Edge */}
-        <div className="mb-5 content-visibility-auto">
-          <SmartBettingEdge compact />
-        </div>
+            {/* Smart Betting Edge */}
+            <div className="mb-5 content-visibility-auto">
+              <SmartBettingEdge compact />
+            </div>
 
-        {/* Live Line Movements */}
-        <div className="mb-5 content-visibility-auto">
-          <Link to="/sharp" className="block" onClick={lightTap}>
-            <OddsMovementCard compact showSharpOnly delay={200} />
-          </Link>
-          <p className="text-xs text-muted-foreground text-center mt-2">
-            Tap to view sharp money dashboard →
-          </p>
-        </div>
+            {/* Live Line Movements */}
+            <div className="mb-5 content-visibility-auto">
+              <Link to="/sharp" className="block" onClick={lightTap}>
+                <OddsMovementCard compact showSharpOnly delay={200} />
+              </Link>
+              <p className="text-xs text-muted-foreground text-center mt-2">
+                Tap to view sharp money dashboard →
+              </p>
+            </div>
+          </>
+        )}
 
         <HowItWorks />
-        <FeatureTeaser />
+        {!isPilotRestricted && <FeatureTeaser />}
       </div>
     </AppShell>
   );
