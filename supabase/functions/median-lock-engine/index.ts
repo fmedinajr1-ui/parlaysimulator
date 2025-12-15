@@ -44,6 +44,7 @@ interface ShockResult {
 interface MedianLockResult {
   status: 'LOCK' | 'STRONG' | 'BLOCK';
   blockReason?: string;
+  betSide: 'OVER' | 'UNDER' | 'PASS';
   
   medianPoints: number;
   medianMinutes: number;
@@ -91,12 +92,12 @@ interface EngineConfig {
 }
 
 const DEFAULT_CONFIG: EngineConfig = {
-  edgeMin: 1.0,
-  hitRateMin: 0.70,
-  minutesFloor: 24,
-  minutesMin: 18,
-  splitEdgeMin: 0.5,
-  adjustedEdgeMin: 0.5,
+  edgeMin: 1.5,           // Enhanced: was 1.0
+  hitRateMin: 0.80,       // Enhanced: was 0.70
+  minutesFloor: 28,       // Enhanced: was 24
+  minutesMin: 22,         // Enhanced: was 18
+  splitEdgeMin: 1.0,      // Enhanced: was 0.5
+  adjustedEdgeMin: 1.0,   // Enhanced: was 0.5
 };
 
 // ============ UTILITY FUNCTIONS ============
@@ -124,6 +125,44 @@ function calculateHitRate(values: number[], line: number, side: 'over' | 'under'
   if (values.length === 0) return 0;
   const hits = values.filter(v => side === 'over' ? v >= line : v < line).length;
   return hits / values.length;
+}
+
+// ============ AUTO BET SIDE DETECTION ============
+
+interface BetSideResult {
+  betSide: 'OVER' | 'UNDER' | 'PASS';
+  edge: number;
+  hitRate: number;
+  side: 'over' | 'under';
+}
+
+function determineBetSide(
+  medianStat: number,
+  bookLine: number,
+  statLast10: number[],
+  config: EngineConfig
+): BetSideResult {
+  const overEdge = medianStat - bookLine;
+  const overHitRate = calculateHitRate(statLast10, bookLine, 'over');
+  
+  const underEdge = bookLine - medianStat;
+  const underHitRate = calculateHitRate(statLast10, bookLine, 'under');
+  
+  // Check OVER first - use config thresholds
+  if (overEdge >= config.edgeMin && overHitRate >= config.hitRateMin) {
+    return { betSide: 'OVER', edge: overEdge, hitRate: overHitRate, side: 'over' };
+  }
+  
+  // Check UNDER
+  if (underEdge >= config.edgeMin && underHitRate >= config.hitRateMin) {
+    return { betSide: 'UNDER', edge: underEdge, hitRate: underHitRate, side: 'under' };
+  }
+  
+  // Default to PASS - return best available edge for logging
+  if (overEdge >= underEdge) {
+    return { betSide: 'PASS', edge: overEdge, hitRate: overHitRate, side: 'over' };
+  }
+  return { betSide: 'PASS', edge: underEdge, hitRate: underHitRate, side: 'under' };
 }
 
 // Helper to get correct stat based on prop type
@@ -228,12 +267,9 @@ function evaluateCandidate(
   const medianUsage = median(candidate.usageLast10);
   const medianShots = median(candidate.shotsLast10);
   
-  // Raw edge and hit rate - bidirectional support
-  const side = candidate.recommendedSide;
-  const rawEdge = side === 'under' 
-    ? candidate.bookLine - medianStat  // UNDER: edge is how much below line
-    : medianStat - candidate.bookLine; // OVER: edge is how much above line
-  const hitRate = calculateHitRate(candidate.statLast10, candidate.bookLine, side);
+  // === AUTO BET SIDE DETECTION ===
+  const betSideResult = determineBetSide(medianStat, candidate.bookLine, candidate.statLast10, config);
+  const { betSide, edge: rawEdge, hitRate, side } = betSideResult;
   const hitRateLast5 = calculateHitRate(candidate.statLast10.slice(0, 5), candidate.bookLine, side);
   
   // Build base result (medianPoints stores the stat median for compatibility)
@@ -247,25 +283,15 @@ function evaluateCandidate(
     hitRateLast5,
     passedChecks,
     failedChecks,
+    betSide,
   };
   
-  // === CHECK 1: Edge & Hit Rate ===
-  if (rawEdge < config.edgeMin) {
-    failedChecks.push(`Edge ${rawEdge.toFixed(1)} < ${config.edgeMin} min`);
-  } else {
-    passedChecks.push(`Edge ${rawEdge.toFixed(1)} ≥ ${config.edgeMin}`);
-  }
-  
-  if (hitRate < config.hitRateMin) {
-    failedChecks.push(`Hit rate ${(hitRate * 100).toFixed(0)}% < ${config.hitRateMin * 100}% min`);
-  } else {
-    passedChecks.push(`Hit rate ${(hitRate * 100).toFixed(0)}% ≥ ${config.hitRateMin * 100}%`);
-  }
-  
-  if (rawEdge < config.edgeMin || hitRate < config.hitRateMin) {
+  // === CHECK 0: Bet Side PASS ===
+  if (betSide === 'PASS') {
+    failedChecks.push(`No clear edge: OVER edge ${(medianStat - candidate.bookLine).toFixed(1)}, UNDER edge ${(candidate.bookLine - medianStat).toFixed(1)}`);
     return {
       status: 'BLOCK',
-      blockReason: 'Low Edge/Hit Rate',
+      blockReason: 'No Clear OVER/UNDER Edge',
       ...baseResult,
       defenseAdjustment: 0,
       adjustedEdge: rawEdge,
@@ -282,6 +308,8 @@ function evaluateCandidate(
       juiceLagBonus: 0,
     };
   }
+  
+  passedChecks.push(`${betSide}: Edge ${rawEdge.toFixed(1)} ≥ ${config.edgeMin}, HR ${(hitRate * 100).toFixed(0)}% ≥ ${config.hitRateMin * 100}%`);
   
   // === CHECK 2: Minutes Floor ===
   const minMinutes = Math.min(...candidate.minutesLast10);
@@ -345,7 +373,7 @@ function evaluateCandidate(
   
   const relevantSplitStats = candidate.location === 'HOME' ? homeStats : awayStats;
   const splitMedian = relevantSplitStats.length > 0 ? median(relevantSplitStats) : medianStat;
-  const splitEdge = side === 'under'
+  const splitEdge = betSide === 'UNDER'
     ? candidate.bookLine - splitMedian
     : splitMedian - candidate.bookLine;
   
@@ -685,6 +713,7 @@ serve(async (req) => {
         prop_type: r.propType,
         book_line: r.bookLine || 0,
         slate_date: targetDate,
+        bet_side: r.betSide,
         median_points: r.medianPoints,
         median_minutes: r.medianMinutes,
         median_usage: r.medianUsage,
@@ -731,7 +760,14 @@ serve(async (req) => {
         ...slip2.map(s => ({
           slate_date: targetDate,
           slip_type: '2-leg',
-          legs: s.legs.map(l => ({ playerName: (l as CandidateWithId).playerName, confidenceScore: l.confidenceScore, status: l.status })),
+          legs: s.legs.map(l => ({ 
+            playerName: (l as CandidateWithId).playerName, 
+            confidenceScore: l.confidenceScore, 
+            status: l.status,
+            betSide: l.betSide,
+            propType: (l as CandidateWithId).propType,
+            bookLine: (l as CandidateWithId).bookLine,
+          })),
           leg_ids: s.legIds,
           slip_score: s.slipScore,
           probability: s.probability,
@@ -740,7 +776,14 @@ serve(async (req) => {
         ...slip3.map(s => ({
           slate_date: targetDate,
           slip_type: '3-leg',
-          legs: s.legs.map(l => ({ playerName: (l as CandidateWithId).playerName, confidenceScore: l.confidenceScore, status: l.status })),
+          legs: s.legs.map(l => ({ 
+            playerName: (l as CandidateWithId).playerName, 
+            confidenceScore: l.confidenceScore, 
+            status: l.status,
+            betSide: l.betSide,
+            propType: (l as CandidateWithId).propType,
+            bookLine: (l as CandidateWithId).bookLine,
+          })),
           leg_ids: s.legIds,
           slip_score: s.slipScore,
           probability: s.probability,

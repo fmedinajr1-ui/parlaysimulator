@@ -10,6 +10,7 @@ interface MedianLockCandidate {
   team_name: string;
   prop_type: string;
   book_line: number;
+  bet_side?: 'OVER' | 'UNDER' | 'PASS';
   classification: 'LOCK' | 'STRONG' | 'BLOCK';
   confidence_score: number;
   hit_rate: number;
@@ -46,6 +47,19 @@ export function MedianLockCandidateCard({ candidate, compact = false }: MedianLo
     }
   };
 
+  const getBetSideBadge = () => {
+    if (!candidate.bet_side || candidate.bet_side === 'PASS') return null;
+    return (
+      <Badge className={`font-bold ${
+        candidate.bet_side === 'OVER' 
+          ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' 
+          : 'bg-orange-500/20 text-orange-400 border-orange-500/30'
+      }`}>
+        {candidate.bet_side === 'OVER' ? '📈' : '📉'} {candidate.bet_side}
+      </Badge>
+    );
+  };
+
   const getConfidenceColor = (score: number) => {
     if (score >= 85) return 'text-green-400';
     if (score >= 75) return 'text-blue-400';
@@ -61,6 +75,7 @@ export function MedianLockCandidateCard({ candidate, compact = false }: MedianLo
             <div className="flex items-center gap-2">
               <span className="font-semibold text-sm">{candidate.player_name}</span>
               {getClassificationBadge()}
+              {getBetSideBadge()}
             </div>
             <div className="flex items-center gap-2">
               <span className={`text-sm font-bold ${getConfidenceColor(candidate.confidence_score)}`}>
@@ -87,7 +102,10 @@ export function MedianLockCandidateCard({ candidate, compact = false }: MedianLo
             <CardTitle className="text-lg">{candidate.player_name}</CardTitle>
             <span className="text-xs text-muted-foreground">{candidate.team_name}</span>
           </div>
-          {getClassificationBadge()}
+          <div className="flex items-center gap-2">
+            {getBetSideBadge()}
+            {getClassificationBadge()}
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">

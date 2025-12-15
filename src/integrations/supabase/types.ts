@@ -1925,6 +1925,7 @@ export type Database = {
         Row: {
           actual_value: number | null
           adjusted_edge: number | null
+          bet_side: string | null
           block_reason: string | null
           book_line: number
           classification: string | null
@@ -1973,6 +1974,7 @@ export type Database = {
         Insert: {
           actual_value?: number | null
           adjusted_edge?: number | null
+          bet_side?: string | null
           block_reason?: string | null
           book_line: number
           classification?: string | null
@@ -2021,6 +2023,7 @@ export type Database = {
         Update: {
           actual_value?: number | null
           adjusted_edge?: number | null
+          bet_side?: string | null
           block_reason?: string | null
           book_line?: number
           classification?: string | null

@@ -9,6 +9,9 @@ interface SlipLeg {
   playerName: string;
   confidenceScore: number;
   status: 'LOCK' | 'STRONG';
+  betSide?: 'OVER' | 'UNDER' | 'PASS';
+  propType?: string;
+  bookLine?: number;
 }
 
 interface GreenSlip {
@@ -122,8 +125,20 @@ export function GreenSlipCard({ slip, rank }: GreenSlipCardProps) {
               key={i}
               className="flex items-center justify-between bg-muted/20 rounded-lg px-3 py-2"
             >
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-sm font-medium">{leg.playerName}</span>
+                {leg.betSide && leg.betSide !== 'PASS' && (
+                  <Badge 
+                    variant="secondary" 
+                    className={`text-xs font-bold ${
+                      leg.betSide === 'OVER' 
+                        ? 'bg-emerald-500/20 text-emerald-400' 
+                        : 'bg-orange-500/20 text-orange-400'
+                    }`}
+                  >
+                    {leg.betSide === 'OVER' ? '📈' : '📉'} {leg.betSide}
+                  </Badge>
+                )}
                 <Badge 
                   variant="secondary" 
                   className={`text-xs ${
