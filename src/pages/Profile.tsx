@@ -16,9 +16,11 @@ import { TodaysUpsetPredictions } from '@/components/profile/TodaysUpsetPredicti
 import { UpsetAccuracyDashboard } from '@/components/profile/UpsetAccuracyDashboard';
 import { NotificationPreferences } from '@/components/profile/NotificationPreferences';
 import { TutorialToggle } from '@/components/tutorial/TutorialToggle';
+import { BankrollManager } from '@/components/bankroll/BankrollManager';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, LogOut, Upload, CreditCard, Crown, User, Settings, Dog, Target, LineChart, GitCompare, Trash2 } from 'lucide-react';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Loader2, LogOut, Upload, CreditCard, Crown, User, Settings, Dog, Target, LineChart, GitCompare, Trash2, ChevronDown, Wallet, BarChart3, Zap, History } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { MobileHeader } from '@/components/layout/MobileHeader';
@@ -248,48 +250,59 @@ const Profile = () => {
           />
         </div>
 
-        {/* Degen Stats */}
+        {/* Bankroll Manager - Prominent placement */}
         <div className="mt-4">
-          <DegenStats
-            totalWins={profile.total_wins}
-            totalLosses={profile.total_losses}
-            totalStaked={profile.total_staked}
-            totalPayout={profile.total_payout}
-            lifetimeDegenScore={profile.lifetime_degenerate_score}
-          />
+          <BankrollManager />
         </div>
 
-        {/* AI Suggestions - Pro users only */}
-        {(isSubscribed || isAdmin) && (
-          <div className="mt-4">
-            <AISuggestionsCard userId={user!.id} />
-          </div>
-        )}
+        {/* Stats & Performance Section - Collapsible */}
+        <Collapsible defaultOpen={false} className="mt-4">
+          <CollapsibleTrigger asChild>
+            <FeedCard className="cursor-pointer hover:bg-muted/50 transition-colors">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <BarChart3 className="w-5 h-5 text-primary" />
+                  <h3 className="font-display text-lg">Stats & Performance</h3>
+                </div>
+                <ChevronDown className="w-5 h-5 text-muted-foreground transition-transform duration-200 group-data-[state=open]:rotate-180" />
+              </div>
+            </FeedCard>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="space-y-4 mt-4">
+            <DegenStats
+              totalWins={profile.total_wins}
+              totalLosses={profile.total_losses}
+              totalStaked={profile.total_staked}
+              totalPayout={profile.total_payout}
+              lifetimeDegenScore={profile.lifetime_degenerate_score}
+            />
+            {(isSubscribed || isAdmin) && (
+              <AISuggestionsCard userId={user!.id} />
+            )}
+            <AIPerformanceCard userId={user!.id} />
+            <BettingCalendarCard userId={user!.id} />
+          </CollapsibleContent>
+        </Collapsible>
 
-        {/* AI Performance */}
-        <div className="mt-4">
-          <AIPerformanceCard userId={user!.id} />
-        </div>
-
-        {/* Smart Betting Calendar */}
-        <div className="mt-4">
-          <BettingCalendarCard userId={user!.id} />
-        </div>
-
-        {/* Today's Upset Predictions */}
-        <div className="mt-4">
-          <TodaysUpsetPredictions userId={user!.id} />
-        </div>
-
-        {/* Upset Prediction Accuracy */}
-        <div className="mt-4">
-          <UpsetAccuracyDashboard />
-        </div>
-
-        {/* Upset Tracker */}
-        <div className="mt-4">
-          <UpsetTrackerCard userId={user!.id} />
-        </div>
+        {/* Predictions Section - Collapsible */}
+        <Collapsible defaultOpen={false} className="mt-4">
+          <CollapsibleTrigger asChild>
+            <FeedCard className="cursor-pointer hover:bg-muted/50 transition-colors">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Zap className="w-5 h-5 text-neon-orange" />
+                  <h3 className="font-display text-lg">Upset Predictions</h3>
+                </div>
+                <ChevronDown className="w-5 h-5 text-muted-foreground transition-transform duration-200 group-data-[state=open]:rotate-180" />
+              </div>
+            </FeedCard>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="space-y-4 mt-4">
+            <TodaysUpsetPredictions userId={user!.id} />
+            <UpsetAccuracyDashboard />
+            <UpsetTrackerCard userId={user!.id} />
+          </CollapsibleContent>
+        </Collapsible>
 
         {/* Notification Preferences - Pro users only */}
         {(isSubscribed || isAdmin) && (
@@ -306,10 +319,23 @@ const Profile = () => {
           </FeedCard>
         </div>
 
-        {/* Parlay History */}
-        <div className="mt-4">
-          <ParlayHistoryFeed onStatsUpdate={fetchProfile} />
-        </div>
+        {/* Parlay History - Collapsible */}
+        <Collapsible defaultOpen={false} className="mt-4">
+          <CollapsibleTrigger asChild>
+            <FeedCard className="cursor-pointer hover:bg-muted/50 transition-colors">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <History className="w-5 h-5 text-muted-foreground" />
+                  <h3 className="font-display text-lg">Parlay History</h3>
+                </div>
+                <ChevronDown className="w-5 h-5 text-muted-foreground transition-transform duration-200 group-data-[state=open]:rotate-180" />
+              </div>
+            </FeedCard>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="mt-4">
+            <ParlayHistoryFeed onStatsUpdate={fetchProfile} />
+          </CollapsibleContent>
+        </Collapsible>
 
         {/* CTA */}
         <div className="mt-6 mb-4">

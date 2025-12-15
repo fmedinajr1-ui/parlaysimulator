@@ -1,4 +1,4 @@
-import { Home, BarChart3, User, TrendingUp, WifiOff } from "lucide-react";
+import { Home, BarChart3, User, Wallet, WifiOff } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { usePWA } from "@/hooks/usePWA";
@@ -7,7 +7,7 @@ import { MenuDrawer } from "@/components/layout/MenuDrawer";
 const navItems = [
   { icon: Home, label: "Home", path: "/" },
   { icon: BarChart3, label: "Analyze", path: "/upload" },
-  { icon: TrendingUp, label: "Odds", path: "/odds" },
+  { icon: Wallet, label: "Kelly", path: "/kelly" },
   { icon: User, label: "Profile", path: "/profile" },
 ];
 

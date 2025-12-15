@@ -40,6 +40,52 @@ export interface VarianceMetrics {
 export interface TiltAnalysis {
   isTilting: boolean;
   tiltReason?: string;
+}
+
+export interface KellyValidation {
+  isValid: boolean;
+  errors: string[];
+}
+
+/**
+ * Validate Kelly inputs before calculation
+ */
+export function validateKellyInputs(input: Partial<KellyInput>): KellyValidation {
+  const errors: string[] = [];
+
+  if (input.winProbability === undefined || input.winProbability === null) {
+    errors.push('Win probability is required');
+  } else if (input.winProbability <= 0 || input.winProbability >= 1) {
+    errors.push('Win probability must be between 0.01 and 0.99');
+  }
+
+  if (input.decimalOdds === undefined || input.decimalOdds === null) {
+    errors.push('Decimal odds are required');
+  } else if (input.decimalOdds <= 1) {
+    errors.push('Decimal odds must be greater than 1');
+  }
+
+  if (input.bankroll === undefined || input.bankroll === null) {
+    errors.push('Bankroll is required');
+  } else if (input.bankroll < 10) {
+    errors.push('Minimum bankroll is $10');
+  }
+
+  if (input.kellyMultiplier !== undefined && (input.kellyMultiplier <= 0 || input.kellyMultiplier > 1)) {
+    errors.push('Kelly multiplier must be between 0.01 and 1');
+  }
+
+  if (input.maxBetPercent !== undefined && (input.maxBetPercent <= 0 || input.maxBetPercent > 0.25)) {
+    errors.push('Max bet percent must be between 0.01 and 0.25');
+  }
+
+  return {
+    isValid: errors.length === 0,
+    errors
+  };
+}
+
+export interface TiltAnalysis {
   suggestedAction: string;
   streakImpact: number;
 }
