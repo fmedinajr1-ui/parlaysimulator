@@ -313,7 +313,7 @@ serve(async (req) => {
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
     
     // Parse request body - ignore user-provided sports, always scan all 3
-    const { limit = 100, minHitRate = 0.8, streakFilter = null } = await req.json().catch(() => ({}));
+    const { limit = 200, minHitRate = 0.8, streakFilter = null } = await req.json().catch(() => ({}));
     
     // Force all 3 sports regardless of request
     const sports = ['basketball_nba', 'americanfootball_nfl', 'icehockey_nhl'];
@@ -325,18 +325,18 @@ serve(async (req) => {
       .select('id', { count: 'exact', head: true })
       .gte('analyzed_at', yesterday);
     
-    const dailyLimit = 100;
+    const dailyLimit = 200;
     const remainingLimit = Math.max(0, dailyLimit - (todayCount || 0));
     
     if (remainingLimit === 0) {
-      console.log('[HitRate] Daily limit of 100 props reached');
+      console.log('[HitRate] Daily limit of 200 props reached');
       return new Response(JSON.stringify({ 
         success: true, 
         analyzed: 0, 
         propsChecked: 0,
         dailyLimitReached: true,
         propsToday: todayCount,
-        noPropsReason: 'Daily limit of 100 props reached. Try again tomorrow.'
+        noPropsReason: 'Daily limit of 200 props reached. Try again tomorrow.'
       }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
     
