@@ -497,12 +497,23 @@ function buildGreenSlips(
   const targetLegs = slipType === '2-leg' ? 2 : 3;
   const combinations = generateCombinations(eligible, targetLegs);
   
+  console.log(`Building ${slipType} slips from ${eligible.length} eligible candidates, ${combinations.length} combinations`);
+  
   // Filter out conflicts
   const validSlips = combinations.filter(combo => {
-    // No same-team legs
-    const teams = combo.map(c => c.teamName);
-    const uniqueTeams = new Set(teams);
-    if (uniqueTeams.size < combo.length) return false;
+    // No duplicate players
+    const players = combo.map(c => c.playerName);
+    const uniquePlayers = new Set(players);
+    if (uniquePlayers.size < combo.length) return false;
+    
+    // Limit same-game legs to max 2 to reduce correlation risk
+    const events = combo.map(c => c.eventId);
+    const eventCounts = events.reduce((acc, e) => {
+      acc[e] = (acc[e] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+    const maxSameGame = Math.max(...Object.values(eventCounts));
+    if (maxSameGame > 2) return false;
     
     return true;
   });
@@ -543,6 +554,8 @@ function buildGreenSlips(
       stakeTier,
     };
   });
+  
+  console.log(`Generated ${scoredSlips.length} valid ${slipType} slips`);
   
   // Return top 10 sorted by slip score
   return scoredSlips
