@@ -15,7 +15,7 @@ export function HeroBanner() {
       <div className="relative z-10 text-center">
         {/* Logo */}
         <div className="flex justify-center mb-3">
-          <ParlayFarmLogo size="lg" className="sm:h-28 drop-shadow-lg" />
+          <ParlayFarmLogo size="2xl" className="sm:h-44 drop-shadow-lg" />
         </div>
         
         <p className="text-muted-foreground text-xs sm:text-sm mb-4 max-w-[280px] mx-auto leading-relaxed">
