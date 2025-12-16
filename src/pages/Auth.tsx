@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { PhoneVerification } from '@/components/auth/PhoneVerification';
 import { Button } from '@/components/ui/button';
@@ -26,15 +26,17 @@ const Auth = () => {
   const [newUserId, setNewUserId] = useState<string | null>(null);
   const { signIn, signUp, user, isLoading } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const returnUrl = searchParams.get('return') || '/profile';
 
   useEffect(() => {
     if (!isLoading && user) {
       // Check if user needs phone verification (for new signups)
       if (authStep === 'credentials') {
-        navigate('/profile');
+        navigate(returnUrl);
       }
     }
-  }, [user, isLoading, navigate, authStep]);
+  }, [user, isLoading, navigate, authStep, returnUrl]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -74,7 +76,7 @@ const Auth = () => {
             title: "Welcome back! 🔥",
             description: "Ready to analyze some degenerate bets?"
           });
-          navigate('/profile');
+          navigate(returnUrl);
         }
       } else {
         const { error, data } = await signUp(email, password);
@@ -108,7 +110,7 @@ const Auth = () => {
       title: "Account Created! 🎉",
       description: "Welcome to the degen club."
     });
-    navigate('/profile');
+    navigate(returnUrl);
   };
 
   const handleBackToCredentials = () => {

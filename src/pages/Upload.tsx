@@ -107,6 +107,31 @@ const Upload = () => {
     }
   }, [searchParams, checkPilotStatus]);
 
+  // Restore pending parlay after authentication
+  useEffect(() => {
+    const pending = sessionStorage.getItem('pendingParlay');
+    if (pending && user) {
+      try {
+        const { legs: savedLegs, stake: savedStake, extractedTotalOdds: savedOdds, extractedGameTime: savedTime } = JSON.parse(pending);
+        if (savedLegs?.length >= 2) {
+          setLegs(savedLegs);
+          if (savedStake) setStake(savedStake);
+          if (savedOdds) setExtractedTotalOdds(savedOdds);
+          if (savedTime) setExtractedGameTime(savedTime);
+          
+          toast({
+            title: "Parlay restored! 📋",
+            description: "Your legs are ready to analyze",
+          });
+        }
+        sessionStorage.removeItem('pendingParlay');
+      } catch (e) {
+        console.error('Failed to restore pending parlay:', e);
+        sessionStorage.removeItem('pendingParlay');
+      }
+    }
+  }, [user]);
+
   // Handle optimized legs from Results page  
   useEffect(() => {
     const optimizedData = location.state as { 
@@ -594,6 +619,25 @@ const Upload = () => {
   }, [isProcessing, user, canScan, isSubscribed, isAdmin]);
 
   const handleSimulate = () => {
+    // Require authentication to analyze
+    if (!user) {
+      // Save current parlay state to sessionStorage
+      sessionStorage.setItem('pendingParlay', JSON.stringify({
+        legs,
+        stake,
+        extractedTotalOdds,
+        extractedGameTime
+      }));
+      
+      toast({
+        title: "Sign in required",
+        description: "Create a free account to analyze your parlay",
+      });
+      
+      navigate('/auth?return=/upload');
+      return;
+    }
+
     // Validate inputs
     const validLegs: ParlayLeg[] = [];
     
