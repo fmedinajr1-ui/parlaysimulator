@@ -180,7 +180,14 @@ export function MenuDrawer() {
           "border-b border-border",
           isMobileCompact ? "p-4 pb-3" : "p-6 pb-4"
         )}>
-          <SheetTitle className="text-left font-display text-lg">Menu</SheetTitle>
+          <div className="flex items-center gap-3">
+            <img 
+              src="/parlay-farm-logo.png" 
+              alt="Parlay Farm" 
+              className="h-10 w-auto"
+            />
+            <SheetTitle className="text-left font-display text-lg">Menu</SheetTitle>
+          </div>
         </SheetHeader>
         
         <div className="flex flex-col py-2">

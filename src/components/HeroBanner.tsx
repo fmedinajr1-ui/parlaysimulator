@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
-import { ArrowRight, Dog } from "lucide-react";
+import { ArrowRight } from "lucide-react";
+import { ParlayFarmLogo } from "@/components/ParlayFarmLogo";
 
 export function HeroBanner() {
   return (
@@ -12,16 +13,10 @@ export function HeroBanner() {
       <div className="absolute top-0 left-1/4 w-16 h-16 bg-primary/15 rounded-full blur-2xl animate-pulse hidden sm:block" />
       
       <div className="relative z-10 text-center">
-        {/* Compact Farm Badge */}
-        <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-primary/10 border border-primary/20 mb-3">
-          <Dog className="w-3 h-3 text-primary" />
-          <span className="text-xs text-primary font-medium">AI-Powered Picks</span>
+        {/* Logo */}
+        <div className="flex justify-center mb-3">
+          <ParlayFarmLogo size="lg" className="sm:h-28 drop-shadow-lg" />
         </div>
-        
-        {/* Compact Title */}
-        <h1 className="font-display text-2xl sm:text-3xl tracking-wide mb-1.5">
-          <span className="text-gradient-fire">PARLAY FARM</span>
-        </h1>
         
         <p className="text-muted-foreground text-xs sm:text-sm mb-4 max-w-[280px] mx-auto leading-relaxed">
           Track sharps, tail winners, unleash your inner wolf 🐺

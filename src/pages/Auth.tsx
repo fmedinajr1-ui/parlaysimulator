@@ -155,6 +155,15 @@ const Auth = () => {
           Back
         </Link>
 
+        {/* Logo */}
+        <div className="flex justify-center mb-6">
+          <img 
+            src="/parlay-farm-logo.png" 
+            alt="Parlay Farm" 
+            className="h-24 w-auto"
+          />
+        </div>
+
         {/* Header */}
         <div className="text-center mb-8">
           <h1 className="font-display text-4xl text-foreground mb-2">
