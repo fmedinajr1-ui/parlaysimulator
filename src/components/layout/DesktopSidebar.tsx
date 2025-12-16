@@ -17,13 +17,16 @@ import {
   Flame,
   PanelLeftClose,
   PanelLeft,
-  ScanSearch
+  ScanSearch,
+  Lock
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { usePilotUser } from "@/hooks/usePilotUser";
+import { PILOT_ALLOWED_ROUTES } from "@/components/PilotRouteGuard";
 
 const mainNavItems = [
   { icon: Home, label: "Home", path: "/" },
@@ -58,15 +61,17 @@ interface DesktopSidebarProps {
 }
 
 export function DesktopSidebar({ collapsed, onToggle }: DesktopSidebarProps) {
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [isAdminRole, setIsAdminRole] = useState(false);
   const location = useLocation();
+  const { isPilotUser, isAdmin: isPilotAdmin, isSubscribed } = usePilotUser();
 
+  // Check admin role from database
   useEffect(() => {
     const checkAdminRole = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session?.user) {
-          setIsAdmin(false);
+          setIsAdminRole(false);
           return;
         }
 
@@ -77,10 +82,10 @@ export function DesktopSidebar({ collapsed, onToggle }: DesktopSidebarProps) {
           .eq('role', 'admin')
           .maybeSingle();
 
-        setIsAdmin(!!data);
+        setIsAdminRole(!!data);
       } catch (err) {
         console.error('Error checking admin role:', err);
-        setIsAdmin(false);
+        setIsAdminRole(false);
       }
     };
 
@@ -94,6 +99,15 @@ export function DesktopSidebar({ collapsed, onToggle }: DesktopSidebarProps) {
   }, []);
 
   const isActive = (path: string) => location.pathname === path;
+  
+  // Determine if user should see restricted features
+  const isPilotRestricted = isPilotUser && !isPilotAdmin && !isSubscribed;
+  const isAdmin = isAdminRole || isPilotAdmin;
+  
+  // Filter features for pilot users
+  const filteredFeatures = isPilotRestricted
+    ? featureItems.filter(item => PILOT_ALLOWED_ROUTES.includes(item.path))
+    : featureItems;
 
   const NavItem = ({ icon: Icon, label, path }: { icon: typeof Home; label: string; path: string }) => {
     const active = isActive(path);
@@ -184,6 +198,16 @@ export function DesktopSidebar({ collapsed, onToggle }: DesktopSidebarProps) {
 
         <Separator className="my-4" />
 
+        {/* Pilot Mode Notice */}
+        {isPilotRestricted && !collapsed && (
+          <div className="mx-2 mb-2 p-2 rounded-lg bg-primary/10 border border-primary/20">
+            <div className="flex items-center gap-2 text-xs">
+              <Lock className="w-3 h-3 text-primary" />
+              <span className="font-medium text-primary">Pilot Mode</span>
+            </div>
+          </div>
+        )}
+
         {/* Features */}
         <div className="space-y-1">
           {!collapsed && (
@@ -191,7 +215,7 @@ export function DesktopSidebar({ collapsed, onToggle }: DesktopSidebarProps) {
               Features
             </p>
           )}
-          {featureItems.map((item) => (
+          {filteredFeatures.map((item) => (
             <NavItem key={item.path} {...item} />
           ))}
         </div>
