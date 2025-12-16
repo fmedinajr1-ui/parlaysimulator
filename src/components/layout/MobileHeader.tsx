@@ -33,8 +33,6 @@ export function MobileHeader({
   const handleBack = () => {
     if (backTo) {
       navigate(backTo);
-    } else if (window.history.length > 1) {
-      navigate(-1);
     } else {
       navigate('/');
     }
