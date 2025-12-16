@@ -11,6 +11,7 @@ const PILOT_ALLOWED_ROUTES = [
   '/profile',
   '/auth',
   '/kelly',
+  '/compare',
 ];
 
 interface PilotRouteGuardProps {

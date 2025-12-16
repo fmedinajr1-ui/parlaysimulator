@@ -15,7 +15,7 @@ import { useHapticFeedback } from "@/hooks/useHapticFeedback";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
-import { Zap, BarChart3, Sparkles, Trophy, Calculator, Lock } from "lucide-react";
+import { Zap, BarChart3, Sparkles, Trophy, Calculator, Lock, GitCompare } from "lucide-react";
 import { usePilotUser } from "@/hooks/usePilotUser";
 
 function QuickAction({ to, icon: Icon, label, iconClass }: { 
@@ -56,9 +56,11 @@ const Index = () => {
   // Quick actions based on user type
   const quickActions = isPilotRestricted ? [
     { to: "/upload", icon: BarChart3, label: "Analyze", iconClass: "text-primary" },
+    { to: "/compare", icon: GitCompare, label: "Compare", iconClass: "text-chart-3" },
     { to: "/kelly", icon: Calculator, label: "Kelly", iconClass: "text-chart-4" },
   ] : [
     { to: "/upload", icon: BarChart3, label: "Analyze", iconClass: "text-primary" },
+    { to: "/compare", icon: GitCompare, label: "Compare", iconClass: "text-chart-3" },
     { to: "/sharp", icon: Zap, label: "Sharp Money", iconClass: "text-neon-yellow" },
     { to: "/suggestions", icon: Sparkles, label: "AI Picks", iconClass: "text-neon-purple" },
     { to: "/best-bets", icon: Trophy, label: "Best Bets", iconClass: "text-chart-4" },
@@ -120,11 +122,12 @@ const Index = () => {
         {/* Example Cards */}
         <ExampleCarousel />
 
+        {/* Compare Parlays - Available to all users */}
+        <CompareTeaser />
+
         {/* Premium Sections - Hidden for Pilot Users */}
         {!isPilotRestricted && (
           <>
-            {/* Compare Parlays */}
-            <CompareTeaser />
 
             {/* AI Suggested Parlays */}
             <div className="mb-4 content-visibility-auto">

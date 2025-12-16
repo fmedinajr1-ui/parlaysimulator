@@ -229,18 +229,22 @@ serve(async (req) => {
     if (quotaData) {
       const totalScansAvailable = quotaData.free_scans_remaining + quotaData.paid_scan_balance;
       const canScan = totalScansAvailable > 0;
+      
+      // Users who purchased scans get full feature access
+      const hasPaidAccess = quotaData.paid_scan_balance > 0;
 
       logStep("Pilot user quota status", { 
         freeScansRemaining: quotaData.free_scans_remaining,
         freeComparesRemaining: quotaData.free_compares_remaining,
         paidScanBalance: quotaData.paid_scan_balance,
+        hasPaidAccess,
         canScan 
       });
 
       return new Response(JSON.stringify({
         subscribed: false,
         isAdmin: false,
-        isPilotUser: true,
+        isPilotUser: !hasPaidAccess, // Unlock features if they have paid scans
         canScan,
         scansRemaining: totalScansAvailable,
         freeScansRemaining: quotaData.free_scans_remaining,
