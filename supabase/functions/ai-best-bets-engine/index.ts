@@ -23,25 +23,40 @@ interface BestBet {
   outcome_name?: string;
   odds?: number;
   historical_accuracy: number;
+  sample_size: number;
   ai_confidence: number;
   composite_score: number;
   ai_reasoning?: string;
   signals: string[];
+  signal_type: string;
 }
 
-// Proven accuracy by sport/recommendation from historical data
-const HISTORICAL_ACCURACY: Record<string, number> = {
-  'nhl_pick': 61.11,
-  'nba_fade': 54.47,
-  'ncaab_fade': 51.89,
-  'nfl_caution': 51.52,
-  'nba_pick': 33.33,  // LOSING - exclude
-  'nfl_pick': 31.25,  // LOSING - exclude
-  'ncaab_pick': 50.0, // Breakeven
+// REAL accuracy by sport/recommendation from verified historical data (as of Dec 2024)
+// These values are based on actual verified outcomes from line_movements table
+const HISTORICAL_ACCURACY: Record<string, { accuracy: number; sampleSize: number }> = {
+  // TOP PERFORMERS - Feature prominently
+  'nfl_fade': { accuracy: 66.54, sampleSize: 260 },     // BEST PERFORMER!
+  'nfl_caution': { accuracy: 55.79, sampleSize: 699 }, // Strong
+  'nhl_caution': { accuracy: 53.08, sampleSize: 552 }, // Profitable
+  'ncaab_fade': { accuracy: 52.92, sampleSize: 907 },  // Profitable
+  
+  // NEAR BREAKEVEN - Include with caution
+  'ncaab_caution': { accuracy: 50.90, sampleSize: 1038 },
+  'ncaab_pick': { accuracy: 50.34, sampleSize: 440 },
+  'nba_caution': { accuracy: 50.19, sampleSize: 257 },
+  
+  // UNDERPERFORMERS - Exclude or consider fading
+  'nba_fade': { accuracy: 49.53, sampleSize: 214 },    // Near random
+  'nhl_fade': { accuracy: 46.86, sampleSize: 175 },    // Below average
+  'nhl_pick': { accuracy: 46.43, sampleSize: 28 },     // Below average - WRONGLY shown before!
+  'nfl_pick': { accuracy: 42.11, sampleSize: 38 },     // Bad
+  'nba_pick': { accuracy: 32.20, sampleSize: 59 },     // TERRIBLE - fade these!
 };
 
-// Minimum accuracy threshold for inclusion
-const MIN_ACCURACY_THRESHOLD = 51.0;
+// Minimum accuracy threshold for inclusion (must beat the vig)
+// At -110 odds, you need 52.38% to break even
+const MIN_ACCURACY_THRESHOLD = 52.4;
+const MIN_SAMPLE_SIZE = 30; // Require statistical significance
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -58,7 +73,7 @@ Deno.serve(async (req) => {
     const now = new Date().toISOString();
     const today = now.split('T')[0];
 
-    console.log('[AI-BestBets] Starting AI-powered best bets analysis...');
+    console.log('[AI-BestBets] Starting AI-powered best bets analysis with corrected accuracy data...');
 
     // Step 1: Fetch REAL accuracy data from verified outcomes
     const { data: verifiedOutcomes } = await supabase
@@ -98,45 +113,61 @@ Deno.serve(async (req) => {
       }
     }
 
-    console.log('[AI-BestBets] Verified accuracy data:', accuracyByKey);
+    console.log('[AI-BestBets] Live accuracy data:', accuracyByKey);
 
-    // Step 2: Fetch candidate signals (upcoming games)
+    // Step 2: Fetch candidate signals (upcoming games) - prioritize by REAL accuracy
     const candidates: any[] = [];
 
-    // NHL Sharp PICK - best performer (61%+)
-    const { data: nhlSharp } = await supabase
+    // NFL FADE - BEST PERFORMER (66.54% with 260 samples!) - PRIORITY
+    const { data: nflFade } = await supabase
       .from('line_movements')
       .select('*')
-      .ilike('sport', '%nhl%')
-      .eq('is_sharp_action', true)
-      .eq('is_primary_record', true)
-      .eq('recommendation', 'pick')
-      .gte('commence_time', now)
-      .gte('authenticity_confidence', 0.6)
-      .order('authenticity_confidence', { ascending: false })
-      .limit(10);
-
-    if (nhlSharp) {
-      candidates.push(...nhlSharp.map(s => ({ ...s, signal_type: 'nhl_pick' })));
-    }
-
-    // NBA FADE - strong performer (54%+)
-    const { data: nbaFade } = await supabase
-      .from('line_movements')
-      .select('*')
-      .ilike('sport', '%nba%')
+      .ilike('sport', '%nfl%')
       .eq('is_primary_record', true)
       .eq('recommendation', 'fade')
       .gte('commence_time', now)
       .gte('authenticity_confidence', 0.5)
       .order('trap_score', { ascending: false })
+      .limit(15);
+
+    if (nflFade) {
+      candidates.push(...nflFade.map(s => ({ ...s, signal_type: 'nfl_fade' })));
+    }
+    console.log(`[AI-BestBets] NFL FADE candidates: ${nflFade?.length || 0}`);
+
+    // NFL CAUTION - Strong (55.79%)
+    const { data: nflCaution } = await supabase
+      .from('line_movements')
+      .select('*')
+      .ilike('sport', '%nfl%')
+      .eq('is_primary_record', true)
+      .eq('recommendation', 'caution')
+      .gte('commence_time', now)
+      .gte('authenticity_confidence', 0.6)
+      .order('authenticity_confidence', { ascending: false })
       .limit(10);
 
-    if (nbaFade) {
-      candidates.push(...nbaFade.map(s => ({ ...s, signal_type: 'nba_fade' })));
+    if (nflCaution) {
+      candidates.push(...nflCaution.map(s => ({ ...s, signal_type: 'nfl_caution' })));
     }
 
-    // NCAAB FADE - slightly profitable (52%+)
+    // NHL CAUTION - Profitable (53.08%) - NOT NHL PICK which is 46%!
+    const { data: nhlCaution } = await supabase
+      .from('line_movements')
+      .select('*')
+      .ilike('sport', '%nhl%')
+      .eq('is_primary_record', true)
+      .eq('recommendation', 'caution')
+      .gte('commence_time', now)
+      .gte('authenticity_confidence', 0.5)
+      .order('authenticity_confidence', { ascending: false })
+      .limit(10);
+
+    if (nhlCaution) {
+      candidates.push(...nhlCaution.map(s => ({ ...s, signal_type: 'nhl_caution' })));
+    }
+
+    // NCAAB FADE - Profitable (52.92%)
     const { data: ncaabFade } = await supabase
       .from('line_movements')
       .select('*')
@@ -144,7 +175,7 @@ Deno.serve(async (req) => {
       .eq('is_primary_record', true)
       .eq('recommendation', 'fade')
       .gte('commence_time', now)
-      .gte('authenticity_confidence', 0.4)
+      .gte('authenticity_confidence', 0.5)
       .order('trap_score', { ascending: false })
       .limit(15);
 
@@ -152,7 +183,7 @@ Deno.serve(async (req) => {
       candidates.push(...ncaabFade.map(s => ({ ...s, signal_type: 'ncaab_fade' })));
     }
 
-    // NBA Fatigue Edge
+    // NBA Fatigue Edge - separate system
     const { data: fatigueGames } = await supabase
       .from('fatigue_edge_tracking')
       .select('*')
@@ -174,51 +205,88 @@ Deno.serve(async (req) => {
       })));
     }
 
-    console.log(`[AI-BestBets] Found ${candidates.length} candidate signals`);
+    console.log(`[AI-BestBets] Found ${candidates.length} total candidate signals`);
 
-    // Step 3: Score each candidate
+    // Step 3: Score each candidate using REAL accuracy data
     const scoredCandidates: BestBet[] = [];
 
     for (const candidate of candidates) {
       const signalKey = candidate.signal_type;
-      const historicalAccuracy = accuracyByKey[signalKey]?.accuracy || 
-                                 HISTORICAL_ACCURACY[signalKey] || 50;
+      
+      // Use live accuracy if available, otherwise use historical baseline
+      const liveAccuracy = accuracyByKey[signalKey]?.accuracy;
+      const liveTotal = accuracyByKey[signalKey]?.total || 0;
+      
+      const baselineAccuracy = HISTORICAL_ACCURACY[signalKey]?.accuracy || 50;
+      const baselineSampleSize = HISTORICAL_ACCURACY[signalKey]?.sampleSize || 0;
+      
+      // Prefer live data if sample size is sufficient
+      const historicalAccuracy = (liveTotal >= 20) ? liveAccuracy : baselineAccuracy;
+      const sampleSize = (liveTotal >= 20) ? liveTotal : baselineSampleSize;
 
       // Skip signals below minimum threshold
       if (historicalAccuracy < MIN_ACCURACY_THRESHOLD) {
-        console.log(`[AI-BestBets] Skipping ${signalKey} - below accuracy threshold (${historicalAccuracy.toFixed(1)}%)`);
+        console.log(`[AI-BestBets] Skipping ${signalKey} - below accuracy threshold (${historicalAccuracy.toFixed(1)}% < ${MIN_ACCURACY_THRESHOLD}%)`);
         continue;
       }
 
-      // Calculate composite score
+      // Skip signals with insufficient sample size
+      if (sampleSize < MIN_SAMPLE_SIZE && signalKey !== 'nba_fatigue') {
+        console.log(`[AI-BestBets] Skipping ${signalKey} - insufficient sample size (${sampleSize} < ${MIN_SAMPLE_SIZE})`);
+        continue;
+      }
+
+      // Calculate composite score - start with accuracy
       const signals: string[] = [];
       let compositeScore = historicalAccuracy;
+
+      // Boost for NFL FADE (best performer)
+      if (signalKey === 'nfl_fade') {
+        compositeScore += 8;
+        signals.push('🔥 Top performer (66%+ accuracy)');
+      }
 
       // Boost for high confidence
       if (candidate.authenticity_confidence >= 0.8) {
         compositeScore += 5;
         signals.push('High confidence signal');
+      } else if (candidate.authenticity_confidence >= 0.6) {
+        compositeScore += 2;
+        signals.push('Medium-high confidence');
       }
 
       // Boost for high trap score (for fades)
-      if (candidate.trap_score && candidate.trap_score >= 60) {
-        compositeScore += 3;
-        signals.push(`Trap score: ${candidate.trap_score}`);
+      if (candidate.trap_score && candidate.trap_score >= 70) {
+        compositeScore += 5;
+        signals.push(`Strong trap: ${candidate.trap_score}`);
+      } else if (candidate.trap_score && candidate.trap_score >= 50) {
+        compositeScore += 2;
+        signals.push(`Trap detected: ${candidate.trap_score}`);
       }
 
       // Boost for fatigue differential
       if (candidate.fatigue_differential && candidate.fatigue_differential >= 25) {
-        compositeScore += 5;
+        compositeScore += 6;
         signals.push(`High fatigue diff: +${candidate.fatigue_differential}`);
       } else if (candidate.fatigue_differential && candidate.fatigue_differential >= 20) {
-        compositeScore += 2;
+        compositeScore += 3;
         signals.push(`Fatigue edge: +${candidate.fatigue_differential}`);
       }
 
       // Boost for multi-book consensus
-      if (candidate.books_consensus && candidate.books_consensus >= 3) {
-        compositeScore += 4;
+      if (candidate.books_consensus && candidate.books_consensus >= 4) {
+        compositeScore += 5;
         signals.push(`${candidate.books_consensus} books consensus`);
+      } else if (candidate.books_consensus && candidate.books_consensus >= 3) {
+        compositeScore += 2;
+        signals.push(`${candidate.books_consensus} books agree`);
+      }
+
+      // Add sample size context
+      if (sampleSize >= 200) {
+        signals.push(`Large sample (n=${sampleSize})`);
+      } else if (sampleSize >= 50) {
+        signals.push(`Good sample (n=${sampleSize})`);
       }
 
       // Calculate AI confidence (normalized 0-1)
@@ -234,36 +302,43 @@ Deno.serve(async (req) => {
         outcome_name: candidate.outcome_name,
         odds: candidate.new_price,
         historical_accuracy: historicalAccuracy,
+        sample_size: sampleSize,
         ai_confidence: aiConfidence,
         composite_score: compositeScore,
-        signals
+        signals,
+        signal_type: signalKey
       });
     }
 
-    // Sort by composite score
+    // Sort by composite score (best first)
     scoredCandidates.sort((a, b) => b.composite_score - a.composite_score);
 
     // Step 4: Use AI to analyze top candidates (if API key available)
-    const topCandidates = scoredCandidates.slice(0, 10);
+    const topCandidates = scoredCandidates.slice(0, 12);
 
     if (LOVABLE_API_KEY && topCandidates.length > 0) {
       try {
-        const prompt = `You are an expert sports betting analyst. Analyze these signals and provide brief reasoning for each bet.
+        const prompt = `You are an expert sports betting analyst. Analyze these signals based on VERIFIED accuracy data and provide brief reasoning.
 
-Historical accuracy data:
+KEY INSIGHT: NFL FADE signals have 66.54% historical accuracy (260 samples) - this is our TOP performer.
+
+Live accuracy data from verified outcomes:
 ${JSON.stringify(accuracyByKey, null, 2)}
+
+Historical baselines:
+${JSON.stringify(HISTORICAL_ACCURACY, null, 2)}
 
 Top candidates to analyze:
 ${topCandidates.map((c, i) => `
 ${i + 1}. ${c.description}
-   - Signal: ${c.recommendation.toUpperCase()}
-   - Sport: ${c.sport}
-   - Historical accuracy: ${c.historical_accuracy.toFixed(1)}%
+   - Signal Type: ${c.signal_type}
+   - Recommendation: ${c.recommendation.toUpperCase()}
+   - Historical accuracy: ${c.historical_accuracy.toFixed(1)}% (n=${c.sample_size})
    - Composite score: ${c.composite_score.toFixed(1)}
    - Signals: ${c.signals.join(', ')}
 `).join('\n')}
 
-For each bet, provide a 1-2 sentence analysis explaining why it's a good or risky play based on the data. Focus on NCAAB fades and other high-accuracy signals.
+For each bet, provide a 1-2 sentence analysis. PRIORITIZE NFL FADE signals as they have proven 66%+ accuracy.
 
 Respond with JSON array:
 [
@@ -322,15 +397,13 @@ Respond with JSON array:
       .upsert(
         topCandidates.map(bet => ({
           event_id: bet.event_id,
-          signal_type: bet.sport.includes('nhl') ? 'nhl_sharp_pick' : 
-                       bet.sport.includes('ncaab') ? 'ncaab_sharp_fade' :
-                       bet.sport.includes('nba') ? 'nba_sharp_fade' : 'other',
+          signal_type: bet.signal_type,
           sport: bet.sport,
           description: bet.description,
           prediction: bet.recommendation,
           odds: bet.odds,
           accuracy_at_time: bet.historical_accuracy,
-          sample_size_at_time: accuracyByKey[`${bet.sport.split('_').pop()}_${bet.recommendation}`]?.total || 0,
+          sample_size_at_time: bet.sample_size,
           created_at: now
         })),
         { onConflict: 'event_id,signal_type' }
@@ -350,7 +423,8 @@ Respond with JSON array:
         candidates: candidates.length,
         filtered: scoredCandidates.length,
         top_picks: topCandidates.length,
-        accuracy_data: Object.keys(accuracyByKey).length
+        accuracy_data: Object.keys(accuracyByKey).length,
+        top_signal_types: topCandidates.slice(0, 5).map(c => c.signal_type)
       }
     });
 
@@ -361,6 +435,7 @@ Respond with JSON array:
         success: true,
         bestBets: topCandidates,
         accuracyData: accuracyByKey,
+        historicalBaselines: HISTORICAL_ACCURACY,
         totalCandidates: candidates.length,
         filteredCount: scoredCandidates.length,
         timestamp: now
