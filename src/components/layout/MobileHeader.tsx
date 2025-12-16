@@ -10,6 +10,7 @@ interface MobileHeaderProps {
   subtitle?: string;
   icon?: ReactNode;
   showBack?: boolean;
+  backTo?: string;
   rightAction?: ReactNode;
   className?: string;
   sticky?: boolean;
@@ -21,12 +22,23 @@ export function MobileHeader({
   subtitle,
   icon,
   showBack = false,
+  backTo,
   rightAction,
   className,
   sticky = true,
   showLogo = true
 }: MobileHeaderProps) {
   const navigate = useNavigate();
+
+  const handleBack = () => {
+    if (backTo) {
+      navigate(backTo);
+    } else if (window.history.length > 1) {
+      navigate(-1);
+    } else {
+      navigate('/');
+    }
+  };
 
   return (
     <header className={cn(
@@ -41,7 +53,7 @@ export function MobileHeader({
               variant="ghost"
               size="icon"
               className="shrink-0 -ml-2 h-10 w-10"
-              onClick={() => navigate(-1)}
+              onClick={handleBack}
             >
               <ChevronLeft className="w-6 h-6" />
             </Button>
