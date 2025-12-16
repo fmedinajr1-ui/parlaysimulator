@@ -3,6 +3,7 @@ import { ChevronLeft } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { ParlayFarmLogo } from "@/components/ParlayFarmLogo";
 
 interface MobileHeaderProps {
   title: string;
@@ -12,6 +13,7 @@ interface MobileHeaderProps {
   rightAction?: ReactNode;
   className?: string;
   sticky?: boolean;
+  showLogo?: boolean;
 }
 
 export function MobileHeader({ 
@@ -21,7 +23,8 @@ export function MobileHeader({
   showBack = false,
   rightAction,
   className,
-  sticky = true
+  sticky = true,
+  showLogo = true
 }: MobileHeaderProps) {
   const navigate = useNavigate();
 
@@ -42,6 +45,9 @@ export function MobileHeader({
             >
               <ChevronLeft className="w-6 h-6" />
             </Button>
+          )}
+          {showLogo && !showBack && (
+            <ParlayFarmLogo size="sm" className="shrink-0" />
           )}
           {icon && (
             <div className="shrink-0">
