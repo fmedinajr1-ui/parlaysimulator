@@ -19,7 +19,7 @@ export function usePilotUser() {
   const { user, session } = useAuth();
   const [state, setState] = useState<PilotUserState>({
     isLoading: true,
-    isPilotUser: false,
+    isPilotUser: true, // Default to restricted until confirmed
     isAdmin: false,
     isSubscribed: false,
     canScan: true,

@@ -28,6 +28,7 @@ import { Separator } from "@/components/ui/separator";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { PILOT_ALLOWED_ROUTES } from "@/components/PilotRouteGuard";
 import { usePilotUser } from "@/hooks/usePilotUser";
+import { useViewport } from "@/hooks/useViewport";
 
 const menuGroups = [
   {
@@ -84,18 +85,20 @@ export function MenuDrawer() {
   const [isAdminRole, setIsAdminRole] = useState(false);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const location = useLocation();
+  const { isSmallPhone, isMediumPhone } = useViewport();
+  const isMobileCompact = isSmallPhone || isMediumPhone;
   
   // Use the centralized pilot user hook
-  const { isPilotUser, isAdmin: isPilotAdmin, isSubscribed } = usePilotUser();
+  const { isPilotUser, isAdmin: isPilotAdmin, isSubscribed, isLoading } = usePilotUser();
 
-  // Initialize open groups
+  // Initialize open groups - collapse all on small phones
   useEffect(() => {
     const initial: Record<string, boolean> = {};
     menuGroups.forEach(group => {
-      initial[group.label] = group.defaultOpen;
+      initial[group.label] = isSmallPhone ? false : group.defaultOpen;
     });
     setOpenGroups(initial);
-  }, []);
+  }, [isSmallPhone]);
 
   // Check admin role from database
   useEffect(() => {
@@ -170,22 +173,36 @@ export function MenuDrawer() {
         </button>
       </SheetTrigger>
       
-      <SheetContent side="left" className="w-[300px] p-0 bg-background overflow-y-auto">
-        <SheetHeader className="p-6 pb-4 border-b border-border">
+      <SheetContent 
+        side="left" 
+        className={cn(
+          "p-0 bg-background overflow-y-auto",
+          isSmallPhone ? "w-[260px]" : "w-[300px]"
+        )}
+      >
+        <SheetHeader className={cn(
+          "border-b border-border",
+          isMobileCompact ? "p-4 pb-3" : "p-6 pb-4"
+        )}>
           <SheetTitle className="text-left font-display text-lg">Menu</SheetTitle>
         </SheetHeader>
         
         <div className="flex flex-col py-2">
           {/* Pilot User Notice */}
           {isPilotRestricted && (
-            <div className="mx-3 mb-2 p-3 rounded-lg bg-primary/10 border border-primary/20">
+            <div className={cn(
+              "mx-3 mb-2 rounded-lg bg-primary/10 border border-primary/20",
+              isMobileCompact ? "p-2" : "p-3"
+            )}>
               <div className="flex items-center gap-2 text-sm">
                 <Lock className="w-4 h-4 text-primary" />
                 <span className="font-medium text-primary">Pilot Mode</span>
               </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Upgrade to unlock all features
-              </p>
+              {!isMobileCompact && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  Upgrade to unlock all features
+                </p>
+              )}
             </div>
           )}
 
@@ -195,9 +212,12 @@ export function MenuDrawer() {
               key={group.label}
               open={openGroups[group.label]} 
               onOpenChange={() => toggleGroup(group.label)}
-              className="px-3 py-1"
+              className={cn("px-3", isMobileCompact ? "py-0.5" : "py-1")}
             >
-              <CollapsibleTrigger className="flex items-center justify-between w-full px-3 py-2 rounded-lg hover:bg-muted/50 transition-colors">
+              <CollapsibleTrigger className={cn(
+                "flex items-center justify-between w-full px-3 rounded-lg hover:bg-muted/50 transition-colors",
+                isMobileCompact ? "py-1.5" : "py-2"
+              )}>
                 <div className="flex items-center gap-2">
                   <group.icon className="w-4 h-4 text-primary" />
                   <span className="text-sm font-medium">{group.label}</span>
@@ -214,13 +234,14 @@ export function MenuDrawer() {
                     to={item.path}
                     onClick={() => setOpen(false)}
                     className={cn(
-                      "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors",
+                      "flex items-center gap-3 px-3 rounded-lg transition-colors",
                       "hover:bg-muted/50 active:bg-muted",
-                      isActive(item.path) && "bg-primary/10 text-primary"
+                      isActive(item.path) && "bg-primary/10 text-primary",
+                      isMobileCompact ? "py-1.5" : "py-2.5"
                     )}
                   >
                     <item.icon className={cn(
-                      "w-4 h-4",
+                      "w-4 h-4 shrink-0",
                       isActive(item.path) ? "text-primary" : "text-muted-foreground"
                     )} />
                     <div className="flex-1 min-w-0">
@@ -230,7 +251,9 @@ export function MenuDrawer() {
                       )}>
                         {item.label}
                       </p>
-                      <p className="text-xs text-muted-foreground truncate">{item.description}</p>
+                      {!isMobileCompact && (
+                        <p className="text-xs text-muted-foreground truncate">{item.description}</p>
+                      )}
                     </div>
                     <ChevronRight className="w-4 h-4 text-muted-foreground/50 shrink-0" />
                   </Link>
@@ -243,7 +266,7 @@ export function MenuDrawer() {
           {isAdmin && (
             <>
               <Separator className="my-2" />
-              <div className="px-3 py-2">
+              <div className={cn("px-3", isMobileCompact ? "py-1" : "py-2")}>
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 mb-2">
                   Admin Tools
                 </p>
@@ -253,13 +276,14 @@ export function MenuDrawer() {
                     to={item.path}
                     onClick={() => setOpen(false)}
                     className={cn(
-                      "flex items-center gap-3 px-3 py-3 rounded-lg transition-colors",
+                      "flex items-center gap-3 px-3 rounded-lg transition-colors",
                       "hover:bg-muted/50 active:bg-muted",
-                      isActive(item.path) && "bg-primary/10 text-primary"
+                      isActive(item.path) && "bg-primary/10 text-primary",
+                      isMobileCompact ? "py-2" : "py-3"
                     )}
                   >
                     <item.icon className={cn(
-                      "w-5 h-5",
+                      isMobileCompact ? "w-4 h-4" : "w-5 h-5",
                       isActive(item.path) ? "text-primary" : "text-muted-foreground"
                     )} />
                     <div className="flex-1">
@@ -269,7 +293,9 @@ export function MenuDrawer() {
                       )}>
                         {item.label}
                       </p>
-                      <p className="text-xs text-muted-foreground">{item.description}</p>
+                      {!isMobileCompact && (
+                        <p className="text-xs text-muted-foreground">{item.description}</p>
+                      )}
                     </div>
                     <ChevronRight className="w-4 h-4 text-muted-foreground/50" />
                   </Link>
