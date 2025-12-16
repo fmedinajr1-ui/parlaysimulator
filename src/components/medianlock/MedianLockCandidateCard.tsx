@@ -36,6 +36,23 @@ interface MedianLockCandidateCardProps {
 }
 
 export function MedianLockCandidateCard({ candidate, compact = false }: MedianLockCandidateCardProps) {
+  const formatPropType = (propType: string) => {
+    const typeMap: Record<string, string> = {
+      'player_points': 'Points',
+      'player_rebounds': 'Rebounds',
+      'player_assists': 'Assists',
+      'player_threes': '3-Pointers',
+      'player_pra': 'PRA',
+      'player_pts_rebs': 'Pts+Rebs',
+      'player_pts_asts': 'Pts+Asts',
+      'player_rebs_asts': 'Rebs+Asts',
+      'player_steals': 'Steals',
+      'player_blocks': 'Blocks',
+      'player_turnovers': 'Turnovers',
+    };
+    return typeMap[propType] || propType.replace('player_', '').replace(/_/g, ' ');
+  };
+
   const getClassificationBadge = () => {
     switch (candidate.classification) {
       case 'LOCK':
@@ -72,8 +89,9 @@ export function MedianLockCandidateCard({ candidate, compact = false }: MedianLo
       <Card className="bg-card/50 border-border/50">
         <CardContent className="p-3">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2">
               <span className="font-semibold text-sm">{candidate.player_name}</span>
+              <Badge variant="outline" className="text-xs px-1">{formatPropType(candidate.prop_type)}</Badge>
               {getClassificationBadge()}
               {getBetSideBadge()}
             </div>
@@ -100,6 +118,7 @@ export function MedianLockCandidateCard({ candidate, compact = false }: MedianLo
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <CardTitle className="text-lg">{candidate.player_name}</CardTitle>
+            <Badge variant="outline" className="text-xs">{formatPropType(candidate.prop_type)}</Badge>
             <span className="text-xs text-muted-foreground">{candidate.team_name}</span>
           </div>
           <div className="flex items-center gap-2">
@@ -142,7 +161,7 @@ export function MedianLockCandidateCard({ candidate, compact = false }: MedianLo
         {/* Edge Breakdown */}
         <div className="space-y-1 text-sm">
           <div className="flex justify-between">
-            <span className="text-muted-foreground">Median Points</span>
+            <span className="text-muted-foreground">Median {formatPropType(candidate.prop_type)}</span>
             <span className="font-medium">{candidate.median_points.toFixed(1)}</span>
           </div>
           <div className="flex justify-between">
