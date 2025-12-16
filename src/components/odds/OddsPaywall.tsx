@@ -24,7 +24,8 @@ export function OddsPaywall({ onSubscribe }: OddsPaywallProps) {
       if (error) throw error;
       
       if (data?.url) {
-        window.open(data.url, '_blank');
+        // Use location.href for better mobile/PWA experience
+        window.location.href = data.url;
         onSubscribe?.();
       }
     } catch (err) {

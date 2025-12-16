@@ -115,7 +115,8 @@ export function usePilotUser() {
       }
 
       if (data?.url) {
-        window.open(data.url, '_blank');
+        // Use location.href for better mobile/PWA experience
+        window.location.href = data.url;
       }
     } catch (err) {
       console.error('Error purchasing scans:', err);
