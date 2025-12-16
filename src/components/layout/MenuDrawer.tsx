@@ -27,6 +27,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { Separator } from "@/components/ui/separator";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { PILOT_ALLOWED_ROUTES } from "@/components/PilotRouteGuard";
+import { usePilotUser } from "@/hooks/usePilotUser";
 
 const menuGroups = [
   {
@@ -80,11 +81,12 @@ const adminItems = [
 
 export function MenuDrawer() {
   const [open, setOpen] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [isPilotUser, setIsPilotUser] = useState(false);
-  const [isSubscribed, setIsSubscribed] = useState(false);
+  const [isAdminRole, setIsAdminRole] = useState(false);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const location = useLocation();
+  
+  // Use the centralized pilot user hook
+  const { isPilotUser, isAdmin: isPilotAdmin, isSubscribed } = usePilotUser();
 
   // Initialize open groups
   useEffect(() => {
@@ -95,49 +97,34 @@ export function MenuDrawer() {
     setOpenGroups(initial);
   }, []);
 
-  // Check user roles
+  // Check admin role from database
   useEffect(() => {
-    const checkRoles = async () => {
+    const checkAdminRole = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session?.user) {
-          setIsAdmin(false);
-          setIsPilotUser(false);
-          setIsSubscribed(false);
+          setIsAdminRole(false);
           return;
         }
 
-        // Check roles
-        const { data: rolesData } = await supabase
+        const { data } = await supabase
           .from('user_roles')
           .select('role')
-          .eq('user_id', session.user.id);
-
-        const roles = rolesData?.map(r => r.role) || [];
-        setIsAdmin(roles.includes('admin'));
-        setIsPilotUser(roles.includes('pilot'));
-
-        // Check subscription
-        const { data: subData } = await supabase
-          .from('subscriptions')
-          .select('status')
           .eq('user_id', session.user.id)
-          .eq('status', 'active')
+          .eq('role', 'admin')
           .maybeSingle();
 
-        setIsSubscribed(!!subData);
+        setIsAdminRole(!!data);
       } catch (err) {
-        console.error('Error checking roles:', err);
-        setIsAdmin(false);
-        setIsPilotUser(false);
-        setIsSubscribed(false);
+        console.error('Error checking admin role:', err);
+        setIsAdminRole(false);
       }
     };
 
-    checkRoles();
+    checkAdminRole();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
-      checkRoles();
+      checkAdminRole();
     });
 
     return () => subscription.unsubscribe();
@@ -152,8 +139,11 @@ export function MenuDrawer() {
     }));
   };
 
-  // Filter menu groups for pilot users
+  // Combine admin checks and determine restriction
+  const isAdmin = isAdminRole || isPilotAdmin;
   const isPilotRestricted = isPilotUser && !isAdmin && !isSubscribed;
+  
+  // Filter menu groups for pilot users
   const filteredMenuGroups = isPilotRestricted
     ? menuGroups.map(group => ({
         ...group,

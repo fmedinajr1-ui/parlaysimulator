@@ -34,7 +34,7 @@ export function usePilotUser() {
     if (!user || !session) {
       setState({
         isLoading: false,
-        isPilotUser: false,
+        isPilotUser: true, // Restrict unauthenticated users by default
         isAdmin: false,
         isSubscribed: false,
         canScan: true,
