@@ -230,3 +230,6 @@ verify_jwt = false
 
 [functions.populate-calibration-data]
 verify_jwt = false
+
+[functions.compare-parlays-ai]
+verify_jwt = false

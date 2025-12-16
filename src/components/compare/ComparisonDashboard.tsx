@@ -6,12 +6,37 @@ import { Crown, TrendingUp, TrendingDown, DollarSign, Percent, Trophy, Target } 
 import { cn } from '@/lib/utils';
 import { MonteCarloVisualization } from './MonteCarloVisualization';
 import { FatigueImpactCard } from './FatigueImpactCard';
+import { AICompareInsights } from './AICompareInsights';
+
+interface AICompareResult {
+  success: boolean;
+  aiAnalysis: {
+    recommendation: string;
+    parlayGrades?: { parlayIndex: number; grade: string; reasoning: string }[];
+    sharpInsight?: string;
+    trapWarnings?: string[];
+    fatigueAlerts?: string[];
+    edgeAnalysis?: string;
+    confidence?: string;
+  } | null;
+  legAnalysis: any[];
+  parlayMetrics: any[];
+  sharpDataCounts: {
+    lineMovements: number;
+    unifiedProps: number;
+    juicedProps: number;
+    trapAnalysis: number;
+    fatigueScores: number;
+  };
+}
 
 interface ComparisonDashboardProps {
   comparisonResult: ComparisonResult;
+  aiCompareResult?: AICompareResult | null;
+  isAiAnalyzing?: boolean;
 }
 
-export function ComparisonDashboard({ comparisonResult }: ComparisonDashboardProps) {
+export function ComparisonDashboard({ comparisonResult, aiCompareResult, isAiAnalyzing }: ComparisonDashboardProps) {
   const { simulations, rankings, bestByMetric, recommendation } = comparisonResult;
 
   if (simulations.length === 0) {
@@ -183,6 +208,23 @@ export function ComparisonDashboard({ comparisonResult }: ComparisonDashboardPro
           );
         })}
       </div>
+
+      {/* AI Sharp Analysis */}
+      {(isAiAnalyzing || aiCompareResult) && (
+        <AICompareInsights 
+          aiAnalysis={aiCompareResult?.aiAnalysis || null}
+          legAnalysis={aiCompareResult?.legAnalysis || []}
+          parlayMetrics={aiCompareResult?.parlayMetrics || []}
+          sharpDataCounts={aiCompareResult?.sharpDataCounts || {
+            lineMovements: 0,
+            unifiedProps: 0,
+            juicedProps: 0,
+            trapAnalysis: 0,
+            fatigueScores: 0
+          }}
+          isLoading={isAiAnalyzing}
+        />
+      )}
 
       {/* Fatigue Impact Analysis */}
       <FatigueImpactCard simulations={simulations} />

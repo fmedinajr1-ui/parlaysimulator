@@ -14,10 +14,34 @@ import { useTutorial } from '@/hooks/useTutorial';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSubscription } from '@/hooks/useSubscription';
 import { usePilotUser } from '@/hooks/usePilotUser';
+import { supabase } from '@/integrations/supabase/client';
 import { Plus, Scale, Loader2, RotateCcw, HelpCircle, Home, Crown } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+
+// AI Compare types
+interface AICompareResult {
+  success: boolean;
+  aiAnalysis: {
+    recommendation: string;
+    parlayGrades?: { parlayIndex: number; grade: string; reasoning: string }[];
+    sharpInsight?: string;
+    trapWarnings?: string[];
+    fatigueAlerts?: string[];
+    edgeAnalysis?: string;
+    confidence?: string;
+  } | null;
+  legAnalysis: any[];
+  parlayMetrics: any[];
+  sharpDataCounts: {
+    lineMovements: number;
+    unifiedProps: number;
+    juicedProps: number;
+    trapAnalysis: number;
+    fatigueScores: number;
+  };
+}
 
 interface SlotState {
   id: string;
@@ -55,6 +79,8 @@ const Compare = () => {
   const [slots, setSlots] = useState<SlotState[]>([createEmptySlot(), createEmptySlot()]);
   const [isComparing, setIsComparing] = useState(false);
   const [comparisonResult, setComparisonResult] = useState<ComparisonResult | null>(null);
+  const [aiCompareResult, setAiCompareResult] = useState<AICompareResult | null>(null);
+  const [isAiAnalyzing, setIsAiAnalyzing] = useState(false);
   const [historySlotIndex, setHistorySlotIndex] = useState<number | null>(null);
   const [showPilotPaywall, setShowPilotPaywall] = useState(false);
   
@@ -67,6 +93,7 @@ const Compare = () => {
         : slot
     ));
     setComparisonResult(null); // Clear previous results
+    setAiCompareResult(null);
   }, []);
 
   const clearSlot = useCallback((index: number) => {
@@ -74,6 +101,7 @@ const Compare = () => {
       i === index ? createEmptySlot() : slot
     ));
     setComparisonResult(null);
+    setAiCompareResult(null);
   }, []);
 
   const addSlot = useCallback(() => {
@@ -97,6 +125,7 @@ const Compare = () => {
     }
     setSlots(prev => prev.filter((_, i) => i !== index));
     setComparisonResult(null);
+    setAiCompareResult(null);
   }, [slots.length]);
 
   const handleSelectFromHistory = useCallback((index: number) => {
@@ -166,6 +195,7 @@ const Compare = () => {
     }
 
     setIsComparing(true);
+    setAiCompareResult(null);
 
     try {
       const simulations: ParlaySimulation[] = [];
@@ -197,8 +227,42 @@ const Compare = () => {
 
       toast({
         title: "Comparison complete! 📊",
-        description: `Analyzed ${simulations.length} parlays. Check out the results!`,
+        description: `Analyzed ${simulations.length} parlays. Running AI analysis...`,
       });
+
+      // Run AI analysis in background
+      setIsAiAnalyzing(true);
+      try {
+        const parlaysForAI = simulations.map(sim => ({
+          legs: sim.legs.map(leg => ({
+            description: leg.description,
+            odds: leg.odds,
+            probability: leg.impliedProbability
+          })),
+          stake: sim.stake,
+          totalOdds: sim.totalOdds,
+          combinedProbability: sim.combinedProbability
+        }));
+
+        const { data, error } = await supabase.functions.invoke('compare-parlays-ai', {
+          body: { parlays: parlaysForAI }
+        });
+
+        if (error) {
+          console.error('AI analysis error:', error);
+        } else if (data?.success) {
+          setAiCompareResult(data);
+          toast({
+            title: "AI Analysis Complete! 🧠",
+            description: "Sharp data cross-referenced. Check the insights below.",
+          });
+        }
+      } catch (aiError) {
+        console.error('AI analysis failed:', aiError);
+      } finally {
+        setIsAiAnalyzing(false);
+      }
+
     } catch (error) {
       console.error('Comparison error:', error);
       toast({
@@ -214,6 +278,8 @@ const Compare = () => {
   const handleReset = useCallback(() => {
     setSlots([createEmptySlot(), createEmptySlot()]);
     setComparisonResult(null);
+    setAiCompareResult(null);
+    setIsAiAnalyzing(false);
   }, []);
 
   const filledCount = slots.filter(s => s.status === 'filled').length;
@@ -346,7 +412,11 @@ const Compare = () => {
         {/* Comparison Results */}
         {comparisonResult && (
           <div className="slide-up mt-4">
-            <ComparisonDashboard comparisonResult={comparisonResult} />
+            <ComparisonDashboard 
+              comparisonResult={comparisonResult} 
+              aiCompareResult={aiCompareResult}
+              isAiAnalyzing={isAiAnalyzing}
+            />
           </div>
         )}
       </main>
