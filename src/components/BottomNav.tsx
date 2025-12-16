@@ -1,4 +1,4 @@
-import { Home, BarChart3, User, Wallet, WifiOff } from "lucide-react";
+import { Home, BarChart3, User, GitCompare, WifiOff } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { usePWA } from "@/hooks/usePWA";
@@ -11,7 +11,7 @@ import { useViewport } from "@/hooks/useViewport";
 const allNavItems = [
   { icon: Home, label: "Home", path: "/" },
   { icon: BarChart3, label: "Analyze", path: "/upload" },
-  { icon: Wallet, label: "Kelly", path: "/kelly" },
+  { icon: GitCompare, label: "Compare", path: "/compare" },
   { icon: User, label: "Profile", path: "/profile" },
 ];
 

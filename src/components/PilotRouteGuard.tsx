@@ -12,6 +12,7 @@ const PILOT_ALLOWED_ROUTES = [
   '/auth',
   '/kelly',
   '/compare',
+  '/verify-phone',
 ];
 
 interface PilotRouteGuardProps {
