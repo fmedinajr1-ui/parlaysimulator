@@ -747,7 +747,7 @@ const Upload = () => {
         freeScansUsed={5}
       />
 
-      <main className="max-w-lg mx-auto px-3 py-4">
+      <main className="max-w-lg mx-auto px-3 pt-4 pb-40">
         {/* Hint for new users */}
         {shouldShowHint('upload-intro') && (
           <div className="mb-4">
