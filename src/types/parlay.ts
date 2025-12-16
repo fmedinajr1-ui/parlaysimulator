@@ -118,10 +118,21 @@ export interface CorrelatedLegPair {
   reason: string;
 }
 
+export interface CorrelationAnalysis {
+  hasCorrelation: boolean;
+  avgCorrelation: number;
+  maxCorrelation: number;
+  independentProbability: number;
+  correlatedProbability: number;
+  correlationImpact: number;
+  correlatedPairs: { leg1: number; leg2: number; correlation: number; type: string }[];
+}
+
 export interface ParlayAnalysis {
   legAnalyses: Array<LegAnalysis & { legIndex: number }>;
   correlatedLegs: CorrelatedLegPair[];
   overallAssessment: string;
+  correlationAnalysis?: CorrelationAnalysis;
 }
 
 export interface ParlaySimulation {

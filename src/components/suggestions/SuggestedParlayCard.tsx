@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Sparkles, TrendingUp, Clock, ChevronRight, Target, Layers, User, BarChart3, Shield, Activity, AlertTriangle, Zap, Minus, Battery } from "lucide-react";
+import { Sparkles, TrendingUp, Clock, ChevronRight, Target, Layers, User, BarChart3, Shield, Activity, AlertTriangle, Zap, Minus, Battery, Link2, Info } from "lucide-react";
 import { DogAvatar } from "@/components/avatars/DogAvatar";
 import { WolfAvatar } from "@/components/avatars/WolfAvatar";
 import { cn } from "@/lib/utils";
@@ -13,6 +13,9 @@ import { createLeg, simulateParlay } from "@/lib/parlay-calculator";
 import { FatigueDifferentialWrapper } from "@/components/fatigue/FatigueDifferentialWrapper";
 import { TrapFavoriteAlertWrapper } from "@/components/alerts/TrapFavoriteAlertWrapper";
 import { ExtremeMovementBadge } from "@/components/alerts/ExtremeMovementBadge";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { buildCorrelationMatrix, calculateCorrelatedProbability, getCorrelationSeverity } from "@/lib/correlation-engine";
+import { ParlayLeg } from "@/types/parlay";
 interface SuggestedLeg {
   description: string;
   odds: number;
@@ -139,15 +142,73 @@ export function SuggestedParlayCard({
   fatigueInfo,
 }: SuggestedParlayCardProps) {
   const navigate = useNavigate();
+  const [correlationData, setCorrelationData] = useState<{
+    hasCorrelation: boolean;
+    avgCorrelation: number;
+    independentProbability: number;
+    correlatedProbability: number;
+    correlationImpact: number;
+    highCorrelationPairs: { leg1: string; leg2: string; correlation: number }[];
+  } | null>(null);
+  
+  // Calculate correlation on mount
+  useEffect(() => {
+    const calculateCorrelation = async () => {
+      if (legs.length < 2) return;
+      
+      try {
+        // Convert to ParlayLeg format for correlation engine
+        const parlayLegs: ParlayLeg[] = legs.map((leg, i) => ({
+          id: `leg-${i}`,
+          description: leg.description,
+          odds: leg.odds,
+          impliedProbability: leg.impliedProbability,
+          riskLevel: leg.impliedProbability >= 0.6 ? 'low' : leg.impliedProbability >= 0.4 ? 'medium' : 'high',
+        }));
+        
+        const matrix = await buildCorrelationMatrix(parlayLegs, sport);
+        const probs = legs.map(l => l.impliedProbability);
+        const result = calculateCorrelatedProbability(probs, matrix);
+        
+        // Find high correlation pairs
+        const highPairs = matrix.correlations
+          .filter(c => c.correlation > 0.25)
+          .map(c => ({
+            leg1: legs[c.legIndex1]?.description.split(' ').slice(0, 3).join(' ') || `Leg ${c.legIndex1 + 1}`,
+            leg2: legs[c.legIndex2]?.description.split(' ').slice(0, 3).join(' ') || `Leg ${c.legIndex2 + 1}`,
+            correlation: c.correlation,
+          }));
+        
+        setCorrelationData({
+          hasCorrelation: matrix.hasHighCorrelation,
+          avgCorrelation: matrix.avgCorrelation,
+          independentProbability: result.independentProbability,
+          correlatedProbability: result.correlatedProbability,
+          correlationImpact: result.correlationImpact,
+          highCorrelationPairs: highPairs,
+        });
+      } catch (err) {
+        console.error('Error calculating correlation:', err);
+      }
+    };
+    
+    calculateCorrelation();
+  }, [legs, sport]);
   
   // Check if NBA game with fatigue edge
   const hasNBAFatigueEdge = sport === 'NBA' && fatigueInfo?.some(f => f.hasFatigueEdge);
   const maxFatigue = fatigueInfo?.reduce((max, f) => f.fatigueScore > max ? f.fatigueScore : max, 0) || 0;
 
+  // Enhanced risk label with correlation awareness
   const getRiskLabel = (prob: number) => {
-    if (prob >= 0.25) return { label: "Low Risk", color: "text-neon-green bg-neon-green/10" };
-    if (prob >= 0.10) return { label: "Medium", color: "text-neon-yellow bg-neon-yellow/10" };
-    return { label: "High Risk", color: "text-neon-orange bg-neon-orange/10" };
+    const hasHighVariance = correlationData?.hasCorrelation && Math.abs(correlationData.correlationImpact) > 2;
+    
+    if (prob >= 0.25) {
+      if (hasHighVariance) return { label: "Low Risk*", color: "text-amber-400 bg-amber-400/10", hasVariance: true };
+      return { label: "Low Risk", color: "text-neon-green bg-neon-green/10", hasVariance: false };
+    }
+    if (prob >= 0.10) return { label: "Medium", color: "text-neon-yellow bg-neon-yellow/10", hasVariance: false };
+    return { label: "High Risk", color: "text-neon-orange bg-neon-orange/10", hasVariance: false };
   };
 
   const getBetTypeBadge = (betType: string) => {
@@ -269,6 +330,59 @@ export function SuggestedParlayCard({
                 <BarChart3 className="w-3 h-3 mr-1" />
                 Your Data
               </Badge>
+            )}
+            {/* Correlation Warning Badge */}
+            {correlationData?.hasCorrelation && (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Badge 
+                      variant="outline" 
+                      className="text-xs text-amber-400 bg-amber-500/10 border-amber-500/30 cursor-help"
+                    >
+                      <Link2 className="w-3 h-3 mr-1" />
+                      Correlated
+                    </Badge>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs">
+                    <div className="space-y-2">
+                      <p className="font-medium text-amber-400">Leg Correlation Detected</p>
+                      <p className="text-xs text-muted-foreground">
+                        Some legs may be dependent, affecting combined probability.
+                      </p>
+                      <div className="space-y-1 text-xs">
+                        <div className="flex justify-between">
+                          <span>Independent:</span>
+                          <span className="font-mono">{(correlationData.independentProbability * 100).toFixed(1)}%</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Adjusted:</span>
+                          <span className="font-mono">{(correlationData.correlatedProbability * 100).toFixed(1)}%</span>
+                        </div>
+                        <div className="flex justify-between border-t border-border/50 pt-1">
+                          <span>Impact:</span>
+                          <span className={cn(
+                            "font-mono",
+                            correlationData.correlationImpact > 0 ? "text-green-400" : "text-amber-400"
+                          )}>
+                            {correlationData.correlationImpact > 0 ? '+' : ''}{correlationData.correlationImpact.toFixed(1)}%
+                          </span>
+                        </div>
+                      </div>
+                      {correlationData.highCorrelationPairs.length > 0 && (
+                        <div className="pt-1 border-t border-border/50">
+                          <p className="text-xs text-muted-foreground mb-1">Correlated pairs:</p>
+                          {correlationData.highCorrelationPairs.slice(0, 2).map((pair, i) => (
+                            <p key={i} className="text-xs truncate">
+                              {pair.leg1} ↔ {pair.leg2}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             )}
             <Badge 
               variant="outline" 
@@ -450,7 +564,7 @@ export function SuggestedParlayCard({
           })}
         </div>
 
-        {/* Stats */}
+        {/* Stats with Confidence Intervals */}
         <div className="flex items-center justify-between pt-2 border-t border-border/30">
           <div>
             <p className="text-xs text-muted-foreground">Total Odds</p>
@@ -459,10 +573,44 @@ export function SuggestedParlayCard({
             </p>
           </div>
           <div className="text-right">
-            <p className="text-xs text-muted-foreground">Win Probability</p>
-            <p className="text-lg font-bold">
-              {(combinedProbability * 100).toFixed(1)}%
+            <p className="text-xs text-muted-foreground flex items-center justify-end gap-1">
+              Win Probability
+              {correlationData?.hasCorrelation && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger>
+                      <Info className="w-3 h-3 text-amber-400" />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p className="text-xs">Adjusted for leg correlation</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
             </p>
+            {correlationData?.hasCorrelation ? (
+              <div className="space-y-0.5">
+                <p className="text-lg font-bold">
+                  {(correlationData.correlatedProbability * 100).toFixed(1)}%
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {Math.max(0, (correlationData.correlatedProbability * 100) - 5).toFixed(0)}-
+                  {Math.min(100, (correlationData.correlatedProbability * 100) + 5).toFixed(0)}% 
+                  <span className="text-amber-400 ml-1">(est. range)</span>
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-0.5">
+                <p className="text-lg font-bold">
+                  {(combinedProbability * 100).toFixed(1)}%
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {Math.max(0, (combinedProbability * 100) - 4).toFixed(0)}-
+                  {Math.min(100, (combinedProbability * 100) + 4).toFixed(0)}% 
+                  <span className="text-muted-foreground/70 ml-1">(est. range)</span>
+                </p>
+              </div>
+            )}
           </div>
         </div>
 
