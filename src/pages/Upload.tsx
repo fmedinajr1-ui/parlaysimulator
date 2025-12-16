@@ -708,6 +708,7 @@ const Upload = () => {
         title="Enter Your Slip"
         subtitle="Add your legs and get analyzed"
         showBack
+        backTo="/"
         rightAction={
           <Button
             variant="ghost"
