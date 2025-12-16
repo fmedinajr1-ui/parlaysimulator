@@ -15,7 +15,7 @@ export default defineConfig(({ mode }) => ({
     mode === "development" && componentTagger(),
     VitePWA({
       registerType: "autoUpdate",
-      includeAssets: ["favicon.ico", "pwa-192x192.png", "pwa-512x512.png"],
+      includeAssets: ["favicon.ico", "parlay-farm-logo.png", "pwa-192x192.png", "pwa-512x512.png"],
       manifest: {
         name: "Parlay Farm - Track Sharps, Tail Winners",
         short_name: "Parlay Farm",

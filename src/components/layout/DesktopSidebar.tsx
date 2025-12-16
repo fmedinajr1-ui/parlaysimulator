@@ -200,9 +200,11 @@ export function DesktopSidebar({ collapsed, onToggle }: DesktopSidebarProps) {
         collapsed ? "justify-center" : "justify-between"
       )}>
         {!collapsed && (
-          <span className="font-display font-bold text-lg text-primary">
-            ParlayEdge
-          </span>
+          <img 
+            src="/parlay-farm-logo.png" 
+            alt="Parlay Farm" 
+            className="h-10 w-auto"
+          />
         )}
         <Button
           variant="ghost"
