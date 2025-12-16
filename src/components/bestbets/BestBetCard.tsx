@@ -6,12 +6,12 @@ import { AddToParlayButton } from '@/components/parlay/AddToParlayButton';
 import { MiniKellyIndicator } from './MiniKellyIndicator';
 import { MiniEnsembleScore } from './MiniEnsembleScore';
 import { extractBestBetSignals } from '@/lib/ensemble-engine';
-import { Clock, Zap, TrendingDown } from 'lucide-react';
+import { Clock, Zap, TrendingDown, Trophy, AlertTriangle } from 'lucide-react';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
 
 interface BestBetCardProps {
-  type: 'nhl_sharp' | 'ncaab_steam' | 'fade_signal' | 'nba_fatigue';
+  type: 'nhl_sharp' | 'ncaab_steam' | 'fade_signal' | 'nba_fatigue' | 'nfl_fade' | 'nfl_caution' | 'nhl_caution';
   event: {
     id: string;
     event_id: string;
@@ -39,21 +39,50 @@ export function BestBetCard({
 }: BestBetCardProps) {
   const getTypeConfig = () => {
     switch (type) {
+      case 'nfl_fade':
+        return {
+          label: '🏈 NFL Fade',
+          icon: <Trophy className="h-4 w-4" />,
+          color: 'from-green-500/20 to-emerald-500/10',
+          badgeColor: 'bg-green-500/20 text-green-400 border-green-500/30',
+          source: 'sharp' as const,
+          isTopPerformer: true
+        };
+      case 'nfl_caution':
+        return {
+          label: '🏈 NFL Caution',
+          icon: <AlertTriangle className="h-4 w-4" />,
+          color: 'from-yellow-500/20 to-amber-500/10',
+          badgeColor: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
+          source: 'sharp' as const,
+          isTopPerformer: false
+        };
+      case 'nhl_caution':
+        return {
+          label: '🏒 NHL Caution',
+          icon: <AlertTriangle className="h-4 w-4" />,
+          color: 'from-cyan-500/20 to-blue-500/10',
+          badgeColor: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30',
+          source: 'sharp' as const,
+          isTopPerformer: false
+        };
       case 'nhl_sharp':
         return {
-          label: 'NHL Sharp',
+          label: '🏒 NHL Sharp',
           icon: <Zap className="h-4 w-4" />,
           color: 'from-blue-500/20 to-cyan-500/10',
           badgeColor: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
-          source: 'sharp' as const
+          source: 'sharp' as const,
+          isTopPerformer: false
         };
       case 'ncaab_steam':
         return {
-          label: 'NCAAB Fade',
+          label: '🏀 NCAAB Fade',
           icon: <TrendingDown className="h-4 w-4" />,
           color: 'from-orange-500/20 to-amber-500/10',
           badgeColor: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
-          source: 'sharp' as const
+          source: 'sharp' as const,
+          isTopPerformer: false
         };
       case 'fade_signal':
         return {
@@ -61,15 +90,17 @@ export function BestBetCard({
           icon: <TrendingDown className="h-4 w-4" />,
           color: 'from-red-500/20 to-pink-500/10',
           badgeColor: 'bg-red-500/20 text-red-400 border-red-500/30',
-          source: 'sharp' as const
+          source: 'sharp' as const,
+          isTopPerformer: false
         };
       case 'nba_fatigue':
         return {
-          label: 'NBA Fatigue',
+          label: '🏀 NBA Fatigue',
           icon: <Zap className="h-4 w-4" />,
           color: 'from-purple-500/20 to-violet-500/10',
           badgeColor: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
-          source: 'manual' as const
+          source: 'manual' as const,
+          isTopPerformer: false
         };
       default:
         return {
@@ -77,7 +108,8 @@ export function BestBetCard({
           icon: <Zap className="h-4 w-4" />,
           color: 'from-chart-1/20 to-chart-1/10',
           badgeColor: 'bg-chart-1/20 text-chart-1 border-chart-1/30',
-          source: 'sharp' as const
+          source: 'sharp' as const,
+          isTopPerformer: false
         };
     }
   };
@@ -107,13 +139,32 @@ export function BestBetCard({
       .toUpperCase();
   };
 
+  // Sample size confidence
+  const getSampleConfidence = () => {
+    if (sampleSize >= 200) return { label: 'High', color: 'text-green-400' };
+    if (sampleSize >= 50) return { label: 'Good', color: 'text-yellow-400' };
+    if (sampleSize >= 20) return { label: 'Low', color: 'text-orange-400' };
+    return { label: 'Very Low', color: 'text-red-400' };
+  };
+
+  const sampleConfidence = getSampleConfidence();
+
   // Create description for parlay
   const parlayDescription = event.outcome_name 
     ? `${event.description} - ${event.outcome_name}`
     : event.description;
 
   return (
-    <Card className={cn('bg-gradient-to-br border-border/50 hover:border-border transition-all', config.color)}>
+    <Card className={cn(
+      'bg-gradient-to-br border-border/50 hover:border-border transition-all relative',
+      config.color,
+      config.isTopPerformer && 'ring-2 ring-green-500/30'
+    )}>
+      {config.isTopPerformer && (
+        <div className="absolute -top-2 -right-2 bg-green-500 text-white text-xs px-2 py-0.5 rounded-full font-bold">
+          TOP
+        </div>
+      )}
       <CardHeader className="pb-2">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-2">
@@ -157,6 +208,14 @@ export function BestBetCard({
               Fatigue Diff: +{event.fatigue_differential}
             </Badge>
           )}
+        </div>
+
+        {/* Sample Size Warning */}
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-muted-foreground">Sample:</span>
+          <span className={cn('font-medium', sampleConfidence.color)}>
+            n={sampleSize} ({sampleConfidence.label})
+          </span>
         </div>
 
         {/* Kelly & Ensemble Indicators */}
