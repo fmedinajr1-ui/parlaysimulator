@@ -100,6 +100,7 @@
     -moz-osx-font-smoothing: grayscale;
     overscroll-behavior-y: contain;
     -webkit-overflow-scrolling: touch;
+    line-height: 1.6;
   }
 
   /* GPU-accelerated scrolling */
@@ -133,6 +134,35 @@
 }
 
 @layer utilities {
+  /* Fluid typography for responsive scaling */
+  .text-fluid-xs {
+    font-size: clamp(0.75rem, 2vw, 0.875rem);
+  }
+  
+  .text-fluid-sm {
+    font-size: clamp(0.8125rem, 2.25vw, 0.9375rem);
+  }
+  
+  .text-fluid-body {
+    font-size: clamp(0.875rem, 2.5vw, 1rem);
+  }
+  
+  .text-fluid-lg {
+    font-size: clamp(1rem, 3vw, 1.125rem);
+  }
+  
+  .text-fluid-xl {
+    font-size: clamp(1.125rem, 3.5vw, 1.25rem);
+  }
+  
+  .text-fluid-2xl {
+    font-size: clamp(1.25rem, 4vw, 1.5rem);
+  }
+  
+  .text-fluid-hero {
+    font-size: clamp(1.5rem, 5vw, 2.25rem);
+  }
+
   .font-display {
     font-family: var(--font-display);
   }

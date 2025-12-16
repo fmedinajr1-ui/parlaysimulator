@@ -28,9 +28,9 @@ function QuickAction({ to, icon: Icon, label, iconClass }: {
   
   return (
     <Link to={to} className="shrink-0" onClick={lightTap}>
-      <div className="quick-action min-w-[140px] active:scale-95 transition-transform">
-        <Icon className={`w-5 h-5 ${iconClass}`} />
-        <span>{label}</span>
+      <div className="quick-action min-w-[100px] sm:min-w-[120px] active:scale-95 transition-transform">
+        <Icon className={`w-4 h-4 sm:w-5 sm:h-5 ${iconClass}`} />
+        <span className="text-xs sm:text-sm">{label}</span>
       </div>
     </Link>
   );
@@ -92,9 +92,9 @@ const Index = () => {
           </div>
         )}
         
-        {/* Quick Actions - FanDuel style horizontal scroll */}
-        <div className="mb-5">
-          <div className="flex gap-3 overflow-x-auto scrollbar-hide pb-2 -mx-4 px-4 scroll-optimized">
+        {/* Quick Actions - Compact horizontal scroll */}
+        <div className="mb-4">
+          <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-2 -mx-4 px-4 scroll-optimized">
             {quickActions.map((action) => (
               <QuickAction 
                 key={action.to}
@@ -107,10 +107,10 @@ const Index = () => {
           </div>
         </div>
 
-        {/* Main CTA */}
-        <div className="flex flex-col items-center gap-3 mb-6">
+        {/* Main CTA - More compact */}
+        <div className="flex flex-col items-center gap-2 mb-4">
           <Link to="/upload" className="w-full" onClick={lightTap}>
-            <Button variant="neon" size="lg" className="w-full font-display text-lg tracking-wider touch-target-lg h-14 active:scale-[0.98] transition-transform">
+            <Button variant="neon" size="lg" className="w-full font-display text-base sm:text-lg tracking-wider touch-target-lg h-12 active:scale-[0.98] transition-transform">
               🎯 Analyze Your Parlay
             </Button>
           </Link>
@@ -127,26 +127,26 @@ const Index = () => {
             <CompareTeaser />
 
             {/* AI Suggested Parlays */}
-            <div className="mb-5 content-visibility-auto">
+            <div className="mb-4 content-visibility-auto">
               <SuggestedParlays />
             </div>
 
             {/* Historical Trends */}
-            <div className="mb-5 content-visibility-auto">
+            <div className="mb-4 content-visibility-auto">
               <HistoricalInsights compact />
             </div>
 
             {/* Smart Betting Edge */}
-            <div className="mb-5 content-visibility-auto">
+            <div className="mb-4 content-visibility-auto">
               <SmartBettingEdge compact />
             </div>
 
             {/* Live Line Movements */}
-            <div className="mb-5 content-visibility-auto">
+            <div className="mb-4 content-visibility-auto">
               <Link to="/sharp" className="block" onClick={lightTap}>
                 <OddsMovementCard compact showSharpOnly delay={200} />
               </Link>
-              <p className="text-xs text-muted-foreground text-center mt-2">
+              <p className="text-xs text-muted-foreground text-center mt-1.5">
                 Tap to view sharp money dashboard →
               </p>
             </div>
