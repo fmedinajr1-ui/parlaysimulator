@@ -33,6 +33,24 @@ interface GreenSlipCardProps {
 export function GreenSlipCard({ slip, rank }: GreenSlipCardProps) {
   const { addLeg } = useParlayBuilder();
 
+  const formatPropType = (propType?: string) => {
+    if (!propType) return null;
+    const typeMap: Record<string, string> = {
+      'player_points': 'Points',
+      'player_rebounds': 'Rebounds',
+      'player_assists': 'Assists',
+      'player_threes': '3-Pointers',
+      'player_pra': 'PRA',
+      'player_pts_rebs': 'Pts+Rebs',
+      'player_pts_asts': 'Pts+Asts',
+      'player_rebs_asts': 'Rebs+Asts',
+      'player_steals': 'Steals',
+      'player_blocks': 'Blocks',
+      'player_turnovers': 'Turnovers',
+    };
+    return typeMap[propType] || propType.replace('player_', '').replace(/_/g, ' ');
+  };
+
   const getStakeTierBadge = () => {
     switch (slip.stake_tier) {
       case 'A':
@@ -125,8 +143,18 @@ export function GreenSlipCard({ slip, rank }: GreenSlipCardProps) {
               key={i}
               className="flex items-center justify-between bg-muted/20 rounded-lg px-3 py-2"
             >
-              <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-sm font-medium">{leg.playerName}</span>
+                {leg.propType && (
+                  <Badge variant="outline" className="text-xs px-1">
+                    {formatPropType(leg.propType)}
+                  </Badge>
+                )}
+                {leg.bookLine && (
+                  <span className="text-xs text-muted-foreground font-medium">
+                    {leg.bookLine}
+                  </span>
+                )}
                 {leg.betSide && leg.betSide !== 'PASS' && (
                   <Badge 
                     variant="secondary" 
