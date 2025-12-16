@@ -13,6 +13,7 @@ interface PilotUserState {
   paidScanBalance: number;
   totalScansAvailable: number;
   hasOddsAccess: boolean;
+  phoneVerified: boolean;
 }
 
 export function usePilotUser() {
@@ -28,6 +29,7 @@ export function usePilotUser() {
     paidScanBalance: 0,
     totalScansAvailable: 5,
     hasOddsAccess: false,
+    phoneVerified: false,
   });
 
   const checkStatus = useCallback(async () => {
@@ -43,6 +45,7 @@ export function usePilotUser() {
         paidScanBalance: 0,
         totalScansAvailable: 5,
         hasOddsAccess: false,
+        phoneVerified: false,
       });
       return;
     }
@@ -67,6 +70,7 @@ export function usePilotUser() {
         paidScanBalance: data.paidScanBalance ?? 0,
         totalScansAvailable: (data.freeScansRemaining ?? 0) + (data.paidScanBalance ?? 0),
         hasOddsAccess: data.hasOddsAccess || false,
+        phoneVerified: data.phoneVerified ?? false,
       });
     } catch (err) {
       console.error('Error checking pilot status:', err);

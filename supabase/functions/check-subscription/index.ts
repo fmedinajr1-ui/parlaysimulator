@@ -47,6 +47,7 @@ serve(async (req) => {
         paidScanBalance: 0,
         scansRemaining: 5,
         hasOddsAccess: false,
+        phoneVerified: false,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,
@@ -69,6 +70,7 @@ serve(async (req) => {
         paidScanBalance: 0,
         scansRemaining: 5,
         hasOddsAccess: false,
+        phoneVerified: false,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,
@@ -77,6 +79,16 @@ serve(async (req) => {
     
     const user = userData.user;
     logStep("User authenticated", { userId: user.id, email: user.email });
+
+    // Check phone verification status from profiles
+    const { data: profileData } = await supabaseClient
+      .from('profiles')
+      .select('phone_verified')
+      .eq('id', user.id)
+      .maybeSingle();
+    
+    const phoneVerified = profileData?.phone_verified ?? false;
+    logStep("Phone verification status", { phoneVerified });
 
     // Check user roles (admin, full_access, etc.)
     const { data: rolesData } = await supabaseClient
@@ -100,6 +112,7 @@ serve(async (req) => {
         canScan: true,
         scansRemaining: -1,
         hasOddsAccess: true,
+        phoneVerified: true, // Admins bypass phone verification
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,
@@ -171,6 +184,7 @@ serve(async (req) => {
         scansRemaining: -1,
         subscriptionEnd,
         hasOddsAccess,
+        phoneVerified,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,
@@ -187,6 +201,7 @@ serve(async (req) => {
         canScan: true,
         scansRemaining: -1,
         hasOddsAccess,
+        phoneVerified,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,
@@ -251,6 +266,7 @@ serve(async (req) => {
         freeComparesRemaining: quotaData.free_compares_remaining,
         paidScanBalance: quotaData.paid_scan_balance,
         hasOddsAccess: false,
+        phoneVerified,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,
@@ -268,6 +284,7 @@ serve(async (req) => {
       paidScanBalance: 0,
       scansRemaining: 5,
       hasOddsAccess: false,
+      phoneVerified: false,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 200,

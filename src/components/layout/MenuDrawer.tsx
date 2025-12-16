@@ -19,7 +19,8 @@ import {
   TrendingUp,
   BarChart3,
   Target,
-  Lock
+  Lock,
+  Info
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
@@ -146,13 +147,8 @@ export function MenuDrawer() {
   const isAdmin = isAdminRole || isPilotAdmin;
   const isPilotRestricted = isPilotUser && !isAdmin && !isSubscribed;
   
-  // Filter menu groups for pilot users
-  const filteredMenuGroups = isPilotRestricted
-    ? menuGroups.map(group => ({
-        ...group,
-        items: group.items.filter(item => PILOT_ALLOWED_ROUTES.includes(item.path))
-      })).filter(group => group.items.length > 0)
-    : menuGroups;
+  // Helper to check if route is allowed for pilot users
+  const isRouteAllowed = (path: string) => PILOT_ALLOWED_ROUTES.includes(path);
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
@@ -195,19 +191,19 @@ export function MenuDrawer() {
               isMobileCompact ? "p-2" : "p-3"
             )}>
               <div className="flex items-center gap-2 text-sm">
-                <Lock className="w-4 h-4 text-primary" />
+                <Sparkles className="w-4 h-4 text-primary" />
                 <span className="font-medium text-primary">Pilot Mode</span>
               </div>
               {!isMobileCompact && (
                 <p className="text-xs text-muted-foreground mt-1">
-                  Upgrade to unlock all features
+                  More features coming soon! Stay tuned.
                 </p>
               )}
             </div>
           )}
 
-          {/* Grouped Navigation */}
-          {filteredMenuGroups.map((group) => (
+          {/* Grouped Navigation - Show all items, lock restricted ones */}
+          {menuGroups.map((group) => (
             <Collapsible 
               key={group.label}
               open={openGroups[group.label]} 
@@ -228,36 +224,64 @@ export function MenuDrawer() {
                 )} />
               </CollapsibleTrigger>
               <CollapsibleContent className="pl-2 mt-1 space-y-0.5">
-                {group.items.map((item) => (
-                  <Link
-                    key={item.path}
-                    to={item.path}
-                    onClick={() => setOpen(false)}
-                    className={cn(
-                      "flex items-center gap-3 px-3 rounded-lg transition-colors",
-                      "hover:bg-muted/50 active:bg-muted",
-                      isActive(item.path) && "bg-primary/10 text-primary",
-                      isMobileCompact ? "py-1.5" : "py-2.5"
-                    )}
-                  >
-                    <item.icon className={cn(
-                      "w-4 h-4 shrink-0",
-                      isActive(item.path) ? "text-primary" : "text-muted-foreground"
-                    )} />
-                    <div className="flex-1 min-w-0">
-                      <p className={cn(
-                        "text-sm font-medium truncate",
-                        isActive(item.path) && "text-primary"
-                      )}>
-                        {item.label}
-                      </p>
-                      {!isMobileCompact && (
-                        <p className="text-xs text-muted-foreground truncate">{item.description}</p>
+                {group.items.map((item) => {
+                  const isLocked = isPilotRestricted && !isRouteAllowed(item.path);
+                  
+                  if (isLocked) {
+                    return (
+                      <div
+                        key={item.path}
+                        className={cn(
+                          "flex items-center gap-3 px-3 rounded-lg opacity-50 cursor-not-allowed",
+                          isMobileCompact ? "py-1.5" : "py-2.5"
+                        )}
+                        title="Coming soon"
+                      >
+                        <item.icon className="w-4 h-4 shrink-0 text-muted-foreground" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate text-muted-foreground">
+                            {item.label}
+                          </p>
+                          {!isMobileCompact && (
+                            <p className="text-xs text-muted-foreground/70 truncate">Coming soon</p>
+                          )}
+                        </div>
+                        <Lock className="w-3 h-3 text-muted-foreground/50 shrink-0" />
+                      </div>
+                    );
+                  }
+                  
+                  return (
+                    <Link
+                      key={item.path}
+                      to={item.path}
+                      onClick={() => setOpen(false)}
+                      className={cn(
+                        "flex items-center gap-3 px-3 rounded-lg transition-colors",
+                        "hover:bg-muted/50 active:bg-muted",
+                        isActive(item.path) && "bg-primary/10 text-primary",
+                        isMobileCompact ? "py-1.5" : "py-2.5"
                       )}
-                    </div>
-                    <ChevronRight className="w-4 h-4 text-muted-foreground/50 shrink-0" />
-                  </Link>
-                ))}
+                    >
+                      <item.icon className={cn(
+                        "w-4 h-4 shrink-0",
+                        isActive(item.path) ? "text-primary" : "text-muted-foreground"
+                      )} />
+                      <div className="flex-1 min-w-0">
+                        <p className={cn(
+                          "text-sm font-medium truncate",
+                          isActive(item.path) && "text-primary"
+                        )}>
+                          {item.label}
+                        </p>
+                        {!isMobileCompact && (
+                          <p className="text-xs text-muted-foreground truncate">{item.description}</p>
+                        )}
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-muted-foreground/50 shrink-0" />
+                    </Link>
+                  );
+                })}
               </CollapsibleContent>
             </Collapsible>
           ))}

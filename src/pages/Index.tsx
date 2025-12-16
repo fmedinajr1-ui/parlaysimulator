@@ -86,10 +86,10 @@ const Index = () => {
         {isPilotRestricted && (
           <div className="mb-5 p-4 rounded-lg bg-primary/10 border border-primary/20">
             <h3 className="font-semibold text-primary flex items-center gap-2">
-              <Lock className="w-4 h-4" /> Pilot Mode Active
+              <Sparkles className="w-4 h-4" /> Welcome to the Pilot! 🎉
             </h3>
             <p className="text-sm text-muted-foreground mt-1">
-              Upload your parlays to get AI analysis. Contact admin for full access.
+              You have access to Analyze, Compare, and Kelly tools. More features coming soon!
             </p>
           </div>
         )}

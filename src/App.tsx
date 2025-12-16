@@ -38,6 +38,7 @@ const SharpComparison = React.lazy(() => import("./pages/SharpComparison"));
 const FanDuelTraps = React.lazy(() => import("./pages/FanDuelTraps"));
 const AllSportsTracker = React.lazy(() => import("./pages/AllSportsTracker"));
 const Kelly = React.lazy(() => import("./pages/Kelly"));
+const VerifyPhone = React.lazy(() => import("./pages/VerifyPhone"));
 
 // QueryClient with optimized defaults
 const queryClient = new QueryClient({
@@ -98,6 +99,7 @@ function AnimatedRoutes() {
             <Route path="/fanduel-traps" element={<FanDuelTraps />} />
             <Route path="/tracker" element={<AllSportsTracker />} />
             <Route path="/kelly" element={<Kelly />} />
+            <Route path="/verify-phone" element={<VerifyPhone />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </React.Suspense>

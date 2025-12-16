@@ -18,7 +18,8 @@ import {
   PanelLeftClose,
   PanelLeft,
   ScanSearch,
-  Lock
+  Lock,
+  Wallet
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
@@ -31,11 +32,13 @@ import { PILOT_ALLOWED_ROUTES } from "@/components/PilotRouteGuard";
 const mainNavItems = [
   { icon: Home, label: "Home", path: "/" },
   { icon: BarChart3, label: "Analyze", path: "/upload" },
-  { icon: TrendingUp, label: "Odds", path: "/odds" },
+  { icon: GitCompare, label: "Compare", path: "/compare" },
   { icon: User, label: "Profile", path: "/profile" },
 ];
 
 const featureItems = [
+  { icon: Wallet, label: "Kelly Calculator", path: "/kelly" },
+  { icon: TrendingUp, label: "Odds Movement", path: "/odds" },
   { icon: Sparkles, label: "AI Picks", path: "/suggestions" },
   { icon: Flame, label: "Hit Rate", path: "/hitrate" },
   { icon: Flame, label: "God Mode Upsets", path: "/god-mode" },
@@ -43,7 +46,6 @@ const featureItems = [
   { icon: ScanSearch, label: "FanDuel Scanner", path: "/fanduel-traps" },
   { icon: Activity, label: "Sharp Money", path: "/sharp" },
   { icon: Activity, label: "NBA Fatigue", path: "/nba-fatigue" },
-  { icon: GitCompare, label: "Compare Parlays", path: "/compare" },
   { icon: Search, label: "Line Shopping", path: "/line-shopping" },
   { icon: Download, label: "Install App", path: "/install" },
 ];
@@ -104,13 +106,47 @@ export function DesktopSidebar({ collapsed, onToggle }: DesktopSidebarProps) {
   const isPilotRestricted = isPilotUser && !isPilotAdmin && !isSubscribed;
   const isAdmin = isAdminRole || isPilotAdmin;
   
-  // Filter features for pilot users
-  const filteredFeatures = isPilotRestricted
-    ? featureItems.filter(item => PILOT_ALLOWED_ROUTES.includes(item.path))
-    : featureItems;
+  // Helper to check if route is allowed for pilot users
+  const isRouteAllowed = (path: string) => PILOT_ALLOWED_ROUTES.includes(path);
 
-  const NavItem = ({ icon: Icon, label, path }: { icon: typeof Home; label: string; path: string }) => {
+  const NavItem = ({ icon: Icon, label, path, locked = false }: { icon: typeof Home; label: string; path: string; locked?: boolean }) => {
     const active = isActive(path);
+    
+    if (locked) {
+      const lockedContent = (
+        <div
+          className={cn(
+            "flex items-center gap-3 px-3 py-2.5 rounded-lg opacity-50 cursor-not-allowed",
+            collapsed && "justify-center px-2"
+          )}
+        >
+          <Icon className="w-5 h-5 shrink-0 text-muted-foreground" />
+          {!collapsed && (
+            <>
+              <span className="text-sm font-medium truncate text-muted-foreground flex-1">
+                {label}
+              </span>
+              <Lock className="w-3 h-3 text-muted-foreground/50" />
+            </>
+          )}
+        </div>
+      );
+
+      if (collapsed) {
+        return (
+          <Tooltip delayDuration={0}>
+            <TooltipTrigger asChild>
+              {lockedContent}
+            </TooltipTrigger>
+            <TooltipContent side="right" className="font-medium">
+              {label} (Coming soon)
+            </TooltipContent>
+          </Tooltip>
+        );
+      }
+
+      return lockedContent;
+    }
     
     const linkContent = (
       <Link
@@ -202,21 +238,26 @@ export function DesktopSidebar({ collapsed, onToggle }: DesktopSidebarProps) {
         {isPilotRestricted && !collapsed && (
           <div className="mx-2 mb-2 p-2 rounded-lg bg-primary/10 border border-primary/20">
             <div className="flex items-center gap-2 text-xs">
-              <Lock className="w-3 h-3 text-primary" />
+              <Sparkles className="w-3 h-3 text-primary" />
               <span className="font-medium text-primary">Pilot Mode</span>
             </div>
+            <p className="text-[10px] text-muted-foreground mt-1">More features coming soon!</p>
           </div>
         )}
 
-        {/* Features */}
+        {/* Features - Show all with lock icons for restricted */}
         <div className="space-y-1">
           {!collapsed && (
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 mb-2">
               Features
             </p>
           )}
-          {filteredFeatures.map((item) => (
-            <NavItem key={item.path} {...item} />
+          {featureItems.map((item) => (
+            <NavItem 
+              key={item.path} 
+              {...item} 
+              locked={isPilotRestricted && !isRouteAllowed(item.path)} 
+            />
           ))}
         </div>
 
