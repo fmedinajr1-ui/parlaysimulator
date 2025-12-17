@@ -84,6 +84,9 @@ serve(async (req) => {
       
       // Step 2c: Analyze sharp line movements
       await runFunction('analyze-sharp-line', {});
+      
+      // Step 2d: Analyze coaching tendencies for today's NBA games
+      await runFunction('coach-tendencies-engine', { teams: [] });
     }
 
     // ============ PHASE 3: PARLAY & SUGGESTION GENERATION ============

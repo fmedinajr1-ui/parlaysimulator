@@ -63,11 +63,15 @@ interface SuggestedLeg {
   fatigueEdge?: string;
   fatigueScore?: number;
   fatigueBoost?: boolean;
+  coachingEdge?: string;
+  coachName?: string;
+  coachingScore?: number;
   hybridBreakdown?: {
     sharp: number;
     user: number;
     ai: number;
     fatigue?: number;
+    coaching?: number;
   };
 }
 
@@ -84,6 +88,7 @@ interface SuggestedParlay {
   is_hybrid?: boolean;
   hybrid_scores?: any;
   has_fatigue_edge?: boolean;
+  has_coaching_edge?: boolean;
 }
 
 interface UserPattern {
@@ -840,6 +845,15 @@ const Suggestions = () => {
                               >
                                 <Shield className="w-3 h-3 mr-1" />
                                 Hybrid
+                              </Badge>
+                            )}
+                            {(suggestion.has_coaching_edge || suggestion.suggestion_reason?.toLowerCase().includes('coach')) && (
+                              <Badge 
+                                variant="outline" 
+                                className="text-xs text-emerald-400 bg-emerald-500/10 border-emerald-500/30"
+                              >
+                                <Target className="w-3 h-3 mr-1" />
+                                Coach
                               </Badge>
                             )}
                             <Badge 

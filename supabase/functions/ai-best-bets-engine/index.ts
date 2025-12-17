@@ -205,7 +205,56 @@ Deno.serve(async (req) => {
       })));
     }
 
-    console.log(`[AI-BestBets] Found ${candidates.length} total candidate signals`);
+    // Coaching Tendencies Edge - NBA coaches with clear patterns
+    const { data: coachProfiles } = await supabase
+      .from('coach_profiles')
+      .select('*')
+      .eq('sport', 'NBA')
+      .eq('is_active', true);
+
+    if (coachProfiles && fatigueGames) {
+      // Add coaching signals for today's games
+      for (const game of fatigueGames) {
+        const homeCoach = coachProfiles.find((c: any) => 
+          game.home_team?.toLowerCase().includes(c.team_name?.toLowerCase()?.split(' ').pop())
+        );
+        const awayCoach = coachProfiles.find((c: any) => 
+          game.away_team?.toLowerCase().includes(c.team_name?.toLowerCase()?.split(' ').pop())
+        );
+
+        if (homeCoach && (homeCoach.pace_preference === 'fast' || homeCoach.pace_preference === 'slow')) {
+          candidates.push({
+            id: `coach_${homeCoach.id}`,
+            event_id: game.event_id,
+            sport: 'basketball_nba',
+            description: `${game.home_team} ${homeCoach.pace_preference === 'fast' ? 'Over' : 'Under'} (Coach ${homeCoach.coach_name})`,
+            recommendation: homeCoach.pace_preference === 'fast' ? 'pick' : 'fade',
+            commence_time: game.game_date,
+            coaching_tendency: homeCoach.pace_preference,
+            coach_name: homeCoach.coach_name,
+            signal_type: 'coaching_pace'
+          });
+        }
+
+        // B2B rest tendency on fatigued games
+        if (homeCoach && homeCoach.b2b_rest_tendency === 'heavy' && game.home_fatigue_score > 50) {
+          candidates.push({
+            id: `coach_b2b_${homeCoach.id}`,
+            event_id: game.event_id,
+            sport: 'basketball_nba',
+            description: `${game.home_team} star props Under (Coach ${homeCoach.coach_name} B2B Rest)`,
+            recommendation: 'fade',
+            commence_time: game.game_date,
+            coaching_tendency: 'b2b_rest_heavy',
+            coach_name: homeCoach.coach_name,
+            fatigue_score: game.home_fatigue_score,
+            signal_type: 'coaching_b2b'
+          });
+        }
+      }
+    }
+
+    console.log(`[AI-BestBets] Found ${candidates.length} total candidate signals (including coaching)`);
 
     // Step 3: Score each candidate using REAL accuracy data
     const scoredCandidates: BestBet[] = [];
@@ -280,6 +329,17 @@ Deno.serve(async (req) => {
       } else if (candidate.books_consensus && candidate.books_consensus >= 3) {
         compositeScore += 2;
         signals.push(`${candidate.books_consensus} books agree`);
+      }
+
+      // Boost for coaching signals
+      if (candidate.signal_type?.startsWith('coaching')) {
+        compositeScore += 4;
+        signals.push(`🏀 Coach tendency: ${candidate.coach_name || 'NBA'}`);
+        if (candidate.coaching_tendency === 'fast') {
+          signals.push('Fast pace = higher scoring');
+        } else if (candidate.coaching_tendency === 'b2b_rest_heavy') {
+          signals.push('B2B rest = star minutes down');
+        }
       }
 
       // Add sample size context
