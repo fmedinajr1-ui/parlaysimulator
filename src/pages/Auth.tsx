@@ -19,7 +19,9 @@ const authSchema = z.object({
 type AuthStep = 'credentials' | 'phone-verification';
 
 const Auth = () => {
-  const [isLogin, setIsLogin] = useState(true);
+  const [searchParams] = useSearchParams();
+  const modeParam = searchParams.get('mode');
+  const [isLogin, setIsLogin] = useState(modeParam !== 'signup');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -27,7 +29,6 @@ const Auth = () => {
   const [newUserId, setNewUserId] = useState<string | null>(null);
   const { signIn, signUp, user, isLoading } = useAuth();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
   const returnUrl = searchParams.get('return') || '/profile';
 
   useEffect(() => {
