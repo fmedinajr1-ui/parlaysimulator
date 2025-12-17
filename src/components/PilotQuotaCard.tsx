@@ -1,12 +1,13 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { Zap, Package, Scan } from 'lucide-react';
+import { Zap, Package, Scan, Loader2 } from 'lucide-react';
 
 interface PilotQuotaCardProps {
   freeScansRemaining: number;
   freeComparesRemaining: number;
   paidScanBalance: number;
+  isPurchasing?: boolean;
   onPurchase: (packType: 'single' | 'pack20' | 'pack50') => void;
 }
 
@@ -14,12 +15,11 @@ export function PilotQuotaCard({
   freeScansRemaining,
   freeComparesRemaining,
   paidScanBalance,
+  isPurchasing = false,
   onPurchase,
 }: PilotQuotaCardProps) {
   const totalFreeScans = 5;
   const totalFreeCompares = 3;
-  const freeScansUsed = totalFreeScans - freeScansRemaining;
-  const freeComparesUsed = totalFreeCompares - freeComparesRemaining;
 
   return (
     <Card className="border-primary/20">
@@ -65,33 +65,54 @@ export function PilotQuotaCard({
               variant="outline"
               size="sm"
               onClick={() => onPurchase('single')}
+              disabled={isPurchasing}
               className="flex flex-col h-auto py-2"
             >
-              <Zap className="w-4 h-4 mb-1" />
-              <span className="text-xs">1 Scan</span>
-              <span className="text-xs font-bold">$1</span>
+              {isPurchasing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <>
+                  <Zap className="w-4 h-4 mb-1" />
+                  <span className="text-xs">1 Scan</span>
+                  <span className="text-xs font-bold">$1</span>
+                </>
+              )}
             </Button>
             
             <Button
               variant="outline"
               size="sm"
               onClick={() => onPurchase('pack20')}
+              disabled={isPurchasing}
               className="flex flex-col h-auto py-2 border-primary"
             >
-              <Package className="w-4 h-4 mb-1 text-primary" />
-              <span className="text-xs">20 Pack</span>
-              <span className="text-xs font-bold text-primary">$15</span>
+              {isPurchasing ? (
+                <Loader2 className="w-4 h-4 animate-spin text-primary" />
+              ) : (
+                <>
+                  <Package className="w-4 h-4 mb-1 text-primary" />
+                  <span className="text-xs">20 Pack</span>
+                  <span className="text-xs font-bold text-primary">$15</span>
+                </>
+              )}
             </Button>
             
             <Button
               variant="outline"
               size="sm"
               onClick={() => onPurchase('pack50')}
+              disabled={isPurchasing}
               className="flex flex-col h-auto py-2"
             >
-              <Package className="w-4 h-4 mb-1" />
-              <span className="text-xs">50 Pack</span>
-              <span className="text-xs font-bold">$40</span>
+              {isPurchasing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <>
+                  <Package className="w-4 h-4 mb-1" />
+                  <span className="text-xs">50 Pack</span>
+                  <span className="text-xs font-bold">$40</span>
+                </>
+              )}
             </Button>
           </div>
         </div>

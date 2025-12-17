@@ -10,7 +10,7 @@ import { toast } from '@/hooks/use-toast';
 interface PhoneVerificationProps {
   userId: string;
   onVerified: () => void;
-  onBack: () => void;
+  onBack?: () => void;
 }
 
 export function PhoneVerification({ userId, onVerified, onBack }: PhoneVerificationProps) {
@@ -196,14 +196,16 @@ export function PhoneVerification({ userId, onVerified, onBack }: PhoneVerificat
             )}
           </Button>
 
-          <button
-            type="button"
-            onClick={onBack}
-            className="flex items-center justify-center gap-2 w-full text-muted-foreground hover:text-foreground text-sm"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to sign up
-          </button>
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              className="flex items-center justify-center gap-2 w-full text-muted-foreground hover:text-foreground text-sm"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Back to sign up
+            </button>
+          )}
         </div>
       </div>
     );

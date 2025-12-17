@@ -57,9 +57,9 @@ function getViewportInfo(): ViewportInfo {
   return {
     width,
     height,
-    isSmallPhone: width <= 375,           // iPhone SE, 8
-    isMediumPhone: width > 375 && width <= 393,  // iPhone 12/13/14
-    isLargePhone: width > 393,            // iPhone Plus/Pro Max
+    isSmallPhone: width <= 414,           // iPhone SE, 8, 12, 13, 14
+    isMediumPhone: width > 414 && width <= 430,  // iPhone Plus/Pro Max
+    isLargePhone: width > 430,            // Large tablets
     hasNotch,
     isLandscape: width > height,
     safeAreaTop,

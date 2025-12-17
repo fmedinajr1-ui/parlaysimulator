@@ -126,20 +126,19 @@ const Auth = () => {
     );
   }
 
-  // Phone verification step for new signups
+  // Phone verification step for new signups - no back button to prevent bypass
   if (authStep === 'phone-verification' && newUserId) {
     return (
       <div className="min-h-dvh bg-background pb-nav-safe">
         <div className="max-w-md mx-auto px-4 py-8">
-          <Link to="/" className="inline-flex items-center gap-2 text-muted-foreground hover:text-foreground mb-8">
-            <ArrowLeft className="w-4 h-4" />
-            Back
-          </Link>
+          <div className="mb-8">
+            <h2 className="text-xl font-semibold text-foreground">Almost there!</h2>
+            <p className="text-sm text-muted-foreground">Verify your phone number to complete signup</p>
+          </div>
 
           <PhoneVerification
             userId={newUserId}
             onVerified={handlePhoneVerified}
-            onBack={handleBackToCredentials}
           />
         </div>
       </div>

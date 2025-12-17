@@ -8,6 +8,9 @@ interface PhoneVerificationGuardProps {
   children: ReactNode;
 }
 
+// Public paths that don't require phone verification
+const PUBLIC_PATHS = ['/', '/auth', '/verify-phone', '/install', '/offline'];
+
 export function PhoneVerificationGuard({ children }: PhoneVerificationGuardProps) {
   const { user, isLoading: authLoading } = useAuth();
   const location = useLocation();
@@ -31,13 +34,15 @@ export function PhoneVerificationGuard({ children }: PhoneVerificationGuardProps
 
         if (error) {
           console.error('Error checking phone verification:', error);
-          setIsVerified(true); // Don't block on error
+          // On error, redirect to verify page for safety
+          setIsVerified(false);
         } else {
           setIsVerified(data?.phone_verified ?? false);
         }
       } catch (err) {
         console.error('Error checking phone verification:', err);
-        setIsVerified(true); // Don't block on error
+        // On error, redirect to verify page for safety
+        setIsVerified(false);
       } finally {
         setIsChecking(false);
       }
@@ -57,17 +62,20 @@ export function PhoneVerificationGuard({ children }: PhoneVerificationGuardProps
     );
   }
 
-  // Allow access to auth and verify-phone pages
-  const publicPaths = ['/auth', '/verify-phone', '/'];
-  if (publicPaths.some(p => location.pathname.startsWith(p) && p !== '/' || location.pathname === p)) {
+  // Check if current path is public
+  const isPublicPath = PUBLIC_PATHS.some(p => 
+    location.pathname === p || 
+    (p !== '/' && location.pathname.startsWith(p))
+  );
+
+  // Allow access to public paths
+  if (isPublicPath) {
     return <>{children}</>;
   }
 
   // Not verified - redirect to verify page
   if (user && isVerified === false) {
-    // Use replaceState to prevent back-button bypass
-    window.history.replaceState(null, '', '/verify-phone');
-    return <Navigate to="/verify-phone" replace />;
+    return <Navigate to="/verify-phone" replace state={{ from: location }} />;
   }
 
   return <>{children}</>;
