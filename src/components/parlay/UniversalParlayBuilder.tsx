@@ -6,6 +6,8 @@ import { Card } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useParlayBuilder } from '@/contexts/ParlayBuilderContext';
 import { ParlayLegCard } from './ParlayLegCard';
+import { CoachingAlertBanner } from './CoachingAlertBanner';
+import { useCoachingSignals } from '@/hooks/useCoachingSignals';
 import { SOURCE_LABELS } from '@/types/universal-parlay';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -28,6 +30,9 @@ export const UniversalParlayBuilder = () => {
 
   const [stake, setStake] = useState<string>('10');
   const [isSaving, setIsSaving] = useState(false);
+  
+  // Fetch coaching signals for NBA legs
+  const { signals, isLoading: coachingLoading, nbaLegCount, getSignalForLeg, criticalWarnings } = useCoachingSignals(legs);
 
   if (legCount === 0) return null;
 
@@ -54,6 +59,9 @@ export const UniversalParlayBuilder = () => {
     return acc;
   }, {} as Record<string, number>);
 
+  // Show coaching indicator in header if NBA legs have warnings
+  const hasCoachingWarnings = criticalWarnings.length > 0;
+
   return (
     <AnimatePresence>
       <motion.div
@@ -74,6 +82,17 @@ export const UniversalParlayBuilder = () => {
               <span className="bg-primary text-primary-foreground text-xs font-bold px-1.5 py-0.5 rounded-full">
                 {legCount}
               </span>
+              {/* Coaching warning indicator in collapsed state */}
+              {!isExpanded && hasCoachingWarnings && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 font-medium animate-pulse">
+                  ⚠️ {criticalWarnings.length}
+                </span>
+              )}
+              {!isExpanded && nbaLegCount > 0 && !hasCoachingWarnings && (
+                <span className="text-[10px] px-1 py-0.5 rounded bg-primary/10 text-primary">
+                  🏀 {nbaLegCount}
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <span className={cn(
@@ -99,8 +118,13 @@ export const UniversalParlayBuilder = () => {
                 exit={{ height: 0, opacity: 0 }}
                 transition={{ duration: 0.2 }}
               >
+                {/* Coaching Alert Banner */}
+                {nbaLegCount > 0 && (
+                  <CoachingAlertBanner signals={signals} isLoading={coachingLoading} />
+                )}
+                
                 {/* Source Breakdown */}
-                <div className="px-3 pb-2 flex flex-wrap gap-1">
+                <div className="px-3 pb-2 pt-2 flex flex-wrap gap-1">
                   {Object.entries(sourceBreakdown).map(([source, count]) => (
                     <span
                       key={source}
@@ -122,6 +146,7 @@ export const UniversalParlayBuilder = () => {
                         key={leg.id}
                         leg={leg}
                         onRemove={removeLeg}
+                        coachingSignal={getSignalForLeg(leg.id)}
                       />
                     ))}
                   </div>
