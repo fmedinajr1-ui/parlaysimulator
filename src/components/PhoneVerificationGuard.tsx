@@ -26,10 +26,26 @@ export function PhoneVerificationGuard({ children }: PhoneVerificationGuardProps
       }
 
       try {
+        // Check if user is admin first - admins bypass phone verification
+        const { data: roleData } = await supabase
+          .from('user_roles')
+          .select('role')
+          .eq('user_id', user.id)
+          .eq('role', 'admin')
+          .maybeSingle();
+
+        if (roleData) {
+          // User is admin, bypass phone verification
+          setIsVerified(true);
+          setIsChecking(false);
+          return;
+        }
+
+        // Check phone verification for non-admin users
         const { data, error } = await supabase
           .from('profiles')
           .select('phone_verified')
-          .eq('id', user.id)
+          .eq('user_id', user.id)
           .maybeSingle();
 
         if (error) {
@@ -48,6 +64,9 @@ export function PhoneVerificationGuard({ children }: PhoneVerificationGuardProps
       }
     };
 
+    // Reset checking state when user changes
+    setIsChecking(true);
+    
     if (!authLoading) {
       checkPhoneVerification();
     }
