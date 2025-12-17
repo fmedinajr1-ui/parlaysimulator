@@ -2,61 +2,82 @@ import React from 'react';
 import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { UniversalLeg, SOURCE_LABELS } from '@/types/universal-parlay';
+import { CoachingSignal } from '@/hooks/useCoachingSignals';
+import { CoachingWarningBadge } from './CoachingWarningBadge';
 import { cn } from '@/lib/utils';
 
 interface ParlayLegCardProps {
   leg: UniversalLeg;
   onRemove: (id: string) => void;
+  coachingSignal?: CoachingSignal;
 }
 
-export const ParlayLegCard = ({ leg, onRemove }: ParlayLegCardProps) => {
+export const ParlayLegCard = ({ leg, onRemove, coachingSignal }: ParlayLegCardProps) => {
   const sourceInfo = SOURCE_LABELS[leg.source];
   
   const formatOdds = (odds: number) => {
     return odds > 0 ? `+${odds}` : odds.toString();
   };
 
+  // Determine if we should show a border highlight based on coaching signal
+  const getBorderStyle = () => {
+    if (!coachingSignal) return 'border-border/50';
+    if (coachingSignal.recommendation === 'FADE') return 'border-red-500/40';
+    if (coachingSignal.recommendation === 'PICK') return 'border-green-500/40';
+    return 'border-yellow-500/40';
+  };
+
   return (
-    <div className="flex items-center justify-between gap-2 p-2 rounded-lg bg-card/50 border border-border/50">
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5 mb-0.5">
-          <span className={cn("text-xs font-medium", sourceInfo.color)}>
-            {sourceInfo.emoji} {sourceInfo.label}
-          </span>
-          {leg.sport && (
-            <span className="text-[10px] text-muted-foreground uppercase">
-              {leg.sport.replace('_', ' ')}
+    <div className={cn(
+      "flex flex-col gap-1.5 p-2 rounded-lg bg-card/50 border",
+      getBorderStyle()
+    )}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 mb-0.5">
+            <span className={cn("text-xs font-medium", sourceInfo.color)}>
+              {sourceInfo.emoji} {sourceInfo.label}
             </span>
-          )}
-          {leg.confidenceScore && leg.source === 'godmode' && (
-            <span className="text-[10px] font-medium text-purple-400">
-              {Math.round(leg.confidenceScore)}% score
-            </span>
+            {leg.sport && (
+              <span className="text-[10px] text-muted-foreground uppercase">
+                {leg.sport.replace('_', ' ')}
+              </span>
+            )}
+            {leg.confidenceScore && leg.source === 'godmode' && (
+              <span className="text-[10px] font-medium text-purple-400">
+                {Math.round(leg.confidenceScore)}% score
+              </span>
+            )}
+          </div>
+          <p className="text-sm font-medium truncate">{leg.description}</p>
+          {leg.playerName && leg.propType && leg.line && (
+            <p className="text-xs text-muted-foreground truncate">
+              {leg.playerName} {leg.side?.toUpperCase()} {leg.line} {leg.propType}
+            </p>
           )}
         </div>
-        <p className="text-sm font-medium truncate">{leg.description}</p>
-        {leg.playerName && leg.propType && leg.line && (
-          <p className="text-xs text-muted-foreground truncate">
-            {leg.playerName} {leg.side?.toUpperCase()} {leg.line} {leg.propType}
-          </p>
-        )}
+        <div className="flex items-center gap-2 shrink-0">
+          <span className={cn(
+            "text-sm font-bold",
+            leg.odds > 0 ? "text-green-500" : "text-muted-foreground"
+          )}>
+            {formatOdds(leg.odds)}
+          </span>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-6 w-6 text-muted-foreground hover:text-destructive"
+            onClick={() => onRemove(leg.id)}
+          >
+            <X className="h-3 w-3" />
+          </Button>
+        </div>
       </div>
-      <div className="flex items-center gap-2 shrink-0">
-        <span className={cn(
-          "text-sm font-bold",
-          leg.odds > 0 ? "text-green-500" : "text-muted-foreground"
-        )}>
-          {formatOdds(leg.odds)}
-        </span>
-        <Button
-          size="icon"
-          variant="ghost"
-          className="h-6 w-6 text-muted-foreground hover:text-destructive"
-          onClick={() => onRemove(leg.id)}
-        >
-          <X className="h-3 w-3" />
-        </Button>
-      </div>
+      
+      {/* Coaching Signal Badge */}
+      {coachingSignal && (
+        <CoachingWarningBadge signal={coachingSignal} />
+      )}
     </div>
   );
 };
