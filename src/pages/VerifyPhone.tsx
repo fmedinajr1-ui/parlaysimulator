@@ -4,8 +4,9 @@ import { useAuth } from '@/contexts/AuthContext';
 import { PhoneVerification } from '@/components/auth/PhoneVerification';
 import { AppShell } from '@/components/layout/AppShell';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Shield, Loader2 } from 'lucide-react';
+import { Shield } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import { FullPageWolfLoader } from '@/components/ui/wolf-loader';
 
 export default function VerifyPhone() {
   const navigate = useNavigate();
@@ -61,15 +62,10 @@ export default function VerifyPhone() {
       }
     };
 
-    if (!isLoading) {
+    if (!isLoading && user) {
       checkVerification();
-    }
-  }, [user, isLoading, navigate]);
-
-  // Redirect to auth if not logged in
-  useEffect(() => {
-    if (!isLoading && !user) {
-      navigate('/auth', { replace: true });
+    } else if (!isLoading && !user) {
+      setChecking(false);
     }
   }, [user, isLoading, navigate]);
 
@@ -78,18 +74,20 @@ export default function VerifyPhone() {
     navigate('/', { replace: true });
   };
 
-  if (isLoading || checking) {
-    return (
-      <AppShell>
-        <div className="flex items-center justify-center min-h-[60vh]">
-          <Loader2 className="w-8 h-8 animate-spin text-primary" />
-        </div>
-      </AppShell>
-    );
+  // Show loader while auth is loading
+  if (isLoading) {
+    return <FullPageWolfLoader text="Loading..." />;
   }
 
+  // Redirect to auth if not logged in
   if (!user) {
+    navigate('/auth', { replace: true });
     return null;
+  }
+
+  // Show loader while checking verification status
+  if (checking) {
+    return <FullPageWolfLoader text="Checking verification..." />;
   }
 
   return (
