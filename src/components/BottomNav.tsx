@@ -66,7 +66,8 @@ export function BottomNav() {
               onClick={handleClick}
               className={cn(
                 "relative flex flex-col items-center justify-center gap-0.5",
-                "flex-1 h-full max-w-[80px]",
+                "flex-1 h-full",
+                isSmallPhone ? "max-w-[56px]" : "max-w-[80px]",
                 "transition-all duration-200 active:scale-95",
                 "touch-manipulation select-none",
                 isActive 

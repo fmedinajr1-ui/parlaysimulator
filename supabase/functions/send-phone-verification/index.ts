@@ -114,10 +114,39 @@ serve(async (req) => {
       body: formData.toString(),
     });
 
+    const twilioData = await twilioResponse.json();
+    logStep('Twilio response', { 
+      status: twilioResponse.status, 
+      sid: twilioData.sid,
+      messageStatus: twilioData.status,
+      errorCode: twilioData.code,
+      errorMessage: twilioData.message
+    });
+
     if (!twilioResponse.ok) {
-      const errorData = await twilioResponse.text();
-      logStep('Twilio error', errorData);
-      throw new Error('Failed to send SMS');
+      const errorMessage = twilioData.message || 'Failed to send SMS';
+      const errorCode = twilioData.code;
+      
+      // Handle specific Twilio error codes
+      if (errorCode === 21608) {
+        throw new Error('SMS not enabled for this phone number. Please contact support.');
+      } else if (errorCode === 21211) {
+        throw new Error('Invalid phone number format.');
+      } else if (errorCode === 21614) {
+        throw new Error('This phone number cannot receive SMS messages.');
+      } else if (errorCode === 21610) {
+        throw new Error('This number has been blocked from receiving messages.');
+      } else if (errorCode === 21408) {
+        throw new Error('SMS service not available in this region.');
+      }
+      
+      logStep('Twilio error details', { errorCode, errorMessage });
+      throw new Error(errorMessage);
+    }
+    
+    // Check if message was queued successfully
+    if (twilioData.status !== 'queued' && twilioData.status !== 'sent') {
+      logStep('Unexpected message status', twilioData.status);
     }
 
     logStep('SMS sent successfully');
