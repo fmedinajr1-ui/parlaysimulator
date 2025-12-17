@@ -587,6 +587,110 @@ export type Database = {
         }
         Relationships: []
       }
+      coach_game_tendencies: {
+        Row: {
+          coach_id: string | null
+          created_at: string | null
+          event_id: string | null
+          game_date: string
+          id: string
+          lineup_experiments: number | null
+          pace: number | null
+          rotation_size: number | null
+          situation: string
+          star_minutes_pct: number | null
+          total_possessions: number | null
+        }
+        Insert: {
+          coach_id?: string | null
+          created_at?: string | null
+          event_id?: string | null
+          game_date: string
+          id?: string
+          lineup_experiments?: number | null
+          pace?: number | null
+          rotation_size?: number | null
+          situation: string
+          star_minutes_pct?: number | null
+          total_possessions?: number | null
+        }
+        Update: {
+          coach_id?: string | null
+          created_at?: string | null
+          event_id?: string | null
+          game_date?: string
+          id?: string
+          lineup_experiments?: number | null
+          pace?: number | null
+          rotation_size?: number | null
+          situation?: string
+          star_minutes_pct?: number | null
+          total_possessions?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "coach_game_tendencies_coach_id_fkey"
+            columns: ["coach_id"]
+            isOneToOne: false
+            referencedRelation: "coach_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      coach_profiles: {
+        Row: {
+          b2b_rest_tendency: string | null
+          blowout_minutes_reduction: number | null
+          coach_name: string
+          created_at: string | null
+          fourth_quarter_pattern: string | null
+          id: string
+          is_active: boolean | null
+          pace_preference: string | null
+          rotation_depth: number | null
+          sport: string
+          star_usage_pct: number | null
+          team_name: string
+          tenure_end_date: string | null
+          tenure_start_date: string
+          updated_at: string | null
+        }
+        Insert: {
+          b2b_rest_tendency?: string | null
+          blowout_minutes_reduction?: number | null
+          coach_name: string
+          created_at?: string | null
+          fourth_quarter_pattern?: string | null
+          id?: string
+          is_active?: boolean | null
+          pace_preference?: string | null
+          rotation_depth?: number | null
+          sport?: string
+          star_usage_pct?: number | null
+          team_name: string
+          tenure_end_date?: string | null
+          tenure_start_date: string
+          updated_at?: string | null
+        }
+        Update: {
+          b2b_rest_tendency?: string | null
+          blowout_minutes_reduction?: number | null
+          coach_name?: string
+          created_at?: string | null
+          fourth_quarter_pattern?: string | null
+          id?: string
+          is_active?: boolean | null
+          pace_preference?: string | null
+          rotation_depth?: number | null
+          sport?: string
+          star_usage_pct?: number | null
+          team_name?: string
+          tenure_end_date?: string | null
+          tenure_start_date?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       cron_job_history: {
         Row: {
           completed_at: string | null
