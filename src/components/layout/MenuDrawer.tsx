@@ -156,16 +156,24 @@ export function MenuDrawer() {
         <button
           className={cn(
             "relative flex flex-col items-center justify-center gap-0.5",
-            "flex-1 h-full max-w-[80px]",
+            "flex-1 h-full",
+            isSmallPhone ? "max-w-[56px]" : "max-w-[80px]",
             "transition-all duration-200 active:scale-95",
             "touch-manipulation select-none",
             "text-muted-foreground active:text-foreground"
           )}
         >
-          <div className="relative flex items-center justify-center w-12 h-8 rounded-2xl">
-            <Menu className="w-[22px] h-[22px]" />
+          <div className={cn(
+            "relative flex items-center justify-center rounded-2xl",
+            isSmallPhone ? "w-10 h-7" : "w-12 h-8"
+          )}>
+            <Menu className={cn(
+              isSmallPhone ? "w-5 h-5" : "w-[22px] h-[22px]"
+            )} />
           </div>
-          <span className="text-[11px] font-semibold">More</span>
+          {!isSmallPhone && (
+            <span className="text-[11px] font-semibold">More</span>
+          )}
         </button>
       </SheetTrigger>
       
