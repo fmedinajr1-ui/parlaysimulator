@@ -109,7 +109,7 @@ export default function VerifyPhone() {
             <PhoneVerification
               userId={user.id}
               onVerified={handleVerified}
-              onBack={() => navigate('/auth')}
+              onBack={() => navigate('/auth?mode=signup')}
             />
           </CardContent>
         </Card>
