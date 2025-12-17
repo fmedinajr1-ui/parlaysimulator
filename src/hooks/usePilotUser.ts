@@ -96,14 +96,13 @@ export function usePilotUser() {
         return { success: false, error: error.message };
       }
 
-      // Refresh status after decrement
-      await checkStatus();
+      // No need to manually refresh - realtime will update the state
       return data;
     } catch (err) {
       console.error('Error decrementing scan:', err);
       return { success: false, error: 'Failed to decrement scan' };
     }
-  }, [user, session, state.isAdmin, state.isSubscribed, checkStatus]);
+  }, [user, session, state.isAdmin, state.isSubscribed]);
 
   const purchaseScans = useCallback(async (packType: 'single' | 'pack20' | 'pack50') => {
     if (!user || !session) return;
@@ -146,13 +145,13 @@ export function usePilotUser() {
         return;
       }
 
-      // Refresh status after credit
-      await checkStatus();
+      // No need to manually refresh - realtime will update the state
     } catch (err) {
       console.error('Error crediting scans:', err);
     }
-  }, [user, session, checkStatus]);
+  }, [user, session]);
 
+  // Initial fetch
   useEffect(() => {
     checkStatus();
   }, [checkStatus]);
@@ -163,6 +162,50 @@ export function usePilotUser() {
     window.addEventListener('focus', handleFocus);
     return () => window.removeEventListener('focus', handleFocus);
   }, [checkStatus]);
+
+  // Real-time subscription for instant credit updates
+  useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase
+      .channel(`pilot-quota-${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*', // Listen for INSERT, UPDATE, DELETE
+          schema: 'public',
+          table: 'pilot_user_quotas',
+          filter: `user_id=eq.${user.id}`,
+        },
+        (payload) => {
+          // Update state immediately from realtime payload
+          const newData = payload.new as {
+            free_scans_remaining?: number;
+            free_compares_remaining?: number;
+            paid_scan_balance?: number;
+          };
+
+          if (newData) {
+            const freeScans = newData.free_scans_remaining ?? 0;
+            const paidScans = newData.paid_scan_balance ?? 0;
+            
+            setState(prev => ({
+              ...prev,
+              freeScansRemaining: freeScans,
+              freeComparesRemaining: newData.free_compares_remaining ?? prev.freeComparesRemaining,
+              paidScanBalance: paidScans,
+              totalScansAvailable: freeScans + paidScans,
+              canScan: (freeScans + paidScans) > 0 || prev.isAdmin || prev.isSubscribed,
+            }));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id]);
 
   return {
     ...state,

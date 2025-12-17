@@ -2,7 +2,7 @@ import { ReactNode, useEffect, useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
-import { Loader2 } from 'lucide-react';
+import { FullPageWolfLoader } from '@/components/ui/wolf-loader';
 
 interface PhoneVerificationGuardProps {
   children: ReactNode;
@@ -74,11 +74,7 @@ export function PhoneVerificationGuard({ children }: PhoneVerificationGuardProps
 
   // Still loading
   if (authLoading || isChecking) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
+    return <FullPageWolfLoader />;
   }
 
   // Check if current path is public

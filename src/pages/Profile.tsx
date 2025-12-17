@@ -23,6 +23,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Loader2, LogOut, Upload, Crown, User, Settings, Target, LineChart, GitCompare, Trash2, ChevronDown, BarChart3, Zap, History } from 'lucide-react';
+import { FullPageWolfLoader } from '@/components/ui/wolf-loader';
 import { toast } from '@/hooks/use-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { MobileHeader } from '@/components/layout/MobileHeader';
@@ -140,15 +141,11 @@ const Profile = () => {
       title: "Signed out",
       description: "See you next time, degen!"
     });
-    navigate('/');
+    navigate('/', { replace: true });
   };
 
   if (authLoading || isLoading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
+    return <FullPageWolfLoader />;
   }
 
   if (!profile) {
