@@ -2,7 +2,7 @@
 // Force cache bust on version change
 
 const CACHE_NAME = 'parlay-farm-v20251211';
-const OFFLINE_URL = '/';
+const OFFLINE_URL = '/offline';
 
 // Assets to cache immediately on install
 const PRECACHE_ASSETS = [
