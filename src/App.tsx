@@ -28,6 +28,7 @@ const SharpMoney = React.lazy(() => import("./pages/SharpMoney"));
 const LineShopping = React.lazy(() => import("./pages/LineShopping"));
 const NBAFatigue = React.lazy(() => import("./pages/NBAFatigue"));
 const Install = React.lazy(() => import("./pages/Install"));
+const Offline = React.lazy(() => import("./pages/Offline"));
 const NotFound = React.lazy(() => import("./pages/NotFound"));
 const PVSCalculator = React.lazy(() => import("./pages/PVSCalculator"));
 const GodModeUpsets = React.lazy(() => import("./pages/GodModeUpsets"));
@@ -90,6 +91,7 @@ function AnimatedRoutes() {
             <Route path="/line-shopping" element={<LineShopping />} />
             <Route path="/nba-fatigue" element={<NBAFatigue />} />
             <Route path="/install" element={<Install />} />
+            <Route path="/offline" element={<Offline />} />
             <Route path="/pvs-calculator" element={<PVSCalculator />} />
             <Route path="/god-mode" element={<GodModeUpsets />} />
             <Route path="/god-mode-tracker" element={<GodModeDashboard />} />

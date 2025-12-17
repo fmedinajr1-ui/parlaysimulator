@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { MobileHeader } from "@/components/layout/MobileHeader";
 import { 
   Download, 
   Smartphone, 
@@ -101,17 +102,14 @@ const Install = () => {
 
   return (
     <div className="min-h-screen bg-background pb-24">
+      <MobileHeader 
+        title="Install App" 
+        subtitle="Get the native experience"
+        showBack
+        backTo="/"
+        icon={<Download className="w-5 h-5" />}
+      />
       <main className="max-w-lg mx-auto px-4 py-6">
-        {/* Hero */}
-        <div className="text-center mb-8">
-          <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/10 flex items-center justify-center mx-auto mb-4 shadow-lg">
-            <Download className="w-10 h-10 text-primary" />
-          </div>
-          <h1 className="text-2xl font-display text-foreground mb-2">INSTALL APP</h1>
-          <p className="text-muted-foreground">
-            Get the full native experience on your device
-          </p>
-        </div>
 
         {/* Install Button */}
         {deferredPrompt ? (

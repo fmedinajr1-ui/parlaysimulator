@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { X, Download, Smartphone } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -8,7 +9,11 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
 }
 
+const EXCLUDED_PATHS = ['/auth', '/install', '/verify-phone', '/offline'];
+
 export function PWAInstallPrompt() {
+  const navigate = useNavigate();
+  const location = useLocation();
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [showPrompt, setShowPrompt] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
@@ -68,11 +73,21 @@ export function PWAInstallPrompt() {
     localStorage.setItem('pwa-prompt-dismissed', new Date().toISOString());
   };
 
+  const handleLearnMore = () => {
+    setShowPrompt(false);
+    navigate('/install');
+  };
+
+  // Don't show on excluded paths
+  if (EXCLUDED_PATHS.some(path => location.pathname.startsWith(path))) {
+    return null;
+  }
+
   if (!showPrompt) return null;
 
   return (
     <div className={cn(
-      "fixed bottom-20 left-4 right-4 z-50 animate-fade-in",
+      "fixed bottom-24 left-4 right-4 z-50 animate-fade-in",
       "bg-card/95 backdrop-blur-xl rounded-2xl border border-border shadow-2xl",
       "p-4 max-w-md mx-auto"
     )}>
@@ -110,7 +125,7 @@ export function PWAInstallPrompt() {
             </Button>
           ) : isIOS ? (
             <Button 
-              onClick={() => window.location.href = '/install'} 
+              onClick={handleLearnMore} 
               size="sm" 
               variant="outline"
               className="w-full"
