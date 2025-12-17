@@ -45,8 +45,8 @@ export function BottomNav() {
       )}
       
       <div className={cn(
-        "flex items-center justify-around px-2 max-w-lg mx-auto pb-safe",
-        isSmallPhone ? "h-[64px]" : "h-[72px]"
+        "flex items-center justify-evenly px-1 max-w-lg mx-auto pb-safe",
+        isSmallPhone ? "h-[60px]" : "h-[72px]"
       )}>
         {navItems.map((item) => {
           const isActive = location.pathname === item.path;

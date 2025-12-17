@@ -14,6 +14,7 @@ interface PilotUserState {
   totalScansAvailable: number;
   hasOddsAccess: boolean;
   phoneVerified: boolean;
+  isPurchasing: boolean;
 }
 
 export function usePilotUser() {
@@ -30,6 +31,7 @@ export function usePilotUser() {
     totalScansAvailable: 5,
     hasOddsAccess: false,
     phoneVerified: false,
+    isPurchasing: false,
   });
 
   const checkStatus = useCallback(async () => {
@@ -46,6 +48,7 @@ export function usePilotUser() {
         totalScansAvailable: 5,
         hasOddsAccess: false,
         phoneVerified: false,
+        isPurchasing: false,
       });
       return;
     }
@@ -59,7 +62,7 @@ export function usePilotUser() {
         return;
       }
 
-      setState({
+      setState(prev => ({
         isLoading: false,
         isPilotUser: data.isPilotUser || false,
         isAdmin: data.isAdmin || false,
@@ -71,7 +74,8 @@ export function usePilotUser() {
         totalScansAvailable: (data.freeScansRemaining ?? 0) + (data.paidScanBalance ?? 0),
         hasOddsAccess: data.hasOddsAccess || false,
         phoneVerified: data.phoneVerified ?? false,
-      });
+        isPurchasing: prev.isPurchasing,
+      }));
     } catch (err) {
       console.error('Error checking pilot status:', err);
       setState(prev => ({ ...prev, isLoading: false }));
@@ -104,6 +108,8 @@ export function usePilotUser() {
   const purchaseScans = useCallback(async (packType: 'single' | 'pack20' | 'pack50') => {
     if (!user || !session) return;
 
+    setState(prev => ({ ...prev, isPurchasing: true }));
+
     try {
       const { data, error } = await supabase.functions.invoke('purchase-scans', {
         body: { packType },
@@ -111,15 +117,19 @@ export function usePilotUser() {
 
       if (error) {
         console.error('Error purchasing scans:', error);
+        setState(prev => ({ ...prev, isPurchasing: false }));
         return;
       }
 
       if (data?.url) {
         // Use location.href for better mobile/PWA experience
         window.location.href = data.url;
+      } else {
+        setState(prev => ({ ...prev, isPurchasing: false }));
       }
     } catch (err) {
       console.error('Error purchasing scans:', err);
+      setState(prev => ({ ...prev, isPurchasing: false }));
     }
   }, [user, session]);
 
