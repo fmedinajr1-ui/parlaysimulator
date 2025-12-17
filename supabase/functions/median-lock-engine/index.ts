@@ -752,8 +752,29 @@ serve(async (req) => {
 
       // Build Green Slips
       const locks = results.filter(r => r.status === 'LOCK' || r.status === 'STRONG');
+      console.log(`Building slips from ${locks.length} LOCK/STRONG candidates`);
+      
       const slip2 = buildGreenSlips(locks, '2-leg');
+      console.log(`2-leg slips generated: ${slip2.length}`);
+      
       const slip3 = buildGreenSlips(locks, '3-leg');
+      console.log(`3-leg slips generated: ${slip3.length}`);
+      
+      if (slip3.length === 0 && locks.length >= 3) {
+        console.warn(`WARNING: No 3-leg slips generated despite ${locks.length} eligible candidates. Check filtering logic.`);
+      }
+
+      // Delete existing slips for today before inserting new ones (prevents duplicates)
+      const { error: deleteError } = await supabase
+        .from('median_lock_slips')
+        .delete()
+        .eq('slate_date', targetDate);
+      
+      if (deleteError) {
+        console.error('Error deleting existing slips:', deleteError);
+      } else {
+        console.log(`Deleted existing slips for ${targetDate}`);
+      }
 
       // Insert slips
       const slipsToInsert = [
@@ -791,12 +812,18 @@ serve(async (req) => {
         })),
       ];
 
+      console.log(`Total slips to insert: ${slipsToInsert.length} (${slip2.length} 2-leg, ${slip3.length} 3-leg)`);
+
       if (slipsToInsert.length > 0) {
         const { error: slipError } = await supabase
           .from('median_lock_slips')
           .insert(slipsToInsert);
         
-        if (slipError) console.error('Slip insert error:', slipError);
+        if (slipError) {
+          console.error('Slip insert error:', slipError);
+        } else {
+          console.log(`Successfully inserted ${slipsToInsert.length} slips`);
+        }
       }
 
       const summary = {
