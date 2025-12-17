@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from '@/hooks/use-toast';
 import { Loader2, Mail, Lock, ArrowLeft } from 'lucide-react';
+import { FullPageWolfLoader } from '@/components/ui/wolf-loader';
 import { Link } from 'react-router-dom';
 import { z } from 'zod';
 
@@ -119,11 +120,7 @@ const Auth = () => {
   };
 
   if (isLoading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
+    return <FullPageWolfLoader />;
   }
 
   // Phone verification step for new signups - no back button to prevent bypass
