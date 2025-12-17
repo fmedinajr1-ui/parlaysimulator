@@ -344,6 +344,80 @@ async function seedNBACoaches(supabase: any): Promise<{ seeded: number }> {
   return { seeded };
 }
 
+async function logCoachingPrediction(
+  supabase: any,
+  coachId: string,
+  coachName: string,
+  teamName: string,
+  eventId: string,
+  gameDate: string,
+  situation: string,
+  propType: string,
+  recommendation: string,
+  confidence: number,
+  propAdjustments: any,
+  playerName?: string,
+  propLine?: number,
+  predictedDirection?: string
+): Promise<{ logged: boolean; id?: string }> {
+  console.log(`Logging coaching prediction for ${coachName} - ${teamName}`);
+  
+  const { data, error } = await supabase
+    .from('coaching_predictions')
+    .insert({
+      coach_id: coachId,
+      coach_name: coachName,
+      team_name: teamName,
+      event_id: eventId,
+      game_date: gameDate,
+      situation,
+      prop_type: propType,
+      player_name: playerName || null,
+      recommendation,
+      confidence,
+      prop_adjustments: propAdjustments,
+      prop_line: propLine || null,
+      predicted_direction: predictedDirection || null
+    })
+    .select('id')
+    .single();
+
+  if (error) {
+    console.error('Error logging prediction:', error);
+    return { logged: false };
+  }
+
+  return { logged: true, id: data?.id };
+}
+
+async function getCoachingAccuracy(
+  supabase: any,
+  coachId: string,
+  situation?: string,
+  propType?: string
+): Promise<any> {
+  let query = supabase
+    .from('coaching_accuracy_metrics')
+    .select('*')
+    .eq('coach_id', coachId);
+
+  if (situation) {
+    query = query.eq('situation', situation);
+  }
+  if (propType) {
+    query = query.eq('prop_type', propType);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    console.error('Error fetching accuracy:', error);
+    return null;
+  }
+
+  return data;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -355,7 +429,7 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    const { action, teamName, situation, propType } = await req.json();
+    const { action, teamName, situation, propType, eventId, gameDate, playerName, propLine, predictedDirection, coachId } = await req.json();
     console.log(`Coach Tendencies Engine - Action: ${action}, Team: ${teamName}`);
 
     let result: any;
@@ -371,6 +445,55 @@ serve(async (req) => {
           situation || 'fresh',
           propType || 'points'
         );
+        break;
+
+      case 'analyze-and-log':
+        if (!teamName || !eventId || !gameDate) {
+          throw new Error('teamName, eventId, and gameDate are required for analyze-and-log action');
+        }
+        const analysis = await analyzeCoachTendencies(
+          supabase,
+          teamName,
+          situation || 'fresh',
+          propType || 'points'
+        );
+        
+        if (analysis) {
+          // Get coach ID
+          const { data: coachData } = await supabase
+            .from('coach_profiles')
+            .select('id')
+            .eq('team_name', teamName)
+            .eq('is_active', true)
+            .maybeSingle();
+
+          if (coachData) {
+            await logCoachingPrediction(
+              supabase,
+              coachData.id,
+              analysis.coachName,
+              teamName,
+              eventId,
+              gameDate,
+              situation || 'fresh',
+              propType || 'points',
+              analysis.recommendation,
+              analysis.confidence,
+              analysis.propAdjustments,
+              playerName,
+              propLine,
+              predictedDirection
+            );
+          }
+        }
+        result = analysis;
+        break;
+
+      case 'get-accuracy':
+        if (!coachId) {
+          throw new Error('coachId is required for get-accuracy action');
+        }
+        result = await getCoachingAccuracy(supabase, coachId, situation, propType);
         break;
 
       case 'get-profile':

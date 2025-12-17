@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Users, TrendingUp, TrendingDown, Clock, Activity, Minus, ChevronDown, ChevronUp } from "lucide-react";
+import { Users, TrendingUp, TrendingDown, Clock, Activity, ChevronDown, ChevronUp, Target, Percent } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { motion, AnimatePresence } from "framer-motion";
 import { ParlayLeg, LegAnalysis } from "@/types/parlay";
@@ -29,6 +29,11 @@ interface CoachTendencySignal {
     assists: number;
     minutes: number;
   };
+  accuracy?: {
+    winRate: number;
+    totalPredictions: number;
+    sampleConfidence: 'high' | 'medium' | 'low';
+  };
 }
 
 interface CoachingInsightsCardProps {
@@ -37,8 +42,16 @@ interface CoachingInsightsCardProps {
   delay?: number;
 }
 
+interface AccuracyMetric {
+  coach_id: string;
+  coach_name: string;
+  win_rate: number;
+  total_predictions: number;
+}
+
 export const CoachingInsightsCard = ({ legs, legAnalyses, delay = 0 }: CoachingInsightsCardProps) => {
   const [coachingData, setCoachingData] = useState<CoachTendencySignal[]>([]);
+  const [accuracyData, setAccuracyData] = useState<Map<string, AccuracyMetric>>(new Map());
   const [isLoading, setIsLoading] = useState(true);
   const [isOpen, setIsOpen] = useState(false);
 
@@ -120,6 +133,18 @@ export const CoachingInsightsCard = ({ legs, legAnalyses, delay = 0 }: CoachingI
       setIsLoading(true);
       const results: CoachTendencySignal[] = [];
 
+      // Fetch accuracy metrics first
+      const { data: metricsData } = await supabase
+        .from('coaching_accuracy_metrics')
+        .select('coach_id, coach_name, win_rate, total_predictions')
+        .gt('total_predictions', 0);
+
+      const metricsMap = new Map<string, AccuracyMetric>();
+      metricsData?.forEach((m: AccuracyMetric) => {
+        metricsMap.set(m.coach_name.toLowerCase(), m);
+      });
+      setAccuracyData(metricsMap);
+
       // Fetch coaching data for each team (in parallel)
       const promises = teams.map(async (team) => {
         try {
@@ -131,8 +156,21 @@ export const CoachingInsightsCard = ({ legs, legAnalyses, delay = 0 }: CoachingI
             }
           });
 
-          if (!error && data) {
-            return data as CoachTendencySignal;
+          if (!error && data?.data) {
+            const coachData = data.data as CoachTendencySignal;
+            
+            // Add accuracy info if available
+            const accuracyInfo = metricsMap.get(coachData.coachName?.toLowerCase());
+            if (accuracyInfo && accuracyInfo.total_predictions > 0) {
+              coachData.accuracy = {
+                winRate: accuracyInfo.win_rate,
+                totalPredictions: accuracyInfo.total_predictions,
+                sampleConfidence: accuracyInfo.total_predictions >= 30 ? 'high' : 
+                                   accuracyInfo.total_predictions >= 15 ? 'medium' : 'low'
+              };
+            }
+            
+            return coachData;
           }
         } catch (err) {
           console.error(`Error fetching coaching data for ${team}:`, err);
@@ -254,16 +292,37 @@ export const CoachingInsightsCard = ({ legs, legAnalyses, delay = 0 }: CoachingI
                     {/* Coach Header */}
                     <div className="flex items-start justify-between mb-3">
                       <div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-medium text-foreground">{coach.coachName}</span>
                           <Badge
                             className={cn("text-xs", getRecommendationColor(coach.recommendation))}
                           >
                             {coach.recommendation}
                           </Badge>
+                          {coach.accuracy && (
+                            <Badge 
+                              variant="outline" 
+                              className={cn(
+                                "text-xs gap-1",
+                                coach.accuracy.winRate >= 55 
+                                  ? "border-chart-2/50 text-chart-2" 
+                                  : coach.accuracy.winRate >= 50 
+                                    ? "border-chart-4/50 text-chart-4"
+                                    : "border-muted text-muted-foreground"
+                              )}
+                            >
+                              <Target className="w-3 h-3" />
+                              {coach.accuracy.winRate.toFixed(1)}%
+                            </Badge>
+                          )}
                         </div>
                         <p className="text-xs text-muted-foreground mt-0.5">
                           {coach.teamName} • {Math.floor(coach.tenureMonths / 12)}y {coach.tenureMonths % 12}m tenure
+                          {coach.accuracy && (
+                            <span className="ml-1 text-muted-foreground/70">
+                              • {coach.accuracy.totalPredictions} predictions ({coach.accuracy.sampleConfidence} conf)
+                            </span>
+                          )}
                         </p>
                       </div>
                       <div className="text-right">
