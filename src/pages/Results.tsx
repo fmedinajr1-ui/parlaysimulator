@@ -22,6 +22,7 @@ import { DoubleDownCard } from "@/components/results/DoubleDownCard";
 import { KellyStakeCard } from "@/components/results/KellyStakeCard";
 import { VarianceWarningCard } from "@/components/results/VarianceWarningCard";
 import { EnsembleConsensusCard } from "@/components/results/EnsembleConsensusCard";
+import { CoachingInsightsCard } from "@/components/results/CoachingInsightsCard";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, RotateCcw, Save, Loader2, LogIn } from "lucide-react";
 import { ParlaySimulation, ParlayAnalysis } from "@/types/parlay";
@@ -474,6 +475,13 @@ const Results = () => {
             legs={simulation.legs}
             legAnalyses={aiAnalysis?.legAnalyses}
             delay={205}
+          />
+
+          {/* Coaching Tendencies */}
+          <CoachingInsightsCard
+            legs={simulation.legs}
+            legAnalyses={aiAnalysis?.legAnalyses}
+            delay={207}
           />
 
           {/* Historical Insights - only show if user is logged in */}
