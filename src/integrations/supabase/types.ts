@@ -3759,6 +3759,54 @@ export type Database = {
         }
         Relationships: []
       }
+      projection_updates: {
+        Row: {
+          affected_line: number | null
+          change_percent: number | null
+          change_reason: string | null
+          created_at: string | null
+          id: string
+          is_significant: boolean | null
+          new_probability: number | null
+          new_projection: number | null
+          player_name: string
+          previous_probability: number | null
+          previous_projection: number | null
+          prop_type: string
+          sport: string | null
+        }
+        Insert: {
+          affected_line?: number | null
+          change_percent?: number | null
+          change_reason?: string | null
+          created_at?: string | null
+          id?: string
+          is_significant?: boolean | null
+          new_probability?: number | null
+          new_projection?: number | null
+          player_name: string
+          previous_probability?: number | null
+          previous_projection?: number | null
+          prop_type: string
+          sport?: string | null
+        }
+        Update: {
+          affected_line?: number | null
+          change_percent?: number | null
+          change_reason?: string | null
+          created_at?: string | null
+          id?: string
+          is_significant?: boolean | null
+          new_probability?: number | null
+          new_projection?: number | null
+          player_name?: string
+          previous_probability?: number | null
+          previous_projection?: number | null
+          prop_type?: string
+          sport?: string | null
+        }
+        Relationships: []
+      }
       push_subscriptions: {
         Row: {
           auth_key: string
