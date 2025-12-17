@@ -236,3 +236,6 @@ verify_jwt = false
 
 [functions.coach-tendencies-engine]
 verify_jwt = false
+
+[functions.auto-refresh-projections]
+verify_jwt = false
