@@ -18,7 +18,7 @@ export default function VerifyPhone() {
     window.history.replaceState(null, '', '/verify-phone');
   }, []);
 
-  // Check if already verified
+  // Check if already verified or if user is admin
   useEffect(() => {
     const checkVerification = async () => {
       if (!user) {
@@ -27,10 +27,25 @@ export default function VerifyPhone() {
       }
 
       try {
+        // Check if user is admin - admins bypass phone verification
+        const { data: roleData } = await supabase
+          .from('user_roles')
+          .select('role')
+          .eq('user_id', user.id)
+          .eq('role', 'admin')
+          .maybeSingle();
+
+        if (roleData) {
+          // User is admin, redirect to home
+          navigate('/', { replace: true });
+          return;
+        }
+
+        // Check phone verification for non-admin users
         const { data } = await supabase
           .from('profiles')
           .select('phone_verified')
-          .eq('id', user.id)
+          .eq('user_id', user.id)
           .maybeSingle();
 
         const verified = data?.phone_verified ?? false;
