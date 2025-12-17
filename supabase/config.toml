@@ -233,3 +233,6 @@ verify_jwt = false
 
 [functions.compare-parlays-ai]
 verify_jwt = false
+
+[functions.coach-tendencies-engine]
+verify_jwt = false

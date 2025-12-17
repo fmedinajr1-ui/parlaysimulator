@@ -51,6 +51,7 @@ export const DEFAULT_ENGINE_WEIGHTS: EngineWeight[] = [
   { name: 'trap_scanner', displayName: 'Trap Scanner', baseWeight: 0.9, accuracyMultiplier: 1.1, sampleSizeThreshold: 20 },
   { name: 'correlation', displayName: 'Correlation Model', baseWeight: 0.7, accuracyMultiplier: 1.0, sampleSizeThreshold: 50 },
   { name: 'monte_carlo', displayName: 'Monte Carlo', baseWeight: 0.85, accuracyMultiplier: 1.0, sampleSizeThreshold: 100 },
+  { name: 'coaching', displayName: 'Coaching Tendencies', baseWeight: 0.7, accuracyMultiplier: 1.1, sampleSizeThreshold: 15 },
 ];
 
 /**
@@ -470,6 +471,142 @@ export function extractHitRateSignals(prop: {
     });
   }
 
+  return signals;
+}
+
+/**
+ * Extract signals from coaching tendencies data
+ */
+export function extractCoachingSignals(coachData: {
+  pacePreference?: 'fast' | 'moderate' | 'slow' | null;
+  rotationDepth?: number | null;
+  starUsagePct?: number | null;
+  b2bRestTendency?: 'aggressive' | 'moderate' | 'cautious' | null;
+  tenureMonths?: number;
+  currentSituation?: string;
+  propType?: string;
+  recommendation?: 'pick' | 'fade' | 'neutral';
+  confidence?: number;
+  reasoning?: string;
+}): EngineSignal[] {
+  const signals: EngineSignal[] = [];
+  
+  if (!coachData || Object.keys(coachData).length === 0) {
+    return signals;
+  }
+  
+  const tenureMonths = coachData.tenureMonths || 12;
+  const tenureConfidence = Math.min(1, tenureMonths / 36); // Max confidence at 3 years
+  
+  // If we have a direct recommendation from the coaching engine
+  if (coachData.recommendation && coachData.confidence) {
+    signals.push({
+      engineName: 'coaching',
+      recommendation: coachData.recommendation,
+      confidence: coachData.confidence * tenureConfidence,
+      reasoning: coachData.reasoning || 'Coaching tendency signal',
+      historicalAccuracy: 0.55 + (tenureConfidence * 0.05), // 55-60% based on tenure
+      sampleSize: Math.min(100, tenureMonths * 2)
+    });
+    return signals;
+  }
+  
+  // Build signals from individual coaching attributes
+  const situation = coachData.currentSituation || 'fresh';
+  const propType = coachData.propType || 'points';
+  
+  // Pace preference signal (affects points/assists props)
+  if (coachData.pacePreference && (propType.includes('points') || propType.includes('assists'))) {
+    let paceRec: 'pick' | 'fade' | 'neutral' = 'neutral';
+    let paceConf = 0.5;
+    
+    if (coachData.pacePreference === 'fast') {
+      paceRec = 'pick'; // Fast pace = more scoring opportunities
+      paceConf = 0.65;
+    } else if (coachData.pacePreference === 'slow') {
+      paceRec = 'fade'; // Slow pace = fewer possessions
+      paceConf = 0.6;
+    }
+    
+    signals.push({
+      engineName: 'coaching',
+      recommendation: paceRec,
+      confidence: paceConf * tenureConfidence,
+      reasoning: `Coach runs ${coachData.pacePreference} pace offense`,
+      historicalAccuracy: 0.54,
+      sampleSize: Math.min(80, tenureMonths * 2)
+    });
+  }
+  
+  // B2B rest tendency signal
+  if (coachData.b2bRestTendency && (situation === 'b2b' || situation === 'b2b_road')) {
+    let b2bRec: 'pick' | 'fade' | 'neutral' = 'neutral';
+    let b2bConf = 0.5;
+    
+    if (coachData.b2bRestTendency === 'cautious') {
+      b2bRec = 'fade'; // Cautious = more rest/reduced minutes
+      b2bConf = 0.7;
+    } else if (coachData.b2bRestTendency === 'aggressive') {
+      b2bRec = 'pick'; // Aggressive = plays through
+      b2bConf = 0.55;
+    }
+    
+    signals.push({
+      engineName: 'coaching',
+      recommendation: b2bRec,
+      confidence: b2bConf * tenureConfidence,
+      reasoning: `Coach is ${coachData.b2bRestTendency} on B2Bs`,
+      historicalAccuracy: 0.58,
+      sampleSize: Math.min(60, tenureMonths)
+    });
+  }
+  
+  // Rotation depth signal (affects minutes props)
+  if (coachData.rotationDepth && propType.includes('minutes')) {
+    let rotRec: 'pick' | 'fade' | 'neutral' = 'neutral';
+    let rotConf = 0.5;
+    
+    if (coachData.rotationDepth >= 10) {
+      rotRec = 'fade'; // Deep rotation = less star minutes
+      rotConf = 0.6;
+    } else if (coachData.rotationDepth <= 7) {
+      rotRec = 'pick'; // Tight rotation = more star minutes
+      rotConf = 0.65;
+    }
+    
+    signals.push({
+      engineName: 'coaching',
+      recommendation: rotRec,
+      confidence: rotConf * tenureConfidence,
+      reasoning: `Coach uses ${coachData.rotationDepth}-man rotation`,
+      historicalAccuracy: 0.56,
+      sampleSize: Math.min(50, tenureMonths * 2)
+    });
+  }
+  
+  // Star usage signal
+  if (coachData.starUsagePct && propType.includes('points')) {
+    let usageRec: 'pick' | 'fade' | 'neutral' = 'neutral';
+    let usageConf = 0.5;
+    
+    if (coachData.starUsagePct >= 60) {
+      usageRec = 'pick'; // High star usage = more production
+      usageConf = 0.6;
+    } else if (coachData.starUsagePct <= 45) {
+      usageRec = 'fade'; // Balanced usage = lower individual ceilings
+      usageConf = 0.55;
+    }
+    
+    signals.push({
+      engineName: 'coaching',
+      recommendation: usageRec,
+      confidence: usageConf * tenureConfidence,
+      reasoning: `Coach's system has ${coachData.starUsagePct}% star usage`,
+      historicalAccuracy: 0.54,
+      sampleSize: Math.min(40, tenureMonths)
+    });
+  }
+  
   return signals;
 }
 
