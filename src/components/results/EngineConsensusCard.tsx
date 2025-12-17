@@ -19,7 +19,8 @@ const ENGINE_CONFIG: Record<string, { icon: typeof TrendingUp; colorClass: strin
   juiced: { icon: Flame, colorClass: 'text-yellow-400', label: 'Juiced Props', shortLabel: 'Juice' },
   godmode: { icon: Zap, colorClass: 'text-orange-400', label: 'God Mode', shortLabel: 'God' },
   fatigue: { icon: Activity, colorClass: 'text-red-400', label: 'Fatigue', shortLabel: 'Fat' },
-  bestbets: { icon: Star, colorClass: 'text-green-400', label: 'Best Bets', shortLabel: 'Best' }
+  bestbets: { icon: Star, colorClass: 'text-green-400', label: 'Best Bets', shortLabel: 'Best' },
+  coaching: { icon: Target, colorClass: 'text-emerald-400', label: 'Coaching', shortLabel: 'Coach' }
 };
 
 const getStatusIcon = (status: EngineSignal['status'], size: 'sm' | 'md' = 'md') => {
@@ -56,6 +57,7 @@ const formatScore = (engine: string, score: number | null): string => {
     case 'sharp':
     case 'hitrate':
     case 'fatigue':
+    case 'coaching':
       return `${Math.round(score)}%`;
     case 'pvs':
       return score >= 80 ? 'S' : score >= 65 ? 'A' : score >= 50 ? 'B' : score >= 35 ? 'C' : 'D';

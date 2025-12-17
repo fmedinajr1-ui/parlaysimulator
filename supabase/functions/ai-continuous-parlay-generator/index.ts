@@ -92,7 +92,7 @@ serve(async (req) => {
     const preferredComboSet = new Set((preferredCombos || []).map((c: any) => c.combination));
     console.log(`⭐ Preferred formula combos: ${preferredComboSet.size}`);
 
-    // Fetch picks from ALL 7 engines in parallel
+    // Fetch picks from ALL 8 engines in parallel (including coaching)
     const [
       sharpPicks,
       pvsPicks,
@@ -100,7 +100,8 @@ serve(async (req) => {
       juicedPicks,
       godmodePicks,
       fatiguePicks,
-      bestBetsPicks
+      bestBetsPicks,
+      coachingPicks
     ] = await Promise.all([
       fetchSharpPicks(supabase, weightMap),
       fetchPVSPicks(supabase, weightMap),
@@ -108,10 +109,11 @@ serve(async (req) => {
       fetchJuicedPicks(supabase, weightMap),
       fetchGodmodePicks(supabase, weightMap),
       fetchFatiguePicks(supabase, weightMap),
-      fetchBestBetsPicks(supabase, weightMap)
+      fetchBestBetsPicks(supabase, weightMap),
+      fetchCoachingPicks(supabase, weightMap)
     ]);
 
-    console.log(`📊 Picks fetched - Sharp: ${sharpPicks.length}, PVS: ${pvsPicks.length}, HitRate: ${hitratePicks.length}, Juiced: ${juicedPicks.length}, GodMode: ${godmodePicks.length}, Fatigue: ${fatiguePicks.length}, BestBets: ${bestBetsPicks.length}`);
+    console.log(`📊 Picks fetched - Sharp: ${sharpPicks.length}, PVS: ${pvsPicks.length}, HitRate: ${hitratePicks.length}, Juiced: ${juicedPicks.length}, GodMode: ${godmodePicks.length}, Fatigue: ${fatiguePicks.length}, BestBets: ${bestBetsPicks.length}, Coaching: ${coachingPicks.length}`);
 
     // Combine all picks
     let allPicks: PickCandidate[] = [
@@ -121,7 +123,8 @@ serve(async (req) => {
       ...juicedPicks,
       ...godmodePicks,
       ...fatiguePicks,
-      ...bestBetsPicks
+      ...bestBetsPicks,
+      ...coachingPicks
     ];
 
     // Filter out picks matching avoid patterns
@@ -266,7 +269,8 @@ serve(async (req) => {
         juiced: juicedPicks.length,
         godmode: godmodePicks.length,
         fatigue: fatiguePicks.length,
-        bestbets: bestBetsPicks.length
+        bestbets: bestBetsPicks.length,
+        coaching: coachingPicks.length
       }
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -586,6 +590,111 @@ async function fetchBestBetsPicks(supabase: any, weightMap: Map<string, FormulaW
     });
   }
 
+  return picks;
+}
+
+// Fetch coaching tendency picks
+async function fetchCoachingPicks(supabase: any, weightMap: Map<string, FormulaWeight>): Promise<PickCandidate[]> {
+  const picks: PickCandidate[] = [];
+  
+  // Fetch NBA coach profiles with clear tendencies
+  const { data: coaches } = await supabase
+    .from('coach_profiles')
+    .select('*')
+    .eq('sport', 'NBA')
+    .eq('is_active', true);
+
+  if (!coaches || coaches.length === 0) return picks;
+
+  // Get today's NBA games from fatigue tracking
+  const today = new Date().toISOString().split('T')[0];
+  const { data: todaysGames } = await supabase
+    .from('fatigue_edge_tracking')
+    .select('*')
+    .gte('game_date', today)
+    .is('recommended_side_won', null);
+
+  for (const game of todaysGames || []) {
+    // Find coaches for both teams
+    const homeCoach = coaches.find((c: any) => 
+      game.home_team?.toLowerCase().includes(c.team_name?.toLowerCase()) ||
+      c.team_name?.toLowerCase().includes(game.home_team?.split(' ').pop()?.toLowerCase())
+    );
+    const awayCoach = coaches.find((c: any) => 
+      game.away_team?.toLowerCase().includes(c.team_name?.toLowerCase()) ||
+      c.team_name?.toLowerCase().includes(game.away_team?.split(' ').pop()?.toLowerCase())
+    );
+
+    // Generate picks based on coaching tendencies
+    if (homeCoach) {
+      const b2bRest = homeCoach.b2b_rest_tendency;
+      const pacePreference = homeCoach.pace_preference;
+      
+      // Fast pace coaches boost points
+      if (pacePreference === 'fast') {
+        const weight = weightMap.get('coaching_pace_fast_coaching')?.current_weight || 1.0;
+        picks.push({
+          description: `${game.home_team} team total Over (Coach ${homeCoach.coach_name} - Fast Pace)`,
+          odds: -110,
+          event_id: game.event_id,
+          sport: 'basketball_nba',
+          engine_source: 'coaching',
+          formula_name: 'coaching_pace_fast',
+          formula_scores: {
+            pace_preference: 80,
+            coach_tenure: homeCoach.tenure_start_date ? 
+              Math.floor((Date.now() - new Date(homeCoach.tenure_start_date).getTime()) / (365 * 24 * 60 * 60 * 1000)) : 1
+          },
+          combined_score: 75 * weight,
+          commence_time: game.game_date,
+          game_description: `${game.away_team} @ ${game.home_team}`
+        });
+      }
+
+      // Heavy rest coaches on B2B = fade stars
+      if (b2bRest === 'heavy' && game.home_fatigue_score > 50) {
+        const weight = weightMap.get('coaching_b2b_heavy_coaching')?.current_weight || 1.0;
+        picks.push({
+          description: `${game.home_team} star props Under (Coach ${homeCoach.coach_name} - B2B Rest Heavy)`,
+          odds: -110,
+          event_id: game.event_id,
+          sport: 'basketball_nba',
+          engine_source: 'coaching',
+          formula_name: 'coaching_b2b_heavy',
+          formula_scores: {
+            b2b_tendency: 85,
+            fatigue_score: game.home_fatigue_score
+          },
+          combined_score: 80 * weight,
+          commence_time: game.game_date,
+          game_description: `${game.away_team} @ ${game.home_team}`
+        });
+      }
+    }
+
+    // Similar for away coach
+    if (awayCoach && awayCoach.pace_preference === 'slow') {
+      const weight = weightMap.get('coaching_pace_slow_coaching')?.current_weight || 1.0;
+      picks.push({
+        description: `${game.away_team} team total Under (Coach ${awayCoach.coach_name} - Slow Pace)`,
+        odds: -110,
+        event_id: game.event_id,
+        sport: 'basketball_nba',
+        engine_source: 'coaching',
+        formula_name: 'coaching_pace_slow',
+        formula_scores: {
+          pace_preference: 30,
+          coach_tenure: awayCoach.tenure_start_date ? 
+            Math.floor((Date.now() - new Date(awayCoach.tenure_start_date).getTime()) / (365 * 24 * 60 * 60 * 1000)) : 1
+        },
+        combined_score: 70 * weight,
+        commence_time: game.game_date,
+        game_description: `${game.away_team} @ ${game.home_team}`
+      });
+    }
+  }
+
+  console.log(`🏀 Coaching picks generated: ${picks.length}`);
   return picks;
 }
 

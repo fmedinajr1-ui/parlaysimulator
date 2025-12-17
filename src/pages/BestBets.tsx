@@ -28,6 +28,8 @@ interface BestBet {
   sharp_indicator?: string;
   trap_score?: number;
   fatigue_differential?: number;
+  coaching_tendency?: string;
+  coach_name?: string;
 }
 
 interface AccuracyStats {
@@ -53,6 +55,8 @@ interface AIBestBet {
   signals: string[];
   signal_type?: string;
   sample_size?: number;
+  coaching_tendency?: string;
+  coach_name?: string;
 }
 
 export default function BestBets() {
@@ -345,6 +349,7 @@ export default function BestBets() {
                       <div className="flex items-start justify-between">
                         <div className="flex items-center gap-2">
                           {bet.signal_type === 'nfl_fade' && <Badge className="bg-green-500/20 text-green-400">TOP</Badge>}
+                          {bet.signal_type?.startsWith('coaching') && <Badge className="bg-emerald-500/20 text-emerald-400">COACH</Badge>}
                           <Badge variant="outline" className="text-xs">{bet.sport.split('_').pop()?.toUpperCase()}</Badge>
                         </div>
                         <div className="text-right">
@@ -355,6 +360,7 @@ export default function BestBets() {
                       <div>
                         <p className="font-semibold">{bet.description}</p>
                         {bet.outcome_name && <p className="text-sm text-chart-1">{bet.outcome_name}</p>}
+                        {bet.coach_name && <p className="text-xs text-emerald-400">🏀 Coach {bet.coach_name}</p>}
                       </div>
                       <div className="flex flex-wrap gap-1">
                         <Badge variant={bet.recommendation === 'fade' ? 'destructive' : 'default'} className="text-xs uppercase">{bet.recommendation}</Badge>
