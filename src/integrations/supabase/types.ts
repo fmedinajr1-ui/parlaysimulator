@@ -691,6 +691,145 @@ export type Database = {
         }
         Relationships: []
       }
+      coaching_accuracy_metrics: {
+        Row: {
+          avg_confidence: number | null
+          calibration_factor: number | null
+          coach_id: string | null
+          coach_name: string
+          correct_predictions: number | null
+          created_at: string
+          id: string
+          prop_type: string
+          roi_percentage: number | null
+          situation: string
+          team_name: string
+          total_predictions: number | null
+          updated_at: string
+          win_rate: number | null
+        }
+        Insert: {
+          avg_confidence?: number | null
+          calibration_factor?: number | null
+          coach_id?: string | null
+          coach_name: string
+          correct_predictions?: number | null
+          created_at?: string
+          id?: string
+          prop_type?: string
+          roi_percentage?: number | null
+          situation?: string
+          team_name: string
+          total_predictions?: number | null
+          updated_at?: string
+          win_rate?: number | null
+        }
+        Update: {
+          avg_confidence?: number | null
+          calibration_factor?: number | null
+          coach_id?: string | null
+          coach_name?: string
+          correct_predictions?: number | null
+          created_at?: string
+          id?: string
+          prop_type?: string
+          roi_percentage?: number | null
+          situation?: string
+          team_name?: string
+          total_predictions?: number | null
+          updated_at?: string
+          win_rate?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "coaching_accuracy_metrics_coach_id_fkey"
+            columns: ["coach_id"]
+            isOneToOne: false
+            referencedRelation: "coach_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      coaching_predictions: {
+        Row: {
+          actual_stat_value: number | null
+          coach_id: string | null
+          coach_name: string
+          confidence: number
+          created_at: string
+          event_id: string
+          game_date: string
+          id: string
+          outcome: string | null
+          outcome_verified: boolean | null
+          player_name: string | null
+          predicted_direction: string | null
+          prediction_accurate: boolean | null
+          prop_adjustments: Json | null
+          prop_line: number | null
+          prop_type: string
+          recommendation: string
+          situation: string
+          team_name: string
+          updated_at: string
+          verified_at: string | null
+        }
+        Insert: {
+          actual_stat_value?: number | null
+          coach_id?: string | null
+          coach_name: string
+          confidence?: number
+          created_at?: string
+          event_id: string
+          game_date: string
+          id?: string
+          outcome?: string | null
+          outcome_verified?: boolean | null
+          player_name?: string | null
+          predicted_direction?: string | null
+          prediction_accurate?: boolean | null
+          prop_adjustments?: Json | null
+          prop_line?: number | null
+          prop_type: string
+          recommendation: string
+          situation?: string
+          team_name: string
+          updated_at?: string
+          verified_at?: string | null
+        }
+        Update: {
+          actual_stat_value?: number | null
+          coach_id?: string | null
+          coach_name?: string
+          confidence?: number
+          created_at?: string
+          event_id?: string
+          game_date?: string
+          id?: string
+          outcome?: string | null
+          outcome_verified?: boolean | null
+          player_name?: string | null
+          predicted_direction?: string | null
+          prediction_accurate?: boolean | null
+          prop_adjustments?: Json | null
+          prop_line?: number | null
+          prop_type?: string
+          recommendation?: string
+          situation?: string
+          team_name?: string
+          updated_at?: string
+          verified_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "coaching_predictions_coach_id_fkey"
+            columns: ["coach_id"]
+            isOneToOne: false
+            referencedRelation: "coach_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cron_job_history: {
         Row: {
           completed_at: string | null

@@ -123,6 +123,9 @@ serve(async (req) => {
       
       // Step 4h: Verify fatigue edge outcomes
       await runFunction('verify-fatigue-outcomes', {});
+      
+      // Step 4i: Verify coaching prediction outcomes
+      await runFunction('verify-coaching-outcomes', {});
     }
 
     // ============ PHASE 5: CALIBRATION & LEARNING ============

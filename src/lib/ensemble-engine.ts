@@ -42,6 +42,7 @@ export interface EngineWeight {
 }
 
 // Default engine weights based on typical performance
+// These can be dynamically adjusted based on coaching_accuracy_metrics
 export const DEFAULT_ENGINE_WEIGHTS: EngineWeight[] = [
   { name: 'sharp_money', displayName: 'Sharp Money', baseWeight: 1.0, accuracyMultiplier: 1.2, sampleSizeThreshold: 20 },
   { name: 'hitrate', displayName: 'Hit Rate', baseWeight: 0.9, accuracyMultiplier: 1.1, sampleSizeThreshold: 30 },
@@ -51,7 +52,7 @@ export const DEFAULT_ENGINE_WEIGHTS: EngineWeight[] = [
   { name: 'trap_scanner', displayName: 'Trap Scanner', baseWeight: 0.9, accuracyMultiplier: 1.1, sampleSizeThreshold: 20 },
   { name: 'correlation', displayName: 'Correlation Model', baseWeight: 0.7, accuracyMultiplier: 1.0, sampleSizeThreshold: 50 },
   { name: 'monte_carlo', displayName: 'Monte Carlo', baseWeight: 0.85, accuracyMultiplier: 1.0, sampleSizeThreshold: 100 },
-  { name: 'coaching', displayName: 'Coaching Tendencies', baseWeight: 0.7, accuracyMultiplier: 1.1, sampleSizeThreshold: 15 },
+  { name: 'coaching', displayName: 'Coaching Tendencies', baseWeight: 0.75, accuracyMultiplier: 1.15, sampleSizeThreshold: 15 },
 ];
 
 /**
@@ -707,4 +708,79 @@ export function aggregateParlayEnsemble(
     parlayRisk,
     recommendation
   };
+}
+
+/**
+ * Adjust coaching engine weight dynamically based on accuracy metrics
+ * This can be called when we have fresh coaching accuracy data
+ */
+export function getAdjustedCoachingWeight(
+  accuracyMetrics?: {
+    winRate?: number;
+    sampleSize?: number;
+    calibrationFactor?: number;
+  }
+): number {
+  const baseConfig = DEFAULT_ENGINE_WEIGHTS.find(e => e.name === 'coaching');
+  if (!baseConfig) return 0.75;
+  
+  const baseWeight = baseConfig.baseWeight;
+  
+  if (!accuracyMetrics || !accuracyMetrics.sampleSize || accuracyMetrics.sampleSize < 10) {
+    // Not enough data - use reduced base weight
+    return baseWeight * 0.8;
+  }
+  
+  const { winRate = 50, sampleSize = 0, calibrationFactor = 1.0 } = accuracyMetrics;
+  
+  // Sample size confidence (0.7 to 1.0)
+  const sampleConfidence = Math.min(1, 0.7 + (sampleSize / 100) * 0.3);
+  
+  // Accuracy adjustment (-0.3 to +0.3 based on win rate)
+  // Win rate of 50% = no adjustment, 60% = +0.2, 40% = -0.2
+  const accuracyAdjustment = ((winRate - 50) / 50) * 0.3;
+  
+  // Calibration bonus (well-calibrated engines get a small boost)
+  const calibrationBonus = Math.abs(calibrationFactor - 1.0) < 0.1 ? 0.05 : 0;
+  
+  // Final adjusted weight
+  const adjustedWeight = baseWeight * sampleConfidence + accuracyAdjustment + calibrationBonus;
+  
+  // Clamp to reasonable range
+  return Math.max(0.3, Math.min(1.2, adjustedWeight));
+}
+
+/**
+ * Extract coaching signals with dynamic accuracy from metrics
+ */
+export function extractCoachingSignalsWithAccuracy(
+  coachData: {
+    pacePreference?: 'fast' | 'moderate' | 'slow' | null;
+    rotationDepth?: number | null;
+    starUsagePct?: number | null;
+    b2bRestTendency?: 'aggressive' | 'moderate' | 'cautious' | null;
+    tenureMonths?: number;
+    currentSituation?: string;
+    propType?: string;
+    recommendation?: 'pick' | 'fade' | 'neutral';
+    confidence?: number;
+    reasoning?: string;
+  },
+  accuracyMetrics?: {
+    winRate?: number;
+    sampleSize?: number;
+  }
+): EngineSignal[] {
+  const baseSignals = extractCoachingSignals(coachData);
+  
+  if (!accuracyMetrics || !accuracyMetrics.winRate) {
+    return baseSignals;
+  }
+  
+  // Enhance signals with actual accuracy data
+  return baseSignals.map(signal => ({
+    ...signal,
+    historicalAccuracy: accuracyMetrics.winRate! / 100,
+    sampleSize: accuracyMetrics.sampleSize || signal.sampleSize
+  }));
 }
