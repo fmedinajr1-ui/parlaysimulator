@@ -7,6 +7,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { useParlayBuilder } from '@/contexts/ParlayBuilderContext';
 import { ParlayLegCard } from './ParlayLegCard';
 import { CoachingAlertBanner } from './CoachingAlertBanner';
+import { ParlayBuilderDebug } from './ParlayBuilderDebug';
 import { useCoachingSignals } from '@/hooks/useCoachingSignals';
 import { SOURCE_LABELS } from '@/types/universal-parlay';
 import { cn } from '@/lib/utils';
@@ -34,7 +35,17 @@ export const UniversalParlayBuilder = () => {
   // Fetch coaching signals for NBA legs
   const { signals, isLoading: coachingLoading, nbaLegCount, getSignalForLeg, criticalWarnings } = useCoachingSignals(legs);
 
-  if (legCount === 0) return null;
+  // Show debug button in dev mode even when empty
+  if (legCount === 0) {
+    if (import.meta.env.DEV) {
+      return (
+        <div className="fixed bottom-24 right-4 z-40">
+          <ParlayBuilderDebug />
+        </div>
+      );
+    }
+    return null;
+  }
 
   const stakeNum = parseFloat(stake) || 0;
   const decimalOdds = combinedOdds > 0 
@@ -244,6 +255,13 @@ export const UniversalParlayBuilder = () => {
                     <Trash2 className="h-3 w-3" />
                   </Button>
                 </div>
+                
+                {/* Debug button - dev only */}
+                {import.meta.env.DEV && (
+                  <div className="px-3 pb-2 flex justify-center">
+                    <ParlayBuilderDebug />
+                  </div>
+                )}
               </motion.div>
             )}
           </AnimatePresence>
