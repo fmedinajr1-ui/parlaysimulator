@@ -40,6 +40,7 @@ const SharpComparison = React.lazy(() => import("./pages/SharpComparison"));
 const FanDuelTraps = React.lazy(() => import("./pages/FanDuelTraps"));
 const AllSportsTracker = React.lazy(() => import("./pages/AllSportsTracker"));
 const Kelly = React.lazy(() => import("./pages/Kelly"));
+const MedianLock = React.lazy(() => import("./pages/MedianLock"));
 const VerifyPhone = React.lazy(() => import("./pages/VerifyPhone"));
 const VerifyEmail = React.lazy(() => import("./pages/VerifyEmail"));
 
@@ -103,6 +104,7 @@ function AnimatedRoutes() {
             <Route path="/fanduel-traps" element={<FanDuelTraps />} />
             <Route path="/tracker" element={<AllSportsTracker />} />
             <Route path="/kelly" element={<Kelly />} />
+            <Route path="/median-lock" element={<MedianLock />} />
             <Route path="/verify-phone" element={<VerifyPhone />} />
             <Route path="/verify-email" element={<VerifyEmail />} />
             <Route path="*" element={<NotFound />} />
