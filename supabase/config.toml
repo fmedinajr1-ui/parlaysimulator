@@ -245,3 +245,6 @@ verify_jwt = false
 
 [functions.verify-email-code]
 verify_jwt = false
+
+[functions.sync-median-lock-game-status]
+verify_jwt = false

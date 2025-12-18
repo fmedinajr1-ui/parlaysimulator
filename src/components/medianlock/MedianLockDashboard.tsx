@@ -1,88 +1,63 @@
 import { useState, useEffect } from "react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
-import { RefreshCw, Lock, TrendingUp, Sparkles, AlertTriangle, Target, Zap } from "lucide-react";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { RefreshCw, Lock, TrendingUp, Sparkles, AlertTriangle, Target, Zap, Radio, CheckCircle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { MedianLockCandidateCard } from "./MedianLockCandidateCard";
 import { GreenSlipCard } from "./GreenSlipCard";
-
-interface MedianLockCandidate {
-  id: string;
-  player_name: string;
-  team_name: string;
-  prop_type: string;
-  book_line: number;
-  classification: 'LOCK' | 'STRONG' | 'BLOCK';
-  confidence_score: number;
-  hit_rate: number;
-  hit_rate_last_5: number;
-  median_points: number;
-  median_minutes: number;
-  raw_edge: number;
-  adjusted_edge: number;
-  defense_adjustment: number;
-  split_edge: number;
-  juice_lag_bonus: number;
-  is_shock_flagged: boolean;
-  shock_reasons: string[];
-  shock_passed_validation: boolean;
-  passed_checks: string[];
-  failed_checks: string[];
-  block_reason?: string;
-  outcome?: string;
-}
-
-interface GreenSlip {
-  id: string;
-  slate_date: string;
-  slip_type: '2-leg' | '3-leg';
-  legs: Array<{ playerName: string; confidenceScore: number; status: 'LOCK' | 'STRONG' }>;
-  slip_score: number;
-  probability: number;
-  stake_tier: 'A' | 'B' | 'C';
-  outcome?: 'won' | 'lost' | 'push' | 'pending';
-}
+import { useMedianLockRealtime } from "@/hooks/useMedianLockRealtime";
+import { formatDistanceToNow } from "date-fns";
 
 export function MedianLockDashboard() {
-  const [candidates, setCandidates] = useState<MedianLockCandidate[]>([]);
-  const [slips, setSlips] = useState<GreenSlip[]>([]);
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState("locks");
+  const [viewMode, setViewMode] = useState<'active' | 'settled' | 'all'>('all');
 
   const today = new Date().toISOString().split('T')[0];
+  
+  const {
+    loading,
+    isConnected,
+    lastUpdated,
+    fetchData,
+    activeCandidates,
+    settledCandidates,
+    locks,
+    strongs,
+    shockFlagged,
+    activeLocks,
+    activeStrongs,
+    twoLegSlips,
+    threeLegSlips,
+    slips,
+    stats,
+  } = useMedianLockRealtime(today);
 
-  const fetchData = async () => {
-    try {
-      const [candidatesRes, slipsRes] = await Promise.all([
-        supabase
-          .from('median_lock_candidates')
-          .select('*')
-          .eq('slate_date', today)
-          .order('confidence_score', { ascending: false }),
-        supabase
-          .from('median_lock_slips')
-          .select('*')
-          .eq('slate_date', today)
-          .order('slip_score', { ascending: false }),
-      ]);
+  // Auto-refresh game status every 2 minutes
+  useEffect(() => {
+    const syncGameStatus = async () => {
+      try {
+        await supabase.functions.invoke('sync-median-lock-game-status', {
+          body: { trigger: 'auto' }
+        });
+      } catch (error) {
+        console.error('Error syncing game status:', error);
+      }
+    };
 
-      if (candidatesRes.data) {
-        setCandidates(candidatesRes.data as MedianLockCandidate[]);
-      }
-      if (slipsRes.data) {
-        setSlips(slipsRes.data as unknown as GreenSlip[]);
-      }
-    } catch (error) {
-      console.error('Error fetching MedianLock data:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    // Initial sync
+    syncGameStatus();
+
+    // Set up interval
+    const interval = setInterval(syncGameStatus, 2 * 60 * 1000); // Every 2 minutes
+
+    return () => clearInterval(interval);
+  }, []);
 
   const runEngine = async () => {
     setRefreshing(true);
@@ -103,15 +78,16 @@ export function MedianLockDashboard() {
     }
   };
 
-  useEffect(() => {
-    fetchData();
-  }, []);
+  // Get filtered candidates based on view mode
+  const getFilteredCandidates = (candidates: typeof locks) => {
+    if (viewMode === 'active') return candidates.filter(c => c.game_status !== 'final' && c.outcome !== 'hit' && c.outcome !== 'miss');
+    if (viewMode === 'settled') return candidates.filter(c => c.game_status === 'final' || c.outcome === 'hit' || c.outcome === 'miss');
+    return candidates;
+  };
 
-  const locks = candidates.filter(c => c.classification === 'LOCK');
-  const strongs = candidates.filter(c => c.classification === 'STRONG');
-  const shockFlagged = candidates.filter(c => c.is_shock_flagged);
-  const twoLegSlips = slips.filter(s => s.slip_type === '2-leg');
-  const threeLegSlips = slips.filter(s => s.slip_type === '3-leg');
+  const filteredLocks = getFilteredCandidates(locks);
+  const filteredStrongs = getFilteredCandidates(strongs);
+  const filteredShockFlagged = getFilteredCandidates(shockFlagged);
 
   if (loading) {
     return (
@@ -139,18 +115,34 @@ export function MedianLockDashboard() {
             AI-powered prop analysis with shock detection & auto-builder
           </p>
         </div>
-        <Button 
-          onClick={runEngine} 
-          disabled={refreshing}
-          className="bg-gradient-to-r from-green-500 to-emerald-600"
-        >
-          <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
-          {refreshing ? 'Analyzing...' : 'Run Engine'}
-        </Button>
+        <div className="flex items-center gap-3">
+          {/* Connection Status */}
+          <div className="flex items-center gap-2 text-sm">
+            <div className={`w-2 h-2 rounded-full ${
+              isConnected ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'
+            }`} />
+            <span className="text-muted-foreground">
+              {isConnected ? 'Live' : 'Connecting...'}
+            </span>
+            {lastUpdated && (
+              <span className="text-xs text-muted-foreground hidden sm:inline">
+                · {formatDistanceToNow(lastUpdated, { addSuffix: true })}
+              </span>
+            )}
+          </div>
+          <Button 
+            onClick={runEngine} 
+            disabled={refreshing}
+            className="bg-gradient-to-r from-green-500 to-emerald-600"
+          >
+            <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
+            {refreshing ? 'Analyzing...' : 'Run Engine'}
+          </Button>
+        </div>
       </div>
 
       {/* Stats Overview */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
         <Card className="bg-gradient-to-br from-green-500/10 to-green-600/5 border-green-500/20">
           <CardContent className="p-4 text-center">
             <div className="text-3xl font-bold text-green-400">{locks.length}</div>
@@ -167,11 +159,21 @@ export function MedianLockDashboard() {
             </div>
           </CardContent>
         </Card>
-        <Card className="bg-gradient-to-br from-yellow-500/10 to-yellow-600/5 border-yellow-500/20">
+        <Card className="bg-gradient-to-br from-red-500/10 to-red-600/5 border-red-500/20">
           <CardContent className="p-4 text-center">
-            <div className="text-3xl font-bold text-yellow-400">{shockFlagged.length}</div>
+            <div className="text-3xl font-bold text-red-400">{stats.liveGames}</div>
             <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">
-              <AlertTriangle className="h-3 w-3" /> SHOCK
+              <Radio className="h-3 w-3" /> LIVE
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="bg-gradient-to-br from-emerald-500/10 to-emerald-600/5 border-emerald-500/20">
+          <CardContent className="p-4 text-center">
+            <div className="text-3xl font-bold text-emerald-400">
+              {stats.hitsCount}/{stats.settledCount}
+            </div>
+            <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">
+              <CheckCircle className="h-3 w-3" /> HITS
             </div>
           </CardContent>
         </Card>
@@ -179,7 +181,7 @@ export function MedianLockDashboard() {
           <CardContent className="p-4 text-center">
             <div className="text-3xl font-bold text-purple-400">{twoLegSlips.length}</div>
             <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">
-              <Sparkles className="h-3 w-3" /> 2-Leg Slips
+              <Sparkles className="h-3 w-3" /> 2-Leg
             </div>
           </CardContent>
         </Card>
@@ -187,10 +189,26 @@ export function MedianLockDashboard() {
           <CardContent className="p-4 text-center">
             <div className="text-3xl font-bold text-orange-400">{threeLegSlips.length}</div>
             <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">
-              <Zap className="h-3 w-3" /> 3-Leg Slips
+              <Zap className="h-3 w-3" /> 3-Leg
             </div>
           </CardContent>
         </Card>
+      </div>
+
+      {/* View Mode Toggle */}
+      <div className="flex items-center gap-4">
+        <span className="text-sm text-muted-foreground">Show:</span>
+        <ToggleGroup type="single" value={viewMode} onValueChange={(v) => v && setViewMode(v as typeof viewMode)}>
+          <ToggleGroupItem value="all" size="sm">
+            All ({locks.length + strongs.length})
+          </ToggleGroupItem>
+          <ToggleGroupItem value="active" size="sm" className="text-green-400">
+            🟢 Active ({activeCandidates.length})
+          </ToggleGroupItem>
+          <ToggleGroupItem value="settled" size="sm" className="text-muted-foreground">
+            ✅ Settled ({settledCandidates.length})
+          </ToggleGroupItem>
+        </ToggleGroup>
       </div>
 
       {/* Main Content Tabs */}
@@ -198,14 +216,14 @@ export function MedianLockDashboard() {
         <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="locks" className="relative">
             🔒 Locks
-            {locks.length > 0 && (
-              <Badge className="ml-1 h-5 px-1.5 bg-green-500/20 text-green-400">{locks.length}</Badge>
+            {filteredLocks.length > 0 && (
+              <Badge className="ml-1 h-5 px-1.5 bg-green-500/20 text-green-400">{filteredLocks.length}</Badge>
             )}
           </TabsTrigger>
           <TabsTrigger value="strong">
             💪 Strong
-            {strongs.length > 0 && (
-              <Badge className="ml-1 h-5 px-1.5 bg-blue-500/20 text-blue-400">{strongs.length}</Badge>
+            {filteredStrongs.length > 0 && (
+              <Badge className="ml-1 h-5 px-1.5 bg-blue-500/20 text-blue-400">{filteredStrongs.length}</Badge>
             )}
           </TabsTrigger>
           <TabsTrigger value="slips">
@@ -216,24 +234,28 @@ export function MedianLockDashboard() {
           </TabsTrigger>
           <TabsTrigger value="shock">
             ⚡ Shock Watch
-            {shockFlagged.length > 0 && (
-              <Badge className="ml-1 h-5 px-1.5 bg-yellow-500/20 text-yellow-400">{shockFlagged.length}</Badge>
+            {filteredShockFlagged.length > 0 && (
+              <Badge className="ml-1 h-5 px-1.5 bg-yellow-500/20 text-yellow-400">{filteredShockFlagged.length}</Badge>
             )}
           </TabsTrigger>
         </TabsList>
 
         <TabsContent value="locks" className="mt-4">
-          {locks.length === 0 ? (
+          {filteredLocks.length === 0 ? (
             <Card className="bg-muted/30">
               <CardContent className="p-8 text-center">
                 <Lock className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
-                <p className="text-muted-foreground">No locks found for today's slate</p>
+                <p className="text-muted-foreground">
+                  {viewMode === 'active' ? 'No active locks' : 
+                   viewMode === 'settled' ? 'No settled locks yet' : 
+                   "No locks found for today's slate"}
+                </p>
                 <p className="text-sm text-muted-foreground mt-1">Run the engine to analyze current props</p>
               </CardContent>
             </Card>
           ) : (
             <div className="flex flex-col gap-4">
-              {locks.map((candidate) => (
+              {filteredLocks.map((candidate) => (
                 <MedianLockCandidateCard key={candidate.id} candidate={candidate} />
               ))}
             </div>
@@ -241,16 +263,20 @@ export function MedianLockDashboard() {
         </TabsContent>
 
         <TabsContent value="strong" className="mt-4">
-          {strongs.length === 0 ? (
+          {filteredStrongs.length === 0 ? (
             <Card className="bg-muted/30">
               <CardContent className="p-8 text-center">
                 <TrendingUp className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
-                <p className="text-muted-foreground">No strong picks found for today</p>
+                <p className="text-muted-foreground">
+                  {viewMode === 'active' ? 'No active strong picks' : 
+                   viewMode === 'settled' ? 'No settled strong picks yet' : 
+                   'No strong picks found for today'}
+                </p>
               </CardContent>
             </Card>
           ) : (
             <div className="flex flex-col gap-4">
-              {strongs.map((candidate) => (
+              {filteredStrongs.map((candidate) => (
                 <MedianLockCandidateCard key={candidate.id} candidate={candidate} />
               ))}
             </div>
@@ -307,7 +333,7 @@ export function MedianLockDashboard() {
         </TabsContent>
 
         <TabsContent value="shock" className="mt-4">
-          {shockFlagged.length === 0 ? (
+          {filteredShockFlagged.length === 0 ? (
             <Card className="bg-muted/30">
               <CardContent className="p-8 text-center">
                 <AlertTriangle className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
@@ -325,7 +351,7 @@ export function MedianLockDashboard() {
                 </CardContent>
               </Card>
               <div className="flex flex-col gap-4">
-                {shockFlagged.map((candidate) => (
+                {filteredShockFlagged.map((candidate) => (
                   <MedianLockCandidateCard key={candidate.id} candidate={candidate} />
                 ))}
               </div>
