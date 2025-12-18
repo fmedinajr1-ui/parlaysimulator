@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp';
-import { Loader2, Phone, ArrowLeft, CheckCircle2 } from 'lucide-react';
+import { Loader2, Phone, ArrowLeft, CheckCircle2, Bug } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from '@/hooks/use-toast';
 
@@ -13,6 +13,9 @@ interface PhoneVerificationProps {
   onBack?: () => void;
 }
 
+// Enable debug mode for development (shows verification code in UI)
+const DEBUG_MODE = true;
+
 export function PhoneVerification({ userId, onVerified, onBack }: PhoneVerificationProps) {
   const [step, setStep] = useState<'phone' | 'otp'>('phone');
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -21,6 +24,7 @@ export function PhoneVerification({ userId, onVerified, onBack }: PhoneVerificat
   const [isLoading, setIsLoading] = useState(false);
   const [cooldown, setCooldown] = useState(0);
   const [expiresIn, setExpiresIn] = useState(0);
+  const [debugCode, setDebugCode] = useState<string | null>(null);
 
   // Cooldown timer for resend
   useEffect(() => {
@@ -77,16 +81,27 @@ export function PhoneVerification({ userId, onVerified, onBack }: PhoneVerificat
     }
 
     setIsLoading(true);
+    setDebugCode(null);
 
     try {
+      console.log('[PhoneVerification] Sending code to:', fullPhone);
+      
       const { data, error } = await supabase.functions.invoke('send-phone-verification', {
-        body: { phone_number: fullPhone }
+        body: { 
+          phone_number: fullPhone,
+          debug_mode: DEBUG_MODE 
+        }
       });
 
-      if (error) throw error;
+      console.log('[PhoneVerification] Response:', { data, error });
+
+      if (error) {
+        console.error('[PhoneVerification] Function error:', error);
+        throw error;
+      }
       
       // Handle rate limit with already sent code
-      if (data.alreadySent) {
+      if (data?.alreadySent) {
         setStep('otp');
         setCooldown(data.waitTime || 60);
         toast({
@@ -96,10 +111,18 @@ export function PhoneVerification({ userId, onVerified, onBack }: PhoneVerificat
         return;
       }
       
-      if (data.error) throw new Error(data.error);
+      if (data?.error) {
+        throw new Error(data.error);
+      }
+
+      // Check for debug code
+      if (data?.debug_code) {
+        setDebugCode(data.debug_code);
+        console.log('[PhoneVerification] DEBUG CODE:', data.debug_code);
+      }
 
       setStep('otp');
-      setCooldown(60);
+      setCooldown(30); // Reduced cooldown
       setExpiresIn(600); // 10 minutes
       
       toast({
@@ -107,6 +130,8 @@ export function PhoneVerification({ userId, onVerified, onBack }: PhoneVerificat
         description: `Verification code sent to ${formatPhoneNumber(phoneNumber)}`,
       });
     } catch (err: any) {
+      console.error('[PhoneVerification] Error:', err);
+      
       // Handle rate limit error
       if (err.message?.includes('wait')) {
         const waitMatch = err.message.match(/(\d+) seconds/);
@@ -138,6 +163,8 @@ export function PhoneVerification({ userId, onVerified, onBack }: PhoneVerificat
     setIsLoading(true);
 
     try {
+      console.log('[PhoneVerification] Verifying code:', otp);
+      
       const { data, error } = await supabase.functions.invoke('verify-phone-code', {
         body: { 
           phone_number: getFullPhoneNumber(),
@@ -146,10 +173,15 @@ export function PhoneVerification({ userId, onVerified, onBack }: PhoneVerificat
         }
       });
 
-      if (error) throw error;
+      console.log('[PhoneVerification] Verify response:', { data, error });
+
+      if (error) {
+        console.error('[PhoneVerification] Verify error:', error);
+        throw error;
+      }
       
       // Check if we need a new code
-      if (data.needsNewCode) {
+      if (data?.needsNewCode) {
         setOtp('');
         setCooldown(0); // Allow immediate resend
         toast({
@@ -160,7 +192,9 @@ export function PhoneVerification({ userId, onVerified, onBack }: PhoneVerificat
         return;
       }
       
-      if (data.error) throw new Error(data.error);
+      if (data?.error) {
+        throw new Error(data.error);
+      }
 
       toast({
         title: "Phone Verified!",
@@ -169,6 +203,7 @@ export function PhoneVerification({ userId, onVerified, onBack }: PhoneVerificat
       
       onVerified();
     } catch (err: any) {
+      console.error('[PhoneVerification] Verification failed:', err);
       toast({
         title: "Verification Failed",
         description: err.message || "Invalid code. Please try again.",
@@ -182,7 +217,14 @@ export function PhoneVerification({ userId, onVerified, onBack }: PhoneVerificat
 
   const handleResendCode = async () => {
     if (cooldown > 0) return;
+    setDebugCode(null);
     await handleSendCode();
+  };
+
+  const handleUseDebugCode = () => {
+    if (debugCode) {
+      setOtp(debugCode);
+    }
   };
 
   if (step === 'phone') {
@@ -271,6 +313,26 @@ export function PhoneVerification({ userId, onVerified, onBack }: PhoneVerificat
         )}
       </div>
 
+      {/* Debug mode code display */}
+      {DEBUG_MODE && debugCode && (
+        <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 text-center">
+          <div className="flex items-center justify-center gap-2 text-yellow-600 text-xs mb-1">
+            <Bug className="w-3 h-3" />
+            <span>DEBUG MODE</span>
+          </div>
+          <p className="text-sm text-foreground">
+            Your code is: <strong className="font-mono text-lg">{debugCode}</strong>
+          </p>
+          <button
+            type="button"
+            onClick={handleUseDebugCode}
+            className="text-xs text-primary hover:underline mt-1"
+          >
+            Auto-fill code
+          </button>
+        </div>
+      )}
+
       <div className="flex justify-center">
         <InputOTP
           value={otp}
@@ -318,7 +380,7 @@ export function PhoneVerification({ userId, onVerified, onBack }: PhoneVerificat
 
         <button
           type="button"
-          onClick={() => { setStep('phone'); setOtp(''); }}
+          onClick={() => { setStep('phone'); setOtp(''); setDebugCode(null); }}
           className="flex items-center justify-center gap-2 w-full text-muted-foreground hover:text-foreground text-sm"
         >
           <ArrowLeft className="w-4 h-4" />
