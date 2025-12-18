@@ -55,6 +55,64 @@ export const CoachingInsightsCard = ({ legs, legAnalyses, delay = 0 }: CoachingI
   const [isLoading, setIsLoading] = useState(true);
   const [isOpen, setIsOpen] = useState(false);
 
+  // Multi-sport team mappings
+  const TEAM_MAPS: Record<string, Record<string, string>> = {
+    NBA: {
+      'hawks': 'Atlanta Hawks', 'celtics': 'Boston Celtics', 'nets': 'Brooklyn Nets',
+      'hornets': 'Charlotte Hornets', 'bulls': 'Chicago Bulls', 'cavaliers': 'Cleveland Cavaliers',
+      'cavs': 'Cleveland Cavaliers', 'mavericks': 'Dallas Mavericks', 'mavs': 'Dallas Mavericks',
+      'nuggets': 'Denver Nuggets', 'pistons': 'Detroit Pistons', 'warriors': 'Golden State Warriors',
+      'rockets': 'Houston Rockets', 'pacers': 'Indiana Pacers', 'clippers': 'Los Angeles Clippers',
+      'lakers': 'Los Angeles Lakers', 'grizzlies': 'Memphis Grizzlies', 'heat': 'Miami Heat',
+      'bucks': 'Milwaukee Bucks', 'timberwolves': 'Minnesota Timberwolves', 'wolves': 'Minnesota Timberwolves',
+      'pelicans': 'New Orleans Pelicans', 'knicks': 'New York Knicks', 'thunder': 'Oklahoma City Thunder',
+      'magic': 'Orlando Magic', '76ers': 'Philadelphia 76ers', 'sixers': 'Philadelphia 76ers',
+      'suns': 'Phoenix Suns', 'trail blazers': 'Portland Trail Blazers', 'blazers': 'Portland Trail Blazers',
+      'kings': 'Sacramento Kings', 'spurs': 'San Antonio Spurs', 'raptors': 'Toronto Raptors',
+      'jazz': 'Utah Jazz', 'wizards': 'Washington Wizards'
+    },
+    NFL: {
+      'cardinals': 'Arizona Cardinals', 'falcons': 'Atlanta Falcons', 'ravens': 'Baltimore Ravens',
+      'bills': 'Buffalo Bills', 'panthers': 'Carolina Panthers', 'bears': 'Chicago Bears',
+      'bengals': 'Cincinnati Bengals', 'browns': 'Cleveland Browns', 'cowboys': 'Dallas Cowboys',
+      'broncos': 'Denver Broncos', 'lions': 'Detroit Lions', 'packers': 'Green Bay Packers',
+      'texans': 'Houston Texans', 'colts': 'Indianapolis Colts', 'jaguars': 'Jacksonville Jaguars',
+      'chiefs': 'Kansas City Chiefs', 'raiders': 'Las Vegas Raiders', 'chargers': 'Los Angeles Chargers',
+      'rams': 'Los Angeles Rams', 'dolphins': 'Miami Dolphins', 'vikings': 'Minnesota Vikings',
+      'patriots': 'New England Patriots', 'saints': 'New Orleans Saints', 'giants': 'New York Giants',
+      'jets': 'New York Jets', 'eagles': 'Philadelphia Eagles', 'steelers': 'Pittsburgh Steelers',
+      '49ers': 'San Francisco 49ers', 'niners': 'San Francisco 49ers', 'seahawks': 'Seattle Seahawks',
+      'buccaneers': 'Tampa Bay Buccaneers', 'bucs': 'Tampa Bay Buccaneers', 'titans': 'Tennessee Titans',
+      'commanders': 'Washington Commanders'
+    },
+    NHL: {
+      'ducks': 'Anaheim Ducks', 'bruins': 'Boston Bruins', 'sabres': 'Buffalo Sabres',
+      'flames': 'Calgary Flames', 'hurricanes': 'Carolina Hurricanes', 'blackhawks': 'Chicago Blackhawks',
+      'avalanche': 'Colorado Avalanche', 'blue jackets': 'Columbus Blue Jackets', 'stars': 'Dallas Stars',
+      'red wings': 'Detroit Red Wings', 'oilers': 'Edmonton Oilers', 'panthers': 'Florida Panthers',
+      'kings': 'Los Angeles Kings', 'wild': 'Minnesota Wild', 'canadiens': 'Montreal Canadiens',
+      'habs': 'Montreal Canadiens', 'predators': 'Nashville Predators', 'devils': 'New Jersey Devils',
+      'islanders': 'New York Islanders', 'rangers': 'New York Rangers', 'senators': 'Ottawa Senators',
+      'flyers': 'Philadelphia Flyers', 'penguins': 'Pittsburgh Penguins', 'sharks': 'San Jose Sharks',
+      'kraken': 'Seattle Kraken', 'blues': 'St. Louis Blues', 'lightning': 'Tampa Bay Lightning',
+      'maple leafs': 'Toronto Maple Leafs', 'leafs': 'Toronto Maple Leafs', 'canucks': 'Vancouver Canucks',
+      'golden knights': 'Vegas Golden Knights', 'capitals': 'Washington Capitals'
+    },
+    MLB: {
+      'diamondbacks': 'Arizona Diamondbacks', 'd-backs': 'Arizona Diamondbacks', 'braves': 'Atlanta Braves',
+      'orioles': 'Baltimore Orioles', 'red sox': 'Boston Red Sox', 'cubs': 'Chicago Cubs',
+      'white sox': 'Chicago White Sox', 'reds': 'Cincinnati Reds', 'guardians': 'Cleveland Guardians',
+      'rockies': 'Colorado Rockies', 'tigers': 'Detroit Tigers', 'astros': 'Houston Astros',
+      'royals': 'Kansas City Royals', 'angels': 'Los Angeles Angels', 'dodgers': 'Los Angeles Dodgers',
+      'marlins': 'Miami Marlins', 'brewers': 'Milwaukee Brewers', 'twins': 'Minnesota Twins',
+      'mets': 'New York Mets', 'yankees': 'New York Yankees', 'athletics': 'Oakland Athletics',
+      'phillies': 'Philadelphia Phillies', 'pirates': 'Pittsburgh Pirates', 'padres': 'San Diego Padres',
+      'giants': 'San Francisco Giants', 'mariners': 'Seattle Mariners', 'cardinals': 'St. Louis Cardinals',
+      'rays': 'Tampa Bay Rays', 'rangers': 'Texas Rangers', 'blue jays': 'Toronto Blue Jays',
+      'nationals': 'Washington Nationals'
+    }
+  };
+
   // Extract team names from legs
   const extractTeamNames = (): string[] => {
     const teams = new Set<string>();
@@ -65,58 +123,16 @@ export const CoachingInsightsCard = ({ legs, legAnalyses, delay = 0 }: CoachingI
         teams.add(analysis.team);
       }
       
-      // Also try to extract from description
+      // Try to extract from description across all sports
       const desc = leg.description.toLowerCase();
-      const nbaTeams = [
-        'hawks', 'celtics', 'nets', 'hornets', 'bulls', 'cavaliers', 'mavericks',
-        'nuggets', 'pistons', 'warriors', 'rockets', 'pacers', 'clippers', 'lakers',
-        'grizzlies', 'heat', 'bucks', 'timberwolves', 'pelicans', 'knicks', 'thunder',
-        'magic', '76ers', 'sixers', 'suns', 'trail blazers', 'blazers', 'kings',
-        'spurs', 'raptors', 'jazz', 'wizards'
-      ];
       
-      nbaTeams.forEach(team => {
-        if (desc.includes(team)) {
-          // Map to full team names
-          const teamMap: Record<string, string> = {
-            'hawks': 'Atlanta Hawks',
-            'celtics': 'Boston Celtics',
-            'nets': 'Brooklyn Nets',
-            'hornets': 'Charlotte Hornets',
-            'bulls': 'Chicago Bulls',
-            'cavaliers': 'Cleveland Cavaliers',
-            'mavericks': 'Dallas Mavericks',
-            'nuggets': 'Denver Nuggets',
-            'pistons': 'Detroit Pistons',
-            'warriors': 'Golden State Warriors',
-            'rockets': 'Houston Rockets',
-            'pacers': 'Indiana Pacers',
-            'clippers': 'LA Clippers',
-            'lakers': 'Los Angeles Lakers',
-            'grizzlies': 'Memphis Grizzlies',
-            'heat': 'Miami Heat',
-            'bucks': 'Milwaukee Bucks',
-            'timberwolves': 'Minnesota Timberwolves',
-            'pelicans': 'New Orleans Pelicans',
-            'knicks': 'New York Knicks',
-            'thunder': 'Oklahoma City Thunder',
-            'magic': 'Orlando Magic',
-            '76ers': 'Philadelphia 76ers',
-            'sixers': 'Philadelphia 76ers',
-            'suns': 'Phoenix Suns',
-            'trail blazers': 'Portland Trail Blazers',
-            'blazers': 'Portland Trail Blazers',
-            'kings': 'Sacramento Kings',
-            'spurs': 'San Antonio Spurs',
-            'raptors': 'Toronto Raptors',
-            'jazz': 'Utah Jazz',
-            'wizards': 'Washington Wizards'
-          };
-          if (teamMap[team]) {
-            teams.add(teamMap[team]);
+      for (const [sport, teamMap] of Object.entries(TEAM_MAPS)) {
+        for (const [shortName, fullName] of Object.entries(teamMap)) {
+          if (desc.includes(shortName)) {
+            teams.add(fullName);
           }
         }
-      });
+      }
     });
     
     return Array.from(teams);
@@ -234,7 +250,27 @@ export const CoachingInsightsCard = ({ legs, legAnalyses, delay = 0 }: CoachingI
   }
 
   if (coachingData.length === 0) {
-    return null;
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: delay / 1000 }}
+      >
+        <Card className="border-border/50 bg-card/80 backdrop-blur-sm">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Users className="w-4 h-4 text-muted-foreground" />
+              Coaching Tendencies
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-xs text-muted-foreground">
+              No coaching data available for the teams in this parlay.
+            </p>
+          </CardContent>
+        </Card>
+      </motion.div>
+    );
   }
 
   return (

@@ -24,7 +24,16 @@ export const CoachingAlertBanner = ({ signals, isLoading, legCountBySport }: Coa
     );
   }
   
-  if (signals.length === 0) return null;
+  if (signals.length === 0) {
+    return (
+      <div className="px-3 py-2 bg-muted/30 border-b border-border/30">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <MinusCircle className="h-3 w-3" />
+          <span>No coaching data for these teams</span>
+        </div>
+      </div>
+    );
+  }
   
   const pickCount = signals.filter(s => s.recommendation === 'PICK').length;
   const fadeCount = signals.filter(s => s.recommendation === 'FADE').length;
