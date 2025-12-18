@@ -890,6 +890,39 @@ export type Database = {
         }
         Relationships: []
       }
+      email_verification_codes: {
+        Row: {
+          attempts: number | null
+          code: string
+          created_at: string | null
+          email: string
+          expires_at: string
+          id: string
+          user_id: string
+          verified: boolean | null
+        }
+        Insert: {
+          attempts?: number | null
+          code: string
+          created_at?: string | null
+          email: string
+          expires_at: string
+          id?: string
+          user_id: string
+          verified?: boolean | null
+        }
+        Update: {
+          attempts?: number | null
+          code?: string
+          created_at?: string | null
+          email?: string
+          expires_at?: string
+          id?: string
+          user_id?: string
+          verified?: boolean | null
+        }
+        Relationships: []
+      }
       engine_brier_scores: {
         Row: {
           bet_type: string | null
@@ -3707,6 +3740,9 @@ export type Database = {
           avatar_url: string | null
           bio: string | null
           created_at: string
+          email: string | null
+          email_verification_sent_at: string | null
+          email_verified: boolean | null
           hints_enabled: boolean | null
           id: string
           instagram_handle: string | null
@@ -3728,6 +3764,9 @@ export type Database = {
           avatar_url?: string | null
           bio?: string | null
           created_at?: string
+          email?: string | null
+          email_verification_sent_at?: string | null
+          email_verified?: boolean | null
           hints_enabled?: boolean | null
           id?: string
           instagram_handle?: string | null
@@ -3749,6 +3788,9 @@ export type Database = {
           avatar_url?: string | null
           bio?: string | null
           created_at?: string
+          email?: string | null
+          email_verification_sent_at?: string | null
+          email_verified?: boolean | null
           hints_enabled?: boolean | null
           id?: string
           instagram_handle?: string | null
