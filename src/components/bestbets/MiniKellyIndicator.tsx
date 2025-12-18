@@ -3,21 +3,25 @@ import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { DollarSign, TrendingUp } from 'lucide-react';
 import { calculateKelly, americanToDecimal } from '@/lib/kelly-calculator';
-import { useBankroll } from '@/hooks/useBankroll';
 import { cn } from '@/lib/utils';
+
+interface BankrollSettings {
+  bankrollAmount?: number;
+  kellyMultiplier?: number;
+  maxBetPercent?: number;
+}
 
 interface MiniKellyIndicatorProps {
   winProbability: number; // 0-1
   americanOdds: number;
+  bankrollSettings?: BankrollSettings | null;
 }
 
-export function MiniKellyIndicator({ winProbability, americanOdds }: MiniKellyIndicatorProps) {
-  const { settings } = useBankroll();
-  
+export function MiniKellyIndicator({ winProbability, americanOdds, bankrollSettings }: MiniKellyIndicatorProps) {
   const kellyResult = useMemo(() => {
-    const bankroll = settings?.bankrollAmount || 1000;
-    const multiplier = settings?.kellyMultiplier || 0.5;
-    const maxBetPercent = settings?.maxBetPercent || 5;
+    const bankroll = bankrollSettings?.bankrollAmount || 1000;
+    const multiplier = bankrollSettings?.kellyMultiplier || 0.5;
+    const maxBetPercent = bankrollSettings?.maxBetPercent || 5;
     
     return calculateKelly({
       winProbability,
@@ -26,7 +30,7 @@ export function MiniKellyIndicator({ winProbability, americanOdds }: MiniKellyIn
       kellyMultiplier: multiplier,
       maxBetPercent: maxBetPercent / 100
     });
-  }, [winProbability, americanOdds, settings]);
+  }, [winProbability, americanOdds, bankrollSettings]);
 
   const getRiskColor = () => {
     switch (kellyResult.riskLevel) {

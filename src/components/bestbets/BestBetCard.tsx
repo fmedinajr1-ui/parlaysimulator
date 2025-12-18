@@ -10,6 +10,12 @@ import { Clock, Zap, TrendingDown, Trophy, AlertTriangle } from 'lucide-react';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
 
+interface BankrollSettings {
+  bankrollAmount?: number;
+  kellyMultiplier?: number;
+  maxBetPercent?: number;
+}
+
 interface BestBetCardProps {
   type: 'nhl_sharp' | 'ncaab_steam' | 'fade_signal' | 'nba_fatigue' | 'nfl_fade' | 'nfl_caution' | 'nhl_caution';
   event: {
@@ -29,13 +35,15 @@ interface BestBetCardProps {
   };
   accuracy: number;
   sampleSize: number;
+  bankrollSettings?: BankrollSettings | null;
 }
 
 export function BestBetCard({ 
   type, 
   event, 
   accuracy, 
-  sampleSize 
+  sampleSize,
+  bankrollSettings 
 }: BestBetCardProps) {
   const getTypeConfig = () => {
     switch (type) {
@@ -223,6 +231,7 @@ export function BestBetCard({
           <MiniKellyIndicator 
             winProbability={winProbability}
             americanOdds={event.odds || -110}
+            bankrollSettings={bankrollSettings}
           />
           <MiniEnsembleScore signals={ensembleSignals} />
         </div>
