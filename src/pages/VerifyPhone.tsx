@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Navigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { PhoneVerification } from '@/components/auth/PhoneVerification';
 import { AppShell } from '@/components/layout/AppShell';
@@ -81,8 +81,7 @@ export default function VerifyPhone() {
 
   // Redirect to auth if not logged in
   if (!user) {
-    navigate('/auth', { replace: true });
-    return null;
+    return <Navigate to="/auth" replace />;
   }
 
   // Show loader while checking verification status
