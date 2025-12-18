@@ -1,13 +1,50 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Users, TrendingUp, TrendingDown, Clock, Activity, ChevronDown, ChevronUp, Target, Percent } from "lucide-react";
+import { 
+  Users, TrendingUp, TrendingDown, Clock, Activity, ChevronDown, ChevronUp, 
+  Target, Percent, Zap, Shield, BarChart3, Footprints, Crosshair
+} from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { motion, AnimatePresence } from "framer-motion";
 import { ParlayLeg, LegAnalysis } from "@/types/parlay";
 import { cn } from "@/lib/utils";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+
+type SportType = 'NBA' | 'NFL' | 'NHL' | 'MLB' | 'UNKNOWN';
+
+interface BaseTendencies {
+  [key: string]: number | undefined;
+}
+
+interface NBATendencies extends BaseTendencies {
+  paceScore: number;
+  rotationScore: number;
+  starUsageScore: number;
+  b2bRestScore: number;
+}
+
+interface NFLTendencies extends BaseTendencies {
+  runPassSplit: number;
+  tempoScore: number;
+  aggressivenessScore: number;
+  fourthDownTendency: number;
+}
+
+interface NHLTendencies extends BaseTendencies {
+  lineChangeTendency: number;
+  goaliePullTiming: number;
+  ppAggression: number;
+  pkConservative: number;
+}
+
+interface MLBTendencies extends BaseTendencies {
+  bullpenUsage: number;
+  platoonTendency: number;
+  openerFrequency: number;
+  bunting: number;
+}
 
 interface CoachTendencySignal {
   teamName: string;
@@ -17,12 +54,8 @@ interface CoachTendencySignal {
   recommendation: 'PICK' | 'FADE' | 'NEUTRAL';
   confidence: number;
   reasoning: string;
-  tendencies: {
-    paceScore: number;
-    rotationScore: number;
-    starUsageScore: number;
-    b2bRestScore: number;
-  };
+  sport?: SportType;
+  tendencies: NBATendencies | NFLTendencies | NHLTendencies | MLBTendencies;
   propAdjustments: {
     points: number;
     rebounds: number;
@@ -49,93 +82,203 @@ interface AccuracyMetric {
   total_predictions: number;
 }
 
+// Sport-specific tendency configurations
+const SPORT_TENDENCY_CONFIG: Record<SportType, { 
+  keys: string[]; 
+  labels: Record<string, string>;
+  icons: Record<string, React.ComponentType<{ className?: string }>>;
+}> = {
+  NBA: {
+    keys: ['paceScore', 'rotationScore', 'starUsageScore', 'b2bRestScore'],
+    labels: {
+      paceScore: 'Pace',
+      rotationScore: 'Rotation',
+      starUsageScore: 'Star Usage',
+      b2bRestScore: 'B2B Rest'
+    },
+    icons: {
+      paceScore: Activity,
+      rotationScore: Users,
+      starUsageScore: TrendingUp,
+      b2bRestScore: Clock
+    }
+  },
+  NFL: {
+    keys: ['runPassSplit', 'tempoScore', 'aggressivenessScore', 'fourthDownTendency'],
+    labels: {
+      runPassSplit: 'Run/Pass',
+      tempoScore: 'Tempo',
+      aggressivenessScore: 'Aggression',
+      fourthDownTendency: '4th Down'
+    },
+    icons: {
+      runPassSplit: Footprints,
+      tempoScore: Zap,
+      aggressivenessScore: Target,
+      fourthDownTendency: Crosshair
+    }
+  },
+  NHL: {
+    keys: ['lineChangeTendency', 'goaliePullTiming', 'ppAggression', 'pkConservative'],
+    labels: {
+      lineChangeTendency: 'Line Changes',
+      goaliePullTiming: 'Goalie Pull',
+      ppAggression: 'PP Style',
+      pkConservative: 'PK Style'
+    },
+    icons: {
+      lineChangeTendency: Users,
+      goaliePullTiming: Shield,
+      ppAggression: Zap,
+      pkConservative: Shield
+    }
+  },
+  MLB: {
+    keys: ['bullpenUsage', 'platoonTendency', 'openerFrequency', 'bunting'],
+    labels: {
+      bullpenUsage: 'Bullpen',
+      platoonTendency: 'Platoon',
+      openerFrequency: 'Opener',
+      bunting: 'Small Ball'
+    },
+    icons: {
+      bullpenUsage: Users,
+      platoonTendency: TrendingUp,
+      openerFrequency: Clock,
+      bunting: BarChart3
+    }
+  },
+  UNKNOWN: {
+    keys: ['paceScore', 'rotationScore', 'starUsageScore', 'b2bRestScore'],
+    labels: {
+      paceScore: 'Pace',
+      rotationScore: 'Rotation',
+      starUsageScore: 'Star Usage',
+      b2bRestScore: 'B2B Rest'
+    },
+    icons: {
+      paceScore: Activity,
+      rotationScore: Users,
+      starUsageScore: TrendingUp,
+      b2bRestScore: Clock
+    }
+  }
+};
+
+// Multi-sport team mappings
+const TEAM_MAPS: Record<SportType, Record<string, string>> = {
+  NBA: {
+    'hawks': 'Atlanta Hawks', 'celtics': 'Boston Celtics', 'nets': 'Brooklyn Nets',
+    'hornets': 'Charlotte Hornets', 'bulls': 'Chicago Bulls', 'cavaliers': 'Cleveland Cavaliers',
+    'cavs': 'Cleveland Cavaliers', 'mavericks': 'Dallas Mavericks', 'mavs': 'Dallas Mavericks',
+    'nuggets': 'Denver Nuggets', 'pistons': 'Detroit Pistons', 'warriors': 'Golden State Warriors',
+    'rockets': 'Houston Rockets', 'pacers': 'Indiana Pacers', 'clippers': 'Los Angeles Clippers',
+    'lakers': 'Los Angeles Lakers', 'grizzlies': 'Memphis Grizzlies', 'heat': 'Miami Heat',
+    'bucks': 'Milwaukee Bucks', 'timberwolves': 'Minnesota Timberwolves', 'wolves': 'Minnesota Timberwolves',
+    'pelicans': 'New Orleans Pelicans', 'knicks': 'New York Knicks', 'thunder': 'Oklahoma City Thunder',
+    'magic': 'Orlando Magic', '76ers': 'Philadelphia 76ers', 'sixers': 'Philadelphia 76ers',
+    'suns': 'Phoenix Suns', 'trail blazers': 'Portland Trail Blazers', 'blazers': 'Portland Trail Blazers',
+    'kings': 'Sacramento Kings', 'spurs': 'San Antonio Spurs', 'raptors': 'Toronto Raptors',
+    'jazz': 'Utah Jazz', 'wizards': 'Washington Wizards'
+  },
+  NFL: {
+    'cardinals': 'Arizona Cardinals', 'falcons': 'Atlanta Falcons', 'ravens': 'Baltimore Ravens',
+    'bills': 'Buffalo Bills', 'panthers': 'Carolina Panthers', 'bears': 'Chicago Bears',
+    'bengals': 'Cincinnati Bengals', 'browns': 'Cleveland Browns', 'cowboys': 'Dallas Cowboys',
+    'broncos': 'Denver Broncos', 'lions': 'Detroit Lions', 'packers': 'Green Bay Packers',
+    'texans': 'Houston Texans', 'colts': 'Indianapolis Colts', 'jaguars': 'Jacksonville Jaguars',
+    'chiefs': 'Kansas City Chiefs', 'raiders': 'Las Vegas Raiders', 'chargers': 'Los Angeles Chargers',
+    'rams': 'Los Angeles Rams', 'dolphins': 'Miami Dolphins', 'vikings': 'Minnesota Vikings',
+    'patriots': 'New England Patriots', 'saints': 'New Orleans Saints', 'giants': 'New York Giants',
+    'jets': 'New York Jets', 'eagles': 'Philadelphia Eagles', 'steelers': 'Pittsburgh Steelers',
+    '49ers': 'San Francisco 49ers', 'niners': 'San Francisco 49ers', 'seahawks': 'Seattle Seahawks',
+    'buccaneers': 'Tampa Bay Buccaneers', 'bucs': 'Tampa Bay Buccaneers', 'titans': 'Tennessee Titans',
+    'commanders': 'Washington Commanders'
+  },
+  NHL: {
+    'ducks': 'Anaheim Ducks', 'bruins': 'Boston Bruins', 'sabres': 'Buffalo Sabres',
+    'flames': 'Calgary Flames', 'hurricanes': 'Carolina Hurricanes', 'blackhawks': 'Chicago Blackhawks',
+    'avalanche': 'Colorado Avalanche', 'blue jackets': 'Columbus Blue Jackets', 'stars': 'Dallas Stars',
+    'red wings': 'Detroit Red Wings', 'oilers': 'Edmonton Oilers', 'panthers': 'Florida Panthers',
+    'kings': 'Los Angeles Kings', 'wild': 'Minnesota Wild', 'canadiens': 'Montreal Canadiens',
+    'habs': 'Montreal Canadiens', 'predators': 'Nashville Predators', 'devils': 'New Jersey Devils',
+    'islanders': 'New York Islanders', 'rangers': 'New York Rangers', 'senators': 'Ottawa Senators',
+    'flyers': 'Philadelphia Flyers', 'penguins': 'Pittsburgh Penguins', 'sharks': 'San Jose Sharks',
+    'kraken': 'Seattle Kraken', 'blues': 'St. Louis Blues', 'lightning': 'Tampa Bay Lightning',
+    'maple leafs': 'Toronto Maple Leafs', 'leafs': 'Toronto Maple Leafs', 'canucks': 'Vancouver Canucks',
+    'golden knights': 'Vegas Golden Knights', 'capitals': 'Washington Capitals'
+  },
+  MLB: {
+    'diamondbacks': 'Arizona Diamondbacks', 'd-backs': 'Arizona Diamondbacks', 'braves': 'Atlanta Braves',
+    'orioles': 'Baltimore Orioles', 'red sox': 'Boston Red Sox', 'cubs': 'Chicago Cubs',
+    'white sox': 'Chicago White Sox', 'reds': 'Cincinnati Reds', 'guardians': 'Cleveland Guardians',
+    'rockies': 'Colorado Rockies', 'tigers': 'Detroit Tigers', 'astros': 'Houston Astros',
+    'royals': 'Kansas City Royals', 'angels': 'Los Angeles Angels', 'dodgers': 'Los Angeles Dodgers',
+    'marlins': 'Miami Marlins', 'brewers': 'Milwaukee Brewers', 'twins': 'Minnesota Twins',
+    'mets': 'New York Mets', 'yankees': 'New York Yankees', 'athletics': 'Oakland Athletics',
+    'phillies': 'Philadelphia Phillies', 'pirates': 'Pittsburgh Pirates', 'padres': 'San Diego Padres',
+    'giants': 'San Francisco Giants', 'mariners': 'Seattle Mariners', 'cardinals': 'St. Louis Cardinals',
+    'rays': 'Tampa Bay Rays', 'rangers': 'Texas Rangers', 'blue jays': 'Toronto Blue Jays',
+    'nationals': 'Washington Nationals'
+  },
+  UNKNOWN: {}
+};
+
 export const CoachingInsightsCard = ({ legs, legAnalyses, delay = 0 }: CoachingInsightsCardProps) => {
   const [coachingData, setCoachingData] = useState<CoachTendencySignal[]>([]);
   const [accuracyData, setAccuracyData] = useState<Map<string, AccuracyMetric>>(new Map());
   const [isLoading, setIsLoading] = useState(true);
   const [isOpen, setIsOpen] = useState(false);
 
-  // Multi-sport team mappings
-  const TEAM_MAPS: Record<string, Record<string, string>> = {
-    NBA: {
-      'hawks': 'Atlanta Hawks', 'celtics': 'Boston Celtics', 'nets': 'Brooklyn Nets',
-      'hornets': 'Charlotte Hornets', 'bulls': 'Chicago Bulls', 'cavaliers': 'Cleveland Cavaliers',
-      'cavs': 'Cleveland Cavaliers', 'mavericks': 'Dallas Mavericks', 'mavs': 'Dallas Mavericks',
-      'nuggets': 'Denver Nuggets', 'pistons': 'Detroit Pistons', 'warriors': 'Golden State Warriors',
-      'rockets': 'Houston Rockets', 'pacers': 'Indiana Pacers', 'clippers': 'Los Angeles Clippers',
-      'lakers': 'Los Angeles Lakers', 'grizzlies': 'Memphis Grizzlies', 'heat': 'Miami Heat',
-      'bucks': 'Milwaukee Bucks', 'timberwolves': 'Minnesota Timberwolves', 'wolves': 'Minnesota Timberwolves',
-      'pelicans': 'New Orleans Pelicans', 'knicks': 'New York Knicks', 'thunder': 'Oklahoma City Thunder',
-      'magic': 'Orlando Magic', '76ers': 'Philadelphia 76ers', 'sixers': 'Philadelphia 76ers',
-      'suns': 'Phoenix Suns', 'trail blazers': 'Portland Trail Blazers', 'blazers': 'Portland Trail Blazers',
-      'kings': 'Sacramento Kings', 'spurs': 'San Antonio Spurs', 'raptors': 'Toronto Raptors',
-      'jazz': 'Utah Jazz', 'wizards': 'Washington Wizards'
-    },
-    NFL: {
-      'cardinals': 'Arizona Cardinals', 'falcons': 'Atlanta Falcons', 'ravens': 'Baltimore Ravens',
-      'bills': 'Buffalo Bills', 'panthers': 'Carolina Panthers', 'bears': 'Chicago Bears',
-      'bengals': 'Cincinnati Bengals', 'browns': 'Cleveland Browns', 'cowboys': 'Dallas Cowboys',
-      'broncos': 'Denver Broncos', 'lions': 'Detroit Lions', 'packers': 'Green Bay Packers',
-      'texans': 'Houston Texans', 'colts': 'Indianapolis Colts', 'jaguars': 'Jacksonville Jaguars',
-      'chiefs': 'Kansas City Chiefs', 'raiders': 'Las Vegas Raiders', 'chargers': 'Los Angeles Chargers',
-      'rams': 'Los Angeles Rams', 'dolphins': 'Miami Dolphins', 'vikings': 'Minnesota Vikings',
-      'patriots': 'New England Patriots', 'saints': 'New Orleans Saints', 'giants': 'New York Giants',
-      'jets': 'New York Jets', 'eagles': 'Philadelphia Eagles', 'steelers': 'Pittsburgh Steelers',
-      '49ers': 'San Francisco 49ers', 'niners': 'San Francisco 49ers', 'seahawks': 'Seattle Seahawks',
-      'buccaneers': 'Tampa Bay Buccaneers', 'bucs': 'Tampa Bay Buccaneers', 'titans': 'Tennessee Titans',
-      'commanders': 'Washington Commanders'
-    },
-    NHL: {
-      'ducks': 'Anaheim Ducks', 'bruins': 'Boston Bruins', 'sabres': 'Buffalo Sabres',
-      'flames': 'Calgary Flames', 'hurricanes': 'Carolina Hurricanes', 'blackhawks': 'Chicago Blackhawks',
-      'avalanche': 'Colorado Avalanche', 'blue jackets': 'Columbus Blue Jackets', 'stars': 'Dallas Stars',
-      'red wings': 'Detroit Red Wings', 'oilers': 'Edmonton Oilers', 'panthers': 'Florida Panthers',
-      'kings': 'Los Angeles Kings', 'wild': 'Minnesota Wild', 'canadiens': 'Montreal Canadiens',
-      'habs': 'Montreal Canadiens', 'predators': 'Nashville Predators', 'devils': 'New Jersey Devils',
-      'islanders': 'New York Islanders', 'rangers': 'New York Rangers', 'senators': 'Ottawa Senators',
-      'flyers': 'Philadelphia Flyers', 'penguins': 'Pittsburgh Penguins', 'sharks': 'San Jose Sharks',
-      'kraken': 'Seattle Kraken', 'blues': 'St. Louis Blues', 'lightning': 'Tampa Bay Lightning',
-      'maple leafs': 'Toronto Maple Leafs', 'leafs': 'Toronto Maple Leafs', 'canucks': 'Vancouver Canucks',
-      'golden knights': 'Vegas Golden Knights', 'capitals': 'Washington Capitals'
-    },
-    MLB: {
-      'diamondbacks': 'Arizona Diamondbacks', 'd-backs': 'Arizona Diamondbacks', 'braves': 'Atlanta Braves',
-      'orioles': 'Baltimore Orioles', 'red sox': 'Boston Red Sox', 'cubs': 'Chicago Cubs',
-      'white sox': 'Chicago White Sox', 'reds': 'Cincinnati Reds', 'guardians': 'Cleveland Guardians',
-      'rockies': 'Colorado Rockies', 'tigers': 'Detroit Tigers', 'astros': 'Houston Astros',
-      'royals': 'Kansas City Royals', 'angels': 'Los Angeles Angels', 'dodgers': 'Los Angeles Dodgers',
-      'marlins': 'Miami Marlins', 'brewers': 'Milwaukee Brewers', 'twins': 'Minnesota Twins',
-      'mets': 'New York Mets', 'yankees': 'New York Yankees', 'athletics': 'Oakland Athletics',
-      'phillies': 'Philadelphia Phillies', 'pirates': 'Pittsburgh Pirates', 'padres': 'San Diego Padres',
-      'giants': 'San Francisco Giants', 'mariners': 'Seattle Mariners', 'cardinals': 'St. Louis Cardinals',
-      'rays': 'Tampa Bay Rays', 'rangers': 'Texas Rangers', 'blue jays': 'Toronto Blue Jays',
-      'nationals': 'Washington Nationals'
+  // Detect sport from legs
+  const detectedSport = useMemo((): SportType => {
+    for (const leg of legs) {
+      const desc = leg.description.toLowerCase();
+      
+      // Check for sport-specific keywords
+      if (desc.includes('nba') || desc.includes('basketball')) return 'NBA';
+      if (desc.includes('nfl') || desc.includes('football') || desc.includes('touchdown') || desc.includes('passing yard')) return 'NFL';
+      if (desc.includes('nhl') || desc.includes('hockey') || desc.includes('goal') && desc.includes('ice')) return 'NHL';
+      if (desc.includes('mlb') || desc.includes('baseball') || desc.includes('strikeout') || desc.includes('home run')) return 'MLB';
+      
+      // Check team names to infer sport
+      for (const [sport, teamMap] of Object.entries(TEAM_MAPS) as [SportType, Record<string, string>][]) {
+        if (sport === 'UNKNOWN') continue;
+        for (const shortName of Object.keys(teamMap)) {
+          if (desc.includes(shortName)) {
+            return sport;
+          }
+        }
+      }
     }
-  };
+    return 'NBA'; // Default to NBA
+  }, [legs]);
 
   // Extract team names from legs
-  const extractTeamNames = (): string[] => {
-    const teams = new Set<string>();
+  const extractTeamNames = (): { team: string; sport: SportType }[] => {
+    const teams: { team: string; sport: SportType }[] = [];
+    const seen = new Set<string>();
     
     legs.forEach((leg, idx) => {
       const analysis = legAnalyses?.[idx];
-      if (analysis?.team) {
-        teams.add(analysis.team);
+      if (analysis?.team && !seen.has(analysis.team)) {
+        seen.add(analysis.team);
+        teams.push({ team: analysis.team, sport: detectedSport });
       }
       
-      // Try to extract from description across all sports
+      // Try to extract from description
       const desc = leg.description.toLowerCase();
+      const teamMap = TEAM_MAPS[detectedSport];
       
-      for (const [sport, teamMap] of Object.entries(TEAM_MAPS)) {
-        for (const [shortName, fullName] of Object.entries(teamMap)) {
-          if (desc.includes(shortName)) {
-            teams.add(fullName);
-          }
+      for (const [shortName, fullName] of Object.entries(teamMap)) {
+        if (desc.includes(shortName) && !seen.has(fullName)) {
+          seen.add(fullName);
+          teams.push({ team: fullName, sport: detectedSport });
         }
       }
     });
     
-    return Array.from(teams);
+    return teams;
   };
 
   useEffect(() => {
@@ -162,18 +305,20 @@ export const CoachingInsightsCard = ({ legs, legAnalyses, delay = 0 }: CoachingI
       setAccuracyData(metricsMap);
 
       // Fetch coaching data for each team (in parallel)
-      const promises = teams.map(async (team) => {
+      const promises = teams.map(async ({ team, sport }) => {
         try {
           const { data, error } = await supabase.functions.invoke('coach-tendencies-engine', {
             body: {
               action: 'analyze',
               teamName: team,
-              situation: 'normal'
+              situation: 'normal',
+              sport: sport
             }
           });
 
           if (!error && data?.data) {
             const coachData = data.data as CoachTendencySignal;
+            coachData.sport = sport;
             
             // Add accuracy info if available
             const accuracyInfo = metricsMap.get(coachData.coachName?.toLowerCase());
@@ -204,7 +349,7 @@ export const CoachingInsightsCard = ({ legs, legAnalyses, delay = 0 }: CoachingI
     };
 
     fetchCoachingData();
-  }, [legs, legAnalyses]);
+  }, [legs, legAnalyses, detectedSport]);
 
   const getRecommendationColor = (rec: string) => {
     switch (rec) {
@@ -224,6 +369,33 @@ export const CoachingInsightsCard = ({ legs, legAnalyses, delay = 0 }: CoachingI
     if (value === 0) return null;
     const sign = value > 0 ? '+' : '';
     return `${sign}${value}%`;
+  };
+
+  const renderTendencies = (coach: CoachTendencySignal) => {
+    const sport = coach.sport || detectedSport;
+    const config = SPORT_TENDENCY_CONFIG[sport];
+    
+    if (!coach.tendencies) return null;
+
+    return (
+      <div className="grid grid-cols-4 gap-2 mb-3">
+        {config.keys.map((key) => {
+          const value = coach.tendencies[key];
+          const IconComponent = config.icons[key];
+          const label = config.labels[key];
+          
+          return (
+            <div key={key} className="text-center p-2 rounded bg-background/50">
+              <IconComponent className="w-3 h-3 mx-auto mb-1 text-muted-foreground" />
+              <span className={cn("text-sm font-medium", getScoreColor(value ?? 0))}>
+                {value ?? '-'}
+              </span>
+              <p className="text-[10px] text-muted-foreground">{label}</p>
+            </div>
+          );
+        })}
+      </div>
+    );
   };
 
   if (isLoading) {
@@ -289,6 +461,9 @@ export const CoachingInsightsCard = ({ legs, legAnalyses, delay = 0 }: CoachingI
                   Coaching Tendencies
                   <Badge variant="outline" className="text-xs ml-2">
                     {coachingData.length} coach{coachingData.length !== 1 ? 'es' : ''}
+                  </Badge>
+                  <Badge variant="secondary" className="text-xs">
+                    {detectedSport}
                   </Badge>
                 </CardTitle>
                 {isOpen ? (
@@ -369,39 +544,8 @@ export const CoachingInsightsCard = ({ legs, legAnalyses, delay = 0 }: CoachingI
                       </div>
                     </div>
 
-                    {/* Tendency Scores */}
-                    {coach.tendencies && (
-                    <div className="grid grid-cols-4 gap-2 mb-3">
-                      <div className="text-center p-2 rounded bg-background/50">
-                        <Activity className="w-3 h-3 mx-auto mb-1 text-muted-foreground" />
-                        <span className={cn("text-sm font-medium", getScoreColor(coach.tendencies.paceScore ?? 0))}>
-                          {coach.tendencies.paceScore ?? '-'}
-                        </span>
-                        <p className="text-[10px] text-muted-foreground">Pace</p>
-                      </div>
-                      <div className="text-center p-2 rounded bg-background/50">
-                        <Users className="w-3 h-3 mx-auto mb-1 text-muted-foreground" />
-                        <span className={cn("text-sm font-medium", getScoreColor(coach.tendencies.rotationScore ?? 0))}>
-                          {coach.tendencies.rotationScore ?? '-'}
-                        </span>
-                        <p className="text-[10px] text-muted-foreground">Rotation</p>
-                      </div>
-                      <div className="text-center p-2 rounded bg-background/50">
-                        <TrendingUp className="w-3 h-3 mx-auto mb-1 text-muted-foreground" />
-                        <span className={cn("text-sm font-medium", getScoreColor(coach.tendencies.starUsageScore ?? 0))}>
-                          {coach.tendencies.starUsageScore ?? '-'}
-                        </span>
-                        <p className="text-[10px] text-muted-foreground">Star Usage</p>
-                      </div>
-                      <div className="text-center p-2 rounded bg-background/50">
-                        <Clock className="w-3 h-3 mx-auto mb-1 text-muted-foreground" />
-                        <span className={cn("text-sm font-medium", getScoreColor(coach.tendencies.b2bRestScore ?? 0))}>
-                          {coach.tendencies.b2bRestScore ?? '-'}
-                        </span>
-                        <p className="text-[10px] text-muted-foreground">B2B Rest</p>
-                      </div>
-                    </div>
-                    )}
+                    {/* Sport-Specific Tendency Scores */}
+                    {renderTendencies(coach)}
 
                     {/* Prop Adjustments */}
                     {coach.propAdjustments && (coach.propAdjustments.points !== 0 || 
