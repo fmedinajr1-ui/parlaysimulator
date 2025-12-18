@@ -434,6 +434,13 @@ const Results = () => {
             delay={140}
           />
 
+          {/* Coaching Tendencies - Now in main view */}
+          <CoachingInsightsCard
+            legs={simulation.legs}
+            legAnalyses={aiAnalysis?.legAnalyses}
+            delay={145}
+          />
+
           {/* Double Down Recommendation */}
           <DoubleDownCard
             legs={simulation.legs}
@@ -507,12 +514,6 @@ const Results = () => {
               delay={175}
             />
 
-            {/* Coaching Tendencies */}
-            <CoachingInsightsCard
-              legs={simulation.legs}
-              legAnalyses={aiAnalysis?.legAnalyses}
-              delay={200}
-            />
 
             {/* Historical Insights - only show if user is logged in */}
             {user && (

@@ -389,12 +389,13 @@ serve(async (req) => {
     let formulaPerformance: any[] = [];
     let bestBetsLog: any[] = [];
     let hitrateProps: any[] = [];
+    let coachProfiles: any[] = [];
     
     try {
       const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
       const today = new Date().toISOString().split('T')[0];
       
-      // Fetch all engine data in parallel (9 data sources)
+      // Fetch all engine data in parallel (10 data sources)
       const [
         movementResult,
         unifiedResult,
@@ -404,7 +405,8 @@ serve(async (req) => {
         avoidResult,
         formulaResult,
         bestBetsResult,
-        hitrateResult
+        hitrateResult,
+        coachResult
       ] = await Promise.all([
         supabase
           .from('line_movements')
@@ -456,6 +458,11 @@ serve(async (req) => {
           .select('*')
           .eq('is_active', true)
           .gte('expires_at', new Date().toISOString())
+          .limit(100),
+        supabase
+          .from('coach_profiles')
+          .select('*')
+          .eq('is_active', true)
           .limit(100)
       ]);
       
@@ -468,8 +475,9 @@ serve(async (req) => {
       formulaPerformance = formulaResult.data || [];
       bestBetsLog = bestBetsResult.data || [];
       hitrateProps = hitrateResult.data || [];
+      coachProfiles = coachResult.data || [];
       
-      console.log(`Loaded engine data: ${lineMovements.length} movements, ${unifiedProps.length} unified, ${godModeUpsets.length} upsets, ${juicedProps.length} juiced, ${fatigueScores.length} fatigue, ${avoidPatterns.length} avoid, ${formulaPerformance.length} formulas, ${bestBetsLog.length} bestBets, ${hitrateProps.length} hitrate`);
+      console.log(`Loaded engine data: ${lineMovements.length} movements, ${unifiedProps.length} unified, ${godModeUpsets.length} upsets, ${juicedProps.length} juiced, ${fatigueScores.length} fatigue, ${avoidPatterns.length} avoid, ${formulaPerformance.length} formulas, ${bestBetsLog.length} bestBets, ${hitrateProps.length} hitrate, ${coachProfiles.length} coaches`);
     } catch (dataError) {
       console.error('Error fetching engine data:', dataError);
     }
@@ -727,7 +735,8 @@ Return ONLY valid JSON, no other text.`;
       sharpData: any,
       fatigueData: any,
       bestBet: any,
-      hitrateData: any
+      hitrateData: any,
+      coachingData: any
     }, formulas: any[]): EngineConsensus {
       const agreeing: string[] = [];
       const disagreeing: string[] = [];
@@ -857,7 +866,47 @@ Return ONLY valid JSON, no other text.`;
         engineSignals.push({ engine: 'bestbets', status: 'no_data', score: null, reason: 'Not in best bets' });
       }
 
-      const totalEngines = 7;
+      // 8. Coaching Engine
+      if (allData.coachingData) {
+        const coach = allData.coachingData;
+        const hasHighPace = coach.pace_preference === 'fast';
+        const hasDeepRotation = coach.rotation_depth && coach.rotation_depth >= 9;
+        const hasRestTendency = coach.b2b_rest_tendency === 'aggressive_rest';
+        
+        // Analyze coaching recommendation based on bet type
+        let isAgree = false;
+        let isDisagree = false;
+        let coachReason = '';
+        
+        if (legDesc.toLowerCase().includes('points') || legDesc.toLowerCase().includes('over')) {
+          // For points/over bets, fast pace and high star usage are favorable
+          isAgree = hasHighPace || (coach.star_usage_pct && coach.star_usage_pct >= 35);
+          isDisagree = coach.pace_preference === 'slow' || hasRestTendency;
+          coachReason = isAgree ? 'High pace/star usage supports scoring' : isDisagree ? 'Slow pace/rest tendency' : 'Neutral coaching style';
+        } else if (legDesc.toLowerCase().includes('assists') || legDesc.toLowerCase().includes('rebounds')) {
+          // For assists/rebounds, rotation depth and pace matter
+          isAgree = hasHighPace && !hasDeepRotation;
+          isDisagree = hasDeepRotation;
+          coachReason = isAgree ? 'Favorable rotation for stats' : isDisagree ? 'Deep rotation limits volume' : 'Moderate coaching impact';
+        } else {
+          // General game coaching analysis
+          coachReason = `Coach: ${coach.coach_name || 'Unknown'} - ${coach.pace_preference || 'standard'} pace`;
+        }
+        
+        engineSignals.push({
+          engine: 'coaching',
+          status: isAgree ? 'agree' : isDisagree ? 'disagree' : 'neutral',
+          score: coach.star_usage_pct || null,
+          reason: coachReason,
+          confidence: coach.rotation_depth ? Math.min(coach.rotation_depth * 10, 100) : undefined
+        });
+        if (isAgree) agreeing.push('Coaching');
+        else if (isDisagree) disagreeing.push('Coaching');
+      } else {
+        engineSignals.push({ engine: 'coaching', status: 'no_data', score: null, reason: 'No coaching data available' });
+      }
+
+      const totalEngines = 8;
       const consensusScore = agreeing.length;
 
       return { 
@@ -979,7 +1028,8 @@ Return ONLY valid JSON, no other text.`;
             sharpData: sharpData?.hasSharpData ? sharpData : null,
             fatigueData: legAnalysis.fatigueData ? fatigueScores.find(f => f.team_name?.toLowerCase().includes(legAnalysis.team?.toLowerCase() || '')) : null,
             bestBet: matchedBestBet || null,
-            hitrateData: matchedHitrate || null
+            hitrateData: matchedHitrate || null,
+            coachingData: coachProfiles.find(c => c.team_name?.toLowerCase().includes(legAnalysis.team?.toLowerCase() || '')) || null
           },
           formulaPerformance
         );
