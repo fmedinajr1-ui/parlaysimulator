@@ -113,7 +113,13 @@ serve(async (req) => {
     });
 
     const twilioResult = await twilioResponse.json();
-    logStep('Twilio Verify response', { status: twilioResponse.status, result: twilioResult });
+    logStep('Twilio Verify response', { 
+      status: twilioResponse.status, 
+      verificationStatus: twilioResult.status,
+      valid: twilioResult.valid,
+      sid: twilioResult.sid,
+      sendAttempts: twilioResult.send_code_attempts?.length 
+    });
 
     if (!twilioResponse.ok) {
       logStep('Twilio Verify API error', twilioResult);
@@ -132,7 +138,28 @@ serve(async (req) => {
       );
     }
 
-    logStep('Verification sent successfully', { status: twilioResult.status });
+    if (twilioResult.status !== 'pending') {
+      logStep('Unexpected verification status', { status: twilioResult.status });
+      return new Response(
+        JSON.stringify({ error: 'Failed to send verification code' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Check if valid is false - this indicates a potential issue with Twilio config
+    if (twilioResult.valid === false) {
+      logStep('WARNING: Twilio returned valid=false', { 
+        sid: twilioResult.sid,
+        sendAttempts: twilioResult.send_code_attempts?.length,
+        hint: 'This may indicate trial account restrictions or credential mismatch'
+      });
+    }
+
+    logStep('Verification sent successfully', { 
+      status: twilioResult.status,
+      valid: twilioResult.valid,
+      verificationSid: twilioResult.sid
+    });
 
     // Record the send time to prevent rapid re-sends
     const authHeader = req.headers.get('Authorization');
