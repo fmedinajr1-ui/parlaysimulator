@@ -10,6 +10,11 @@ const logStep = (step: string, details?: any) => {
   console.log(`[SEND-PHONE-VERIFICATION] ${step}`, details ? JSON.stringify(details) : '');
 };
 
+// Generate a 6-digit code
+function generateCode(): string {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -31,7 +36,7 @@ serve(async (req) => {
     const phoneRegex = /^\+[1-9]\d{1,14}$/;
     if (!phoneRegex.test(phone_number)) {
       return new Response(
-        JSON.stringify({ error: 'Invalid phone number format. Please use E.164 format (e.g., +1234567890)' }),
+        JSON.stringify({ error: 'Invalid phone number format. Please use E.164 format (e.g., +14155551234)' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -40,53 +45,107 @@ serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+    // Get authenticated user
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
+      return new Response(
+        JSON.stringify({ error: 'Authorization required' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const token = authHeader.replace('Bearer ', '');
+    const { data: { user }, error: userError } = await supabase.auth.getUser(token);
+    
+    if (userError || !user) {
+      logStep('User auth error', userError);
+      return new Response(
+        JSON.stringify({ error: 'Invalid authentication' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    logStep('User authenticated', { userId: user.id });
+
     // Check if phone is already verified by another user
     const { data: existingProfile } = await supabase
       .from('profiles')
-      .select('phone_number, phone_verification_sent_at')
+      .select('phone_number, user_id')
       .eq('phone_number', phone_number)
       .eq('phone_verified', true)
+      .neq('user_id', user.id)
       .single();
 
     if (existingProfile) {
-      logStep('Phone already registered');
+      logStep('Phone already registered to another user');
       return new Response(
         JSON.stringify({ error: 'This phone number is already registered to another account' }),
         { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // Check for recent verification attempt to prevent race condition
-    const { data: recentAttempt } = await supabase
-      .from('profiles')
-      .select('phone_verification_sent_at')
-      .eq('phone_number', phone_number)
-      .single();
+    // Check for recent verification attempts (rate limiting)
+    const { data: recentCodes } = await supabase
+      .from('phone_verification_codes')
+      .select('created_at')
+      .eq('user_id', user.id)
+      .gte('created_at', new Date(Date.now() - 60000).toISOString())
+      .order('created_at', { ascending: false })
+      .limit(1);
 
-    if (recentAttempt?.phone_verification_sent_at) {
-      const lastSentAt = new Date(recentAttempt.phone_verification_sent_at);
-      const secondsSinceSent = (Date.now() - lastSentAt.getTime()) / 1000;
+    if (recentCodes && recentCodes.length > 0) {
+      const lastSent = new Date(recentCodes[0].created_at);
+      const secondsRemaining = Math.ceil(60 - (Date.now() - lastSent.getTime()) / 1000);
       
-      if (secondsSinceSent < 60) {
-        const waitTime = Math.ceil(60 - secondsSinceSent);
-        logStep('Rate limited - code recently sent', { secondsSinceSent, waitTime });
+      if (secondsRemaining > 0) {
         return new Response(
           JSON.stringify({ 
-            error: `Please wait ${waitTime} seconds before requesting a new code`,
-            waitTime,
-            alreadySent: true
+            error: `Please wait ${secondsRemaining} seconds before requesting a new code`,
+            cooldown: secondsRemaining
           }),
           { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
     }
 
-    // Get Twilio credentials
+    // Generate verification code
+    const code = generateCode();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    logStep('Generated code', { codeLength: code.length, expiresAt: expiresAt.toISOString() });
+
+    // Invalidate any existing codes for this user
+    await supabase
+      .from('phone_verification_codes')
+      .delete()
+      .eq('user_id', user.id);
+
+    // Store the new code
+    const { error: insertError } = await supabase
+      .from('phone_verification_codes')
+      .insert({
+        user_id: user.id,
+        phone_number,
+        code,
+        expires_at: expiresAt.toISOString(),
+        verified: false,
+        attempts: 0
+      });
+
+    if (insertError) {
+      logStep('Failed to store code', insertError);
+      return new Response(
+        JSON.stringify({ error: 'Failed to generate verification code' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Get Twilio credentials for direct SMS
     const accountSid = Deno.env.get('TWILIO_ACCOUNT_SID');
     const authToken = Deno.env.get('TWILIO_AUTH_TOKEN');
-    const verifyServiceSid = Deno.env.get('TWILIO_VERIFY_SERVICE_SID');
+    const fromNumber = Deno.env.get('TWILIO_PHONE_NUMBER');
 
-    if (!accountSid || !authToken || !verifyServiceSid) {
+    if (!accountSid || !authToken || !fromNumber) {
       logStep('Missing Twilio credentials');
       return new Response(
         JSON.stringify({ error: 'SMS service not configured' }),
@@ -94,14 +153,15 @@ serve(async (req) => {
       );
     }
 
-    logStep('Sending verification via Twilio Verify API');
+    logStep('Sending SMS via Twilio Messages API', { from: fromNumber });
 
-    // Use Twilio Verify API to send verification code
-    const twilioUrl = `https://verify.twilio.com/v2/Services/${verifyServiceSid}/Verifications`;
+    // Send SMS directly using Twilio Messages API
+    const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
     
     const formData = new URLSearchParams();
     formData.append('To', phone_number);
-    formData.append('Channel', 'sms');
+    formData.append('From', fromNumber);
+    formData.append('Body', `Your Parlay Farm verification code is: ${code}. It expires in 10 minutes.`);
 
     const twilioResponse = await fetch(twilioUrl, {
       method: 'POST',
@@ -113,73 +173,38 @@ serve(async (req) => {
     });
 
     const twilioResult = await twilioResponse.json();
-    logStep('Twilio Verify response', { 
+    logStep('Twilio SMS response', { 
       status: twilioResponse.status, 
-      verificationStatus: twilioResult.status,
-      valid: twilioResult.valid,
       sid: twilioResult.sid,
-      sendAttempts: twilioResult.send_code_attempts?.length 
+      errorCode: twilioResult.code,
+      errorMessage: twilioResult.message
     });
 
     if (!twilioResponse.ok) {
-      logStep('Twilio Verify API error', twilioResult);
+      logStep('Twilio SMS API error', twilioResult);
       
-      // Handle specific Twilio errors
-      if (twilioResult.code === 60203) {
-        return new Response(
-          JSON.stringify({ error: 'Too many verification attempts. Please try again later.' }),
-          { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-      
+      // Clean up the stored code since SMS failed
+      await supabase
+        .from('phone_verification_codes')
+        .delete()
+        .eq('user_id', user.id);
+
       return new Response(
-        JSON.stringify({ error: twilioResult.message || 'Failed to send verification code' }),
+        JSON.stringify({ 
+          error: twilioResult.message || 'Failed to send SMS',
+          twilioCode: twilioResult.code
+        }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    if (twilioResult.status !== 'pending') {
-      logStep('Unexpected verification status', { status: twilioResult.status });
-      return new Response(
-        JSON.stringify({ error: 'Failed to send verification code' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Check if valid is false - this indicates a potential issue with Twilio config
-    if (twilioResult.valid === false) {
-      logStep('WARNING: Twilio returned valid=false', { 
-        sid: twilioResult.sid,
-        sendAttempts: twilioResult.send_code_attempts?.length,
-        hint: 'This may indicate trial account restrictions or credential mismatch'
-      });
-    }
-
-    logStep('Verification sent successfully', { 
-      status: twilioResult.status,
-      valid: twilioResult.valid,
-      verificationSid: twilioResult.sid
-    });
-
-    // Record the send time to prevent rapid re-sends
-    const authHeader = req.headers.get('Authorization');
-    if (authHeader) {
-      const token = authHeader.replace('Bearer ', '');
-      const { data: { user } } = await supabase.auth.getUser(token);
-      if (user) {
-        await supabase
-          .from('profiles')
-          .update({ phone_verification_sent_at: new Date().toISOString() })
-          .eq('user_id', user.id);
-        logStep('Updated verification sent timestamp for user', { userId: user.id });
-      }
-    }
+    logStep('SMS sent successfully', { messageSid: twilioResult.sid });
 
     return new Response(
       JSON.stringify({ 
         success: true, 
-        message: 'Verification code sent successfully',
-        expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString() // 10 minutes
+        message: 'Verification code sent',
+        expiresInSeconds: 600
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
