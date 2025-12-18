@@ -2,14 +2,14 @@ import React from 'react';
 import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { UniversalLeg, SOURCE_LABELS } from '@/types/universal-parlay';
-import { CoachingSignal } from '@/hooks/useCoachingSignals';
+import { SportsCoachingSignal } from '@/hooks/useSportsCoachingSignals';
 import { CoachingWarningBadge } from './CoachingWarningBadge';
 import { cn } from '@/lib/utils';
 
 interface ParlayLegCardProps {
   leg: UniversalLeg;
   onRemove: (id: string) => void;
-  coachingSignal?: CoachingSignal;
+  coachingSignal?: SportsCoachingSignal;
 }
 
 export const ParlayLegCard = ({ leg, onRemove, coachingSignal }: ParlayLegCardProps) => {
