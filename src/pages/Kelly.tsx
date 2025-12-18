@@ -3,6 +3,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { MobileHeader } from '@/components/layout/MobileHeader';
 import { BankrollManager } from '@/components/bankroll/BankrollManager';
 import { KellyStakeCard } from '@/components/results/KellyStakeCard';
+import { KellyWhatIfComparison } from '@/components/kelly/KellyWhatIfComparison';
 import { FeedCard } from '@/components/FeedCard';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -129,11 +130,19 @@ const Kelly = () => {
 
         {/* Kelly Result */}
         {hasValidInputs && (
-          <KellyStakeCard
-            winProbability={parsedProbability}
-            americanOdds={parsedOdds}
-            userStake={parsedStake > 0 ? parsedStake : undefined}
-          />
+          <>
+            <KellyStakeCard
+              winProbability={parsedProbability}
+              americanOdds={parsedOdds}
+              userStake={parsedStake > 0 ? parsedStake : undefined}
+            />
+            
+            {/* What-If Comparison */}
+            <KellyWhatIfComparison
+              winProbability={parsedProbability}
+              americanOdds={parsedOdds}
+            />
+          </>
         )}
 
         {/* Quick Tips */}
