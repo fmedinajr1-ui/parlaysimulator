@@ -59,17 +59,31 @@ serve(async (req) => {
     });
 
     const twilioResult = await twilioResponse.json();
-    logStep('Twilio Verify check response', { status: twilioResponse.status, verificationStatus: twilioResult.status });
+    logStep('Twilio Verify check response', { 
+      httpStatus: twilioResponse.status, 
+      verificationStatus: twilioResult.status,
+      valid: twilioResult.valid,
+      errorCode: twilioResult.code,
+      errorMessage: twilioResult.message
+    });
 
     if (!twilioResponse.ok) {
-      logStep('Twilio Verify API error', twilioResult);
+      logStep('Twilio Verify API error', { 
+        code: twilioResult.code,
+        message: twilioResult.message,
+        moreInfo: twilioResult.more_info
+      });
       
       // Handle specific Twilio errors
       if (twilioResult.code === 20404) {
+        logStep('404 Error - Verification not found', {
+          hint: 'This usually means: 1) Code expired, 2) New code was requested, 3) Trial account number not verified, 4) Credential mismatch'
+        });
         return new Response(
           JSON.stringify({ 
-            error: 'This code has expired or a new code was requested. Please use the most recent code sent to your phone.',
-            needsNewCode: true
+            error: 'Verification not found. This can happen if: the code expired, a new code was requested, or this number is not verified in your Twilio trial account.',
+            needsNewCode: true,
+            debugHint: 'Check Twilio Console: Verify Service SID, Account credentials, and Verified Caller IDs for trial accounts'
           }),
           { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
@@ -85,9 +99,22 @@ serve(async (req) => {
           { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
+
+      // Handle invalid code
+      if (twilioResult.code === 60200) {
+        return new Response(
+          JSON.stringify({ 
+            error: 'Invalid verification code. Please check and try again.'
+          }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
       
       return new Response(
-        JSON.stringify({ error: twilioResult.message || 'Failed to verify code' }),
+        JSON.stringify({ 
+          error: twilioResult.message || 'Failed to verify code',
+          twilioCode: twilioResult.code
+        }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
