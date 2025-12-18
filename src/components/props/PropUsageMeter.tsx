@@ -163,7 +163,9 @@ export function PropUsageMeter({ projection, propType, line }: PropUsageMeterPro
             Required Rate
           </div>
           <div className="font-mono font-semibold text-sm text-foreground">
-            {(projection.requiredRate ?? 0).toFixed(2)}/min
+            {projection.requiredRate != null 
+              ? `${projection.requiredRate.toFixed(2)}/min`
+              : '— (no data)'}
           </div>
         </div>
         <div className="p-2 rounded-lg bg-muted/30 border border-border/30">
@@ -172,8 +174,15 @@ export function PropUsageMeter({ projection, propType, line }: PropUsageMeterPro
             Historical Rate
           </div>
           <div className="font-mono font-semibold text-sm text-foreground">
-            {(projection.historicalRate ?? 0).toFixed(2)}/min
+            {projection.historicalRate != null 
+              ? `${projection.historicalRate.toFixed(2)}/min`
+              : '— (no data)'}
           </div>
+          {projection.historicalRate == null && (
+            <div className="text-[9px] text-muted-foreground mt-0.5">
+              Historical data unavailable
+            </div>
+          )}
         </div>
       </div>
 

@@ -230,28 +230,72 @@ export const CoachingInsightsCard = ({ legs, legAnalyses, delay = 0 }: CoachingI
   const [isLoading, setIsLoading] = useState(true);
   const [isOpen, setIsOpen] = useState(false);
 
-  // Detect sport from legs
+  // Detect sport from legs - improved detection with sport-specific keywords first
   const detectedSport = useMemo((): SportType => {
     for (const leg of legs) {
       const desc = leg.description.toLowerCase();
       
-      // Check for sport-specific keywords
-      if (desc.includes('nba') || desc.includes('basketball')) return 'NBA';
-      if (desc.includes('nfl') || desc.includes('football') || desc.includes('touchdown') || desc.includes('passing yard')) return 'NFL';
-      if (desc.includes('nhl') || desc.includes('hockey') || desc.includes('goal') && desc.includes('ice')) return 'NHL';
-      if (desc.includes('mlb') || desc.includes('baseball') || desc.includes('strikeout') || desc.includes('home run')) return 'MLB';
+      // NFL-specific keywords (check first - more specific terms)
+      if (desc.includes('nfl') || desc.includes('football') || 
+          desc.includes('touchdown') || desc.includes('passing yard') ||
+          desc.includes('rushing yard') || desc.includes('receiving yard') ||
+          desc.includes('quarterback') || desc.includes('wide receiver') ||
+          desc.includes('interception') || desc.includes('sack')) {
+        return 'NFL';
+      }
       
-      // Check team names to infer sport
-      for (const [sport, teamMap] of Object.entries(TEAM_MAPS) as [SportType, Record<string, string>][]) {
-        if (sport === 'UNKNOWN') continue;
-        for (const shortName of Object.keys(teamMap)) {
-          if (desc.includes(shortName)) {
-            return sport;
-          }
-        }
+      // NHL-specific keywords
+      if (desc.includes('nhl') || desc.includes('hockey') || 
+          desc.includes('shots on goal') || desc.includes('power play') ||
+          desc.includes('goalie') || desc.includes('saves') ||
+          (desc.includes('goal') && (desc.includes('ice') || desc.includes('period')))) {
+        return 'NHL';
+      }
+      
+      // MLB-specific keywords
+      if (desc.includes('mlb') || desc.includes('baseball') || 
+          desc.includes('strikeout') || desc.includes('home run') ||
+          desc.includes('pitcher') || desc.includes('batter') ||
+          desc.includes('inning') || desc.includes('rbi') ||
+          desc.includes('hits allowed')) {
+        return 'MLB';
+      }
+      
+      // NBA-specific keywords (check after NFL to avoid "passing" confusion)
+      if (desc.includes('nba') || desc.includes('basketball') ||
+          desc.includes('three pointer') || desc.includes('free throw') ||
+          desc.includes('double-double') || desc.includes('triple-double')) {
+        return 'NBA';
       }
     }
-    return 'NBA'; // Default to NBA
+    
+    // Check team names - check NFL teams first (they overlap with NBA city names)
+    for (const leg of legs) {
+      const desc = leg.description.toLowerCase();
+      
+      // Check NFL-only team names first (no NBA equivalent)
+      const nflOnlyTeams = ['chiefs', 'cowboys', 'broncos', 'packers', 'steelers', 'ravens', 
+                           'patriots', 'eagles', '49ers', 'niners', 'seahawks', 'buccaneers', 
+                           'bucs', 'titans', 'commanders', 'texans', 'colts', 'jaguars',
+                           'chargers', 'raiders', 'bengals', 'bills', 'dolphins', 'jets',
+                           'saints', 'panthers', 'falcons', 'bears', 'lions', 'vikings'];
+      for (const team of nflOnlyTeams) {
+        if (desc.includes(team)) return 'NFL';
+      }
+      
+      // Check NBA-only team names
+      const nbaOnlyTeams = ['celtics', 'nets', 'knicks', '76ers', 'sixers', 'raptors',
+                           'bulls', 'cavaliers', 'cavs', 'pistons', 'pacers', 'bucks',
+                           'hawks', 'hornets', 'heat', 'magic', 'wizards', 'nuggets',
+                           'timberwolves', 'wolves', 'thunder', 'trail blazers', 'blazers',
+                           'jazz', 'warriors', 'clippers', 'lakers', 'suns', 'kings',
+                           'mavericks', 'mavs', 'rockets', 'grizzlies', 'pelicans', 'spurs'];
+      for (const team of nbaOnlyTeams) {
+        if (desc.includes(team)) return 'NBA';
+      }
+    }
+    
+    return 'UNKNOWN'; // Return UNKNOWN instead of defaulting to NBA
   }, [legs]);
 
   // Extract team names from legs
@@ -421,7 +465,10 @@ export const CoachingInsightsCard = ({ legs, legAnalyses, delay = 0 }: CoachingI
     );
   }
 
-  if (coachingData.length === 0) {
+  // Check if we have valid coaching data (not just empty responses)
+  const hasValidData = coachingData.some(c => c.coachName && (c as any).dataAvailable !== false);
+  
+  if (coachingData.length === 0 || !hasValidData) {
     return (
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -433,11 +480,18 @@ export const CoachingInsightsCard = ({ legs, legAnalyses, delay = 0 }: CoachingI
             <CardTitle className="text-sm flex items-center gap-2">
               <Users className="w-4 h-4 text-muted-foreground" />
               Coaching Tendencies
+              {detectedSport !== 'UNKNOWN' && (
+                <Badge variant="secondary" className="text-xs ml-2">
+                  {detectedSport}
+                </Badge>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-xs text-muted-foreground">
-              No coaching data available for the teams in this parlay.
+              {detectedSport === 'UNKNOWN' 
+                ? 'Could not detect sport from parlay legs. No coaching data available.'
+                : `No coaching data available for the teams in this ${detectedSport} parlay.`}
             </p>
           </CardContent>
         </Card>

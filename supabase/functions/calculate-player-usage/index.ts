@@ -29,7 +29,7 @@ serve(async (req) => {
   }
 
   try {
-    const { playerName, propType, line, opponent, gameDate } = await req.json();
+    const { playerName, propType, line, opponent, gameDate, sport } = await req.json();
 
     if (!playerName || !propType || line === undefined) {
       return new Response(
@@ -42,46 +42,76 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    console.log(`Calculating usage for ${playerName} - ${propType} ${line}`);
+    // Detect sport from propType if not provided
+    const normalizedSport = (sport || 'NBA').toUpperCase();
+    console.log(`Calculating usage for ${playerName} - ${propType} ${line} (${normalizedSport})`);
 
-    // Map prop type to stat column
-    const propTypeMap: Record<string, string> = {
-      'points': 'points',
-      'rebounds': 'rebounds',
-      'assists': 'assists',
-      'threes': 'threes_made',
-      'blocks': 'blocks',
-      'steals': 'steals',
-      'pts': 'points',
-      'reb': 'rebounds',
-      'ast': 'assists',
-      'pts+reb': 'points,rebounds',
-      'pts+ast': 'points,assists',
+    // Sport-specific table mapping
+    const tableMap: Record<string, string> = {
+      'NBA': 'nba_player_game_logs',
+      'NFL': 'nfl_player_game_logs',
+      'NHL': 'nhl_player_game_logs',
+      'MLB': 'mlb_player_game_logs'
+    };
+    const tableName = tableMap[normalizedSport] || 'nba_player_game_logs';
+
+    // Sport-specific prop type mappings
+    const nbaPropTypeMap: Record<string, string> = {
+      'points': 'points', 'rebounds': 'rebounds', 'assists': 'assists',
+      'threes': 'threes_made', 'blocks': 'blocks', 'steals': 'steals',
+      'pts': 'points', 'reb': 'rebounds', 'ast': 'assists',
+      'pts+reb': 'points,rebounds', 'pts+ast': 'points,assists',
       'pts+reb+ast': 'points,rebounds,assists',
     };
+    
+    const nflPropTypeMap: Record<string, string> = {
+      'passing_yards': 'passing_yards', 'rushing_yards': 'rushing_yards',
+      'receiving_yards': 'receiving_yards', 'receptions': 'receptions',
+      'touchdowns': 'touchdowns', 'completions': 'completions',
+      'pass_yards': 'passing_yards', 'rush_yards': 'rushing_yards',
+      'rec_yards': 'receiving_yards', 'tds': 'touchdowns',
+    };
+    
+    const nhlPropTypeMap: Record<string, string> = {
+      'goals': 'goals', 'assists': 'assists', 'points': 'points',
+      'shots': 'shots_on_goal', 'saves': 'saves', 'blocks': 'blocked_shots',
+    };
+    
+    const mlbPropTypeMap: Record<string, string> = {
+      'hits': 'hits', 'runs': 'runs', 'rbis': 'rbis', 'rbi': 'rbis',
+      'strikeouts': 'strikeouts', 'home_runs': 'home_runs', 'hr': 'home_runs',
+      'total_bases': 'total_bases', 'stolen_bases': 'stolen_bases',
+    };
 
-    const statColumn = propTypeMap[propType.toLowerCase()] || 'points';
+    const propTypeMaps: Record<string, Record<string, string>> = {
+      'NBA': nbaPropTypeMap, 'NFL': nflPropTypeMap,
+      'NHL': nhlPropTypeMap, 'MLB': mlbPropTypeMap
+    };
+    
+    const propTypeMap = propTypeMaps[normalizedSport] || nbaPropTypeMap;
+    const statColumn = propTypeMap[propType.toLowerCase()] || propType.toLowerCase();
     const isCombo = statColumn.includes(',');
 
-    // Fetch recent game logs
+    // Fetch recent game logs from sport-specific table
     const { data: gameLogs, error: logsError } = await supabase
-      .from('nba_player_game_logs')
+      .from(tableName)
       .select('*')
       .ilike('player_name', `%${playerName}%`)
       .order('game_date', { ascending: false })
       .limit(10);
 
     if (logsError) {
-      console.error('Error fetching game logs:', logsError);
+      console.error(`Error fetching game logs from ${tableName}:`, logsError);
     }
 
     // Calculate usage metrics from game logs
-    let avgMinutes = 32;
+    let avgMinutes = normalizedSport === 'NBA' ? 32 : normalizedSport === 'NFL' ? 60 : 20;
     let avgStat = 0;
-    let statPerMin = 0;
+    let statPerMin: number | null = null;
     let recentGames: { date: string; value: number; minutes: number }[] = [];
     let hitCount = 0;
     let gamesAnalyzed = 0;
+    let dataAvailable = true;
 
     if (gameLogs && gameLogs.length > 0) {
       gamesAnalyzed = gameLogs.length;
@@ -89,11 +119,14 @@ serve(async (req) => {
       // Calculate averages
       let totalMinutes = 0;
       let totalStat = 0;
+      let hasMinutesData = false;
 
       for (const game of gameLogs) {
-        const minutes = game.minutes_played || 32;
+        // Different sports have different minute columns
+        const minutes = game.minutes_played || game.snaps || game.time_on_ice || game.innings_pitched || 0;
+        if (minutes > 0) hasMinutesData = true;
+        
         let statValue = 0;
-
         if (isCombo) {
           const cols = statColumn.split(',');
           for (const col of cols) {
@@ -117,14 +150,24 @@ serve(async (req) => {
         }
       }
 
-      avgMinutes = totalMinutes / gamesAnalyzed;
+      avgMinutes = hasMinutesData && totalMinutes > 0 ? totalMinutes / gamesAnalyzed : avgMinutes;
       avgStat = totalStat / gamesAnalyzed;
-      statPerMin = avgMinutes > 0 ? avgStat / avgMinutes : 0;
+      
+      // Only calculate rate if we have valid minutes data
+      if (hasMinutesData && totalMinutes > 0) {
+        statPerMin = avgStat / avgMinutes;
+      } else {
+        statPerMin = null; // Explicitly null when minutes data unavailable
+      }
+    } else {
+      // No game logs found
+      dataAvailable = false;
+      statPerMin = null;
     }
 
     // Calculate required rate to hit line
     const requiredRate = avgMinutes > 0 ? line / avgMinutes : 0;
-    const efficiencyMargin = statPerMin > 0 
+    const efficiencyMargin = statPerMin !== null && statPerMin > 0 && requiredRate > 0
       ? ((statPerMin - requiredRate) / requiredRate) * 100 
       : 0;
 
@@ -192,7 +235,10 @@ serve(async (req) => {
     const hitPercentage = gamesAnalyzed > 0 ? (hitCount / gamesAnalyzed) * 100 : 50;
     const adjustedEfficiency = efficiencyMargin + paceImpact + fatigueImpact + defenseImpact;
 
-    if (hitPercentage >= 70 && adjustedEfficiency >= 5) {
+    if (!dataAvailable || gamesAnalyzed === 0) {
+      verdict = 'NEUTRAL';
+      verdictReason = `Insufficient historical data for ${playerName} in ${normalizedSport}`;
+    } else if (hitPercentage >= 70 && adjustedEfficiency >= 5) {
       verdict = 'FAVORABLE';
       verdictReason = `Strong historical hit rate (${hitPercentage.toFixed(0)}%) with ${adjustedEfficiency.toFixed(1)}% efficiency buffer`;
     } else if (hitPercentage <= 40 || adjustedEfficiency < -10) {
@@ -205,7 +251,7 @@ serve(async (req) => {
       verdictReason = `Marginal edge (${hitPercentage.toFixed(0)}% hit rate, ${adjustedEfficiency.toFixed(1)}% efficiency)`;
     }
 
-    const projection: UsageProjection = {
+    const projection: UsageProjection & { dataAvailable: boolean } = {
       playerName,
       propType,
       line,
@@ -215,7 +261,7 @@ serve(async (req) => {
         avg: Math.round(avgMinutes * 10) / 10 
       },
       requiredRate: Math.round(requiredRate * 1000) / 1000,
-      historicalRate: Math.round(statPerMin * 1000) / 1000,
+      historicalRate: statPerMin !== null ? Math.round(statPerMin * 1000) / 1000 : null as any,
       efficiencyMargin: Math.round(efficiencyMargin * 10) / 10,
       recentGames: recentGames.slice(0, 5),
       hitRate: { 
@@ -227,7 +273,8 @@ serve(async (req) => {
       fatigueImpact: Math.round(fatigueImpact * 10) / 10,
       opponentDefenseRank,
       verdict,
-      verdictReason
+      verdictReason,
+      dataAvailable
     };
 
     // Cache the usage metrics
