@@ -37,7 +37,7 @@ serve(async (req) => {
 
     logStep("Decrementing quota", { userId: user.id, quotaType });
 
-    // Check if user is admin or subscribed (they have unlimited)
+    // Check if user is admin (they have unlimited)
     const { data: roleData } = await supabaseClient
       .from('user_roles')
       .select('role')
@@ -69,8 +69,15 @@ serve(async (req) => {
       });
     }
 
-    // For pilot users, use the quota system
-    if (roles.includes('pilot')) {
+    // Check if user has a pilot_user_quotas record (regardless of role)
+    const { data: quotaData } = await supabaseClient
+      .from('pilot_user_quotas')
+      .select('*')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (quotaData) {
+      // User has quota record - use the quota system
       const { data: result, error } = await supabaseClient.rpc('decrement_pilot_quota', {
         p_user_id: user.id,
         p_quota_type: quotaType
@@ -89,19 +96,29 @@ serve(async (req) => {
       });
     }
 
-    // For regular free users, use the old scan_usage system
-    const { error: incrementError } = await supabaseClient.rpc('increment_scan_count', {
-      p_user_id: user.id
-    });
+    // No quota record exists - create one with decremented value
+    logStep("Creating new quota record for user");
+    
+    const initialScans = quotaType === 'scan' ? 4 : 5; // 5-1 = 4 if scan
+    const initialCompares = quotaType === 'compare' ? 2 : 3; // 3-1 = 2 if compare
+    
+    const { error: insertError } = await supabaseClient
+      .from('pilot_user_quotas')
+      .insert({
+        user_id: user.id,
+        free_scans_remaining: initialScans,
+        free_compares_remaining: initialCompares,
+        paid_scan_balance: 0
+      });
 
-    if (incrementError) {
-      logStep("Error incrementing scan count", { error: incrementError.message });
-      throw new Error(`Failed to increment scan: ${incrementError.message}`);
+    if (insertError) {
+      logStep("Error creating quota record", { error: insertError.message });
+      throw new Error(`Failed to create quota: ${insertError.message}`);
     }
 
-    logStep("Free user scan incremented");
+    logStep("New quota record created with decremented value");
 
-    return new Response(JSON.stringify({ success: true, used: 'free' }), {
+    return new Response(JSON.stringify({ success: true, used: 'free', created: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 200,
     });
