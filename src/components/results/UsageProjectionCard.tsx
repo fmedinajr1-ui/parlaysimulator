@@ -185,10 +185,14 @@ export function UsageProjectionCard({ projection, legDescription }: UsageProject
               Required Rate
             </p>
             <p className="font-mono text-sm font-medium">
-              {projection.requiredRate.toFixed(2)} {formatPropType(projection.propType)}/min
+              {projection.requiredRate != null 
+                ? `${projection.requiredRate.toFixed(2)} ${formatPropType(projection.propType)}/min`
+                : '— (no data)'}
             </p>
             <p className="text-xs text-muted-foreground">
-              ({projection.line} ÷ {projection.projectedMinutes.avg} min)
+              {projection.requiredRate != null 
+                ? `(${projection.line} ÷ ${projection.projectedMinutes.avg} min)`
+                : 'Insufficient minutes data'}
             </p>
           </div>
           <div className="p-2 bg-muted/50 rounded-lg">
@@ -197,11 +201,17 @@ export function UsageProjectionCard({ projection, legDescription }: UsageProject
               Historical Rate
             </p>
             <p className="font-mono text-sm font-medium">
-              {projection.historicalRate.toFixed(2)} {formatPropType(projection.propType)}/min
+              {projection.historicalRate != null 
+                ? `${projection.historicalRate.toFixed(2)} ${formatPropType(projection.propType)}/min`
+                : '— (no data)'}
             </p>
-            <p className={`text-xs ${projection.efficiencyMargin >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              {projection.efficiencyMargin >= 0 ? '+' : ''}{projection.efficiencyMargin.toFixed(1)}% margin
-            </p>
+            {projection.historicalRate != null ? (
+              <p className={`text-xs ${projection.efficiencyMargin >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                {projection.efficiencyMargin >= 0 ? '+' : ''}{projection.efficiencyMargin.toFixed(1)}% margin
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">Historical data unavailable</p>
+            )}
           </div>
         </div>
 

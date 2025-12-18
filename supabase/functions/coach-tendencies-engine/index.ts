@@ -228,16 +228,63 @@ function analyzeMLBCoach(coach: CoachProfile, propType: string): CoachTendencySi
 async function analyzeCoachTendencies(supabase: any, teamName: string, sport: string, propType: string): Promise<CoachTendencySignal | null> {
   console.log(`Analyzing coaching tendencies for ${teamName}, sport: ${sport}, prop: ${propType}`);
   
-  const { data: coach, error: coachError } = await supabase
+  // Normalize sport for query - handle various formats
+  const sportNormalized = sport?.toLowerCase() || '';
+  let sportFilter = '';
+  if (sportNormalized.includes('nfl') || sportNormalized.includes('football')) {
+    sportFilter = 'nfl';
+  } else if (sportNormalized.includes('nhl') || sportNormalized.includes('hockey')) {
+    sportFilter = 'nhl';
+  } else if (sportNormalized.includes('mlb') || sportNormalized.includes('baseball')) {
+    sportFilter = 'mlb';
+  } else if (sportNormalized.includes('nba') || sportNormalized.includes('basketball')) {
+    sportFilter = 'nba';
+  }
+  
+  // Build query with sport filter if provided
+  let query = supabase
     .from('coach_profiles')
     .select('*')
+    .eq('is_active', true);
+  
+  // Add sport filter FIRST to avoid cross-sport matches
+  if (sportFilter) {
+    query = query.ilike('sport', `%${sportFilter}%`);
+  }
+  
+  // Try exact team name match first
+  const { data: exactMatch, error: exactError } = await query
     .eq('team_name', teamName)
-    .eq('is_active', true)
     .maybeSingle();
   
-  if (coachError || !coach) {
-    console.log(`No active coach found for ${teamName}`);
-    return null;
+  let coach = exactMatch;
+  
+  // If no exact match, try partial match with sport filter
+  if (!coach && !exactError) {
+    const { data: partialMatch } = await supabase
+      .from('coach_profiles')
+      .select('*')
+      .eq('is_active', true)
+      .ilike('sport', sportFilter ? `%${sportFilter}%` : '%')
+      .ilike('team_name', `%${teamName}%`)
+      .maybeSingle();
+    
+    coach = partialMatch;
+  }
+  
+  if (!coach) {
+    console.log(`No active coach found for ${teamName} in sport ${sport}`);
+    return {
+      coachName: '',
+      teamName,
+      sport: sport || 'UNKNOWN',
+      tenureMonths: 0,
+      recommendation: 'neutral',
+      confidence: 0,
+      reasoning: `No coaching data available for ${teamName} in ${sport || 'this sport'}`,
+      propAdjustments: {},
+      dataAvailable: false
+    } as any;
   }
 
   const sportKey = coach.sport?.toLowerCase() || '';
