@@ -1,15 +1,16 @@
 import React, { useState } from 'react';
 import { ChevronDown, ChevronUp, AlertTriangle, CheckCircle, MinusCircle } from 'lucide-react';
-import { CoachingSignal } from '@/hooks/useCoachingSignals';
+import { SportsCoachingSignal, SPORT_ICONS, SportType } from '@/hooks/useSportsCoachingSignals';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface CoachingAlertBannerProps {
-  signals: CoachingSignal[];
+  signals: SportsCoachingSignal[];
   isLoading?: boolean;
+  legCountBySport?: Record<SportType, number>;
 }
 
-export const CoachingAlertBanner = ({ signals, isLoading }: CoachingAlertBannerProps) => {
+export const CoachingAlertBanner = ({ signals, isLoading, legCountBySport }: CoachingAlertBannerProps) => {
   const [isExpanded, setIsExpanded] = useState(false);
   
   if (isLoading) {
@@ -27,9 +28,15 @@ export const CoachingAlertBanner = ({ signals, isLoading }: CoachingAlertBannerP
   
   const pickCount = signals.filter(s => s.recommendation === 'PICK').length;
   const fadeCount = signals.filter(s => s.recommendation === 'FADE').length;
-  const neutralCount = signals.filter(s => s.recommendation === 'NEUTRAL').length;
   
   const totalWarnings = signals.reduce((acc, s) => acc + s.warnings.length, 0);
+  
+  // Group signals by sport
+  const signalsBySport = signals.reduce((acc, signal) => {
+    if (!acc[signal.sport]) acc[signal.sport] = [];
+    acc[signal.sport].push(signal);
+    return acc;
+  }, {} as Record<SportType, SportsCoachingSignal[]>);
   
   // Determine banner severity
   const bannerSeverity = fadeCount > 0 ? 'warning' : pickCount > 0 ? 'success' : 'neutral';
@@ -56,6 +63,11 @@ export const CoachingAlertBanner = ({ signals, isLoading }: CoachingAlertBannerP
     }
   };
   
+  // Get sport icons summary
+  const sportsSummary = Object.keys(signalsBySport).map(sport => 
+    SPORT_ICONS[sport as SportType]
+  ).join(' ');
+  
   return (
     <div className={cn("border-b", getBannerStyles())}>
       <button
@@ -64,9 +76,9 @@ export const CoachingAlertBanner = ({ signals, isLoading }: CoachingAlertBannerP
       >
         <div className="flex items-center gap-2">
           {getHeaderIcon()}
-          <span className="text-xs font-medium">🏀 COACHING ALERTS</span>
+          <span className="text-xs font-medium">{sportsSummary} COACHING ALERTS</span>
           <span className="text-[10px] text-muted-foreground">
-            {signals.length} NBA leg{signals.length !== 1 ? 's' : ''} • {totalWarnings} signal{totalWarnings !== 1 ? 's' : ''}
+            {signals.length} leg{signals.length !== 1 ? 's' : ''} • {totalWarnings} signal{totalWarnings !== 1 ? 's' : ''}
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -97,9 +109,18 @@ export const CoachingAlertBanner = ({ signals, isLoading }: CoachingAlertBannerP
             transition={{ duration: 0.15 }}
             className="overflow-hidden"
           >
-            <div className="px-3 pb-2 space-y-1.5">
-              {signals.map(signal => (
-                <SignalRow key={signal.legId} signal={signal} />
+            <div className="px-3 pb-2 space-y-2">
+              {Object.entries(signalsBySport).map(([sport, sportSignals]) => (
+                <div key={sport}>
+                  <div className="text-[10px] text-muted-foreground font-medium mb-1 flex items-center gap-1">
+                    {SPORT_ICONS[sport as SportType]} {sport}
+                  </div>
+                  <div className="space-y-1.5">
+                    {sportSignals.map(signal => (
+                      <SignalRow key={signal.legId} signal={signal} />
+                    ))}
+                  </div>
+                </div>
               ))}
             </div>
           </motion.div>
@@ -109,7 +130,7 @@ export const CoachingAlertBanner = ({ signals, isLoading }: CoachingAlertBannerP
   );
 };
 
-const SignalRow = ({ signal }: { signal: CoachingSignal }) => {
+const SignalRow = ({ signal }: { signal: SportsCoachingSignal }) => {
   const getIcon = () => {
     switch (signal.recommendation) {
       case 'PICK':
@@ -123,16 +144,19 @@ const SignalRow = ({ signal }: { signal: CoachingSignal }) => {
   
   const primaryWarning = signal.warnings[0] || signal.reasoning[0] || 'Standard coaching profile';
   
-  // Format adjustment preview
+  // Format adjustment preview based on sport
   const adjustmentPreview = () => {
     const parts: string[] = [];
-    if (signal.propAdjustments.points !== 0) {
-      parts.push(`${signal.propAdjustments.points > 0 ? '+' : ''}${signal.propAdjustments.points}% pts`);
-    }
-    if (signal.propAdjustments.minutes !== 0) {
-      parts.push(`${signal.propAdjustments.minutes > 0 ? '+' : ''}${signal.propAdjustments.minutes}% min`);
-    }
-    return parts.slice(0, 2).join(', ');
+    const adjustments = signal.propAdjustments;
+    
+    Object.entries(adjustments).slice(0, 2).forEach(([key, value]) => {
+      if (value !== 0) {
+        const shortKey = key.split('_')[0];
+        parts.push(`${value > 0 ? '+' : ''}${value}% ${shortKey}`);
+      }
+    });
+    
+    return parts.join(', ');
   };
   
   return (
