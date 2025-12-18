@@ -239,3 +239,9 @@ verify_jwt = false
 
 [functions.auto-refresh-projections]
 verify_jwt = false
+
+[functions.send-email-verification]
+verify_jwt = false
+
+[functions.verify-email-code]
+verify_jwt = false
