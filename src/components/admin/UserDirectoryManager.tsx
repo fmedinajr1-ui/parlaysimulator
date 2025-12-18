@@ -20,6 +20,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { 
   Users, 
   Mail, 
@@ -131,32 +137,37 @@ export function UserDirectoryManager() {
     return `•••-•••-${phone.slice(-4)}`;
   };
 
-  const exportToCSV = () => {
-    const headers = ['Email', 'Username', 'Phone', 'Email Verified', 'Phone Verified', 'Joined'];
-    const rows = filteredUsers.map(user => [
+  const exportToCSV = (exportAll: boolean = false) => {
+    const dataToExport = exportAll ? users : filteredUsers;
+    const headers = ['User ID', 'Email', 'Username', 'Phone Number', 'Email Verified', 'Phone Verified', 'Total Wins', 'Total Losses', 'Total Staked', 'Joined'];
+    const rows = dataToExport.map(user => [
+      user.user_id || '',
       user.email || '',
       user.username || '',
       user.phone_number || '',
       user.email_verified ? 'Yes' : 'No',
       user.phone_verified ? 'Yes' : 'No',
-      user.created_at ? format(new Date(user.created_at), 'yyyy-MM-dd') : ''
+      user.total_wins?.toString() || '0',
+      user.total_losses?.toString() || '0',
+      user.total_staked?.toString() || '0',
+      user.created_at ? format(new Date(user.created_at), 'yyyy-MM-dd HH:mm:ss') : ''
     ]);
 
     const csvContent = [headers, ...rows]
-      .map(row => row.map(cell => `"${cell}"`).join(','))
+      .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
       .join('\n');
 
-    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `users-export-${format(new Date(), 'yyyy-MM-dd')}.csv`;
+    a.download = `parlay-farm-users-${exportAll ? 'all' : 'filtered'}-${format(new Date(), 'yyyy-MM-dd-HHmm')}.csv`;
     a.click();
     URL.revokeObjectURL(url);
 
     toast({
       title: "Export Complete",
-      description: `Exported ${filteredUsers.length} users to CSV`
+      description: `Exported ${dataToExport.length} users to CSV`
     });
   };
 
@@ -174,15 +185,26 @@ export function UserDirectoryManager() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button 
-              variant="outline" 
-              size="sm"
-              onClick={exportToCSV}
-              disabled={filteredUsers.length === 0}
-            >
-              <Download className="w-4 h-4 mr-1" />
-              Export
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  disabled={users.length === 0}
+                >
+                  <Download className="w-4 h-4 mr-1" />
+                  Export
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => exportToCSV(true)}>
+                  Export All Users ({users.length})
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => exportToCSV(false)} disabled={filteredUsers.length === 0}>
+                  Export Filtered ({filteredUsers.length})
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button 
               variant="outline" 
               size="sm"
