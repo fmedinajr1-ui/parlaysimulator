@@ -7,6 +7,7 @@ import { usePilotUser } from "@/hooks/usePilotUser";
 import { PILOT_ALLOWED_ROUTES } from "@/components/PilotRouteGuard";
 import { useScrollDirection } from "@/hooks/useScrollDirection";
 import { useViewport } from "@/hooks/useViewport";
+import { ScanBalanceBadge } from "@/components/ui/scan-balance-badge";
 
 const allNavItems = [
   { icon: Home, label: "Home", path: "/" },
@@ -18,7 +19,7 @@ const allNavItems = [
 export function BottomNav() {
   const location = useLocation();
   const { isOnline } = usePWA();
-  const { isPilotUser, isAdmin, isSubscribed } = usePilotUser();
+  const { isPilotUser, isAdmin, isSubscribed, totalScansAvailable } = usePilotUser();
   const { isVisible } = useScrollDirection(15);
   const { isSmallPhone } = useViewport();
 
@@ -26,6 +27,9 @@ export function BottomNav() {
   const navItems = (isPilotUser && !isAdmin && !isSubscribed)
     ? allNavItems.filter(item => PILOT_ALLOWED_ROUTES.includes(item.path))
     : allNavItems;
+
+  // Show scan indicator for non-admin, non-subscribed users
+  const showScanIndicator = !isAdmin && !isSubscribed;
 
   return (
     <nav className={cn(
@@ -51,6 +55,7 @@ export function BottomNav() {
         {navItems.map((item) => {
           const isActive = location.pathname === item.path;
           const Icon = item.icon;
+          const isAnalyzeTab = item.path === '/upload';
 
           const handleClick = (e: React.MouseEvent) => {
             if (isActive) {
@@ -92,6 +97,17 @@ export function BottomNav() {
                     isActive && "text-primary"
                   )} 
                 />
+                
+                {/* Scan count badge on Analyze tab */}
+                {isAnalyzeTab && showScanIndicator && (
+                  <div className="absolute -top-1 -right-1">
+                    <ScanBalanceBadge 
+                      scansRemaining={totalScansAvailable} 
+                      size="sm"
+                      showIcon={false}
+                    />
+                  </div>
+                )}
               </div>
               
               {/* Hide labels on small phones */}

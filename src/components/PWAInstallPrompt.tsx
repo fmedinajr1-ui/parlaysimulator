@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { X, Download, Smartphone } from 'lucide-react';
+import { X, Download, Share, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { motion, AnimatePresence } from 'framer-motion';
+import wolfLoaderImage from "@/assets/wolf-loader.png";
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -83,58 +85,95 @@ export function PWAInstallPrompt() {
     return null;
   }
 
-  if (!showPrompt) return null;
-
   return (
-    <div className={cn(
-      "fixed bottom-24 left-4 right-4 z-50 animate-fade-in",
-      "bg-card/95 backdrop-blur-xl rounded-2xl border border-border shadow-2xl",
-      "p-4 max-w-md mx-auto"
-    )}>
-      <button 
-        onClick={handleDismiss}
-        className="absolute top-2 right-2 p-1 text-muted-foreground hover:text-foreground transition-colors"
-      >
-        <X className="w-4 h-4" />
-      </button>
-      
-      <div className="flex items-start gap-3">
-        <div className="w-12 h-12 rounded-xl bg-primary/20 flex items-center justify-center shrink-0">
-          <Smartphone className="w-6 h-6 text-primary" />
-        </div>
-        
-        <div className="flex-1 min-w-0">
-          <h3 className="font-semibold text-foreground text-sm mb-1">
-            Install Parlay Farm
-          </h3>
-          <p className="text-xs text-muted-foreground mb-3">
-            {isIOS 
-              ? "Tap Share then 'Add to Home Screen' for the best experience"
-              : "Install our app for instant access and push notifications"
-            }
-          </p>
-          
-          {deferredPrompt ? (
-            <Button 
-              onClick={handleInstall} 
-              size="sm" 
-              className="w-full gradient-fire"
+    <AnimatePresence>
+      {showPrompt && (
+        <motion.div
+          initial={{ y: "100%", opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          exit={{ y: "100%", opacity: 0 }}
+          transition={{ type: "spring", damping: 25, stiffness: 300 }}
+          className={cn(
+            "fixed bottom-20 left-3 right-3 z-50 safe-area-inset-bottom",
+            "sm:left-auto sm:right-4 sm:bottom-24 sm:max-w-sm"
+          )}
+        >
+          <div className={cn(
+            "bg-card/98 backdrop-blur-xl rounded-2xl border border-border/50",
+            "shadow-[0_-8px_40px_rgba(0,0,0,0.4)]",
+            "p-4 relative overflow-hidden"
+          )}>
+            {/* Gradient accent */}
+            <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-primary via-accent to-primary" />
+            
+            <button 
+              onClick={handleDismiss}
+              className="absolute top-3 right-3 p-1.5 rounded-full bg-muted/50 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
             >
-              <Download className="w-4 h-4 mr-2" />
-              Install Now
-            </Button>
-          ) : isIOS ? (
-            <Button 
-              onClick={handleLearnMore} 
-              size="sm" 
-              variant="outline"
-              className="w-full"
-            >
-              Learn How to Install
-            </Button>
-          ) : null}
-        </div>
-      </div>
-    </div>
+              <X className="w-4 h-4" />
+            </button>
+            
+            <div className="flex items-start gap-3 pr-8">
+              {/* Wolf Icon */}
+              <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center shrink-0 border border-primary/20">
+                <img 
+                  src={wolfLoaderImage} 
+                  alt="Parlay Farm" 
+                  className="w-10 h-10 object-contain"
+                />
+              </div>
+              
+              <div className="flex-1 min-w-0">
+                <h3 className="font-display font-bold text-foreground text-base mb-0.5">
+                  Install Parlay Farm
+                </h3>
+                <p className="text-xs text-muted-foreground mb-3 leading-relaxed">
+                  {isIOS 
+                    ? "Add to your home screen for the best experience"
+                    : "Get instant access and push notifications"
+                  }
+                </p>
+                
+                {deferredPrompt ? (
+                  <Button 
+                    onClick={handleInstall} 
+                    size="sm" 
+                    className="w-full gradient-fire h-9"
+                  >
+                    <Download className="w-4 h-4 mr-2" />
+                    Install App
+                  </Button>
+                ) : isIOS ? (
+                  <div className="space-y-2">
+                    {/* iOS Instructions */}
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/30 rounded-lg p-2">
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-5 h-5 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold text-[10px]">1</span>
+                        <span>Tap</span>
+                        <Share className="w-4 h-4 text-primary" />
+                      </div>
+                      <span>→</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-5 h-5 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold text-[10px]">2</span>
+                        <Plus className="w-4 h-4 text-primary" />
+                        <span>Add to Home</span>
+                      </div>
+                    </div>
+                    <Button 
+                      onClick={handleLearnMore} 
+                      size="sm" 
+                      variant="outline"
+                      className="w-full h-9"
+                    >
+                      See Full Guide
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
