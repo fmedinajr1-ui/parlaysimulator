@@ -4958,7 +4958,10 @@ export type Database = {
           avatar_url: string
           created_at: string
           email: string
+          email_verified: boolean
           lifetime_degenerate_score: number
+          phone_number: string
+          phone_verified: boolean
           total_losses: number
           total_staked: number
           total_wins: number
