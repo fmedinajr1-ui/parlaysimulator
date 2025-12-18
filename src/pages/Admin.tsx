@@ -38,6 +38,7 @@ import SharpLineCalculator from '@/components/admin/SharpLineCalculator';
 import { MovementAccuracyDashboard } from '@/components/admin/MovementAccuracyDashboard';
 import { CollaboratorManager } from '@/components/admin/CollaboratorManager';
 import { ApprovedUsersManager } from '@/components/admin/ApprovedUsersManager';
+import { UserDirectoryManager } from '@/components/admin/UserDirectoryManager';
 import { MasterAccuracyDashboard } from '@/components/admin/accuracy/MasterAccuracyDashboard';
 import { SharpRecalibrationPanel } from '@/components/admin/SharpRecalibrationPanel';
 import { CalibrationFactorsPanel } from '@/components/admin/CalibrationFactorsPanel';
@@ -458,6 +459,7 @@ export default function Admin() {
       case 'users':
         return (
           <div className="space-y-6">
+            <UserDirectoryManager />
             <CollaboratorManager />
             <ApprovedUsersManager />
           </div>
