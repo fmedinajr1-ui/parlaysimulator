@@ -7,11 +7,15 @@ import {
   Target,
   Shield,
   Wallet,
-  Info
+  Info,
+  Brain,
+  XCircle,
+  Activity
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { 
   calculateKelly, 
   americanToDecimal, 
@@ -30,6 +34,8 @@ interface KellyStakeCardProps {
   americanOdds: number;
   userStake?: number;
   delay?: number;
+  varianceScore?: number; // 0-100, higher = more variance
+  coachImpact?: { adjustment: number; reason: string };
 }
 
 const KELLY_OPTIONS = [
@@ -38,14 +44,95 @@ const KELLY_OPTIONS = [
   { value: 0.25, label: 'Quarter Kelly', risk: 'Conservative' },
 ];
 
+interface CoachingCommentary {
+  type: 'skip' | 'reduce' | 'normal' | 'good';
+  message: string;
+  reason: string;
+}
+
+function getCoachingCommentary(
+  kellyResult: KellyResult | null,
+  varianceScore: number | undefined,
+  coachImpact: { adjustment: number; reason: string } | undefined
+): CoachingCommentary {
+  if (!kellyResult) {
+    return { type: 'skip', message: 'Unable to calculate', reason: 'Missing data' };
+  }
+
+  const edge = kellyResult.edge;
+  const hasHighVariance = varianceScore !== undefined && varianceScore < 50;
+  const hasNegativeCoach = coachImpact && coachImpact.adjustment < -0.5;
+  
+  // Skip conditions
+  if (edge < 0) {
+    return {
+      type: 'skip',
+      message: 'SKIP THIS BET',
+      reason: 'Negative expected value - the odds don\'t justify the risk'
+    };
+  }
+  
+  if (edge < 3 && hasHighVariance) {
+    return {
+      type: 'skip',
+      message: 'Consider skipping',
+      reason: 'Marginal edge combined with high variance makes this a risky proposition'
+    };
+  }
+
+  // Reduce conditions
+  if (hasHighVariance) {
+    return {
+      type: 'reduce',
+      message: 'Reduce to 1/4 Kelly',
+      reason: 'High player variance suggests reducing exposure'
+    };
+  }
+
+  if (hasNegativeCoach) {
+    return {
+      type: 'reduce',
+      message: 'Reduce stake',
+      reason: `Coach tendencies work against this pick: ${coachImpact?.reason}`
+    };
+  }
+
+  if (kellyResult.riskLevel === 'aggressive' || kellyResult.riskLevel === 'reckless') {
+    return {
+      type: 'reduce',
+      message: 'Consider Half Kelly',
+      reason: 'Risk level is elevated - a smaller stake protects your bankroll'
+    };
+  }
+
+  // Good conditions
+  if (edge > 10 && kellyResult.riskLevel === 'conservative') {
+    return {
+      type: 'good',
+      message: 'Strong opportunity',
+      reason: 'Good edge with controlled risk - this is a solid betting spot'
+    };
+  }
+
+  return {
+    type: 'normal',
+    message: 'Proceed as calculated',
+    reason: 'Edge and risk are within acceptable parameters'
+  };
+}
+
 export function KellyStakeCard({ 
   winProbability, 
   americanOdds, 
   userStake = 0,
-  delay = 0 
+  delay = 0,
+  varianceScore,
+  coachImpact
 }: KellyStakeCardProps) {
-  const { settings, isLoading } = useBankroll();
+  const { settings, isLoading, updateBankroll } = useBankroll();
   const [selectedMultiplier, setSelectedMultiplier] = useState(0.5);
+  const [isEditingBankroll, setIsEditingBankroll] = useState(false);
+  const [tempBankroll, setTempBankroll] = useState('');
 
   const bankroll = settings?.bankrollAmount ?? 0;
   const decimalOdds = americanOdds !== 0 ? americanToDecimal(americanOdds) : 0;
@@ -79,6 +166,10 @@ export function KellyStakeCard({
     return null;
   }, [userStake, kellyResult]);
 
+  const coachingCommentary = useMemo(() => {
+    return getCoachingCommentary(kellyResult, varianceScore, coachImpact);
+  }, [kellyResult, varianceScore, coachImpact]);
+
   const riskColorMap = {
     conservative: 'text-neon-green',
     moderate: 'text-neon-cyan',
@@ -91,6 +182,14 @@ export function KellyStakeCard({
     moderate: 'bg-neon-cyan/10',
     aggressive: 'bg-amber-500/10',
     reckless: 'bg-neon-red/10'
+  };
+
+  const handleSaveBankroll = async () => {
+    const newAmount = parseFloat(tempBankroll);
+    if (!isNaN(newAmount) && newAmount >= 10) {
+      await updateBankroll({ bankrollAmount: newAmount });
+      setIsEditingBankroll(false);
+    }
   };
 
   if (isLoading) {
@@ -178,11 +277,68 @@ export function KellyStakeCard({
         </Badge>
       </div>
 
+      {/* Coaching Commentary */}
+      <div className={`p-4 rounded-xl mb-6 ${
+        coachingCommentary.type === 'skip' ? 'bg-neon-red/10 border border-neon-red/20' :
+        coachingCommentary.type === 'reduce' ? 'bg-amber-500/10 border border-amber-500/20' :
+        coachingCommentary.type === 'good' ? 'bg-neon-green/10 border border-neon-green/20' :
+        'bg-muted/30 border border-border'
+      }`}>
+        <div className="flex items-start gap-3">
+          {coachingCommentary.type === 'skip' ? (
+            <XCircle className="w-5 h-5 text-neon-red shrink-0 mt-0.5" />
+          ) : coachingCommentary.type === 'reduce' ? (
+            <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+          ) : coachingCommentary.type === 'good' ? (
+            <Target className="w-5 h-5 text-neon-green shrink-0 mt-0.5" />
+          ) : (
+            <Brain className="w-5 h-5 text-muted-foreground shrink-0 mt-0.5" />
+          )}
+          <div>
+            <p className={`text-sm font-medium ${
+              coachingCommentary.type === 'skip' ? 'text-neon-red' :
+              coachingCommentary.type === 'reduce' ? 'text-amber-500' :
+              coachingCommentary.type === 'good' ? 'text-neon-green' :
+              'text-foreground'
+            }`}>
+              {coachingCommentary.message}
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {coachingCommentary.reason}
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Main Stats Grid */}
       <div className="grid grid-cols-2 gap-4 mb-6">
         <div className="text-center p-4 rounded-xl bg-muted/50">
           <p className="text-xs text-muted-foreground uppercase mb-1">Your Bankroll</p>
-          <p className="text-2xl font-bold text-foreground">${bankroll.toLocaleString()}</p>
+          {isEditingBankroll ? (
+            <div className="flex gap-2">
+              <Input
+                type="number"
+                value={tempBankroll}
+                onChange={(e) => setTempBankroll(e.target.value)}
+                className="h-8 text-center"
+                placeholder={bankroll.toString()}
+              />
+              <Button size="sm" onClick={handleSaveBankroll}>Save</Button>
+            </div>
+          ) : (
+            <p 
+              className="text-2xl font-bold text-foreground cursor-pointer hover:text-neon-cyan transition-colors"
+              onClick={() => {
+                setTempBankroll(bankroll.toString());
+                setIsEditingBankroll(true);
+              }}
+            >
+              ${bankroll.toLocaleString()}
+            </p>
+          )}
+          {!isEditingBankroll && (
+            <p className="text-[10px] text-muted-foreground mt-1">Click to edit</p>
+          )}
         </div>
         <div className="text-center p-4 rounded-xl bg-neon-cyan/10 border border-neon-cyan/20">
           <p className="text-xs text-muted-foreground uppercase mb-1">Kelly Recommends</p>
@@ -215,6 +371,40 @@ export function KellyStakeCard({
           </p>
         </div>
       </div>
+
+      {/* Variance & Coach Impact Indicators */}
+      {(varianceScore !== undefined || coachImpact) && (
+        <div className="grid grid-cols-2 gap-4 mb-6">
+          {varianceScore !== undefined && (
+            <div className="p-3 rounded-lg bg-muted/30">
+              <div className="flex items-center gap-2 mb-1">
+                <Activity className="w-4 h-4 text-muted-foreground" />
+                <span className="text-xs text-muted-foreground uppercase">Consistency</span>
+              </div>
+              <p className={`text-lg font-semibold ${
+                varianceScore >= 70 ? 'text-neon-green' :
+                varianceScore >= 50 ? 'text-amber-500' : 'text-neon-red'
+              }`}>
+                {varianceScore.toFixed(0)}%
+              </p>
+            </div>
+          )}
+          {coachImpact && (
+            <div className="p-3 rounded-lg bg-muted/30">
+              <div className="flex items-center gap-2 mb-1">
+                <Brain className="w-4 h-4 text-muted-foreground" />
+                <span className="text-xs text-muted-foreground uppercase">Coach Impact</span>
+              </div>
+              <p className={`text-lg font-semibold ${
+                coachImpact.adjustment > 0 ? 'text-neon-green' :
+                coachImpact.adjustment < 0 ? 'text-neon-red' : 'text-muted-foreground'
+              }`}>
+                {coachImpact.adjustment > 0 ? '+' : ''}{coachImpact.adjustment.toFixed(1)}%
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Kelly Multiplier Selector */}
       <div className="mb-6">

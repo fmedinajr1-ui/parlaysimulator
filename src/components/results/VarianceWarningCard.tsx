@@ -6,7 +6,9 @@ import {
   TrendingDown,
   Coffee,
   Flame,
-  BarChart3
+  BarChart3,
+  Sparkles,
+  Target
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -17,25 +19,110 @@ import {
 } from "@/lib/kelly-calculator";
 import { useBankroll } from "@/hooks/useBankroll";
 import { useMemo } from "react";
+import { PerformanceSparkline } from "./PerformanceSparkline";
 
 interface VarianceWarningCardProps {
   winProbability: number;
   americanOdds: number;
   stake: number;
   delay?: number;
+  recentPerformances?: number[];
+  line?: number;
+}
+
+interface IQRMetrics {
+  q1: number;
+  median: number;
+  q3: number;
+  iqr: number;
+  consistencyScore: number;
+}
+
+function calculateIQR(data: number[]): IQRMetrics | null {
+  if (!data || data.length < 5) return null;
+  
+  const sorted = [...data].sort((a, b) => a - b);
+  const n = sorted.length;
+  
+  const q1Index = Math.floor(n * 0.25);
+  const medianIndex = Math.floor(n * 0.5);
+  const q3Index = Math.floor(n * 0.75);
+  
+  const q1 = sorted[q1Index];
+  const median = sorted[medianIndex];
+  const q3 = sorted[q3Index];
+  const iqr = q3 - q1;
+  
+  // Consistency score: lower IQR relative to median = more consistent
+  const avgPerf = data.reduce((a, b) => a + b, 0) / data.length;
+  const consistencyScore = avgPerf > 0 ? Math.max(0, 100 - (iqr / avgPerf) * 100) : 50;
+  
+  return { q1, median, q3, iqr, consistencyScore };
+}
+
+function getStakeRecommendation(
+  sharpeRatio: number, 
+  riskOfRuin: number, 
+  consistencyScore: number | null,
+  edge: number
+): { recommendation: string; kellyFraction: string; color: string; shouldSkip: boolean } {
+  // High variance + marginal edge = skip or reduce
+  if (edge < 3 && consistencyScore !== null && consistencyScore < 50) {
+    return {
+      recommendation: "SKIP or reduce to 1/8 Kelly",
+      kellyFraction: "1/8",
+      color: "text-neon-red",
+      shouldSkip: true
+    };
+  }
+  
+  if (sharpeRatio < 0) {
+    return {
+      recommendation: "Skip this bet - negative expected value",
+      kellyFraction: "0",
+      color: "text-neon-red",
+      shouldSkip: true
+    };
+  }
+  
+  if (riskOfRuin > 30 || sharpeRatio < 0.2) {
+    return {
+      recommendation: "Reduce to Quarter Kelly",
+      kellyFraction: "1/4",
+      color: "text-amber-500",
+      shouldSkip: false
+    };
+  }
+  
+  if (sharpeRatio < 0.5 || (consistencyScore !== null && consistencyScore < 60)) {
+    return {
+      recommendation: "Recommend Half Kelly",
+      kellyFraction: "1/2",
+      color: "text-neon-cyan",
+      shouldSkip: false
+    };
+  }
+  
+  return {
+    recommendation: "Full Kelly appropriate",
+    kellyFraction: "1",
+    color: "text-neon-green",
+    shouldSkip: false
+  };
 }
 
 export function VarianceWarningCard({ 
   winProbability, 
   americanOdds, 
   stake,
-  delay = 0 
+  delay = 0,
+  recentPerformances,
+  line
 }: VarianceWarningCardProps) {
   const { settings, getDrawdownPercent } = useBankroll();
   
   const bankroll = settings?.bankrollAmount ?? 1000;
   const decimalOdds = americanToDecimal(americanOdds);
-  const potentialWin = stake * (decimalOdds - 1);
 
   const varianceMetrics = useMemo(() => {
     return calculateVariance(winProbability, stake, decimalOdds, bankroll);
@@ -51,6 +138,24 @@ export function VarianceWarningCard({
       settings.peakBankroll
     );
   }, [settings, stake]);
+
+  const iqrMetrics = useMemo(() => {
+    return calculateIQR(recentPerformances || []);
+  }, [recentPerformances]);
+
+  const edge = useMemo(() => {
+    const impliedProb = 1 / decimalOdds;
+    return (winProbability - impliedProb) * 100;
+  }, [winProbability, decimalOdds]);
+
+  const stakeRecommendation = useMemo(() => {
+    return getStakeRecommendation(
+      varianceMetrics.sharpeRatio,
+      varianceMetrics.riskOfRuin,
+      iqrMetrics?.consistencyScore ?? null,
+      edge
+    );
+  }, [varianceMetrics, iqrMetrics, edge]);
 
   const drawdownPercent = getDrawdownPercent();
 
@@ -81,6 +186,92 @@ export function VarianceWarningCard({
           </Badge>
         )}
       </div>
+
+      {/* Stake Recommendation Banner */}
+      <div className={`p-3 rounded-xl mb-4 ${
+        stakeRecommendation.shouldSkip 
+          ? 'bg-neon-red/10 border border-neon-red/20' 
+          : stakeRecommendation.kellyFraction === "1/4"
+            ? 'bg-amber-500/10 border border-amber-500/20'
+            : stakeRecommendation.kellyFraction === "1/2"
+              ? 'bg-neon-cyan/10 border border-neon-cyan/20'
+              : 'bg-neon-green/10 border border-neon-green/20'
+      }`}>
+        <div className="flex items-center gap-2">
+          <Target className={`w-4 h-4 ${stakeRecommendation.color}`} />
+          <p className={`text-sm font-medium ${stakeRecommendation.color}`}>
+            {stakeRecommendation.recommendation}
+          </p>
+        </div>
+        {stakeRecommendation.shouldSkip && (
+          <p className="text-xs text-muted-foreground mt-1 ml-6">
+            High variance + marginal edge suggests caution
+          </p>
+        )}
+      </div>
+
+      {/* Performance Sparkline */}
+      {recentPerformances && recentPerformances.length >= 5 && (
+        <div className="mb-6 p-4 rounded-xl bg-muted/30">
+          <p className="text-xs text-muted-foreground mb-3 flex items-center gap-1">
+            <Sparkles className="w-3 h-3" />
+            Last {recentPerformances.length} Performances
+          </p>
+          <PerformanceSparkline 
+            data={recentPerformances} 
+            threshold={line}
+            height={60}
+          />
+          
+          {/* IQR Display */}
+          {iqrMetrics && (
+            <div className="grid grid-cols-4 gap-2 mt-3 text-center">
+              <div>
+                <p className="text-xs text-muted-foreground">Q1</p>
+                <p className="text-sm font-medium">{iqrMetrics.q1.toFixed(1)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Median</p>
+                <p className="text-sm font-medium text-neon-cyan">{iqrMetrics.median.toFixed(1)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Q3</p>
+                <p className="text-sm font-medium">{iqrMetrics.q3.toFixed(1)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">IQR</p>
+                <p className="text-sm font-medium">{iqrMetrics.iqr.toFixed(1)}</p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Consistency Score */}
+      {iqrMetrics && (
+        <div className="mb-6">
+          <div className="flex items-center justify-between text-sm mb-2">
+            <span className="text-muted-foreground">Player Consistency</span>
+            <span className={
+              iqrMetrics.consistencyScore >= 70 ? 'text-neon-green' :
+              iqrMetrics.consistencyScore >= 50 ? 'text-amber-500' : 'text-neon-red'
+            }>
+              {iqrMetrics.consistencyScore.toFixed(0)}%
+            </span>
+          </div>
+          <Progress 
+            value={iqrMetrics.consistencyScore} 
+            className="h-2"
+          />
+          <p className="text-xs text-muted-foreground mt-1">
+            {iqrMetrics.consistencyScore >= 70 
+              ? "Consistent performer - good for props" 
+              : iqrMetrics.consistencyScore >= 50
+                ? "Moderate variance - consider stakes"
+                : "High variance - reduce exposure"}
+          </p>
+        </div>
+      )}
 
       {/* Outcome Range Visualization */}
       <div className="mb-6 p-4 rounded-xl bg-muted/30">
