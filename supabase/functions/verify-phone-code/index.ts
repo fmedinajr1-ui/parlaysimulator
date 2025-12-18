@@ -27,115 +27,95 @@ serve(async (req) => {
       );
     }
 
-    // Get Twilio credentials
-    const accountSid = Deno.env.get('TWILIO_ACCOUNT_SID');
-    const authToken = Deno.env.get('TWILIO_AUTH_TOKEN');
-    const verifyServiceSid = Deno.env.get('TWILIO_VERIFY_SERVICE_SID');
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    if (!accountSid || !authToken || !verifyServiceSid) {
-      logStep('Missing Twilio credentials');
-      return new Response(
-        JSON.stringify({ error: 'SMS service not configured' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    // Get the verification code from database
+    const { data: verificationRecord, error: fetchError } = await supabase
+      .from('phone_verification_codes')
+      .select('*')
+      .eq('user_id', user_id)
+      .eq('phone_number', phone_number)
+      .eq('verified', false)
+      .single();
 
-    logStep('Verifying code via Twilio Verify API');
-
-    // Use Twilio Verify API to check the code
-    const twilioUrl = `https://verify.twilio.com/v2/Services/${verifyServiceSid}/VerificationChecks`;
-    
-    const formData = new URLSearchParams();
-    formData.append('To', phone_number);
-    formData.append('Code', code);
-
-    const twilioResponse = await fetch(twilioUrl, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Basic ${btoa(`${accountSid}:${authToken}`)}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: formData.toString(),
-    });
-
-    const twilioResult = await twilioResponse.json();
-    logStep('Twilio Verify check response', { 
-      httpStatus: twilioResponse.status, 
-      verificationStatus: twilioResult.status,
-      valid: twilioResult.valid,
-      errorCode: twilioResult.code,
-      errorMessage: twilioResult.message
-    });
-
-    if (!twilioResponse.ok) {
-      logStep('Twilio Verify API error', { 
-        code: twilioResult.code,
-        message: twilioResult.message,
-        moreInfo: twilioResult.more_info
-      });
-      
-      // Handle specific Twilio errors
-      if (twilioResult.code === 20404) {
-        logStep('404 Error - Verification not found', {
-          hint: 'This usually means: 1) Code expired, 2) New code was requested, 3) Trial account number not verified, 4) Credential mismatch'
-        });
-        return new Response(
-          JSON.stringify({ 
-            error: 'Verification not found. This can happen if: the code expired, a new code was requested, or this number is not verified in your Twilio trial account.',
-            needsNewCode: true,
-            debugHint: 'Check Twilio Console: Verify Service SID, Account credentials, and Verified Caller IDs for trial accounts'
-          }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      // Handle max attempts reached
-      if (twilioResult.code === 60202) {
-        return new Response(
-          JSON.stringify({ 
-            error: 'Too many failed attempts. Please request a new code.',
-            needsNewCode: true
-          }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      // Handle invalid code
-      if (twilioResult.code === 60200) {
-        return new Response(
-          JSON.stringify({ 
-            error: 'Invalid verification code. Please check and try again.'
-          }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-      
+    if (fetchError || !verificationRecord) {
+      logStep('No verification code found', { fetchError });
       return new Response(
         JSON.stringify({ 
-          error: twilioResult.message || 'Failed to verify code',
-          twilioCode: twilioResult.code
+          error: 'No verification code found. Please request a new code.',
+          needsNewCode: true
         }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // Check if verification was approved
-    if (twilioResult.status !== 'approved') {
-      logStep('Invalid code', { status: twilioResult.status });
+    logStep('Found verification record', { 
+      expiresAt: verificationRecord.expires_at,
+      attempts: verificationRecord.attempts
+    });
+
+    // Check if code has expired
+    if (new Date(verificationRecord.expires_at) < new Date()) {
+      logStep('Code expired');
+      
+      // Delete expired code
+      await supabase
+        .from('phone_verification_codes')
+        .delete()
+        .eq('id', verificationRecord.id);
+
       return new Response(
         JSON.stringify({ 
-          error: 'Invalid verification code. Please check and try again.',
-          attemptsRemaining: twilioResult.send_code_attempts?.length < 5 ? 5 - (twilioResult.send_code_attempts?.length || 0) : undefined
+          error: 'Verification code has expired. Please request a new code.',
+          needsNewCode: true
+        }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Check attempts limit (max 5 attempts)
+    if (verificationRecord.attempts >= 5) {
+      logStep('Too many attempts');
+      
+      // Delete the code after too many attempts
+      await supabase
+        .from('phone_verification_codes')
+        .delete()
+        .eq('id', verificationRecord.id);
+
+      return new Response(
+        JSON.stringify({ 
+          error: 'Too many failed attempts. Please request a new code.',
+          needsNewCode: true
+        }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Verify the code
+    if (verificationRecord.code !== code) {
+      logStep('Invalid code', { attempts: verificationRecord.attempts + 1 });
+      
+      // Increment attempts
+      await supabase
+        .from('phone_verification_codes')
+        .update({ attempts: verificationRecord.attempts + 1 })
+        .eq('id', verificationRecord.id);
+
+      const attemptsRemaining = 5 - (verificationRecord.attempts + 1);
+      
+      return new Response(
+        JSON.stringify({ 
+          error: `Invalid verification code. ${attemptsRemaining} attempts remaining.`,
+          attemptsRemaining
         }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
     logStep('Code verified successfully');
-
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     // Check if phone is already verified by another user
     const { data: existingProfile } = await supabase
@@ -167,6 +147,12 @@ serve(async (req) => {
       logStep('Error updating profile', updateError);
       throw new Error('Failed to verify phone number');
     }
+
+    // Mark verification code as used and delete it
+    await supabase
+      .from('phone_verification_codes')
+      .delete()
+      .eq('id', verificationRecord.id);
 
     logStep('Phone verified successfully');
 
