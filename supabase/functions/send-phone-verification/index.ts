@@ -15,15 +15,36 @@ function generateCode(): string {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
+// Clean and format phone number to E.164
+function formatToE164(phone: string): string {
+  // Remove all non-digit characters except leading +
+  let cleaned = phone.replace(/[^\d+]/g, '');
+  
+  // If it doesn't start with +, assume it needs one
+  if (!cleaned.startsWith('+')) {
+    // If it starts with 1 and is 11 digits, it's likely US
+    if (cleaned.startsWith('1') && cleaned.length === 11) {
+      cleaned = '+' + cleaned;
+    } else if (cleaned.length === 10) {
+      // Assume US number
+      cleaned = '+1' + cleaned;
+    } else {
+      cleaned = '+' + cleaned;
+    }
+  }
+  
+  return cleaned;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const { phone_number } = await req.json();
+    const { phone_number, debug_mode } = await req.json();
     
-    logStep('Received request', { phone_number: phone_number?.substring(0, 6) + '***' });
+    logStep('Received request', { phone_number: phone_number?.substring(0, 6) + '***', debug_mode });
 
     if (!phone_number) {
       return new Response(
@@ -32,11 +53,16 @@ serve(async (req) => {
       );
     }
 
+    // Clean and format phone number
+    const formattedPhone = formatToE164(phone_number);
+    logStep('Formatted phone', { original: phone_number?.substring(0, 6) + '***', formatted: formattedPhone?.substring(0, 6) + '***' });
+
     // Validate phone number format (E.164)
-    const phoneRegex = /^\+[1-9]\d{1,14}$/;
-    if (!phoneRegex.test(phone_number)) {
+    const phoneRegex = /^\+[1-9]\d{6,14}$/;
+    if (!phoneRegex.test(formattedPhone)) {
+      logStep('Invalid phone format', { formattedPhone: formattedPhone?.substring(0, 6) + '***' });
       return new Response(
-        JSON.stringify({ error: 'Invalid phone number format. Please use E.164 format (e.g., +14155551234)' }),
+        JSON.stringify({ error: 'Invalid phone number format. Please enter a valid phone number.' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -71,7 +97,7 @@ serve(async (req) => {
     const { data: existingProfile } = await supabase
       .from('profiles')
       .select('phone_number, user_id')
-      .eq('phone_number', phone_number)
+      .eq('phone_number', formattedPhone)
       .eq('phone_verified', true)
       .neq('user_id', user.id)
       .single();
@@ -84,18 +110,18 @@ serve(async (req) => {
       );
     }
 
-    // Check for recent verification attempts (rate limiting)
+    // Check for recent verification attempts (rate limiting - 30 seconds)
     const { data: recentCodes } = await supabase
       .from('phone_verification_codes')
       .select('created_at')
       .eq('user_id', user.id)
-      .gte('created_at', new Date(Date.now() - 60000).toISOString())
+      .gte('created_at', new Date(Date.now() - 30000).toISOString())
       .order('created_at', { ascending: false })
       .limit(1);
 
     if (recentCodes && recentCodes.length > 0) {
       const lastSent = new Date(recentCodes[0].created_at);
-      const secondsRemaining = Math.ceil(60 - (Date.now() - lastSent.getTime()) / 1000);
+      const secondsRemaining = Math.ceil(30 - (Date.now() - lastSent.getTime()) / 1000);
       
       if (secondsRemaining > 0) {
         return new Response(
@@ -125,7 +151,7 @@ serve(async (req) => {
       .from('phone_verification_codes')
       .insert({
         user_id: user.id,
-        phone_number,
+        phone_number: formattedPhone,
         code,
         expires_at: expiresAt.toISOString(),
         verified: false,
@@ -146,21 +172,30 @@ serve(async (req) => {
     const fromNumber = Deno.env.get('TWILIO_PHONE_NUMBER');
 
     if (!accountSid || !authToken || !fromNumber) {
-      logStep('Missing Twilio credentials');
+      logStep('Missing Twilio credentials', { 
+        hasAccountSid: !!accountSid, 
+        hasAuthToken: !!authToken, 
+        hasFromNumber: !!fromNumber 
+      });
       return new Response(
         JSON.stringify({ error: 'SMS service not configured' }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    logStep('Sending SMS via Twilio Messages API', { from: fromNumber });
+    // Clean the from number too
+    const cleanFromNumber = formatToE164(fromNumber);
+    logStep('Sending SMS via Twilio Messages API', { 
+      from: cleanFromNumber,
+      to: formattedPhone?.substring(0, 6) + '***'
+    });
 
     // Send SMS directly using Twilio Messages API
     const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
     
     const formData = new URLSearchParams();
-    formData.append('To', phone_number);
-    formData.append('From', fromNumber);
+    formData.append('To', formattedPhone);
+    formData.append('From', cleanFromNumber);
     formData.append('Body', `Your Parlay Farm verification code is: ${code}. It expires in 10 minutes.`);
 
     const twilioResponse = await fetch(twilioUrl, {
@@ -173,15 +208,23 @@ serve(async (req) => {
     });
 
     const twilioResult = await twilioResponse.json();
+    
+    // Detailed Twilio response logging
     logStep('Twilio SMS response', { 
       status: twilioResponse.status, 
       sid: twilioResult.sid,
+      messageStatus: twilioResult.status,
       errorCode: twilioResult.code,
-      errorMessage: twilioResult.message
+      errorMessage: twilioResult.message,
+      to: twilioResult.to?.substring(0, 6) + '***',
+      from: twilioResult.from
     });
 
     if (!twilioResponse.ok) {
-      logStep('Twilio SMS API error', twilioResult);
+      logStep('Twilio SMS API error', {
+        fullError: twilioResult,
+        status: twilioResponse.status
+      });
       
       // Clean up the stored code since SMS failed
       await supabase
@@ -189,28 +232,55 @@ serve(async (req) => {
         .delete()
         .eq('user_id', user.id);
 
+      // Provide user-friendly error messages
+      let userMessage = 'Failed to send SMS. Please try again.';
+      if (twilioResult.code === 21211) {
+        userMessage = 'Invalid phone number. Please check and try again.';
+      } else if (twilioResult.code === 21608) {
+        userMessage = 'This phone number cannot receive SMS. Please use a different number.';
+      } else if (twilioResult.code === 21610) {
+        userMessage = 'This number has been blacklisted. Please contact support.';
+      } else if (twilioResult.code === 21614) {
+        userMessage = 'This number is not a valid mobile number.';
+      } else if (twilioResult.message) {
+        userMessage = twilioResult.message;
+      }
+
       return new Response(
         JSON.stringify({ 
-          error: twilioResult.message || 'Failed to send SMS',
+          error: userMessage,
           twilioCode: twilioResult.code
         }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    logStep('SMS sent successfully', { messageSid: twilioResult.sid });
+    logStep('SMS sent successfully', { 
+      messageSid: twilioResult.sid,
+      messageStatus: twilioResult.status 
+    });
+
+    // In debug mode, return the code (ONLY for development!)
+    const responseData: any = { 
+      success: true, 
+      message: 'Verification code sent',
+      expiresInSeconds: 600,
+      phoneFormatted: formattedPhone?.substring(0, 6) + '***'
+    };
+
+    // Debug mode - return the code for testing (disable in production!)
+    if (debug_mode === true) {
+      responseData.debug_code = code;
+      logStep('DEBUG MODE: Returning code in response');
+    }
 
     return new Response(
-      JSON.stringify({ 
-        success: true, 
-        message: 'Verification code sent',
-        expiresInSeconds: 600
-      }),
+      JSON.stringify(responseData),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
   } catch (error) {
-    logStep('Error', error);
+    logStep('Unhandled error', { error: error instanceof Error ? error.message : error });
     const errorMessage = error instanceof Error ? error.message : 'Failed to send verification code';
     return new Response(
       JSON.stringify({ error: errorMessage }),
