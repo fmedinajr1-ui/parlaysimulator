@@ -52,36 +52,48 @@ interface FinalPickDecision {
   skip: boolean;
 }
 
-// MINIMUM CONFIDENCE THRESHOLD - 65% (lowered from 80% to allow more picks)
-const MIN_CONFIDENCE_THRESHOLD = 0.65;
+// MINIMUM CONFIDENCE THRESHOLD - 70% (raised from 65% for quality)
+const MIN_CONFIDENCE_THRESHOLD = 0.70;
 
-// AI BETTING KNOWLEDGE RULES
+// AI BETTING KNOWLEDGE RULES - Updated based on accuracy analysis
 const AI_BETTING_RULES = {
-  FOLLOW: ['LINE_AND_JUICE_MOVED', 'LATE_MONEY_SWEET_SPOT', 'INJURY_UNDER', 'MULTI_BOOK_CONSENSUS', 'PVS_S_TIER', 'PVS_A_TIER', 'CONSISTENT_MOVEMENT'],
-  FADE: ['EARLY_MORNING_OVER', 'PRICE_ONLY_MOVE', 'FAKE_SHARP_TAG', 'STEAM_MOVE_NO_CONSENSUS', 'HIGH_TRAP_SCORE', 'PVS_D_TIER', 'INCONSISTENT_MOVEMENT'],
+  // CRITICAL FIX: Follow juice when aligned with unified intelligence
+  FOLLOW: ['JUICE_UNIFIED_ALIGNED', 'LINE_AND_JUICE_MOVED', 'LATE_MONEY_SWEET_SPOT', 'INJURY_UNDER', 'MULTI_BOOK_CONSENSUS', 'PVS_S_TIER', 'CONSISTENT_MOVEMENT'],
+  // Only fade when clear trap signals exist
+  FADE: ['EARLY_MORNING_OVER', 'PRICE_ONLY_MOVE', 'FAKE_SHARP_TAG', 'HIGH_TRAP_SCORE_70', 'INCONSISTENT_MOVEMENT', 'CONFLICTING_SIGNALS'],
+  // SKIP these tiers entirely due to 0% historical accuracy
+  SKIP_TIERS: ['HIGH_VALUE'],
 };
 
-// PVS Tier confidence multipliers
+// PVS Tier confidence multipliers - Updated based on accuracy data
 const PVS_TIER_MULTIPLIERS: Record<string, number> = {
+  'ELITE_PICK': 1.25,
+  'STRONG_LEAN': 1.15,
   'S': 1.20,
   'A': 1.12,
   'B': 1.05,
+  'MODERATE_EDGE': 0.98,
   'C': 0.95,
   'D': 0.85,
+  'RISKY': 0.80,
+  'HIGH_VALUE': 0.0, // DISABLED - 0% historical accuracy
 };
 
-// Confidence boost factors for 80% threshold system
+// Confidence boost factors - Recalibrated based on historical performance
 const CONFIDENCE_BOOSTS = {
-  MCS_HIGH: 0.15,         // MCS ≥ 80% (4+ moves same direction)
-  MCS_MEDIUM: 0.10,       // MCS ≥ 60% (3+ moves same direction)
-  MULTI_BOOK_CONSENSUS: 0.10,
-  LATE_MONEY_WINDOW: 0.08,
-  LINE_AND_JUICE: 0.08,
-  PVS_S_TIER: 0.07,
-  PVS_A_TIER: 0.05,
-  TOTAL_MOVEMENT_HIGH: 0.10, // Total movement ≥ 20 points
+  JUICE_UNIFIED_ALIGNED: 0.18,  // NEW: Juice direction matches unified recommendation
+  MCS_HIGH: 0.15,               // MCS ≥ 80% (4+ moves same direction)
+  MCS_MEDIUM: 0.10,             // MCS ≥ 60% (3+ moves same direction)
+  MULTI_BOOK_CONSENSUS: 0.12,   // Increased from 0.10
+  LATE_MONEY_WINDOW: 0.10,      // Increased from 0.08
+  LINE_AND_JUICE: 0.10,         // Increased from 0.08
+  PVS_S_TIER: 0.08,             // Slightly increased
+  PVS_A_TIER: 0.06,             // Slightly increased
+  TOTAL_MOVEMENT_HIGH: 0.10,
   INJURY_SIGNAL: 0.08,
-  TRAP_SCORE_HIGH: 0.10,    // For fades
+  TRAP_SCORE_HIGH: 0.12,        // Increased for fades
+  HIGH_VALUE_PENALTY: -0.25,    // NEW: Penalty for HIGH_VALUE tier
+  OVER_BIAS_PENALTY: -0.05,     // NEW: Historical over-pick penalty
 };
 
 // Calculate Movement Consistency Score from history
@@ -137,7 +149,7 @@ function calculateMovementConsistency(
   };
 }
 
-// Enhanced decision matrix for final picks - Now with 80% confidence threshold
+// CRITICAL FIX: Enhanced decision matrix - Follow juice when aligned, not fade
 function determineFinalPick(
   prop: JuicedProp,
   currentOverPrice: number,
@@ -151,10 +163,11 @@ function determineFinalPick(
   movementHistory: MovementSnapshot[]
 ): FinalPickDecision {
   const juiceLevel = prop.juice_level;
-  const originalJuiceOnOver = prop.juice_direction === 'over';
+  const juiceDirection = prop.juice_direction as 'over' | 'under';
   
   // Check if juice has reversed
   const currentJuiceOnOver = currentOverPrice < currentUnderPrice;
+  const originalJuiceOnOver = juiceDirection === 'over';
   const juiceReversed = originalJuiceOnOver !== currentJuiceOnOver;
   
   // Calculate how much the line moved
@@ -166,12 +179,32 @@ function determineFinalPick(
   const hasUnified = prop.used_unified_intelligence && prop.unified_composite_score !== undefined;
   const unifiedComposite = prop.unified_composite_score || 0;
   const unifiedPvsTier = prop.unified_pvs_tier || 'C';
-  const unifiedRecommendation = prop.unified_recommendation;
+  const unifiedRecommendation = prop.unified_recommendation as 'over' | 'under' | undefined;
   const unifiedConfidence = prop.unified_confidence || 0;
   const unifiedTrapScore = prop.unified_trap_score || 0;
   
+  // 🚨 CRITICAL: Skip HIGH_VALUE tier entirely - 0% historical accuracy
+  if (AI_BETTING_RULES.SKIP_TIERS.includes(unifiedPvsTier)) {
+    return {
+      pick: null,
+      reason: `🚫 HIGH_VALUE tier disabled (0% historical accuracy)`,
+      confidence: 0,
+      skip: true,
+    };
+  }
+  
   // Get PVS tier multiplier
   const pvsMultiplier = PVS_TIER_MULTIPLIERS[unifiedPvsTier] || 1.0;
+  
+  // If multiplier is 0 (disabled tier), skip
+  if (pvsMultiplier === 0) {
+    return {
+      pick: null,
+      reason: `🚫 Disabled tier: ${unifiedPvsTier}`,
+      confidence: 0,
+      skip: true,
+    };
+  }
   
   // 📊 MOVEMENT CONSISTENCY ANALYSIS
   const mcs = prop.movement_consistency_score || 0;
@@ -199,46 +232,67 @@ function determineFinalPick(
   const isLateMoneyWindow = hoursToGame >= 1 && hoursToGame <= 3;
   
   // ==========================================
-  // SIGNAL ANALYSIS & CONFIDENCE BUILDING
+  // 🎯 CRITICAL FIX: FOLLOW JUICE WHEN ALIGNED
   // ==========================================
   
-  // 1️⃣ Movement Consistency (Most Important)
+  // Check if unified recommendation ALIGNS with juice direction
+  const juiceUnifiedAligned = hasUnified && 
+    unifiedRecommendation === juiceDirection && 
+    unifiedConfidence >= 0.80;
+  
+  // 1️⃣ FOLLOW JUICE + UNIFIED ALIGNED (Most reliable signal)
+  if (juiceUnifiedAligned && unifiedTrapScore < 50) {
+    baseConfidence += CONFIDENCE_BOOSTS.JUICE_UNIFIED_ALIGNED;
+    suggestedPick = juiceDirection; // FOLLOW the juice, not fade!
+    reasons.push(`🎯 Juice + Unified ALIGNED: ${juiceDirection.toUpperCase()} (${(unifiedConfidence * 100).toFixed(0)}%)`);
+  }
+  
+  // 2️⃣ Movement Consistency (Strong secondary signal)
   if (movementAnalysis.isConsistent) {
     baseConfidence += movementAnalysis.boost;
-    suggestedPick = movementAnalysis.direction === 'over' ? 'over' : 
-                    movementAnalysis.direction === 'under' ? 'under' : null;
+    // Only override if no aligned signal yet
+    if (!suggestedPick) {
+      suggestedPick = movementAnalysis.direction === 'over' ? 'over' : 
+                      movementAnalysis.direction === 'under' ? 'under' : null;
+    }
     reasons.push(`📊 ${movementAnalysis.description}`);
   } else if (totalSnapshots >= 2) {
     baseConfidence += movementAnalysis.boost; // Apply penalty
     reasons.push(`⚠️ ${movementAnalysis.description}`);
   }
   
-  // 2️⃣ High Trap Score - Strong fade signal
+  // 3️⃣ High Trap Score (70+) - Only FADE when trap is clear
   if (hasUnified && unifiedTrapScore >= 70) {
     baseConfidence += CONFIDENCE_BOOSTS.TRAP_SCORE_HIGH;
-    const fadePick: 'over' | 'under' = originalJuiceOnOver ? 'under' : 'over';
-    if (!suggestedPick || movementAnalysis.direction === fadePick) {
+    const fadePick: 'over' | 'under' = juiceDirection === 'over' ? 'under' : 'over';
+    // Only override to fade if we don't have strong aligned signal
+    if (!juiceUnifiedAligned) {
       suggestedPick = fadePick;
     }
-    reasons.push(`🚨 High trap score (${unifiedTrapScore}) - Fading public`);
+    reasons.push(`🚨 High trap score (${unifiedTrapScore}) - Consider fading`);
   }
   
-  // 3️⃣ S/A Tier PVS
-  if (hasUnified && (unifiedPvsTier === 'S' || unifiedPvsTier === 'A') && unifiedComposite >= 70) {
-    const pvsBoost = unifiedPvsTier === 'S' ? CONFIDENCE_BOOSTS.PVS_S_TIER : CONFIDENCE_BOOSTS.PVS_A_TIER;
+  // 4️⃣ S/A Tier or ELITE_PICK/STRONG_LEAN PVS
+  const isEliteTier = ['S', 'A', 'ELITE_PICK', 'STRONG_LEAN'].includes(unifiedPvsTier);
+  if (hasUnified && isEliteTier && unifiedComposite >= 70) {
+    const pvsBoost = ['S', 'ELITE_PICK'].includes(unifiedPvsTier) 
+      ? CONFIDENCE_BOOSTS.PVS_S_TIER 
+      : CONFIDENCE_BOOSTS.PVS_A_TIER;
     baseConfidence += pvsBoost;
-    const pvsPick = unifiedRecommendation === 'over' ? 'over' : 'under';
-    if (!suggestedPick) suggestedPick = pvsPick;
+    // Follow unified recommendation for elite tiers
+    if (!suggestedPick && unifiedRecommendation) {
+      suggestedPick = unifiedRecommendation;
+    }
     reasons.push(`🧠 ${unifiedPvsTier}-Tier PVS (${unifiedComposite.toFixed(0)})`);
   }
   
-  // 4️⃣ Multi-book consensus
+  // 5️⃣ Multi-book consensus
   if (hasConfirmedSharp && sharpSignals.some(s => s.includes('MULTI_BOOK'))) {
     baseConfidence += CONFIDENCE_BOOSTS.MULTI_BOOK_CONSENSUS;
     reasons.push('📚 Multi-book consensus');
   }
   
-  // 5️⃣ Late money window (1-3 hours)
+  // 6️⃣ Late money window (1-3 hours)
   if (isLateMoneyWindow && (hasSharpOnOver || hasSharpOnUnder)) {
     baseConfidence += CONFIDENCE_BOOSTS.LATE_MONEY_WINDOW;
     if (!suggestedPick) {
@@ -247,56 +301,69 @@ function determineFinalPick(
     reasons.push('🕐 Late money sweet spot (1-3hr)');
   }
   
-  // 6️⃣ Line AND juice moved together
+  // 7️⃣ Line AND juice moved together
   if (hasConfirmedSharp && sharpSignals.some(s => s.includes('LINE_AND_JUICE'))) {
     baseConfidence += CONFIDENCE_BOOSTS.LINE_AND_JUICE;
     reasons.push('💰 Line + juice moved together');
   }
   
-  // 7️⃣ Total movement ≥ 20 points
+  // 8️⃣ Total movement ≥ 20 points
   if (totalMovement >= 20) {
     baseConfidence += CONFIDENCE_BOOSTS.TOTAL_MOVEMENT_HIGH;
     reasons.push(`📈 Major movement (${totalMovement.toFixed(0)} pts)`);
   }
   
-  // 8️⃣ Injury signal
+  // 9️⃣ Injury signal
   if (hasInjurySignal) {
     baseConfidence += CONFIDENCE_BOOSTS.INJURY_SIGNAL;
     suggestedPick = 'under';
     reasons.push('🏥 Injury signal detected');
   }
   
-  // 9️⃣ Morning trap fade
-  if (isMorningTrap && prop.juice_direction === 'over') {
+  // 🔟 Morning trap fade - Only if NOT aligned with unified
+  if (isMorningTrap && juiceDirection === 'over' && !juiceUnifiedAligned) {
     baseConfidence += 0.05;
     if (!suggestedPick) suggestedPick = 'under';
     reasons.push('🌅 Fading early morning over trap');
   }
   
-  // 🔟 Price-only trap (negative signal)
+  // ❌ NEGATIVE SIGNALS
+  
+  // Price-only trap (negative signal)
   if (hasPriceOnlyTrap && !hasConfirmedSharp) {
     baseConfidence -= 0.08;
     reasons.push('❌ Price-only move (trap indicator)');
+  }
+  
+  // Over-bias penalty (historical data shows over picks underperform)
+  if (suggestedPick === 'over' && !juiceUnifiedAligned) {
+    baseConfidence += CONFIDENCE_BOOSTS.OVER_BIAS_PENALTY;
+    reasons.push('📉 Over-pick historical penalty');
   }
   
   // Apply PVS multiplier to final confidence
   let finalConfidence = baseConfidence * pvsMultiplier;
   
   // ==========================================
-  // FINAL DECISION WITH 80% THRESHOLD
+  // FINAL DECISION WITH THRESHOLD
   // ==========================================
   
-  // Determine final pick direction
+  // Determine final pick direction if not set
   if (!suggestedPick) {
-    // Default logic if no strong signals
-    if (hasSharpOnUnder) {
+    // Default: Follow unified if available, otherwise follow juice direction
+    if (hasUnified && unifiedRecommendation) {
+      suggestedPick = unifiedRecommendation;
+      reasons.push(`📋 Following unified recommendation: ${unifiedRecommendation}`);
+    } else if (hasSharpOnUnder) {
       suggestedPick = 'under';
+      reasons.push('📋 Following sharp action on under');
     } else if (hasSharpOnOver && hasConfirmedSharp) {
       suggestedPick = 'over';
-    } else if (hasUnified && unifiedRecommendation) {
-      suggestedPick = unifiedRecommendation === 'over' ? 'over' : 'under';
+      reasons.push('📋 Following confirmed sharp on over');
     } else {
-      suggestedPick = 'under'; // Default fade
+      // Default to juice direction (FOLLOW, not fade)
+      suggestedPick = juiceDirection;
+      reasons.push(`📋 Following juice direction: ${juiceDirection}`);
     }
   }
   
@@ -317,25 +384,24 @@ function determineFinalPick(
   finalConfidence = Math.min(0.95, Math.max(0, finalConfidence));
   
   // ==========================================
-  // 80% THRESHOLD CHECK
+  // THRESHOLD CHECK
   // ==========================================
   
   if (finalConfidence < MIN_CONFIDENCE_THRESHOLD) {
     return {
       pick: null,
-      reason: `⏭️ Below 65% threshold (${(finalConfidence * 100).toFixed(0)}%) | ${reasons.slice(0, 2).join(' | ')}`,
+      reason: `⏭️ Below ${MIN_CONFIDENCE_THRESHOLD * 100}% threshold (${(finalConfidence * 100).toFixed(0)}%) | ${reasons.slice(0, 2).join(' | ')}`,
       confidence: finalConfidence,
       skip: true,
     };
   }
   
-  // Check for inconsistent movement - require higher confidence (70% instead of 85%)
+  // Check for inconsistent movement - require higher confidence
   if (!movementAnalysis.isConsistent && totalSnapshots >= 3) {
-    // Inconsistent movement detected - need slightly higher confidence
-    if (finalConfidence < 0.70) {
+    if (finalConfidence < 0.75) {
       return {
         pick: null,
-        reason: `⏭️ Inconsistent day movement (${mcs.toFixed(0)}% MCS) - need 70%+ | ${reasons[0] || ''}`,
+        reason: `⏭️ Inconsistent day movement (${mcs.toFixed(0)}% MCS) - need 75%+ | ${reasons[0] || ''}`,
         confidence: finalConfidence,
         skip: true,
       };
