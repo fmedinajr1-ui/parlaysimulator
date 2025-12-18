@@ -1,6 +1,6 @@
-// Pull to refresh hook - mobile gesture handling
 import { useState, useCallback, useRef, useEffect } from 'react';
 
+// Pull to refresh hook - mobile gesture handling
 interface UsePullToRefreshOptions {
   onRefresh: () => Promise<void>;
   threshold?: number;
