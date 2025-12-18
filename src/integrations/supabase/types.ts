@@ -641,13 +641,26 @@ export type Database = {
         Row: {
           b2b_rest_tendency: string | null
           blowout_minutes_reduction: number | null
+          bullpen_usage: string | null
           coach_name: string
           created_at: string | null
+          empty_net_tendency: string | null
+          fourth_down_aggression: string | null
           fourth_quarter_pattern: string | null
+          garbage_time_behavior: string | null
+          goalie_pull_tendency: string | null
           id: string
           is_active: boolean | null
+          line_matching: string | null
+          lineup_consistency: string | null
           pace_preference: string | null
+          pinch_hit_frequency: string | null
+          platoon_tendency: string | null
+          pp_aggression: string | null
+          qb_usage_style: string | null
+          red_zone_tendency: string | null
           rotation_depth: number | null
+          run_pass_tendency: string | null
           sport: string
           star_usage_pct: number | null
           team_name: string
@@ -658,13 +671,26 @@ export type Database = {
         Insert: {
           b2b_rest_tendency?: string | null
           blowout_minutes_reduction?: number | null
+          bullpen_usage?: string | null
           coach_name: string
           created_at?: string | null
+          empty_net_tendency?: string | null
+          fourth_down_aggression?: string | null
           fourth_quarter_pattern?: string | null
+          garbage_time_behavior?: string | null
+          goalie_pull_tendency?: string | null
           id?: string
           is_active?: boolean | null
+          line_matching?: string | null
+          lineup_consistency?: string | null
           pace_preference?: string | null
+          pinch_hit_frequency?: string | null
+          platoon_tendency?: string | null
+          pp_aggression?: string | null
+          qb_usage_style?: string | null
+          red_zone_tendency?: string | null
           rotation_depth?: number | null
+          run_pass_tendency?: string | null
           sport?: string
           star_usage_pct?: number | null
           team_name: string
@@ -675,13 +701,26 @@ export type Database = {
         Update: {
           b2b_rest_tendency?: string | null
           blowout_minutes_reduction?: number | null
+          bullpen_usage?: string | null
           coach_name?: string
           created_at?: string | null
+          empty_net_tendency?: string | null
+          fourth_down_aggression?: string | null
           fourth_quarter_pattern?: string | null
+          garbage_time_behavior?: string | null
+          goalie_pull_tendency?: string | null
           id?: string
           is_active?: boolean | null
+          line_matching?: string | null
+          lineup_consistency?: string | null
           pace_preference?: string | null
+          pinch_hit_frequency?: string | null
+          platoon_tendency?: string | null
+          pp_aggression?: string | null
+          qb_usage_style?: string | null
+          red_zone_tendency?: string | null
           rotation_depth?: number | null
+          run_pass_tendency?: string | null
           sport?: string
           star_usage_pct?: number | null
           team_name?: string

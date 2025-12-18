@@ -7,7 +7,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { useParlayBuilder } from '@/contexts/ParlayBuilderContext';
 import { ParlayLegCard } from './ParlayLegCard';
 import { CoachingAlertBanner } from './CoachingAlertBanner';
-import { useCoachingSignals } from '@/hooks/useCoachingSignals';
+import { useSportsCoachingSignals, SPORT_ICONS } from '@/hooks/useSportsCoachingSignals';
 import { SOURCE_LABELS } from '@/types/universal-parlay';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -31,8 +31,8 @@ export const UniversalParlayBuilder = () => {
   const [stake, setStake] = useState<string>('10');
   const [isSaving, setIsSaving] = useState(false);
   
-  // Fetch coaching signals for NBA legs
-  const { signals, isLoading: coachingLoading, nbaLegCount, getSignalForLeg, criticalWarnings } = useCoachingSignals(legs);
+  // Fetch coaching signals for all sports
+  const { signals, isLoading: coachingLoading, totalLegsWithCoaching, legCountBySport, getSignalForLeg, criticalWarnings } = useSportsCoachingSignals(legs);
 
   if (legCount === 0) return null;
 
@@ -88,9 +88,9 @@ export const UniversalParlayBuilder = () => {
                   ⚠️ {criticalWarnings.length}
                 </span>
               )}
-              {!isExpanded && nbaLegCount > 0 && !hasCoachingWarnings && (
+              {!isExpanded && totalLegsWithCoaching > 0 && !hasCoachingWarnings && (
                 <span className="text-[10px] px-1 py-0.5 rounded bg-primary/10 text-primary">
-                  🏀 {nbaLegCount}
+                  🏆 {totalLegsWithCoaching}
                 </span>
               )}
             </div>
@@ -119,8 +119,8 @@ export const UniversalParlayBuilder = () => {
                 transition={{ duration: 0.2 }}
               >
                 {/* Coaching Alert Banner */}
-                {nbaLegCount > 0 && (
-                  <CoachingAlertBanner signals={signals} isLoading={coachingLoading} />
+                {totalLegsWithCoaching > 0 && (
+                  <CoachingAlertBanner signals={signals} isLoading={coachingLoading} legCountBySport={legCountBySport} />
                 )}
                 
                 {/* Source Breakdown */}

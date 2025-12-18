@@ -1,5 +1,5 @@
 import React from 'react';
-import { CoachingSignal } from '@/hooks/useCoachingSignals';
+import { SportsCoachingSignal, SPORT_ICONS } from '@/hooks/useSportsCoachingSignals';
 import { cn } from '@/lib/utils';
 import {
   Tooltip,
@@ -9,7 +9,7 @@ import {
 } from '@/components/ui/tooltip';
 
 interface CoachingWarningBadgeProps {
-  signal: CoachingSignal;
+  signal: SportsCoachingSignal;
   compact?: boolean;
 }
 
@@ -36,27 +36,22 @@ export const CoachingWarningBadge = ({ signal, compact = false }: CoachingWarnin
     }
   };
   
+  const sportIcon = SPORT_ICONS[signal.sport] || '🏆';
   const primaryWarning = signal.warnings[0] || 'Coaching analysis available';
   
-  // Format prop adjustments for tooltip
+  // Format prop adjustments for tooltip based on sport
   const formatAdjustments = () => {
     const adjustments: string[] = [];
     const { propAdjustments } = signal;
     
-    if (propAdjustments.points !== 0) {
-      adjustments.push(`${propAdjustments.points > 0 ? '+' : ''}${propAdjustments.points}% pts`);
-    }
-    if (propAdjustments.minutes !== 0) {
-      adjustments.push(`${propAdjustments.minutes > 0 ? '+' : ''}${propAdjustments.minutes}% min`);
-    }
-    if (propAdjustments.rebounds !== 0) {
-      adjustments.push(`${propAdjustments.rebounds > 0 ? '+' : ''}${propAdjustments.rebounds}% reb`);
-    }
-    if (propAdjustments.assists !== 0) {
-      adjustments.push(`${propAdjustments.assists > 0 ? '+' : ''}${propAdjustments.assists}% ast`);
-    }
+    Object.entries(propAdjustments).forEach(([key, value]) => {
+      if (value !== 0) {
+        const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        adjustments.push(`${value > 0 ? '+' : ''}${value}% ${label}`);
+      }
+    });
     
-    return adjustments.join(' | ');
+    return adjustments.slice(0, 4).join(' | ');
   };
   
   if (compact) {
@@ -68,13 +63,16 @@ export const CoachingWarningBadge = ({ signal, compact = false }: CoachingWarnin
               "inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-medium border cursor-help",
               getRecommendationStyles()
             )}>
-              🏀 {signal.coachName.split(' ').pop()}
+              {sportIcon} {signal.coachName.split(' ').pop()}
             </span>
           </TooltipTrigger>
           <TooltipContent side="top" className="max-w-xs">
             <div className="space-y-1.5">
               <div className="font-semibold flex items-center gap-1.5">
                 {getRecommendationIcon()} {signal.coachName} ({signal.teamName})
+              </div>
+              <div className="text-[10px] px-1.5 py-0.5 rounded bg-muted inline-block">
+                {signal.sport}
               </div>
               <div className="text-xs text-muted-foreground">
                 {signal.reasoning[0]}
@@ -106,7 +104,7 @@ export const CoachingWarningBadge = ({ signal, compact = false }: CoachingWarnin
             "flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] border cursor-help",
             getRecommendationStyles()
           )}>
-            <span>🏀</span>
+            <span>{sportIcon}</span>
             <span className="font-medium">{signal.coachName}:</span>
             <span className="truncate max-w-[120px]">{primaryWarning}</span>
             <span className={cn(
@@ -120,8 +118,11 @@ export const CoachingWarningBadge = ({ signal, compact = false }: CoachingWarnin
         </TooltipTrigger>
         <TooltipContent side="top" className="max-w-xs">
           <div className="space-y-2">
-            <div className="font-semibold">
+            <div className="font-semibold flex items-center gap-2">
               {getRecommendationIcon()} Coach Tendency Analysis
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted font-normal">
+                {signal.sport}
+              </span>
             </div>
             <div className="text-xs space-y-1">
               {signal.reasoning.map((r, i) => (
