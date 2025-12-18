@@ -21,7 +21,7 @@ export function usePilotUser() {
   const { user, session } = useAuth();
   const [state, setState] = useState<PilotUserState>({
     isLoading: true,
-    isPilotUser: false, // Don't restrict during loading - wait for actual status
+    isPilotUser: true, // Default to true - ensures pilot quota system is used during loading
     isAdmin: false,
     isSubscribed: false,
     canScan: true,

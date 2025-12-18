@@ -539,13 +539,9 @@ const Upload = () => {
 
         successCount++;
 
-        // Decrement scan for users
+        // Decrement scan for users - always use pilot quota system
         if (user && !isSubscribed && !isAdmin) {
-          if (isPilotUser) {
-            await decrementScan('scan');
-          } else {
-            await incrementScan();
-          }
+          await decrementScan('scan');
         }
 
       } catch (err) {
