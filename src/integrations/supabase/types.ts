@@ -4055,6 +4055,7 @@ export type Database = {
       }
       sharp_line_tracker: {
         Row: {
+          actual_value: number | null
           ai_confidence: number | null
           ai_direction: string | null
           ai_reasoning: string | null
@@ -4077,14 +4078,18 @@ export type Database = {
           opening_over_price: number
           opening_time: string | null
           opening_under_price: number
+          outcome: string | null
           player_name: string
           price_movement_over: number | null
           price_movement_under: number | null
           prop_type: string
           sport: string
           status: string | null
+          verified_at: string | null
+          was_correct: boolean | null
         }
         Insert: {
+          actual_value?: number | null
           ai_confidence?: number | null
           ai_direction?: string | null
           ai_reasoning?: string | null
@@ -4107,14 +4112,18 @@ export type Database = {
           opening_over_price: number
           opening_time?: string | null
           opening_under_price: number
+          outcome?: string | null
           player_name: string
           price_movement_over?: number | null
           price_movement_under?: number | null
           prop_type: string
           sport: string
           status?: string | null
+          verified_at?: string | null
+          was_correct?: boolean | null
         }
         Update: {
+          actual_value?: number | null
           ai_confidence?: number | null
           ai_direction?: string | null
           ai_reasoning?: string | null
@@ -4137,12 +4146,15 @@ export type Database = {
           opening_over_price?: number
           opening_time?: string | null
           opening_under_price?: number
+          outcome?: string | null
           player_name?: string
           price_movement_over?: number | null
           price_movement_under?: number | null
           prop_type?: string
           sport?: string
           status?: string | null
+          verified_at?: string | null
+          was_correct?: boolean | null
         }
         Relationships: []
       }
@@ -4176,6 +4188,60 @@ export type Database = {
           last_accuracy?: number | null
           sample_size?: number | null
           updated_at?: string
+        }
+        Relationships: []
+      }
+      sharp_tracker_accuracy_metrics: {
+        Row: {
+          ai_direction: string | null
+          ai_recommendation: string | null
+          avg_confidence: number | null
+          confidence_bucket: string | null
+          created_at: string | null
+          id: string
+          roi_percentage: number | null
+          sample_size_confidence: string | null
+          sport: string | null
+          total_lost: number | null
+          total_predictions: number | null
+          total_push: number | null
+          total_won: number | null
+          updated_at: string | null
+          win_rate: number | null
+        }
+        Insert: {
+          ai_direction?: string | null
+          ai_recommendation?: string | null
+          avg_confidence?: number | null
+          confidence_bucket?: string | null
+          created_at?: string | null
+          id?: string
+          roi_percentage?: number | null
+          sample_size_confidence?: string | null
+          sport?: string | null
+          total_lost?: number | null
+          total_predictions?: number | null
+          total_push?: number | null
+          total_won?: number | null
+          updated_at?: string | null
+          win_rate?: number | null
+        }
+        Update: {
+          ai_direction?: string | null
+          ai_recommendation?: string | null
+          avg_confidence?: number | null
+          confidence_bucket?: string | null
+          created_at?: string | null
+          id?: string
+          roi_percentage?: number | null
+          sample_size_confidence?: string | null
+          sport?: string | null
+          total_lost?: number | null
+          total_predictions?: number | null
+          total_push?: number | null
+          total_won?: number | null
+          updated_at?: string | null
+          win_rate?: number | null
         }
         Relationships: []
       }

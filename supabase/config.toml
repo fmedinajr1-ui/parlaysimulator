@@ -248,3 +248,21 @@ verify_jwt = false
 
 [functions.sync-median-lock-game-status]
 verify_jwt = false
+
+[functions.verify-sharp-tracker-outcomes]
+verify_jwt = false
+
+[functions.verify-coaching-outcomes]
+verify_jwt = false
+
+[functions.calculate-rolling-performance]
+verify_jwt = false
+
+[functions.purchase-scans]
+verify_jwt = false
+
+[functions.credit-scan-purchase]
+verify_jwt = false
+
+[functions.decrement-pilot-scan]
+verify_jwt = false
