@@ -143,7 +143,7 @@ function normalizePropType(propType: string): string {
 }
 
 const DAILY_LIMIT = 50;
-const MIN_CONFIDENCE = 0.8;
+const MIN_CONFIDENCE = 0.6; // Lowered from 0.8 to match actual unified_props confidence range
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -223,7 +223,7 @@ serve(async (req) => {
         unifiedPropsMap.set(key, up as UnifiedProp);
       }
     }
-    console.log(`🧠 Loaded ${unifiedPropsMap.size} unified props with 80%+ confidence`);
+    console.log(`🧠 Loaded ${unifiedPropsMap.size} unified props with 60%+ confidence`);
     
     // Track already scanned props today for deduplication
     const { data: existingProps } = await supabase
@@ -328,11 +328,11 @@ serve(async (req) => {
                     
                     // Include both OVER and UNDER juiced props with 80%+ unified confidence
                     if (isJuiced) {
-                      // Cross-reference with unified props for intelligence (80%+ confidence required)
+                      // Cross-reference with unified props for intelligence (60%+ confidence required)
                       const unifiedKey = `${normalizePlayerName(playerName)}_${market}`;
                       const unifiedProp = unifiedPropsMap.get(unifiedKey);
                       
-                      // SKIP if no unified data with 80%+ confidence
+                      // SKIP if no unified data with 60%+ confidence
                       if (!unifiedProp || unifiedProp.confidence < MIN_CONFIDENCE) {
                         continue;
                       }
@@ -400,7 +400,7 @@ serve(async (req) => {
                         juice_amount: juiceAmount,
                         is_morning_trap: isTrap,
                         trap_reason: trapReason || undefined,
-                        // Always has unified data since we require 80%+ confidence
+                        // Always has unified data since we require 60%+ confidence
                         unified_composite_score: unifiedProp.composite_score,
                         unified_pvs_tier: unifiedProp.pvs_tier,
                         unified_recommendation: unifiedProp.recommended_side,
@@ -431,7 +431,7 @@ serve(async (req) => {
       }
     }
     
-    console.log(`🔥 Found ${allJuicedProps.length} juiced props (over & under, 80%+ confidence)`);
+    console.log(`🔥 Found ${allJuicedProps.length} juiced props (over & under, 60%+ confidence)`);
     console.log(`🧠 All ${unifiedMatchCount} props have Unified Intelligence data (recommendation aligned)`);
     
     // Sort by confidence (highest first), then juice level
