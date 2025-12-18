@@ -2201,6 +2201,8 @@ export type Database = {
         Row: {
           actual_value: number | null
           adjusted_edge: number | null
+          away_score: number | null
+          away_team: string | null
           bet_side: string | null
           block_reason: string | null
           book_line: number
@@ -2212,9 +2214,16 @@ export type Database = {
           defense_adjustment: number | null
           event_id: string | null
           failed_checks: Json | null
+          game_clock: string | null
+          game_final_time: string | null
+          game_period: string | null
+          game_start_time: string | null
+          game_status: string | null
           hit_rate: number | null
           hit_rate_last_5: number | null
           home_away_last_10: Json | null
+          home_score: number | null
+          home_team: string | null
           id: string
           is_shock_flagged: boolean | null
           juice_lag_bonus: number | null
@@ -2250,6 +2259,8 @@ export type Database = {
         Insert: {
           actual_value?: number | null
           adjusted_edge?: number | null
+          away_score?: number | null
+          away_team?: string | null
           bet_side?: string | null
           block_reason?: string | null
           book_line: number
@@ -2261,9 +2272,16 @@ export type Database = {
           defense_adjustment?: number | null
           event_id?: string | null
           failed_checks?: Json | null
+          game_clock?: string | null
+          game_final_time?: string | null
+          game_period?: string | null
+          game_start_time?: string | null
+          game_status?: string | null
           hit_rate?: number | null
           hit_rate_last_5?: number | null
           home_away_last_10?: Json | null
+          home_score?: number | null
+          home_team?: string | null
           id?: string
           is_shock_flagged?: boolean | null
           juice_lag_bonus?: number | null
@@ -2299,6 +2317,8 @@ export type Database = {
         Update: {
           actual_value?: number | null
           adjusted_edge?: number | null
+          away_score?: number | null
+          away_team?: string | null
           bet_side?: string | null
           block_reason?: string | null
           book_line?: number
@@ -2310,9 +2330,16 @@ export type Database = {
           defense_adjustment?: number | null
           event_id?: string | null
           failed_checks?: Json | null
+          game_clock?: string | null
+          game_final_time?: string | null
+          game_period?: string | null
+          game_start_time?: string | null
+          game_status?: string | null
           hit_rate?: number | null
           hit_rate_last_5?: number | null
           home_away_last_10?: Json | null
+          home_score?: number | null
+          home_team?: string | null
           id?: string
           is_shock_flagged?: boolean | null
           juice_lag_bonus?: number | null
