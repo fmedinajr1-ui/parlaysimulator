@@ -53,6 +53,16 @@ export function PhoneVerification({ userId, onVerified, onBack }: PhoneVerificat
   };
 
   const handleSendCode = async () => {
+    // Prevent sending if still in cooldown
+    if (cooldown > 0) {
+      toast({
+        title: "Please Wait",
+        description: `You can request a new code in ${cooldown} seconds.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
     const fullPhone = getFullPhoneNumber();
     
     // Basic validation
@@ -74,17 +84,37 @@ export function PhoneVerification({ userId, onVerified, onBack }: PhoneVerificat
       });
 
       if (error) throw error;
+      
+      // Handle rate limit with already sent code
+      if (data.alreadySent) {
+        setStep('otp');
+        setCooldown(data.waitTime || 60);
+        toast({
+          title: "Code Already Sent",
+          description: `A code was recently sent. Please wait ${data.waitTime || 60} seconds before requesting a new one.`,
+        });
+        return;
+      }
+      
       if (data.error) throw new Error(data.error);
 
       setStep('otp');
       setCooldown(60);
-      setExpiresIn(data.expiresIn || 300);
+      setExpiresIn(600); // 10 minutes
       
       toast({
-        title: "Code Sent! 📱",
+        title: "Code Sent!",
         description: `Verification code sent to ${formatPhoneNumber(phoneNumber)}`,
       });
     } catch (err: any) {
+      // Handle rate limit error
+      if (err.message?.includes('wait')) {
+        const waitMatch = err.message.match(/(\d+) seconds/);
+        if (waitMatch) {
+          setCooldown(parseInt(waitMatch[1]));
+          setStep('otp');
+        }
+      }
       toast({
         title: "Failed to Send Code",
         description: err.message || "Please try again.",
@@ -117,10 +147,23 @@ export function PhoneVerification({ userId, onVerified, onBack }: PhoneVerificat
       });
 
       if (error) throw error;
+      
+      // Check if we need a new code
+      if (data.needsNewCode) {
+        setOtp('');
+        setCooldown(0); // Allow immediate resend
+        toast({
+          title: "Code Expired",
+          description: data.error || "Please request a new code.",
+          variant: "destructive",
+        });
+        return;
+      }
+      
       if (data.error) throw new Error(data.error);
 
       toast({
-        title: "Phone Verified! ✅",
+        title: "Phone Verified!",
         description: "Your account is now set up.",
       });
       

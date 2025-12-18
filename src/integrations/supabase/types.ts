@@ -3706,6 +3706,7 @@ export type Database = {
           instagram_handle: string | null
           lifetime_degenerate_score: number
           phone_number: string | null
+          phone_verification_sent_at: string | null
           phone_verified: boolean | null
           total_losses: number
           total_payout: number
@@ -3726,6 +3727,7 @@ export type Database = {
           instagram_handle?: string | null
           lifetime_degenerate_score?: number
           phone_number?: string | null
+          phone_verification_sent_at?: string | null
           phone_verified?: boolean | null
           total_losses?: number
           total_payout?: number
@@ -3746,6 +3748,7 @@ export type Database = {
           instagram_handle?: string | null
           lifetime_degenerate_score?: number
           phone_number?: string | null
+          phone_verification_sent_at?: string | null
           phone_verified?: boolean | null
           total_losses?: number
           total_payout?: number

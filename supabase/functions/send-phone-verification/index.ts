@@ -43,7 +43,7 @@ serve(async (req) => {
     // Check if phone is already verified by another user
     const { data: existingProfile } = await supabase
       .from('profiles')
-      .select('phone_number')
+      .select('phone_number, phone_verification_sent_at')
       .eq('phone_number', phone_number)
       .eq('phone_verified', true)
       .single();
@@ -54,6 +54,31 @@ serve(async (req) => {
         JSON.stringify({ error: 'This phone number is already registered to another account' }),
         { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
+    }
+
+    // Check for recent verification attempt to prevent race condition
+    const { data: recentAttempt } = await supabase
+      .from('profiles')
+      .select('phone_verification_sent_at')
+      .eq('phone_number', phone_number)
+      .single();
+
+    if (recentAttempt?.phone_verification_sent_at) {
+      const lastSentAt = new Date(recentAttempt.phone_verification_sent_at);
+      const secondsSinceSent = (Date.now() - lastSentAt.getTime()) / 1000;
+      
+      if (secondsSinceSent < 60) {
+        const waitTime = Math.ceil(60 - secondsSinceSent);
+        logStep('Rate limited - code recently sent', { secondsSinceSent, waitTime });
+        return new Response(
+          JSON.stringify({ 
+            error: `Please wait ${waitTime} seconds before requesting a new code`,
+            waitTime,
+            alreadySent: true
+          }),
+          { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
     }
 
     // Get Twilio credentials
@@ -108,6 +133,20 @@ serve(async (req) => {
     }
 
     logStep('Verification sent successfully', { status: twilioResult.status });
+
+    // Record the send time to prevent rapid re-sends
+    const authHeader = req.headers.get('Authorization');
+    if (authHeader) {
+      const token = authHeader.replace('Bearer ', '');
+      const { data: { user } } = await supabase.auth.getUser(token);
+      if (user) {
+        await supabase
+          .from('profiles')
+          .update({ phone_verification_sent_at: new Date().toISOString() })
+          .eq('user_id', user.id);
+        logStep('Updated verification sent timestamp for user', { userId: user.id });
+      }
+    }
 
     return new Response(
       JSON.stringify({ 

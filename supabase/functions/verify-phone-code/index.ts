@@ -67,7 +67,21 @@ serve(async (req) => {
       // Handle specific Twilio errors
       if (twilioResult.code === 20404) {
         return new Response(
-          JSON.stringify({ error: 'Verification code expired or not found. Please request a new code.' }),
+          JSON.stringify({ 
+            error: 'This code has expired or a new code was requested. Please use the most recent code sent to your phone.',
+            needsNewCode: true
+          }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Handle max attempts reached
+      if (twilioResult.code === 60202) {
+        return new Response(
+          JSON.stringify({ 
+            error: 'Too many failed attempts. Please request a new code.',
+            needsNewCode: true
+          }),
           { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
@@ -82,7 +96,10 @@ serve(async (req) => {
     if (twilioResult.status !== 'approved') {
       logStep('Invalid code', { status: twilioResult.status });
       return new Response(
-        JSON.stringify({ error: 'Invalid verification code. Please try again.' }),
+        JSON.stringify({ 
+          error: 'Invalid verification code. Please check and try again.',
+          attemptsRemaining: twilioResult.send_code_attempts?.length < 5 ? 5 - (twilioResult.send_code_attempts?.length || 0) : undefined
+        }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
