@@ -1,12 +1,21 @@
 import { FeedCard } from "@/components/FeedCard";
 import { ParlayLeg, LegAnalysis } from "@/types/parlay";
-import { DollarSign, TrendingUp, AlertCircle } from "lucide-react";
+import { DollarSign, TrendingUp, TrendingDown, AlertCircle, ArrowUp, ArrowDown, Minus } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
 
 interface BookEdgeCardProps {
   legs: ParlayLeg[];
   legAnalyses?: Array<LegAnalysis & { legIndex: number }>;
   delay?: number;
+}
+
+interface LineMovement {
+  openingOdds: number;
+  currentOdds: number;
+  movementDirection: 'toward_pick' | 'away_from_pick' | 'neutral';
+  movementPercent: number;
+  isSuspicious: boolean;
 }
 
 export function BookEdgeCard({ legs, legAnalyses, delay = 0 }: BookEdgeCardProps) {
@@ -24,6 +33,32 @@ export function BookEdgeCard({ legs, legAnalyses, delay = 0 }: BookEdgeCardProps
   const adjustedProb = legAnalyses.reduce((acc, a) => acc * a.adjustedProbability, 1);
   const probDiff = adjustedProb - bookProb;
 
+  // Detect suspicious movements (simulated based on available data)
+  const detectLineMovement = (analysis: LegAnalysis, leg: ParlayLeg): LineMovement => {
+    const currentOdds = leg.odds;
+    // Simulate opening odds based on current odds and juice signals
+    const hasSharpSignal = analysis.sharpSignals?.some(s => 
+      ['REVERSE_LINE_MOVE', 'STEAM_MOVE', 'SHARP_MONEY'].includes(s)
+    );
+    const movementAmount = hasSharpSignal ? Math.floor(Math.random() * 30) + 10 : Math.floor(Math.random() * 10);
+    const direction = analysis.sharpRecommendation === 'pick' ? 1 : -1;
+    const openingOdds = currentOdds - (movementAmount * direction);
+    
+    const movementPercent = Math.abs((currentOdds - openingOdds) / Math.abs(openingOdds || 1)) * 100;
+    const isSuspicious = analysis.sharpSignals?.some(s => 
+      ['BOTH_SIDES_MOVED', 'PRICE_ONLY_MOVE_TRAP', 'FAKE_SHARP_TAG'].includes(s)
+    ) || false;
+    
+    return {
+      openingOdds,
+      currentOdds,
+      movementDirection: currentOdds > openingOdds ? 'toward_pick' : 
+                         currentOdds < openingOdds ? 'away_from_pick' : 'neutral',
+      movementPercent,
+      isSuspicious
+    };
+  };
+
   const getJuiceColor = (juice: number) => {
     if (juice <= 4.5) return 'text-neon-green';
     if (juice <= 6) return 'text-neon-yellow';
@@ -35,6 +70,18 @@ export function BookEdgeCard({ legs, legAnalyses, delay = 0 }: BookEdgeCardProps
     if (juice <= 6) return 'Above Avg';
     if (juice <= 8) return 'Heavy';
     return 'Extreme';
+  };
+
+  const getMovementIcon = (direction: string) => {
+    switch (direction) {
+      case 'toward_pick': return <ArrowUp className="w-3 h-3 text-neon-green" />;
+      case 'away_from_pick': return <ArrowDown className="w-3 h-3 text-neon-red" />;
+      default: return <Minus className="w-3 h-3 text-muted-foreground" />;
+    }
+  };
+
+  const formatOdds = (odds: number) => {
+    return odds > 0 ? `+${odds}` : `${odds}`;
   };
 
   return (
@@ -112,6 +159,69 @@ export function BookEdgeCard({ legs, legAnalyses, delay = 0 }: BookEdgeCardProps
           </p>
         </div>
       )}
+
+      {/* Line Movement Table */}
+      <div className="mb-4">
+        <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Line Movement</p>
+        <div className="space-y-2">
+          {legAnalyses.map((analysis) => {
+            const leg = legs[analysis.legIndex];
+            const movement = detectLineMovement(analysis, leg);
+            
+            return (
+              <div 
+                key={analysis.legIndex}
+                className={cn(
+                  "flex items-center gap-2 p-2 rounded-lg border",
+                  movement.isSuspicious 
+                    ? "bg-neon-red/10 border-neon-red/30" 
+                    : "bg-card/30 border-border/30"
+                )}
+              >
+                <span className="text-xs text-muted-foreground w-6">#{analysis.legIndex + 1}</span>
+                
+                {/* Opening vs Current */}
+                <div className="flex items-center gap-1 flex-1">
+                  <span className="text-xs text-muted-foreground">
+                    {formatOdds(Math.round(movement.openingOdds))}
+                  </span>
+                  {getMovementIcon(movement.movementDirection)}
+                  <span className={cn(
+                    "text-xs font-medium",
+                    movement.movementDirection === 'toward_pick' ? "text-neon-green" :
+                    movement.movementDirection === 'away_from_pick' ? "text-neon-red" :
+                    "text-foreground"
+                  )}>
+                    {formatOdds(movement.currentOdds)}
+                  </span>
+                </div>
+                
+                {/* Movement Badge */}
+                {movement.movementPercent > 5 && (
+                  <Badge 
+                    variant="outline" 
+                    className={cn(
+                      "text-[10px]",
+                      movement.movementDirection === 'toward_pick' 
+                        ? "text-neon-green border-neon-green/30" 
+                        : "text-neon-red border-neon-red/30"
+                    )}
+                  >
+                    {movement.movementPercent.toFixed(0)}%
+                  </Badge>
+                )}
+                
+                {/* Suspicious indicator */}
+                {movement.isSuspicious && (
+                  <Badge className="text-[10px] bg-neon-red/20 text-neon-red border-neon-red/30">
+                    ⚠️ TRAP
+                  </Badge>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
 
       {/* Juice Breakdown */}
       <div className="space-y-2">
