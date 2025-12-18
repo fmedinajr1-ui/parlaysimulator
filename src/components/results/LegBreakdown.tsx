@@ -1,8 +1,10 @@
 import { FeedCard } from "../FeedCard";
 import { ParlayLeg, LegAnalysis, InjuryAlert } from "@/types/parlay";
-import { ChevronDown, ChevronUp, AlertTriangle } from "lucide-react";
+import { ChevronDown, ChevronUp, AlertTriangle, TrendingUp, TrendingDown, Users } from "lucide-react";
 import { useState } from "react";
 import { InjuryAlertBadge } from "./InjuryAlertBadge";
+import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
 
 interface LegBreakdownProps {
   legs: ParlayLeg[];
@@ -36,6 +38,37 @@ const sharpEmojis = {
   caution: "⚠️ CAUTION",
 };
 
+// Sport-specific coach impact calculations
+const calculateCoachImpact = (analysis: LegAnalysis | undefined): { edge: number; reason: string } | null => {
+  if (!analysis) return null;
+  
+  // Check for fatigue data which often indicates coaching impact
+  const fatigueData = analysis.fatigueData;
+  if (fatigueData) {
+    const impact = fatigueData.isBackToBack ? -1.5 : 0;
+    if (impact !== 0) {
+      return {
+        edge: impact,
+        reason: fatigueData.isBackToBack 
+          ? "Back-to-back game reduces expected output" 
+          : "Normal rest schedule"
+      };
+    }
+  }
+  
+  // Check for unified prop data with sharp money signal
+  const unifiedData = analysis.unifiedPropData;
+  if (unifiedData && unifiedData.confidence > 0.7) {
+    const impactMultiplier = unifiedData.recommendation === 'OVER' ? 0.8 : -0.8;
+    return {
+      edge: impactMultiplier,
+      reason: `High confidence ${unifiedData.recommendation.toLowerCase()} based on usage patterns`
+    };
+  }
+  
+  return null;
+};
+
 export function LegBreakdown({ legs, legAnalyses, delay = 0 }: LegBreakdownProps) {
   const [expandedLeg, setExpandedLeg] = useState<string | null>(null);
 
@@ -53,6 +86,7 @@ export function LegBreakdown({ legs, legAnalyses, delay = 0 }: LegBreakdownProps
         {legs.map((leg, idx) => {
           const analysis = getLegAnalysis(idx);
           const hasInjuries = analysis?.injuryAlerts && analysis.injuryAlerts.length > 0;
+          const coachImpact = calculateCoachImpact(analysis);
           
           return (
             <div 
@@ -126,6 +160,35 @@ export function LegBreakdown({ legs, legAnalyses, delay = 0 }: LegBreakdownProps
                     </div>
                   )}
                   
+                  {/* NEW: Coach Impact Row */}
+                  {coachImpact && (
+                    <div className={cn(
+                      "mt-3 p-3 rounded-lg border flex items-center gap-3",
+                      coachImpact.edge > 0 
+                        ? "bg-neon-green/10 border-neon-green/30" 
+                        : "bg-neon-red/10 border-neon-red/30"
+                    )}>
+                      <Users className={cn(
+                        "w-5 h-5",
+                        coachImpact.edge > 0 ? "text-neon-green" : "text-neon-red"
+                      )} />
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-muted-foreground uppercase">Coach Impact</span>
+                          <Badge variant="outline" className={cn(
+                            "text-xs",
+                            coachImpact.edge > 0 
+                              ? "text-neon-green border-neon-green/30" 
+                              : "text-neon-red border-neon-red/30"
+                          )}>
+                            {coachImpact.edge > 0 ? '+' : ''}{coachImpact.edge.toFixed(1)}% edge
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">{coachImpact.reason}</p>
+                      </div>
+                    </div>
+                  )}
+                  
                   {/* Trap Alert - Show prominently if detected */}
                   {analysis?.sharpRecommendation === 'fade' && analysis?.sharpSignals?.some(s => 
                     ['BOTH_SIDES_MOVED', 'PRICE_ONLY_MOVE_TRAP', 'SINGLE_BOOK_DIVERGENCE', 'FAKE_SHARP_TAG'].includes(s)
@@ -171,6 +234,39 @@ export function LegBreakdown({ legs, legAnalyses, delay = 0 }: LegBreakdownProps
                           🎯 {analysis.sharpFinalPick}
                         </p>
                       )}
+                    </div>
+                  )}
+                  
+                  {/* Usage Projection if available */}
+                  {analysis?.usageProjection && (
+                    <div className="mt-3 p-3 rounded-lg bg-neon-cyan/10 border border-neon-cyan/30">
+                      <p className="text-xs text-muted-foreground uppercase mb-2">Usage Projection</p>
+                      <div className="grid grid-cols-3 gap-2 text-center">
+                        <div>
+                          <p className="text-sm font-bold text-neon-cyan">
+                            {analysis.usageProjection.projectedMinutes.avg.toFixed(0)}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground">Avg Min</p>
+                        </div>
+                        <div>
+                          <p className="text-sm font-bold text-foreground">
+                            {analysis.usageProjection.hitRate.percentage.toFixed(0)}%
+                          </p>
+                          <p className="text-[10px] text-muted-foreground">Hit Rate</p>
+                        </div>
+                        <div>
+                          <Badge variant="outline" className={cn(
+                            "text-[10px]",
+                            analysis.usageProjection.verdict === 'FAVORABLE' 
+                              ? "text-neon-green border-neon-green/30"
+                              : analysis.usageProjection.verdict === 'UNFAVORABLE'
+                                ? "text-neon-red border-neon-red/30"
+                                : "text-neon-yellow border-neon-yellow/30"
+                          )}>
+                            {analysis.usageProjection.verdict}
+                          </Badge>
+                        </div>
+                      </div>
                     </div>
                   )}
                   
