@@ -9,7 +9,7 @@ import { ParlayBuilderProvider } from "@/contexts/ParlayBuilderContext";
 import { PWAInstallPrompt } from "@/components/PWAInstallPrompt";
 import { BottomNav } from "@/components/BottomNav";
 import { UniversalParlayBuilder } from "@/components/parlay/UniversalParlayBuilder";
-import { PageSkeleton } from "@/components/ui/page-skeleton";
+import { WolfLoadingOverlay } from "@/components/ui/wolf-loading-overlay";
 import { AnimatePresence, motion } from "framer-motion";
 import { PilotRouteGuard } from "@/components/PilotRouteGuard";
 import { PhoneVerificationGuard } from "@/components/PhoneVerificationGuard";
@@ -78,7 +78,7 @@ function AnimatedRoutes() {
         transition={pageTransition}
         style={{ pointerEvents: 'auto' }}
       >
-        <React.Suspense fallback={<PageSkeleton variant="dashboard" />}>
+        <React.Suspense fallback={<WolfLoadingOverlay />}>
           <Routes location={location}>
             <Route path="/" element={<Index />} />
             <Route path="/upload" element={<Upload />} />

@@ -2,7 +2,7 @@ import { cn } from "@/lib/utils";
 import wolfLoaderImage from "@/assets/wolf-loader.png";
 
 interface WolfLoaderProps {
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'sm' | 'md' | 'lg' | 'xl';
   text?: string;
   className?: string;
 }
@@ -11,7 +11,8 @@ export function WolfLoader({ size = 'md', text, className }: WolfLoaderProps) {
   const sizeClasses = {
     sm: 'h-12 w-12',
     md: 'h-20 w-20',
-    lg: 'h-28 w-28'
+    lg: 'h-28 w-28',
+    xl: 'h-40 w-40'
   };
 
   return (
