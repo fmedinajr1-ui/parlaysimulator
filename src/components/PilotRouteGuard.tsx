@@ -13,6 +13,9 @@ const PILOT_ALLOWED_ROUTES = [
   '/kelly',
   '/compare',
   '/verify-phone',
+  '/verify-email',
+  '/install',
+  '/offline',
 ];
 
 interface PilotRouteGuardProps {
