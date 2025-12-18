@@ -5,20 +5,30 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { RefreshCw, Lock, TrendingUp, Sparkles, AlertTriangle, Target, Zap, Radio, CheckCircle } from "lucide-react";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { RefreshCw, Lock, TrendingUp, Sparkles, AlertTriangle, Target, Zap, Radio, CheckCircle, CalendarIcon, ChevronLeft, ChevronRight } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { MedianLockCandidateCard } from "./MedianLockCandidateCard";
 import { GreenSlipCard } from "./GreenSlipCard";
 import { useMedianLockRealtime } from "@/hooks/useMedianLockRealtime";
-import { formatDistanceToNow } from "date-fns";
+import { formatDistanceToNow, format, subDays, addDays, isToday } from "date-fns";
+import { cn } from "@/lib/utils";
 
 export function MedianLockDashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState("locks");
   const [viewMode, setViewMode] = useState<'active' | 'settled' | 'all'>('all');
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  const [calendarOpen, setCalendarOpen] = useState(false);
 
-  const today = new Date().toISOString().split('T')[0];
+  const slateDate = selectedDate.toISOString().split('T')[0];
+  const isViewingToday = isToday(selectedDate);
+
+  const goToPreviousDay = () => setSelectedDate(prev => subDays(prev, 1));
+  const goToNextDay = () => setSelectedDate(prev => addDays(prev, 1));
+  const goToToday = () => setSelectedDate(new Date());
   
   const {
     loading,
@@ -36,7 +46,7 @@ export function MedianLockDashboard() {
     threeLegSlips,
     slips,
     stats,
-  } = useMedianLockRealtime(today);
+  } = useMedianLockRealtime(slateDate);
 
   // Auto-refresh game status every 2 minutes
   useEffect(() => {
@@ -63,7 +73,7 @@ export function MedianLockDashboard() {
     setRefreshing(true);
     try {
       const { data, error } = await supabase.functions.invoke('median-lock-engine', {
-        body: { action: 'run', slateDate: today },
+        body: { action: 'run', slateDate },
       });
 
       if (error) throw error;
@@ -132,13 +142,57 @@ export function MedianLockDashboard() {
           </div>
           <Button 
             onClick={runEngine} 
-            disabled={refreshing}
+            disabled={refreshing || !isViewingToday}
             className="bg-gradient-to-r from-green-500 to-emerald-600"
           >
             <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
             {refreshing ? 'Analyzing...' : 'Run Engine'}
           </Button>
         </div>
+      </div>
+
+      {/* Date Picker */}
+      <div className="flex items-center gap-2">
+        <Button variant="outline" size="icon" onClick={goToPreviousDay}>
+          <ChevronLeft className="h-4 w-4" />
+        </Button>
+        <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              className={cn(
+                "min-w-[180px] justify-start text-left font-normal",
+                !selectedDate && "text-muted-foreground"
+              )}
+            >
+              <CalendarIcon className="mr-2 h-4 w-4" />
+              {format(selectedDate, "PPP")}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-auto p-0" align="start">
+            <Calendar
+              mode="single"
+              selected={selectedDate}
+              onSelect={(date) => {
+                if (date) {
+                  setSelectedDate(date);
+                  setCalendarOpen(false);
+                }
+              }}
+              disabled={(date) => date > new Date()}
+              initialFocus
+              className="p-3 pointer-events-auto"
+            />
+          </PopoverContent>
+        </Popover>
+        <Button variant="outline" size="icon" onClick={goToNextDay} disabled={isViewingToday}>
+          <ChevronRight className="h-4 w-4" />
+        </Button>
+        {!isViewingToday && (
+          <Button variant="ghost" size="sm" onClick={goToToday}>
+            Today
+          </Button>
+        )}
       </div>
 
       {/* Stats Overview */}

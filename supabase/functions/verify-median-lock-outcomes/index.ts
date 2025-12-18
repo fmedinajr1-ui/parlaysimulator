@@ -47,7 +47,7 @@ serve(async (req) => {
         // Fetch player's actual game log for that date
         const { data: gameLog, error: logError } = await supabase
           .from('nba_player_game_logs')
-          .select('points, rebounds, assists, minutes_played')
+          .select('points, rebounds, assists, minutes_played, threes_made, fg3m, steals, blocks, turnovers')
           .eq('player_name', candidate.player_name)
           .eq('game_date', candidate.slate_date)
           .single();
@@ -61,14 +61,28 @@ serve(async (req) => {
         let actualValue: number | null = null;
         const propType = candidate.prop_type?.toLowerCase() || '';
 
-        if (propType.includes('points')) {
-          actualValue = gameLog.points;
-        } else if (propType.includes('rebounds')) {
-          actualValue = gameLog.rebounds;
-        } else if (propType.includes('assists')) {
-          actualValue = gameLog.assists;
-        } else if (propType.includes('pra') || propType.includes('pts+reb+ast')) {
+        if (propType.includes('pra') || propType.includes('pts+reb+ast') || propType.includes('pts_rebs_asts')) {
           actualValue = (gameLog.points || 0) + (gameLog.rebounds || 0) + (gameLog.assists || 0);
+        } else if (propType.includes('pts_rebs') || propType.includes('pts+reb') || propType.includes('points_rebounds')) {
+          actualValue = (gameLog.points || 0) + (gameLog.rebounds || 0);
+        } else if (propType.includes('pts_asts') || propType.includes('pts+ast') || propType.includes('points_assists')) {
+          actualValue = (gameLog.points || 0) + (gameLog.assists || 0);
+        } else if (propType.includes('rebs_asts') || propType.includes('reb+ast') || propType.includes('rebounds_assists')) {
+          actualValue = (gameLog.rebounds || 0) + (gameLog.assists || 0);
+        } else if (propType.includes('points') || propType.includes('pts')) {
+          actualValue = gameLog.points;
+        } else if (propType.includes('rebounds') || propType.includes('rebs')) {
+          actualValue = gameLog.rebounds;
+        } else if (propType.includes('assists') || propType.includes('asts')) {
+          actualValue = gameLog.assists;
+        } else if (propType.includes('threes') || propType.includes('3pt') || propType.includes('three_pointers')) {
+          actualValue = gameLog.threes_made ?? gameLog.fg3m ?? null;
+        } else if (propType.includes('steals') || propType.includes('stl')) {
+          actualValue = gameLog.steals ?? null;
+        } else if (propType.includes('blocks') || propType.includes('blk')) {
+          actualValue = gameLog.blocks ?? null;
+        } else if (propType.includes('turnovers') || propType.includes('to')) {
+          actualValue = gameLog.turnovers ?? null;
         }
 
         if (actualValue === null) {
@@ -76,18 +90,33 @@ serve(async (req) => {
           continue;
         }
 
-        // Determine outcome (assuming Over bets for MedianLock)
+        // Determine outcome based on bet_side (OVER or UNDER)
+        const betSide = candidate.bet_side || 'OVER'; // Default to OVER for legacy data
         const bookLine = candidate.book_line || 0;
         let outcome: string;
         
-        if (actualValue > bookLine) {
-          outcome = 'hit';
-          hitCount++;
-        } else if (actualValue === bookLine) {
-          outcome = 'push';
+        if (betSide === 'UNDER') {
+          // For UNDER bets: hit if actual < line
+          if (actualValue < bookLine) {
+            outcome = 'hit';
+            hitCount++;
+          } else if (actualValue === bookLine) {
+            outcome = 'push';
+          } else {
+            outcome = 'miss';
+            missCount++;
+          }
         } else {
-          outcome = 'miss';
-          missCount++;
+          // For OVER bets: hit if actual > line
+          if (actualValue > bookLine) {
+            outcome = 'hit';
+            hitCount++;
+          } else if (actualValue === bookLine) {
+            outcome = 'push';
+          } else {
+            outcome = 'miss';
+            missCount++;
+          }
         }
 
         // Update candidate with outcome
