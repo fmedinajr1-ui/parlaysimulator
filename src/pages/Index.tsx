@@ -13,10 +13,11 @@ import { PullToRefreshContainer, PullToRefreshIndicator } from "@/components/ui/
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
 import { useHapticFeedback } from "@/hooks/useHapticFeedback";
 import { Button } from "@/components/ui/button";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
-import { Zap, BarChart3, Sparkles, Trophy, Calculator, Lock, GitCompare } from "lucide-react";
+import { Zap, BarChart3, Sparkles, Trophy, Calculator, Lock, GitCompare, LogIn, LogOut } from "lucide-react";
 import { usePilotUser } from "@/hooks/usePilotUser";
+import { useAuth } from "@/contexts/AuthContext";
 
 function QuickAction({ to, icon: Icon, label, iconClass }: { 
   to: string; 
@@ -39,9 +40,20 @@ function QuickAction({ to, icon: Icon, label, iconClass }: {
 const Index = () => {
   const { lightTap, success } = useHapticFeedback();
   const { isPilotUser, isAdmin, isSubscribed, isLoading } = usePilotUser();
+  const { user, signOut } = useAuth();
+  const navigate = useNavigate();
   
   // Pilot users who are NOT admin and NOT subscribed get restricted view
   const isPilotRestricted = isPilotUser && !isAdmin && !isSubscribed;
+
+  const handleAuthAction = async () => {
+    lightTap();
+    if (user) {
+      await signOut();
+    } else {
+      navigate('/auth');
+    }
+  };
 
   const handleRefresh = React.useCallback(async () => {
     await new Promise(resolve => setTimeout(resolve, 1000));
@@ -81,6 +93,28 @@ const Index = () => {
         style={{ transform: `translateY(${Math.min(pullProgress * 0.5, 40)}px)` }}
       >
         <HeroBanner />
+
+        {/* Auth Button */}
+        <div className="flex justify-end mb-4">
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={handleAuthAction}
+            className="gap-2"
+          >
+            {user ? (
+              <>
+                <LogOut className="w-4 h-4" />
+                Sign Out
+              </>
+            ) : (
+              <>
+                <LogIn className="w-4 h-4" />
+                Sign In
+              </>
+            )}
+          </Button>
+        </div>
 
         {/* Pilot Mode Welcome Message */}
         {isPilotRestricted && (
