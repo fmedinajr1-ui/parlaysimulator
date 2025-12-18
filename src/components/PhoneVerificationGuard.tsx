@@ -14,17 +14,14 @@ const PUBLIC_PATHS = ['/', '/auth', '/verify-phone', '/install', '/offline'];
 export function PhoneVerificationGuard({ children }: PhoneVerificationGuardProps) {
   const { user, isLoading: authLoading } = useAuth();
   const location = useLocation();
-  const [verificationStatus, setVerificationStatus] = useState<{
-    emailVerified: boolean | null;
-    phoneVerified: boolean | null;
-  }>({ emailVerified: null, phoneVerified: null });
+  const [phoneVerified, setPhoneVerified] = useState<boolean | null>(null);
   const [isChecking, setIsChecking] = useState(true);
 
   useEffect(() => {
     const checkVerification = async () => {
       if (!user) {
         setIsChecking(false);
-        setVerificationStatus({ emailVerified: true, phoneVerified: true }); // Don't block unauthenticated users
+        setPhoneVerified(true); // Don't block unauthenticated users
         return;
       }
 
@@ -39,32 +36,27 @@ export function PhoneVerificationGuard({ children }: PhoneVerificationGuardProps
 
         if (roleData) {
           // User is admin, bypass verification
-          setVerificationStatus({ emailVerified: true, phoneVerified: true });
+          setPhoneVerified(true);
           setIsChecking(false);
           return;
         }
 
-        // Check both email and phone verification for non-admin users
+        // Check phone verification for non-admin users
         const { data, error } = await supabase
           .from('profiles')
-          .select('email_verified, phone_verified')
+          .select('phone_verified')
           .eq('user_id', user.id)
           .maybeSingle();
 
         if (error) {
           console.error('Error checking verification:', error);
-          // On error, redirect to verify page for safety
-          setVerificationStatus({ emailVerified: false, phoneVerified: false });
+          setPhoneVerified(false);
         } else {
-          setVerificationStatus({
-            emailVerified: data?.email_verified ?? false,
-            phoneVerified: data?.phone_verified ?? false
-          });
+          setPhoneVerified(data?.phone_verified ?? false);
         }
       } catch (err) {
         console.error('Error checking verification:', err);
-        // On error, redirect to verify page for safety
-        setVerificationStatus({ emailVerified: false, phoneVerified: false });
+        setPhoneVerified(false);
       } finally {
         setIsChecking(false);
       }
@@ -94,8 +86,8 @@ export function PhoneVerificationGuard({ children }: PhoneVerificationGuardProps
     return <>{children}</>;
   }
 
-  // Check verification status - only phone verification required now
-  if (user && verificationStatus.phoneVerified === false) {
+  // Check phone verification status
+  if (user && phoneVerified === false) {
     return <Navigate to="/verify-phone" replace state={{ from: location }} />;
   }
 
