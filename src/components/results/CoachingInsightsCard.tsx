@@ -370,39 +370,41 @@ export const CoachingInsightsCard = ({ legs, legAnalyses, delay = 0 }: CoachingI
                     </div>
 
                     {/* Tendency Scores */}
+                    {coach.tendencies && (
                     <div className="grid grid-cols-4 gap-2 mb-3">
                       <div className="text-center p-2 rounded bg-background/50">
                         <Activity className="w-3 h-3 mx-auto mb-1 text-muted-foreground" />
-                        <span className={cn("text-sm font-medium", getScoreColor(coach.tendencies.paceScore))}>
-                          {coach.tendencies.paceScore}
+                        <span className={cn("text-sm font-medium", getScoreColor(coach.tendencies.paceScore ?? 0))}>
+                          {coach.tendencies.paceScore ?? '-'}
                         </span>
                         <p className="text-[10px] text-muted-foreground">Pace</p>
                       </div>
                       <div className="text-center p-2 rounded bg-background/50">
                         <Users className="w-3 h-3 mx-auto mb-1 text-muted-foreground" />
-                        <span className={cn("text-sm font-medium", getScoreColor(coach.tendencies.rotationScore))}>
-                          {coach.tendencies.rotationScore}
+                        <span className={cn("text-sm font-medium", getScoreColor(coach.tendencies.rotationScore ?? 0))}>
+                          {coach.tendencies.rotationScore ?? '-'}
                         </span>
                         <p className="text-[10px] text-muted-foreground">Rotation</p>
                       </div>
                       <div className="text-center p-2 rounded bg-background/50">
                         <TrendingUp className="w-3 h-3 mx-auto mb-1 text-muted-foreground" />
-                        <span className={cn("text-sm font-medium", getScoreColor(coach.tendencies.starUsageScore))}>
-                          {coach.tendencies.starUsageScore}
+                        <span className={cn("text-sm font-medium", getScoreColor(coach.tendencies.starUsageScore ?? 0))}>
+                          {coach.tendencies.starUsageScore ?? '-'}
                         </span>
                         <p className="text-[10px] text-muted-foreground">Star Usage</p>
                       </div>
                       <div className="text-center p-2 rounded bg-background/50">
                         <Clock className="w-3 h-3 mx-auto mb-1 text-muted-foreground" />
-                        <span className={cn("text-sm font-medium", getScoreColor(coach.tendencies.b2bRestScore))}>
-                          {coach.tendencies.b2bRestScore}
+                        <span className={cn("text-sm font-medium", getScoreColor(coach.tendencies.b2bRestScore ?? 0))}>
+                          {coach.tendencies.b2bRestScore ?? '-'}
                         </span>
                         <p className="text-[10px] text-muted-foreground">B2B Rest</p>
                       </div>
                     </div>
+                    )}
 
                     {/* Prop Adjustments */}
-                    {(coach.propAdjustments.points !== 0 || 
+                    {coach.propAdjustments && (coach.propAdjustments.points !== 0 || 
                       coach.propAdjustments.rebounds !== 0 || 
                       coach.propAdjustments.assists !== 0 || 
                       coach.propAdjustments.minutes !== 0) && (
