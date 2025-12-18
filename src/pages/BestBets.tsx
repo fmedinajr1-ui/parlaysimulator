@@ -10,6 +10,7 @@ import { BestBetCard } from '@/components/bestbets/BestBetCard';
 import { AddToParlayButton } from '@/components/parlay/AddToParlayButton';
 import { supabase } from '@/integrations/supabase/client';
 import { useParlayBuilder } from '@/contexts/ParlayBuilderContext';
+import { useBankroll } from '@/hooks/useBankroll';
 import { Loader2, Trophy, Zap, TrendingDown, Target, RefreshCw, Sparkles } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
@@ -62,6 +63,7 @@ interface AIBestBet {
 export default function BestBets() {
   const navigate = useNavigate();
   const { addLeg, legs } = useParlayBuilder();
+  const { settings: bankrollSettings } = useBankroll();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
@@ -382,10 +384,10 @@ export default function BestBets() {
               <Card className="p-8 text-center"><Target className="h-12 w-12 mx-auto mb-4 text-muted-foreground" /><h3 className="text-lg font-semibold">No Best Bets Available</h3></Card>
             ) : (
               <div className="grid gap-4 md:grid-cols-2">
-                {nflFade.map(bet => <BestBetCard key={bet.id} type="nfl_fade" event={bet} accuracy={accuracyStats.nfl_fade.accuracy} sampleSize={accuracyStats.nfl_fade.sampleSize} />)}
-                {ncaabFade.map(bet => <BestBetCard key={bet.id} type="ncaab_steam" event={bet} accuracy={accuracyStats.ncaab_fade.accuracy} sampleSize={accuracyStats.ncaab_fade.sampleSize} />)}
-                {nhlCaution.map(bet => <BestBetCard key={bet.id} type="nhl_caution" event={bet} accuracy={accuracyStats.nhl_caution.accuracy} sampleSize={accuracyStats.nhl_caution.sampleSize} />)}
-                {nbaFatigue.map(bet => <BestBetCard key={bet.id} type="nba_fatigue" event={bet} accuracy={accuracyStats.nba_fatigue.accuracy} sampleSize={accuracyStats.nba_fatigue.sampleSize} />)}
+                {nflFade.map(bet => <BestBetCard key={bet.id} type="nfl_fade" event={bet} accuracy={accuracyStats.nfl_fade.accuracy} sampleSize={accuracyStats.nfl_fade.sampleSize} bankrollSettings={bankrollSettings} />)}
+                {ncaabFade.map(bet => <BestBetCard key={bet.id} type="ncaab_steam" event={bet} accuracy={accuracyStats.ncaab_fade.accuracy} sampleSize={accuracyStats.ncaab_fade.sampleSize} bankrollSettings={bankrollSettings} />)}
+                {nhlCaution.map(bet => <BestBetCard key={bet.id} type="nhl_caution" event={bet} accuracy={accuracyStats.nhl_caution.accuracy} sampleSize={accuracyStats.nhl_caution.sampleSize} bankrollSettings={bankrollSettings} />)}
+                {nbaFatigue.map(bet => <BestBetCard key={bet.id} type="nba_fatigue" event={bet} accuracy={accuracyStats.nba_fatigue.accuracy} sampleSize={accuracyStats.nba_fatigue.sampleSize} bankrollSettings={bankrollSettings} />)}
               </div>
             )}
           </TabsContent>
@@ -401,7 +403,7 @@ export default function BestBets() {
               </div>
             </Card>
             {nflFade.length === 0 ? <p className="text-center text-muted-foreground py-8">No NFL fade signals available</p> : (
-              <div className="grid gap-4 md:grid-cols-2">{nflFade.map(bet => <BestBetCard key={bet.id} type="nfl_fade" event={bet} accuracy={accuracyStats.nfl_fade.accuracy} sampleSize={accuracyStats.nfl_fade.sampleSize} />)}</div>
+              <div className="grid gap-4 md:grid-cols-2">{nflFade.map(bet => <BestBetCard key={bet.id} type="nfl_fade" event={bet} accuracy={accuracyStats.nfl_fade.accuracy} sampleSize={accuracyStats.nfl_fade.sampleSize} bankrollSettings={bankrollSettings} />)}</div>
             )}
           </TabsContent>
 
@@ -410,7 +412,7 @@ export default function BestBets() {
               <div className="flex items-center gap-3"><TrendingDown className="h-6 w-6 text-orange-400" /><div><h3 className="font-semibold">🏀 NCAAB Fade Signals</h3><p className="text-sm text-muted-foreground">NCAAB fade at {accuracyStats.ncaab_fade.accuracy.toFixed(1)}% (n={accuracyStats.ncaab_fade.sampleSize})</p></div></div>
             </Card>
             {ncaabFade.length === 0 ? <p className="text-center text-muted-foreground py-8">No NCAAB fade signals</p> : (
-              <div className="grid gap-4 md:grid-cols-2">{ncaabFade.map(bet => <BestBetCard key={bet.id} type="ncaab_steam" event={bet} accuracy={accuracyStats.ncaab_fade.accuracy} sampleSize={accuracyStats.ncaab_fade.sampleSize} />)}</div>
+              <div className="grid gap-4 md:grid-cols-2">{ncaabFade.map(bet => <BestBetCard key={bet.id} type="ncaab_steam" event={bet} accuracy={accuracyStats.ncaab_fade.accuracy} sampleSize={accuracyStats.ncaab_fade.sampleSize} bankrollSettings={bankrollSettings} />)}</div>
             )}
           </TabsContent>
 
@@ -419,7 +421,7 @@ export default function BestBets() {
               <div className="flex items-center gap-3"><Zap className="h-6 w-6 text-cyan-400" /><div><h3 className="font-semibold">🏒 NHL Caution Signals</h3><p className="text-sm text-muted-foreground">NHL caution at {accuracyStats.nhl_caution.accuracy.toFixed(1)}% (n={accuracyStats.nhl_caution.sampleSize})</p></div></div>
             </Card>
             {nhlCaution.length === 0 ? <p className="text-center text-muted-foreground py-8">No NHL caution signals</p> : (
-              <div className="grid gap-4 md:grid-cols-2">{nhlCaution.map(bet => <BestBetCard key={bet.id} type="nhl_caution" event={bet} accuracy={accuracyStats.nhl_caution.accuracy} sampleSize={accuracyStats.nhl_caution.sampleSize} />)}</div>
+              <div className="grid gap-4 md:grid-cols-2">{nhlCaution.map(bet => <BestBetCard key={bet.id} type="nhl_caution" event={bet} accuracy={accuracyStats.nhl_caution.accuracy} sampleSize={accuracyStats.nhl_caution.sampleSize} bankrollSettings={bankrollSettings} />)}</div>
             )}
           </TabsContent>
 
@@ -428,7 +430,7 @@ export default function BestBets() {
               <div className="flex items-center gap-3"><Zap className="h-6 w-6 text-purple-400" /><div><h3 className="font-semibold">💪 NBA Fatigue Edge</h3><p className="text-sm text-muted-foreground">Games with 20+ fatigue diff at {accuracyStats.nba_fatigue.accuracy.toFixed(1)}%</p></div></div>
             </Card>
             {nbaFatigue.length === 0 ? <p className="text-center text-muted-foreground py-8">No high fatigue games</p> : (
-              <div className="grid gap-4 md:grid-cols-2">{nbaFatigue.map(bet => <BestBetCard key={bet.id} type="nba_fatigue" event={bet} accuracy={accuracyStats.nba_fatigue.accuracy} sampleSize={accuracyStats.nba_fatigue.sampleSize} />)}</div>
+              <div className="grid gap-4 md:grid-cols-2">{nbaFatigue.map(bet => <BestBetCard key={bet.id} type="nba_fatigue" event={bet} accuracy={accuracyStats.nba_fatigue.accuracy} sampleSize={accuracyStats.nba_fatigue.sampleSize} bankrollSettings={bankrollSettings} />)}</div>
             )}
           </TabsContent>
         </Tabs>
