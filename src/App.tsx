@@ -42,7 +42,7 @@ const AllSportsTracker = React.lazy(() => import("./pages/AllSportsTracker"));
 const Kelly = React.lazy(() => import("./pages/Kelly"));
 const MedianLock = React.lazy(() => import("./pages/MedianLock"));
 const VerifyPhone = React.lazy(() => import("./pages/VerifyPhone"));
-const VerifyEmail = React.lazy(() => import("./pages/VerifyEmail"));
+
 
 // QueryClient with optimized defaults
 const queryClient = new QueryClient({
@@ -106,7 +106,7 @@ function AnimatedRoutes() {
             <Route path="/kelly" element={<Kelly />} />
             <Route path="/median-lock" element={<MedianLock />} />
             <Route path="/verify-phone" element={<VerifyPhone />} />
-            <Route path="/verify-email" element={<VerifyEmail />} />
+            
             <Route path="*" element={<NotFound />} />
           </Routes>
         </React.Suspense>

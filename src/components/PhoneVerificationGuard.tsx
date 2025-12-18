@@ -9,7 +9,7 @@ interface PhoneVerificationGuardProps {
 }
 
 // Public paths that don't require verification
-const PUBLIC_PATHS = ['/', '/auth', '/verify-email', '/verify-phone', '/install', '/offline'];
+const PUBLIC_PATHS = ['/', '/auth', '/verify-phone', '/install', '/offline'];
 
 export function PhoneVerificationGuard({ children }: PhoneVerificationGuardProps) {
   const { user, isLoading: authLoading } = useAuth();
@@ -94,14 +94,9 @@ export function PhoneVerificationGuard({ children }: PhoneVerificationGuardProps
     return <>{children}</>;
   }
 
-  // Check verification status - email first, then phone
-  if (user) {
-    if (verificationStatus.emailVerified === false) {
-      return <Navigate to="/verify-email" replace state={{ from: location }} />;
-    }
-    if (verificationStatus.phoneVerified === false) {
-      return <Navigate to="/verify-phone" replace state={{ from: location }} />;
-    }
+  // Check verification status - only phone verification required now
+  if (user && verificationStatus.phoneVerified === false) {
+    return <Navigate to="/verify-phone" replace state={{ from: location }} />;
   }
 
   return <>{children}</>;

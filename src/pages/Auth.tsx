@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { EmailVerification } from '@/components/auth/EmailVerification';
 import { PhoneVerification } from '@/components/auth/PhoneVerification';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,7 +16,7 @@ const authSchema = z.object({
   password: z.string().min(6, 'Password must be at least 6 characters').max(72, 'Password too long')
 });
 
-type AuthStep = 'credentials' | 'email-verification' | 'phone-verification';
+type AuthStep = 'credentials' | 'phone-verification';
 
 const Auth = () => {
   const [searchParams] = useSearchParams();
@@ -99,20 +98,15 @@ const Auth = () => {
             });
           }
         } else if (data?.user) {
-          // New user created, proceed to email verification first
+          // New user created, proceed directly to phone verification
           setNewUserId(data.user.id);
           setSignupEmail(email);
-          setAuthStep('email-verification');
+          setAuthStep('phone-verification');
         }
       }
     } finally {
       setIsSubmitting(false);
     }
-  };
-
-  const handleEmailVerified = () => {
-    // After email verification, proceed to phone verification
-    setAuthStep('phone-verification');
   };
 
   const handlePhoneVerified = () => {
@@ -127,43 +121,13 @@ const Auth = () => {
     return <FullPageWolfLoader />;
   }
 
-  // Email verification step for new signups
-  if (authStep === 'email-verification' && newUserId) {
-    return (
-      <div className="min-h-dvh bg-background pb-nav-safe">
-        <div className="max-w-md mx-auto px-4 py-8">
-          <div className="mb-8">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary text-sm font-bold">1</div>
-              <div className="h-0.5 w-8 bg-muted" />
-              <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center text-muted-foreground text-sm font-bold">2</div>
-            </div>
-            <h2 className="text-xl font-semibold text-foreground">Step 1: Verify Email</h2>
-            <p className="text-sm text-muted-foreground">Confirm your email address to continue</p>
-          </div>
-
-          <EmailVerification
-            userId={newUserId}
-            defaultEmail={signupEmail}
-            onVerified={handleEmailVerified}
-          />
-        </div>
-      </div>
-    );
-  }
-
-  // Phone verification step for new signups (after email is verified)
+  // Phone verification step for new signups
   if (authStep === 'phone-verification' && newUserId) {
     return (
       <div className="min-h-dvh bg-background pb-nav-safe">
         <div className="max-w-md mx-auto px-4 py-8">
           <div className="mb-8">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-8 h-8 rounded-full bg-green-500/20 flex items-center justify-center text-green-500 text-sm font-bold">✓</div>
-              <div className="h-0.5 w-8 bg-primary" />
-              <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary text-sm font-bold">2</div>
-            </div>
-            <h2 className="text-xl font-semibold text-foreground">Step 2: Verify Phone</h2>
+            <h2 className="text-xl font-semibold text-foreground">Verify Phone</h2>
             <p className="text-sm text-muted-foreground">One phone number per account for security</p>
           </div>
 
