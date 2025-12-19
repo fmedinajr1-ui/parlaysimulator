@@ -40,6 +40,15 @@ export function MedianLockCandidateCard({ candidate, compact = false }: MedianLo
     }
   };
 
+  const getParlayGradeBadge = () => {
+    if (!candidate.parlay_grade) return null;
+    return (
+      <Badge className="bg-emerald-500/30 text-emerald-300 border-emerald-500/50 font-bold">
+        🏆 PARLAY
+      </Badge>
+    );
+  };
+
   const getBetSideBadge = () => {
     if (!candidate.bet_side || candidate.bet_side === 'PASS') return null;
     return (
@@ -127,6 +136,7 @@ export function MedianLockCandidateCard({ candidate, compact = false }: MedianLo
               outcome={candidate.outcome}
               compact
             />
+            {getParlayGradeBadge()}
             {getBetSideBadge()}
             {getClassificationBadge()}
           </div>

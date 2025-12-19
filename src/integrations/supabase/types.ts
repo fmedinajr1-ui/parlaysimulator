@@ -2277,6 +2277,7 @@ export type Database = {
           opponent: string | null
           opponent_defense_rank: number | null
           outcome: string | null
+          parlay_grade: boolean | null
           passed_checks: Json | null
           player_name: string
           points_last_10: Json | null
@@ -2335,6 +2336,7 @@ export type Database = {
           opponent?: string | null
           opponent_defense_rank?: number | null
           outcome?: string | null
+          parlay_grade?: boolean | null
           passed_checks?: Json | null
           player_name: string
           points_last_10?: Json | null
@@ -2393,6 +2395,7 @@ export type Database = {
           opponent?: string | null
           opponent_defense_rank?: number | null
           outcome?: string | null
+          parlay_grade?: boolean | null
           passed_checks?: Json | null
           player_name?: string
           points_last_10?: Json | null
