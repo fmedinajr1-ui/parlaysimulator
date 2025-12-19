@@ -34,7 +34,7 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { action, parlayId, outcome, userId, legs, legResults } = await req.json();
+    const { action, parlayId, outcome, userId, legs, legResults, formulaName, engineSource } = await req.json();
 
     console.log('🧠 AI Learning Engine - Action:', action);
 
@@ -101,7 +101,6 @@ serve(async (req) => {
 
     // NEW: Re-enable a disabled engine
     if (action === 're_enable_engine') {
-      const { formulaName, engineSource } = await req.json();
       const result = await reEnableEngine(supabase, formulaName, engineSource);
       return new Response(JSON.stringify(result), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
