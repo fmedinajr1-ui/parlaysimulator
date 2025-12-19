@@ -2233,6 +2233,7 @@ export type Database = {
           closing_price: number | null
           clv_direction: string | null
           commence_time: string | null
+          consensus_ratio: number | null
           created_at: string
           description: string
           detected_at: string
@@ -2249,6 +2250,7 @@ export type Database = {
           linked_parlay_ids: string[] | null
           market_type: string
           movement_authenticity: string | null
+          movement_bucket: string | null
           movement_type: string
           movement_weight: number | null
           new_point: number | null
@@ -2257,6 +2259,7 @@ export type Database = {
           old_price: number
           opening_point: number | null
           opening_price: number | null
+          opening_side: string | null
           opposite_side_moved: boolean | null
           outcome_correct: boolean | null
           outcome_name: string
@@ -2265,6 +2268,7 @@ export type Database = {
           point_change: number | null
           preliminary_confidence: number | null
           price_change: number
+          price_direction: string | null
           recommendation: string | null
           recommendation_reason: string | null
           sharp_edge_score: number | null
@@ -2272,6 +2276,7 @@ export type Database = {
           sharp_pressure: number | null
           sharp_probability: number | null
           sport: string
+          sport_adjusted: boolean | null
           time_weight: number | null
           trap_pressure: number | null
           trap_score: number | null
@@ -2285,6 +2290,7 @@ export type Database = {
           closing_price?: number | null
           clv_direction?: string | null
           commence_time?: string | null
+          consensus_ratio?: number | null
           created_at?: string
           description: string
           detected_at?: string
@@ -2301,6 +2307,7 @@ export type Database = {
           linked_parlay_ids?: string[] | null
           market_type: string
           movement_authenticity?: string | null
+          movement_bucket?: string | null
           movement_type?: string
           movement_weight?: number | null
           new_point?: number | null
@@ -2309,6 +2316,7 @@ export type Database = {
           old_price: number
           opening_point?: number | null
           opening_price?: number | null
+          opening_side?: string | null
           opposite_side_moved?: boolean | null
           outcome_correct?: boolean | null
           outcome_name: string
@@ -2317,6 +2325,7 @@ export type Database = {
           point_change?: number | null
           preliminary_confidence?: number | null
           price_change: number
+          price_direction?: string | null
           recommendation?: string | null
           recommendation_reason?: string | null
           sharp_edge_score?: number | null
@@ -2324,6 +2333,7 @@ export type Database = {
           sharp_pressure?: number | null
           sharp_probability?: number | null
           sport: string
+          sport_adjusted?: boolean | null
           time_weight?: number | null
           trap_pressure?: number | null
           trap_score?: number | null
@@ -2337,6 +2347,7 @@ export type Database = {
           closing_price?: number | null
           clv_direction?: string | null
           commence_time?: string | null
+          consensus_ratio?: number | null
           created_at?: string
           description?: string
           detected_at?: string
@@ -2353,6 +2364,7 @@ export type Database = {
           linked_parlay_ids?: string[] | null
           market_type?: string
           movement_authenticity?: string | null
+          movement_bucket?: string | null
           movement_type?: string
           movement_weight?: number | null
           new_point?: number | null
@@ -2361,6 +2373,7 @@ export type Database = {
           old_price?: number
           opening_point?: number | null
           opening_price?: number | null
+          opening_side?: string | null
           opposite_side_moved?: boolean | null
           outcome_correct?: boolean | null
           outcome_name?: string
@@ -2369,6 +2382,7 @@ export type Database = {
           point_change?: number | null
           preliminary_confidence?: number | null
           price_change?: number
+          price_direction?: string | null
           recommendation?: string | null
           recommendation_reason?: string | null
           sharp_edge_score?: number | null
@@ -2376,6 +2390,7 @@ export type Database = {
           sharp_pressure?: number | null
           sharp_probability?: number | null
           sport?: string
+          sport_adjusted?: boolean | null
           time_weight?: number | null
           trap_pressure?: number | null
           trap_score?: number | null
@@ -4461,6 +4476,36 @@ export type Database = {
         }
         Relationships: []
       }
+      sharp_engine_sport_config: {
+        Row: {
+          config_key: string
+          config_value: number
+          created_at: string | null
+          description: string | null
+          id: string
+          sport: string
+          updated_at: string | null
+        }
+        Insert: {
+          config_key: string
+          config_value: number
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          sport: string
+          updated_at?: string | null
+        }
+        Update: {
+          config_key?: string
+          config_value?: number
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          sport?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       sharp_line_tracker: {
         Row: {
           actual_value: number | null
@@ -4563,6 +4608,51 @@ export type Database = {
           status?: string | null
           verified_at?: string | null
           was_correct?: boolean | null
+        }
+        Relationships: []
+      }
+      sharp_signal_accuracy: {
+        Row: {
+          accuracy_rate: number | null
+          avg_ses_when_present: number | null
+          correct_when_present: number | null
+          created_at: string | null
+          id: string
+          last_calibrated_at: string | null
+          signal_name: string
+          signal_type: string
+          sport: string | null
+          suggested_weight: number | null
+          total_occurrences: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          accuracy_rate?: number | null
+          avg_ses_when_present?: number | null
+          correct_when_present?: number | null
+          created_at?: string | null
+          id?: string
+          last_calibrated_at?: string | null
+          signal_name: string
+          signal_type: string
+          sport?: string | null
+          suggested_weight?: number | null
+          total_occurrences?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          accuracy_rate?: number | null
+          avg_ses_when_present?: number | null
+          correct_when_present?: number | null
+          created_at?: string | null
+          id?: string
+          last_calibrated_at?: string | null
+          signal_name?: string
+          signal_type?: string
+          sport?: string | null
+          suggested_weight?: number | null
+          total_occurrences?: number | null
+          updated_at?: string | null
         }
         Relationships: []
       }
@@ -5749,6 +5839,18 @@ export type Database = {
           sport: string
           total_predictions: number
           window_days: number
+        }[]
+      }
+      get_sharp_signal_accuracy_summary: {
+        Args: never
+        Returns: {
+          accuracy_rate: number
+          correct_when_present: number
+          performance_rating: string
+          signal_name: string
+          signal_type: string
+          suggested_weight: number
+          total_occurrences: number
         }[]
       }
       get_similar_historical_patterns: {
