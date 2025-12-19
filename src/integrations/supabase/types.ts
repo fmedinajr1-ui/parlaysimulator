@@ -2397,12 +2397,14 @@ export type Database = {
           blended_median: number | null
           block_reason: string | null
           book_line: number
+          book_recommended_side: string | null
           classification: string | null
           confidence_score: number | null
           consistency_score: number | null
           created_at: string | null
           current_price: number | null
           defense_adjustment: number | null
+          engine_side_matched_book: boolean | null
           event_id: string | null
           failed_checks: Json | null
           game_clock: string | null
@@ -2463,12 +2465,14 @@ export type Database = {
           blended_median?: number | null
           block_reason?: string | null
           book_line: number
+          book_recommended_side?: string | null
           classification?: string | null
           confidence_score?: number | null
           consistency_score?: number | null
           created_at?: string | null
           current_price?: number | null
           defense_adjustment?: number | null
+          engine_side_matched_book?: boolean | null
           event_id?: string | null
           failed_checks?: Json | null
           game_clock?: string | null
@@ -2529,12 +2533,14 @@ export type Database = {
           blended_median?: number | null
           block_reason?: string | null
           book_line?: number
+          book_recommended_side?: string | null
           classification?: string | null
           confidence_score?: number | null
           consistency_score?: number | null
           created_at?: string | null
           current_price?: number | null
           defense_adjustment?: number | null
+          engine_side_matched_book?: boolean | null
           event_id?: string | null
           failed_checks?: Json | null
           game_clock?: string | null
@@ -4796,6 +4802,48 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      team_defense_rankings: {
+        Row: {
+          created_at: string | null
+          efficiency_rank: number | null
+          id: string
+          is_current: boolean | null
+          overall_rank: number
+          points_allowed_rank: number | null
+          season: string | null
+          sport: string
+          team_abbreviation: string
+          team_name: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          efficiency_rank?: number | null
+          id?: string
+          is_current?: boolean | null
+          overall_rank: number
+          points_allowed_rank?: number | null
+          season?: string | null
+          sport?: string
+          team_abbreviation: string
+          team_name?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          efficiency_rank?: number | null
+          id?: string
+          is_current?: boolean | null
+          overall_rank?: number
+          points_allowed_rank?: number | null
+          season?: string | null
+          sport?: string
+          team_abbreviation?: string
+          team_name?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
       }
       team_season_standings: {
         Row: {
