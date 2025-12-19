@@ -5188,6 +5188,18 @@ export type Database = {
           username: string
         }[]
       }
+      get_median_lock_accuracy_stats: {
+        Args: never
+        Returns: {
+          category: string
+          hit_rate: number
+          hits: number
+          misses: number
+          sample_confidence: string
+          total_picks: number
+          verified_picks: number
+        }[]
+      }
       get_movement_accuracy: {
         Args: {
           p_max_movement: number
