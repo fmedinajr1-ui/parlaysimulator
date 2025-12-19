@@ -284,3 +284,12 @@ verify_jwt = false
 
 [functions.fetch-nfl-injuries]
 verify_jwt = false
+
+[functions.fetch-nhl-injuries]
+verify_jwt = false
+
+[functions.fetch-mlb-injuries]
+verify_jwt = false
+
+[functions.recalibrate-accuracy]
+verify_jwt = false

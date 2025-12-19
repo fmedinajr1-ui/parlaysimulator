@@ -215,7 +215,8 @@ async function analyzeEvent(supabase: any, event: any, sport: string, batchData?
 
   // Calculate all component scores (using batch data when available)
   const sharpPct = calculateSharpPctFromBatch(batchData?.lineMovements || [], eventId, underdog, bookmakers);
-  const chessEv = calculateCHESSEVFromBatch(batchData?.injuries || [], sport, underdog, favorite);
+  // Pass both injury sources - unified injuries for multi-sport support
+  const chessEv = calculateCHESSEVFromBatch(batchData?.injuries || [], batchData?.unifiedInjuries || [], sport, underdog, favorite);
   const upsetValueScore = calculateUpsetValueScore(underdogOdds, sharpPct);
   const recordDiffScore = calculateRecordDiffFromBatch(batchData?.standings || [], sport, underdog, favorite);
   const homeCourtAdvantage = calculateHomeCourtFromBatch(batchData?.homeCourtStats || [], sport, home_team, isHomeUnderdog);
@@ -434,35 +435,59 @@ function calculateSharpPctFromBatch(lineMovements: any[], eventId: string, under
   return Math.min(100, Math.max(0, sharpScore));
 }
 
-// Calculate CHESS EV from pre-loaded injury data
-function calculateCHESSEVFromBatch(injuries: any[], sport: string, underdog: string, favorite: string): number {
-  // Only NBA has injury data currently - return neutral for other sports
+// Calculate CHESS EV from pre-loaded injury data - now supports all sports with unified injury_reports
+function calculateCHESSEVFromBatch(injuries: any[], unifiedInjuries: any[], sport: string, underdog: string, favorite: string): number {
   const sportKey = mapSportKeyToAlias(sport);
-  if (sportKey !== 'NBA') {
-    return 50; // Neutral score when no injury data available
-  }
-
-  if (!injuries || injuries.length === 0) {
+  
+  // Use unified injuries for all sports, fallback to NBA-specific table for NBA
+  let relevantInjuries: any[] = [];
+  
+  // Check unified injury_reports first (has data for NFL, NHL, MLB, NBA)
+  const unifiedForSport = unifiedInjuries.filter(i => i.sport === sportKey);
+  
+  if (unifiedForSport.length > 0) {
+    relevantInjuries = unifiedForSport;
+  } else if (sportKey === 'NBA' && injuries.length > 0) {
+    // Fallback to legacy NBA injury table
+    relevantInjuries = injuries;
+  } else {
+    // No injury data for this sport - return neutral
     return 50;
   }
 
-  // Simple team matching from batch data (team_aliases lookup already done in batch load)
-  const favoriteInjuries = injuries.filter((i: any) => 
+  // Simple team matching from batch data
+  const favoriteInjuries = relevantInjuries.filter((i: any) => 
     favorite.toLowerCase().includes(i.team_name?.toLowerCase()) ||
     i.team_name?.toLowerCase().includes(favorite.split(' ').pop()?.toLowerCase() || '')
   );
-  const underdogInjuries = injuries.filter((i: any) => 
+  const underdogInjuries = relevantInjuries.filter((i: any) => 
     underdog.toLowerCase().includes(i.team_name?.toLowerCase()) ||
     i.team_name?.toLowerCase().includes(underdog.split(' ').pop()?.toLowerCase() || '')
   );
 
-  // Calculate impact
-  const impactWeights: Record<string, number> = { high: 0.4, medium: 0.2, low: 0.1 };
+  // Calculate impact using impact_score from unified table or impact_level from NBA table
+  let favoriteImpact = 0;
+  let underdogImpact = 0;
   
-  const favoriteImpact = favoriteInjuries.reduce((sum: number, i: any) => 
-    sum + (impactWeights[i.impact_level] || 0.1), 0);
-  const underdogImpact = underdogInjuries.reduce((sum: number, i: any) => 
-    sum + (impactWeights[i.impact_level] || 0.1), 0);
+  for (const i of favoriteInjuries) {
+    if (i.impact_score !== undefined) {
+      // Unified table uses impact_score (0-100)
+      favoriteImpact += i.impact_score / 100;
+    } else {
+      // NBA table uses impact_level (high/medium/low)
+      const impactWeights: Record<string, number> = { high: 0.4, medium: 0.2, low: 0.1 };
+      favoriteImpact += impactWeights[i.impact_level] || 0.1;
+    }
+  }
+  
+  for (const i of underdogInjuries) {
+    if (i.impact_score !== undefined) {
+      underdogImpact += i.impact_score / 100;
+    } else {
+      const impactWeights: Record<string, number> = { high: 0.4, medium: 0.2, low: 0.1 };
+      underdogImpact += impactWeights[i.impact_level] || 0.1;
+    }
+  }
 
   const injuryValue = Math.min(1, Math.max(-1, favoriteImpact - underdogImpact));
 
