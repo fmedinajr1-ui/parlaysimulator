@@ -266,3 +266,6 @@ verify_jwt = false
 
 [functions.decrement-pilot-scan]
 verify_jwt = false
+
+[functions.elite-daily-hitter-engine]
+verify_jwt = false

@@ -902,6 +902,72 @@ export type Database = {
         }
         Relationships: []
       }
+      daily_elite_parlays: {
+        Row: {
+          actual_result: Json | null
+          combined_probability: number | null
+          created_at: string
+          engine_consensus: Json | null
+          generation_round: number | null
+          id: string
+          leg_edges: Json | null
+          leg_probabilities: Json | null
+          legs: Json
+          model_version: string | null
+          outcome: string
+          parlay_date: string
+          settled_at: string | null
+          slip_score: number | null
+          source_engines: Json | null
+          sports: Json | null
+          total_edge: number | null
+          total_odds: number | null
+          variance_penalty: number | null
+        }
+        Insert: {
+          actual_result?: Json | null
+          combined_probability?: number | null
+          created_at?: string
+          engine_consensus?: Json | null
+          generation_round?: number | null
+          id?: string
+          leg_edges?: Json | null
+          leg_probabilities?: Json | null
+          legs?: Json
+          model_version?: string | null
+          outcome?: string
+          parlay_date: string
+          settled_at?: string | null
+          slip_score?: number | null
+          source_engines?: Json | null
+          sports?: Json | null
+          total_edge?: number | null
+          total_odds?: number | null
+          variance_penalty?: number | null
+        }
+        Update: {
+          actual_result?: Json | null
+          combined_probability?: number | null
+          created_at?: string
+          engine_consensus?: Json | null
+          generation_round?: number | null
+          id?: string
+          leg_edges?: Json | null
+          leg_probabilities?: Json | null
+          legs?: Json
+          model_version?: string | null
+          outcome?: string
+          parlay_date?: string
+          settled_at?: string | null
+          slip_score?: number | null
+          source_engines?: Json | null
+          sports?: Json | null
+          total_edge?: number | null
+          total_odds?: number | null
+          variance_penalty?: number | null
+        }
+        Relationships: []
+      }
       email_subscribers: {
         Row: {
           email: string
@@ -5419,6 +5485,7 @@ export type Database = {
         | "collaborator"
         | "pilot"
         | "full_access"
+        | "elite_access"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -5553,6 +5620,7 @@ export const Constants = {
         "collaborator",
         "pilot",
         "full_access",
+        "elite_access",
       ],
     },
   },

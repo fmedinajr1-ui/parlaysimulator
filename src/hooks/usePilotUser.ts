@@ -13,6 +13,7 @@ interface PilotUserState {
   paidScanBalance: number;
   totalScansAvailable: number;
   hasOddsAccess: boolean;
+  hasEliteAccess: boolean;
   phoneVerified: boolean;
   isPurchasing: boolean;
 }
@@ -30,6 +31,7 @@ export function usePilotUser() {
     paidScanBalance: 0,
     totalScansAvailable: 5,
     hasOddsAccess: false,
+    hasEliteAccess: false,
     phoneVerified: false,
     isPurchasing: false,
   });
@@ -47,6 +49,7 @@ export function usePilotUser() {
         paidScanBalance: 0,
         totalScansAvailable: 5,
         hasOddsAccess: false,
+        hasEliteAccess: false,
         phoneVerified: false,
         isPurchasing: false,
       });
@@ -73,6 +76,7 @@ export function usePilotUser() {
         paidScanBalance: data.paidScanBalance ?? 0,
         totalScansAvailable: (data.freeScansRemaining ?? 0) + (data.paidScanBalance ?? 0),
         hasOddsAccess: data.hasOddsAccess || false,
+        hasEliteAccess: data.hasEliteAccess || false,
         phoneVerified: data.phoneVerified ?? false,
         isPurchasing: prev.isPurchasing,
       }));
