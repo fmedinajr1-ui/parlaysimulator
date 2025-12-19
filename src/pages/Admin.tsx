@@ -50,6 +50,7 @@ import { SharpEngineConfigPanel } from '@/components/admin/SharpEngineConfigPane
 import { AIGenerativeProgressDashboard } from '@/components/admin/AIGenerativeProgressDashboard';
 import { AllSportsTracker } from '@/components/tracker/AllSportsTracker';
 import { MedianLockBacktestPanel } from '@/components/medianlock';
+import { EliteAccessManager } from '@/components/admin/EliteAccessManager';
 interface ParlayData {
   id: string;
   user_id: string;
@@ -459,6 +460,7 @@ export default function Admin() {
       case 'users':
         return (
           <div className="space-y-6">
+            <EliteAccessManager />
             <UserDirectoryManager />
             <CollaboratorManager />
             <ApprovedUsersManager />
