@@ -3804,6 +3804,48 @@ export type Database = {
         }
         Relationships: []
       }
+      phone_verification_audit: {
+        Row: {
+          attempts_at_time: number | null
+          code_age_seconds: number | null
+          created_at: string
+          event_type: string
+          failure_reason: string | null
+          id: string
+          ip_address: string | null
+          phone_number: string
+          success: boolean
+          user_agent: string | null
+          user_id: string
+        }
+        Insert: {
+          attempts_at_time?: number | null
+          code_age_seconds?: number | null
+          created_at?: string
+          event_type: string
+          failure_reason?: string | null
+          id?: string
+          ip_address?: string | null
+          phone_number: string
+          success?: boolean
+          user_agent?: string | null
+          user_id: string
+        }
+        Update: {
+          attempts_at_time?: number | null
+          code_age_seconds?: number | null
+          created_at?: string
+          event_type?: string
+          failure_reason?: string | null
+          id?: string
+          ip_address?: string | null
+          phone_number?: string
+          success?: boolean
+          user_agent?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       phone_verification_codes: {
         Row: {
           attempts: number | null
