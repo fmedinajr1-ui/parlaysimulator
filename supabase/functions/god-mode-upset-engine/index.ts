@@ -6,15 +6,15 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// God Mode weights - updated with record differential
-const WEIGHTS = {
-  SHARP_PCT: 0.30,
-  CHESS_EV: 0.20,
+// Default weights (used if DB weights not available)
+const DEFAULT_WEIGHTS = {
+  SHARP_PCT: 0.20,
+  CHESS_EV: 0.15,
   UPSET_VALUE: 0.15,
-  RECORD_DIFF: 0.15, // NEW: Season record differential
-  HOME_COURT: 0.05,
-  HISTORICAL_DAY: 0.05,
-  MONTE_CARLO: 0.10
+  RECORD_DIFF: 0.15,
+  HOME_COURT: 0.10,
+  HISTORICAL_DAY: 0.10,
+  MONTE_CARLO: 0.15
 };
 
 // Day multipliers for historical boost
@@ -25,9 +25,40 @@ const DAY_MULTIPLIERS: Record<number, number> = {
 // Batch-loaded data cache to avoid per-event queries
 interface BatchData {
   injuries: any[];
+  unifiedInjuries: any[]; // From new unified injury_reports table
   standings: any[];
   homeCourtStats: any[];
   lineMovements: any[];
+  weights: Record<string, Record<string, number>>; // sport -> weight_key -> weight_value
+}
+
+// Helper to get weights for a sport (with fallback to DEFAULT, then to DEFAULT_WEIGHTS)
+function getWeightsForSport(batchData: BatchData | undefined, sport: string): Record<string, number> {
+  const sportAlias = mapSportKeyToAlias(sport);
+  const sportWeights = batchData?.weights?.[sportAlias] || batchData?.weights?.['DEFAULT'] || {};
+  
+  return {
+    SHARP_PCT: sportWeights['sharp_pct'] ?? DEFAULT_WEIGHTS.SHARP_PCT,
+    CHESS_EV: sportWeights['chess_ev'] ?? DEFAULT_WEIGHTS.CHESS_EV,
+    UPSET_VALUE: sportWeights['upset_value'] ?? DEFAULT_WEIGHTS.UPSET_VALUE,
+    RECORD_DIFF: sportWeights['record_diff'] ?? DEFAULT_WEIGHTS.RECORD_DIFF,
+    HOME_COURT: sportWeights['home_court'] ?? DEFAULT_WEIGHTS.HOME_COURT,
+    HISTORICAL_DAY: sportWeights['historical_day'] ?? DEFAULT_WEIGHTS.HISTORICAL_DAY,
+    MONTE_CARLO: sportWeights['monte_carlo'] ?? DEFAULT_WEIGHTS.MONTE_CARLO,
+  };
+}
+
+// Map sport keys from The Odds API to team_aliases sport column
+function mapSportKeyToAlias(sportKey: string): string {
+  const mapping: Record<string, string> = {
+    'basketball_nba': 'NBA',
+    'basketball_ncaab': 'NCAAB',
+    'americanfootball_nfl': 'NFL',
+    'americanfootball_ncaaf': 'NCAAF',
+    'icehockey_nhl': 'NHL',
+    'baseball_mlb': 'MLB'
+  };
+  return mapping[sportKey] || sportKey.toUpperCase();
 }
 
 serve(async (req) => {
@@ -59,21 +90,32 @@ serve(async (req) => {
     console.log('[God Mode] Batch loading supporting data...');
     const today = new Date().toISOString().split('T')[0];
     
-    const [injuriesResult, standingsResult, hcaResult, movementsResult] = await Promise.all([
+    const [injuriesResult, unifiedInjuriesResult, standingsResult, hcaResult, movementsResult, weightsResult] = await Promise.all([
       supabase.from('nba_injury_reports').select('*').gte('game_date', today),
+      supabase.from('injury_reports').select('*').gte('game_date', today), // New unified table
       supabase.from('team_season_standings').select('*'),
       supabase.from('home_court_advantage_stats').select('*'),
-      supabase.from('line_movements').select('*').eq('is_sharp_action', true).gte('detected_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()).order('detected_at', { ascending: false }).limit(500)
+      supabase.from('line_movements').select('*').eq('is_sharp_action', true).gte('detected_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()).order('detected_at', { ascending: false }).limit(500),
+      supabase.from('god_mode_weights').select('*').eq('is_active', true)
     ]);
+
+    // Parse weights into a nested object by sport
+    const weightsBySport: Record<string, Record<string, number>> = {};
+    for (const w of weightsResult.data || []) {
+      if (!weightsBySport[w.sport]) weightsBySport[w.sport] = {};
+      weightsBySport[w.sport][w.weight_key] = w.weight_value;
+    }
 
     const batchData: BatchData = {
       injuries: injuriesResult.data || [],
+      unifiedInjuries: unifiedInjuriesResult.data || [],
       standings: standingsResult.data || [],
       homeCourtStats: hcaResult.data || [],
-      lineMovements: movementsResult.data || []
+      lineMovements: movementsResult.data || [],
+      weights: weightsBySport
     };
 
-    console.log(`[God Mode] Batch loaded: ${batchData.injuries.length} injuries, ${batchData.standings.length} standings, ${batchData.homeCourtStats.length} HCA stats, ${batchData.lineMovements.length} movements`);
+    console.log(`[God Mode] Batch loaded: ${batchData.injuries.length} NBA injuries, ${batchData.unifiedInjuries.length} unified injuries, ${batchData.standings.length} standings, ${batchData.homeCourtStats.length} HCA stats, ${batchData.lineMovements.length} movements, ${Object.keys(weightsBySport).length} weight configs`);
     
     const allPredictions: any[] = [];
     
@@ -180,6 +222,9 @@ async function analyzeEvent(supabase: any, event: any, sport: string, batchData?
   const historicalDayBoost = calculateHistoricalDayBoost(new Date(commence_time));
   const monteCarloBoost = calculateMonteCarloBoost(underdogOdds, sport);
 
+  // Get sport-specific weights from DB or fallback to defaults
+  const WEIGHTS = getWeightsForSport(batchData, sport);
+
   // Calculate final upset score with record differential
   const finalUpsetScore = Math.min(100, Math.max(0,
     (sharpPct * WEIGHTS.SHARP_PCT) +
@@ -214,8 +259,8 @@ async function analyzeEvent(supabase: any, event: any, sport: string, batchData?
   const riskLevel = calculateRiskLevel(confidenceAdjustedScore, underdogOdds);
   const suggestion = determineSuggestion(confidenceAdjustedScore, confidence, underdogOdds);
 
-  // Build signals array with record differential
-  const signals = buildSignals(sharpPct, chessEv, upsetValueScore, recordDiffScore, homeCourtAdvantage, historicalDayBoost, monteCarloBoost);
+  // Build signals array with record differential (pass WEIGHTS for signal breakdown)
+  const signals = buildSignals(sharpPct, chessEv, upsetValueScore, recordDiffScore, homeCourtAdvantage, historicalDayBoost, monteCarloBoost, WEIGHTS);
   
   // Detect trap on favorite - enhanced with record check
   const trapOnFavorite = (sharpPct >= 60 && upsetValueScore >= 50) || recordDiffScore >= 70;
@@ -559,18 +604,7 @@ async function calculateHomeCourtAdvantage(supabase: any, sport: string, homeTea
   }
 }
 
-// Map Odds API sport keys to team_aliases sport column
-function mapSportKeyToAlias(sportKey: string): string {
-  const map: Record<string, string> = {
-    'basketball_nba': 'NBA',
-    'basketball_ncaab': 'NCAAB',
-    'americanfootball_nfl': 'NFL',
-    'americanfootball_ncaaf': 'NCAAF',
-    'icehockey_nhl': 'NHL',
-    'baseball_mlb': 'MLB'
-  };
-  return map[sportKey] || sportKey;
-}
+// NOTE: mapSportKeyToAlias is defined at top of file in getWeightsForSport helper
 
 function calculateHistoricalDayBoost(gameDate: Date) {
   const dayOfWeek = gameDate.getDay();
@@ -737,7 +771,7 @@ async function calculateRecordDifferential(supabase: any, sport: string, underdo
   }
 }
 
-function buildSignals(sharpPct: number, chessEv: number, upsetValue: number, recordDiff: number, homeCourt: number, dayBoost: number, monteCarlo: number) {
+function buildSignals(sharpPct: number, chessEv: number, upsetValue: number, recordDiff: number, homeCourt: number, dayBoost: number, monteCarlo: number, WEIGHTS: Record<string, number>) {
   return [
     {
       name: 'Sharp Money',
