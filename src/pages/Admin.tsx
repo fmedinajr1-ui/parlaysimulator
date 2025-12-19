@@ -51,6 +51,7 @@ import { AIGenerativeProgressDashboard } from '@/components/admin/AIGenerativePr
 import { AllSportsTracker } from '@/components/tracker/AllSportsTracker';
 import { MedianLockBacktestPanel } from '@/components/medianlock';
 import { EliteAccessManager } from '@/components/admin/EliteAccessManager';
+import { GodModeWeightsPanel } from '@/components/admin/GodModeWeightsPanel';
 interface ParlayData {
   id: string;
   user_id: string;
@@ -468,7 +469,12 @@ export default function Admin() {
         );
       
       case 'god-mode':
-        return <GodModeDashboard />;
+        return (
+          <div className="space-y-6">
+            <GodModeWeightsPanel />
+            <GodModeDashboard />
+          </div>
+        );
       
       case 'tracker':
         return <AllSportsTracker />;
