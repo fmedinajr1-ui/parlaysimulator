@@ -4803,6 +4803,45 @@ export type Database = {
           },
         ]
       }
+      team_aliases: {
+        Row: {
+          aliases: Json | null
+          city: string | null
+          created_at: string | null
+          id: string
+          is_active: boolean | null
+          nickname: string | null
+          sport: string
+          team_abbreviation: string
+          team_name: string
+          updated_at: string | null
+        }
+        Insert: {
+          aliases?: Json | null
+          city?: string | null
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          nickname?: string | null
+          sport: string
+          team_abbreviation: string
+          team_name: string
+          updated_at?: string | null
+        }
+        Update: {
+          aliases?: Json | null
+          city?: string | null
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          nickname?: string | null
+          sport?: string
+          team_abbreviation?: string
+          team_name?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       team_defense_rankings: {
         Row: {
           created_at: string | null
@@ -5405,6 +5444,16 @@ export type Database = {
         Returns: {
           indicator: string
           is_sharp: boolean
+        }[]
+      }
+      find_team_by_alias: {
+        Args: { search_term: string; sport_filter?: string }
+        Returns: {
+          match_type: string
+          nickname: string
+          sport: string
+          team_abbreviation: string
+          team_name: string
         }[]
       }
       get_accuracy_trends: {
