@@ -281,3 +281,6 @@ verify_jwt = false
 
 [functions.generate-combo-props]
 verify_jwt = false
+
+[functions.fetch-nfl-injuries]
+verify_jwt = false

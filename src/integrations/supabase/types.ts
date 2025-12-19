@@ -1727,6 +1727,39 @@ export type Database = {
         }
         Relationships: []
       }
+      god_mode_weights: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          id: string
+          is_active: boolean | null
+          sport: string
+          updated_at: string | null
+          weight_key: string
+          weight_value: number
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          sport: string
+          updated_at?: string | null
+          weight_key: string
+          weight_value?: number
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          sport?: string
+          updated_at?: string | null
+          weight_key?: string
+          weight_value?: number
+        }
+        Relationships: []
+      }
       hitrate_accuracy_metrics: {
         Row: {
           avg_actual_probability: number
@@ -1880,6 +1913,60 @@ export type Database = {
           team_name?: string
           updated_at?: string
           venue_name?: string | null
+        }
+        Relationships: []
+      }
+      injury_reports: {
+        Row: {
+          created_at: string | null
+          event_id: string | null
+          game_date: string | null
+          id: string
+          impact_score: number | null
+          injury_detail: string | null
+          injury_type: string | null
+          is_star_player: boolean | null
+          player_name: string
+          position: string | null
+          source: string | null
+          sport: string
+          status: string
+          team_name: string
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          event_id?: string | null
+          game_date?: string | null
+          id?: string
+          impact_score?: number | null
+          injury_detail?: string | null
+          injury_type?: string | null
+          is_star_player?: boolean | null
+          player_name: string
+          position?: string | null
+          source?: string | null
+          sport: string
+          status: string
+          team_name: string
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          event_id?: string | null
+          game_date?: string | null
+          id?: string
+          impact_score?: number | null
+          injury_detail?: string | null
+          injury_type?: string | null
+          is_star_player?: boolean | null
+          player_name?: string
+          position?: string | null
+          source?: string | null
+          sport?: string
+          status?: string
+          team_name?: string
+          updated_at?: string | null
         }
         Relationships: []
       }
@@ -5721,6 +5808,15 @@ export type Database = {
           total_suggestions_followed: number
           total_won: number
           win_rate: number
+        }[]
+      }
+      get_time_decayed_accuracy: {
+        Args: { p_decay_days?: number; p_signal_type: string }
+        Returns: {
+          decayed_accuracy: number
+          recent_accuracy: number
+          recent_sample_size: number
+          total_sample_size: number
         }[]
       }
       get_unified_accuracy_stats: {
