@@ -156,17 +156,123 @@ async function fetchDefenseRankings(supabase: any): Promise<DefenseRanking[]> {
   }
 }
 
-function getDefenseRank(teamAbbrev: string, rankings: DefenseRanking[]): number {
+// ============ TEAM NAME TO ABBREVIATION MAPPING ============
+
+const TEAM_NAME_TO_ABBREV: Record<string, string> = {
+  'atlanta hawks': 'ATL',
+  'boston celtics': 'BOS',
+  'brooklyn nets': 'BKN',
+  'charlotte hornets': 'CHA',
+  'chicago bulls': 'CHI',
+  'cleveland cavaliers': 'CLE',
+  'dallas mavericks': 'DAL',
+  'denver nuggets': 'DEN',
+  'detroit pistons': 'DET',
+  'golden state warriors': 'GSW',
+  'houston rockets': 'HOU',
+  'indiana pacers': 'IND',
+  'los angeles clippers': 'LAC',
+  'la clippers': 'LAC',
+  'los angeles lakers': 'LAL',
+  'la lakers': 'LAL',
+  'memphis grizzlies': 'MEM',
+  'miami heat': 'MIA',
+  'milwaukee bucks': 'MIL',
+  'minnesota timberwolves': 'MIN',
+  'new orleans pelicans': 'NOP',
+  'new york knicks': 'NYK',
+  'oklahoma city thunder': 'OKC',
+  'orlando magic': 'ORL',
+  'philadelphia 76ers': 'PHI',
+  'phoenix suns': 'PHX',
+  'portland trail blazers': 'POR',
+  'sacramento kings': 'SAC',
+  'san antonio spurs': 'SAS',
+  'toronto raptors': 'TOR',
+  'utah jazz': 'UTA',
+  'washington wizards': 'WAS',
+  // Common variations
+  'hawks': 'ATL',
+  'celtics': 'BOS',
+  'nets': 'BKN',
+  'hornets': 'CHA',
+  'bulls': 'CHI',
+  'cavaliers': 'CLE',
+  'cavs': 'CLE',
+  'mavericks': 'DAL',
+  'mavs': 'DAL',
+  'nuggets': 'DEN',
+  'pistons': 'DET',
+  'warriors': 'GSW',
+  'rockets': 'HOU',
+  'pacers': 'IND',
+  'clippers': 'LAC',
+  'lakers': 'LAL',
+  'grizzlies': 'MEM',
+  'heat': 'MIA',
+  'bucks': 'MIL',
+  'timberwolves': 'MIN',
+  'wolves': 'MIN',
+  'pelicans': 'NOP',
+  'knicks': 'NYK',
+  'thunder': 'OKC',
+  'magic': 'ORL',
+  '76ers': 'PHI',
+  'sixers': 'PHI',
+  'suns': 'PHX',
+  'trail blazers': 'POR',
+  'blazers': 'POR',
+  'kings': 'SAC',
+  'spurs': 'SAS',
+  'raptors': 'TOR',
+  'jazz': 'UTA',
+  'wizards': 'WAS',
+};
+
+function teamNameToAbbrev(teamName: string): string {
+  if (!teamName) return 'UNK';
+  const normalized = teamName.toLowerCase().trim();
+  
+  // Direct match
+  if (TEAM_NAME_TO_ABBREV[normalized]) {
+    return TEAM_NAME_TO_ABBREV[normalized];
+  }
+  
+  // Already an abbreviation (3 letters uppercase)?
+  if (teamName.length <= 3 && teamName === teamName.toUpperCase()) {
+    return teamName;
+  }
+  
+  // Partial match - check if any key is contained in the input
+  for (const [key, abbrev] of Object.entries(TEAM_NAME_TO_ABBREV)) {
+    if (normalized.includes(key) || key.includes(normalized)) {
+      return abbrev;
+    }
+  }
+  
+  // Fallback: take first 3 chars uppercase
+  return teamName.toUpperCase().slice(0, 3);
+}
+
+function getDefenseRank(teamInput: string, rankings: DefenseRanking[]): number {
   if (rankings.length === 0) return 15; // Default to league average
   
-  const normalized = teamAbbrev.toUpperCase().trim();
+  // Convert team name to abbreviation first
+  const abbrev = teamNameToAbbrev(teamInput);
+  
   const match = rankings.find(r => 
-    r.team.toUpperCase() === normalized ||
-    r.team.toUpperCase().includes(normalized) ||
-    normalized.includes(r.team.toUpperCase())
+    r.team.toUpperCase() === abbrev ||
+    r.team.toUpperCase().includes(abbrev) ||
+    abbrev.includes(r.team.toUpperCase())
   );
   
-  return match?.rank ?? 15;
+  if (match) {
+    console.log(`Defense rank for ${teamInput} -> ${abbrev}: ${match.rank}`);
+    return match.rank;
+  }
+  
+  console.log(`No defense rank found for ${teamInput} -> ${abbrev}, using default 15`);
+  return 15;
 }
 
 // ============ UTILITY FUNCTIONS ============
@@ -1065,8 +1171,9 @@ serve(async (req) => {
           continue;
         }
 
-        // Get today's opponent from the prop data or latest log
-        const todayOpponent = prop.opponent || logs[0]?.opponent_abbreviation || 'UNK';
+        // FIX: Get today's opponent from the prop data (use opponent_name, not opponent)
+        const rawOpponent = prop.opponent_name || logs[0]?.opponent_abbreviation || 'UNK';
+        const todayOpponent = teamNameToAbbrev(rawOpponent);
         
         // FIX: Get real defense rank instead of hardcoded 15
         const realDefenseRank = getDefenseRank(todayOpponent, defenseRankings);
