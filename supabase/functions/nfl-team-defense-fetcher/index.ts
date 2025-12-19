@@ -42,8 +42,6 @@ const NFL_TEAMS: { id: number; abbrev: string; name: string }[] = [
   { id: 34, abbrev: 'HOU', name: 'Houston Texans' },
 ];
 
-const ESPN_NFL_API = "https://site.api.espn.com/apis/site/v2/sports/football/nfl";
-
 interface TeamDefenseStats {
   team_abbrev: string;
   team_name: string;
@@ -61,10 +59,24 @@ interface TeamDefenseStats {
   season: string;
 }
 
-// Extract stat value from ESPN stats array
-function extractStat(stats: any[], statName: string): number {
-  const stat = stats?.find((s: any) => s.name === statName || s.displayName === statName);
-  return stat ? parseFloat(stat.value) || 0 : 0;
+// Extract stat from ESPN stats array - handles multiple formats
+function extractStat(stats: any[], ...possibleNames: string[]): number {
+  if (!stats || !Array.isArray(stats)) return 0;
+  
+  for (const name of possibleNames) {
+    const stat = stats.find((s: any) => 
+      s?.name?.toLowerCase() === name.toLowerCase() || 
+      s?.displayName?.toLowerCase() === name.toLowerCase() ||
+      s?.abbreviation?.toLowerCase() === name.toLowerCase()
+    );
+    if (stat?.value !== undefined) {
+      return parseFloat(stat.value) || 0;
+    }
+    if (stat?.displayValue !== undefined) {
+      return parseFloat(stat.displayValue.replace(/,/g, '')) || 0;
+    }
+  }
+  return 0;
 }
 
 serve(async (req) => {
@@ -86,70 +98,165 @@ serve(async (req) => {
     const allTeamStats: TeamDefenseStats[] = [];
     const errors: string[] = [];
     
-    // Fetch each team's defensive stats
+    // Use NFL team statistics endpoint that returns actual defensive stats
     for (const team of NFL_TEAMS) {
       try {
-        const statsUrl = `${ESPN_NFL_API}/teams/${team.id}/statistics?season=${season}`;
+        // ESPN team stats endpoint for defense
+        const statsUrl = `https://sports.core.api.espn.com/v2/sports/football/leagues/nfl/seasons/${season}/types/2/teams/${team.id}/statistics`;
         console.log(`[NFL Defense] Fetching ${team.abbrev}...`);
         
         const res = await fetch(statsUrl);
         if (!res.ok) {
-          console.log(`[NFL Defense] Failed for ${team.abbrev}: ${res.status}`);
+          console.log(`[NFL Defense] Primary endpoint failed for ${team.abbrev}: ${res.status}`);
+          
+          // Fallback to site API
+          const fallbackUrl = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/${team.id}/statistics?season=${season}`;
+          const fallbackRes = await fetch(fallbackUrl);
+          
+          if (!fallbackRes.ok) {
+            console.log(`[NFL Defense] Fallback also failed for ${team.abbrev}`);
+            continue;
+          }
+          
+          const fallbackData = await fallbackRes.json();
+          console.log(`[NFL Defense] ${team.abbrev} fallback response keys:`, Object.keys(fallbackData));
+          
+          // Parse site API format
+          const categories = fallbackData.results?.stats || fallbackData.stats || [];
+          let gamesPlayed = 17;
+          let rushYards = 0, rushTds = 0, rushAttempts = 0;
+          let passYards = 0, passTds = 0, completions = 0, interceptions = 0;
+          let pointsAllowed = 0;
+          
+          for (const cat of categories) {
+            const catName = (cat.name || cat.displayName || '').toLowerCase();
+            const catStats = cat.stats || [];
+            
+            // Check for defensive stats
+            if (catName.includes('defense') || catName.includes('defensive')) {
+              gamesPlayed = extractStat(catStats, 'gamesPlayed', 'GP', 'games') || 17;
+              
+              // Rushing defense stats
+              if (catName.includes('rush')) {
+                rushYards = extractStat(catStats, 'rushingYardsAllowed', 'yardsAllowed', 'yards', 'YDS');
+                rushTds = extractStat(catStats, 'rushingTouchdownsAllowed', 'TDAllowed', 'TD');
+                rushAttempts = extractStat(catStats, 'rushingAttempts', 'attempts', 'ATT');
+              }
+              
+              // Passing defense stats
+              if (catName.includes('pass')) {
+                passYards = extractStat(catStats, 'passingYardsAllowed', 'yardsAllowed', 'yards', 'YDS');
+                passTds = extractStat(catStats, 'passingTouchdownsAllowed', 'TDAllowed', 'TD');
+                completions = extractStat(catStats, 'completionsAllowed', 'completions', 'CMP');
+                interceptions = extractStat(catStats, 'interceptions', 'INT');
+              }
+              
+              // General defense
+              if (catName === 'defense' || catName === 'defensive') {
+                pointsAllowed = extractStat(catStats, 'pointsAllowed', 'points', 'PTS');
+                interceptions = interceptions || extractStat(catStats, 'interceptions', 'INT');
+              }
+            }
+          }
+          
+          const teamStats: TeamDefenseStats = {
+            team_abbrev: team.abbrev,
+            team_name: team.name,
+            rush_yards_allowed_per_game: gamesPlayed > 0 ? rushYards / gamesPlayed : 0,
+            rush_tds_allowed: rushTds,
+            rush_attempts_against: rushAttempts,
+            rush_yards_per_attempt_allowed: rushAttempts > 0 ? rushYards / rushAttempts : 0,
+            pass_yards_allowed_per_game: gamesPlayed > 0 ? passYards / gamesPlayed : 0,
+            pass_tds_allowed: passTds,
+            completions_allowed: completions,
+            interceptions_forced: interceptions,
+            total_yards_allowed_per_game: gamesPlayed > 0 ? (rushYards + passYards) / gamesPlayed : 0,
+            points_allowed_per_game: gamesPlayed > 0 ? pointsAllowed / gamesPlayed : 0,
+            games_played: gamesPlayed,
+            season,
+          };
+          
+          allTeamStats.push(teamStats);
+          await new Promise(resolve => setTimeout(resolve, 200));
           continue;
         }
         
         const data = await res.json();
-        const splits = data.results?.stats?.categories || data.stats?.categories || [];
         
-        // Find defensive categories
-        let rushDefense: any[] = [];
-        let passDefense: any[] = [];
-        let defense: any[] = [];
+        // Parse core API response structure
+        let gamesPlayed = 17;
+        let rushYards = 0, rushTds = 0, rushAttempts = 0;
+        let passYards = 0, passTds = 0, completions = 0, interceptions = 0;
+        let pointsAllowed = 0;
+        
+        // Core API structure uses splits
+        const splits = data.splits?.categories || [];
+        
+        console.log(`[NFL Defense] ${team.abbrev} found ${splits.length} stat categories`);
         
         for (const category of splits) {
-          const catName = category.name?.toLowerCase() || '';
-          if (catName.includes('rushing') && catName.includes('defense')) {
-            rushDefense = category.stats || [];
-          } else if (catName.includes('passing') && catName.includes('defense')) {
-            passDefense = category.stats || [];
-          } else if (catName === 'defense' || catName.includes('defensive')) {
-            defense = category.stats || [];
+          const catName = (category.name || category.displayName || '').toLowerCase();
+          const catStats = category.stats || [];
+          
+          console.log(`[NFL Defense] ${team.abbrev} category: ${catName}, stats count: ${catStats.length}`);
+          
+          // Games played
+          if (catName.includes('general') || catName.includes('games')) {
+            gamesPlayed = extractStat(catStats, 'gamesPlayed', 'GP', 'games') || 17;
+          }
+          
+          // Rushing stats (look for opponent/allowed data)
+          if (catName.includes('rushing')) {
+            const yards = extractStat(catStats, 'rushingYardsAgainst', 'opponentRushingYards', 'yardsAllowed', 'rushingYards');
+            if (yards > 0) rushYards = yards;
+            
+            const tds = extractStat(catStats, 'rushingTouchdownsAgainst', 'opponentRushingTD', 'rushingTouchdowns');
+            if (tds > 0) rushTds = tds;
+            
+            const atts = extractStat(catStats, 'rushingAttemptsAgainst', 'opponentRushingAttempts', 'rushingAttempts');
+            if (atts > 0) rushAttempts = atts;
+          }
+          
+          // Passing stats
+          if (catName.includes('passing')) {
+            const yards = extractStat(catStats, 'passingYardsAgainst', 'opponentPassingYards', 'yardsAllowed', 'passingYards');
+            if (yards > 0) passYards = yards;
+            
+            const tds = extractStat(catStats, 'passingTouchdownsAgainst', 'opponentPassingTD', 'passingTouchdowns');
+            if (tds > 0) passTds = tds;
+            
+            const cmps = extractStat(catStats, 'completionsAgainst', 'opponentCompletions', 'completions');
+            if (cmps > 0) completions = cmps;
+          }
+          
+          // Defensive/turnover stats
+          if (catName.includes('defense') || catName.includes('turnover') || catName.includes('interception')) {
+            const ints = extractStat(catStats, 'interceptions', 'INT', 'defensiveInterceptions');
+            if (ints > 0) interceptions = ints;
+            
+            const pts = extractStat(catStats, 'pointsAgainst', 'pointsAllowed', 'opponentPoints', 'points');
+            if (pts > 0) pointsAllowed = pts;
+          }
+          
+          // Scoring
+          if (catName.includes('scoring') || catName.includes('points')) {
+            const pts = extractStat(catStats, 'pointsAgainst', 'pointsAllowed', 'opponentPoints');
+            if (pts > 0) pointsAllowed = pts;
           }
         }
-        
-        // Calculate per-game stats
-        const gamesPlayed = extractStat(defense, 'gamesPlayed') || 
-                           extractStat(rushDefense, 'gamesPlayed') || 17;
-        
-        const rushYardsAllowed = extractStat(rushDefense, 'rushingYardsAllowed') || 
-                                  extractStat(rushDefense, 'rushingYards') || 0;
-        const rushTdsAllowed = extractStat(rushDefense, 'rushingTouchdownsAllowed') ||
-                               extractStat(rushDefense, 'rushingTouchdowns') || 0;
-        const rushAttempts = extractStat(rushDefense, 'rushingAttempts') || 0;
-        
-        const passYardsAllowed = extractStat(passDefense, 'passingYardsAllowed') ||
-                                  extractStat(passDefense, 'passingYards') || 0;
-        const passTdsAllowed = extractStat(passDefense, 'passingTouchdownsAllowed') ||
-                               extractStat(passDefense, 'passingTouchdowns') || 0;
-        const completions = extractStat(passDefense, 'completions') || 0;
-        const interceptions = extractStat(passDefense, 'interceptions') || 
-                             extractStat(defense, 'interceptions') || 0;
-        
-        const pointsAllowed = extractStat(defense, 'pointsAllowed') || 
-                              extractStat(defense, 'totalPointsAllowed') || 0;
         
         const teamStats: TeamDefenseStats = {
           team_abbrev: team.abbrev,
           team_name: team.name,
-          rush_yards_allowed_per_game: gamesPlayed > 0 ? rushYardsAllowed / gamesPlayed : 0,
-          rush_tds_allowed: rushTdsAllowed,
+          rush_yards_allowed_per_game: gamesPlayed > 0 ? rushYards / gamesPlayed : 0,
+          rush_tds_allowed: rushTds,
           rush_attempts_against: rushAttempts,
-          rush_yards_per_attempt_allowed: rushAttempts > 0 ? rushYardsAllowed / rushAttempts : 0,
-          pass_yards_allowed_per_game: gamesPlayed > 0 ? passYardsAllowed / gamesPlayed : 0,
-          pass_tds_allowed: passTdsAllowed,
+          rush_yards_per_attempt_allowed: rushAttempts > 0 ? rushYards / rushAttempts : 0,
+          pass_yards_allowed_per_game: gamesPlayed > 0 ? passYards / gamesPlayed : 0,
+          pass_tds_allowed: passTds,
           completions_allowed: completions,
           interceptions_forced: interceptions,
-          total_yards_allowed_per_game: gamesPlayed > 0 ? (rushYardsAllowed + passYardsAllowed) / gamesPlayed : 0,
+          total_yards_allowed_per_game: gamesPlayed > 0 ? (rushYards + passYards) / gamesPlayed : 0,
           points_allowed_per_game: gamesPlayed > 0 ? pointsAllowed / gamesPlayed : 0,
           games_played: gamesPlayed,
           season,
@@ -158,7 +265,7 @@ serve(async (req) => {
         allTeamStats.push(teamStats);
         
         // Rate limiting
-        await new Promise(resolve => setTimeout(resolve, 150));
+        await new Promise(resolve => setTimeout(resolve, 200));
         
       } catch (teamError) {
         console.error(`[NFL Defense] Error for ${team.abbrev}:`, teamError);
@@ -168,7 +275,44 @@ serve(async (req) => {
     
     console.log(`[NFL Defense Fetcher] Fetched stats for ${allTeamStats.length} teams`);
     
-    // Calculate rankings
+    // If we still have 0 data, use the standings API for basic defensive data
+    if (allTeamStats.every(t => t.points_allowed_per_game === 0)) {
+      console.log('[NFL Defense] No data from stats API, trying standings...');
+      
+      try {
+        const standingsUrl = `https://site.api.espn.com/apis/v2/sports/football/nfl/standings?season=${season}`;
+        const standingsRes = await fetch(standingsUrl);
+        
+        if (standingsRes.ok) {
+          const standingsData = await standingsRes.json();
+          const children = standingsData.children || [];
+          
+          for (const conf of children) {
+            const divChildren = conf.standings?.entries || conf.children || [];
+            
+            for (const entry of divChildren) {
+              const teamAbbrev = entry.team?.abbreviation;
+              const stats = entry.stats || [];
+              
+              const matchedTeam = allTeamStats.find(t => t.team_abbrev === teamAbbrev);
+              if (matchedTeam) {
+                const pointsAgainst = stats.find((s: any) => s.name === 'pointsAgainst' || s.abbreviation === 'PA');
+                const gamesPlayed = stats.find((s: any) => s.name === 'gamesPlayed' || s.abbreviation === 'GP');
+                
+                if (pointsAgainst?.value && gamesPlayed?.value) {
+                  matchedTeam.points_allowed_per_game = parseFloat(pointsAgainst.value) / parseFloat(gamesPlayed.value);
+                  matchedTeam.games_played = parseFloat(gamesPlayed.value);
+                }
+              }
+            }
+          }
+        }
+      } catch (standingsError) {
+        console.error('[NFL Defense] Standings fetch error:', standingsError);
+      }
+    }
+    
+    // Calculate rankings (lower yards/points = better rank = lower number)
     const sortedByRush = [...allTeamStats].sort((a, b) => a.rush_yards_allowed_per_game - b.rush_yards_allowed_per_game);
     const sortedByPass = [...allTeamStats].sort((a, b) => a.pass_yards_allowed_per_game - b.pass_yards_allowed_per_game);
     const sortedByTotal = [...allTeamStats].sort((a, b) => a.total_yards_allowed_per_game - b.total_yards_allowed_per_game);
