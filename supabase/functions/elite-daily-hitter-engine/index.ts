@@ -51,8 +51,10 @@ function calculateLegProbability(pick: PickCandidate): number {
   const weights: number[] = [];
   
   // Hit rate signal (most reliable)
+  // FIX: Check if hit_rate is already decimal (0-1) or percentage (0-100)
   if (pick.hitRate && pick.hitRate > 0) {
-    signals.push(pick.hitRate / 100);
+    const normalizedHitRate = pick.hitRate <= 1 ? pick.hitRate : pick.hitRate / 100;
+    signals.push(normalizedHitRate);
     weights.push(1.5);
   }
   
@@ -377,15 +379,33 @@ serve(async (req) => {
     // CALCULATE p_leg AND FILTER
     // =====================================================
     
+    const MIN_LEG_PROBABILITY = 0.55;  // Minimum 55% per leg
+    const MIN_COMBINED_PROBABILITY = 0.15;  // Minimum 15% combined
+    const IDEAL_LEG_PROBABILITY = 0.70;  // Ideal threshold
+    
     for (const pick of eligiblePicks) {
       pick.p_leg = calculateLegProbability(pick);
       pick.variance = getVariance(pick.propType);
     }
     
-    // Filter for p_leg >= 0.70
-    const highConfidencePicks = eligiblePicks.filter(p => p.p_leg >= 0.70);
+    // First, filter out picks below absolute minimum threshold
+    const qualityPicks = eligiblePicks.filter(p => p.p_leg >= MIN_LEG_PROBABILITY);
     
-    logStep("High-confidence picks after filtering", { 
+    logStep("Quality picks after minimum filter", { 
+      count: qualityPicks.length,
+      picks: qualityPicks.map(p => ({ 
+        player: p.playerName, 
+        prop: p.propType, 
+        p_leg: p.p_leg.toFixed(3),
+        hitRate: p.hitRate,
+        engines: p.engines.length 
+      }))
+    });
+    
+    // Then filter for high confidence picks (70%+)
+    let highConfidencePicks = qualityPicks.filter(p => p.p_leg >= IDEAL_LEG_PROBABILITY);
+    
+    logStep("High-confidence picks (70%+)", { 
       count: highConfidencePicks.length,
       picks: highConfidencePicks.map(p => ({ 
         player: p.playerName, 
@@ -395,20 +415,25 @@ serve(async (req) => {
       }))
     });
     
+    // If not enough 70%+ picks, fall back to quality picks (55%+)
     if (highConfidencePicks.length < 3) {
-      // Fall back to top 10 by p_leg if not enough high-confidence picks
-      const sorted = eligiblePicks.sort((a, b) => b.p_leg - a.p_leg).slice(0, 10);
-      if (sorted.length >= 3) {
-        highConfidencePicks.push(...sorted.filter(s => !highConfidencePicks.includes(s)));
-      }
+      logStep("Not enough 70%+ picks, falling back to 55%+ quality threshold");
+      // Sort by p_leg descending and take top picks
+      const sorted = qualityPicks.sort((a, b) => b.p_leg - a.p_leg);
+      highConfidencePicks = sorted.slice(0, Math.min(15, sorted.length));
     }
     
     if (highConfidencePicks.length < 3) {
-      logStep("Not enough picks to generate parlay", { count: highConfidencePicks.length });
+      logStep("Not enough quality picks to generate parlay - AI CHOOSING NOT TO PRODUCE", { 
+        count: highConfidencePicks.length,
+        reason: "Quality threshold not met - refusing to generate subpar parlay"
+      });
       return new Response(JSON.stringify({ 
         success: false, 
-        message: "Not enough high-confidence picks available",
-        picksFound: highConfidencePicks.length
+        message: "No high-quality picks available today. AI refuses to generate a parlay below quality standards.",
+        picksFound: highConfidencePicks.length,
+        minimumRequired: 3,
+        qualityThreshold: `${MIN_LEG_PROBABILITY * 100}% per leg`
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,
@@ -455,13 +480,56 @@ serve(async (req) => {
     
     // Sort by slip score and select the best
     validCombinations.sort((a, b) => b.slipScore - a.slipScore);
-    const bestCombo = validCombinations[0];
+    
+    // Filter combinations that meet minimum combined probability
+    const qualityCombinations = validCombinations.filter(c => c.combinedProbability >= MIN_COMBINED_PROBABILITY);
+    
+    if (qualityCombinations.length === 0) {
+      logStep("No combinations meet minimum combined probability - AI CHOOSING NOT TO PRODUCE", {
+        bestAvailable: (validCombinations[0]?.combinedProbability * 100).toFixed(2) + '%',
+        required: (MIN_COMBINED_PROBABILITY * 100) + '%'
+      });
+      return new Response(JSON.stringify({ 
+        success: false, 
+        message: `No parlay combinations meet the ${MIN_COMBINED_PROBABILITY * 100}% minimum probability threshold. AI refuses to generate.`,
+        bestAvailableProbability: validCombinations[0]?.combinedProbability
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200,
+      });
+    }
+    
+    const bestCombo = qualityCombinations[0];
     
     logStep("Best combination selected", {
       slipScore: bestCombo.slipScore.toFixed(4),
       combinedProbability: (bestCombo.combinedProbability * 100).toFixed(2) + '%',
-      legs: bestCombo.legs.map(l => `${l.playerName} ${l.propType} ${l.side} ${l.line}`)
+      legs: bestCombo.legs.map(l => `${l.playerName} ${l.propType} ${l.side} ${l.line} (${(l.p_leg * 100).toFixed(0)}%)`)
     });
+    
+    // Generate AI selection rationale
+    const engineCounts: Record<string, number> = {};
+    bestCombo.legs.forEach(leg => {
+      leg.engines.forEach(e => {
+        engineCounts[e] = (engineCounts[e] || 0) + 1;
+      });
+    });
+    
+    const topEngines = Object.entries(engineCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 2)
+      .map(([name, count]) => `${name} (${count} legs)`);
+    
+    const avgLegProb = bestCombo.legs.reduce((sum, l) => sum + l.p_leg, 0) / 3;
+    const avgEdge = bestCombo.legs.reduce((sum, l) => sum + (l.edge || 0), 0) / 3;
+    
+    const selectionRationale = `Selected from ${validCombinations.length} valid combinations based on SlipScore optimization. ` +
+      `This parlay has a ${(bestCombo.combinedProbability * 100).toFixed(1)}% combined probability with ` +
+      `${(avgLegProb * 100).toFixed(0)}% average leg confidence. ` +
+      `Primary engine signals: ${topEngines.join(', ')}. ` +
+      `Total edge: +${bestCombo.totalEdge.toFixed(1)}%, Variance penalty: ${bestCombo.variancePenalty.toFixed(2)}.`;
+    
+    logStep("Selection rationale generated", { rationale: selectionRationale });
     
     // Calculate total odds
     let totalOdds = 1;
@@ -523,7 +591,7 @@ serve(async (req) => {
     
     const generationRound = (latestParlay?.generation_round || 0) + 1;
     
-    // Save to database
+    // Save to database with selection rationale
     const { data: newParlay, error: insertError } = await supabaseClient
       .from('daily_elite_parlays')
       .insert({
@@ -540,6 +608,7 @@ serve(async (req) => {
         sports: Array.from(sports),
         source_engines: Array.from(allEngines),
         generation_round: generationRound,
+        selection_rationale: selectionRationale,
       })
       .select()
       .single();

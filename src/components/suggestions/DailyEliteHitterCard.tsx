@@ -5,9 +5,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Crown, Target, Zap, TrendingUp, RefreshCw, Trophy, Sparkles } from 'lucide-react';
-import { format } from 'date-fns';
+import { Crown, Target, Zap, TrendingUp, RefreshCw, Trophy, Sparkles, Info, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react';
+import { format, parseISO } from 'date-fns';
 import { cn } from '@/lib/utils';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 
 interface LegData {
   playerName: string;
@@ -33,6 +34,8 @@ interface EliteParlay {
   sports: string[];
   source_engines: string[];
   outcome: string;
+  selection_rationale?: string;
+  engine_consensus?: Array<{ leg: string; playerName: string; engines: string[]; confidence: number }>;
 }
 
 const sportEmojis: Record<string, string> = {
@@ -56,6 +59,7 @@ const engineColors: Record<string, string> = {
 
 export function DailyEliteHitterCard() {
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [showRationale, setShowRationale] = useState(false);
 
   const { data: parlay, isLoading, refetch } = useQuery({
     queryKey: ['daily-elite-parlay'],
@@ -75,6 +79,7 @@ export function DailyEliteHitterCard() {
         legs: (data.legs || []) as unknown as LegData[],
         sports: (data.sports || []) as unknown as string[],
         source_engines: (data.source_engines || []) as unknown as string[],
+        engine_consensus: (data.engine_consensus || []) as unknown as EliteParlay['engine_consensus'],
       } as EliteParlay;
     },
     staleTime: 1000 * 60 * 5,
@@ -127,6 +132,13 @@ export function DailyEliteHitterCard() {
 
   const combinedProbPercent = (parlay.combined_probability * 100).toFixed(1);
   const legs = parlay.legs || [];
+  
+  // Fix timezone issue by parsing date correctly
+  const displayDate = format(parseISO(parlay.parlay_date), 'MMM d');
+  
+  // Check if parlay meets quality standards
+  const meetsQualityStandards = parlay.combined_probability >= 0.15 && 
+    legs.every(leg => leg.p_leg >= 0.55);
 
   return (
     <Card className="border-primary/30 bg-gradient-to-br from-primary/5 via-background to-primary/10 overflow-hidden">
@@ -138,7 +150,7 @@ export function DailyEliteHitterCard() {
             Daily Elite 3-Leg Hitter
           </CardTitle>
           <Badge variant="outline" className="text-xs">
-            {format(new Date(parlay.parlay_date), 'MMM d')}
+            {displayDate}
           </Badge>
         </div>
         
@@ -147,7 +159,11 @@ export function DailyEliteHitterCard() {
           <div className="flex items-center gap-1">
             <Target className="w-4 h-4 text-green-500" />
             <span className="text-muted-foreground">Prob:</span>
-            <span className="font-semibold text-green-500">{combinedProbPercent}%</span>
+            <span className={cn(
+              "font-semibold",
+              parlay.combined_probability >= 0.20 ? "text-green-500" : 
+              parlay.combined_probability >= 0.15 ? "text-yellow-500" : "text-red-500"
+            )}>{combinedProbPercent}%</span>
           </div>
           <div className="flex items-center gap-1">
             <TrendingUp className="w-4 h-4 text-blue-500" />
@@ -162,9 +178,37 @@ export function DailyEliteHitterCard() {
             <span className="font-semibold text-yellow-500">+{parlay.total_edge?.toFixed(1)}%</span>
           </div>
         </div>
+        
+        {/* Quality Warning */}
+        {!meetsQualityStandards && (
+          <div className="flex items-center gap-2 mt-2 p-2 rounded-md bg-yellow-500/10 border border-yellow-500/30">
+            <AlertTriangle className="w-4 h-4 text-yellow-500" />
+            <span className="text-xs text-yellow-500">Limited high-quality picks available today</span>
+          </div>
+        )}
       </CardHeader>
 
       <CardContent className="pt-4 space-y-3">
+        {/* Why These Picks Section */}
+        {parlay.selection_rationale && (
+          <Collapsible open={showRationale} onOpenChange={setShowRationale}>
+            <CollapsibleTrigger asChild>
+              <Button variant="ghost" size="sm" className="w-full justify-between text-xs text-muted-foreground hover:text-foreground">
+                <span className="flex items-center gap-1">
+                  <Info className="w-3 h-3" />
+                  Why These Picks?
+                </span>
+                {showRationale ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="px-2 pb-2">
+              <p className="text-xs text-muted-foreground bg-muted/30 p-3 rounded-lg">
+                {parlay.selection_rationale}
+              </p>
+            </CollapsibleContent>
+          </Collapsible>
+        )}
+        
         {/* Legs */}
         {legs.map((leg, idx) => (
           <div 
@@ -191,7 +235,11 @@ export function DailyEliteHitterCard() {
                 </p>
               </div>
               <div className="text-right shrink-0">
-                <div className="text-sm font-semibold text-primary">
+                <div className={cn(
+                  "text-sm font-semibold",
+                  leg.p_leg >= 0.70 ? "text-green-500" :
+                  leg.p_leg >= 0.55 ? "text-yellow-500" : "text-red-500"
+                )}>
                   {(leg.p_leg * 100).toFixed(0)}%
                 </div>
                 <div className="text-[10px] text-muted-foreground">

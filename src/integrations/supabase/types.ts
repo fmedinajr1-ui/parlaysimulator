@@ -916,6 +916,7 @@ export type Database = {
           model_version: string | null
           outcome: string
           parlay_date: string
+          selection_rationale: string | null
           settled_at: string | null
           slip_score: number | null
           source_engines: Json | null
@@ -937,6 +938,7 @@ export type Database = {
           model_version?: string | null
           outcome?: string
           parlay_date: string
+          selection_rationale?: string | null
           settled_at?: string | null
           slip_score?: number | null
           source_engines?: Json | null
@@ -958,6 +960,7 @@ export type Database = {
           model_version?: string | null
           outcome?: string
           parlay_date?: string
+          selection_rationale?: string | null
           settled_at?: string | null
           slip_score?: number | null
           source_engines?: Json | null
