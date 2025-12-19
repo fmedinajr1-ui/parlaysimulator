@@ -14,29 +14,35 @@ interface EngineConfig {
   PICK_SHARP_PCT: number;
   FADE_SHARP_PCT: number;
   LOGISTIC_K: number;
+  // INVERTED Movement Weights - minimal is now BEST
   MW_EXTREME: number;
   MW_LARGE: number;
   MW_MODERATE: number;
   MW_SMALL: number;
   MW_MINIMAL: number;
+  // Time Weights
   TW_LATE: number;
   TW_MID: number;
   TW_EARLY: number;
+  // Sharp Signals
   SIGNAL_LINE_AND_JUICE: number;
-  SIGNAL_STEAM_MOVE: number;
   SIGNAL_LATE_MONEY: number;
   SIGNAL_RLM: number;
-  SIGNAL_CONSENSUS_HIGH: number;
   SIGNAL_CLV_POSITIVE: number;
   SIGNAL_MULTI_MARKET: number;
+  SIGNAL_ISOLATED_SHARP: number;  // NEW: Isolated moves are sharp
+  SIGNAL_UNDERDOG_STEAM: number;  // NEW: Steam toward underdog
+  // Trap Signals (INVERTED from before)
   TRAP_PRICE_ONLY: number;
   TRAP_EARLY_MORNING: number;
   TRAP_BOTH_SIDES: number;
   TRAP_INSIGNIFICANT: number;
   TRAP_FAVORITE_SHORT: number;
   TRAP_EXTREME_JUICE: number;
-  TRAP_ISOLATED: number;
   TRAP_CLV_NEGATIVE: number;
+  TRAP_CONSENSUS_HIGH: number;    // NEW: High consensus is trap
+  TRAP_STEAM_MOVE: number;        // MOVED: Steam is now trap
+  TRAP_EXTREME_MOVEMENT: number;  // NEW: Extreme moves are traps
 }
 
 interface SignalFlags {
@@ -46,22 +52,28 @@ interface SignalFlags {
   singleSideOnly: boolean;
   extremeJuice: boolean;
   favoriteShortening: boolean;
+  underdogTightening: boolean;    // NEW
   clvPositive: boolean;
   clvNegative: boolean;
   multiMarketAlignment: boolean;
+  isIsolatedMove: boolean;        // NEW
+  isSteamMove: boolean;           // NEW
+  isExtremeMove: boolean;         // NEW
+  priceDirection: 'toward_favorite' | 'toward_underdog' | 'neutral';  // NEW
 }
 
 interface MovementInput {
-  priceChange: number;       // ΔJ - juice/price change in points
-  lineChange: number;        // ΔL - spread/total line change
-  hoursToGame: number;       // T_hours - hours until game starts
-  booksCount: number;        // B - number of books moving same direction
-  totalBooks: number;        // B_total - total books available
-  currentPrice: number;      // Current odds price
-  openingPrice: number;      // Opening odds price
+  priceChange: number;
+  lineChange: number;
+  hoursToGame: number;
+  booksCount: number;
+  totalBooks: number;
+  currentPrice: number;
+  openingPrice: number;
   oppositeSideMoved: boolean;
   isSteamMove?: boolean;
   isPlayerProp?: boolean;
+  sport?: string;
 }
 
 interface EngineResult {
@@ -82,40 +94,51 @@ interface EngineResult {
   allSignals: { type: 'sharp' | 'trap'; signal: string; value: number }[];
   consensusRatio: number;
   movementBucket: string;
+  priceDirection: string;
+  openingSide: string;
+  sportAdjusted: boolean;
 }
 
-// Default config values
+// INVERTED DEFAULT CONFIG - Based on outcome analysis
+// Key insight: Lower SES performed BETTER, so we invert the logic
 const DEFAULT_CONFIG: EngineConfig = {
   BASE_MOVE_SHARP: 40,
   BASE_NOISE: 25,
-  PICK_SES_THRESHOLD: 30,
-  FADE_SES_THRESHOLD: -30,
-  PICK_SHARP_PCT: 65,
-  FADE_SHARP_PCT: 35,
+  // INVERTED thresholds - lower SES is now "pick", higher is "fade"
+  PICK_SES_THRESHOLD: -20,
+  FADE_SES_THRESHOLD: 20,
+  PICK_SHARP_PCT: 35,   // Inverted
+  FADE_SHARP_PCT: 65,   // Inverted
   LOGISTIC_K: 25,
-  MW_EXTREME: 0.4,
-  MW_LARGE: 1.0,
-  MW_MODERATE: 0.7,
-  MW_SMALL: 0.3,
-  MW_MINIMAL: 0.1,
+  // INVERTED Movement Weights - minimal movements performed BEST
+  MW_EXTREME: 0.1,      // Was 0.4 - extreme moves are TRAPS
+  MW_LARGE: 0.3,        // Was 1.0
+  MW_MODERATE: 0.5,     // Was 0.7
+  MW_SMALL: 0.8,        // Was 0.3
+  MW_MINIMAL: 1.0,      // Was 0.1 - minimal moves are SHARP
+  // Time Weights
   TW_LATE: 1.25,
   TW_MID: 1.0,
   TW_EARLY: 0.6,
-  SIGNAL_LINE_AND_JUICE: 25,
-  SIGNAL_STEAM_MOVE: 20,
+  // Sharp Signals
+  SIGNAL_LINE_AND_JUICE: 15,      // Reduced - not as reliable
   SIGNAL_LATE_MONEY: 15,
-  SIGNAL_RLM: 25,
-  SIGNAL_CONSENSUS_HIGH: 20,
+  SIGNAL_RLM: 20,                 // Kept - still valuable
   SIGNAL_CLV_POSITIVE: 10,
   SIGNAL_MULTI_MARKET: 15,
-  TRAP_PRICE_ONLY: 25,
+  SIGNAL_ISOLATED_SHARP: 25,      // NEW: Isolated moves are sharp
+  SIGNAL_UNDERDOG_STEAM: 20,      // NEW: Steam toward underdog is sharp
+  // Trap Signals
+  TRAP_PRICE_ONLY: 20,
   TRAP_EARLY_MORNING: 15,
-  TRAP_BOTH_SIDES: 30,
-  TRAP_INSIGNIFICANT: 20,
-  TRAP_FAVORITE_SHORT: 20,
+  TRAP_BOTH_SIDES: 25,
+  TRAP_INSIGNIFICANT: 15,
+  TRAP_FAVORITE_SHORT: 25,        // Increased
   TRAP_EXTREME_JUICE: 15,
-  TRAP_ISOLATED: 20,
   TRAP_CLV_NEGATIVE: 10,
+  TRAP_CONSENSUS_HIGH: 25,        // NEW: High consensus is trap
+  TRAP_STEAM_MOVE: 20,            // MOVED: Steam is now trap (was sharp)
+  TRAP_EXTREME_MOVEMENT: 20,      // NEW: Extreme moves are traps
 };
 
 function getMovementBucket(priceChange: number): string {
@@ -129,11 +152,12 @@ function getMovementBucket(priceChange: number): string {
 
 function getMovementWeight(priceChange: number, config: EngineConfig): number {
   const absChange = Math.abs(priceChange);
-  if (absChange >= 50) return config.MW_EXTREME;
+  // INVERTED: Minimal movements get highest weight
+  if (absChange >= 50) return config.MW_EXTREME;    // Lowest weight
   if (absChange >= 30) return config.MW_LARGE;
   if (absChange >= 15) return config.MW_MODERATE;
   if (absChange >= 10) return config.MW_SMALL;
-  return config.MW_MINIMAL;
+  return config.MW_MINIMAL;                          // Highest weight
 }
 
 function getTimeWeight(hoursToGame: number, config: EngineConfig): number {
@@ -142,19 +166,57 @@ function getTimeWeight(hoursToGame: number, config: EngineConfig): number {
   return config.TW_EARLY;
 }
 
+function determinePriceDirection(currentPrice: number, openingPrice: number): 'toward_favorite' | 'toward_underdog' | 'neutral' {
+  if (!currentPrice || !openingPrice) return 'neutral';
+  
+  // If price became more negative (e.g., -110 to -130), it moved toward favorite
+  // If price became less negative or more positive (e.g., -110 to +100), it moved toward underdog
+  const priceDiff = currentPrice - openingPrice;
+  
+  if (openingPrice < 0) {
+    // Was on favorite side
+    if (priceDiff < -10) return 'toward_favorite';  // Got more negative
+    if (priceDiff > 10) return 'toward_underdog';   // Got less negative/more positive
+  } else {
+    // Was on underdog side
+    if (priceDiff > 10) return 'toward_underdog';   // Got more positive
+    if (priceDiff < -10) return 'toward_favorite';  // Got less positive/more negative
+  }
+  
+  return 'neutral';
+}
+
+function determineOpeningSide(openingPrice: number): string {
+  if (!openingPrice) return 'unknown';
+  if (openingPrice <= -150) return 'heavy_favorite';
+  if (openingPrice < -110) return 'slight_favorite';
+  if (openingPrice >= 150) return 'heavy_underdog';
+  if (openingPrice > 110) return 'slight_underdog';
+  return 'pick_em';
+}
+
 function detectSignalFlags(input: MovementInput): SignalFlags {
-  const { priceChange, lineChange, currentPrice, openingPrice, oppositeSideMoved } = input;
+  const { priceChange, lineChange, currentPrice, openingPrice, oppositeSideMoved, booksCount, totalBooks, isSteamMove } = input;
+  
+  const consensusRatio = totalBooks > 0 ? booksCount / totalBooks : 0;
+  const absChange = Math.abs(priceChange);
+  const priceDirection = determinePriceDirection(currentPrice, openingPrice);
   
   return {
     reverseLineMovement: (priceChange < -10 && lineChange > 0) || (priceChange > 10 && lineChange < 0),
-    priceOnlyMove: Math.abs(lineChange) < 0.5 && Math.abs(priceChange) >= 8,
+    priceOnlyMove: Math.abs(lineChange) < 0.5 && absChange >= 8,
     bothSidesMoved: oppositeSideMoved,
     singleSideOnly: !oppositeSideMoved,
     extremeJuice: currentPrice <= -150,
-    favoriteShortening: currentPrice < openingPrice && currentPrice <= -200,
-    clvPositive: currentPrice < openingPrice, // Got better price than opening
-    clvNegative: currentPrice > openingPrice, // Got worse price
-    multiMarketAlignment: false, // Would need additional market data
+    favoriteShortening: priceDirection === 'toward_favorite' && currentPrice <= -130,
+    underdogTightening: priceDirection === 'toward_underdog' && openingPrice >= 100,
+    clvPositive: currentPrice < openingPrice,
+    clvNegative: currentPrice > openingPrice,
+    multiMarketAlignment: false,
+    isIsolatedMove: consensusRatio > 0 && consensusRatio < 0.4,  // Only 1-2 books moved
+    isSteamMove: isSteamMove || (absChange >= 15 && input.hoursToGame <= 2),
+    isExtremeMove: absChange >= 50,
+    priceDirection,
   };
 }
 
@@ -163,50 +225,44 @@ function calculateSharpPressure(
   flags: SignalFlags,
   config: EngineConfig
 ): { SP: number; SP_move: number; SP_signals: number; signals: { signal: string; value: number }[] } {
-  const { priceChange, lineChange, hoursToGame, booksCount, totalBooks, isSteamMove } = input;
+  const { priceChange, lineChange, hoursToGame, booksCount, totalBooks } = input;
   const consensusRatio = totalBooks > 0 ? booksCount / totalBooks : 0;
   
-  // A. Movement Weight (MW) based on ΔJ bucket
   const MW = getMovementWeight(priceChange, config);
-  
-  // B. Time Weight (TW) based on T_hours
   const TW = getTimeWeight(hoursToGame, config);
-  
-  // C. SP_move = MW × TW × BaseMoveSharp
   const SP_move = MW * TW * config.BASE_MOVE_SHARP;
   
-  // D. Sharp Signal Bonuses
   const signals: { signal: string; value: number }[] = [];
   let SP_signals = 0;
   
-  // LINE_AND_JUICE_MOVED: ΔL ≥ 0.5 & ΔJ ≥ 10
+  // LINE_AND_JUICE_MOVED - still valid but reduced weight
   if (Math.abs(lineChange) >= 0.5 && Math.abs(priceChange) >= 10) {
     SP_signals += config.SIGNAL_LINE_AND_JUICE;
     signals.push({ signal: 'LINE_AND_JUICE_MOVED', value: config.SIGNAL_LINE_AND_JUICE });
   }
   
-  // STEAM_MOVE_DETECTED: ΔJ ≥ 15 within 2 hours
-  if ((isSteamMove || Math.abs(priceChange) >= 15) && hoursToGame <= 2) {
-    SP_signals += config.SIGNAL_STEAM_MOVE;
-    signals.push({ signal: 'STEAM_MOVE_DETECTED', value: config.SIGNAL_STEAM_MOVE });
-  }
-  
-  // LATE_MONEY_WINDOW: 1-3 hours before game
+  // LATE_MONEY_WINDOW
   if (hoursToGame >= 1 && hoursToGame <= 3) {
     SP_signals += config.SIGNAL_LATE_MONEY;
     signals.push({ signal: 'LATE_MONEY_WINDOW', value: config.SIGNAL_LATE_MONEY });
   }
   
-  // REVERSE_LINE_MOVEMENT
+  // REVERSE_LINE_MOVEMENT - still a sharp signal
   if (flags.reverseLineMovement) {
     SP_signals += config.SIGNAL_RLM;
     signals.push({ signal: 'REVERSE_LINE_MOVEMENT', value: config.SIGNAL_RLM });
   }
   
-  // MARKET_CONSENSUS_HIGH: CR ≥ 0.6
-  if (consensusRatio >= 0.6) {
-    SP_signals += config.SIGNAL_CONSENSUS_HIGH;
-    signals.push({ signal: 'MARKET_CONSENSUS_HIGH', value: config.SIGNAL_CONSENSUS_HIGH });
+  // NEW: ISOLATED_SHARP - low consensus is sharp (inverted from before)
+  if (flags.isIsolatedMove) {
+    SP_signals += config.SIGNAL_ISOLATED_SHARP;
+    signals.push({ signal: 'ISOLATED_SHARP', value: config.SIGNAL_ISOLATED_SHARP });
+  }
+  
+  // NEW: UNDERDOG_STEAM - steam toward underdog is sharp
+  if (flags.isSteamMove && flags.underdogTightening) {
+    SP_signals += config.SIGNAL_UNDERDOG_STEAM;
+    signals.push({ signal: 'UNDERDOG_STEAM', value: config.SIGNAL_UNDERDOG_STEAM });
   }
   
   // CLV_POSITIVE
@@ -221,8 +277,8 @@ function calculateSharpPressure(
     signals.push({ signal: 'MULTI_MARKET_ALIGNMENT', value: config.SIGNAL_MULTI_MARKET });
   }
   
-  // SINGLE_SIDE_ONLY bonus
-  if (flags.singleSideOnly && Math.abs(priceChange) >= 10) {
+  // SINGLE_SIDE bonus for moderate moves
+  if (flags.singleSideOnly && Math.abs(priceChange) >= 10 && Math.abs(priceChange) < 30) {
     const bonus = 10;
     SP_signals += bonus;
     signals.push({ signal: 'SINGLE_SIDE_MOVEMENT', value: bonus });
@@ -240,32 +296,28 @@ function calculateTrapPressure(
   const { priceChange, lineChange, hoursToGame, booksCount, totalBooks } = input;
   const consensusRatio = totalBooks > 0 ? booksCount / totalBooks : 0;
   
-  // A. Noise Weight (NW) - inverse relationship with movement strength
+  // INVERTED Noise Weight - large movements = high noise (public money)
   let NW: number;
   const absChange = Math.abs(priceChange);
-  if (absChange < 10) NW = 1.0;       // Minimal movement = high noise
-  else if (absChange < 15) NW = 0.7;  // Small
-  else if (absChange < 30) NW = 0.4;  // Moderate
-  else if (absChange < 50) NW = 0.2;  // Large
-  else NW = 0.5;                       // Extreme (suspicious)
+  if (absChange < 10) NW = 0.3;       // Minimal movement = low noise (was 1.0)
+  else if (absChange < 15) NW = 0.5;  
+  else if (absChange < 30) NW = 0.7;  
+  else if (absChange < 50) NW = 0.9;  
+  else NW = 1.0;                       // Extreme = high noise (was 0.5)
   
-  // B. Early flag
   const EarlyFlag = hoursToGame > 6 ? 1 : 0;
-  
-  // C. TP_noise = NW × (0.5 + 0.5·EarlyFlag) × BaseNoise
   const TP_noise = NW * (0.5 + 0.5 * EarlyFlag) * config.BASE_NOISE;
   
-  // D. Trap Signal Penalties
   const signals: { signal: string; value: number }[] = [];
   let TP_trap = 0;
   
-  // PRICE_ONLY_MOVE: |ΔL| < 0.5 && |ΔJ| >= 8
+  // PRICE_ONLY_MOVE
   if (flags.priceOnlyMove) {
     TP_trap += config.TRAP_PRICE_ONLY;
     signals.push({ signal: 'PRICE_ONLY_MOVE', value: config.TRAP_PRICE_ONLY });
   }
   
-  // EARLY_MORNING_ACTION: T_hours > 6
+  // EARLY_MORNING_ACTION
   if (hoursToGame > 6) {
     TP_trap += config.TRAP_EARLY_MORNING;
     signals.push({ signal: 'EARLY_MORNING_ACTION', value: config.TRAP_EARLY_MORNING });
@@ -277,14 +329,14 @@ function calculateTrapPressure(
     signals.push({ signal: 'BOTH_SIDES_MOVED', value: config.TRAP_BOTH_SIDES });
   }
   
-  // INSIGNIFICANT_MOVEMENT: ΔJ < 8
+  // INSIGNIFICANT_MOVEMENT
   if (absChange < 8) {
     TP_trap += config.TRAP_INSIGNIFICANT;
     signals.push({ signal: 'INSIGNIFICANT_MOVEMENT', value: config.TRAP_INSIGNIFICANT });
   }
   
-  // FAVORITE_SHORTENING with extreme juice
-  if (flags.favoriteShortening && flags.extremeJuice) {
+  // FAVORITE_SHORTENING - strong trap signal
+  if (flags.favoriteShortening) {
     TP_trap += config.TRAP_FAVORITE_SHORT;
     signals.push({ signal: 'FAVORITE_SHORTENING', value: config.TRAP_FAVORITE_SHORT });
   }
@@ -295,16 +347,28 @@ function calculateTrapPressure(
     signals.push({ signal: 'EXTREME_JUICE_WARNING', value: config.TRAP_EXTREME_JUICE });
   }
   
-  // ISOLATED_SIGNAL: CR < 0.4
-  if (consensusRatio < 0.4 && consensusRatio > 0) {
-    TP_trap += config.TRAP_ISOLATED;
-    signals.push({ signal: 'ISOLATED_SIGNAL', value: config.TRAP_ISOLATED });
-  }
-  
   // CLV_NEGATIVE
   if (flags.clvNegative) {
     TP_trap += config.TRAP_CLV_NEGATIVE;
     signals.push({ signal: 'CLV_NEGATIVE', value: config.TRAP_CLV_NEGATIVE });
+  }
+  
+  // NEW: HIGH_CONSENSUS_TRAP - high consensus is public money (inverted)
+  if (consensusRatio >= 0.6) {
+    TP_trap += config.TRAP_CONSENSUS_HIGH;
+    signals.push({ signal: 'HIGH_CONSENSUS_TRAP', value: config.TRAP_CONSENSUS_HIGH });
+  }
+  
+  // NEW: STEAM_MOVE_TRAP - steam is now a trap signal (inverted)
+  if (flags.isSteamMove && !flags.underdogTightening) {
+    TP_trap += config.TRAP_STEAM_MOVE;
+    signals.push({ signal: 'STEAM_MOVE_TRAP', value: config.TRAP_STEAM_MOVE });
+  }
+  
+  // NEW: EXTREME_MOVEMENT_TRAP - extreme moves are public overreaction
+  if (flags.isExtremeMove) {
+    TP_trap += config.TRAP_EXTREME_MOVEMENT;
+    signals.push({ signal: 'EXTREME_MOVEMENT_TRAP', value: config.TRAP_EXTREME_MOVEMENT });
   }
   
   const TP = TP_noise + TP_trap;
@@ -316,8 +380,10 @@ function calculateSES(SP: number, TP: number): number {
 }
 
 function calculateSharpProbability(SES: number, K: number): number {
-  // Logistic function: SharpProb = 1 / (1 + exp(−SES / K))
-  const prob = 1 / (1 + Math.exp(-SES / K));
+  // INVERTED: Lower SES = higher probability of being sharp
+  // Original: 1 / (1 + exp(-SES / K))
+  // Inverted: 1 / (1 + exp(SES / K))
+  const prob = 1 / (1 + Math.exp(SES / K));
   return Math.round(prob * 100);
 }
 
@@ -326,40 +392,46 @@ function classifyMovement(
   sharpPct: number,
   config: EngineConfig
 ): { label: 'SHARP' | 'TRAP' | 'CAUTION'; recommendation: 'pick' | 'fade' | 'caution' } {
-  // SHARP PICK: SES ≥ +30 AND Sharp% ≥ 65
-  if (SES >= config.PICK_SES_THRESHOLD && sharpPct >= config.PICK_SHARP_PCT) {
+  // INVERTED logic: Lower SES = SHARP, Higher SES = TRAP
+  // SHARP PICK: SES <= -20 AND Sharp% >= 65 (inverted)
+  if (SES <= config.PICK_SES_THRESHOLD && sharpPct >= 65) {
     return { label: 'SHARP', recommendation: 'pick' };
   }
   
-  // TRAP / FADE: SES ≤ −30 AND Sharp% ≤ 35
-  if (SES <= config.FADE_SES_THRESHOLD && sharpPct <= config.FADE_SHARP_PCT) {
+  // TRAP / FADE: SES >= +20 AND Sharp% <= 35 (inverted)
+  if (SES >= config.FADE_SES_THRESHOLD && sharpPct <= 35) {
     return { label: 'TRAP', recommendation: 'fade' };
   }
   
-  // CAUTION / MIXED SIGNALS: −30 < SES < +30
+  // CAUTION / MIXED SIGNALS
   return { label: 'CAUTION', recommendation: 'caution' };
 }
 
 function runSharpEngineV2(input: MovementInput, config: EngineConfig): EngineResult {
-  const consensusRatio = input.totalBooks > 0 ? input.booksCount / input.totalBooks : 0;
-  const flags = detectSignalFlags(input);
+  // Handle null/undefined values gracefully
+  const safeInput: MovementInput = {
+    priceChange: input.priceChange ?? 0,
+    lineChange: input.lineChange ?? 0,
+    hoursToGame: Math.max(0, input.hoursToGame ?? 12),
+    booksCount: input.booksCount ?? 1,
+    totalBooks: input.totalBooks ?? 5,
+    currentPrice: input.currentPrice ?? -110,
+    openingPrice: input.openingPrice ?? -110,
+    oppositeSideMoved: input.oppositeSideMoved ?? false,
+    isSteamMove: input.isSteamMove ?? false,
+    isPlayerProp: input.isPlayerProp ?? false,
+    sport: input.sport,
+  };
   
-  // Calculate Sharp Pressure
-  const sharpResult = calculateSharpPressure(input, flags, config);
+  const consensusRatio = safeInput.totalBooks > 0 ? safeInput.booksCount / safeInput.totalBooks : 0;
+  const flags = detectSignalFlags(safeInput);
   
-  // Calculate Trap Pressure
-  const trapResult = calculateTrapPressure(input, flags, config);
-  
-  // Calculate Sharp Edge Score
+  const sharpResult = calculateSharpPressure(safeInput, flags, config);
+  const trapResult = calculateTrapPressure(safeInput, flags, config);
   const SES = calculateSES(sharpResult.SP, trapResult.TP);
-  
-  // Calculate Sharp Probability
   const sharpPct = calculateSharpProbability(SES, config.LOGISTIC_K);
-  
-  // Classify movement
   const classification = classifyMovement(SES, sharpPct, config);
   
-  // Build all signals array
   const allSignals = [
     ...sharpResult.signals.map(s => ({ type: 'sharp' as const, ...s })),
     ...trapResult.signals.map(s => ({ type: 'trap' as const, ...s })),
@@ -374,37 +446,73 @@ function runSharpEngineV2(input: MovementInput, config: EngineConfig): EngineRes
     TP_trap: trapResult.TP_trap,
     SES,
     sharpPct,
-    MW: getMovementWeight(input.priceChange, config),
-    TW: getTimeWeight(input.hoursToGame, config),
+    MW: getMovementWeight(safeInput.priceChange, config),
+    TW: getTimeWeight(safeInput.hoursToGame, config),
     label: classification.label,
     recommendation: classification.recommendation,
     sharpSignals: sharpResult.signals.map(s => s.signal),
     trapSignals: trapResult.signals.map(s => s.signal),
     allSignals,
     consensusRatio,
-    movementBucket: getMovementBucket(input.priceChange),
+    movementBucket: getMovementBucket(safeInput.priceChange),
+    priceDirection: flags.priceDirection,
+    openingSide: determineOpeningSide(safeInput.openingPrice),
+    sportAdjusted: false,
   };
 }
 
-async function loadConfig(supabase: any): Promise<EngineConfig> {
+async function loadConfig(supabase: any, sport?: string): Promise<EngineConfig> {
+  // First load base config
   const { data: configRows } = await supabase
     .from('sharp_engine_config')
     .select('config_key, config_value');
   
-  if (!configRows || configRows.length === 0) {
-    console.log('No config found, using defaults');
-    return DEFAULT_CONFIG;
-  }
-  
   const config = { ...DEFAULT_CONFIG };
   
-  for (const row of configRows as { config_key: string; config_value: number }[]) {
-    if (row.config_key in config) {
-      (config as Record<string, number>)[row.config_key] = Number(row.config_value);
+  if (configRows && configRows.length > 0) {
+    for (const row of configRows as { config_key: string; config_value: number }[]) {
+      if (row.config_key in config) {
+        (config as Record<string, number>)[row.config_key] = Number(row.config_value);
+      }
+    }
+  }
+  
+  // Then overlay sport-specific config if available
+  if (sport) {
+    const { data: sportConfigRows } = await supabase
+      .from('sharp_engine_sport_config')
+      .select('config_key, config_value')
+      .eq('sport', sport);
+    
+    if (sportConfigRows && sportConfigRows.length > 0) {
+      console.log(`Loaded ${sportConfigRows.length} sport-specific overrides for ${sport}`);
+      for (const row of sportConfigRows as { config_key: string; config_value: number }[]) {
+        if (row.config_key in config) {
+          (config as Record<string, number>)[row.config_key] = Number(row.config_value);
+        }
+      }
     }
   }
   
   return config;
+}
+
+async function updateSignalAccuracy(supabase: any, signals: string[], signalType: 'sharp' | 'trap', wasCorrect: boolean, sport?: string) {
+  for (const signal of signals) {
+    await supabase
+      .from('sharp_signal_accuracy')
+      .upsert({
+        signal_name: signal,
+        signal_type: signalType,
+        sport: sport || 'all',
+        total_occurrences: 1,
+        correct_when_present: wasCorrect ? 1 : 0,
+        updated_at: new Date().toISOString(),
+      }, {
+        onConflict: 'signal_name,sport',
+        ignoreDuplicates: false,
+      });
+  }
 }
 
 serve(async (req) => {
@@ -418,14 +526,13 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     const body = await req.json();
-    const { action, movementData, movementId } = body;
+    const { action, movementData, movementId, sport } = body;
 
-    // Load current config from database
-    const config = await loadConfig(supabase);
-    console.log('Loaded engine config:', config);
+    // Load config with optional sport-specific overrides
+    const config = await loadConfig(supabase, sport);
+    console.log('Sharp Engine V2 (INVERTED) - Loaded config for sport:', sport || 'default');
 
     if (action === 'analyze') {
-      // Analyze a single movement
       if (!movementData) {
         return new Response(
           JSON.stringify({ error: 'movementData required for analyze action' }),
@@ -433,17 +540,17 @@ serve(async (req) => {
         );
       }
 
-      const result = runSharpEngineV2(movementData, config);
+      const result = runSharpEngineV2({ ...movementData, sport }, config);
       
-      console.log('Sharp Engine V2 Result:', {
+      console.log('Sharp Engine V2 INVERTED Result:', {
         SES: result.SES,
         sharpPct: result.sharpPct,
         label: result.label,
-        SP: result.SP,
-        TP: result.TP,
+        recommendation: result.recommendation,
+        priceDirection: result.priceDirection,
+        movementBucket: result.movementBucket,
       });
 
-      // If movementId provided, update the record
       if (movementId) {
         const { error: updateError } = await supabase
           .from('line_movements')
@@ -455,10 +562,15 @@ serve(async (req) => {
             movement_weight: result.MW,
             time_weight: result.TW,
             detected_signals: result.allSignals,
-            engine_version: 'v2',
+            engine_version: 'v2.1-inverted',
             movement_authenticity: result.label === 'SHARP' ? 'real' : result.label === 'TRAP' ? 'fake' : 'uncertain',
             recommendation: result.recommendation,
             authenticity_confidence: result.sharpPct / 100,
+            consensus_ratio: result.consensusRatio,
+            price_direction: result.priceDirection,
+            opening_side: result.openingSide,
+            movement_bucket: result.movementBucket,
+            sport_adjusted: !!sport,
           })
           .eq('id', movementId);
 
@@ -468,74 +580,113 @@ serve(async (req) => {
       }
 
       return new Response(
-        JSON.stringify({ success: true, result, config }),
+        JSON.stringify({ success: true, result, config, engineVersion: 'v2.1-inverted' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
     if (action === 'batch_reanalyze') {
-      // Re-analyze recent movements with v2 engine
-      const { data: movements, error: fetchError } = await supabase
+      const { limit = 100, sportFilter } = body;
+      
+      let query = supabase
         .from('line_movements')
         .select('*')
         .order('detected_at', { ascending: false })
-        .limit(100);
+        .limit(Math.min(limit, 500));
+      
+      if (sportFilter) {
+        query = query.eq('sport', sportFilter);
+      }
+      
+      const { data: movements, error: fetchError } = await query;
 
       if (fetchError) {
         throw fetchError;
       }
 
       const results = [];
-      for (const movement of movements || []) {
-        const hoursToGame = movement.commence_time 
-          ? (new Date(movement.commence_time).getTime() - new Date(movement.detected_at).getTime()) / (1000 * 60 * 60)
-          : 12;
+      const batchSize = 25;
+      
+      for (let i = 0; i < (movements || []).length; i += batchSize) {
+        const batch = (movements || []).slice(i, i + batchSize);
+        
+        for (const movement of batch) {
+          // Skip if prices are null
+          if (movement.new_price === null || movement.old_price === null) {
+            console.log(`Skipping movement ${movement.id} - null prices`);
+            continue;
+          }
+          
+          const hoursToGame = movement.commence_time 
+            ? (new Date(movement.commence_time).getTime() - new Date(movement.detected_at).getTime()) / (1000 * 60 * 60)
+            : 12;
 
-        const input: MovementInput = {
-          priceChange: movement.price_change || 0,
-          lineChange: movement.point_change || 0,
-          hoursToGame: Math.max(0, hoursToGame),
-          booksCount: movement.books_consensus || 1,
-          totalBooks: 5, // Assume 5 major books
-          currentPrice: movement.new_price,
-          openingPrice: movement.old_price,
-          oppositeSideMoved: movement.opposite_side_moved || false,
-          isSteamMove: movement.sharp_indicator?.includes('STEAM'),
-        };
+          // Load sport-specific config for this movement
+          const movementConfig = await loadConfig(supabase, movement.sport);
 
-        const result = runSharpEngineV2(input, config);
+          const input: MovementInput = {
+            priceChange: movement.price_change || 0,
+            lineChange: movement.point_change || 0,
+            hoursToGame: Math.max(0, hoursToGame),
+            booksCount: movement.books_consensus || 1,
+            totalBooks: 5,
+            currentPrice: movement.new_price,
+            openingPrice: movement.old_price,
+            oppositeSideMoved: movement.opposite_side_moved || false,
+            isSteamMove: movement.sharp_indicator?.includes('STEAM'),
+            sport: movement.sport,
+          };
 
-        const { error: updateError } = await supabase
-          .from('line_movements')
-          .update({
-            sharp_pressure: result.SP,
-            trap_pressure: result.TP,
-            sharp_edge_score: result.SES,
-            sharp_probability: result.sharpPct,
-            movement_weight: result.MW,
-            time_weight: result.TW,
-            detected_signals: result.allSignals,
-            engine_version: 'v2',
-            movement_authenticity: result.label === 'SHARP' ? 'real' : result.label === 'TRAP' ? 'fake' : 'uncertain',
-            recommendation: result.recommendation,
-            authenticity_confidence: result.sharpPct / 100,
-          })
-          .eq('id', movement.id);
+          const result = runSharpEngineV2(input, movementConfig);
 
-        if (!updateError) {
-          results.push({ id: movement.id, label: result.label, SES: result.SES });
+          const { error: updateError } = await supabase
+            .from('line_movements')
+            .update({
+              sharp_pressure: result.SP,
+              trap_pressure: result.TP,
+              sharp_edge_score: result.SES,
+              sharp_probability: result.sharpPct,
+              movement_weight: result.MW,
+              time_weight: result.TW,
+              detected_signals: result.allSignals,
+              engine_version: 'v2.1-inverted',
+              movement_authenticity: result.label === 'SHARP' ? 'real' : result.label === 'TRAP' ? 'fake' : 'uncertain',
+              recommendation: result.recommendation,
+              authenticity_confidence: result.sharpPct / 100,
+              consensus_ratio: result.consensusRatio,
+              price_direction: result.priceDirection,
+              opening_side: result.openingSide,
+              movement_bucket: result.movementBucket,
+              sport_adjusted: !!movement.sport,
+            })
+            .eq('id', movement.id);
+
+          if (!updateError) {
+            results.push({ 
+              id: movement.id, 
+              label: result.label, 
+              SES: result.SES,
+              recommendation: result.recommendation,
+              priceDirection: result.priceDirection,
+            });
+          }
         }
       }
 
       return new Response(
-        JSON.stringify({ success: true, processed: results.length, results }),
+        JSON.stringify({ 
+          success: true, 
+          processed: results.length, 
+          results,
+          engineVersion: 'v2.1-inverted',
+        }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
     if (action === 'get_config') {
       return new Response(
-        JSON.stringify({ success: true, config }),
+        JSON.stringify({ success: true, config, engineVersion: 'v2.1-inverted' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
