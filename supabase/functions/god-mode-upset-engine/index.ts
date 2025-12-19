@@ -338,11 +338,19 @@ function calculateUpsetValueScore(underdogOdds: number, sharpPct: number) {
 }
 
 async function calculateHomeCourtAdvantage(supabase: any, sport: string, homeTeam: string, isUnderdogHome: boolean) {
+  // Use team_aliases for robust team matching
+  const sportKey = mapSportKeyToAlias(sport);
+  const { data: teamAlias } = await supabase
+    .rpc('find_team_by_alias', { search_term: homeTeam, sport_filter: sportKey })
+    .single();
+
+  const teamName = teamAlias?.team_name || homeTeam;
+
   const { data: hcaStats } = await supabase
     .from('home_court_advantage_stats')
     .select('*')
     .eq('sport', sport)
-    .ilike('team_name', `%${homeTeam.split(' ').pop()}%`)
+    .eq('team_name', teamName)
     .single();
 
   if (!hcaStats) {
@@ -359,6 +367,19 @@ async function calculateHomeCourtAdvantage(supabase: any, sport: string, homeTea
     const homePenalty = (hcaStats.home_win_rate - 0.5) * 50;
     return Math.min(100, Math.max(0, awayBoost - homePenalty + 40));
   }
+}
+
+// Map Odds API sport keys to team_aliases sport column
+function mapSportKeyToAlias(sportKey: string): string {
+  const map: Record<string, string> = {
+    'basketball_nba': 'NBA',
+    'basketball_ncaab': 'NCAAB',
+    'americanfootball_nfl': 'NFL',
+    'americanfootball_ncaaf': 'NCAAF',
+    'icehockey_nhl': 'NHL',
+    'baseball_mlb': 'MLB'
+  };
+  return map[sportKey] || sportKey;
 }
 
 function calculateHistoricalDayBoost(gameDate: Date) {
@@ -457,37 +478,34 @@ function determineSuggestion(upsetScore: number, confidence: string, underdogOdd
   return 'avoid';
 }
 
-// NEW: Calculate record differential between underdog and favorite
+// Calculate record differential between underdog and favorite using team_aliases for robust matching
 async function calculateRecordDifferential(supabase: any, sport: string, underdog: string, favorite: string): Promise<number> {
   try {
-    // Map sport key to standings sport
-    const sportMap: Record<string, string> = {
-      'basketball_nba': 'NBA',
-      'americanfootball_nfl': 'NFL',
-      'basketball_ncaab': 'NCAAB',
-      'americanfootball_ncaaf': 'NCAAF'
-    };
-    const standingsSport = sportMap[sport] || sport;
+    const standingsSport = mapSportKeyToAlias(sport);
 
+    // Use find_team_by_alias for robust team matching
+    const [underdogAliasResult, favoriteAliasResult] = await Promise.all([
+      supabase.rpc('find_team_by_alias', { search_term: underdog, sport_filter: standingsSport }).single(),
+      supabase.rpc('find_team_by_alias', { search_term: favorite, sport_filter: standingsSport }).single()
+    ]);
+
+    const underdogTeamName = underdogAliasResult.data?.team_name || underdog;
+    const favoriteTeamName = favoriteAliasResult.data?.team_name || favorite;
+
+    // Fetch standings for both teams
     const { data: standings } = await supabase
       .from('team_season_standings')
       .select('team_name, win_pct, wins, losses, point_differential')
-      .eq('sport', standingsSport);
+      .eq('sport', standingsSport)
+      .in('team_name', [underdogTeamName, favoriteTeamName]);
 
-    if (!standings || standings.length === 0) {
-      return 50; // Neutral if no data
+    if (!standings || standings.length < 2) {
+      console.log(`[God Mode] Missing standings for ${underdogTeamName} or ${favoriteTeamName}`);
+      return 50; // Neutral if can't find teams
     }
 
-    // Find team standings (flexible matching)
-    const findTeam = (teamName: string) => {
-      return standings.find((s: any) => 
-        s.team_name.toLowerCase().includes(teamName.split(' ').pop()?.toLowerCase() || '') ||
-        teamName.toLowerCase().includes(s.team_name.split(' ').pop()?.toLowerCase() || '')
-      );
-    };
-
-    const underdogStanding = findTeam(underdog);
-    const favoriteStanding = findTeam(favorite);
+    const underdogStanding = standings.find((s: any) => s.team_name === underdogTeamName);
+    const favoriteStanding = standings.find((s: any) => s.team_name === favoriteTeamName);
 
     if (!underdogStanding || !favoriteStanding) {
       return 50; // Neutral if can't find teams
