@@ -33,29 +33,68 @@ interface BestBet {
 
 // REAL accuracy by sport/recommendation from verified historical data (as of Dec 2024)
 // These values are based on actual verified outcomes from line_movements table
-const HISTORICAL_ACCURACY: Record<string, { accuracy: number; sampleSize: number }> = {
+const HISTORICAL_ACCURACY: Record<string, { accuracy: number; sampleSize: number; avgOdds?: number }> = {
   // TOP PERFORMERS - Feature prominently
-  'nfl_fade': { accuracy: 66.54, sampleSize: 260 },     // BEST PERFORMER!
-  'nfl_caution': { accuracy: 55.79, sampleSize: 699 }, // Strong
-  'nhl_caution': { accuracy: 53.08, sampleSize: 552 }, // Profitable
-  'ncaab_fade': { accuracy: 52.92, sampleSize: 907 },  // Profitable
+  'nfl_fade': { accuracy: 66.54, sampleSize: 260, avgOdds: -110 },     // BEST PERFORMER!
+  'nfl_caution': { accuracy: 55.79, sampleSize: 699, avgOdds: -110 }, // Strong
+  'nhl_caution': { accuracy: 53.08, sampleSize: 552, avgOdds: -110 }, // Profitable
+  'ncaab_fade': { accuracy: 52.92, sampleSize: 907, avgOdds: -110 },  // Profitable
+  
+  // GOD MODE UPSETS - Plus money plays (lower accuracy OK with +odds)
+  'god_mode_high': { accuracy: 38.0, sampleSize: 50, avgOdds: 200 },    // +200 avg, needs 33.3% for breakeven
+  'god_mode_medium': { accuracy: 30.0, sampleSize: 100, avgOdds: 275 }, // +275 avg, needs 26.7% for breakeven
   
   // NEAR BREAKEVEN - Include with caution
-  'ncaab_caution': { accuracy: 50.90, sampleSize: 1038 },
-  'ncaab_pick': { accuracy: 50.34, sampleSize: 440 },
-  'nba_caution': { accuracy: 50.19, sampleSize: 257 },
+  'ncaab_caution': { accuracy: 50.90, sampleSize: 1038, avgOdds: -110 },
+  'ncaab_pick': { accuracy: 50.34, sampleSize: 440, avgOdds: -110 },
+  'nba_caution': { accuracy: 50.19, sampleSize: 257, avgOdds: -110 },
   
   // UNDERPERFORMERS - Exclude or consider fading
-  'nba_fade': { accuracy: 49.53, sampleSize: 214 },    // Near random
-  'nhl_fade': { accuracy: 46.86, sampleSize: 175 },    // Below average
-  'nhl_pick': { accuracy: 46.43, sampleSize: 28 },     // Below average - WRONGLY shown before!
-  'nfl_pick': { accuracy: 42.11, sampleSize: 38 },     // Bad
-  'nba_pick': { accuracy: 32.20, sampleSize: 59 },     // TERRIBLE - fade these!
+  'nba_fade': { accuracy: 49.53, sampleSize: 214, avgOdds: -110 },    // Near random
+  'nhl_fade': { accuracy: 46.86, sampleSize: 175, avgOdds: -110 },    // Below average
+  'nhl_pick': { accuracy: 46.43, sampleSize: 28, avgOdds: -110 },     // Below average
+  'nfl_pick': { accuracy: 42.11, sampleSize: 38, avgOdds: -110 },     // Bad
+  'nba_pick': { accuracy: 32.20, sampleSize: 59, avgOdds: -110 },     // TERRIBLE - fade these!
 };
 
-// Minimum accuracy threshold for inclusion (must beat the vig)
-// At -110 odds, you need 52.38% to break even
-const MIN_ACCURACY_THRESHOLD = 52.4;
+// Calculate breakeven accuracy for given American odds
+function getBreakevenAccuracy(odds: number): number {
+  if (odds > 0) {
+    return 100 / (odds + 100) * 100; // e.g., +200 = 33.3%
+  } else {
+    return Math.abs(odds) / (Math.abs(odds) + 100) * 100; // e.g., -110 = 52.38%
+  }
+}
+
+// ROI-based threshold: must beat breakeven for the typical odds in this signal type
+function getAccuracyThreshold(signalKey: string, candidateOdds?: number): number {
+  const avgOdds = candidateOdds || HISTORICAL_ACCURACY[signalKey]?.avgOdds || -110;
+  return getBreakevenAccuracy(avgOdds);
+}
+
+// Calculate expected ROI for a signal
+function calculateExpectedROI(accuracy: number, avgOdds: number): number {
+  const winProb = accuracy / 100;
+  const loseProb = 1 - winProb;
+  
+  if (avgOdds > 0) {
+    // Plus money: win returns odds/100 units, lose returns -1 unit
+    return (winProb * (avgOdds / 100)) - loseProb;
+  } else {
+    // Minus money: win returns 100/|odds| units, lose returns -1 unit
+    return (winProb * (100 / Math.abs(avgOdds))) - loseProb;
+  }
+}
+
+// Sample-size weighted boost multiplier (0.5 - 1.0)
+function getSampleSizeMultiplier(sampleSize: number): number {
+  if (sampleSize >= 200) return 1.0;
+  if (sampleSize >= 100) return 0.9;
+  if (sampleSize >= 50) return 0.8;
+  if (sampleSize >= 30) return 0.7;
+  return 0.5;
+}
+
 const MIN_SAMPLE_SIZE = 30; // Require statistical significance
 
 Deno.serve(async (req) => {
@@ -254,7 +293,40 @@ Deno.serve(async (req) => {
       }
     }
 
-    console.log(`[AI-BestBets] Found ${candidates.length} total candidate signals (including coaching)`);
+    // GOD MODE UPSETS - High value plus-money plays
+    const { data: godModeUpsets } = await supabase
+      .from('god_mode_upset_predictions')
+      .select('*')
+      .gte('commence_time', now)
+      .eq('game_completed', false)
+      .gte('final_upset_score', 55)
+      .in('confidence', ['high', 'medium'])
+      .order('final_upset_score', { ascending: false })
+      .limit(15);
+
+    if (godModeUpsets) {
+      for (const upset of godModeUpsets) {
+        const signalType = upset.confidence === 'high' ? 'god_mode_high' : 'god_mode_medium';
+        candidates.push({
+          id: upset.id,
+          event_id: upset.event_id,
+          sport: upset.sport,
+          description: `${upset.underdog} ML (+${upset.underdog_odds}) vs ${upset.favorite}`,
+          recommendation: 'pick',
+          commence_time: upset.commence_time,
+          outcome_name: `${upset.underdog} Moneyline`,
+          new_price: upset.underdog_odds,
+          upset_score: upset.final_upset_score,
+          upset_probability: upset.upset_probability,
+          chaos_mode: upset.chaos_mode_active,
+          sharp_pct: upset.sharp_pct,
+          signal_type: signalType
+        });
+      }
+      console.log(`[AI-BestBets] God Mode upset candidates: ${godModeUpsets.length}`);
+    }
+
+    console.log(`[AI-BestBets] Found ${candidates.length} total candidate signals (including coaching, God Mode)`);
 
     // Step 3: Score each candidate using REAL accuracy data
     const scoredCandidates: BestBet[] = [];
@@ -268,76 +340,85 @@ Deno.serve(async (req) => {
       
       const baselineAccuracy = HISTORICAL_ACCURACY[signalKey]?.accuracy || 50;
       const baselineSampleSize = HISTORICAL_ACCURACY[signalKey]?.sampleSize || 0;
+      const avgOdds = candidate.new_price || HISTORICAL_ACCURACY[signalKey]?.avgOdds || -110;
       
       // Prefer live data if sample size is sufficient
       const historicalAccuracy = (liveTotal >= 20) ? liveAccuracy : baselineAccuracy;
       const sampleSize = (liveTotal >= 20) ? liveTotal : baselineSampleSize;
 
-      // Skip signals below minimum threshold
-      if (historicalAccuracy < MIN_ACCURACY_THRESHOLD) {
-        console.log(`[AI-BestBets] Skipping ${signalKey} - below accuracy threshold (${historicalAccuracy.toFixed(1)}% < ${MIN_ACCURACY_THRESHOLD}%)`);
+      // ROI-based threshold: must beat breakeven for the odds
+      const accuracyThreshold = getAccuracyThreshold(signalKey, avgOdds);
+      const expectedROI = calculateExpectedROI(historicalAccuracy, avgOdds);
+
+      // Skip signals below ROI-adjusted threshold (allows plus-money with lower accuracy)
+      if (historicalAccuracy < accuracyThreshold) {
+        console.log(`[AI-BestBets] Skipping ${signalKey} - below ROI threshold (${historicalAccuracy.toFixed(1)}% < ${accuracyThreshold.toFixed(1)}% for ${avgOdds} odds)`);
         continue;
       }
 
-      // Skip signals with insufficient sample size
-      if (sampleSize < MIN_SAMPLE_SIZE && signalKey !== 'nba_fatigue') {
+      // Skip signals with insufficient sample size (except fatigue and god mode which have separate tracking)
+      const skipSampleCheck = signalKey === 'nba_fatigue' || signalKey.startsWith('god_mode');
+      if (sampleSize < MIN_SAMPLE_SIZE && !skipSampleCheck) {
         console.log(`[AI-BestBets] Skipping ${signalKey} - insufficient sample size (${sampleSize} < ${MIN_SAMPLE_SIZE})`);
         continue;
       }
+      
+      // Sample size weight multiplier for boosts
+      const sampleMultiplier = getSampleSizeMultiplier(sampleSize);
 
       // Calculate composite score - start with accuracy
       const signals: string[] = [];
       let compositeScore = historicalAccuracy;
 
-      // Boost for NFL FADE (best performer)
+      // Boost for NFL FADE (best performer) - weighted by sample size
       if (signalKey === 'nfl_fade') {
-        compositeScore += 8;
+        compositeScore += 8 * sampleMultiplier;
         signals.push('🔥 Top performer (66%+ accuracy)');
       }
 
       // Safe access for authenticity_confidence (may not exist on all signal types)
       const authConfidence = candidate.authenticity_confidence ?? 0;
       if (authConfidence >= 0.8) {
-        compositeScore += 5;
+        compositeScore += 5 * sampleMultiplier;
         signals.push('High confidence signal');
       } else if (authConfidence >= 0.6) {
-        compositeScore += 2;
+        compositeScore += 2 * sampleMultiplier;
         signals.push('Medium-high confidence');
       }
 
       // Safe access for trap_score (only exists on line movement signals)
       const trapScore = candidate.trap_score ?? 0;
       if (trapScore >= 70) {
-        compositeScore += 5;
+        compositeScore += 5 * sampleMultiplier;
         signals.push(`Strong trap: ${trapScore}`);
       } else if (trapScore >= 50) {
-        compositeScore += 2;
+        compositeScore += 2 * sampleMultiplier;
         signals.push(`Trap detected: ${trapScore}`);
       }
 
       // Safe access for fatigue_differential (only on fatigue signals)
       const fatigueDiff = candidate.fatigue_differential ?? 0;
       if (fatigueDiff >= 25) {
-        compositeScore += 6;
+        compositeScore += 6 * sampleMultiplier;
         signals.push(`High fatigue diff: +${fatigueDiff}`);
       } else if (fatigueDiff >= 20) {
-        compositeScore += 3;
+        compositeScore += 3 * sampleMultiplier;
         signals.push(`Fatigue edge: +${fatigueDiff}`);
       }
 
       // Safe access for books_consensus (may not exist on all signals)
       const booksConsensus = candidate.books_consensus ?? 0;
       if (booksConsensus >= 4) {
-        compositeScore += 5;
+        compositeScore += 5 * sampleMultiplier;
         signals.push(`${booksConsensus} books consensus`);
       } else if (booksConsensus >= 3) {
-        compositeScore += 2;
+        compositeScore += 2 * sampleMultiplier;
         signals.push(`${booksConsensus} books agree`);
       }
 
       // Boost for coaching signals
       if (signalKey?.startsWith('coaching')) {
-        compositeScore += 4;
+        compositeScore += 4 * sampleMultiplier;
         signals.push(`🏀 Coach tendency: ${candidate.coach_name || 'NBA'}`);
         if (candidate.coaching_tendency === 'fast') {
           signals.push('Fast pace = higher scoring');
@@ -346,11 +427,57 @@ Deno.serve(async (req) => {
         }
       }
 
+      // GOD MODE UPSET boosts
+      if (signalKey?.startsWith('god_mode')) {
+        const upsetScore = candidate.upset_score ?? 0;
+        const chaosMode = candidate.chaos_mode ?? false;
+        const sharpPct = candidate.sharp_pct ?? 0;
+        
+        // Boost based on upset score
+        if (upsetScore >= 75) {
+          compositeScore += 10 * sampleMultiplier;
+          signals.push(`🐺 God Mode: ${upsetScore.toFixed(0)} upset score`);
+        } else if (upsetScore >= 65) {
+          compositeScore += 6 * sampleMultiplier;
+          signals.push(`🔮 Strong upset signal: ${upsetScore.toFixed(0)}`);
+        } else {
+          compositeScore += 3 * sampleMultiplier;
+          signals.push(`Upset candidate: ${upsetScore.toFixed(0)}`);
+        }
+        
+        // Chaos mode active = extra boost
+        if (chaosMode) {
+          compositeScore += 5;
+          signals.push('🌪️ CHAOS MODE active');
+        }
+        
+        // Sharp money on underdog
+        if (sharpPct >= 70) {
+          compositeScore += 4 * sampleMultiplier;
+          signals.push(`Sharp money: ${sharpPct.toFixed(0)}%`);
+        }
+        
+        // Plus money value context
+        const odds = candidate.new_price ?? 0;
+        if (odds >= 250) {
+          signals.push(`💰 High value: +${odds}`);
+        } else if (odds >= 150) {
+          signals.push(`Value play: +${odds}`);
+        }
+        
+        // Add ROI context for plus money
+        if (expectedROI > 0) {
+          signals.push(`📈 +${(expectedROI * 100).toFixed(1)}% expected ROI`);
+        }
+      }
+
       // Add sample size context
       if (sampleSize >= 200) {
         signals.push(`Large sample (n=${sampleSize})`);
       } else if (sampleSize >= 50) {
         signals.push(`Good sample (n=${sampleSize})`);
+      } else if (signalKey?.startsWith('god_mode')) {
+        signals.push(`God Mode tracking (n=${sampleSize})`);
       }
 
       // Calculate AI confidence (normalized 0-1)
