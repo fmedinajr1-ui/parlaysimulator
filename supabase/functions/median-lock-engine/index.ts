@@ -72,6 +72,10 @@ interface MedianLockResult {
   
   passedChecks: string[];
   failedChecks: string[];
+  
+  // Parlay-grade flag (65-70% target accuracy)
+  parlayGrade: boolean;
+  parlayGradeReason?: string;
 }
 
 interface GreenSlip {
@@ -300,6 +304,70 @@ function detectUsageShock(candidate: PlayerPropCandidate, bookLine: number): Sho
   };
 }
 
+// ============ PARLAY GRADE DETECTION ============
+
+interface ParlayGradeResult {
+  isParlayGrade: boolean;
+  reason?: string;
+}
+
+function determineParlayGrade(
+  propType: string,
+  betSide: 'OVER' | 'UNDER' | 'PASS',
+  gap: number, // |median - bookLine|
+  confidenceScore: number,
+  classification: 'LOCK' | 'STRONG' | 'BLOCK'
+): ParlayGradeResult {
+  // Only LOCK candidates can be parlay-grade
+  if (classification !== 'LOCK') {
+    return { isParlayGrade: false };
+  }
+  
+  // NEVER parlay-grade if gap is too large (books know something)
+  if (gap > 5) {
+    return { isParlayGrade: false, reason: `Gap ${gap.toFixed(1)} too large (>5)` };
+  }
+  
+  // NEVER parlay-grade if gap is too small (no edge)
+  if (gap < 1.5) {
+    return { isParlayGrade: false, reason: `Gap ${gap.toFixed(1)} too small (<1.5)` };
+  }
+  
+  // === TIER 1: High-accuracy prop type + bet side combos (64-67% historical) ===
+  // UNDER rebounds/assists with moderate gaps are our best performers
+  if (betSide === 'UNDER' && (propType === 'player_rebounds' || propType === 'player_assists')) {
+    if (gap >= 1.5 && gap <= 4) {
+      return { 
+        isParlayGrade: true, 
+        reason: `TIER1: ${betSide} ${propType.replace('player_', '')} with gap ${gap.toFixed(1)} (64-67% historical)` 
+      };
+    }
+  }
+  
+  // === TIER 2: Sweet-spot gap (1.5-3) with very high confidence (97+) ===
+  if (gap >= 1.5 && gap <= 3 && confidenceScore >= 97) {
+    return { 
+      isParlayGrade: true, 
+      reason: `TIER2: Sweet-spot gap ${gap.toFixed(1)} with confidence ${confidenceScore.toFixed(0)}` 
+    };
+  }
+  
+  // === BLOCK: Points with large gaps are historically bad ===
+  if (propType === 'player_points' && gap > 4) {
+    return { isParlayGrade: false, reason: `Points gap ${gap.toFixed(1)} > 4 (trap risk)` };
+  }
+  
+  // === TIER 3: UNDER anything with tight gap and high confidence ===
+  if (betSide === 'UNDER' && gap >= 1.5 && gap <= 3 && confidenceScore >= 92) {
+    return { 
+      isParlayGrade: true, 
+      reason: `TIER3: UNDER with tight gap ${gap.toFixed(1)} and confidence ${confidenceScore.toFixed(0)}` 
+    };
+  }
+  
+  return { isParlayGrade: false };
+}
+
 // ============ CORE ENGINE ============
 
 function evaluateCandidate(
@@ -354,6 +422,7 @@ function evaluateCandidate(
       consistencyScore: 0,
       confidenceScore: 0,
       juiceLagBonus: 0,
+      parlayGrade: false,
     };
   }
   
@@ -380,6 +449,7 @@ function evaluateCandidate(
       consistencyScore: 0,
       confidenceScore: 0,
       juiceLagBonus: 0,
+      parlayGrade: false,
     };
   }
   passedChecks.push(`Minutes floor: median ${medianMinutes.toFixed(0)} ≥ ${config.minutesFloor}`);
@@ -407,6 +477,7 @@ function evaluateCandidate(
       consistencyScore: 0,
       confidenceScore: 0,
       juiceLagBonus: 0,
+      parlayGrade: false,
     };
   }
   passedChecks.push(`Defense adjustment: ${defenseAdjustment >= 0 ? '+' : ''}${defenseAdjustment.toFixed(1)} (rank ${candidate.opponentDefenseRank})`);
@@ -444,6 +515,7 @@ function evaluateCandidate(
       consistencyScore: 0,
       confidenceScore: 0,
       juiceLagBonus: 0,
+      parlayGrade: false,
     };
   }
   passedChecks.push(`${candidate.location} split edge: ${splitEdge.toFixed(1)} ≥ ${config.splitEdgeMin}`);
@@ -477,6 +549,7 @@ function evaluateCandidate(
       consistencyScore: 0,
       confidenceScore: 0,
       juiceLagBonus,
+      parlayGrade: false,
     };
   }
   
@@ -511,6 +584,20 @@ function evaluateCandidate(
     failedChecks.push(`Confidence ${confidenceScore.toFixed(1)} < 75 → BLOCK`);
   }
   
+  // === PARLAY GRADE DETECTION ===
+  const gap = Math.abs(medianStat - candidate.bookLine);
+  const parlayGradeResult = determineParlayGrade(
+    candidate.propType,
+    betSide,
+    gap,
+    confidenceScore,
+    status
+  );
+  
+  if (parlayGradeResult.isParlayGrade) {
+    passedChecks.push(`PARLAY GRADE: ${parlayGradeResult.reason}`);
+  }
+  
   return {
     status,
     blockReason: status === 'BLOCK' ? 'Low Confidence Score' : undefined,
@@ -528,6 +615,8 @@ function evaluateCandidate(
     consistencyScore,
     confidenceScore,
     juiceLagBonus,
+    parlayGrade: parlayGradeResult.isParlayGrade,
+    parlayGradeReason: parlayGradeResult.reason,
   };
 }
 
@@ -785,6 +874,7 @@ serve(async (req) => {
         block_reason: r.blockReason,
         passed_checks: r.passedChecks,
         failed_checks: r.failedChecks,
+        parlay_grade: r.parlayGrade,
       }));
 
       if (candidatesToInsert.length > 0) {

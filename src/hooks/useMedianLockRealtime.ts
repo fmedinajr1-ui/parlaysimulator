@@ -27,6 +27,8 @@ export interface MedianLockCandidate {
   failed_checks: string[];
   block_reason?: string;
   outcome?: string;
+  // Parlay grade flag
+  parlay_grade?: boolean;
   // Game status fields
   game_status?: 'scheduled' | 'live' | 'final' | 'postponed';
   game_start_time?: string;
