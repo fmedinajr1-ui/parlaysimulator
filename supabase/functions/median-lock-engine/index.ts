@@ -105,13 +105,69 @@ interface EngineConfig {
 }
 
 const DEFAULT_CONFIG: EngineConfig = {
-  edgeMin: 1.5,           // Enhanced: was 1.0
-  hitRateMin: 0.80,       // Enhanced: was 0.70
-  minutesFloor: 28,       // Enhanced: was 24
-  minutesMin: 22,         // Enhanced: was 18
-  splitEdgeMin: 1.0,      // Enhanced: was 0.5
-  adjustedEdgeMin: 1.0,   // Enhanced: was 0.5
+  edgeMin: 1.0,           // Recalibrated: was 1.5 (too strict)
+  hitRateMin: 0.70,       // Recalibrated: was 0.80 (too strict)
+  minutesFloor: 26,       // Recalibrated: was 28
+  minutesMin: 20,         // Recalibrated: was 22
+  splitEdgeMin: 0.5,      // Recalibrated: was 1.0 (too strict)
+  adjustedEdgeMin: 0.5,   // Recalibrated: was 1.0 (too strict)
 };
+
+// ============ TEAM DEFENSE RANKINGS CACHE ============
+
+interface DefenseRanking {
+  team: string;
+  rank: number;
+  sport: string;
+}
+
+let defenseRankingsCache: DefenseRanking[] = [];
+let defenseRankingsCacheTime = 0;
+const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+async function fetchDefenseRankings(supabase: any): Promise<DefenseRanking[]> {
+  const now = Date.now();
+  if (defenseRankingsCache.length > 0 && (now - defenseRankingsCacheTime) < CACHE_TTL_MS) {
+    return defenseRankingsCache;
+  }
+  
+  try {
+    const { data, error } = await supabase
+      .from('team_defense_rankings')
+      .select('team_abbreviation, overall_rank, sport')
+      .eq('is_current', true);
+    
+    if (error || !data || data.length === 0) {
+      console.log('No defense rankings found, using defaults');
+      return [];
+    }
+    
+    defenseRankingsCache = data.map((d: any) => ({
+      team: d.team_abbreviation,
+      rank: d.overall_rank,
+      sport: d.sport,
+    }));
+    defenseRankingsCacheTime = now;
+    console.log(`Loaded ${defenseRankingsCache.length} defense rankings`);
+    return defenseRankingsCache;
+  } catch (e) {
+    console.error('Error fetching defense rankings:', e);
+    return [];
+  }
+}
+
+function getDefenseRank(teamAbbrev: string, rankings: DefenseRanking[]): number {
+  if (rankings.length === 0) return 15; // Default to league average
+  
+  const normalized = teamAbbrev.toUpperCase().trim();
+  const match = rankings.find(r => 
+    r.team.toUpperCase() === normalized ||
+    r.team.toUpperCase().includes(normalized) ||
+    normalized.includes(r.team.toUpperCase())
+  );
+  
+  return match?.rank ?? 15;
+}
 
 // ============ UTILITY FUNCTIONS ============
 
@@ -727,17 +783,19 @@ function evaluateCandidate(
     confidenceScore -= 3;
   }
   
-  // Classify
+  // Classify - RECALIBRATED thresholds based on actual hit rate data
+  // Previous: LOCK ≥85, STRONG ≥75 resulted in 46% hit rate
+  // New: Tighter thresholds to improve accuracy
   let status: 'LOCK' | 'STRONG' | 'BLOCK';
-  if (confidenceScore >= 85) {
+  if (confidenceScore >= 92) {
     status = 'LOCK';
-    passedChecks.push(`Confidence ${confidenceScore.toFixed(1)} ≥ 85 → LOCK`);
-  } else if (confidenceScore >= 75) {
+    passedChecks.push(`Confidence ${confidenceScore.toFixed(1)} ≥ 92 → LOCK`);
+  } else if (confidenceScore >= 82) {
     status = 'STRONG';
-    passedChecks.push(`Confidence ${confidenceScore.toFixed(1)} ≥ 75 → STRONG`);
+    passedChecks.push(`Confidence ${confidenceScore.toFixed(1)} ≥ 82 → STRONG`);
   } else {
     status = 'BLOCK';
-    failedChecks.push(`Confidence ${confidenceScore.toFixed(1)} < 75 → BLOCK`);
+    failedChecks.push(`Confidence ${confidenceScore.toFixed(1)} < 82 → BLOCK`);
   }
   
   // === OPPONENT-BASED BLOCKING ===
@@ -792,6 +850,8 @@ interface CandidateWithId extends MedianLockResult {
   propType: string;
   eventId: string;
   bookLine: number;
+  engineSideMatchedBook?: boolean; // NEW: Track if engine agrees with book
+  bookRecommendedSide?: 'over' | 'under'; // NEW: Store book's recommendation
 }
 
 function generateCombinations<T>(arr: T[], size: number): T[][] {
@@ -982,8 +1042,13 @@ serve(async (req) => {
 
       console.log(`Processing ${(propData || []).length} props for candidates`);
       
+      // Fetch defense rankings once for the entire slate
+      const defenseRankings = await fetchDefenseRankings(supabase);
+      console.log(`Defense rankings loaded: ${defenseRankings.length} teams`);
+
       for (const prop of propData || []) {
-        const key = `${prop.player_name}_${prop.prop_type}`;
+        // FIX: Include book_line in deduplication key to allow multiple lines per player/prop
+        const key = `${prop.player_name}_${prop.prop_type}_${prop.current_line}`;
         if (processed.has(key)) continue;
         processed.add(key);
 
@@ -1003,6 +1068,9 @@ serve(async (req) => {
         // Get today's opponent from the prop data or latest log
         const todayOpponent = prop.opponent || logs[0]?.opponent_abbreviation || 'UNK';
         
+        // FIX: Get real defense rank instead of hardcoded 15
+        const realDefenseRank = getDefenseRank(todayOpponent, defenseRankings);
+        
         // Build candidate from available data
         const candidate: PlayerPropCandidate = {
           playerName: prop.player_name,
@@ -1013,7 +1081,7 @@ serve(async (req) => {
           openingPrice: -110,
           location: logs[0]?.is_home ? 'HOME' : 'AWAY',
           opponent: todayOpponent,
-          opponentDefenseRank: 15, // Default to average
+          opponentDefenseRank: realDefenseRank, // FIX: Use real defense rank
           eventId: prop.event_id || `${prop.player_name}_${targetDate}`,
           recommendedSide: (prop.recommended_side || 'over') as 'over' | 'under',
           statLast10: logs.map(l => getStatForPropType(l, prop.prop_type)),
@@ -1037,7 +1105,14 @@ serve(async (req) => {
 
         const result = evaluateCandidate(candidate, engineConfig, vsOpponentData);
         
-        console.log(`EVALUATED: ${prop.player_name} ${prop.prop_type} ${candidate.recommendedSide} - status=${result.status}, blockReason=${result.blockReason || 'none'}, edge=${result.adjustedEdge?.toFixed(2)}, hitRate=${(result.hitRate * 100).toFixed(1)}%, vsOpp=${result.vsOpponentGames} games, impact=${result.opponentImpact}`);
+        // FIX: Track whether engine agrees with book's recommended side
+        const engineSideMatchedBook = (
+          (result.betSide === 'OVER' && candidate.recommendedSide === 'over') ||
+          (result.betSide === 'UNDER' && candidate.recommendedSide === 'under') ||
+          result.betSide === 'PASS'
+        );
+        
+        console.log(`EVALUATED: ${prop.player_name} ${prop.prop_type} line=${candidate.bookLine} book=${candidate.recommendedSide} engine=${result.betSide} matched=${engineSideMatchedBook} - status=${result.status}, defRank=${realDefenseRank}, edge=${result.adjustedEdge?.toFixed(2)}, hitRate=${(result.hitRate * 100).toFixed(1)}%, vsOpp=${result.vsOpponentGames} games`);
         
         results.push({
           ...result,
@@ -1047,6 +1122,8 @@ serve(async (req) => {
           propType: candidate.propType,
           eventId: candidate.eventId,
           bookLine: candidate.bookLine,
+          engineSideMatchedBook, // NEW: Track engine vs book agreement
+          bookRecommendedSide: candidate.recommendedSide, // NEW: Store book's recommendation
         });
       }
 
@@ -1087,7 +1164,7 @@ serve(async (req) => {
         passed_checks: r.passedChecks,
         failed_checks: r.failedChecks,
         parlay_grade: r.parlayGrade,
-        // NEW: Opponent-based columns
+        // Opponent-based columns
         vs_opponent_games: r.vsOpponentGames,
         vs_opponent_hit_rate: r.vsOpponentHitRate,
         vs_opponent_median: r.vsOpponentMedian,
@@ -1095,6 +1172,9 @@ serve(async (req) => {
         blended_hit_rate: r.blendedHitRate,
         blended_median: r.blendedMedian,
         opponent_impact: r.opponentImpact,
+        // NEW: Engine vs Book side tracking
+        engine_side_matched_book: r.engineSideMatchedBook,
+        book_recommended_side: r.bookRecommendedSide,
       }));
 
       if (candidatesToInsert.length > 0) {
