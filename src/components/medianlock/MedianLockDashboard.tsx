@@ -7,7 +7,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { RefreshCw, Lock, TrendingUp, Sparkles, AlertTriangle, Target, Zap, Radio, CheckCircle, CalendarIcon, ChevronLeft, ChevronRight } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { RefreshCw, Lock, TrendingUp, Sparkles, AlertTriangle, Target, Zap, Radio, CheckCircle, CalendarIcon, ChevronLeft, ChevronRight, Layers } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { MedianLockCandidateCard } from "./MedianLockCandidateCard";
@@ -17,12 +18,30 @@ import { useMedianLockRealtime } from "@/hooks/useMedianLockRealtime";
 import { formatDistanceToNow, format, subDays, addDays, isToday } from "date-fns";
 import { cn } from "@/lib/utils";
 
+// Prop type display names for UI
+const PROP_TYPE_LABELS: Record<string, string> = {
+  'all': 'All Props',
+  'player_points': 'Points',
+  'player_rebounds': 'Rebounds',
+  'player_assists': 'Assists',
+  'player_threes': '3-Pointers',
+  'player_pra': 'PRA',
+  'player_pts_rebs': 'P+R',
+  'player_pts_asts': 'P+A',
+  'player_rebs_asts': 'R+A',
+  'player_stl_blk': 'S+B',
+  'player_steals': 'Steals',
+  'player_blocks': 'Blocks',
+};
+
 export function MedianLockDashboard() {
   const [refreshing, setRefreshing] = useState(false);
+  const [generatingCombos, setGeneratingCombos] = useState(false);
   const [activeTab, setActiveTab] = useState("locks");
   const [viewMode, setViewMode] = useState<'active' | 'settled' | 'all'>('all');
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [calendarOpen, setCalendarOpen] = useState(false);
+  const [propTypeFilter, setPropTypeFilter] = useState<string>('all');
 
   const slateDate = selectedDate.toISOString().split('T')[0];
   const isViewingToday = isToday(selectedDate);
@@ -89,11 +108,44 @@ export function MedianLockDashboard() {
     }
   };
 
-  // Get filtered candidates based on view mode
+  const generateComboProps = async () => {
+    setGeneratingCombos(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('generate-combo-props', {
+        body: { action: 'generate' },
+      });
+
+      if (error) throw error;
+      
+      toast.success(`Generated ${data.summary?.propsGenerated || 0} combo props (${Object.entries(data.summary?.byType || {}).map(([k, v]) => `${k}: ${v}`).join(', ')})`);
+    } catch (error) {
+      console.error('Combo props error:', error);
+      toast.error('Failed to generate combo props');
+    } finally {
+      setGeneratingCombos(false);
+    }
+  };
+
+  // Get unique prop types from candidates
+  const availablePropTypes = Array.from(new Set(locks.concat(strongs).map(c => c.prop_type))).filter(Boolean);
+
+  // Get filtered candidates based on view mode and prop type
   const getFilteredCandidates = (candidates: typeof locks) => {
-    if (viewMode === 'active') return candidates.filter(c => c.game_status !== 'final' && c.outcome !== 'hit' && c.outcome !== 'miss');
-    if (viewMode === 'settled') return candidates.filter(c => c.game_status === 'final' || c.outcome === 'hit' || c.outcome === 'miss');
-    return candidates;
+    let filtered = candidates;
+    
+    // View mode filter
+    if (viewMode === 'active') {
+      filtered = filtered.filter(c => c.game_status !== 'final' && c.outcome !== 'hit' && c.outcome !== 'miss');
+    } else if (viewMode === 'settled') {
+      filtered = filtered.filter(c => c.game_status === 'final' || c.outcome === 'hit' || c.outcome === 'miss');
+    }
+    
+    // Prop type filter
+    if (propTypeFilter !== 'all') {
+      filtered = filtered.filter(c => c.prop_type === propTypeFilter);
+    }
+    
+    return filtered;
   };
 
   const filteredLocks = getFilteredCandidates(locks);
@@ -253,20 +305,58 @@ export function MedianLockDashboard() {
         </Card>
       </div>
 
-      {/* View Mode Toggle */}
-      <div className="flex items-center gap-4">
-        <span className="text-sm text-muted-foreground">Show:</span>
-        <ToggleGroup type="single" value={viewMode} onValueChange={(v) => v && setViewMode(v as typeof viewMode)}>
-          <ToggleGroupItem value="all" size="sm">
-            All ({locks.length + strongs.length})
-          </ToggleGroupItem>
-          <ToggleGroupItem value="active" size="sm" className="text-green-400">
-            🟢 Active ({activeCandidates.length})
-          </ToggleGroupItem>
-          <ToggleGroupItem value="settled" size="sm" className="text-muted-foreground">
-            ✅ Settled ({settledCandidates.length})
-          </ToggleGroupItem>
-        </ToggleGroup>
+      {/* Filters Row */}
+      <div className="flex flex-wrap items-center gap-4">
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground">Show:</span>
+          <ToggleGroup type="single" value={viewMode} onValueChange={(v) => v && setViewMode(v as typeof viewMode)}>
+            <ToggleGroupItem value="all" size="sm">
+              All ({locks.length + strongs.length})
+            </ToggleGroupItem>
+            <ToggleGroupItem value="active" size="sm" className="text-green-400">
+              🟢 Active ({activeCandidates.length})
+            </ToggleGroupItem>
+            <ToggleGroupItem value="settled" size="sm" className="text-muted-foreground">
+              ✅ Settled ({settledCandidates.length})
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </div>
+
+        {/* Prop Type Filter */}
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground">Prop:</span>
+          <Select value={propTypeFilter} onValueChange={setPropTypeFilter}>
+            <SelectTrigger className="w-[140px] h-8">
+              <SelectValue placeholder="All Props" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Props</SelectItem>
+              {/* Single props */}
+              <SelectItem value="player_points">Points</SelectItem>
+              <SelectItem value="player_rebounds">Rebounds</SelectItem>
+              <SelectItem value="player_assists">Assists</SelectItem>
+              <SelectItem value="player_threes">3-Pointers</SelectItem>
+              {/* Combo props */}
+              <SelectItem value="player_pra">🔥 PRA</SelectItem>
+              <SelectItem value="player_pts_rebs">P+R</SelectItem>
+              <SelectItem value="player_pts_asts">P+A</SelectItem>
+              <SelectItem value="player_rebs_asts">R+A</SelectItem>
+              <SelectItem value="player_stl_blk">S+B</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Generate Combo Props Button */}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={generateComboProps}
+          disabled={generatingCombos}
+          className="gap-1.5"
+        >
+          <Layers className={`h-4 w-4 ${generatingCombos ? 'animate-pulse' : ''}`} />
+          {generatingCombos ? 'Generating...' : 'Gen Combos'}
+        </Button>
       </div>
 
       {/* Main Content Tabs */}

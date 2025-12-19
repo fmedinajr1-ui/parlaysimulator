@@ -278,3 +278,6 @@ verify_jwt = false
 
 [functions.first-scorer-engine]
 verify_jwt = false
+
+[functions.generate-combo-props]
+verify_jwt = false
