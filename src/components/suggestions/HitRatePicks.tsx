@@ -6,12 +6,29 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, RefreshCw, Target, Zap, TrendingUp, TrendingDown, Minus, AlertCircle, Flame, Plus, BarChart3, Shield, Thermometer, Snowflake } from "lucide-react";
+import { Loader2, RefreshCw, Target, Zap, TrendingUp, TrendingDown, Minus, AlertCircle, Flame, Plus, BarChart3, Shield, Thermometer, Snowflake, Swords } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { AddToParlayButton } from "@/components/parlay/AddToParlayButton";
 import { MiniEnsembleScore } from "@/components/bestbets/MiniEnsembleScore";
 import { MiniKellyIndicator } from "@/components/bestbets/MiniKellyIndicator";
 import { extractHitRateSignals } from "@/lib/ensemble-engine";
+import { OpponentImpactCard } from "@/components/results/OpponentImpactCard";
+import { cn } from "@/lib/utils";
+
+// Calculate opponent impact based on hit rate differential
+const calculateOpponentImpact = (
+  overallHitRate: number, 
+  vsOpponentHitRate: number | null
+): 'BOOST' | 'NEUTRAL' | 'CAUTION' | 'FADE' => {
+  if (!vsOpponentHitRate) return 'NEUTRAL';
+  
+  const diff = vsOpponentHitRate - overallHitRate;
+  
+  if (diff >= 0.1) return 'BOOST';      // 10%+ better vs opponent
+  if (diff <= -0.2) return 'FADE';       // 20%+ worse vs opponent
+  if (diff <= -0.1) return 'CAUTION';    // 10%+ worse vs opponent
+  return 'NEUTRAL';
+};
 
 // Calculate trend from game logs (recent games vs older games)
 const calculateTrend = (gameLogs: any[], line: number, side: 'over' | 'under'): 'up' | 'down' | 'neutral' => {
@@ -88,6 +105,13 @@ const LINE_VALUE_OPTIONS = [
   { value: "hot", label: "🔥 Trending Up" },
 ];
 
+// Opponent matchup filter options
+const OPPONENT_MATCHUP_OPTIONS = [
+  { value: "all", label: "All Matchups" },
+  { value: "boost", label: "🚀 Favorable" },
+  { value: "fade", label: "🚫 Avoid (FADE)" },
+];
+
 // Get line value badge styling
 const getLineValueBadgeClass = (label: string | null) => {
   switch (label) {
@@ -152,6 +176,7 @@ export function HitRatePicks() {
   const [streakFilter, setStreakFilter] = useState("all");
   const [sportFilter, setSportFilter] = useState("all"); // Default to all sports
   const [lineValueFilter, setLineValueFilter] = useState("all");
+  const [opponentMatchupFilter, setOpponentMatchupFilter] = useState("all");
   const [propsToday, setPropsToday] = useState(0);
   const hasAutoFetched = useRef(false);
 
@@ -174,7 +199,7 @@ export function HitRatePicks() {
 
   // Fetch individual high hit-rate props with filters
   const { data: props, isLoading: propsLoading } = useQuery({
-    queryKey: ['hitrate-props', hitRateThreshold, streakFilter, sportFilter, lineValueFilter],
+    queryKey: ['hitrate-props', hitRateThreshold, streakFilter, sportFilter, lineValueFilter, opponentMatchupFilter],
     queryFn: async () => {
       let query = supabase
         .from('player_prop_hitrates')
@@ -208,7 +233,21 @@ export function HitRatePicks() {
       const { data, error } = await query;
       
       if (error) throw error;
-      return data || [];
+      
+      // Apply opponent matchup filter client-side (after fetching)
+      let filteredData = data || [];
+      if (opponentMatchupFilter !== 'all') {
+        filteredData = filteredData.filter((prop: any) => {
+          if (!prop.vs_opponent_games || prop.vs_opponent_games < 2) return false;
+          const bestHitRate = prop.recommended_side === 'over' ? prop.hit_rate_over : prop.hit_rate_under;
+          const impact = calculateOpponentImpact(bestHitRate, prop.vs_opponent_hit_rate);
+          if (opponentMatchupFilter === 'boost') return impact === 'BOOST';
+          if (opponentMatchupFilter === 'fade') return impact === 'FADE' || impact === 'CAUTION';
+          return true;
+        });
+      }
+      
+      return filteredData;
     }
   });
 
@@ -407,6 +446,23 @@ export function HitRatePicks() {
     other: props?.filter((p: any) => !['5/5', '4/5', '3/5'].includes(p.hit_streak)) || [],
   };
 
+  // Calculate opponent matchup stats for summary badges
+  const opponentMatchupStats = useMemo(() => {
+    if (!props) return { boost: 0, fade: 0, caution: 0 };
+    
+    let boost = 0, fade = 0, caution = 0;
+    props.forEach((prop: any) => {
+      if (prop.vs_opponent_games >= 2) {
+        const bestHitRate = prop.recommended_side === 'over' ? prop.hit_rate_over : prop.hit_rate_under;
+        const impact = calculateOpponentImpact(bestHitRate, prop.vs_opponent_hit_rate);
+        if (impact === 'BOOST') boost++;
+        else if (impact === 'FADE') fade++;
+        else if (impact === 'CAUTION') caution++;
+      }
+    });
+    return { boost, fade, caution };
+  }, [props]);
+
   return (
     <div className="space-y-6">
       {/* Filter Controls */}
@@ -445,6 +501,19 @@ export function HitRatePicks() {
             </SelectTrigger>
             <SelectContent className="bg-popover border-border">
               {LINE_VALUE_OPTIONS.map(opt => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select value={opponentMatchupFilter} onValueChange={setOpponentMatchupFilter}>
+            <SelectTrigger className="w-36 bg-background border-border">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-popover border-border">
+              {OPPONENT_MATCHUP_OPTIONS.map(opt => (
                 <SelectItem key={opt.value} value={opt.value}>
                   {opt.label}
                 </SelectItem>
@@ -552,6 +621,24 @@ export function HitRatePicks() {
           {propsByStreak['3/5'].length > 0 && (
             <Badge className="bg-neon-yellow/20 text-neon-yellow border-neon-yellow/30">
               {propsByStreak['3/5'].length} Solid (3/5)
+            </Badge>
+          )}
+          
+          {/* Opponent Matchup Summary Badges */}
+          {opponentMatchupStats.boost > 0 && (
+            <Badge className="bg-neon-green/20 text-neon-green border-neon-green/30">
+              <Swords className="h-3 w-3 mr-1" />
+              🚀 {opponentMatchupStats.boost} Favorable Matchups
+            </Badge>
+          )}
+          {opponentMatchupStats.fade > 0 && (
+            <Badge className="bg-neon-red/20 text-neon-red border-neon-red/30">
+              🚫 {opponentMatchupStats.fade} Matchups to Avoid
+            </Badge>
+          )}
+          {opponentMatchupStats.caution > 0 && (
+            <Badge className="bg-neon-yellow/20 text-neon-yellow border-neon-yellow/30">
+              ⚠️ {opponentMatchupStats.caution} Mixed History
             </Badge>
           )}
         </div>
@@ -692,6 +779,20 @@ function PropCard({ prop, PROP_LABELS }: { prop: any; PROP_LABELS: Record<string
   const seasonTrendData = getSeasonTrendBadge(prop.trend_direction, prop.season_trend_pct);
   const SeasonTrendIcon = seasonTrendData.icon;
   
+  // Calculate opponent impact
+  const opponentImpact = calculateOpponentImpact(bestHitRate, prop.vs_opponent_hit_rate);
+  const hasOpponentData = prop.vs_opponent_games >= 2;
+  
+  // Calculate blended metrics
+  const overallMedian = prop.last_5_avg || prop.season_avg || prop.current_line;
+  const vsOpponentMedian = prop.vs_opponent_avg || overallMedian;
+  const blendedHitRate = hasOpponentData 
+    ? (bestHitRate * 0.6) + ((prop.vs_opponent_hit_rate || bestHitRate) * 0.4)
+    : bestHitRate;
+  const blendedMedian = hasOpponentData
+    ? (overallMedian * 0.6) + (vsOpponentMedian * 0.4)
+    : overallMedian;
+  
   // Generate ensemble signals
   const ensembleSignals = useMemo(() => extractHitRateSignals({
     hit_rate_over: prop.hit_rate_over,
@@ -732,14 +833,27 @@ function PropCard({ prop, PROP_LABELS }: { prop: any; PROP_LABELS: Record<string
                   {prop.line_vs_season_pct > 0 ? '+' : ''}{prop.line_vs_season_pct}%
                 </Badge>
               )}
+              {/* Opponent Impact Badge (Prominent in Header) */}
+              {hasOpponentData && opponentImpact !== 'NEUTRAL' && (
+                <Badge className={cn(
+                  opponentImpact === 'BOOST' && "bg-neon-green/20 text-neon-green border-neon-green/30",
+                  opponentImpact === 'CAUTION' && "bg-neon-yellow/20 text-neon-yellow border-neon-yellow/30",
+                  opponentImpact === 'FADE' && "bg-neon-red/20 text-neon-red border-neon-red/30 animate-pulse"
+                )}>
+                  {opponentImpact === 'BOOST' && '🚀'}
+                  {opponentImpact === 'CAUTION' && '⚠️'}
+                  {opponentImpact === 'FADE' && '🚫'}
+                  vs {prop.opponent_name?.split(' ').pop() || 'OPP'}
+                </Badge>
+              )}
             </div>
             <div className="text-sm text-muted-foreground">
               {prop.recommended_side.toUpperCase()} {prop.current_line}{' '}
               {PROP_LABELS[prop.prop_type] || prop.prop_type}
             </div>
             <div className="text-xs text-muted-foreground mt-1">
-720:               {prop.game_description}
-721:             </div>
+              {prop.game_description}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <div className="text-right">
@@ -877,6 +991,23 @@ function PropCard({ prop, PROP_LABELS }: { prop: any; PROP_LABELS: Record<string
             </div>
           )}
         </div>
+        
+        {/* PROMINENT Opponent Impact Card */}
+        {hasOpponentData && (
+          <OpponentImpactCard
+            playerName={prop.player_name}
+            opponent={prop.opponent_name || 'Opponent'}
+            propType={prop.prop_type}
+            overallHitRate={bestHitRate}
+            overallMedian={overallMedian}
+            vsOpponentHitRate={prop.vs_opponent_hit_rate || 0}
+            vsOpponentMedian={vsOpponentMedian}
+            vsOpponentGames={prop.vs_opponent_games}
+            blendedHitRate={blendedHitRate}
+            blendedMedian={blendedMedian}
+            impact={opponentImpact}
+          />
+        )}
         
         {/* Last 5 Games Mini Chart */}
         {last5Results.length > 0 && (
