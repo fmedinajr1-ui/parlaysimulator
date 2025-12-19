@@ -67,6 +67,23 @@ export default defineConfig(({ mode }) => ({
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         globPatterns: ["**/*.{css,html,ico,png,svg,woff2}"],
         navigateFallback: null,
+        // Force service worker update on every deploy
+        cleanupOutdatedCaches: true,
+        skipWaiting: true,
+        clientsClaim: true,
+        // Network-first for JS files to prevent stale React chunks
+        runtimeCaching: [
+          {
+            urlPattern: /\.js$/,
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'js-cache-v2',
+              expiration: {
+                maxAgeSeconds: 60 * 60, // 1 hour
+              },
+            },
+          },
+        ],
       }
     })
   ].filter(Boolean),

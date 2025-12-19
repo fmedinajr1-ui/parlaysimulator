@@ -13,6 +13,7 @@ import { WolfLoadingOverlay } from "@/components/ui/wolf-loading-overlay";
 import { AnimatePresence, motion } from "framer-motion";
 import { PilotRouteGuard } from "@/components/PilotRouteGuard";
 import { PhoneVerificationGuard } from "@/components/PhoneVerificationGuard";
+import { PWAUpdatePrompt } from "@/components/PWAUpdatePrompt";
 
 // Lazy load all pages for code splitting
 const Index = React.lazy(() => import("./pages/Index"));
@@ -130,6 +131,7 @@ function AppContent() {
       <PilotRouteGuard>
         <Toaster />
         <Sonner />
+        <PWAUpdatePrompt />
         <AnimatedRoutes />
         <UniversalParlayBuilder />
         {isMobile && <BottomNav />}

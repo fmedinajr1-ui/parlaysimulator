@@ -22,7 +22,8 @@ import { PilotQuotaCard } from '@/components/PilotQuotaCard';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { Loader2, LogOut, Upload, Crown, User, Settings, Target, LineChart, GitCompare, Trash2, ChevronDown, BarChart3, Zap, History } from 'lucide-react';
+import { Loader2, LogOut, Upload, Crown, User, Settings, Target, LineChart, GitCompare, Trash2, ChevronDown, BarChart3, Zap, History, RefreshCw } from 'lucide-react';
+import { clearPWACacheAndRefresh } from '@/components/PWAUpdatePrompt';
 import { FullPageWolfLoader } from '@/components/ui/wolf-loader';
 import { toast } from '@/hooks/use-toast';
 import { AppShell } from '@/components/layout/AppShell';
@@ -343,6 +344,22 @@ const Profile = () => {
           <FeedCard>
             <h3 className="font-display text-lg mb-3">App Preferences</h3>
             <TutorialToggle />
+            
+            {/* Clear Cache Button for stuck PWA users */}
+            <div className="mt-4 pt-4 border-t border-border">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={clearPWACacheAndRefresh}
+                className="w-full text-muted-foreground"
+              >
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Clear Cache & Refresh App
+              </Button>
+              <p className="text-xs text-muted-foreground mt-2 text-center">
+                Use this if the app seems stuck or outdated
+              </p>
+            </div>
           </FeedCard>
         </div>
 
