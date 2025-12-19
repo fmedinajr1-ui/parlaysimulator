@@ -347,13 +347,28 @@ Deno.serve(async (req) => {
       const sampleSize = (liveTotal >= 20) ? liveTotal : baselineSampleSize;
 
       // ROI-based threshold: must beat breakeven for the odds
-      const accuracyThreshold = getAccuracyThreshold(signalKey, avgOdds);
-      const expectedROI = calculateExpectedROI(historicalAccuracy, avgOdds);
+      // For God Mode upsets, use actual candidate odds (not historical average)
+      const candidateOdds = signalKey.startsWith('god_mode') 
+        ? (candidate.new_price || avgOdds) 
+        : avgOdds;
+      const accuracyThreshold = getAccuracyThreshold(signalKey, candidateOdds);
+      const expectedROI = calculateExpectedROI(historicalAccuracy, candidateOdds);
 
       // Skip signals below ROI-adjusted threshold (allows plus-money with lower accuracy)
-      if (historicalAccuracy < accuracyThreshold) {
-        console.log(`[AI-BestBets] Skipping ${signalKey} - below ROI threshold (${historicalAccuracy.toFixed(1)}% < ${accuracyThreshold.toFixed(1)}% for ${avgOdds} odds)`);
+      // For God Mode, we accept if expectedROI is positive (historical accuracy beats breakeven)
+      const isGodMode = signalKey.startsWith('god_mode');
+      const meetsThreshold = isGodMode 
+        ? (expectedROI > 0 || historicalAccuracy >= accuracyThreshold * 0.95) // 5% tolerance for God Mode
+        : (historicalAccuracy >= accuracyThreshold);
+        
+      if (!meetsThreshold) {
+        console.log(`[AI-BestBets] Skipping ${signalKey} - below ROI threshold (${historicalAccuracy.toFixed(1)}% < ${accuracyThreshold.toFixed(1)}% for ${candidateOdds} odds, ROI: ${(expectedROI * 100).toFixed(1)}%)`);
         continue;
+      }
+      
+      // Log when God Mode passes threshold
+      if (isGodMode) {
+        console.log(`[AI-BestBets] ✅ God Mode ${signalKey} INCLUDED: ${historicalAccuracy.toFixed(1)}% accuracy, ${candidateOdds} odds, ${(expectedROI * 100).toFixed(1)}% expected ROI`);
       }
 
       // Skip signals with insufficient sample size (except fatigue and god mode which have separate tracking)
