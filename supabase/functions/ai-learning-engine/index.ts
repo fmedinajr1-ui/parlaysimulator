@@ -82,6 +82,31 @@ serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
+
+    // NEW: Reset corrupted streak data
+    if (action === 'reset_streak_data') {
+      const result = await resetStreakData(supabase);
+      return new Response(JSON.stringify(result), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // NEW: Auto-disable unhealthy engines
+    if (action === 'auto_disable_engines') {
+      const result = await autoDisableUnhealthyEngines(supabase);
+      return new Response(JSON.stringify(result), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // NEW: Re-enable a disabled engine
+    if (action === 're_enable_engine') {
+      const { formulaName, engineSource } = await req.json();
+      const result = await reEnableEngine(supabase, formulaName, engineSource);
+      return new Response(JSON.stringify(result), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
     
     if (action === 'full_learning_cycle') {
       console.log('🔄 Starting full learning cycle...');
@@ -93,6 +118,9 @@ serve(async (req) => {
       const syncResult = await syncLearningProgressFromSettled(supabase);
       const healthResult = await getEngineHealth(supabase);
       
+      // NEW: Run auto-disable check at end of learning cycle
+      const autoDisableResult = await autoDisableUnhealthyEngines(supabase);
+      
       return new Response(JSON.stringify({
         success: true,
         settlements: settleResult,
@@ -101,7 +129,8 @@ serve(async (req) => {
         avoid_patterns: avoidResult,
         cross_engine: crossEngineResult,
         learning_progress_synced: syncResult,
-        engine_health: healthResult
+        engine_health: healthResult,
+        auto_disabled: autoDisableResult
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
@@ -191,7 +220,7 @@ serve(async (req) => {
   }
 });
 
-// NEW: Engine health monitoring - identify underperforming formulas
+// NEW: Engine health monitoring - identify underperforming formulas (excludes disabled)
 async function getEngineHealth(supabase: any) {
   console.log('🏥 Checking engine health...');
 
@@ -199,6 +228,7 @@ async function getEngineHealth(supabase: any) {
     .from('ai_formula_performance')
     .select('*')
     .gte('total_picks', 5)
+    .or('is_disabled.is.null,is_disabled.eq.false') // Exclude disabled engines
     .order('current_accuracy', { ascending: true });
 
   const unhealthyEngines = (formulas || []).filter((f: any) => 
@@ -238,6 +268,225 @@ async function getEngineHealth(supabase: any) {
     recommendations,
     disabled_recommendations: recommendations.filter((r: any) => r.action === 'DISABLE'),
     review_recommendations: recommendations.filter((r: any) => r.action === 'REVIEW')
+  };
+}
+
+// NEW: Reset corrupted streak data - recalculates streaks from recent leg-level outcomes
+async function resetStreakData(supabase: any) {
+  console.log('🔄 Resetting corrupted streak data...');
+
+  // First, get all formulas
+  const { data: formulas, error: formulaError } = await supabase
+    .from('ai_formula_performance')
+    .select('*');
+
+  if (formulaError) {
+    console.error('Error fetching formulas:', formulaError);
+    return { success: false, error: 'Failed to fetch formulas' };
+  }
+
+  const results: any[] = [];
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  for (const formula of formulas || []) {
+    // Reset streaks to 0 first
+    let currentWinStreak = 0;
+    let currentLossStreak = 0;
+
+    // Get recent settled parlays that contain this formula
+    const { data: recentParlays } = await supabase
+      .from('ai_generated_parlays')
+      .select('*')
+      .not('outcome', 'is', null)
+      .gte('settled_at', thirtyDaysAgo)
+      .order('settled_at', { ascending: true });
+
+    // Process each parlay to recalculate streaks based on leg outcomes
+    for (const parlay of recentParlays || []) {
+      const legs = parlay.legs || [];
+      const legSources = parlay.leg_sources || {};
+
+      // Find legs that used this formula
+      for (let i = 0; i < legs.length; i++) {
+        const leg = legs[i];
+        if (leg.formula_name === formula.formula_name && leg.engine_source === formula.engine_source) {
+          // Check if we have leg-level source data
+          const legSource = legSources[i] || legSources[leg.description] || {};
+          const legOutcome = legSource.outcome;
+
+          // If we have leg-level outcome, use it
+          if (legOutcome === 'won') {
+            currentWinStreak++;
+            currentLossStreak = 0;
+          } else if (legOutcome === 'lost') {
+            currentLossStreak++;
+            currentWinStreak = 0;
+          } else {
+            // Fall back to parlay outcome (less accurate but better than corrupted data)
+            if (parlay.outcome === 'won') {
+              currentWinStreak++;
+              currentLossStreak = 0;
+            } else if (parlay.outcome === 'lost') {
+              currentLossStreak++;
+              currentWinStreak = 0;
+            }
+          }
+        }
+      }
+    }
+
+    // Update the formula with corrected streak data
+    const { error: updateError } = await supabase
+      .from('ai_formula_performance')
+      .update({
+        last_win_streak: currentWinStreak,
+        last_loss_streak: currentLossStreak,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', formula.id);
+
+    if (!updateError) {
+      results.push({
+        formula_name: formula.formula_name,
+        engine_source: formula.engine_source,
+        old_win_streak: formula.last_win_streak,
+        old_loss_streak: formula.last_loss_streak,
+        new_win_streak: currentWinStreak,
+        new_loss_streak: currentLossStreak,
+        corrected: formula.last_win_streak !== currentWinStreak || formula.last_loss_streak !== currentLossStreak
+      });
+    }
+  }
+
+  const correctedCount = results.filter(r => r.corrected).length;
+  console.log(`✅ Reset streak data: ${correctedCount}/${results.length} formulas corrected`);
+
+  return {
+    success: true,
+    total_formulas: results.length,
+    corrected_formulas: correctedCount,
+    details: results.filter(r => r.corrected)
+  };
+}
+
+// NEW: Auto-disable unhealthy engines based on critical failure thresholds
+async function autoDisableUnhealthyEngines(supabase: any) {
+  console.log('🚫 Checking for engines to auto-disable...');
+
+  // Get all active (non-disabled) formulas with enough sample size
+  const { data: formulas, error: formulaError } = await supabase
+    .from('ai_formula_performance')
+    .select('*')
+    .gte('total_picks', 10) // Need sufficient sample size
+    .or('is_disabled.is.null,is_disabled.eq.false'); // Only check active engines
+
+  if (formulaError) {
+    console.error('Error fetching formulas:', formulaError);
+    return { success: false, error: 'Failed to fetch formulas' };
+  }
+
+  const disabledEngines: any[] = [];
+  const now = new Date().toISOString();
+
+  for (const formula of formulas || []) {
+    let shouldDisable = false;
+    let disableReason = '';
+
+    // Critical failure criteria:
+    // 1. Accuracy < 30% with 20+ picks
+    if (formula.current_accuracy < 30 && formula.total_picks >= 20) {
+      shouldDisable = true;
+      disableReason = `Critical accuracy failure: ${formula.current_accuracy?.toFixed(1)}% with ${formula.total_picks} picks`;
+    }
+    // 2. Loss streak >= 10
+    else if (formula.last_loss_streak >= 10) {
+      shouldDisable = true;
+      disableReason = `Extended loss streak: ${formula.last_loss_streak} consecutive losses`;
+    }
+    // 3. Accuracy < 20% with 10+ picks (extreme underperformance)
+    else if (formula.current_accuracy < 20 && formula.total_picks >= 10) {
+      shouldDisable = true;
+      disableReason = `Extreme underperformance: ${formula.current_accuracy?.toFixed(1)}% accuracy`;
+    }
+
+    if (shouldDisable) {
+      const { error: updateError } = await supabase
+        .from('ai_formula_performance')
+        .update({
+          is_disabled: true,
+          disabled_at: now,
+          disable_reason: disableReason,
+          updated_at: now
+        })
+        .eq('id', formula.id);
+
+      if (!updateError) {
+        disabledEngines.push({
+          formula_name: formula.formula_name,
+          engine_source: formula.engine_source,
+          accuracy: formula.current_accuracy,
+          total_picks: formula.total_picks,
+          loss_streak: formula.last_loss_streak,
+          reason: disableReason
+        });
+        console.log(`🚫 Disabled ${formula.formula_name} (${formula.engine_source}): ${disableReason}`);
+      }
+    }
+  }
+
+  console.log(`✅ Auto-disable check complete: ${disabledEngines.length} engines disabled`);
+
+  return {
+    success: true,
+    engines_checked: (formulas || []).length,
+    engines_disabled: disabledEngines.length,
+    disabled_engines: disabledEngines
+  };
+}
+
+// NEW: Re-enable a previously disabled engine
+async function reEnableEngine(supabase: any, formulaName: string, engineSource: string) {
+  console.log(`🔄 Re-enabling engine: ${formulaName} (${engineSource})`);
+
+  const { data: formula, error: fetchError } = await supabase
+    .from('ai_formula_performance')
+    .select('*')
+    .eq('formula_name', formulaName)
+    .eq('engine_source', engineSource)
+    .single();
+
+  if (fetchError || !formula) {
+    return { success: false, error: 'Formula not found' };
+  }
+
+  if (!formula.is_disabled) {
+    return { success: false, error: 'Formula is not disabled' };
+  }
+
+  const { error: updateError } = await supabase
+    .from('ai_formula_performance')
+    .update({
+      is_disabled: false,
+      disabled_at: null,
+      disable_reason: null,
+      // Reset streaks to give it a fresh start
+      last_win_streak: 0,
+      last_loss_streak: 0,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', formula.id);
+
+  if (updateError) {
+    return { success: false, error: 'Failed to re-enable engine' };
+  }
+
+  console.log(`✅ Re-enabled ${formulaName} (${engineSource})`);
+
+  return {
+    success: true,
+    formula_name: formulaName,
+    engine_source: engineSource,
+    previous_disable_reason: formula.disable_reason
   };
 }
 

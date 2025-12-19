@@ -218,9 +218,12 @@ export type Database = {
           created_at: string | null
           current_accuracy: number | null
           current_weight: number | null
+          disable_reason: string | null
+          disabled_at: string | null
           engine_source: string
           formula_name: string
           id: string
+          is_disabled: boolean | null
           last_loss_streak: number | null
           last_win_streak: number | null
           loss_patterns: Json | null
@@ -236,9 +239,12 @@ export type Database = {
           created_at?: string | null
           current_accuracy?: number | null
           current_weight?: number | null
+          disable_reason?: string | null
+          disabled_at?: string | null
           engine_source: string
           formula_name: string
           id?: string
+          is_disabled?: boolean | null
           last_loss_streak?: number | null
           last_win_streak?: number | null
           loss_patterns?: Json | null
@@ -254,9 +260,12 @@ export type Database = {
           created_at?: string | null
           current_accuracy?: number | null
           current_weight?: number | null
+          disable_reason?: string | null
+          disabled_at?: string | null
           engine_source?: string
           formula_name?: string
           id?: string
+          is_disabled?: boolean | null
           last_loss_streak?: number | null
           last_win_streak?: number | null
           loss_patterns?: Json | null
