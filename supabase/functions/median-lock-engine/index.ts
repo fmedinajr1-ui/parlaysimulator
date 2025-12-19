@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -156,109 +156,128 @@ async function fetchDefenseRankings(supabase: any): Promise<DefenseRanking[]> {
   }
 }
 
-// ============ TEAM NAME TO ABBREVIATION MAPPING ============
+// ============ TEAM ALIAS LOOKUP (DATABASE-BACKED) ============
 
-const TEAM_NAME_TO_ABBREV: Record<string, string> = {
-  'atlanta hawks': 'ATL',
-  'boston celtics': 'BOS',
-  'brooklyn nets': 'BKN',
-  'charlotte hornets': 'CHA',
-  'chicago bulls': 'CHI',
-  'cleveland cavaliers': 'CLE',
-  'dallas mavericks': 'DAL',
-  'denver nuggets': 'DEN',
-  'detroit pistons': 'DET',
-  'golden state warriors': 'GSW',
-  'houston rockets': 'HOU',
-  'indiana pacers': 'IND',
-  'los angeles clippers': 'LAC',
-  'la clippers': 'LAC',
-  'los angeles lakers': 'LAL',
-  'la lakers': 'LAL',
-  'memphis grizzlies': 'MEM',
-  'miami heat': 'MIA',
-  'milwaukee bucks': 'MIL',
-  'minnesota timberwolves': 'MIN',
-  'new orleans pelicans': 'NOP',
-  'new york knicks': 'NYK',
-  'oklahoma city thunder': 'OKC',
-  'orlando magic': 'ORL',
-  'philadelphia 76ers': 'PHI',
-  'phoenix suns': 'PHX',
-  'portland trail blazers': 'POR',
-  'sacramento kings': 'SAC',
-  'san antonio spurs': 'SAS',
-  'toronto raptors': 'TOR',
-  'utah jazz': 'UTA',
-  'washington wizards': 'WAS',
-  // Common variations
-  'hawks': 'ATL',
-  'celtics': 'BOS',
-  'nets': 'BKN',
-  'hornets': 'CHA',
-  'bulls': 'CHI',
-  'cavaliers': 'CLE',
-  'cavs': 'CLE',
-  'mavericks': 'DAL',
-  'mavs': 'DAL',
-  'nuggets': 'DEN',
-  'pistons': 'DET',
-  'warriors': 'GSW',
-  'rockets': 'HOU',
-  'pacers': 'IND',
-  'clippers': 'LAC',
-  'lakers': 'LAL',
-  'grizzlies': 'MEM',
-  'heat': 'MIA',
-  'bucks': 'MIL',
-  'timberwolves': 'MIN',
-  'wolves': 'MIN',
-  'pelicans': 'NOP',
-  'knicks': 'NYK',
-  'thunder': 'OKC',
-  'magic': 'ORL',
-  '76ers': 'PHI',
-  'sixers': 'PHI',
-  'suns': 'PHX',
-  'trail blazers': 'POR',
-  'blazers': 'POR',
-  'kings': 'SAC',
-  'spurs': 'SAS',
-  'raptors': 'TOR',
-  'jazz': 'UTA',
-  'wizards': 'WAS',
-};
+// Cache for team alias lookups to avoid repeated DB calls
+const teamAliasCache: Map<string, string> = new Map();
+let teamAliasCacheLoaded = false;
 
-function teamNameToAbbrev(teamName: string): string {
-  if (!teamName) return 'UNK';
-  const normalized = teamName.toLowerCase().trim();
+// Load all team aliases into cache at startup for fast lookups
+async function loadTeamAliasCache(supabase: SupabaseClient): Promise<void> {
+  if (teamAliasCacheLoaded) return;
   
-  // Direct match
-  if (TEAM_NAME_TO_ABBREV[normalized]) {
-    return TEAM_NAME_TO_ABBREV[normalized];
+  try {
+    const { data, error } = await supabase
+      .from('team_aliases')
+      .select('team_abbreviation, team_name, nickname, aliases, sport')
+      .eq('is_active', true);
+    
+    if (error) {
+      console.error('Error loading team alias cache:', error);
+      return;
+    }
+    
+    // Build cache with all variations
+    for (const team of data || []) {
+      const abbrev = team.team_abbreviation;
+      const sportPrefix = team.sport === 'NBA' ? '' : `${team.sport}:`;
+      
+      // Map abbreviation
+      teamAliasCache.set(`${sportPrefix}${abbrev.toLowerCase()}`, abbrev);
+      
+      // Map full team name
+      teamAliasCache.set(`${sportPrefix}${team.team_name.toLowerCase()}`, abbrev);
+      
+      // Map nickname
+      if (team.nickname) {
+        teamAliasCache.set(`${sportPrefix}${team.nickname.toLowerCase()}`, abbrev);
+      }
+      
+      // Map all aliases
+      const aliases = team.aliases as string[] || [];
+      for (const alias of aliases) {
+        teamAliasCache.set(`${sportPrefix}${alias.toLowerCase()}`, abbrev);
+      }
+    }
+    
+    teamAliasCacheLoaded = true;
+    console.log(`Loaded ${teamAliasCache.size} team alias mappings into cache`);
+  } catch (e) {
+    console.error('Failed to load team alias cache:', e);
   }
+}
+
+// Fast synchronous lookup using cache (with fallback to RPC for cache misses)
+function teamNameToAbbrev(teamName: string, sport: string = 'NBA'): string {
+  if (!teamName) return 'UNK';
+  
+  const normalized = teamName.toLowerCase().trim();
+  const sportPrefix = sport === 'NBA' ? '' : `${sport}:`;
+  
+  // Check cache with sport prefix
+  const cachedWithSport = teamAliasCache.get(`${sportPrefix}${normalized}`);
+  if (cachedWithSport) return cachedWithSport;
+  
+  // Check cache without sport prefix (for NBA default)
+  const cachedDefault = teamAliasCache.get(normalized);
+  if (cachedDefault) return cachedDefault;
   
   // Already an abbreviation (3 letters uppercase)?
   if (teamName.length <= 3 && teamName === teamName.toUpperCase()) {
     return teamName;
   }
   
-  // Partial match - check if any key is contained in the input
-  for (const [key, abbrev] of Object.entries(TEAM_NAME_TO_ABBREV)) {
-    if (normalized.includes(key) || key.includes(normalized)) {
+  // Partial match in cache
+  for (const [key, abbrev] of teamAliasCache.entries()) {
+    const keyWithoutPrefix = key.includes(':') ? key.split(':')[1] : key;
+    if (keyWithoutPrefix.includes(normalized) || normalized.includes(keyWithoutPrefix)) {
       return abbrev;
     }
   }
   
   // Fallback: take first 3 chars uppercase
+  console.log(`No team alias found for "${teamName}", using fallback`);
+  return teamName.toUpperCase().slice(0, 3);
+}
+
+// Async lookup using database RPC (for when cache might miss)
+async function lookupTeamAbbreviation(
+  supabase: SupabaseClient,
+  teamName: string,
+  sport: string = 'NBA'
+): Promise<string> {
+  // Try cache first
+  const cached = teamNameToAbbrev(teamName, sport);
+  if (cached !== teamName.toUpperCase().slice(0, 3)) {
+    return cached;
+  }
+  
+  // Call database RPC for cache miss
+  try {
+    const { data, error } = await supabase.rpc('find_team_by_alias', {
+      search_term: teamName,
+      sport_filter: sport
+    });
+    
+    if (!error && data && data.length > 0) {
+      const abbrev = data[0].team_abbreviation;
+      // Update cache for future lookups
+      teamAliasCache.set(teamName.toLowerCase(), abbrev);
+      console.log(`DB lookup: ${teamName} -> ${abbrev} (${data[0].match_type})`);
+      return abbrev;
+    }
+  } catch (e) {
+    console.error('Error in team alias RPC lookup:', e);
+  }
+  
   return teamName.toUpperCase().slice(0, 3);
 }
 
 function getDefenseRank(teamInput: string, rankings: DefenseRanking[]): number {
   if (rankings.length === 0) return 15; // Default to league average
   
-  // Convert team name to abbreviation first
-  const abbrev = teamNameToAbbrev(teamInput);
+  // Convert team name to abbreviation using cache
+  const abbrev = teamNameToAbbrev(teamInput, 'NBA');
   
   const match = rankings.find(r => 
     r.team.toUpperCase() === abbrev ||
@@ -1068,6 +1087,9 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // Load team alias cache at startup for fast lookups
+    await loadTeamAliasCache(supabase);
 
     const { action, slateDate, config } = await req.json();
     const engineConfig: EngineConfig = { ...DEFAULT_CONFIG, ...config };
