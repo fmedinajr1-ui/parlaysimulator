@@ -12,6 +12,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { MedianLockCandidateCard } from "./MedianLockCandidateCard";
 import { GreenSlipCard } from "./GreenSlipCard";
+import { MedianLockAccuracyCard } from "./MedianLockAccuracyCard";
 import { useMedianLockRealtime } from "@/hooks/useMedianLockRealtime";
 import { formatDistanceToNow, format, subDays, addDays, isToday } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -194,6 +195,9 @@ export function MedianLockDashboard() {
           </Button>
         )}
       </div>
+
+      {/* Historical Accuracy Card */}
+      <MedianLockAccuracyCard />
 
       {/* Stats Overview */}
       <div className="grid grid-cols-2 md:grid-cols-6 gap-3">

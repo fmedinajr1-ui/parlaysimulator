@@ -148,9 +148,33 @@ function determineBetSide(
   const underEdge = bookLine - medianStat;
   const underHitRate = calculateHitRate(statLast10, bookLine, 'under');
   
-  // Check OVER first - use config thresholds
+  // Check OVER with STRICTER filters (similar to UNDER)
   if (overEdge >= config.edgeMin && overHitRate >= config.hitRateMin) {
-    return { betSide: 'OVER', edge: overEdge, hitRate: overHitRate, side: 'over' };
+    // === STRICTER OVER VALIDATION ===
+    
+    // 1. Variance check: OVER bets need consistent players (but allow slightly more variance than UNDER)
+    const overVariance = stdDev(statLast10);
+    if (overVariance > 6) {
+      console.log(`OVER blocked: high variance ${overVariance.toFixed(1)} > 6`);
+      // Fall through to check UNDER
+    }
+    // 2. Trending check: Last 3 games should also be over the line
+    else {
+      const last3 = statLast10.slice(0, 3);
+      const last3Over = last3.filter(v => v >= bookLine).length;
+      if (last3Over < 2) {
+        console.log(`OVER blocked: only ${last3Over}/3 recent games over line (trending filter)`);
+        // Fall through to check UNDER
+      } 
+      // 3. Edge buffer: Require higher edge for OVER bets (at least 1.5)
+      else if (overEdge < 1.5) {
+        console.log(`OVER blocked: edge ${overEdge.toFixed(1)} < 1.5 (edge buffer)`);
+        // Fall through to check UNDER
+      } else {
+        // Passed all OVER filters
+        return { betSide: 'OVER', edge: overEdge, hitRate: overHitRate, side: 'over' };
+      }
+    }
   }
   
   // Check UNDER with STRICTER filters
