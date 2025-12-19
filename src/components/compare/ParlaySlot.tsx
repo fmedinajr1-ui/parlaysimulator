@@ -119,8 +119,9 @@ export function ParlaySlot({
       }
 
       let newStake = stake;
-      if (extractedStake) {
-        const stakeNum = parseFloat(extractedStake.replace(/[$,]/g, ''));
+      // extractedStake is now returned as a number from the API
+      if (extractedStake !== null && extractedStake !== undefined) {
+        const stakeNum = typeof extractedStake === 'number' ? extractedStake : parseFloat(String(extractedStake).replace(/[$,]/g, ''));
         if (!isNaN(stakeNum) && stakeNum > 0) {
           newStake = stakeNum.toString();
         }

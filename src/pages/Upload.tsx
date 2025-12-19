@@ -432,7 +432,8 @@ const Upload = () => {
 
           if (data?.totalOdds) setExtractedTotalOdds(parseInt(data.totalOdds.replace('+', '')));
           if (data?.earliestGameTime) setExtractedGameTime(data.earliestGameTime);
-          if (data?.stake) setStake(data.stake.replace(/[$,]/g, ''));
+          // stake is now returned as a number from the API
+          if (data?.stake !== null && data?.stake !== undefined) setStake(String(data.stake));
 
           toast({
             title: `Extracted ${extractedLegs.length} legs from video! 🎬`,
@@ -530,7 +531,8 @@ const Upload = () => {
         // Store data from last successful extraction
         if (data?.totalOdds) lastTotalOdds = parseInt(data.totalOdds.replace('+', ''));
         if (data?.earliestGameTime) lastGameTime = data.earliestGameTime;
-        if (data?.stake) lastStake = data.stake;
+        // stake is now returned as a number from the API
+        if (data?.stake !== null && data?.stake !== undefined) lastStake = String(data.stake);
 
         // Update status to success
         setUploadQueue(prev => prev.map((item, idx) => 
@@ -562,7 +564,7 @@ const Upload = () => {
     
     if (lastTotalOdds) setExtractedTotalOdds(lastTotalOdds);
     if (lastGameTime) setExtractedGameTime(lastGameTime);
-    if (lastStake) setStake(lastStake.replace(/[$,]/g, ''));
+    if (lastStake) setStake(lastStake);
 
     setIsProcessing(false);
     setProcessingIndex(-1);
