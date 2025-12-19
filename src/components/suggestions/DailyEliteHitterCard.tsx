@@ -68,7 +68,14 @@ export function DailyEliteHitterCard() {
         .maybeSingle();
       
       if (error) throw error;
-      return data as EliteParlay | null;
+      if (!data) return null;
+      
+      return {
+        ...data,
+        legs: (data.legs || []) as unknown as LegData[],
+        sports: (data.sports || []) as unknown as string[],
+        source_engines: (data.source_engines || []) as unknown as string[],
+      } as EliteParlay;
     },
     staleTime: 1000 * 60 * 5,
   });
