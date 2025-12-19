@@ -76,6 +76,15 @@ interface MedianLockResult {
   // Parlay-grade flag (65-70% target accuracy)
   parlayGrade: boolean;
   parlayGradeReason?: string;
+  
+  // NEW: Opponent-specific stats
+  vsOpponentGames: number;
+  vsOpponentHitRate: number;
+  vsOpponentMedian: number;
+  vsOpponentAvg: number;
+  blendedHitRate: number;
+  blendedMedian: number;
+  opponentImpact: 'BOOST' | 'NEUTRAL' | 'CAUTION' | 'FADE';
 }
 
 interface GreenSlip {
@@ -368,11 +377,64 @@ function determineParlayGrade(
   return { isParlayGrade: false };
 }
 
+// ============ OPPONENT STATS ============
+
+interface VsOpponentStats {
+  vsGames: number[];
+  vsHitRate: number;
+  vsMedian: number;
+  vsAvg: number;
+}
+
+// Default opponent stats when no matchup data exists
+const DEFAULT_OPPONENT_STATS: {
+  vsOpponentGames: number;
+  vsOpponentHitRate: number;
+  vsOpponentMedian: number;
+  vsOpponentAvg: number;
+  blendedHitRate: number;
+  blendedMedian: number;
+  opponentImpact: 'BOOST' | 'NEUTRAL' | 'CAUTION' | 'FADE';
+} = {
+  vsOpponentGames: 0,
+  vsOpponentHitRate: 0,
+  vsOpponentMedian: 0,
+  vsOpponentAvg: 0,
+  blendedHitRate: 0,
+  blendedMedian: 0,
+  opponentImpact: 'NEUTRAL',
+};
+
+function calculateOpponentImpact(
+  overallMedian: number,
+  vsOpponentMedian: number,
+  overallHitRate: number,
+  vsOpponentHitRate: number
+): 'BOOST' | 'NEUTRAL' | 'CAUTION' | 'FADE' {
+  const medianDiff = vsOpponentMedian - overallMedian;
+  const hitRateDiff = vsOpponentHitRate - overallHitRate;
+  
+  // BOOST: Player performs significantly better vs this opponent
+  if (medianDiff >= 2 && hitRateDiff >= 0.05) return 'BOOST';
+  if (medianDiff >= 3) return 'BOOST';
+  
+  // FADE: Player struggles badly vs this opponent
+  if (medianDiff <= -3 && hitRateDiff <= -0.1) return 'FADE';
+  if (medianDiff <= -4) return 'FADE';
+  if (hitRateDiff <= -0.2) return 'FADE';
+  
+  // CAUTION: Slight underperformance
+  if (medianDiff <= -1.5 || hitRateDiff <= -0.1) return 'CAUTION';
+  
+  return 'NEUTRAL';
+}
+
 // ============ CORE ENGINE ============
 
 function evaluateCandidate(
   candidate: PlayerPropCandidate,
-  config: EngineConfig = DEFAULT_CONFIG
+  config: EngineConfig = DEFAULT_CONFIG,
+  vsOpponentData?: VsOpponentStats | null
 ): MedianLockResult {
   const passedChecks: string[] = [];
   const failedChecks: string[] = [];
@@ -388,6 +450,43 @@ function evaluateCandidate(
   const { betSide, edge: rawEdge, hitRate, side } = betSideResult;
   const hitRateLast5 = calculateHitRate(candidate.statLast10.slice(0, 5), candidate.bookLine, side);
   
+  // === OPPONENT DATA CALCULATION ===
+  let opponentStats = DEFAULT_OPPONENT_STATS;
+  
+  if (vsOpponentData && vsOpponentData.vsGames.length >= 2) {
+    const vsGamesCount = vsOpponentData.vsGames.length;
+    
+    // 60% overall + 40% vs opponent weighting
+    const blendedHitRate = (hitRate * 0.6) + (vsOpponentData.vsHitRate * 0.4);
+    const blendedMedian = (medianStat * 0.6) + (vsOpponentData.vsMedian * 0.4);
+    
+    const opponentImpact = calculateOpponentImpact(
+      medianStat,
+      vsOpponentData.vsMedian,
+      hitRate,
+      vsOpponentData.vsHitRate
+    );
+    
+    opponentStats = {
+      vsOpponentGames: vsGamesCount,
+      vsOpponentHitRate: vsOpponentData.vsHitRate,
+      vsOpponentMedian: vsOpponentData.vsMedian,
+      vsOpponentAvg: vsOpponentData.vsAvg,
+      blendedHitRate,
+      blendedMedian,
+      opponentImpact,
+    };
+    
+    // Add opponent info to checks
+    if (opponentImpact === 'BOOST') {
+      passedChecks.push(`vs ${candidate.opponent}: BOOST (+${(vsOpponentData.vsMedian - medianStat).toFixed(1)} median, ${(vsOpponentData.vsHitRate * 100).toFixed(0)}% HR)`);
+    } else if (opponentImpact === 'FADE') {
+      failedChecks.push(`vs ${candidate.opponent}: FADE (${(vsOpponentData.vsMedian - medianStat).toFixed(1)} median, ${(vsOpponentData.vsHitRate * 100).toFixed(0)}% HR)`);
+    } else if (opponentImpact === 'CAUTION') {
+      failedChecks.push(`vs ${candidate.opponent}: CAUTION (${(vsOpponentData.vsMedian - medianStat).toFixed(1)} median)`);
+    }
+  }
+  
   // Build base result (medianPoints stores the stat median for compatibility)
   const baseResult = {
     medianPoints: medianStat,
@@ -400,6 +499,7 @@ function evaluateCandidate(
     passedChecks,
     failedChecks,
     betSide,
+    ...opponentStats,
   };
   
   // === CHECK 0: Bet Side PASS ===
@@ -561,8 +661,7 @@ function evaluateCandidate(
   const statStdDev = stdDev(candidate.statLast10);
   const consistencyScore = statStdDev > 0 ? medianStat / statStdDev : medianStat;
   
-  // ConfidenceScore formula:
-  // AdjustedEdge × 0.35 × 10 + HitRate × 40 + (MedianMinutes / 30) × 10 + ConsistencyScore × 8 + JuiceLagBonus × 5 - (ShockFlag ? 6 : 0)
+  // ConfidenceScore formula with opponent adjustment:
   let confidenceScore = 
     (adjustedEdge * 3.5) +           // Edge weight (0.35 * 10)
     (hitRate * 40) +                  // Hit rate weight
@@ -570,6 +669,17 @@ function evaluateCandidate(
     (Math.min(consistencyScore, 5) * 8) + // Consistency weight (capped)
     (juiceLagBonus * 5) -             // Juice lag bonus
     (shockResult.isShock ? 6 : 0);    // Shock penalty
+  
+  // Apply opponent impact adjustment
+  if (opponentStats.opponentImpact === 'BOOST') {
+    confidenceScore += 5;
+    passedChecks.push(`Opponent BOOST: +5 confidence`);
+  } else if (opponentStats.opponentImpact === 'FADE') {
+    confidenceScore -= 10;
+    failedChecks.push(`Opponent FADE: -10 confidence`);
+  } else if (opponentStats.opponentImpact === 'CAUTION') {
+    confidenceScore -= 3;
+  }
   
   // Classify
   let status: 'LOCK' | 'STRONG' | 'BLOCK';
@@ -582,6 +692,13 @@ function evaluateCandidate(
   } else {
     status = 'BLOCK';
     failedChecks.push(`Confidence ${confidenceScore.toFixed(1)} < 75 → BLOCK`);
+  }
+  
+  // === OPPONENT-BASED BLOCKING ===
+  // If opponent impact is FADE and blended hit rate is too low, block the candidate
+  if (opponentStats.opponentImpact === 'FADE' && opponentStats.blendedHitRate < 0.65 && opponentStats.vsOpponentGames >= 3) {
+    status = 'BLOCK';
+    failedChecks.push(`Blocked: FADE impact with ${(opponentStats.blendedHitRate * 100).toFixed(0)}% blended HR < 65%`);
   }
   
   // === PARLAY GRADE DETECTION ===
@@ -779,6 +896,40 @@ serve(async (req) => {
       const playersWithLogs = Object.keys(playerLogs).length;
       console.log(`Grouped ${gameLogs?.length || 0} game logs into ${playersWithLogs} unique players`);
 
+      // Helper function to fetch vs opponent stats
+      const fetchVsOpponentStats = (
+        allLogs: typeof gameLogs,
+        opponent: string,
+        propType: string,
+        bookLine: number,
+        side: 'over' | 'under'
+      ): VsOpponentStats | null => {
+        if (!allLogs || allLogs.length === 0) return null;
+        
+        // Filter logs where this player faced this opponent
+        const vsGames = allLogs.filter(log => {
+          const oppAbbrev = log.opponent_abbreviation || '';
+          return oppAbbrev.toLowerCase().includes(opponent.toLowerCase().slice(0, 3)) ||
+                 opponent.toLowerCase().includes(oppAbbrev.toLowerCase());
+        });
+        
+        if (vsGames.length < 2) return null;
+        
+        const vsStats = vsGames.map(log => getStatForPropType(log, propType));
+        const vsMedianVal = median(vsStats);
+        const vsAvgVal = average(vsStats);
+        const vsHitRateVal = calculateHitRate(vsStats, bookLine, side);
+        
+        console.log(`vs ${opponent}: ${vsGames.length} games, median=${vsMedianVal.toFixed(1)}, hitRate=${(vsHitRateVal * 100).toFixed(0)}%`);
+        
+        return {
+          vsGames: vsStats,
+          vsHitRate: vsHitRateVal,
+          vsMedian: vsMedianVal,
+          vsAvg: vsAvgVal,
+        };
+      };
+
       const results: CandidateWithId[] = [];
       const processed = new Set<string>();
       let skippedLowGames = 0;
@@ -790,8 +941,11 @@ serve(async (req) => {
         if (processed.has(key)) continue;
         processed.add(key);
 
+        // Get ALL logs for this player (not just last 10) to search for opponent matchups
+        const allPlayerLogs = playerLogs[prop.player_name] || [];
+        
         // Filter out zero-minute games (DNP/inactive) before slicing
-        const logs = (playerLogs[prop.player_name] || [])
+        const logs = allPlayerLogs
           .filter(l => (l.minutes_played || 0) > 0)
           .slice(0, 10);
         if (logs.length < 5) {
@@ -800,6 +954,9 @@ serve(async (req) => {
           continue;
         }
 
+        // Get today's opponent from the prop data or latest log
+        const todayOpponent = prop.opponent || logs[0]?.opponent_abbreviation || 'UNK';
+        
         // Build candidate from available data
         const candidate: PlayerPropCandidate = {
           playerName: prop.player_name,
@@ -809,7 +966,7 @@ serve(async (req) => {
           currentPrice: -110, // Default if not available
           openingPrice: -110,
           location: logs[0]?.is_home ? 'HOME' : 'AWAY',
-          opponent: logs[0]?.opponent_abbreviation || 'UNK',
+          opponent: todayOpponent,
           opponentDefenseRank: 15, // Default to average
           eventId: prop.event_id || `${prop.player_name}_${targetDate}`,
           recommendedSide: (prop.recommended_side || 'over') as 'over' | 'under',
@@ -823,9 +980,18 @@ serve(async (req) => {
           isNewlyStarting: false,
         };
 
-        const result = evaluateCandidate(candidate, engineConfig);
+        // Fetch vs opponent historical data from ALL games (not just last 10)
+        const vsOpponentData = fetchVsOpponentStats(
+          allPlayerLogs.filter(l => (l.minutes_played || 0) > 0),
+          todayOpponent,
+          prop.prop_type,
+          prop.current_line,
+          candidate.recommendedSide
+        );
+
+        const result = evaluateCandidate(candidate, engineConfig, vsOpponentData);
         
-        console.log(`EVALUATED: ${prop.player_name} ${prop.prop_type} ${candidate.recommendedSide} - status=${result.status}, blockReason=${result.blockReason || 'none'}, edge=${result.adjustedEdge?.toFixed(2)}, hitRate=${(result.hitRate * 100).toFixed(1)}%`);
+        console.log(`EVALUATED: ${prop.player_name} ${prop.prop_type} ${candidate.recommendedSide} - status=${result.status}, blockReason=${result.blockReason || 'none'}, edge=${result.adjustedEdge?.toFixed(2)}, hitRate=${(result.hitRate * 100).toFixed(1)}%, vsOpp=${result.vsOpponentGames} games, impact=${result.opponentImpact}`);
         
         results.push({
           ...result,
@@ -875,6 +1041,14 @@ serve(async (req) => {
         passed_checks: r.passedChecks,
         failed_checks: r.failedChecks,
         parlay_grade: r.parlayGrade,
+        // NEW: Opponent-based columns
+        vs_opponent_games: r.vsOpponentGames,
+        vs_opponent_hit_rate: r.vsOpponentHitRate,
+        vs_opponent_median: r.vsOpponentMedian,
+        vs_opponent_avg: r.vsOpponentAvg,
+        blended_hit_rate: r.blendedHitRate,
+        blended_median: r.blendedMedian,
+        opponent_impact: r.opponentImpact,
       }));
 
       if (candidatesToInsert.length > 0) {

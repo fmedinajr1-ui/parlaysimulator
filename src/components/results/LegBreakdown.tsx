@@ -3,6 +3,7 @@ import { ParlayLeg, LegAnalysis, InjuryAlert } from "@/types/parlay";
 import { ChevronDown, ChevronUp, AlertTriangle, TrendingUp, TrendingDown, Users, Target, Zap, Crown } from "lucide-react";
 import { useState } from "react";
 import { InjuryAlertBadge } from "./InjuryAlertBadge";
+import { OpponentImpactCard } from "./OpponentImpactCard";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 
@@ -157,9 +158,24 @@ export function LegBreakdown({ legs, legAnalyses, delay = 0 }: LegBreakdownProps
                         {hitRatePercent.toFixed(0)}%
                       </span>
                     </div>
-                  )}
+                    )}
 
-                  {/* MedianLock PRO Card */}
+                  {/* Opponent Impact Card - PROMINENT */}
+                  {medianLockData?.vs_opponent_games >= 2 && (
+                    <OpponentImpactCard
+                      playerName={leg.description.split(' ')[0] || 'Player'}
+                      opponent={medianLockData.opponent || 'OPP'}
+                      propType={medianLockData.prop_type || 'player_points'}
+                      overallHitRate={medianLockData.hit_rate || 0}
+                      overallMedian={medianLockData.median_points || 0}
+                      vsOpponentHitRate={medianLockData.vs_opponent_hit_rate || 0}
+                      vsOpponentMedian={medianLockData.vs_opponent_median || 0}
+                      vsOpponentGames={medianLockData.vs_opponent_games || 0}
+                      blendedHitRate={medianLockData.blended_hit_rate || 0}
+                      blendedMedian={medianLockData.blended_median || 0}
+                      impact={medianLockData.opponent_impact || 'NEUTRAL'}
+                    />
+                  )}
                   {medianLockData && (
                     <div className={cn(
                       "mt-3 p-3 rounded-lg border",

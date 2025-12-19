@@ -2243,6 +2243,8 @@ export type Database = {
           away_score: number | null
           away_team: string | null
           bet_side: string | null
+          blended_hit_rate: number | null
+          blended_median: number | null
           block_reason: string | null
           book_line: number
           classification: string | null
@@ -2276,6 +2278,7 @@ export type Database = {
           opening_price: number | null
           opponent: string | null
           opponent_defense_rank: number | null
+          opponent_impact: string | null
           outcome: string | null
           parlay_grade: boolean | null
           passed_checks: Json | null
@@ -2295,6 +2298,10 @@ export type Database = {
           usage_last_10: Json | null
           usage_shock: boolean | null
           verified_at: string | null
+          vs_opponent_avg: number | null
+          vs_opponent_games: number | null
+          vs_opponent_hit_rate: number | null
+          vs_opponent_median: number | null
         }
         Insert: {
           actual_value?: number | null
@@ -2302,6 +2309,8 @@ export type Database = {
           away_score?: number | null
           away_team?: string | null
           bet_side?: string | null
+          blended_hit_rate?: number | null
+          blended_median?: number | null
           block_reason?: string | null
           book_line: number
           classification?: string | null
@@ -2335,6 +2344,7 @@ export type Database = {
           opening_price?: number | null
           opponent?: string | null
           opponent_defense_rank?: number | null
+          opponent_impact?: string | null
           outcome?: string | null
           parlay_grade?: boolean | null
           passed_checks?: Json | null
@@ -2354,6 +2364,10 @@ export type Database = {
           usage_last_10?: Json | null
           usage_shock?: boolean | null
           verified_at?: string | null
+          vs_opponent_avg?: number | null
+          vs_opponent_games?: number | null
+          vs_opponent_hit_rate?: number | null
+          vs_opponent_median?: number | null
         }
         Update: {
           actual_value?: number | null
@@ -2361,6 +2375,8 @@ export type Database = {
           away_score?: number | null
           away_team?: string | null
           bet_side?: string | null
+          blended_hit_rate?: number | null
+          blended_median?: number | null
           block_reason?: string | null
           book_line?: number
           classification?: string | null
@@ -2394,6 +2410,7 @@ export type Database = {
           opening_price?: number | null
           opponent?: string | null
           opponent_defense_rank?: number | null
+          opponent_impact?: string | null
           outcome?: string | null
           parlay_grade?: boolean | null
           passed_checks?: Json | null
@@ -2413,6 +2430,10 @@ export type Database = {
           usage_last_10?: Json | null
           usage_shock?: boolean | null
           verified_at?: string | null
+          vs_opponent_avg?: number | null
+          vs_opponent_games?: number | null
+          vs_opponent_hit_rate?: number | null
+          vs_opponent_median?: number | null
         }
         Relationships: []
       }
