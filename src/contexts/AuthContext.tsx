@@ -21,11 +21,19 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   React.useEffect(() => {
     let mounted = true;
 
-    // Check for existing session first
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    // Check for existing session first - with stale session detection
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
       if (mounted) {
-        setSession(session);
-        setUser(session?.user ?? null);
+        if (error) {
+          // Session is stale/invalid - clear it
+          console.warn('[Auth] Stale session detected, clearing:', error.message);
+          supabase.auth.signOut();
+          setSession(null);
+          setUser(null);
+        } else {
+          setSession(session);
+          setUser(session?.user ?? null);
+        }
         setIsLoading(false);
       }
     });
@@ -68,7 +76,24 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   const signOut = async () => {
+    // Clear local state immediately for responsive UI
+    setSession(null);
+    setUser(null);
+    
+    // Sign out from Supabase
     await supabase.auth.signOut();
+    
+    // Clear any cached auth tokens from localStorage
+    try {
+      const keys = Object.keys(localStorage);
+      keys.forEach(key => {
+        if (key.startsWith('sb-') || key.includes('supabase')) {
+          localStorage.removeItem(key);
+        }
+      });
+    } catch (e) {
+      console.warn('[Auth] Could not clear localStorage:', e);
+    }
   };
 
   return (
