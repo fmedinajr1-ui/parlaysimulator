@@ -91,6 +91,17 @@ interface EngineSignal {
   confidence?: number;
 }
 
+interface MedianLockData {
+  classification: string;
+  confidence_score: number;
+  bet_side: string;
+  hit_rate: number;
+  parlay_grade: boolean;
+  edge_percent: number;
+  projected_minutes: number;
+  adjusted_edge: number;
+}
+
 interface EngineConsensus {
   agreeingEngines: string[];
   disagreingEngines: string[];
@@ -125,6 +136,19 @@ interface LegAnalysis {
   fatigueData?: FatigueData;
   engineConsensus?: EngineConsensus;
   avoidPatterns?: string[];
+  medianLockData?: MedianLockData;
+  coachData?: {
+    coachName: string;
+    teamName: string;
+    sport: string;
+    offensiveBias: number;
+    defensiveBias: number;
+    recommendation: string;
+    confidence: number;
+    propRelevance: string;
+    propAdjustment: number;
+  };
+  hitRatePercent?: number;
 }
 
 interface HistoricalContext {
@@ -390,12 +414,13 @@ serve(async (req) => {
     let bestBetsLog: any[] = [];
     let hitrateProps: any[] = [];
     let coachProfiles: any[] = [];
+    let medianLockCandidates: any[] = [];
     
     try {
       const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
       const today = new Date().toISOString().split('T')[0];
       
-      // Fetch all engine data in parallel (10 data sources)
+      // Fetch all engine data in parallel (11 data sources)
       const [
         movementResult,
         unifiedResult,
@@ -406,7 +431,8 @@ serve(async (req) => {
         formulaResult,
         bestBetsResult,
         hitrateResult,
-        coachResult
+        coachResult,
+        medianLockResult
       ] = await Promise.all([
         supabase
           .from('line_movements')
@@ -463,7 +489,13 @@ serve(async (req) => {
           .from('coach_profiles')
           .select('*')
           .eq('is_active', true)
-          .limit(100)
+          .limit(100),
+        supabase
+          .from('median_lock_candidates')
+          .select('*')
+          .eq('slate_date', today)
+          .in('classification', ['LOCK', 'STRONG'])
+          .limit(200)
       ]);
       
       lineMovements = movementResult.data || [];
@@ -476,8 +508,9 @@ serve(async (req) => {
       bestBetsLog = bestBetsResult.data || [];
       hitrateProps = hitrateResult.data || [];
       coachProfiles = coachResult.data || [];
+      medianLockCandidates = medianLockResult.data || [];
       
-      console.log(`Loaded engine data: ${lineMovements.length} movements, ${unifiedProps.length} unified, ${godModeUpsets.length} upsets, ${juicedProps.length} juiced, ${fatigueScores.length} fatigue, ${avoidPatterns.length} avoid, ${formulaPerformance.length} formulas, ${bestBetsLog.length} bestBets, ${hitrateProps.length} hitrate, ${coachProfiles.length} coaches`);
+      console.log(`Loaded engine data: ${lineMovements.length} movements, ${unifiedProps.length} unified, ${godModeUpsets.length} upsets, ${juicedProps.length} juiced, ${fatigueScores.length} fatigue, ${avoidPatterns.length} avoid, ${formulaPerformance.length} formulas, ${bestBetsLog.length} bestBets, ${hitrateProps.length} hitrate, ${coachProfiles.length} coaches, ${medianLockCandidates.length} medianLock`);
     } catch (dataError) {
       console.error('Error fetching engine data:', dataError);
     }
@@ -728,6 +761,51 @@ Return ONLY valid JSON, no other text.`;
         .map(p => p.avoid_reason || p.description || p.pattern_key);
     }
 
+    function matchMedianLock(playerName: string, propType: string, candidates: any[]): any | null {
+      const playerLower = playerName.toLowerCase();
+      const propLower = propType.toLowerCase();
+      return candidates.find(c => 
+        c.player_name?.toLowerCase().includes(playerLower) ||
+        playerLower.includes(c.player_name?.toLowerCase() || '')
+      ) || null;
+    }
+
+    function calculateCoachBias(coach: any, propType: string): { 
+      offensiveBias: number; 
+      defensiveBias: number; 
+      propRelevance: string;
+      propAdjustment: number;
+    } {
+      // Calculate offensive/defensive bias relative to league averages
+      const pace = coach.pace_preference === 'fast' ? 10 : coach.pace_preference === 'slow' ? -10 : 0;
+      const starUsage = (coach.star_usage_pct || 50) - 50; // Normalize to 50% average
+      const rotationImpact = coach.rotation_depth ? (10 - coach.rotation_depth) * 2 : 0; // Deeper rotation = negative
+      
+      const offensiveBias = pace + (starUsage * 0.3);
+      const defensiveBias = -pace + (rotationImpact * 0.5);
+      
+      // Prop-type-specific relevance
+      const propLower = propType.toLowerCase();
+      let propRelevance = 'Neutral coaching impact';
+      let propAdjustment = 0;
+      
+      if (propLower.includes('points') || propLower.includes('pts')) {
+        propRelevance = pace > 0 ? 'Fast pace boosts scoring opportunities' : pace < 0 ? 'Slow pace limits possessions' : 'Standard pace';
+        propAdjustment = pace > 0 ? 2 : pace < 0 ? -2 : 0;
+      } else if (propLower.includes('rebound') || propLower.includes('reb')) {
+        propRelevance = 'Rotation depth affects rebound opportunities';
+        propAdjustment = rotationImpact > 0 ? 1 : -1;
+      } else if (propLower.includes('assist') || propLower.includes('ast')) {
+        propRelevance = pace > 0 ? 'Ball movement creates assist opportunities' : 'Isolation plays limit assists';
+        propAdjustment = pace > 0 ? 1.5 : -1;
+      } else if (propLower.includes('three') || propLower.includes('3pt')) {
+        propRelevance = pace > 0 ? 'Up-tempo creates more 3PT attempts' : 'Half-court sets limit attempts';
+        propAdjustment = pace > 0 ? 0.5 : -0.5;
+      }
+      
+      return { offensiveBias, defensiveBias, propRelevance, propAdjustment };
+    }
+
     function calculateEngineConsensus(legDesc: string, legPlayer: string | undefined, legTeam: string | undefined, allData: {
       unifiedProp: any,
       upset: any,
@@ -736,7 +814,8 @@ Return ONLY valid JSON, no other text.`;
       fatigueData: any,
       bestBet: any,
       hitrateData: any,
-      coachingData: any
+      coachingData: any,
+      medianLockData: any
     }, formulas: any[]): EngineConsensus {
       const agreeing: string[] = [];
       const disagreeing: string[] = [];
@@ -906,7 +985,34 @@ Return ONLY valid JSON, no other text.`;
         engineSignals.push({ engine: 'coaching', status: 'no_data', score: null, reason: 'No coaching data available' });
       }
 
-      const totalEngines = 8;
+      // 9. MedianLock Engine
+      if (allData.medianLockData) {
+        const mlData = allData.medianLockData;
+        const isLock = mlData.classification === 'LOCK';
+        const isParlayGrade = mlData.parlay_grade === true;
+        const descLower = legDesc.toLowerCase();
+        const betMatchesSide = (descLower.includes('over') && mlData.bet_side === 'OVER') || 
+                               (descLower.includes('under') && mlData.bet_side === 'UNDER');
+        
+        const isAgree = (isLock || isParlayGrade) && betMatchesSide;
+        const isDisagree = !betMatchesSide && (isLock || isParlayGrade);
+        
+        engineSignals.push({
+          engine: 'medianlock',
+          status: isAgree ? 'agree' : isDisagree ? 'disagree' : 'neutral',
+          score: mlData.confidence_score || null,
+          reason: isParlayGrade 
+            ? `🏆 PARLAY GRADE - ${mlData.classification} (${(mlData.hit_rate || 0).toFixed(0)}% hit rate)`
+            : `${mlData.classification} pick - ${mlData.bet_side} (${(mlData.confidence_score || 0).toFixed(0)}% conf)`,
+          confidence: mlData.confidence_score
+        });
+        if (isAgree) agreeing.push('MedianLock');
+        else if (isDisagree) disagreeing.push('MedianLock');
+      } else {
+        engineSignals.push({ engine: 'medianlock', status: 'no_data', score: null, reason: 'No MedianLock data available' });
+      }
+
+      const totalEngines = 9;
       const consensusScore = agreeing.length;
 
       return { 
@@ -1016,6 +1122,50 @@ Return ONLY valid JSON, no other text.`;
             (legAnalysis.player && l.player_name?.toLowerCase().includes(legAnalysis.player.toLowerCase()))
           );
         });
+
+        // Match to MedianLock candidates
+        let matchedMedianLock = null;
+        if (legAnalysis.player && medianLockCandidates.length > 0) {
+          matchedMedianLock = matchMedianLock(legAnalysis.player, legDesc, medianLockCandidates);
+          if (matchedMedianLock) {
+            legAnalysis.medianLockData = {
+              classification: matchedMedianLock.classification,
+              confidence_score: matchedMedianLock.confidence_score || 0,
+              bet_side: matchedMedianLock.bet_side,
+              hit_rate: matchedMedianLock.hit_rate || 0,
+              parlay_grade: matchedMedianLock.parlay_grade || false,
+              edge_percent: matchedMedianLock.edge_percent || 0,
+              projected_minutes: matchedMedianLock.projected_minutes || 0,
+              adjusted_edge: matchedMedianLock.adjusted_edge || 0
+            };
+            console.log(`✅ MedianLock matched for ${legAnalysis.player}: ${matchedMedianLock.classification}, ${matchedMedianLock.bet_side}`);
+          }
+        }
+
+        // Add coach data with prop-type-specific analysis
+        const matchedCoach = coachProfiles.find(c => c.team_name?.toLowerCase().includes(legAnalysis.team?.toLowerCase() || ''));
+        if (matchedCoach) {
+          const coachBias = calculateCoachBias(matchedCoach, legDesc);
+          legAnalysis.coachData = {
+            coachName: matchedCoach.coach_name,
+            teamName: matchedCoach.team_name,
+            sport: matchedCoach.sport || 'NBA',
+            offensiveBias: coachBias.offensiveBias,
+            defensiveBias: coachBias.defensiveBias,
+            recommendation: coachBias.propAdjustment > 0 ? 'PICK' : coachBias.propAdjustment < 0 ? 'FADE' : 'NEUTRAL',
+            confidence: Math.min(100, Math.abs(coachBias.offensiveBias) + Math.abs(coachBias.defensiveBias) + 40),
+            propRelevance: coachBias.propRelevance,
+            propAdjustment: coachBias.propAdjustment
+          };
+          console.log(`✅ Coach data matched for ${legAnalysis.team}: ${matchedCoach.coach_name}`);
+        }
+
+        // Add hit rate percentage from unified props or hitrate parlays
+        if (legAnalysis.unifiedPropData?.hitRateScore) {
+          legAnalysis.hitRatePercent = legAnalysis.unifiedPropData.hitRateScore * 100;
+        } else if (matchedHitrate?.combined_probability) {
+          legAnalysis.hitRatePercent = matchedHitrate.combined_probability * 100;
+        }
         
         legAnalysis.engineConsensus = calculateEngineConsensus(
           legDesc,
@@ -1029,7 +1179,8 @@ Return ONLY valid JSON, no other text.`;
             fatigueData: legAnalysis.fatigueData ? fatigueScores.find(f => f.team_name?.toLowerCase().includes(legAnalysis.team?.toLowerCase() || '')) : null,
             bestBet: matchedBestBet || null,
             hitrateData: matchedHitrate || null,
-            coachingData: coachProfiles.find(c => c.team_name?.toLowerCase().includes(legAnalysis.team?.toLowerCase() || '')) || null
+            coachingData: matchedCoach || null,
+            medianLockData: matchedMedianLock || null
           },
           formulaPerformance
         );
