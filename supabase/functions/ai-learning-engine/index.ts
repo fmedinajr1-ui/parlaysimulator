@@ -17,6 +17,13 @@ interface LossPattern {
   timestamp: string;
 }
 
+interface LegResult {
+  description: string;
+  outcome: 'won' | 'lost' | 'pending';
+  actualValue?: number;
+  line?: number;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -31,7 +38,7 @@ serve(async (req) => {
 
     console.log('🧠 AI Learning Engine - Action:', action);
 
-    // Enhanced settlement with loss analysis
+    // Enhanced settlement with loss analysis (LEG-LEVEL ATTRIBUTION)
     if (action === 'process_settlement_with_analysis') {
       return await processSettlementWithAnalysis(supabase, parlayId, outcome, legResults);
     }
@@ -67,6 +74,14 @@ serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
+
+    // NEW: Engine health monitoring action
+    if (action === 'get_engine_health') {
+      const result = await getEngineHealth(supabase);
+      return new Response(JSON.stringify(result), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
     
     if (action === 'full_learning_cycle') {
       console.log('🔄 Starting full learning cycle...');
@@ -76,6 +91,7 @@ serve(async (req) => {
       const avoidResult = await updateAvoidPatterns(supabase);
       const crossEngineResult = await analyzeCrossEnginePerformance(supabase);
       const syncResult = await syncLearningProgressFromSettled(supabase);
+      const healthResult = await getEngineHealth(supabase);
       
       return new Response(JSON.stringify({
         success: true,
@@ -84,7 +100,8 @@ serve(async (req) => {
         compound_formulas: compoundResult,
         avoid_patterns: avoidResult,
         cross_engine: crossEngineResult,
-        learning_progress_synced: syncResult
+        learning_progress_synced: syncResult,
+        engine_health: healthResult
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
@@ -174,14 +191,64 @@ serve(async (req) => {
   }
 });
 
-// Enhanced settlement with detailed loss analysis
+// NEW: Engine health monitoring - identify underperforming formulas
+async function getEngineHealth(supabase: any) {
+  console.log('🏥 Checking engine health...');
+
+  const { data: formulas } = await supabase
+    .from('ai_formula_performance')
+    .select('*')
+    .gte('total_picks', 5)
+    .order('current_accuracy', { ascending: true });
+
+  const unhealthyEngines = (formulas || []).filter((f: any) => 
+    f.current_accuracy < 40 || f.last_loss_streak >= 5
+  );
+
+  const recommendations = unhealthyEngines.map((f: any) => ({
+    formula_name: f.formula_name,
+    engine_source: f.engine_source,
+    accuracy: f.current_accuracy,
+    total_picks: f.total_picks,
+    wins: f.wins,
+    losses: f.losses,
+    loss_streak: f.last_loss_streak,
+    action: f.current_accuracy < 30 ? 'DISABLE' : f.current_accuracy < 40 ? 'REVIEW' : 'MONITOR',
+    reason: f.last_loss_streak >= 5 
+      ? `${f.last_loss_streak} consecutive losses`
+      : `${f.current_accuracy?.toFixed(1) || 0}% accuracy below threshold`,
+    sport_breakdown: f.sport_breakdown
+  }));
+
+  // Summary stats
+  const totalEngines = (formulas || []).length;
+  const healthyCount = totalEngines - unhealthyEngines.length;
+  const avgAccuracy = totalEngines > 0 
+    ? (formulas || []).reduce((sum: number, f: any) => sum + (f.current_accuracy || 0), 0) / totalEngines 
+    : 0;
+
+  console.log(`🏥 Health check: ${healthyCount}/${totalEngines} engines healthy, avg accuracy: ${avgAccuracy.toFixed(1)}%`);
+
+  return {
+    success: true,
+    total_engines: totalEngines,
+    healthy_engines: healthyCount,
+    unhealthy_engines: unhealthyEngines.length,
+    average_accuracy: Math.round(avgAccuracy * 10) / 10,
+    recommendations,
+    disabled_recommendations: recommendations.filter((r: any) => r.action === 'DISABLE'),
+    review_recommendations: recommendations.filter((r: any) => r.action === 'REVIEW')
+  };
+}
+
+// Enhanced settlement with LEG-LEVEL ATTRIBUTION (FIXED)
 async function processSettlementWithAnalysis(
   supabase: any, 
   parlayId: string, 
   outcome: 'won' | 'lost',
-  legResults?: Array<{ description: string; outcome: string; actualValue?: number; line?: number }>
+  legResults?: LegResult[]
 ) {
-  console.log(`📊 Processing settlement with analysis for parlay ${parlayId} - ${outcome}`);
+  console.log(`📊 Processing settlement withLEG-LEVEL analysis for parlay ${parlayId} - ${outcome}`);
 
   const { data: parlay, error } = await supabase
     .from('ai_generated_parlays')
@@ -203,8 +270,9 @@ async function processSettlementWithAnalysis(
     .eq('id', parlayId);
 
   const legs = parlay.legs || [];
-  const isWin = outcome === 'won';
   const lossPatterns: LossPattern[] = [];
+  let legsProcessed = 0;
+  let legsSkipped = 0;
 
   for (let i = 0; i < legs.length; i++) {
     const leg = legs[i];
@@ -213,7 +281,16 @@ async function processSettlementWithAnalysis(
     const engineSource = leg.engine_source;
     const sport = leg.sport || parlay.sport;
 
-    if (!formulaName || !engineSource) continue;
+    // Warn about untagged legs
+    if (!formulaName || !engineSource) {
+      console.warn(`⚠️ Skipping untagged leg ${i}: ${leg.description || 'unknown'} - missing formula_name or engine_source`);
+      legsSkipped++;
+      continue;
+    }
+
+    if (!sport) {
+      console.warn(`⚠️ Leg ${i} missing sport, using parlay sport: ${parlay.sport}`);
+    }
 
     const { data: formula } = await supabase
       .from('ai_formula_performance')
@@ -222,12 +299,24 @@ async function processSettlementWithAnalysis(
       .eq('engine_source', engineSource)
       .single();
 
-    // Determine individual leg outcome
-    const legWon = legResult?.outcome === 'won';
-    const legLost = legResult?.outcome === 'lost';
+    // CRITICAL FIX: Use INDIVIDUAL leg outcome, not parlay outcome
+    const legOutcome = legResult?.outcome;
+    const legWon = legOutcome === 'won';
+    const legLost = legOutcome === 'lost';
+    const isLegVerified = legOutcome && legOutcome !== 'pending';
+
+    // If no individual leg results provided, fall back to parlay outcome
+    // but log a warning since this is less accurate
+    const useParlayfallback = !legResults || legResults.length === 0;
+    if (useParlayfallback) {
+      console.warn(`⚠️ No individual leg results for parlay ${parlayId}, using parlay outcome for all legs`);
+    }
+
+    const effectiveLegWon = useParlayfallback ? (outcome === 'won') : legWon;
+    const effectiveLegLost = useParlayfallback ? (outcome === 'lost') : legLost;
 
     // Track loss patterns for analysis
-    if (legLost && legResult) {
+    if (effectiveLegLost && legResult) {
       const lossPattern: LossPattern = {
         description: leg.description,
         line: legResult.line,
@@ -247,18 +336,19 @@ async function processSettlementWithAnalysis(
     }
 
     if (formula) {
-      const newWins = formula.wins + (isWin ? 1 : 0);
-      const newLosses = formula.losses + (isWin ? 0 : 1);
+      // FIXED: Use leg-level outcome for wins/losses
+      const newWins = formula.wins + (effectiveLegWon ? 1 : 0);
+      const newLosses = formula.losses + (effectiveLegLost ? 1 : 0);
       const newTotal = formula.total_picks + 1;
       const newAccuracy = newTotal > 0 ? (newWins / newTotal) * 100 : 0;
 
-      // Update sport breakdown
+      // Update sport breakdown with leg-level outcome
       const sportBreakdown = formula.sport_breakdown || {};
       if (!sportBreakdown[sport]) {
         sportBreakdown[sport] = { wins: 0, losses: 0, accuracy: 0 };
       }
-      sportBreakdown[sport].wins += isWin ? 1 : 0;
-      sportBreakdown[sport].losses += isWin ? 0 : 1;
+      sportBreakdown[sport].wins += effectiveLegWon ? 1 : 0;
+      sportBreakdown[sport].losses += effectiveLegLost ? 1 : 0;
       const sportTotal = sportBreakdown[sport].wins + sportBreakdown[sport].losses;
       sportBreakdown[sport].accuracy = sportTotal > 0 ? (sportBreakdown[sport].wins / sportTotal) * 100 : 0;
 
@@ -269,6 +359,7 @@ async function processSettlementWithAnalysis(
         ...lossPatterns.filter(lp => lp.formula_name === formulaName)
       ].slice(-50); // Keep last 50 loss patterns
 
+      // FIXED: Update streak based on leg outcome, not parlay outcome
       await supabase
         .from('ai_formula_performance')
         .update({
@@ -276,55 +367,84 @@ async function processSettlementWithAnalysis(
           wins: newWins,
           losses: newLosses,
           current_accuracy: Math.round(newAccuracy * 100) / 100,
-          last_win_streak: isWin ? (formula.last_win_streak + 1) : 0,
-          last_loss_streak: isWin ? 0 : (formula.last_loss_streak + 1),
+          last_win_streak: effectiveLegWon ? (formula.last_win_streak + 1) : 0,
+          last_loss_streak: effectiveLegLost ? 0 : (formula.last_loss_streak + 1),
           sport_breakdown: sportBreakdown,
           loss_patterns: updatedLossPatterns
         })
         .eq('id', formula.id);
 
-      console.log(`✅ Updated ${formulaName}: ${newAccuracy.toFixed(1)}% (${newWins}W-${newLosses}L)`);
+      console.log(`✅ Updated ${formulaName} (leg ${legOutcome || 'fallback'}): ${newAccuracy.toFixed(1)}% (${newWins}W-${newLosses}L)`);
+      legsProcessed++;
     } else {
-      // Create new formula entry
+      // Create new formula entry using leg outcome
       await supabase
         .from('ai_formula_performance')
         .insert({
           formula_name: formulaName,
           engine_source: engineSource,
           total_picks: 1,
-          wins: isWin ? 1 : 0,
-          losses: isWin ? 0 : 1,
-          current_accuracy: isWin ? 100 : 0,
+          wins: effectiveLegWon ? 1 : 0,
+          losses: effectiveLegLost ? 1 : 0,
+          current_accuracy: effectiveLegWon ? 100 : 0,
           current_weight: 1.0,
-          last_win_streak: isWin ? 1 : 0,
-          last_loss_streak: isWin ? 0 : 1,
-          sport_breakdown: { [sport]: { wins: isWin ? 1 : 0, losses: isWin ? 0 : 1, accuracy: isWin ? 100 : 0 } },
-          loss_patterns: !isWin ? lossPatterns.filter(lp => lp.formula_name === formulaName) : []
+          last_win_streak: effectiveLegWon ? 1 : 0,
+          last_loss_streak: effectiveLegLost ? 1 : 0,
+          sport_breakdown: { [sport]: { wins: effectiveLegWon ? 1 : 0, losses: effectiveLegLost ? 1 : 0, accuracy: effectiveLegWon ? 100 : 0 } },
+          loss_patterns: effectiveLegLost ? lossPatterns.filter(lp => lp.formula_name === formulaName) : []
         });
+      legsProcessed++;
     }
   }
 
-  // Update compound formulas
-  await updateCompoundFormulaForParlay(supabase, parlay, isWin);
+  // Update compound formulas (still uses parlay outcome since it's the combo that won/lost)
+  await updateCompoundFormulaForParlay(supabase, parlay, outcome === 'won');
 
   // Update cross-engine performance
-  await updateCrossEngineForParlay(supabase, parlay, isWin);
+  await updateCrossEngineForParlay(supabase, parlay, outcome === 'won');
 
   // Update learning progress with parlay for pattern extraction
-  await updateLearningProgress(supabase, isWin, parlay);
+  await updateLearningProgress(supabase, outcome === 'won', parlay);
 
-  // Instantly recalculate weights after each settlement
-  await recalculateAllWeights(supabase);
+  // DECOUPLED: Check if we should trigger weight recalculation
+  // Only recalculate if 10+ settlements have occurred in the last hour
+  const shouldRecalculateWeights = await checkWeightRecalculationThreshold(supabase);
+  if (shouldRecalculateWeights) {
+    console.log('📊 Threshold reached - triggering weight recalculation');
+    await recalculateAllWeights(supabase);
+  }
 
   return new Response(JSON.stringify({
     success: true,
     parlay_id: parlayId,
     outcome,
-    formulas_updated: legs.length,
-    loss_patterns_recorded: lossPatterns.length
+    legs_processed: legsProcessed,
+    legs_skipped: legsSkipped,
+    loss_patterns_recorded: lossPatterns.length,
+    weights_recalculated: shouldRecalculateWeights,
+    attribution_type: legResults && legResults.length > 0 ? 'leg_level' : 'parlay_fallback'
   }), {
     headers: { ...corsHeaders, 'Content-Type': 'application/json' }
   });
+}
+
+// Check if we should recalculate weights (threshold-based, not every settlement)
+async function checkWeightRecalculationThreshold(supabase: any): Promise<boolean> {
+  const oneHourAgo = new Date(Date.now() - 3600000).toISOString();
+  
+  const { count, error } = await supabase
+    .from('ai_generated_parlays')
+    .select('*', { count: 'exact', head: true })
+    .not('settled_at', 'is', null)
+    .gte('settled_at', oneHourAgo);
+
+  if (error) {
+    console.warn('⚠️ Could not check recalculation threshold:', error.message);
+    return false;
+  }
+
+  // Recalculate weights if 10+ settlements in last hour
+  return (count || 0) >= 10;
 }
 
 // Check and create avoid patterns based on repeated losses
@@ -492,7 +612,6 @@ async function updateLearningProgress(supabase: any, isWin: boolean, parlay?: an
     const newLosses = (progress.losses || 0) + (isWin ? 0 : 1);
     const total = newWins + newLosses;
     
-    // Extract pattern from parlay for learned_patterns
     const learnedPatterns = progress.learned_patterns || { winning: [], losing: [] };
     
     if (parlay) {
@@ -519,7 +638,7 @@ async function updateLearningProgress(supabase: any, isWin: boolean, parlay?: an
   }
 }
 
-// Extract pattern description from a parlay
+// Extract pattern description from a parlay (enhanced with structured metadata)
 function extractPatternFromParlay(parlay: any): string | null {
   if (!parlay) return null;
   
@@ -538,11 +657,41 @@ function extractPatternFromParlay(parlay: any): string | null {
   const engineStr = sourceEngines.length > 0 ? sourceEngines.join('/') : 'ai';
   const signalStr = signals.length > 0 ? signals.slice(0, 2).join(', ') : '';
   
+  // Extract prop types and bet sides for richer patterns
+  const propTypes = legs.map((l: any) => extractPropType(l.description)).filter(Boolean);
+  const betSides = legs.map((l: any) => extractBetSide(l.description)).filter(Boolean);
+  
   let pattern = `[${sport.toUpperCase()}] ${strategy} - ${legDescriptions}`;
   if (engineStr) pattern += ` (${engineStr})`;
   if (signalStr) pattern += ` | Signals: ${signalStr}`;
+  if (propTypes.length > 0) pattern += ` | Props: ${[...new Set(propTypes)].join(', ')}`;
+  if (betSides.length > 0) pattern += ` | Sides: ${[...new Set(betSides)].join(', ')}`;
   
   return pattern;
+}
+
+// Extract prop type from description
+function extractPropType(description: string): string | null {
+  if (!description) return null;
+  const lower = description.toLowerCase();
+  if (lower.includes('points')) return 'points';
+  if (lower.includes('rebounds')) return 'rebounds';
+  if (lower.includes('assists')) return 'assists';
+  if (lower.includes('pra') || lower.includes('pts+reb+ast')) return 'pra';
+  if (lower.includes('threes') || lower.includes('3pt')) return 'threes';
+  if (lower.includes('goals')) return 'goals';
+  if (lower.includes('passing')) return 'passing';
+  if (lower.includes('rushing')) return 'rushing';
+  return null;
+}
+
+// Extract bet side from description
+function extractBetSide(description: string): string | null {
+  if (!description) return null;
+  const lower = description.toLowerCase();
+  if (lower.includes('over')) return 'over';
+  if (lower.includes('under')) return 'under';
+  return null;
 }
 
 // Sync learning progress from all settled parlays
@@ -658,7 +807,7 @@ async function syncLearningProgressFromSettled(supabase: any) {
   };
 }
 
-// Original processSettlement function
+// Original processSettlement function (updated with leg-level attribution)
 async function processSettlement(supabase: any, parlayId: string, outcome: 'won' | 'lost') {
   console.log(`📊 Processing settlement for parlay ${parlayId} - ${outcome}`);
 
@@ -683,12 +832,19 @@ async function processSettlement(supabase: any, parlayId: string, outcome: 'won'
   const legs = parlay.legs || [];
   const isWin = outcome === 'won';
 
+  // Note: This function uses parlay-level attribution since no leg results are provided
+  // For proper leg-level attribution, use process_settlement_with_analysis with legResults
+  console.warn(`⚠️ processSettlement uses parlay-level attribution. For accuracy, use process_settlement_with_analysis with legResults`);
+
   for (const leg of legs) {
     const formulaName = leg.formula_name;
     const engineSource = leg.engine_source;
     const sport = leg.sport || parlay.sport;
 
-    if (!formulaName || !engineSource) continue;
+    if (!formulaName || !engineSource) {
+      console.warn(`⚠️ Skipping untagged leg: ${leg.description || 'unknown'}`);
+      continue;
+    }
 
     const { data: formula } = await supabase
       .from('ai_formula_performance')
