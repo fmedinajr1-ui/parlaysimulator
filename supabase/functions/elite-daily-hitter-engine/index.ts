@@ -199,7 +199,7 @@ serve(async (req) => {
     const eligiblePicks: PickCandidate[] = [];
     const now = new Date();
     
-    // 1. MedianLock candidates (LOCK/STRONG with high edge)
+    // 1. MedianLock candidates (LOCK/STRONG with high edge) - TODAY ONLY
     logStep("Fetching MedianLock candidates");
     
     const { data: medianLockData, error: mlError } = await supabaseClient
@@ -208,7 +208,8 @@ serve(async (req) => {
       .in('classification', ['LOCK', 'STRONG'])
       .gte('adjusted_edge', 1.0)
       .eq('outcome', 'pending')
-      .order('created_at', { ascending: false })
+      .eq('slate_date', today)
+      .order('adjusted_edge', { ascending: false })
       .limit(50);
     
     if (mlError) {
