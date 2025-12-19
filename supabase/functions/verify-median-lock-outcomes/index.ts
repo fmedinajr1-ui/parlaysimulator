@@ -18,17 +18,30 @@ serve(async (req) => {
 
     console.log('Starting MedianLock outcome verification...');
 
+    // Check if this is a re-verification request
+    const { reverify } = await req.json().catch(() => ({ reverify: false }));
+
     // Get pending candidates from yesterday and earlier
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
     const yesterdayStr = yesterday.toISOString().split('T')[0];
 
-    const { data: pendingCandidates, error: candidatesError } = await supabase
+    let candidatesQuery = supabase
       .from('median_lock_candidates')
       .select('*')
-      .lte('slate_date', yesterdayStr)
-      .or('outcome.is.null,outcome.eq.pending')
-      .limit(100);
+      .lte('slate_date', yesterdayStr);
+    
+    // If reverify mode, also include already-verified candidates to recalculate
+    if (reverify) {
+      console.log('RE-VERIFICATION MODE: Recalculating all historical outcomes...');
+      candidatesQuery = candidatesQuery.limit(500);
+    } else {
+      candidatesQuery = candidatesQuery
+        .or('outcome.is.null,outcome.eq.pending')
+        .limit(100);
+    }
+    
+    const { data: pendingCandidates, error: candidatesError } = await candidatesQuery;
 
     if (candidatesError) {
       console.error('Error fetching pending candidates:', candidatesError);
@@ -90,9 +103,24 @@ serve(async (req) => {
           continue;
         }
 
-        // Determine outcome based on bet_side (OVER or UNDER)
-        const betSide = candidate.bet_side || 'OVER'; // Default to OVER for legacy data
+        // CRITICAL FIX: Smart detection of bet side when not stored
+        // For legacy data where bet_side is NULL, infer from median_points vs book_line
         const bookLine = candidate.book_line || 0;
+        let betSide = candidate.bet_side;
+        
+        if (!betSide) {
+          // Infer bet side from median_points comparison to book_line
+          // If median was below line, engine likely recommended UNDER
+          const medianPoints = candidate.median_points || 0;
+          if (medianPoints < bookLine) {
+            betSide = 'UNDER';
+            console.log(`Inferred UNDER for ${candidate.player_name}: median ${medianPoints} < line ${bookLine}`);
+          } else {
+            betSide = 'OVER';
+            console.log(`Inferred OVER for ${candidate.player_name}: median ${medianPoints} >= line ${bookLine}`);
+          }
+        }
+        
         let outcome: string;
         
         if (betSide === 'UNDER') {

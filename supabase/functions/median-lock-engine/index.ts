@@ -153,9 +153,33 @@ function determineBetSide(
     return { betSide: 'OVER', edge: overEdge, hitRate: overHitRate, side: 'over' };
   }
   
-  // Check UNDER
+  // Check UNDER with STRICTER filters
   if (underEdge >= config.edgeMin && underHitRate >= config.hitRateMin) {
-    return { betSide: 'UNDER', edge: underEdge, hitRate: underHitRate, side: 'under' };
+    // === STRICTER UNDER VALIDATION ===
+    
+    // 1. Variance check: UNDER bets are risky with high-variance players
+    const variance = stdDev(statLast10);
+    if (variance > 5) {
+      console.log(`UNDER blocked: high variance ${variance.toFixed(1)} > 5`);
+      // Fall through to PASS
+    } 
+    // 2. Blowout protection: If median is way below line, something's off
+    else if (medianStat < bookLine * 0.6) {
+      console.log(`UNDER blocked: median ${medianStat.toFixed(1)} too low vs line ${bookLine} (blowout protection)`);
+      // Fall through to PASS
+    }
+    // 3. Trending check: Last 3 games should also be under the line
+    else {
+      const last3 = statLast10.slice(0, 3);
+      const last3Under = last3.filter(v => v < bookLine).length;
+      if (last3Under < 2) {
+        console.log(`UNDER blocked: only ${last3Under}/3 recent games under line (trending filter)`);
+        // Fall through to PASS
+      } else {
+        // Passed all UNDER filters
+        return { betSide: 'UNDER', edge: underEdge, hitRate: underHitRate, side: 'under' };
+      }
+    }
   }
   
   // Default to PASS - return best available edge for logging
