@@ -1333,10 +1333,13 @@ Return ONLY valid JSON, no other text.`;
         }
 
         // Add hit rate percentage from unified props or hitrate parlays
+        // Fix: Check if already a percentage (>1) before multiplying
         if (legAnalysis.unifiedPropData?.hitRateScore) {
-          legAnalysis.hitRatePercent = legAnalysis.unifiedPropData.hitRateScore * 100;
+          const hrScore = legAnalysis.unifiedPropData.hitRateScore;
+          legAnalysis.hitRatePercent = hrScore > 1 ? hrScore : hrScore * 100;
         } else if (matchedHitrate?.combined_probability) {
-          legAnalysis.hitRatePercent = matchedHitrate.combined_probability * 100;
+          const cp = matchedHitrate.combined_probability;
+          legAnalysis.hitRatePercent = cp > 1 ? cp : cp * 100;
         }
         
         legAnalysis.engineConsensus = calculateEngineConsensus(
@@ -1389,7 +1392,8 @@ Return ONLY valid JSON, no other text.`;
                   playerName: legAnalysis.player,
                   propType,
                   line,
-                  opponent: legAnalysis.team || undefined
+                  opponent: legAnalysis.team || undefined,
+                  sport: legAnalysis.sport || 'NBA'
                 })
               });
 
