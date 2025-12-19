@@ -201,13 +201,21 @@ serve(async (req) => {
     
     // 1. MedianLock candidates (LOCK/STRONG with high edge)
     logStep("Fetching MedianLock candidates");
-    const { data: medianLockData } = await supabaseClient
+    
+    const { data: medianLockData, error: mlError } = await supabaseClient
       .from('median_lock_candidates')
       .select('*')
       .in('classification', ['LOCK', 'STRONG'])
-      .gte('edge_percentage', 1.5)
-      .gte('game_time', now.toISOString())
-      .eq('outcome', 'pending');
+      .gte('adjusted_edge', 1.0)
+      .eq('outcome', 'pending')
+      .order('created_at', { ascending: false })
+      .limit(50);
+    
+    if (mlError) {
+      logStep("MedianLock query error", { error: mlError.message });
+    }
+    
+    logStep("MedianLock results", { count: medianLockData?.length || 0 });
     
     for (const m of medianLockData || []) {
       const existing = eligiblePicks.find(p => 
@@ -216,23 +224,24 @@ serve(async (req) => {
       );
       
       if (existing) {
-        existing.medianLockEdge = m.edge_percentage;
+        existing.medianLockEdge = m.adjusted_edge;
         existing.engines.push('MedianLock');
       } else {
         eligiblePicks.push({
           id: m.id,
           playerName: m.player_name,
           propType: m.prop_type,
-          line: m.median_line,
+          line: m.book_line,
           side: (m.bet_side?.toLowerCase() || 'over') as 'over' | 'under',
-          odds: -110,
-          sport: m.sport || 'NBA',
+          odds: m.current_price || -110,
+          sport: 'NBA', // MedianLock is NBA only
           eventId: m.event_id || m.id,
-          gameDescription: m.game_description,
-          commenceTime: m.game_time,
-          medianLockEdge: m.edge_percentage,
+          gameDescription: `${m.team_name} vs ${m.opponent}`,
+          commenceTime: m.game_start_time || m.slate_date || new Date().toISOString(),
+          medianLockEdge: m.adjusted_edge,
+          hitRate: m.hit_rate,
           p_leg: 0,
-          edge: m.edge_percentage || 0,
+          edge: m.adjusted_edge || 0,
           variance: 0,
           engines: ['MedianLock'],
         });
