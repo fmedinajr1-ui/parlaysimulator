@@ -293,3 +293,6 @@ verify_jwt = false
 
 [functions.recalibrate-accuracy]
 verify_jwt = false
+
+[functions.cleanup-phone-verification]
+verify_jwt = false
