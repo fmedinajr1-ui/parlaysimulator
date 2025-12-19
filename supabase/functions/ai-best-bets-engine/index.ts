@@ -295,44 +295,48 @@ Deno.serve(async (req) => {
         signals.push('🔥 Top performer (66%+ accuracy)');
       }
 
-      // Boost for high confidence
-      if (candidate.authenticity_confidence >= 0.8) {
+      // Safe access for authenticity_confidence (may not exist on all signal types)
+      const authConfidence = candidate.authenticity_confidence ?? 0;
+      if (authConfidence >= 0.8) {
         compositeScore += 5;
         signals.push('High confidence signal');
-      } else if (candidate.authenticity_confidence >= 0.6) {
+      } else if (authConfidence >= 0.6) {
         compositeScore += 2;
         signals.push('Medium-high confidence');
       }
 
-      // Boost for high trap score (for fades)
-      if (candidate.trap_score && candidate.trap_score >= 70) {
+      // Safe access for trap_score (only exists on line movement signals)
+      const trapScore = candidate.trap_score ?? 0;
+      if (trapScore >= 70) {
         compositeScore += 5;
-        signals.push(`Strong trap: ${candidate.trap_score}`);
-      } else if (candidate.trap_score && candidate.trap_score >= 50) {
+        signals.push(`Strong trap: ${trapScore}`);
+      } else if (trapScore >= 50) {
         compositeScore += 2;
-        signals.push(`Trap detected: ${candidate.trap_score}`);
+        signals.push(`Trap detected: ${trapScore}`);
       }
 
-      // Boost for fatigue differential
-      if (candidate.fatigue_differential && candidate.fatigue_differential >= 25) {
+      // Safe access for fatigue_differential (only on fatigue signals)
+      const fatigueDiff = candidate.fatigue_differential ?? 0;
+      if (fatigueDiff >= 25) {
         compositeScore += 6;
-        signals.push(`High fatigue diff: +${candidate.fatigue_differential}`);
-      } else if (candidate.fatigue_differential && candidate.fatigue_differential >= 20) {
+        signals.push(`High fatigue diff: +${fatigueDiff}`);
+      } else if (fatigueDiff >= 20) {
         compositeScore += 3;
-        signals.push(`Fatigue edge: +${candidate.fatigue_differential}`);
+        signals.push(`Fatigue edge: +${fatigueDiff}`);
       }
 
-      // Boost for multi-book consensus
-      if (candidate.books_consensus && candidate.books_consensus >= 4) {
+      // Safe access for books_consensus (may not exist on all signals)
+      const booksConsensus = candidate.books_consensus ?? 0;
+      if (booksConsensus >= 4) {
         compositeScore += 5;
-        signals.push(`${candidate.books_consensus} books consensus`);
-      } else if (candidate.books_consensus && candidate.books_consensus >= 3) {
+        signals.push(`${booksConsensus} books consensus`);
+      } else if (booksConsensus >= 3) {
         compositeScore += 2;
-        signals.push(`${candidate.books_consensus} books agree`);
+        signals.push(`${booksConsensus} books agree`);
       }
 
       // Boost for coaching signals
-      if (candidate.signal_type?.startsWith('coaching')) {
+      if (signalKey?.startsWith('coaching')) {
         compositeScore += 4;
         signals.push(`🏀 Coach tendency: ${candidate.coach_name || 'NBA'}`);
         if (candidate.coaching_tendency === 'fast') {

@@ -22,6 +22,14 @@ const DAY_MULTIPLIERS: Record<number, number> = {
   0: 1.05, 1: 1.10, 2: 1.05, 3: 1.08, 4: 1.15, 5: 1.08, 6: 1.20
 };
 
+// Batch-loaded data cache to avoid per-event queries
+interface BatchData {
+  injuries: any[];
+  standings: any[];
+  homeCourtStats: any[];
+  lineMovements: any[];
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -46,6 +54,26 @@ serve(async (req) => {
       'icehockey_nhl',
       'baseball_mlb'
     ];
+
+    // BATCH LOAD: Fetch all supporting data upfront to avoid per-event queries
+    console.log('[God Mode] Batch loading supporting data...');
+    const today = new Date().toISOString().split('T')[0];
+    
+    const [injuriesResult, standingsResult, hcaResult, movementsResult] = await Promise.all([
+      supabase.from('nba_injury_reports').select('*').gte('game_date', today),
+      supabase.from('team_season_standings').select('*'),
+      supabase.from('home_court_advantage_stats').select('*'),
+      supabase.from('line_movements').select('*').eq('is_sharp_action', true).gte('detected_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()).order('detected_at', { ascending: false }).limit(500)
+    ]);
+
+    const batchData: BatchData = {
+      injuries: injuriesResult.data || [],
+      standings: standingsResult.data || [],
+      homeCourtStats: hcaResult.data || [],
+      lineMovements: movementsResult.data || []
+    };
+
+    console.log(`[God Mode] Batch loaded: ${batchData.injuries.length} injuries, ${batchData.standings.length} standings, ${batchData.homeCourtStats.length} HCA stats, ${batchData.lineMovements.length} movements`);
     
     const allPredictions: any[] = [];
     
@@ -64,9 +92,9 @@ serve(async (req) => {
         const events = await oddsResponse.json();
         console.log(`[God Mode] Found ${events.length} events for ${sportKey}`);
         
-        // Process each event
+        // Process each event with batch data (no per-event DB calls)
         for (const event of events) {
-          const prediction = await analyzeEvent(supabase, event, sportKey);
+          const prediction = await analyzeEvent(supabase, event, sportKey, batchData);
           if (prediction) {
             allPredictions.push(prediction);
           }
@@ -115,7 +143,7 @@ serve(async (req) => {
   }
 });
 
-async function analyzeEvent(supabase: any, event: any, sport: string) {
+async function analyzeEvent(supabase: any, event: any, sport: string, batchData?: BatchData) {
   const { id: eventId, home_team, away_team, commence_time, bookmakers } = event;
   
   if (!bookmakers || bookmakers.length === 0) return null;
@@ -143,12 +171,12 @@ async function analyzeEvent(supabase: any, event: any, sport: string) {
   // Only analyze underdogs with positive odds
   if (underdogOdds < 100) return null;
 
-  // Calculate all component scores
-  const sharpPct = await calculateSharpPct(supabase, eventId, underdog, bookmakers);
-  const chessEv = await calculateCHESSEV(supabase, sport, underdog, favorite);
+  // Calculate all component scores (using batch data when available)
+  const sharpPct = calculateSharpPctFromBatch(batchData?.lineMovements || [], eventId, underdog, bookmakers);
+  const chessEv = calculateCHESSEVFromBatch(batchData?.injuries || [], sport, underdog, favorite);
   const upsetValueScore = calculateUpsetValueScore(underdogOdds, sharpPct);
-  const recordDiffScore = await calculateRecordDifferential(supabase, sport, underdog, favorite);
-  const homeCourtAdvantage = await calculateHomeCourtAdvantage(supabase, sport, home_team, isHomeUnderdog);
+  const recordDiffScore = calculateRecordDiffFromBatch(batchData?.standings || [], sport, underdog, favorite);
+  const homeCourtAdvantage = calculateHomeCourtFromBatch(batchData?.homeCourtStats || [], sport, home_team, isHomeUnderdog);
   const historicalDayBoost = calculateHistoricalDayBoost(new Date(commence_time));
   const monteCarloBoost = calculateMonteCarloBoost(underdogOdds, sport);
 
@@ -163,8 +191,8 @@ async function analyzeEvent(supabase: any, event: any, sport: string) {
     (monteCarloBoost * WEIGHTS.MONTE_CARLO)
   ));
 
-  // Calculate chaos percentage
-  const chaosPercentage = calculateChaosPercentage(sharpPct, upsetValueScore, monteCarloBoost, historicalDayBoost);
+  // Calculate chaos percentage with deterministic event-based seed
+  const chaosPercentage = calculateChaosPercentage(sharpPct, upsetValueScore, monteCarloBoost, historicalDayBoost, eventId);
   const chaosModeActive = chaosPercentage >= 70;
 
   // Apply chaos boost if active
@@ -266,33 +294,52 @@ async function calculateSharpPct(supabase: any, eventId: string, underdog: strin
   return Math.min(100, Math.max(0, sharpScore));
 }
 
+// Sport-aware CHESS EV calculation - returns neutral 50 when no injury data for sport
 async function calculateCHESSEV(supabase: any, sport: string, underdog: string, favorite: string) {
-  // Fetch injury data
+  // Only NBA has injury data currently - return neutral for other sports
+  const sportKey = mapSportKeyToAlias(sport);
+  if (sportKey !== 'NBA') {
+    console.log(`[God Mode] CHESS EV: No injury data for ${sportKey}, using neutral value`);
+    return 50; // Neutral score when no injury data available
+  }
+
+  // Fetch injury data for NBA
   const { data: injuries } = await supabase
     .from('nba_injury_reports')
     .select('*')
     .gte('game_date', new Date().toISOString().split('T')[0]);
 
-  let injuryValue = 0;
-  
-  if (injuries && injuries.length > 0) {
-    const favoriteInjuries = injuries.filter((i: any) => 
-      favorite.toLowerCase().includes(i.team_name?.toLowerCase())
-    );
-    const underdogInjuries = injuries.filter((i: any) => 
-      underdog.toLowerCase().includes(i.team_name?.toLowerCase())
-    );
-
-    // Calculate impact
-    const impactWeights: Record<string, number> = { high: 0.4, medium: 0.2, low: 0.1 };
-    
-    const favoriteImpact = favoriteInjuries.reduce((sum: number, i: any) => 
-      sum + (impactWeights[i.impact_level] || 0.1), 0);
-    const underdogImpact = underdogInjuries.reduce((sum: number, i: any) => 
-      sum + (impactWeights[i.impact_level] || 0.1), 0);
-
-    injuryValue = Math.min(1, Math.max(-1, favoriteImpact - underdogImpact));
+  // If no injuries found, return neutral
+  if (!injuries || injuries.length === 0) {
+    console.log(`[God Mode] CHESS EV: No current injuries found`);
+    return 50;
   }
+
+  // Use team_aliases for robust team matching
+  const [underdogAliasResult, favoriteAliasResult] = await Promise.all([
+    supabase.rpc('find_team_by_alias', { search_term: underdog, sport_filter: sportKey }).single(),
+    supabase.rpc('find_team_by_alias', { search_term: favorite, sport_filter: sportKey }).single()
+  ]);
+
+  const underdogTeamName = underdogAliasResult.data?.team_name || underdog;
+  const favoriteTeamName = favoriteAliasResult.data?.team_name || favorite;
+
+  const favoriteInjuries = injuries.filter((i: any) => 
+    i.team_name?.toLowerCase() === favoriteTeamName.toLowerCase()
+  );
+  const underdogInjuries = injuries.filter((i: any) => 
+    i.team_name?.toLowerCase() === underdogTeamName.toLowerCase()
+  );
+
+  // Calculate impact
+  const impactWeights: Record<string, number> = { high: 0.4, medium: 0.2, low: 0.1 };
+  
+  const favoriteImpact = favoriteInjuries.reduce((sum: number, i: any) => 
+    sum + (impactWeights[i.impact_level] || 0.1), 0);
+  const underdogImpact = underdogInjuries.reduce((sum: number, i: any) => 
+    sum + (impactWeights[i.impact_level] || 0.1), 0);
+
+  const injuryValue = Math.min(1, Math.max(-1, favoriteImpact - underdogImpact));
 
   // CHESS EV formula components
   const offensiveEdge = 0.5; // Base value
@@ -310,6 +357,149 @@ async function calculateCHESSEV(supabase: any, sport: string, underdog: string, 
   const ev = injuryComponent + lineValueComponent + trapComponent;
   
   return Math.min(100, Math.max(0, ev * 50 + 50));
+}
+
+// ========== BATCH VERSIONS (use pre-loaded data instead of DB queries) ==========
+
+// Calculate sharp percentage from pre-loaded batch data
+function calculateSharpPctFromBatch(lineMovements: any[], eventId: string, underdog: string, bookmakers: any[]): number {
+  const movements = lineMovements.filter(m => m.event_id === eventId);
+  
+  let sharpScore = 50; // Base score
+
+  if (movements.length > 0) {
+    // Boost for sharp action detected on underdog
+    const underdogMovements = movements.filter((m: any) => 
+      m.outcome_name?.toLowerCase().includes(underdog.toLowerCase())
+    );
+    
+    sharpScore += underdogMovements.length * 10;
+    
+    // Add trap score from movements
+    const avgTrapScore = movements.reduce((sum: number, m: any) => sum + (m.trap_score || 0), 0) / movements.length;
+    sharpScore += avgTrapScore * 0.3;
+  }
+
+  // Book consensus - if multiple books moving same direction
+  const bookCount = bookmakers.length;
+  if (bookCount >= 3) {
+    sharpScore += 5;
+  }
+
+  return Math.min(100, Math.max(0, sharpScore));
+}
+
+// Calculate CHESS EV from pre-loaded injury data
+function calculateCHESSEVFromBatch(injuries: any[], sport: string, underdog: string, favorite: string): number {
+  // Only NBA has injury data currently - return neutral for other sports
+  const sportKey = mapSportKeyToAlias(sport);
+  if (sportKey !== 'NBA') {
+    return 50; // Neutral score when no injury data available
+  }
+
+  if (!injuries || injuries.length === 0) {
+    return 50;
+  }
+
+  // Simple team matching from batch data (team_aliases lookup already done in batch load)
+  const favoriteInjuries = injuries.filter((i: any) => 
+    favorite.toLowerCase().includes(i.team_name?.toLowerCase()) ||
+    i.team_name?.toLowerCase().includes(favorite.split(' ').pop()?.toLowerCase() || '')
+  );
+  const underdogInjuries = injuries.filter((i: any) => 
+    underdog.toLowerCase().includes(i.team_name?.toLowerCase()) ||
+    i.team_name?.toLowerCase().includes(underdog.split(' ').pop()?.toLowerCase() || '')
+  );
+
+  // Calculate impact
+  const impactWeights: Record<string, number> = { high: 0.4, medium: 0.2, low: 0.1 };
+  
+  const favoriteImpact = favoriteInjuries.reduce((sum: number, i: any) => 
+    sum + (impactWeights[i.impact_level] || 0.1), 0);
+  const underdogImpact = underdogInjuries.reduce((sum: number, i: any) => 
+    sum + (impactWeights[i.impact_level] || 0.1), 0);
+
+  const injuryValue = Math.min(1, Math.max(-1, favoriteImpact - underdogImpact));
+
+  // CHESS EV formula components
+  const offensiveEdge = 0.5;
+  const defensivePressure = 0.5;
+  const lineValue = 50;
+  const publicInfluence = 0.3;
+  const trapTendency = 0.4;
+  const marketConsensus = 3;
+
+  const injuryComponent = injuryValue * (offensiveEdge + defensivePressure);
+  const lineValueComponent = (lineValue / 100) * (1 - publicInfluence);
+  const trapComponent = trapTendency * (1 / marketConsensus);
+
+  const ev = injuryComponent + lineValueComponent + trapComponent;
+  
+  return Math.min(100, Math.max(0, ev * 50 + 50));
+}
+
+// Calculate record differential from pre-loaded standings data
+function calculateRecordDiffFromBatch(standings: any[], sport: string, underdog: string, favorite: string): number {
+  const standingsSport = mapSportKeyToAlias(sport);
+  
+  // Filter to this sport
+  const sportStandings = standings.filter(s => s.sport === standingsSport);
+  
+  if (sportStandings.length === 0) {
+    return 50; // Neutral if no data
+  }
+
+  // Find teams using flexible matching
+  const findTeam = (teamName: string) => {
+    return sportStandings.find((s: any) => 
+      s.team_name?.toLowerCase() === teamName.toLowerCase() ||
+      teamName.toLowerCase().includes(s.team_name?.split(' ').pop()?.toLowerCase() || '') ||
+      s.team_name?.toLowerCase().includes(teamName.split(' ').pop()?.toLowerCase() || '')
+    );
+  };
+
+  const underdogStanding = findTeam(underdog);
+  const favoriteStanding = findTeam(favorite);
+
+  if (!underdogStanding || !favoriteStanding) {
+    return 50;
+  }
+
+  // Calculate score based on record differential
+  const winPctDiff = (underdogStanding.win_pct || 0.5) - (favoriteStanding.win_pct || 0.5);
+  const recordScore = 50 + (winPctDiff * 100);
+
+  // Add point differential bonus
+  const pdDiff = (underdogStanding.point_differential || 0) - (favoriteStanding.point_differential || 0);
+  const pdBonus = Math.min(15, Math.max(-15, pdDiff / 2));
+
+  return Math.min(100, Math.max(0, recordScore + pdBonus));
+}
+
+// Calculate home court advantage from pre-loaded stats
+function calculateHomeCourtFromBatch(hcaStats: any[], sport: string, homeTeam: string, isUnderdogHome: boolean): number {
+  // Find matching team stats
+  const teamStats = hcaStats.find(s => 
+    s.sport === sport && (
+      s.team_name?.toLowerCase() === homeTeam.toLowerCase() ||
+      homeTeam.toLowerCase().includes(s.team_name?.split(' ').pop()?.toLowerCase() || '')
+    )
+  );
+
+  if (!teamStats) {
+    // Default values if no data
+    return isUnderdogHome ? 60 : 40;
+  }
+
+  if (isUnderdogHome) {
+    // Underdog at home - significant boost
+    return Math.min(100, (teamStats.home_upset_rate || 0.3) * 200 + 30);
+  } else {
+    // Underdog away - penalty based on home team strength
+    const awayBoost = (teamStats.away_upset_rate || 0.25) * 150;
+    const homePenalty = ((teamStats.home_win_rate || 0.5) - 0.5) * 50;
+    return Math.min(100, Math.max(0, awayBoost - homePenalty + 40));
+  }
 }
 
 function calculateUpsetValueScore(underdogOdds: number, sharpPct: number) {
@@ -415,7 +605,8 @@ function calculateMonteCarloBoost(underdogOdds: number, sport: string) {
   return Math.min(100, Math.max(0, boost));
 }
 
-function calculateChaosPercentage(sharpPct: number, upsetValue: number, monteCarlo: number, dayBoost: number) {
+// Use event-based deterministic seeding instead of Math.random() for reproducibility
+function calculateChaosPercentage(sharpPct: number, upsetValue: number, monteCarlo: number, dayBoost: number, eventId?: string) {
   // Chaos indicators
   let chaos = 0;
 
@@ -433,10 +624,24 @@ function calculateChaosPercentage(sharpPct: number, upsetValue: number, monteCar
   // Historical day patterns
   if (dayBoost >= 60) chaos += 15;
 
-  // Random volatility factor
-  chaos += Math.random() * 20;
+  // Deterministic volatility factor based on event hash instead of random
+  // This ensures same event always gets same volatility boost
+  const volatilityBoost = eventId ? hashToVolatility(eventId) : 10;
+  chaos += volatilityBoost;
 
   return Math.min(100, chaos);
+}
+
+// Convert eventId to a deterministic volatility value (0-20)
+function hashToVolatility(eventId: string): number {
+  let hash = 0;
+  for (let i = 0; i < eventId.length; i++) {
+    const char = eventId.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  // Map hash to 0-20 range
+  return Math.abs(hash % 21);
 }
 
 function calculateUpsetProbability(upsetScore: number, underdogOdds: number, chaosModeActive: boolean) {
