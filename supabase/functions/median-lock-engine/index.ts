@@ -226,17 +226,63 @@ function determineBetSide(
   return { betSide: 'PASS', edge: underEdge, hitRate: underHitRate, side: 'under' };
 }
 
-// Helper to get correct stat based on prop type
+// Helper to get correct stat based on prop type (including combo props)
 function getStatForPropType(log: any, propType: string): number {
-  switch (propType) {
+  const normalizedType = propType.toLowerCase();
+  
+  // Single stat props
+  switch (normalizedType) {
     case 'player_points': return log.points || 0;
     case 'player_assists': return log.assists || 0;
     case 'player_rebounds': return log.rebounds || 0;
     case 'player_threes': return log.threes_made || 0;
     case 'player_blocks': return log.blocks || 0;
     case 'player_steals': return log.steals || 0;
-    default: return log.points || 0;
+    case 'player_turnovers': return log.turnovers || 0;
   }
+  
+  // Combo props: Points + Rebounds + Assists (PRA)
+  if (normalizedType.includes('points') && normalizedType.includes('rebounds') && normalizedType.includes('assists')) {
+    return (log.points || 0) + (log.rebounds || 0) + (log.assists || 0);
+  }
+  if (normalizedType === 'player_pra' || normalizedType === 'pra') {
+    return (log.points || 0) + (log.rebounds || 0) + (log.assists || 0);
+  }
+  
+  // Combo props: Points + Rebounds (P+R)
+  if (normalizedType.includes('points') && normalizedType.includes('rebounds') && !normalizedType.includes('assists')) {
+    return (log.points || 0) + (log.rebounds || 0);
+  }
+  if (normalizedType === 'player_pts_rebs' || normalizedType === 'pts_rebs' || normalizedType === 'player_points_rebounds') {
+    return (log.points || 0) + (log.rebounds || 0);
+  }
+  
+  // Combo props: Points + Assists (P+A)
+  if (normalizedType.includes('points') && normalizedType.includes('assists') && !normalizedType.includes('rebounds')) {
+    return (log.points || 0) + (log.assists || 0);
+  }
+  if (normalizedType === 'player_pts_asts' || normalizedType === 'pts_asts' || normalizedType === 'player_points_assists') {
+    return (log.points || 0) + (log.assists || 0);
+  }
+  
+  // Combo props: Rebounds + Assists (R+A)
+  if (normalizedType.includes('rebounds') && normalizedType.includes('assists') && !normalizedType.includes('points')) {
+    return (log.rebounds || 0) + (log.assists || 0);
+  }
+  if (normalizedType === 'player_rebs_asts' || normalizedType === 'rebs_asts' || normalizedType === 'player_rebounds_assists') {
+    return (log.rebounds || 0) + (log.assists || 0);
+  }
+  
+  // Combo props: Steals + Blocks (S+B)
+  if (normalizedType.includes('steals') && normalizedType.includes('blocks')) {
+    return (log.steals || 0) + (log.blocks || 0);
+  }
+  if (normalizedType === 'player_stl_blk' || normalizedType === 'stl_blk' || normalizedType === 'player_steals_blocks') {
+    return (log.steals || 0) + (log.blocks || 0);
+  }
+  
+  // Default to points
+  return log.points || 0;
 }
 
 // ============ DEFENSE ADJUSTMENT ============

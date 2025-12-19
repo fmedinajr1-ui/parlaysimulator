@@ -1484,6 +1484,78 @@ export type Database = {
         }
         Relationships: []
       }
+      first_scorer_props: {
+        Row: {
+          actual_first_scorer: string | null
+          ai_probability: number | null
+          analysis_factors: Json | null
+          away_team: string | null
+          confidence_score: number | null
+          created_at: string | null
+          edge: number | null
+          expires_at: string | null
+          game_id: string
+          game_time: string | null
+          home_team: string | null
+          id: string
+          implied_probability: number | null
+          is_active: boolean | null
+          odds: number | null
+          outcome: string | null
+          prop_type: string
+          recommendation: string | null
+          selection: string
+          sport: string
+          verified_at: string | null
+        }
+        Insert: {
+          actual_first_scorer?: string | null
+          ai_probability?: number | null
+          analysis_factors?: Json | null
+          away_team?: string | null
+          confidence_score?: number | null
+          created_at?: string | null
+          edge?: number | null
+          expires_at?: string | null
+          game_id: string
+          game_time?: string | null
+          home_team?: string | null
+          id?: string
+          implied_probability?: number | null
+          is_active?: boolean | null
+          odds?: number | null
+          outcome?: string | null
+          prop_type: string
+          recommendation?: string | null
+          selection: string
+          sport: string
+          verified_at?: string | null
+        }
+        Update: {
+          actual_first_scorer?: string | null
+          ai_probability?: number | null
+          analysis_factors?: Json | null
+          away_team?: string | null
+          confidence_score?: number | null
+          created_at?: string | null
+          edge?: number | null
+          expires_at?: string | null
+          game_id?: string
+          game_time?: string | null
+          home_team?: string | null
+          id?: string
+          implied_probability?: number | null
+          is_active?: boolean | null
+          odds?: number | null
+          outcome?: string | null
+          prop_type?: string
+          recommendation?: string | null
+          selection?: string
+          sport?: string
+          verified_at?: string | null
+        }
+        Relationships: []
+      }
       god_mode_accuracy_metrics: {
         Row: {
           accuracy_rate: number
@@ -3068,6 +3140,87 @@ export type Database = {
         }
         Relationships: []
       }
+      nfl_team_defense_stats: {
+        Row: {
+          completions_allowed: number | null
+          created_at: string | null
+          games_played: number | null
+          id: string
+          interceptions_forced: number | null
+          overall_defense_rank: number | null
+          pass_defense_rank: number | null
+          pass_tds_allowed: number | null
+          pass_yards_allowed_per_game: number | null
+          points_allowed_per_game: number | null
+          rush_attempts_against: number | null
+          rush_defense_rank: number | null
+          rush_tds_allowed: number | null
+          rush_yards_allowed_per_game: number | null
+          rush_yards_per_attempt_allowed: number | null
+          season: string | null
+          team_abbrev: string
+          team_name: string
+          total_yards_allowed_per_game: number | null
+          updated_at: string | null
+          vs_qb_rank: number | null
+          vs_rb_rank: number | null
+          vs_te_rank: number | null
+          vs_wr_rank: number | null
+        }
+        Insert: {
+          completions_allowed?: number | null
+          created_at?: string | null
+          games_played?: number | null
+          id?: string
+          interceptions_forced?: number | null
+          overall_defense_rank?: number | null
+          pass_defense_rank?: number | null
+          pass_tds_allowed?: number | null
+          pass_yards_allowed_per_game?: number | null
+          points_allowed_per_game?: number | null
+          rush_attempts_against?: number | null
+          rush_defense_rank?: number | null
+          rush_tds_allowed?: number | null
+          rush_yards_allowed_per_game?: number | null
+          rush_yards_per_attempt_allowed?: number | null
+          season?: string | null
+          team_abbrev: string
+          team_name: string
+          total_yards_allowed_per_game?: number | null
+          updated_at?: string | null
+          vs_qb_rank?: number | null
+          vs_rb_rank?: number | null
+          vs_te_rank?: number | null
+          vs_wr_rank?: number | null
+        }
+        Update: {
+          completions_allowed?: number | null
+          created_at?: string | null
+          games_played?: number | null
+          id?: string
+          interceptions_forced?: number | null
+          overall_defense_rank?: number | null
+          pass_defense_rank?: number | null
+          pass_tds_allowed?: number | null
+          pass_yards_allowed_per_game?: number | null
+          points_allowed_per_game?: number | null
+          rush_attempts_against?: number | null
+          rush_defense_rank?: number | null
+          rush_tds_allowed?: number | null
+          rush_yards_allowed_per_game?: number | null
+          rush_yards_per_attempt_allowed?: number | null
+          season?: string | null
+          team_abbrev?: string
+          team_name?: string
+          total_yards_allowed_per_game?: number | null
+          updated_at?: string | null
+          vs_qb_rank?: number | null
+          vs_rb_rank?: number | null
+          vs_te_rank?: number | null
+          vs_wr_rank?: number | null
+        }
+        Relationships: []
+      }
       nhl_player_game_logs: {
         Row: {
           assists: number | null
@@ -3119,6 +3272,66 @@ export type Database = {
           points?: number | null
           power_play_points?: number | null
           shots_on_goal?: number | null
+        }
+        Relationships: []
+      }
+      nhl_team_pace_stats: {
+        Row: {
+          created_at: string | null
+          games_played: number | null
+          goals_against_per_game: number | null
+          goals_for_per_game: number | null
+          id: string
+          losses: number | null
+          ot_losses: number | null
+          season: string | null
+          shot_differential: number | null
+          shot_generation_rank: number | null
+          shot_suppression_rank: number | null
+          shots_against_per_game: number | null
+          shots_for_per_game: number | null
+          team_abbrev: string
+          team_name: string
+          updated_at: string | null
+          wins: number | null
+        }
+        Insert: {
+          created_at?: string | null
+          games_played?: number | null
+          goals_against_per_game?: number | null
+          goals_for_per_game?: number | null
+          id?: string
+          losses?: number | null
+          ot_losses?: number | null
+          season?: string | null
+          shot_differential?: number | null
+          shot_generation_rank?: number | null
+          shot_suppression_rank?: number | null
+          shots_against_per_game?: number | null
+          shots_for_per_game?: number | null
+          team_abbrev: string
+          team_name: string
+          updated_at?: string | null
+          wins?: number | null
+        }
+        Update: {
+          created_at?: string | null
+          games_played?: number | null
+          goals_against_per_game?: number | null
+          goals_for_per_game?: number | null
+          id?: string
+          losses?: number | null
+          ot_losses?: number | null
+          season?: string | null
+          shot_differential?: number | null
+          shot_generation_rank?: number | null
+          shot_suppression_rank?: number | null
+          shots_against_per_game?: number | null
+          shots_for_per_game?: number | null
+          team_abbrev?: string
+          team_name?: string
+          updated_at?: string | null
+          wins?: number | null
         }
         Relationships: []
       }

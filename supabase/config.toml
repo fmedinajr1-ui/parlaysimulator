@@ -269,3 +269,12 @@ verify_jwt = false
 
 [functions.elite-daily-hitter-engine]
 verify_jwt = false
+
+[functions.nfl-team-defense-fetcher]
+verify_jwt = false
+
+[functions.nhl-team-stats-fetcher]
+verify_jwt = false
+
+[functions.first-scorer-engine]
+verify_jwt = false
