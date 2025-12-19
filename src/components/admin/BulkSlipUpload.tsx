@@ -31,16 +31,29 @@ interface QueuedImage {
 
 interface ExtractedLeg {
   description: string;
-  odds: number;
+  odds: string;  // American odds format e.g. "+150" or "-110"
+  gameTime?: string | null;
+  gameTimeISO?: string | null;
   sport?: string;
   betType?: string;
 }
 
 interface ExtractedParlay {
   legs: ExtractedLeg[];
-  stake: number;
-  potentialPayout: number;
+  stake: number | null;
+  potentialPayout: number | null;
+  earliestGameTime?: string | null;
+  earliestGameTimeISO?: string | null;
+  isBettingSlip?: boolean;
+  originalOddsFormat?: 'american' | 'decimal' | 'fractional' | null;
   sport?: string;
+}
+
+// Helper to parse American odds string to number
+function parseOddsToNumber(odds: string): number {
+  const cleaned = odds.replace(/[+\s]/g, '');
+  const num = parseInt(cleaned, 10);
+  return isNaN(num) ? 0 : num;
 }
 
 const SPORTS = ['NBA', 'NFL', 'NHL', 'MLB', 'NCAAB', 'NCAAF', 'Soccer', 'UFC', 'Other'];
@@ -227,9 +240,10 @@ export function BulkSlipUpload() {
         
         // Create parlay history entry
         const combinedOdds = item.result.legs.reduce((acc, leg) => {
-          const decimalOdds = leg.odds > 0 
-            ? (leg.odds / 100) + 1 
-            : (100 / Math.abs(leg.odds)) + 1;
+          const oddsNum = parseOddsToNumber(leg.odds);
+          const decimalOdds = oddsNum > 0 
+            ? (oddsNum / 100) + 1 
+            : (100 / Math.abs(oddsNum)) + 1;
           return acc * decimalOdds;
         }, 1);
         
@@ -262,9 +276,10 @@ export function BulkSlipUpload() {
         
         // Create training data entries for each leg
         const trainingEntries = item.result.legs.map((leg, idx) => {
-          const decimalOdds = leg.odds > 0 
-            ? (leg.odds / 100) + 1 
-            : (100 / Math.abs(leg.odds)) + 1;
+          const oddsNum = parseOddsToNumber(leg.odds);
+          const decimalOdds = oddsNum > 0 
+            ? (oddsNum / 100) + 1 
+            : (100 / Math.abs(oddsNum)) + 1;
           const impliedProbability = 1 / decimalOdds;
           
           return {
@@ -272,7 +287,7 @@ export function BulkSlipUpload() {
             user_id: user.id,
             leg_index: idx,
             description: leg.description,
-            odds: leg.odds,
+            odds: oddsNum,
             implied_probability: impliedProbability,
             sport: leg.sport || item.result?.sport || 'Unknown',
             bet_type: leg.betType || 'other'
@@ -559,9 +574,9 @@ export function BulkSlipUpload() {
                               </Badge>
                             )}
                             <span className={`font-mono ${
-                              leg.odds > 0 ? 'text-green-500' : 'text-red-500'
+                              parseOddsToNumber(leg.odds) > 0 ? 'text-green-500' : 'text-red-500'
                             }`}>
-                              {leg.odds > 0 ? '+' : ''}{leg.odds}
+                              {leg.odds.startsWith('-') || leg.odds.startsWith('+') ? leg.odds : `+${leg.odds}`}
                             </span>
                           </div>
                         </div>
