@@ -8,8 +8,8 @@ interface PhoneVerificationGuardProps {
   children: ReactNode;
 }
 
-// Public paths that don't require verification
-const PUBLIC_PATHS = ['/', '/auth', '/verify-phone', '/install', '/offline'];
+// Public paths that don't require verification - include /profile for sign-out access
+const PUBLIC_PATHS = ['/', '/auth', '/verify-phone', '/install', '/offline', '/profile'];
 
 export function PhoneVerificationGuard({ children }: PhoneVerificationGuardProps) {
   const { user, isLoading: authLoading } = useAuth();
