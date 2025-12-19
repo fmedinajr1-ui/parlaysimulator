@@ -9,6 +9,7 @@ import { OddsMovementCard } from "@/components/results/OddsMovementCard";
 import { CompareTeaser } from "@/components/CompareTeaser";
 import { HistoricalInsights } from "@/components/suggestions/HistoricalInsights";
 import { SmartBettingEdge } from "@/components/suggestions/SmartBettingEdge";
+import { DailyEliteHitterCard } from "@/components/suggestions/DailyEliteHitterCard";
 import { PullToRefreshContainer, PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
 import { useHapticFeedback } from "@/hooks/useHapticFeedback";
@@ -39,7 +40,7 @@ function QuickAction({ to, icon: Icon, label, iconClass }: {
 
 const Index = () => {
   const { lightTap, success } = useHapticFeedback();
-  const { isPilotUser, isAdmin, isSubscribed, isLoading } = usePilotUser();
+  const { isPilotUser, isAdmin, isSubscribed, isLoading, hasEliteAccess } = usePilotUser();
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   
@@ -155,6 +156,13 @@ const Index = () => {
         
         {/* Example Cards */}
         <ExampleCarousel />
+
+        {/* Daily Elite Hitter - Admin/Elite Access Only */}
+        {hasEliteAccess && (
+          <div className="mb-4">
+            <DailyEliteHitterCard />
+          </div>
+        )}
 
         {/* Compare Parlays - Available to all users */}
         <CompareTeaser />

@@ -90,7 +90,7 @@ serve(async (req) => {
     const phoneVerified = profileData?.phone_verified ?? false;
     logStep("Phone verification status", { phoneVerified });
 
-    // Check user roles (admin, full_access, etc.)
+    // Check user roles (admin, full_access, elite_access, etc.)
     const { data: rolesData } = await supabaseClient
       .from('user_roles')
       .select('role')
@@ -99,8 +99,9 @@ serve(async (req) => {
     const roles = rolesData?.map(r => r.role) || [];
     const isAdmin = roles.includes('admin');
     const hasFullAccess = roles.includes('full_access');
+    const hasEliteAccess = roles.includes('elite_access') || isAdmin;
 
-    logStep("User roles", { roles, isAdmin, hasFullAccess });
+    logStep("User roles", { roles, isAdmin, hasFullAccess, hasEliteAccess });
 
     // Admin gets unlimited access
     if (isAdmin) {
@@ -112,6 +113,7 @@ serve(async (req) => {
         canScan: true,
         scansRemaining: -1,
         hasOddsAccess: true,
+        hasEliteAccess: true,
         phoneVerified: true, // Admins bypass phone verification
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -184,6 +186,7 @@ serve(async (req) => {
         scansRemaining: -1,
         subscriptionEnd,
         hasOddsAccess,
+        hasEliteAccess,
         phoneVerified,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -201,6 +204,7 @@ serve(async (req) => {
         canScan: true,
         scansRemaining: -1,
         hasOddsAccess,
+        hasEliteAccess,
         phoneVerified,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -266,6 +270,7 @@ serve(async (req) => {
         freeComparesRemaining: quotaData.free_compares_remaining,
         paidScanBalance: quotaData.paid_scan_balance,
         hasOddsAccess: false,
+        hasEliteAccess,
         phoneVerified,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
