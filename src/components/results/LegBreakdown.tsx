@@ -1,6 +1,6 @@
 import { FeedCard } from "../FeedCard";
 import { ParlayLeg, LegAnalysis, InjuryAlert } from "@/types/parlay";
-import { ChevronDown, ChevronUp, AlertTriangle, TrendingUp, TrendingDown, Users } from "lucide-react";
+import { ChevronDown, ChevronUp, AlertTriangle, TrendingUp, TrendingDown, Users, Target, Zap, Crown } from "lucide-react";
 import { useState } from "react";
 import { InjuryAlertBadge } from "./InjuryAlertBadge";
 import { cn } from "@/lib/utils";
@@ -38,37 +38,6 @@ const sharpEmojis = {
   caution: "⚠️ CAUTION",
 };
 
-// Sport-specific coach impact calculations
-const calculateCoachImpact = (analysis: LegAnalysis | undefined): { edge: number; reason: string } | null => {
-  if (!analysis) return null;
-  
-  // Check for fatigue data which often indicates coaching impact
-  const fatigueData = analysis.fatigueData;
-  if (fatigueData) {
-    const impact = fatigueData.isBackToBack ? -1.5 : 0;
-    if (impact !== 0) {
-      return {
-        edge: impact,
-        reason: fatigueData.isBackToBack 
-          ? "Back-to-back game reduces expected output" 
-          : "Normal rest schedule"
-      };
-    }
-  }
-  
-  // Check for unified prop data with sharp money signal
-  const unifiedData = analysis.unifiedPropData;
-  if (unifiedData && unifiedData.confidence > 0.7) {
-    const impactMultiplier = unifiedData.recommendation === 'OVER' ? 0.8 : -0.8;
-    return {
-      edge: impactMultiplier,
-      reason: `High confidence ${unifiedData.recommendation.toLowerCase()} based on usage patterns`
-    };
-  }
-  
-  return null;
-};
-
 export function LegBreakdown({ legs, legAnalyses, delay = 0 }: LegBreakdownProps) {
   const [expandedLeg, setExpandedLeg] = useState<string | null>(null);
 
@@ -86,14 +55,19 @@ export function LegBreakdown({ legs, legAnalyses, delay = 0 }: LegBreakdownProps
         {legs.map((leg, idx) => {
           const analysis = getLegAnalysis(idx);
           const hasInjuries = analysis?.injuryAlerts && analysis.injuryAlerts.length > 0;
-          const coachImpact = calculateCoachImpact(analysis);
+          const medianLockData = (analysis as any)?.medianLockData;
+          const coachData = (analysis as any)?.coachData;
+          const hitRatePercent = (analysis as any)?.hitRatePercent;
           
           return (
             <div 
               key={leg.id}
-              className={`rounded-xl bg-muted/50 border overflow-hidden transition-all duration-200 ${
-                hasInjuries ? 'border-neon-orange/50' : 'border-border/50'
-              }`}
+              className={cn(
+                "rounded-xl bg-muted/50 border overflow-hidden transition-all duration-200",
+                hasInjuries ? 'border-neon-orange/50' : 
+                medianLockData?.parlay_grade ? 'border-neon-green/50' : 
+                'border-border/50'
+              )}
             >
               <button
                 onClick={() => setExpandedLeg(expandedLeg === leg.id ? null : leg.id)}
@@ -110,7 +84,18 @@ export function LegBreakdown({ legs, legAnalyses, delay = 0 }: LegBreakdownProps
                       {hasInjuries && (
                         <span className="text-xs px-2 py-0.5 rounded-full bg-neon-orange/20 text-neon-orange border border-neon-orange/30 flex items-center gap-1">
                           <AlertTriangle className="w-3 h-3" />
-                          INJURY ALERT
+                          INJURY
+                        </span>
+                      )}
+                      {medianLockData?.parlay_grade && (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-neon-green/20 text-neon-green border border-neon-green/30 flex items-center gap-1">
+                          <Crown className="w-3 h-3" />
+                          PARLAY GRADE
+                        </span>
+                      )}
+                      {hitRatePercent && hitRatePercent >= 60 && (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-neon-cyan/20 text-neon-cyan border border-neon-cyan/30">
+                          {hitRatePercent.toFixed(0)}% HR
                         </span>
                       )}
                     </div>
@@ -144,6 +129,173 @@ export function LegBreakdown({ legs, legAnalyses, delay = 0 }: LegBreakdownProps
                       <p className="text-xs text-muted-foreground uppercase">Miss Rate</p>
                     </div>
                   </div>
+
+                  {/* Hit Rate Badge - prominent display */}
+                  {hitRatePercent && (
+                    <div className={cn(
+                      "mt-3 p-3 rounded-lg border flex items-center justify-between",
+                      hitRatePercent >= 65 ? "bg-neon-green/10 border-neon-green/30" :
+                      hitRatePercent >= 50 ? "bg-neon-yellow/10 border-neon-yellow/30" :
+                      "bg-neon-red/10 border-neon-red/30"
+                    )}>
+                      <div className="flex items-center gap-2">
+                        <Target className={cn(
+                          "w-5 h-5",
+                          hitRatePercent >= 65 ? "text-neon-green" :
+                          hitRatePercent >= 50 ? "text-neon-yellow" : "text-neon-red"
+                        )} />
+                        <div>
+                          <span className="text-xs text-muted-foreground uppercase">Historical Hit Rate</span>
+                          <p className="text-xs text-muted-foreground">Based on similar prop matchups</p>
+                        </div>
+                      </div>
+                      <span className={cn(
+                        "text-xl font-bold",
+                        hitRatePercent >= 65 ? "text-neon-green" :
+                        hitRatePercent >= 50 ? "text-neon-yellow" : "text-neon-red"
+                      )}>
+                        {hitRatePercent.toFixed(0)}%
+                      </span>
+                    </div>
+                  )}
+
+                  {/* MedianLock PRO Card */}
+                  {medianLockData && (
+                    <div className={cn(
+                      "mt-3 p-3 rounded-lg border",
+                      medianLockData.parlay_grade ? "bg-neon-green/15 border-neon-green/50" :
+                      medianLockData.classification === 'LOCK' ? "bg-neon-green/10 border-neon-green/30" :
+                      "bg-neon-cyan/10 border-neon-cyan/30"
+                    )}>
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <Zap className={cn(
+                            "w-5 h-5",
+                            medianLockData.parlay_grade ? "text-neon-green" : "text-neon-cyan"
+                          )} />
+                          <span className="text-sm font-bold">
+                            MedianLock™ PRO
+                          </span>
+                        </div>
+                        <Badge variant="outline" className={cn(
+                          medianLockData.parlay_grade ? "text-neon-green border-neon-green/50" :
+                          medianLockData.classification === 'LOCK' ? "text-neon-green border-neon-green/30" :
+                          "text-neon-cyan border-neon-cyan/30"
+                        )}>
+                          {medianLockData.parlay_grade ? '🏆 PARLAY GRADE' : medianLockData.classification}
+                        </Badge>
+                      </div>
+                      
+                      <div className="grid grid-cols-3 gap-2 text-center">
+                        <div className="p-2 rounded bg-background/50">
+                          <p className="text-sm font-bold text-neon-cyan">
+                            {medianLockData.edge_percent?.toFixed(1) || '0'}%
+                          </p>
+                          <p className="text-[10px] text-muted-foreground">Edge</p>
+                        </div>
+                        <div className="p-2 rounded bg-background/50">
+                          <p className="text-sm font-bold text-foreground">
+                            {medianLockData.projected_minutes?.toFixed(0) || '-'}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground">Proj Min</p>
+                        </div>
+                        <div className="p-2 rounded bg-background/50">
+                          <p className="text-sm font-bold text-neon-purple">
+                            {medianLockData.adjusted_edge?.toFixed(1) || '0'}%
+                          </p>
+                          <p className="text-[10px] text-muted-foreground">Adj Edge</p>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center justify-between mt-2">
+                        <span className="text-xs text-muted-foreground">
+                          Recommended: <span className="font-medium">{medianLockData.bet_side}</span>
+                        </span>
+                        <span className="text-xs">
+                          {(medianLockData.hit_rate || 0).toFixed(0)}% historical hit rate
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Coach Scorecard */}
+                  {coachData && (
+                    <div className={cn(
+                      "mt-3 p-3 rounded-lg border",
+                      coachData.recommendation === 'PICK' 
+                        ? "bg-neon-green/10 border-neon-green/30" 
+                        : coachData.recommendation === 'FADE'
+                          ? "bg-neon-red/10 border-neon-red/30"
+                          : "bg-muted/50 border-border/50"
+                    )}>
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <Users className={cn(
+                            "w-5 h-5",
+                            coachData.recommendation === 'PICK' ? "text-neon-green" :
+                            coachData.recommendation === 'FADE' ? "text-neon-red" : "text-muted-foreground"
+                          )} />
+                          <div>
+                            <span className="text-sm font-medium">{coachData.coachName}</span>
+                            <p className="text-[10px] text-muted-foreground">{coachData.teamName}</p>
+                          </div>
+                        </div>
+                        <Badge variant="outline" className={cn(
+                          "text-xs",
+                          coachData.recommendation === 'PICK' ? "text-neon-green border-neon-green/30" :
+                          coachData.recommendation === 'FADE' ? "text-neon-red border-neon-red/30" :
+                          "text-muted-foreground border-border"
+                        )}>
+                          {coachData.sport}
+                        </Badge>
+                      </div>
+                      
+                      {/* Offensive/Defensive Bias */}
+                      <div className="grid grid-cols-2 gap-2 mb-2">
+                        <div className="text-center p-2 rounded bg-background/50">
+                          <span className={cn("text-sm font-bold", 
+                            coachData.offensiveBias > 0 ? "text-neon-green" : 
+                            coachData.offensiveBias < 0 ? "text-neon-red" : "text-muted-foreground"
+                          )}>
+                            {coachData.offensiveBias > 0 ? '+' : ''}{coachData.offensiveBias.toFixed(1)}%
+                          </span>
+                          <p className="text-[10px] text-muted-foreground">OFF Bias</p>
+                        </div>
+                        <div className="text-center p-2 rounded bg-background/50">
+                          <span className={cn("text-sm font-bold",
+                            coachData.defensiveBias > 0 ? "text-neon-green" : 
+                            coachData.defensiveBias < 0 ? "text-neon-red" : "text-muted-foreground"
+                          )}>
+                            {coachData.defensiveBias > 0 ? '+' : ''}{coachData.defensiveBias.toFixed(1)}%
+                          </span>
+                          <p className="text-[10px] text-muted-foreground">DEF Bias</p>
+                        </div>
+                      </div>
+                      
+                      {/* Prop Relevance */}
+                      <p className="text-xs text-muted-foreground mb-2">
+                        {coachData.propRelevance}
+                      </p>
+                      
+                      {/* Confidence & Adjustment */}
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground">Confidence</span>
+                        <div className="flex items-center gap-2">
+                          {coachData.propAdjustment !== 0 && (
+                            <span className={cn(
+                              "text-xs font-medium",
+                              coachData.propAdjustment > 0 ? "text-neon-green" : "text-neon-red"
+                            )}>
+                              {coachData.propAdjustment > 0 ? '+' : ''}{coachData.propAdjustment.toFixed(1)} adjustment
+                            </span>
+                          )}
+                          <Badge variant="outline" className="text-xs">
+                            {coachData.confidence.toFixed(0)}%
+                          </Badge>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   
                   {/* Calibrated probability if available */}
                   {analysis?.calibratedProbability && (
@@ -157,35 +309,6 @@ export function LegBreakdown({ legs, legAnalyses, delay = 0 }: LegBreakdownProps
                       <p className="text-xs text-muted-foreground mt-1">
                         Adjusted based on AI's historical accuracy
                       </p>
-                    </div>
-                  )}
-                  
-                  {/* NEW: Coach Impact Row */}
-                  {coachImpact && (
-                    <div className={cn(
-                      "mt-3 p-3 rounded-lg border flex items-center gap-3",
-                      coachImpact.edge > 0 
-                        ? "bg-neon-green/10 border-neon-green/30" 
-                        : "bg-neon-red/10 border-neon-red/30"
-                    )}>
-                      <Users className={cn(
-                        "w-5 h-5",
-                        coachImpact.edge > 0 ? "text-neon-green" : "text-neon-red"
-                      )} />
-                      <div className="flex-1">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs text-muted-foreground uppercase">Coach Impact</span>
-                          <Badge variant="outline" className={cn(
-                            "text-xs",
-                            coachImpact.edge > 0 
-                              ? "text-neon-green border-neon-green/30" 
-                              : "text-neon-red border-neon-red/30"
-                          )}>
-                            {coachImpact.edge > 0 ? '+' : ''}{coachImpact.edge.toFixed(1)}% edge
-                          </Badge>
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-1">{coachImpact.reason}</p>
-                      </div>
                     </div>
                   )}
                   
