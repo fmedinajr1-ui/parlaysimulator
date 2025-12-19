@@ -149,6 +149,34 @@ interface LegAnalysis {
     propAdjustment: number;
   };
   hitRatePercent?: number;
+  nflDefenseData?: {
+    teamAbbrev: string;
+    teamName: string;
+    rushYardsAllowedPG: number;
+    passYardsAllowedPG: number;
+    totalYardsAllowedPG: number;
+    pointsAllowedPG: number;
+    rushDefenseRank: number;
+    passDefenseRank: number;
+    overallDefenseRank: number;
+    vsQBRank: number;
+    vsRBRank: number;
+    vsWRRank: number;
+    vsTERank: number;
+  };
+  nhlPaceData?: {
+    teamAbbrev: string;
+    teamName: string;
+    shotsForPG: number;
+    shotsAgainstPG: number;
+    shotDifferential: number;
+    shotGenerationRank: number;
+    shotSuppressionRank: number;
+    goalsForPG: number;
+    goalsAgainstPG: number;
+    powerPlayPct: number;
+    penaltyKillPct: number;
+  };
 }
 
 interface HistoricalContext {
@@ -415,12 +443,14 @@ serve(async (req) => {
     let hitrateProps: any[] = [];
     let coachProfiles: any[] = [];
     let medianLockCandidates: any[] = [];
+    let nflDefenseStats: any[] = [];
+    let nhlPaceStats: any[] = [];
     
     try {
       const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
       const today = new Date().toISOString().split('T')[0];
       
-      // Fetch all engine data in parallel (11 data sources)
+      // Fetch all engine data in parallel (13 data sources)
       const [
         movementResult,
         unifiedResult,
@@ -432,7 +462,9 @@ serve(async (req) => {
         bestBetsResult,
         hitrateResult,
         coachResult,
-        medianLockResult
+        medianLockResult,
+        nflDefenseResult,
+        nhlPaceResult
       ] = await Promise.all([
         supabase
           .from('line_movements')
@@ -495,7 +527,17 @@ serve(async (req) => {
           .select('*')
           .eq('slate_date', today)
           .in('classification', ['LOCK', 'STRONG'])
-          .limit(200)
+          .limit(200),
+        // NFL Team Defense Stats
+        supabase
+          .from('nfl_team_defense_stats')
+          .select('*')
+          .limit(32),
+        // NHL Team Pace Stats
+        supabase
+          .from('nhl_team_pace_stats')
+          .select('*')
+          .limit(32)
       ]);
       
       lineMovements = movementResult.data || [];
@@ -509,8 +551,10 @@ serve(async (req) => {
       hitrateProps = hitrateResult.data || [];
       coachProfiles = coachResult.data || [];
       medianLockCandidates = medianLockResult.data || [];
+      nflDefenseStats = nflDefenseResult.data || [];
+      nhlPaceStats = nhlPaceResult.data || [];
       
-      console.log(`Loaded engine data: ${lineMovements.length} movements, ${unifiedProps.length} unified, ${godModeUpsets.length} upsets, ${juicedProps.length} juiced, ${fatigueScores.length} fatigue, ${avoidPatterns.length} avoid, ${formulaPerformance.length} formulas, ${bestBetsLog.length} bestBets, ${hitrateProps.length} hitrate, ${coachProfiles.length} coaches, ${medianLockCandidates.length} medianLock`);
+      console.log(`Loaded engine data: ${lineMovements.length} movements, ${unifiedProps.length} unified, ${godModeUpsets.length} upsets, ${juicedProps.length} juiced, ${fatigueScores.length} fatigue, ${avoidPatterns.length} avoid, ${formulaPerformance.length} formulas, ${bestBetsLog.length} bestBets, ${hitrateProps.length} hitrate, ${coachProfiles.length} coaches, ${medianLockCandidates.length} medianLock, ${nflDefenseStats.length} nflDefense, ${nhlPaceStats.length} nhlPace`);
     } catch (dataError) {
       console.error('Error fetching engine data:', dataError);
     }
@@ -806,6 +850,85 @@ Return ONLY valid JSON, no other text.`;
       return { offensiveBias, defensiveBias, propRelevance, propAdjustment };
     }
 
+    // NFL Defense matching function
+    function matchNFLDefense(teamOrOpponent: string, desc: string, stats: any[]): any | null {
+      if (!teamOrOpponent || stats.length === 0) return null;
+      
+      const teamLower = teamOrOpponent.toLowerCase();
+      const descLower = desc.toLowerCase();
+      
+      // NFL team abbreviations and full names to match
+      const nflTeamMatches: Record<string, string[]> = {
+        'ATL': ['falcons', 'atlanta'],
+        'BUF': ['bills', 'buffalo'],
+        'CHI': ['bears', 'chicago'],
+        'CIN': ['bengals', 'cincinnati'],
+        'CLE': ['browns', 'cleveland'],
+        'DAL': ['cowboys', 'dallas'],
+        'DEN': ['broncos', 'denver'],
+        'DET': ['lions', 'detroit'],
+        'GB': ['packers', 'green bay'],
+        'TEN': ['titans', 'tennessee'],
+        'IND': ['colts', 'indianapolis'],
+        'KC': ['chiefs', 'kansas city'],
+        'LV': ['raiders', 'las vegas', 'vegas'],
+        'LAR': ['rams', 'la rams', 'los angeles rams'],
+        'MIA': ['dolphins', 'miami'],
+        'MIN': ['vikings', 'minnesota'],
+        'NE': ['patriots', 'new england'],
+        'NO': ['saints', 'new orleans'],
+        'NYG': ['giants', 'ny giants'],
+        'NYJ': ['jets', 'ny jets'],
+        'PHI': ['eagles', 'philadelphia'],
+        'ARI': ['cardinals', 'arizona'],
+        'PIT': ['steelers', 'pittsburgh'],
+        'LAC': ['chargers', 'la chargers', 'los angeles chargers'],
+        'SF': ['49ers', 'san francisco', 'niners'],
+        'SEA': ['seahawks', 'seattle'],
+        'TB': ['buccaneers', 'bucs', 'tampa bay', 'tampa'],
+        'WSH': ['commanders', 'washington'],
+        'CAR': ['panthers', 'carolina'],
+        'JAX': ['jaguars', 'jacksonville'],
+        'BAL': ['ravens', 'baltimore'],
+        'HOU': ['texans', 'houston']
+      };
+      
+      return stats.find(s => {
+        const abbrev = s.team_abbrev?.toUpperCase();
+        const teamName = s.team_name?.toLowerCase() || '';
+        
+        // Direct abbreviation match
+        if (abbrev && (teamLower.includes(abbrev.toLowerCase()) || descLower.includes(abbrev.toLowerCase()))) {
+          return true;
+        }
+        
+        // Full name match
+        if (teamName && (teamLower.includes(teamName) || descLower.includes(teamName))) {
+          return true;
+        }
+        
+        // Nickname/alias match
+        const aliases = nflTeamMatches[abbrev] || [];
+        return aliases.some(alias => teamLower.includes(alias) || descLower.includes(alias));
+      }) || null;
+    }
+
+    // NHL Pace matching function
+    function matchNHLPace(teamOrOpponent: string, desc: string, stats: any[]): any | null {
+      if (!teamOrOpponent || stats.length === 0) return null;
+      
+      const teamLower = teamOrOpponent.toLowerCase();
+      const descLower = desc.toLowerCase();
+      
+      return stats.find(s => {
+        const teamAbbrev = s.team_abbrev?.toLowerCase() || '';
+        const teamName = s.team_name?.toLowerCase() || '';
+        
+        return teamLower.includes(teamAbbrev) || teamLower.includes(teamName) ||
+               descLower.includes(teamAbbrev) || descLower.includes(teamName);
+      }) || null;
+    }
+
     function calculateEngineConsensus(legDesc: string, legPlayer: string | undefined, legTeam: string | undefined, allData: {
       unifiedProp: any,
       upset: any,
@@ -860,7 +983,8 @@ Return ONLY valid JSON, no other text.`;
       // 3. Hit Rate Engine (from unified props or hitrate_parlays)
       const hitRateScore = allData.unifiedProp?.hit_rate_score || allData.hitrateData?.combined_probability;
       if (hitRateScore !== undefined) {
-        const hrPct = hitRateScore * (hitRateScore > 1 ? 1 : 100);
+        // Fix: If hitRateScore is already > 1, it's already a percentage; otherwise multiply by 100
+        const hrPct = hitRateScore > 1 ? hitRateScore : hitRateScore * 100;
         const isAgree = hrPct >= 65;
         const isDisagree = hrPct <= 40;
         engineSignals.push({
@@ -1096,7 +1220,50 @@ Return ONLY valid JSON, no other text.`;
           }
         }
 
-        // Check avoid patterns
+        // Match to NFL defense stats (for NFL legs)
+        if (legAnalysis.sport?.toUpperCase() === 'NFL' && nflDefenseStats.length > 0) {
+          const matchedNFLDefense = matchNFLDefense(legAnalysis.team || '', legDesc, nflDefenseStats);
+          if (matchedNFLDefense) {
+            legAnalysis.nflDefenseData = {
+              teamAbbrev: matchedNFLDefense.team_abbrev,
+              teamName: matchedNFLDefense.team_name,
+              rushYardsAllowedPG: matchedNFLDefense.rush_yards_allowed_per_game || 0,
+              passYardsAllowedPG: matchedNFLDefense.pass_yards_allowed_per_game || 0,
+              totalYardsAllowedPG: matchedNFLDefense.total_yards_allowed_per_game || 0,
+              pointsAllowedPG: matchedNFLDefense.points_allowed_per_game || 0,
+              rushDefenseRank: matchedNFLDefense.rush_defense_rank || 0,
+              passDefenseRank: matchedNFLDefense.pass_defense_rank || 0,
+              overallDefenseRank: matchedNFLDefense.overall_defense_rank || 0,
+              vsQBRank: matchedNFLDefense.vs_qb_rank || 0,
+              vsRBRank: matchedNFLDefense.vs_rb_rank || 0,
+              vsWRRank: matchedNFLDefense.vs_wr_rank || 0,
+              vsTERank: matchedNFLDefense.vs_te_rank || 0
+            };
+            console.log(`✅ NFL Defense matched for ${legAnalysis.team}: ${matchedNFLDefense.team_abbrev}, rank=${matchedNFLDefense.overall_defense_rank}`);
+          }
+        }
+
+        // Match to NHL pace stats (for NHL legs)
+        if (legAnalysis.sport?.toUpperCase() === 'NHL' && nhlPaceStats.length > 0) {
+          const matchedNHLPace = matchNHLPace(legAnalysis.team || '', legDesc, nhlPaceStats);
+          if (matchedNHLPace) {
+            legAnalysis.nhlPaceData = {
+              teamAbbrev: matchedNHLPace.team_abbrev,
+              teamName: matchedNHLPace.team_name,
+              shotsForPG: matchedNHLPace.shots_for_per_game || 0,
+              shotsAgainstPG: matchedNHLPace.shots_against_per_game || 0,
+              shotDifferential: matchedNHLPace.shot_differential || 0,
+              shotGenerationRank: matchedNHLPace.shot_generation_rank || 0,
+              shotSuppressionRank: matchedNHLPace.shot_suppression_rank || 0,
+              goalsForPG: matchedNHLPace.goals_for_per_game || 0,
+              goalsAgainstPG: matchedNHLPace.goals_against_per_game || 0,
+              powerPlayPct: matchedNHLPace.power_play_pct || 0,
+              penaltyKillPct: matchedNHLPace.penalty_kill_pct || 0
+            };
+            console.log(`✅ NHL Pace matched for ${legAnalysis.team}: ${matchedNHLPace.team_abbrev}, shots=${matchedNHLPace.shots_for_per_game}`);
+          }
+        }
+
         if (avoidPatterns.length > 0) {
           const matchedPatterns = checkAvoidPatterns(legDesc, avoidPatterns);
           if (matchedPatterns.length > 0) {
@@ -1142,22 +1309,27 @@ Return ONLY valid JSON, no other text.`;
           }
         }
 
-        // Add coach data with prop-type-specific analysis
-        const matchedCoach = coachProfiles.find(c => c.team_name?.toLowerCase().includes(legAnalysis.team?.toLowerCase() || ''));
-        if (matchedCoach) {
-          const coachBias = calculateCoachBias(matchedCoach, legDesc);
-          legAnalysis.coachData = {
-            coachName: matchedCoach.coach_name,
-            teamName: matchedCoach.team_name,
-            sport: matchedCoach.sport || 'NBA',
-            offensiveBias: coachBias.offensiveBias,
-            defensiveBias: coachBias.defensiveBias,
-            recommendation: coachBias.propAdjustment > 0 ? 'PICK' : coachBias.propAdjustment < 0 ? 'FADE' : 'NEUTRAL',
-            confidence: Math.min(100, Math.abs(coachBias.offensiveBias) + Math.abs(coachBias.defensiveBias) + 40),
-            propRelevance: coachBias.propRelevance,
-            propAdjustment: coachBias.propAdjustment
-          };
-          console.log(`✅ Coach data matched for ${legAnalysis.team}: ${matchedCoach.coach_name}`);
+        // Add coach data with prop-type-specific analysis - ONLY for NBA legs
+        if (legAnalysis.sport?.toUpperCase() === 'NBA' && coachProfiles.length > 0) {
+          const matchedCoach = coachProfiles.find(c => 
+            c.team_name?.toLowerCase().includes(legAnalysis.team?.toLowerCase() || '') &&
+            c.sport?.toUpperCase() === 'NBA'
+          );
+          if (matchedCoach) {
+            const coachBias = calculateCoachBias(matchedCoach, legDesc);
+            legAnalysis.coachData = {
+              coachName: matchedCoach.coach_name,
+              teamName: matchedCoach.team_name,
+              sport: 'NBA',
+              offensiveBias: coachBias.offensiveBias,
+              defensiveBias: coachBias.defensiveBias,
+              recommendation: coachBias.propAdjustment > 0 ? 'PICK' : coachBias.propAdjustment < 0 ? 'FADE' : 'NEUTRAL',
+              confidence: Math.min(100, Math.abs(coachBias.offensiveBias) + Math.abs(coachBias.defensiveBias) + 40),
+              propRelevance: coachBias.propRelevance,
+              propAdjustment: coachBias.propAdjustment
+            };
+            console.log(`✅ Coach data matched for ${legAnalysis.team}: ${matchedCoach.coach_name}`);
+          }
         }
 
         // Add hit rate percentage from unified props or hitrate parlays
@@ -1179,7 +1351,7 @@ Return ONLY valid JSON, no other text.`;
             fatigueData: legAnalysis.fatigueData ? fatigueScores.find(f => f.team_name?.toLowerCase().includes(legAnalysis.team?.toLowerCase() || '')) : null,
             bestBet: matchedBestBet || null,
             hitrateData: matchedHitrate || null,
-            coachingData: matchedCoach || null,
+            coachingData: legAnalysis.coachData ? coachProfiles.find(c => c.team_name?.toLowerCase().includes(legAnalysis.team?.toLowerCase() || '')) : null,
             medianLockData: matchedMedianLock || null
           },
           formulaPerformance
