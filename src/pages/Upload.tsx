@@ -27,6 +27,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { compressImage, validateMediaFile } from "@/lib/image-compression";
 import { extractFramesFromVideo, isVideoFile, type ExtractionProgress } from "@/lib/video-frame-extractor";
 import { ClearerScreenshotNudge } from "@/components/upload/ClearerScreenshotNudge";
+import { useHapticFeedback } from "@/hooks/useHapticFeedback";
+import { usePersistedState } from "@/hooks/usePersistedState";
 
 // Calculate estimated per-leg odds when we only have total odds
 function calculateEstimatedLegOdds(totalOdds: number, numLegs: number): number {
@@ -67,17 +69,33 @@ const Upload = () => {
   const { isSubscribed, isAdmin, canScan, scansRemaining, incrementScan, startCheckout, checkSubscription } = useSubscription();
   const { isPilotUser, canScan: pilotCanScan, totalScansAvailable, decrementScan, purchaseScans, checkStatus: checkPilotStatus } = usePilotUser();
   const { shouldShowHint, dismissHint } = useHints();
+  const haptics = useHapticFeedback();
+  
+  // Persisted state for Safari PWA backgrounding (30 minute TTL)
+  const UPLOAD_STATE_KEY = 'upload-page-state';
+  const [persistedData, setPersistedData, clearPersistedData] = usePersistedState<{
+    legs: LegInput[];
+    stake: string;
+    extractedTotalOdds: number | null;
+    extractedGameTime: string | null;
+    wasRestored?: boolean;
+  }>(UPLOAD_STATE_KEY, {
+    legs: [
+      { id: crypto.randomUUID(), description: "", odds: "" },
+      { id: crypto.randomUUID(), description: "", odds: "" },
+    ],
+    stake: "10",
+    extractedTotalOdds: null,
+    extractedGameTime: null,
+  }, 30 * 60 * 1000);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [legs, setLegs] = useState<LegInput[]>([
-    { id: crypto.randomUUID(), description: "", odds: "" },
-    { id: crypto.randomUUID(), description: "", odds: "" },
-  ]);
-  const [stake, setStake] = useState("10");
+  const [legs, setLegs] = useState<LegInput[]>(persistedData.legs);
+  const [stake, setStake] = useState(persistedData.stake);
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [extractedTotalOdds, setExtractedTotalOdds] = useState<number | null>(null);
-  const [extractedGameTime, setExtractedGameTime] = useState<string | null>(null);
+  const [extractedTotalOdds, setExtractedTotalOdds] = useState<number | null>(persistedData.extractedTotalOdds);
+  const [extractedGameTime, setExtractedGameTime] = useState<string | null>(persistedData.extractedGameTime);
   const [isEditingGameTime, setIsEditingGameTime] = useState(false);
   const [editDate, setEditDate] = useState<Date | undefined>(undefined);
   const [editTime, setEditTime] = useState("19:00");
@@ -92,6 +110,31 @@ const Upload = () => {
   const [undoCountdown, setUndoCountdown] = useState<number>(0);
   const [videoProgress, setVideoProgress] = useState<ExtractionProgress | null>(null);
   const [showExtractionNudge, setShowExtractionNudge] = useState(false);
+  const [showRestoredBanner, setShowRestoredBanner] = useState(false);
+
+  // Show restored session banner on mount if data was restored
+  useEffect(() => {
+    const hasValidLegs = persistedData.legs.some(l => l.description.trim());
+    if (hasValidLegs && !persistedData.wasRestored) {
+      setShowRestoredBanner(true);
+      setPersistedData({ ...persistedData, wasRestored: true });
+      haptics.success();
+    }
+  }, []);
+
+  // Persist state whenever it changes meaningfully
+  useEffect(() => {
+    const hasContent = legs.some(l => l.description.trim());
+    if (hasContent) {
+      setPersistedData({
+        legs,
+        stake,
+        extractedTotalOdds,
+        extractedGameTime,
+        wasRestored: true,
+      });
+    }
+  }, [legs, stake, extractedTotalOdds, extractedGameTime]);
 
   // Check for success/cancel params from purchase
   useEffect(() => {
@@ -271,17 +314,20 @@ const Upload = () => {
       
       // Show toast based on results
       if (data.hasSharpConflicts) {
+        haptics.warning();
         toast({
           title: "⚠️ Sharp Conflicts Detected",
           description: data.suggestedAction,
           variant: "destructive",
         });
       } else if (data.overallRisk === 'caution') {
+        haptics.mediumTap();
         toast({
           title: "🟡 Proceed with Caution",
           description: data.suggestedAction,
         });
       } else {
+        haptics.success();
         toast({
           title: "🟢 Looking Good!",
           description: data.suggestedAction,
@@ -289,6 +335,7 @@ const Upload = () => {
       }
     } catch (error) {
       console.error('Quick check error:', error);
+      haptics.error();
       toast({
         title: "Quick Check Failed",
         description: "Unable to fetch sharp data. Try again later.",
@@ -418,6 +465,7 @@ const Upload = () => {
         
         if (extractedLegs.length === 0) {
           setShowExtractionNudge(true);
+          haptics.error();
           toast({
             title: "No betting slip found",
             description: `Scanned ${data?.framesProcessed || frames.length} frames but couldn't find parlay data. Try a clearer recording.`,
@@ -426,6 +474,7 @@ const Upload = () => {
           // Do NOT decrement scan - extraction failed
         } else {
           setShowExtractionNudge(false);
+          haptics.success();
           // Set extracted legs
           const legInputs: LegInput[] = extractedLegs.map((leg: any) => ({
             id: crypto.randomUUID(),
@@ -457,6 +506,7 @@ const Upload = () => {
         }
       } catch (err) {
         console.error('Video processing error:', err);
+        haptics.error();
         toast({
           title: "Video processing failed",
           description: err instanceof Error ? err.message : "Unknown error",
@@ -583,12 +633,13 @@ const Upload = () => {
     setProcessingIndex(-1);
 
     if (successCount > 0) {
+      haptics.success();
       toast({
         title: `Extracted ${allExtractedLegs.length} total legs! 🎯`,
         description: `From ${successCount} slip${successCount > 1 ? 's' : ''}`,
       });
     }
-  }, [user, canScan, isSubscribed, isAdmin, incrementScan, startCheckout, scansRemaining]);
+  }, [user, canScan, isSubscribed, isAdmin, incrementScan, startCheckout, scansRemaining, haptics]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
