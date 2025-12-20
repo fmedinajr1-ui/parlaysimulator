@@ -24,6 +24,8 @@ interface Pool {
   created_at: string;
   member_count?: number;
   legs_submitted?: number;
+  creator_username?: string | null;
+  creator_avatar?: string | null;
 }
 
 export default function Pools() {
@@ -72,6 +74,41 @@ export default function Pools() {
 
   useEffect(() => {
     fetchPools();
+  }, [user]);
+
+  // Realtime subscription for pool updates
+  useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase
+      .channel('pools-realtime')
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'parlay_pools' 
+      }, (payload) => {
+        console.log('Pool changed:', payload);
+        fetchPools();
+      })
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'pool_legs' 
+      }, () => {
+        fetchPools();
+      })
+      .on('postgres_changes', { 
+        event: 'INSERT', 
+        schema: 'public', 
+        table: 'pool_memberships' 
+      }, () => {
+        fetchPools();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [user]);
 
   const handlePoolCreated = () => {
@@ -252,6 +289,9 @@ export default function Pools() {
                           <span>{pool.legs_submitted || 0}/{pool.num_legs_required} legs</span>
                           <span>{pool.member_count || 0} members</span>
                           <span>${pool.stake_per_member} stake</span>
+                          {pool.creator_username && (
+                            <span className="text-xs">by {pool.creator_username}</span>
+                          )}
                         </div>
                       </div>
                       <Button size="sm" variant="outline">

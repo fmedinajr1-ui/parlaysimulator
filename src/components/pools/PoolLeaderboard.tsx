@@ -17,6 +17,10 @@ interface LeaderboardEntry {
   total_staked: number;
   roi_percentage: number;
   current_streak: number;
+  profiles?: {
+    username: string | null;
+    avatar_url: string | null;
+  } | null;
 }
 
 export function PoolLeaderboard() {
@@ -135,7 +139,7 @@ export function PoolLeaderboard() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="font-medium truncate">
-                      {isCurrentUser ? 'You' : `Player ${entry.user_id.slice(0, 6)}`}
+                      {isCurrentUser ? 'You' : (entry.profiles?.username || `Player ${entry.user_id.slice(0, 6)}`)}
                     </span>
                     {isCurrentUser && (
                       <Badge variant="outline" className="text-xs">You</Badge>

@@ -40,12 +40,25 @@ interface PoolLeg {
   engine_source: string;
   engine_confidence: number;
   submitted_at: string;
+  profiles?: {
+    username: string | null;
+    avatar_url: string | null;
+  } | null;
 }
 
 interface PoolMember {
   user_id: string;
   role: string;
   joined_at: string;
+  profiles?: {
+    username: string | null;
+    avatar_url: string | null;
+  } | null;
+}
+
+interface ProfileInfo {
+  username: string | null;
+  avatar_url: string | null;
 }
 
 export default function PoolDetail() {
@@ -321,7 +334,10 @@ export default function PoolDetail() {
                     </div>
                     <p className="font-medium mb-1">{leg.description}</p>
                     <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                      {leg.sport && <span>{leg.sport}</span>}
+                      <span className="text-xs">
+                        by {leg.profiles?.username || (leg.user_id === user?.id ? 'You' : 'Member')}
+                      </span>
+                      {leg.sport && <span>• {leg.sport}</span>}
                       {leg.bet_type && <span>• {leg.bet_type}</span>}
                       {leg.status !== 'pending' && (
                         <Badge 
@@ -355,8 +371,10 @@ export default function PoolDetail() {
                   className="py-1"
                 >
                   <Users className="w-3 h-3 mr-1" />
-                  {member.role === 'creator' ? 'Creator' : 'Member'}
-                  {member.user_id === user?.id && ' (You)'}
+                  {member.user_id === user?.id 
+                    ? 'You' 
+                    : member.profiles?.username || (member.role === 'creator' ? 'Creator' : 'Member')}
+                  {member.role === 'creator' && member.user_id !== user?.id && ' (Creator)'}
                 </Badge>
               ))}
             </div>
