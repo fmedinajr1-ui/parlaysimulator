@@ -43,6 +43,9 @@ const AllSportsTracker = React.lazy(() => import("./pages/AllSportsTracker"));
 const Kelly = React.lazy(() => import("./pages/Kelly"));
 const MedianLock = React.lazy(() => import("./pages/MedianLock"));
 const VerifyPhone = React.lazy(() => import("./pages/VerifyPhone"));
+const Pools = React.lazy(() => import("./pages/Pools"));
+const PoolDetail = React.lazy(() => import("./pages/PoolDetail"));
+const JoinPool = React.lazy(() => import("./pages/JoinPool"));
 
 
 // QueryClient with optimized defaults
@@ -109,6 +112,9 @@ function AnimatedRoutes() {
             <Route path="/median-lock" element={<MedianLock />} />
             <Route path="/verify-phone" element={<VerifyPhone />} />
             <Route path="/verify-email" element={<Navigate to="/auth" replace />} />
+            <Route path="/pools" element={<Pools />} />
+            <Route path="/pools/:id" element={<PoolDetail />} />
+            <Route path="/pools/join/:inviteCode" element={<JoinPool />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </React.Suspense>

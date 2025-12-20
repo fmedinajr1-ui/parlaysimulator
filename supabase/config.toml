@@ -305,3 +305,6 @@ verify_jwt = false
 
 [functions.find-swap-alternatives]
 verify_jwt = false
+
+[functions.pool-manager]
+verify_jwt = false

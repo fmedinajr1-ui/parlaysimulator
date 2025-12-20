@@ -3816,6 +3816,51 @@ export type Database = {
         }
         Relationships: []
       }
+      parlay_pools: {
+        Row: {
+          combined_odds: number | null
+          created_at: string | null
+          creator_id: string
+          id: string
+          invite_code: string
+          is_won: boolean | null
+          num_legs_required: number
+          pool_name: string
+          pool_rules: Json | null
+          settled_at: string | null
+          stake_per_member: number | null
+          status: string
+        }
+        Insert: {
+          combined_odds?: number | null
+          created_at?: string | null
+          creator_id: string
+          id?: string
+          invite_code?: string
+          is_won?: boolean | null
+          num_legs_required: number
+          pool_name: string
+          pool_rules?: Json | null
+          settled_at?: string | null
+          stake_per_member?: number | null
+          status?: string
+        }
+        Update: {
+          combined_odds?: number | null
+          created_at?: string | null
+          creator_id?: string
+          id?: string
+          invite_code?: string
+          is_won?: boolean | null
+          num_legs_required?: number
+          pool_name?: string
+          pool_rules?: Json | null
+          settled_at?: string | null
+          stake_per_member?: number | null
+          status?: string
+        }
+        Relationships: []
+      }
       parlay_training_data: {
         Row: {
           ai_adjusted_probability: number | null
@@ -4429,6 +4474,154 @@ export type Database = {
           usage_trend?: string | null
         }
         Relationships: []
+      }
+      pool_leaderboard_stats: {
+        Row: {
+          current_streak: number | null
+          id: string
+          legs_submitted: number | null
+          legs_won: number | null
+          pools_won: number | null
+          roi_percentage: number | null
+          total_payout: number | null
+          total_pools_joined: number | null
+          total_staked: number | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          current_streak?: number | null
+          id?: string
+          legs_submitted?: number | null
+          legs_won?: number | null
+          pools_won?: number | null
+          roi_percentage?: number | null
+          total_payout?: number | null
+          total_pools_joined?: number | null
+          total_staked?: number | null
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          current_streak?: number | null
+          id?: string
+          legs_submitted?: number | null
+          legs_won?: number | null
+          pools_won?: number | null
+          roi_percentage?: number | null
+          total_payout?: number | null
+          total_pools_joined?: number | null
+          total_staked?: number | null
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      pool_legs: {
+        Row: {
+          bet_type: string
+          description: string
+          engine_confidence: number | null
+          engine_source: string | null
+          event_id: string | null
+          id: string
+          implied_probability: number | null
+          leg_index: number
+          line: number | null
+          odds: number
+          player_name: string | null
+          pool_id: string
+          prop_type: string | null
+          settled_at: string | null
+          side: string | null
+          sport: string | null
+          status: string | null
+          submitted_at: string | null
+          user_id: string
+        }
+        Insert: {
+          bet_type: string
+          description: string
+          engine_confidence?: number | null
+          engine_source?: string | null
+          event_id?: string | null
+          id?: string
+          implied_probability?: number | null
+          leg_index: number
+          line?: number | null
+          odds: number
+          player_name?: string | null
+          pool_id: string
+          prop_type?: string | null
+          settled_at?: string | null
+          side?: string | null
+          sport?: string | null
+          status?: string | null
+          submitted_at?: string | null
+          user_id: string
+        }
+        Update: {
+          bet_type?: string
+          description?: string
+          engine_confidence?: number | null
+          engine_source?: string | null
+          event_id?: string | null
+          id?: string
+          implied_probability?: number | null
+          leg_index?: number
+          line?: number | null
+          odds?: number
+          player_name?: string | null
+          pool_id?: string
+          prop_type?: string | null
+          settled_at?: string | null
+          side?: string | null
+          sport?: string | null
+          status?: string | null
+          submitted_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pool_legs_pool_id_fkey"
+            columns: ["pool_id"]
+            isOneToOne: false
+            referencedRelation: "parlay_pools"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pool_memberships: {
+        Row: {
+          id: string
+          joined_at: string | null
+          pool_id: string
+          role: string | null
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          joined_at?: string | null
+          pool_id: string
+          role?: string | null
+          user_id: string
+        }
+        Update: {
+          id?: string
+          joined_at?: string | null
+          pool_id?: string
+          role?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pool_memberships_pool_id_fkey"
+            columns: ["pool_id"]
+            isOneToOne: false
+            referencedRelation: "parlay_pools"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       profiles: {
         Row: {
