@@ -354,8 +354,8 @@ export function MedianLockDashboard() {
           disabled={generatingCombos}
           className="gap-1.5"
         >
-          <Layers className={`h-4 w-4 ${generatingCombos ? 'animate-pulse' : ''}`} />
-          {generatingCombos ? 'Generating...' : 'Gen Combos'}
+          <Layers className={`h-4 w-4 ${generatingCombos ? 'animate-spin' : ''}`} />
+          {generatingCombos ? 'Generating combos...' : 'Gen Combos'}
         </Button>
       </div>
 

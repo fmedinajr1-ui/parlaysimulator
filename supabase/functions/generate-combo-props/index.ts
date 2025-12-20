@@ -192,48 +192,46 @@ serve(async (req) => {
 
     console.log(`[generate-combo-props] Generated ${generatedProps.length} combo props`);
 
-    // Insert/upsert into player_prop_hitrates table
-    const insertErrors: string[] = [];
-    
-    for (const prop of generatedProps) {
-      const hitRate = prop.recommendedSide === 'over' ? prop.hitRateOver : prop.hitRateUnder;
-      
-      const { error: upsertError } = await supabase
-        .from('player_prop_hitrates')
-        .upsert({
-          player_name: prop.playerName,
-          sport: 'NBA',
-          prop_type: prop.propType,
-          current_line: prop.syntheticLine,
-          over_price: -110, // Synthetic standard price
-          under_price: -110,
-          games_analyzed: prop.gamesAnalyzed,
-          over_hits: Math.round(prop.hitRateOver * prop.gamesAnalyzed),
-          under_hits: Math.round(prop.hitRateUnder * prop.gamesAnalyzed),
-          hit_rate_over: prop.hitRateOver,
-          hit_rate_under: prop.hitRateUnder,
-          recommended_side: prop.recommendedSide,
-          confidence_score: prop.confidenceScore,
-          last_5_results: prop.last5Values,
-          last_5_avg: prop.last5Values.reduce((a, b) => a + b, 0) / prop.last5Values.length,
-          season_avg: prop.medianValue,
-          season_games_played: prop.gamesAnalyzed,
-          analyzed_at: new Date().toISOString(),
-          expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // 24 hours
-        }, {
-          onConflict: 'player_name,prop_type,current_line',
-          ignoreDuplicates: false,
-        });
+    // Prepare batch records for single upsert operation
+    const batchRecords = generatedProps.map(prop => ({
+      player_name: prop.playerName,
+      sport: 'NBA',
+      prop_type: prop.propType,
+      current_line: prop.syntheticLine,
+      over_price: -110,
+      under_price: -110,
+      games_analyzed: prop.gamesAnalyzed,
+      over_hits: Math.round(prop.hitRateOver * prop.gamesAnalyzed),
+      under_hits: Math.round(prop.hitRateUnder * prop.gamesAnalyzed),
+      hit_rate_over: prop.hitRateOver,
+      hit_rate_under: prop.hitRateUnder,
+      recommended_side: prop.recommendedSide,
+      confidence_score: prop.confidenceScore,
+      last_5_results: prop.last5Values,
+      last_5_avg: prop.last5Values.reduce((a, b) => a + b, 0) / prop.last5Values.length,
+      season_avg: prop.medianValue,
+      season_games_played: prop.gamesAnalyzed,
+      analyzed_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    }));
 
-      if (upsertError) {
-        console.error(`Error upserting combo prop for ${prop.playerName}:`, upsertError);
-        insertErrors.push(`${prop.playerName} ${prop.displayName}: ${upsertError.message}`);
-      } else {
-        inserted++;
-      }
+    // Single batch upsert instead of individual calls
+    const { error: batchError } = await supabase
+      .from('player_prop_hitrates')
+      .upsert(batchRecords, {
+        onConflict: 'player_name,prop_type,current_line',
+        ignoreDuplicates: false,
+      });
+
+    const insertErrors: string[] = [];
+    if (batchError) {
+      console.error('[generate-combo-props] Batch upsert error:', batchError);
+      insertErrors.push(batchError.message);
+    } else {
+      inserted = generatedProps.length;
     }
 
-    console.log(`[generate-combo-props] Inserted ${inserted} props, ${insertErrors.length} errors`);
+    console.log(`[generate-combo-props] Batch inserted ${inserted} props, ${insertErrors.length} errors`);
 
     // Log to cron_job_history
     await supabase.from('cron_job_history').insert({
