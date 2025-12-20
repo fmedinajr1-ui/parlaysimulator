@@ -12,7 +12,7 @@ import { PilotPaywallModal } from "@/components/PilotPaywallModal";
 import { QuickCheckResults } from "@/components/upload/QuickCheckResults";
 import { UploadOptimizer } from "@/components/upload/UploadOptimizer";
 import { MobileHeader } from "@/components/layout/MobileHeader";
-import { Plus, Upload as UploadIcon, Flame, X, Loader2, Sparkles, CheckCircle2, Clock, Pencil, CalendarIcon, Crown, Image, Shield, HelpCircle, Home, Video } from "lucide-react";
+import { Plus, Upload as UploadIcon, Flame, X, Loader2, Sparkles, CheckCircle2, Clock, Pencil, CalendarIcon, Crown, Image, Shield, HelpCircle, Home, Video, Trash2 } from "lucide-react";
 import { HintTooltip } from "@/components/tutorial/HintTooltip";
 import { useHints } from "@/hooks/useHints";
 import { Progress } from "@/components/ui/progress";
@@ -381,6 +381,25 @@ const Upload = () => {
       return;
     }
     setLegs([...legs, { id: crypto.randomUUID(), description: "", odds: "" }]);
+  };
+
+  const handleClearAll = () => {
+    setLegs([
+      { id: crypto.randomUUID(), description: "", odds: "" },
+      { id: crypto.randomUUID(), description: "", odds: "" },
+    ]);
+    setExtractedTotalOdds(null);
+    setExtractedGameTime(null);
+    setStake("10");
+    setQuickCheckResults(null);
+    setShowOptimizer(false);
+    clearPersistedData();
+    haptics.mediumTap();
+    
+    toast({
+      title: "Cleared! 🗑️",
+      description: "Ready for a new parlay.",
+    });
   };
 
   const removeLeg = (id: string) => {
@@ -1134,9 +1153,22 @@ const Upload = () => {
 
         {/* Legs Table */}
         <FeedCard variant="full-bleed" className="mb-5">
-          <p className="text-sm text-muted-foreground uppercase tracking-wider mb-3">
-            📋 Your Legs ({legs.length})
-          </p>
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm text-muted-foreground uppercase tracking-wider">
+              📋 Your Legs ({legs.length})
+            </p>
+            {legs.some(l => l.description.trim() || l.odds.trim()) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleClearAll}
+                className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 h-7 px-2"
+              >
+                <Trash2 className="w-3.5 h-3.5 mr-1" />
+                Clear All
+              </Button>
+            )}
+          </div>
           
           <div className="space-y-2">
             {legs.map((leg, idx) => (
