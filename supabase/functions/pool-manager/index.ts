@@ -325,18 +325,41 @@ serve(async (req) => {
           });
         }
 
-        // Get members
+        // Get members with profile info
         const { data: memberships } = await supabaseClient
           .from('pool_memberships')
           .select('user_id, role, joined_at')
           .eq('pool_id', pool.id);
 
-        // Get legs
+        // Get profile info for members
+        const memberIds = memberships?.map(m => m.user_id) || [];
+        const { data: profiles } = await supabaseClient
+          .from('profiles')
+          .select('user_id, username, avatar_url')
+          .in('user_id', memberIds);
+
+        const membersWithProfiles = memberships?.map(m => ({
+          ...m,
+          profiles: profiles?.find(p => p.user_id === m.user_id) || null
+        })) || [];
+
+        // Get legs with profile info
         const { data: legs } = await supabaseClient
           .from('pool_legs')
           .select('*')
           .eq('pool_id', pool.id)
           .order('leg_index', { ascending: true });
+
+        const legUserIds = legs?.map(l => l.user_id) || [];
+        const { data: legProfiles } = await supabaseClient
+          .from('profiles')
+          .select('user_id, username, avatar_url')
+          .in('user_id', legUserIds);
+
+        const legsWithProfiles = legs?.map(l => ({
+          ...l,
+          profiles: legProfiles?.find(p => p.user_id === l.user_id) || null
+        })) || [];
 
         // Check if current user is a member
         const isMember = memberships?.some(m => m.user_id === user.id);
@@ -344,8 +367,8 @@ serve(async (req) => {
         return new Response(JSON.stringify({ 
           success: true, 
           pool,
-          members: memberships || [],
-          legs: legs || [],
+          members: membersWithProfiles,
+          legs: legsWithProfiles,
           is_member: isMember
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -390,7 +413,7 @@ serve(async (req) => {
           });
         }
 
-        // Get member counts for each pool
+        // Get member counts and creator info for each pool
         const poolsWithCounts = await Promise.all((pools || []).map(async (pool) => {
           const { count } = await supabaseClient
             .from('pool_memberships')
@@ -402,10 +425,19 @@ serve(async (req) => {
             .select('*', { count: 'exact', head: true })
             .eq('pool_id', pool.id);
 
+          // Get creator profile
+          const { data: creatorProfile } = await supabaseClient
+            .from('profiles')
+            .select('username, avatar_url')
+            .eq('user_id', pool.creator_id)
+            .single();
+
           return {
             ...pool,
             member_count: count || 0,
-            legs_submitted: legCount || 0
+            legs_submitted: legCount || 0,
+            creator_username: creatorProfile?.username || null,
+            creator_avatar: creatorProfile?.avatar_url || null
           };
         }));
 
@@ -428,7 +460,19 @@ serve(async (req) => {
           });
         }
 
-        return new Response(JSON.stringify({ success: true, leaderboard: leaderboard || [] }), {
+        // Get profile info for leaderboard entries
+        const userIds = leaderboard?.map(l => l.user_id) || [];
+        const { data: profiles } = await supabaseClient
+          .from('profiles')
+          .select('user_id, username, avatar_url')
+          .in('user_id', userIds);
+
+        const leaderboardWithProfiles = leaderboard?.map(entry => ({
+          ...entry,
+          profiles: profiles?.find(p => p.user_id === entry.user_id) || null
+        })) || [];
+
+        return new Response(JSON.stringify({ success: true, leaderboard: leaderboardWithProfiles }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
       }
