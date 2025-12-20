@@ -26,6 +26,7 @@ import { usePilotUser } from "@/hooks/usePilotUser";
 import { useAuth } from "@/contexts/AuthContext";
 import { compressImage, validateMediaFile } from "@/lib/image-compression";
 import { extractFramesFromVideo, isVideoFile, type ExtractionProgress } from "@/lib/video-frame-extractor";
+import { ClearerScreenshotNudge } from "@/components/upload/ClearerScreenshotNudge";
 
 // Calculate estimated per-leg odds when we only have total odds
 function calculateEstimatedLegOdds(totalOdds: number, numLegs: number): number {
@@ -90,6 +91,7 @@ const Upload = () => {
   const [originalLegs, setOriginalLegs] = useState<LegInput[] | null>(null);
   const [undoCountdown, setUndoCountdown] = useState<number>(0);
   const [videoProgress, setVideoProgress] = useState<ExtractionProgress | null>(null);
+  const [showExtractionNudge, setShowExtractionNudge] = useState(false);
 
   // Check for success/cancel params from purchase
   useEffect(() => {
@@ -385,6 +387,7 @@ const Upload = () => {
         return;
       }
 
+      setShowExtractionNudge(false); // Clear any previous nudge
       setIsProcessing(true);
       setVideoProgress({ stage: 'loading', currentFrame: 0, totalFrames: 0, message: 'Loading video...' });
 
@@ -414,12 +417,15 @@ const Upload = () => {
         const extractedLegs = data?.legs || [];
         
         if (extractedLegs.length === 0) {
+          setShowExtractionNudge(true);
           toast({
             title: "No betting slip found",
             description: `Scanned ${data?.framesProcessed || frames.length} frames but couldn't find parlay data. Try a clearer recording.`,
             variant: "destructive",
           });
+          // Do NOT decrement scan - extraction failed
         } else {
+          setShowExtractionNudge(false);
           // Set extracted legs
           const legInputs: LegInput[] = extractedLegs.map((leg: any) => ({
             id: crypto.randomUUID(),
@@ -440,7 +446,7 @@ const Upload = () => {
             description: `Found betting slip in ${data?.framesWithSlips || 1} of ${data?.framesProcessed || frames.length} frames`,
           });
 
-          // Decrement scan for users
+          // Only decrement scan on SUCCESSFUL extraction with legs found
           if (user && !isSubscribed && !isAdmin) {
             if (isPilotUser) {
               await decrementScan('scan');
@@ -539,11 +545,18 @@ const Upload = () => {
           idx === i ? { ...item, status: 'success', extractedLegs } : item
         ));
 
-        successCount++;
+        // Only count as success and decrement scan if legs were actually found
+        if (extractedLegs.length > 0) {
+          successCount++;
+          setShowExtractionNudge(false);
 
-        // Decrement scan for users - always use pilot quota system
-        if (user && !isSubscribed && !isAdmin) {
-          await decrementScan('scan');
+          // Decrement scan for users - only on successful extraction
+          if (user && !isSubscribed && !isAdmin) {
+            await decrementScan('scan');
+          }
+        } else {
+          // No legs found - show nudge, don't charge
+          setShowExtractionNudge(true);
         }
 
       } catch (err) {
@@ -905,6 +918,18 @@ const Upload = () => {
             )}
           </div>
         </FeedCard>
+
+        {/* Clearer Screenshot Nudge - shown when extraction fails */}
+        {showExtractionNudge && (
+          <div className="mb-5">
+            <ClearerScreenshotNudge 
+              onRetry={() => {
+                setShowExtractionNudge(false);
+                fileInputRef.current?.click();
+              }} 
+            />
+          </div>
+        )}
 
         {/* Divider */}
         <div className="flex items-center gap-3 mb-5">
