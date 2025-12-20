@@ -94,13 +94,28 @@ export default function PoolDetail() {
     if (!id || !user) return;
 
     try {
-      const session = await supabase.auth.getSession();
-      const token = session.data.session?.access_token;
+      // Force refresh session to get valid token
+      await supabase.auth.refreshSession();
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      if (!token) {
+        toast.error('Please sign in again');
+        setLoading(false);
+        return;
+      }
 
       const response = await supabase.functions.invoke('pool-manager', {
         body: { action: 'get-pool', pool_id: id },
         headers: { Authorization: `Bearer ${token}` }
       });
+
+      if (response.error) {
+        console.error('Function error:', response.error);
+        toast.error('Failed to load pool');
+        setLoading(false);
+        return;
+      }
 
       if (response.data?.pool) {
         setPool(response.data.pool);

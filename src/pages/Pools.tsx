@@ -40,8 +40,26 @@ export default function Pools() {
     if (!user) return;
 
     try {
-      const session = await supabase.auth.getSession();
-      const token = session.data.session?.access_token;
+      // Force refresh session to get valid token
+      const { data: sessionData, error: sessionError } = await supabase.auth.refreshSession();
+      
+      if (sessionError || !sessionData.session) {
+        // Fallback to getSession if refresh fails
+        const { data: fallbackSession } = await supabase.auth.getSession();
+        if (!fallbackSession.session) {
+          console.error('Session error:', sessionError);
+          toast.error('Please sign in again');
+          return;
+        }
+      }
+
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      if (!token) {
+        toast.error('Please sign in again');
+        return;
+      }
 
       // Fetch user's pools
       const myPoolsResponse = await supabase.functions.invoke('pool-manager', {
@@ -49,7 +67,9 @@ export default function Pools() {
         headers: { Authorization: `Bearer ${token}` }
       });
 
-      if (myPoolsResponse.data?.pools) {
+      if (myPoolsResponse.error) {
+        console.error('Error fetching my pools:', myPoolsResponse.error);
+      } else if (myPoolsResponse.data?.pools) {
         setMyPools(myPoolsResponse.data.pools);
       }
 
@@ -59,7 +79,9 @@ export default function Pools() {
         headers: { Authorization: `Bearer ${token}` }
       });
 
-      if (openPoolsResponse.data?.pools) {
+      if (openPoolsResponse.error) {
+        console.error('Error fetching open pools:', openPoolsResponse.error);
+      } else if (openPoolsResponse.data?.pools) {
         setOpenPools(openPoolsResponse.data.pools.filter(
           (p: Pool) => !myPoolsResponse.data?.pools?.some((mp: Pool) => mp.id === p.id)
         ));
