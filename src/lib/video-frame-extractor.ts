@@ -11,10 +11,11 @@ export interface ExtractedFrame {
 }
 
 export interface ExtractionProgress {
-  stage: 'loading' | 'extracting' | 'complete' | 'error';
+  stage: 'loading' | 'extracting' | 'analyzing' | 'complete' | 'error';
   currentFrame: number;
   totalFrames: number;
   message: string;
+  legsFound?: number;
 }
 
 export interface ExtractionResult {
@@ -28,6 +29,7 @@ const FRAME_INTERVAL_SECONDS = 1;
 const MAX_FRAMES = 30;
 const JPEG_QUALITY = 0.85;
 const FRAME_TIMEOUT_MS = 8000; // 8 second timeout per frame
+const SIMILARITY_THRESHOLD = 0.92; // Skip frames that are 92%+ similar
 
 /**
  * Detect if we're on iOS Safari
@@ -283,6 +285,68 @@ function isLikelyBlankFrame(base64: string): boolean {
   // A typical JPEG with content is at least 5KB
   const dataLength = base64.length - 'data:image/jpeg;base64,'.length;
   return dataLength < 3000;
+}
+
+/**
+ * Compare two frames to detect if they're nearly identical
+ * Uses base64 length and sampling for quick comparison
+ */
+export function areFramesSimilar(frame1: string, frame2: string, threshold = SIMILARITY_THRESHOLD): boolean {
+  // Quick length comparison first
+  const len1 = frame1.length;
+  const len2 = frame2.length;
+  const lengthRatio = Math.min(len1, len2) / Math.max(len1, len2);
+  
+  // If lengths are very different, frames are definitely different
+  if (lengthRatio < 0.85) return false;
+  
+  // If lengths are very similar, check content samples
+  if (lengthRatio > 0.98) {
+    // Sample comparison at multiple positions
+    const sampleSize = 500;
+    const positions = [
+      Math.floor(len1 * 0.25),
+      Math.floor(len1 * 0.5),
+      Math.floor(len1 * 0.75)
+    ];
+    
+    let matchingSamples = 0;
+    for (const pos of positions) {
+      const sample1 = frame1.substring(pos, pos + sampleSize);
+      const sample2 = frame2.substring(pos, pos + sampleSize);
+      if (sample1 === sample2) matchingSamples++;
+    }
+    
+    // If 2+ samples match, consider similar
+    if (matchingSamples >= 2) return true;
+  }
+  
+  return lengthRatio > threshold;
+}
+
+/**
+ * Deduplicate frames by removing similar consecutive frames
+ */
+export function deduplicateFrames(frames: ExtractedFrame[]): ExtractedFrame[] {
+  if (frames.length <= 1) return frames;
+  
+  const uniqueFrames: ExtractedFrame[] = [frames[0]];
+  let skippedCount = 0;
+  
+  for (let i = 1; i < frames.length; i++) {
+    const lastUnique = uniqueFrames[uniqueFrames.length - 1];
+    if (!areFramesSimilar(frames[i].base64, lastUnique.base64)) {
+      uniqueFrames.push(frames[i]);
+    } else {
+      skippedCount++;
+    }
+  }
+  
+  if (skippedCount > 0) {
+    console.log(`Frame deduplication: skipped ${skippedCount} similar frames, keeping ${uniqueFrames.length}`);
+  }
+  
+  return uniqueFrames;
 }
 
 /**

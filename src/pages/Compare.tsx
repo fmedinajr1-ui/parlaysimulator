@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { ParlaySlot, LegInput } from '@/components/compare/ParlaySlot';
 import { ComparisonDashboard } from '@/components/compare/ComparisonDashboard';
@@ -14,8 +14,10 @@ import { useTutorial } from '@/hooks/useTutorial';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSubscription } from '@/hooks/useSubscription';
 import { usePilotUser } from '@/hooks/usePilotUser';
+import { usePersistedState, hasPersistedState } from '@/hooks/usePersistedState';
+import { useSaveOnBackground } from '@/hooks/useVisibilityChange';
 import { supabase } from '@/integrations/supabase/client';
-import { Plus, Scale, Loader2, RotateCcw, HelpCircle, Home, Crown } from 'lucide-react';
+import { Plus, Scale, Loader2, RotateCcw, HelpCircle, Home, Crown, RotateCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
@@ -71,20 +73,42 @@ const createEmptySlot = (): SlotState => ({
   status: 'empty'
 });
 
+const COMPARE_STATE_KEY = 'compare-page-state';
+
 const Compare = () => {
   const { user } = useAuth();
   const { isSubscribed, isAdmin } = useSubscription();
   const { isPilotUser, freeComparesRemaining, decrementScan, purchaseScans } = usePilotUser();
   
-  const [slots, setSlots] = useState<SlotState[]>([createEmptySlot(), createEmptySlot()]);
+  // Persisted state for slots - survives Safari PWA backgrounding
+  const [slots, setSlots, clearPersistedSlots] = usePersistedState<SlotState[]>(
+    COMPARE_STATE_KEY,
+    [createEmptySlot(), createEmptySlot()],
+    30 * 60 * 1000 // 30 minutes
+  );
+  
   const [isComparing, setIsComparing] = useState(false);
   const [comparisonResult, setComparisonResult] = useState<ComparisonResult | null>(null);
   const [aiCompareResult, setAiCompareResult] = useState<AICompareResult | null>(null);
   const [isAiAnalyzing, setIsAiAnalyzing] = useState(false);
   const [historySlotIndex, setHistorySlotIndex] = useState<number | null>(null);
   const [showPilotPaywall, setShowPilotPaywall] = useState(false);
+  const [showRestoredBanner, setShowRestoredBanner] = useState(false);
   
   const { showTutorial, setShowTutorial, markComplete } = useTutorial('compare');
+
+  // Check if we have restored state on mount
+  useEffect(() => {
+    const hasRestoredState = hasPersistedState(COMPARE_STATE_KEY);
+    const hasFilledSlots = slots.some(s => s.status === 'filled');
+    
+    if (hasRestoredState && hasFilledSlots) {
+      setShowRestoredBanner(true);
+      // Auto-hide after 5 seconds
+      const timer = setTimeout(() => setShowRestoredBanner(false), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, []);
 
   const updateSlot = useCallback((index: number, legs: LegInput[], stake: string, extractedTotalOdds: number | null) => {
     setSlots(prev => prev.map((slot, i) => 
@@ -280,7 +304,9 @@ const Compare = () => {
     setComparisonResult(null);
     setAiCompareResult(null);
     setIsAiAnalyzing(false);
-  }, []);
+    setShowRestoredBanner(false);
+    clearPersistedSlots();
+  }, [clearPersistedSlots]);
 
   const filledCount = slots.filter(s => s.status === 'filled').length;
 
@@ -319,6 +345,24 @@ const Compare = () => {
           <p className="text-muted-foreground text-sm">
             Add up to 4 parlays and find your best bet.
           </p>
+
+          {/* Session Restored Banner */}
+          {showRestoredBanner && (
+            <div className="mt-2 bg-primary/10 border border-primary/30 rounded-lg p-2 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs text-primary">
+                <RotateCw className="w-3.5 h-3.5" />
+                <span>Session restored!</span>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-xs"
+                onClick={() => setShowRestoredBanner(false)}
+              >
+                Dismiss
+              </Button>
+            </div>
+          )}
 
           {/* Quota Indicator */}
           {user && (

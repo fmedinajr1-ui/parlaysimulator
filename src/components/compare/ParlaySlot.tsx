@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { Upload, Pencil, History, X, Loader2, Plus, Trash2, Crown, Video } from 'lucide-react';
+import { Upload, Pencil, History, X, Loader2, Plus, Trash2, Crown, Video, StopCircle } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
@@ -12,7 +12,7 @@ import { useSubscription } from '@/hooks/useSubscription';
 import { useAuth } from '@/contexts/AuthContext';
 import { PaywallModal } from '@/components/PaywallModal';
 import { compressImage, validateImageFile } from '@/lib/image-compression';
-import { extractFramesFromVideo, isVideoFile, validateVideoFile, type ExtractionProgress } from '@/lib/video-frame-extractor';
+import { extractFramesFromVideo, isVideoFile, validateVideoFile, deduplicateFrames, type ExtractionProgress } from '@/lib/video-frame-extractor';
 
 export interface LegInput {
   id: string;
@@ -46,10 +46,12 @@ export function ParlaySlot({
   showTutorialAttributes = false,
 }: ParlaySlotProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [inputMode, setInputMode] = useState<'select' | 'manual' | null>(status === 'filled' ? 'manual' : null);
   const [showPaywall, setShowPaywall] = useState(false);
   const [videoProgress, setVideoProgress] = useState<ExtractionProgress | null>(null);
+  const [isCancelled, setIsCancelled] = useState(false);
   
   const { user } = useAuth();
   const { isSubscribed, isAdmin, canScan, scansRemaining, incrementScan, startCheckout } = useSubscription();
@@ -112,6 +114,10 @@ export function ParlaySlot({
       return;
     }
 
+    // Reset cancellation state
+    setIsCancelled(false);
+    abortControllerRef.current = new AbortController();
+
     // Handle video files
     if (isVideoFile(file)) {
       const validation = validateVideoFile(file);
@@ -134,20 +140,42 @@ export function ParlaySlot({
           throw new Error("Could not extract frames. Try a screenshot instead.");
         }
 
+        // Deduplicate similar frames to reduce AI calls
+        const uniqueFrames = deduplicateFrames(frames);
+        
         setVideoProgress({
-          stage: 'extracting',
+          stage: 'analyzing',
           currentFrame: 0,
-          totalFrames: frames.length,
-          message: 'Analyzing frames with AI...'
+          totalFrames: uniqueFrames.length,
+          message: `Analyzing ${uniqueFrames.length} unique frames...`,
+          legsFound: 0
         });
 
+        // Check if cancelled
+        if (abortControllerRef.current?.signal.aborted) {
+          throw new Error("Cancelled by user");
+        }
+
         const { data, error } = await supabase.functions.invoke('extract-parlay', {
-          body: { frames: frames.map(f => f.base64) }
+          body: { 
+            frames: uniqueFrames.map(f => f.base64),
+            // Enable progressive updates
+            progressiveMode: true
+          }
         });
 
         if (error || data?.error) {
           throw new Error(error?.message || data?.error || 'Failed to process video');
         }
+
+        // Update progress with final count
+        setVideoProgress({
+          stage: 'complete',
+          currentFrame: uniqueFrames.length,
+          totalFrames: uniqueFrames.length,
+          message: `Found ${data?.legs?.length || 0} legs!`,
+          legsFound: data?.legs?.length || 0
+        });
 
         const success = processExtractedData(data);
 
@@ -158,19 +186,24 @@ export function ParlaySlot({
 
       } catch (error) {
         console.error('Video processing error:', error);
-        setVideoProgress({ 
-          stage: 'error', 
-          currentFrame: 0, 
-          totalFrames: 0, 
-          message: error instanceof Error ? error.message : 'Video scan failed'
-        });
-        toast({
-          title: "Video scan failed 📹",
-          description: "Try uploading a screenshot of your slip instead.",
-          variant: "destructive",
-        });
+        const errorMessage = error instanceof Error ? error.message : 'Video scan failed';
+        
+        if (errorMessage !== "Cancelled by user") {
+          setVideoProgress({ 
+            stage: 'error', 
+            currentFrame: 0, 
+            totalFrames: 0, 
+            message: errorMessage
+          });
+          toast({
+            title: "Video scan failed 📹",
+            description: "Try uploading a screenshot of your slip instead.",
+            variant: "destructive",
+          });
+        }
       } finally {
         setIsProcessing(false);
+        abortControllerRef.current = null;
         // Keep videoProgress error for a moment so user sees the message
         setTimeout(() => setVideoProgress(null), 2000);
       }
@@ -217,6 +250,17 @@ export function ParlaySlot({
       setIsProcessing(false);
     }
   }, [index, stake, onUpdate, user, canScan, isSubscribed, isAdmin, incrementScan, processExtractedData]);
+
+  const handleCancelProcessing = useCallback(() => {
+    setIsCancelled(true);
+    abortControllerRef.current?.abort();
+    setIsProcessing(false);
+    setVideoProgress(null);
+    toast({
+      title: "Cancelled",
+      description: "Video processing stopped.",
+    });
+  }, []);
 
   const handleFileInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -299,12 +343,28 @@ export function ParlaySlot({
               <Loader2 className="w-6 h-6 animate-spin text-primary" />
               {videoProgress ? (
                 <>
-                  <span className="text-muted-foreground text-sm">{videoProgress.message}</span>
+                  <span className="text-muted-foreground text-sm text-center">{videoProgress.message}</span>
                   {videoProgress.totalFrames > 0 && (
                     <Progress 
                       value={(videoProgress.currentFrame / videoProgress.totalFrames) * 100} 
                       className="w-32 h-2" 
                     />
+                  )}
+                  {videoProgress.legsFound !== undefined && videoProgress.legsFound > 0 && (
+                    <span className="text-xs text-primary font-medium">
+                      Found {videoProgress.legsFound} legs so far...
+                    </span>
+                  )}
+                  {videoProgress.stage === 'analyzing' && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleCancelProcessing}
+                      className="text-muted-foreground hover:text-destructive"
+                    >
+                      <StopCircle className="w-4 h-4 mr-1" />
+                      Cancel
+                    </Button>
                   )}
                 </>
               ) : (
