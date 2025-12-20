@@ -1,26 +1,47 @@
 /**
  * Image compression utility for betting slip uploads
  * Reduces file size before sending to OpenAI vision API
+ * Includes OCR preprocessing for better text recognition
  */
+
+import { applyOCREnhancements, type PreprocessingOptions } from './image-preprocessing';
 
 const MAX_DIMENSION = 1920; // Max width or height
 const COMPRESSION_QUALITY = 0.8; // JPEG quality (0-1)
+
+// Default OCR preprocessing options
+const DEFAULT_OCR_OPTIONS: PreprocessingOptions = {
+  contrast: 1.3,
+  sharpen: true,
+  autoLevel: true,
+};
 
 export interface CompressionResult {
   base64: string;
   originalSize: number;
   compressedSize: number;
   wasCompressed: boolean;
+  wasPreprocessed?: boolean;
+}
+
+export interface CompressImageOptions {
+  enableOCRPreprocessing?: boolean;
+  preprocessingOptions?: PreprocessingOptions;
 }
 
 /**
  * Compress an image file before upload
+ * - Applies OCR preprocessing (contrast, sharpening, auto-level)
  * - Resizes if larger than MAX_DIMENSION
  * - Converts to JPEG for better compression
  * - Returns base64 string ready for API
  */
-export async function compressImage(file: File): Promise<CompressionResult> {
+export async function compressImage(
+  file: File,
+  options: CompressImageOptions = { enableOCRPreprocessing: true }
+): Promise<CompressionResult> {
   const originalSize = file.size;
+  const { enableOCRPreprocessing = true, preprocessingOptions } = options;
 
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -57,23 +78,47 @@ export async function compressImage(file: File): Promise<CompressionResult> {
       ctx.fillRect(0, 0, width, height);
       ctx.drawImage(img, 0, 0, width, height);
 
+      // Apply OCR preprocessing if enabled
+      let wasPreprocessed = false;
+      if (enableOCRPreprocessing) {
+        try {
+          const imageData = ctx.getImageData(0, 0, width, height);
+          const enhancedData = applyOCREnhancements(
+            imageData,
+            width,
+            height,
+            preprocessingOptions || DEFAULT_OCR_OPTIONS
+          );
+          ctx.putImageData(enhancedData, 0, 0);
+          wasPreprocessed = true;
+          console.log('OCR preprocessing applied: contrast=1.3, sharpen=true, autoLevel=true');
+        } catch (error) {
+          console.warn('OCR preprocessing failed, using original image:', error);
+        }
+      }
+
       // Convert to JPEG base64
       const base64 = canvas.toDataURL('image/jpeg', COMPRESSION_QUALITY);
       
       // Calculate compressed size (rough estimate from base64)
       const compressedSize = Math.round((base64.length * 3) / 4);
 
-      console.log(`Image compression: ${(originalSize / 1024).toFixed(1)}KB → ${(compressedSize / 1024).toFixed(1)}KB (${wasResized ? 'resized' : 'quality only'})`);
+      console.log(`Image compression: ${(originalSize / 1024).toFixed(1)}KB → ${(compressedSize / 1024).toFixed(1)}KB (${wasResized ? 'resized' : 'quality only'}${wasPreprocessed ? ', OCR enhanced' : ''})`);
+
+      // Clean up object URL
+      URL.revokeObjectURL(img.src);
 
       resolve({
         base64,
         originalSize,
         compressedSize,
-        wasCompressed: wasResized || compressedSize < originalSize
+        wasCompressed: wasResized || compressedSize < originalSize,
+        wasPreprocessed
       });
     };
 
     img.onerror = () => {
+      URL.revokeObjectURL(img.src);
       reject(new Error('Failed to load image'));
     };
 
