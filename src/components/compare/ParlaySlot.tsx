@@ -3,7 +3,8 @@ import { FeedCard } from '@/components/FeedCard';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Upload, Pencil, History, X, Loader2, Plus, Trash2, Crown } from 'lucide-react';
+import { Progress } from '@/components/ui/progress';
+import { Upload, Pencil, History, X, Loader2, Plus, Trash2, Crown, Video } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
@@ -11,6 +12,7 @@ import { useSubscription } from '@/hooks/useSubscription';
 import { useAuth } from '@/contexts/AuthContext';
 import { PaywallModal } from '@/components/PaywallModal';
 import { compressImage, validateImageFile } from '@/lib/image-compression';
+import { extractFramesFromVideo, isVideoFile, validateVideoFile, type ExtractionProgress } from '@/lib/video-frame-extractor';
 
 export interface LegInput {
   id: string;
@@ -47,9 +49,61 @@ export function ParlaySlot({
   const [isProcessing, setIsProcessing] = useState(false);
   const [inputMode, setInputMode] = useState<'select' | 'manual' | null>(status === 'filled' ? 'manual' : null);
   const [showPaywall, setShowPaywall] = useState(false);
+  const [videoProgress, setVideoProgress] = useState<ExtractionProgress | null>(null);
   
   const { user } = useAuth();
   const { isSubscribed, isAdmin, canScan, scansRemaining, incrementScan, startCheckout } = useSubscription();
+
+  const processExtractedData = useCallback((data: any) => {
+    const extractedLegs = data?.legs || [];
+    const extractedTotalOddsStr = data?.totalOdds;
+    const extractedStake = data?.stake;
+
+    if (extractedLegs.length === 0) {
+      toast({
+        title: "No legs found 🤔",
+        description: "Try a clearer image or enter manually.",
+        variant: "destructive",
+      });
+      return false;
+    }
+
+    const newLegs: LegInput[] = extractedLegs.map((leg: { description: string; odds: string }) => ({
+      id: crypto.randomUUID(),
+      description: leg.description || "",
+      odds: leg.odds?.replace('+', '') || "",
+    }));
+
+    while (newLegs.length < 2) {
+      newLegs.push({ id: crypto.randomUUID(), description: "", odds: "" });
+    }
+
+    let parsedOdds: number | null = null;
+    if (extractedTotalOddsStr) {
+      const parsed = parseInt(extractedTotalOddsStr.replace('+', ''));
+      if (!isNaN(parsed) && parsed !== 0) {
+        parsedOdds = parsed;
+      }
+    }
+
+    let newStake = stake;
+    if (extractedStake !== null && extractedStake !== undefined) {
+      const stakeNum = typeof extractedStake === 'number' ? extractedStake : parseFloat(String(extractedStake).replace(/[$,]/g, ''));
+      if (!isNaN(stakeNum) && stakeNum > 0) {
+        newStake = stakeNum.toString();
+      }
+    }
+
+    onUpdate(newLegs, newStake, parsedOdds);
+    setInputMode('manual');
+
+    toast({
+      title: `Parlay ${index + 1}: Found ${extractedLegs.length} legs! 🎯`,
+      description: "Review and edit if needed.",
+    });
+
+    return true;
+  }, [index, stake, onUpdate]);
 
   const handleFileSelect = useCallback(async (file: File) => {
     // Check scan access for logged-in users
@@ -58,7 +112,64 @@ export function ParlaySlot({
       return;
     }
 
-    // Validate file
+    // Handle video files
+    if (isVideoFile(file)) {
+      const validation = validateVideoFile(file);
+      if (!validation.valid) {
+        toast({
+          title: "Invalid video! 📹",
+          description: validation.error,
+          variant: "destructive",
+        });
+        return;
+      }
+
+      setIsProcessing(true);
+      setVideoProgress({ stage: 'loading', currentFrame: 0, totalFrames: 0, message: 'Loading video...' });
+
+      try {
+        const { frames } = await extractFramesFromVideo(file, setVideoProgress);
+
+        if (frames.length === 0) {
+          throw new Error("Could not extract frames from video");
+        }
+
+        setVideoProgress({
+          stage: 'extracting',
+          currentFrame: 0,
+          totalFrames: frames.length,
+          message: 'Analyzing frames with AI...'
+        });
+
+        const { data, error } = await supabase.functions.invoke('extract-parlay', {
+          body: { frames: frames.map(f => f.base64) }
+        });
+
+        if (error || data?.error) {
+          throw new Error(error?.message || data?.error || 'Failed to process video');
+        }
+
+        const success = processExtractedData(data);
+
+        if (success && user && !isSubscribed && !isAdmin) {
+          await incrementScan();
+        }
+
+      } catch (error) {
+        console.error('Video processing error:', error);
+        toast({
+          title: "Video scan failed 😵",
+          description: error instanceof Error ? error.message : "Try again or use an image.",
+          variant: "destructive",
+        });
+      } finally {
+        setIsProcessing(false);
+        setVideoProgress(null);
+      }
+      return;
+    }
+
+    // Handle image files
     const validation = validateImageFile(file);
     if (!validation.valid) {
       toast({
@@ -72,7 +183,6 @@ export function ParlaySlot({
     setIsProcessing(true);
 
     try {
-      // Compress image before upload
       const { base64: imageBase64 } = await compressImage(file);
       const { data, error } = await supabase.functions.invoke('extract-parlay', {
         body: { imageBase64 }
@@ -82,58 +192,11 @@ export function ParlaySlot({
         throw new Error(error?.message || data?.error || 'Failed to process image');
       }
 
-      const extractedLegs = data?.legs || [];
-      const extractedTotalOddsStr = data?.totalOdds;
-      const extractedStake = data?.stake;
+      const success = processExtractedData(data);
 
-      if (extractedLegs.length === 0) {
-        toast({
-          title: "No legs found 🤔",
-          description: "Try a clearer image or enter manually.",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      // Increment scan count for free users after successful scan
-      if (user && !isSubscribed && !isAdmin) {
+      if (success && user && !isSubscribed && !isAdmin) {
         await incrementScan();
       }
-
-      const newLegs: LegInput[] = extractedLegs.map((leg: { description: string; odds: string }) => ({
-        id: crypto.randomUUID(),
-        description: leg.description || "",
-        odds: leg.odds?.replace('+', '') || "",
-      }));
-
-      while (newLegs.length < 2) {
-        newLegs.push({ id: crypto.randomUUID(), description: "", odds: "" });
-      }
-
-      let parsedOdds: number | null = null;
-      if (extractedTotalOddsStr) {
-        const parsed = parseInt(extractedTotalOddsStr.replace('+', ''));
-        if (!isNaN(parsed) && parsed !== 0) {
-          parsedOdds = parsed;
-        }
-      }
-
-      let newStake = stake;
-      // extractedStake is now returned as a number from the API
-      if (extractedStake !== null && extractedStake !== undefined) {
-        const stakeNum = typeof extractedStake === 'number' ? extractedStake : parseFloat(String(extractedStake).replace(/[$,]/g, ''));
-        if (!isNaN(stakeNum) && stakeNum > 0) {
-          newStake = stakeNum.toString();
-        }
-      }
-
-      onUpdate(newLegs, newStake, parsedOdds);
-      setInputMode('manual');
-
-      toast({
-        title: `Parlay ${index + 1}: Found ${extractedLegs.length} legs! 🎯`,
-        description: "Review and edit if needed.",
-      });
 
     } catch (error) {
       console.error('OCR error:', error);
@@ -145,7 +208,7 @@ export function ParlaySlot({
     } finally {
       setIsProcessing(false);
     }
-  }, [index, stake, onUpdate, user, canScan, isSubscribed, isAdmin, incrementScan]);
+  }, [index, stake, onUpdate, user, canScan, isSubscribed, isAdmin, incrementScan, processExtractedData]);
 
   const handleFileInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -211,9 +274,21 @@ export function ParlaySlot({
   if (isProcessing) {
     return (
       <FeedCard className="p-4">
-        <div className="flex items-center justify-center gap-3 py-8">
+        <div className="flex flex-col items-center justify-center gap-3 py-8">
           <Loader2 className="w-6 h-6 animate-spin text-primary" />
-          <span className="text-muted-foreground">Scanning parlay {index + 1}...</span>
+          {videoProgress ? (
+            <>
+              <span className="text-muted-foreground text-sm">{videoProgress.message}</span>
+              {videoProgress.totalFrames > 0 && (
+                <Progress 
+                  value={(videoProgress.currentFrame / videoProgress.totalFrames) * 100} 
+                  className="w-32 h-2" 
+                />
+              )}
+            </>
+          ) : (
+            <span className="text-muted-foreground">Scanning parlay {index + 1}...</span>
+          )}
         </div>
       </FeedCard>
     );
@@ -231,13 +306,13 @@ export function ParlaySlot({
         />
         
         <FeedCard className="p-4">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            onChange={handleFileInputChange}
-            className="hidden"
-          />
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*,video/mp4,video/quicktime,video/webm,video/x-m4v,.mov,.mp4,.webm,.m4v"
+          onChange={handleFileInputChange}
+          className="hidden"
+        />
           
           <div className="text-center mb-4">
             <div className="flex items-center justify-center gap-2 mb-2">
@@ -270,10 +345,13 @@ export function ParlaySlot({
               onClick={triggerFileInput}
               data-tutorial={showTutorialAttributes ? "upload-button" : undefined}
             >
-              <Upload className="w-5 h-5 text-primary" />
+              <div className="flex gap-1">
+                <Upload className="w-5 h-5 text-primary" />
+                <Video className="w-4 h-4 text-primary/60" />
+              </div>
               <div className="text-left">
                 <div className="font-medium">Upload Slip</div>
-                <div className="text-xs text-muted-foreground">AI extracts your legs</div>
+                <div className="text-xs text-muted-foreground">Image or screen recording</div>
               </div>
             </Button>
 
@@ -322,7 +400,7 @@ export function ParlaySlot({
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*"
+          accept="image/*,video/mp4,video/quicktime,video/webm,video/x-m4v,.mov,.mp4,.webm,.m4v"
           onChange={handleFileInputChange}
           className="hidden"
         />
