@@ -111,6 +111,49 @@ export interface LegAnalysis {
   fatigueData?: FatigueData;
   engineConsensus?: EngineConsensus;
   avoidPatterns?: string[];
+  researchSummary?: ResearchSummary;
+  hitRatePercent?: number;
+  medianLockData?: MedianLockData;
+  coachData?: CoachData;
+}
+
+export interface ResearchSignal {
+  engine: 'hitrate' | 'medianlock' | 'sharp' | 'pvs' | 'fatigue' | 'usage' | 'coaching' | 'godmode' | 'juiced';
+  status: 'positive' | 'negative' | 'neutral';
+  headline: string;
+  icon: string;
+  details?: string;
+  score?: number;
+}
+
+export interface ResearchSummary {
+  signals: ResearchSignal[];
+  overallVerdict: 'STRONG_PICK' | 'LEAN_PICK' | 'NEUTRAL' | 'LEAN_FADE' | 'STRONG_FADE';
+  verdictReason: string;
+  strengthScore: number;
+}
+
+export interface MedianLockData {
+  classification: string;
+  confidence_score: number;
+  bet_side: string;
+  hit_rate: number;
+  parlay_grade: boolean;
+  edge_percent: number;
+  projected_minutes: number;
+  adjusted_edge: number;
+}
+
+export interface CoachData {
+  coachName: string;
+  teamName: string;
+  sport: string;
+  offensiveBias: number;
+  defensiveBias: number;
+  recommendation: string;
+  confidence: number;
+  propRelevance: string;
+  propAdjustment: number;
 }
 
 export interface CorrelatedLegPair {
