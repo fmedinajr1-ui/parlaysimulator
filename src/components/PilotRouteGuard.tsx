@@ -15,6 +15,7 @@ const PILOT_ALLOWED_ROUTES = [
   '/verify-phone',
   '/install',
   '/offline',
+  '/daily-elite',
 ];
 
 interface PilotRouteGuardProps {
