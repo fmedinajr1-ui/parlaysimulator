@@ -77,11 +77,16 @@ export default defineConfig(({ mode }) => ({
             urlPattern: /\.js$/,
             handler: 'NetworkFirst',
             options: {
-              cacheName: 'js-cache-v2',
+              cacheName: 'js-cache-v4',
               expiration: {
-                maxAgeSeconds: 60 * 60, // 1 hour
+                maxAgeSeconds: 60 * 30, // 30 minutes
               },
+              networkTimeoutSeconds: 10,
             },
+          },
+          {
+            urlPattern: /^https:\/\/.*\.supabase\.co\/.*/,
+            handler: 'NetworkOnly',
           },
         ],
       }

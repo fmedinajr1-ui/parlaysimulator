@@ -1,6 +1,7 @@
 /**
  * Video frame extraction utility for betting slip recordings
  * Extracts frames from video files for AI analysis
+ * Updated for iOS Safari / PWA compatibility
  */
 
 export interface ExtractedFrame {
@@ -10,7 +11,7 @@ export interface ExtractedFrame {
 }
 
 export interface ExtractionProgress {
-  stage: 'loading' | 'extracting' | 'complete';
+  stage: 'loading' | 'extracting' | 'complete' | 'error';
   currentFrame: number;
   totalFrames: number;
   message: string;
@@ -23,9 +24,21 @@ export interface ExtractionResult {
 }
 
 const MAX_FRAME_DIMENSION = 1280;
-const FRAME_INTERVAL_SECONDS = 1; // Extract 1 frame per second
-const MAX_FRAMES = 30; // Cap at 30 frames max
+const FRAME_INTERVAL_SECONDS = 1;
+const MAX_FRAMES = 30;
 const JPEG_QUALITY = 0.85;
+const FRAME_TIMEOUT_MS = 8000; // 8 second timeout per frame
+
+/**
+ * Detect if we're on iOS Safari
+ */
+function isIOSSafari(): boolean {
+  const ua = navigator.userAgent;
+  const isIOS = /iPad|iPhone|iPod/.test(ua);
+  const isWebKit = /WebKit/.test(ua);
+  const isChrome = /CriOS/.test(ua);
+  return isIOS && isWebKit && !isChrome;
+}
 
 /**
  * Extract frames from a video file at regular intervals
@@ -44,33 +57,59 @@ export async function extractFramesFromVideo(
       return;
     }
 
+    // Mobile-friendly video attributes
     video.muted = true;
     video.playsInline = true;
-    video.preload = 'metadata';
+    video.setAttribute('playsinline', 'true');
+    video.setAttribute('webkit-playsinline', 'true');
+    video.autoplay = false;
+    video.preload = 'auto'; // Better mobile support
+    video.crossOrigin = 'anonymous';
 
     const cleanup = () => {
-      URL.revokeObjectURL(video.src);
-      video.remove();
-      canvas.remove();
+      try {
+        URL.revokeObjectURL(video.src);
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+        video.remove();
+        canvas.remove();
+      } catch (e) {
+        console.warn('Cleanup error:', e);
+      }
     };
 
-    video.onerror = () => {
+    // Overall timeout for video loading
+    const loadTimeout = setTimeout(() => {
       cleanup();
-      reject(new Error('Failed to load video file'));
+      reject(new Error('Video loading timed out. Try a shorter video or screenshot instead.'));
+    }, 30000);
+
+    video.onerror = (e) => {
+      clearTimeout(loadTimeout);
+      cleanup();
+      console.error('Video load error:', e);
+      reject(new Error('Failed to load video. Try uploading a screenshot instead.'));
     };
 
     video.onloadedmetadata = async () => {
+      clearTimeout(loadTimeout);
       const duration = video.duration;
       
-      // Calculate frame extraction points
-      const frameInterval = Math.max(
-        FRAME_INTERVAL_SECONDS,
-        duration / MAX_FRAMES
-      );
-      const totalFrames = Math.min(
-        Math.floor(duration / frameInterval),
-        MAX_FRAMES
-      );
+      if (!duration || duration <= 0 || !isFinite(duration)) {
+        cleanup();
+        reject(new Error('Invalid video duration. Try a different video or screenshot.'));
+        return;
+      }
+
+      const frameInterval = Math.max(FRAME_INTERVAL_SECONDS, duration / MAX_FRAMES);
+      const totalFrames = Math.min(Math.floor(duration / frameInterval), MAX_FRAMES);
+
+      if (totalFrames < 1) {
+        cleanup();
+        reject(new Error('Video too short. Try a screenshot instead.'));
+        return;
+      }
 
       onProgress?.({
         stage: 'loading',
@@ -143,6 +182,7 @@ export async function extractFramesFromVideo(
 
 /**
  * Extract a single frame at a specific timestamp
+ * With iOS Safari compatibility fixes
  */
 function extractFrameAtTime(
   video: HTMLVideoElement,
@@ -153,20 +193,69 @@ function extractFrameAtTime(
   height: number
 ): Promise<string> {
   return new Promise((resolve, reject) => {
+    const isiOS = isIOSSafari();
+    
+    // Timeout fallback
+    const timeoutId = setTimeout(() => {
+      video.removeEventListener('seeked', onSeeked);
+      video.removeEventListener('error', onError);
+      console.warn(`Frame extraction timeout at ${timestamp}s`);
+      reject(new Error(`Timeout seeking to ${timestamp}s`));
+    }, FRAME_TIMEOUT_MS);
+
     const onSeeked = () => {
       video.removeEventListener('seeked', onSeeked);
       video.removeEventListener('error', onError);
       
-      // Draw white background then frame
-      ctx.fillStyle = '#FFFFFF';
-      ctx.fillRect(0, 0, width, height);
-      ctx.drawImage(video, 0, 0, width, height);
+      // iOS Safari fix: Double requestAnimationFrame delay
+      // This ensures the video frame is fully decoded before drawing
+      const drawFrame = () => {
+        clearTimeout(timeoutId);
+        
+        try {
+          // Draw white background then frame
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, 0, width, height);
+          ctx.drawImage(video, 0, 0, width, height);
+          
+          const base64 = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
+          
+          // Quick check for blank/white frame
+          if (isLikelyBlankFrame(base64)) {
+            console.warn(`Likely blank frame at ${timestamp}s, retrying...`);
+            // Retry once with extra delay
+            setTimeout(() => {
+              ctx.fillStyle = '#FFFFFF';
+              ctx.fillRect(0, 0, width, height);
+              ctx.drawImage(video, 0, 0, width, height);
+              resolve(canvas.toDataURL('image/jpeg', JPEG_QUALITY));
+            }, 100);
+          } else {
+            resolve(base64);
+          }
+        } catch (drawError) {
+          console.error('Draw error:', drawError);
+          reject(new Error(`Failed to draw frame at ${timestamp}s`));
+        }
+      };
       
-      const base64 = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
-      resolve(base64);
+      if (isiOS) {
+        // Triple RAF for iOS Safari
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => {
+            window.requestAnimationFrame(drawFrame);
+          });
+        });
+      } else {
+        // Double RAF for other browsers
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(drawFrame);
+        });
+      }
     };
 
     const onError = () => {
+      clearTimeout(timeoutId);
       video.removeEventListener('seeked', onSeeked);
       video.removeEventListener('error', onError);
       reject(new Error(`Failed to seek to ${timestamp}s`));
@@ -174,8 +263,26 @@ function extractFrameAtTime(
 
     video.addEventListener('seeked', onSeeked);
     video.addEventListener('error', onError);
-    video.currentTime = timestamp;
+    
+    try {
+      video.currentTime = timestamp;
+    } catch (e) {
+      clearTimeout(timeoutId);
+      video.removeEventListener('seeked', onSeeked);
+      video.removeEventListener('error', onError);
+      reject(new Error(`Cannot set video time to ${timestamp}s`));
+    }
   });
+}
+
+/**
+ * Quick heuristic to detect likely blank/white frames
+ */
+function isLikelyBlankFrame(base64: string): boolean {
+  // Very short base64 often means blank/white image
+  // A typical JPEG with content is at least 5KB
+  const dataLength = base64.length - 'data:image/jpeg;base64,'.length;
+  return dataLength < 3000;
 }
 
 /**

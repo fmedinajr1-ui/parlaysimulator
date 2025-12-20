@@ -131,7 +131,7 @@ export function ParlaySlot({
         const { frames } = await extractFramesFromVideo(file, setVideoProgress);
 
         if (frames.length === 0) {
-          throw new Error("Could not extract frames from video");
+          throw new Error("Could not extract frames. Try a screenshot instead.");
         }
 
         setVideoProgress({
@@ -151,20 +151,28 @@ export function ParlaySlot({
 
         const success = processExtractedData(data);
 
+        // Only decrement scan on successful extraction with actual legs
         if (success && user && !isSubscribed && !isAdmin) {
           await incrementScan();
         }
 
       } catch (error) {
         console.error('Video processing error:', error);
+        setVideoProgress({ 
+          stage: 'error', 
+          currentFrame: 0, 
+          totalFrames: 0, 
+          message: error instanceof Error ? error.message : 'Video scan failed'
+        });
         toast({
-          title: "Video scan failed 😵",
-          description: error instanceof Error ? error.message : "Try again or use an image.",
+          title: "Video scan failed 📹",
+          description: "Try uploading a screenshot of your slip instead.",
           variant: "destructive",
         });
       } finally {
         setIsProcessing(false);
-        setVideoProgress(null);
+        // Keep videoProgress error for a moment so user sees the message
+        setTimeout(() => setVideoProgress(null), 2000);
       }
       return;
     }
@@ -271,23 +279,38 @@ export function ParlaySlot({
     onClear();
   };
 
-  if (isProcessing) {
+  if (isProcessing || videoProgress?.stage === 'error') {
     return (
       <FeedCard className="p-4">
         <div className="flex flex-col items-center justify-center gap-3 py-8">
-          <Loader2 className="w-6 h-6 animate-spin text-primary" />
-          {videoProgress ? (
+          {videoProgress?.stage === 'error' ? (
             <>
-              <span className="text-muted-foreground text-sm">{videoProgress.message}</span>
-              {videoProgress.totalFrames > 0 && (
-                <Progress 
-                  value={(videoProgress.currentFrame / videoProgress.totalFrames) * 100} 
-                  className="w-32 h-2" 
-                />
-              )}
+              <div className="text-destructive text-sm text-center">{videoProgress.message}</div>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => setVideoProgress(null)}
+              >
+                Try Screenshot Instead
+              </Button>
             </>
           ) : (
-            <span className="text-muted-foreground">Scanning parlay {index + 1}...</span>
+            <>
+              <Loader2 className="w-6 h-6 animate-spin text-primary" />
+              {videoProgress ? (
+                <>
+                  <span className="text-muted-foreground text-sm">{videoProgress.message}</span>
+                  {videoProgress.totalFrames > 0 && (
+                    <Progress 
+                      value={(videoProgress.currentFrame / videoProgress.totalFrames) * 100} 
+                      className="w-32 h-2" 
+                    />
+                  )}
+                </>
+              ) : (
+                <span className="text-muted-foreground">Scanning parlay {index + 1}...</span>
+              )}
+            </>
           )}
         </div>
       </FeedCard>
