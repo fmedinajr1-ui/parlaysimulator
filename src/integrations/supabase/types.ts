@@ -1591,6 +1591,72 @@ export type Database = {
         }
         Relationships: []
       }
+      fatigue_training_data: {
+        Row: {
+          actual_spread: number | null
+          actual_total: number | null
+          archived_at: string
+          away_fatigue_factors: Json | null
+          away_fatigue_score: number
+          away_team: string
+          created_at: string
+          event_id: string
+          fatigue_differential: number
+          game_date: string
+          game_result: string | null
+          home_fatigue_factors: Json | null
+          home_fatigue_score: number
+          home_team: string
+          id: string
+          recommended_angle: string | null
+          recommended_side: string
+          recommended_side_won: boolean | null
+          sport: string
+        }
+        Insert: {
+          actual_spread?: number | null
+          actual_total?: number | null
+          archived_at?: string
+          away_fatigue_factors?: Json | null
+          away_fatigue_score: number
+          away_team: string
+          created_at?: string
+          event_id: string
+          fatigue_differential: number
+          game_date: string
+          game_result?: string | null
+          home_fatigue_factors?: Json | null
+          home_fatigue_score: number
+          home_team: string
+          id?: string
+          recommended_angle?: string | null
+          recommended_side: string
+          recommended_side_won?: boolean | null
+          sport?: string
+        }
+        Update: {
+          actual_spread?: number | null
+          actual_total?: number | null
+          archived_at?: string
+          away_fatigue_factors?: Json | null
+          away_fatigue_score?: number
+          away_team?: string
+          created_at?: string
+          event_id?: string
+          fatigue_differential?: number
+          game_date?: string
+          game_result?: string | null
+          home_fatigue_factors?: Json | null
+          home_fatigue_score?: number
+          home_team?: string
+          id?: string
+          recommended_angle?: string | null
+          recommended_side?: string
+          recommended_side_won?: boolean | null
+          sport?: string
+        }
+        Relationships: []
+      }
       first_scorer_props: {
         Row: {
           actual_first_scorer: string | null
@@ -4880,6 +4946,204 @@ export type Database = {
           total_won?: number | null
           updated_at?: string | null
           win_rate?: number | null
+        }
+        Relationships: []
+      }
+      sports_fatigue_edge_tracking: {
+        Row: {
+          actual_spread: number | null
+          actual_total: number | null
+          away_fatigue_score: number
+          away_team: string
+          created_at: string
+          event_id: string
+          fatigue_differential: number
+          game_date: string
+          game_result: string | null
+          home_fatigue_score: number
+          home_team: string
+          id: string
+          recommended_angle: string | null
+          recommended_side: string
+          recommended_side_won: boolean | null
+          sport: string
+          spread_covered: boolean | null
+          total_result: string | null
+          updated_at: string
+          verified_at: string | null
+        }
+        Insert: {
+          actual_spread?: number | null
+          actual_total?: number | null
+          away_fatigue_score: number
+          away_team: string
+          created_at?: string
+          event_id: string
+          fatigue_differential: number
+          game_date: string
+          game_result?: string | null
+          home_fatigue_score: number
+          home_team: string
+          id?: string
+          recommended_angle?: string | null
+          recommended_side: string
+          recommended_side_won?: boolean | null
+          sport?: string
+          spread_covered?: boolean | null
+          total_result?: string | null
+          updated_at?: string
+          verified_at?: string | null
+        }
+        Update: {
+          actual_spread?: number | null
+          actual_total?: number | null
+          away_fatigue_score?: number
+          away_team?: string
+          created_at?: string
+          event_id?: string
+          fatigue_differential?: number
+          game_date?: string
+          game_result?: string | null
+          home_fatigue_score?: number
+          home_team?: string
+          id?: string
+          recommended_angle?: string | null
+          recommended_side?: string
+          recommended_side_won?: boolean | null
+          sport?: string
+          spread_covered?: boolean | null
+          total_result?: string | null
+          updated_at?: string
+          verified_at?: string | null
+        }
+        Relationships: []
+      }
+      sports_fatigue_scores: {
+        Row: {
+          altitude_factor: number | null
+          betting_adjustments: Json | null
+          commence_time: string | null
+          created_at: string
+          event_id: string
+          fatigue_category: string
+          fatigue_score: number
+          game_date: string
+          games_last_14_days: number | null
+          games_last_7_days: number | null
+          id: string
+          is_back_to_back: boolean | null
+          is_three_in_four: boolean | null
+          opponent_name: string | null
+          recommended_angle: string | null
+          rest_days: number | null
+          road_trip_games: number | null
+          short_week: boolean | null
+          sport: string
+          team_name: string
+          timezone_changes: number | null
+          travel_miles: number | null
+          updated_at: string
+        }
+        Insert: {
+          altitude_factor?: number | null
+          betting_adjustments?: Json | null
+          commence_time?: string | null
+          created_at?: string
+          event_id: string
+          fatigue_category?: string
+          fatigue_score?: number
+          game_date?: string
+          games_last_14_days?: number | null
+          games_last_7_days?: number | null
+          id?: string
+          is_back_to_back?: boolean | null
+          is_three_in_four?: boolean | null
+          opponent_name?: string | null
+          recommended_angle?: string | null
+          rest_days?: number | null
+          road_trip_games?: number | null
+          short_week?: boolean | null
+          sport?: string
+          team_name: string
+          timezone_changes?: number | null
+          travel_miles?: number | null
+          updated_at?: string
+        }
+        Update: {
+          altitude_factor?: number | null
+          betting_adjustments?: Json | null
+          commence_time?: string | null
+          created_at?: string
+          event_id?: string
+          fatigue_category?: string
+          fatigue_score?: number
+          game_date?: string
+          games_last_14_days?: number | null
+          games_last_7_days?: number | null
+          id?: string
+          is_back_to_back?: boolean | null
+          is_three_in_four?: boolean | null
+          opponent_name?: string | null
+          recommended_angle?: string | null
+          rest_days?: number | null
+          road_trip_games?: number | null
+          short_week?: boolean | null
+          sport?: string
+          team_name?: string
+          timezone_changes?: number | null
+          travel_miles?: number | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      sports_team_locations: {
+        Row: {
+          altitude_ft: number | null
+          arena_name: string | null
+          city: string
+          created_at: string
+          id: string
+          is_active: boolean | null
+          latitude: number
+          longitude: number
+          sport: string
+          state: string | null
+          team_abbreviation: string | null
+          team_name: string
+          timezone: string
+          updated_at: string
+        }
+        Insert: {
+          altitude_ft?: number | null
+          arena_name?: string | null
+          city: string
+          created_at?: string
+          id?: string
+          is_active?: boolean | null
+          latitude: number
+          longitude: number
+          sport: string
+          state?: string | null
+          team_abbreviation?: string | null
+          team_name: string
+          timezone?: string
+          updated_at?: string
+        }
+        Update: {
+          altitude_ft?: number | null
+          arena_name?: string | null
+          city?: string
+          created_at?: string
+          id?: string
+          is_active?: boolean | null
+          latitude?: number
+          longitude?: number
+          sport?: string
+          state?: string | null
+          team_abbreviation?: string | null
+          team_name?: string
+          timezone?: string
+          updated_at?: string
         }
         Relationships: []
       }
