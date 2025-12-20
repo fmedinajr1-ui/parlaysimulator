@@ -72,6 +72,23 @@ export default function PoolDetail() {
   const [isMember, setIsMember] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitLegOpen, setSubmitLegOpen] = useState(false);
+  const [username, setUsername] = useState<string | null>(null);
+
+  // Fetch current user's username
+  useEffect(() => {
+    const fetchUsername = async () => {
+      if (!user) return;
+      const { data } = await supabase
+        .from('profiles')
+        .select('username')
+        .eq('user_id', user.id)
+        .single();
+      if (data?.username) {
+        setUsername(data.username);
+      }
+    };
+    fetchUsername();
+  }, [user]);
 
   const fetchPoolDetails = async () => {
     if (!id || !user) return;
@@ -135,10 +152,13 @@ export default function PoolDetail() {
   const sharePool = async () => {
     if (!pool) return;
     const link = getShareableUrl(`/pools/join/${pool.invite_code}`);
+    const shareText = username 
+      ? `@${username} wants you to join their parlay pool: ${pool.pool_name}`
+      : `Join my parlay pool: ${pool.pool_name}`;
     
     const shared = await shareContent({
       title: pool.pool_name,
-      text: `Join my parlay pool: ${pool.pool_name}`,
+      text: shareText,
       url: link
     });
     

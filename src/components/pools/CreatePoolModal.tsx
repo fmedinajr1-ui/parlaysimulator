@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
 import { Copy, Check, Users, Trophy, Share2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { shareContent, getShareableUrl } from '@/lib/utils';
 
@@ -16,12 +17,29 @@ interface CreatePoolModalProps {
 }
 
 export function CreatePoolModal({ open, onOpenChange, onPoolCreated }: CreatePoolModalProps) {
+  const { user } = useAuth();
   const [poolName, setPoolName] = useState('');
   const [numLegs, setNumLegs] = useState(4);
   const [stakeAmount, setStakeAmount] = useState(10);
   const [creating, setCreating] = useState(false);
   const [createdPool, setCreatedPool] = useState<{ id: string; invite_code: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [username, setUsername] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchUsername = async () => {
+      if (!user) return;
+      const { data } = await supabase
+        .from('profiles')
+        .select('username')
+        .eq('user_id', user.id)
+        .single();
+      if (data?.username) {
+        setUsername(data.username);
+      }
+    };
+    fetchUsername();
+  }, [user]);
 
   const handleCreate = async () => {
     if (!poolName.trim()) {
@@ -75,9 +93,12 @@ export function CreatePoolModal({ open, onOpenChange, onPoolCreated }: CreatePoo
 
   const shareInviteLink = async () => {
     if (!createdPool) return;
+    const shareText = username 
+      ? `@${username} wants you to join their parlay pool: ${poolName}`
+      : `Join my parlay pool: ${poolName}`;
     const shared = await shareContent({
       title: poolName,
-      text: `Join my parlay pool: ${poolName}`,
+      text: shareText,
       url: inviteLink
     });
     if (!shared) {
