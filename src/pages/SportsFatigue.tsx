@@ -14,13 +14,28 @@ import {
   Battery, BatteryLow, BatteryWarning, BatteryFull, 
   RefreshCw, TrendingUp, Plane, Clock, Mountain,
   Target, Zap, Trophy, AlertTriangle, Flame,
-  Disc, CircleDot
+  Disc, CircleDot, TrendingDown, User
 } from "lucide-react";
 import { format } from "date-fns";
 import { FatigueMeter } from "@/components/fatigue/FatigueMeter";
 import { FatigueEdgeROI } from "@/components/fatigue/FatigueEdgeROI";
 import { toast } from "sonner";
 import { getPredictionData, isSweetSpot, isHighRisk, getConfidenceBgColor } from "@/lib/fatigue-predictions";
+
+interface PlayerPropTarget {
+  player: string;
+  prop: string;
+  direction: 'under' | 'over';
+  reason: string;
+}
+
+interface PropTargets {
+  fade_team: string;
+  lean_team: string;
+  player_props: PlayerPropTarget[];
+  confidence: 'strong' | 'good' | 'slight' | 'minimal';
+  edge_factors: string[];
+}
 
 interface FatigueScore {
   id: string;
@@ -40,6 +55,7 @@ interface FatigueScore {
   road_trip_games: number;
   betting_adjustments: Record<string, number> | null;
   recommended_angle: string | null;
+  prop_targets: PropTargets | null;
   game_date: string;
   commence_time: string;
 }
@@ -78,6 +94,13 @@ const categoryIcons: Record<string, React.ReactNode> = {
   'Red Alert': <BatteryWarning className="w-4 h-4" />,
 };
 
+const confidenceColors: Record<string, string> = {
+  strong: 'bg-neon-green/20 text-neon-green border-neon-green/50',
+  good: 'bg-neon-cyan/20 text-neon-cyan border-neon-cyan/50',
+  slight: 'bg-neon-yellow/20 text-neon-yellow border-neon-yellow/50',
+  minimal: 'bg-muted text-muted-foreground border-border',
+};
+
 export default function SportsFatigue() {
   const [games, setGames] = useState<GameWithFatigue[]>([]);
   const [loading, setLoading] = useState(true);
@@ -101,6 +124,7 @@ export default function SportsFatigue() {
         const score: FatigueScore = {
           ...row,
           betting_adjustments: row.betting_adjustments as Record<string, number> | null,
+          prop_targets: row.prop_targets as unknown as PropTargets | null,
         };
         const existing = gameMap.get(score.event_id) || [];
         existing.push(score);
@@ -224,6 +248,77 @@ export default function SportsFatigue() {
     return SPORT_CONFIG[sport]?.color || 'text-muted-foreground';
   };
 
+  // Render prop targets section
+  const renderPropTargets = (propTargets: PropTargets | null, fatigueDiff: number) => {
+    if (!propTargets || fatigueDiff < 10) return null;
+    
+    const { fade_team, lean_team, player_props, confidence, edge_factors } = propTargets;
+    
+    return (
+      <div className="mt-3 space-y-3">
+        {/* LEAN / FADE Section */}
+        <div className="grid grid-cols-2 gap-2">
+          {/* LEAN Team */}
+          <div className="p-2 rounded-lg bg-neon-green/10 border border-neon-green/30">
+            <div className="flex items-center gap-1.5 mb-1">
+              <TrendingUp className="w-3 h-3 text-neon-green" />
+              <span className="text-[10px] font-semibold text-neon-green uppercase tracking-wider">LEAN</span>
+            </div>
+            <p className="text-sm font-bold text-foreground truncate">{lean_team}</p>
+          </div>
+          
+          {/* FADE Team */}
+          <div className="p-2 rounded-lg bg-neon-red/10 border border-neon-red/30">
+            <div className="flex items-center gap-1.5 mb-1">
+              <TrendingDown className="w-3 h-3 text-neon-red" />
+              <span className="text-[10px] font-semibold text-neon-red uppercase tracking-wider">FADE</span>
+            </div>
+            <p className="text-sm font-bold text-foreground truncate">{fade_team}</p>
+          </div>
+        </div>
+        
+        {/* Player Props to Fade */}
+        {player_props.length > 0 && (
+          <div className="p-2 rounded-lg bg-muted/50 border border-border/50">
+            <div className="flex items-center gap-1.5 mb-2">
+              <User className="w-3 h-3 text-muted-foreground" />
+              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                Fade Props ({fade_team})
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {player_props.slice(0, 4).map((prop, idx) => (
+                <Badge 
+                  key={idx}
+                  variant="outline"
+                  className="text-[10px] border-neon-red/40 bg-neon-red/10 text-neon-red"
+                >
+                  {prop.player.split(' ').pop()} {prop.direction.toUpperCase()} {prop.prop}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        )}
+        
+        {/* Confidence & Edge Factors */}
+        <div className="flex items-center justify-between">
+          <Badge className={`text-[10px] ${confidenceColors[confidence]}`}>
+            {confidence === 'strong' && <Flame className="w-3 h-3 mr-1" />}
+            {confidence === 'good' && <Target className="w-3 h-3 mr-1" />}
+            {confidence.charAt(0).toUpperCase() + confidence.slice(1)} Confidence
+          </Badge>
+          <div className="flex gap-1">
+            {edge_factors.slice(0, 2).map((factor, idx) => (
+              <Badge key={idx} variant="outline" className="text-[9px]">
+                {factor}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <AppShell noPadding>
       <MobileHeader
@@ -301,7 +396,7 @@ export default function SportsFatigue() {
               ))}
             </div>
             <p className="text-xs text-muted-foreground mt-3">
-              15+ point differential = significant betting edge
+              15+ point differential = significant betting edge • Now with player prop targets!
             </p>
           </FeedCard>
 
@@ -338,9 +433,10 @@ export default function SportsFatigue() {
                   <p className="text-[10px] text-muted-foreground">20-29 differential sweet spot • 55% win rate • +5.6% ROI</p>
                 </div>
               </div>
-              <div className="space-y-2">
+              <div className="space-y-3">
                 {filteredGames.filter(g => isSweetSpot(g.fatigueDiff)).map((game) => {
                   const edgeTeamData = game.edgeTeam === 'home' ? game.home_team : game.away_team;
+                  const propTargets = game.home_team.prop_targets;
                   const prediction = getPredictionData(game.fatigueDiff);
                   
                   return (
@@ -361,10 +457,43 @@ export default function SportsFatigue() {
                           +{game.fatigueDiff} EDGE
                         </Badge>
                       </div>
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-muted-foreground">Lean:</span>
-                          <span className="text-sm font-semibold text-neon-green">{edgeTeamData.team_name}</span>
+                      
+                      {/* Player Prop Targets */}
+                      {propTargets && (
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2">
+                            <Badge className="bg-neon-green/20 text-neon-green border-neon-green/30 text-[10px]">
+                              ✅ LEAN: {propTargets.lean_team}
+                            </Badge>
+                            <Badge className="bg-neon-red/20 text-neon-red border-neon-red/30 text-[10px]">
+                              ❌ FADE: {propTargets.fade_team}
+                            </Badge>
+                          </div>
+                          
+                          {propTargets.player_props.length > 0 && (
+                            <div className="flex flex-wrap gap-1">
+                              {propTargets.player_props.slice(0, 3).map((prop, idx) => (
+                                <Badge 
+                                  key={idx}
+                                  variant="outline"
+                                  className="text-[9px] border-neon-red/40"
+                                >
+                                  <User className="w-2 h-2 mr-0.5" />
+                                  {prop.player.split(' ').pop()} {prop.direction.toUpperCase()} {prop.prop}
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      
+                      <div className="flex items-center justify-between mt-2">
+                        <div className="flex gap-1">
+                          {propTargets?.edge_factors.slice(0, 2).map((factor, idx) => (
+                            <Badge key={idx} variant="outline" className="text-[9px]">
+                              {factor}
+                            </Badge>
+                          ))}
                         </div>
                         <div className="flex items-center gap-2">
                           <Badge variant="outline" className="text-[10px] border-neon-green/50 text-neon-green">
@@ -375,11 +504,6 @@ export default function SportsFatigue() {
                           </Badge>
                         </div>
                       </div>
-                      {game.home_team.recommended_angle && (
-                        <p className="text-xs text-muted-foreground mt-2 italic">
-                          {game.home_team.recommended_angle}
-                        </p>
-                      )}
                     </div>
                   );
                 })}
@@ -546,14 +670,8 @@ export default function SportsFatigue() {
                       </div>
                     </div>
 
-                    {/* Recommended Angle */}
-                    {game.home_team.recommended_angle && (
-                      <div className="p-2 rounded-lg bg-muted/30 border border-border/50">
-                        <p className="text-xs text-muted-foreground">
-                          {game.home_team.recommended_angle}
-                        </p>
-                      </div>
-                    )}
+                    {/* Prop Targets Section */}
+                    {renderPropTargets(game.home_team.prop_targets, game.fatigueDiff)}
                   </div>
                 </FeedCard>
               ))}
