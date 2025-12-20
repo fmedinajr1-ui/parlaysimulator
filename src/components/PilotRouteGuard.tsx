@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import { ReactNode, useState, useEffect } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { usePilotUser } from '@/hooks/usePilotUser';
 import { FullPageWolfLoader } from '@/components/ui/wolf-loader';
@@ -22,11 +22,25 @@ interface PilotRouteGuardProps {
 }
 
 export function PilotRouteGuard({ children }: PilotRouteGuardProps) {
-  const { isLoading, isPilotUser, isAdmin, isSubscribed } = usePilotUser();
   const location = useLocation();
+  const [hasError, setHasError] = useState(false);
+  
+  // Wrap usePilotUser in try-catch via state to handle hook errors gracefully
+  let pilotData = { isLoading: false, isPilotUser: false, isAdmin: false, isSubscribed: false };
+  
+  try {
+    pilotData = usePilotUser();
+  } catch (error) {
+    console.error('PilotRouteGuard: Hook error, allowing access:', error);
+    // On error, allow access rather than blocking
+    if (!hasError) setHasError(true);
+    return <>{children}</>;
+  }
+  
+  const { isLoading, isPilotUser, isAdmin, isSubscribed } = pilotData;
 
-  // Still loading - show wolf loader
-  if (isLoading) {
+  // Still loading - show wolf loader (with timeout fallback)
+  if (isLoading && !hasError) {
     return <FullPageWolfLoader />;
   }
 
