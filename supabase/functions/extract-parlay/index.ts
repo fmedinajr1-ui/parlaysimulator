@@ -26,6 +26,109 @@ interface ExtractionResult {
   originalOddsFormat: 'american' | 'decimal' | 'fractional' | null;
 }
 
+// ============= OPENAI FALLBACK =============
+
+/**
+ * Extract parlay using OpenAI Vision API as fallback
+ */
+async function extractWithOpenAI(
+  imageData: string,
+  systemPrompt: string,
+  openAIKey: string
+): Promise<ExtractionResult | null> {
+  console.log("Attempting OpenAI Vision fallback with gpt-4o-mini...");
+  
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${openAIKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: [
+              { 
+                type: "text", 
+                text: "Extract all parlay information from this betting slip image. Return only the JSON wrapped in triple backticks." 
+              },
+              {
+                type: "image_url",
+                image_url: {
+                  url: imageData.startsWith("data:") ? imageData : `data:image/jpeg;base64,${imageData}`,
+                  detail: "high"
+                }
+              }
+            ]
+          }
+        ],
+        max_tokens: 2000
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("OpenAI fallback error:", response.status, errorText);
+      return null;
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || "{}";
+    
+    console.log("OpenAI response received, parsing...");
+    
+    const parsed = extractJSON(content);
+    
+    if (parsed && validateExtractionResult(parsed)) {
+      const typedParsed = parsed as any;
+      
+      if (typedParsed.isBettingSlip !== false && typedParsed.legs && typedParsed.legs.length > 0) {
+        const reportedFormat = typedParsed.oddsFormat || null;
+        const firstLegOdds = typedParsed.legs[0]?.odds || '';
+        const detectedFormat = reportedFormat || detectOddsFormat(firstLegOdds);
+        
+        const processedLegs: ExtractedLeg[] = typedParsed.legs.map((leg: any) => {
+          const legOddsFormat = detectOddsFormat(leg.odds);
+          const americanOdds = convertToAmericanOdds(leg.odds, legOddsFormat);
+          const gameTimeISO = parseGameTime(leg.gameTime);
+          
+          return {
+            description: leg.description,
+            odds: americanOdds,
+            gameTime: leg.gameTime || null,
+            gameTimeISO
+          };
+        });
+        
+        const earliestGameTimeISO = parseGameTime(typedParsed.earliestGameTime);
+        
+        console.log(`OpenAI fallback succeeded: found ${processedLegs.length} legs`);
+        
+        return {
+          legs: processedLegs,
+          totalOdds: typedParsed.totalOdds || null,
+          stake: parseNumericValue(typedParsed.stake),
+          potentialPayout: parseNumericValue(typedParsed.potentialPayout),
+          earliestGameTime: typedParsed.earliestGameTime || null,
+          earliestGameTimeISO,
+          isBettingSlip: true,
+          originalOddsFormat: detectedFormat
+        };
+      }
+    }
+    
+    console.log("OpenAI fallback: no betting slip found in response");
+    return null;
+  } catch (err) {
+    console.error("OpenAI fallback error:", err);
+    return null;
+  }
+}
+
 // ============= HELPER FUNCTIONS =============
 
 /**
@@ -654,11 +757,43 @@ Rules:
 
     console.log(`Merged result: ${mergedResult.legs.length} unique legs from ${allResults.length} frames with betting content`);
 
+    // ============= OPENAI FALLBACK IF GEMINI FAILS =============
+    if (!mergedResult.isBettingSlip || mergedResult.legs.length === 0) {
+      const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
+      
+      if (OPENAI_API_KEY && imagesToProcess.length > 0) {
+        console.log("Gemini found no betting slip, trying OpenAI fallback...");
+        
+        // Try OpenAI with the best frames (first 3)
+        const framesToTry = imagesToProcess.slice(0, 3);
+        
+        for (let i = 0; i < framesToTry.length; i++) {
+          const openAIResult = await extractWithOpenAI(framesToTry[i], systemPrompt, OPENAI_API_KEY);
+          
+          if (openAIResult && openAIResult.isBettingSlip && openAIResult.legs.length > 0) {
+            console.log(`OpenAI fallback succeeded on frame ${i + 1} with ${openAIResult.legs.length} legs`);
+            return new Response(
+              JSON.stringify({
+                ...openAIResult,
+                framesProcessed: imagesToProcess.length,
+                framesWithSlips: 1,
+                fallbackUsed: "openai"
+              }),
+              { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
+        }
+        
+        console.log("OpenAI fallback also failed to find betting slip");
+      }
+    }
+
     return new Response(
       JSON.stringify({
         ...mergedResult,
         framesProcessed: imagesToProcess.length,
-        framesWithSlips
+        framesWithSlips,
+        fallbackUsed: null
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
