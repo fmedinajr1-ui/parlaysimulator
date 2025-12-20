@@ -483,12 +483,24 @@ serve(async (req) => {
     const systemPrompt = `You are an expert at reading betting slips and sports betting parlays. 
 Your job is to extract parlay information from betting slip images.
 
-Extract the following information:
+CRITICAL - CONTENT TYPE DETECTION:
+First, determine what type of content you're looking at:
+1. BETTING SLIP: Shows a parlay/bet with legs, odds, stake amount. Has labels like "Parlay", "Same Game Parlay", "Bet Slip", "Wager", team names with odds.
+2. APP NAVIGATION: Shows sportsbook homepage, menus, game listings, live scores, account pages, settings, promotions - these are NOT betting slips.
+3. OTHER: Loading screens, blank screens, unclear images, non-sports content.
+
+For screen recordings/video frames:
+- MOST frames will show app navigation, menus, or loading screens - these are NOT betting slips
+- Only extract betting slip data from frames that CLEARLY show a placed parlay/bet slip with visible legs and odds
+- If a frame shows: sportsbook homepage, game listings, live scores, menus, promotions, account settings - return isBettingSlip: false
+- A betting slip typically shows: "Parlay" or "SGP" label, multiple legs with team/player names AND odds, stake/wager amount, potential payout
+
+WHAT TO EXTRACT (only from actual betting slips):
 1. All individual legs with their descriptions, odds, and game date/time
-2. The TOTAL PARLAY ODDS if shown on the slip (look for total odds, combined odds, or parlay odds)
-3. The STAKE/WAGER amount if visible (the amount being bet)
+2. The TOTAL PARLAY ODDS if shown (look for "Total Odds", "Combined", or prominent odds display)
+3. The STAKE/WAGER amount if visible
 4. The POTENTIAL PAYOUT or "To Win" amount if visible
-5. The EARLIEST game date/time from all legs (for when the parlay starts)
+5. The EARLIEST game date/time from all legs
 
 For individual legs, extract:
 - The description (team name, player name, bet type like "ML", "Over/Under", spread, etc.)
@@ -502,13 +514,6 @@ IMPORTANT ODDS FORMAT:
 - Fractional odds: 3/2, 5/1, 1/4 (number/number format)
 - Return the odds exactly as shown on the slip
 - Set "oddsFormat" to indicate which format the slip uses
-
-IMPORTANT: 
-- The TOTAL ODDS is different from individual leg odds - it's the combined odds for the entire parlay
-- Look for labels like "Total Odds", "Parlay Odds", "Combined", or just a prominently displayed odds value
-- For stake, look for "Wager", "Stake", "Bet Amount", or dollar amounts
-- For payout, look for "To Win", "Potential Payout", "Returns", etc.
-- If this doesn't look like a betting slip at all, return isBettingSlip: false
 
 Return ONLY valid JSON wrapped in triple backticks:
 \`\`\`json
@@ -528,7 +533,8 @@ Return ONLY valid JSON wrapped in triple backticks:
 \`\`\`
 
 Rules:
-- Set isBettingSlip to false if the image doesn't appear to be a betting slip
+- Set isBettingSlip to FALSE if the image shows app navigation, menus, homepages, game listings, or anything that is NOT a betting slip
+- Set isBettingSlip to FALSE if you cannot clearly identify it as a placed bet/parlay
 - Set oddsFormat to "american", "decimal", or "fractional" based on how odds appear on the slip
 - Set totalOdds, stake, potentialPayout, or earliestGameTime to null if not clearly visible
 - Set individual leg gameTime to null if not visible for that leg
