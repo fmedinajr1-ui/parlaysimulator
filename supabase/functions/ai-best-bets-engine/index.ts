@@ -96,6 +96,106 @@ function getSampleSizeMultiplier(sampleSize: number): number {
 }
 
 const MIN_SAMPLE_SIZE = 30; // Require statistical significance
+const BREAKEVEN_STANDARD = 52.4; // Standard -110 breakeven
+
+// Dynamic weighting types
+interface SignalAccuracyData {
+  signal_name: string;
+  signal_type: string;
+  sport: string | null;
+  total_occurrences: number;
+  accuracy_rate: number;
+  suggested_weight: number;
+}
+
+interface RollingPerformanceData {
+  engine_name: string;
+  sport: string | null;
+  window_days: number;
+  hit_rate: number;
+  sample_size: number;
+  roi_percentage: number;
+}
+
+// Calculate dynamic boost from live signal accuracy data
+function getDynamicBoost(
+  signalKey: string, 
+  sport: string,
+  signalAccuracies: SignalAccuracyData[]
+): number {
+  // Find matching signal accuracy data
+  const signalData = signalAccuracies.find(s => {
+    const matchesSignal = s.signal_name?.toLowerCase() === signalKey?.toLowerCase() ||
+                          s.signal_type?.toLowerCase() === signalKey?.toLowerCase();
+    const matchesSport = !s.sport || s.sport === 'all' || 
+                         sport?.toLowerCase().includes(s.sport.toLowerCase());
+    return matchesSignal && matchesSport;
+  });
+
+  if (!signalData || signalData.total_occurrences < 20) {
+    return 0; // Not enough data for dynamic weighting
+  }
+
+  // Calculate edge above breakeven
+  const accuracyEdge = signalData.accuracy_rate - BREAKEVEN_STANDARD;
+  
+  // Apply sample size confidence multiplier
+  const sampleMultiplier = getSampleSizeMultiplier(signalData.total_occurrences);
+  
+  // Use suggested_weight if available, otherwise calculate from accuracy edge
+  if (signalData.suggested_weight && signalData.suggested_weight > 0) {
+    return signalData.suggested_weight * sampleMultiplier;
+  }
+  
+  // Dynamic boost: 0.6 points per percentage above breakeven, scaled by sample size
+  return Math.max(0, accuracyEdge * 0.6 * sampleMultiplier);
+}
+
+// Calculate recency factor from rolling performance data
+// Compares short-term (14-day) vs long-term (30-day) performance
+function getRecencyFactor(
+  signalType: string,
+  sport: string,
+  rollingPerformance: RollingPerformanceData[]
+): number {
+  // Map signal types to engine names
+  const engineName = signalType.includes('fade') ? 'sharp_fade' :
+                     signalType.includes('caution') ? 'sharp_caution' :
+                     signalType.includes('fatigue') ? 'fatigue_edge' :
+                     signalType.includes('god_mode') ? 'god_mode' :
+                     signalType.includes('coaching') ? 'coaching' :
+                     'sharp_money';
+
+  const sportKey = sport?.split('_').pop()?.toLowerCase() || '';
+
+  // Find recent (14-day) and longer-term (30-day) data
+  const recentData = rollingPerformance.find(p => 
+    p.engine_name === engineName && 
+    p.window_days === 14 &&
+    (!p.sport || p.sport === sportKey)
+  );
+  
+  const longerData = rollingPerformance.find(p => 
+    p.engine_name === engineName && 
+    p.window_days === 30 &&
+    (!p.sport || p.sport === sportKey)
+  );
+
+  // Default to neutral if insufficient data
+  if (!recentData || !longerData) return 1.0;
+  if (recentData.sample_size < 10 || longerData.sample_size < 20) return 1.0;
+
+  // Calculate recency edge (positive = hot streak, negative = cold streak)
+  const recentEdge = recentData.hit_rate - longerData.hit_rate;
+  
+  // Apply a ±15% adjustment based on recent form
+  // Hot streak (recent 5% better) = 1.075 multiplier
+  // Cold streak (recent 5% worse) = 0.925 multiplier
+  const recencyFactor = 1.0 + (recentEdge / 100) * 1.5;
+  
+  // Clamp between 0.85 and 1.15 to prevent extreme swings
+  return Math.max(0.85, Math.min(1.15, recencyFactor));
+}
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -112,9 +212,27 @@ Deno.serve(async (req) => {
     const now = new Date().toISOString();
     const today = now.split('T')[0];
 
-    console.log('[AI-BestBets] Starting AI-powered best bets analysis with corrected accuracy data...');
+    console.log('[AI-BestBets] Starting AI-powered best bets analysis with dynamic weighting...');
 
-    // Step 1: Fetch REAL accuracy data from verified outcomes
+    // Step 0: Fetch dynamic weighting data from sharp_signal_accuracy
+    const { data: signalAccuracies } = await supabase
+      .from('sharp_signal_accuracy')
+      .select('signal_name, signal_type, sport, total_occurrences, accuracy_rate, suggested_weight')
+      .gte('total_occurrences', 15);
+
+    const dynamicWeights: SignalAccuracyData[] = signalAccuracies || [];
+    console.log(`[AI-BestBets] Loaded ${dynamicWeights.length} signal accuracy records for dynamic weighting`);
+
+    // Step 0b: Fetch rolling performance data for recency weighting
+    const { data: rollingPerformance } = await supabase
+      .from('performance_snapshots')
+      .select('engine_name, sport, window_days, hit_rate, sample_size, roi_percentage')
+      .in('window_days', [14, 30])
+      .order('snapshot_date', { ascending: false })
+      .limit(50);
+
+    const rollingData: RollingPerformanceData[] = rollingPerformance || [];
+    console.log(`[AI-BestBets] Loaded ${rollingData.length} rolling performance records`);
     const { data: verifiedOutcomes } = await supabase
       .from('line_movements')
       .select('sport, recommendation, outcome_correct')
@@ -385,8 +503,30 @@ Deno.serve(async (req) => {
       const signals: string[] = [];
       let compositeScore = historicalAccuracy;
 
-      // Boost for NFL FADE (best performer) - weighted by sample size
-      if (signalKey === 'nfl_fade') {
+      // DYNAMIC WEIGHTING: Get boost from live signal accuracy data
+      const dynamicBoost = getDynamicBoost(signalKey, candidate.sport || '', dynamicWeights);
+      if (dynamicBoost > 0) {
+        compositeScore += dynamicBoost;
+        signals.push(`📊 Dynamic boost: +${dynamicBoost.toFixed(1)}`);
+        console.log(`[AI-BestBets] Dynamic boost for ${signalKey}: +${dynamicBoost.toFixed(1)} (from live accuracy data)`);
+      }
+
+      // ROLLING WINDOW: Apply recency factor based on recent vs longer-term performance
+      const recencyFactor = getRecencyFactor(signalKey, candidate.sport || '', rollingData);
+      if (recencyFactor !== 1.0) {
+        const recencyAdjustment = (recencyFactor - 1.0) * 100;
+        compositeScore *= recencyFactor;
+        if (recencyFactor > 1.02) {
+          signals.push(`🔥 Hot streak: +${recencyAdjustment.toFixed(1)}%`);
+        } else if (recencyFactor < 0.98) {
+          signals.push(`❄️ Cold streak: ${recencyAdjustment.toFixed(1)}%`);
+        }
+        console.log(`[AI-BestBets] Recency factor for ${signalKey}: ${recencyFactor.toFixed(3)} (${recencyAdjustment > 0 ? '+' : ''}${recencyAdjustment.toFixed(1)}%)`);
+      }
+
+      // Boost for NFL FADE (best performer) - now uses dynamic weight if available
+      if (signalKey === 'nfl_fade' && dynamicBoost === 0) {
+        // Fallback static boost only if no dynamic data
         compositeScore += 8 * sampleMultiplier;
         signals.push('🔥 Top performer (66%+ accuracy)');
       }
@@ -431,8 +571,8 @@ Deno.serve(async (req) => {
         signals.push(`${booksConsensus} books agree`);
       }
 
-      // Boost for coaching signals
-      if (signalKey?.startsWith('coaching')) {
+      // Boost for coaching signals - uses dynamic weight if available
+      if (signalKey?.startsWith('coaching') && dynamicBoost === 0) {
         compositeScore += 4 * sampleMultiplier;
         signals.push(`🏀 Coach tendency: ${candidate.coach_name || 'NBA'}`);
         if (candidate.coaching_tendency === 'fast') {
@@ -440,6 +580,8 @@ Deno.serve(async (req) => {
         } else if (candidate.coaching_tendency === 'b2b_rest_heavy') {
           signals.push('B2B rest = star minutes down');
         }
+      } else if (signalKey?.startsWith('coaching')) {
+        signals.push(`🏀 Coach tendency: ${candidate.coach_name || 'NBA'}`);
       }
 
       // GOD MODE UPSET boosts
@@ -630,6 +772,8 @@ Respond with JSON array:
         filtered: scoredCandidates.length,
         top_picks: topCandidates.length,
         accuracy_data: Object.keys(accuracyByKey).length,
+        dynamic_weights_loaded: dynamicWeights.length,
+        rolling_performance_loaded: rollingData.length,
         top_signal_types: topCandidates.slice(0, 5).map(c => c.signal_type)
       }
     });
@@ -644,6 +788,8 @@ Respond with JSON array:
         historicalBaselines: HISTORICAL_ACCURACY,
         totalCandidates: candidates.length,
         filteredCount: scoredCandidates.length,
+        dynamicWeightsLoaded: dynamicWeights.length,
+        rollingPerformanceLoaded: rollingData.length,
         timestamp: now
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
