@@ -28,7 +28,7 @@ const Suggestions = React.lazy(() => import("./pages/Suggestions"));
 const OddsMovement = React.lazy(() => import("./pages/OddsMovement"));
 const SharpMoney = React.lazy(() => import("./pages/SharpMoney"));
 const LineShopping = React.lazy(() => import("./pages/LineShopping"));
-const NBAFatigue = React.lazy(() => import("./pages/NBAFatigue"));
+const SportsFatigue = React.lazy(() => import("./pages/SportsFatigue"));
 const Install = React.lazy(() => import("./pages/Install"));
 const Offline = React.lazy(() => import("./pages/Offline"));
 const NotFound = React.lazy(() => import("./pages/NotFound"));
@@ -93,7 +93,8 @@ function AnimatedRoutes() {
             <Route path="/odds" element={<OddsMovement />} />
             <Route path="/sharp" element={<SharpMoney />} />
             <Route path="/line-shopping" element={<LineShopping />} />
-            <Route path="/nba-fatigue" element={<NBAFatigue />} />
+            <Route path="/sports-fatigue" element={<SportsFatigue />} />
+            <Route path="/nba-fatigue" element={<SportsFatigue />} />
             <Route path="/install" element={<Install />} />
             <Route path="/offline" element={<Offline />} />
             <Route path="/pvs-calculator" element={<PVSCalculator />} />
