@@ -9,6 +9,8 @@ import { Crown, Target, Zap, TrendingUp, RefreshCw, Trophy, Sparkles, Info, Chev
 import { format, parseISO } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
+import { useToast } from '@/hooks/use-toast';
 
 interface LegData {
   playerName: string;
@@ -60,6 +62,7 @@ const engineColors: Record<string, string> = {
 export function DailyEliteHitterCard() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showRationale, setShowRationale] = useState(false);
+  const { toast } = useToast();
 
   const { data: parlay, isLoading, refetch } = useQuery({
     queryKey: ['daily-elite-parlay'],
@@ -90,6 +93,31 @@ export function DailyEliteHitterCard() {
     try {
       await supabase.functions.invoke('elite-daily-hitter-engine');
       await refetch();
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  const handleRegenerate = async () => {
+    setIsRefreshing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('elite-daily-hitter-engine', {
+        body: { force: true }
+      });
+      
+      if (error) throw error;
+      
+      await refetch();
+      toast({
+        title: "Parlay Regenerated! 🔄",
+        description: "New picks selected from latest data.",
+      });
+    } catch (error) {
+      toast({
+        title: "Regeneration Failed",
+        description: error instanceof Error ? error.message : "Please try again",
+        variant: "destructive",
+      });
     } finally {
       setIsRefreshing(false);
     }
@@ -149,9 +177,39 @@ export function DailyEliteHitterCard() {
             <Crown className="w-5 h-5 text-primary" />
             Daily Elite 3-Leg Hitter
           </CardTitle>
-          <Badge variant="outline" className="text-xs">
-            {displayDate}
-          </Badge>
+          <div className="flex items-center gap-2">
+            {/* Regenerate Button with Confirmation */}
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  disabled={isRefreshing}
+                  className="h-7 w-7 hover:bg-primary/10"
+                  title="Regenerate with latest data"
+                >
+                  <RefreshCw className={cn("w-4 h-4", isRefreshing && "animate-spin")} />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Regenerate Today's Parlay?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This will replace the current picks with a new selection based on the latest data from all engines (MedianLock, HitRate, PVS, Sharp).
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={handleRegenerate}>
+                    Regenerate
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+            <Badge variant="outline" className="text-xs">
+              {displayDate}
+            </Badge>
+          </div>
         </div>
         
         {/* Stats Row */}

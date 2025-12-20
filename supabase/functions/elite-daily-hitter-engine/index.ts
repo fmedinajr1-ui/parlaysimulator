@@ -43,6 +43,7 @@ interface Combination {
   combinedProbability: number;
   totalEdge: number;
   variancePenalty: number;
+  engineDiversityBonus: number;
 }
 
 // Calculate leg probability based on available signals
@@ -124,8 +125,15 @@ function getVariance(propType: string): number {
   return 0.05; // Low variance (points, passing yards, etc.)
 }
 
+// Calculate engine diversity bonus - reward parlays with picks from different engines
+function calculateEngineDiversityBonus(legs: PickCandidate[]): number {
+  const uniqueEngines = new Set(legs.flatMap(l => l.engines));
+  // Bonus: +0.1 for 2 different engines, +0.2 for 3 different engines
+  return Math.max(0, (uniqueEngines.size - 1) * 0.1);
+}
+
 // Calculate SlipScore for a combination
-function calculateSlipScore(legs: PickCandidate[]): { slipScore: number; combinedProbability: number; totalEdge: number; variancePenalty: number } {
+function calculateSlipScore(legs: PickCandidate[]): { slipScore: number; combinedProbability: number; totalEdge: number; variancePenalty: number; engineDiversityBonus: number } {
   const EDGE_WEIGHT = 0.3;
   const VARIANCE_PENALTY_WEIGHT = 0.2;
   
@@ -142,9 +150,12 @@ function calculateSlipScore(legs: PickCandidate[]): { slipScore: number; combine
     variancePenalty += leg.variance;
   }
   
-  const slipScore = logProbSum + (EDGE_WEIGHT * totalEdge) - (VARIANCE_PENALTY_WEIGHT * variancePenalty);
+  // Add engine diversity bonus to prioritize mixed-engine parlays
+  const engineDiversityBonus = calculateEngineDiversityBonus(legs);
   
-  return { slipScore, combinedProbability, totalEdge, variancePenalty };
+  const slipScore = logProbSum + (EDGE_WEIGHT * totalEdge) - (VARIANCE_PENALTY_WEIGHT * variancePenalty) + engineDiversityBonus;
+  
+  return { slipScore, combinedProbability, totalEdge, variancePenalty, engineDiversityBonus };
 }
 
 // Check if two legs are from the same event or team
@@ -173,6 +184,16 @@ serve(async (req) => {
   try {
     logStep("Starting Elite Daily Hitter Engine");
     
+    // Parse request body for force flag
+    let force = false;
+    try {
+      const body = await req.json();
+      force = body?.force === true;
+      logStep("Request parsed", { force });
+    } catch {
+      // No body or invalid JSON, use defaults
+    }
+    
     const today = new Date().toISOString().split('T')[0];
     
     // Check if we already have a parlay for today
@@ -182,7 +203,7 @@ serve(async (req) => {
       .eq('parlay_date', today)
       .maybeSingle();
     
-    if (existingParlay) {
+    if (existingParlay && !force) {
       logStep("Parlay already exists for today", { id: existingParlay.id });
       return new Response(JSON.stringify({ 
         success: true, 
@@ -192,6 +213,15 @@ serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,
       });
+    }
+    
+    // If force=true, delete existing parlay to regenerate
+    if (existingParlay && force) {
+      logStep("Force regeneration requested, deleting existing parlay", { id: existingParlay.id });
+      await supabaseClient
+        .from('daily_elite_parlays')
+        .delete()
+        .eq('id', existingParlay.id);
     }
     
     // =====================================================
@@ -251,19 +281,23 @@ serve(async (req) => {
       }
     }
     
-    // 2. Hit Rate props (≥75% hit rate)
+    // 2. Hit Rate props (≥75% hit rate) - FIX: hit_rate is stored as decimal (0-1)
     logStep("Fetching Hit Rate candidates");
+    const upcomingCutoff = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10-min buffer
     const { data: hitRateData } = await supabaseClient
       .from('player_prop_hitrates')
       .select('*')
-      .gte('hit_rate_over', 75)
-      .gte('commence_time', now.toISOString());
+      .gte('hit_rate_over', 0.75) // FIX: Use decimal format (0.75 = 75%)
+      .gte('commence_time', upcomingCutoff);
+    
+    logStep("HitRate results", { count: hitRateData?.length || 0 });
     
     for (const h of hitRateData || []) {
       const side = h.hit_rate_over >= h.hit_rate_under ? 'over' : 'under';
       const hitRate = side === 'over' ? h.hit_rate_over : h.hit_rate_under;
       
-      if (hitRate < 75) continue;
+      // FIX: Use decimal comparison (0.75 = 75%)
+      if (hitRate < 0.75) continue;
       
       const existing = eligiblePicks.find(p => 
         p.playerName === h.player_name && 
@@ -294,30 +328,35 @@ serve(async (req) => {
       }
     }
     
-    // 3. Sharp Money signals (high authenticity)
+    // 3. Sharp Money signals (high authenticity) - FIX: Use correct column names
     logStep("Fetching Sharp Money candidates");
     const { data: sharpData } = await supabaseClient
       .from('line_movements')
       .select('*')
-      .gte('ses_score', 35)
+      .gte('sharp_edge_score', 35) // FIX: Use correct column name
       .gte('authenticity_confidence', 0.7)
-      .gte('commence_time', now.toISOString())
+      .gte('commence_time', upcomingCutoff)
       .is('outcome_verified', null);
     
+    logStep("Sharp results", { count: sharpData?.length || 0 });
+    
     for (const s of sharpData || []) {
+      // Skip team-level spreads (no player name) - we only want player props
+      if (!s.player_name) continue;
+      
       const existing = eligiblePicks.find(p => 
         p.playerName === s.player_name && 
-        p.propType === s.prop_type
+        p.propType === s.market_type // FIX: Use market_type instead of prop_type
       );
       
       if (existing) {
-        existing.sharpScore = s.ses_score;
+        existing.sharpScore = s.sharp_edge_score; // FIX: Use correct column
         existing.engines.push('Sharp');
-      } else if (s.player_name && s.prop_type) {
+      } else if (s.market_type) {
         eligiblePicks.push({
           id: s.id,
           playerName: s.player_name,
-          propType: s.prop_type,
+          propType: s.market_type, // FIX: Use market_type
           line: s.current_line || 0,
           side: (s.recommendation?.includes('OVER') ? 'over' : 'under') as 'over' | 'under',
           odds: -110,
@@ -325,22 +364,22 @@ serve(async (req) => {
           eventId: s.event_id || s.id,
           gameDescription: s.description,
           commenceTime: s.commence_time,
-          sharpScore: s.ses_score,
+          sharpScore: s.sharp_edge_score, // FIX: Use correct column
           p_leg: 0,
-          edge: s.ses_score / 20,
+          edge: (s.sharp_edge_score || 0) / 20,
           variance: 0,
           engines: ['Sharp'],
         });
       }
     }
     
-    // 4. PVS high-scoring props (≥80)
+    // 4. PVS high-scoring props (≥75) - Lowered threshold for more candidates
     logStep("Fetching PVS candidates");
     const { data: pvsData } = await supabaseClient
       .from('unified_props')
       .select('*')
-      .gte('pvs_final_score', 80)
-      .gte('commence_time', now.toISOString())
+      .gte('pvs_final_score', 75) // FIX: Lowered from 80 to 75
+      .gte('commence_time', upcomingCutoff)
       .eq('outcome', 'pending');
     
     for (const p of pvsData || []) {
