@@ -14,6 +14,7 @@ import { HistoricalInsightsCard } from "@/components/results/HistoricalInsightsC
 import { TrapAvoidanceCard } from "@/components/results/TrapAvoidanceCard";
 import { ParlayHealthCard } from "@/components/results/ParlayHealthCard";
 import { ParlayOptimizer } from "@/components/results/ParlayOptimizer";
+import { SmartLegSwapCard } from "@/components/results/SmartLegSwapCard";
 import { FatigueImpactCard } from "@/components/results/FatigueImpactCard";
 import { UsageAnalysisSection } from "@/components/results/UsageAnalysisSection";
 import { DoubleDownCard } from "@/components/results/DoubleDownCard";
@@ -473,6 +474,13 @@ const Results = () => {
               legAnalyses={aiAnalysis?.legAnalyses}
               isLoading={isLoadingAnalysis}
               delay={0}
+            />
+
+            {/* Smart Leg Swap - Find better alternatives for weak legs */}
+            <SmartLegSwapCard
+              legs={simulation.legs}
+              legAnalyses={aiAnalysis?.legAnalyses}
+              delay={40}
             />
 
             {/* Parlay Optimizer */}

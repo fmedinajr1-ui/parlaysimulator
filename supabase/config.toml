@@ -302,3 +302,6 @@ verify_jwt = false
 
 [functions.verify-elite-parlay-outcomes]
 verify_jwt = false
+
+[functions.find-swap-alternatives]
+verify_jwt = false

@@ -14,6 +14,7 @@ interface ParlayBuilderContextType {
   winProbability: number;
   addLeg: (leg: Omit<UniversalLeg, 'id' | 'addedAt'>) => void;
   removeLeg: (id: string) => void;
+  swapLeg: (legIdToRemove: string, newLeg: Omit<UniversalLeg, 'id' | 'addedAt'>) => void;
   clearParlay: () => void;
   toggleExpanded: () => void;
   setExpanded: (expanded: boolean) => void;
@@ -107,6 +108,23 @@ export const ParlayBuilderProvider = ({ children }: { children: React.ReactNode 
 
   const removeLeg = React.useCallback((id: string) => {
     setLegs(prev => prev.filter(leg => leg.id !== id));
+  }, []);
+
+  const swapLeg = React.useCallback((legIdToRemove: string, newLeg: Omit<UniversalLeg, 'id' | 'addedAt'>) => {
+    const swappedLeg: UniversalLeg = {
+      ...newLeg,
+      id: crypto.randomUUID(),
+      addedAt: new Date().toISOString(),
+    };
+    
+    setLegs(prev => prev.map(leg => 
+      leg.id === legIdToRemove ? swappedLeg : leg
+    ));
+    
+    toast({
+      title: "Leg Swapped!",
+      description: `Replaced with ${newLeg.description}`,
+    });
   }, []);
 
   const clearParlay = React.useCallback(() => {
@@ -276,6 +294,7 @@ export const ParlayBuilderProvider = ({ children }: { children: React.ReactNode 
         winProbability,
         addLeg,
         removeLeg,
+        swapLeg,
         clearParlay,
         toggleExpanded,
         setExpanded: setIsExpanded,
