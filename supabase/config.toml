@@ -296,3 +296,6 @@ verify_jwt = false
 
 [functions.cleanup-phone-verification]
 verify_jwt = false
+
+[functions.verify-elite-parlay-outcomes]
+verify_jwt = false
