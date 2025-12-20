@@ -4,6 +4,8 @@ import { ChevronDown, ChevronUp, AlertTriangle, TrendingUp, TrendingDown, Users,
 import { useState } from "react";
 import { InjuryAlertBadge } from "./InjuryAlertBadge";
 import { OpponentImpactCard } from "./OpponentImpactCard";
+import { ResearchSummarySection } from "./ResearchSummarySection";
+import { SportPropIcon } from "./SportPropIcon";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 
@@ -56,9 +58,10 @@ export function LegBreakdown({ legs, legAnalyses, delay = 0 }: LegBreakdownProps
         {legs.map((leg, idx) => {
           const analysis = getLegAnalysis(idx);
           const hasInjuries = analysis?.injuryAlerts && analysis.injuryAlerts.length > 0;
-          const medianLockData = (analysis as any)?.medianLockData;
-          const coachData = (analysis as any)?.coachData;
-          const hitRatePercent = (analysis as any)?.hitRatePercent;
+          const medianLockData = analysis?.medianLockData;
+          const coachData = analysis?.coachData;
+          const hitRatePercent = analysis?.hitRatePercent;
+          const researchSummary = analysis?.researchSummary;
           
           return (
             <div 
@@ -77,7 +80,13 @@ export function LegBreakdown({ legs, legAnalyses, delay = 0 }: LegBreakdownProps
                 <div className="flex items-center gap-3 flex-1 min-w-0">
                   <span className="text-lg font-bold text-muted-foreground">#{idx + 1}</span>
                   <div className="flex-1 min-w-0">
-                    <p className="font-medium text-foreground truncate">{leg.description}</p>
+                    <div className="flex items-center gap-2">
+                      <SportPropIcon 
+                        sport={analysis?.sport} 
+                        betType={analysis?.betType}
+                      />
+                      <p className="font-medium text-foreground truncate">{leg.description}</p>
+                    </div>
                     <div className="flex items-center gap-2 mt-1 flex-wrap">
                       <span className={`text-xs px-2 py-0.5 rounded-full border ${riskColors[leg.riskLevel]}`}>
                         {riskEmojis[leg.riskLevel]} {leg.riskLevel.toUpperCase()}
@@ -94,9 +103,15 @@ export function LegBreakdown({ legs, legAnalyses, delay = 0 }: LegBreakdownProps
                           PARLAY GRADE
                         </span>
                       )}
-                      {hitRatePercent && hitRatePercent >= 60 && (
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-neon-cyan/20 text-neon-cyan border border-neon-cyan/30">
-                          {hitRatePercent.toFixed(0)}% HR
+                      {researchSummary && (
+                        <span className={cn(
+                          "text-xs px-2 py-0.5 rounded-full border",
+                          researchSummary.strengthScore >= 70 ? "bg-neon-green/20 text-neon-green border-neon-green/30" :
+                          researchSummary.strengthScore >= 50 ? "bg-neon-cyan/20 text-neon-cyan border-neon-cyan/30" :
+                          researchSummary.strengthScore >= 30 ? "bg-neon-yellow/20 text-neon-yellow border-neon-yellow/30" :
+                          "bg-neon-red/20 text-neon-red border-neon-red/30"
+                        )}>
+                          {researchSummary.strengthScore}/100
                         </span>
                       )}
                     </div>
@@ -116,6 +131,13 @@ export function LegBreakdown({ legs, legAnalyses, delay = 0 }: LegBreakdownProps
               
               {expandedLeg === leg.id && (
                 <div className="px-4 pb-4 pt-0 border-t border-border/50 fade-in">
+                  {/* Research Summary Section - NEW PROMINENT PLACEMENT */}
+                  {researchSummary && (
+                    <div className="mt-3">
+                      <ResearchSummarySection summary={researchSummary} />
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-2 gap-4 mt-3">
                     <div className="text-center p-3 rounded-lg bg-background/50">
                       <p className="text-2xl font-bold text-foreground">
@@ -158,24 +180,25 @@ export function LegBreakdown({ legs, legAnalyses, delay = 0 }: LegBreakdownProps
                         {hitRatePercent.toFixed(0)}%
                       </span>
                     </div>
-                    )}
+                  )}
 
                   {/* Opponent Impact Card - PROMINENT */}
-                  {medianLockData?.vs_opponent_games >= 2 && (
+                  {medianLockData && (medianLockData as any).vs_opponent_games >= 2 && (
                     <OpponentImpactCard
                       playerName={leg.description.split(' ')[0] || 'Player'}
-                      opponent={medianLockData.opponent || 'OPP'}
-                      propType={medianLockData.prop_type || 'player_points'}
+                      opponent={(medianLockData as any).opponent || 'OPP'}
+                      propType={(medianLockData as any).prop_type || 'player_points'}
                       overallHitRate={medianLockData.hit_rate || 0}
-                      overallMedian={medianLockData.median_points || 0}
-                      vsOpponentHitRate={medianLockData.vs_opponent_hit_rate || 0}
-                      vsOpponentMedian={medianLockData.vs_opponent_median || 0}
-                      vsOpponentGames={medianLockData.vs_opponent_games || 0}
-                      blendedHitRate={medianLockData.blended_hit_rate || 0}
-                      blendedMedian={medianLockData.blended_median || 0}
-                      impact={medianLockData.opponent_impact || 'NEUTRAL'}
+                      overallMedian={(medianLockData as any).median_points || 0}
+                      vsOpponentHitRate={(medianLockData as any).vs_opponent_hit_rate || 0}
+                      vsOpponentMedian={(medianLockData as any).vs_opponent_median || 0}
+                      vsOpponentGames={(medianLockData as any).vs_opponent_games || 0}
+                      blendedHitRate={(medianLockData as any).blended_hit_rate || 0}
+                      blendedMedian={(medianLockData as any).blended_median || 0}
+                      impact={(medianLockData as any).opponent_impact || 'NEUTRAL'}
                     />
                   )}
+                  
                   {medianLockData && (
                     <div className={cn(
                       "mt-3 p-3 rounded-lg border",

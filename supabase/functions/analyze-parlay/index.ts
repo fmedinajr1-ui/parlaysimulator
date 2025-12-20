@@ -217,7 +217,239 @@ const TRAP_SIGNALS = [
   'FAKE_SHARP_TAG'
 ];
 
-// Deterministic matching function
+interface ResearchSignal {
+  engine: 'hitrate' | 'medianlock' | 'sharp' | 'pvs' | 'fatigue' | 'usage' | 'coaching' | 'godmode' | 'juiced';
+  status: 'positive' | 'negative' | 'neutral';
+  headline: string;
+  icon: string;
+  details?: string;
+  score?: number;
+}
+
+interface ResearchSummary {
+  signals: ResearchSignal[];
+  overallVerdict: 'STRONG_PICK' | 'LEAN_PICK' | 'NEUTRAL' | 'LEAN_FADE' | 'STRONG_FADE';
+  verdictReason: string;
+  strengthScore: number;
+}
+
+// Generate human-readable research summary from all engine signals
+function generateResearchSummary(legAnalysis: LegAnalysis, legDesc: string): ResearchSummary {
+  const signals: ResearchSignal[] = [];
+  let positiveCount = 0;
+  let negativeCount = 0;
+  let totalScore = 50; // Start neutral
+
+  // 1. Hit Rate Signal
+  const hitRate = legAnalysis.hitRatePercent || 
+    legAnalysis.usageProjection?.hitRate?.percentage || 
+    legAnalysis.unifiedPropData?.hitRateScore;
+  
+  if (hitRate !== undefined) {
+    const hrValue = hitRate > 1 ? hitRate : hitRate * 100;
+    const status = hrValue >= 60 ? 'positive' : hrValue >= 45 ? 'neutral' : 'negative';
+    signals.push({
+      engine: 'hitrate',
+      status,
+      headline: `${hrValue.toFixed(0)}% hit rate over recent games`,
+      icon: '🎯',
+      score: hrValue,
+      details: hrValue >= 65 ? 'Strong historical performance' : 
+               hrValue >= 50 ? 'Average hit rate' : 'Below average - proceed with caution'
+    });
+    if (status === 'positive') { positiveCount++; totalScore += 10; }
+    else if (status === 'negative') { negativeCount++; totalScore -= 10; }
+  }
+
+  // 2. MedianLock Signal
+  const ml = legAnalysis.medianLockData;
+  if (ml) {
+    const edgePositive = (ml.edge_percent || 0) > 2;
+    const isParlaySafe = ml.parlay_grade === true;
+    const status = isParlaySafe ? 'positive' : edgePositive ? 'positive' : 'neutral';
+    
+    signals.push({
+      engine: 'medianlock',
+      status,
+      headline: `${ml.edge_percent?.toFixed(1) || 0}% edge; ${ml.projected_minutes?.toFixed(0) || '-'}min projected`,
+      icon: '⚡',
+      score: ml.adjusted_edge || ml.edge_percent,
+      details: isParlaySafe ? '🏆 Parlay Grade - Elite selection' : 
+               `${ml.classification} classification with ${(ml.hit_rate || 0).toFixed(0)}% historical accuracy`
+    });
+    if (status === 'positive') { positiveCount++; totalScore += 12; }
+  }
+
+  // 3. Sharp Money Signal
+  if (legAnalysis.sharpRecommendation) {
+    const isSharpPick = legAnalysis.sharpRecommendation === 'pick';
+    const isTrap = legAnalysis.sharpSignals?.some(s => 
+      ['BOTH_SIDES_MOVED', 'PRICE_ONLY_MOVE_TRAP', 'FAKE_SHARP_TAG'].includes(s)
+    );
+    
+    const status = isTrap ? 'negative' : isSharpPick ? 'positive' : 
+                   legAnalysis.sharpRecommendation === 'fade' ? 'negative' : 'neutral';
+    
+    const movementInfo = legAnalysis.sharpSignals?.length 
+      ? ` with ${legAnalysis.sharpSignals.length} signal(s)` : '';
+    
+    signals.push({
+      engine: 'sharp',
+      status,
+      headline: isTrap ? '⚠️ Trap bet detected - sharp money divergence' :
+               isSharpPick ? `Sharp consensus${movementInfo}` :
+               legAnalysis.sharpReason || 'Mixed sharp signals',
+      icon: '💰',
+      score: (legAnalysis.sharpConfidence || 0.5) * 100,
+      details: legAnalysis.sharpFinalPick || legAnalysis.sharpReason
+    });
+    if (status === 'positive') { positiveCount++; totalScore += 15; }
+    else if (status === 'negative') { negativeCount++; totalScore -= 15; }
+  }
+
+  // 4. PVS/Unified Prop Signal
+  const pvs = legAnalysis.unifiedPropData;
+  if (pvs) {
+    const pvsGood = pvs.pvsScore >= 70;
+    const status = pvsGood ? 'positive' : pvs.pvsScore >= 50 ? 'neutral' : 'negative';
+    
+    signals.push({
+      engine: 'pvs',
+      status,
+      headline: `${pvs.pvsTier} tier prop - ${pvs.confidence.toFixed(0)}% confidence`,
+      icon: '📊',
+      score: pvs.pvsScore,
+      details: pvs.recommendation || `Trap score: ${pvs.trapScore.toFixed(0)}%`
+    });
+    if (status === 'positive') { positiveCount++; totalScore += 8; }
+    else if (status === 'negative') { negativeCount++; totalScore -= 8; }
+  }
+
+  // 5. Fatigue Signal
+  const fatigue = legAnalysis.fatigueData;
+  if (fatigue) {
+    const isFresh = fatigue.fatigueScore <= 30 && !fatigue.isBackToBack;
+    const isTired = fatigue.fatigueScore >= 60 || fatigue.isBackToBack;
+    const status = isFresh ? 'positive' : isTired ? 'negative' : 'neutral';
+    
+    signals.push({
+      engine: 'fatigue',
+      status,
+      headline: fatigue.isBackToBack ? 'Back-to-back game - fatigue factor' :
+               `${fatigue.fatigueCategory} fatigue level`,
+      icon: '🔋',
+      score: 100 - fatigue.fatigueScore,
+      details: fatigue.recommendedAngle || 
+               (fatigue.travelMiles > 1000 ? `${fatigue.travelMiles.toFixed(0)} miles travel` : undefined)
+    });
+    if (status === 'positive') { positiveCount++; totalScore += 5; }
+    else if (status === 'negative') { negativeCount++; totalScore -= 8; }
+  }
+
+  // 6. Usage/Injury Signal
+  const usage = legAnalysis.usageProjection;
+  if (usage) {
+    const status = usage.verdict === 'FAVORABLE' ? 'positive' :
+                   usage.verdict === 'UNFAVORABLE' ? 'negative' : 'neutral';
+    
+    signals.push({
+      engine: 'usage',
+      status,
+      headline: usage.verdictReason,
+      icon: '📈',
+      score: usage.verdict === 'FAVORABLE' ? 75 : usage.verdict === 'UNFAVORABLE' ? 25 : 50,
+      details: `${usage.projectedMinutes.avg.toFixed(0)} projected minutes, ` +
+               `${usage.hitRate.percentage.toFixed(0)}% hit rate (${usage.hitRate.hits}/${usage.hitRate.total})`
+    });
+    if (status === 'positive') { positiveCount++; totalScore += 10; }
+    else if (status === 'negative') { negativeCount++; totalScore -= 10; }
+  }
+
+  // 7. Coaching Signal
+  const coach = legAnalysis.coachData;
+  if (coach) {
+    const status = coach.recommendation === 'PICK' ? 'positive' :
+                   coach.recommendation === 'FADE' ? 'negative' : 'neutral';
+    
+    signals.push({
+      engine: 'coaching',
+      status,
+      headline: `${coach.coachName}: ${coach.propRelevance}`,
+      icon: '👨‍💼',
+      score: coach.confidence,
+      details: `OFF bias: ${coach.offensiveBias > 0 ? '+' : ''}${coach.offensiveBias.toFixed(1)}%, ` +
+               `DEF bias: ${coach.defensiveBias > 0 ? '+' : ''}${coach.defensiveBias.toFixed(1)}%`
+    });
+    if (status === 'positive') { positiveCount++; totalScore += 5; }
+    else if (status === 'negative') { negativeCount++; totalScore -= 5; }
+  }
+
+  // 8. God Mode / Upset Signal
+  const upset = legAnalysis.upsetData;
+  if (upset && upset.upsetScore > 0) {
+    const status = upset.chaosModeActive ? 'positive' : 'neutral';
+    
+    signals.push({
+      engine: 'godmode',
+      status,
+      headline: upset.suggestion,
+      icon: '🔮',
+      score: upset.upsetScore,
+      details: `${upset.confidence} confidence - ${upset.isTrapFavorite ? '⚠️ Trap favorite detected' : 'Upset potential active'}`
+    });
+    if (upset.chaosModeActive) { positiveCount++; totalScore += 5; }
+  }
+
+  // 9. Juiced Props Signal
+  const juice = legAnalysis.juiceData;
+  if (juice) {
+    const heavyJuice = juice.juiceAmount > 10;
+    const status = heavyJuice ? 'negative' : 'neutral';
+    
+    signals.push({
+      engine: 'juiced',
+      status,
+      headline: `${juice.juiceLevel} juice ${juice.juiceDirection}`,
+      icon: '🧃',
+      score: 100 - juice.juiceAmount,
+      details: juice.finalPick || `Movement consistency: ${(juice.movementConsistency * 100).toFixed(0)}%`
+    });
+    if (status === 'negative') { negativeCount++; totalScore -= 5; }
+  }
+
+  // Calculate overall verdict
+  const netScore = positiveCount - negativeCount;
+  totalScore = Math.max(0, Math.min(100, totalScore));
+  
+  let overallVerdict: ResearchSummary['overallVerdict'];
+  let verdictReason: string;
+  
+  if (netScore >= 3 && totalScore >= 70) {
+    overallVerdict = 'STRONG_PICK';
+    verdictReason = `Multiple engines align positively (${positiveCount} supporting signals). High confidence selection.`;
+  } else if (netScore >= 1 && totalScore >= 55) {
+    overallVerdict = 'LEAN_PICK';
+    verdictReason = `Positive signals outweigh concerns. Moderate edge detected.`;
+  } else if (netScore <= -3 || totalScore <= 30) {
+    overallVerdict = 'STRONG_FADE';
+    verdictReason = `Multiple warning signals detected (${negativeCount} concerns). Consider removing from parlay.`;
+  } else if (netScore <= -1 || totalScore <= 45) {
+    overallVerdict = 'LEAN_FADE';
+    verdictReason = `More concerns than positive signals. Proceed with caution.`;
+  } else {
+    overallVerdict = 'NEUTRAL';
+    verdictReason = `Mixed signals with no clear edge. Consider your own research.`;
+  }
+
+  return {
+    signals,
+    overallVerdict,
+    verdictReason,
+    strengthScore: totalScore
+  };
+}
+
+
 function matchLegToMovements(legDescription: string, movements: LineMovement[]): MatchedSharpData | null {
   const descLower = legDescription.toLowerCase();
   
@@ -1407,6 +1639,10 @@ Return ONLY valid JSON, no other text.`;
             console.error(`❌ Error fetching usage for ${legAnalysis.player}:`, usageError);
           }
         }
+
+        // Generate research summary after all engine data is collected
+        legAnalysis.researchSummary = generateResearchSummary(legAnalysis, legDesc);
+        console.log(`📋 Research summary generated for leg ${idx}: ${legAnalysis.researchSummary.overallVerdict} (${legAnalysis.researchSummary.strengthScore}/100)`);
 
         return legAnalysis;
       });
