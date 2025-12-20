@@ -439,6 +439,9 @@ Rules:
     const allResults: ExtractionResult[] = [];
     let framesWithSlips = 0;
     let detectedOddsFormat: 'american' | 'decimal' | 'fractional' | null = null;
+    let totalLegsFound = 0;
+    const MIN_LEGS_FOR_EARLY_EXIT = 6; // Stop early if we find enough legs
+    const MIN_FRAMES_FOR_EARLY_EXIT = 3; // Need at least 3 frames with slips to trust the data
     
     // For video frames, use configurable batch size
     const effectiveBatchSize = imagesToProcess.length > 1 ? batchSize : 1;
@@ -487,6 +490,10 @@ Rules:
             console.error(`Image ${imageIndex + 1} error:`, response.status, errorText);
             
             if (response.status === 429) {
+              // Rate limit - wait and retry with exponential backoff
+              const retryAfter = Math.min(2000 * Math.pow(2, Math.floor(imageIndex / 3)), 10000);
+              console.log(`Rate limited, waiting ${retryAfter}ms before retry...`);
+              await new Promise(r => setTimeout(r, retryAfter));
               throw new Error("Rate limit exceeded");
             }
             if (response.status === 402) {
@@ -559,9 +566,25 @@ Rules:
       
       try {
         const batchResults = await Promise.all(batchPromises);
-        batchResults.forEach(r => { if (r) allResults.push(r); });
+        batchResults.forEach(r => { 
+          if (r) {
+            allResults.push(r);
+            totalLegsFound += r.legs.length;
+          }
+        });
+        
+        // Early exit if we have enough data
+        if (totalLegsFound >= MIN_LEGS_FOR_EARLY_EXIT && framesWithSlips >= MIN_FRAMES_FOR_EARLY_EXIT) {
+          console.log(`Early exit: found ${totalLegsFound} legs from ${framesWithSlips} frames, sufficient data collected`);
+          break;
+        }
       } catch (err) {
         if (err instanceof Error && err.message.includes("Rate limit")) {
+          // For rate limits, don't fail immediately - continue with what we have
+          console.warn("Rate limit hit, continuing with collected data...");
+          if (allResults.length > 0) {
+            break; // Use what we have
+          }
           return new Response(
             JSON.stringify({ error: "Rate limit exceeded. Please try again in a moment." }),
             { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
