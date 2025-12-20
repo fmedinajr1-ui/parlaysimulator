@@ -5034,6 +5034,7 @@ export type Database = {
           is_back_to_back: boolean | null
           is_three_in_four: boolean | null
           opponent_name: string | null
+          prop_targets: Json | null
           recommended_angle: string | null
           rest_days: number | null
           road_trip_games: number | null
@@ -5059,6 +5060,7 @@ export type Database = {
           is_back_to_back?: boolean | null
           is_three_in_four?: boolean | null
           opponent_name?: string | null
+          prop_targets?: Json | null
           recommended_angle?: string | null
           rest_days?: number | null
           road_trip_games?: number | null
@@ -5084,6 +5086,7 @@ export type Database = {
           is_back_to_back?: boolean | null
           is_three_in_four?: boolean | null
           opponent_name?: string | null
+          prop_targets?: Json | null
           recommended_angle?: string | null
           rest_days?: number | null
           road_trip_games?: number | null

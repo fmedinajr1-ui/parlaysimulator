@@ -31,6 +31,165 @@ interface FatigueFactors {
   gamesLast14Days: number;
 }
 
+interface PlayerPropTarget {
+  player: string;
+  prop: string;
+  direction: 'under' | 'over';
+  reason: string;
+}
+
+interface PropTargets {
+  fade_team: string;
+  lean_team: string;
+  player_props: PlayerPropTarget[];
+  confidence: 'strong' | 'good' | 'slight' | 'minimal';
+  edge_factors: string[];
+}
+
+// Comprehensive star player database for all sports
+const STAR_PLAYERS: Record<string, Record<string, string[]>> = {
+  basketball_nba: {
+    'Atlanta Hawks': ['Trae Young', 'Dejounte Murray', 'Jalen Johnson'],
+    'Boston Celtics': ['Jayson Tatum', 'Jaylen Brown', 'Derrick White'],
+    'Brooklyn Nets': ['Mikal Bridges', 'Cam Thomas', 'Dennis Schroder'],
+    'Charlotte Hornets': ['LaMelo Ball', 'Brandon Miller', 'Miles Bridges'],
+    'Chicago Bulls': ['Zach LaVine', 'DeMar DeRozan', 'Coby White'],
+    'Cleveland Cavaliers': ['Donovan Mitchell', 'Darius Garland', 'Evan Mobley'],
+    'Dallas Mavericks': ['Luka Doncic', 'Kyrie Irving', 'P.J. Washington'],
+    'Denver Nuggets': ['Nikola Jokic', 'Jamal Murray', 'Michael Porter Jr.'],
+    'Detroit Pistons': ['Cade Cunningham', 'Jaden Ivey', 'Jalen Duren'],
+    'Golden State Warriors': ['Stephen Curry', 'Klay Thompson', 'Draymond Green'],
+    'Houston Rockets': ['Jalen Green', 'Alperen Sengun', 'Fred VanVleet'],
+    'Indiana Pacers': ['Tyrese Haliburton', 'Pascal Siakam', 'Myles Turner'],
+    'LA Clippers': ['Kawhi Leonard', 'Paul George', 'James Harden'],
+    'Los Angeles Lakers': ['LeBron James', 'Anthony Davis', 'Austin Reaves'],
+    'Memphis Grizzlies': ['Ja Morant', 'Desmond Bane', 'Jaren Jackson Jr.'],
+    'Miami Heat': ['Jimmy Butler', 'Bam Adebayo', 'Tyler Herro'],
+    'Milwaukee Bucks': ['Giannis Antetokounmpo', 'Damian Lillard', 'Khris Middleton'],
+    'Minnesota Timberwolves': ['Anthony Edwards', 'Karl-Anthony Towns', 'Rudy Gobert'],
+    'New Orleans Pelicans': ['Zion Williamson', 'Brandon Ingram', 'CJ McCollum'],
+    'New York Knicks': ['Jalen Brunson', 'Julius Randle', 'RJ Barrett'],
+    'Oklahoma City Thunder': ['Shai Gilgeous-Alexander', 'Chet Holmgren', 'Jalen Williams'],
+    'Orlando Magic': ['Paolo Banchero', 'Franz Wagner', 'Wendell Carter Jr.'],
+    'Philadelphia 76ers': ['Joel Embiid', 'Tyrese Maxey', 'Tobias Harris'],
+    'Phoenix Suns': ['Kevin Durant', 'Devin Booker', 'Bradley Beal'],
+    'Portland Trail Blazers': ['Anfernee Simons', 'Scoot Henderson', 'Jerami Grant'],
+    'Sacramento Kings': ["De'Aaron Fox", 'Domantas Sabonis', 'Keegan Murray'],
+    'San Antonio Spurs': ['Victor Wembanyama', 'Devin Vassell', 'Keldon Johnson'],
+    'Toronto Raptors': ['Scottie Barnes', 'RJ Barrett', 'Immanuel Quickley'],
+    'Utah Jazz': ['Lauri Markkanen', 'Jordan Clarkson', 'Collin Sexton'],
+    'Washington Wizards': ['Kyle Kuzma', 'Jordan Poole', 'Bilal Coulibaly'],
+  },
+  americanfootball_nfl: {
+    'Arizona Cardinals': ['Kyler Murray', 'James Conner', 'Marquise Brown'],
+    'Atlanta Falcons': ['Bijan Robinson', 'Drake London', 'Kyle Pitts'],
+    'Baltimore Ravens': ['Lamar Jackson', 'Derrick Henry', 'Zay Flowers'],
+    'Buffalo Bills': ['Josh Allen', 'James Cook', 'Stefon Diggs'],
+    'Carolina Panthers': ['Bryce Young', 'Chuba Hubbard', 'Adam Thielen'],
+    'Chicago Bears': ['Caleb Williams', 'DJ Moore', 'Cole Kmet'],
+    'Cincinnati Bengals': ["Ja'Marr Chase", 'Joe Burrow', 'Tee Higgins'],
+    'Cleveland Browns': ['Deshaun Watson', 'Nick Chubb', 'Amari Cooper'],
+    'Dallas Cowboys': ['CeeDee Lamb', 'Dak Prescott', 'Tony Pollard'],
+    'Denver Broncos': ['Bo Nix', 'Javonte Williams', 'Courtland Sutton'],
+    'Detroit Lions': ["Amon-Ra St. Brown", 'Jahmyr Gibbs', 'Jared Goff'],
+    'Green Bay Packers': ['Jordan Love', 'Josh Jacobs', 'Jayden Reed'],
+    'Houston Texans': ['CJ Stroud', 'Stefon Diggs', 'Nico Collins'],
+    'Indianapolis Colts': ['Anthony Richardson', 'Jonathan Taylor', 'Michael Pittman Jr.'],
+    'Jacksonville Jaguars': ['Travis Etienne', 'Trevor Lawrence', 'Calvin Ridley'],
+    'Kansas City Chiefs': ['Patrick Mahomes', 'Travis Kelce', 'Isiah Pacheco'],
+    'Las Vegas Raiders': ['Davante Adams', 'Jakobi Meyers', 'Brock Bowers'],
+    'Los Angeles Chargers': ['Justin Herbert', 'Austin Ekeler', 'Keenan Allen'],
+    'Los Angeles Rams': ['Cooper Kupp', 'Puka Nacua', 'Kyren Williams'],
+    'Miami Dolphins': ['Tyreek Hill', 'Tua Tagovailoa', 'Jaylen Waddle'],
+    'Minnesota Vikings': ['Justin Jefferson', 'Jordan Addison', 'Aaron Jones'],
+    'New England Patriots': ['Drake Maye', 'Rhamondre Stevenson', 'Hunter Henry'],
+    'New Orleans Saints': ['Alvin Kamara', 'Chris Olave', 'Derek Carr'],
+    'New York Giants': ['Saquon Barkley', 'Malik Nabers', 'Daniel Jones'],
+    'New York Jets': ['Breece Hall', 'Garrett Wilson', 'Aaron Rodgers'],
+    'Philadelphia Eagles': ["A.J. Brown", 'Jalen Hurts', 'DeVonta Smith'],
+    'Pittsburgh Steelers': ['Najee Harris', 'George Pickens', 'Pat Freiermuth'],
+    'San Francisco 49ers': ['Christian McCaffrey', 'Brandon Aiyuk', 'Deebo Samuel'],
+    'Seattle Seahawks': ['DK Metcalf', 'Geno Smith', 'Jaxon Smith-Njigba'],
+    'Tampa Bay Buccaneers': ['Mike Evans', 'Chris Godwin', 'Rachaad White'],
+    'Tennessee Titans': ['Tony Pollard', 'DeAndre Hopkins', 'Calvin Ridley'],
+    'Washington Commanders': ['Jayden Daniels', 'Terry McLaurin', 'Brian Robinson Jr.'],
+  },
+  baseball_mlb: {
+    'Arizona Diamondbacks': ['Corbin Carroll', 'Ketel Marte', 'Zac Gallen'],
+    'Atlanta Braves': ['Ronald Acuña Jr.', 'Matt Olson', 'Austin Riley'],
+    'Baltimore Orioles': ['Gunnar Henderson', 'Adley Rutschman', 'Cedric Mullins'],
+    'Boston Red Sox': ['Rafael Devers', 'Masataka Yoshida', 'Trevor Story'],
+    'Chicago Cubs': ['Dansby Swanson', 'Ian Happ', 'Seiya Suzuki'],
+    'Chicago White Sox': ['Luis Robert Jr.', 'Andrew Benintendi', 'Tim Anderson'],
+    'Cincinnati Reds': ['Elly De La Cruz', 'Matt McLain', 'Spencer Steer'],
+    'Cleveland Guardians': ['José Ramírez', 'Josh Naylor', 'Steven Kwan'],
+    'Colorado Rockies': ['Ezequiel Tovar', 'Brenton Doyle', 'Ryan McMahon'],
+    'Detroit Tigers': ['Spencer Torkelson', 'Riley Greene', 'Kerry Carpenter'],
+    'Houston Astros': ['Jose Altuve', 'Yordan Alvarez', 'Kyle Tucker'],
+    'Kansas City Royals': ['Bobby Witt Jr.', 'Salvador Perez', 'MJ Melendez'],
+    'Los Angeles Angels': ['Mike Trout', 'Shohei Ohtani', 'Taylor Ward'],
+    'Los Angeles Dodgers': ['Mookie Betts', 'Freddie Freeman', 'Will Smith'],
+    'Miami Marlins': ['Jazz Chisholm Jr.', 'Luis Arraez', 'Jorge Soler'],
+    'Milwaukee Brewers': ['Christian Yelich', 'William Contreras', 'Willy Adames'],
+    'Minnesota Twins': ['Byron Buxton', 'Carlos Correa', 'Royce Lewis'],
+    'New York Mets': ['Pete Alonso', 'Francisco Lindor', 'Brandon Nimmo'],
+    'New York Yankees': ['Aaron Judge', 'Juan Soto', 'Giancarlo Stanton'],
+    'Oakland Athletics': ['Brent Rooker', 'JJ Bleday', 'Shea Langeliers'],
+    'Philadelphia Phillies': ['Bryce Harper', 'Trea Turner', 'Kyle Schwarber'],
+    'Pittsburgh Pirates': ['Bryan Reynolds', 'Ke\'Bryan Hayes', 'Oneil Cruz'],
+    'San Diego Padres': ['Fernando Tatis Jr.', 'Manny Machado', 'Xander Bogaerts'],
+    'San Francisco Giants': ['Matt Chapman', 'Michael Conforto', 'LaMonte Wade Jr.'],
+    'Seattle Mariners': ['Julio Rodríguez', 'Cal Raleigh', 'JP Crawford'],
+    'St. Louis Cardinals': ['Paul Goldschmidt', 'Nolan Arenado', 'Willson Contreras'],
+    'Tampa Bay Rays': ['Wander Franco', 'Randy Arozarena', 'Yandy Díaz'],
+    'Texas Rangers': ['Corey Seager', 'Marcus Semien', 'Adolis García'],
+    'Toronto Blue Jays': ['Vladimir Guerrero Jr.', 'Bo Bichette', 'George Springer'],
+    'Washington Nationals': ['CJ Abrams', 'Lane Thomas', 'Joey Meneses'],
+  },
+  icehockey_nhl: {
+    'Anaheim Ducks': ['Trevor Zegras', 'Troy Terry', 'Mason McTavish'],
+    'Arizona Coyotes': ['Clayton Keller', 'Nick Schmaltz', 'Dylan Guenther'],
+    'Boston Bruins': ['David Pastrnak', 'Brad Marchand', 'Charlie McAvoy'],
+    'Buffalo Sabres': ['Tage Thompson', 'Rasmus Dahlin', 'Alex Tuch'],
+    'Calgary Flames': ['Nazem Kadri', 'Jonathan Huberdeau', 'Mikael Backlund'],
+    'Carolina Hurricanes': ['Sebastian Aho', 'Andrei Svechnikov', 'Martin Necas'],
+    'Chicago Blackhawks': ['Connor Bedard', 'Tyler Bertuzzi', 'Nick Foligno'],
+    'Colorado Avalanche': ['Nathan MacKinnon', 'Cale Makar', 'Mikko Rantanen'],
+    'Columbus Blue Jackets': ['Johnny Gaudreau', 'Zach Werenski', 'Patrik Laine'],
+    'Dallas Stars': ['Jason Robertson', 'Roope Hintz', 'Joe Pavelski'],
+    'Detroit Red Wings': ['Dylan Larkin', 'Lucas Raymond', 'Moritz Seider'],
+    'Edmonton Oilers': ['Connor McDavid', 'Leon Draisaitl', 'Zach Hyman'],
+    'Florida Panthers': ['Aleksander Barkov', 'Matthew Tkachuk', 'Carter Verhaeghe'],
+    'Los Angeles Kings': ['Anze Kopitar', 'Adrian Kempe', 'Quinton Byfield'],
+    'Minnesota Wild': ['Kirill Kaprizov', 'Matt Boldy', 'Joel Eriksson Ek'],
+    'Montreal Canadiens': ['Nick Suzuki', 'Cole Caufield', 'Juraj Slafkovsky'],
+    'Nashville Predators': ['Filip Forsberg', 'Roman Josi', 'Gustav Nyquist'],
+    'New Jersey Devils': ['Jack Hughes', 'Nico Hischier', 'Jesper Bratt'],
+    'New York Islanders': ['Mathew Barzal', 'Brock Nelson', 'Bo Horvat'],
+    'New York Rangers': ['Artemi Panarin', 'Mika Zibanejad', 'Adam Fox'],
+    'Ottawa Senators': ['Brady Tkachuk', 'Tim Stützle', 'Claude Giroux'],
+    'Philadelphia Flyers': ['Travis Konecny', 'Owen Tippett', 'Sean Couturier'],
+    'Pittsburgh Penguins': ['Sidney Crosby', 'Evgeni Malkin', 'Bryan Rust'],
+    'San Jose Sharks': ['Tomas Hertl', 'Logan Couture', 'Erik Karlsson'],
+    'Seattle Kraken': ['Matty Beniers', 'Jared McCann', 'Jordan Eberle'],
+    'St. Louis Blues': ['Robert Thomas', 'Jordan Kyrou', 'Pavel Buchnevich'],
+    'Tampa Bay Lightning': ['Nikita Kucherov', 'Brayden Point', 'Steven Stamkos'],
+    'Toronto Maple Leafs': ['Auston Matthews', 'Mitch Marner', 'William Nylander'],
+    'Vancouver Canucks': ['Elias Pettersson', 'JT Miller', 'Brock Boeser'],
+    'Vegas Golden Knights': ['Jack Eichel', 'Mark Stone', 'Chandler Stephenson'],
+    'Washington Capitals': ['Alex Ovechkin', 'Dylan Strome', 'Tom Wilson'],
+    'Winnipeg Jets': ['Kyle Connor', 'Mark Scheifele', 'Nikolaj Ehlers'],
+  },
+};
+
+// Sport-specific prop types
+const SPORT_PROP_TYPES: Record<string, string[]> = {
+  basketball_nba: ['points', 'rebounds', 'assists', '3-pointers'],
+  americanfootball_nfl: ['passing yards', 'rushing yards', 'receiving yards', 'TDs'],
+  baseball_mlb: ['hits', 'RBIs', 'total bases', 'runs'],
+  icehockey_nhl: ['goals', 'assists', 'shots on goal', 'points'],
+};
+
 // Sport-specific fatigue weights
 const SPORT_WEIGHTS: Record<string, Record<string, number>> = {
   basketball_nba: {
@@ -47,23 +206,23 @@ const SPORT_WEIGHTS: Record<string, Record<string, number>> = {
     earlyStart: 5,
   },
   americanfootball_nfl: {
-    shortWeek: 20, // Thursday games
+    shortWeek: 20,
     crossCountry: 15,
     travel2000: 12,
     travel1000: 8,
     timezone2: 12,
     timezone1: 6,
     altitude: 10,
-    mondayToSunday: 5, // Short rest after Monday night
+    mondayToSunday: 5,
   },
   baseball_mlb: {
-    backToBack: 8, // Less impact in baseball
-    roadTripLong: 15, // 5+ games road trip
-    roadTripMedium: 10, // 3-4 games
+    backToBack: 8,
+    roadTripLong: 15,
+    roadTripMedium: 10,
     travel1500: 10,
     travel1000: 6,
     timezone2: 8,
-    dayNight: 12, // Day game after night game
+    dayNight: 12,
     doubleheader: 18,
   },
   icehockey_nhl: {
@@ -136,7 +295,6 @@ function getFatigueCategory(score: number): string {
 function calculateBettingAdjustments(fatigueScore: number, sport: string) {
   const factor = fatigueScore / 100;
   
-  // Sport-specific adjustments
   const adjustments: Record<string, number> = {
     mlAdjustment: Math.round(factor * 8 * 10) / 10,
     spreadAdjustment: Math.round(factor * 3 * 10) / 10,
@@ -162,46 +320,125 @@ function calculateBettingAdjustments(fatigueScore: number, sport: string) {
   return adjustments;
 }
 
-// Always generate an angle for any differential
-function getRecommendedAngle(homeFatigue: number, awayFatigue: number, sport: string): string {
+// Enhanced recommendation generator with specific player prop targets
+function generatePropTargets(
+  homeTeam: string,
+  awayTeam: string,
+  homeFatigue: number,
+  awayFatigue: number,
+  sport: string,
+  travelMiles: number,
+  isAltitudeGame: boolean,
+  isBackToBack: boolean
+): PropTargets {
   const diff = Math.abs(homeFatigue - awayFatigue);
-  const fresherTeam = homeFatigue < awayFatigue ? 'home' : 'away';
-  const tiredTeam = homeFatigue < awayFatigue ? 'away' : 'home';
+  const fatigueTeam = homeFatigue > awayFatigue ? homeTeam : awayTeam;
+  const freshTeam = homeFatigue > awayFatigue ? awayTeam : homeTeam;
+  const fatigueScore = Math.max(homeFatigue, awayFatigue);
   
-  // Sport-specific recommendations
-  const sportTips: Record<string, Record<string, string>> = {
-    basketball_nba: {
-      strong: `🔥 Strong edge: Fade ${tiredTeam} player props, target ${fresherTeam} ML/spread. Focus on unders.`,
-      good: `✅ Good edge: ${fresherTeam} team favored. Consider unders on ${tiredTeam} players.`,
-      slight: `👀 Slight edge: Monitor ${tiredTeam} starters minutes. Look for value on ${fresherTeam}.`,
-      minimal: `📊 Minimal edge: ${fresherTeam} has slight fatigue advantage. Watch late-game performance.`,
-    },
-    americanfootball_nfl: {
-      strong: `🔥 Strong edge: Fade ${tiredTeam} on short week. Target game under.`,
-      good: `✅ Good edge: ${fresherTeam} favored. Consider ${tiredTeam} QB under on passing.`,
-      slight: `👀 Slight edge: ${fresherTeam} has rest advantage. Watch 4th quarter.`,
-      minimal: `📊 ${fresherTeam} slightly fresher. Minor edge on execution plays.`,
-    },
-    baseball_mlb: {
-      strong: `🔥 Strong edge: Target first 5 innings under. Fade ${tiredTeam} bats.`,
-      good: `✅ Good edge: ${fresherTeam} bullpen advantage. Look at F5 ML.`,
-      slight: `👀 Slight edge: ${tiredTeam} on long road trip. Watch late innings.`,
-      minimal: `📊 ${fresherTeam} marginally fresher. Consider pitcher rest days.`,
-    },
-    icehockey_nhl: {
-      strong: `🔥 Strong edge: ${tiredTeam} B2B, target under. ${fresherTeam} puck line value.`,
-      good: `✅ Good edge: ${fresherTeam} should dominate possession. Consider over on their shots.`,
-      slight: `👀 Slight edge: ${fresherTeam} fresher legs in 3rd period.`,
-      minimal: `📊 ${fresherTeam} minor rest advantage. Watch goalie fatigue.`,
-    },
+  // Determine confidence level
+  let confidence: PropTargets['confidence'] = 'minimal';
+  if (diff >= 30) confidence = 'strong';
+  else if (diff >= 20) confidence = 'good';
+  else if (diff >= 15) confidence = 'slight';
+  
+  // Build edge factors list
+  const edgeFactors: string[] = [];
+  if (travelMiles > 1000) edgeFactors.push(`${Math.round(travelMiles)}mi travel`);
+  if (isAltitudeGame) edgeFactors.push('altitude disadvantage');
+  if (isBackToBack) edgeFactors.push('B2B');
+  if (edgeFactors.length === 0) edgeFactors.push(`+${diff} fatigue differential`);
+  
+  // Get star players for the fatigued team
+  const sportPlayers = STAR_PLAYERS[sport] || {};
+  const fatigueTeamPlayers = sportPlayers[fatigueTeam] || [];
+  const propTypes = SPORT_PROP_TYPES[sport] || ['points'];
+  
+  // Generate player prop targets based on fatigue severity
+  const playerProps: PlayerPropTarget[] = [];
+  
+  // More props suggested for higher fatigue differentials
+  const numPlayers = diff >= 30 ? 3 : diff >= 20 ? 2 : 1;
+  const numPropsPerPlayer = diff >= 25 ? 2 : 1;
+  
+  for (let i = 0; i < Math.min(numPlayers, fatigueTeamPlayers.length); i++) {
+    const player = fatigueTeamPlayers[i];
+    for (let j = 0; j < Math.min(numPropsPerPlayer, propTypes.length); j++) {
+      const prop = propTypes[j];
+      
+      // Build reason string
+      let reason = '';
+      if (isBackToBack) reason = 'B2B fatigue';
+      else if (travelMiles > 1000) reason = 'travel fatigue';
+      else if (isAltitudeGame) reason = 'altitude';
+      else reason = 'cumulative fatigue';
+      
+      playerProps.push({
+        player,
+        prop,
+        direction: 'under',
+        reason,
+      });
+    }
+  }
+  
+  return {
+    fade_team: fatigueTeam,
+    lean_team: freshTeam,
+    player_props: playerProps,
+    confidence,
+    edge_factors: edgeFactors,
   };
+}
 
-  const tips = sportTips[sport] || sportTips.basketball_nba;
+// Generate readable recommendation angle text
+function getRecommendedAngle(
+  homeTeam: string,
+  awayTeam: string,
+  homeFatigue: number,
+  awayFatigue: number,
+  sport: string,
+  propTargets: PropTargets
+): string {
+  const diff = Math.abs(homeFatigue - awayFatigue);
   
-  if (diff >= 30) return tips.strong;
-  if (diff >= 20) return tips.good;
-  if (diff >= 15) return tips.slight;
-  return tips.minimal;
+  // Build player prop suggestions text
+  const propSuggestions = propTargets.player_props
+    .slice(0, 3)
+    .map(p => `${p.player} ${p.direction.toUpperCase()} ${p.prop}`)
+    .join(', ');
+  
+  const edgeText = propTargets.edge_factors.join(' + ');
+  
+  // Confidence emoji based on level
+  const confEmoji = propTargets.confidence === 'strong' ? '🔥' : 
+                    propTargets.confidence === 'good' ? '✅' : 
+                    propTargets.confidence === 'slight' ? '👀' : '📊';
+  
+  // Sport-specific formatting
+  const sportLabels: Record<string, string> = {
+    basketball_nba: 'NBA',
+    americanfootball_nfl: 'NFL',
+    baseball_mlb: 'MLB',
+    icehockey_nhl: 'NHL',
+  };
+  
+  let angle = `${confEmoji} LEAN: ${propTargets.lean_team}`;
+  
+  if (propTargets.player_props.length > 0) {
+    angle += ` | FADE ${propTargets.fade_team}: ${propSuggestions}`;
+  }
+  
+  angle += ` | Edge: ${edgeText}`;
+  
+  // Add confidence indicator
+  const confText = propTargets.confidence === 'strong' ? 'High Confidence' :
+                   propTargets.confidence === 'good' ? 'Good Edge' :
+                   propTargets.confidence === 'slight' ? 'Slight Edge' : 'Minor Edge';
+  
+  angle += ` | ${confText} (+${diff})`;
+  
+  return angle;
 }
 
 Deno.serve(async (req) => {
@@ -237,7 +474,7 @@ Deno.serve(async (req) => {
     if (oldEdges && oldEdges.length > 0) {
       const trainingData = oldEdges.map(edge => ({
         event_id: edge.event_id,
-        sport: 'basketball_nba', // Legacy data
+        sport: 'basketball_nba',
         home_team: edge.home_team,
         away_team: edge.away_team,
         game_date: edge.game_date,
@@ -394,7 +631,28 @@ Deno.serve(async (req) => {
         const awayAdjustments = calculateBettingAdjustments(awayFatigueScore, sport);
 
         const differential = Math.abs(homeFatigueScore - awayFatigueScore);
-        const angle = getRecommendedAngle(homeFatigueScore, awayFatigueScore, sport);
+        
+        // Generate player prop targets (the new enhanced recommendations)
+        const propTargets = generatePropTargets(
+          game.homeTeam,
+          game.awayTeam,
+          homeFatigueScore,
+          awayFatigueScore,
+          sport,
+          travelMiles,
+          isAltitudeGame,
+          awayFactors.isBackToBack
+        );
+        
+        // Generate the readable angle text
+        const angle = getRecommendedAngle(
+          game.homeTeam,
+          game.awayTeam,
+          homeFatigueScore,
+          awayFatigueScore,
+          sport,
+          propTargets
+        );
 
         // Prepare records
         const homeRecord = {
@@ -415,6 +673,7 @@ Deno.serve(async (req) => {
           road_trip_games: 0,
           betting_adjustments: homeAdjustments,
           recommended_angle: angle,
+          prop_targets: propTargets,
           game_date: today,
           commence_time: game.gameTime,
           opponent_name: game.awayTeam,
@@ -438,6 +697,7 @@ Deno.serve(async (req) => {
           road_trip_games: awayFactors.roadTripGames,
           betting_adjustments: awayAdjustments,
           recommended_angle: angle,
+          prop_targets: propTargets,
           game_date: today,
           commence_time: game.gameTime,
           opponent_name: game.homeTeam,
@@ -453,7 +713,7 @@ Deno.serve(async (req) => {
         if (upsertError) {
           console.error(`Error upserting fatigue for ${game.homeTeam} vs ${game.awayTeam}:`, upsertError);
         } else {
-          // Track edges with 10+ differential (lowered threshold for more recommendations)
+          // Track edges with 10+ differential
           if (differential >= 10) {
             const recommendedSide = homeFatigueScore < awayFatigueScore ? 'home' : 'away';
             
@@ -482,6 +742,7 @@ Deno.serve(async (req) => {
             awayFatigue: awayFatigueScore,
             differential,
             edge: angle,
+            propTargets,
           });
         }
       }
