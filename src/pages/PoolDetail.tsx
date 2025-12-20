@@ -10,7 +10,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { SubmitLegModal } from '@/components/pools/SubmitLegModal';
-import { shareContent } from '@/lib/utils';
+import { shareContent, getShareableUrl } from '@/lib/utils';
 
 interface Pool {
   id: string;
@@ -127,14 +127,14 @@ export default function PoolDetail() {
 
   const copyInviteLink = () => {
     if (!pool) return;
-    const link = `${window.location.origin}/pools/join/${pool.invite_code}`;
+    const link = getShareableUrl(`/pools/join/${pool.invite_code}`);
     navigator.clipboard.writeText(link);
     toast.success('Invite link copied!');
   };
 
   const sharePool = async () => {
     if (!pool) return;
-    const link = `${window.location.origin}/pools/join/${pool.invite_code}`;
+    const link = getShareableUrl(`/pools/join/${pool.invite_code}`);
     
     const shared = await shareContent({
       title: pool.pool_name,

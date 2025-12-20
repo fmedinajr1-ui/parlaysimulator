@@ -7,7 +7,7 @@ import { Slider } from '@/components/ui/slider';
 import { Copy, Check, Users, Trophy, Share2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { shareContent } from '@/lib/utils';
+import { shareContent, getShareableUrl } from '@/lib/utils';
 
 interface CreatePoolModalProps {
   open: boolean;
@@ -98,7 +98,7 @@ export function CreatePoolModal({ open, onOpenChange, onPoolCreated }: CreatePoo
   };
 
   const inviteLink = createdPool 
-    ? `${window.location.origin}/pools/join/${createdPool.invite_code}`
+    ? getShareableUrl(`/pools/join/${createdPool.invite_code}`)
     : '';
 
   return (
