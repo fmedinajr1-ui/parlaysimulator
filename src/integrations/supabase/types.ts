@@ -911,6 +911,62 @@ export type Database = {
         }
         Relationships: []
       }
+      daily_elite_leg_outcomes: {
+        Row: {
+          actual_value: number | null
+          created_at: string | null
+          engine_signals: Json | null
+          id: string
+          leg_index: number
+          line: number
+          outcome: string | null
+          parlay_id: string | null
+          player_name: string
+          predicted_probability: number | null
+          prop_type: string
+          side: string
+          verified_at: string | null
+        }
+        Insert: {
+          actual_value?: number | null
+          created_at?: string | null
+          engine_signals?: Json | null
+          id?: string
+          leg_index: number
+          line: number
+          outcome?: string | null
+          parlay_id?: string | null
+          player_name: string
+          predicted_probability?: number | null
+          prop_type: string
+          side: string
+          verified_at?: string | null
+        }
+        Update: {
+          actual_value?: number | null
+          created_at?: string | null
+          engine_signals?: Json | null
+          id?: string
+          leg_index?: number
+          line?: number
+          outcome?: string | null
+          parlay_id?: string | null
+          player_name?: string
+          predicted_probability?: number | null
+          prop_type?: string
+          side?: string
+          verified_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "daily_elite_leg_outcomes_parlay_id_fkey"
+            columns: ["parlay_id"]
+            isOneToOne: false
+            referencedRelation: "daily_elite_parlays"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       daily_elite_parlays: {
         Row: {
           actual_result: Json | null
@@ -977,6 +1033,48 @@ export type Database = {
           total_edge?: number | null
           total_odds?: number | null
           variance_penalty?: number | null
+        }
+        Relationships: []
+      }
+      elite_parlay_accuracy_metrics: {
+        Row: {
+          accuracy_rate: number | null
+          avg_predicted_probability: number | null
+          calibration_factor: number | null
+          correct_predictions: number | null
+          created_at: string | null
+          id: string
+          metric_key: string
+          metric_type: string
+          sample_confidence: string | null
+          total_predictions: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          accuracy_rate?: number | null
+          avg_predicted_probability?: number | null
+          calibration_factor?: number | null
+          correct_predictions?: number | null
+          created_at?: string | null
+          id?: string
+          metric_key: string
+          metric_type: string
+          sample_confidence?: string | null
+          total_predictions?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          accuracy_rate?: number | null
+          avg_predicted_probability?: number | null
+          calibration_factor?: number | null
+          correct_predictions?: number | null
+          created_at?: string | null
+          id?: string
+          metric_key?: string
+          metric_type?: string
+          sample_confidence?: string | null
+          total_predictions?: number | null
+          updated_at?: string | null
         }
         Relationships: []
       }
