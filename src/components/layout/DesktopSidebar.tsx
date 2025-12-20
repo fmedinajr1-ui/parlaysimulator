@@ -32,6 +32,7 @@ import { PILOT_ALLOWED_ROUTES } from "@/components/PilotRouteGuard";
 const mainNavItems = [
   { icon: Home, label: "Home", path: "/" },
   { icon: BarChart3, label: "Analyze", path: "/upload" },
+  { icon: Users, label: "Pools", path: "/pools" },
   { icon: GitCompare, label: "Compare", path: "/compare" },
   { icon: User, label: "Profile", path: "/profile" },
 ];
