@@ -118,13 +118,27 @@ export default function JoinPool() {
     setJoining(true);
 
     try {
-      const session = await supabase.auth.getSession();
-      const token = session.data.session?.access_token;
+      // Force refresh session to get valid token
+      await supabase.auth.refreshSession();
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      if (!token) {
+        toast.error('Please sign in again');
+        setJoining(false);
+        return;
+      }
 
       const response = await supabase.functions.invoke('pool-manager', {
         body: { action: 'join', invite_code: inviteCode },
         headers: { Authorization: `Bearer ${token}` }
       });
+
+      if (response.error) {
+        console.error('Function error:', response.error);
+        toast.error('Failed to join pool');
+        return;
+      }
 
       if (response.data?.error) {
         toast.error(response.data.error);
