@@ -5942,6 +5942,51 @@ export type Database = {
         }
         Relationships: []
       }
+      user_bet_preferences: {
+        Row: {
+          created_at: string | null
+          id: string
+          include_coaching_signals: boolean | null
+          include_fatigue_edge: boolean | null
+          include_god_mode: boolean | null
+          max_odds: number | null
+          min_accuracy_threshold: number | null
+          min_sample_size: number | null
+          preferred_sports: string[] | null
+          risk_tolerance: string | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          include_coaching_signals?: boolean | null
+          include_fatigue_edge?: boolean | null
+          include_god_mode?: boolean | null
+          max_odds?: number | null
+          min_accuracy_threshold?: number | null
+          min_sample_size?: number | null
+          preferred_sports?: string[] | null
+          risk_tolerance?: string | null
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          include_coaching_signals?: boolean | null
+          include_fatigue_edge?: boolean | null
+          include_god_mode?: boolean | null
+          max_odds?: number | null
+          min_accuracy_threshold?: number | null
+          min_sample_size?: number | null
+          preferred_sports?: string[] | null
+          risk_tolerance?: string | null
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           created_at: string | null

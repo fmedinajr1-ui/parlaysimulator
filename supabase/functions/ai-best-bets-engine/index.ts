@@ -27,8 +27,20 @@ interface BestBet {
   ai_confidence: number;
   composite_score: number;
   ai_reasoning?: string;
+  risk_factors?: string[];
   signals: string[];
   signal_type: string;
+}
+
+interface UserPreferences {
+  preferred_sports: string[];
+  risk_tolerance: 'conservative' | 'medium' | 'aggressive';
+  include_god_mode: boolean;
+  include_coaching_signals: boolean;
+  include_fatigue_edge: boolean;
+  max_odds: number;
+  min_sample_size: number;
+  min_accuracy_threshold: number;
 }
 
 // REAL accuracy by sport/recommendation from verified historical data (as of Dec 2024)
@@ -211,6 +223,40 @@ Deno.serve(async (req) => {
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     const now = new Date().toISOString();
     const today = now.split('T')[0];
+
+    // Parse request body for user preferences
+    let userPreferences: UserPreferences | null = null;
+    let userId: string | null = null;
+    
+    try {
+      const body = await req.json();
+      userId = body.user_id;
+      
+      if (userId) {
+        // Fetch user preferences from database
+        const { data: prefs } = await supabase
+          .from('user_bet_preferences')
+          .select('*')
+          .eq('user_id', userId)
+          .single();
+        
+        if (prefs) {
+          userPreferences = {
+            preferred_sports: prefs.preferred_sports || ['nfl', 'nba', 'nhl', 'ncaab', 'mlb'],
+            risk_tolerance: prefs.risk_tolerance || 'medium',
+            include_god_mode: prefs.include_god_mode ?? true,
+            include_coaching_signals: prefs.include_coaching_signals ?? true,
+            include_fatigue_edge: prefs.include_fatigue_edge ?? true,
+            max_odds: prefs.max_odds || 500,
+            min_sample_size: prefs.min_sample_size || 20,
+            min_accuracy_threshold: prefs.min_accuracy_threshold || 52.0
+          };
+          console.log(`[AI-BestBets] Loaded user preferences for ${userId}:`, userPreferences);
+        }
+      }
+    } catch {
+      // No body or invalid JSON - continue without preferences
+    }
 
     console.log('[AI-BestBets] Starting AI-powered best bets analysis with dynamic weighting...');
 
@@ -444,13 +490,108 @@ Deno.serve(async (req) => {
       console.log(`[AI-BestBets] God Mode upset candidates: ${godModeUpsets.length}`);
     }
 
-    console.log(`[AI-BestBets] Found ${candidates.length} total candidate signals (including coaching, God Mode)`);
+    // PHASE 6: Additional Engines - MedianLock candidates
+    const { data: medianLockCandidates } = await supabase
+      .from('median_lock_candidates')
+      .select('*')
+      .gte('slate_date', today)
+      .in('classification', ['LOCK', 'STRONG'])
+      .eq('parlay_grade', true)
+      .gte('confidence_score', 0.65)
+      .order('confidence_score', { ascending: false })
+      .limit(15);
+
+    if (medianLockCandidates) {
+      for (const lock of medianLockCandidates) {
+        candidates.push({
+          id: lock.id,
+          event_id: lock.event_id,
+          sport: 'basketball_nba',
+          description: `${lock.player_name} ${lock.prop_type} ${lock.bet_side} ${lock.book_line}`,
+          recommendation: lock.bet_side?.toLowerCase() === 'over' ? 'pick' : 'fade',
+          commence_time: lock.game_start_time,
+          outcome_name: `${lock.player_name} ${lock.prop_type} ${lock.bet_side}`,
+          new_price: lock.current_price || -110,
+          player_name: lock.player_name,
+          prop_type: lock.prop_type,
+          hit_rate: lock.hit_rate,
+          confidence_score: lock.confidence_score,
+          classification: lock.classification,
+          signal_type: 'median_lock'
+        });
+      }
+      console.log(`[AI-BestBets] MedianLock candidates: ${medianLockCandidates.length}`);
+    }
+
+    // PHASE 6: Additional Engines - HitRate parlays
+    const { data: hitRateParlays } = await supabase
+      .from('hitrate_parlays')
+      .select('*')
+      .eq('is_active', true)
+      .gte('min_hit_rate', 65)
+      .gte('combined_probability', 0.5)
+      .order('combined_probability', { ascending: false })
+      .limit(10);
+
+    if (hitRateParlays) {
+      for (const parlay of hitRateParlays) {
+        const legs = Array.isArray(parlay.legs) ? parlay.legs : [];
+        if (legs.length > 0) {
+          candidates.push({
+            id: parlay.id,
+            event_id: `hitrate_${parlay.id}`,
+            sport: parlay.sport || 'mixed',
+            description: `HitRate ${parlay.strategy_type}: ${legs.length} legs @ ${parlay.min_hit_rate}%+ hit rate`,
+            recommendation: 'pick',
+            commence_time: parlay.expires_at,
+            outcome_name: `HitRate Parlay (${parlay.strategy_type})`,
+            new_price: parlay.total_odds || 200,
+            combined_probability: parlay.combined_probability,
+            min_hit_rate: parlay.min_hit_rate,
+            strategy_type: parlay.strategy_type,
+            leg_count: legs.length,
+            signal_type: 'hitrate_parlay'
+          });
+        }
+      }
+      console.log(`[AI-BestBets] HitRate parlay candidates: ${hitRateParlays.length}`);
+    }
+
+    console.log(`[AI-BestBets] Found ${candidates.length} total candidate signals (including all engines)`);
 
     // Step 3: Score each candidate using REAL accuracy data
     const scoredCandidates: BestBet[] = [];
 
     for (const candidate of candidates) {
       const signalKey = candidate.signal_type;
+      const sportKey = candidate.sport?.split('_').pop()?.toLowerCase() || 'unknown';
+      
+      // PHASE 4: Apply user preference filters
+      if (userPreferences) {
+        // Sport filter
+        if (!userPreferences.preferred_sports.includes(sportKey)) {
+          continue;
+        }
+        
+        // Risk tolerance filter
+        if (userPreferences.risk_tolerance === 'conservative') {
+          // Conservative: no god mode, no high odds, require higher sample size
+          if (signalKey.startsWith('god_mode') && !userPreferences.include_god_mode) continue;
+          if (Math.abs(candidate.new_price || -110) > 200) continue;
+        }
+        
+        // God mode filter
+        if (!userPreferences.include_god_mode && signalKey.startsWith('god_mode')) continue;
+        
+        // Coaching signals filter
+        if (!userPreferences.include_coaching_signals && signalKey.startsWith('coaching')) continue;
+        
+        // Fatigue edge filter
+        if (!userPreferences.include_fatigue_edge && signalKey === 'nba_fatigue') continue;
+        
+        // Max odds filter (for plus money)
+        if (candidate.new_price > 0 && candidate.new_price > userPreferences.max_odds) continue;
+      }
       
       // Use live accuracy if available, otherwise use historical baseline
       const liveAccuracy = accuracyByKey[signalKey]?.accuracy;
@@ -464,6 +605,11 @@ Deno.serve(async (req) => {
       const historicalAccuracy = (liveTotal >= 20) ? liveAccuracy : baselineAccuracy;
       const sampleSize = (liveTotal >= 20) ? liveTotal : baselineSampleSize;
 
+      // PHASE 4: User min accuracy threshold
+      if (userPreferences && historicalAccuracy < userPreferences.min_accuracy_threshold) {
+        continue;
+      }
+
       // ROI-based threshold: must beat breakeven for the odds
       // For God Mode upsets, use actual candidate odds (not historical average)
       const candidateOdds = signalKey.startsWith('god_mode') 
@@ -475,9 +621,15 @@ Deno.serve(async (req) => {
       // Skip signals below ROI-adjusted threshold (allows plus-money with lower accuracy)
       // For God Mode, we accept if expectedROI is positive (historical accuracy beats breakeven)
       const isGodMode = signalKey.startsWith('god_mode');
+      const isMedianLock = signalKey === 'median_lock';
+      const isHitRate = signalKey === 'hitrate_parlay';
+      
+      // MedianLock and HitRate have their own accuracy thresholds
       const meetsThreshold = isGodMode 
-        ? (expectedROI > 0 || historicalAccuracy >= accuracyThreshold * 0.95) // 5% tolerance for God Mode
-        : (historicalAccuracy >= accuracyThreshold);
+        ? (expectedROI > 0 || historicalAccuracy >= accuracyThreshold * 0.95)
+        : isMedianLock || isHitRate
+          ? true // These engines have pre-filtered for quality
+          : (historicalAccuracy >= accuracyThreshold);
         
       if (!meetsThreshold) {
         console.log(`[AI-BestBets] Skipping ${signalKey} - below ROI threshold (${historicalAccuracy.toFixed(1)}% < ${accuracyThreshold.toFixed(1)}% for ${candidateOdds} odds, ROI: ${(expectedROI * 100).toFixed(1)}%)`);
@@ -489,10 +641,12 @@ Deno.serve(async (req) => {
         console.log(`[AI-BestBets] ✅ God Mode ${signalKey} INCLUDED: ${historicalAccuracy.toFixed(1)}% accuracy, ${candidateOdds} odds, ${(expectedROI * 100).toFixed(1)}% expected ROI`);
       }
 
-      // Skip signals with insufficient sample size (except fatigue and god mode which have separate tracking)
-      const skipSampleCheck = signalKey === 'nba_fatigue' || signalKey.startsWith('god_mode');
-      if (sampleSize < MIN_SAMPLE_SIZE && !skipSampleCheck) {
-        console.log(`[AI-BestBets] Skipping ${signalKey} - insufficient sample size (${sampleSize} < ${MIN_SAMPLE_SIZE})`);
+      // Skip signals with insufficient sample size (except special engines)
+      const skipSampleCheck = signalKey === 'nba_fatigue' || signalKey.startsWith('god_mode') || 
+                              signalKey === 'median_lock' || signalKey === 'hitrate_parlay';
+      const effectiveMinSample = userPreferences?.min_sample_size || MIN_SAMPLE_SIZE;
+      if (sampleSize < effectiveMinSample && !skipSampleCheck) {
+        console.log(`[AI-BestBets] Skipping ${signalKey} - insufficient sample size (${sampleSize} < ${effectiveMinSample})`);
         continue;
       }
       
@@ -628,6 +782,44 @@ Deno.serve(async (req) => {
         }
       }
 
+      // PHASE 6: MedianLock signal boosts
+      if (signalKey === 'median_lock') {
+        const hitRate = candidate.hit_rate ?? 0;
+        const confidenceScore = candidate.confidence_score ?? 0;
+        const classification = candidate.classification || '';
+        
+        if (classification === 'LOCK') {
+          compositeScore += 8 * sampleMultiplier;
+          signals.push(`🔒 MedianLock LOCK (${hitRate.toFixed(0)}% hit rate)`);
+        } else if (classification === 'STRONG') {
+          compositeScore += 5 * sampleMultiplier;
+          signals.push(`📊 MedianLock STRONG (${hitRate.toFixed(0)}% hit rate)`);
+        }
+        
+        if (confidenceScore >= 0.8) {
+          compositeScore += 4;
+          signals.push(`High confidence: ${(confidenceScore * 100).toFixed(0)}%`);
+        }
+        
+        signals.push(`Player: ${candidate.player_name}`);
+      }
+
+      // PHASE 6: HitRate parlay boosts
+      if (signalKey === 'hitrate_parlay') {
+        const minHitRate = candidate.min_hit_rate ?? 0;
+        const combinedProb = candidate.combined_probability ?? 0;
+        const legCount = candidate.leg_count ?? 0;
+        
+        compositeScore += 6 * sampleMultiplier;
+        signals.push(`🎯 HitRate ${candidate.strategy_type} (${minHitRate}%+ hit rate)`);
+        signals.push(`${legCount} legs @ ${(combinedProb * 100).toFixed(0)}% combined prob`);
+        
+        if (minHitRate >= 70) {
+          compositeScore += 4;
+          signals.push('Premium hit rate tier');
+        }
+      }
+
       // Add sample size context
       if (sampleSize >= 200) {
         signals.push(`Large sample (n=${sampleSize})`);
@@ -635,6 +827,10 @@ Deno.serve(async (req) => {
         signals.push(`Good sample (n=${sampleSize})`);
       } else if (signalKey?.startsWith('god_mode')) {
         signals.push(`God Mode tracking (n=${sampleSize})`);
+      } else if (signalKey === 'median_lock') {
+        signals.push(`MedianLock tracking`);
+      } else if (signalKey === 'hitrate_parlay') {
+        signals.push(`HitRate system`);
       }
 
       // Calculate AI confidence (normalized 0-1)
@@ -666,15 +862,18 @@ Deno.serve(async (req) => {
 
     if (LOVABLE_API_KEY && topCandidates.length > 0) {
       try {
-        const prompt = `You are an expert sports betting analyst. Analyze these signals based on VERIFIED accuracy data and provide brief reasoning.
+        // PHASE 5: Enhanced AI prompt with risk factors
+        const prompt = `You are an expert sports betting analyst. Analyze these signals and provide BOTH positive reasoning AND risk factors.
 
-KEY INSIGHT: NFL FADE signals have 66.54% historical accuracy (260 samples) - this is our TOP performer.
+KEY PERFORMERS (prioritize these):
+- NFL FADE: 66.54% accuracy (260 samples) - BEST PERFORMER
+- NFL CAUTION: 55.79% accuracy (699 samples)
+- NHL CAUTION: 53.08% accuracy (552 samples)
+- MedianLock LOCK/STRONG: 65-70% hit rate on player props
+- HitRate Parlays: Pre-filtered for high hit rate legs
 
-Live accuracy data from verified outcomes:
+Live accuracy data:
 ${JSON.stringify(accuracyByKey, null, 2)}
-
-Historical baselines:
-${JSON.stringify(HISTORICAL_ACCURACY, null, 2)}
 
 Top candidates to analyze:
 ${topCandidates.map((c, i) => `
@@ -686,12 +885,28 @@ ${i + 1}. ${c.description}
    - Signals: ${c.signals.join(', ')}
 `).join('\n')}
 
-For each bet, provide a 1-2 sentence analysis. PRIORITIZE NFL FADE signals as they have proven 66%+ accuracy.
+For EACH bet, provide:
+1. "reasoning": 1-2 sentence positive analysis (why this pick looks good)
+2. "risk_factors": Array of 1-3 specific risks that could hurt this pick
+3. "confidence_adjustment": -0.1 to +0.1 based on overall assessment
+
+RISK FACTORS TO CONSIDER:
+- Small sample size (n < 50): "Limited sample size (n=X)"
+- Recent cold streak vs historical: "Recent form below average"
+- Plus money volatility: "High variance plus-money play"
+- Conflicting signals: "Some engines disagree"
+- Key matchup concerns: "Tough opponent matchup"
+- Prop-specific risks: "Minutes uncertainty", "Game script dependent"
+- Weather/travel factors for outdoor sports
 
 Respond with JSON array:
 [
-  { "index": 0, "reasoning": "Brief analysis...", "confidence_adjustment": 0.0 },
-  ...
+  { 
+    "index": 0, 
+    "reasoning": "Strong NFL FADE signal with 66% historical accuracy...",
+    "risk_factors": ["Limited recent data this season", "Division rivalry game"],
+    "confidence_adjustment": 0.0 
+  }
 ]`;
 
         const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
@@ -703,7 +918,7 @@ Respond with JSON array:
           body: JSON.stringify({
             model: 'google/gemini-2.5-flash',
             messages: [
-              { role: 'system', content: 'You are a sports betting analyst. Respond only with valid JSON.' },
+              { role: 'system', content: 'You are a sports betting analyst who provides balanced analysis including risks. Respond only with valid JSON.' },
               { role: 'user', content: prompt }
             ],
             temperature: 0.3,
@@ -722,6 +937,11 @@ Respond with JSON array:
             for (const analysis of analyses) {
               if (analysis.index < topCandidates.length) {
                 topCandidates[analysis.index].ai_reasoning = analysis.reasoning;
+                
+                // PHASE 5: Add risk factors to the bet
+                if (analysis.risk_factors && Array.isArray(analysis.risk_factors)) {
+                  topCandidates[analysis.index].risk_factors = analysis.risk_factors;
+                }
                 
                 // Apply confidence adjustment
                 if (analysis.confidence_adjustment) {
