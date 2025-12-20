@@ -5,6 +5,12 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+const PRODUCTION_DOMAIN = "https://parlaysimulator.com";
+
+export const getShareableUrl = (path: string): string => {
+  return `${PRODUCTION_DOMAIN}${path}`;
+};
+
 export interface ShareOptions {
   title: string;
   text: string;
