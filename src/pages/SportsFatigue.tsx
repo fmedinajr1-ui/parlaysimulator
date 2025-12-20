@@ -97,7 +97,11 @@ export default function SportsFatigue() {
 
       // Group by event_id
       const gameMap = new Map<string, FatigueScore[]>();
-      (data || []).forEach((score: FatigueScore) => {
+      (data || []).forEach((row) => {
+        const score: FatigueScore = {
+          ...row,
+          betting_adjustments: row.betting_adjustments as Record<string, number> | null,
+        };
         const existing = gameMap.get(score.event_id) || [];
         existing.push(score);
         gameMap.set(score.event_id, existing);
@@ -466,7 +470,7 @@ export default function SportsFatigue() {
                         <p className="font-semibold text-sm text-foreground truncate">
                           {game.away_team.team_name}
                         </p>
-                        <FatigueMeter score={game.away_team.fatigue_score} size="sm" />
+                        <FatigueMeter score={game.away_team.fatigue_score} category={game.away_team.fatigue_category} size="sm" showLabel={false} />
                         
                         {/* Fatigue factors */}
                         <div className="mt-2 flex flex-wrap gap-1">
@@ -524,7 +528,7 @@ export default function SportsFatigue() {
                         <p className="font-semibold text-sm text-foreground truncate">
                           {game.home_team.team_name}
                         </p>
-                        <FatigueMeter score={game.home_team.fatigue_score} size="sm" />
+                        <FatigueMeter score={game.home_team.fatigue_score} category={game.home_team.fatigue_category} size="sm" showLabel={false} />
                         
                         {/* Fatigue factors */}
                         <div className="mt-2 flex flex-wrap gap-1">
