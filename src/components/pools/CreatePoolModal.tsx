@@ -4,9 +4,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
-import { Copy, Check, Users, Trophy } from 'lucide-react';
+import { Copy, Check, Users, Trophy, Share2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { shareContent } from '@/lib/utils';
 
 interface CreatePoolModalProps {
   open: boolean;
@@ -66,11 +67,22 @@ export function CreatePoolModal({ open, onOpenChange, onPoolCreated }: CreatePoo
 
   const copyInviteLink = () => {
     if (!createdPool) return;
-    const link = `${window.location.origin}/pools/join/${createdPool.invite_code}`;
-    navigator.clipboard.writeText(link);
+    navigator.clipboard.writeText(inviteLink);
     setCopied(true);
     toast.success('Link copied!');
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const shareInviteLink = async () => {
+    if (!createdPool) return;
+    const shared = await shareContent({
+      title: poolName,
+      text: `Join my parlay pool: ${poolName}`,
+      url: inviteLink
+    });
+    if (!shared) {
+      toast.success('Link copied!');
+    }
   };
 
   const handleClose = () => {
@@ -117,7 +129,7 @@ export function CreatePoolModal({ open, onOpenChange, onPoolCreated }: CreatePoo
                 <Input
                   value={inviteLink}
                   readOnly
-                  className="text-sm bg-background"
+                  className="text-sm bg-background flex-1"
                 />
                 <Button onClick={copyInviteLink} variant="outline" size="icon">
                   {copied ? (
@@ -125,6 +137,9 @@ export function CreatePoolModal({ open, onOpenChange, onPoolCreated }: CreatePoo
                   ) : (
                     <Copy className="w-4 h-4" />
                   )}
+                </Button>
+                <Button onClick={shareInviteLink} variant="outline" size="icon">
+                  <Share2 className="w-4 h-4" />
                 </Button>
               </div>
             </div>
