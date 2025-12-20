@@ -193,6 +193,8 @@ serve(async (req) => {
     console.log(`[generate-combo-props] Generated ${generatedProps.length} combo props`);
 
     // Insert/upsert into player_prop_hitrates table
+    const insertErrors: string[] = [];
+    
     for (const prop of generatedProps) {
       const hitRate = prop.recommendedSide === 'over' ? prop.hitRateOver : prop.hitRateUnder;
       
@@ -225,20 +227,24 @@ serve(async (req) => {
 
       if (upsertError) {
         console.error(`Error upserting combo prop for ${prop.playerName}:`, upsertError);
+        insertErrors.push(`${prop.playerName} ${prop.displayName}: ${upsertError.message}`);
       } else {
         inserted++;
       }
     }
 
+    console.log(`[generate-combo-props] Inserted ${inserted} props, ${insertErrors.length} errors`);
+
     // Log to cron_job_history
     await supabase.from('cron_job_history').insert({
       job_name: 'generate-combo-props',
-      status: 'completed',
+      status: insertErrors.length > 0 ? 'completed_with_errors' : 'completed',
       result: {
         playersProcessed: uniquePlayers.length,
         propsGenerated: generatedProps.length,
         propsInserted: inserted,
         propsSkipped: skipped,
+        errors: insertErrors.slice(0, 10), // Limit error log size
         comboTypes: COMBO_PROP_DEFINITIONS.map(d => d.displayName),
       },
       completed_at: new Date().toISOString(),
@@ -257,6 +263,7 @@ serve(async (req) => {
         propsGenerated: generatedProps.length,
         propsInserted: inserted,
         propsSkipped: skipped,
+        errorCount: insertErrors.length,
         byType: summaryByType,
       },
       // Include sample props for verification
@@ -269,6 +276,7 @@ serve(async (req) => {
         side: p.recommendedSide,
         confidence: (p.confidenceScore * 100).toFixed(0) + '%',
       })),
+      errors: insertErrors.length > 0 ? insertErrors.slice(0, 5) : undefined,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
@@ -276,9 +284,12 @@ serve(async (req) => {
   } catch (error) {
     console.error('[generate-combo-props] Error:', error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorStack = error instanceof Error ? error.stack : undefined;
+    
     return new Response(JSON.stringify({
       success: false,
       error: errorMessage,
+      details: errorStack,
     }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
