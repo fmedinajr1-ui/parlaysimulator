@@ -111,13 +111,34 @@ export function MedianLockDashboard() {
   const generateComboProps = async () => {
     setGeneratingCombos(true);
     try {
+      // Step 1: Generate combo props
       const { data, error } = await supabase.functions.invoke('generate-combo-props', {
         body: { action: 'generate' },
       });
 
       if (error) throw error;
       
-      toast.success(`Generated ${data.summary?.propsGenerated || 0} combo props (${Object.entries(data.summary?.byType || {}).map(([k, v]) => `${k}: ${v}`).join(', ')})`);
+      const propsGenerated = data.summary?.propsGenerated || 0;
+      toast.success(`Generated ${propsGenerated} combo props`);
+      
+      if (propsGenerated > 0) {
+        // Step 2: Auto-run engine to process combo props into candidates
+        toast.info('Analyzing combo props through MedianLock engine...');
+        
+        const { data: engineData, error: engineError } = await supabase.functions.invoke('median-lock-engine', {
+          body: { action: 'run', slateDate },
+        });
+        
+        if (engineError) {
+          console.error('Engine error after combo gen:', engineError);
+          toast.error('Generated props but failed to analyze');
+        } else {
+          toast.success(`Analyzed ${engineData.summary?.totalCandidates || 0} candidates`);
+        }
+        
+        // Step 3: Refresh data to show new candidates
+        await fetchData();
+      }
     } catch (error) {
       console.error('Combo props error:', error);
       toast.error('Failed to generate combo props');
