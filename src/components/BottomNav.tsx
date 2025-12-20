@@ -8,6 +8,7 @@ import { PILOT_ALLOWED_ROUTES } from "@/components/PilotRouteGuard";
 import { useScrollDirection } from "@/hooks/useScrollDirection";
 import { useViewport } from "@/hooks/useViewport";
 import { ScanBalanceBadge } from "@/components/ui/scan-balance-badge";
+import { useHapticFeedback } from "@/hooks/useHapticFeedback";
 
 const allNavItems = [
   { icon: Home, label: "Home", path: "/" },
@@ -22,6 +23,7 @@ export function BottomNav() {
   const { isPilotUser, isAdmin, isSubscribed, totalScansAvailable } = usePilotUser();
   const { isVisible } = useScrollDirection(15);
   const { isSmallPhone } = useViewport();
+  const haptics = useHapticFeedback();
 
   // Filter nav items for pilot users
   const navItems = (isPilotUser && !isAdmin && !isSubscribed)
@@ -58,8 +60,10 @@ export function BottomNav() {
           const isAnalyzeTab = item.path === '/upload';
 
           const handleClick = (e: React.MouseEvent) => {
+            haptics.selection(); // Haptic feedback on every tap
             if (isActive) {
               e.preventDefault();
+              haptics.lightTap(); // Extra feedback for scroll-to-top
               window.scrollTo({ top: 0, behavior: 'smooth' });
             }
           };
@@ -88,7 +92,7 @@ export function BottomNav() {
               <div className={cn(
                 "relative flex items-center justify-center rounded-2xl transition-all duration-300",
                 isSmallPhone ? "w-10 h-7" : "w-12 h-8",
-                isActive && "bg-primary/15"
+                isActive && "bg-primary/15 scale-105"
               )}>
                 <Icon 
                   className={cn(

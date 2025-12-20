@@ -6,6 +6,7 @@ import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp
 import { Loader2, Phone, ArrowLeft, CheckCircle2, Bug } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from '@/hooks/use-toast';
+import { useHapticFeedback } from '@/hooks/useHapticFeedback';
 
 interface PhoneVerificationProps {
   userId: string;
@@ -25,6 +26,7 @@ export function PhoneVerification({ userId, onVerified, onBack }: PhoneVerificat
   const [cooldown, setCooldown] = useState(0);
   const [expiresIn, setExpiresIn] = useState(0);
   const [debugCode, setDebugCode] = useState<string | null>(null);
+  const haptics = useHapticFeedback();
 
   // Cooldown timer for resend
   useEffect(() => {
@@ -124,6 +126,7 @@ export function PhoneVerification({ userId, onVerified, onBack }: PhoneVerificat
       setStep('otp');
       setCooldown(30); // Reduced cooldown
       setExpiresIn(600); // 10 minutes
+      haptics.success();
       
       toast({
         title: "Code Sent!",
@@ -131,6 +134,7 @@ export function PhoneVerification({ userId, onVerified, onBack }: PhoneVerificat
       });
     } catch (err: any) {
       console.error('[PhoneVerification] Error:', err);
+      haptics.error();
       
       // Handle rate limit error
       if (err.message?.includes('wait')) {
@@ -177,18 +181,40 @@ export function PhoneVerification({ userId, onVerified, onBack }: PhoneVerificat
 
       if (error) {
         console.error('[PhoneVerification] Verify error:', error);
+        haptics.error();
         throw error;
       }
       
-      // Check if we need a new code
+      // Check if we need a new code (expired)
       if (data?.needsNewCode) {
         setOtp('');
         setCooldown(0); // Allow immediate resend
+        haptics.warning();
         toast({
-          title: "Code Expired",
-          description: data.error || "Please request a new code.",
+          title: "Code Expired ⏰",
+          description: "Your verification code has expired. Tap 'Resend code' to get a new one.",
           variant: "destructive",
         });
+        return;
+      }
+      
+      // Check for attempts remaining
+      if (data?.attemptsRemaining !== undefined && data?.error) {
+        setOtp('');
+        haptics.error();
+        const attemptsLeft = data.attemptsRemaining;
+        toast({
+          title: attemptsLeft === 0 
+            ? "No Attempts Remaining" 
+            : `Incorrect Code (${attemptsLeft} ${attemptsLeft === 1 ? 'attempt' : 'attempts'} left)`,
+          description: attemptsLeft === 0 
+            ? "Please request a new code." 
+            : "Please check your code and try again.",
+          variant: "destructive",
+        });
+        if (attemptsLeft === 0) {
+          setCooldown(0); // Allow immediate resend
+        }
         return;
       }
       
@@ -196,19 +222,39 @@ export function PhoneVerification({ userId, onVerified, onBack }: PhoneVerificat
         throw new Error(data.error);
       }
 
+      haptics.success();
       toast({
-        title: "Phone Verified!",
+        title: "Phone Verified! ✓",
         description: "Your account is now set up.",
       });
       
       onVerified();
     } catch (err: any) {
       console.error('[PhoneVerification] Verification failed:', err);
-      toast({
-        title: "Verification Failed",
-        description: err.message || "Invalid code. Please try again.",
-        variant: "destructive",
-      });
+      haptics.error();
+      
+      // Parse error message for specific scenarios
+      const errMsg = err.message || "";
+      
+      if (errMsg.includes('already registered') || errMsg.includes('already claimed')) {
+        toast({
+          title: "Phone Already Registered",
+          description: "This phone number is linked to another account. Use a different number.",
+          variant: "destructive",
+        });
+      } else if (errMsg.includes('rate limit') || errMsg.includes('too many')) {
+        toast({
+          title: "Too Many Attempts",
+          description: "Please wait a few minutes before trying again.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Verification Failed",
+          description: errMsg || "Invalid code. Please try again.",
+          variant: "destructive",
+        });
+      }
       setOtp('');
     } finally {
       setIsLoading(false);
