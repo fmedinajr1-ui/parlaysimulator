@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { Upload, Pencil, History, X, Loader2, Plus, Trash2, Crown, Video, StopCircle } from 'lucide-react';
+import { Upload, Pencil, History, X, Loader2, Plus, Trash2, Crown, Video, StopCircle, Camera } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
@@ -52,6 +52,7 @@ export function ParlaySlot({
   const [showPaywall, setShowPaywall] = useState(false);
   const [videoProgress, setVideoProgress] = useState<ExtractionProgress | null>(null);
   const [isCancelled, setIsCancelled] = useState(false);
+  const [showRetryNudge, setShowRetryNudge] = useState(false);
   
   const { user } = useAuth();
   const { isSubscribed, isAdmin, canScan, scansRemaining, incrementScan, startCheckout } = useSubscription();
@@ -62,6 +63,7 @@ export function ParlaySlot({
     const extractedStake = data?.stake;
 
     if (extractedLegs.length === 0) {
+      setShowRetryNudge(true);
       toast({
         title: "No legs found 🤔",
         description: "Try a clearer image or enter manually.",
@@ -69,6 +71,8 @@ export function ParlaySlot({
       });
       return false;
     }
+
+    setShowRetryNudge(false);
 
     const newLegs: LegInput[] = extractedLegs.map((leg: { description: string; odds: string }) => ({
       id: crypto.randomUUID(),
@@ -130,6 +134,7 @@ export function ParlaySlot({
         return;
       }
 
+      setShowRetryNudge(false); // Clear any previous nudge
       setIsProcessing(true);
       setVideoProgress({ stage: 'loading', currentFrame: 0, totalFrames: 0, message: 'Loading video...' });
 
@@ -221,6 +226,7 @@ export function ParlaySlot({
       return;
     }
 
+    setShowRetryNudge(false); // Clear any previous nudge
     setIsProcessing(true);
 
     try {
@@ -464,6 +470,19 @@ export function ParlaySlot({
               </div>
             </Button>
           </div>
+
+          {/* Retry nudge - shown when extraction failed */}
+          {showRetryNudge && (
+            <div className="mt-4 bg-muted/50 border border-dashed border-border rounded-lg p-3 text-center space-y-2">
+              <Camera className="w-6 h-6 mx-auto text-muted-foreground" />
+              <div>
+                <p className="text-sm font-medium text-foreground">Couldn't read your slip</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Try a clearer screenshot with all legs visible
+                </p>
+              </div>
+            </div>
+          )}
         </FeedCard>
       </>
     );
