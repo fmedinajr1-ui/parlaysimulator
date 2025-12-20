@@ -581,15 +581,18 @@ export default function SportsFatigue() {
                           ? 'bg-neon-cyan/10 border-neon-cyan/30' 
                           : 'bg-muted/30 border-border/50'
                       }`}>
-                        <div className="flex items-center gap-2 mb-2">
+                        <div className="flex items-center justify-between mb-2">
                           <Badge className={`text-[10px] ${categoryColors[game.away_team.fatigue_category] || 'bg-muted'}`}>
                             {categoryIcons[game.away_team.fatigue_category]}
                           </Badge>
-                          {game.edgeTeam === 'away' && (
-                            <Badge className="text-[10px] bg-neon-green/20 text-neon-green">
-                              EDGE
-                            </Badge>
-                          )}
+                          <div className="flex items-center gap-1">
+                            {game.edgeTeam === 'away' && (
+                              <Badge className="text-[10px] bg-neon-green/20 text-neon-green border-neon-green/30">
+                                +{game.fatigueDiff} EDGE
+                              </Badge>
+                            )}
+                            <span className="text-xs font-bold text-foreground">{game.away_team.fatigue_score}</span>
+                          </div>
                         </div>
                         <p className="font-semibold text-sm text-foreground truncate">
                           {game.away_team.team_name}
@@ -639,15 +642,18 @@ export default function SportsFatigue() {
                           ? 'bg-neon-cyan/10 border-neon-cyan/30' 
                           : 'bg-muted/30 border-border/50'
                       }`}>
-                        <div className="flex items-center gap-2 mb-2">
+                        <div className="flex items-center justify-between mb-2">
                           <Badge className={`text-[10px] ${categoryColors[game.home_team.fatigue_category] || 'bg-muted'}`}>
                             {categoryIcons[game.home_team.fatigue_category]}
                           </Badge>
-                          {game.edgeTeam === 'home' && (
-                            <Badge className="text-[10px] bg-neon-green/20 text-neon-green">
-                              EDGE
-                            </Badge>
-                          )}
+                          <div className="flex items-center gap-1">
+                            {game.edgeTeam === 'home' && (
+                              <Badge className="text-[10px] bg-neon-green/20 text-neon-green border-neon-green/30">
+                                +{game.fatigueDiff} EDGE
+                              </Badge>
+                            )}
+                            <span className="text-xs font-bold text-foreground">{game.home_team.fatigue_score}</span>
+                          </div>
                         </div>
                         <p className="font-semibold text-sm text-foreground truncate">
                           {game.home_team.team_name}
@@ -669,6 +675,15 @@ export default function SportsFatigue() {
                         </div>
                       </div>
                     </div>
+
+                    {/* Recommended Angle */}
+                    {game.home_team.recommended_angle && (
+                      <div className="p-2 rounded-lg bg-muted/50 border border-border/50">
+                        <p className="text-xs text-muted-foreground font-medium">
+                          📊 {game.home_team.recommended_angle}
+                        </p>
+                      </div>
+                    )}
 
                     {/* Prop Targets Section */}
                     {renderPropTargets(game.home_team.prop_targets, game.fatigueDiff)}
