@@ -27,6 +27,7 @@ export default function JoinPool() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [pool, setPool] = useState<Pool | null>(null);
+  const [creatorUsername, setCreatorUsername] = useState<string | null>(null);
   const [memberCount, setMemberCount] = useState(0);
   const [legCount, setLegCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -55,6 +56,17 @@ export default function JoinPool() {
         }
 
         setPool(poolData);
+
+        // Fetch creator's username
+        const { data: creatorProfile } = await supabase
+          .from('profiles')
+          .select('username')
+          .eq('user_id', poolData.creator_id)
+          .single();
+
+        if (creatorProfile?.username) {
+          setCreatorUsername(creatorProfile.username);
+        }
 
         // Get member count
         const { count: members } = await supabase
@@ -97,7 +109,7 @@ export default function JoinPool() {
   const handleJoin = async () => {
     if (!user) {
       // Redirect to auth with return URL
-      navigate(`/auth?redirect=/pools/join/${inviteCode}`);
+      navigate(`/auth?return=/pools/join/${inviteCode}`);
       return;
     }
 
@@ -184,7 +196,11 @@ export default function JoinPool() {
               <Users className="w-8 h-8 text-primary-foreground" />
             </div>
             <h1 className="text-2xl font-display mb-1">{pool.pool_name}</h1>
-            <p className="text-muted-foreground">You've been invited to join this parlay pool</p>
+            <p className="text-muted-foreground">
+              {creatorUsername 
+                ? `@${creatorUsername} wants you to join this pool`
+                : "You've been invited to join this parlay pool"}
+            </p>
           </div>
 
           {/* Pool Stats */}
