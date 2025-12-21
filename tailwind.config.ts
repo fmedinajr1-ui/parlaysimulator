@@ -105,7 +105,23 @@ export default {
         },
         "pulse-glow": {
           "0%, 100%": { boxShadow: "0 0 20px hsl(var(--neon-green) / 0.3)" },
-          "50%": { boxShadow: "0 0 40px hsl(var(--neon-green) / 0.6)" },
+          "50%": { boxShadow: "0 0 60px hsl(var(--neon-green) / 0.8)" },
+        },
+        "celebration-glow": {
+          "0%, 100%": { 
+            boxShadow: "0 0 20px hsl(var(--neon-green) / 0.3), 0 0 40px hsl(var(--neon-cyan) / 0.2)" 
+          },
+          "50%": { 
+            boxShadow: "0 0 60px hsl(var(--neon-green) / 0.8), 0 0 80px hsl(var(--neon-cyan) / 0.5)" 
+          },
+        },
+        "confetti-fall": {
+          "0%": { transform: "translateY(0) rotate(0deg)", opacity: "1" },
+          "100%": { transform: "translateY(100vh) rotate(720deg)", opacity: "0" },
+        },
+        "float-up": {
+          "0%": { transform: "translateY(0)", opacity: "1" },
+          "100%": { transform: "translateY(-100px)", opacity: "0" },
         },
         "emoji-bounce": {
           "0%": { transform: "scale(0) rotate(-20deg)", opacity: "0" },
@@ -127,6 +143,9 @@ export default {
         "slide-up": "slide-up 0.5s ease-out",
         "bounce-in": "bounce-in 0.6s cubic-bezier(0.68, -0.55, 0.265, 1.55)",
         "pulse-glow": "pulse-glow 2s ease-in-out infinite",
+        "celebration-glow": "celebration-glow 1.5s ease-in-out infinite",
+        "confetti-fall": "confetti-fall 2s ease-out forwards",
+        "float-up": "float-up 2s ease-out forwards",
         "emoji-bounce": "emoji-bounce 0.6s ease-out",
         "wolf-prowl": "wolf-prowl 1s ease-in-out infinite",
         "dog-wag": "dog-wag 0.3s ease-in-out infinite",

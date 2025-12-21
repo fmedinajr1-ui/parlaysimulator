@@ -314,3 +314,6 @@ verify_jwt = false
 
 [functions.fetch-player-context]
 verify_jwt = false
+
+[functions.fetch-parlay-comparison]
+verify_jwt = false
