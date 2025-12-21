@@ -1,5 +1,5 @@
 // Haptic feedback hook - mobile vibration patterns
-type HapticPattern = 'light' | 'medium' | 'heavy' | 'success' | 'warning' | 'error' | 'selection';
+type HapticPattern = 'light' | 'medium' | 'heavy' | 'success' | 'warning' | 'error' | 'selection' | 'tabSwitch';
 
 const patterns: Record<HapticPattern, number | number[]> = {
   light: 10,
@@ -9,6 +9,7 @@ const patterns: Record<HapticPattern, number | number[]> = {
   warning: [30, 50, 30],
   error: [50, 100, 50],
   selection: 5,
+  tabSwitch: [3, 30, 8], // iOS-style quick tap for tab switching
 };
 
 // Simple vibrate function - no hooks needed
@@ -32,5 +33,6 @@ export function useHapticFeedback() {
     warning: () => vibrate('warning'),
     error: () => vibrate('error'),
     selection: () => vibrate('selection'),
+    tabSwitch: () => vibrate('tabSwitch'),
   };
 }
