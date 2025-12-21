@@ -36,7 +36,7 @@ export function BottomNav() {
 
   return (
     <nav className={cn(
-      "fixed bottom-0 left-0 right-0 z-50",
+      "fixed bottom-0 left-0 right-0 z-50 pb-safe",
       "bg-background/98 backdrop-blur-xl sm:backdrop-blur-2xl",
       "border-t border-border/30",
       "shadow-[0_-4px_20px_rgba(0,0,0,0.3)]",
@@ -52,7 +52,7 @@ export function BottomNav() {
       )}
       
       <div className={cn(
-        "flex items-center justify-evenly px-1 max-w-lg mx-auto pb-safe",
+        "flex items-center justify-evenly px-1 max-w-lg mx-auto",
         isSmallPhone ? "h-[60px]" : "h-[72px]"
       )}>
         {navItems.map((item) => {
