@@ -415,22 +415,35 @@ function getEarlierDate(date1: string | null, date2: string | null): string | nu
  * Process extraction response and return result
  */
 function processExtractionResponse(content: string, detectedOddsFormatRef: { value: 'american' | 'decimal' | 'fractional' | null }): ExtractionResult | null {
-  console.log(`[ProcessResponse] Parsing content...`);
+  // DETAILED LOGGING: Log the full raw AI response for debugging
+  console.log(`[ProcessResponse] ====== RAW AI RESPONSE START ======`);
+  console.log(content);
+  console.log(`[ProcessResponse] ====== RAW AI RESPONSE END ======`);
+  
   const parsed = extractJSON(content);
   
   if (!parsed) {
-    console.log(`[ProcessResponse] Failed to extract JSON from content`);
+    console.log(`[ProcessResponse] FAILED: Could not extract JSON from AI response`);
     return null;
   }
   
-  console.log(`[ProcessResponse] Extracted JSON:`, JSON.stringify(parsed).substring(0, 500));
-  
-  if (!validateExtractionResult(parsed)) {
-    console.log(`[ProcessResponse] Validation failed for parsed result`);
-    return null;
-  }
+  // DETAILED LOGGING: Log the full extracted JSON before validation
+  console.log(`[ProcessResponse] ====== EXTRACTED JSON START ======`);
+  console.log(JSON.stringify(parsed, null, 2));
+  console.log(`[ProcessResponse] ====== EXTRACTED JSON END ======`);
   
   const typedParsed = parsed as any;
+  
+  // Log key fields for debugging
+  console.log(`[ProcessResponse] isBettingSlip: ${typedParsed.isBettingSlip}`);
+  console.log(`[ProcessResponse] legs count: ${typedParsed.legs?.length || 0}`);
+  console.log(`[ProcessResponse] totalOdds: ${typedParsed.totalOdds}`);
+  
+  if (!validateExtractionResult(parsed)) {
+    console.log(`[ProcessResponse] FAILED: Validation failed for parsed result`);
+    console.log(`[ProcessResponse] Validation details: legs=${typedParsed.legs?.length}, isBettingSlip=${typedParsed.isBettingSlip}`);
+    return null;
+  }
   
   if (typedParsed.isBettingSlip !== false && typedParsed.legs && typedParsed.legs.length > 0) {
     const reportedFormat = typedParsed.oddsFormat || null;
@@ -468,7 +481,7 @@ function processExtractionResponse(content: string, detectedOddsFormatRef: { val
     
     const earliestGameTimeISO = parseGameTime(typedParsed.earliestGameTime);
     
-    console.log(`[ProcessResponse] Successfully processed ${processedLegs.length} legs, totalOdds: ${typedParsed.totalOdds}`);
+    console.log(`[ProcessResponse] SUCCESS: Processed ${processedLegs.length} legs, totalOdds: ${typedParsed.totalOdds}`);
     
     return {
       legs: processedLegs,
@@ -482,96 +495,117 @@ function processExtractionResponse(content: string, detectedOddsFormatRef: { val
     };
   }
   
-  console.log(`[ProcessResponse] Not a betting slip or no legs found`);
+  console.log(`[ProcessResponse] FAILED: isBettingSlip=${typedParsed.isBettingSlip}, legs=${typedParsed.legs?.length || 0}`);
   return null;
 }
 
 // ============= EXTRACTION FUNCTIONS =============
 
-const systemPrompt = `You are an expert at reading betting slips and sports betting parlays. 
-Your job is to extract parlay information from betting slip images.
+const systemPrompt = `You are an expert at reading betting slips from FanDuel, DraftKings, BetMGM, and other sportsbooks.
+Your job is to extract parlay/SGP information from betting slip images.
 
-CRITICAL - CONTENT TYPE DETECTION:
-First, determine what type of content you're looking at:
-1. BETTING SLIP: Shows a parlay/bet with legs, odds, stake amount. Has labels like "Parlay", "Same Game Parlay", "Bet Slip", "Wager", team names with odds.
-2. APP NAVIGATION: Shows sportsbook homepage, menus, game listings, live scores, account pages, settings, promotions - these are NOT betting slips.
-3. OTHER: Loading screens, blank screens, unclear images, non-sports content.
+CRITICAL - RECOGNIZING FANDUEL/DRAFTKINGS BETTING SLIPS:
+The following UI elements indicate a BETTING SLIP (isBettingSlip: true):
+- "Betslip" header or tab at the top of the screen
+- "Same Game Parlay" or "SGP" badge (often yellow/orange)
+- "Parlay" label
+- A list of player props or selections with checkmarks or indicators
+- Individual picks like "Player Name Over/Under X.5 Points/Rebounds/Assists"
+- A "Place Bet" or "Add to Betslip" button
+- Total odds displayed prominently (e.g., "+1018", "+2456", "+892")
+- Stake input field or wager amount
+- "Potential Payout" or "To Win" amount
 
-For screen recordings/video frames:
-- MOST frames will show app navigation, menus, or loading screens - these are NOT betting slips
-- Only extract betting slip data from frames that CLEARLY show a placed parlay/bet slip with visible legs and odds
-- If a frame shows: sportsbook homepage, game listings, live scores, menus, promotions, account settings - return isBettingSlip: false
-- A betting slip typically shows: "Parlay" or "SGP" label, multiple legs with team/player names, stake/wager amount, potential payout
+FANDUEL SPECIFIC UI PATTERNS:
+- Blue/white interface with "Betslip" tab
+- Yellow "SGP" badge for Same Game Parlays
+- Player props listed as "Player Name - Over/Under X.5 Stat Type"
+- Legs shown with player photos and prop details
+- Total odds shown at bottom near "Place Bet" button
 
-WHAT TO EXTRACT (only from actual betting slips):
-1. All individual legs with their descriptions, odds (if visible), and game date/time
-2. The TOTAL PARLAY ODDS - THIS IS CRITICAL! Look for "Total Odds", "Combined Odds", "+1018", or prominent odds display
-3. The STAKE/WAGER amount if visible
-4. The POTENTIAL PAYOUT or "To Win" amount if visible
-5. The EARLIEST game date/time from all legs
+DRAFTKINGS SPECIFIC UI PATTERNS:
+- Dark theme interface
+- "Bet Slip" header
+- "SGP" or "PARLAY" labels
+- Similar player prop format
 
-CRITICAL - SAME GAME PARLAYS (SGP):
-- FanDuel, DraftKings, and other sportsbooks often show ONLY the TOTAL combined odds for SGP/parlay slips
-- Individual leg odds may NOT be displayed on SGP slips - this is NORMAL
-- If individual leg odds are NOT visible but you can see the legs/picks, use "N/A" for individual odds
-- ALWAYS extract the TOTAL odds prominently displayed (e.g., "+1018", "+2456")
-- ALWAYS extract ALL leg descriptions even if their individual odds are not shown
+WHAT IS NOT A BETTING SLIP (isBettingSlip: false):
+- Sportsbook homepage showing games/matches
+- Live scores or game schedules
+- Menu navigation screens
+- Account/settings pages
+- Promotional banners
+- Loading screens
 
-For individual legs, extract:
-- The description (team name, player name, bet type like "ML", "Over/Under", spread, points line, etc.)
-- The odds for THAT SPECIFIC LEG if visible - otherwise use "N/A"
-- The game date/time if visible
+CRITICAL EXTRACTION RULES:
+1. If you see ANY betting slip UI elements listed above, set isBettingSlip: true
+2. Extract ALL visible legs/picks even if individual odds are not shown
+3. For SGP slips, individual leg odds are often NOT displayed - use "N/A" for individual odds
+4. ALWAYS extract the TOTAL combined odds (the prominent odds display like "+1018")
+5. Extract stake and potential payout if visible
+
+For each leg, extract:
+- description: The full pick (e.g., "Jayson Tatum Over 26.5 Points")
+- odds: Individual leg odds if visible, otherwise "N/A"
+- gameTime: Game date/time if visible
 
 IMPORTANT ODDS FORMAT:
-- Detect the odds format used on the slip (American, Decimal, or Fractional)
-- American odds: +150, -110, +250, +1018 (starts with + or -)
-- Decimal odds: 2.50, 1.91, 3.00 (just a decimal number, typically 1.01 to 100)
-- Fractional odds: 3/2, 5/1, 1/4 (number/number format)
-- Return the odds exactly as shown on the slip
-- Set "oddsFormat" to indicate which format the slip uses
+- American odds: +150, -110, +1018 (starts with + or -)
+- Decimal odds: 2.50, 1.91 (decimal number)
+- Fractional odds: 3/2, 5/1 (number/number)
+- Return odds exactly as shown, set "oddsFormat" accordingly
 
 Return ONLY valid JSON wrapped in triple backticks:
 \`\`\`json
 {
   "legs": [
-    {"description": "Lakers ML", "odds": "-150", "gameTime": "Nov 28, 2024 7:00 PM EST"},
-    {"description": "Chiefs -3.5", "odds": "-110", "gameTime": "Nov 28, 2024 8:30 PM EST"},
-    {"description": "Curry Over 25.5 Pts", "odds": "N/A", "gameTime": null}
+    {"description": "Jayson Tatum Over 26.5 Points", "odds": "N/A", "gameTime": "Dec 21, 2024 7:00 PM EST"},
+    {"description": "Jaylen Brown Over 5.5 Assists", "odds": "N/A", "gameTime": null}
   ],
-  "totalOdds": "+2456",
+  "totalOdds": "+1018",
   "stake": "25.00",
-  "potentialPayout": "638.50",
-  "earliestGameTime": "Nov 28, 2024 7:00 PM EST",
+  "potentialPayout": "279.50",
+  "earliestGameTime": "Dec 21, 2024 7:00 PM EST",
   "oddsFormat": "american",
   "isBettingSlip": true
 }
 \`\`\`
 
-Rules:
-- Set isBettingSlip to FALSE if the image shows app navigation, menus, homepages, game listings, or anything that is NOT a betting slip
-- Set isBettingSlip to FALSE if you cannot clearly identify it as a placed bet/parlay
-- For SGP slips where individual odds are not shown, use "N/A" for leg odds but STILL EXTRACT ALL LEGS
-- The totalOdds field is CRITICAL - extract it even if individual leg odds are "N/A"
-- Set oddsFormat to "american", "decimal", or "fractional" based on how odds appear on the slip
-- Set totalOdds, stake, potentialPayout, or earliestGameTime to null if not clearly visible
-- Set individual leg gameTime to null if not visible for that leg
-- For stake and potentialPayout, just use the number without currency symbols
-- For game times, include timezone if visible, otherwise assume local time
-- earliestGameTime should be the soonest game time from all legs
-- Keep leg descriptions concise but include the key info (player name, stat type, line number)
-- If you cannot read the image clearly or it's not a betting slip, return: {"legs": [], "totalOdds": null, "stake": null, "potentialPayout": null, "earliestGameTime": null, "oddsFormat": null, "isBettingSlip": false}`;
+If the image is clearly NOT a betting slip (homepage, navigation, scores), return:
+\`\`\`json
+{"legs": [], "totalOdds": null, "stake": null, "potentialPayout": null, "earliestGameTime": null, "oddsFormat": null, "isBettingSlip": false}
+\`\`\``;
+
+// Explicit retry prompt for when first attempt fails
+const retryPrompt = `This IS a FanDuel/DraftKings betting slip screenshot. I can see it has player props or selections.
+Please extract ALL the betting information. Look for:
+- The "Betslip" or "SGP" indicator
+- Each player pick/prop (e.g., "Player Over X.5 Points")
+- The total combined odds (like +1018)
+- Any stake or payout amounts
+
+Even if individual leg odds are not shown, extract each leg description.
+Return ONLY the JSON wrapped in triple backticks.`;
 
 /**
- * Extract parlay using OpenAI Vision API (PRIMARY - faster)
+ * Extract parlay using OpenAI Vision API (PRIMARY - using gpt-4o for better vision)
  */
 async function extractWithOpenAI(
   imageData: string,
   openAIKey: string,
   imageIndex: number,
   totalImages: number,
-  detectedOddsFormatRef: { value: 'american' | 'decimal' | 'fractional' | null }
+  detectedOddsFormatRef: { value: 'american' | 'decimal' | 'fractional' | null },
+  isRetry: boolean = false
 ): Promise<ExtractionResult | null> {
-  console.log(`[OpenAI] Processing image ${imageIndex + 1}/${totalImages}...`);
+  const model = "gpt-4o"; // Upgraded from gpt-4o-mini for better vision recognition
+  console.log(`[OpenAI] Processing image ${imageIndex + 1}/${totalImages} with ${model}${isRetry ? ' (RETRY)' : ''}...`);
+  
+  const userPrompt = isRetry 
+    ? retryPrompt 
+    : (totalImages > 1 
+        ? `This is frame ${imageIndex + 1} from a screen recording. Extract any betting slip information visible. Return only JSON wrapped in triple backticks.`
+        : "Extract all parlay information from this betting slip image. Return only the JSON wrapped in triple backticks.");
   
   try {
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -581,7 +615,7 @@ async function extractWithOpenAI(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
+        model: model,
         messages: [
           { role: "system", content: systemPrompt },
           {
@@ -589,9 +623,7 @@ async function extractWithOpenAI(
             content: [
               { 
                 type: "text", 
-                text: totalImages > 1 
-                  ? `This is frame ${imageIndex + 1} from a screen recording. Extract any betting slip information visible. Return only JSON wrapped in triple backticks.`
-                  : "Extract all parlay information from this betting slip image. Return only the JSON wrapped in triple backticks." 
+                text: userPrompt
               },
               {
                 type: "image_url",
@@ -612,8 +644,9 @@ async function extractWithOpenAI(
       console.error(`[OpenAI] Image ${imageIndex + 1} error:`, response.status, errorText);
       
       if (response.status === 429) {
-        console.log("[OpenAI] Rate limited");
-        throw new Error("OpenAI rate limit exceeded");
+        console.log("[OpenAI] Rate limited, will try with gpt-4o-mini...");
+        // Fallback to gpt-4o-mini if rate limited on gpt-4o
+        return await extractWithOpenAIMini(imageData, openAIKey, imageIndex, totalImages, detectedOddsFormatRef);
       }
       return null;
     }
@@ -621,18 +654,87 @@ async function extractWithOpenAI(
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content || "{}";
     
+    console.log(`[OpenAI] Raw response length: ${content.length} chars`);
+    
     const result = processExtractionResponse(content, detectedOddsFormatRef);
     
     if (result) {
       console.log(`[OpenAI] Image ${imageIndex + 1}: Found ${result.legs.length} legs`);
+      return result;
     } else {
       console.log(`[OpenAI] Image ${imageIndex + 1}: No betting slip found`);
+      
+      // If first attempt failed and not already a retry, try with explicit prompt
+      if (!isRetry) {
+        console.log(`[OpenAI] Image ${imageIndex + 1}: Retrying with explicit betting slip prompt...`);
+        return await extractWithOpenAI(imageData, openAIKey, imageIndex, totalImages, detectedOddsFormatRef, true);
+      }
+      
+      return null;
     }
-    
-    return result;
   } catch (err) {
     console.error(`[OpenAI] Error processing image ${imageIndex + 1}:`, err);
     throw err;
+  }
+}
+
+/**
+ * Fallback to gpt-4o-mini if gpt-4o is rate limited
+ */
+async function extractWithOpenAIMini(
+  imageData: string,
+  openAIKey: string,
+  imageIndex: number,
+  totalImages: number,
+  detectedOddsFormatRef: { value: 'american' | 'decimal' | 'fractional' | null }
+): Promise<ExtractionResult | null> {
+  console.log(`[OpenAI-Mini] Processing image ${imageIndex + 1}/${totalImages}...`);
+  
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${openAIKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: [
+              { 
+                type: "text", 
+                text: retryPrompt // Use explicit prompt for mini model
+              },
+              {
+                type: "image_url",
+                image_url: {
+                  url: imageData.startsWith("data:") ? imageData : `data:image/jpeg;base64,${imageData}`,
+                  detail: "high"
+                }
+              }
+            ]
+          }
+        ],
+        max_tokens: 2000
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`[OpenAI-Mini] Image ${imageIndex + 1} error:`, response.status, errorText);
+      return null;
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || "{}";
+    
+    return processExtractionResponse(content, detectedOddsFormatRef);
+  } catch (err) {
+    console.error(`[OpenAI-Mini] Error processing image ${imageIndex + 1}:`, err);
+    return null;
   }
 }
 
@@ -644,9 +746,16 @@ async function extractWithGemini(
   lovableApiKey: string,
   imageIndex: number,
   totalImages: number,
-  detectedOddsFormatRef: { value: 'american' | 'decimal' | 'fractional' | null }
+  detectedOddsFormatRef: { value: 'american' | 'decimal' | 'fractional' | null },
+  isRetry: boolean = false
 ): Promise<ExtractionResult | null> {
-  console.log(`[Gemini] Processing image ${imageIndex + 1}/${totalImages}...`);
+  console.log(`[Gemini] Processing image ${imageIndex + 1}/${totalImages}${isRetry ? ' (RETRY)' : ''}...`);
+  
+  const userPrompt = isRetry 
+    ? retryPrompt 
+    : (totalImages > 1 
+        ? `This is frame ${imageIndex + 1} from a screen recording. Extract any betting slip information visible. Return only JSON wrapped in triple backticks.`
+        : "Extract all parlay information from this betting slip image. Return only the JSON wrapped in triple backticks.");
   
   try {
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -664,9 +773,7 @@ async function extractWithGemini(
             content: [
               {
                 type: "text",
-                text: totalImages > 1 
-                  ? `This is frame ${imageIndex + 1} from a screen recording. Extract any betting slip information visible. Return only JSON wrapped in triple backticks.`
-                  : "Extract all parlay information from this betting slip image. Return only the JSON wrapped in triple backticks."
+                text: userPrompt
               },
               {
                 type: "image_url",
@@ -696,15 +803,24 @@ async function extractWithGemini(
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content || "{}";
     
+    console.log(`[Gemini] Raw response length: ${content.length} chars`);
+    
     const result = processExtractionResponse(content, detectedOddsFormatRef);
     
     if (result) {
       console.log(`[Gemini] Image ${imageIndex + 1}: Found ${result.legs.length} legs`);
+      return result;
     } else {
       console.log(`[Gemini] Image ${imageIndex + 1}: No betting slip found`);
+      
+      // If first attempt failed and not already a retry, try with explicit prompt
+      if (!isRetry) {
+        console.log(`[Gemini] Image ${imageIndex + 1}: Retrying with explicit betting slip prompt...`);
+        return await extractWithGemini(imageData, lovableApiKey, imageIndex, totalImages, detectedOddsFormatRef, true);
+      }
+      
+      return null;
     }
-    
-    return result;
   } catch (err) {
     console.error(`[Gemini] Error processing image ${imageIndex + 1}:`, err);
     throw err;
