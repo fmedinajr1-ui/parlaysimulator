@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 const ROUTE_STORAGE_KEY = 'parlay-farm-persisted-route';
@@ -15,12 +15,14 @@ interface PersistedRoute {
 /**
  * Hook that persists the current route and scroll position to sessionStorage.
  * When the app reloads (e.g., after iOS kills the PWA), it restores the previous location.
+ * Also handles popstate events for proper swipe-back navigation.
  */
 export function useRoutePersistence() {
   const location = useLocation();
   const navigate = useNavigate();
   const hasRestoredRef = useRef(false);
   const isInitialMountRef = useRef(true);
+  const isPopstateNavigationRef = useRef(false);
 
   // Restore route on initial mount (only once)
   useEffect(() => {
@@ -68,6 +70,12 @@ export function useRoutePersistence() {
       return;
     }
 
+    // Skip saving if this was a popstate navigation (browser handled it)
+    if (isPopstateNavigationRef.current) {
+      isPopstateNavigationRef.current = false;
+      return;
+    }
+
     try {
       const routeData: PersistedRoute = {
         pathname: location.pathname,
@@ -80,6 +88,19 @@ export function useRoutePersistence() {
       console.warn('[useRoutePersistence] Failed to save route:', error);
     }
   }, [location.pathname, location.search]);
+
+  // Handle popstate events (swipe-back, forward/back buttons)
+  // React Router handles this automatically, but we need to track it
+  useEffect(() => {
+    const handlePopState = () => {
+      // Mark that this navigation came from popstate (browser gesture)
+      // React Router will handle the actual navigation
+      isPopstateNavigationRef.current = true;
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   // Save scroll position on scroll (debounced)
   useEffect(() => {

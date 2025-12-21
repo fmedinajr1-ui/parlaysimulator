@@ -27,14 +27,21 @@ export function usePageLifecycle() {
       }
     };
 
-    // Handle pageshow (Safari iOS - fires when page is restored)
+    // Handle pageshow (Safari iOS - fires when page is restored from bfcache)
     const handlePageShow = (event: PageTransitionEvent) => {
       if (event.persisted) {
-        // Page was restored from bfcache
-        // Force a repaint to ensure UI is visible
+        // Page was restored from bfcache - this is instant navigation!
+        // Force a repaint to ensure UI is visible and responsive
         document.documentElement.style.backgroundColor = '';
+        
+        // Trigger a re-render cycle to wake up React
         requestAnimationFrame(() => {
+          // Add class for any CSS transitions that need to re-trigger
           document.documentElement.classList.add('bfcache-restored');
+          
+          // Force any stale timers/intervals to re-sync
+          window.dispatchEvent(new CustomEvent('bfcache-restore'));
+          
           requestAnimationFrame(() => {
             document.documentElement.classList.remove('bfcache-restored');
           });
