@@ -311,3 +311,6 @@ verify_jwt = false
 
 [functions.seed-sports-historical-fatigue]
 verify_jwt = false
+
+[functions.fetch-player-context]
+verify_jwt = false

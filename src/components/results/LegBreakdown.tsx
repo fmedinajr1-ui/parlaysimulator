@@ -1,11 +1,13 @@
 import { FeedCard } from "../FeedCard";
 import { ParlayLeg, LegAnalysis, InjuryAlert } from "@/types/parlay";
 import { ChevronDown, ChevronUp, AlertTriangle, TrendingUp, TrendingDown, Users, Target, Zap, Crown } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { InjuryAlertBadge } from "./InjuryAlertBadge";
 import { OpponentImpactCard } from "./OpponentImpactCard";
 import { ResearchSummarySection } from "./ResearchSummarySection";
 import { SportPropIcon } from "./SportPropIcon";
+import { PlayerNewsContextCard } from "./PlayerNewsContextCard";
+import { usePlayerContext } from "@/hooks/usePlayerContext";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 
@@ -43,6 +45,20 @@ const sharpEmojis = {
 
 export function LegBreakdown({ legs, legAnalyses, delay = 0 }: LegBreakdownProps) {
   const [expandedLeg, setExpandedLeg] = useState<string | null>(null);
+  const { contexts, isLoading: contextLoading, fetchContexts, getContextForLeg } = usePlayerContext();
+
+  // Fetch player context when legs change
+  useEffect(() => {
+    if (legs.length > 0) {
+      const legInputs = legs.map((leg, idx) => ({
+        legId: leg.id,
+        description: leg.description,
+        propType: legAnalyses?.find(la => la.legIndex === idx)?.betType,
+        sport: legAnalyses?.find(la => la.legIndex === idx)?.sport,
+      }));
+      fetchContexts(legInputs);
+    }
+  }, [legs, legAnalyses, fetchContexts]);
 
   const getLegAnalysis = (legIndex: number) => {
     return legAnalyses?.find(la => la.legIndex === legIndex);
@@ -131,6 +147,14 @@ export function LegBreakdown({ legs, legAnalyses, delay = 0 }: LegBreakdownProps
               
               {expandedLeg === leg.id && (
                 <div className="px-4 pb-4 pt-0 border-t border-border/50 fade-in">
+                  {/* Player News Context - AI-generated insights */}
+                  <div className="mt-3">
+                    <PlayerNewsContextCard 
+                      context={getContextForLeg(leg.id)}
+                      isLoading={contextLoading}
+                    />
+                  </div>
+
                   {/* Research Summary Section - NEW PROMINENT PLACEMENT */}
                   {researchSummary && (
                     <div className="mt-3">
