@@ -10,10 +10,11 @@ const MAX_DIMENSION = 1920; // Max width or height
 const COMPRESSION_QUALITY = 0.8; // JPEG quality (0-1)
 
 // Default OCR preprocessing options
+// NOTE: Reduced contrast/sharpening as modern AI vision models work better with natural images
 const DEFAULT_OCR_OPTIONS: PreprocessingOptions = {
-  contrast: 1.3,
-  sharpen: true,
-  autoLevel: true,
+  contrast: 1.1, // Reduced from 1.3 - less aggressive processing
+  sharpen: false, // Disabled - modern AI vision doesn't need this
+  autoLevel: false, // Disabled - can cause issues with colorful sportsbook UIs
 };
 
 export interface CompressionResult {
