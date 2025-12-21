@@ -31,6 +31,9 @@
     <meta name="msapplication-tap-highlight" content="no" />
     <meta name="format-detection" content="telephone=no" />
     
+    <!-- bfcache optimization for iOS Safari -->
+    <meta http-equiv="Cache-Control" content="no-store" />
+    
     <!-- PWA Icons -->
     <link rel="icon" type="image/png" href="/parlay-farm-logo.png" />
     <link rel="apple-touch-icon" href="/pwa-192x192.png" />
@@ -95,8 +98,8 @@
     <meta name="apple-mobile-web-app-orientations" content="portrait" />
   </head>
 
-  <body>
-    <div id="root"></div>
+  <body style="background-color: #0a0c10;">
+    <div id="root" style="min-height: 100vh; min-height: 100dvh; background-color: inherit;"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

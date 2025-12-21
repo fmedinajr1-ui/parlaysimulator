@@ -15,6 +15,8 @@ import { PilotRouteGuard } from "@/components/PilotRouteGuard";
 import { PhoneVerificationGuard } from "@/components/PhoneVerificationGuard";
 import { PWAUpdatePrompt } from "@/components/PWAUpdatePrompt";
 import { RouteErrorBoundary } from "@/components/RouteErrorBoundary";
+import { useRoutePersistence } from "@/hooks/useRoutePersistence";
+import { usePageLifecycle } from "@/hooks/usePageLifecycle";
 
 // Lazy load all pages for code splitting
 const Index = React.lazy(() => import("./pages/Index"));
@@ -128,6 +130,10 @@ function AnimatedRoutes() {
 
 function AppContent() {
   const [isMobile, setIsMobile] = React.useState(false);
+  
+  // Enable route persistence and page lifecycle handling for mobile PWA
+  useRoutePersistence();
+  usePageLifecycle();
   
   React.useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 768);

@@ -66,7 +66,8 @@ export default defineConfig(({ mode }) => ({
       workbox: {
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         globPatterns: ["**/*.{css,html,ico,png,svg,woff2}"],
-        navigateFallback: null,
+        navigateFallback: '/index.html',
+        navigateFallbackDenylist: [/^\/api/, /^\/functions/, /^\/supabase/],
         // Force service worker update on every deploy
         cleanupOutdatedCaches: true,
         skipWaiting: true,
