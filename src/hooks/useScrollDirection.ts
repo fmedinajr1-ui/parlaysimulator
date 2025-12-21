@@ -16,10 +16,13 @@ export function useScrollDirection(threshold = 10): ScrollDirectionState {
   const handleScroll = useCallback(() => {
     const currentScrollY = window.scrollY;
     const isAtTop = currentScrollY < 10;
+    
+    // Check if page has scrollable content (with buffer for iOS bounce)
+    const hasScrollableContent = document.documentElement.scrollHeight > window.innerHeight + 50;
 
     setState((prev) => {
-      // Always show at top
-      if (isAtTop) {
+      // Always show at top or if no scrollable content
+      if (isAtTop || !hasScrollableContent) {
         return { direction: null, isAtTop: true, isVisible: true };
       }
 
