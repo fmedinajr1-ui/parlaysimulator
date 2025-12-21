@@ -37,9 +37,9 @@ export function BottomNav() {
   return (
     <nav className={cn(
       "fixed bottom-0 left-0 right-0 z-50 pb-safe",
-      "bg-background/98 backdrop-blur-xl sm:backdrop-blur-2xl",
-      "border-t border-border/30",
-      "shadow-[0_-4px_20px_rgba(0,0,0,0.3)]",
+      "bg-background/95 backdrop-blur-2xl",
+      "border-t border-white/10",
+      "shadow-[0_-4px_20px_rgba(0,0,0,0.3),inset_0_1px_0_rgba(255,255,255,0.08)]",
       "transition-transform duration-300 ease-out",
       !isVisible && "translate-y-full"
     )}>
@@ -52,8 +52,8 @@ export function BottomNav() {
       )}
       
       <div className={cn(
-        "flex items-center justify-evenly px-1 max-w-lg mx-auto",
-        isSmallPhone ? "h-[60px]" : "h-[72px]"
+        "flex items-center justify-evenly px-1 max-w-lg mx-auto py-2",
+        isSmallPhone ? "h-[64px]" : "h-[76px]"
       )}>
         {navItems.map((item) => {
           const isActive = location.pathname === item.path;
@@ -61,11 +61,12 @@ export function BottomNav() {
           const isAnalyzeTab = item.path === '/upload';
 
           const handleClick = (e: React.MouseEvent) => {
-            haptics.selection(); // Haptic feedback on every tap
             if (isActive) {
               e.preventDefault();
-              haptics.lightTap(); // Extra feedback for scroll-to-top
+              haptics.lightTap(); // Light feedback for scroll-to-top
               window.scrollTo({ top: 0, behavior: 'smooth' });
+            } else {
+              haptics.tabSwitch(); // iOS-style tab switch haptic
             }
           };
 
@@ -92,13 +93,12 @@ export function BottomNav() {
               
               <div className={cn(
                 "relative flex items-center justify-center rounded-2xl transition-all duration-300",
-                isSmallPhone ? "w-10 h-7" : "w-12 h-8",
+                isSmallPhone ? "w-12 h-9" : "w-14 h-10",
                 isActive && "bg-primary/15 scale-105"
               )}>
                 <Icon 
                   className={cn(
-                    "transition-all duration-300", 
-                    isSmallPhone ? "w-5 h-5" : "w-[22px] h-[22px]",
+                    "w-6 h-6 transition-all duration-300",
                     isActive && "text-primary"
                   )} 
                 />
@@ -118,8 +118,8 @@ export function BottomNav() {
               {/* Hide labels on small phones */}
               {!isSmallPhone && (
                 <span className={cn(
-                  "text-[11px] font-semibold transition-colors",
-                  isActive ? "text-primary" : "text-muted-foreground"
+                  "text-[11px] transition-colors",
+                  isActive ? "text-primary font-bold" : "text-muted-foreground font-medium"
                 )}>
                   {item.label}
                 </span>
