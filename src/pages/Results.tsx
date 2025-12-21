@@ -7,6 +7,7 @@ import { SimulationHighlights } from "@/components/results/SimulationHighlights"
 import { BankrollCard } from "@/components/results/BankrollCard";
 import { LegBreakdown } from "@/components/results/LegBreakdown";
 import { ShareableMeme } from "@/components/results/ShareableMeme";
+import { LegBreakdownScorecard } from "@/components/results/LegBreakdownScorecard";
 import { LegIntelligenceCard } from "@/components/results/LegIntelligenceCard";
 import { CorrelationWarning } from "@/components/results/CorrelationWarning";
 import { BookEdgeCard } from "@/components/results/BookEdgeCard";
@@ -24,7 +25,6 @@ import { EnsembleConsensusCard } from "@/components/results/EnsembleConsensusCar
 import { CoachingInsightsCard } from "@/components/results/CoachingInsightsCard";
 import { CollapsibleSection } from "@/components/results/CollapsibleSection";
 import { ConsolidatedVerdictCard } from "@/components/results/ConsolidatedVerdictCard";
-import { LegVerdictSummary } from "@/components/results/LegVerdictSummary";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, RotateCcw, Save, Loader2, LogIn, BarChart3, Zap, FileText } from "lucide-react";
 import { ParlaySimulation, ParlayAnalysis } from "@/types/parlay";
@@ -401,25 +401,26 @@ const Results = () => {
             delay={0}
           />
           
+          {/* Shareable Scorecard - Right after probability */}
+          <LegBreakdownScorecard
+            legs={simulation.legs}
+            legAnalyses={aiAnalysis?.legAnalyses}
+            probability={simulation.combinedProbability}
+            delay={50}
+          />
+          
           <DegenerateMeter 
             probability={simulation.combinedProbability}
             degenerateLevel={simulation.degenerateLevel}
             delay={100}
           />
 
-          {/* NEW: Consolidated AI Verdict - Shows pick/fade/caution counts and overall recommendation */}
+          {/* Consolidated AI Verdict - Shows pick/fade/caution counts and overall recommendation */}
           <ConsolidatedVerdictCard
             legs={simulation.legs}
             aiAnalysis={aiAnalysis}
             combinedProbability={simulation.combinedProbability}
             delay={110}
-          />
-
-          {/* NEW: Compact Leg Summary with verdicts */}
-          <LegVerdictSummary
-            legs={simulation.legs}
-            legAnalyses={aiAnalysis?.legAnalyses}
-            delay={120}
           />
 
           {/* Parlay Health Score Dashboard */}
@@ -592,7 +593,7 @@ const Results = () => {
 
           {/* === SECTION 4: FULL LEG BREAKDOWN (Collapsible) === */}
           <CollapsibleSection
-            title="Full Leg Breakdown"
+            title="Detailed Leg Analysis"
             icon={<FileText className="w-4 h-4 text-neon-purple" />}
             defaultOpen={false}
             preview={
