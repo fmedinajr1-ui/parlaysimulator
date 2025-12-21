@@ -1,8 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 /**
  * A hook that persists state to sessionStorage, surviving Safari PWA backgrounding.
  * State is automatically saved on every change and restored on mount.
+ * 
+ * Enhanced with defensive checks for mobile PWA environments where
+ * React context may not be fully initialized during lazy loading.
  * 
  * @param key - Storage key for this state
  * @param initialValue - Default value if nothing is stored
@@ -13,46 +16,92 @@ export function usePersistedState<T>(
   initialValue: T,
   maxAgeMs: number = 30 * 60 * 1000
 ): [T, React.Dispatch<React.SetStateAction<T>>, () => void] {
+  // Track if component is mounted to prevent updates after unmount
+  const mountedRef = useRef(true);
+  const isInitializedRef = useRef(false);
+
+  // Safe initialization with comprehensive error handling
   const [state, setState] = useState<T>(() => {
     try {
+      // Check if we're in a browser environment
+      if (typeof window === 'undefined' || typeof sessionStorage === 'undefined') {
+        return initialValue;
+      }
+
       const stored = sessionStorage.getItem(key);
       if (stored) {
-        const { value, timestamp } = JSON.parse(stored);
+        const parsed = JSON.parse(stored);
+        const { value, timestamp } = parsed;
+        
         // Check if stored value is still fresh
-        if (Date.now() - timestamp < maxAgeMs) {
+        if (timestamp && Date.now() - timestamp < maxAgeMs) {
+          isInitializedRef.current = true;
           return value as T;
         }
+        
         // Stale data, remove it
-        sessionStorage.removeItem(key);
+        try {
+          sessionStorage.removeItem(key);
+        } catch {
+          // Ignore removal errors
+        }
       }
     } catch (error) {
-      console.warn(`Failed to restore persisted state for ${key}:`, error);
+      // Log but don't crash - return initial value instead
+      console.warn(`[usePersistedState] Failed to restore state for ${key}:`, error);
     }
+    
+    isInitializedRef.current = true;
     return initialValue;
   });
 
-  // Persist state on every change
+  // Safe setState wrapper that checks mount status
+  const safeSetState = useCallback<React.Dispatch<React.SetStateAction<T>>>((value) => {
+    if (mountedRef.current) {
+      setState(value);
+    }
+  }, []);
+
+  // Persist state on every change with error handling
   useEffect(() => {
+    // Skip initial persistence if we just loaded from storage
+    if (!isInitializedRef.current) {
+      isInitializedRef.current = true;
+      return;
+    }
+
     try {
-      sessionStorage.setItem(key, JSON.stringify({
-        value: state,
-        timestamp: Date.now()
-      }));
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.setItem(key, JSON.stringify({
+          value: state,
+          timestamp: Date.now()
+        }));
+      }
     } catch (error) {
-      console.warn(`Failed to persist state for ${key}:`, error);
+      console.warn(`[usePersistedState] Failed to persist state for ${key}:`, error);
     }
   }, [key, state]);
 
-  // Clear persisted state
+  // Cleanup on unmount
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  // Clear persisted state with error handling
   const clearPersistedState = useCallback(() => {
     try {
-      sessionStorage.removeItem(key);
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.removeItem(key);
+      }
     } catch (error) {
-      console.warn(`Failed to clear persisted state for ${key}:`, error);
+      console.warn(`[usePersistedState] Failed to clear state for ${key}:`, error);
     }
   }, [key]);
 
-  return [state, setState, clearPersistedState];
+  return [state, safeSetState, clearPersistedState];
 }
 
 /**
@@ -60,10 +109,14 @@ export function usePersistedState<T>(
  */
 export function hasPersistedState(key: string, maxAgeMs: number = 30 * 60 * 1000): boolean {
   try {
+    if (typeof sessionStorage === 'undefined') {
+      return false;
+    }
+    
     const stored = sessionStorage.getItem(key);
     if (stored) {
       const { timestamp } = JSON.parse(stored);
-      return Date.now() - timestamp < maxAgeMs;
+      return timestamp && Date.now() - timestamp < maxAgeMs;
     }
   } catch {
     // Ignore errors

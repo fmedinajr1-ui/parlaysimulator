@@ -14,6 +14,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { PilotRouteGuard } from "@/components/PilotRouteGuard";
 import { PhoneVerificationGuard } from "@/components/PhoneVerificationGuard";
 import { PWAUpdatePrompt } from "@/components/PWAUpdatePrompt";
+import { RouteErrorBoundary } from "@/components/RouteErrorBoundary";
 
 // Lazy load all pages for code splitting
 const Index = React.lazy(() => import("./pages/Index"));
@@ -82,42 +83,44 @@ function AnimatedRoutes() {
         transition={pageTransition}
         style={{ pointerEvents: 'auto' }}
       >
-        <React.Suspense fallback={<WolfLoadingOverlay />}>
-          <Routes location={location}>
-            <Route path="/" element={<Index />} />
-            <Route path="/upload" element={<Upload />} />
-            <Route path="/results" element={<Results />} />
-            <Route path="/profile" element={<Profile />} />
-            <Route path="/auth" element={<Auth />} />
-            <Route path="/admin" element={<Admin />} />
-            <Route path="/collaborate" element={<Collaborate />} />
-            <Route path="/compare" element={<Compare />} />
-            <Route path="/suggestions" element={<Suggestions />} />
-            <Route path="/odds" element={<OddsMovement />} />
-            <Route path="/sharp" element={<SharpMoney />} />
-            <Route path="/line-shopping" element={<LineShopping />} />
-            <Route path="/sports-fatigue" element={<SportsFatigue />} />
-            <Route path="/nba-fatigue" element={<SportsFatigue />} />
-            <Route path="/install" element={<Install />} />
-            <Route path="/offline" element={<Offline />} />
-            <Route path="/pvs-calculator" element={<PVSCalculator />} />
-            <Route path="/god-mode" element={<GodModeUpsets />} />
-            <Route path="/god-mode-tracker" element={<GodModeDashboard />} />
-            <Route path="/hitrate" element={<HitRate />} />
-            <Route path="/best-bets" element={<BestBets />} />
-            <Route path="/sharp-comparison" element={<SharpComparison />} />
-            <Route path="/fanduel-traps" element={<FanDuelTraps />} />
-            <Route path="/tracker" element={<AllSportsTracker />} />
-            <Route path="/kelly" element={<Kelly />} />
-            <Route path="/median-lock" element={<MedianLock />} />
-            <Route path="/verify-phone" element={<VerifyPhone />} />
-            <Route path="/verify-email" element={<Navigate to="/auth" replace />} />
-            <Route path="/pools" element={<Pools />} />
-            <Route path="/pools/:id" element={<PoolDetail />} />
-            <Route path="/pools/join/:inviteCode" element={<JoinPool />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </React.Suspense>
+        <RouteErrorBoundary>
+          <React.Suspense fallback={<WolfLoadingOverlay />}>
+            <Routes location={location}>
+              <Route path="/" element={<Index />} />
+              <Route path="/upload" element={<Upload />} />
+              <Route path="/results" element={<Results />} />
+              <Route path="/profile" element={<Profile />} />
+              <Route path="/auth" element={<Auth />} />
+              <Route path="/admin" element={<Admin />} />
+              <Route path="/collaborate" element={<Collaborate />} />
+              <Route path="/compare" element={<Compare />} />
+              <Route path="/suggestions" element={<Suggestions />} />
+              <Route path="/odds" element={<OddsMovement />} />
+              <Route path="/sharp" element={<SharpMoney />} />
+              <Route path="/line-shopping" element={<LineShopping />} />
+              <Route path="/sports-fatigue" element={<SportsFatigue />} />
+              <Route path="/nba-fatigue" element={<SportsFatigue />} />
+              <Route path="/install" element={<Install />} />
+              <Route path="/offline" element={<Offline />} />
+              <Route path="/pvs-calculator" element={<PVSCalculator />} />
+              <Route path="/god-mode" element={<GodModeUpsets />} />
+              <Route path="/god-mode-tracker" element={<GodModeDashboard />} />
+              <Route path="/hitrate" element={<HitRate />} />
+              <Route path="/best-bets" element={<BestBets />} />
+              <Route path="/sharp-comparison" element={<SharpComparison />} />
+              <Route path="/fanduel-traps" element={<FanDuelTraps />} />
+              <Route path="/tracker" element={<AllSportsTracker />} />
+              <Route path="/kelly" element={<Kelly />} />
+              <Route path="/median-lock" element={<MedianLock />} />
+              <Route path="/verify-phone" element={<VerifyPhone />} />
+              <Route path="/verify-email" element={<Navigate to="/auth" replace />} />
+              <Route path="/pools" element={<Pools />} />
+              <Route path="/pools/:id" element={<PoolDetail />} />
+              <Route path="/pools/join/:inviteCode" element={<JoinPool />} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </React.Suspense>
+        </RouteErrorBoundary>
       </motion.div>
     </AnimatePresence>
   );
