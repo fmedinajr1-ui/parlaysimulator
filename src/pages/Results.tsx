@@ -12,6 +12,8 @@ import { LegIntelligenceCard } from "@/components/results/LegIntelligenceCard";
 import { CorrelationWarning } from "@/components/results/CorrelationWarning";
 import { BookEdgeCard } from "@/components/results/BookEdgeCard";
 import { HistoricalInsightsCard } from "@/components/results/HistoricalInsightsCard";
+import { HistoricalComparisonCard } from "@/components/results/HistoricalComparisonCard";
+import { CelebrationEffect } from "@/components/results/CelebrationEffect";
 import { TrapAvoidanceCard } from "@/components/results/TrapAvoidanceCard";
 import { ParlayHealthCard } from "@/components/results/ParlayHealthCard";
 import { ParlayOptimizer } from "@/components/results/ParlayOptimizer";
@@ -27,7 +29,7 @@ import { CollapsibleSection } from "@/components/results/CollapsibleSection";
 import { ConsolidatedVerdictCard } from "@/components/results/ConsolidatedVerdictCard";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, RotateCcw, Save, Loader2, LogIn, BarChart3, Zap, FileText } from "lucide-react";
-import { ParlaySimulation, ParlayAnalysis } from "@/types/parlay";
+import { ParlaySimulation, ParlayAnalysis, LegAnalysis } from "@/types/parlay";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -401,12 +403,33 @@ const Results = () => {
             delay={0}
           />
           
-          {/* Shareable Scorecard - Right after probability */}
-          <LegBreakdownScorecard
-            legs={simulation.legs}
-            legAnalyses={aiAnalysis?.legAnalyses}
+          {/* Shareable Scorecard with Celebration Effect */}
+          <CelebrationEffect isActive={(() => {
+            // Check if all legs are PICK/LEAN
+            if (!aiAnalysis?.legAnalyses) return false;
+            return simulation.legs.every((_, idx) => {
+              const analysis = aiAnalysis.legAnalyses?.find((la) => la.legIndex === idx);
+              if (analysis?.researchSummary) {
+                const verdict = analysis.researchSummary.overallVerdict;
+                return verdict === 'STRONG_PICK' || verdict === 'LEAN_PICK';
+              }
+              return analysis?.sharpRecommendation === 'pick';
+            });
+          })()}>
+            <LegBreakdownScorecard
+              legs={simulation.legs}
+              legAnalyses={aiAnalysis?.legAnalyses}
+              probability={simulation.combinedProbability}
+              delay={50}
+            />
+          </CelebrationEffect>
+
+          {/* Historical Comparison - How this parlay stacks up */}
+          <HistoricalComparisonCard
+            legCount={simulation.legs.length}
+            degenerateLevel={simulation.degenerateLevel}
             probability={simulation.combinedProbability}
-            delay={50}
+            delay={75}
           />
           
           <DegenerateMeter 
