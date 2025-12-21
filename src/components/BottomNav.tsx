@@ -18,6 +18,9 @@ const allNavItems = [
   { icon: User, label: "Profile", path: "/profile" },
 ];
 
+// Routes where bottom nav should always be visible (no hide on scroll)
+const ALWAYS_VISIBLE_ROUTES = ['/auth', '/verify-phone', '/login', '/signup'];
+
 export function BottomNav() {
   const location = useLocation();
   const { isOnline } = usePWA();
@@ -25,6 +28,10 @@ export function BottomNav() {
   const { isVisible } = useScrollDirection(15);
   const { isSmallPhone } = useViewport();
   const haptics = useHapticFeedback();
+  
+  // Always show nav on auth-related pages
+  const shouldAlwaysShow = ALWAYS_VISIBLE_ROUTES.some(route => location.pathname.startsWith(route));
+  const navVisible = shouldAlwaysShow || isVisible;
 
   // Filter nav items for pilot users
   const navItems = (isPilotUser && !isAdmin && !isSubscribed)
@@ -41,7 +48,7 @@ export function BottomNav() {
       "border-t border-white/[0.12]",
       "shadow-[0_-4px_24px_rgba(0,0,0,0.4),inset_0_1px_0_rgba(255,255,255,0.12),inset_0_2px_4px_rgba(255,255,255,0.04)]",
       "transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]",
-      !isVisible && "translate-y-full opacity-0"
+      !navVisible && "translate-y-full opacity-0"
     )}>
       {/* Gradient overlay for premium glass effect */}
       <div className="absolute inset-0 bg-gradient-to-b from-white/[0.06] via-transparent to-black/[0.04] pointer-events-none" />
