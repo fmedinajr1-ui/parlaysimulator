@@ -31,9 +31,10 @@ export const UniversalParlayBuilder = () => {
   const [stake, setStake] = useState<string>('10');
   const [isSaving, setIsSaving] = useState(false);
   
-  // Fetch coaching signals for all sports
+  // Fetch coaching signals for all sports - must be called before any early returns (React Rules of Hooks)
   const { signals, isLoading: coachingLoading, totalLegsWithCoaching, legCountBySport, getSignalForLeg, criticalWarnings } = useSportsCoachingSignals(legs);
 
+  // Early return AFTER all hooks are called
   if (legCount === 0) return null;
 
   const stakeNum = parseFloat(stake) || 0;
