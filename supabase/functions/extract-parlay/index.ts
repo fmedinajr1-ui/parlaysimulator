@@ -26,109 +26,6 @@ interface ExtractionResult {
   originalOddsFormat: 'american' | 'decimal' | 'fractional' | null;
 }
 
-// ============= OPENAI FALLBACK =============
-
-/**
- * Extract parlay using OpenAI Vision API as fallback
- */
-async function extractWithOpenAI(
-  imageData: string,
-  systemPrompt: string,
-  openAIKey: string
-): Promise<ExtractionResult | null> {
-  console.log("Attempting OpenAI Vision fallback with gpt-4o-mini...");
-  
-  try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${openAIKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: systemPrompt },
-          {
-            role: "user",
-            content: [
-              { 
-                type: "text", 
-                text: "Extract all parlay information from this betting slip image. Return only the JSON wrapped in triple backticks." 
-              },
-              {
-                type: "image_url",
-                image_url: {
-                  url: imageData.startsWith("data:") ? imageData : `data:image/jpeg;base64,${imageData}`,
-                  detail: "high"
-                }
-              }
-            ]
-          }
-        ],
-        max_tokens: 2000
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("OpenAI fallback error:", response.status, errorText);
-      return null;
-    }
-
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || "{}";
-    
-    console.log("OpenAI response received, parsing...");
-    
-    const parsed = extractJSON(content);
-    
-    if (parsed && validateExtractionResult(parsed)) {
-      const typedParsed = parsed as any;
-      
-      if (typedParsed.isBettingSlip !== false && typedParsed.legs && typedParsed.legs.length > 0) {
-        const reportedFormat = typedParsed.oddsFormat || null;
-        const firstLegOdds = typedParsed.legs[0]?.odds || '';
-        const detectedFormat = reportedFormat || detectOddsFormat(firstLegOdds);
-        
-        const processedLegs: ExtractedLeg[] = typedParsed.legs.map((leg: any) => {
-          const legOddsFormat = detectOddsFormat(leg.odds);
-          const americanOdds = convertToAmericanOdds(leg.odds, legOddsFormat);
-          const gameTimeISO = parseGameTime(leg.gameTime);
-          
-          return {
-            description: leg.description,
-            odds: americanOdds,
-            gameTime: leg.gameTime || null,
-            gameTimeISO
-          };
-        });
-        
-        const earliestGameTimeISO = parseGameTime(typedParsed.earliestGameTime);
-        
-        console.log(`OpenAI fallback succeeded: found ${processedLegs.length} legs`);
-        
-        return {
-          legs: processedLegs,
-          totalOdds: typedParsed.totalOdds || null,
-          stake: parseNumericValue(typedParsed.stake),
-          potentialPayout: parseNumericValue(typedParsed.potentialPayout),
-          earliestGameTime: typedParsed.earliestGameTime || null,
-          earliestGameTimeISO,
-          isBettingSlip: true,
-          originalOddsFormat: detectedFormat
-        };
-      }
-    }
-    
-    console.log("OpenAI fallback: no betting slip found in response");
-    return null;
-  } catch (err) {
-    console.error("OpenAI fallback error:", err);
-    return null;
-  }
-}
-
 // ============= HELPER FUNCTIONS =============
 
 /**
@@ -434,53 +331,58 @@ function getEarlierDate(date1: string | null, date2: string | null): string | nu
   }
 }
 
-// ============= MAIN HANDLER =============
-
-serve(async (req) => {
-  // Handle CORS preflight
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+/**
+ * Process extraction response and return result
+ */
+function processExtractionResponse(content: string, detectedOddsFormatRef: { value: 'american' | 'decimal' | 'fractional' | null }): ExtractionResult | null {
+  const parsed = extractJSON(content);
+  
+  if (parsed && validateExtractionResult(parsed)) {
+    const typedParsed = parsed as any;
+    
+    if (typedParsed.isBettingSlip !== false && typedParsed.legs && typedParsed.legs.length > 0) {
+      const reportedFormat = typedParsed.oddsFormat || null;
+      const firstLegOdds = typedParsed.legs[0]?.odds || '';
+      const detectedFormat = reportedFormat || detectOddsFormat(firstLegOdds);
+      
+      if (!detectedOddsFormatRef.value && detectedFormat) {
+        detectedOddsFormatRef.value = detectedFormat;
+      }
+      
+      const processedLegs: ExtractedLeg[] = typedParsed.legs.map((leg: any) => {
+        const legOddsFormat = detectOddsFormat(leg.odds);
+        const americanOdds = convertToAmericanOdds(leg.odds, legOddsFormat);
+        const gameTimeISO = parseGameTime(leg.gameTime);
+        
+        return {
+          description: leg.description,
+          odds: americanOdds,
+          gameTime: leg.gameTime || null,
+          gameTimeISO
+        };
+      });
+      
+      const earliestGameTimeISO = parseGameTime(typedParsed.earliestGameTime);
+      
+      return {
+        legs: processedLegs,
+        totalOdds: typedParsed.totalOdds || null,
+        stake: parseNumericValue(typedParsed.stake),
+        potentialPayout: parseNumericValue(typedParsed.potentialPayout),
+        earliestGameTime: typedParsed.earliestGameTime || null,
+        earliestGameTimeISO,
+        isBettingSlip: true,
+        originalOddsFormat: detectedFormat
+      };
+    }
   }
+  
+  return null;
+}
 
-  try {
-    const body = await req.json();
-    const { 
-      imageBase64, 
-      frames,
-      batchSize: requestedBatchSize,
-      batchDelay: requestedBatchDelay 
-    } = body;
-    
-    // Configurable batch parameters with sensible defaults and limits
-    const batchSize = Math.min(Math.max(requestedBatchSize || 3, 1), 10);
-    const batchDelay = Math.min(Math.max(requestedBatchDelay || 500, 100), 2000);
-    
-    // Support both single image and multiple frames
-    const imagesToProcess: string[] = frames && Array.isArray(frames) && frames.length > 0 
-      ? frames 
-      : imageBase64 
-        ? [imageBase64] 
-        : [];
-    
-    if (imagesToProcess.length === 0) {
-      return new Response(
-        JSON.stringify({ error: "No image or frames provided" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+// ============= EXTRACTION FUNCTIONS =============
 
-    console.log(`Processing ${imagesToProcess.length} image(s) with batchSize=${batchSize}, batchDelay=${batchDelay}ms...`);
-
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) {
-      console.error("LOVABLE_API_KEY is not configured");
-      return new Response(
-        JSON.stringify({ error: "AI service not configured" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const systemPrompt = `You are an expert at reading betting slips and sports betting parlays. 
+const systemPrompt = `You are an expert at reading betting slips and sports betting parlays. 
 Your job is to extract parlay information from betting slip images.
 
 CRITICAL - CONTENT TYPE DETECTION:
@@ -544,15 +446,218 @@ Rules:
 - Keep leg descriptions concise
 - If you cannot read the image clearly or it's not a betting slip, return: {"legs": [], "totalOdds": null, "stake": null, "potentialPayout": null, "earliestGameTime": null, "oddsFormat": null, "isBettingSlip": false}`;
 
-    // Process all images and collect results
+/**
+ * Extract parlay using OpenAI Vision API (PRIMARY - faster)
+ */
+async function extractWithOpenAI(
+  imageData: string,
+  openAIKey: string,
+  imageIndex: number,
+  totalImages: number,
+  detectedOddsFormatRef: { value: 'american' | 'decimal' | 'fractional' | null }
+): Promise<ExtractionResult | null> {
+  console.log(`[OpenAI] Processing image ${imageIndex + 1}/${totalImages}...`);
+  
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${openAIKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: [
+              { 
+                type: "text", 
+                text: totalImages > 1 
+                  ? `This is frame ${imageIndex + 1} from a screen recording. Extract any betting slip information visible. Return only JSON wrapped in triple backticks.`
+                  : "Extract all parlay information from this betting slip image. Return only the JSON wrapped in triple backticks." 
+              },
+              {
+                type: "image_url",
+                image_url: {
+                  url: imageData.startsWith("data:") ? imageData : `data:image/jpeg;base64,${imageData}`,
+                  detail: "high"
+                }
+              }
+            ]
+          }
+        ],
+        max_tokens: 2000
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`[OpenAI] Image ${imageIndex + 1} error:`, response.status, errorText);
+      
+      if (response.status === 429) {
+        console.log("[OpenAI] Rate limited");
+        throw new Error("OpenAI rate limit exceeded");
+      }
+      return null;
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || "{}";
+    
+    const result = processExtractionResponse(content, detectedOddsFormatRef);
+    
+    if (result) {
+      console.log(`[OpenAI] Image ${imageIndex + 1}: Found ${result.legs.length} legs`);
+    } else {
+      console.log(`[OpenAI] Image ${imageIndex + 1}: No betting slip found`);
+    }
+    
+    return result;
+  } catch (err) {
+    console.error(`[OpenAI] Error processing image ${imageIndex + 1}:`, err);
+    throw err;
+  }
+}
+
+/**
+ * Extract parlay using Gemini via Lovable AI Gateway (FALLBACK)
+ */
+async function extractWithGemini(
+  imageData: string,
+  lovableApiKey: string,
+  imageIndex: number,
+  totalImages: number,
+  detectedOddsFormatRef: { value: 'american' | 'decimal' | 'fractional' | null }
+): Promise<ExtractionResult | null> {
+  console.log(`[Gemini] Processing image ${imageIndex + 1}/${totalImages}...`);
+  
+  try {
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${lovableApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash",
+        messages: [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: totalImages > 1 
+                  ? `This is frame ${imageIndex + 1} from a screen recording. Extract any betting slip information visible. Return only JSON wrapped in triple backticks.`
+                  : "Extract all parlay information from this betting slip image. Return only the JSON wrapped in triple backticks."
+              },
+              {
+                type: "image_url",
+                image_url: {
+                  url: imageData.startsWith("data:") ? imageData : `data:image/jpeg;base64,${imageData}`
+                }
+              }
+            ]
+          }
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`[Gemini] Image ${imageIndex + 1} error:`, response.status, errorText);
+      
+      if (response.status === 429) {
+        throw new Error("Gemini rate limit exceeded");
+      }
+      if (response.status === 402) {
+        throw new Error("AI usage limit reached");
+      }
+      return null;
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || "{}";
+    
+    const result = processExtractionResponse(content, detectedOddsFormatRef);
+    
+    if (result) {
+      console.log(`[Gemini] Image ${imageIndex + 1}: Found ${result.legs.length} legs`);
+    } else {
+      console.log(`[Gemini] Image ${imageIndex + 1}: No betting slip found`);
+    }
+    
+    return result;
+  } catch (err) {
+    console.error(`[Gemini] Error processing image ${imageIndex + 1}:`, err);
+    throw err;
+  }
+}
+
+// ============= MAIN HANDLER =============
+
+serve(async (req) => {
+  // Handle CORS preflight
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  try {
+    const body = await req.json();
+    const { 
+      imageBase64, 
+      frames,
+      batchSize: requestedBatchSize,
+      batchDelay: requestedBatchDelay 
+    } = body;
+    
+    // Configurable batch parameters with sensible defaults
+    const batchSize = Math.min(Math.max(requestedBatchSize || 4, 1), 10);
+    const batchDelay = Math.min(Math.max(requestedBatchDelay || 300, 100), 2000);
+    
+    // Support both single image and multiple frames
+    const imagesToProcess: string[] = frames && Array.isArray(frames) && frames.length > 0 
+      ? frames 
+      : imageBase64 
+        ? [imageBase64] 
+        : [];
+    
+    if (imagesToProcess.length === 0) {
+      return new Response(
+        JSON.stringify({ error: "No image or frames provided" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    console.log(`Processing ${imagesToProcess.length} image(s) with batchSize=${batchSize}, batchDelay=${batchDelay}ms...`);
+
+    const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    
+    if (!OPENAI_API_KEY && !LOVABLE_API_KEY) {
+      console.error("Neither OPENAI_API_KEY nor LOVABLE_API_KEY is configured");
+      return new Response(
+        JSON.stringify({ error: "AI service not configured" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Track extraction state
     const allResults: ExtractionResult[] = [];
     let framesWithSlips = 0;
-    let detectedOddsFormat: 'american' | 'decimal' | 'fractional' | null = null;
+    const detectedOddsFormatRef: { value: 'american' | 'decimal' | 'fractional' | null } = { value: null };
     let totalLegsFound = 0;
-    const MIN_LEGS_FOR_EARLY_EXIT = 6; // Stop early if we find enough legs
-    const MIN_FRAMES_FOR_EARLY_EXIT = 3; // Need at least 3 frames with slips to trust the data
+    const MIN_LEGS_FOR_EARLY_EXIT = 6;
+    const MIN_FRAMES_FOR_EARLY_EXIT = 3;
     
-    // For video frames, use configurable batch size
+    let primaryEngine: 'openai' | 'gemini' = OPENAI_API_KEY ? 'openai' : 'gemini';
+    let usedFallback = false;
+    
+    console.log(`Using ${primaryEngine.toUpperCase()} as primary extraction engine`);
+
+    // ============= PRIMARY EXTRACTION (OpenAI if available, else Gemini) =============
     const effectiveBatchSize = imagesToProcess.length > 1 ? batchSize : 1;
     
     for (let i = 0; i < imagesToProcess.length; i += effectiveBatchSize) {
@@ -560,115 +665,16 @@ Rules:
       
       const batchPromises = batch.map(async (imageData, batchIndex) => {
         const imageIndex = i + batchIndex;
-        console.log(`Processing image ${imageIndex + 1}/${imagesToProcess.length}...`);
         
         try {
-          const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${LOVABLE_API_KEY}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              model: "google/gemini-2.5-flash",
-              messages: [
-                { role: "system", content: systemPrompt },
-                {
-                  role: "user",
-                  content: [
-                    {
-                      type: "text",
-                      text: imagesToProcess.length > 1 
-                        ? `This is frame ${imageIndex + 1} from a screen recording. Extract any betting slip information visible. Return only JSON wrapped in triple backticks.`
-                        : "Extract all parlay information from this betting slip image. Return only the JSON wrapped in triple backticks."
-                    },
-                    {
-                      type: "image_url",
-                      image_url: {
-                        url: imageData.startsWith("data:") ? imageData : `data:image/jpeg;base64,${imageData}`
-                      }
-                    }
-                  ]
-                }
-              ],
-            }),
-          });
-
-          if (!response.ok) {
-            const errorText = await response.text();
-            console.error(`Image ${imageIndex + 1} error:`, response.status, errorText);
-            
-            if (response.status === 429) {
-              // Rate limit - wait and retry with exponential backoff
-              const retryAfter = Math.min(2000 * Math.pow(2, Math.floor(imageIndex / 3)), 10000);
-              console.log(`Rate limited, waiting ${retryAfter}ms before retry...`);
-              await new Promise(r => setTimeout(r, retryAfter));
-              throw new Error("Rate limit exceeded");
-            }
-            if (response.status === 402) {
-              throw new Error("AI usage limit reached");
-            }
-            return null;
+          if (primaryEngine === 'openai' && OPENAI_API_KEY) {
+            return await extractWithOpenAI(imageData, OPENAI_API_KEY, imageIndex, imagesToProcess.length, detectedOddsFormatRef);
+          } else if (LOVABLE_API_KEY) {
+            return await extractWithGemini(imageData, LOVABLE_API_KEY, imageIndex, imagesToProcess.length, detectedOddsFormatRef);
           }
-
-          const data = await response.json();
-          const content = data.choices?.[0]?.message?.content || "{}";
-          
-          // Use robust JSON extraction
-          const parsed = extractJSON(content);
-          
-          if (parsed && validateExtractionResult(parsed)) {
-            const typedParsed = parsed as any;
-            
-            // Only count frames that actually have betting slip content
-            if (typedParsed.isBettingSlip !== false && typedParsed.legs && typedParsed.legs.length > 0) {
-              framesWithSlips++;
-              
-              // Detect odds format from the parsed data or from the first leg
-              const reportedFormat = typedParsed.oddsFormat || null;
-              const firstLegOdds = typedParsed.legs[0]?.odds || '';
-              const detectedFormat = reportedFormat || detectOddsFormat(firstLegOdds);
-              
-              if (!detectedOddsFormat && detectedFormat) {
-                detectedOddsFormat = detectedFormat;
-              }
-              
-              // Process legs: convert odds to American and parse game times
-              const processedLegs: ExtractedLeg[] = typedParsed.legs.map((leg: any) => {
-                const legOddsFormat = detectOddsFormat(leg.odds);
-                const americanOdds = convertToAmericanOdds(leg.odds, legOddsFormat);
-                const gameTimeISO = parseGameTime(leg.gameTime);
-                
-                return {
-                  description: leg.description,
-                  odds: americanOdds,
-                  gameTime: leg.gameTime || null,
-                  gameTimeISO
-                };
-              });
-              
-              // Parse earliest game time
-              const earliestGameTimeISO = parseGameTime(typedParsed.earliestGameTime);
-              
-              return {
-                legs: processedLegs,
-                totalOdds: typedParsed.totalOdds || null,
-                stake: parseNumericValue(typedParsed.stake),
-                potentialPayout: parseNumericValue(typedParsed.potentialPayout),
-                earliestGameTime: typedParsed.earliestGameTime || null,
-                earliestGameTimeISO,
-                isBettingSlip: true,
-                originalOddsFormat: detectedFormat
-              } as ExtractionResult;
-            }
-          }
-          
           return null;
         } catch (err) {
-          console.error(`Error processing image ${imageIndex + 1}:`, err);
-          if (err instanceof Error && (err.message.includes("Rate limit") || err.message.includes("usage limit"))) {
-            throw err;
-          }
+          console.error(`Error in primary extraction for image ${imageIndex + 1}:`, err);
           return null;
         }
       });
@@ -678,44 +684,73 @@ Rules:
         batchResults.forEach(r => { 
           if (r) {
             allResults.push(r);
+            framesWithSlips++;
             totalLegsFound += r.legs.length;
           }
         });
         
         // Early exit if we have enough data
         if (totalLegsFound >= MIN_LEGS_FOR_EARLY_EXIT && framesWithSlips >= MIN_FRAMES_FOR_EARLY_EXIT) {
-          console.log(`Early exit: found ${totalLegsFound} legs from ${framesWithSlips} frames, sufficient data collected`);
+          console.log(`Early exit: found ${totalLegsFound} legs from ${framesWithSlips} frames`);
           break;
         }
       } catch (err) {
-        if (err instanceof Error && err.message.includes("Rate limit")) {
-          // For rate limits, don't fail immediately - continue with what we have
-          console.warn("Rate limit hit, continuing with collected data...");
-          if (allResults.length > 0) {
-            break; // Use what we have
-          }
-          return new Response(
-            JSON.stringify({ error: "Rate limit exceeded. Please try again in a moment." }),
-            { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-        if (err instanceof Error && err.message.includes("usage limit")) {
-          return new Response(
-            JSON.stringify({ error: "AI usage limit reached. Please add credits to your workspace." }),
-            { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
+        console.error("Batch processing error:", err);
       }
       
-      // Configurable delay between batches for video frames
+      // Small delay between batches
       if (imagesToProcess.length > 1 && i + effectiveBatchSize < imagesToProcess.length) {
         await new Promise(r => setTimeout(r, batchDelay));
       }
     }
 
-    console.log(`Found betting slip content in ${framesWithSlips}/${imagesToProcess.length} frames`);
+    console.log(`Primary extraction (${primaryEngine}): Found ${framesWithSlips} frames with ${totalLegsFound} total legs`);
 
-    // Merge all results, deduplicating legs
+    // ============= FALLBACK EXTRACTION =============
+    // If primary extraction found nothing, try the fallback engine
+    if (framesWithSlips === 0 || totalLegsFound === 0) {
+      const fallbackEngine = primaryEngine === 'openai' ? 'gemini' : 'openai';
+      const fallbackKey = fallbackEngine === 'openai' ? OPENAI_API_KEY : LOVABLE_API_KEY;
+      
+      if (fallbackKey) {
+        console.log(`Primary extraction found nothing, trying ${fallbackEngine.toUpperCase()} fallback...`);
+        usedFallback = true;
+        
+        // Try first 3 frames with fallback
+        const framesToTry = imagesToProcess.slice(0, 3);
+        
+        for (let i = 0; i < framesToTry.length; i++) {
+          try {
+            let result: ExtractionResult | null = null;
+            
+            if (fallbackEngine === 'openai' && OPENAI_API_KEY) {
+              result = await extractWithOpenAI(framesToTry[i], OPENAI_API_KEY, i, framesToTry.length, detectedOddsFormatRef);
+            } else if (fallbackEngine === 'gemini' && LOVABLE_API_KEY) {
+              result = await extractWithGemini(framesToTry[i], LOVABLE_API_KEY, i, framesToTry.length, detectedOddsFormatRef);
+            }
+            
+            if (result && result.legs.length > 0) {
+              console.log(`Fallback (${fallbackEngine}) succeeded on frame ${i + 1} with ${result.legs.length} legs`);
+              return new Response(
+                JSON.stringify({
+                  ...result,
+                  framesProcessed: imagesToProcess.length,
+                  framesWithSlips: 1,
+                  fallbackUsed: fallbackEngine
+                }),
+                { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+              );
+            }
+          } catch (err) {
+            console.error(`Fallback error on frame ${i + 1}:`, err);
+          }
+        }
+        
+        console.log(`Fallback (${fallbackEngine}) also failed to find betting slip`);
+      }
+    }
+
+    // ============= MERGE RESULTS =============
     const mergedResult: ExtractionResult = {
       legs: [],
       totalOdds: null,
@@ -724,7 +759,7 @@ Rules:
       earliestGameTime: null,
       earliestGameTimeISO: null,
       isBettingSlip: framesWithSlips > 0,
-      originalOddsFormat: detectedOddsFormat
+      originalOddsFormat: detectedOddsFormatRef.value
     };
 
     const seenLegs = new Set<string>();
@@ -733,13 +768,11 @@ Rules:
     for (const result of allResults) {
       // Add unique legs
       for (const leg of result.legs) {
-        // Create a normalized key for deduplication
         const legKey = `${leg.description.toLowerCase().replace(/\s+/g, ' ').trim()}|${leg.odds}`;
         if (!seenLegs.has(legKey)) {
           seenLegs.add(legKey);
           mergedResult.legs.push(leg);
           
-          // Track earliest game time from all legs
           if (leg.gameTimeISO) {
             earliestISO = getEarlierDate(earliestISO, leg.gameTimeISO);
           }
@@ -761,45 +794,15 @@ Rules:
       mergedResult.earliestGameTimeISO = earliestISO;
     }
 
-    console.log(`Merged result: ${mergedResult.legs.length} unique legs from ${allResults.length} frames with betting content`);
-
-    // ============= OPENAI FALLBACK IF GEMINI FAILS =============
-    if (!mergedResult.isBettingSlip || mergedResult.legs.length === 0) {
-      const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
-      
-      if (OPENAI_API_KEY && imagesToProcess.length > 0) {
-        console.log("Gemini found no betting slip, trying OpenAI fallback...");
-        
-        // Try OpenAI with the best frames (first 3)
-        const framesToTry = imagesToProcess.slice(0, 3);
-        
-        for (let i = 0; i < framesToTry.length; i++) {
-          const openAIResult = await extractWithOpenAI(framesToTry[i], systemPrompt, OPENAI_API_KEY);
-          
-          if (openAIResult && openAIResult.isBettingSlip && openAIResult.legs.length > 0) {
-            console.log(`OpenAI fallback succeeded on frame ${i + 1} with ${openAIResult.legs.length} legs`);
-            return new Response(
-              JSON.stringify({
-                ...openAIResult,
-                framesProcessed: imagesToProcess.length,
-                framesWithSlips: 1,
-                fallbackUsed: "openai"
-              }),
-              { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-            );
-          }
-        }
-        
-        console.log("OpenAI fallback also failed to find betting slip");
-      }
-    }
+    console.log(`Final result: ${mergedResult.legs.length} unique legs from ${framesWithSlips} frames`);
 
     return new Response(
       JSON.stringify({
         ...mergedResult,
         framesProcessed: imagesToProcess.length,
         framesWithSlips,
-        fallbackUsed: null
+        fallbackUsed: usedFallback ? (primaryEngine === 'openai' ? 'gemini' : 'openai') : null,
+        primaryEngine
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
