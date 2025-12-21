@@ -105,6 +105,8 @@ export default function SportsFatigue() {
   const [games, setGames] = useState<GameWithFatigue[]>([]);
   const [loading, setLoading] = useState(true);
   const [calculating, setCalculating] = useState(false);
+  const [seeding, setSeeding] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [sportFilter, setSportFilter] = useState<SportFilter>('all');
 
   const fetchFatigueData = useCallback(async () => {
@@ -205,6 +207,52 @@ export default function SportsFatigue() {
       toast.error('Failed to calculate fatigue scores');
     } finally {
       setCalculating(false);
+    }
+  };
+
+  const seedHistoricalData = async () => {
+    setSeeding(true);
+    try {
+      toast.info('Seeding historical data... This may take a minute.');
+      const { data, error } = await supabase.functions.invoke('seed-sports-historical-fatigue', {
+        body: { sport: sportFilter === 'all' ? null : sportFilter }
+      });
+      
+      if (error) throw error;
+      
+      if (data?.success) {
+        toast.success(`Seeded ${data.gamesProcessed} games! Found ${data.edgesFound} edges`);
+      }
+      
+      await fetchFatigueData();
+    } catch (error) {
+      console.error('Error seeding historical data:', error);
+      toast.error('Failed to seed historical data');
+    } finally {
+      setSeeding(false);
+    }
+  };
+
+  const resetData = async () => {
+    setResetting(true);
+    try {
+      toast.info('Resetting and reseeding data...');
+      const { data, error } = await supabase.functions.invoke('seed-sports-historical-fatigue', {
+        body: { reset: true, sport: sportFilter === 'all' ? null : sportFilter }
+      });
+      
+      if (error) throw error;
+      
+      if (data?.success) {
+        toast.success(`Reset complete! Seeded ${data.gamesProcessed} games`);
+      }
+      
+      await fetchFatigueData();
+    } catch (error) {
+      console.error('Error resetting data:', error);
+      toast.error('Failed to reset data');
+    } finally {
+      setResetting(false);
     }
   };
 
@@ -400,26 +448,66 @@ export default function SportsFatigue() {
             </p>
           </FeedCard>
 
-          {/* Action Button */}
-          {filteredGames.length === 0 && !loading && (
-            <Button 
-              onClick={calculateFatigue} 
-              disabled={calculating}
-              className="w-full"
-            >
-              {calculating ? (
-                <>
-                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                  Calculating All Sports...
-                </>
-              ) : (
-                <>
-                  <Zap className="w-4 h-4 mr-2" />
-                  Calculate Today's Fatigue
-                </>
-              )}
-            </Button>
-          )}
+          {/* Action Buttons */}
+          <div className="flex flex-col gap-2">
+            {filteredGames.length === 0 && !loading && (
+              <Button 
+                onClick={calculateFatigue} 
+                disabled={calculating || seeding || resetting}
+                className="w-full"
+              >
+                {calculating ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                    Calculating All Sports...
+                  </>
+                ) : (
+                  <>
+                    <Zap className="w-4 h-4 mr-2" />
+                    Calculate Today's Fatigue
+                  </>
+                )}
+              </Button>
+            )}
+            <div className="flex gap-2">
+              <Button 
+                onClick={seedHistoricalData} 
+                disabled={seeding || calculating || resetting}
+                variant="outline"
+                className="flex-1"
+              >
+                {seeding ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                    Seeding...
+                  </>
+                ) : (
+                  <>
+                    <Trophy className="w-4 h-4 mr-2" />
+                    Seed Historical Data
+                  </>
+                )}
+              </Button>
+              <Button 
+                onClick={resetData} 
+                disabled={resetting || calculating || seeding}
+                variant="destructive"
+                className="flex-1"
+              >
+                {resetting ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                    Resetting...
+                  </>
+                ) : (
+                  <>
+                    <AlertTriangle className="w-4 h-4 mr-2" />
+                    Reset & Reseed
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
 
           {/* Best Bets Section - 20-29 Sweet Spot */}
           {!loading && filteredGames.filter(g => isSweetSpot(g.fatigueDiff)).length > 0 && (
