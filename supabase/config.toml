@@ -308,3 +308,6 @@ verify_jwt = false
 
 [functions.pool-manager]
 verify_jwt = false
+
+[functions.seed-sports-historical-fatigue]
+verify_jwt = false
