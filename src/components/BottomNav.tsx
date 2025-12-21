@@ -37,21 +37,25 @@ export function BottomNav() {
   return (
     <nav className={cn(
       "fixed bottom-0 left-0 right-0 z-50 pb-safe",
-      "bg-background/95 backdrop-blur-2xl",
-      "border-t border-white/10",
-      "shadow-[0_-4px_20px_rgba(0,0,0,0.3),inset_0_1px_0_rgba(255,255,255,0.08)]",
-      "transition-transform duration-300 ease-out",
-      !isVisible && "translate-y-full"
+      "bg-background/90 backdrop-blur-3xl",
+      "border-t border-white/[0.12]",
+      "shadow-[0_-4px_24px_rgba(0,0,0,0.4),inset_0_1px_0_rgba(255,255,255,0.12),inset_0_2px_4px_rgba(255,255,255,0.04)]",
+      "transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]",
+      !isVisible && "translate-y-full opacity-0"
     )}>
-      {/* Offline indicator */}
-      {!isOnline && (
-        <div className="flex items-center justify-center gap-2 py-1 bg-neon-orange/10 text-neon-orange text-xs font-medium border-b border-neon-orange/20">
-          <WifiOff className="w-3 h-3" />
-          <span>Offline</span>
-        </div>
-      )}
+      {/* Gradient overlay for premium glass effect */}
+      <div className="absolute inset-0 bg-gradient-to-b from-white/[0.06] via-transparent to-black/[0.04] pointer-events-none" />
       
-      <div className={cn(
+      <div className="relative">
+        {/* Offline indicator */}
+        {!isOnline && (
+          <div className="flex items-center justify-center gap-2 py-1 bg-neon-orange/10 text-neon-orange text-xs font-medium border-b border-neon-orange/20">
+            <WifiOff className="w-3 h-3" />
+            <span>Offline</span>
+          </div>
+        )}
+        
+        <div className={cn(
         "flex items-center justify-evenly px-1 max-w-lg mx-auto py-2",
         isSmallPhone ? "h-[64px]" : "h-[76px]"
       )}>
@@ -130,6 +134,7 @@ export function BottomNav() {
         
         {/* Hamburger Menu */}
         <MenuDrawer />
+        </div>
       </div>
     </nav>
   );
