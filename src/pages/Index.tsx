@@ -51,6 +51,7 @@ const Index = () => {
     lightTap();
     if (user) {
       await signOut();
+      navigate('/', { replace: true });
     } else {
       navigate('/auth');
     }
