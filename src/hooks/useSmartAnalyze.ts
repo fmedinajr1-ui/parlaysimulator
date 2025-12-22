@@ -42,7 +42,7 @@ interface UseSmartAnalyzeOptions {
 }
 
 const GUEST_ENGINES = ['market-signal-engine'];
-const SUBSCRIBER_ENGINES = ['market-signal-engine', 'trap-probability-engine', 'median-lock-engine'];
+const SUBSCRIBER_ENGINES = ['market-signal-engine', 'trap-probability-engine', 'median-lock-engine', 'median-edge-engine'];
 const ADMIN_ENGINES = [...SUBSCRIBER_ENGINES, 'sharp-engine-v2', 'god-mode-upset-engine', 'coach-tendencies-engine'];
 
 export function useSmartAnalyze(options: UseSmartAnalyzeOptions = {}) {
@@ -99,7 +99,7 @@ export function useSmartAnalyze(options: UseSmartAnalyzeOptions = {}) {
       case 'homepage':
         // On homepage, run trending/general engines
         return roleEngines.filter(e => 
-          ['market-signal-engine', 'median-lock-engine'].includes(e)
+          ['market-signal-engine', 'median-lock-engine', 'median-edge-engine'].includes(e)
         );
       case 'single_leg':
         // For single leg, run leg-specific engines

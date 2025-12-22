@@ -2838,6 +2838,114 @@ export type Database = {
         }
         Relationships: []
       }
+      median_edge_picks: {
+        Row: {
+          actual_value: number | null
+          adjustments: Json | null
+          alt_line_suggestion: number | null
+          confidence_flag: string | null
+          created_at: string | null
+          edge: number | null
+          event_id: string | null
+          expected_minutes: number | null
+          game_date: string | null
+          game_time: string | null
+          id: string
+          injury_context: string | null
+          is_volatile: boolean | null
+          m1_recent_form: number | null
+          m2_matchup: number | null
+          m3_minutes_weighted: number | null
+          m4_usage: number | null
+          m5_location: number | null
+          odds_current: number | null
+          odds_open: number | null
+          opponent_team: string | null
+          outcome: string | null
+          player_name: string
+          reason_summary: string | null
+          recommendation: string | null
+          sport: string | null
+          sportsbook_line: number | null
+          spread: number | null
+          stat_type: string
+          std_dev: number | null
+          team_name: string | null
+          true_median: number | null
+          verified_at: string | null
+        }
+        Insert: {
+          actual_value?: number | null
+          adjustments?: Json | null
+          alt_line_suggestion?: number | null
+          confidence_flag?: string | null
+          created_at?: string | null
+          edge?: number | null
+          event_id?: string | null
+          expected_minutes?: number | null
+          game_date?: string | null
+          game_time?: string | null
+          id?: string
+          injury_context?: string | null
+          is_volatile?: boolean | null
+          m1_recent_form?: number | null
+          m2_matchup?: number | null
+          m3_minutes_weighted?: number | null
+          m4_usage?: number | null
+          m5_location?: number | null
+          odds_current?: number | null
+          odds_open?: number | null
+          opponent_team?: string | null
+          outcome?: string | null
+          player_name: string
+          reason_summary?: string | null
+          recommendation?: string | null
+          sport?: string | null
+          sportsbook_line?: number | null
+          spread?: number | null
+          stat_type: string
+          std_dev?: number | null
+          team_name?: string | null
+          true_median?: number | null
+          verified_at?: string | null
+        }
+        Update: {
+          actual_value?: number | null
+          adjustments?: Json | null
+          alt_line_suggestion?: number | null
+          confidence_flag?: string | null
+          created_at?: string | null
+          edge?: number | null
+          event_id?: string | null
+          expected_minutes?: number | null
+          game_date?: string | null
+          game_time?: string | null
+          id?: string
+          injury_context?: string | null
+          is_volatile?: boolean | null
+          m1_recent_form?: number | null
+          m2_matchup?: number | null
+          m3_minutes_weighted?: number | null
+          m4_usage?: number | null
+          m5_location?: number | null
+          odds_current?: number | null
+          odds_open?: number | null
+          opponent_team?: string | null
+          outcome?: string | null
+          player_name?: string
+          reason_summary?: string | null
+          recommendation?: string | null
+          sport?: string | null
+          sportsbook_line?: number | null
+          spread?: number | null
+          stat_type?: string
+          std_dev?: number | null
+          team_name?: string | null
+          true_median?: number | null
+          verified_at?: string | null
+        }
+        Relationships: []
+      }
       median_lock_backtest_results: {
         Row: {
           avg_confidence_score: number | null

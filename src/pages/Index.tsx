@@ -9,6 +9,7 @@ import { CompareTeaser } from "@/components/CompareTeaser";
 import { HistoricalInsights } from "@/components/suggestions/HistoricalInsights";
 import { SmartBettingEdge } from "@/components/suggestions/SmartBettingEdge";
 import { DailyEliteHitterCard } from "@/components/suggestions/DailyEliteHitterCard";
+import { MedianEdgePicksCard } from "@/components/suggestions/MedianEdgePicksCard";
 import { CriticalAlertsTicker } from "@/components/news";
 import { PullToRefreshContainer, PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
@@ -170,6 +171,13 @@ const Index = () => {
         {(hasEliteAccess || isPilotUser) && (
           <div className="mb-4">
             <DailyEliteHitterCard />
+          </div>
+        )}
+
+        {/* 5-Median Edge Engine - Pilot + Subscriber + Admin Access */}
+        {(isPilotUser || isSubscribed || isAdmin) && (
+          <div className="mb-4">
+            <MedianEdgePicksCard />
           </div>
         )}
 
