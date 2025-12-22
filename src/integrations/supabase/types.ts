@@ -1828,6 +1828,63 @@ export type Database = {
         }
         Relationships: []
       }
+      game_news_feed: {
+        Row: {
+          affected_props: Json | null
+          away_team: string
+          commence_time: string
+          created_at: string | null
+          event_id: string
+          expires_at: string | null
+          headline: string
+          home_team: string
+          id: string
+          impact_level: string | null
+          market_impact: boolean | null
+          news_type: string
+          player_name: string | null
+          source_id: string | null
+          source_table: string | null
+          sport: string
+        }
+        Insert: {
+          affected_props?: Json | null
+          away_team: string
+          commence_time: string
+          created_at?: string | null
+          event_id: string
+          expires_at?: string | null
+          headline: string
+          home_team: string
+          id?: string
+          impact_level?: string | null
+          market_impact?: boolean | null
+          news_type: string
+          player_name?: string | null
+          source_id?: string | null
+          source_table?: string | null
+          sport: string
+        }
+        Update: {
+          affected_props?: Json | null
+          away_team?: string
+          commence_time?: string
+          created_at?: string | null
+          event_id?: string
+          expires_at?: string | null
+          headline?: string
+          home_team?: string
+          id?: string
+          impact_level?: string | null
+          market_impact?: boolean | null
+          news_type?: string
+          player_name?: string | null
+          source_id?: string | null
+          source_table?: string | null
+          sport?: string
+        }
+        Relationships: []
+      }
       god_mode_accuracy_metrics: {
         Row: {
           accuracy_rate: number
@@ -6324,6 +6381,42 @@ export type Database = {
           under_price?: number | null
           updated_at?: string
           upset_score?: number | null
+        }
+        Relationships: []
+      }
+      upcoming_games_cache: {
+        Row: {
+          activity_score: number | null
+          away_team: string
+          commence_time: string
+          event_id: string
+          home_team: string
+          last_news_at: string | null
+          news_count: number | null
+          sport: string
+          updated_at: string | null
+        }
+        Insert: {
+          activity_score?: number | null
+          away_team: string
+          commence_time: string
+          event_id: string
+          home_team: string
+          last_news_at?: string | null
+          news_count?: number | null
+          sport: string
+          updated_at?: string | null
+        }
+        Update: {
+          activity_score?: number | null
+          away_team?: string
+          commence_time?: string
+          event_id?: string
+          home_team?: string
+          last_news_at?: string | null
+          news_count?: number | null
+          sport?: string
+          updated_at?: string | null
         }
         Relationships: []
       }

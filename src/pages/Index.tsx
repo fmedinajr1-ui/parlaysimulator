@@ -5,18 +5,18 @@ import { HowItWorks } from "@/components/HowItWorks";
 import { FeatureTeaser } from "@/components/FeatureTeaser";
 import { SampleParlayButton } from "@/components/SampleParlayButton";
 import { SuggestedParlays } from "@/components/suggestions/SuggestedParlays";
-import { OddsMovementCard } from "@/components/results/OddsMovementCard";
 import { CompareTeaser } from "@/components/CompareTeaser";
 import { HistoricalInsights } from "@/components/suggestions/HistoricalInsights";
 import { SmartBettingEdge } from "@/components/suggestions/SmartBettingEdge";
 import { DailyEliteHitterCard } from "@/components/suggestions/DailyEliteHitterCard";
+import { LiveNewsStream } from "@/components/news";
 import { PullToRefreshContainer, PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
 import { useHapticFeedback } from "@/hooks/useHapticFeedback";
 import { Button } from "@/components/ui/button";
 import { Link, useNavigate } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
-import { Zap, BarChart3, Sparkles, Trophy, Calculator, Lock, GitCompare, LogIn, LogOut } from "lucide-react";
+import { Zap, BarChart3, Sparkles, Trophy, Calculator, GitCompare, LogIn, LogOut } from "lucide-react";
 import { usePilotUser } from "@/hooks/usePilotUser";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -171,6 +171,10 @@ const Index = () => {
         {/* Premium Sections - Hidden for Pilot Users */}
         {!isPilotRestricted && (
           <>
+            {/* Live News Stream - Primary Feature */}
+            <div className="mb-6 content-visibility-auto">
+              <LiveNewsStream maxGames={8} />
+            </div>
 
             {/* AI Suggested Parlays */}
             <div className="mb-4 content-visibility-auto">
@@ -185,16 +189,6 @@ const Index = () => {
             {/* Smart Betting Edge */}
             <div className="mb-4 content-visibility-auto">
               <SmartBettingEdge compact />
-            </div>
-
-            {/* Live Line Movements */}
-            <div className="mb-4 content-visibility-auto">
-              <Link to="/sharp" className="block" onClick={lightTap}>
-                <OddsMovementCard compact showSharpOnly delay={200} />
-              </Link>
-              <p className="text-xs text-muted-foreground text-center mt-1.5">
-                Tap to view sharp money dashboard →
-              </p>
             </div>
           </>
         )}
