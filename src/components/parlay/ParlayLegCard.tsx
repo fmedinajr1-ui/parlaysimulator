@@ -5,29 +5,52 @@ import { UniversalLeg, SOURCE_LABELS } from '@/types/universal-parlay';
 import { SportsCoachingSignal } from '@/hooks/useSportsCoachingSignals';
 import { CoachingWarningBadge } from './CoachingWarningBadge';
 import { MarketSignalBadge, type MarketSignal } from './MarketSignalBadge';
+import { TrapProbabilityBadge } from './TrapProbabilityBadge';
 import { cn } from '@/lib/utils';
+
+interface TrapSignal {
+  signal: string;
+  points: number;
+  reason: string;
+  category: 'trap' | 'safe';
+}
+
+interface TrapProbabilityData {
+  trap_probability: number;
+  risk_label: 'Low' | 'Medium' | 'High';
+  recommendation: 'Play' | 'Reduce Line' | 'Avoid';
+  explanation: string;
+  triggered_signals?: TrapSignal[];
+}
 
 interface ParlayLegCardProps {
   leg: UniversalLeg;
   onRemove: (id: string) => void;
   coachingSignal?: SportsCoachingSignal;
   marketSignal?: MarketSignal | null;
+  trapProbability?: TrapProbabilityData | null;
 }
 
-export const ParlayLegCard = ({ leg, onRemove, coachingSignal, marketSignal }: ParlayLegCardProps) => {
+export const ParlayLegCard = ({ leg, onRemove, coachingSignal, marketSignal, trapProbability }: ParlayLegCardProps) => {
   const sourceInfo = SOURCE_LABELS[leg.source];
   
   const formatOdds = (odds: number) => {
     return odds > 0 ? `+${odds}` : odds.toString();
   };
 
-  // Determine if we should show a border highlight based on coaching signal
+  // Determine if we should show a border highlight based on coaching signal or trap
   const getBorderStyle = () => {
+    // High trap risk takes priority
+    if (trapProbability?.risk_label === 'High') return 'border-red-500/50';
+    if (trapProbability?.risk_label === 'Medium') return 'border-yellow-500/40';
+    
     if (!coachingSignal) return 'border-border/50';
     if (coachingSignal.recommendation === 'FADE') return 'border-red-500/40';
     if (coachingSignal.recommendation === 'PICK') return 'border-green-500/40';
     return 'border-yellow-500/40';
   };
+
+  const showTrapWarning = trapProbability && trapProbability.risk_label !== 'Low';
 
   return (
     <div className={cn(
@@ -77,8 +100,19 @@ export const ParlayLegCard = ({ leg, onRemove, coachingSignal, marketSignal }: P
       </div>
       
       {/* Signal Badges Row */}
-      {(coachingSignal || marketSignal) && (
+      {(coachingSignal || marketSignal || showTrapWarning) && (
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Trap probability badge (compact) */}
+          {showTrapWarning && trapProbability && (
+            <TrapProbabilityBadge
+              trapProbability={trapProbability.trap_probability}
+              riskLabel={trapProbability.risk_label}
+              recommendation={trapProbability.recommendation}
+              explanation={trapProbability.explanation}
+              triggeredSignals={trapProbability.triggered_signals}
+              compact
+            />
+          )}
           {marketSignal && (
             <MarketSignalBadge signal={marketSignal} compact />
           )}

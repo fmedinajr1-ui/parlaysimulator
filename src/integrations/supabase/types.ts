@@ -6030,6 +6030,156 @@ export type Database = {
           },
         ]
       }
+      trap_probability_accuracy: {
+        Row: {
+          accuracy_rate: number | null
+          avg_trap_probability: number | null
+          calibration_factor: number | null
+          correct_predictions: number | null
+          id: string
+          probability_bucket: string
+          risk_label: string
+          total_predictions: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          accuracy_rate?: number | null
+          avg_trap_probability?: number | null
+          calibration_factor?: number | null
+          correct_predictions?: number | null
+          id?: string
+          probability_bucket: string
+          risk_label: string
+          total_predictions?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          accuracy_rate?: number | null
+          avg_trap_probability?: number | null
+          calibration_factor?: number | null
+          correct_predictions?: number | null
+          id?: string
+          probability_bucket?: string
+          risk_label?: string
+          total_predictions?: number | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      trap_probability_analysis: {
+        Row: {
+          both_sides_moved: boolean | null
+          both_sides_score: number | null
+          created_at: string | null
+          current_line: number | null
+          current_odds: number | null
+          event_id: string
+          explanation: string | null
+          favorite_shorten_score: number | null
+          has_narrative_angle: boolean | null
+          id: string
+          is_primetime: boolean | null
+          is_star_player: boolean | null
+          line_movement_magnitude: number | null
+          market_type: string | null
+          multi_book_early_score: number | null
+          opening_line: number | null
+          opening_odds: number | null
+          outcome: string | null
+          outcome_name: string
+          player_name: string | null
+          price_freeze_score: number | null
+          price_only_move: boolean | null
+          public_bet_percentage: number | null
+          recommendation: string | null
+          reverse_line_movement_score: number | null
+          risk_label: string | null
+          round_number_score: number | null
+          sharp_only_movement_score: number | null
+          sport: string | null
+          star_boost_score: number | null
+          trap_probability: number | null
+          triggered_signals: Json | null
+          updated_at: string | null
+          verified_at: string | null
+          was_actually_trap: boolean | null
+        }
+        Insert: {
+          both_sides_moved?: boolean | null
+          both_sides_score?: number | null
+          created_at?: string | null
+          current_line?: number | null
+          current_odds?: number | null
+          event_id: string
+          explanation?: string | null
+          favorite_shorten_score?: number | null
+          has_narrative_angle?: boolean | null
+          id?: string
+          is_primetime?: boolean | null
+          is_star_player?: boolean | null
+          line_movement_magnitude?: number | null
+          market_type?: string | null
+          multi_book_early_score?: number | null
+          opening_line?: number | null
+          opening_odds?: number | null
+          outcome?: string | null
+          outcome_name: string
+          player_name?: string | null
+          price_freeze_score?: number | null
+          price_only_move?: boolean | null
+          public_bet_percentage?: number | null
+          recommendation?: string | null
+          reverse_line_movement_score?: number | null
+          risk_label?: string | null
+          round_number_score?: number | null
+          sharp_only_movement_score?: number | null
+          sport?: string | null
+          star_boost_score?: number | null
+          trap_probability?: number | null
+          triggered_signals?: Json | null
+          updated_at?: string | null
+          verified_at?: string | null
+          was_actually_trap?: boolean | null
+        }
+        Update: {
+          both_sides_moved?: boolean | null
+          both_sides_score?: number | null
+          created_at?: string | null
+          current_line?: number | null
+          current_odds?: number | null
+          event_id?: string
+          explanation?: string | null
+          favorite_shorten_score?: number | null
+          has_narrative_angle?: boolean | null
+          id?: string
+          is_primetime?: boolean | null
+          is_star_player?: boolean | null
+          line_movement_magnitude?: number | null
+          market_type?: string | null
+          multi_book_early_score?: number | null
+          opening_line?: number | null
+          opening_odds?: number | null
+          outcome?: string | null
+          outcome_name?: string
+          player_name?: string | null
+          price_freeze_score?: number | null
+          price_only_move?: boolean | null
+          public_bet_percentage?: number | null
+          recommendation?: string | null
+          reverse_line_movement_score?: number | null
+          risk_label?: string | null
+          round_number_score?: number | null
+          sharp_only_movement_score?: number | null
+          sport?: string | null
+          star_boost_score?: number | null
+          trap_probability?: number | null
+          triggered_signals?: Json | null
+          updated_at?: string | null
+          verified_at?: string | null
+          was_actually_trap?: boolean | null
+        }
+        Relationships: []
+      }
       unified_props: {
         Row: {
           away_team_record: string | null

@@ -323,3 +323,6 @@ verify_jwt = false
 
 [functions.check-device]
 verify_jwt = false
+
+[functions.trap-probability-engine]
+verify_jwt = false
