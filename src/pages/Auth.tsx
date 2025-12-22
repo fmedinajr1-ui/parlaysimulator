@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { PhoneVerification } from '@/components/auth/PhoneVerification';
+import { EmailVerification } from '@/components/auth/EmailVerification';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -16,7 +16,7 @@ const authSchema = z.object({
   password: z.string().min(6, 'Password must be at least 6 characters').max(72, 'Password too long')
 });
 
-type AuthStep = 'credentials' | 'phone-verification';
+type AuthStep = 'credentials' | 'email-verification';
 
 const Auth = () => {
   const [searchParams] = useSearchParams();
@@ -98,10 +98,10 @@ const Auth = () => {
             });
           }
         } else if (data?.user) {
-          // New user created, proceed directly to phone verification
+          // New user created, proceed directly to email verification
           setNewUserId(data.user.id);
           setSignupEmail(email);
-          setAuthStep('phone-verification');
+          setAuthStep('email-verification');
         }
       }
     } finally {
@@ -109,7 +109,7 @@ const Auth = () => {
     }
   };
 
-  const handlePhoneVerified = () => {
+  const handleEmailVerified = () => {
     toast({
       title: "Account Created! 🎉",
       description: "Welcome to the degen club."
@@ -121,19 +121,20 @@ const Auth = () => {
     return <FullPageWolfLoader />;
   }
 
-  // Phone verification step for new signups
-  if (authStep === 'phone-verification' && newUserId) {
+  // Email verification step for new signups
+  if (authStep === 'email-verification' && newUserId) {
     return (
       <div className="min-h-dvh bg-background pb-nav-safe">
         <div className="max-w-md mx-auto px-4 py-8">
           <div className="mb-8">
-            <h2 className="text-xl font-semibold text-foreground">Verify Phone</h2>
-            <p className="text-sm text-muted-foreground">One phone number per account for security</p>
+            <h2 className="text-xl font-semibold text-foreground">Verify Email</h2>
+            <p className="text-sm text-muted-foreground">One email per account for security</p>
           </div>
 
-          <PhoneVerification
+          <EmailVerification
             userId={newUserId}
-            onVerified={handlePhoneVerified}
+            userEmail={signupEmail}
+            onVerified={handleEmailVerified}
           />
         </div>
       </div>

@@ -11,7 +11,7 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
 }
 
-const EXCLUDED_PATHS = ['/auth', '/install', '/verify-phone', '/offline'];
+const EXCLUDED_PATHS = ['/auth', '/install', '/verify-email', '/offline'];
 
 export function PWAInstallPrompt() {
   const navigate = useNavigate();

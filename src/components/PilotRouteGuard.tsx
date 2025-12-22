@@ -12,7 +12,7 @@ const PILOT_ALLOWED_ROUTES = [
   '/auth',
   '/kelly',
   '/compare',
-  '/verify-phone',
+  '/verify-email',
   '/install',
   '/offline',
   '/daily-elite',

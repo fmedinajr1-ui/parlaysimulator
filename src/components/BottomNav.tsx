@@ -19,7 +19,7 @@ const allNavItems = [
 ];
 
 // Routes where bottom nav should always be visible (no hide on scroll)
-const ALWAYS_VISIBLE_ROUTES = ['/auth', '/verify-phone', '/login', '/signup'];
+const ALWAYS_VISIBLE_ROUTES = ['/auth', '/verify-email', '/login', '/signup'];
 
 export function BottomNav() {
   const location = useLocation();
