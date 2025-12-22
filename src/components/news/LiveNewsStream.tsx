@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { useGameNewsStream } from "@/hooks/useGameNewsStream";
+import { useGameNewsStream, NewsItem } from "@/hooks/useGameNewsStream";
 import { SportTabs } from "@/components/ui/sport-tabs";
 import { GameNewsCard } from "./GameNewsCard";
 import { ConnectionIndicator } from "./ConnectionIndicator";
+import { PlayerNewsDetailModal } from "./PlayerNewsDetailModal";
 import { FeedCard } from "@/components/FeedCard";
 import { Radio, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -24,6 +25,13 @@ export function LiveNewsStream({ maxGames = 10, className }: LiveNewsStreamProps
   const [activeSport, setActiveSport] = useState('all');
   const { games, isLoading, isConnected, triggerRefresh } = useGameNewsStream(activeSport);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [selectedNewsItem, setSelectedNewsItem] = useState<NewsItem | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+
+  const handleNewsClick = (item: NewsItem) => {
+    setSelectedNewsItem(item);
+    setIsModalOpen(true);
+  };
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -84,6 +92,7 @@ export function LiveNewsStream({ maxGames = 10, className }: LiveNewsStreamProps
               key={game.event_id}
               game={game}
               defaultExpanded={game.activity_score >= 8}
+              onNewsClick={handleNewsClick}
             />
           ))}
         </div>
@@ -98,6 +107,13 @@ export function LiveNewsStream({ maxGames = 10, className }: LiveNewsStreamProps
           </p>
         </FeedCard>
       )}
+
+      {/* Player Detail Modal */}
+      <PlayerNewsDetailModal
+        open={isModalOpen}
+        onOpenChange={setIsModalOpen}
+        newsItem={selectedNewsItem}
+      />
     </section>
   );
 }
