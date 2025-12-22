@@ -41,7 +41,7 @@ interface UseSmartAnalyzeOptions {
   sport?: string;
 }
 
-const GUEST_ENGINES = ['market-signal-preview'];
+const GUEST_ENGINES = ['market-signal-engine'];
 const SUBSCRIBER_ENGINES = ['market-signal-engine', 'trap-probability-engine', 'median-lock-engine'];
 const ADMIN_ENGINES = [...SUBSCRIBER_ENGINES, 'sharp-engine-v2', 'god-mode-upset-engine', 'coach-tendencies-engine'];
 
@@ -99,12 +99,12 @@ export function useSmartAnalyze(options: UseSmartAnalyzeOptions = {}) {
       case 'homepage':
         // On homepage, run trending/general engines
         return roleEngines.filter(e => 
-          ['market-signal-engine', 'market-signal-preview', 'median-lock-engine'].includes(e)
+          ['market-signal-engine', 'median-lock-engine'].includes(e)
         );
       case 'single_leg':
         // For single leg, run leg-specific engines
         return roleEngines.filter(e => 
-          ['market-signal-engine', 'market-signal-preview', 'trap-probability-engine'].includes(e)
+          ['market-signal-engine', 'trap-probability-engine'].includes(e)
         );
       case 'parlay_builder':
         // For parlay, run all available engines
