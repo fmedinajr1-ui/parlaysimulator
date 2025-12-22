@@ -1315,6 +1315,45 @@ export type Database = {
         }
         Relationships: []
       }
+      engine_status: {
+        Row: {
+          accuracy_rate: number | null
+          created_at: string | null
+          engine_name: string
+          id: string
+          is_active: boolean | null
+          last_evaluated_at: string | null
+          retirement_reason: string | null
+          roi_percentage: number | null
+          sample_size: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          accuracy_rate?: number | null
+          created_at?: string | null
+          engine_name: string
+          id?: string
+          is_active?: boolean | null
+          last_evaluated_at?: string | null
+          retirement_reason?: string | null
+          roi_percentage?: number | null
+          sample_size?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          accuracy_rate?: number | null
+          created_at?: string | null
+          engine_name?: string
+          id?: string
+          is_active?: boolean | null
+          last_evaluated_at?: string | null
+          retirement_reason?: string | null
+          roi_percentage?: number | null
+          sample_size?: number | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       extreme_movement_alerts: {
         Row: {
           alert_level: string
@@ -2618,6 +2657,126 @@ export type Database = {
           time_weight?: number | null
           trap_pressure?: number | null
           trap_score?: number | null
+          verified_at?: string | null
+        }
+        Relationships: []
+      }
+      market_signal_weights: {
+        Row: {
+          created_at: string | null
+          id: string
+          last_accuracy: number | null
+          sample_size: number | null
+          updated_at: string | null
+          weight_key: string
+          weight_value: number | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          last_accuracy?: number | null
+          sample_size?: number | null
+          updated_at?: string | null
+          weight_key: string
+          weight_value?: number | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          last_accuracy?: number | null
+          sample_size?: number | null
+          updated_at?: string | null
+          weight_key?: string
+          weight_value?: number | null
+        }
+        Relationships: []
+      }
+      market_signals: {
+        Row: {
+          confirming_books: number | null
+          created_at: string | null
+          current_point: number | null
+          current_price: number | null
+          current_ts: string | null
+          event_id: string
+          hours_to_game: number | null
+          id: string
+          juice_move_score: number | null
+          line_move_score: number | null
+          market_score: number | null
+          market_type: string | null
+          multi_book_consensus_score: number | null
+          opening_point: number | null
+          opening_price: number | null
+          opening_ts: string | null
+          outcome_correct: boolean | null
+          outcome_name: string
+          outcome_verified: boolean | null
+          player_name: string | null
+          public_fade_score: number | null
+          rationale: string | null
+          signal_label: string | null
+          sport: string | null
+          timing_sharpness_score: number | null
+          updated_at: string | null
+          verified_at: string | null
+        }
+        Insert: {
+          confirming_books?: number | null
+          created_at?: string | null
+          current_point?: number | null
+          current_price?: number | null
+          current_ts?: string | null
+          event_id: string
+          hours_to_game?: number | null
+          id?: string
+          juice_move_score?: number | null
+          line_move_score?: number | null
+          market_score?: number | null
+          market_type?: string | null
+          multi_book_consensus_score?: number | null
+          opening_point?: number | null
+          opening_price?: number | null
+          opening_ts?: string | null
+          outcome_correct?: boolean | null
+          outcome_name: string
+          outcome_verified?: boolean | null
+          player_name?: string | null
+          public_fade_score?: number | null
+          rationale?: string | null
+          signal_label?: string | null
+          sport?: string | null
+          timing_sharpness_score?: number | null
+          updated_at?: string | null
+          verified_at?: string | null
+        }
+        Update: {
+          confirming_books?: number | null
+          created_at?: string | null
+          current_point?: number | null
+          current_price?: number | null
+          current_ts?: string | null
+          event_id?: string
+          hours_to_game?: number | null
+          id?: string
+          juice_move_score?: number | null
+          line_move_score?: number | null
+          market_score?: number | null
+          market_type?: string | null
+          multi_book_consensus_score?: number | null
+          opening_point?: number | null
+          opening_price?: number | null
+          opening_ts?: string | null
+          outcome_correct?: boolean | null
+          outcome_name?: string
+          outcome_verified?: boolean | null
+          player_name?: string | null
+          public_fade_score?: number | null
+          rationale?: string | null
+          signal_label?: string | null
+          sport?: string | null
+          timing_sharpness_score?: number | null
+          updated_at?: string | null
           verified_at?: string | null
         }
         Relationships: []
