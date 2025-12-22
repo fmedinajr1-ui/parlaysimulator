@@ -17,9 +17,9 @@ interface SmartLegSwapCardProps {
   delay?: number;
 }
 
-export const SmartLegSwapCard = ({ legs, legAnalyses, delay = 0 }: SmartLegSwapCardProps) => {
+const SmartLegSwapCardContent = ({ legs, legAnalyses, delay = 0 }: SmartLegSwapCardProps) => {
   const [isExpanded, setIsExpanded] = useState(false);
-  const { swapLeg, removeLeg, addLeg } = useParlayBuilder();
+  const { removeLeg, addLeg } = useParlayBuilder();
   const { alternatives, loading, findAlternatives, clearAlternatives } = useSwapAlternatives();
 
   // Find the weakest leg based on analysis
@@ -309,4 +309,21 @@ export const SmartLegSwapCard = ({ legs, legAnalyses, delay = 0 }: SmartLegSwapC
       </Card>
     </motion.div>
   );
+};
+
+// Wrapper with error boundary to prevent crashes during animation mount/unmount
+export const SmartLegSwapCard = (props: SmartLegSwapCardProps) => {
+  const [hasError, setHasError] = useState(false);
+
+  if (hasError) {
+    return null;
+  }
+
+  try {
+    return <SmartLegSwapCardContent {...props} />;
+  } catch (error) {
+    console.error('SmartLegSwapCard render error:', error);
+    setHasError(true);
+    return null;
+  }
 };

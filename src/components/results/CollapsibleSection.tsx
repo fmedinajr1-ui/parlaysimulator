@@ -1,6 +1,6 @@
 import { ReactNode, useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 
 interface CollapsibleSectionProps {
@@ -49,20 +49,20 @@ export function CollapsibleSection({
         </div>
       )}
 
-      <AnimatePresence>
-        {isOpen && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-          >
-            <div className="px-4 pb-4 space-y-3">
-              {children}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Keep children mounted but animate visibility - prevents hook re-initialization issues */}
+      <motion.div
+        initial={false}
+        animate={{ 
+          height: isOpen ? "auto" : 0,
+          opacity: isOpen ? 1 : 0
+        }}
+        transition={{ duration: 0.2, ease: "easeInOut" }}
+        style={{ overflow: 'hidden', pointerEvents: isOpen ? 'auto' : 'none' }}
+      >
+        <div className="px-4 pb-4 space-y-3">
+          {children}
+        </div>
+      </motion.div>
     </div>
   );
 }
