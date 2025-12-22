@@ -1,17 +1,13 @@
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
-import { 
-  Calculator, Target, TrendingUp, TrendingDown, RefreshCw, 
-  ChevronDown, ChevronUp, Zap, AlertTriangle, Info
-} from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { useToast } from '@/hooks/use-toast';
+import { useState } from "react";
+import { Calculator, Database, ChevronDown, ChevronUp, RefreshCw, Activity, TrendingUp, TrendingDown, Loader2 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Button } from "@/components/ui/button";
+import { useToast } from "@/hooks/use-toast";
+import { MedianEdgeCalculator } from "./MedianEdgeCalculator";
+
+type ViewMode = "calculator" | "auto";
 
 interface MedianEdgePick {
   id: string;
@@ -22,38 +18,19 @@ interface MedianEdgePick {
   edge: number;
   recommendation: string;
   confidence_flag: string;
-  alt_line_suggestion: number | null;
-  reason_summary: string;
   m1_recent_form: number;
   m2_matchup: number;
   m3_minutes_weighted: number;
-  m4_usage: number;
-  m5_location: number;
-  adjustments: {
-    blowout_risk?: number;
-    injury_boost?: number;
-    minutes_limit?: number;
-  };
-  is_volatile: boolean;
-  std_dev: number;
-  outcome: string;
-  team_name?: string;
-  opponent_team?: string;
+  adjustments: Record<string, number>;
+  reason_summary: string;
+  created_at: string;
 }
 
-const statEmojis: Record<string, string> = {
-  'points': '🏀',
-  'rebounds': '📊',
-  'assists': '🎯',
-};
-
 export function MedianEdgePicksCard() {
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [expandedPick, setExpandedPick] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>("calculator");
   const { toast } = useToast();
 
-  const { data: picks, isLoading, refetch } = useQuery({
+  const { data: picks, isLoading, refetch, isFetching } = useQuery({
     queryKey: ['median-edge-picks'],
     queryFn: async () => {
       const today = new Date().toISOString().split('T')[0];
@@ -61,341 +38,216 @@ export function MedianEdgePicksCard() {
         .from('median_edge_picks')
         .select('*')
         .eq('game_date', today)
-        .in('recommendation', ['STRONG OVER', 'STRONG UNDER', 'LEAN OVER', 'LEAN UNDER'])
         .order('edge', { ascending: false });
       
       if (error) throw error;
-      
       return (data || []).map(pick => ({
         ...pick,
-        adjustments: (pick.adjustments as MedianEdgePick['adjustments']) || {},
+        adjustments: (pick.adjustments as Record<string, number>) || {},
       })) as MedianEdgePick[];
     },
-    staleTime: 1000 * 60 * 5,
+    enabled: viewMode === "auto"
   });
 
-  // Manual analyze - runs the full engine
-  const handleAnalyze = async () => {
-    setIsAnalyzing(true);
-    try {
-      const { data, error } = await supabase.functions.invoke('median-edge-engine', {
-        body: { action: 'analyze_auto' }
-      });
-      
-      if (error) throw error;
-      await refetch();
-      toast({
-        title: "Analysis Complete",
-        description: `Found ${data?.actionable_picks || 0} actionable picks (${data?.strong_picks || 0} strong, ${data?.lean_picks || 0} lean)`,
-      });
-    } catch (error) {
-      toast({
-        title: "Analysis Failed",
-        description: error instanceof Error ? error.message : "Please try again",
-        variant: "destructive",
-      });
-    } finally {
-      setIsAnalyzing(false);
-    }
-  };
-
-  // Refresh - just reload from database
   const handleRefresh = async () => {
-    setIsRefreshing(true);
-    try {
-      await refetch();
-      toast({
-        title: "Picks Refreshed",
-        description: "Latest median edge picks loaded.",
-      });
-    } catch (error) {
-      toast({
-        title: "Refresh Failed",
-        description: error instanceof Error ? error.message : "Please try again",
-        variant: "destructive",
-      });
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
-
-  const getRecommendationStyle = (rec: string) => {
-    if (rec.includes('STRONG OVER')) return 'bg-green-500/20 text-green-400 border-green-500/30';
-    if (rec.includes('STRONG UNDER')) return 'bg-red-500/20 text-red-400 border-red-500/30';
-    if (rec.includes('LEAN OVER')) return 'bg-green-500/10 text-green-300 border-green-500/20';
-    if (rec.includes('LEAN UNDER')) return 'bg-red-500/10 text-red-300 border-red-500/20';
-    return 'bg-muted text-muted-foreground';
+    await refetch();
+    toast({
+      title: "Refreshed",
+      description: "Picks have been refreshed from the database."
+    });
   };
 
   const strongPicks = picks?.filter(p => p.recommendation.includes('STRONG')) || [];
   const leanPicks = picks?.filter(p => p.recommendation.includes('LEAN')) || [];
 
-  if (isLoading) {
-    return (
-      <Card className="border-cyan-500/30 bg-gradient-to-br from-cyan-500/5 to-cyan-500/10">
-        <CardHeader className="pb-2">
-          <Skeleton className="h-6 w-48" />
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <Skeleton className="h-20 w-full" />
-          <Skeleton className="h-20 w-full" />
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (!picks || picks.length === 0) {
-    return (
-      <Card className="border-cyan-500/30 bg-gradient-to-br from-cyan-500/5 to-cyan-500/10">
-        <CardHeader className="pb-2">
-          <CardTitle className="flex items-center gap-2 text-lg">
-            <Calculator className="w-5 h-5 text-cyan-500" />
-            5-Median Edge Engine
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="text-center py-6">
-          <p className="text-muted-foreground mb-4">No edge picks available yet for today</p>
-          <div className="flex items-center justify-center gap-2">
-            <Button onClick={handleAnalyze} disabled={isAnalyzing} size="sm" className="bg-cyan-600 hover:bg-cyan-700">
-              {isAnalyzing ? <RefreshCw className="w-4 h-4 animate-spin mr-2" /> : <Zap className="w-4 h-4 mr-2" />}
-              {isAnalyzing ? 'Analyzing...' : 'Run Analysis'}
-            </Button>
-            <Button onClick={handleRefresh} disabled={isRefreshing} size="sm" variant="outline">
-              {isRefreshing ? <RefreshCw className="w-4 h-4 animate-spin mr-2" /> : <RefreshCw className="w-4 h-4 mr-2" />}
-              Refresh
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
   return (
-    <Card className="border-cyan-500/30 bg-gradient-to-br from-cyan-500/5 via-background to-cyan-500/10 overflow-hidden">
-      <CardHeader className="pb-2 border-b border-border/50">
-        <div className="flex items-center justify-between">
-          <CardTitle className="flex items-center gap-2 text-lg">
-            <Calculator className="w-5 h-5 text-cyan-500" />
-            5-Median Edge Engine
-          </CardTitle>
-          <div className="flex items-center gap-2">
-            <Button 
-              variant="ghost" 
-              size="sm"
-              onClick={handleAnalyze}
-              disabled={isAnalyzing}
-              className="h-7 px-2 text-xs hover:bg-cyan-500/10"
-            >
-              {isAnalyzing ? <RefreshCw className="w-3 h-3 animate-spin mr-1" /> : <Zap className="w-3 h-3 mr-1" />}
-              {isAnalyzing ? 'Running...' : 'Analyze'}
-            </Button>
-            <Button 
-              variant="ghost" 
-              size="icon" 
-              onClick={handleRefresh}
-              disabled={isRefreshing}
-              className="h-7 w-7 hover:bg-cyan-500/10"
-            >
-              <RefreshCw className={cn("w-4 h-4", isRefreshing && "animate-spin")} />
-            </Button>
-            <Badge variant="outline" className="text-xs">
-              {picks.length} picks
-            </Badge>
-          </div>
-        </div>
-        
-        {/* Summary Stats */}
-        <div className="flex items-center gap-4 mt-2 text-sm">
-          <div className="flex items-center gap-1">
-            <Target className="w-4 h-4 text-green-500" />
-            <span className="text-muted-foreground">Strong:</span>
-            <span className="font-semibold text-green-500">{strongPicks.length}</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <TrendingUp className="w-4 h-4 text-yellow-500" />
-            <span className="text-muted-foreground">Lean:</span>
-            <span className="font-semibold text-yellow-500">{leanPicks.length}</span>
-          </div>
-        </div>
-      </CardHeader>
-
-      <CardContent className="pt-4 space-y-3">
-        {/* Strong Picks */}
-        {strongPicks.length > 0 && (
-          <div className="space-y-2">
-            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Strong Plays (+3 Edge)</h4>
-            {strongPicks.map((pick) => (
-              <PickCard 
-                key={pick.id} 
-                pick={pick} 
-                isExpanded={expandedPick === pick.id}
-                onToggle={() => setExpandedPick(expandedPick === pick.id ? null : pick.id)}
-                getRecommendationStyle={getRecommendationStyle}
-              />
-            ))}
-          </div>
-        )}
-
-        {/* Lean Picks */}
-        {leanPicks.length > 0 && (
-          <div className="space-y-2">
-            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Lean Plays (+1.5 Edge)</h4>
-            {leanPicks.slice(0, 3).map((pick) => (
-              <PickCard 
-                key={pick.id} 
-                pick={pick} 
-                isExpanded={expandedPick === pick.id}
-                onToggle={() => setExpandedPick(expandedPick === pick.id ? null : pick.id)}
-                getRecommendationStyle={getRecommendationStyle}
-              />
-            ))}
-          </div>
-        )}
-
-        {/* Engine Info */}
-        <div className="flex items-center gap-2 pt-2 text-xs text-muted-foreground">
-          <Info className="w-3 h-3" />
-          <span>Weighted medians: Form 25% • Matchup 20% • Minutes 20% • Usage 20% • Location 15%</span>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function PickCard({ 
-  pick, 
-  isExpanded, 
-  onToggle,
-  getRecommendationStyle 
-}: { 
-  pick: MedianEdgePick;
-  isExpanded: boolean;
-  onToggle: () => void;
-  getRecommendationStyle: (rec: string) => string;
-}) {
-  const isOver = pick.recommendation.includes('OVER');
-  const statEmoji = statEmojis[pick.stat_type] || '📊';
-
-  return (
-    <div className="p-3 rounded-lg bg-muted/30 border border-border/50">
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-lg">{statEmoji}</span>
-            <span className="font-medium text-sm truncate">{pick.player_name}</span>
-            {pick.confidence_flag === 'JUICE_LAG_SHARP' && (
-              <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-yellow-500/20 text-yellow-400 border-yellow-500/30">
-                <Zap className="w-2.5 h-2.5 mr-0.5" />
-                SHARP
-              </Badge>
-            )}
-            {pick.is_volatile && (
-              <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-orange-500/20 text-orange-400 border-orange-500/30">
-                <AlertTriangle className="w-2.5 h-2.5 mr-0.5" />
-                VOL
-              </Badge>
-            )}
-          </div>
-          <p className="text-sm text-muted-foreground">
-            {pick.stat_type.charAt(0).toUpperCase() + pick.stat_type.slice(1)} {pick.sportsbook_line}
-          </p>
-          {pick.team_name && (
-            <p className="text-xs text-muted-foreground/70">
-              {pick.team_name} {pick.opponent_team ? `vs ${pick.opponent_team}` : ''}
-            </p>
-          )}
-        </div>
-        <div className="text-right shrink-0">
-          <Badge variant="outline" className={cn("text-xs mb-1", getRecommendationStyle(pick.recommendation))}>
-            {isOver ? <TrendingUp className="w-3 h-3 mr-1" /> : <TrendingDown className="w-3 h-3 mr-1" />}
-            {pick.recommendation}
-          </Badge>
-          <div className={cn(
-            "text-sm font-semibold",
-            pick.edge >= 3 ? "text-green-500" : 
-            pick.edge >= 1.5 ? "text-yellow-500" : "text-muted-foreground"
-          )}>
-            {pick.edge > 0 ? '+' : ''}{pick.edge.toFixed(1)} edge
-          </div>
-        </div>
+    <div className="space-y-4">
+      {/* Mode Toggle */}
+      <div className="flex items-center justify-center">
+        <ToggleGroup 
+          type="single" 
+          value={viewMode} 
+          onValueChange={(v) => v && setViewMode(v as ViewMode)}
+          className="bg-background/50 border border-border/50 rounded-xl p-1"
+        >
+          <ToggleGroupItem 
+            value="calculator" 
+            className="px-4 py-2 data-[state=on]:bg-cyan-500/20 data-[state=on]:text-cyan-300 rounded-lg transition-all gap-2"
+          >
+            <Calculator className="w-4 h-4" />
+            <span>Calculator</span>
+          </ToggleGroupItem>
+          <ToggleGroupItem 
+            value="auto" 
+            className="px-4 py-2 data-[state=on]:bg-primary/20 data-[state=on]:text-primary rounded-lg transition-all gap-2"
+          >
+            <Database className="w-4 h-4" />
+            <span>Auto Picks</span>
+          </ToggleGroupItem>
+        </ToggleGroup>
       </div>
 
-      {/* Collapsible Details */}
-      <Collapsible open={isExpanded} onOpenChange={onToggle}>
-        <CollapsibleTrigger asChild>
-          <Button variant="ghost" size="sm" className="w-full mt-2 h-6 text-xs text-muted-foreground">
-            {isExpanded ? <ChevronUp className="w-3 h-3 mr-1" /> : <ChevronDown className="w-3 h-3 mr-1" />}
-            {isExpanded ? 'Hide Details' : 'Show 5-Median Breakdown'}
-          </Button>
-        </CollapsibleTrigger>
-        <CollapsibleContent className="mt-2 space-y-2">
-          {/* True Median vs Line */}
-          <div className="flex items-center justify-between p-2 rounded bg-background/50">
-            <span className="text-xs text-muted-foreground">True Median</span>
-            <span className="font-semibold text-cyan-400">{pick.true_median.toFixed(1)}</span>
+      {/* Calculator Mode */}
+      {viewMode === "calculator" && <MedianEdgeCalculator />}
+
+      {/* Auto Mode */}
+      {viewMode === "auto" && (
+        <div className="relative overflow-hidden rounded-2xl border border-primary/30 bg-gradient-to-br from-card/90 via-card/70 to-primary/10 backdrop-blur-sm">
+          <div className="absolute -top-20 -right-20 w-40 h-40 bg-primary/10 rounded-full blur-3xl" />
+          
+          <div className="relative p-5 space-y-4">
+            {/* Header */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-primary/20 border border-primary/30">
+                  <Activity className="w-5 h-5 text-primary" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-lg">Auto-Generated Picks</h3>
+                  <p className="text-xs text-muted-foreground">AI-analyzed median edge picks</p>
+                </div>
+              </div>
+              <Button
+                onClick={handleRefresh}
+                disabled={isFetching}
+                variant="outline"
+                size="sm"
+                className="gap-2"
+              >
+                {isFetching ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                Refresh
+              </Button>
+            </div>
+
+            {/* Loading State */}
+            {isLoading && (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-8 h-8 animate-spin text-primary" />
+              </div>
+            )}
+
+            {/* Empty State */}
+            {!isLoading && (!picks || picks.length === 0) && (
+              <div className="text-center py-12">
+                <Database className="w-12 h-12 text-muted-foreground mx-auto mb-3 opacity-50" />
+                <p className="text-muted-foreground">No auto picks available today.</p>
+                <p className="text-xs text-muted-foreground mt-1">Use the calculator to manually analyze props.</p>
+              </div>
+            )}
+
+            {/* Picks List */}
+            {!isLoading && picks && picks.length > 0 && (
+              <div className="space-y-4">
+                {/* Stats Summary */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-center">
+                    <p className="text-2xl font-bold text-emerald-400">{strongPicks.length}</p>
+                    <p className="text-xs text-muted-foreground">Strong Picks</p>
+                  </div>
+                  <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-center">
+                    <p className="text-2xl font-bold text-amber-400">{leanPicks.length}</p>
+                    <p className="text-xs text-muted-foreground">Lean Picks</p>
+                  </div>
+                </div>
+
+                {/* Strong Picks */}
+                {strongPicks.length > 0 && (
+                  <div className="space-y-2">
+                    <h4 className="text-sm font-semibold text-emerald-400 flex items-center gap-2">
+                      <TrendingUp className="w-4 h-4" />
+                      Strong Picks
+                    </h4>
+                    {strongPicks.map((pick) => (
+                      <PickCard key={pick.id} pick={pick} />
+                    ))}
+                  </div>
+                )}
+
+                {/* Lean Picks */}
+                {leanPicks.length > 0 && (
+                  <div className="space-y-2">
+                    <h4 className="text-sm font-semibold text-amber-400 flex items-center gap-2">
+                      <TrendingDown className="w-4 h-4" />
+                      Lean Picks
+                    </h4>
+                    {leanPicks.map((pick) => (
+                      <PickCard key={pick.id} pick={pick} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-
-          {/* 5 Medians */}
-          <div className="grid grid-cols-5 gap-1 text-center">
-            <div className="p-1.5 rounded bg-background/30">
-              <div className="text-[10px] text-muted-foreground">Form</div>
-              <div className="text-xs font-medium">{pick.m1_recent_form?.toFixed(1) || '-'}</div>
-            </div>
-            <div className="p-1.5 rounded bg-background/30">
-              <div className="text-[10px] text-muted-foreground">Match</div>
-              <div className="text-xs font-medium">{pick.m2_matchup?.toFixed(1) || '-'}</div>
-            </div>
-            <div className="p-1.5 rounded bg-background/30">
-              <div className="text-[10px] text-muted-foreground">Mins</div>
-              <div className="text-xs font-medium">{pick.m3_minutes_weighted?.toFixed(1) || '-'}</div>
-            </div>
-            <div className="p-1.5 rounded bg-background/30">
-              <div className="text-[10px] text-muted-foreground">Usage</div>
-              <div className="text-xs font-medium">{pick.m4_usage?.toFixed(1) || '-'}</div>
-            </div>
-            <div className="p-1.5 rounded bg-background/30">
-              <div className="text-[10px] text-muted-foreground">Loc</div>
-              <div className="text-xs font-medium">{pick.m5_location?.toFixed(1) || '-'}</div>
-            </div>
-          </div>
-
-          {/* Adjustments */}
-          {(pick.adjustments?.blowout_risk || pick.adjustments?.injury_boost || pick.adjustments?.minutes_limit) && (
-            <div className="flex flex-wrap gap-1">
-              {pick.adjustments?.blowout_risk && (
-                <Badge variant="outline" className="text-[10px] bg-red-500/10 text-red-400">
-                  Blowout {pick.adjustments.blowout_risk}
-                </Badge>
-              )}
-              {pick.adjustments?.injury_boost && (
-                <Badge variant="outline" className="text-[10px] bg-green-500/10 text-green-400">
-                  Injury Boost +{pick.adjustments.injury_boost}
-                </Badge>
-              )}
-              {pick.adjustments?.minutes_limit && (
-                <Badge variant="outline" className="text-[10px] bg-orange-500/10 text-orange-400">
-                  Mins Limit {pick.adjustments.minutes_limit}
-                </Badge>
-              )}
-            </div>
-          )}
-
-          {/* Reason */}
-          <p className="text-xs text-muted-foreground bg-muted/30 p-2 rounded">
-            {pick.reason_summary}
-          </p>
-
-          {/* Alt Line Suggestion */}
-          {pick.alt_line_suggestion && (
-            <div className="flex items-center gap-2 p-2 rounded bg-yellow-500/10 border border-yellow-500/20">
-              <AlertTriangle className="w-3 h-3 text-yellow-500" />
-              <span className="text-xs text-yellow-400">
-                Alt line suggestion: {pick.alt_line_suggestion.toFixed(1)}
-              </span>
-            </div>
-          )}
-        </CollapsibleContent>
-      </Collapsible>
+        </div>
+      )}
     </div>
   );
 }
+
+function PickCard({ pick }: { pick: MedianEdgePick }) {
+  const [expanded, setExpanded] = useState(false);
+  
+  const isOver = pick.recommendation.includes('OVER');
+  const isStrong = pick.recommendation.includes('STRONG');
+  
+  const colorClasses = isOver
+    ? isStrong ? 'border-emerald-500/50 bg-emerald-500/10' : 'border-emerald-500/30 bg-emerald-500/5'
+    : isStrong ? 'border-red-500/50 bg-red-500/10' : 'border-red-500/30 bg-red-500/5';
+  
+  const textColor = isOver ? 'text-emerald-400' : 'text-red-400';
+
+  return (
+    <div className={`rounded-xl border ${colorClasses} overflow-hidden transition-all`}>
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full p-3 flex items-center justify-between text-left"
+      >
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold truncate">{pick.player_name}</span>
+            <span className="text-xs text-muted-foreground capitalize">{pick.stat_type}</span>
+          </div>
+          <div className="flex items-center gap-3 mt-1">
+            <span className="text-sm">
+              Line: <span className="font-mono">{pick.sportsbook_line}</span>
+            </span>
+            <span className="text-sm">
+              Median: <span className="font-mono text-cyan-400">{pick.true_median}</span>
+            </span>
+            <span className={`text-sm font-semibold ${textColor}`}>
+              {pick.edge > 0 ? '+' : ''}{pick.edge}
+            </span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className={`px-2 py-1 rounded-lg text-xs font-semibold ${colorClasses} ${textColor}`}>
+            {pick.recommendation}
+          </span>
+          {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+        </div>
+      </button>
+      
+      {expanded && (
+        <div className="px-3 pb-3 pt-0 space-y-2 border-t border-border/20">
+          <p className="text-sm text-muted-foreground">{pick.reason_summary}</p>
+          <div className="grid grid-cols-3 gap-2 text-xs">
+            <div className="text-center p-2 rounded-lg bg-background/30">
+              <p className="text-muted-foreground">Form</p>
+              <p className="font-mono">{pick.m1_recent_form?.toFixed(1) || '-'}</p>
+            </div>
+            <div className="text-center p-2 rounded-lg bg-background/30">
+              <p className="text-muted-foreground">Matchup</p>
+              <p className="font-mono">{pick.m2_matchup?.toFixed(1) || '-'}</p>
+            </div>
+            <div className="text-center p-2 rounded-lg bg-background/30">
+              <p className="text-muted-foreground">Minutes</p>
+              <p className="font-mono">{pick.m3_minutes_weighted?.toFixed(1) || '-'}</p>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default MedianEdgePicksCard;
