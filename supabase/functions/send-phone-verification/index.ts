@@ -166,19 +166,37 @@ serve(async (req) => {
       );
     }
 
-    // Get Twilio credentials for direct SMS
-    const accountSid = Deno.env.get('TWILIO_ACCOUNT_SID');
-    const authToken = Deno.env.get('TWILIO_AUTH_TOKEN');
-    const fromNumber = Deno.env.get('TWILIO_PHONE_NUMBER');
+    // Get Twilio credentials for direct SMS (trim to remove any whitespace)
+    const accountSid = Deno.env.get('TWILIO_ACCOUNT_SID')?.trim();
+    const authToken = Deno.env.get('TWILIO_AUTH_TOKEN')?.trim();
+    const fromNumber = Deno.env.get('TWILIO_PHONE_NUMBER')?.trim();
+
+    logStep('Twilio credentials check', { 
+      hasAccountSid: !!accountSid, 
+      accountSidLength: accountSid?.length,
+      accountSidPrefix: accountSid?.substring(0, 4),
+      hasAuthToken: !!authToken, 
+      authTokenLength: authToken?.length,
+      hasFromNumber: !!fromNumber,
+      fromNumber: fromNumber
+    });
 
     if (!accountSid || !authToken || !fromNumber) {
-      logStep('Missing Twilio credentials', { 
-        hasAccountSid: !!accountSid, 
-        hasAuthToken: !!authToken, 
-        hasFromNumber: !!fromNumber 
-      });
+      logStep('Missing Twilio credentials');
       return new Response(
         JSON.stringify({ error: 'SMS service not configured' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Validate Account SID format (should start with AC and be 34 chars)
+    if (!accountSid.startsWith('AC') || accountSid.length !== 34) {
+      logStep('Invalid Account SID format', { 
+        startsWithAC: accountSid.startsWith('AC'),
+        length: accountSid.length 
+      });
+      return new Response(
+        JSON.stringify({ error: 'Invalid Twilio Account SID format. Should start with AC and be 34 characters.' }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
