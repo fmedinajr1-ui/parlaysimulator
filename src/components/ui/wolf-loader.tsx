@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import wolfLoaderImage from "@/assets/wolf-loader.png";
+import { ParlayFarmLogo } from "@/components/ParlayFarmLogo";
 
 interface WolfLoaderProps {
   size?: 'sm' | 'md' | 'lg' | 'xl';
@@ -7,23 +7,19 @@ interface WolfLoaderProps {
   className?: string;
 }
 
-export function WolfLoader({ size = 'md', text, className }: WolfLoaderProps) {
-  const sizeClasses = {
-    sm: 'h-12 w-12',
-    md: 'h-20 w-20',
-    lg: 'h-28 w-28',
-    xl: 'h-40 w-40'
-  };
+const sizeMap = {
+  sm: 'sm' as const,
+  md: 'md' as const,
+  lg: 'lg' as const,
+  xl: 'xl' as const
+};
 
+export function WolfLoader({ size = 'md', text, className }: WolfLoaderProps) {
   return (
     <div className={cn("flex flex-col items-center justify-center gap-3", className)}>
-      <img 
-        src={wolfLoaderImage} 
-        alt="Loading..." 
-        className={cn(
-          sizeClasses[size], 
-          "animate-pulse drop-shadow-[0_0_15px_hsl(var(--primary)/0.5)]"
-        )}
+      <ParlayFarmLogo 
+        size={sizeMap[size]} 
+        className="animate-logo-glow"
       />
       {text && (
         <p className="text-sm text-muted-foreground animate-pulse font-medium">
