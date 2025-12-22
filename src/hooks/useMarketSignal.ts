@@ -90,6 +90,9 @@ export const useMarketSignals = (legs: Array<{ eventId?: string; description: st
   const [signals, setSignals] = useState<Map<string, MarketSignal>>(new Map());
   const [isLoading, setIsLoading] = useState(false);
 
+  // Create a stable key to prevent infinite re-renders
+  const legsKey = JSON.stringify(legs.map(l => l.eventId).filter(Boolean).sort());
+
   useEffect(() => {
     const fetchSignals = async () => {
       const eventIds = legs
@@ -138,7 +141,7 @@ export const useMarketSignals = (legs: Array<{ eventId?: string; description: st
     };
 
     fetchSignals();
-  }, [legs]);
+  }, [legsKey, legs]);
 
   const getSignalForLeg = useCallback((leg: { eventId?: string; description: string; playerName?: string }): MarketSignal | null => {
     if (!leg.eventId) return null;
