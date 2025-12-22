@@ -144,11 +144,20 @@ export function PhoneVerification({ userId, onVerified, onBack }: PhoneVerificat
           setStep('otp');
         }
       }
-      toast({
-        title: "Failed to Send Code",
-        description: err.message || "Please try again.",
-        variant: "destructive",
-      });
+      // Handle already registered phone number
+      if (err.message?.includes('already') && err.message?.includes('created')) {
+        toast({
+          title: "Account Already Exists",
+          description: "An account with this phone number has already been created. Please sign in instead.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Failed to Send Code",
+          description: err.message || "Please try again.",
+          variant: "destructive",
+        });
+      }
     } finally {
       setIsLoading(false);
     }
