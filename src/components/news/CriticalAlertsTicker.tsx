@@ -2,7 +2,7 @@ import React from 'react';
 import { useCriticalAlerts } from '@/hooks/useCriticalAlerts';
 import { AlertTriangle, TrendingUp, Activity } from 'lucide-react';
 import { cn } from '@/lib/utils';
-
+import { formatMatchupAbbreviation } from '@/lib/team-abbreviations';
 const getAlertIcon = (newsType: string) => {
   switch (newsType) {
     case 'injury':
@@ -64,7 +64,7 @@ export function CriticalAlertsTicker() {
                 {alert.headline}
               </span>
               <span className="text-muted-foreground text-xs">
-                {alert.home_team} vs {alert.away_team}
+                {formatMatchupAbbreviation(alert.away_team, alert.home_team, alert.sport)}
               </span>
               <span className="text-border">•</span>
             </div>
