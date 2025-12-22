@@ -30,7 +30,7 @@ import {
   ArrowLeft,
   Target,
   Sparkles,
-  Phone
+  Mail
 } from 'lucide-react';
 import { AILearningDashboard } from '@/components/admin/AILearningDashboard';
 import { SharpMoneyPanel } from '@/components/admin/SharpMoneyPanel';
@@ -400,13 +400,13 @@ export default function Admin() {
             </CardHeader>
             <CardContent className="pt-0">
               <Button 
-                onClick={() => navigate('/verify-phone?test=true')}
+                onClick={() => navigate('/verify-email?test=true')}
                 variant="outline"
                 size="sm"
                 className="gap-2"
               >
-                <Phone className="w-4 h-4" />
-                Test Phone Verification
+                <Mail className="w-4 h-4" />
+                Test Email Verification
               </Button>
             </CardContent>
           </Card>
@@ -493,12 +493,12 @@ export default function Admin() {
               </CardHeader>
               <CardContent>
                 <Button 
-                  onClick={() => navigate('/verify-phone?test=true')}
+                  onClick={() => navigate('/verify-email?test=true')}
                   variant="outline"
                   className="gap-2"
                 >
-                  <Phone className="w-4 h-4" />
-                  Test Phone Verification
+                  <Mail className="w-4 h-4" />
+                  Test Email Verification
                 </Button>
               </CardContent>
             </Card>

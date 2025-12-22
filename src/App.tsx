@@ -12,7 +12,7 @@ import { UniversalParlayBuilder } from "@/components/parlay/UniversalParlayBuild
 import { WolfLoadingOverlay } from "@/components/ui/wolf-loading-overlay";
 import { AnimatePresence, motion } from "framer-motion";
 import { PilotRouteGuard } from "@/components/PilotRouteGuard";
-import { PhoneVerificationGuard } from "@/components/PhoneVerificationGuard";
+import { EmailVerificationGuard } from "@/components/EmailVerificationGuard";
 import { PWAUpdatePrompt } from "@/components/PWAUpdatePrompt";
 import { RouteErrorBoundary } from "@/components/RouteErrorBoundary";
 import { useRoutePersistence } from "@/hooks/useRoutePersistence";
@@ -45,7 +45,7 @@ const FanDuelTraps = React.lazy(() => import("./pages/FanDuelTraps"));
 const AllSportsTracker = React.lazy(() => import("./pages/AllSportsTracker"));
 const Kelly = React.lazy(() => import("./pages/Kelly"));
 const MedianLock = React.lazy(() => import("./pages/MedianLock"));
-const VerifyPhone = React.lazy(() => import("./pages/VerifyPhone"));
+const VerifyEmail = React.lazy(() => import("./pages/VerifyEmail"));
 const Pools = React.lazy(() => import("./pages/Pools"));
 const PoolDetail = React.lazy(() => import("./pages/PoolDetail"));
 const JoinPool = React.lazy(() => import("./pages/JoinPool"));
@@ -114,8 +114,8 @@ function AnimatedRoutes() {
               <Route path="/tracker" element={<AllSportsTracker />} />
               <Route path="/kelly" element={<Kelly />} />
               <Route path="/median-lock" element={<MedianLock />} />
-              <Route path="/verify-phone" element={<VerifyPhone />} />
-              <Route path="/verify-email" element={<Navigate to="/auth" replace />} />
+              <Route path="/verify-email" element={<VerifyEmail />} />
+              <Route path="/verify-phone" element={<Navigate to="/verify-email" replace />} />
               <Route path="/pools" element={<Pools />} />
               <Route path="/pools/:id" element={<PoolDetail />} />
               <Route path="/pools/join/:inviteCode" element={<JoinPool />} />
@@ -143,7 +143,7 @@ function AppContent() {
   }, []);
   
   return (
-    <PhoneVerificationGuard>
+    <EmailVerificationGuard>
       <PilotRouteGuard>
         <Toaster />
         <Sonner />
@@ -153,7 +153,7 @@ function AppContent() {
         {isMobile && <BottomNav />}
         <PWAInstallPrompt />
       </PilotRouteGuard>
-    </PhoneVerificationGuard>
+    </EmailVerificationGuard>
   );
 }
 
