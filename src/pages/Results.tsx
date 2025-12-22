@@ -401,6 +401,8 @@ const Results = () => {
             probability={simulation.combinedProbability} 
             degenerateLevel={simulation.degenerateLevel}
             delay={0}
+            simulation={simulation}
+            aiAnalysis={aiAnalysis}
           />
           
           {/* Shareable Scorecard with Celebration Effect */}
