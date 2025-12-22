@@ -119,12 +119,34 @@ export function useSmartAnalyze(options: UseSmartAnalyzeOptions = {}) {
     }
   }, [getEnginesForRole]);
 
+  // Build engine-specific payload
+  const buildEnginePayload = (engineName: string, basePayload: any): any => {
+    switch (engineName) {
+      case 'median-lock-engine':
+        return { action: 'get_candidates', date: new Date().toISOString().split('T')[0] };
+      case 'market-signal-engine':
+        return { action: 'scan', ...basePayload };
+      case 'trap-probability-engine':
+        return { action: 'analyze', ...basePayload };
+      case 'sharp-engine-v2':
+        return { action: 'analyze', ...basePayload };
+      case 'god-mode-upset-engine':
+        return { action: 'run' };
+      case 'coach-tendencies-engine':
+        return { action: 'analyze', ...basePayload };
+      default:
+        return basePayload;
+    }
+  };
+
   // Run a single engine
   const runEngine = async (engineName: string, payload: any): Promise<EngineResult> => {
     const startTime = Date.now();
     try {
+      const enginePayload = buildEnginePayload(engineName, payload);
+      
       const { data, error } = await supabase.functions.invoke(engineName, {
-        body: payload,
+        body: enginePayload,
       });
 
       if (error) {
