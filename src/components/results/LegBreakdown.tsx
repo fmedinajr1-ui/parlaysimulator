@@ -10,6 +10,7 @@ import { PlayerNewsContextCard } from "./PlayerNewsContextCard";
 import { usePlayerContext } from "@/hooks/usePlayerContext";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
+import { abbreviateTeamsInDescription, extractMatchupFromDescription } from "@/lib/team-abbreviations";
 
 interface LegBreakdownProps {
   legs: ParlayLeg[];
@@ -79,6 +80,10 @@ export function LegBreakdown({ legs, legAnalyses, delay = 0 }: LegBreakdownProps
           const hitRatePercent = analysis?.hitRatePercent;
           const researchSummary = analysis?.researchSummary;
           
+          // Get abbreviated description and matchup
+          const abbreviatedDescription = abbreviateTeamsInDescription(leg.description, analysis?.sport);
+          const matchupInfo = extractMatchupFromDescription(leg.description, analysis?.sport);
+          
           return (
             <div 
               key={leg.id}
@@ -101,7 +106,12 @@ export function LegBreakdown({ legs, legAnalyses, delay = 0 }: LegBreakdownProps
                         sport={analysis?.sport} 
                         betType={analysis?.betType}
                       />
-                      <p className="font-medium text-foreground truncate">{leg.description}</p>
+                      <p className="font-medium text-foreground truncate">{abbreviatedDescription}</p>
+                      {matchupInfo && (
+                        <span className="text-xs text-muted-foreground shrink-0">
+                          {matchupInfo.matchup}
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-2 mt-1 flex-wrap">
                       <span className={`text-xs px-2 py-0.5 rounded-full border ${riskColors[leg.riskLevel]}`}>

@@ -1,7 +1,6 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useState, useMemo } from "react";
 import { ProbabilityCard } from "@/components/results/ProbabilityCard";
-import { DegenerateMeter } from "@/components/results/DegenerateMeter";
 import { TrashTalkThread } from "@/components/results/TrashTalkThread";
 import { SimulationHighlights } from "@/components/results/SimulationHighlights";
 import { BankrollCard } from "@/components/results/BankrollCard";
@@ -441,13 +440,6 @@ const Results = () => {
             />
           </SafeComponent>
           
-          <SafeComponent name="DegenerateMeter">
-            <DegenerateMeter 
-              probability={simulation.combinedProbability}
-              degenerateLevel={simulation.degenerateLevel}
-              delay={100}
-            />
-          </SafeComponent>
 
           {/* Consolidated AI Verdict - Shows pick/fade/caution counts and overall recommendation */}
           <SafeComponent name="ConsolidatedVerdictCard">

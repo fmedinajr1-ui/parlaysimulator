@@ -12,6 +12,7 @@ import {
   Clock
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
+import { abbreviateTeamsInDescription, getTeamAbbreviation, extractMatchupFromDescription } from '@/lib/team-abbreviations';
 
 interface TrackerPick {
   id: string;
@@ -70,6 +71,11 @@ export function LivePickCard({ pick }: { pick: TrackerPick }) {
 
   const timeAgo = formatDistanceToNow(new Date(pick.created_at), { addSuffix: true });
 
+  // Get abbreviated description and team
+  const abbreviatedDescription = abbreviateTeamsInDescription(pick.pick_description, pick.sport);
+  const teamAbbrev = pick.team_name ? getTeamAbbreviation(pick.team_name, pick.sport) : null;
+  const matchupInfo = extractMatchupFromDescription(pick.pick_description, pick.sport);
+
   return (
     <Card className={`${engineConfig.bg} border-l-4 hover:bg-accent/50 transition-colors`} 
           style={{ borderLeftColor: `hsl(var(--${engineConfig.color.replace('text-', '')}))` }}>
@@ -85,11 +91,21 @@ export function LivePickCard({ pick }: { pick: TrackerPick }) {
               <Badge variant="outline" className="text-[10px] px-1.5 py-0">
                 {pick.sport}
               </Badge>
+              {teamAbbrev && (
+                <span className="text-[10px] font-medium text-foreground/70">
+                  {teamAbbrev}
+                </span>
+              )}
+              {matchupInfo && !teamAbbrev && (
+                <span className="text-[10px] font-medium text-foreground/70">
+                  {matchupInfo.matchup}
+                </span>
+              )}
             </div>
 
             {/* Pick Description */}
             <p className="text-sm font-medium line-clamp-2 mb-1">
-              {pick.pick_description}
+              {abbreviatedDescription}
             </p>
 
             {/* Details Row */}
