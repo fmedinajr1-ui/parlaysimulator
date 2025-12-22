@@ -390,6 +390,27 @@ export default function Admin() {
             </Card>
           </div>
 
+          {/* Quick Actions */}
+          <Card className="bg-card/50 border-primary/20">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Settings className="w-4 h-4" />
+                Quick Actions
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <Button 
+                onClick={() => navigate('/verify-phone?test=true')}
+                variant="outline"
+                size="sm"
+                className="gap-2"
+              >
+                <Phone className="w-4 h-4" />
+                Test Phone Verification
+              </Button>
+            </CardContent>
+          </Card>
+
           {/* Section Navigation Cards */}
           <div className="space-y-3">
             <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
