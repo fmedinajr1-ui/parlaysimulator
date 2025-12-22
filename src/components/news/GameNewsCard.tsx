@@ -5,12 +5,12 @@ import { ActivityPulse } from "./ActivityPulse";
 import { NewsItemRow } from "./NewsItemRow";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { format } from "date-fns";
-import type { GameWithNews } from "@/hooks/useGameNewsStream";
+import type { GameWithNews, NewsItem } from "@/hooks/useGameNewsStream";
 
 interface GameNewsCardProps {
   game: GameWithNews;
   defaultExpanded?: boolean;
-  onNewsClick?: (newsId: string) => void;
+  onNewsClick?: (item: NewsItem) => void;
 }
 
 const SPORT_ICONS: Record<string, string> = {
@@ -90,7 +90,7 @@ export function GameNewsCard({ game, defaultExpanded = false, onNewsClick }: Gam
               <NewsItemRow 
                 key={item.id} 
                 item={item} 
-                onClick={() => onNewsClick?.(item.id)}
+                onClick={() => onNewsClick?.(item)}
               />
             ))}
           </div>
