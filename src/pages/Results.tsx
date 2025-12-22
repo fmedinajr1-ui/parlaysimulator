@@ -27,6 +27,7 @@ import { EnsembleConsensusCard } from "@/components/results/EnsembleConsensusCar
 import { CoachingInsightsCard } from "@/components/results/CoachingInsightsCard";
 import { CollapsibleSection } from "@/components/results/CollapsibleSection";
 import { ConsolidatedVerdictCard } from "@/components/results/ConsolidatedVerdictCard";
+import { SafeComponent } from "@/components/results/ComponentErrorBoundary";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, RotateCcw, Save, Loader2, LogIn, BarChart3, Zap, FileText } from "lucide-react";
 import { ParlaySimulation, ParlayAnalysis, LegAnalysis } from "@/types/parlay";
@@ -397,254 +398,308 @@ const Results = () => {
         {/* Results Feed - Reorganized for better hierarchy */}
         <div className="space-y-3">
           {/* === SECTION 1: QUICK SUMMARY (Always Visible) === */}
-          <ProbabilityCard 
-            probability={simulation.combinedProbability} 
-            degenerateLevel={simulation.degenerateLevel}
-            delay={0}
-            simulation={simulation}
-            aiAnalysis={aiAnalysis}
-          />
+          <SafeComponent name="ProbabilityCard">
+            <ProbabilityCard 
+              probability={simulation.combinedProbability} 
+              degenerateLevel={simulation.degenerateLevel}
+              delay={0}
+              simulation={simulation}
+              aiAnalysis={aiAnalysis}
+            />
+          </SafeComponent>
           
           {/* Shareable Scorecard with Celebration Effect */}
-          <CelebrationEffect isActive={(() => {
-            // Check if all legs are PICK/LEAN
-            if (!aiAnalysis?.legAnalyses) return false;
-            return simulation.legs.every((_, idx) => {
-              const analysis = aiAnalysis.legAnalyses?.find((la) => la.legIndex === idx);
-              if (analysis?.researchSummary) {
-                const verdict = analysis.researchSummary.overallVerdict;
-                return verdict === 'STRONG_PICK' || verdict === 'LEAN_PICK';
-              }
-              return analysis?.sharpRecommendation === 'pick';
-            });
-          })()}>
-            <LegBreakdownScorecard
-              legs={simulation.legs}
-              legAnalyses={aiAnalysis?.legAnalyses}
-              probability={simulation.combinedProbability}
-              delay={50}
-            />
-          </CelebrationEffect>
+          <SafeComponent name="LegBreakdownScorecard">
+            <CelebrationEffect isActive={(() => {
+              // Check if all legs are PICK/LEAN
+              if (!aiAnalysis?.legAnalyses) return false;
+              return simulation.legs.every((_, idx) => {
+                const analysis = aiAnalysis.legAnalyses?.find((la) => la.legIndex === idx);
+                if (analysis?.researchSummary) {
+                  const verdict = analysis.researchSummary.overallVerdict;
+                  return verdict === 'STRONG_PICK' || verdict === 'LEAN_PICK';
+                }
+                return analysis?.sharpRecommendation === 'pick';
+              });
+            })()}>
+              <LegBreakdownScorecard
+                legs={simulation.legs}
+                legAnalyses={aiAnalysis?.legAnalyses}
+                probability={simulation.combinedProbability}
+                delay={50}
+              />
+            </CelebrationEffect>
+          </SafeComponent>
 
           {/* Historical Comparison - How this parlay stacks up */}
-          <HistoricalComparisonCard
-            legCount={simulation.legs.length}
-            degenerateLevel={simulation.degenerateLevel}
-            probability={simulation.combinedProbability}
-            delay={75}
-          />
+          <SafeComponent name="HistoricalComparisonCard">
+            <HistoricalComparisonCard
+              legCount={simulation.legs.length}
+              degenerateLevel={simulation.degenerateLevel}
+              probability={simulation.combinedProbability}
+              delay={75}
+            />
+          </SafeComponent>
           
-          <DegenerateMeter 
-            probability={simulation.combinedProbability}
-            degenerateLevel={simulation.degenerateLevel}
-            delay={100}
-          />
+          <SafeComponent name="DegenerateMeter">
+            <DegenerateMeter 
+              probability={simulation.combinedProbability}
+              degenerateLevel={simulation.degenerateLevel}
+              delay={100}
+            />
+          </SafeComponent>
 
           {/* Consolidated AI Verdict - Shows pick/fade/caution counts and overall recommendation */}
-          <ConsolidatedVerdictCard
-            legs={simulation.legs}
-            aiAnalysis={aiAnalysis}
-            combinedProbability={simulation.combinedProbability}
-            delay={110}
-          />
+          <SafeComponent name="ConsolidatedVerdictCard">
+            <ConsolidatedVerdictCard
+              legs={simulation.legs}
+              aiAnalysis={aiAnalysis}
+              combinedProbability={simulation.combinedProbability}
+              delay={110}
+            />
+          </SafeComponent>
 
           {/* Parlay Health Score Dashboard */}
-          <ParlayHealthCard 
-            legAnalyses={aiAnalysis?.legAnalyses}
-            delay={130}
-          />
+          <SafeComponent name="ParlayHealthCard">
+            <ParlayHealthCard 
+              legAnalyses={aiAnalysis?.legAnalyses}
+              delay={130}
+            />
+          </SafeComponent>
 
           {/* Ensemble Consensus */}
-          <EnsembleConsensusCard
-            legs={simulation.legs}
-            legAnalyses={aiAnalysis?.legAnalyses}
-            delay={140}
-          />
+          <SafeComponent name="EnsembleConsensusCard">
+            <EnsembleConsensusCard
+              legs={simulation.legs}
+              legAnalyses={aiAnalysis?.legAnalyses}
+              delay={140}
+            />
+          </SafeComponent>
 
           {/* Coaching Tendencies - Now in main view */}
-          <CoachingInsightsCard
-            legs={simulation.legs}
-            legAnalyses={aiAnalysis?.legAnalyses}
-            delay={145}
-          />
+          <SafeComponent name="CoachingInsightsCard">
+            <CoachingInsightsCard
+              legs={simulation.legs}
+              legAnalyses={aiAnalysis?.legAnalyses}
+              delay={145}
+            />
+          </SafeComponent>
 
           {/* Double Down Recommendation */}
-          <DoubleDownCard
-            legs={simulation.legs}
-            legAnalyses={aiAnalysis?.legAnalyses}
-            stake={simulation.stake}
-            delay={150}
-          />
+          <SafeComponent name="DoubleDownCard">
+            <DoubleDownCard
+              legs={simulation.legs}
+              legAnalyses={aiAnalysis?.legAnalyses}
+              stake={simulation.stake}
+              delay={150}
+            />
+          </SafeComponent>
 
           {/* Trap Avoidance - Show prominently if traps detected */}
-          <TrapAvoidanceCard 
-            legAnalyses={aiAnalysis?.legAnalyses}
-            delay={160}
-          />
+          <SafeComponent name="TrapAvoidanceCard">
+            <TrapAvoidanceCard 
+              legAnalyses={aiAnalysis?.legAnalyses}
+              delay={160}
+            />
+          </SafeComponent>
 
           {/* === SECTION 2: DETAILED ANALYSIS (Collapsible) === */}
-          <CollapsibleSection
-            title="Detailed Analysis"
-            icon={<BarChart3 className="w-4 h-4 text-neon-cyan" />}
-            defaultOpen={false}
-            badge={<Badge variant="outline" className="text-xs ml-2">{simulation.legs.length} legs</Badge>}
-            preview={
-              <p className="text-xs text-muted-foreground">
-                Usage analysis, book edge, fatigue impact, coaching tendencies, variance & Kelly
-              </p>
-            }
-          >
-            {/* Usage Analysis Section */}
-            <UsageAnalysisSection
-              legs={simulation.legs}
-              legAnalyses={aiAnalysis?.legAnalyses}
-              isLoading={isLoadingAnalysis}
-              delay={0}
-            />
+          <SafeComponent name="DetailedAnalysisSection">
+            <CollapsibleSection
+              title="Detailed Analysis"
+              icon={<BarChart3 className="w-4 h-4 text-neon-cyan" />}
+              defaultOpen={false}
+              badge={<Badge variant="outline" className="text-xs ml-2">{simulation.legs.length} legs</Badge>}
+              preview={
+                <p className="text-xs text-muted-foreground">
+                  Usage analysis, book edge, fatigue impact, coaching tendencies, variance & Kelly
+                </p>
+              }
+            >
+              {/* Usage Analysis Section */}
+              <SafeComponent name="UsageAnalysisSection">
+                <UsageAnalysisSection
+                  legs={simulation.legs}
+                  legAnalyses={aiAnalysis?.legAnalyses}
+                  isLoading={isLoadingAnalysis}
+                  delay={0}
+                />
+              </SafeComponent>
 
-            {/* Smart Leg Swap - Find better alternatives for weak legs */}
-            <SmartLegSwapCard
-              legs={simulation.legs}
-              legAnalyses={aiAnalysis?.legAnalyses}
-              delay={40}
-            />
+              {/* Smart Leg Swap - Find better alternatives for weak legs */}
+              <SafeComponent name="SmartLegSwapCard">
+                <SmartLegSwapCard
+                  legs={simulation.legs}
+                  legAnalyses={aiAnalysis?.legAnalyses}
+                  delay={40}
+                />
+              </SafeComponent>
 
-            {/* Parlay Optimizer */}
-            <ParlayOptimizer 
-              legs={simulation.legs}
-              legAnalyses={aiAnalysis?.legAnalyses}
-              stake={simulation.stake}
-              combinedProbability={simulation.combinedProbability}
-              potentialPayout={simulation.potentialPayout}
-              delay={50}
-            />
+              {/* Parlay Optimizer */}
+              <SafeComponent name="ParlayOptimizer">
+                <ParlayOptimizer 
+                  legs={simulation.legs}
+                  legAnalyses={aiAnalysis?.legAnalyses}
+                  stake={simulation.stake}
+                  combinedProbability={simulation.combinedProbability}
+                  potentialPayout={simulation.potentialPayout}
+                  delay={50}
+                />
+              </SafeComponent>
 
-            {/* AI-Powered Intelligence Section */}
-            <LegIntelligenceCard 
-              legs={simulation.legs}
-              legAnalyses={aiAnalysis?.legAnalyses}
-              isLoading={isLoadingAnalysis}
-              delay={100}
-            />
-
-
-            <BookEdgeCard 
-              legs={simulation.legs}
-              legAnalyses={aiAnalysis?.legAnalyses}
-              delay={150}
-            />
-
-            {/* NBA Fatigue Impact */}
-            <FatigueImpactCard 
-              legs={simulation.legs}
-              legAnalyses={aiAnalysis?.legAnalyses}
-              delay={175}
-            />
+              {/* AI-Powered Intelligence Section */}
+              <SafeComponent name="LegIntelligenceCard">
+                <LegIntelligenceCard 
+                  legs={simulation.legs}
+                  legAnalyses={aiAnalysis?.legAnalyses}
+                  isLoading={isLoadingAnalysis}
+                  delay={100}
+                />
+              </SafeComponent>
 
 
-            {/* Historical Insights - only show if user is logged in */}
-            {user && (
-              <HistoricalInsightsCard
-                legContexts={historicalContext?.legContexts || []}
-                userOverall={historicalContext?.userOverall || { totalBets: 0, totalWins: 0, hitRate: 0 }}
-                aiOverall={historicalContext?.aiOverall || { totalPredictions: 0, correctPredictions: 0, accuracy: 0 }}
-                isLoading={isLoadingHistory}
-                delay={225}
-              />
-            )}
-          </CollapsibleSection>
+              <SafeComponent name="BookEdgeCard">
+                <BookEdgeCard 
+                  legs={simulation.legs}
+                  legAnalyses={aiAnalysis?.legAnalyses}
+                  delay={150}
+                />
+              </SafeComponent>
+
+              {/* NBA Fatigue Impact */}
+              <SafeComponent name="FatigueImpactCard">
+                <FatigueImpactCard 
+                  legs={simulation.legs}
+                  legAnalyses={aiAnalysis?.legAnalyses}
+                  delay={175}
+                />
+              </SafeComponent>
+
+
+              {/* Historical Insights - only show if user is logged in */}
+              {user && (
+                <SafeComponent name="HistoricalInsightsCard">
+                  <HistoricalInsightsCard
+                    legContexts={historicalContext?.legContexts || []}
+                    userOverall={historicalContext?.userOverall || { totalBets: 0, totalWins: 0, hitRate: 0 }}
+                    aiOverall={historicalContext?.aiOverall || { totalPredictions: 0, correctPredictions: 0, accuracy: 0 }}
+                    isLoading={isLoadingHistory}
+                    delay={225}
+                  />
+                </SafeComponent>
+              )}
+            </CollapsibleSection>
+          </SafeComponent>
 
           {/* === SECTION 3: STAKE & RISK (Collapsible) === */}
-          <CollapsibleSection
-            title="Stake & Risk Analysis"
-            icon={<Zap className="w-4 h-4 text-neon-yellow" />}
-            defaultOpen={false}
-            preview={
-              <p className="text-xs text-muted-foreground">
-                Kelly stake calculator, variance warning, bankroll impact
-              </p>
-            }
-          >
-            <BankrollCard 
-              stake={simulation.stake}
-              potentialPayout={simulation.potentialPayout}
-              expectedValue={simulation.expectedValue}
-              probability={simulation.combinedProbability}
-              delay={0}
-            />
+          <SafeComponent name="StakeRiskSection">
+            <CollapsibleSection
+              title="Stake & Risk Analysis"
+              icon={<Zap className="w-4 h-4 text-neon-yellow" />}
+              defaultOpen={false}
+              preview={
+                <p className="text-xs text-muted-foreground">
+                  Kelly stake calculator, variance warning, bankroll impact
+                </p>
+              }
+            >
+              <SafeComponent name="BankrollCard">
+                <BankrollCard 
+                  stake={simulation.stake}
+                  potentialPayout={simulation.potentialPayout}
+                  expectedValue={simulation.expectedValue}
+                  probability={simulation.combinedProbability}
+                  delay={0}
+                />
+              </SafeComponent>
 
-            {/* Kelly Stake Recommendation */}
-            <KellyStakeCard
-              winProbability={simulation.combinedProbability}
-              americanOdds={simulation.legs.reduce((acc, leg) => {
-                const combinedDecimal = simulation.potentialPayout / simulation.stake;
-                if (combinedDecimal >= 2) {
-                  return (combinedDecimal - 1) * 100;
-                } else {
-                  return -100 / (combinedDecimal - 1);
-                }
-              }, 0)}
-              userStake={simulation.stake}
-              delay={50}
-            />
+              {/* Kelly Stake Recommendation */}
+              <SafeComponent name="KellyStakeCard">
+                <KellyStakeCard
+                  winProbability={simulation.combinedProbability}
+                  americanOdds={simulation.legs.reduce((acc, leg) => {
+                    const combinedDecimal = simulation.potentialPayout / simulation.stake;
+                    if (combinedDecimal >= 2) {
+                      return (combinedDecimal - 1) * 100;
+                    } else {
+                      return -100 / (combinedDecimal - 1);
+                    }
+                  }, 0)}
+                  userStake={simulation.stake}
+                  delay={50}
+                />
+              </SafeComponent>
 
-            {/* Variance Warning */}
-            <VarianceWarningCard
-              winProbability={simulation.combinedProbability}
-              americanOdds={(() => {
-                const combinedDecimal = simulation.potentialPayout / simulation.stake;
-                if (combinedDecimal >= 2) {
-                  return (combinedDecimal - 1) * 100;
-                } else {
-                  return -100 / (combinedDecimal - 1);
-                }
-              })()}
-              stake={simulation.stake}
-              delay={100}
-            />
+              {/* Variance Warning */}
+              <SafeComponent name="VarianceWarningCard">
+                <VarianceWarningCard
+                  winProbability={simulation.combinedProbability}
+                  americanOdds={(() => {
+                    const combinedDecimal = simulation.potentialPayout / simulation.stake;
+                    if (combinedDecimal >= 2) {
+                      return (combinedDecimal - 1) * 100;
+                    } else {
+                      return -100 / (combinedDecimal - 1);
+                    }
+                  })()}
+                  stake={simulation.stake}
+                  delay={100}
+                />
+              </SafeComponent>
 
-            <SimulationHighlights 
-              highlights={simulation.simulationHighlights}
-              delay={150}
-            />
-          </CollapsibleSection>
+              <SafeComponent name="SimulationHighlights">
+                <SimulationHighlights 
+                  highlights={simulation.simulationHighlights}
+                  delay={150}
+                />
+              </SafeComponent>
+            </CollapsibleSection>
+          </SafeComponent>
 
           {/* === SECTION 4: FULL LEG BREAKDOWN (Collapsible) === */}
-          <CollapsibleSection
-            title="Detailed Leg Analysis"
-            icon={<FileText className="w-4 h-4 text-neon-purple" />}
-            defaultOpen={false}
-            preview={
-              <p className="text-xs text-muted-foreground">
-                Complete analysis for each leg with sharp signals, injuries, and probabilities
-              </p>
-            }
-          >
-            <LegBreakdown 
-              legs={simulation.legs}
-              legAnalyses={aiAnalysis?.legAnalyses}
-              delay={0}
-            />
-          </CollapsibleSection>
+          <SafeComponent name="LegBreakdownSection">
+            <CollapsibleSection
+              title="Detailed Leg Analysis"
+              icon={<FileText className="w-4 h-4 text-neon-purple" />}
+              defaultOpen={false}
+              preview={
+                <p className="text-xs text-muted-foreground">
+                  Complete analysis for each leg with sharp signals, injuries, and probabilities
+                </p>
+              }
+            >
+              <SafeComponent name="LegBreakdown">
+                <LegBreakdown 
+                  legs={simulation.legs}
+                  legAnalyses={aiAnalysis?.legAnalyses}
+                  delay={0}
+                />
+              </SafeComponent>
+            </CollapsibleSection>
+          </SafeComponent>
 
           {/* === SECTION 5: FUN STUFF (Always Visible at Bottom) === */}
-          <TrashTalkThread 
-            trashTalk={displayRoasts}
-            isLoading={isLoadingRoasts}
-            isAiGenerated={!!aiRoasts}
-            delay={250}
-          />
+          <SafeComponent name="TrashTalkThread">
+            <TrashTalkThread 
+              trashTalk={displayRoasts}
+              isLoading={isLoadingRoasts}
+              isAiGenerated={!!aiRoasts}
+              delay={250}
+            />
+          </SafeComponent>
           
-          <ShareableMeme 
-            probability={simulation.combinedProbability}
-            degenerateLevel={simulation.degenerateLevel}
-            legCount={simulation.legs.length}
-            legs={simulation.legs}
-            stake={simulation.stake}
-            potentialPayout={simulation.potentialPayout}
-            roast={displayRoasts?.[0]}
-            delay={300}
-          />
+          <SafeComponent name="ShareableMeme">
+            <ShareableMeme 
+              probability={simulation.combinedProbability}
+              degenerateLevel={simulation.degenerateLevel}
+              legCount={simulation.legs.length}
+              legs={simulation.legs}
+              stake={simulation.stake}
+              potentialPayout={simulation.potentialPayout}
+              roast={displayRoasts?.[0]}
+              delay={300}
+            />
+          </SafeComponent>
         </div>
 
         {/* Save to Profile */}
