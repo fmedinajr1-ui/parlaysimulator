@@ -136,6 +136,16 @@ export default {
           "0%, 100%": { transform: "rotate(-5deg)" },
           "50%": { transform: "rotate(5deg)" },
         },
+        "logo-glow": {
+          "0%, 100%": { 
+            filter: "drop-shadow(0 0 8px hsl(var(--primary) / 0.4))",
+            transform: "scale(1)"
+          },
+          "50%": { 
+            filter: "drop-shadow(0 0 25px hsl(var(--primary) / 0.8)) drop-shadow(0 0 40px hsl(var(--neon-green) / 0.5))",
+            transform: "scale(1.02)"
+          },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
@@ -149,6 +159,7 @@ export default {
         "emoji-bounce": "emoji-bounce 0.6s ease-out",
         "wolf-prowl": "wolf-prowl 1s ease-in-out infinite",
         "dog-wag": "dog-wag 0.3s ease-in-out infinite",
+        "logo-glow": "logo-glow 2s ease-in-out infinite",
       },
     },
   },
