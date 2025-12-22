@@ -152,15 +152,10 @@ const Index = () => {
           </div>
         </div>
 
-        {/* Smart Analyze + Engine Status - Side by Side (Admin Only) */}
+        {/* Smart Analyze Button - Admin Only */}
         {isAdmin && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-            <div className="flex items-center justify-center">
-              <SmartAnalyzeButton variant="hero" />
-            </div>
-            <div className="flex items-center">
-              <EngineStatusBar showDetails={isAdmin} className="w-full" />
-            </div>
+          <div className="flex flex-col items-center gap-4 mb-6">
+            <SmartAnalyzeButton variant="hero" />
           </div>
         )}
 
