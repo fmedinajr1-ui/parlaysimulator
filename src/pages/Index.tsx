@@ -19,6 +19,8 @@ import { AppShell } from "@/components/layout/AppShell";
 import { Zap, BarChart3, Sparkles, Trophy, Calculator, GitCompare, LogIn, LogOut } from "lucide-react";
 import { usePilotUser } from "@/hooks/usePilotUser";
 import { useAuth } from "@/contexts/AuthContext";
+import { SmartAnalyzeButton } from "@/components/SmartAnalyzeButton";
+import { EngineStatusBar } from "@/components/EngineStatusBar";
 
 function QuickAction({ to, icon: Icon, label, iconClass }: { 
   to: string; 
@@ -144,6 +146,18 @@ const Index = () => {
             ))}
           </div>
         </div>
+
+        {/* Smart Analyze Button - Hero CTA */}
+        <div className="flex flex-col items-center gap-4 mb-6">
+          <SmartAnalyzeButton variant="hero" />
+        </div>
+
+        {/* Engine Status Bar - Real-time indicators */}
+        {!isPilotRestricted && (
+          <div className="mb-4">
+            <EngineStatusBar showDetails={isAdmin} />
+          </div>
+        )}
 
         {/* Main CTA - More compact */}
         <div className="flex flex-col items-center gap-2 mb-4">
