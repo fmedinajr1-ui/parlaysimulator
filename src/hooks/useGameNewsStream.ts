@@ -41,6 +41,27 @@ export function useGameNewsStream(sportFilter: string = 'all') {
   const queryClient = useQueryClient();
   const [isConnected, setIsConnected] = useState(false);
   const [newItemIds, setNewItemIds] = useState<Set<string>>(new Set());
+  const [hasInitialized, setHasInitialized] = useState(false);
+
+  // Trigger the aggregator to populate data on mount
+  useEffect(() => {
+    if (hasInitialized) return;
+    
+    const initializeData = async () => {
+      try {
+        console.log('[useGameNewsStream] Initializing - calling aggregator...');
+        await supabase.functions.invoke('game-news-aggregator', {
+          body: { sport: sportFilter !== 'all' ? sportFilter : undefined },
+        });
+        setHasInitialized(true);
+      } catch (err) {
+        console.error('[useGameNewsStream] Init error:', err);
+        setHasInitialized(true); // Still mark as initialized to prevent infinite retries
+      }
+    };
+
+    initializeData();
+  }, [sportFilter, hasInitialized]);
 
   // Fetch games with their news
   const { data: games = [], isLoading, refetch } = useQuery({
@@ -73,6 +94,45 @@ export function useGameNewsStream(sportFilter: string = 'all') {
       }
 
       if (!gamesData || gamesData.length === 0) {
+        // If no games in cache, try the aggregator again
+        if (hasInitialized) {
+          console.log('[useGameNewsStream] No games found, triggering aggregator...');
+          await supabase.functions.invoke('game-news-aggregator', {
+            body: { sport: sportFilter !== 'all' ? sportFilter : undefined },
+          });
+          // Re-fetch after aggregator runs
+          const { data: retryData } = await supabase
+            .from('upcoming_games_cache')
+            .select('*')
+            .gte('commence_time', now)
+            .order('activity_score', { ascending: false })
+            .order('commence_time', { ascending: true })
+            .limit(20);
+          
+          if (!retryData || retryData.length === 0) {
+            return [];
+          }
+          
+          // Fetch news for retry games
+          const retryEventIds = retryData.map(g => g.event_id);
+          const { data: retryNews } = await supabase
+            .from('game_news_feed')
+            .select('*')
+            .in('event_id', retryEventIds)
+            .order('created_at', { ascending: false });
+
+          const newsMap = new Map<string, NewsItem[]>();
+          (retryNews || []).forEach((item: any) => {
+            const existing = newsMap.get(item.event_id) || [];
+            existing.push({ ...item, isNew: newItemIds.has(item.id) } as NewsItem);
+            newsMap.set(item.event_id, existing);
+          });
+
+          return retryData.map((game: any) => ({
+            ...game,
+            news: newsMap.get(game.event_id) || [],
+          }));
+        }
         return [];
       }
 
@@ -107,8 +167,9 @@ export function useGameNewsStream(sportFilter: string = 'all') {
 
       return result;
     },
-    refetchInterval: 60000, // Refetch every minute
-    staleTime: 30000,
+    refetchInterval: 30000, // Refetch every 30 seconds for more live updates
+    staleTime: 15000,
+    enabled: hasInitialized, // Only start fetching after initialization
   });
 
   // Real-time subscription for new news items
