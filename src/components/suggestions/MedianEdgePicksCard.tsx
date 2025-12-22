@@ -49,6 +49,7 @@ const statEmojis: Record<string, string> = {
 
 export function MedianEdgePicksCard() {
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [expandedPick, setExpandedPick] = useState<string | null>(null);
   const { toast } = useToast();
 
@@ -73,18 +74,39 @@ export function MedianEdgePicksCard() {
     staleTime: 1000 * 60 * 5,
   });
 
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
+  // Manual analyze - runs the full engine
+  const handleAnalyze = async () => {
+    setIsAnalyzing(true);
     try {
-      const { error } = await supabase.functions.invoke('median-edge-engine', {
-        body: { action: 'get_picks' }
+      const { data, error } = await supabase.functions.invoke('median-edge-engine', {
+        body: { action: 'analyze_auto' }
       });
       
       if (error) throw error;
       await refetch();
       toast({
+        title: "Analysis Complete",
+        description: `Found ${data?.actionable_picks || 0} actionable picks (${data?.strong_picks || 0} strong, ${data?.lean_picks || 0} lean)`,
+      });
+    } catch (error) {
+      toast({
+        title: "Analysis Failed",
+        description: error instanceof Error ? error.message : "Please try again",
+        variant: "destructive",
+      });
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  // Refresh - just reload from database
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await refetch();
+      toast({
         title: "Picks Refreshed",
-        description: "Latest median edge analysis loaded.",
+        description: "Latest median edge picks loaded.",
       });
     } catch (error) {
       toast({
@@ -133,10 +155,16 @@ export function MedianEdgePicksCard() {
         </CardHeader>
         <CardContent className="text-center py-6">
           <p className="text-muted-foreground mb-4">No edge picks available yet for today</p>
-          <Button onClick={handleRefresh} disabled={isRefreshing} size="sm" variant="outline">
-            {isRefreshing ? <RefreshCw className="w-4 h-4 animate-spin mr-2" /> : <RefreshCw className="w-4 h-4 mr-2" />}
-            Check for Picks
-          </Button>
+          <div className="flex items-center justify-center gap-2">
+            <Button onClick={handleAnalyze} disabled={isAnalyzing} size="sm" className="bg-cyan-600 hover:bg-cyan-700">
+              {isAnalyzing ? <RefreshCw className="w-4 h-4 animate-spin mr-2" /> : <Zap className="w-4 h-4 mr-2" />}
+              {isAnalyzing ? 'Analyzing...' : 'Run Analysis'}
+            </Button>
+            <Button onClick={handleRefresh} disabled={isRefreshing} size="sm" variant="outline">
+              {isRefreshing ? <RefreshCw className="w-4 h-4 animate-spin mr-2" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+              Refresh
+            </Button>
+          </div>
         </CardContent>
       </Card>
     );
@@ -151,6 +179,16 @@ export function MedianEdgePicksCard() {
             5-Median Edge Engine
           </CardTitle>
           <div className="flex items-center gap-2">
+            <Button 
+              variant="ghost" 
+              size="sm"
+              onClick={handleAnalyze}
+              disabled={isAnalyzing}
+              className="h-7 px-2 text-xs hover:bg-cyan-500/10"
+            >
+              {isAnalyzing ? <RefreshCw className="w-3 h-3 animate-spin mr-1" /> : <Zap className="w-3 h-3 mr-1" />}
+              {isAnalyzing ? 'Running...' : 'Analyze'}
+            </Button>
             <Button 
               variant="ghost" 
               size="icon" 
