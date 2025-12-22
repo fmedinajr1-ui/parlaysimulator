@@ -152,12 +152,6 @@ const Index = () => {
           </div>
         </div>
 
-        {/* Smart Analyze Button - Admin Only */}
-        {isAdmin && (
-          <div className="flex flex-col items-center gap-4 mb-6">
-            <SmartAnalyzeButton variant="hero" />
-          </div>
-        )}
 
         {/* Main CTA - Side by Side */}
         <div className="flex items-center gap-4 mb-4">
