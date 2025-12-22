@@ -16,6 +16,7 @@ import { ExtremeMovementBadge } from "@/components/alerts/ExtremeMovementBadge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { buildCorrelationMatrix, calculateCorrelatedProbability, getCorrelationSeverity } from "@/lib/correlation-engine";
 import { ParlayLeg } from "@/types/parlay";
+import { getTeamAbbreviation, formatMatchupAbbreviation, abbreviateTeamsInDescription } from "@/lib/team-abbreviations";
 interface SuggestedLeg {
   description: string;
   odds: number;
@@ -407,7 +408,7 @@ export function SuggestedParlayCard({
             const oddsColor = getOddsColor(leg.odds);
             const probPercent = (leg.impliedProbability * 100).toFixed(0);
             
-            // Enhanced description for totals - show game context
+            // Enhanced description for totals - show game context with abbreviations
             const getEnhancedDescription = () => {
               const desc = leg.description?.trim() || '';
               const isTotal = betBadge.label === 'Total' || leg.betType?.toLowerCase().includes('total');
@@ -418,13 +419,19 @@ export function SuggestedParlayCard({
                 const side = desc.toLowerCase();
                 const lineInfo = leg.line ? ` ${leg.line}` : '';
                 const gameInfo = leg.homeTeam && leg.awayTeam 
-                  ? `${leg.awayTeam} @ ${leg.homeTeam}` 
+                  ? formatMatchupAbbreviation(leg.awayTeam, leg.homeTeam, leg.sport)
                   : '';
                 return gameInfo ? `${side.charAt(0).toUpperCase() + side.slice(1)}${lineInfo} - ${gameInfo}` : `${side.charAt(0).toUpperCase() + side.slice(1)}${lineInfo} (Game Total)`;
               }
               
-              return desc;
+              // Abbreviate any team names in the description
+              return abbreviateTeamsInDescription(desc, leg.sport);
             };
+            
+            // Get matchup abbreviation if home/away teams available
+            const matchupLabel = leg.homeTeam && leg.awayTeam 
+              ? formatMatchupAbbreviation(leg.awayTeam, leg.homeTeam, leg.sport)
+              : null;
             
             return (
               <div 
@@ -436,6 +443,9 @@ export function SuggestedParlayCard({
                     <p className="text-sm text-foreground leading-tight">{getEnhancedDescription()}</p>
                     <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
                       <span>{leg.sport}</span>
+                      {matchupLabel && (
+                        <span className="font-medium text-foreground/70">{matchupLabel}</span>
+                      )}
                       <span>•</span>
                       <div className="flex items-center gap-1">
                         <BetIcon className="w-3 h-3" />

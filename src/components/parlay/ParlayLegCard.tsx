@@ -7,6 +7,7 @@ import { CoachingWarningBadge } from './CoachingWarningBadge';
 import { MarketSignalBadge, type MarketSignal } from './MarketSignalBadge';
 import { TrapProbabilityBadge } from './TrapProbabilityBadge';
 import { cn } from '@/lib/utils';
+import { abbreviateTeamsInDescription, extractMatchupFromDescription } from '@/lib/team-abbreviations';
 
 interface TrapSignal {
   signal: string;
@@ -38,6 +39,10 @@ export const ParlayLegCard = ({ leg, onRemove, coachingSignal, marketSignal, tra
     return odds > 0 ? `+${odds}` : odds.toString();
   };
 
+  // Get abbreviated description and matchup
+  const abbreviatedDescription = abbreviateTeamsInDescription(leg.description, leg.sport);
+  const matchupInfo = extractMatchupFromDescription(leg.description, leg.sport);
+
   // Determine if we should show a border highlight based on coaching signal or trap
   const getBorderStyle = () => {
     // High trap risk takes priority
@@ -68,13 +73,18 @@ export const ParlayLegCard = ({ leg, onRemove, coachingSignal, marketSignal, tra
                 {leg.sport.replace('_', ' ')}
               </span>
             )}
+            {matchupInfo && (
+              <span className="text-[10px] font-medium text-foreground/70">
+                {matchupInfo.matchup}
+              </span>
+            )}
             {leg.confidenceScore && leg.source === 'godmode' && (
               <span className="text-[10px] font-medium text-purple-400">
                 {Math.round(leg.confidenceScore)}% score
               </span>
             )}
           </div>
-          <p className="text-sm font-medium truncate">{leg.description}</p>
+          <p className="text-sm font-medium truncate">{abbreviatedDescription}</p>
           {leg.playerName && leg.propType && leg.line && (
             <p className="text-xs text-muted-foreground truncate">
               {leg.playerName} {leg.side?.toUpperCase()} {leg.line} {leg.propType}
