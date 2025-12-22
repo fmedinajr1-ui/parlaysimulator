@@ -304,6 +304,159 @@ serve(async (req) => {
       });
     }
 
+    // AUTO MODE: Fetch props from database and analyze them
+    if (action === 'analyze_auto') {
+      console.log('[median-edge-engine] Running auto analysis...');
+      const today = new Date().toISOString().split('T')[0];
+
+      // First, clear today's old picks to avoid duplicates
+      await supabase
+        .from('median_edge_picks')
+        .delete()
+        .eq('game_date', today);
+
+      // Fetch player props from fanduel_player_props or similar table
+      const { data: playerProps, error: propsError } = await supabase
+        .from('fanduel_player_props')
+        .select('*')
+        .gte('game_time', today)
+        .in('prop_type', ['points', 'rebounds', 'assists', 'player_points', 'player_rebounds', 'player_assists']);
+
+      if (propsError) {
+        console.error('[median-edge-engine] Props fetch error:', propsError);
+      }
+
+      // Fetch game logs for recent stats
+      const { data: gameLogs, error: logsError } = await supabase
+        .from('nba_player_game_logs')
+        .select('*')
+        .order('game_date', { ascending: false })
+        .limit(500);
+
+      if (logsError) {
+        console.error('[median-edge-engine] Game logs error:', logsError);
+      }
+
+      const results: EngineOutput[] = [];
+      const propsList = playerProps || [];
+      
+      console.log(`[median-edge-engine] Found ${propsList.length} props to analyze`);
+
+      for (const prop of propsList) {
+        const playerName = prop.player_name;
+        let statType = prop.prop_type?.replace('player_', '') || 'points';
+        
+        // Normalize stat type
+        if (!['points', 'rebounds', 'assists'].includes(statType)) {
+          continue;
+        }
+
+        // Get player's game logs
+        const playerLogs = (gameLogs || [])
+          .filter((log: any) => log.player_name?.toLowerCase() === playerName?.toLowerCase())
+          .slice(0, 10);
+
+        if (playerLogs.length < 3) {
+          console.log(`[median-edge-engine] Skipping ${playerName} - insufficient data`);
+          continue;
+        }
+
+        // Extract stats based on stat type
+        const getStatValue = (log: any): number => {
+          if (statType === 'points') return log.points || log.pts || 0;
+          if (statType === 'rebounds') return log.rebounds || log.reb || 0;
+          if (statType === 'assists') return log.assists || log.ast || 0;
+          return 0;
+        };
+
+        const last5Stats = playerLogs.slice(0, 5).map(getStatValue);
+        const last5Minutes = playerLogs.slice(0, 5).map((log: any) => log.minutes || log.min || 30);
+        const avgMinutes = last5Minutes.reduce((a: number, b: number) => a + b, 0) / last5Minutes.length;
+
+        // Skip if minutes too low
+        if (avgMinutes < 24) {
+          console.log(`[median-edge-engine] Skipping ${playerName} - low minutes: ${avgMinutes}`);
+          continue;
+        }
+
+        const input: EngineInput = {
+          player_name: playerName,
+          stat_type: statType as 'points' | 'rebounds' | 'assists',
+          sportsbook_line: prop.line || prop.over_line || 0,
+          game_location: prop.is_home ? 'home' : 'away',
+          expected_minutes: avgMinutes,
+          spread: prop.spread || 0,
+          injury_context: 'none',
+          odds_open: prop.opening_odds || -110,
+          odds_current: prop.over_price || prop.current_odds || -110,
+          last_5_game_stats: last5Stats.length >= 5 ? last5Stats : [...last5Stats, ...last5Stats].slice(0, 5),
+          last_5_game_minutes: last5Minutes.length >= 5 ? last5Minutes : [...last5Minutes, ...last5Minutes].slice(0, 5),
+          last_5_vs_matchup_stats: last5Stats, // Use same stats as fallback
+          usage_metrics: last5Stats, // Use same stats as proxy
+          home_stats: last5Stats,
+          away_stats: last5Stats,
+          event_id: prop.event_id,
+          team_name: prop.team_name,
+          opponent_team: prop.opponent_team,
+          game_time: prop.game_time,
+        };
+
+        const result = calculateMedianEdge(input);
+        
+        // Only save if it's actionable
+        if (result.recommendation !== 'NO BET') {
+          results.push(result);
+
+          await supabase.from('median_edge_picks').insert({
+            player_name: result.player_name,
+            stat_type: result.stat_type,
+            sportsbook_line: result.sportsbook_line,
+            true_median: result.true_median,
+            edge: result.edge,
+            recommendation: result.recommendation,
+            confidence_flag: result.confidence_flag,
+            alt_line_suggestion: result.alt_line_suggestion,
+            reason_summary: result.reason_summary,
+            m1_recent_form: result.m1_recent_form,
+            m2_matchup: result.m2_matchup,
+            m3_minutes_weighted: result.m3_minutes_weighted,
+            m4_usage: result.m4_usage,
+            m5_location: result.m5_location,
+            adjustments: result.adjustments,
+            std_dev: result.std_dev,
+            is_volatile: result.is_volatile,
+            event_id: input.event_id,
+            team_name: input.team_name,
+            opponent_team: input.opponent_team,
+            game_time: input.game_time,
+            expected_minutes: input.expected_minutes,
+            spread: input.spread,
+            injury_context: input.injury_context,
+            odds_open: input.odds_open,
+            odds_current: input.odds_current,
+            game_date: today,
+          });
+        }
+      }
+
+      const strongPicks = results.filter(r => r.recommendation.includes('STRONG'));
+      const leanPicks = results.filter(r => r.recommendation.includes('LEAN'));
+
+      console.log(`[median-edge-engine] Auto analysis complete: ${strongPicks.length} strong, ${leanPicks.length} lean`);
+
+      return new Response(JSON.stringify({
+        success: true,
+        mode: 'auto',
+        total_analyzed: propsList.length,
+        actionable_picks: results.length,
+        strong_picks: strongPicks.length,
+        lean_picks: leanPicks.length,
+        picks: results,
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     // Default: return engine info
     return new Response(JSON.stringify({
       success: true,

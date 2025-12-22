@@ -124,6 +124,8 @@ export function useSmartAnalyze(options: UseSmartAnalyzeOptions = {}) {
     switch (engineName) {
       case 'median-lock-engine':
         return { action: 'get_candidates', date: new Date().toISOString().split('T')[0] };
+      case 'median-edge-engine':
+        return { action: 'analyze_auto' };
       case 'market-signal-engine':
         return { action: 'scan', ...basePayload };
       case 'trap-probability-engine':
