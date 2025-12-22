@@ -216,10 +216,22 @@ serve(async (req) => {
     formData.append('From', cleanFromNumber);
     formData.append('Body', `Your Parlay Farm verification code is: ${code}. It expires in 10 minutes.`);
 
+    // Create auth string and log details for debugging
+    const authString = `${accountSid}:${authToken}`;
+    const base64Auth = btoa(authString);
+    
+    logStep('Auth debug', { 
+      authStringLength: authString.length,
+      base64Length: base64Auth.length,
+      expectedAuthStringLength: 34 + 1 + 32, // SID + colon + token
+      authTokenFirstChars: authToken?.substring(0, 4),
+      authTokenLastChars: authToken?.substring(authToken.length - 4)
+    });
+
     const twilioResponse = await fetch(twilioUrl, {
       method: 'POST',
       headers: {
-        'Authorization': `Basic ${btoa(`${accountSid}:${authToken}`)}`,
+        'Authorization': `Basic ${base64Auth}`,
         'Content-Type': 'application/x-www-form-urlencoded',
       },
       body: formData.toString(),
