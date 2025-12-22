@@ -1036,6 +1036,66 @@ export type Database = {
         }
         Relationships: []
       }
+      device_limits: {
+        Row: {
+          created_at: string | null
+          id: string
+          is_active: boolean | null
+          limit_type: string
+          max_accounts: number
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          limit_type: string
+          max_accounts?: number
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          limit_type?: string
+          max_accounts?: number
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      device_registrations: {
+        Row: {
+          block_reason: string | null
+          created_at: string | null
+          device_fingerprint: string
+          id: string
+          ip_address: string | null
+          is_blocked: boolean | null
+          user_agent: string | null
+          user_id: string
+        }
+        Insert: {
+          block_reason?: string | null
+          created_at?: string | null
+          device_fingerprint: string
+          id?: string
+          ip_address?: string | null
+          is_blocked?: boolean | null
+          user_agent?: string | null
+          user_id: string
+        }
+        Update: {
+          block_reason?: string | null
+          created_at?: string | null
+          device_fingerprint?: string
+          id?: string
+          ip_address?: string | null
+          is_blocked?: boolean | null
+          user_agent?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       elite_parlay_accuracy_metrics: {
         Row: {
           accuracy_rate: number | null

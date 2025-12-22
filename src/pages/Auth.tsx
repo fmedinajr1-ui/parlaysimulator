@@ -1,15 +1,17 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { useDeviceFingerprint } from '@/hooks/useDeviceFingerprint';
 import { EmailVerification } from '@/components/auth/EmailVerification';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from '@/hooks/use-toast';
-import { Loader2, Mail, Lock, ArrowLeft } from 'lucide-react';
+import { Loader2, Mail, Lock, ArrowLeft, ShieldAlert } from 'lucide-react';
 import { FullPageWolfLoader } from '@/components/ui/wolf-loader';
 import { Link } from 'react-router-dom';
 import { z } from 'zod';
+import { supabase } from '@/integrations/supabase/client';
 
 const authSchema = z.object({
   email: z.string().trim().email('Invalid email address').max(255, 'Email too long'),
@@ -17,6 +19,14 @@ const authSchema = z.object({
 });
 
 type AuthStep = 'credentials' | 'email-verification';
+
+interface DeviceCheckResult {
+  allowed: boolean;
+  reason?: string;
+  code?: string;
+  fingerprintAccounts?: number;
+  remainingAccounts?: number;
+}
 
 const Auth = () => {
   const [searchParams] = useSearchParams();
@@ -28,7 +38,10 @@ const Auth = () => {
   const [authStep, setAuthStep] = useState<AuthStep>('credentials');
   const [newUserId, setNewUserId] = useState<string | null>(null);
   const [signupEmail, setSignupEmail] = useState<string>('');
+  const [deviceBlocked, setDeviceBlocked] = useState(false);
+  const [deviceBlockReason, setDeviceBlockReason] = useState<string>('');
   const { signIn, signUp, user, isLoading } = useAuth();
+  const { deviceInfo, isLoading: deviceLoading } = useDeviceFingerprint();
   const navigate = useNavigate();
   const returnUrl = searchParams.get('return') || '/profile';
 
@@ -40,6 +53,60 @@ const Auth = () => {
       }
     }
   }, [user, isLoading, navigate, authStep, returnUrl]);
+
+  const checkDeviceBeforeSignup = async (): Promise<boolean> => {
+    if (!deviceInfo) {
+      console.warn('Device fingerprint not available');
+      return true; // Allow signup if fingerprinting fails
+    }
+
+    try {
+      const { data, error } = await supabase.functions.invoke<DeviceCheckResult>('check-device', {
+        body: {
+          action: 'check',
+          deviceFingerprint: deviceInfo.fingerprint,
+          userAgent: deviceInfo.userAgent
+        }
+      });
+
+      if (error) {
+        console.error('Device check error:', error);
+        return true; // Allow signup if check fails
+      }
+
+      if (data && !data.allowed) {
+        setDeviceBlocked(true);
+        setDeviceBlockReason(data.reason || 'Device registration limit reached.');
+        return false;
+      }
+
+      return true;
+    } catch (err) {
+      console.error('Failed to check device:', err);
+      return true; // Allow signup if check fails
+    }
+  };
+
+  const registerDevice = async (userId: string): Promise<void> => {
+    if (!deviceInfo) {
+      console.warn('Cannot register device - fingerprint not available');
+      return;
+    }
+
+    try {
+      await supabase.functions.invoke('check-device', {
+        body: {
+          action: 'register',
+          deviceFingerprint: deviceInfo.fingerprint,
+          userAgent: deviceInfo.userAgent,
+          userId
+        }
+      });
+    } catch (err) {
+      console.error('Failed to register device:', err);
+      // Non-blocking - don't prevent signup if registration fails
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -82,6 +149,13 @@ const Auth = () => {
           navigate(returnUrl);
         }
       } else {
+        // Check device before allowing signup
+        const deviceAllowed = await checkDeviceBeforeSignup();
+        if (!deviceAllowed) {
+          setIsSubmitting(false);
+          return;
+        }
+
         const { error, data } = await signUp(email, password);
         if (error) {
           if (error.message.includes('User already registered')) {
@@ -98,6 +172,9 @@ const Auth = () => {
             });
           }
         } else if (data?.user) {
+          // Register device for this new user
+          await registerDevice(data.user.id);
+          
           // New user created, proceed directly to email verification
           setNewUserId(data.user.id);
           setSignupEmail(email);
@@ -119,6 +196,46 @@ const Auth = () => {
 
   if (isLoading) {
     return <FullPageWolfLoader />;
+  }
+
+  // Device blocked state
+  if (deviceBlocked) {
+    return (
+      <div className="min-h-dvh bg-background pb-nav-safe">
+        <div className="max-w-md mx-auto px-4 py-8">
+          <Link to="/" className="inline-flex items-center gap-2 text-muted-foreground hover:text-foreground mb-8">
+            <ArrowLeft className="w-4 h-4" />
+            Back
+          </Link>
+
+          <div className="text-center space-y-6">
+            <div className="mx-auto w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center">
+              <ShieldAlert className="w-8 h-8 text-destructive" />
+            </div>
+            
+            <div>
+              <h1 className="font-display text-2xl text-foreground mb-2">Account Limit Reached</h1>
+              <p className="text-muted-foreground">{deviceBlockReason}</p>
+            </div>
+
+            <div className="text-sm text-muted-foreground">
+              <p>If you believe this is an error, please contact support.</p>
+            </div>
+
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDeviceBlocked(false);
+                setDeviceBlockReason('');
+                setIsLogin(true);
+              }}
+            >
+              Login to Existing Account
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   // Email verification step for new signups
@@ -208,12 +325,17 @@ const Auth = () => {
             variant="neon"
             size="lg"
             className="w-full font-display"
-            disabled={isSubmitting}
+            disabled={isSubmitting || (!isLogin && deviceLoading)}
           >
             {isSubmitting ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                 {isLogin ? 'LOGGING IN...' : 'CREATING ACCOUNT...'}
+              </>
+            ) : deviceLoading && !isLogin ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                PREPARING...
               </>
             ) : (
               isLogin ? '🔥 LOGIN' : '🎟️ SIGN UP'
