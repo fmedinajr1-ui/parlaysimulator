@@ -41,6 +41,11 @@ interface SuggestedLeg {
   homeTeamRecord?: string;
   awayTeamRecord?: string;
   isTrapFavorite?: boolean;
+  // Game context fields
+  homeTeam?: string;
+  awayTeam?: string;
+  line?: number;
+  side?: string;
 }
 
 interface FatigueInfo {
@@ -396,11 +401,31 @@ export function SuggestedParlayCard({
       <CardContent className="space-y-3">
         {/* Legs */}
         <div className="space-y-2">
-          {legs.map((leg, index) => {
+        {legs.map((leg, index) => {
             const betBadge = getBetTypeBadge(leg.betType);
             const BetIcon = betBadge.icon;
             const oddsColor = getOddsColor(leg.odds);
             const probPercent = (leg.impliedProbability * 100).toFixed(0);
+            
+            // Enhanced description for totals - show game context
+            const getEnhancedDescription = () => {
+              const desc = leg.description?.trim() || '';
+              const isTotal = betBadge.label === 'Total' || leg.betType?.toLowerCase().includes('total');
+              const isSimpleOverUnder = /^(over|under)$/i.test(desc);
+              
+              // If it's just "Over" or "Under" without context, enhance it
+              if (isTotal && isSimpleOverUnder) {
+                const side = desc.toLowerCase();
+                const lineInfo = leg.line ? ` ${leg.line}` : '';
+                const gameInfo = leg.homeTeam && leg.awayTeam 
+                  ? `${leg.awayTeam} @ ${leg.homeTeam}` 
+                  : '';
+                return gameInfo ? `${side.charAt(0).toUpperCase() + side.slice(1)}${lineInfo} - ${gameInfo}` : `${side.charAt(0).toUpperCase() + side.slice(1)}${lineInfo} (Game Total)`;
+              }
+              
+              return desc;
+            };
+            
             return (
               <div 
                 key={index}
@@ -408,7 +433,7 @@ export function SuggestedParlayCard({
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm text-foreground leading-tight">{leg.description}</p>
+                    <p className="text-sm text-foreground leading-tight">{getEnhancedDescription()}</p>
                     <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
                       <span>{leg.sport}</span>
                       <span>•</span>
