@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Calculator, Zap, ChevronDown, ChevronUp, RotateCcw, TrendingUp, TrendingDown, Minus, Home, Plane, UserMinus, Clock, Info } from "lucide-react";
+import { Calculator, Zap, ChevronDown, ChevronUp, RotateCcw, TrendingUp, TrendingDown, Minus, Home, Plane, UserMinus, Clock, Info, Lock } from "lucide-react";
+import { CelebrationEffect } from "@/components/results/CelebrationEffect";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -297,71 +298,140 @@ export function MedianEdgeCalculator() {
 
         {/* Results */}
         <AnimatePresence mode="wait">
-          {hasCalculated && result && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              transition={{ duration: 0.3 }}
-              className="space-y-4 pt-4 border-t border-border/30"
-            >
-              {/* Main Results Grid */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="p-4 rounded-xl bg-background/50 border border-border/30 text-center">
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">True Median</p>
-                  <p className="text-2xl font-bold font-mono text-cyan-400">{result.trueMedian}</p>
-                </div>
-                <div className="p-4 rounded-xl bg-background/50 border border-border/30 text-center">
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Book Line</p>
-                  <p className="text-2xl font-bold font-mono">{sportsbookLine}</p>
-                </div>
-              </div>
+          {hasCalculated && result && (() => {
+            const line = parseFloat(sportsbookLine);
+            const isOver = result.trueMedian > line;
+            const isUnder = result.trueMedian < line;
+            const direction = isOver ? 'OVER' : isUnder ? 'UNDER' : 'PUSH';
+            const isStrongEdge = Math.abs(result.edge) >= 2;
 
-              {/* Edge Display */}
-              <div className="p-4 rounded-xl bg-background/30 border border-border/30">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm text-muted-foreground">Edge</span>
-                  <span className={`text-xl font-bold font-mono ${result.edge > 0 ? 'text-emerald-400' : result.edge < 0 ? 'text-red-400' : 'text-muted-foreground'}`}>
-                    {result.edge > 0 ? '+' : ''}{result.edge}
-                  </span>
-                </div>
-                <div className="relative h-3 bg-muted/30 rounded-full overflow-hidden">
+            return (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                transition={{ duration: 0.3 }}
+                className="space-y-4 pt-4 border-t border-border/30"
+              >
+                {/* Big OVER/UNDER Direction Badge with Celebration */}
+                <CelebrationEffect isActive={isStrongEdge}>
                   <motion.div
-                    initial={{ width: 0 }}
-                    animate={{ width: `${Math.min(100, Math.abs(result.edge) * 10 + 50)}%` }}
-                    transition={{ duration: 0.5, ease: "easeOut" }}
-                    className={`absolute h-full rounded-full ${result.edge > 0 ? 'bg-gradient-to-r from-emerald-600 to-emerald-400' : result.edge < 0 ? 'bg-gradient-to-r from-red-600 to-red-400' : 'bg-muted'}`}
-                    style={{ left: result.edge >= 0 ? '50%' : 'auto', right: result.edge < 0 ? '50%' : 'auto' }}
-                  />
-                  <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-foreground/20" />
-                </div>
-              </div>
-
-              {/* Recommendation Badge */}
-              {colors && (
-                <motion.div
-                  initial={{ scale: 0.9, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  transition={{ delay: 0.2, duration: 0.3 }}
-                  className={`p-5 rounded-xl ${colors.bg} border ${colors.border} ${colors.glow} shadow-lg text-center`}
-                >
-                  <div className="flex items-center justify-center gap-2 mb-2">
-                    {result.recommendation.includes('OVER') ? (
-                      <TrendingUp className={`w-6 h-6 ${colors.text}`} />
-                    ) : result.recommendation.includes('UNDER') ? (
-                      <TrendingDown className={`w-6 h-6 ${colors.text}`} />
-                    ) : (
-                      <Minus className={`w-6 h-6 ${colors.text}`} />
+                    initial={{ scale: 0.8, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                    className={`relative p-6 rounded-2xl text-center overflow-hidden ${
+                      isOver 
+                        ? 'bg-gradient-to-br from-emerald-500/20 via-emerald-600/10 to-emerald-500/20 border-2 border-emerald-500/50 shadow-lg shadow-emerald-500/20' 
+                        : isUnder 
+                          ? 'bg-gradient-to-br from-cyan-500/20 via-cyan-600/10 to-cyan-500/20 border-2 border-cyan-500/50 shadow-lg shadow-cyan-500/20'
+                          : 'bg-gradient-to-br from-amber-500/20 via-amber-600/10 to-amber-500/20 border-2 border-amber-500/50 shadow-lg shadow-amber-500/20'
+                    }`}
+                  >
+                    {/* Animated background glow */}
+                    {isStrongEdge && (
+                      <motion.div
+                        className={`absolute inset-0 opacity-30 ${
+                          isOver ? 'bg-emerald-500' : isUnder ? 'bg-cyan-500' : 'bg-amber-500'
+                        }`}
+                        animate={{ opacity: [0.1, 0.3, 0.1] }}
+                        transition={{ duration: 2, repeat: Infinity }}
+                      />
                     )}
-                    <span className={`text-xl font-bold ${colors.text}`}>{result.recommendation}</span>
-                  </div>
+
+                    <div className="relative z-10">
+                      {/* Direction Icon and Text */}
+                      <div className="flex items-center justify-center gap-3 mb-3">
+                        {isOver ? (
+                          <motion.div
+                            animate={{ y: [0, -5, 0] }}
+                            transition={{ duration: 1, repeat: Infinity }}
+                          >
+                            <TrendingUp className="w-10 h-10 text-emerald-400" />
+                          </motion.div>
+                        ) : isUnder ? (
+                          <motion.div
+                            animate={{ y: [0, 5, 0] }}
+                            transition={{ duration: 1, repeat: Infinity }}
+                          >
+                            <TrendingDown className="w-10 h-10 text-cyan-400" />
+                          </motion.div>
+                        ) : (
+                          <Minus className="w-10 h-10 text-amber-400" />
+                        )}
+                        <span className={`text-4xl font-black tracking-wider ${
+                          isOver ? 'text-emerald-400' : isUnder ? 'text-cyan-400' : 'text-amber-400'
+                        }`}>
+                          {direction}
+                        </span>
+                        {isOver ? (
+                          <motion.div
+                            animate={{ y: [0, -5, 0] }}
+                            transition={{ duration: 1, repeat: Infinity, delay: 0.5 }}
+                          >
+                            <TrendingUp className="w-10 h-10 text-emerald-400" />
+                          </motion.div>
+                        ) : isUnder ? (
+                          <motion.div
+                            animate={{ y: [0, 5, 0] }}
+                            transition={{ duration: 1, repeat: Infinity, delay: 0.5 }}
+                          >
+                            <TrendingDown className="w-10 h-10 text-cyan-400" />
+                          </motion.div>
+                        ) : (
+                          <Minus className="w-10 h-10 text-amber-400" />
+                        )}
+                      </div>
+
+                      {/* Line Value */}
+                      <p className="text-2xl font-bold font-mono text-foreground mb-4">
+                        {sportsbookLine} {statType.toUpperCase()}
+                      </p>
+
+                      {/* Stats Row */}
+                      <div className="flex items-center justify-center gap-6 text-sm">
+                        <div className="text-center">
+                          <p className="text-muted-foreground text-xs uppercase tracking-wider">True Median</p>
+                          <p className="text-lg font-bold font-mono text-cyan-400">{result.trueMedian}</p>
+                        </div>
+                        <div className="w-px h-8 bg-border/50" />
+                        <div className="text-center">
+                          <p className="text-muted-foreground text-xs uppercase tracking-wider">Edge</p>
+                          <p className={`text-lg font-bold font-mono ${
+                            result.edge > 0 ? 'text-emerald-400' : result.edge < 0 ? 'text-red-400' : 'text-muted-foreground'
+                          }`}>
+                            {result.edge > 0 ? '+' : ''}{result.edge}
+                          </p>
+                        </div>
+                        <div className="w-px h-8 bg-border/50" />
+                        <div className="text-center">
+                          <p className="text-muted-foreground text-xs uppercase tracking-wider">Confidence</p>
+                          <p className={`text-lg font-bold ${
+                            isOver ? 'text-emerald-400' : isUnder ? 'text-cyan-400' : 'text-amber-400'
+                          }`}>{result.confidence}%</p>
+                        </div>
+                      </div>
+
+                      {/* Strong Pick Badge */}
+                      {isStrongEdge && (
+                        <motion.div
+                          initial={{ opacity: 0, scale: 0.8 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          transition={{ delay: 0.3 }}
+                          className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-primary/20 to-primary/10 border border-primary/30"
+                        >
+                          <span className="text-lg">🔥</span>
+                          <span className="font-semibold text-primary">STRONG EDGE FOUND</span>
+                          <span className="text-lg">🔥</span>
+                        </motion.div>
+                      )}
+                    </div>
+                  </motion.div>
+                </CelebrationEffect>
+
+                {/* Reason Summary */}
+                <div className="p-3 rounded-xl bg-background/30 border border-border/20 text-center">
                   <p className="text-sm text-muted-foreground">{result.reasonSummary}</p>
-                  <div className="mt-3 flex items-center justify-center gap-2">
-                    <span className="text-xs text-muted-foreground">Confidence:</span>
-                    <span className={`text-sm font-semibold ${colors.text}`}>{result.confidence}%</span>
-                  </div>
-                </motion.div>
-              )}
+                </div>
 
               {/* Median Breakdown */}
               <div className="space-y-2">
@@ -415,8 +485,9 @@ export function MedianEdgeCalculator() {
                   </div>
                 </div>
               )}
-            </motion.div>
-          )}
+              </motion.div>
+            );
+          })()}
         </AnimatePresence>
       </div>
     </div>
