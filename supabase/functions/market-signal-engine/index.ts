@@ -204,6 +204,39 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     const body = await req.json();
+    console.log('Received request:', JSON.stringify(body));
+
+    // Handle action-based requests from Smart Analyze
+    if (body.action === 'scan') {
+      console.log('Scanning for market signals...');
+      
+      // Fetch recent market signals
+      const { data: signals, error: fetchError } = await supabase
+        .from('market_signals')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(20);
+      
+      if (fetchError) {
+        console.error('Error fetching signals:', fetchError);
+      }
+      
+      const hasSignals = signals && signals.length > 0;
+      
+      return new Response(JSON.stringify({
+        success: true,
+        action: 'scan',
+        signals: signals || [],
+        summary: hasSignals 
+          ? `Found ${signals.length} active market signals`
+          : 'No active market signals - markets are stable',
+        market_health: hasSignals ? 'active' : 'quiet',
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Handle direct signal calculation
     const inputs: MarketSignalInput[] = Array.isArray(body) ? body : [body];
     
     console.log(`Processing ${inputs.length} market signal requests`);

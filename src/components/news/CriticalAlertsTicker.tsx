@@ -82,7 +82,7 @@ export function CriticalAlertsTicker() {
         }
         
         .ticker-content {
-          animation: ticker-scroll 40s linear infinite;
+          animation: ticker-scroll 80s linear infinite;
         }
         
         .ticker-content:hover {
