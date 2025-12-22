@@ -29,7 +29,8 @@ import {
   Clock,
   ArrowLeft,
   Target,
-  Sparkles
+  Sparkles,
+  Phone
 } from 'lucide-react';
 import { AILearningDashboard } from '@/components/admin/AILearningDashboard';
 import { SharpMoneyPanel } from '@/components/admin/SharpMoneyPanel';
@@ -461,6 +462,25 @@ export default function Admin() {
       case 'users':
         return (
           <div className="space-y-6">
+            {/* Quick Actions */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Settings className="w-5 h-5" />
+                  Quick Actions
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Button 
+                  onClick={() => navigate('/verify-phone?test=true')}
+                  variant="outline"
+                  className="gap-2"
+                >
+                  <Phone className="w-4 h-4" />
+                  Test Phone Verification
+                </Button>
+              </CardContent>
+            </Card>
             <EliteAccessManager />
             <UserDirectoryManager />
             <CollaboratorManager />
