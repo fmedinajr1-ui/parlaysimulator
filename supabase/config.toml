@@ -326,3 +326,6 @@ verify_jwt = false
 
 [functions.trap-probability-engine]
 verify_jwt = false
+
+[functions.game-news-aggregator]
+verify_jwt = false
