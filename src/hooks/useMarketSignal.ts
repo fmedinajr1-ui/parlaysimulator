@@ -141,7 +141,7 @@ export const useMarketSignals = (legs: Array<{ eventId?: string; description: st
     };
 
     fetchSignals();
-  }, [legsKey, legs]);
+  }, [legsKey]);
 
   const getSignalForLeg = useCallback((leg: { eventId?: string; description: string; playerName?: string }): MarketSignal | null => {
     if (!leg.eventId) return null;
