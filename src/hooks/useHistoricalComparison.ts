@@ -1,6 +1,8 @@
-import { useState, useEffect } from 'react';
+import * as React from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+
+const { useState, useEffect } = React;
 
 interface SimilarParlay {
   id: string;

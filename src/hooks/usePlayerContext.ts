@@ -1,6 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import * as React from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { PlayerContext } from "@/components/results/PlayerNewsContextCard";
+
+const { useState, useEffect, useCallback, useRef } = React;
 
 interface LegInput {
   legId: string;
