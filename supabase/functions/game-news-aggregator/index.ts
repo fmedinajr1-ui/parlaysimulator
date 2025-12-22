@@ -31,6 +31,31 @@ function truncateHeadline(text: string, maxLen = 160): string {
   return text.substring(0, maxLen - 3) + '...';
 }
 
+// Parse team names from description field (e.g., "Team A @ Team B" or "Team A vs Team B")
+function parseMatchupFromDescription(description: string): { home: string; away: string } | null {
+  if (!description) return null;
+  
+  // Try different patterns
+  const patterns = [
+    / @ /,       // "Away @ Home"
+    / vs\.? /i,  // "Away vs Home" or "Away vs. Home"
+    / at /i,     // "Away at Home"
+  ];
+  
+  for (const pattern of patterns) {
+    const parts = description.split(pattern);
+    if (parts.length >= 2) {
+      // Clean up team names - remove extra text after team name
+      const awayTeam = parts[0].trim().split(/[:-]/)[0].trim();
+      const homeTeam = parts[1].trim().split(/[:-]/)[0].trim();
+      if (awayTeam && homeTeam) {
+        return { away: awayTeam, home: homeTeam };
+      }
+    }
+  }
+  return null;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -62,19 +87,26 @@ serve(async (req) => {
         const eventId = m.event_id;
         const isSharp = m.is_sharp_action || Math.abs(m.price_change || 0) >= 15;
         
+        // Parse team names from description if home_team/away_team not available
+        const matchup = parseMatchupFromDescription(m.description || '');
+        
         if (!gamesMap.has(eventId)) {
           gamesMap.set(eventId, {
             event_id: eventId,
             sport: m.sport || 'basketball_nba',
-            home_team: m.home_team || 'Home',
-            away_team: m.away_team || 'Away',
+            home_team: m.home_team || matchup?.home || 'TBD',
+            away_team: m.away_team || matchup?.away || 'TBD',
             commence_time: m.commence_time || now,
           });
         }
 
+        // Include line value for Over/Under bets
+        const outcomeName = m.outcome_name || 'Line';
+        const pointInfo = m.new_point ? ` ${m.new_point}` : '';
+        
         const headline = isSharp
-          ? `⚡ Sharp money on ${m.outcome_name}: ${formatOdds(m.old_price)} → ${formatOdds(m.new_price)}`
-          : `📈 ${m.outcome_name} moved ${(m.price_change || 0) > 0 ? '↑' : '↓'} ${Math.abs(m.price_change || 0)} pts`;
+          ? `⚡ Sharp money on ${outcomeName}${pointInfo}: ${formatOdds(m.old_price)} → ${formatOdds(m.new_price)}`
+          : `📈 ${outcomeName}${pointInfo} moved ${(m.price_change || 0) > 0 ? '↑' : '↓'} ${Math.abs(m.price_change || 0)} pts`;
 
         newsItems.push({
           ...gamesMap.get(eventId),
