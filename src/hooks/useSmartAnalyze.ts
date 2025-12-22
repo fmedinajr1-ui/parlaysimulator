@@ -139,6 +139,29 @@ export function useSmartAnalyze(options: UseSmartAnalyzeOptions = {}) {
     }
   };
 
+  // Save engine result to tracker for realtime display
+  const saveToTracker = async (result: EngineResult, context: AnalyzeContext, sportValue?: string) => {
+    if (!result.success || !result.data) return;
+    
+    try {
+      const { data } = result;
+      
+      const trackerRecord = {
+        engine_name: result.engine,
+        sport: sportValue || 'ALL',
+        pick_description: data.summary || data.message || `${result.engine} analysis complete`,
+        confidence: data.confidence || data.market_score || null,
+        confidence_level: data.signal_label || data.recommendation || 'neutral',
+        signals: data.signals || data,
+        status: 'active',
+      };
+      
+      await supabase.from('engine_live_tracker').insert(trackerRecord);
+    } catch (err) {
+      console.error('Failed to save to tracker:', err);
+    }
+  };
+
   // Run a single engine
   const runEngine = async (engineName: string, payload: any): Promise<EngineResult> => {
     const startTime = Date.now();
@@ -217,6 +240,14 @@ export function useSmartAnalyze(options: UseSmartAnalyzeOptions = {}) {
           batch.map(engine => runEngine(engine, payload))
         );
         engineResults.push(...batchResults);
+        
+        // Save successful results to tracker for realtime display
+        for (const result of batchResults) {
+          if (result.success) {
+            await saveToTracker(result, analyzeContext, sport);
+          }
+        }
+        
         setProgress(Math.round(((i + batch.length) / totalEngines) * 100));
       }
 
