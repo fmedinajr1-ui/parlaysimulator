@@ -283,7 +283,7 @@ serve(async (req) => {
       
       // This specific error is okay to reveal as it's a conflict situation
       return new Response(
-        JSON.stringify({ error: 'This phone number is already registered to another account' }),
+        JSON.stringify({ error: 'An account with this phone number has already been created. Please sign in instead.' }),
         { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
