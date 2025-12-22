@@ -9,7 +9,7 @@ import { CompareTeaser } from "@/components/CompareTeaser";
 import { HistoricalInsights } from "@/components/suggestions/HistoricalInsights";
 import { SmartBettingEdge } from "@/components/suggestions/SmartBettingEdge";
 import { DailyEliteHitterCard } from "@/components/suggestions/DailyEliteHitterCard";
-import { LiveNewsStream } from "@/components/news";
+import { CriticalAlertsTicker } from "@/components/news";
 import { PullToRefreshContainer, PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
 import { useHapticFeedback } from "@/hooks/useHapticFeedback";
@@ -98,6 +98,11 @@ const Index = () => {
       >
         <HeroBanner />
 
+        {/* Critical Alerts Ticker - Visible to all users */}
+        <div className="mb-4 -mx-4">
+          <CriticalAlertsTicker />
+        </div>
+
         {/* Auth Button */}
         <div className="flex justify-end mb-4">
           <Button 
@@ -147,13 +152,15 @@ const Index = () => {
           </div>
         </div>
 
-        {/* Smart Analyze Button - Hero CTA */}
-        <div className="flex flex-col items-center gap-4 mb-6">
-          <SmartAnalyzeButton variant="hero" />
-        </div>
+        {/* Smart Analyze Button - Admin Only */}
+        {isAdmin && (
+          <div className="flex flex-col items-center gap-4 mb-6">
+            <SmartAnalyzeButton variant="hero" />
+          </div>
+        )}
 
-        {/* Engine Status Bar - Real-time indicators */}
-        {!isPilotRestricted && (
+        {/* Engine Status Bar - Admin Only */}
+        {isAdmin && (
           <div className="mb-4">
             <EngineStatusBar showDetails={isAdmin} />
           </div>
@@ -172,8 +179,8 @@ const Index = () => {
         {/* Example Cards */}
         <ExampleCarousel />
 
-        {/* Daily Elite Hitter - Admin/Elite Access Only */}
-        {hasEliteAccess && (
+        {/* Daily Elite Hitter - Pilot + Elite + Admin Access */}
+        {(hasEliteAccess || isPilotUser) && (
           <div className="mb-4">
             <DailyEliteHitterCard />
           </div>
@@ -185,11 +192,6 @@ const Index = () => {
         {/* Premium Sections - Hidden for Pilot Users */}
         {!isPilotRestricted && (
           <>
-            {/* Live News Stream - Primary Feature */}
-            <div className="mb-6 content-visibility-auto">
-              <LiveNewsStream maxGames={8} />
-            </div>
-
             {/* AI Suggested Parlays */}
             <div className="mb-4 content-visibility-auto">
               <SuggestedParlays />
