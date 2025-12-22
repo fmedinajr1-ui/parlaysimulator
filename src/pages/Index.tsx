@@ -152,23 +152,21 @@ const Index = () => {
           </div>
         </div>
 
-        {/* Smart Analyze Button - Admin Only */}
+        {/* Smart Analyze + Engine Status - Side by Side (Admin Only) */}
         {isAdmin && (
-          <div className="flex flex-col items-center gap-4 mb-6">
-            <SmartAnalyzeButton variant="hero" />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            <div className="flex items-center justify-center">
+              <SmartAnalyzeButton variant="hero" />
+            </div>
+            <div className="flex items-center">
+              <EngineStatusBar showDetails={isAdmin} className="w-full" />
+            </div>
           </div>
         )}
 
-        {/* Engine Status Bar - Admin Only */}
-        {isAdmin && (
-          <div className="mb-4">
-            <EngineStatusBar showDetails={isAdmin} />
-          </div>
-        )}
-
-        {/* Main CTA - More compact */}
-        <div className="flex flex-col items-center gap-2 mb-4">
-          <Link to="/upload" className="w-full" onClick={lightTap}>
+        {/* Main CTA - Side by Side */}
+        <div className="flex items-center gap-4 mb-4">
+          <Link to="/upload" className="flex-1" onClick={lightTap}>
             <Button variant="neon" size="lg" className="w-full font-display text-base sm:text-lg tracking-wider touch-target-lg h-12 active:scale-[0.98] transition-transform">
               🎯 Analyze Your Parlay
             </Button>
