@@ -41,7 +41,6 @@ const featureItems = [
   { icon: Wallet, label: "Kelly Calculator", path: "/kelly" },
   { icon: TrendingUp, label: "Odds Movement", path: "/odds" },
   { icon: Sparkles, label: "AI Picks", path: "/suggestions" },
-  { icon: Flame, label: "Hit Rate", path: "/hitrate" },
   { icon: Flame, label: "God Mode Upsets", path: "/god-mode" },
   { icon: Zap, label: "GOD MODE Tracker", path: "/god-mode-tracker" },
   { icon: ScanSearch, label: "FanDuel Scanner", path: "/fanduel-traps" },

@@ -9,7 +9,7 @@ import { LegBreakdown } from "@/components/results/LegBreakdown";
 import { ShareableMeme } from "@/components/results/ShareableMeme";
 import { LegBreakdownScorecard } from "@/components/results/LegBreakdownScorecard";
 import { LegIntelligenceCard } from "@/components/results/LegIntelligenceCard";
-import { CorrelationWarning } from "@/components/results/CorrelationWarning";
+
 import { BookEdgeCard } from "@/components/results/BookEdgeCard";
 import { HistoricalInsightsCard } from "@/components/results/HistoricalInsightsCard";
 import { HistoricalComparisonCard } from "@/components/results/HistoricalComparisonCard";
@@ -527,13 +527,6 @@ const Results = () => {
               delay={100}
             />
 
-            {aiAnalysis?.correlatedLegs && aiAnalysis.correlatedLegs.length > 0 && (
-              <CorrelationWarning 
-                correlatedLegs={aiAnalysis.correlatedLegs}
-                legs={simulation.legs}
-                delay={125}
-              />
-            )}
 
             <BookEdgeCard 
               legs={simulation.legs}

@@ -41,18 +41,14 @@ export interface EngineWeight {
   sampleSizeThreshold: number;
 }
 
-// Default engine weights based on typical performance
-// These can be dynamically adjusted based on coaching_accuracy_metrics
+// Default engine weights - only profitable engines
 export const DEFAULT_ENGINE_WEIGHTS: EngineWeight[] = [
-  { name: 'sharp_money', displayName: 'Sharp Money', baseWeight: 1.0, accuracyMultiplier: 1.2, sampleSizeThreshold: 20 },
-  { name: 'hitrate', displayName: 'Hit Rate', baseWeight: 0.9, accuracyMultiplier: 1.1, sampleSizeThreshold: 30 },
-  { name: 'juiced_props', displayName: 'Juiced Props', baseWeight: 0.85, accuracyMultiplier: 1.0, sampleSizeThreshold: 25 },
-  { name: 'fatigue', displayName: 'Fatigue Edge', baseWeight: 0.8, accuracyMultiplier: 1.15, sampleSizeThreshold: 15 },
-  { name: 'god_mode', displayName: 'God Mode', baseWeight: 0.75, accuracyMultiplier: 1.3, sampleSizeThreshold: 10 },
-  { name: 'trap_scanner', displayName: 'Trap Scanner', baseWeight: 0.9, accuracyMultiplier: 1.1, sampleSizeThreshold: 20 },
-  { name: 'correlation', displayName: 'Correlation Model', baseWeight: 0.7, accuracyMultiplier: 1.0, sampleSizeThreshold: 50 },
-  { name: 'monte_carlo', displayName: 'Monte Carlo', baseWeight: 0.85, accuracyMultiplier: 1.0, sampleSizeThreshold: 100 },
-  { name: 'coaching', displayName: 'Coaching Tendencies', baseWeight: 0.75, accuracyMultiplier: 1.15, sampleSizeThreshold: 15 },
+  { name: 'god_mode', displayName: 'God Mode', baseWeight: 1.2, accuracyMultiplier: 1.3, sampleSizeThreshold: 10 },
+  { name: 'fade_signal', displayName: 'Fade Signal', baseWeight: 1.1, accuracyMultiplier: 1.2, sampleSizeThreshold: 20 },
+  { name: 'trap_scanner', displayName: 'Trap Scanner', baseWeight: 1.0, accuracyMultiplier: 1.1, sampleSizeThreshold: 20 },
+  { name: 'market_signal', displayName: 'Market Signal', baseWeight: 1.0, accuracyMultiplier: 1.0, sampleSizeThreshold: 30 },
+  { name: 'fatigue', displayName: 'Fatigue Edge', baseWeight: 0.9, accuracyMultiplier: 1.15, sampleSizeThreshold: 15 },
+  { name: 'coaching', displayName: 'Coaching Tendencies', baseWeight: 0.85, accuracyMultiplier: 1.15, sampleSizeThreshold: 15 },
 ];
 
 /**

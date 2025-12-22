@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { OddsMovementCard } from "@/components/results/OddsMovementCard";
 import { LineHistoryChart } from "@/components/odds/LineHistoryChart";
 import { PushNotificationToggle } from "@/components/odds/PushNotificationToggle";
-import { JuicedPropsCard } from "@/components/suggestions/JuicedPropsCard";
+
 import { OddsPaywall } from "@/components/odds/OddsPaywall";
 import { MobileHeader } from "@/components/layout/MobileHeader";
 import { PullToRefreshContainer, PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
@@ -12,7 +12,7 @@ import { useHapticFeedback } from "@/hooks/useHapticFeedback";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { Activity, Zap, TrendingUp, RefreshCw, Flame, ShoppingCart, Loader2 } from "lucide-react";
+import { Activity, Zap, TrendingUp, RefreshCw, ShoppingCart, Loader2 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useSubscription } from "@/hooks/useSubscription";
 import { useAuth } from "@/contexts/AuthContext";
@@ -257,7 +257,7 @@ const OddsMovement = () => {
 
           {/* Main Content Tabs */}
           <Tabs defaultValue="movements" className="space-y-4">
-            <TabsList className="grid w-full grid-cols-4 bg-card">
+            <TabsList className="grid w-full grid-cols-3 bg-card">
               <TabsTrigger 
                 value="movements" 
                 className="data-[state=active]:bg-primary/20"
@@ -275,12 +275,12 @@ const OddsMovement = () => {
                 <span className="hidden sm:inline">Sharp</span>
               </TabsTrigger>
               <TabsTrigger 
-                value="juiced" 
-                className="data-[state=active]:bg-neon-orange/20"
+                value="charts" 
+                className="data-[state=active]:bg-neon-green/20"
                 onClick={lightTap}
               >
-                <Flame className="w-4 h-4 mr-1" />
-                <span className="hidden sm:inline">Props</span>
+                <TrendingUp className="w-4 h-4 mr-1" />
+                <span className="hidden sm:inline">Charts</span>
               </TabsTrigger>
               <TabsTrigger 
                 value="charts" 
@@ -309,9 +309,6 @@ const OddsMovement = () => {
               />
             </TabsContent>
 
-            <TabsContent value="juiced" className="space-y-4 content-visibility-auto">
-              <JuicedPropsCard />
-            </TabsContent>
 
             <TabsContent value="charts" className="space-y-4 content-visibility-auto">
               <LineHistoryChart 

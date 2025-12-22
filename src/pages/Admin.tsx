@@ -44,13 +44,11 @@ import { MasterAccuracyDashboard } from '@/components/admin/accuracy/MasterAccur
 import { SharpRecalibrationPanel } from '@/components/admin/SharpRecalibrationPanel';
 import { CalibrationFactorsPanel } from '@/components/admin/CalibrationFactorsPanel';
 import { CronJobHistoryPanel } from '@/components/admin/CronJobHistoryPanel';
-import { HitRateAccuracyPanel } from '@/components/admin/HitRateAccuracyPanel';
 import { UnifiedAccuracyDashboard } from '@/components/admin/UnifiedAccuracyDashboard';
 import { SharpEngineV2Card } from '@/components/sharp/SharpEngineV2Card';
 import { SharpEngineConfigPanel } from '@/components/admin/SharpEngineConfigPanel';
 import { AIGenerativeProgressDashboard } from '@/components/admin/AIGenerativeProgressDashboard';
 import { AllSportsTracker } from '@/components/tracker/AllSportsTracker';
-import { MedianLockBacktestPanel } from '@/components/medianlock';
 import { EliteAccessManager } from '@/components/admin/EliteAccessManager';
 import { GodModeWeightsPanel } from '@/components/admin/GodModeWeightsPanel';
 interface ParlayData {
@@ -78,8 +76,7 @@ type AdminSection =
   | 'users' 
   | 'parlays'
   | 'god-mode'
-  | 'tracker'
-  | 'medianlock';
+  | 'tracker';
 
 const sectionConfig = [
   {
@@ -141,16 +138,9 @@ const sectionConfig = [
   {
     id: 'tracker' as AdminSection,
     title: 'All-Sports Tracker',
-    description: 'Real-time picks from all 8 engines',
+    description: 'Real-time picks from all engines',
     icon: Eye,
     color: 'text-emerald-500'
-  },
-  {
-    id: 'medianlock' as AdminSection,
-    title: 'MedianLock™ PRO',
-    description: 'Hit rate engine backtest & tuning',
-    icon: Target,
-    color: 'text-cyan-500'
   },
 ];
 
@@ -450,7 +440,6 @@ export default function Admin() {
           <div className="space-y-6">
             <UnifiedAccuracyDashboard />
             <MasterAccuracyDashboard />
-            <HitRateAccuracyPanel />
           </div>
         );
       
@@ -705,9 +694,8 @@ export default function Admin() {
           </div>
         );
 
-      case 'medianlock':
-        return <MedianLockBacktestPanel />;
-      
+
+
       default:
         return null;
     }
