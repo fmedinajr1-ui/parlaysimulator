@@ -29,10 +29,7 @@ const ENGINES = [
   { id: 'all', label: 'All Engines', icon: Activity },
   { id: 'sharp', label: 'Sharp', icon: Zap },
   { id: 'godmode', label: 'God Mode', icon: Brain },
-  { id: 'juiced', label: 'Juiced', icon: Target },
-  { id: 'hitrate', label: 'HitRate', icon: TrendingUp },
   { id: 'fatigue', label: 'Fatigue', icon: AlertCircle },
-  { id: 'ai', label: 'AI Parlay', icon: Brain },
   { id: 'fanduel', label: 'FanDuel', icon: Target },
   { id: 'unified', label: 'Unified', icon: Activity },
 ];

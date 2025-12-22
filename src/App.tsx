@@ -38,13 +38,11 @@ const NotFound = React.lazy(() => import("./pages/NotFound"));
 const PVSCalculator = React.lazy(() => import("./pages/PVSCalculator"));
 const GodModeUpsets = React.lazy(() => import("./pages/GodModeUpsets"));
 const GodModeDashboard = React.lazy(() => import("./pages/GodModeDashboard"));
-const HitRate = React.lazy(() => import("./pages/HitRate"));
 const BestBets = React.lazy(() => import("./pages/BestBets"));
 const SharpComparison = React.lazy(() => import("./pages/SharpComparison"));
 const FanDuelTraps = React.lazy(() => import("./pages/FanDuelTraps"));
 const AllSportsTracker = React.lazy(() => import("./pages/AllSportsTracker"));
 const Kelly = React.lazy(() => import("./pages/Kelly"));
-const MedianLock = React.lazy(() => import("./pages/MedianLock"));
 const VerifyEmail = React.lazy(() => import("./pages/VerifyEmail"));
 const Pools = React.lazy(() => import("./pages/Pools"));
 const PoolDetail = React.lazy(() => import("./pages/PoolDetail"));
@@ -107,13 +105,11 @@ function AnimatedRoutes() {
               <Route path="/pvs-calculator" element={<PVSCalculator />} />
               <Route path="/god-mode" element={<GodModeUpsets />} />
               <Route path="/god-mode-tracker" element={<GodModeDashboard />} />
-              <Route path="/hitrate" element={<HitRate />} />
               <Route path="/best-bets" element={<BestBets />} />
               <Route path="/sharp-comparison" element={<SharpComparison />} />
               <Route path="/fanduel-traps" element={<FanDuelTraps />} />
               <Route path="/tracker" element={<AllSportsTracker />} />
               <Route path="/kelly" element={<Kelly />} />
-              <Route path="/median-lock" element={<MedianLock />} />
               <Route path="/verify-email" element={<VerifyEmail />} />
               <Route path="/verify-phone" element={<Navigate to="/verify-email" replace />} />
               <Route path="/pools" element={<Pools />} />

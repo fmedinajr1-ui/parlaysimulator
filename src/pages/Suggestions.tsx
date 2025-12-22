@@ -9,9 +9,6 @@ import { SuggestionHistoryFeed } from "@/components/suggestions/SuggestionHistor
 import { StrategyPerformanceCard } from "@/components/suggestions/StrategyPerformanceCard";
 import { CalibrationDashboard } from "@/components/results/CalibrationDashboard";
 import { TodaysFatigueGames } from "@/components/fatigue";
-import { JuicedPropsCard } from "@/components/suggestions/JuicedPropsCard";
-import { HitRatePicks } from "@/components/suggestions/HitRatePicks";
-import { MedianLockDashboard } from "@/components/medianlock";
 import { SuggestedParlayOptimizer } from "@/components/suggestions/SuggestedParlayOptimizer";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -671,22 +668,18 @@ const Suggestions = () => {
 
         {/* Tab Navigation */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-5 bg-muted/50 mb-4">
+          <TabsList className="grid w-full grid-cols-4 bg-muted/50 mb-4">
             <TabsTrigger value="suggestions" className="text-xs">
               <Sparkles className="w-3 h-3 mr-1" />
               All
             </TabsTrigger>
-            <TabsTrigger value="medianlock" className="text-xs">
-              <Lock className="w-3 h-3 mr-1" />
-              Locks
-            </TabsTrigger>
-            <TabsTrigger value="hitrate" className="text-xs">
-              <Target className="w-3 h-3 mr-1" />
-              Hit Rate
-            </TabsTrigger>
             <TabsTrigger value="sharp-props" className="text-xs">
               <Zap className="w-3 h-3 mr-1" />
               Sharp
+            </TabsTrigger>
+            <TabsTrigger value="fatigue" className="text-xs">
+              <Target className="w-3 h-3 mr-1" />
+              Fatigue
             </TabsTrigger>
             <TabsTrigger value="history" className="text-xs">
               <History className="w-3 h-3 mr-1" />
@@ -1016,20 +1009,8 @@ const Suggestions = () => {
             )}
           </TabsContent>
 
-          {/* MedianLock Tab */}
-          <TabsContent value="medianlock" className="mt-4 space-y-4">
-            <MedianLockDashboard />
-          </TabsContent>
-
-          {/* Hit Rate Tab */}
-          <TabsContent value="hitrate" className="mt-4 space-y-4">
-            <HitRatePicks />
-          </TabsContent>
-
           {/* Sharp Props Tab */}
           <TabsContent value="sharp-props" className="mt-4 space-y-4">
-            {/* Juiced Props Card - Morning Scan */}
-            <JuicedPropsCard />
             
             {/* Sharp Props Header */}
             <Card className="bg-gradient-to-br from-orange-500/10 to-yellow-500/10 border-orange-500/30">
@@ -1374,6 +1355,11 @@ const Suggestions = () => {
                 </div>
               );
             })()}
+          </TabsContent>
+
+          {/* Fatigue Tab */}
+          <TabsContent value="fatigue" className="mt-4 space-y-4">
+            <TodaysFatigueGames />
           </TabsContent>
 
           <TabsContent value="history" className="mt-4 space-y-4">

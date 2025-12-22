@@ -48,7 +48,6 @@ const menuGroups = [
     defaultOpen: true,
     items: [
       { icon: Sparkles, label: "AI Picks", path: "/suggestions", description: "Smart betting suggestions" },
-      { icon: Flame, label: "Hit Rate", path: "/hitrate", description: "X/5 streak patterns" },
       { icon: Activity, label: "Sharp Money", path: "/sharp", description: "Track sharp action" },
       { icon: ScanSearch, label: "FanDuel Scanner", path: "/fanduel-traps", description: "Trap line detection" },
     ]
