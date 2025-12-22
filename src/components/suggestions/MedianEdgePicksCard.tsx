@@ -6,6 +6,8 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { MedianEdgeCalculator } from "./MedianEdgeCalculator";
+import { AutoPicksPaywall } from "./AutoPicksPaywall";
+import { usePilotUser } from "@/hooks/usePilotUser";
 
 type ViewMode = "calculator" | "auto";
 
@@ -29,7 +31,10 @@ interface MedianEdgePick {
 export function MedianEdgePicksCard() {
   const [viewMode, setViewMode] = useState<ViewMode>("calculator");
   const { toast } = useToast();
-
+  const { isAdmin, isSubscribed, isLoading: isUserLoading } = usePilotUser();
+  
+  // Check if user has access to Auto Picks
+  const hasAutoPicksAccess = isAdmin || isSubscribed;
   const { data: picks, isLoading, refetch, isFetching } = useQuery({
     queryKey: ['median-edge-picks'],
     queryFn: async () => {
@@ -90,8 +95,13 @@ export function MedianEdgePicksCard() {
       {/* Calculator Mode */}
       {viewMode === "calculator" && <MedianEdgeCalculator />}
 
-      {/* Auto Mode */}
-      {viewMode === "auto" && (
+      {/* Auto Mode - Show Paywall if no access */}
+      {viewMode === "auto" && !hasAutoPicksAccess && !isUserLoading && (
+        <AutoPicksPaywall />
+      )}
+
+      {/* Auto Mode - Show Content if has access */}
+      {viewMode === "auto" && hasAutoPicksAccess && (
         <div className="relative overflow-hidden rounded-2xl border border-primary/30 bg-gradient-to-br from-card/90 via-card/70 to-primary/10 backdrop-blur-sm">
           <div className="absolute -top-20 -right-20 w-40 h-40 bg-primary/10 rounded-full blur-3xl" />
           
