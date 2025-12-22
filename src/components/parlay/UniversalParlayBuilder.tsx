@@ -7,6 +7,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { useParlayBuilder } from '@/contexts/ParlayBuilderContext';
 import { ParlayLegCard } from './ParlayLegCard';
 import { CoachingAlertBanner } from './CoachingAlertBanner';
+import { LiveProbabilitySimulator } from './LiveProbabilitySimulator';
 import { useSportsCoachingSignals, SPORT_ICONS } from '@/hooks/useSportsCoachingSignals';
 import { SOURCE_LABELS } from '@/types/universal-parlay';
 import { cn } from '@/lib/utils';
@@ -153,20 +154,15 @@ export const UniversalParlayBuilder = () => {
                   </div>
                 </ScrollArea>
 
+                {/* Live Probability Simulator */}
+                <div className="px-3 pt-2">
+                  <LiveProbabilitySimulator 
+                    legs={legs.map(leg => ({ odds: leg.odds }))} 
+                  />
+                </div>
+
                 {/* Stats */}
                 <div className="px-3 py-2 bg-muted/50 border-t border-border/50">
-                  <div className="flex justify-between text-sm mb-2">
-                    <span className="text-muted-foreground">Win Probability</span>
-                    <span className={cn(
-                      "font-bold",
-                      winProbability < 5 ? "text-red-500" : 
-                      winProbability < 15 ? "text-orange-500" : 
-                      winProbability < 30 ? "text-yellow-500" : "text-green-500"
-                    )}>
-                      {winProbability.toFixed(1)}%
-                    </span>
-                  </div>
-                  
                   <div className="flex gap-2 items-center mb-2">
                     <div className="flex-1">
                       <label className="text-[10px] text-muted-foreground uppercase mb-0.5 block">
