@@ -9,6 +9,7 @@ import { ParlayLegCard } from './ParlayLegCard';
 import { CoachingAlertBanner } from './CoachingAlertBanner';
 import { LiveProbabilitySimulator } from './LiveProbabilitySimulator';
 import { useSportsCoachingSignals, SPORT_ICONS } from '@/hooks/useSportsCoachingSignals';
+import { useMarketSignals } from '@/hooks/useMarketSignal';
 import { SOURCE_LABELS } from '@/types/universal-parlay';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -34,6 +35,11 @@ export const UniversalParlayBuilder = () => {
   
   // Fetch coaching signals for all sports - must be called before any early returns (React Rules of Hooks)
   const { signals, isLoading: coachingLoading, totalLegsWithCoaching, legCountBySport, getSignalForLeg, criticalWarnings } = useSportsCoachingSignals(legs);
+  
+  // Fetch market signals for all legs
+  const { getSignalForLeg: getMarketSignalForLeg, isLoading: marketSignalsLoading } = useMarketSignals(
+    legs.map(leg => ({ eventId: leg.eventId, description: leg.description, playerName: leg.playerName }))
+  );
 
   // Early return AFTER all hooks are called
   if (legCount === 0) return null;
@@ -149,6 +155,7 @@ export const UniversalParlayBuilder = () => {
                         leg={leg}
                         onRemove={removeLeg}
                         coachingSignal={getSignalForLeg(leg.id)}
+                        marketSignal={getMarketSignalForLeg({ eventId: leg.eventId, description: leg.description, playerName: leg.playerName })}
                       />
                     ))}
                   </div>

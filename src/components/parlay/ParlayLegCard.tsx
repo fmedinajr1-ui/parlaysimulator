@@ -4,15 +4,17 @@ import { Button } from '@/components/ui/button';
 import { UniversalLeg, SOURCE_LABELS } from '@/types/universal-parlay';
 import { SportsCoachingSignal } from '@/hooks/useSportsCoachingSignals';
 import { CoachingWarningBadge } from './CoachingWarningBadge';
+import { MarketSignalBadge, type MarketSignal } from './MarketSignalBadge';
 import { cn } from '@/lib/utils';
 
 interface ParlayLegCardProps {
   leg: UniversalLeg;
   onRemove: (id: string) => void;
   coachingSignal?: SportsCoachingSignal;
+  marketSignal?: MarketSignal | null;
 }
 
-export const ParlayLegCard = ({ leg, onRemove, coachingSignal }: ParlayLegCardProps) => {
+export const ParlayLegCard = ({ leg, onRemove, coachingSignal, marketSignal }: ParlayLegCardProps) => {
   const sourceInfo = SOURCE_LABELS[leg.source];
   
   const formatOdds = (odds: number) => {
@@ -74,9 +76,16 @@ export const ParlayLegCard = ({ leg, onRemove, coachingSignal }: ParlayLegCardPr
         </div>
       </div>
       
-      {/* Coaching Signal Badge */}
-      {coachingSignal && (
-        <CoachingWarningBadge signal={coachingSignal} />
+      {/* Signal Badges Row */}
+      {(coachingSignal || marketSignal) && (
+        <div className="flex items-center gap-2 flex-wrap">
+          {marketSignal && (
+            <MarketSignalBadge signal={marketSignal} compact />
+          )}
+          {coachingSignal && (
+            <CoachingWarningBadge signal={coachingSignal} compact />
+          )}
+        </div>
       )}
     </div>
   );

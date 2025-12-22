@@ -318,5 +318,8 @@ verify_jwt = false
 [functions.fetch-parlay-comparison]
 verify_jwt = false
 
+[functions.market-signal-engine]
+verify_jwt = false
+
 [functions.check-device]
 verify_jwt = false
