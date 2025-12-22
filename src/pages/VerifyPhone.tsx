@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, Navigate } from 'react-router-dom';
+import { useNavigate, Navigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { PhoneVerification } from '@/components/auth/PhoneVerification';
 import { AppShell } from '@/components/layout/AppShell';
@@ -10,14 +10,19 @@ import { FullPageWolfLoader } from '@/components/ui/wolf-loader';
 
 export default function VerifyPhone() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user, isLoading } = useAuth();
   const [isVerified, setIsVerified] = useState<boolean | null>(null);
   const [checking, setChecking] = useState(true);
+  
+  // Check if test mode is enabled via query param
+  const isTestMode = searchParams.get('test') === 'true';
 
   // Use replaceState to prevent back-button bypass
   useEffect(() => {
-    window.history.replaceState(null, '', '/verify-phone');
-  }, []);
+    const path = isTestMode ? '/verify-phone?test=true' : '/verify-phone';
+    window.history.replaceState(null, '', path);
+  }, [isTestMode]);
 
   // Check if already verified or if user is admin
   useEffect(() => {
@@ -28,18 +33,20 @@ export default function VerifyPhone() {
       }
 
       try {
-        // Check if user is admin - admins bypass phone verification
-        const { data: roleData } = await supabase
-          .from('user_roles')
-          .select('role')
-          .eq('user_id', user.id)
-          .eq('role', 'admin')
-          .maybeSingle();
+        // Check if user is admin - admins bypass phone verification (unless in test mode)
+        if (!isTestMode) {
+          const { data: roleData } = await supabase
+            .from('user_roles')
+            .select('role')
+            .eq('user_id', user.id)
+            .eq('role', 'admin')
+            .maybeSingle();
 
-        if (roleData) {
-          // User is admin, redirect to home
-          navigate('/', { replace: true });
-          return;
+          if (roleData) {
+            // User is admin, redirect to home
+            navigate('/', { replace: true });
+            return;
+          }
         }
 
         // Check phone verification for non-admin users
