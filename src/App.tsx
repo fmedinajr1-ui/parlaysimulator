@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, useLocation, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ParlayBuilderProvider } from "@/contexts/ParlayBuilderContext";
+import { PilotUserProvider } from "@/contexts/PilotUserContext";
 import { PWAInstallPrompt } from "@/components/PWAInstallPrompt";
 import { BottomNav } from "@/components/BottomNav";
 import { UniversalParlayBuilder } from "@/components/parlay/UniversalParlayBuilder";
@@ -158,11 +159,13 @@ const App = () => {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <AuthProvider>
-          <ParlayBuilderProvider>
-            <TooltipProvider>
-              <AppContent />
-            </TooltipProvider>
-          </ParlayBuilderProvider>
+          <PilotUserProvider>
+            <ParlayBuilderProvider>
+              <TooltipProvider>
+                <AppContent />
+              </TooltipProvider>
+            </ParlayBuilderProvider>
+          </PilotUserProvider>
         </AuthProvider>
       </BrowserRouter>
     </QueryClientProvider>

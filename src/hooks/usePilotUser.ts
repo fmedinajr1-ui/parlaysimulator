@@ -1,221 +1,38 @@
-import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/contexts/AuthContext';
+import { useContext } from 'react';
+import { PilotUserContext, usePilotUserContext } from '@/contexts/PilotUserContext';
 
-interface PilotUserState {
-  isLoading: boolean;
-  isPilotUser: boolean;
-  isAdmin: boolean;
-  isSubscribed: boolean;
-  canScan: boolean;
-  freeScansRemaining: number;
-  freeComparesRemaining: number;
-  paidScanBalance: number;
-  totalScansAvailable: number;
-  hasOddsAccess: boolean;
-  hasEliteAccess: boolean;
-  phoneVerified: boolean;
-  isPurchasing: boolean;
-}
-
+/**
+ * Hook to access pilot user state and actions.
+ * Uses centralized React Query caching to prevent duplicate API calls.
+ * 
+ * This is a backward-compatible wrapper around PilotUserContext.
+ * All components using this hook share the same cached data.
+ */
 export function usePilotUser() {
-  const { user, session } = useAuth();
-  const [state, setState] = useState<PilotUserState>({
-    isLoading: true,
-    isPilotUser: true, // Default to true - ensures pilot quota system is used during loading
-    isAdmin: false,
-    isSubscribed: false,
-    canScan: true,
-    freeScansRemaining: 5,
-    freeComparesRemaining: 3,
-    paidScanBalance: 0,
-    totalScansAvailable: 5,
-    hasOddsAccess: false,
-    hasEliteAccess: false,
-    phoneVerified: false,
-    isPurchasing: false,
-  });
-
-  const checkStatus = useCallback(async () => {
-    if (!user || !session) {
-      setState({
-        isLoading: false,
-        isPilotUser: true, // Restrict unauthenticated users by default
-        isAdmin: false,
-        isSubscribed: false,
-        canScan: true,
-        freeScansRemaining: 5,
-        freeComparesRemaining: 3,
-        paidScanBalance: 0,
-        totalScansAvailable: 5,
-        hasOddsAccess: false,
-        hasEliteAccess: false,
-        phoneVerified: false,
-        isPurchasing: false,
-      });
-      return;
-    }
-
-    try {
-      const { data, error } = await supabase.functions.invoke('check-subscription');
-
-      if (error) {
-        console.error('Error checking pilot status:', error);
-        setState(prev => ({ ...prev, isLoading: false }));
-        return;
-      }
-
-      setState(prev => ({
-        isLoading: false,
-        isPilotUser: data.isPilotUser || false,
-        isAdmin: data.isAdmin || false,
-        isSubscribed: data.subscribed || false,
-        canScan: data.canScan ?? true,
-        freeScansRemaining: data.freeScansRemaining ?? 5,
-        freeComparesRemaining: data.freeComparesRemaining ?? 3,
-        paidScanBalance: data.paidScanBalance ?? 0,
-        totalScansAvailable: (data.freeScansRemaining ?? 0) + (data.paidScanBalance ?? 0),
-        hasOddsAccess: data.hasOddsAccess || false,
-        hasEliteAccess: data.hasEliteAccess || false,
-        phoneVerified: data.phoneVerified ?? false,
-        isPurchasing: prev.isPurchasing,
-      }));
-    } catch (err) {
-      console.error('Error checking pilot status:', err);
-      setState(prev => ({ ...prev, isLoading: false }));
-    }
-  }, [user, session]);
-
-  const decrementScan = useCallback(async (quotaType: 'scan' | 'compare' = 'scan') => {
-    if (!user || !session) return { success: false, error: 'Not authenticated' };
-    if (state.isAdmin || state.isSubscribed) return { success: true, unlimited: true };
-
-    try {
-      const { data, error } = await supabase.functions.invoke('decrement-pilot-scan', {
-        body: { quotaType },
-      });
-
-      if (error) {
-        console.error('Error decrementing scan:', error);
-        return { success: false, error: error.message };
-      }
-
-      // No need to manually refresh - realtime will update the state
-      return data;
-    } catch (err) {
-      console.error('Error decrementing scan:', err);
-      return { success: false, error: 'Failed to decrement scan' };
-    }
-  }, [user, session, state.isAdmin, state.isSubscribed]);
-
-  const purchaseScans = useCallback(async (packType: 'single' | 'pack20' | 'pack50') => {
-    if (!user || !session) return;
-
-    setState(prev => ({ ...prev, isPurchasing: true }));
-
-    try {
-      const { data, error } = await supabase.functions.invoke('purchase-scans', {
-        body: { packType },
-      });
-
-      if (error) {
-        console.error('Error purchasing scans:', error);
-        setState(prev => ({ ...prev, isPurchasing: false }));
-        return;
-      }
-
-      if (data?.url) {
-        // Use location.href for better mobile/PWA experience
-        window.location.href = data.url;
-      } else {
-        setState(prev => ({ ...prev, isPurchasing: false }));
-      }
-    } catch (err) {
-      console.error('Error purchasing scans:', err);
-      setState(prev => ({ ...prev, isPurchasing: false }));
-    }
-  }, [user, session]);
-
-  const creditScans = useCallback(async (scans: number) => {
-    if (!user || !session) return;
-
-    try {
-      const { error } = await supabase.functions.invoke('credit-scan-purchase', {
-        body: { scans },
-      });
-
-      if (error) {
-        console.error('Error crediting scans:', error);
-        return;
-      }
-
-      // No need to manually refresh - realtime will update the state
-    } catch (err) {
-      console.error('Error crediting scans:', err);
-    }
-  }, [user, session]);
-
-  // Initial fetch
-  useEffect(() => {
-    checkStatus();
-  }, [checkStatus]);
-
-  // Refresh on window focus
-  useEffect(() => {
-    const handleFocus = () => checkStatus();
-    window.addEventListener('focus', handleFocus);
-    return () => window.removeEventListener('focus', handleFocus);
-  }, [checkStatus]);
-
-  // Real-time subscription for instant credit updates
-  useEffect(() => {
-    if (!user) return;
-
-    const channel = supabase
-      .channel(`pilot-quota-${user.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*', // Listen for INSERT, UPDATE, DELETE
-          schema: 'public',
-          table: 'pilot_user_quotas',
-          filter: `user_id=eq.${user.id}`,
-        },
-        (payload) => {
-          // Update state immediately from realtime payload
-          const newData = payload.new as {
-            free_scans_remaining?: number;
-            free_compares_remaining?: number;
-            paid_scan_balance?: number;
-          };
-
-          if (newData) {
-            const freeScans = newData.free_scans_remaining ?? 0;
-            const paidScans = newData.paid_scan_balance ?? 0;
-            
-            setState(prev => ({
-              ...prev,
-              freeScansRemaining: freeScans,
-              freeComparesRemaining: newData.free_compares_remaining ?? prev.freeComparesRemaining,
-              paidScanBalance: paidScans,
-              totalScansAvailable: freeScans + paidScans,
-              canScan: (freeScans + paidScans) > 0 || prev.isAdmin || prev.isSubscribed,
-            }));
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
+  const context = useContext(PilotUserContext);
+  
+  // If used outside provider (e.g., during initial render), return safe defaults
+  if (!context) {
+    return {
+      isLoading: true,
+      isPilotUser: true,
+      isAdmin: false,
+      isSubscribed: false,
+      canScan: true,
+      freeScansRemaining: 5,
+      freeComparesRemaining: 3,
+      paidScanBalance: 0,
+      totalScansAvailable: 5,
+      hasOddsAccess: false,
+      hasEliteAccess: false,
+      phoneVerified: false,
+      isPurchasing: false,
+      checkStatus: async () => {},
+      decrementScan: async () => ({ success: false, error: 'Context not available' }),
+      purchaseScans: async () => {},
+      creditScans: async () => {},
     };
-  }, [user?.id]);
-
-  return {
-    ...state,
-    checkStatus,
-    decrementScan,
-    purchaseScans,
-    creditScans,
-  };
+  }
+  
+  return context;
 }
