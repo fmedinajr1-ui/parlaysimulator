@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 import { Scan } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
+import { useRef, useEffect, useState } from "react";
 
 interface ScanBalanceBadgeProps {
   scansRemaining: number;
@@ -20,6 +21,18 @@ export function ScanBalanceBadge({
   onClick
 }: ScanBalanceBadgeProps) {
   const percentage = (scansRemaining / totalScans) * 100;
+  const prevScansRef = useRef(scansRemaining);
+  const [shouldAnimate, setShouldAnimate] = useState(false);
+  
+  // Only animate when scans actually decrease (user action)
+  useEffect(() => {
+    if (prevScansRef.current > scansRemaining) {
+      setShouldAnimate(true);
+      const timer = setTimeout(() => setShouldAnimate(false), 300);
+      return () => clearTimeout(timer);
+    }
+    prevScansRef.current = scansRemaining;
+  }, [scansRemaining]);
   
   const getColorClass = () => {
     if (percentage > 60) return "bg-emerald-500/20 text-emerald-400 border-emerald-500/30";
@@ -33,26 +46,21 @@ export function ScanBalanceBadge({
   };
 
   return (
-    <AnimatePresence mode="wait">
-      <motion.button
-        key={scansRemaining}
-        initial={{ scale: 1.2, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        exit={{ scale: 0.8, opacity: 0 }}
-        transition={{ type: "spring", stiffness: 500, damping: 30 }}
-        onClick={onClick}
-        className={cn(
-          "inline-flex items-center rounded-full border font-semibold transition-all",
-          "active:scale-95 touch-manipulation",
-          sizeClasses[size],
-          getColorClass(),
-          onClick && "cursor-pointer hover:opacity-80",
-          className
-        )}
-      >
-        {showIcon && <Scan className={cn(size === 'sm' ? "w-2.5 h-2.5" : "w-3 h-3")} />}
-        <span>{scansRemaining}</span>
-      </motion.button>
-    </AnimatePresence>
+    <motion.button
+      animate={shouldAnimate ? { scale: [1, 1.2, 1] } : { scale: 1 }}
+      transition={{ duration: 0.3, ease: "easeOut" }}
+      onClick={onClick}
+      className={cn(
+        "inline-flex items-center rounded-full border font-semibold transition-colors",
+        "active:scale-95 touch-manipulation",
+        sizeClasses[size],
+        getColorClass(),
+        onClick && "cursor-pointer hover:opacity-80",
+        className
+      )}
+    >
+      {showIcon && <Scan className={cn(size === 'sm' ? "w-2.5 h-2.5" : "w-3 h-3")} />}
+      <span>{scansRemaining}</span>
+    </motion.button>
   );
 }
