@@ -2,8 +2,9 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAdminRole } from "@/hooks/useAdminRole";
 import { ArrowLeft, Plus, Send, Loader2, Edit2, Trash2, Eye, EyeOff } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -14,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
+import { FullPageWolfLoader } from "@/components/ui/wolf-loader";
 
 interface Release {
   id: string;
@@ -30,6 +32,7 @@ interface Release {
 
 export default function ReleaseManager() {
   const { user } = useAuth();
+  const { isAdmin, isLoading: adminLoading } = useAdminRole();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -176,12 +179,13 @@ export default function ReleaseManager() {
     });
   };
 
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <p className="text-muted-foreground">Please log in to access this page.</p>
-      </div>
-    );
+  // Admin check - redirect non-admins
+  if (adminLoading) {
+    return <FullPageWolfLoader text="Checking permissions..." />;
+  }
+
+  if (!user || !isAdmin) {
+    return <Navigate to="/" replace />;
   }
 
   return (

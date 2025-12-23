@@ -68,8 +68,6 @@ export function EmailVerification({ userId, userEmail, onVerified, onBack }: Ema
     haptic.mediumTap();
 
     try {
-      console.log('[EmailVerification] Sending code to:', email);
-      
       const { data, error } = await supabase.functions.invoke('send-email-verification', {
         body: { 
           email: email.toLowerCase(),
@@ -77,10 +75,7 @@ export function EmailVerification({ userId, userEmail, onVerified, onBack }: Ema
         }
       });
 
-      console.log('[EmailVerification] Response:', { data, error });
-
       if (error) {
-        console.error('[EmailVerification] Error:', error);
         toast.error(error.message || 'Failed to send verification code');
         return;
       }
