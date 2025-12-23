@@ -222,14 +222,39 @@ serve(async (req) => {
     if (emailError) {
       logStep('Resend email error', emailError);
       
-      // Clean up the stored code since email failed
+      // In debug mode, still return success with the code (useful for testing when Resend domain not verified)
+      if (debug_mode === true) {
+        logStep('DEBUG MODE: Email failed, returning code anyway for testing');
+        
+        // Update email_verification_sent_at anyway
+        await supabase
+          .from('profiles')
+          .update({ email_verification_sent_at: new Date().toISOString() })
+          .eq('user_id', user.id);
+        
+        return new Response(
+          JSON.stringify({ 
+            success: true, 
+            message: 'Email service limited (testing mode) - use code below',
+            debug_code: code,
+            expiresInSeconds: 600,
+            emailError: 'Resend testing domain only sends to account owner. Verify your domain at resend.com/domains for production.'
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      
+      // Production mode - clean up the stored code since email failed
       await supabase
         .from('email_verification_codes')
         .delete()
         .eq('user_id', user.id);
 
       return new Response(
-        JSON.stringify({ error: 'Failed to send verification email. Please try again.' }),
+        JSON.stringify({ 
+          error: 'Failed to send verification email. Please try again or contact support.',
+          details: 'Email delivery failed. If this persists, the email domain may need configuration.'
+        }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
