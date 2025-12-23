@@ -9,6 +9,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { PaywallModal } from "@/components/PaywallModal";
 import { PilotPaywallModal } from "@/components/PilotPaywallModal";
+import { LowScansPopup } from "@/components/LowScansPopup";
 import { QuickCheckResults } from "@/components/upload/QuickCheckResults";
 import { UploadOptimizer } from "@/components/upload/UploadOptimizer";
 import { ExtractionQueueBanner } from "@/components/upload/ExtractionQueueBanner";
@@ -24,6 +25,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import { useSubscription } from "@/hooks/useSubscription";
 import { usePilotUser } from "@/hooks/usePilotUser";
+import { useLowScansPopup } from "@/hooks/useLowScansPopup";
 import { useAuth } from "@/contexts/AuthContext";
 import { compressImage, validateMediaFile } from "@/lib/image-compression";
 import { extractFramesFromVideo, isVideoFile, type ExtractionProgress } from "@/lib/video-frame-extractor";
@@ -69,9 +71,10 @@ const Upload = () => {
   const [searchParams] = useSearchParams();
   const { user } = useAuth();
   const { isSubscribed, isAdmin, canScan, scansRemaining, incrementScan, startCheckout, checkSubscription } = useSubscription();
-  const { isPilotUser, canScan: pilotCanScan, totalScansAvailable, decrementScan, purchaseScans, checkStatus: checkPilotStatus } = usePilotUser();
+  const { isPilotUser, canScan: pilotCanScan, totalScansAvailable, decrementScan, purchaseScans, checkStatus: checkPilotStatus, isPurchasing: isPilotPurchasing } = usePilotUser();
   const { shouldShowHint, dismissHint } = useHints();
   const haptics = useHapticFeedback();
+  const lowScansPopup = useLowScansPopup();
   
   // Persisted state for Safari PWA backgrounding (30 minute TTL)
   const UPLOAD_STATE_KEY = 'upload-page-state';
@@ -520,6 +523,8 @@ const Upload = () => {
           if (user && !isSubscribed && !isAdmin) {
             if (isPilotUser) {
               await decrementScan('scan');
+              // Trigger low scans popup if running low (after decrement, so use totalScansAvailable - 1)
+              lowScansPopup.triggerIfLow(totalScansAvailable - 1);
             } else {
               await incrementScan();
             }
@@ -703,6 +708,11 @@ const Upload = () => {
         title: `Extracted ${allExtractedLegs.length} total legs! 🎯`,
         description: `From ${successCount} slip${successCount > 1 ? 's' : ''}${rateLimitHit ? ' (some retried)' : ''}`,
       });
+      
+      // Trigger low scans popup if running low (after decrements)
+      if (user && !isSubscribed && !isAdmin && isPilotUser) {
+        lowScansPopup.triggerIfLow(totalScansAvailable - successCount);
+      }
     } else if (rateLimitHit) {
       toast({
         title: "Please try again",
@@ -710,7 +720,7 @@ const Upload = () => {
         variant: "destructive",
       });
     }
-  }, [user, canScan, isSubscribed, isAdmin, incrementScan, startCheckout, scansRemaining, haptics, decrementScan, isPilotUser, pilotCanScan]);
+  }, [user, canScan, isSubscribed, isAdmin, incrementScan, startCheckout, scansRemaining, haptics, decrementScan, isPilotUser, pilotCanScan, totalScansAvailable, lowScansPopup]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -1370,6 +1380,19 @@ const Upload = () => {
           </Button>
         </div>
       </div>
+
+      {/* Low Scans Popup */}
+      <LowScansPopup
+        isOpen={lowScansPopup.isOpen}
+        onClose={lowScansPopup.close}
+        onDismiss={lowScansPopup.dismiss}
+        onPurchase={(packType) => {
+          lowScansPopup.close();
+          purchaseScans(packType);
+        }}
+        scansRemaining={totalScansAvailable}
+        isPurchasing={isPilotPurchasing}
+      />
     </div>
   );
 };

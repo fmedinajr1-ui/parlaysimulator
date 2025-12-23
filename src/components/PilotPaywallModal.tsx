@@ -11,7 +11,7 @@ import wolfLoaderImage from "@/assets/wolf-loader.png";
 interface PilotPaywallModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onPurchase: (packType: 'single' | 'pack20' | 'pack50') => void;
+  onPurchase: (packType: 'single' | 'pack10' | 'pack20' | 'pack50') => void;
   freeScansUsed?: number;
   isPurchasing?: boolean;
 }
@@ -21,7 +21,7 @@ function PaywallContent({ onClose, onPurchase, freeScansUsed = 5, isPurchasing =
   const navigate = useNavigate();
   const { mediumTap } = useHapticFeedback();
 
-  const handlePurchase = (packType: 'single' | 'pack20' | 'pack50') => {
+  const handlePurchase = (packType: 'single' | 'pack10' | 'pack20' | 'pack50') => {
     mediumTap();
     if (!user) {
       navigate('/auth');
@@ -77,9 +77,9 @@ function PaywallContent({ onClose, onPurchase, freeScansUsed = 5, isPurchasing =
           </div>
         </button>
 
-        {/* 20 Pack - Featured */}
+        {/* 10 Pack - Most Popular */}
         <button
-          onClick={() => handlePurchase('pack20')}
+          onClick={() => handlePurchase('pack10')}
           disabled={isPurchasing}
           className={cn(
             "w-full rounded-xl border-2 border-primary bg-primary/5 p-4 text-left transition-all relative",
@@ -88,13 +88,41 @@ function PaywallContent({ onClose, onPurchase, freeScansUsed = 5, isPurchasing =
             isPurchasing && "opacity-50 pointer-events-none"
           )}
         >
-          <div className="absolute -top-2.5 left-4 px-2 py-0.5 bg-primary text-primary-foreground text-xs font-bold rounded-full">
-            SAVE $5
+          <div className="absolute -top-2.5 left-4 px-2 py-0.5 bg-primary text-primary-foreground text-xs font-bold rounded-full flex items-center gap-1">
+            🔥 MOST POPULAR
           </div>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center">
                 <Package className="w-5 h-5 text-primary" />
+              </div>
+              <div>
+                <p className="font-semibold text-foreground">10 Scan Pack</p>
+                <p className="text-xs text-muted-foreground">$0.80 per scan • Save $2</p>
+              </div>
+            </div>
+            <span className="text-2xl font-bold text-primary">$8</span>
+          </div>
+        </button>
+
+        {/* 20 Pack */}
+        <button
+          onClick={() => handlePurchase('pack20')}
+          disabled={isPurchasing}
+          className={cn(
+            "w-full rounded-xl border border-border bg-card p-4 text-left transition-all relative",
+            "active:scale-[0.98] touch-manipulation",
+            "hover:border-primary/50 hover:bg-card/80",
+            isPurchasing && "opacity-50 pointer-events-none"
+          )}
+        >
+          <div className="absolute -top-2.5 left-4 px-2 py-0.5 bg-muted text-muted-foreground text-xs font-bold rounded-full">
+            SAVE $5
+          </div>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center">
+                <Package className="w-5 h-5 text-muted-foreground" />
               </div>
               <div>
                 <p className="font-semibold text-foreground">20 Scan Pack</p>

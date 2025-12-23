@@ -15,6 +15,7 @@ const logStep = (step: string, details?: any) => {
 // Scan pack price IDs
 const SCAN_PRICES = {
   single: { priceId: "price_1Sej1Y9D6r1PTCBBN3FEOZ2Z", scans: 1, amount: 100 },
+  pack10: { priceId: "price_1ShZHg9D6r1PTCBBDSVn2W1A", scans: 10, amount: 800 },
   pack20: { priceId: "price_1Sej1r9D6r1PTCBB784tIJoE", scans: 20, amount: 1500 },
   pack50: { priceId: "price_1Sej259D6r1PTCBBlfMapwpH", scans: 50, amount: 4000 },
 };
