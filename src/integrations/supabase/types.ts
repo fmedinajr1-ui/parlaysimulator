@@ -422,6 +422,45 @@ export type Database = {
         }
         Relationships: []
       }
+      app_releases: {
+        Row: {
+          body: string | null
+          created_at: string
+          id: string
+          is_published: boolean
+          notifications_sent: boolean
+          published_at: string | null
+          release_type: string
+          summary: string
+          title: string
+          version: string
+        }
+        Insert: {
+          body?: string | null
+          created_at?: string
+          id?: string
+          is_published?: boolean
+          notifications_sent?: boolean
+          published_at?: string | null
+          release_type?: string
+          summary: string
+          title: string
+          version: string
+        }
+        Update: {
+          body?: string | null
+          created_at?: string
+          id?: string
+          is_published?: boolean
+          notifications_sent?: boolean
+          published_at?: string | null
+          release_type?: string
+          summary?: string
+          title?: string
+          version?: string
+        }
+        Relationships: []
+      }
       approved_odds_users: {
         Row: {
           approved_at: string | null
@@ -4011,6 +4050,8 @@ export type Database = {
           last_juiced_email_at: string | null
           last_notified_at: string | null
           min_confidence_threshold: number
+          push_release_notifications: boolean
+          release_notifications: boolean
           updated_at: string
           user_id: string
         }
@@ -4024,6 +4065,8 @@ export type Database = {
           last_juiced_email_at?: string | null
           last_notified_at?: string | null
           min_confidence_threshold?: number
+          push_release_notifications?: boolean
+          release_notifications?: boolean
           updated_at?: string
           user_id: string
         }
@@ -4037,6 +4080,8 @@ export type Database = {
           last_juiced_email_at?: string | null
           last_notified_at?: string | null
           min_confidence_threshold?: number
+          push_release_notifications?: boolean
+          release_notifications?: boolean
           updated_at?: string
           user_id?: string
         }
