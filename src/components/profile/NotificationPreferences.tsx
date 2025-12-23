@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Bell, BellOff, Loader2, Mail, Sparkles, Check, Target } from "lucide-react";
+import { Bell, BellOff, Loader2, Mail, Sparkles, Check, Target, Rocket } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -22,6 +22,8 @@ export function NotificationPreferences() {
   
   const [emailNotifications, setEmailNotifications] = useState(true);
   const [juicedPicksEmail, setJuicedPicksEmail] = useState(true);
+  const [releaseNotifications, setReleaseNotifications] = useState(true);
+  const [pushReleaseNotifications, setPushReleaseNotifications] = useState(true);
   const [minConfidence, setMinConfidence] = useState(0.5);
   const [favoriteSports, setFavoriteSports] = useState<string[]>([]);
   const [email, setEmail] = useState("");
@@ -49,9 +51,9 @@ export function NotificationPreferences() {
         setHasPrefs(true);
         setEmailNotifications(data.email_notifications);
         setJuicedPicksEmail(data.juiced_picks_email ?? true);
+        setReleaseNotifications((data as any).release_notifications ?? true);
+        setPushReleaseNotifications((data as any).push_release_notifications ?? true);
         setMinConfidence(data.min_confidence_threshold);
-        setFavoriteSports(data.favorite_sports || []);
-        setEmail(data.email);
         setFavoriteSports(data.favorite_sports || []);
         setEmail(data.email);
       } else {
@@ -75,6 +77,8 @@ export function NotificationPreferences() {
         email: email || user.email,
         email_notifications: emailNotifications,
         juiced_picks_email: juicedPicksEmail,
+        release_notifications: releaseNotifications,
+        push_release_notifications: pushReleaseNotifications,
         min_confidence_threshold: minConfidence,
         favorite_sports: favoriteSports,
       };
@@ -189,6 +193,46 @@ export function NotificationPreferences() {
                 id="juiced-picks-email"
                 checked={juicedPicksEmail}
                 onCheckedChange={setJuicedPicksEmail}
+              />
+            </div>
+
+            {/* App Update Email Toggle */}
+            <div className="flex items-center justify-between pt-2 pb-2 border-b border-border/30">
+              <div className="flex items-center gap-3">
+                <Rocket className="w-5 h-5 text-primary" />
+                <div>
+                  <Label htmlFor="release-email" className="text-sm font-medium">
+                    App Update Emails
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Receive emails when new features or fixes are released
+                  </p>
+                </div>
+              </div>
+              <Switch
+                id="release-email"
+                checked={releaseNotifications}
+                onCheckedChange={setReleaseNotifications}
+              />
+            </div>
+
+            {/* App Update Push Toggle */}
+            <div className="flex items-center justify-between pt-2 pb-2 border-b border-border/30">
+              <div className="flex items-center gap-3">
+                <Bell className="w-5 h-5 text-primary" />
+                <div>
+                  <Label htmlFor="release-push" className="text-sm font-medium">
+                    App Update Push
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Receive push notifications for app updates
+                  </p>
+                </div>
+              </div>
+              <Switch
+                id="release-push"
+                checked={pushReleaseNotifications}
+                onCheckedChange={setPushReleaseNotifications}
               />
             </div>
 

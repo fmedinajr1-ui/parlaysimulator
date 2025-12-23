@@ -332,3 +332,6 @@ verify_jwt = false
 
 [functions.game-news-aggregator]
 verify_jwt = false
+
+[functions.send-release-notification]
+verify_jwt = false
