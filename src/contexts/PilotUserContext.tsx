@@ -22,7 +22,7 @@ interface PilotUserState {
 interface PilotUserContextType extends PilotUserState {
   checkStatus: () => Promise<void>;
   decrementScan: (quotaType?: 'scan' | 'compare') => Promise<{ success: boolean; error?: string; unlimited?: boolean }>;
-  purchaseScans: (packType: 'single' | 'pack20' | 'pack50') => Promise<void>;
+  purchaseScans: (packType: 'single' | 'pack10' | 'pack20' | 'pack50') => Promise<void>;
   creditScans: (scans: number) => Promise<void>;
 }
 
@@ -168,7 +168,7 @@ export function PilotUserProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user, session, data?.isAdmin, data?.subscribed]);
 
-  const purchaseScans = useCallback(async (packType: 'single' | 'pack20' | 'pack50') => {
+  const purchaseScans = useCallback(async (packType: 'single' | 'pack10' | 'pack20' | 'pack50') => {
     if (!user || !session) return;
 
     setIsPurchasing(true);
