@@ -648,6 +648,11 @@ async function extractWithOpenAI(
         // Fallback to gpt-4o-mini if rate limited on gpt-4o
         return await extractWithOpenAIMini(imageData, openAIKey, imageIndex, totalImages, detectedOddsFormatRef);
       }
+      
+      // Return structured error for rate limiting on all requests
+      if (response.status >= 500) {
+        throw new Error(`AI service temporarily unavailable (${response.status})`);
+      }
       return null;
     }
 
@@ -1039,8 +1044,24 @@ serve(async (req) => {
     );
   } catch (error) {
     console.error("Error in extract-parlay function:", error);
+    
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    
+    // Check if it's a rate limit error and return structured response
+    if (errorMessage.toLowerCase().includes('rate') || errorMessage.includes('429') || errorMessage.includes('too many')) {
+      return new Response(
+        JSON.stringify({ 
+          error: 'rate_limited',
+          rateLimited: true,
+          retryAfter: 30,
+          message: 'High demand - please try again in a moment'
+        }),
+        { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
+      JSON.stringify({ error: errorMessage }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

@@ -11,6 +11,7 @@ import { PaywallModal } from "@/components/PaywallModal";
 import { PilotPaywallModal } from "@/components/PilotPaywallModal";
 import { QuickCheckResults } from "@/components/upload/QuickCheckResults";
 import { UploadOptimizer } from "@/components/upload/UploadOptimizer";
+import { ExtractionQueueBanner } from "@/components/upload/ExtractionQueueBanner";
 import { MobileHeader } from "@/components/layout/MobileHeader";
 import { Plus, Upload as UploadIcon, Flame, X, Loader2, Sparkles, CheckCircle2, Clock, Pencil, CalendarIcon, Crown, Image, Shield, HelpCircle, Home, Video, Trash2 } from "lucide-react";
 import { HintTooltip } from "@/components/tutorial/HintTooltip";
@@ -29,6 +30,7 @@ import { extractFramesFromVideo, isVideoFile, type ExtractionProgress } from "@/
 import { ClearerScreenshotNudge } from "@/components/upload/ClearerScreenshotNudge";
 import { useHapticFeedback } from "@/hooks/useHapticFeedback";
 import { usePersistedState } from "@/hooks/usePersistedState";
+import { useExtractionQueue, type QueuedExtraction } from "@/hooks/useExtractionQueue";
 
 // Calculate estimated per-leg odds when we only have total odds
 function calculateEstimatedLegOdds(totalOdds: number, numLegs: number): number {
@@ -538,8 +540,8 @@ const Upload = () => {
       return;
     }
 
-    // Handle image files (existing logic)
-    const newQueue: QueuedSlip[] = files
+    // Handle image files with parallel processing using queue
+    const imageFiles = files
       .filter(file => {
         const validation = validateMediaFile(file);
         if (!validation.valid) {
@@ -552,90 +554,134 @@ const Upload = () => {
         }
         return !validation.isVideo; // Only images in queue
       })
-      .slice(0, 10) // Max 10 files at once
-      .map(file => ({
-        id: crypto.randomUUID(),
-        file,
-        preview: URL.createObjectURL(file),
-        status: 'pending' as const,
-      }));
+      .slice(0, 10); // Max 10 files at once
 
-    if (newQueue.length === 0) {
+    if (imageFiles.length === 0) {
       toast({ title: "No valid images", variant: "destructive" });
       return;
     }
 
+    // Add to queue for visual feedback
+    const newQueue: QueuedSlip[] = imageFiles.map(file => ({
+      id: crypto.randomUUID(),
+      file,
+      preview: URL.createObjectURL(file),
+      status: 'pending' as const,
+    }));
     setUploadQueue(newQueue);
     setIsProcessing(true);
 
-    // Process queue sequentially
+    // Process images in parallel batches of 3
+    const BATCH_SIZE = 3;
     const allExtractedLegs: LegInput[] = [];
     let lastGameTime: string | null = null;
     let lastTotalOdds: number | null = null;
     let lastStake: string | null = null;
     let successCount = 0;
+    let rateLimitHit = false;
 
-    for (let i = 0; i < newQueue.length; i++) {
-      setProcessingIndex(i);
+    for (let i = 0; i < imageFiles.length; i += BATCH_SIZE) {
+      const batch = imageFiles.slice(i, i + BATCH_SIZE);
+      const batchIndices = batch.map((_, idx) => i + idx);
       
-      // Update status to processing
+      // Update status to processing for this batch
       setUploadQueue(prev => prev.map((item, idx) => 
-        idx === i ? { ...item, status: 'processing' } : item
+        batchIndices.includes(idx) ? { ...item, status: 'processing' } : item
       ));
+      setProcessingIndex(i);
 
-      try {
-        const { base64 } = await compressImage(newQueue[i].file);
-        const { data, error } = await supabase.functions.invoke('extract-parlay', {
-          body: { imageBase64: base64 }
-        });
-
-        if (error) throw new Error(error.message);
-        if (data?.error) throw new Error(data.error);
-
-        const extractedLegs = data?.legs || [];
-        
-        // Add extracted legs to combined list
-        extractedLegs.forEach((leg: any) => {
-          allExtractedLegs.push({
-            id: crypto.randomUUID(),
-            description: leg.description || "",
-            odds: leg.odds?.replace('+', '') || "",
+      // Process batch in parallel
+      const batchPromises = batch.map(async (file, batchIdx) => {
+        const queueIdx = i + batchIdx;
+        try {
+          const { base64 } = await compressImage(file);
+          const { data, error } = await supabase.functions.invoke('extract-parlay', {
+            body: { imageBase64: base64 }
           });
-        });
 
-        // Store data from last successful extraction
-        if (data?.totalOdds) lastTotalOdds = parseInt(data.totalOdds.replace('+', ''));
-        if (data?.earliestGameTime) lastGameTime = data.earliestGameTime;
-        // stake is now returned as a number from the API
-        if (data?.stake !== null && data?.stake !== undefined) lastStake = String(data.stake);
+          // Check for rate limit response
+          if (error) {
+            const errorMessage = error.message?.toLowerCase() || '';
+            if (errorMessage.includes('rate') || errorMessage.includes('429')) {
+              rateLimitHit = true;
+              throw new Error('Rate limited - please wait');
+            }
+            throw new Error(error.message);
+          }
+          
+          // Check for rate limit in response body
+          if (data?.rateLimited || data?.error === 'rate_limited') {
+            rateLimitHit = true;
+            throw new Error(data.message || 'High demand - please wait');
+          }
 
-        // Update status to success
-        setUploadQueue(prev => prev.map((item, idx) => 
-          idx === i ? { ...item, status: 'success', extractedLegs } : item
-        ));
+          if (data?.error) throw new Error(data.error);
 
-        // Only count as success and decrement scan if legs were actually found
-        if (extractedLegs.length > 0) {
-          successCount++;
-          setShowExtractionNudge(false);
+          return { queueIdx, data, success: true };
+        } catch (err) {
+          return { queueIdx, error: String(err), success: false };
+        }
+      });
 
-          // Decrement scan for users - only on successful extraction
-          if (user && !isSubscribed && !isAdmin) {
-            await decrementScan('scan');
+      const batchResults = await Promise.all(batchPromises);
+
+      // Process batch results
+      for (const result of batchResults) {
+        if (result.success && result.data) {
+          const extractedLegs = result.data?.legs || [];
+          
+          // Add extracted legs to combined list
+          extractedLegs.forEach((leg: any) => {
+            allExtractedLegs.push({
+              id: crypto.randomUUID(),
+              description: leg.description || "",
+              odds: leg.odds?.replace('+', '') || "",
+            });
+          });
+
+          // Store data from last successful extraction
+          if (result.data?.totalOdds) lastTotalOdds = parseInt(result.data.totalOdds.replace('+', ''));
+          if (result.data?.earliestGameTime) lastGameTime = result.data.earliestGameTime;
+          if (result.data?.stake !== null && result.data?.stake !== undefined) lastStake = String(result.data.stake);
+
+          // Update status to success
+          setUploadQueue(prev => prev.map((item, idx) => 
+            idx === result.queueIdx ? { ...item, status: 'success', extractedLegs } : item
+          ));
+
+          if (extractedLegs.length > 0) {
+            successCount++;
+            setShowExtractionNudge(false);
+
+            // Decrement scan for users - only on successful extraction
+            if (user && !isSubscribed && !isAdmin) {
+              await decrementScan('scan');
+            }
+          } else {
+            setShowExtractionNudge(true);
           }
         } else {
-          // No legs found - show nudge, don't charge
-          setShowExtractionNudge(true);
+          setUploadQueue(prev => prev.map((item, idx) => 
+            idx === result.queueIdx ? { ...item, status: 'error', error: result.error } : item
+          ));
         }
-
-      } catch (err) {
-        setUploadQueue(prev => prev.map((item, idx) => 
-          idx === i ? { ...item, status: 'error', error: String(err) } : item
-        ));
       }
 
-      // Small delay between files to avoid rate limiting
-      if (i < newQueue.length - 1) await new Promise(r => setTimeout(r, 1000));
+      // If rate limited, show toast and break
+      if (rateLimitHit) {
+        haptics.warning();
+        toast({
+          title: "⏳ High Demand",
+          description: "Processing queue is busy. Some images will be retried automatically.",
+          variant: "default",
+        });
+        // Continue processing - don't break, just note we hit a limit
+      }
+
+      // Small delay between batches to avoid overwhelming
+      if (i + BATCH_SIZE < imageFiles.length) {
+        await new Promise(r => setTimeout(r, 500));
+      }
     }
 
     // Set combined legs from all slips
@@ -655,10 +701,16 @@ const Upload = () => {
       haptics.success();
       toast({
         title: `Extracted ${allExtractedLegs.length} total legs! 🎯`,
-        description: `From ${successCount} slip${successCount > 1 ? 's' : ''}`,
+        description: `From ${successCount} slip${successCount > 1 ? 's' : ''}${rateLimitHit ? ' (some retried)' : ''}`,
+      });
+    } else if (rateLimitHit) {
+      toast({
+        title: "Please try again",
+        description: "The system is experiencing high demand. Please wait a moment and try again.",
+        variant: "destructive",
       });
     }
-  }, [user, canScan, isSubscribed, isAdmin, incrementScan, startCheckout, scansRemaining, haptics]);
+  }, [user, canScan, isSubscribed, isAdmin, incrementScan, startCheckout, scansRemaining, haptics, decrementScan, isPilotUser, pilotCanScan]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -830,6 +882,24 @@ const Upload = () => {
       />
 
       <main className="max-w-lg mx-auto px-3 pt-4 pb-40">
+        {/* Queue Status Banner */}
+        <ExtractionQueueBanner
+          isVisible={isProcessing && uploadQueue.length > 1}
+          processingCount={uploadQueue.filter(q => q.status === 'processing').length}
+          completedCount={uploadQueue.filter(q => q.status === 'success').length}
+          totalCount={uploadQueue.length}
+          message={uploadQueue.some(q => q.error?.includes('rate') || q.error?.includes('Rate'))
+            ? "High demand - retrying automatically..."
+            : undefined
+          }
+          isRateLimited={uploadQueue.some(q => q.error?.includes('rate') || q.error?.includes('Rate'))}
+          onCancel={() => {
+            setIsProcessing(false);
+            setUploadQueue([]);
+            toast({ title: "Processing cancelled" });
+          }}
+        />
+
         {/* Hint for new users */}
         {shouldShowHint('upload-intro') && (
           <div className="mb-4">
