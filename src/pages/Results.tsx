@@ -43,6 +43,7 @@ const Results = () => {
   const simulation = location.state?.simulation as ParlaySimulation | undefined;
   const extractedGameTime = location.state?.extractedGameTime as string | undefined;
   const suggestedParlayId = location.state?.suggestedParlayId as string | undefined;
+  const slipImageUrl = location.state?.slipImageUrl as string | undefined;
   const [aiRoasts, setAiRoasts] = useState<string[] | null>(null);
   const [isLoadingRoasts, setIsLoadingRoasts] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -257,7 +258,8 @@ const Results = () => {
         degenerate_level: simulation.degenerateLevel,
         ai_roasts: aiRoasts,
         event_start_time: eventStartTime,
-        suggested_parlay_id: suggestedParlayId || null
+        suggested_parlay_id: suggestedParlayId || null,
+        slip_image_url: slipImageUrl || null
       }).select().single();
 
       if (error) {
