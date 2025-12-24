@@ -51,6 +51,8 @@ import { AIGenerativeProgressDashboard } from '@/components/admin/AIGenerativePr
 import { AllSportsTracker } from '@/components/tracker/AllSportsTracker';
 import { EliteAccessManager } from '@/components/admin/EliteAccessManager';
 import { GodModeWeightsPanel } from '@/components/admin/GodModeWeightsPanel';
+import { SlipImageViewer } from '@/components/admin/SlipImageViewer';
+
 interface ParlayData {
   id: string;
   user_id: string;
@@ -64,6 +66,7 @@ interface ParlayData {
   is_won: boolean | null;
   created_at: string;
   event_start_time: string | null;
+  slip_image_url: string | null;
 }
 
 type AdminSection = 
@@ -632,6 +635,9 @@ export default function Admin() {
                 >
                   <CardContent className="p-4">
                     <div className="flex gap-4">
+                      {/* Slip Image Thumbnail */}
+                      <SlipImageViewer imageUrl={parlay.slip_image_url} />
+                      
                       {!parlay.is_settled && (
                         <div className="pt-1">
                           <Checkbox

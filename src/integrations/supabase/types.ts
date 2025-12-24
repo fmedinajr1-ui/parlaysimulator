@@ -4152,6 +4152,7 @@ export type Database = {
           legs: Json
           potential_payout: number
           settled_at: string | null
+          slip_image_url: string | null
           stake: number
           suggested_parlay_id: string | null
           user_id: string
@@ -4169,6 +4170,7 @@ export type Database = {
           legs: Json
           potential_payout: number
           settled_at?: string | null
+          slip_image_url?: string | null
           stake: number
           suggested_parlay_id?: string | null
           user_id: string
@@ -4186,6 +4188,7 @@ export type Database = {
           legs?: Json
           potential_payout?: number
           settled_at?: string | null
+          slip_image_url?: string | null
           stake?: number
           suggested_parlay_id?: string | null
           user_id?: string
@@ -6928,6 +6931,7 @@ export type Database = {
           is_won: boolean
           legs: Json
           potential_payout: number
+          slip_image_url: string
           stake: number
           user_id: string
           username: string

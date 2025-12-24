@@ -116,6 +116,7 @@ const Upload = () => {
   const [videoProgress, setVideoProgress] = useState<ExtractionProgress | null>(null);
   const [showExtractionNudge, setShowExtractionNudge] = useState(false);
   const [showRestoredBanner, setShowRestoredBanner] = useState(false);
+  const [lastUploadedSlipUrl, setLastUploadedSlipUrl] = useState<string | null>(null);
 
   // Show restored session banner on mount if data was restored
   useEffect(() => {
@@ -519,6 +520,9 @@ const Upload = () => {
             description: `Found betting slip in ${data?.framesWithSlips || 1} of ${data?.framesProcessed || frames.length} frames`,
           });
 
+          // For video, we don't store the original video file (too large), just note no slip image
+          setLastUploadedSlipUrl(null);
+
           // Only decrement scan on SUCCESSFUL extraction with legs found
           if (user && !isSubscribed && !isAdmin) {
             if (isPilotUser) {
@@ -709,6 +713,32 @@ const Upload = () => {
         description: `From ${successCount} slip${successCount > 1 ? 's' : ''}${rateLimitHit ? ' (some retried)' : ''}`,
       });
       
+      // Upload first successful slip image to storage for admin viewing
+      if (user && imageFiles.length > 0) {
+        try {
+          const firstSuccessIdx = uploadQueue.findIndex(q => q.status === 'success');
+          const firstFile = firstSuccessIdx >= 0 ? imageFiles[firstSuccessIdx] : imageFiles[0];
+          const fileName = `${user.id}/${Date.now()}-${firstFile.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+          
+          const { data: uploadData, error: uploadError } = await supabase.storage
+            .from('betting-slips')
+            .upload(fileName, firstFile, { 
+              cacheControl: '3600',
+              upsert: false 
+            });
+          
+          if (!uploadError && uploadData) {
+            const { data: { publicUrl } } = supabase.storage
+              .from('betting-slips')
+              .getPublicUrl(uploadData.path);
+            setLastUploadedSlipUrl(publicUrl);
+          }
+        } catch (uploadErr) {
+          console.error('Slip upload error:', uploadErr);
+          // Don't block the flow for upload failures
+        }
+      }
+      
       // Trigger low scans popup if running low (after decrements)
       if (user && !isSubscribed && !isAdmin && isPilotUser) {
         lowScansPopup.triggerIfLow(totalScansAvailable - successCount);
@@ -837,11 +867,13 @@ const Upload = () => {
     
     // Clear extracted data after use
     const gameTimeToPass = extractedGameTime;
+    const slipUrlToPass = lastUploadedSlipUrl;
     setExtractedTotalOdds(null);
     setExtractedGameTime(null);
+    setLastUploadedSlipUrl(null);
     
-    // Navigate to results with simulation data and extracted game time
-    navigate('/results', { state: { simulation, extractedGameTime: gameTimeToPass } });
+    // Navigate to results with simulation data, extracted game time, and slip image URL
+    navigate('/results', { state: { simulation, extractedGameTime: gameTimeToPass, slipImageUrl: slipUrlToPass } });
   };
 
   return (
