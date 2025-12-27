@@ -163,7 +163,7 @@ export default function Collaborate() {
       
       const { data, error } = await supabase.functions.invoke('analyze-sharp-line', {
         body: {
-          prop_id: prop.id,
+          id: prop.id,
           player_name: prop.player_name,
           prop_type: prop.prop_type,
           sport: prop.sport,
