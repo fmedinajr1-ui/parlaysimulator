@@ -104,11 +104,34 @@ export default function Collaborate() {
       if (error) throw error;
       return data;
     },
-    onSuccess: (data, prop) => {
+    onSuccess: async (data, prop) => {
       if (data?.found && data?.odds) {
         const differentBook = data.found_on_different_book;
+        
+        // Save the fetched odds to the database
+        const lineMovement = data.odds.line - prop.opening_line;
+        const priceMovementOver = data.odds.over_price - prop.opening_over_price;
+        const priceMovementUnder = data.odds.under_price - prop.opening_under_price;
+        
+        const { error: updateError } = await supabase
+          .from('sharp_line_tracker')
+          .update({
+            current_line: data.odds.line,
+            current_over_price: data.odds.over_price,
+            current_under_price: data.odds.under_price,
+            last_updated: new Date().toISOString(),
+            line_movement: lineMovement,
+            price_movement_over: priceMovementOver,
+            price_movement_under: priceMovementUnder,
+          })
+          .eq('id', prop.id);
+        
+        if (updateError) {
+          console.error('Failed to save odds to database:', updateError);
+        }
+        
         toast({
-          title: differentBook ? 'Found on Different Book' : 'Odds Updated',
+          title: differentBook ? 'Found on Different Book' : 'Odds Updated & Saved',
           description: differentBook 
             ? `${prop.player_name}: Found on ${data.odds.bookmaker} instead - Line ${data.odds.line}, Over ${data.odds.over_price}, Under ${data.odds.under_price}`
             : `${prop.player_name}: Line ${data.odds.line}, Over ${data.odds.over_price}, Under ${data.odds.under_price}`,
@@ -133,8 +156,12 @@ export default function Collaborate() {
   // Analyze prop mutation
   const analyzeProp = useMutation({
     mutationFn: async (prop: TrackedProp) => {
+      // Warn if no current data - suggest fetching first
+      const hasCurrentData = prop.current_line !== null;
+      
       const { data, error } = await supabase.functions.invoke('analyze-sharp-line', {
         body: {
+          prop_id: prop.id,
           player_name: prop.player_name,
           prop_type: prop.prop_type,
           sport: prop.sport,
@@ -144,16 +171,18 @@ export default function Collaborate() {
           current_line: prop.current_line || prop.opening_line,
           current_over_price: prop.current_over_price || prop.opening_over_price,
           current_under_price: prop.current_under_price || prop.opening_under_price,
+          has_current_data: hasCurrentData,
         }
       });
 
       if (error) throw error;
-      return data;
+      return { ...data, hasCurrentData };
     },
     onSuccess: (data, prop) => {
+      const staleWarning = !data.hasCurrentData ? ' (using opening data - fetch odds first for accuracy)' : '';
       toast({
         title: 'Analysis Complete',
-        description: `${prop.player_name}: ${data.recommendation || 'Analysis completed'}`,
+        description: `${prop.player_name}: ${data.recommendation || 'Analysis completed'}${staleWarning}`,
       });
       queryClient.invalidateQueries({ queryKey: ['collab-tracked-props'] });
     },
@@ -368,10 +397,16 @@ export default function Collaborate() {
                         <span className="text-red-400">U: {prop.opening_under_price}</span>
                       </div>
                     </div>
-                    <div className="bg-muted/30 rounded-lg p-2">
-                      <p className="text-xs text-muted-foreground mb-1">Current</p>
+                    <div className={`rounded-lg p-2 ${prop.current_line === null ? 'bg-yellow-500/10 border border-yellow-500/30' : 'bg-muted/30'}`}>
+                      <div className="flex items-center gap-1 mb-1">
+                        <p className="text-xs text-muted-foreground">Current</p>
+                        {prop.current_line === null && (
+                          <AlertTriangle className="w-3 h-3 text-yellow-500" />
+                        )}
+                      </div>
                       <p className="text-sm font-medium">
                         Line: {prop.current_line ?? prop.opening_line}
+                        {prop.current_line === null && <span className="text-yellow-500 text-xs ml-1">(stale)</span>}
                       </p>
                       <div className="flex gap-2 text-xs">
                         <span className="text-green-400">
