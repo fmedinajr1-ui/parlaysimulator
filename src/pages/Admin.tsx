@@ -52,6 +52,7 @@ import { AllSportsTracker } from '@/components/tracker/AllSportsTracker';
 import { EliteAccessManager } from '@/components/admin/EliteAccessManager';
 import { GodModeWeightsPanel } from '@/components/admin/GodModeWeightsPanel';
 import { SlipImageViewer } from '@/components/admin/SlipImageViewer';
+import { FeatureAccessManager } from '@/components/admin/FeatureAccessManager';
 
 interface ParlayData {
   id: string;
@@ -475,6 +476,9 @@ export default function Admin() {
       case 'users':
         return (
           <div className="space-y-6">
+            {/* Feature Access Manager with Overview */}
+            <FeatureAccessManager />
+            
             {/* Quick Actions */}
             <Card>
               <CardHeader>
@@ -483,7 +487,7 @@ export default function Admin() {
                   Quick Actions
                 </CardTitle>
               </CardHeader>
-              <CardContent>
+              <CardContent className="flex gap-2 flex-wrap">
                 <Button 
                   onClick={() => navigate('/verify-email?test=true')}
                   variant="outline"
@@ -491,6 +495,14 @@ export default function Admin() {
                 >
                   <Mail className="w-4 h-4" />
                   Test Email Verification
+                </Button>
+                <Button 
+                  onClick={() => navigate('/collaborate')}
+                  variant="outline"
+                  className="gap-2"
+                >
+                  <Users className="w-4 h-4" />
+                  Go to Collaborate Page
                 </Button>
               </CardContent>
             </Card>

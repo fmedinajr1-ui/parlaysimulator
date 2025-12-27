@@ -7270,6 +7270,7 @@ export type Database = {
         | "pilot"
         | "full_access"
         | "elite_access"
+        | "odds_tracker_access"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -7405,6 +7406,7 @@ export const Constants = {
         "pilot",
         "full_access",
         "elite_access",
+        "odds_tracker_access",
       ],
     },
   },
