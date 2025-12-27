@@ -130,13 +130,15 @@ export default function Collaborate() {
           console.error('Failed to save odds to database:', updateError);
         }
         
+        // Refresh UI first, then show toast
+        await queryClient.invalidateQueries({ queryKey: ['collab-tracked-props'] });
+        
         toast({
           title: differentBook ? 'Found on Different Book' : 'Odds Updated & Saved',
           description: differentBook 
             ? `${prop.player_name}: Found on ${data.odds.bookmaker} instead - Line ${data.odds.line}, Over ${data.odds.over_price}, Under ${data.odds.under_price}`
             : `${prop.player_name}: Line ${data.odds.line}, Over ${data.odds.over_price}, Under ${data.odds.under_price}`,
         });
-        queryClient.invalidateQueries({ queryKey: ['collab-tracked-props'] });
       } else {
         toast({
           title: 'Not Available',
@@ -178,13 +180,15 @@ export default function Collaborate() {
       if (error) throw error;
       return { ...data, hasCurrentData };
     },
-    onSuccess: (data, prop) => {
+    onSuccess: async (data, prop) => {
       const staleWarning = !data.hasCurrentData ? ' (using opening data - fetch odds first for accuracy)' : '';
+      // Refresh UI first, then show toast
+      await queryClient.invalidateQueries({ queryKey: ['collab-tracked-props'] });
+      
       toast({
         title: 'Analysis Complete',
         description: `${prop.player_name}: ${data.recommendation || 'Analysis completed'}${staleWarning}`,
       });
-      queryClient.invalidateQueries({ queryKey: ['collab-tracked-props'] });
     },
     onError: () => {
       toast({
@@ -221,13 +225,15 @@ export default function Collaborate() {
       
       return results;
     },
-    onSuccess: (results) => {
+    onSuccess: async (results) => {
       const found = results.filter(r => r.data?.found).length;
+      // Refresh UI first, then show toast
+      await queryClient.invalidateQueries({ queryKey: ['collab-tracked-props'] });
+      
       toast({
         title: 'Bulk Fetch Complete',
         description: `Updated ${found} of ${results.length} props`,
       });
-      queryClient.invalidateQueries({ queryKey: ['collab-tracked-props'] });
     },
     onError: () => {
       toast({
