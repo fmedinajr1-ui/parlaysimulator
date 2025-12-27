@@ -37,8 +37,6 @@ import { SharpMoneyPanel } from '@/components/admin/SharpMoneyPanel';
 import { GodModeDashboard } from '@/components/upsets/GodModeDashboard';
 import SharpLineCalculator from '@/components/admin/SharpLineCalculator';
 import { MovementAccuracyDashboard } from '@/components/admin/MovementAccuracyDashboard';
-import { CollaboratorManager } from '@/components/admin/CollaboratorManager';
-import { ApprovedUsersManager } from '@/components/admin/ApprovedUsersManager';
 import { UserDirectoryManager } from '@/components/admin/UserDirectoryManager';
 import { MasterAccuracyDashboard } from '@/components/admin/accuracy/MasterAccuracyDashboard';
 import { SharpRecalibrationPanel } from '@/components/admin/SharpRecalibrationPanel';
@@ -49,7 +47,7 @@ import { SharpEngineV2Card } from '@/components/sharp/SharpEngineV2Card';
 import { SharpEngineConfigPanel } from '@/components/admin/SharpEngineConfigPanel';
 import { AIGenerativeProgressDashboard } from '@/components/admin/AIGenerativeProgressDashboard';
 import { AllSportsTracker } from '@/components/tracker/AllSportsTracker';
-import { EliteAccessManager } from '@/components/admin/EliteAccessManager';
+
 import { GodModeWeightsPanel } from '@/components/admin/GodModeWeightsPanel';
 import { SlipImageViewer } from '@/components/admin/SlipImageViewer';
 import { FeatureAccessManager } from '@/components/admin/FeatureAccessManager';
@@ -476,40 +474,11 @@ export default function Admin() {
       case 'users':
         return (
           <div className="space-y-6">
-            {/* Feature Access Manager with Overview */}
+            {/* Unified User & Access Manager */}
             <FeatureAccessManager />
             
-            {/* Quick Actions */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Settings className="w-5 h-5" />
-                  Quick Actions
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="flex gap-2 flex-wrap">
-                <Button 
-                  onClick={() => navigate('/verify-email?test=true')}
-                  variant="outline"
-                  className="gap-2"
-                >
-                  <Mail className="w-4 h-4" />
-                  Test Email Verification
-                </Button>
-                <Button 
-                  onClick={() => navigate('/collaborate')}
-                  variant="outline"
-                  className="gap-2"
-                >
-                  <Users className="w-4 h-4" />
-                  Go to Collaborate Page
-                </Button>
-              </CardContent>
-            </Card>
-            <EliteAccessManager />
+            {/* User Directory for detailed stats */}
             <UserDirectoryManager />
-            <CollaboratorManager />
-            <ApprovedUsersManager />
           </div>
         );
       
