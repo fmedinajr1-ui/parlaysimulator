@@ -11,6 +11,8 @@ import { cn } from '@/lib/utils';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
+import { useSubscription } from '@/hooks/useSubscription';
+import { EliteHitterPaywall } from './EliteHitterPaywall';
 
 interface LegData {
   playerName: string;
@@ -63,6 +65,7 @@ export function DailyEliteHitterCard() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showRationale, setShowRationale] = useState(false);
   const { toast } = useToast();
+  const { hasEliteHitterAccess, isAdmin, isLoading: isSubscriptionLoading } = useSubscription();
 
   const { data: parlay, isLoading, refetch } = useQuery({
     queryKey: ['daily-elite-parlay'],
@@ -123,7 +126,12 @@ export function DailyEliteHitterCard() {
     }
   };
 
-  if (isLoading) {
+  // Show paywall if user doesn't have access
+  if (!isSubscriptionLoading && !hasEliteHitterAccess && !isAdmin) {
+    return <EliteHitterPaywall />;
+  }
+
+  if (isLoading || isSubscriptionLoading) {
     return (
       <Card className="border-primary/30 bg-gradient-to-br from-primary/5 to-primary/10">
         <CardHeader className="pb-2">

@@ -12,8 +12,9 @@ const logStep = (step: string, details?: any) => {
   console.log(`[CHECK-SUBSCRIPTION] ${step}${detailsStr}`);
 };
 
-// Odds Tracker Pro price ID
+// Subscription price IDs
 const ODDS_TRACKER_PRICE_ID = "price_1Sb7Tk9D6r1PTCBBmJ3jYBxo";
+const ELITE_HITTER_PRICE_ID = "price_1SiyaG9D6r1PTCBBC4zJBRE5";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -139,6 +140,7 @@ serve(async (req) => {
     let isSubscribed = false;
     let subscriptionEnd = null;
     let hasOddsSubscription = false;
+    let hasEliteHitterSubscription = false;
 
     if (customers.data.length > 0) {
       const customerId = customers.data[0].id;
@@ -161,6 +163,12 @@ serve(async (req) => {
         );
         logStep("Odds Tracker subscription check", { hasOddsSubscription });
         
+        // Check if user has Elite Hitter Pro subscription
+        hasEliteHitterSubscription = subscriptions.data.some((sub: any) => 
+          sub.items.data.some((item: any) => item.price.id === ELITE_HITTER_PRICE_ID)
+        );
+        logStep("Elite Hitter subscription check", { hasEliteHitterSubscription });
+        
         // Update local subscription record
         await supabaseClient.from('subscriptions').upsert({
           user_id: user.id,
@@ -175,6 +183,9 @@ serve(async (req) => {
 
     // Determine odds access: approved user OR has odds subscription
     const hasOddsAccess = isApprovedOddsUser || hasOddsSubscription;
+    
+    // Determine elite hitter access: subscription OR elite_access role OR admin
+    const hasEliteHitterAccess = hasEliteHitterSubscription || hasEliteAccess;
 
     // If subscribed, unlimited access
     if (isSubscribed) {
@@ -187,6 +198,7 @@ serve(async (req) => {
         subscriptionEnd,
         hasOddsAccess,
         hasEliteAccess,
+        hasEliteHitterAccess,
         phoneVerified,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -205,6 +217,7 @@ serve(async (req) => {
         scansRemaining: -1,
         hasOddsAccess,
         hasEliteAccess,
+        hasEliteHitterAccess: true, // full_access grants elite hitter
         phoneVerified,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -271,6 +284,7 @@ serve(async (req) => {
         paidScanBalance: quotaData.paid_scan_balance,
         hasOddsAccess: false,
         hasEliteAccess,
+        hasEliteHitterAccess: hasEliteAccess, // Elite access role grants hitter
         phoneVerified,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
