@@ -28,6 +28,7 @@ import { format, formatDistanceToNow } from 'date-fns';
 
 interface TrackedProp {
   id: string;
+  event_id: string | null;
   player_name: string;
   prop_type: string;
   game_description: string;
@@ -87,9 +88,12 @@ export default function Collaborate() {
   // Fetch current odds mutation
   const fetchOdds = useMutation({
     mutationFn: async (prop: TrackedProp) => {
+      if (!prop.event_id) {
+        throw new Error('No event_id available for this prop');
+      }
       const { data, error } = await supabase.functions.invoke('fetch-current-odds', {
         body: {
-          event_id: prop.game_description,
+          event_id: prop.event_id,
           sport: prop.sport,
           player_name: prop.player_name,
           prop_type: prop.prop_type,
@@ -117,10 +121,10 @@ export default function Collaborate() {
         });
       }
     },
-    onError: () => {
+    onError: (error) => {
       toast({
         title: 'Error',
-        description: 'Failed to fetch current odds',
+        description: error instanceof Error ? error.message : 'Failed to fetch current odds',
         variant: 'destructive',
       });
     },
@@ -165,14 +169,15 @@ export default function Collaborate() {
   // Fetch all odds mutation
   const fetchAllOdds = useMutation({
     mutationFn: async () => {
-      const props = trackedProps?.filter(p => p.status !== 'completed') || [];
+      // Only fetch props with valid event_id
+      const props = trackedProps?.filter(p => p.status !== 'completed' && p.event_id) || [];
       const results = [];
       
       for (const prop of props.slice(0, 10)) { // Limit to 10 at a time
         try {
           const { data } = await supabase.functions.invoke('fetch-current-odds', {
             body: {
-              event_id: prop.game_description,
+              event_id: prop.event_id,
               sport: prop.sport,
               player_name: prop.player_name,
               prop_type: prop.prop_type,
@@ -404,7 +409,8 @@ export default function Collaborate() {
                       size="sm" 
                       variant="outline"
                       onClick={() => fetchOdds.mutate(prop)}
-                      disabled={fetchOdds.isPending}
+                      disabled={fetchOdds.isPending || !prop.event_id}
+                      title={!prop.event_id ? 'No event_id available' : undefined}
                       className="flex-1"
                     >
                       {fetchOdds.isPending ? (
@@ -412,7 +418,7 @@ export default function Collaborate() {
                       ) : (
                         <DollarSign className="w-3 h-3 mr-1" />
                       )}
-                      Fetch Odds
+                      {prop.event_id ? 'Fetch Odds' : 'No Event ID'}
                     </Button>
                     <Button 
                       size="sm" 
