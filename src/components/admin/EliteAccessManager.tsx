@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
-import { Crown, Search, UserPlus, UserMinus, Loader2, CheckCircle } from 'lucide-react';
+import { Crown, Search, UserMinus, Loader2, Users, Zap, ShieldCheck } from 'lucide-react';
 
 interface EliteUser {
   id: string;
@@ -17,12 +17,31 @@ interface EliteUser {
   username?: string;
 }
 
+interface SearchResultWithRoles {
+  user_id: string;
+  email: string;
+  roles: string[];
+}
+
+const QUICK_ADD_ROLES = [
+  { role: 'elite_access', label: '+Elite', icon: Crown, color: 'text-yellow-500' },
+  { role: 'collaborator', label: '+Collab', icon: Users, color: 'text-blue-500' },
+  { role: 'full_access', label: '+Full', icon: Zap, color: 'text-green-500' },
+] as const;
+
+const ROLE_BADGES: Record<string, { label: string; icon: typeof Crown; color: string }> = {
+  elite_access: { label: 'Elite', icon: Crown, color: 'text-yellow-500 border-yellow-500/30' },
+  collaborator: { label: 'Collab', icon: Users, color: 'text-blue-500 border-blue-500/30' },
+  full_access: { label: 'Full', icon: Zap, color: 'text-green-500 border-green-500/30' },
+  admin: { label: 'Admin', icon: ShieldCheck, color: 'text-red-500 border-red-500/30' },
+};
+
 export function EliteAccessManager() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [searchEmail, setSearchEmail] = useState('');
   const [isSearching, setIsSearching] = useState(false);
-  const [searchResult, setSearchResult] = useState<{ user_id: string; email: string } | null>(null);
+  const [searchResult, setSearchResult] = useState<SearchResultWithRoles | null>(null);
 
   // Fetch users with elite_access role
   const { data: eliteUsers, isLoading } = useQuery({
@@ -35,28 +54,35 @@ export function EliteAccessManager() {
       
       if (error) throw error;
       
-      // Get profile info for each user
+      // Get profile info and all roles for each user
       const usersWithProfiles = await Promise.all(
         (roles || []).map(async (role) => {
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('email, username')
-            .eq('user_id', role.user_id)
-            .maybeSingle();
+          const [profileRes, rolesRes] = await Promise.all([
+            supabase
+              .from('profiles')
+              .select('email, username')
+              .eq('user_id', role.user_id)
+              .maybeSingle(),
+            supabase
+              .from('user_roles')
+              .select('role')
+              .eq('user_id', role.user_id)
+          ]);
           
           return {
             ...role,
-            email: profile?.email || 'Unknown',
-            username: profile?.username || null
+            email: profileRes.data?.email || 'Unknown',
+            username: profileRes.data?.username || null,
+            allRoles: rolesRes.data?.map(r => r.role) || []
           };
         })
       );
       
-      return usersWithProfiles as EliteUser[];
+      return usersWithProfiles as (EliteUser & { allRoles: string[] })[];
     }
   });
 
-  // Search for user by email
+  // Search for user by email and fetch their roles
   const handleSearch = async () => {
     if (!searchEmail.trim()) return;
     
@@ -74,7 +100,16 @@ export function EliteAccessManager() {
       if (error) throw error;
       
       if (data) {
-        setSearchResult(data);
+        // Fetch all roles for this user
+        const { data: userRoles } = await supabase
+          .from('user_roles')
+          .select('role')
+          .eq('user_id', data.user_id);
+        
+        setSearchResult({
+          ...data,
+          roles: userRoles?.map(r => r.role) || []
+        });
       } else {
         toast({
           title: "User not found",
@@ -94,27 +129,32 @@ export function EliteAccessManager() {
     }
   };
 
-  // Grant elite access
-  const grantAccessMutation = useMutation({
-    mutationFn: async (userId: string) => {
+  // Quick add any role
+  const quickAddMutation = useMutation({
+    mutationFn: async ({ userId, role }: { userId: string; role: string }) => {
       const { error } = await supabase
         .from('user_roles')
-        .insert({ user_id: userId, role: 'elite_access' });
-      
+        .insert([{ user_id: userId, role: role as 'elite_access' | 'collaborator' | 'full_access' }]);
       if (error) {
         if (error.code === '23505') {
-          throw new Error('User already has elite access');
+          throw new Error(`User already has ${role} access`);
         }
         throw error;
       }
     },
-    onSuccess: () => {
+    onSuccess: (_, { role }) => {
       queryClient.invalidateQueries({ queryKey: ['elite-access-users'] });
-      setSearchResult(null);
-      setSearchEmail('');
+      queryClient.invalidateQueries({ queryKey: ['all-users-with-roles'] });
+      // Update local search result
+      if (searchResult) {
+        setSearchResult({
+          ...searchResult,
+          roles: [...searchResult.roles, role]
+        });
+      }
       toast({
         title: "Access granted",
-        description: "User now has elite access to Daily Hitter"
+        description: `Successfully added ${role.replace('_', ' ')} access`
       });
     },
     onError: (error: Error) => {
@@ -139,6 +179,7 @@ export function EliteAccessManager() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['elite-access-users'] });
+      queryClient.invalidateQueries({ queryKey: ['all-users-with-roles'] });
       toast({
         title: "Access revoked",
         description: "User no longer has elite access"
@@ -152,10 +193,6 @@ export function EliteAccessManager() {
       });
     }
   });
-
-  const hasEliteAccess = (userId: string) => {
-    return eliteUsers?.some(u => u.user_id === userId);
-  };
 
   return (
     <Card className="border-primary/30">
@@ -188,36 +225,54 @@ export function EliteAccessManager() {
             </Button>
           </div>
           
-          {/* Search Result */}
+          {/* Search Result with Multi-Role Quick Add */}
           {searchResult && (
-            <div className="p-3 rounded-lg bg-muted/50 border border-border flex items-center justify-between">
+            <div className="p-4 rounded-lg bg-muted/50 border border-border space-y-3">
               <div>
                 <p className="font-medium text-sm">{searchResult.email}</p>
-                {hasEliteAccess(searchResult.user_id) ? (
-                  <Badge variant="outline" className="text-green-500 border-green-500/30 mt-1">
-                    <CheckCircle className="w-3 h-3 mr-1" />
-                    Has Access
-                  </Badge>
+                {/* Current role badges */}
+                {searchResult.roles.length > 0 ? (
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {searchResult.roles.map((role) => {
+                      const badge = ROLE_BADGES[role];
+                      if (!badge) return null;
+                      const Icon = badge.icon;
+                      return (
+                        <Badge key={role} variant="outline" className={badge.color}>
+                          <Icon className="w-3 h-3 mr-1" />
+                          {badge.label}
+                        </Badge>
+                      );
+                    })}
+                  </div>
                 ) : (
-                  <p className="text-xs text-muted-foreground">No elite access</p>
+                  <p className="text-xs text-muted-foreground mt-1">No roles assigned</p>
                 )}
               </div>
-              {!hasEliteAccess(searchResult.user_id) && (
-                <Button
-                  size="sm"
-                  onClick={() => grantAccessMutation.mutate(searchResult.user_id)}
-                  disabled={grantAccessMutation.isPending}
-                >
-                  {grantAccessMutation.isPending ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <>
-                      <UserPlus className="w-4 h-4 mr-1" />
-                      Grant
-                    </>
-                  )}
-                </Button>
-              )}
+              
+              {/* Quick Add Buttons */}
+              <div className="flex flex-wrap gap-2 pt-2 border-t border-border/50">
+                {QUICK_ADD_ROLES.map(({ role, label, icon: Icon, color }) => {
+                  const hasRole = searchResult.roles.includes(role);
+                  return (
+                    <Button
+                      key={role}
+                      size="sm"
+                      variant={hasRole ? "secondary" : "outline"}
+                      disabled={hasRole || quickAddMutation.isPending}
+                      onClick={() => quickAddMutation.mutate({ userId: searchResult.user_id, role })}
+                      className={hasRole ? 'opacity-50' : ''}
+                    >
+                      {quickAddMutation.isPending ? (
+                        <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                      ) : (
+                        <Icon className={`w-3 h-3 mr-1 ${color}`} />
+                      )}
+                      {hasRole ? '✓' : label}
+                    </Button>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>
@@ -243,9 +298,19 @@ export function EliteAccessManager() {
                 >
                   <div>
                     <p className="font-medium text-sm">{user.email}</p>
-                    {user.username && (
-                      <p className="text-xs text-muted-foreground">@{user.username}</p>
-                    )}
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {user.allRoles?.map((role) => {
+                        const badge = ROLE_BADGES[role];
+                        if (!badge) return null;
+                        const Icon = badge.icon;
+                        return (
+                          <Badge key={role} variant="outline" className={`text-xs ${badge.color}`}>
+                            <Icon className="w-2.5 h-2.5 mr-0.5" />
+                            {badge.label}
+                          </Badge>
+                        );
+                      })}
+                    </div>
                   </div>
                   <Button
                     variant="ghost"
