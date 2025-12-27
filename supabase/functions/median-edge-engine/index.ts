@@ -308,43 +308,71 @@ serve(async (req) => {
     if (action === 'analyze_auto') {
       console.log('[median-edge-engine] Running auto analysis...');
       const today = new Date().toISOString().split('T')[0];
+      const now = new Date().toISOString();
 
       // First, clear today's old picks to avoid duplicates
-      await supabase
+      const { error: deleteError } = await supabase
         .from('median_edge_picks')
         .delete()
         .eq('game_date', today);
+      
+      if (deleteError) {
+        console.log('[median-edge-engine] Delete error (may be empty):', deleteError.message);
+      }
 
-      // Fetch player props from fanduel_player_props or similar table
+      // Fetch player props from unified_props table (correct table name)
       const { data: playerProps, error: propsError } = await supabase
-        .from('fanduel_player_props')
+        .from('unified_props')
         .select('*')
-        .gte('game_time', today)
-        .in('prop_type', ['points', 'rebounds', 'assists', 'player_points', 'player_rebounds', 'player_assists']);
+        .gte('commence_time', now)
+        .eq('is_active', true)
+        .in('prop_type', ['player_points', 'player_rebounds', 'player_assists']);
 
       if (propsError) {
         console.error('[median-edge-engine] Props fetch error:', propsError);
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'Failed to fetch props: ' + propsError.message,
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
       }
+
+      console.log(`[median-edge-engine] Found ${playerProps?.length || 0} props from unified_props`);
 
       // Fetch game logs for recent stats
       const { data: gameLogs, error: logsError } = await supabase
         .from('nba_player_game_logs')
         .select('*')
         .order('game_date', { ascending: false })
-        .limit(500);
+        .limit(1000);
 
       if (logsError) {
         console.error('[median-edge-engine] Game logs error:', logsError);
       }
 
+      console.log(`[median-edge-engine] Found ${gameLogs?.length || 0} game logs`);
+
       const results: EngineOutput[] = [];
       const propsList = playerProps || [];
       
-      console.log(`[median-edge-engine] Found ${propsList.length} props to analyze`);
+      // Helper to determine if player is home based on game_description
+      const isPlayerHome = (gameDesc: string, teamName: string): boolean => {
+        if (!gameDesc || !teamName) return false;
+        // Format: "Away Team @ Home Team"
+        const parts = gameDesc.split(' @ ');
+        if (parts.length === 2) {
+          const homeTeam = parts[1].toLowerCase();
+          return homeTeam.includes(teamName.toLowerCase()) || teamName.toLowerCase().includes(homeTeam);
+        }
+        return false;
+      };
 
       for (const prop of propsList) {
         const playerName = prop.player_name;
-        let statType = prop.prop_type?.replace('player_', '') || 'points';
+        // Map prop_type: player_points -> points, player_rebounds -> rebounds, etc.
+        let statType = (prop.prop_type || '').replace('player_', '');
         
         // Normalize stat type
         if (!['points', 'rebounds', 'assists'].includes(statType)) {
@@ -357,8 +385,7 @@ serve(async (req) => {
           .slice(0, 10);
 
         if (playerLogs.length < 3) {
-          console.log(`[median-edge-engine] Skipping ${playerName} - insufficient data`);
-          continue;
+          continue; // Skip silently to reduce log noise
         }
 
         // Extract stats based on stat type
@@ -375,20 +402,22 @@ serve(async (req) => {
 
         // Skip if minutes too low
         if (avgMinutes < 24) {
-          console.log(`[median-edge-engine] Skipping ${playerName} - low minutes: ${avgMinutes}`);
           continue;
         }
+
+        // Determine home/away from game_description
+        const gameIsHome = isPlayerHome(prop.game_description || '', prop.team_name || '');
 
         const input: EngineInput = {
           player_name: playerName,
           stat_type: statType as 'points' | 'rebounds' | 'assists',
-          sportsbook_line: prop.line || prop.over_line || 0,
-          game_location: prop.is_home ? 'home' : 'away',
+          sportsbook_line: prop.current_line || prop.line || 0,
+          game_location: gameIsHome ? 'home' : 'away',
           expected_minutes: avgMinutes,
-          spread: prop.spread || 0,
+          spread: 0, // Not available in unified_props
           injury_context: 'none',
-          odds_open: prop.opening_odds || -110,
-          odds_current: prop.over_price || prop.current_odds || -110,
+          odds_open: -110, // Default opening odds
+          odds_current: prop.over_price || -110,
           last_5_game_stats: last5Stats.length >= 5 ? last5Stats : [...last5Stats, ...last5Stats].slice(0, 5),
           last_5_game_minutes: last5Minutes.length >= 5 ? last5Minutes : [...last5Minutes, ...last5Minutes].slice(0, 5),
           last_5_vs_matchup_stats: last5Stats, // Use same stats as fallback
@@ -398,7 +427,7 @@ serve(async (req) => {
           event_id: prop.event_id,
           team_name: prop.team_name,
           opponent_team: prop.opponent_team,
-          game_time: prop.game_time,
+          game_time: prop.commence_time,
         };
 
         const result = calculateMedianEdge(input);
@@ -407,7 +436,7 @@ serve(async (req) => {
         if (result.recommendation !== 'NO BET') {
           results.push(result);
 
-          await supabase.from('median_edge_picks').insert({
+          const { error: insertError } = await supabase.from('median_edge_picks').insert({
             player_name: result.player_name,
             stat_type: result.stat_type,
             sportsbook_line: result.sportsbook_line,
@@ -436,13 +465,17 @@ serve(async (req) => {
             odds_current: input.odds_current,
             game_date: today,
           });
+
+          if (insertError) {
+            console.error(`[median-edge-engine] Insert error for ${playerName}:`, insertError.message);
+          }
         }
       }
 
       const strongPicks = results.filter(r => r.recommendation.includes('STRONG'));
       const leanPicks = results.filter(r => r.recommendation.includes('LEAN'));
 
-      console.log(`[median-edge-engine] Auto analysis complete: ${strongPicks.length} strong, ${leanPicks.length} lean`);
+      console.log(`[median-edge-engine] Auto analysis complete: ${strongPicks.length} strong, ${leanPicks.length} lean picks from ${propsList.length} props`);
 
       return new Response(JSON.stringify({
         success: true,
