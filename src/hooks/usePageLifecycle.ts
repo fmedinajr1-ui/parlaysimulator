@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { saveCurrentRoute } from './useRoutePersistence';
+import { saveCurrentRoute } from '@/utils/routePersistence';
 
 /**
  * Hook that handles page lifecycle events for mobile PWA optimization.

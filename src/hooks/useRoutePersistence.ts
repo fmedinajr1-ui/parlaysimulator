@@ -1,16 +1,14 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { 
+  ROUTE_STORAGE_KEY, 
+  SCROLL_STORAGE_KEY, 
+  MAX_AGE_MS, 
+  type PersistedRoute 
+} from '@/utils/routePersistence';
 
-const ROUTE_STORAGE_KEY = 'parlay-farm-persisted-route';
-const SCROLL_STORAGE_KEY = 'parlay-farm-persisted-scroll';
-const MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes
-
-interface PersistedRoute {
-  pathname: string;
-  search: string;
-  scrollY: number;
-  timestamp: number;
-}
+// Re-export for backwards compatibility
+export { saveCurrentRoute } from '@/utils/routePersistence';
 
 /**
  * Hook that persists the current route and scroll position to sessionStorage.
@@ -129,21 +127,4 @@ export function useRoutePersistence() {
       window.removeEventListener('scroll', handleScroll);
     };
   }, []);
-}
-
-/**
- * Save the current route immediately (useful before backgrounding)
- */
-export function saveCurrentRoute() {
-  try {
-    const routeData: PersistedRoute = {
-      pathname: window.location.pathname,
-      search: window.location.search,
-      scrollY: window.scrollY,
-      timestamp: Date.now(),
-    };
-    sessionStorage.setItem(ROUTE_STORAGE_KEY, JSON.stringify(routeData));
-  } catch {
-    // Ignore save errors
-  }
 }
