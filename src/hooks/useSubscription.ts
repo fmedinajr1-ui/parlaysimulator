@@ -11,6 +11,7 @@ interface SubscriptionState {
   scansRemaining: number;
   subscriptionEnd: string | null;
   hasOddsAccess: boolean;
+  hasEliteHitterAccess: boolean;
 }
 
 export function useSubscription() {
@@ -23,6 +24,7 @@ export function useSubscription() {
     scansRemaining: 3,
     subscriptionEnd: null,
     hasOddsAccess: false,
+    hasEliteHitterAccess: false,
   });
 
   const checkSubscription = useCallback(async () => {
@@ -35,6 +37,7 @@ export function useSubscription() {
         scansRemaining: 3,
         subscriptionEnd: null,
         hasOddsAccess: false,
+        hasEliteHitterAccess: false,
       });
       return;
     }
@@ -56,6 +59,7 @@ export function useSubscription() {
         scansRemaining: data.scansRemaining ?? 3,
         subscriptionEnd: data.subscriptionEnd || null,
         hasOddsAccess: data.hasOddsAccess || false,
+        hasEliteHitterAccess: data.hasEliteHitterAccess || false,
       });
     } catch (err) {
       console.error('Error checking subscription:', err);
@@ -118,6 +122,26 @@ export function useSubscription() {
     }
   }, [user, session]);
 
+  const startEliteHitterCheckout = useCallback(async () => {
+    if (!user || !session) return;
+
+    try {
+      const { data, error } = await supabase.functions.invoke('create-elite-hitter-checkout');
+
+      if (error) {
+        console.error('Error creating elite hitter checkout:', error);
+        return;
+      }
+
+      if (data?.url) {
+        // Use location.href for better mobile/PWA experience
+        window.location.href = data.url;
+      }
+    } catch (err) {
+      console.error('Error starting elite hitter checkout:', err);
+    }
+  }, [user, session]);
+
   useEffect(() => {
     checkSubscription();
   }, [checkSubscription]);
@@ -138,5 +162,6 @@ export function useSubscription() {
     incrementScan,
     startCheckout,
     openCustomerPortal,
+    startEliteHitterCheckout,
   };
 }
