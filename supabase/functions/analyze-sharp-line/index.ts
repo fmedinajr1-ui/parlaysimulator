@@ -685,6 +685,71 @@ serve(async (req) => {
     const maxPriceChange = Math.max(Math.abs(overPriceChange), Math.abs(underPriceChange));
     const avgJuiceChange = (Math.abs(overPriceChange) + Math.abs(underPriceChange)) / 2;
 
+    // Check if there's real movement to analyze
+    const hasRealMovement = Math.abs(lineChange) >= 0.25 || 
+                            Math.abs(overPriceChange) >= 5 || 
+                            Math.abs(underPriceChange) >= 5;
+    
+    // Early return for insufficient data - return caution instead of defaulting to fade
+    if (!hasRealMovement) {
+      console.log('[GOD MODE Engine V2] No significant movement detected - returning caution');
+      
+      const cautionResult: GodModeResult = {
+        sharpPressure: 0,
+        trapPressure: 0,
+        marketNoise: 0,
+        eventVolatilityModifier: 1,
+        nmes: 0,
+        sharpProbability: 0.33,
+        trapProbability: 0.33,
+        neutralProbability: 0.34,
+        strategyBoost: 0,
+        godModeScore: 50,
+        recommendation: 'caution',
+        direction: 'over',
+        confidence: 0.5,
+        sharpSignals: [],
+        trapSignals: [],
+        consensusRatio: 0.5,
+        consensusStrength: 'weak',
+        reasoning: 'Insufficient line movement to detect sharp or trap signals. No significant price or line changes from opening.',
+        explanation: [
+          '⚠️ No significant movement detected',
+          'Line change: ' + lineChange.toFixed(2) + ' (need ≥0.25)',
+          'Over price change: ' + overPriceChange.toFixed(0) + ' (need ≥5)',
+          'Under price change: ' + underPriceChange.toFixed(0) + ' (need ≥5)',
+          '💡 Fetch current odds to get fresh market data'
+        ]
+      };
+      
+      // Still update the database with caution result
+      if (input.id) {
+        const { error: updateError } = await supabase
+          .from('sharp_line_tracker')
+          .update({
+            ai_direction: 'over',
+            ai_recommendation: 'caution',
+            ai_confidence: 0.5,
+            ai_reasoning: cautionResult.reasoning,
+            sharp_signals: [],
+            trap_signals: [],
+            god_mode_score: 50,
+            analyzed_at: new Date().toISOString()
+          })
+          .eq('id', input.id);
+        
+        if (updateError) {
+          console.error('[GOD MODE Engine V2] Error updating caution result:', updateError);
+        } else {
+          console.log('[GOD MODE Engine V2] Saved caution result for prop:', input.id);
+        }
+      }
+      
+      return new Response(JSON.stringify(cautionResult), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
     // Determine hours to game
     let hoursToGame = 24;
     if (input.commence_time) {
