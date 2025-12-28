@@ -94,8 +94,10 @@ const Profile = () => {
   useEffect(() => {
     if (user) {
       fetchProfile();
+    } else if (!authLoading) {
+      setIsLoading(false);
     }
-  }, [user]);
+  }, [user, authLoading]);
 
   const fetchProfile = async () => {
     if (!user) return;

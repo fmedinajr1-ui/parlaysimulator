@@ -85,7 +85,7 @@ serve(async (req) => {
     const { data: profileData } = await supabaseClient
       .from('profiles')
       .select('phone_verified')
-      .eq('id', user.id)
+      .eq('user_id', user.id)
       .maybeSingle();
     
     const phoneVerified = profileData?.phone_verified ?? false;
