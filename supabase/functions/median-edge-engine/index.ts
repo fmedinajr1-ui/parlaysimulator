@@ -341,6 +341,29 @@ serve(async (req) => {
 
       console.log(`[median-edge-engine] Found ${playerProps?.length || 0} props from unified_props`);
 
+      // Deduplicate props by player_name + prop_type to avoid processing same player/stat multiple times
+      const propsByPlayerStat = new Map<string, typeof playerProps[0]>();
+      for (const prop of (playerProps || [])) {
+        const key = `${prop.player_name?.toLowerCase()}_${prop.prop_type}`;
+        
+        if (!propsByPlayerStat.has(key)) {
+          propsByPlayerStat.set(key, prop);
+        } else {
+          // Prefer fanduel/draftkings, or lower line (more conservative)
+          const existing = propsByPlayerStat.get(key)!;
+          const existingLine = existing.current_line || existing.line || 999;
+          const newLine = prop.current_line || prop.line || 999;
+          
+          if (prop.bookmaker === 'fanduel' || prop.bookmaker === 'draftkings') {
+            propsByPlayerStat.set(key, prop);
+          } else if (newLine < existingLine && existing.bookmaker !== 'fanduel' && existing.bookmaker !== 'draftkings') {
+            propsByPlayerStat.set(key, prop);
+          }
+        }
+      }
+      const dedupedProps = Array.from(propsByPlayerStat.values());
+      console.log(`[median-edge-engine] Deduped ${playerProps?.length || 0} props to ${dedupedProps.length} unique player/stat combos`);
+
       // Fetch game logs for recent stats
       const { data: gameLogs, error: logsError } = await supabase
         .from('nba_player_game_logs')
@@ -355,7 +378,6 @@ serve(async (req) => {
       console.log(`[median-edge-engine] Found ${gameLogs?.length || 0} game logs`);
 
       const results: EngineOutput[] = [];
-      const propsList = playerProps || [];
       
       // Helper to determine if player is home based on game_description
       const isPlayerHome = (gameDesc: string, teamName: string): boolean => {
@@ -369,7 +391,7 @@ serve(async (req) => {
         return false;
       };
 
-      for (const prop of propsList) {
+      for (const prop of dedupedProps) {
         const playerName = prop.player_name;
         // Map prop_type: player_points -> points, player_rebounds -> rebounds, etc.
         let statType = (prop.prop_type || '').replace('player_', '');
@@ -475,12 +497,12 @@ serve(async (req) => {
       const strongPicks = results.filter(r => r.recommendation.includes('STRONG'));
       const leanPicks = results.filter(r => r.recommendation.includes('LEAN'));
 
-      console.log(`[median-edge-engine] Auto analysis complete: ${strongPicks.length} strong, ${leanPicks.length} lean picks from ${propsList.length} props`);
+      console.log(`[median-edge-engine] Auto analysis complete: ${strongPicks.length} strong, ${leanPicks.length} lean picks from ${dedupedProps.length} unique props`);
 
       return new Response(JSON.stringify({
         success: true,
         mode: 'auto',
-        total_analyzed: propsList.length,
+        total_analyzed: dedupedProps.length,
         actionable_picks: results.length,
         strong_picks: strongPicks.length,
         lean_picks: leanPicks.length,
