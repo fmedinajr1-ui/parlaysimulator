@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Calculator, Database, ChevronDown, ChevronUp, RefreshCw, Activity, TrendingUp, TrendingDown, Loader2 } from "lucide-react";
+import { Calculator, Database, ChevronDown, ChevronUp, RefreshCw, Activity, TrendingUp, TrendingDown, Loader2, Sparkles } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -30,6 +30,7 @@ interface MedianEdgePick {
 
 export function MedianEdgePicksCard() {
   const [viewMode, setViewMode] = useState<ViewMode>("calculator");
+  const [isGenerating, setIsGenerating] = useState(false);
   const { toast } = useToast();
   const { isAdmin, isSubscribed, isLoading: isUserLoading } = usePilotUser();
   
@@ -60,6 +61,34 @@ export function MedianEdgePicksCard() {
       title: "Refreshed",
       description: "Picks have been refreshed from the database."
     });
+  };
+
+  const handleGenerate = async () => {
+    setIsGenerating(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('median-edge-engine', {
+        body: { action: 'analyze_auto' }
+      });
+      
+      if (error) throw error;
+      
+      toast({
+        title: "Picks Generated",
+        description: `Found ${data?.actionable_picks || 0} actionable picks (${data?.strong_picks || 0} strong, ${data?.lean_picks || 0} lean)`
+      });
+      
+      // Refetch to show new picks
+      await refetch();
+    } catch (error: any) {
+      console.error('Generation error:', error);
+      toast({
+        title: "Generation Failed",
+        description: error.message || "Failed to generate picks",
+        variant: "destructive"
+      });
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const strongPicks = picks?.filter(p => p.recommendation.includes('STRONG')) || [];
@@ -117,16 +146,28 @@ export function MedianEdgePicksCard() {
                   <p className="text-xs text-muted-foreground">AI-analyzed median edge picks</p>
                 </div>
               </div>
-              <Button
-                onClick={handleRefresh}
-                disabled={isFetching}
-                variant="outline"
-                size="sm"
-                className="gap-2"
-              >
-                {isFetching ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                Refresh
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  onClick={handleGenerate}
+                  disabled={isGenerating || isFetching}
+                  variant="default"
+                  size="sm"
+                  className="gap-2"
+                >
+                  {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                  {picks?.length ? 'Regenerate' : 'Generate'}
+                </Button>
+                <Button
+                  onClick={handleRefresh}
+                  disabled={isFetching || isGenerating}
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
+                >
+                  {isFetching ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                  Refresh
+                </Button>
+              </div>
             </div>
 
             {/* Loading State */}
@@ -136,12 +177,29 @@ export function MedianEdgePicksCard() {
               </div>
             )}
 
-            {/* Empty State */}
+            {/* Empty State - Show Generate Button */}
             {!isLoading && (!picks || picks.length === 0) && (
               <div className="text-center py-12">
                 <Database className="w-12 h-12 text-muted-foreground mx-auto mb-3 opacity-50" />
                 <p className="text-muted-foreground">No auto picks available today.</p>
-                <p className="text-xs text-muted-foreground mt-1">Use the calculator to manually analyze props.</p>
+                <p className="text-xs text-muted-foreground mt-1 mb-4">Click below to generate AI-analyzed picks.</p>
+                <Button
+                  onClick={handleGenerate}
+                  disabled={isGenerating}
+                  className="gap-2"
+                >
+                  {isGenerating ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      Generate Picks
+                    </>
+                  )}
+                </Button>
               </div>
             )}
 
