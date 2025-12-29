@@ -23,16 +23,10 @@ export function useRoutePersistence() {
   // Must call hooks unconditionally, so we use refs to track validity
   const isContextValid = navigationContext !== null;
   
-  // These hooks will still be called but we'll guard their usage
-  let location = { pathname: '/', search: '' };
-  let navigate: ReturnType<typeof useNavigate> | null = null;
-  
-  try {
-    location = useLocation();
-    navigate = useNavigate();
-  } catch (e) {
-    console.warn('[useRoutePersistence] Router hooks failed - PWA may need cache refresh');
-  }
+  // Call hooks unconditionally at top level (React Rules of Hooks)
+  // They will throw if context is missing, but we guard usage in effects
+  const location = useLocation();
+  const navigate = useNavigate();
   
   const hasRestoredRef = useRef(false);
   const isInitialMountRef = useRef(true);
@@ -40,7 +34,7 @@ export function useRoutePersistence() {
 
   // Restore route on initial mount (only once)
   useEffect(() => {
-    if (!isContextValid || !navigate) return;
+    if (!isContextValid) return;
     if (hasRestoredRef.current) return;
     hasRestoredRef.current = true;
 
