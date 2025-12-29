@@ -115,4 +115,14 @@ export default defineConfig(({ mode }) => ({
       "react-router-dom",
     ],
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom'],
+          'router-vendor': ['react-router-dom'],
+        },
+      },
+    },
+  },
 }));

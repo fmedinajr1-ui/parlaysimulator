@@ -1,7 +1,7 @@
-// Service Worker for PWA - Parlay Farm - v20251219-fix
-// Force cache bust on version change - bumped to fix auth issues
+// Service Worker for PWA - Parlay Farm - v20251229-react-fix
+// Force cache bust on version change - bumped to fix React duplicate instance flickering
 
-const CACHE_NAME = 'parlay-farm-v20251219-fix';
+const CACHE_NAME = 'parlay-farm-v20251229-react-fix';
 const OFFLINE_URL = '/offline';
 
 // Assets to cache immediately on install
@@ -15,13 +15,13 @@ const PRECACHE_ASSETS = [
 
 // Install event - skip waiting to activate immediately
 self.addEventListener('install', (event) => {
-  console.log('[SW] Installing service worker v20251219-fix...');
+  console.log('[SW] Installing service worker v20251229-react-fix...');
   self.skipWaiting();
 });
 
 // Activate event - clean up ALL old caches and claim clients
 self.addEventListener('activate', (event) => {
-  console.log('[SW] Activating service worker v20251219-fix...');
+  console.log('[SW] Activating service worker v20251229-react-fix...');
   
   event.waitUntil(
     caches.keys()
