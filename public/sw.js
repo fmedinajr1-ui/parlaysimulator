@@ -56,6 +56,15 @@ self.addEventListener('fetch', (event) => {
       event.request.url.includes('the-odds-api.com')) {
     return;
   }
+
+  // ALWAYS fetch fresh for navigation requests - prevents stale routing
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request)
+        .catch(() => caches.match('/') || caches.match(OFFLINE_URL))
+    );
+    return;
+  }
   
   // NETWORK FIRST for JavaScript files to prevent stale React chunks
   if (event.request.url.includes('.js') || 
