@@ -2486,6 +2486,166 @@ serve(async (req) => {
     }
 
     // ========================================
+    // STRATEGY 17: MATCHUP HISTORY PARLAY
+    // ✅ RULE: Player props based on historical performance vs specific opponent
+    // ========================================
+    console.log('Generating MATCHUP HISTORY PARLAY...');
+    
+    // Fetch game logs for matchup history analysis
+    const { data: gameLogs, error: gameLogsError } = await supabase
+      .from('nba_player_game_logs')
+      .select('player_name, opponent, points, rebounds, assists, game_date, is_home')
+      .order('game_date', { ascending: false })
+      .limit(2000);
+    
+    if (gameLogsError) {
+      console.error('Error fetching game logs for matchup:', gameLogsError);
+    }
+    
+    // Fetch unified props for today's games
+    const { data: unifiedProps, error: propsError } = await supabase
+      .from('unified_props')
+      .select('*')
+      .eq('is_active', true)
+      .in('prop_type', ['player_points', 'player_rebounds', 'player_assists'])
+      .gte('commence_time', now.toISOString());
+    
+    if (propsError) {
+      console.error('Error fetching unified props:', propsError);
+    }
+    
+    if (gameLogs && gameLogs.length > 0 && unifiedProps && unifiedProps.length > 0) {
+      interface MatchupLegData {
+        leg: SuggestionLeg;
+        matchupData: {
+          gamesVsOpponent: number;
+          avgVsOpponent: number;
+          hitRate: number;
+          lastGameVsOpponent?: { date: string; value: number };
+        };
+      }
+      
+      const matchupCandidates: MatchupLegData[] = [];
+      
+      for (const prop of unifiedProps) {
+        const playerName = prop.player_name?.toLowerCase();
+        const opponentName = prop.opponent_team?.toLowerCase() || '';
+        
+        if (!playerName || !opponentName) continue;
+        
+        // Get games against this specific opponent
+        const matchupHistory = gameLogs.filter((log: any) => 
+          log.player_name?.toLowerCase() === playerName &&
+          (log.opponent?.toLowerCase().includes(opponentName) || 
+           opponentName.includes(log.opponent?.toLowerCase() || ''))
+        );
+        
+        if (matchupHistory.length >= 2) {
+          const statType = (prop.prop_type || '').replace('player_', '');
+          const statValues = matchupHistory.map((log: any) => {
+            if (statType === 'points') return log.points || 0;
+            if (statType === 'rebounds') return log.rebounds || 0;
+            if (statType === 'assists') return log.assists || 0;
+            return 0;
+          }).filter((v: number) => v > 0);
+          
+          if (statValues.length === 0) continue;
+          
+          const line = prop.current_line || prop.line || 0;
+          const avgVsOpponent = statValues.reduce((a: number, b: number) => a + b, 0) / statValues.length;
+          const hitRate = statValues.filter((v: number) => v > line).length / statValues.length;
+          
+          // If player historically exceeds line 60%+ of the time vs this opponent
+          if (hitRate >= 0.6 && avgVsOpponent > line) {
+            const odds = prop.over_price || -110;
+            const impliedProb = americanToImplied(odds);
+            
+            matchupCandidates.push({
+              leg: {
+                description: `${prop.player_name} Over ${line} ${statType}`,
+                odds,
+                impliedProbability: impliedProb,
+                sport: 'NBA',
+                betType: prop.prop_type || 'player_prop',
+                eventTime: prop.commence_time || now.toISOString(),
+                eventId: prop.event_id,
+              },
+              matchupData: {
+                gamesVsOpponent: matchupHistory.length,
+                avgVsOpponent: Math.round(avgVsOpponent * 10) / 10,
+                hitRate: Math.round(hitRate * 100),
+                lastGameVsOpponent: matchupHistory[0] ? {
+                  date: matchupHistory[0].game_date,
+                  value: statType === 'points' ? matchupHistory[0].points : 
+                         statType === 'rebounds' ? matchupHistory[0].rebounds : 
+                         matchupHistory[0].assists,
+                } : undefined,
+              },
+            });
+          }
+        }
+      }
+      
+      console.log(`Found ${matchupCandidates.length} matchup history candidates`);
+      
+      // Sort by hit rate (highest first)
+      matchupCandidates.sort((a, b) => b.matchupData.hitRate - a.matchupData.hitRate);
+      
+      // Build parlay from top matchup picks
+      if (matchupCandidates.length >= 2) {
+        const matchupLegs: SuggestionLeg[] = [];
+        const matchupDataArray: any[] = [];
+        let matchupProb = 1;
+        const usedPlayers = new Set<string>();
+        
+        for (const candidate of matchupCandidates) {
+          if (matchupLegs.length >= 4) break;
+          const playerKey = candidate.leg.description.split(' ')[0].toLowerCase();
+          if (usedPlayers.has(playerKey)) continue;
+          
+          const newProb = matchupProb * candidate.leg.impliedProbability;
+          if (newProb >= 0.12) {
+            matchupProb = newProb;
+            usedPlayers.add(playerKey);
+            matchupLegs.push(candidate.leg);
+            matchupDataArray.push({
+              player: candidate.leg.description,
+              ...candidate.matchupData,
+            });
+          }
+        }
+        
+        if (matchupLegs.length >= 2) {
+          const totalOdds = calculateTotalOdds(matchupLegs);
+          const avgHitRate = Math.round(
+            matchupDataArray.reduce((sum, m) => sum + m.hitRate, 0) / matchupDataArray.length
+          );
+          
+          // Build reason with matchup details
+          const matchupDetails = matchupDataArray.slice(0, 2).map((m: any) => {
+            const playerName = m.player.split(' ')[0];
+            return `${playerName}: avg ${m.avgVsOpponent} vs opp (${m.hitRate}% hit)`;
+          }).join(', ');
+          
+          suggestions.unshift({
+            legs: matchupLegs,
+            total_odds: totalOdds,
+            combined_probability: matchupProb,
+            suggestion_reason: `📊 MATCHUP HISTORY: ${matchupLegs.length} props based on past games vs opponent. ${matchupDetails}. Avg ${avgHitRate}% hit rate vs these teams!`,
+            sport: 'NBA',
+            confidence_score: Math.min(0.75 + (avgHitRate - 60) * 0.003, 0.90),
+            expires_at: new Date(now.getTime() + 12 * 60 * 60 * 1000).toISOString(),
+            is_data_driven: true,
+            parlay_strategy: 'MATCHUP_HISTORY',
+            matchup_data: matchupDataArray,
+          });
+          
+          console.log(`Created MATCHUP HISTORY PARLAY with ${matchupLegs.length} legs, avg hit rate: ${avgHitRate}%`);
+        }
+      }
+    }
+
+    // ========================================
     // STRATEGY 16: HYBRID PARLAY
     // Combines sharp money + user patterns + AI accuracy in one formula
     // ========================================
@@ -2695,6 +2855,8 @@ serve(async (req) => {
           expires_at: s.expires_at,
           is_hybrid: s.is_hybrid || false,
           hybrid_scores: s.hybrid_scores || null,
+          parlay_strategy: s.parlay_strategy || null,
+          matchup_data: s.matchup_data || null,
         })));
 
       if (insertError) {

@@ -5915,6 +5915,8 @@ export type Database = {
           is_active: boolean
           is_hybrid: boolean | null
           legs: Json
+          matchup_data: Json | null
+          parlay_strategy: string | null
           pick_status: string | null
           sport: string
           suggestion_reason: string
@@ -5938,6 +5940,8 @@ export type Database = {
           is_active?: boolean
           is_hybrid?: boolean | null
           legs: Json
+          matchup_data?: Json | null
+          parlay_strategy?: string | null
           pick_status?: string | null
           sport: string
           suggestion_reason: string
@@ -5961,6 +5965,8 @@ export type Database = {
           is_active?: boolean
           is_hybrid?: boolean | null
           legs?: Json
+          matchup_data?: Json | null
+          parlay_strategy?: string | null
           pick_status?: string | null
           sport?: string
           suggestion_reason?: string

@@ -18,7 +18,8 @@ import {
   XCircle,
   Lightbulb,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  BarChart3
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
@@ -36,6 +37,14 @@ interface VerdictSignal {
 
 type VerdictType = 'strong_pick' | 'lean_pick' | 'hold' | 'lean_fade' | 'strong_fade';
 
+interface MatchupData {
+  player: string;
+  gamesVsOpponent: number;
+  avgVsOpponent: number;
+  hitRate: number;
+  lastGameVsOpponent?: { date: string; value: number };
+}
+
 interface Suggestion {
   id: string;
   sport: string;
@@ -47,6 +56,8 @@ interface Suggestion {
   verdict?: VerdictType | string | null;
   verdict_signals?: VerdictSignal[] | any;
   verdict_score?: number | null;
+  parlay_strategy?: string | null;
+  matchup_data?: MatchupData[] | any;
 }
 
 interface LearningInsights {
@@ -527,6 +538,28 @@ export function AISuggestionsCard({ userId }: AISuggestionsCardProps) {
                           {signal.engine}: {signal.signal}
                         </Badge>
                       ))}
+                    </div>
+                  )}
+                  
+                  {/* Matchup History Badge */}
+                  {suggestion.parlay_strategy === 'MATCHUP_HISTORY' && suggestion.matchup_data && (
+                    <div className="mt-2 p-2 rounded-lg bg-primary/5 border border-primary/20">
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        <BarChart3 className="w-3.5 h-3.5 text-primary" />
+                        <span className="text-xs font-medium text-primary">Matchup History</span>
+                      </div>
+                      <div className="space-y-1">
+                        {(suggestion.matchup_data as MatchupData[]).slice(0, 2).map((match, idx) => (
+                          <div key={idx} className="flex items-center justify-between text-xs">
+                            <span className="text-muted-foreground truncate max-w-[120px]">
+                              {match.player?.split(' ')[0]}
+                            </span>
+                            <span className="text-foreground font-mono">
+                              {match.avgVsOpponent} avg • {match.hitRate}% hit
+                            </span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
                   
