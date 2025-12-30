@@ -100,43 +100,49 @@ function ParlayCard({ parlay }: { parlay: HistoricalParlay }) {
       
       <CollapsibleContent>
         <div className="pl-4 pr-2 py-2 space-y-2 border-l-2 border-border/50 ml-4 mt-1">
-          {parlay.legs.map((leg, idx) => {
-            const legOutcome = parlay.leg_outcomes?.find(lo => lo.leg_index === idx);
-            
-            return (
-              <div 
-                key={idx} 
-                className="flex items-start justify-between text-sm gap-2"
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <span>{sportEmojis[leg.sport] || '🎯'}</span>
-                  <span className="truncate text-muted-foreground">
-                    {leg.playerName} {leg.side.charAt(0).toUpperCase()} {leg.line} {leg.propType}
-                  </span>
+          {(!parlay.leg_outcomes || parlay.leg_outcomes.length === 0) && parlay.outcome !== 'pending' ? (
+            <p className="text-xs text-muted-foreground italic">
+              Leg details not yet verified
+            </p>
+          ) : (
+            parlay.legs.map((leg, idx) => {
+              const legOutcome = parlay.leg_outcomes?.find(lo => lo.leg_index === idx);
+              
+              return (
+                <div 
+                  key={idx} 
+                  className="flex items-start justify-between text-sm gap-2"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span>{sportEmojis[leg.sport] || '🎯'}</span>
+                    <span className="truncate text-muted-foreground">
+                      {leg.playerName} {leg.side.charAt(0).toUpperCase()} {leg.line} {leg.propType}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {legOutcome?.outcome ? (
+                      <>
+                        {legOutcome.outcome === 'hit' ? (
+                          <CheckCircle className="w-3 h-3 text-green-500" />
+                        ) : legOutcome.outcome === 'miss' ? (
+                          <XCircle className="w-3 h-3 text-red-500" />
+                        ) : (
+                          <HelpCircle className="w-3 h-3 text-muted-foreground" />
+                        )}
+                        {legOutcome.actual_value !== null && (
+                          <span className="text-xs text-muted-foreground">
+                            ({legOutcome.actual_value})
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">--</span>
+                    )}
+                  </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  {legOutcome?.outcome ? (
-                    <>
-                      {legOutcome.outcome === 'hit' ? (
-                        <CheckCircle className="w-3 h-3 text-green-500" />
-                      ) : legOutcome.outcome === 'miss' ? (
-                        <XCircle className="w-3 h-3 text-red-500" />
-                      ) : (
-                        <HelpCircle className="w-3 h-3 text-muted-foreground" />
-                      )}
-                      {legOutcome.actual_value !== null && (
-                        <span className="text-xs text-muted-foreground">
-                          ({legOutcome.actual_value})
-                        </span>
-                      )}
-                    </>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">--</span>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+              );
+            })
+          )}
         </div>
       </CollapsibleContent>
     </Collapsible>

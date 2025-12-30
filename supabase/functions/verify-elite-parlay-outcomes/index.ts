@@ -159,23 +159,30 @@ serve(async (req) => {
     console.log('=== Starting Elite Parlay Outcome Verification ===');
     
     // Parse request options
-    const { forceFetch = false, dateRange = 14 } = await req.json().catch(() => ({}));
+    const { forceFetch = false, forceRecheck = false, dateRange = 14 } = await req.json().catch(() => ({}));
     
     // Fetch pending parlays that are at least 24 hours old
     const cutoffDate = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     
-    const { data: pendingParlays, error: fetchError } = await supabase
+    let query = supabase
       .from('daily_elite_parlays')
-      .select('*')
-      .in('outcome', ['pending', 'no_data'])
-      .lte('parlay_date', cutoffDate)
-      .order('parlay_date', { ascending: false });
+      .select('*');
+    
+    if (forceRecheck) {
+      // Re-verify all parlays (to populate missing leg outcomes)
+      console.log('Force recheck mode: including already-settled parlays');
+      query = query.lte('parlay_date', cutoffDate);
+    } else {
+      query = query.in('outcome', ['pending', 'no_data']).lte('parlay_date', cutoffDate);
+    }
+    
+    const { data: pendingParlays, error: fetchError } = await query.order('parlay_date', { ascending: false });
 
     if (fetchError) {
       throw new Error(`Failed to fetch pending parlays: ${fetchError.message}`);
     }
 
-    console.log(`Found ${pendingParlays?.length || 0} pending/no_data parlays to verify`);
+    console.log(`Found ${pendingParlays?.length || 0} parlays to verify (forceRecheck: ${forceRecheck})`);
 
     // Fetch all game logs from the date range
     const oldestParlay = pendingParlays?.[pendingParlays.length - 1];
@@ -213,6 +220,20 @@ serve(async (req) => {
         const legs = parlay.legs as any[];
         if (!legs || legs.length === 0) {
           console.log(`Parlay ${parlay.id} has no legs, skipping`);
+          continue;
+        }
+
+        // Check if leg outcomes already exist (for forceRecheck mode)
+        const { data: existingOutcomes } = await supabase
+          .from('daily_elite_leg_outcomes')
+          .select('leg_index')
+          .eq('parlay_id', parlay.id);
+        
+        const hasAllLegOutcomes = existingOutcomes?.length === legs.length;
+        
+        // Skip if already has all leg outcomes and not forcing
+        if (hasAllLegOutcomes && !forceFetch && parlay.outcome !== 'pending' && parlay.outcome !== 'no_data') {
+          console.log(`Parlay ${parlay.id} already has all leg outcomes, skipping`);
           continue;
         }
 
@@ -339,8 +360,8 @@ serve(async (req) => {
             results.legsMissed++;
           }
 
-          // Insert leg outcome record
-          await supabase.from('daily_elite_leg_outcomes').upsert({
+          // Insert leg outcome record with error handling
+          const { error: legUpsertError } = await supabase.from('daily_elite_leg_outcomes').upsert({
             parlay_id: parlay.id,
             leg_index: i,
             player_name: legData.playerName,
@@ -353,6 +374,13 @@ serve(async (req) => {
             engine_signals: { engine: legData.engine, eventId: legData.eventId, matchScore },
             verified_at: new Date().toISOString(),
           }, { onConflict: 'parlay_id,leg_index' });
+          
+          if (legUpsertError) {
+            console.error(`Failed to save leg outcome for parlay ${parlay.id} leg ${i}:`, legUpsertError);
+            results.errors.push(`Leg save failed: ${legUpsertError.message}`);
+          } else {
+            console.log(`Saved leg outcome: ${parlay.id} leg ${i} = ${legOutcome}`);
+          }
         }
 
         // Determine overall parlay outcome
