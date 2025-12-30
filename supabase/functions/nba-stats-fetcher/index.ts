@@ -151,6 +151,52 @@ async function fetchInjuries(apiKey: string): Promise<BDLInjury[]> {
   }
 }
 
+// Helper to parse ESPN boxscore stats dynamically based on headers
+function parseESPNPlayerStats(athlete: any, labels: string[]): Record<string, number> {
+  const stats: Record<string, number> = {
+    points: 0,
+    rebounds: 0,
+    assists: 0,
+    threes_made: 0,
+    blocks: 0,
+    steals: 0,
+    turnovers: 0,
+    minutes_played: 0,
+  };
+
+  if (!athlete.stats || !labels) return stats;
+
+  const rawStats = athlete.stats;
+  
+  for (let i = 0; i < labels.length; i++) {
+    const label = labels[i]?.toLowerCase() || '';
+    const value = rawStats[i] || '0';
+    
+    if (label === 'min') {
+      const minParts = value.split(':');
+      stats.minutes_played = parseInt(minParts[0]) || 0;
+    } else if (label === 'pts') {
+      stats.points = parseInt(value) || 0;
+    } else if (label === 'reb') {
+      stats.rebounds = parseInt(value) || 0;
+    } else if (label === 'ast') {
+      stats.assists = parseInt(value) || 0;
+    } else if (label === '3pt') {
+      // Format: "made-attempted"
+      const parts = value.split('-');
+      stats.threes_made = parseInt(parts[0]) || 0;
+    } else if (label === 'blk') {
+      stats.blocks = parseInt(value) || 0;
+    } else if (label === 'stl') {
+      stats.steals = parseInt(value) || 0;
+    } else if (label === 'to') {
+      stats.turnovers = parseInt(value) || 0;
+    }
+  }
+  
+  return stats;
+}
+
 // ESPN Backup fetcher - more reliable for recent games
 async function fetchESPNGameLogs(daysBack: number = 7): Promise<any[]> {
   const gameLogRecords: any[] = [];
@@ -159,46 +205,65 @@ async function fetchESPNGameLogs(daysBack: number = 7): Promise<any[]> {
     console.log(`[ESPN NBA] Fetching game logs for last ${daysBack} days...`);
     
     // Get recent games from ESPN scoreboard
-    const allGameIds: string[] = [];
+    const allGameIds: { id: string, dateStr: string }[] = [];
     
     for (let dayOffset = 0; dayOffset < daysBack; dayOffset++) {
       const targetDate = new Date();
       targetDate.setDate(targetDate.getDate() - dayOffset);
       const dateStr = targetDate.toISOString().split('T')[0].replace(/-/g, '');
+      const isoDateStr = targetDate.toISOString().split('T')[0];
       
       try {
         const scoreboardUrl = `${ESPN_NBA_API}/scoreboard?dates=${dateStr}`;
+        console.log(`[ESPN NBA] Fetching scoreboard: ${scoreboardUrl}`);
         const scoreboardRes = await fetch(scoreboardUrl);
         
         if (scoreboardRes.ok) {
           const scoreboardData = await scoreboardRes.json();
           const events = scoreboardData.events || [];
           
+          console.log(`[ESPN NBA] Day ${isoDateStr}: ${events.length} games found`);
+          
           for (const event of events) {
-            if (event.status?.type?.completed) {
-              allGameIds.push(event.id);
+            const status = event.status?.type;
+            console.log(`[ESPN NBA] Game ${event.id}: ${event.shortName}, status: ${status?.name}`);
+            
+            // Check if game is completed
+            if (status?.completed === true || status?.name === 'STATUS_FINAL') {
+              allGameIds.push({ id: event.id, dateStr: isoDateStr });
             }
           }
+        } else {
+          console.error(`[ESPN NBA] Scoreboard fetch failed: ${scoreboardRes.status} ${scoreboardRes.statusText}`);
         }
       } catch (e) {
-        console.log(`[ESPN NBA] Error fetching day ${dayOffset}:`, e);
+        console.error(`[ESPN NBA] Error fetching day ${dayOffset}:`, e);
       }
     }
     
-    console.log(`[ESPN NBA] Found ${allGameIds.length} completed games`);
+    console.log(`[ESPN NBA] Found ${allGameIds.length} completed games total`);
     
-    // Process each game's boxscore (limit to 20 per run)
-    for (const gameId of allGameIds.slice(0, 20)) {
+    // Process each game's boxscore
+    for (const game of allGameIds.slice(0, 30)) {
       try {
-        const boxscoreUrl = `${ESPN_NBA_API}/summary?event=${gameId}`;
+        const boxscoreUrl = `${ESPN_NBA_API}/summary?event=${game.id}`;
+        console.log(`[ESPN NBA] Fetching boxscore: ${boxscoreUrl}`);
         const boxRes = await fetch(boxscoreUrl);
         
-        if (!boxRes.ok) continue;
+        if (!boxRes.ok) {
+          console.error(`[ESPN NBA] Boxscore fetch failed for ${game.id}: ${boxRes.status}`);
+          continue;
+        }
         
         const boxData = await boxRes.json();
-        const gameDate = boxData.header?.competitions?.[0]?.date?.split('T')[0];
         
-        if (!gameDate) continue;
+        // Get game date from header or use our tracked date
+        const gameDate = boxData.header?.competitions?.[0]?.date?.split('T')[0] || game.dateStr;
+        
+        if (!gameDate) {
+          console.error(`[ESPN NBA] No date for game ${game.id}`);
+          continue;
+        }
         
         const homeTeam = boxData.header?.competitions?.[0]?.competitors?.find((c: any) => c.homeAway === 'home');
         const awayTeam = boxData.header?.competitions?.[0]?.competitors?.find((c: any) => c.homeAway === 'away');
@@ -206,63 +271,107 @@ async function fetchESPNGameLogs(daysBack: number = 7): Promise<any[]> {
         const homeTeamName = homeTeam?.team?.displayName || 'Unknown';
         const awayTeamName = awayTeam?.team?.displayName || 'Unknown';
         
+        console.log(`[ESPN NBA] Processing: ${awayTeamName} @ ${homeTeamName} on ${gameDate}`);
+        
         // Get player stats from boxscore
         const boxscore = boxData.boxscore;
-        if (!boxscore?.players) continue;
+        if (!boxscore?.players) {
+          console.log(`[ESPN NBA] No player boxscore data for game ${game.id}`);
+          continue;
+        }
+        
+        let playersExtracted = 0;
         
         for (const teamStats of boxscore.players) {
           const isHome = teamStats.team?.id === homeTeam?.team?.id;
           const opponent = isHome ? awayTeamName : homeTeamName;
           
           for (const category of teamStats.statistics || []) {
-            if (category.name?.toLowerCase() !== 'starters' && category.name?.toLowerCase() !== 'bench') continue;
+            // Get stat labels from this category
+            const labels = category.labels || [];
             
             for (const athlete of category.athletes || []) {
               const playerName = athlete.athlete?.displayName;
               if (!playerName) continue;
               
-              const stats = athlete.stats || [];
-              // ESPN stats order: MIN, FG, 3PT, FT, OREB, DREB, REB, AST, STL, BLK, TO, PF, +/-, PTS
+              // Check if player played (didn't sit)
+              const didNotPlay = athlete.didNotPlay === true;
+              if (didNotPlay) continue;
               
-              let minutes = 0;
-              if (stats[0]) {
-                const minParts = stats[0].split(':');
-                minutes = parseInt(minParts[0]) || 0;
+              // Parse stats using dynamic labels
+              const stats = parseESPNPlayerStats(athlete, labels);
+              
+              // Only add if they played some minutes
+              if (stats.minutes_played > 0 || stats.points > 0) {
+                gameLogRecords.push({
+                  player_name: playerName,
+                  game_date: gameDate,
+                  opponent,
+                  is_home: isHome,
+                  ...stats,
+                });
+                playersExtracted++;
               }
-              
-              const threeParts = (stats[2] || '0-0').split('-');
-              const threesMade = parseInt(threeParts[0]) || 0;
-              
-              gameLogRecords.push({
-                player_name: playerName,
-                game_date: gameDate,
-                opponent,
-                is_home: isHome,
-                points: parseInt(stats[13]) || 0,
-                rebounds: parseInt(stats[6]) || 0,
-                assists: parseInt(stats[7]) || 0,
-                threes_made: threesMade,
-                blocks: parseInt(stats[9]) || 0,
-                steals: parseInt(stats[8]) || 0,
-                turnovers: parseInt(stats[10]) || 0,
-                minutes_played: minutes,
-              });
             }
           }
         }
         
-        await new Promise(resolve => setTimeout(resolve, 100));
+        console.log(`[ESPN NBA] Extracted ${playersExtracted} players from game ${game.id}`);
+        
+        // Rate limit between API calls
+        await new Promise(resolve => setTimeout(resolve, 200));
       } catch (gameError) {
-        console.error(`[ESPN NBA] Error processing game ${gameId}:`, gameError);
+        console.error(`[ESPN NBA] Error processing game ${game.id}:`, gameError);
       }
     }
     
-    console.log(`[ESPN NBA] Extracted ${gameLogRecords.length} player game logs`);
+    console.log(`[ESPN NBA] Total: ${gameLogRecords.length} player game logs extracted`);
   } catch (error) {
     console.error('[ESPN NBA] Fatal error:', error);
   }
   
   return gameLogRecords;
+}
+
+// Extract player names from pending elite parlays
+async function getPlayersFromParlays(supabase: any): Promise<string[]> {
+  const playerNames: Set<string> = new Set();
+  
+  try {
+    // Get parlays from last 14 days that need verification
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 14);
+    
+    const { data: parlays, error } = await supabase
+      .from('daily_elite_parlays')
+      .select('legs')
+      .gte('parlay_date', cutoff.toISOString().split('T')[0])
+      .in('outcome', ['pending', 'no_data']);
+    
+    if (error) {
+      console.error('[NBA Stats] Error fetching parlays:', error);
+      return [];
+    }
+    
+    for (const parlay of parlays || []) {
+      const legs = parlay.legs as any[];
+      for (const leg of legs || []) {
+        const playerName = leg.playerName || leg.player_name || leg.player;
+        const sport = leg.sport || 'basketball_nba';
+        
+        // Only NBA players
+        if (playerName && sport.includes('basketball')) {
+          playerNames.add(playerName);
+        }
+      }
+    }
+    
+    console.log(`[NBA Stats] Found ${playerNames.size} unique NBA players from pending parlays`);
+    return Array.from(playerNames);
+  } catch (e) {
+    console.error('[NBA Stats] Error extracting parlay players:', e);
+    return [];
+  }
 }
 
 serve(async (req) => {
@@ -278,9 +387,9 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { mode = 'sync', playerNames = [], daysBack = 7, useESPN = true } = await req.json().catch(() => ({}));
+    const { mode = 'sync', playerNames = [], daysBack = 7, useESPN = true, includeParlayPlayers = true } = await req.json().catch(() => ({}));
     
-    console.log(`[NBA Stats Fetcher] Starting with mode: ${mode}, players: ${playerNames.length}, useESPN: ${useESPN}`);
+    console.log(`[NBA Stats Fetcher] Starting with mode: ${mode}, daysBack: ${daysBack}, useESPN: ${useESPN}`);
     
     const results: Record<string, any> = {
       playersMatched: 0,
@@ -296,21 +405,31 @@ serve(async (req) => {
       console.log('[NBA Stats Fetcher] Fetching from ESPN API (primary)...');
       const espnRecords = await fetchESPNGameLogs(daysBack);
       
+      console.log(`[NBA Stats Fetcher] ESPN returned ${espnRecords.length} records`);
+      
       if (espnRecords.length > 0) {
-        const { error: espnError } = await supabase
-          .from('nba_player_game_logs')
-          .upsert(espnRecords, { 
-            onConflict: 'player_name,game_date',
-            ignoreDuplicates: false 
-          });
-        
-        if (espnError) {
-          console.error('[NBA Stats Fetcher] ESPN insert error:', espnError);
-          results.errors.push(espnError.message);
-        } else {
-          results.espnRecords = espnRecords.length;
-          results.statsInserted += espnRecords.length;
+        // Batch insert in chunks of 100
+        const chunkSize = 100;
+        for (let i = 0; i < espnRecords.length; i += chunkSize) {
+          const chunk = espnRecords.slice(i, i + chunkSize);
+          const { error: espnError } = await supabase
+            .from('nba_player_game_logs')
+            .upsert(chunk, { 
+              onConflict: 'player_name,game_date',
+              ignoreDuplicates: false 
+            });
+          
+          if (espnError) {
+            console.error(`[NBA Stats Fetcher] ESPN insert error (batch ${i}):`, espnError);
+            results.errors.push(espnError.message);
+          } else {
+            results.espnRecords += chunk.length;
+          }
         }
+        results.statsInserted += results.espnRecords;
+        console.log(`[NBA Stats Fetcher] Successfully inserted ${results.espnRecords} ESPN records`);
+      } else {
+        console.warn('[NBA Stats Fetcher] ESPN returned 0 records - API may be down or format changed');
       }
     }
 
@@ -318,9 +437,20 @@ serve(async (req) => {
     if (apiKey) {
       console.log('[NBA Stats Fetcher] Fetching from BallDontLie API (secondary)...');
       
-      let playersToFetch: string[] = playerNames;
+      let playersToFetch: string[] = [...playerNames];
       
-      if (mode === 'sync' && playersToFetch.length === 0) {
+      // Get players from pending parlays
+      if (includeParlayPlayers) {
+        const parlayPlayers = await getPlayersFromParlays(supabase);
+        for (const player of parlayPlayers) {
+          if (!playersToFetch.includes(player)) {
+            playersToFetch.push(player);
+          }
+        }
+      }
+      
+      // Also get from unified_props if in sync mode
+      if (mode === 'sync' && playersToFetch.length < 10) {
         const { data: propsData, error: propsError } = await supabase
           .from('unified_props')
           .select('player_name')
@@ -330,9 +460,17 @@ serve(async (req) => {
         if (propsError) {
           results.errors.push(propsError.message);
         } else if (propsData) {
-          playersToFetch = [...new Set(propsData.map(p => p.player_name))];
-          console.log(`[NBA Stats Fetcher] Found ${playersToFetch.length} unique players from props`);
+          for (const p of propsData) {
+            if (!playersToFetch.includes(p.player_name)) {
+              playersToFetch.push(p.player_name);
+            }
+          }
         }
+      }
+      
+      console.log(`[NBA Stats Fetcher] Total players to fetch: ${playersToFetch.length}`);
+      if (playersToFetch.length > 0) {
+        console.log(`[NBA Stats Fetcher] Sample players: ${playersToFetch.slice(0, 5).join(', ')}`);
       }
 
       if (playersToFetch.length > 0) {
@@ -343,6 +481,8 @@ serve(async (req) => {
 
         const cachedMap = new Map(cachedPlayers?.map(p => [p.player_name, p]) || []);
         const uncachedPlayers = playersToFetch.filter(name => !cachedMap.has(name));
+        
+        console.log(`[NBA Stats Fetcher] Cached: ${cachedMap.size}, Need to search: ${uncachedPlayers.length}`);
         
         const newPlayerMappings: any[] = [];
         
@@ -366,6 +506,9 @@ serve(async (req) => {
               last_updated: new Date().toISOString(),
             });
             results.playersMatched++;
+            console.log(`[NBA Stats Fetcher] Found BDL player: ${playerName} -> ID ${player.id}`);
+          } else {
+            console.log(`[NBA Stats Fetcher] Player not found in BDL: ${playerName}`);
           }
           
           await new Promise(resolve => setTimeout(resolve, 100));
@@ -430,6 +573,7 @@ serve(async (req) => {
           } else {
             results.bdlRecords = gameLogRecords.length;
             results.statsInserted += gameLogRecords.length;
+            console.log(`[NBA Stats Fetcher] Inserted ${gameLogRecords.length} BDL records`);
           }
         }
       }
@@ -505,10 +649,10 @@ serve(async (req) => {
         error_message: errorMessage,
       });
     }
-    
-    return new Response(JSON.stringify({ 
-      success: false, 
-      error: errorMessage 
+
+    return new Response(JSON.stringify({
+      success: false,
+      error: errorMessage,
     }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
