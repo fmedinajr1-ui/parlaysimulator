@@ -430,6 +430,25 @@ serve(async (req) => {
 
         results.parlaysVerified++;
         console.log(`Parlay ${parlay.id} (${parlay.parlay_date}): ${parlayOutcome} (${hitLegs.length}/${nbaLegs.length} legs hit)`);
+        
+        // Trigger loss analysis learning when a parlay is lost
+        if (parlayOutcome === 'lost') {
+          console.log(`Triggering loss pattern analysis for parlay ${parlay.id}`);
+          try {
+            // Call the analyze function to learn from this loss
+            const analyzeUrl = `${supabaseUrl}/functions/v1/analyze-elite-hitter-losses`;
+            await fetch(analyzeUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${supabaseServiceKey}`,
+              },
+              body: JSON.stringify({ parlayId: parlay.id }),
+            });
+          } catch (analyzeError) {
+            console.error('Failed to trigger loss analysis:', analyzeError);
+          }
+        }
 
       } catch (parlayError) {
         const errorMsg = parlayError instanceof Error ? parlayError.message : 'Unknown error';
