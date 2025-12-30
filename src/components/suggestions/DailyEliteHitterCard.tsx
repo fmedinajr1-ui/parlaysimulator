@@ -5,7 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Crown, Target, Zap, TrendingUp, RefreshCw, Trophy, Sparkles, Info, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Crown, Target, Zap, TrendingUp, RefreshCw, Trophy, Sparkles, Info, ChevronDown, ChevronUp, AlertTriangle, BarChart3, History } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -13,6 +14,8 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { useToast } from '@/hooks/use-toast';
 import { useSubscription } from '@/hooks/useSubscription';
 import { EliteHitterPaywall } from './EliteHitterPaywall';
+import { EliteHitterPerformance } from './EliteHitterPerformance';
+import { EliteHitterHistory } from './EliteHitterHistory';
 
 interface LegData {
   playerName: string;
@@ -186,7 +189,6 @@ export function DailyEliteHitterCard() {
             Daily Elite 3-Leg Hitter
           </CardTitle>
           <div className="flex items-center gap-2">
-            {/* Regenerate Button with Confirmation */}
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 <Button 
@@ -203,142 +205,161 @@ export function DailyEliteHitterCard() {
                 <AlertDialogHeader>
                   <AlertDialogTitle>Regenerate Today's Parlay?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    This will replace the current picks with a new selection based on the latest data from all engines (MedianLock, HitRate, PVS, Sharp).
+                    This will replace the current picks with a new selection based on the latest data from all engines.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction onClick={handleRegenerate}>
-                    Regenerate
-                  </AlertDialogAction>
+                  <AlertDialogAction onClick={handleRegenerate}>Regenerate</AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
-            <Badge variant="outline" className="text-xs">
-              {displayDate}
-            </Badge>
+            <Badge variant="outline" className="text-xs">{displayDate}</Badge>
           </div>
         </div>
-        
-        {/* Stats Row */}
-        <div className="flex items-center gap-4 mt-2 text-sm">
-          <div className="flex items-center gap-1">
-            <Target className="w-4 h-4 text-green-500" />
-            <span className="text-muted-foreground">Prob:</span>
-            <span className={cn(
-              "font-semibold",
-              parlay.combined_probability >= 0.20 ? "text-green-500" : 
-              parlay.combined_probability >= 0.15 ? "text-yellow-500" : "text-red-500"
-            )}>{combinedProbPercent}%</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <TrendingUp className="w-4 h-4 text-blue-500" />
-            <span className="text-muted-foreground">Odds:</span>
-            <span className="font-semibold text-blue-500">
-              {parlay.total_odds > 0 ? '+' : ''}{Math.round(parlay.total_odds)}
-            </span>
-          </div>
-          <div className="flex items-center gap-1">
-            <Zap className="w-4 h-4 text-yellow-500" />
-            <span className="text-muted-foreground">Edge:</span>
-            <span className="font-semibold text-yellow-500">+{parlay.total_edge?.toFixed(1)}%</span>
-          </div>
-        </div>
-        
-        {/* Quality Warning */}
-        {!meetsQualityStandards && (
-          <div className="flex items-center gap-2 mt-2 p-2 rounded-md bg-yellow-500/10 border border-yellow-500/30">
-            <AlertTriangle className="w-4 h-4 text-yellow-500" />
-            <span className="text-xs text-yellow-500">Limited high-quality picks available today</span>
-          </div>
-        )}
       </CardHeader>
 
-      <CardContent className="pt-4 space-y-3">
-        {/* Why These Picks Section */}
-        {parlay.selection_rationale && (
-          <Collapsible open={showRationale} onOpenChange={setShowRationale}>
-            <CollapsibleTrigger asChild>
-              <Button variant="ghost" size="sm" className="w-full justify-between text-xs text-muted-foreground hover:text-foreground">
-                <span className="flex items-center gap-1">
-                  <Info className="w-3 h-3" />
-                  Why These Picks?
-                </span>
-                {showRationale ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              </Button>
-            </CollapsibleTrigger>
-            <CollapsibleContent className="px-2 pb-2">
-              <p className="text-xs text-muted-foreground bg-muted/30 p-3 rounded-lg">
-                {parlay.selection_rationale}
-              </p>
-            </CollapsibleContent>
-          </Collapsible>
-        )}
-        
-        {/* Legs */}
-        {legs.map((leg, idx) => (
-          <div 
-            key={idx} 
-            className="p-3 rounded-lg bg-muted/30 border border-border/50"
-          >
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-lg">{sportEmojis[leg.sport] || '🎯'}</span>
-                  <span className="font-medium text-sm truncate">{leg.playerName}</span>
-                  <Badge 
-                    variant="outline" 
-                    className={cn(
-                      "text-[10px] px-1.5 py-0",
-                      leg.side === 'over' ? 'text-green-500 border-green-500/30' : 'text-red-500 border-red-500/30'
-                    )}
-                  >
-                    {leg.side.toUpperCase()}
-                  </Badge>
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  {leg.propType} {leg.line} ({leg.odds > 0 ? '+' : ''}{leg.odds})
-                </p>
+      <CardContent className="pt-4">
+        <Tabs defaultValue="today" className="w-full">
+          <TabsList className="w-full mb-4">
+            <TabsTrigger value="today" className="flex-1 gap-1">
+              <Target className="w-3 h-3" />
+              Today
+            </TabsTrigger>
+            <TabsTrigger value="stats" className="flex-1 gap-1">
+              <BarChart3 className="w-3 h-3" />
+              Stats
+            </TabsTrigger>
+            <TabsTrigger value="history" className="flex-1 gap-1">
+              <History className="w-3 h-3" />
+              History
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="today" className="space-y-3 mt-0">
+            {/* Stats Row */}
+            <div className="flex items-center gap-4 text-sm">
+              <div className="flex items-center gap-1">
+                <Target className="w-4 h-4 text-green-500" />
+                <span className="text-muted-foreground">Prob:</span>
+                <span className={cn(
+                  "font-semibold",
+                  parlay.combined_probability >= 0.20 ? "text-green-500" : 
+                  parlay.combined_probability >= 0.15 ? "text-yellow-500" : "text-red-500"
+                )}>{combinedProbPercent}%</span>
               </div>
-              <div className="text-right shrink-0">
-                <div className={cn(
-                  "text-sm font-semibold",
-                  leg.p_leg >= 0.70 ? "text-green-500" :
-                  leg.p_leg >= 0.55 ? "text-yellow-500" : "text-red-500"
-                )}>
-                  {(leg.p_leg * 100).toFixed(0)}%
-                </div>
-                <div className="text-[10px] text-muted-foreground">
-                  +{leg.edge?.toFixed(1)}% edge
-                </div>
+              <div className="flex items-center gap-1">
+                <TrendingUp className="w-4 h-4 text-blue-500" />
+                <span className="text-muted-foreground">Odds:</span>
+                <span className="font-semibold text-blue-500">
+                  {parlay.total_odds > 0 ? '+' : ''}{Math.round(parlay.total_odds)}
+                </span>
+              </div>
+              <div className="flex items-center gap-1">
+                <Zap className="w-4 h-4 text-yellow-500" />
+                <span className="text-muted-foreground">Edge:</span>
+                <span className="font-semibold text-yellow-500">+{parlay.total_edge?.toFixed(1)}%</span>
               </div>
             </div>
             
-            {/* Engine badges */}
-            <div className="flex flex-wrap gap-1 mt-2">
-              {leg.engines?.map((engine, eIdx) => (
-                <Badge 
-                  key={eIdx} 
-                  variant="outline" 
-                  className={cn("text-[10px] px-1.5 py-0", engineColors[engine] || '')}
-                >
-                  {engine}
-                </Badge>
-              ))}
-            </div>
-          </div>
-        ))}
+            {/* Quality Warning */}
+            {!meetsQualityStandards && (
+              <div className="flex items-center gap-2 p-2 rounded-md bg-yellow-500/10 border border-yellow-500/30">
+                <AlertTriangle className="w-4 h-4 text-yellow-500" />
+                <span className="text-xs text-yellow-500">Limited high-quality picks available today</span>
+              </div>
+            )}
 
-        {/* Outcome badge if settled */}
-        {parlay.outcome !== 'pending' && (
-          <div className={cn(
-            "flex items-center justify-center gap-2 p-3 rounded-lg",
-            parlay.outcome === 'won' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
-          )}>
-            <Trophy className="w-5 h-5" />
-            <span className="font-semibold">{parlay.outcome === 'won' ? 'HIT!' : 'MISS'}</span>
-          </div>
-        )}
+            {/* Why These Picks */}
+            {parlay.selection_rationale && (
+              <Collapsible open={showRationale} onOpenChange={setShowRationale}>
+                <CollapsibleTrigger asChild>
+                  <Button variant="ghost" size="sm" className="w-full justify-between text-xs text-muted-foreground hover:text-foreground">
+                    <span className="flex items-center gap-1">
+                      <Info className="w-3 h-3" />
+                      Why These Picks?
+                    </span>
+                    {showRationale ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="px-2 pb-2">
+                  <p className="text-xs text-muted-foreground bg-muted/30 p-3 rounded-lg">
+                    {parlay.selection_rationale}
+                  </p>
+                </CollapsibleContent>
+              </Collapsible>
+            )}
+            
+            {/* Legs */}
+            {legs.map((leg, idx) => (
+              <div key={idx} className="p-3 rounded-lg bg-muted/30 border border-border/50">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-lg">{sportEmojis[leg.sport] || '🎯'}</span>
+                      <span className="font-medium text-sm truncate">{leg.playerName}</span>
+                      <Badge 
+                        variant="outline" 
+                        className={cn(
+                          "text-[10px] px-1.5 py-0",
+                          leg.side === 'over' ? 'text-green-500 border-green-500/30' : 'text-red-500 border-red-500/30'
+                        )}
+                      >
+                        {leg.side.toUpperCase()}
+                      </Badge>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      {leg.propType} {leg.line} ({leg.odds > 0 ? '+' : ''}{leg.odds})
+                    </p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className={cn(
+                      "text-sm font-semibold",
+                      leg.p_leg >= 0.70 ? "text-green-500" :
+                      leg.p_leg >= 0.55 ? "text-yellow-500" : "text-red-500"
+                    )}>
+                      {(leg.p_leg * 100).toFixed(0)}%
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">
+                      +{leg.edge?.toFixed(1)}% edge
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {leg.engines?.map((engine, eIdx) => (
+                    <Badge 
+                      key={eIdx} 
+                      variant="outline" 
+                      className={cn("text-[10px] px-1.5 py-0", engineColors[engine] || '')}
+                    >
+                      {engine}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            ))}
+
+            {/* Outcome badge */}
+            {parlay.outcome !== 'pending' && (
+              <div className={cn(
+                "flex items-center justify-center gap-2 p-3 rounded-lg",
+                parlay.outcome === 'won' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+              )}>
+                <Trophy className="w-5 h-5" />
+                <span className="font-semibold">{parlay.outcome === 'won' ? 'HIT!' : 'MISS'}</span>
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="stats" className="mt-0">
+            <EliteHitterPerformance />
+          </TabsContent>
+
+          <TabsContent value="history" className="mt-0">
+            <EliteHitterHistory />
+          </TabsContent>
+        </Tabs>
       </CardContent>
     </Card>
   );
