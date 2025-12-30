@@ -32,12 +32,13 @@ interface EngineInput {
   injury_context: 'none' | 'teammate_out' | 'minutes_limit';
   odds_open: number;
   odds_current: number;
-  last_5_game_stats: number[];
-  last_5_game_minutes: number[];
-  last_5_vs_matchup_stats: number[];
+  last_10_game_stats: number[];
+  last_10_game_minutes: number[];
+  matchup_stats: number[]; // Stats vs specific opponent
   usage_metrics: number[];
   home_stats: number[];
   away_stats: number[];
+  games_analyzed: number;
   event_id?: string;
   team_name?: string;
   opponent_team?: string;
@@ -69,15 +70,19 @@ interface EngineOutput {
 }
 
 function calculateMedianEdge(input: EngineInput): EngineOutput {
-  // 1️⃣ RECENT FORM MEDIAN (M1) - 25% weight
-  const M1 = median(input.last_5_game_stats);
+  // 1️⃣ RECENT FORM MEDIAN (M1) - 25% weight (last 5 games for recency)
+  const recentStats = input.last_10_game_stats.slice(0, 5);
+  const M1 = median(recentStats);
 
-  // 2️⃣ MATCHUP MEDIAN (M2) - 20% weight
-  const M2 = median(input.last_5_vs_matchup_stats);
+  // 2️⃣ MATCHUP MEDIAN (M2) - 20% weight (games vs specific opponent)
+  // If no matchup data, fall back to recent form
+  const M2 = input.matchup_stats.length > 0 
+    ? median(input.matchup_stats) 
+    : M1;
 
-  // 3️⃣ MINUTES-WEIGHTED MEDIAN (M3) - 20% weight
-  const adjustedStats = input.last_5_game_stats.map((stat, idx) => {
-    const minutes = input.last_5_game_minutes[idx] || input.expected_minutes;
+  // 3️⃣ MINUTES-WEIGHTED MEDIAN (M3) - 20% weight (all 10 games)
+  const adjustedStats = input.last_10_game_stats.map((stat, idx) => {
+    const minutes = input.last_10_game_minutes[idx] || input.expected_minutes;
     if (minutes <= 0) return stat;
     return (stat / minutes) * input.expected_minutes;
   });
@@ -148,9 +153,11 @@ function calculateMedianEdge(input: EngineInput): EngineOutput {
     altLineSuggestion = input.sportsbook_line - 2.5;
   }
 
-  // Calculate volatility
-  const statStdDev = stdDev(input.last_5_game_stats);
-  const statMean = input.last_5_game_stats.reduce((a, b) => a + b, 0) / input.last_5_game_stats.length;
+  // Calculate volatility using all 10 games
+  const statStdDev = stdDev(input.last_10_game_stats);
+  const statMean = input.last_10_game_stats.length > 0 
+    ? input.last_10_game_stats.reduce((a, b) => a + b, 0) / input.last_10_game_stats.length 
+    : 0;
   const isVolatile = statMean > 0 && (statStdDev / statMean) > 0.35;
 
   // 📝 REASON SUMMARY
@@ -401,7 +408,7 @@ serve(async (req) => {
           continue;
         }
 
-        // Get player's game logs
+        // Get player's game logs - use LAST 10 GAMES
         const playerLogs = (gameLogs || [])
           .filter((log: any) => log.player_name?.toLowerCase() === playerName?.toLowerCase())
           .slice(0, 10);
@@ -418,14 +425,32 @@ serve(async (req) => {
           return 0;
         };
 
-        const last5Stats = playerLogs.slice(0, 5).map(getStatValue);
-        const last5Minutes = playerLogs.slice(0, 5).map((log: any) => log.minutes || log.min || 30);
-        const avgMinutes = last5Minutes.reduce((a: number, b: number) => a + b, 0) / last5Minutes.length;
+        // Get last 10 games stats and minutes
+        const last10Stats = playerLogs.map(getStatValue);
+        const last10Minutes = playerLogs.map((log: any) => log.minutes || log.min || 30);
+        const avgMinutes = last10Minutes.reduce((a: number, b: number) => a + b, 0) / last10Minutes.length;
 
         // Skip if minutes too low
         if (avgMinutes < 24) {
           continue;
         }
+
+        // Get matchup-specific stats (games against this opponent)
+        const opponentName = prop.opponent_team?.toLowerCase() || '';
+        const matchupLogs = (gameLogs || [])
+          .filter((log: any) => 
+            log.player_name?.toLowerCase() === playerName?.toLowerCase() &&
+            (log.opponent?.toLowerCase().includes(opponentName) || 
+             opponentName.includes(log.opponent?.toLowerCase() || ''))
+          )
+          .slice(0, 5);
+        const matchupStats = matchupLogs.map(getStatValue);
+
+        // Get home/away splits
+        const homeLogs = playerLogs.filter((log: any) => log.is_home === true);
+        const awayLogs = playerLogs.filter((log: any) => log.is_home === false);
+        const homeStats = homeLogs.map(getStatValue);
+        const awayStats = awayLogs.map(getStatValue);
 
         // Determine home/away from game_description
         const gameIsHome = isPlayerHome(prop.game_description || '', prop.team_name || '');
@@ -440,12 +465,13 @@ serve(async (req) => {
           injury_context: 'none',
           odds_open: -110, // Default opening odds
           odds_current: prop.over_price || -110,
-          last_5_game_stats: last5Stats.length >= 5 ? last5Stats : [...last5Stats, ...last5Stats].slice(0, 5),
-          last_5_game_minutes: last5Minutes.length >= 5 ? last5Minutes : [...last5Minutes, ...last5Minutes].slice(0, 5),
-          last_5_vs_matchup_stats: last5Stats, // Use same stats as fallback
-          usage_metrics: last5Stats, // Use same stats as proxy
-          home_stats: last5Stats,
-          away_stats: last5Stats,
+          last_10_game_stats: last10Stats,
+          last_10_game_minutes: last10Minutes,
+          matchup_stats: matchupStats,
+          usage_metrics: last10Stats, // Use same stats as proxy
+          home_stats: homeStats.length > 0 ? homeStats : last10Stats,
+          away_stats: awayStats.length > 0 ? awayStats : last10Stats,
+          games_analyzed: playerLogs.length,
           event_id: prop.event_id,
           team_name: prop.team_name,
           opponent_team: prop.opponent_team,
