@@ -50,6 +50,7 @@ const PoolDetail = React.lazy(() => import("./pages/PoolDetail"));
 const JoinPool = React.lazy(() => import("./pages/JoinPool"));
 const Changelog = React.lazy(() => import("./pages/Changelog"));
 const ReleaseManager = React.lazy(() => import("./pages/admin/ReleaseManager"));
+const LiveDashboard = React.lazy(() => import("./pages/LiveDashboard"));
 
 
 // QueryClient with optimized defaults
@@ -120,6 +121,7 @@ function AnimatedRoutes() {
               <Route path="/pools/join/:inviteCode" element={<JoinPool />} />
               <Route path="/changelog" element={<Changelog />} />
               <Route path="/admin/releases" element={<ReleaseManager />} />
+              <Route path="/live-dashboard" element={<LiveDashboard />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </React.Suspense>
