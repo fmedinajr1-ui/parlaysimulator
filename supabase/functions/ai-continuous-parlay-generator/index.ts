@@ -33,9 +33,33 @@ interface GeneratedParlay {
   signals_used: string[];
   total_odds: number;
   confidence_score: number;
-  formula_breakdown: Record<string, number>;
+  formula_breakdown: Record<string, any>;
   source_engines: string[];
   sport: string;
+}
+
+// No-Bet Veto Helper - returns veto status and reason
+function shouldNoBet(
+  picks: PickCandidate[], 
+  confidenceScore: number, 
+  engineCount: number
+): { veto: boolean; reason: string } {
+  if (picks.length === 0) {
+    return { veto: true, reason: 'no_picks_available' };
+  }
+  if (confidenceScore < 50) {
+    return { veto: true, reason: 'confidence_too_low' };
+  }
+  if (engineCount < 2) {
+    return { veto: true, reason: 'insufficient_engine_diversity' };
+  }
+  
+  const avgCombinedScore = picks.reduce((sum, p) => sum + p.combined_score, 0) / picks.length;
+  if (avgCombinedScore < 55) {
+    return { veto: true, reason: 'weak_combined_score' };
+  }
+  
+  return { veto: false, reason: '' };
 }
 
 serve(async (req) => {
@@ -79,6 +103,17 @@ serve(async (req) => {
 
     const avoidSet = new Set((avoidPatterns || []).map((p: any) => p.pattern_key));
     console.log(`🚫 Active avoid patterns: ${avoidSet.size}`);
+
+    // FEATURE 1: Fetch active formula auto-bans
+    const { data: autoBans } = await supabase
+      .from('ai_formula_auto_bans')
+      .select('formula_name, engine_source')
+      .eq('is_active', true);
+
+    const autoBanSet = new Set(
+      (autoBans || []).map((b: any) => `${b.formula_name}_${b.engine_source}`)
+    );
+    console.log(`🚨 Active formula auto-bans: ${autoBanSet.size}`);
 
     // Fetch preferred compound formulas
     const { data: preferredCombos } = await supabase
@@ -138,6 +173,17 @@ serve(async (req) => {
       console.log(`🚫 Filtered out ${filteredCount} picks based on avoid patterns`);
     }
 
+    // FEATURE 1: Filter out picks from auto-banned formulas
+    const preBanCount = allPicks.length;
+    allPicks = allPicks.filter(pick => {
+      const banKey = `${pick.formula_name}_${pick.engine_source}`;
+      return !autoBanSet.has(banKey);
+    });
+    const bannedCount = preBanCount - allPicks.length;
+    if (bannedCount > 0) {
+      console.log(`🚫 Filtered out ${bannedCount} picks from auto-banned formulas`);
+    }
+
     // Boost scores for picks from preferred combos
     allPicks = allPicks.map(pick => {
       const isInPreferredCombo = Array.from(preferredComboSet).some(combo => 
@@ -191,10 +237,19 @@ serve(async (req) => {
       generatedParlays.push(...mixedParlays);
     }
 
-    console.log(`🎯 Generated ${generatedParlays.length} parlays`);
+    // FEATURE 2: Filter out NO_BET parlays and track veto count
+    const preVetoCount = generatedParlays.length;
+    const validParlays = generatedParlays.filter(p => p.strategy_used !== 'NO_BET');
+    const vetoCount = preVetoCount - validParlays.length;
 
-    // Save parlays to database
-    const parlaysToInsert = generatedParlays.map(parlay => ({
+    if (vetoCount > 0) {
+      console.log(`🛑 Vetoed ${vetoCount} weak parlays (NO_BET veto)`);
+    }
+
+    console.log(`🎯 Generated ${validParlays.length} valid parlays (${vetoCount} vetoed)`);
+
+    // Save parlays to database (only valid parlays)
+    const parlaysToInsert = validParlays.map(parlay => ({
       generation_round: currentRound,
       strategy_used: parlay.strategy_used,
       signals_used: parlay.signals_used,
@@ -234,10 +289,10 @@ serve(async (req) => {
       }
     }
 
-    // Update learning progress
+    // Update learning progress with veto counts
     await supabase.from('ai_learning_progress').insert({
       generation_round: currentRound,
-      parlays_generated: generatedParlays.length,
+      parlays_generated: validParlays.length,
       current_accuracy: currentAccuracy,
       strategy_weights: Object.fromEntries(
         Array.from(weightMap.entries()).map(([k, v]) => [k, v.current_weight])
@@ -245,13 +300,55 @@ serve(async (req) => {
       learned_patterns: {
         winning: [],
         losing: [],
-        engines_used: [...new Set(generatedParlays.flatMap(p => p.source_engines))]
+        engines_used: [...new Set(validParlays.flatMap(p => p.source_engines))],
+        veto_counts: {
+          no_bet: vetoCount,
+          auto_banned_picks: bannedCount
+        }
       }
     });
 
+    // FEATURE 1: Detect and trigger new auto-bans for poorly performing formulas
+    const { data: poorFormulas } = await supabase
+      .from('ai_formula_performance')
+      .select('*')
+      .gte('total_picks', 15)
+      .lte('current_accuracy', 42)
+      .eq('is_disabled', false);
+
+    let newBansCreated = 0;
+    for (const formula of poorFormulas || []) {
+      const banKey = `${formula.formula_name}_${formula.engine_source}`;
+      
+      // Check if already auto-banned
+      if (!autoBanSet.has(banKey)) {
+        const { error: banError } = await supabase
+          .from('ai_formula_auto_bans')
+          .upsert({
+            formula_name: formula.formula_name,
+            engine_source: formula.engine_source,
+            ban_reason: 'low_accuracy_streak',
+            accuracy_at_ban: formula.current_accuracy,
+            total_picks: formula.total_picks,
+            is_active: true,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }, { onConflict: 'formula_name,engine_source' });
+        
+        if (!banError) {
+          newBansCreated++;
+          console.log(`🚨 Auto-banned formula: ${banKey} (accuracy: ${formula.current_accuracy}%)`);
+        }
+      }
+    }
+
+    if (newBansCreated > 0) {
+      console.log(`🚨 Created ${newBansCreated} new auto-bans (will take effect next cycle)`);
+    }
+
     // Log sport distribution
     const sportDistribution: Record<string, number> = {};
-    generatedParlays.forEach(p => {
+    validParlays.forEach(p => {
       sportDistribution[p.sport] = (sportDistribution[p.sport] || 0) + 1;
     });
 
@@ -260,7 +357,10 @@ serve(async (req) => {
     return new Response(JSON.stringify({
       success: true,
       generation_round: currentRound,
-      parlays_generated: generatedParlays.length,
+      parlays_generated: validParlays.length,
+      parlays_vetoed: vetoCount,
+      picks_auto_banned: bannedCount,
+      new_auto_bans: newBansCreated,
       sport_distribution: sportDistribution,
       picks_by_engine: {
         sharp: sharpPicks.length,
@@ -493,8 +593,8 @@ async function fetchGodmodePicks(supabase: any, weightMap: Map<string, FormulaWe
     const weight = weightMap.get(`${formulaName}_godmode`)?.current_weight || 1.0;
     
     picks.push({
-      description: `${upset.underdog} ML vs ${upset.favorite} (GodMode ${upset.final_upset_score?.toFixed(0)} - ${upset.confidence})`,
-      odds: upset.underdog_odds,
+      description: `${upset.underdog} ML vs ${upset.favorite} (GodMode ${upset.confidence} - ${upset.final_upset_score}%)`,
+      odds: upset.underdog_odds || 150,
       event_id: upset.event_id,
       sport: upset.sport,
       engine_source: 'godmode',
@@ -502,8 +602,7 @@ async function fetchGodmodePicks(supabase: any, weightMap: Map<string, FormulaWe
       formula_scores: {
         final_upset_score: upset.final_upset_score || 0,
         chess_ev: upset.chess_ev || 0,
-        sharp_pct: upset.sharp_pct || 0,
-        chaos_percentage: upset.chaos_percentage || 0
+        monte_carlo_boost: upset.monte_carlo_boost || 0
       },
       combined_score: (upset.final_upset_score || 0) * weight,
       commence_time: upset.commence_time,
@@ -514,187 +613,124 @@ async function fetchGodmodePicks(supabase: any, weightMap: Map<string, FormulaWe
   return picks;
 }
 
-// Fetch fatigue edge picks
+// Fetch fatigue-based picks
 async function fetchFatiguePicks(supabase: any, weightMap: Map<string, FormulaWeight>): Promise<PickCandidate[]> {
   const picks: PickCandidate[] = [];
   
-  const today = new Date().toISOString().split('T')[0];
-  
-  const { data: fatigue } = await supabase
+  const { data: fatigueEdges } = await supabase
     .from('fatigue_edge_tracking')
     .select('*')
-    .gte('fatigue_differential', 20)
-    .gte('game_date', today)
+    .gte('fatigue_differential', 8)
+    .gte('game_date', new Date().toISOString().split('T')[0])
     .is('recommended_side_won', null)
     .order('fatigue_differential', { ascending: false })
     .limit(15);
 
-  for (const game of fatigue || []) {
-    const isHighDiff = (game.fatigue_differential || 0) >= 30;
-    const formulaName = isHighDiff ? 'fatigue_diff_30+' : 'fatigue_diff_20+';
+  for (const edge of fatigueEdges || []) {
+    const isHighDiff = (edge.fatigue_differential || 0) >= 12;
+    const formulaName = isHighDiff ? 'fatigue_diff_12+' : 'fatigue_diff_8+';
     const weight = weightMap.get(`${formulaName}_fatigue`)?.current_weight || 1.0;
     
     picks.push({
-      description: `${game.recommended_side} (Fatigue Edge +${game.fatigue_differential} - ${game.recommended_angle || 'spread'})`,
+      description: `${edge.recommended_side} ${edge.recommended_angle || 'ML'} (Fatigue Edge: ${edge.fatigue_differential} pts)`,
       odds: -110,
-      event_id: game.event_id,
+      event_id: edge.event_id,
       sport: 'basketball_nba',
       engine_source: 'fatigue',
       formula_name: formulaName,
       formula_scores: {
-        fatigue_differential: game.fatigue_differential || 0,
-        home_fatigue: game.home_fatigue_score || 0,
-        away_fatigue: game.away_fatigue_score || 0
+        fatigue_differential: edge.fatigue_differential || 0,
+        home_fatigue: edge.home_fatigue_score || 0,
+        away_fatigue: edge.away_fatigue_score || 0
       },
-      combined_score: (game.fatigue_differential || 0) * weight,
-      commence_time: game.game_date,
-      game_description: `${game.away_team} @ ${game.home_team}`
+      combined_score: (edge.fatigue_differential || 0) * 5 * weight,
+      commence_time: edge.game_date + 'T19:00:00Z',
+      game_description: `${edge.away_team} @ ${edge.home_team}`
     });
   }
 
   return picks;
 }
 
-// Fetch best bets picks
+// Fetch best bets (proven high-accuracy picks)
 async function fetchBestBetsPicks(supabase: any, weightMap: Map<string, FormulaWeight>): Promise<PickCandidate[]> {
   const picks: PickCandidate[] = [];
-  
-  const today = new Date().toISOString().split('T')[0];
   
   const { data: bestBets } = await supabase
     .from('best_bets_log')
     .select('*')
-    .gte('created_at', today)
+    .gte('accuracy_at_time', 60)
     .is('outcome', null)
-    .gte('accuracy_at_time', 55)
+    .gte('created_at', new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString())
     .order('accuracy_at_time', { ascending: false })
-    .limit(15);
+    .limit(20);
 
   for (const bet of bestBets || []) {
-    const weight = weightMap.get('bestbets_high_accuracy_bestbets')?.current_weight || 1.0;
+    const isHighAccuracy = (bet.accuracy_at_time || 0) >= 70;
+    const formulaName = isHighAccuracy ? 'bestbets_acc_70+' : 'bestbets_acc_60+';
+    const weight = weightMap.get(`${formulaName}_bestbets`)?.current_weight || 1.0;
     
     picks.push({
-      description: `${bet.description || bet.prediction} (Best Bet - ${bet.signal_type} ${(bet.accuracy_at_time || 0).toFixed(0)}%)`,
+      description: `${bet.prediction} (BestBet - ${bet.accuracy_at_time?.toFixed(0)}% acc, ${bet.signal_type})`,
       odds: bet.odds || -110,
       event_id: bet.event_id,
       sport: bet.sport,
       engine_source: 'bestbets',
-      formula_name: 'bestbets_high_accuracy',
+      formula_name: formulaName,
       formula_scores: {
         accuracy_at_time: bet.accuracy_at_time || 0,
         sample_size: bet.sample_size_at_time || 0
       },
       combined_score: (bet.accuracy_at_time || 0) * weight,
       commence_time: bet.created_at,
-      game_description: bet.description?.split(' (')[0] || bet.description
+      game_description: bet.description
     });
   }
 
   return picks;
 }
 
-// Fetch coaching tendency picks
+// Fetch coaching engine picks (coach tendencies)
 async function fetchCoachingPicks(supabase: any, weightMap: Map<string, FormulaWeight>): Promise<PickCandidate[]> {
   const picks: PickCandidate[] = [];
   
-  // Fetch NBA coach profiles with clear tendencies
-  const { data: coaches } = await supabase
-    .from('coach_profiles')
-    .select('*')
-    .eq('sport', 'NBA')
-    .eq('is_active', true);
-
-  if (!coaches || coaches.length === 0) return picks;
-
-  // Get today's NBA games from fatigue tracking
   const today = new Date().toISOString().split('T')[0];
-  const { data: todaysGames } = await supabase
-    .from('fatigue_edge_tracking')
+  
+  // Get today's coaching predictions with high confidence
+  const { data: coachingPredictions } = await supabase
+    .from('coaching_predictions')
     .select('*')
-    .gte('game_date', today)
-    .is('recommended_side_won', null);
+    .eq('game_date', today)
+    .gte('confidence', 0.70)
+    .eq('outcome_verified', false)
+    .order('confidence', { ascending: false })
+    .limit(20);
 
-  for (const game of todaysGames || []) {
-    // Find coaches for both teams
-    const homeCoach = coaches.find((c: any) => 
-      game.home_team?.toLowerCase().includes(c.team_name?.toLowerCase()) ||
-      c.team_name?.toLowerCase().includes(game.home_team?.split(' ').pop()?.toLowerCase())
-    );
-    const awayCoach = coaches.find((c: any) => 
-      game.away_team?.toLowerCase().includes(c.team_name?.toLowerCase()) ||
-      c.team_name?.toLowerCase().includes(game.away_team?.split(' ').pop()?.toLowerCase())
-    );
-
-    // Generate picks based on coaching tendencies
-    if (homeCoach) {
-      const b2bRest = homeCoach.b2b_rest_tendency;
-      const pacePreference = homeCoach.pace_preference;
-      
-      // Fast pace coaches boost points
-      if (pacePreference === 'fast') {
-        const weight = weightMap.get('coaching_pace_fast_coaching')?.current_weight || 1.0;
-        picks.push({
-          description: `${game.home_team} team total Over (Coach ${homeCoach.coach_name} - Fast Pace)`,
-          odds: -110,
-          event_id: game.event_id,
-          sport: 'basketball_nba',
-          engine_source: 'coaching',
-          formula_name: 'coaching_pace_fast',
-          formula_scores: {
-            pace_preference: 80,
-            coach_tenure: homeCoach.tenure_start_date ? 
-              Math.floor((Date.now() - new Date(homeCoach.tenure_start_date).getTime()) / (365 * 24 * 60 * 60 * 1000)) : 1
-          },
-          combined_score: 75 * weight,
-          commence_time: game.game_date,
-          game_description: `${game.away_team} @ ${game.home_team}`
-        });
-      }
-
-      // Heavy rest coaches on B2B = fade stars
-      if (b2bRest === 'heavy' && game.home_fatigue_score > 50) {
-        const weight = weightMap.get('coaching_b2b_heavy_coaching')?.current_weight || 1.0;
-        picks.push({
-          description: `${game.home_team} star props Under (Coach ${homeCoach.coach_name} - B2B Rest Heavy)`,
-          odds: -110,
-          event_id: game.event_id,
-          sport: 'basketball_nba',
-          engine_source: 'coaching',
-          formula_name: 'coaching_b2b_heavy',
-          formula_scores: {
-            b2b_tendency: 85,
-            fatigue_score: game.home_fatigue_score
-          },
-          combined_score: 80 * weight,
-          commence_time: game.game_date,
-          game_description: `${game.away_team} @ ${game.home_team}`
-        });
-      }
-    }
-
-    // Similar for away coach
-    if (awayCoach && awayCoach.pace_preference === 'slow') {
-      const weight = weightMap.get('coaching_pace_slow_coaching')?.current_weight || 1.0;
-      picks.push({
-        description: `${game.away_team} team total Under (Coach ${awayCoach.coach_name} - Slow Pace)`,
-        odds: -110,
-        event_id: game.event_id,
-        sport: 'basketball_nba',
-        engine_source: 'coaching',
-        formula_name: 'coaching_pace_slow',
-        formula_scores: {
-          pace_preference: 30,
-          coach_tenure: awayCoach.tenure_start_date ? 
-            Math.floor((Date.now() - new Date(awayCoach.tenure_start_date).getTime()) / (365 * 24 * 60 * 60 * 1000)) : 1
-        },
-        combined_score: 70 * weight,
-        commence_time: game.game_date,
-        game_description: `${game.away_team} @ ${game.home_team}`
-      });
-    }
+  for (const pred of coachingPredictions || []) {
+    const isHighConfidence = (pred.confidence || 0) >= 0.80;
+    const situationKey = pred.situation === 'b2b' ? 'b2b' : pred.situation === 'rest' ? 'rest' : 'pace';
+    const formulaName = `coaching_${situationKey}${isHighConfidence ? '_80+' : '_70+'}`;
+    const weight = weightMap.get(`${formulaName}_coaching`)?.current_weight || 1.0;
+    
+    const confidencePct = ((pred.confidence || 0) * 100).toFixed(0);
+    
+    picks.push({
+      description: `${pred.player_name || pred.team_name} ${pred.recommendation} (Coach ${pred.coach_name} ${pred.situation} - ${confidencePct}%)`,
+      odds: -110,
+      event_id: pred.event_id,
+      sport: 'basketball_nba',
+      engine_source: 'coaching',
+      formula_name: formulaName,
+      formula_scores: {
+        confidence: pred.confidence || 0,
+        situation_type: situationKey === 'b2b' ? 1 : situationKey === 'rest' ? 2 : 3
+      },
+      combined_score: (pred.confidence || 0) * 100 * weight,
+      commence_time: pred.game_date + 'T19:00:00Z',
+      game_description: `${pred.team_name} game`
+    });
   }
 
-  console.log(`🏀 Coaching picks generated: ${picks.length}`);
   return picks;
 }
 
@@ -922,7 +958,7 @@ function getCombinedProbability(picks: PickCandidate[]): number {
   return combinedProb;
 }
 
-// Create a parlay from picks with 4-stage confidence funnel
+// Create a parlay from picks with 4-stage confidence funnel + NO-BET veto
 function createParlay(picks: PickCandidate[], sport: string, weightMap?: Map<string, FormulaWeight>): GeneratedParlay {
   let totalOddsDecimal = 1;
   for (const pick of picks) {
@@ -964,6 +1000,31 @@ function createParlay(picks: PickCandidate[], sport: string, weightMap?: Map<str
   // Clamp to 35-95% range (never 0% or 100%)
   const confidenceScore = Math.max(35, Math.min(95, Math.round(rawConfidence)));
 
+  const sourceEngines = [...new Set(picks.map(p => p.engine_source))];
+  const signalsUsed = [...new Set(picks.map(p => p.formula_name))];
+  
+  // FEATURE 2: Apply No-Bet veto check
+  const avgCombinedScore = picks.reduce((sum, p) => sum + p.combined_score, 0) / picks.length;
+  const noBetCheck = shouldNoBet(picks, confidenceScore, sourceEngines.length);
+  
+  if (noBetCheck.veto) {
+    return {
+      legs: [],
+      strategy_used: 'NO_BET',
+      signals_used: [],
+      total_odds: 0,
+      confidence_score: 0,
+      formula_breakdown: {
+        veto_reason: noBetCheck.reason,
+        avg_combined_score: Math.round(avgCombinedScore * 100) / 100,
+        engine_count: sourceEngines.length,
+        original_confidence: confidenceScore
+      },
+      source_engines: [],
+      sport
+    };
+  }
+
   const formulaBreakdown: Record<string, number> = {};
   picks.forEach(pick => {
     Object.entries(pick.formula_scores).forEach(([key, value]) => {
@@ -981,8 +1042,6 @@ function createParlay(picks: PickCandidate[], sport: string, weightMap?: Map<str
   formulaBreakdown['_conf_risk'] = Math.round(riskFactor * 100);
   formulaBreakdown['_conf_probability'] = Math.round(combinedProbability * 100);
 
-  const sourceEngines = [...new Set(picks.map(p => p.engine_source))];
-  const signalsUsed = [...new Set(picks.map(p => p.formula_name))];
   const strategyUsed = signalsUsed.join('+');
 
   return {
