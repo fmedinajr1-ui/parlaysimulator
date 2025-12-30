@@ -335,3 +335,6 @@ verify_jwt = false
 
 [functions.send-release-notification]
 verify_jwt = false
+
+[functions.sync-live-scores]
+verify_jwt = false
