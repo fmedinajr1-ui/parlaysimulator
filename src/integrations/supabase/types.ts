@@ -2802,6 +2802,60 @@ export type Database = {
         }
         Relationships: []
       }
+      live_game_scores: {
+        Row: {
+          away_score: number | null
+          away_team: string
+          clock: string | null
+          created_at: string | null
+          event_id: string
+          game_status: string | null
+          home_score: number | null
+          home_team: string
+          id: string
+          last_updated: string | null
+          period: string | null
+          player_stats: Json | null
+          quarter_scores: Json | null
+          sport: string
+          start_time: string
+        }
+        Insert: {
+          away_score?: number | null
+          away_team: string
+          clock?: string | null
+          created_at?: string | null
+          event_id: string
+          game_status?: string | null
+          home_score?: number | null
+          home_team: string
+          id?: string
+          last_updated?: string | null
+          period?: string | null
+          player_stats?: Json | null
+          quarter_scores?: Json | null
+          sport: string
+          start_time: string
+        }
+        Update: {
+          away_score?: number | null
+          away_team?: string
+          clock?: string | null
+          created_at?: string | null
+          event_id?: string
+          game_status?: string | null
+          home_score?: number | null
+          home_team?: string
+          id?: string
+          last_updated?: string | null
+          period?: string | null
+          player_stats?: Json | null
+          quarter_scores?: Json | null
+          sport?: string
+          start_time?: string
+        }
+        Relationships: []
+      }
       market_signal_weights: {
         Row: {
           created_at: string | null
