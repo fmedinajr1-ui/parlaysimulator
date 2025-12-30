@@ -3,8 +3,10 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { SuggestedParlayCard } from "./SuggestedParlayCard";
 import { DoubleDownSuggestion } from "./DoubleDownSuggestion";
+import { AISuggestionHistory } from "./AISuggestionHistory";
 import { Button } from "@/components/ui/button";
-import { Loader2, Sparkles, RefreshCw, Lock } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Loader2, Sparkles, RefreshCw, Lock, History } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useSubscription } from "@/hooks/useSubscription";
 import { useNavigate } from "react-router-dom";
@@ -165,72 +167,94 @@ export function SuggestedParlays() {
           <Sparkles className="w-5 h-5 text-primary" />
           <h2 className="text-lg font-display text-foreground">AI SUGGESTED PARLAYS</h2>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={generateSuggestions}
-          disabled={isGenerating}
-        >
-          {isGenerating ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <RefreshCw className="w-4 h-4" />
-          )}
-          {hasGenerated ? "Refresh" : "Generate"}
-        </Button>
       </div>
 
-      {isLoading ? (
-        <div className="flex items-center justify-center py-8">
-          <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-        </div>
-      ) : suggestions.length > 0 ? (
-        <div className="space-y-4">
-          {/* Double Down Pick at top */}
-          <DoubleDownSuggestion suggestions={suggestions} />
-          
-          <div className="grid gap-4 md:grid-cols-2">
-            {suggestions.map((suggestion) => (
-              <SuggestedParlayCard
-                key={suggestion.id}
-                legs={suggestion.legs}
-                totalOdds={suggestion.total_odds}
-                combinedProbability={suggestion.combined_probability}
-                suggestionReason={suggestion.suggestion_reason}
-                sport={suggestion.sport}
-                confidenceScore={suggestion.confidence_score}
-                expiresAt={suggestion.expires_at}
-                isHybrid={suggestion.is_hybrid}
-              />
-            ))}
-          </div>
-        </div>
-      ) : (
-        <div className="bg-card/50 border border-border/50 rounded-xl p-6 text-center">
-          <Sparkles className="w-8 h-8 text-muted-foreground mx-auto mb-3" />
-          <p className="text-muted-foreground mb-4">
-            {hasGenerated 
-              ? "No suggestions available right now. Try again when more games are scheduled."
-              : "Click Generate to get personalized parlay suggestions based on your betting history and live odds"
-            }
-          </p>
-          {!hasGenerated && (
-            <Button onClick={generateSuggestions} disabled={isGenerating}>
+      <Tabs defaultValue="today" className="w-full">
+        <TabsList className="grid w-full grid-cols-2 h-9 mb-4">
+          <TabsTrigger value="today" className="text-xs flex items-center gap-1">
+            <Sparkles className="w-3 h-3" />
+            Today's Picks
+          </TabsTrigger>
+          <TabsTrigger value="history" className="text-xs flex items-center gap-1">
+            <History className="w-3 h-3" />
+            Results
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="today" className="space-y-4">
+          <div className="flex justify-end">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={generateSuggestions}
+              disabled={isGenerating}
+            >
               {isGenerating ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Generating...
-                </>
+                <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
-                <>
-                  <Sparkles className="w-4 h-4 mr-2" />
-                  Generate Suggestions
-                </>
+                <RefreshCw className="w-4 h-4" />
               )}
+              {hasGenerated ? "Refresh" : "Generate"}
             </Button>
+          </div>
+
+          {isLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : suggestions.length > 0 ? (
+            <div className="space-y-4">
+              {/* Double Down Pick at top */}
+              <DoubleDownSuggestion suggestions={suggestions} />
+              
+              <div className="grid gap-4 md:grid-cols-2">
+                {suggestions.map((suggestion) => (
+                  <SuggestedParlayCard
+                    key={suggestion.id}
+                    legs={suggestion.legs}
+                    totalOdds={suggestion.total_odds}
+                    combinedProbability={suggestion.combined_probability}
+                    suggestionReason={suggestion.suggestion_reason}
+                    sport={suggestion.sport}
+                    confidenceScore={suggestion.confidence_score}
+                    expiresAt={suggestion.expires_at}
+                    isHybrid={suggestion.is_hybrid}
+                  />
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="bg-card/50 border border-border/50 rounded-xl p-6 text-center">
+              <Sparkles className="w-8 h-8 text-muted-foreground mx-auto mb-3" />
+              <p className="text-muted-foreground mb-4">
+                {hasGenerated 
+                  ? "No suggestions available right now. Try again when more games are scheduled."
+                  : "Click Generate to get personalized parlay suggestions based on your betting history and live odds"
+                }
+              </p>
+              {!hasGenerated && (
+                <Button onClick={generateSuggestions} disabled={isGenerating}>
+                  {isGenerating ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4 mr-2" />
+                      Generate Suggestions
+                    </>
+                  )}
+                </Button>
+              )}
+            </div>
           )}
-        </div>
-      )}
+        </TabsContent>
+
+        <TabsContent value="history">
+          <AISuggestionHistory />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
