@@ -44,6 +44,8 @@ interface Combination {
   totalEdge: number;
   variancePenalty: number;
   engineDiversityBonus: number;
+  patternPenalty: number;
+  blockedPatterns: string[];
 }
 
 // Calculate leg probability based on available signals
@@ -132,8 +134,80 @@ function calculateEngineDiversityBonus(legs: PickCandidate[]): number {
   return Math.max(0, (uniqueEngines.size - 1) * 0.1);
 }
 
-// Calculate SlipScore for a combination
-function calculateSlipScore(legs: PickCandidate[]): { slipScore: number; combinedProbability: number; totalEdge: number; variancePenalty: number; engineDiversityBonus: number } {
+// Loss Pattern structure for learned patterns
+interface LossPattern {
+  pattern_type: string;
+  pattern_key: string;
+  description: string;
+  loss_count: number;
+  hit_count: number;
+  total_count: number;
+  accuracy_rate: number;
+  severity: string;
+  penalty_amount: number;
+  is_active: boolean;
+}
+
+// Apply penalties based on learned loss patterns
+function applyPatternPenalties(legs: PickCandidate[], patterns: LossPattern[]): { totalPenalty: number; blockedPatterns: string[]; appliedPenalties: { pattern: string; penalty: number }[] } {
+  let totalPenalty = 0;
+  const blockedPatterns: string[] = [];
+  const appliedPenalties: { pattern: string; penalty: number }[] = [];
+  
+  if (!patterns || patterns.length === 0) {
+    return { totalPenalty: 0, blockedPatterns: [], appliedPenalties: [] };
+  }
+  
+  // Check engine concentration patterns
+  const allEngines = legs.flatMap(l => l.engines);
+  const uniqueEngines = new Set(allEngines);
+  
+  if (uniqueEngines.size === 1) {
+    const singleEngine = [...uniqueEngines][0].toLowerCase();
+    const enginePattern = patterns.find(p => 
+      p.pattern_type === 'engine_concentration' && 
+      p.pattern_key === `all_${singleEngine}_parlay` &&
+      p.is_active
+    );
+    
+    if (enginePattern) {
+      if (enginePattern.severity === 'block') {
+        blockedPatterns.push(enginePattern.pattern_key);
+      } else {
+        totalPenalty += enginePattern.penalty_amount;
+        appliedPenalties.push({ pattern: enginePattern.pattern_key, penalty: enginePattern.penalty_amount });
+      }
+    }
+  }
+  
+  // Check prop type + side patterns for each leg
+  for (const leg of legs) {
+    const propType = leg.propType?.toLowerCase()?.replace(/[^a-z]/g, '_') || 'unknown';
+    const side = leg.side?.toLowerCase() || 'over';
+    const patternKey = `${propType}_${side}`;
+    
+    const propPattern = patterns.find(p => 
+      p.pattern_type === 'prop_type_side' && 
+      p.pattern_key === patternKey &&
+      p.is_active &&
+      p.accuracy_rate < 0.50 // Only penalize underperforming patterns
+    );
+    
+    if (propPattern) {
+      if (propPattern.severity === 'block') {
+        blockedPatterns.push(propPattern.pattern_key);
+      } else {
+        totalPenalty += propPattern.penalty_amount;
+        appliedPenalties.push({ pattern: propPattern.pattern_key, penalty: propPattern.penalty_amount });
+      }
+    }
+  }
+  
+  return { totalPenalty, blockedPatterns, appliedPenalties };
+}
+
+// Calculate SlipScore for a combination (with optional pattern penalties)
+function calculateSlipScore(legs: PickCandidate[], patterns?: LossPattern[]): { slipScore: number; combinedProbability: number; totalEdge: number; variancePenalty: number; engineDiversityBonus: number; patternPenalty: number; blockedPatterns: string[] } {
   const EDGE_WEIGHT = 0.3;
   const VARIANCE_PENALTY_WEIGHT = 0.2;
   
@@ -153,9 +227,13 @@ function calculateSlipScore(legs: PickCandidate[]): { slipScore: number; combine
   // Add engine diversity bonus to prioritize mixed-engine parlays
   const engineDiversityBonus = calculateEngineDiversityBonus(legs);
   
-  const slipScore = logProbSum + (EDGE_WEIGHT * totalEdge) - (VARIANCE_PENALTY_WEIGHT * variancePenalty) + engineDiversityBonus;
+  // Apply learned pattern penalties
+  const { totalPenalty: patternPenalty, blockedPatterns, appliedPenalties } = 
+    patterns ? applyPatternPenalties(legs, patterns) : { totalPenalty: 0, blockedPatterns: [], appliedPenalties: [] };
   
-  return { slipScore, combinedProbability, totalEdge, variancePenalty, engineDiversityBonus };
+  const slipScore = logProbSum + (EDGE_WEIGHT * totalEdge) - (VARIANCE_PENALTY_WEIGHT * variancePenalty) + engineDiversityBonus - patternPenalty;
+  
+  return { slipScore, combinedProbability, totalEdge, variancePenalty, engineDiversityBonus, patternPenalty, blockedPatterns };
 }
 
 // Check if two legs are from the same event or team
@@ -192,6 +270,22 @@ serve(async (req) => {
       logStep("Request parsed", { force });
     } catch {
       // No body or invalid JSON, use defaults
+    }
+    
+    // Load learned loss patterns for penalty application
+    logStep("Loading learned loss patterns");
+    const { data: lossPatterns, error: patternsError } = await supabaseClient
+      .from('elite_hitter_loss_patterns')
+      .select('*')
+      .eq('is_active', true);
+    
+    if (patternsError) {
+      logStep("Error loading patterns", { error: patternsError.message });
+    } else {
+      logStep("Loaded loss patterns", { 
+        count: lossPatterns?.length || 0,
+        blockedPatterns: lossPatterns?.filter((p: LossPattern) => p.severity === 'block').length || 0
+      });
     }
     
     const today = new Date().toISOString().split('T')[0];
@@ -493,8 +587,17 @@ serve(async (req) => {
           // Skip if same event/team
           if (hasSameEventOrTeam(combo)) continue;
           
-          // Calculate slip score
-          const scores = calculateSlipScore(combo);
+          // Calculate slip score WITH learned pattern penalties
+          const scores = calculateSlipScore(combo, lossPatterns || []);
+          
+          // Skip combinations with blocked patterns
+          if (scores.blockedPatterns.length > 0) {
+            logStep("Skipping blocked combination", { 
+              legs: combo.map(l => l.playerName),
+              blockedPatterns: scores.blockedPatterns 
+            });
+            continue;
+          }
           
           validCombinations.push({
             legs: combo,

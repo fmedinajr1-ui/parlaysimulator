@@ -338,3 +338,6 @@ verify_jwt = false
 
 [functions.sync-live-scores]
 verify_jwt = false
+
+[functions.analyze-elite-hitter-losses]
+verify_jwt = false

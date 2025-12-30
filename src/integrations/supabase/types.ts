@@ -1180,6 +1180,57 @@ export type Database = {
         }
         Relationships: []
       }
+      elite_hitter_loss_patterns: {
+        Row: {
+          accuracy_rate: number | null
+          created_at: string
+          description: string | null
+          example_losses: Json | null
+          hit_count: number
+          id: string
+          is_active: boolean | null
+          loss_count: number
+          pattern_key: string
+          pattern_type: string
+          penalty_amount: number | null
+          severity: string
+          total_count: number
+          updated_at: string
+        }
+        Insert: {
+          accuracy_rate?: number | null
+          created_at?: string
+          description?: string | null
+          example_losses?: Json | null
+          hit_count?: number
+          id?: string
+          is_active?: boolean | null
+          loss_count?: number
+          pattern_key: string
+          pattern_type: string
+          penalty_amount?: number | null
+          severity?: string
+          total_count?: number
+          updated_at?: string
+        }
+        Update: {
+          accuracy_rate?: number | null
+          created_at?: string
+          description?: string | null
+          example_losses?: Json | null
+          hit_count?: number
+          id?: string
+          is_active?: boolean | null
+          loss_count?: number
+          pattern_key?: string
+          pattern_type?: string
+          penalty_amount?: number | null
+          severity?: string
+          total_count?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       elite_parlay_accuracy_metrics: {
         Row: {
           accuracy_rate: number | null
