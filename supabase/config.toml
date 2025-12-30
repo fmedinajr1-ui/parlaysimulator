@@ -1,5 +1,8 @@
 project_id = "pajakaqphlxoqjtrxzmi"
 
+[functions.verify-suggested-parlay-outcomes]
+verify_jwt = false
+
 [functions.median-edge-engine]
 verify_jwt = false
 

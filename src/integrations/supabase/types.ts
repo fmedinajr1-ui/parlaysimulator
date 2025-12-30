@@ -6094,10 +6094,13 @@ export type Database = {
           initial_recommendation: string | null
           is_active: boolean
           is_hybrid: boolean | null
+          leg_outcomes: Json | null
           legs: Json
           matchup_data: Json | null
+          outcome: string | null
           parlay_strategy: string | null
           pick_status: string | null
+          settled_at: string | null
           sport: string
           suggestion_reason: string
           total_odds: number
@@ -6119,10 +6122,13 @@ export type Database = {
           initial_recommendation?: string | null
           is_active?: boolean
           is_hybrid?: boolean | null
+          leg_outcomes?: Json | null
           legs: Json
           matchup_data?: Json | null
+          outcome?: string | null
           parlay_strategy?: string | null
           pick_status?: string | null
+          settled_at?: string | null
           sport: string
           suggestion_reason: string
           total_odds: number
@@ -6144,10 +6150,13 @@ export type Database = {
           initial_recommendation?: string | null
           is_active?: boolean
           is_hybrid?: boolean | null
+          leg_outcomes?: Json | null
           legs?: Json
           matchup_data?: Json | null
+          outcome?: string | null
           parlay_strategy?: string | null
           pick_status?: string | null
+          settled_at?: string | null
           sport?: string
           suggestion_reason?: string
           total_odds?: number
