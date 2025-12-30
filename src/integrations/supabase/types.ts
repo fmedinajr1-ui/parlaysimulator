@@ -1003,12 +1003,16 @@ export type Database = {
           id: string
           leg_index: number
           line: number
+          opponent_defense_rank: number | null
+          opponent_defense_rating: number | null
+          opponent_name: string | null
           outcome: string | null
           parlay_id: string | null
           player_name: string
           predicted_probability: number | null
           prop_type: string
           side: string
+          sport: string | null
           verified_at: string | null
         }
         Insert: {
@@ -1018,12 +1022,16 @@ export type Database = {
           id?: string
           leg_index: number
           line: number
+          opponent_defense_rank?: number | null
+          opponent_defense_rating?: number | null
+          opponent_name?: string | null
           outcome?: string | null
           parlay_id?: string | null
           player_name: string
           predicted_probability?: number | null
           prop_type: string
           side: string
+          sport?: string | null
           verified_at?: string | null
         }
         Update: {
@@ -1033,12 +1041,16 @@ export type Database = {
           id?: string
           leg_index?: number
           line?: number
+          opponent_defense_rank?: number | null
+          opponent_defense_rating?: number | null
+          opponent_name?: string | null
           outcome?: string | null
           parlay_id?: string | null
           player_name?: string
           predicted_probability?: number | null
           prop_type?: string
           side?: string
+          sport?: string | null
           verified_at?: string | null
         }
         Relationships: [
@@ -1228,6 +1240,69 @@ export type Database = {
           severity?: string
           total_count?: number
           updated_at?: string
+        }
+        Relationships: []
+      }
+      elite_hitter_matchup_patterns: {
+        Row: {
+          accuracy_rate: number | null
+          avg_actual_value: number | null
+          avg_line: number | null
+          avg_miss_margin: number | null
+          created_at: string | null
+          defense_tier: string
+          example_matchups: Json | null
+          hit_count: number | null
+          id: string
+          is_active: boolean | null
+          is_boost: boolean | null
+          miss_count: number | null
+          penalty_amount: number | null
+          prop_type: string
+          side: string
+          sport: string
+          total_count: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          accuracy_rate?: number | null
+          avg_actual_value?: number | null
+          avg_line?: number | null
+          avg_miss_margin?: number | null
+          created_at?: string | null
+          defense_tier: string
+          example_matchups?: Json | null
+          hit_count?: number | null
+          id?: string
+          is_active?: boolean | null
+          is_boost?: boolean | null
+          miss_count?: number | null
+          penalty_amount?: number | null
+          prop_type: string
+          side: string
+          sport?: string
+          total_count?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          accuracy_rate?: number | null
+          avg_actual_value?: number | null
+          avg_line?: number | null
+          avg_miss_margin?: number | null
+          created_at?: string | null
+          defense_tier?: string
+          example_matchups?: Json | null
+          hit_count?: number | null
+          id?: string
+          is_active?: boolean | null
+          is_boost?: boolean | null
+          miss_count?: number | null
+          penalty_amount?: number | null
+          prop_type?: string
+          side?: string
+          sport?: string
+          total_count?: number | null
+          updated_at?: string | null
         }
         Relationships: []
       }

@@ -45,6 +45,7 @@ interface Combination {
   variancePenalty: number;
   engineDiversityBonus: number;
   patternPenalty: number;
+  matchupPenalty: number;
   blockedPatterns: string[];
 }
 
@@ -148,6 +149,36 @@ interface LossPattern {
   is_active: boolean;
 }
 
+// Matchup Pattern structure for defense-correlated patterns
+interface MatchupPattern {
+  sport: string;
+  prop_type: string;
+  side: string;
+  defense_tier: string;
+  hit_count: number;
+  miss_count: number;
+  total_count: number;
+  accuracy_rate: number;
+  penalty_amount: number;
+  is_boost: boolean;
+  is_active: boolean;
+}
+
+// Get defense tier from rank
+function getDefenseTier(rank: number): string {
+  if (rank <= 5) return 'elite';
+  if (rank <= 12) return 'good';
+  if (rank <= 20) return 'average';
+  return 'weak';
+}
+
+// Extract opponent from game description
+function extractOpponent(gameDescription: string): string {
+  if (!gameDescription) return '';
+  const parts = gameDescription.split(/[@vs]+/).map(s => s.trim());
+  return parts[1] || parts[0] || '';
+}
+
 // Apply penalties based on learned loss patterns
 function applyPatternPenalties(legs: PickCandidate[], patterns: LossPattern[]): { totalPenalty: number; blockedPatterns: string[]; appliedPenalties: { pattern: string; penalty: number }[] } {
   let totalPenalty = 0;
@@ -206,8 +237,13 @@ function applyPatternPenalties(legs: PickCandidate[], patterns: LossPattern[]): 
   return { totalPenalty, blockedPatterns, appliedPenalties };
 }
 
-// Calculate SlipScore for a combination (with optional pattern penalties)
-function calculateSlipScore(legs: PickCandidate[], patterns?: LossPattern[]): { slipScore: number; combinedProbability: number; totalEdge: number; variancePenalty: number; engineDiversityBonus: number; patternPenalty: number; blockedPatterns: string[] } {
+// Calculate SlipScore for a combination (with optional pattern penalties and matchup data)
+function calculateSlipScore(
+  legs: PickCandidate[], 
+  patterns?: LossPattern[], 
+  matchupPatterns?: MatchupPattern[],
+  defenseDataMap?: Map<string, { defense_rank: number }>
+): { slipScore: number; combinedProbability: number; totalEdge: number; variancePenalty: number; engineDiversityBonus: number; patternPenalty: number; matchupPenalty: number; blockedPatterns: string[] } {
   const EDGE_WEIGHT = 0.3;
   const VARIANCE_PENALTY_WEIGHT = 0.2;
   
@@ -231,9 +267,42 @@ function calculateSlipScore(legs: PickCandidate[], patterns?: LossPattern[]): { 
   const { totalPenalty: patternPenalty, blockedPatterns, appliedPenalties } = 
     patterns ? applyPatternPenalties(legs, patterns) : { totalPenalty: 0, blockedPatterns: [], appliedPenalties: [] };
   
-  const slipScore = logProbSum + (EDGE_WEIGHT * totalEdge) - (VARIANCE_PENALTY_WEIGHT * variancePenalty) + engineDiversityBonus - patternPenalty;
+  // Apply matchup-based penalties/boosts
+  let matchupPenalty = 0;
+  if (matchupPatterns && matchupPatterns.length > 0 && defenseDataMap) {
+    for (const leg of legs) {
+      const opponent = extractOpponent(leg.gameDescription || '');
+      const defenseData = defenseDataMap.get(opponent.toLowerCase());
+      
+      if (defenseData) {
+        const tier = getDefenseTier(defenseData.defense_rank);
+        const propType = leg.propType?.toLowerCase()?.replace(/[^a-z]/g, '_') || 'unknown';
+        const side = leg.side?.toLowerCase() || 'over';
+        
+        const matchupPattern = matchupPatterns.find(p => 
+          p.prop_type === propType &&
+          p.side === side &&
+          p.defense_tier === tier &&
+          p.is_active &&
+          p.total_count >= 3 // Only use patterns with sufficient data
+        );
+        
+        if (matchupPattern) {
+          if (matchupPattern.is_boost && matchupPattern.accuracy_rate >= 0.65) {
+            // Favorable matchup - apply boost (negative penalty)
+            matchupPenalty -= matchupPattern.penalty_amount;
+          } else if (!matchupPattern.is_boost && matchupPattern.accuracy_rate < 0.50) {
+            // Unfavorable matchup - apply penalty
+            matchupPenalty += matchupPattern.penalty_amount;
+          }
+        }
+      }
+    }
+  }
   
-  return { slipScore, combinedProbability, totalEdge, variancePenalty, engineDiversityBonus, patternPenalty, blockedPatterns };
+  const slipScore = logProbSum + (EDGE_WEIGHT * totalEdge) - (VARIANCE_PENALTY_WEIGHT * variancePenalty) + engineDiversityBonus - patternPenalty - matchupPenalty;
+  
+  return { slipScore, combinedProbability, totalEdge, variancePenalty, engineDiversityBonus, patternPenalty, matchupPenalty, blockedPatterns };
 }
 
 // Check if two legs are from the same event or team
@@ -287,6 +356,41 @@ serve(async (req) => {
         blockedPatterns: lossPatterns?.filter((p: LossPattern) => p.severity === 'block').length || 0
       });
     }
+    
+    // Load matchup patterns for defense-correlated penalties
+    logStep("Loading matchup patterns");
+    const { data: matchupPatterns, error: matchupError } = await supabaseClient
+      .from('elite_hitter_matchup_patterns')
+      .select('*')
+      .eq('is_active', true)
+      .gte('total_count', 3); // Only use patterns with sufficient data
+    
+    if (matchupError) {
+      logStep("Error loading matchup patterns", { error: matchupError.message });
+    } else {
+      logStep("Loaded matchup patterns", { 
+        count: matchupPatterns?.length || 0,
+        boostPatterns: matchupPatterns?.filter((p: MatchupPattern) => p.is_boost).length || 0
+      });
+    }
+    
+    // Load defense rankings for opponent lookup
+    logStep("Loading defense rankings");
+    const { data: defenseData } = await supabaseClient
+      .from('nba_opponent_defense_stats')
+      .select('team_name, defense_rank, defense_rating');
+    
+    // Create a lookup map for defense data
+    const defenseDataMap = new Map<string, { defense_rank: number; defense_rating: number }>();
+    for (const team of defenseData || []) {
+      if (team.team_name) {
+        defenseDataMap.set(team.team_name.toLowerCase(), {
+          defense_rank: team.defense_rank,
+          defense_rating: team.defense_rating
+        });
+      }
+    }
+    logStep("Defense data loaded", { teamCount: defenseDataMap.size });
     
     const today = new Date().toISOString().split('T')[0];
     
@@ -587,8 +691,8 @@ serve(async (req) => {
           // Skip if same event/team
           if (hasSameEventOrTeam(combo)) continue;
           
-          // Calculate slip score WITH learned pattern penalties
-          const scores = calculateSlipScore(combo, lossPatterns || []);
+          // Calculate slip score WITH learned pattern penalties AND matchup penalties
+          const scores = calculateSlipScore(combo, lossPatterns || [], matchupPatterns || [], defenseDataMap);
           
           // Skip combinations with blocked patterns
           if (scores.blockedPatterns.length > 0) {
@@ -597,6 +701,14 @@ serve(async (req) => {
               blockedPatterns: scores.blockedPatterns 
             });
             continue;
+          }
+          
+          // Log matchup penalty if significant
+          if (scores.matchupPenalty !== 0) {
+            logStep("Matchup adjustment applied", { 
+              legs: combo.map(l => l.playerName),
+              matchupPenalty: scores.matchupPenalty.toFixed(2)
+            });
           }
           
           validCombinations.push({
