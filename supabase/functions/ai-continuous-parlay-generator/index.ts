@@ -38,7 +38,20 @@ interface GeneratedParlay {
   sport: string;
 }
 
-// No-Bet Veto Helper - returns veto status and reason
+// Banned formula combinations that historically underperform
+const BANNED_COMBINATIONS = new Set([
+  'hitrate_5_5+godmode_medium_50+',
+  'hitrate_4_5+godmode_medium_50+',
+  'hitrate_5_5+hitrate_4_5',
+]);
+
+// Check if formula combination is valid
+function isValidCombination(picks: PickCandidate[]): boolean {
+  const formulas = picks.map(p => p.formula_name).sort().join('+');
+  return !BANNED_COMBINATIONS.has(formulas);
+}
+
+// No-Bet Veto Helper - TIGHTENED thresholds for better accuracy
 function shouldNoBet(
   picks: PickCandidate[], 
   confidenceScore: number, 
@@ -47,7 +60,8 @@ function shouldNoBet(
   if (picks.length === 0) {
     return { veto: true, reason: 'no_picks_available' };
   }
-  if (confidenceScore < 50) {
+  // TIGHTENED: Was 50, now 55
+  if (confidenceScore < 55) {
     return { veto: true, reason: 'confidence_too_low' };
   }
   if (engineCount < 2) {
@@ -55,8 +69,25 @@ function shouldNoBet(
   }
   
   const avgCombinedScore = picks.reduce((sum, p) => sum + p.combined_score, 0) / picks.length;
-  if (avgCombinedScore < 55) {
+  // TIGHTENED: Was 55, now 60
+  if (avgCombinedScore < 60) {
     return { veto: true, reason: 'weak_combined_score' };
+  }
+  
+  // NEW: Require at least one high-confidence anchor signal
+  const hasAnchorSignal = picks.some(p => 
+    (p.engine_source === 'godmode' && p.formula_name === 'godmode_high_65+') ||
+    (p.engine_source === 'sharp' && (p.formula_scores.sharp_edge_score as number) >= 40) ||
+    (p.engine_source === 'pvs' && (p.formula_scores.pvs_final_score as number) >= 85) ||
+    (p.engine_source === 'bestbets' && (p.formula_scores.accuracy_at_time as number) >= 70)
+  );
+  if (!hasAnchorSignal) {
+    return { veto: true, reason: 'no_anchor_signal' };
+  }
+  
+  // NEW: Check for banned combinations
+  if (!isValidCombination(picks)) {
+    return { veto: true, reason: 'banned_combination' };
   }
   
   return { veto: false, reason: '' };
@@ -420,11 +451,11 @@ async function fetchSharpPicks(supabase: any, weightMap: Map<string, FormulaWeig
     });
   }
 
-  // Get sharp FADE signals (high trap score)
+// Fetch sharp FADE signals (high trap score) - TIGHTENED: Was 50, now 60
   const { data: fadePicks } = await supabase
     .from('line_movements')
     .select('*')
-    .gte('trap_score', 50)
+    .gte('trap_score', 60)
     .eq('recommendation', 'fade')
     .eq('is_primary_record', true)
     .gte('commence_time', new Date().toISOString())
@@ -454,21 +485,21 @@ async function fetchSharpPicks(supabase: any, weightMap: Map<string, FormulaWeig
   return picks;
 }
 
-// Fetch PVS calculator picks
+// Fetch PVS calculator picks - TIGHTENED: Was 70, now 80+
 async function fetchPVSPicks(supabase: any, weightMap: Map<string, FormulaWeight>): Promise<PickCandidate[]> {
   const picks: PickCandidate[] = [];
   
   const { data: pvsProps } = await supabase
     .from('unified_props')
     .select('*')
-    .gte('pvs_final_score', 70)
+    .gte('pvs_final_score', 80)  // TIGHTENED from 70
     .gte('commence_time', new Date().toISOString())
     .order('pvs_final_score', { ascending: false })
     .limit(30);
 
   for (const prop of pvsProps || []) {
-    const isPVS80 = (prop.pvs_final_score || 0) >= 80;
-    const formulaName = isPVS80 ? 'pvs_final_80+' : 'pvs_final_70+';
+    const isPVS90 = (prop.pvs_final_score || 0) >= 90;
+    const formulaName = isPVS90 ? 'pvs_final_90+' : 'pvs_final_80+';
     const weight = weightMap.get(`${formulaName}_pvs`)?.current_weight || 1.0;
     
     picks.push({
@@ -492,48 +523,15 @@ async function fetchPVSPicks(supabase: any, weightMap: Map<string, FormulaWeight
   return picks;
 }
 
-// Fetch hit rate picks
+// DISABLED: HitRate engine removed due to 0% parlay accuracy despite high individual hit rates
+// The high hit rate on individual props does not translate to parlay success
 async function fetchHitratePicks(supabase: any, weightMap: Map<string, FormulaWeight>): Promise<PickCandidate[]> {
-  const picks: PickCandidate[] = [];
-  
-  const { data: hitrates } = await supabase
-    .from('player_prop_hitrates')
-    .select('*')
-    .gte('hit_rate_over', 0.75)
-    .gte('games_analyzed', 5)
-    .gte('commence_time', new Date().toISOString())
-    .order('hit_rate_over', { ascending: false })
-    .limit(30);
-
-  for (const hr of hitrates || []) {
-    const isPerfect = hr.hit_streak === '5/5';
-    const formulaName = isPerfect ? 'hitrate_5_5' : 'hitrate_4_5';
-    const weight = weightMap.get(`${formulaName}_hitrate`)?.current_weight || 1.0;
-    const hitRate = Math.max(hr.hit_rate_over || 0, hr.hit_rate_under || 0);
-    const side = (hr.hit_rate_over || 0) > (hr.hit_rate_under || 0) ? 'Over' : 'Under';
-    
-    picks.push({
-      description: `${hr.player_name} ${side} ${hr.current_line} ${hr.prop_type} (${(hitRate * 100).toFixed(0)}% Hit Rate${hr.hit_streak ? ` - ${hr.hit_streak}` : ''})`,
-      odds: side === 'Over' ? (hr.over_price || -110) : (hr.under_price || -110),
-      event_id: hr.event_id || '',
-      sport: hr.sport,
-      engine_source: 'hitrate',
-      formula_name: formulaName,
-      formula_scores: {
-        hit_rate: hitRate,
-        games_analyzed: hr.games_analyzed || 0,
-        consistency_score: hr.consistency_score || 0
-      },
-      combined_score: hitRate * 100 * weight,
-      commence_time: hr.commence_time || new Date().toISOString(),
-      game_description: hr.game_description
-    });
-  }
-
-  return picks;
+  // Return empty - HitRate engine is now disabled
+  console.log('⚠️ HitRate engine disabled due to poor parlay performance');
+  return [];
 }
 
-// Fetch juiced props picks
+// Fetch juiced props picks - TIGHTENED: Was 70%, now 80%
 async function fetchJuicedPicks(supabase: any, weightMap: Map<string, FormulaWeight>): Promise<PickCandidate[]> {
   const picks: PickCandidate[] = [];
   
@@ -542,7 +540,7 @@ async function fetchJuicedPicks(supabase: any, weightMap: Map<string, FormulaWei
     .select('*')
     .not('final_pick', 'is', null)
     .in('juice_level', ['extreme', 'heavy'])
-    .gte('unified_confidence', 0.70)  // 70% confidence minimum for juiced props
+    .gte('unified_confidence', 0.80)  // TIGHTENED from 70%
     .gte('commence_time', new Date().toISOString())
     .order('juice_amount', { ascending: false })
     .limit(25);
@@ -573,23 +571,23 @@ async function fetchJuicedPicks(supabase: any, weightMap: Map<string, FormulaWei
   return picks;
 }
 
-// Fetch god mode upset picks
+// Fetch god mode upset picks - TIGHTENED: Only high confidence 65+ now
 async function fetchGodmodePicks(supabase: any, weightMap: Map<string, FormulaWeight>): Promise<PickCandidate[]> {
   const picks: PickCandidate[] = [];
   
+  // TIGHTENED: Only 'high' confidence with 65+ score (removed 'medium')
   const { data: upsets } = await supabase
     .from('god_mode_upset_predictions')
     .select('*')
-    .in('confidence', ['high', 'medium'])
-    .gte('final_upset_score', 50)
+    .eq('confidence', 'high')  // TIGHTENED: Was ['high', 'medium']
+    .gte('final_upset_score', 65)  // TIGHTENED: Was 50
     .eq('game_completed', false)
     .gte('commence_time', new Date().toISOString())
     .order('final_upset_score', { ascending: false })
     .limit(20);
 
   for (const upset of upsets || []) {
-    const isHigh = upset.confidence === 'high' && (upset.final_upset_score || 0) >= 65;
-    const formulaName = isHigh ? 'godmode_high_65+' : 'godmode_medium_50+';
+    const formulaName = 'godmode_high_65+';  // Only high tier now
     const weight = weightMap.get(`${formulaName}_godmode`)?.current_weight || 1.0;
     
     picks.push({

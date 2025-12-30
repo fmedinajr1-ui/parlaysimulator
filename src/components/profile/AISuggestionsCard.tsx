@@ -28,6 +28,14 @@ interface AISuggestionsCardProps {
   userId: string;
 }
 
+interface VerdictSignal {
+  engine: string;
+  signal: string;
+  confidence: number;
+}
+
+type VerdictType = 'strong_pick' | 'lean_pick' | 'hold' | 'lean_fade' | 'strong_fade';
+
 interface Suggestion {
   id: string;
   sport: string;
@@ -36,6 +44,9 @@ interface Suggestion {
   suggestion_reason: string;
   confidence_score: number;
   legs: any[];
+  verdict?: VerdictType | string | null;
+  verdict_signals?: VerdictSignal[] | any;
+  verdict_score?: number | null;
 }
 
 interface LearningInsights {
@@ -77,6 +88,23 @@ const getRiskTier = (probability: number) => {
     icon: Flame,
     dotColor: 'bg-neon-red'
   };
+};
+
+const getVerdictConfig = (verdict?: string) => {
+  switch (verdict) {
+    case 'strong_pick':
+      return { label: 'STRONG PICK', color: 'bg-neon-green/20 text-neon-green border-neon-green/30', icon: CheckCircle };
+    case 'lean_pick':
+      return { label: 'PICK', color: 'bg-primary/20 text-primary border-primary/30', icon: TrendingUp };
+    case 'hold':
+      return { label: 'HOLD', color: 'bg-neon-yellow/20 text-neon-yellow border-neon-yellow/30', icon: AlertTriangle };
+    case 'lean_fade':
+      return { label: 'LEAN FADE', color: 'bg-orange-500/20 text-orange-400 border-orange-500/30', icon: XCircle };
+    case 'strong_fade':
+      return { label: 'FADE', color: 'bg-neon-red/20 text-neon-red border-neon-red/30', icon: XCircle };
+    default:
+      return null;
+  }
 };
 
 const formatOdds = (odds: number) => {
@@ -432,14 +460,21 @@ export function AISuggestionsCard({ userId }: AISuggestionsCardProps) {
         <>
           {/* Top Suggestions */}
           <div className="space-y-3">
-            {topSuggestions.map((suggestion) => {
+{topSuggestions.map((suggestion) => {
               const tier = getRiskTier(suggestion.combined_probability);
               const TierIcon = tier.icon;
+              const verdictConfig = getVerdictConfig(suggestion.verdict);
+              const VerdictIcon = verdictConfig?.icon;
               
               return (
                 <div 
                   key={suggestion.id}
-                  className="bg-background/50 rounded-xl p-3 border border-border/50"
+                  className={cn(
+                    "bg-background/50 rounded-xl p-3 border",
+                    suggestion.verdict?.includes('pick') ? "border-l-4 border-l-neon-green border-border/50" :
+                    suggestion.verdict?.includes('fade') ? "border-l-4 border-l-neon-red border-border/50" :
+                    "border-border/50"
+                  )}
                 >
                   <div className="flex items-start justify-between mb-2">
                     <div className="flex items-center gap-2">
@@ -454,9 +489,17 @@ export function AISuggestionsCard({ userId }: AISuggestionsCardProps) {
                       </span>
                       <span className="text-xs text-muted-foreground">Win Probability</span>
                     </div>
-                    <Badge variant="outline" className={tier.color}>
-                      {tier.shortLabel}
-                    </Badge>
+                    <div className="flex items-center gap-1.5">
+                      {verdictConfig && VerdictIcon && (
+                        <Badge variant="outline" className={verdictConfig.color}>
+                          <VerdictIcon className="w-3 h-3 mr-1" />
+                          {verdictConfig.label}
+                        </Badge>
+                      )}
+                      <Badge variant="outline" className={tier.color}>
+                        {tier.shortLabel}
+                      </Badge>
+                    </div>
                   </div>
                   
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -466,6 +509,26 @@ export function AISuggestionsCard({ userId }: AISuggestionsCardProps) {
                     <span>•</span>
                     <span>{suggestion.legs.length} legs</span>
                   </div>
+                  
+                  {/* Verdict Signals */}
+                  {suggestion.verdict_signals && suggestion.verdict_signals.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {suggestion.verdict_signals.slice(0, 3).map((signal, idx) => (
+                        <Badge 
+                          key={idx} 
+                          variant="secondary" 
+                          className={cn(
+                            "text-[10px]",
+                            signal.signal === 'PICK' || signal.signal === 'CONFIRMED' ? "bg-neon-green/10 text-neon-green" :
+                            signal.signal === 'FADE' || signal.signal === 'TRAP_DETECTED' ? "bg-neon-red/10 text-neon-red" :
+                            "bg-muted text-muted-foreground"
+                          )}
+                        >
+                          {signal.engine}: {signal.signal}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
                   
                   {suggestion.suggestion_reason && (
                     <p className="text-xs text-muted-foreground mt-2 line-clamp-2 italic">
