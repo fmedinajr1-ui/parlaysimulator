@@ -323,6 +323,7 @@ export type Database = {
           ai_reasoning: string | null
           confidence_score: number
           created_at: string
+          cross_validated: boolean | null
           formula_breakdown: Json | null
           generation_round: number
           id: string
@@ -335,12 +336,14 @@ export type Database = {
           sport: string | null
           strategy_used: string
           total_odds: number
+          validation_signals: Json | null
         }
         Insert: {
           accuracy_at_generation?: number | null
           ai_reasoning?: string | null
           confidence_score?: number
           created_at?: string
+          cross_validated?: boolean | null
           formula_breakdown?: Json | null
           generation_round?: number
           id?: string
@@ -353,12 +356,14 @@ export type Database = {
           sport?: string | null
           strategy_used: string
           total_odds?: number
+          validation_signals?: Json | null
         }
         Update: {
           accuracy_at_generation?: number | null
           ai_reasoning?: string | null
           confidence_score?: number
           created_at?: string
+          cross_validated?: boolean | null
           formula_breakdown?: Json | null
           generation_round?: number
           id?: string
@@ -371,6 +376,7 @@ export type Database = {
           sport?: string | null
           strategy_used?: string
           total_odds?: number
+          validation_signals?: Json | null
         }
         Relationships: []
       }
@@ -5914,6 +5920,10 @@ export type Database = {
           suggestion_reason: string
           total_odds: number
           user_id: string | null
+          verdict: string | null
+          verdict_score: number | null
+          verdict_signals: Json | null
+          verdict_updated_at: string | null
         }
         Insert: {
           clv_score?: number | null
@@ -5933,6 +5943,10 @@ export type Database = {
           suggestion_reason: string
           total_odds: number
           user_id?: string | null
+          verdict?: string | null
+          verdict_score?: number | null
+          verdict_signals?: Json | null
+          verdict_updated_at?: string | null
         }
         Update: {
           clv_score?: number | null
@@ -5952,6 +5966,10 @@ export type Database = {
           suggestion_reason?: string
           total_odds?: number
           user_id?: string | null
+          verdict?: string | null
+          verdict_score?: number | null
+          verdict_signals?: Json | null
+          verdict_updated_at?: string | null
         }
         Relationships: []
       }
