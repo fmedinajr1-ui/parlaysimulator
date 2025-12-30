@@ -112,6 +112,66 @@ interface LegData {
   engine: string;
   eventId?: string;
   sport?: string;
+  gameDescription?: string;
+}
+
+// Extract opponent from game description
+function extractOpponent(gameDescription: string, playerTeam?: string): string {
+  if (!gameDescription) return '';
+  // Format: "Team A @ Team B" or "Team A vs Team B"
+  const parts = gameDescription.split(/[@vs]+/).map(s => s.trim());
+  if (parts.length < 2) return parts[0] || '';
+  // Return the team that isn't the player's team
+  if (playerTeam) {
+    return parts.find(p => !p.toLowerCase().includes(playerTeam.toLowerCase())) || parts[1] || '';
+  }
+  return parts[1] || ''; // Default to away team
+}
+
+// Get defense tier from rank
+function getDefenseTier(rank: number): string {
+  if (rank <= 5) return 'elite';
+  if (rank <= 12) return 'good';
+  if (rank <= 20) return 'average';
+  return 'weak';
+}
+
+// Get defense rating for an opponent
+async function getDefenseRating(supabase: any, opponentName: string, sport: string): Promise<{ defense_rank: number; defense_rating: number; points_allowed_avg?: number; assists_allowed_avg?: number; rebounds_allowed_avg?: number } | null> {
+  if (!opponentName) return null;
+  
+  if (sport === 'NBA' || sport === 'basketball_nba') {
+    // Try exact match first
+    const { data } = await supabase
+      .from('nba_opponent_defense_stats')
+      .select('defense_rank, defense_rating, points_allowed_avg, assists_allowed_avg, rebounds_allowed_avg')
+      .ilike('team_name', `%${opponentName}%`)
+      .limit(1)
+      .maybeSingle();
+    
+    if (data) return data;
+    
+    // Try with team aliases
+    const normalized = opponentName.toLowerCase().replace(/[^a-z\s]/g, '').trim();
+    const { data: aliasData } = await supabase
+      .from('team_aliases')
+      .select('team_name')
+      .or(`team_name.ilike.%${normalized}%,nickname.ilike.%${normalized}%,aliases.cs.{"${normalized}"}`)
+      .eq('sport', 'NBA')
+      .limit(1)
+      .maybeSingle();
+    
+    if (aliasData?.team_name) {
+      const { data: defenseData } = await supabase
+        .from('nba_opponent_defense_stats')
+        .select('defense_rank, defense_rating, points_allowed_avg, assists_allowed_avg, rebounds_allowed_avg')
+        .ilike('team_name', `%${aliasData.team_name}%`)
+        .limit(1)
+        .maybeSingle();
+      return defenseData || null;
+    }
+  }
+  return null;
 }
 
 function parseLegFromJson(leg: any, index: number): LegData | null {
@@ -125,6 +185,7 @@ function parseLegFromJson(leg: any, index: number): LegData | null {
       engine: leg.engine || leg.source || leg.engines?.[0] || 'unknown',
       eventId: leg.eventId || leg.event_id,
       sport: leg.sport || 'basketball_nba',
+      gameDescription: leg.gameDescription || leg.game_description || '',
     };
   } catch (e) {
     console.error(`Failed to parse leg ${index}:`, e);
@@ -360,6 +421,12 @@ serve(async (req) => {
             results.legsMissed++;
           }
 
+          // Extract opponent and get defense rating for matchup context
+          const opponentName = extractOpponent(legData.gameDescription || '', playerLog.team);
+          const defenseData = await getDefenseRating(supabase, opponentName, legData.sport || 'NBA');
+          
+          console.log(`Matchup context: ${legData.playerName} vs ${opponentName}${defenseData ? ` (rank ${defenseData.defense_rank})` : ' (no defense data)'}`);
+
           // Insert leg outcome record with error handling
           const { error: legUpsertError } = await supabase.from('daily_elite_leg_outcomes').upsert({
             parlay_id: parlay.id,
@@ -373,6 +440,11 @@ serve(async (req) => {
             outcome: legOutcome,
             engine_signals: { engine: legData.engine, eventId: legData.eventId, matchScore },
             verified_at: new Date().toISOString(),
+            // Matchup context
+            opponent_name: opponentName || null,
+            opponent_defense_rank: defenseData?.defense_rank || null,
+            opponent_defense_rating: defenseData?.defense_rating || null,
+            sport: legData.sport || 'NBA',
           }, { onConflict: 'parlay_id,leg_index' });
           
           if (legUpsertError) {

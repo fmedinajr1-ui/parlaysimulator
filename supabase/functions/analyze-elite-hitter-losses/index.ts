@@ -18,6 +18,26 @@ interface LossPattern {
   example?: string;
 }
 
+interface MatchupPattern {
+  sport: string;
+  propType: string;
+  side: string;
+  defenseTier: string;
+  isHit: boolean;
+  line: number;
+  actualValue: number;
+  opponent: string;
+  date: string;
+}
+
+// Get defense tier from rank
+function getDefenseTier(rank: number): string {
+  if (rank <= 5) return 'elite';
+  if (rank <= 12) return 'good';
+  if (rank <= 20) return 'average';
+  return 'weak';
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -160,6 +180,55 @@ serve(async (req) => {
         } else if (legOutcome.outcome === 'hit' || legOutcome.outcome === 'push') {
           patternStats[patternKey].hits++;
         }
+        
+        // Pattern 5: Matchup Analysis (opponent defense correlation)
+        if (legOutcome.opponent_defense_rank && legOutcome.opponent_defense_rank > 0) {
+          const defenseTier = getDefenseTier(legOutcome.opponent_defense_rank);
+          const matchupKey = `${propType}_${side}_vs_${defenseTier}`;
+          
+          if (!patternStats[matchupKey]) {
+            patternStats[matchupKey] = { losses: 0, hits: 0, examples: [] };
+          }
+          
+          if (isLegLoss) {
+            patternStats[matchupKey].losses++;
+            patternStats[matchupKey].examples.push(
+              `${parlay.parlay_date}: ${leg.playerName} ${propType} ${side} vs ${legOutcome.opponent_name || 'unknown'} (rank ${legOutcome.opponent_defense_rank}) - ${legOutcome.actual_value} vs ${leg.line}`
+            );
+            
+            // Also update matchup patterns table for specialized tracking
+            const matchupData: MatchupPattern = {
+              sport: legOutcome.sport || 'NBA',
+              propType,
+              side,
+              defenseTier,
+              isHit: false,
+              line: leg.line,
+              actualValue: legOutcome.actual_value || 0,
+              opponent: legOutcome.opponent_name || 'unknown',
+              date: parlay.parlay_date
+            };
+            
+            await upsertMatchupPattern(supabase, matchupData);
+          } else if (legOutcome.outcome === 'hit' || legOutcome.outcome === 'push') {
+            patternStats[matchupKey].hits++;
+            
+            // Track hits too for accuracy calculation
+            const matchupData: MatchupPattern = {
+              sport: legOutcome.sport || 'NBA',
+              propType,
+              side,
+              defenseTier,
+              isHit: true,
+              line: leg.line,
+              actualValue: legOutcome.actual_value || 0,
+              opponent: legOutcome.opponent_name || 'unknown',
+              date: parlay.parlay_date
+            };
+            
+            await upsertMatchupPattern(supabase, matchupData);
+          }
+        }
       }
     }
     
@@ -249,3 +318,90 @@ serve(async (req) => {
     );
   }
 });
+
+// Upsert matchup pattern into specialized tracking table
+async function upsertMatchupPattern(supabase: any, pattern: MatchupPattern) {
+  try {
+    // First get existing record
+    const { data: existing } = await supabase
+      .from('elite_hitter_matchup_patterns')
+      .select('*')
+      .eq('sport', pattern.sport)
+      .eq('prop_type', pattern.propType)
+      .eq('side', pattern.side)
+      .eq('defense_tier', pattern.defenseTier)
+      .maybeSingle();
+    
+    const hitCount = (existing?.hit_count || 0) + (pattern.isHit ? 1 : 0);
+    const missCount = (existing?.miss_count || 0) + (pattern.isHit ? 0 : 1);
+    const totalCount = hitCount + missCount;
+    const accuracyRate = totalCount > 0 ? hitCount / totalCount : 0;
+    
+    // Calculate new averages
+    const prevTotal = existing?.total_count || 0;
+    const newAvgLine = prevTotal > 0 
+      ? ((existing?.avg_line || 0) * prevTotal + pattern.line) / (prevTotal + 1)
+      : pattern.line;
+    const newAvgActual = prevTotal > 0
+      ? ((existing?.avg_actual_value || 0) * prevTotal + pattern.actualValue) / (prevTotal + 1)
+      : pattern.actualValue;
+    const missMargin = pattern.isHit ? 0 : Math.abs(pattern.actualValue - pattern.line);
+    const newAvgMissMargin = !pattern.isHit && missCount > 0
+      ? ((existing?.avg_miss_margin || 0) * (missCount - 1) + missMargin) / missCount
+      : existing?.avg_miss_margin || 0;
+    
+    // Calculate penalty based on accuracy
+    let penalty = 0;
+    let isBoost = false;
+    
+    if (accuracyRate < 0.40 && totalCount >= 3) {
+      penalty = 0.5;
+    } else if (accuracyRate < 0.45 && totalCount >= 2) {
+      penalty = 0.35;
+    } else if (accuracyRate < 0.50) {
+      penalty = 0.2;
+    } else if (accuracyRate >= 0.65 && totalCount >= 3) {
+      isBoost = true;
+      penalty = -0.15; // Negative = bonus
+    }
+    
+    // Add new example (keep last 5)
+    const newExample = {
+      player: pattern.opponent,
+      date: pattern.date,
+      line: pattern.line,
+      actual: pattern.actualValue,
+      hit: pattern.isHit
+    };
+    const examples = [...(existing?.example_matchups || []), newExample].slice(-5);
+    
+    const { error } = await supabase
+      .from('elite_hitter_matchup_patterns')
+      .upsert({
+        sport: pattern.sport,
+        prop_type: pattern.propType,
+        side: pattern.side,
+        defense_tier: pattern.defenseTier,
+        hit_count: hitCount,
+        miss_count: missCount,
+        total_count: totalCount,
+        accuracy_rate: accuracyRate,
+        avg_line: newAvgLine,
+        avg_actual_value: newAvgActual,
+        avg_miss_margin: newAvgMissMargin,
+        example_matchups: examples,
+        penalty_amount: Math.abs(penalty),
+        is_boost: isBoost,
+        is_active: true,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'sport,prop_type,side,defense_tier' });
+    
+    if (error) {
+      console.error('Error upserting matchup pattern:', error);
+    } else {
+      console.log(`Matchup pattern updated: ${pattern.propType}_${pattern.side} vs ${pattern.defenseTier} - ${(accuracyRate * 100).toFixed(1)}%`);
+    }
+  } catch (e) {
+    console.error('Failed to upsert matchup pattern:', e);
+  }
+}
