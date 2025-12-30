@@ -1,4 +1,5 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { calculateROI, calculateStreak, calculateBestWorstStreaks, type ParlayResult } from '@/utils/roiCalculator';
 
@@ -67,6 +68,33 @@ export interface EliteHitterStats {
 }
 
 export function useEliteHitterHistory() {
+  const queryClient = useQueryClient();
+
+  // Real-time subscription for auto-updates
+  useEffect(() => {
+    const channel = supabase
+      .channel('elite-hitter-changes')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'daily_elite_parlays'
+      }, () => {
+        queryClient.invalidateQueries({ queryKey: ['elite-hitter-history'] });
+      })
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'daily_elite_leg_outcomes'
+      }, () => {
+        queryClient.invalidateQueries({ queryKey: ['elite-hitter-history'] });
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [queryClient]);
+
   return useQuery({
     queryKey: ['elite-hitter-history'],
     queryFn: async (): Promise<{ parlays: HistoricalParlay[]; stats: EliteHitterStats }> => {
@@ -193,6 +221,7 @@ export function useEliteHitterHistory() {
 
       return { parlays: historicalParlays, stats };
     },
-    staleTime: 1000 * 60 * 5,
+    staleTime: 1000 * 30, // 30 seconds
+    refetchInterval: 1000 * 60, // Poll every 60s as fallback
   });
 }
