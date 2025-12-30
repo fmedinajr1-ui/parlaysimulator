@@ -212,6 +212,45 @@ export type Database = {
         }
         Relationships: []
       }
+      ai_formula_auto_bans: {
+        Row: {
+          accuracy_at_ban: number | null
+          ban_reason: string
+          created_at: string | null
+          engine_source: string
+          formula_name: string
+          id: string
+          is_active: boolean
+          lifted_at: string | null
+          total_picks: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          accuracy_at_ban?: number | null
+          ban_reason?: string
+          created_at?: string | null
+          engine_source: string
+          formula_name: string
+          id?: string
+          is_active?: boolean
+          lifted_at?: string | null
+          total_picks?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          accuracy_at_ban?: number | null
+          ban_reason?: string
+          created_at?: string | null
+          engine_source?: string
+          formula_name?: string
+          id?: string
+          is_active?: boolean
+          lifted_at?: string | null
+          total_picks?: number | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       ai_formula_performance: {
         Row: {
           compound_formulas: Json | null
