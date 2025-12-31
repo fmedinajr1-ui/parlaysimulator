@@ -64,7 +64,11 @@ export function LivePlayerPropCard({ leg, className }: LivePlayerPropCardProps) 
 
   // Status helpers for game bets (totals, spreads, moneylines)
   // These can't be evaluated mid-game, only show result when final
+  // IMPORTANT: If no game matched (gameInfo is null), treat as truly upcoming
   const getGameBetStatusIcon = () => {
+    // No matched game = still pending/upcoming
+    if (!gameInfo) return <Clock className="w-4 h-4" />;
+    
     if (gameStatus === 'final') {
       return isHitting ? 
         <CheckCircle2 className="w-4 h-4 text-chart-2" /> : 
@@ -77,12 +81,18 @@ export function LivePlayerPropCard({ leg, className }: LivePlayerPropCardProps) 
   };
 
   const getGameBetStatusText = () => {
+    // No matched game = treat as pending regardless of gameStatus
+    if (!gameInfo) return 'Pending';
+    
     if (gameStatus === 'final') return isHitting ? 'HIT' : 'MISS';
     if (gameStatus === 'in_progress' || gameStatus === 'halftime') return 'Live';
     return 'Pending';
   };
 
   const getGameBetStatusColor = () => {
+    // No matched game = muted
+    if (!gameInfo) return 'text-muted-foreground';
+    
     if (gameStatus === 'final') return isHitting ? 'text-chart-2' : 'text-destructive';
     if (gameStatus === 'in_progress' || gameStatus === 'halftime') return 'text-chart-4';
     return 'text-muted-foreground';
