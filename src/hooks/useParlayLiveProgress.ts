@@ -77,7 +77,8 @@ const PROP_TO_STAT: Record<string, string | ((s: PlayerStat) => number)> = {
 };
 
 // Normalize player name for matching
-const normalizePlayerName = (name: string): string => {
+const normalizePlayerName = (name: string | undefined | null): string => {
+  if (!name) return '';
   return name
     .toLowerCase()
     .replace(/[^a-z\s]/g, '')
@@ -85,9 +86,14 @@ const normalizePlayerName = (name: string): string => {
 };
 
 // Fuzzy match player names
-const matchPlayerNames = (parlayName: string, liveName: string): boolean => {
+const matchPlayerNames = (parlayName: string | undefined | null, liveName: string | undefined | null): boolean => {
+  if (!parlayName || !liveName) return false;
+  
   const normalized1 = normalizePlayerName(parlayName);
   const normalized2 = normalizePlayerName(liveName);
+  
+  // Return false if either normalized name is empty
+  if (!normalized1 || !normalized2) return false;
   
   // Exact match
   if (normalized1 === normalized2) return true;
@@ -95,6 +101,8 @@ const matchPlayerNames = (parlayName: string, liveName: string): boolean => {
   // Check if last names match (most common case)
   const parts1 = normalized1.split(' ').filter(p => p.length > 1);
   const parts2 = normalized2.split(' ').filter(p => p.length > 1);
+  
+  if (parts1.length === 0 || parts2.length === 0) return false;
   
   const lastName1 = parts1[parts1.length - 1];
   const lastName2 = parts2[parts2.length - 1];
@@ -219,16 +227,19 @@ export function useParlayLiveProgress() {
         let matchedStat: PlayerStat | null = null;
         let matchedGame: LiveGame | null = null;
 
-        for (const game of games) {
-          const playerStats = game.playerStats || [];
-          for (const stat of playerStats) {
-            if (matchPlayerNames(playerName, stat.name)) {
-              matchedStat = stat;
-              matchedGame = game;
-              break;
+        // Only try to match players for player prop bets
+        if (isPlayerProp && playerName) {
+          for (const game of games) {
+            const playerStats = game.playerStats || [];
+            for (const stat of playerStats) {
+              if (stat.name && matchPlayerNames(playerName, stat.name)) {
+                matchedStat = stat;
+                matchedGame = game;
+                break;
+              }
             }
+            if (matchedStat) break;
           }
-          if (matchedStat) break;
         }
 
         const currentValue = matchedStat ? getStatValue(matchedStat, propType) : null;
