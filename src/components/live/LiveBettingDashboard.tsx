@@ -25,15 +25,37 @@ export function LiveBettingDashboard() {
     p.legs.filter(l => l.gameStatus === 'in_progress')
   );
 
-  // Group legs by game
+  // Helper to create a stable game key from various sources
+  const getGameKey = (leg: typeof allLiveLegs[0]): string => {
+    if (leg.eventId) return leg.eventId;
+    if (leg.gameInfo) return `${leg.gameInfo.awayTeam}@${leg.gameInfo.homeTeam}`;
+    if (leg.matchup) return leg.matchup.replace(/\s+/g, '').toLowerCase();
+    
+    // Extract from description as last resort
+    const desc = (leg.description || '').toLowerCase();
+    const teamMatch = desc.match(/([a-z\s]+)\s*[@vs\.]+\s*([a-z\s]+)/i);
+    if (teamMatch) return `${teamMatch[1].trim()}@${teamMatch[2].trim()}`;
+    
+    return 'unknown';
+  };
+
+  // Group legs by game AND deduplicate within each game
   const legsByGame = allLiveLegs.reduce((acc, leg) => {
-    const key = leg.eventId || 'unknown';
+    const key = getGameKey(leg);
     if (!acc[key]) {
-      acc[key] = { gameInfo: leg.gameInfo, legs: [] };
+      acc[key] = { gameInfo: leg.gameInfo, legs: [], seenBets: new Set<string>() };
     }
-    acc[key].legs.push(leg);
+    
+    // Create unique key for this specific bet (to avoid duplicates)
+    const betKey = `${leg.description}-${leg.betType}-${leg.side}-${leg.line}`;
+    
+    if (!acc[key].seenBets.has(betKey)) {
+      acc[key].seenBets.add(betKey);
+      acc[key].legs.push(leg);
+    }
+    
     return acc;
-  }, {} as Record<string, { gameInfo: any; legs: typeof allLiveLegs }>);
+  }, {} as Record<string, { gameInfo: any; legs: typeof allLiveLegs; seenBets: Set<string> }>);
 
   const handleSync = async () => {
     await triggerSync();
