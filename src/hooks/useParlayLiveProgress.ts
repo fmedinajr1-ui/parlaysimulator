@@ -255,10 +255,18 @@ export function useParlayLiveProgress() {
         }
 
         // For non-player props (totals, spreads, ML), try to match by team name in description
+        // IMPORTANT: Only match games of the same sport to avoid cross-sport matches
         if (!isPlayerProp && !matchedGame && description) {
           const descLower = description.toLowerCase();
+          const legSport = (leg.sport || parlay.sport || '').toUpperCase();
           
           for (const game of games) {
+            // Filter by sport first to avoid matching NBA bets to NFL games
+            const gameSport = (game.sport || '').toUpperCase();
+            if (legSport && gameSport && gameSport !== legSport) {
+              continue;
+            }
+            
             const homeTeam = (game.homeTeam || '').toLowerCase();
             const awayTeam = (game.awayTeam || '').toLowerCase();
             
