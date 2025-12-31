@@ -29,6 +29,7 @@ export interface LegLiveProgress {
   description: string;
   betType: string;
   sport: string;
+  matchup?: string; // Structured matchup data from parlay generation
 }
 
 export interface ParlayLiveProgress {
@@ -346,6 +347,7 @@ export function useParlayLiveProgress() {
           description,
           betType,
           sport: leg.sport || parlay.sport || '',
+          matchup: leg.matchup, // Pass structured matchup from parlay generation
         };
       });
 
