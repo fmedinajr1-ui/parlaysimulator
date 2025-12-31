@@ -133,29 +133,46 @@ export function LiveBettingDashboard() {
     triggerSync,
   } = useParlayLiveProgress();
 
-  // Get all live legs and GLOBALLY deduplicate BEFORE grouping by game
-  const allLiveLegsRaw = liveParlays.flatMap(p => 
-    p.legs.filter(l => l.gameStatus === 'in_progress')
-  );
-  
-  // Global deduplication - ensure each unique bet only appears once
-  const seenBetIds = new Set<string>();
-  const allLiveLegs = allLiveLegsRaw.filter(leg => {
-    const betId = getUniqueBetId(leg);
-    if (seenBetIds.has(betId)) return false;
-    seenBetIds.add(betId);
-    return true;
-  });
+  // Get all live legs and GLOBALLY deduplicate with parlay count tracking
+  const { allLiveLegs, legsByGame } = (() => {
+    const allLegsRaw = liveParlays.flatMap(p => 
+      p.legs.filter(l => l.gameStatus === 'in_progress').map(l => ({ ...l, parlayId: p.parlayId }))
+    );
+    
+    // Track which parlays contain each unique bet
+    const betToParlays = new Map<string, Set<string>>();
+    allLegsRaw.forEach(leg => {
+      const betId = getUniqueBetId(leg);
+      if (!betToParlays.has(betId)) {
+        betToParlays.set(betId, new Set());
+      }
+      betToParlays.get(betId)!.add((leg as any).parlayId);
+    });
+    
+    // Deduplicate and attach parlay count
+    const seenBetIds = new Set<string>();
+    const uniqueLegs = allLegsRaw.filter(leg => {
+      const betId = getUniqueBetId(leg);
+      if (seenBetIds.has(betId)) return false;
+      seenBetIds.add(betId);
+      return true;
+    }).map(leg => ({
+      ...leg,
+      parlayCount: betToParlays.get(getUniqueBetId(leg))?.size || 1,
+    }));
 
-  // Group deduplicated legs by game
-  const legsByGame = allLiveLegs.reduce((acc, leg) => {
-    const key = getGameKey(leg);
-    if (!acc[key]) {
-      acc[key] = { gameInfo: leg.gameInfo, legs: [] };
-    }
-    acc[key].legs.push(leg);
-    return acc;
-  }, {} as Record<string, { gameInfo: any; legs: typeof allLiveLegs }>);
+    // Group deduplicated legs by game
+    const byGame = uniqueLegs.reduce((acc, leg) => {
+      const key = getGameKey(leg);
+      if (!acc[key]) {
+        acc[key] = { gameInfo: leg.gameInfo, legs: [] };
+      }
+      acc[key].legs.push(leg);
+      return acc;
+    }, {} as Record<string, { gameInfo: any; legs: typeof uniqueLegs }>);
+    
+    return { allLiveLegs: uniqueLegs, legsByGame: byGame };
+  })();
 
   const handleSync = async () => {
     setIsSyncing(true);

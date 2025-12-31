@@ -10,7 +10,7 @@ import {
 } from '@/lib/team-abbreviations';
 
 interface LivePlayerPropCardProps {
-  leg: LegLiveProgress;
+  leg: LegLiveProgress & { parlayCount?: number };
   className?: string;
 }
 
@@ -178,13 +178,22 @@ export function LivePlayerPropCard({ leg, className }: LivePlayerPropCardProps) 
     
     const betLabel = getBetLabel();
     
+    const parlayCount = (leg as any).parlayCount || 1;
+    
     return (
       <div className={cn('p-3 rounded-lg bg-muted/30 border border-border/30', className)}>
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             {getGameBetStatusIcon()}
             <div>
-              <p className="font-medium text-sm">{betLabel}</p>
+              <div className="flex items-center gap-2">
+                <p className="font-medium text-sm">{betLabel}</p>
+                {parlayCount > 1 && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary whitespace-nowrap">
+                    in {parlayCount} parlays
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-muted-foreground">
                 {getSecondaryLabel()}
               </p>
@@ -200,13 +209,22 @@ export function LivePlayerPropCard({ leg, className }: LivePlayerPropCardProps) 
     );
   }
 
+  const parlayCount = (leg as any).parlayCount || 1;
+
   return (
     <div className={cn('p-3 rounded-lg bg-muted/30 border border-border/30', className)}>
       <div className="flex items-start justify-between gap-2 mb-2">
         <div className="flex items-start gap-2">
           {getStatusIcon()}
           <div>
-            <p className="font-medium text-sm">{playerName}</p>
+            <div className="flex items-center gap-2">
+              <p className="font-medium text-sm">{playerName}</p>
+              {parlayCount > 1 && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary whitespace-nowrap">
+                  in {parlayCount} parlays
+                </span>
+              )}
+            </div>
             <p className="text-xs text-muted-foreground">
               {formatPropType(propType)} {side?.toUpperCase() || ''} {line}
             </p>
