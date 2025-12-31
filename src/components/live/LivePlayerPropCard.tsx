@@ -130,7 +130,14 @@ export function LivePlayerPropCard({ leg, className }: LivePlayerPropCardProps) 
         // For totals: "Over 238.5" or "Under 215.5"
         const sideText = side || (cleanDesc.toLowerCase().includes('under') ? 'Under' : 'Over');
         const capitalizedSide = sideText.charAt(0).toUpperCase() + sideText.slice(1).toLowerCase();
-        return line > 0 ? `${capitalizedSide} ${line}` : capitalizedSide;
+        
+        // Try to get line from prop line, or extract from description
+        if (line > 0) return `${capitalizedSide} ${line}`;
+        
+        const lineMatch = cleanDesc.match(/(\d+\.?\d*)/);
+        if (lineMatch) return `${capitalizedSide} ${lineMatch[1]}`;
+        
+        return capitalizedSide;
       }
       
       if (betTypeLower.includes('spread')) {
@@ -142,8 +149,21 @@ export function LivePlayerPropCard({ leg, className }: LivePlayerPropCardProps) 
       return abbreviateTeamsInDescription(cleanDesc, sport) || cleanDesc || 'Game Bet';
     };
     
+    // Get secondary label - show matchup if available, otherwise sport + bet type
+    const getSecondaryLabel = () => {
+      if (teamMatchup) return teamMatchup;
+      
+      // Fallback: show sport + bet type for context
+      const sportLabel = sport?.toUpperCase() || '';
+      const betTypeLabel = betType ? betType.replace(/_/g, ' ') : 'Total';
+      const formattedBetType = betTypeLabel.split(' ').map(w => 
+        w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()
+      ).join(' ');
+      
+      return sportLabel ? `${sportLabel} • ${formattedBetType}` : formattedBetType;
+    };
+    
     const betLabel = getBetLabel();
-    const betTypeLabel = betType ? betType.replace(/_/g, ' ').toUpperCase() : 'GAME BET';
     
     return (
       <div className={cn('p-3 rounded-lg bg-muted/30 border border-border/30', className)}>
@@ -153,7 +173,7 @@ export function LivePlayerPropCard({ leg, className }: LivePlayerPropCardProps) 
             <div>
               <p className="font-medium text-sm">{betLabel}</p>
               <p className="text-xs text-muted-foreground">
-                {teamMatchup || betTypeLabel}
+                {getSecondaryLabel()}
               </p>
             </div>
           </div>
