@@ -22,6 +22,47 @@ function stdDev(arr: number[]): number {
   return Math.sqrt(variance);
 }
 
+// 🆕 FIX #1: Recency-Weighted Median - gives higher weight to recent games
+function recencyWeightedMedian(values: number[]): number {
+  if (values.length === 0) return 0;
+  
+  // Game 1 (most recent) gets highest weight, exponentially decreasing
+  const weights = values.map((_, i) => 1 / (i + 1));
+  const weighted: number[] = [];
+  
+  values.forEach((val, i) => {
+    const count = Math.round(weights[i] * 10);
+    for (let j = 0; j < count; j++) weighted.push(val);
+  });
+  
+  return median(weighted);
+}
+
+// 🆕 FIX #2: Log-Scaled Minutes Normalization - prevents over-projection of low-minute spikes
+function minutesAdjustedStat(
+  stat: number,
+  actualMinutes: number,
+  expectedMinutes: number
+): number {
+  if (actualMinutes <= 0) return stat;
+  const ratio = expectedMinutes / actualMinutes;
+  // Log scaling prevents over-projection of low-minute spikes
+  return stat * Math.log2(1 + ratio);
+}
+
+// 🆕 FIX #4: Opponent Defense Adjustment - adjusts for matchup difficulty
+function opponentAdjustment(stat: number, opponentDefRank?: number): number {
+  if (!opponentDefRank || opponentDefRank <= 0) return stat;
+  
+  // Top 5 defense = harder matchup (-8%)
+  // Bottom 5 defense = easier matchup (+8%)
+  if (opponentDefRank <= 5) return stat * 0.92;
+  if (opponentDefRank >= 25) return stat * 1.08;
+  if (opponentDefRank <= 10) return stat * 0.96;
+  if (opponentDefRank >= 20) return stat * 1.04;
+  return stat;
+}
+
 interface EngineInput {
   player_name: string;
   stat_type: 'points' | 'rebounds' | 'assists';
@@ -43,6 +84,7 @@ interface EngineInput {
   team_name?: string;
   opponent_team?: string;
   game_time?: string;
+  opponent_def_rank?: number; // 🆕 1-30 defense ranking for opponent adjustment
 }
 
 interface EngineOutput {
@@ -70,34 +112,57 @@ interface EngineOutput {
 }
 
 function calculateMedianEdge(input: EngineInput): EngineOutput {
-  // 1️⃣ RECENT FORM MEDIAN (M1) - 25% weight (last 5 games for recency)
-  const recentStats = input.last_10_game_stats.slice(0, 5);
-  const M1 = median(recentStats);
+  // Calculate volatility FIRST (needed for dampening)
+  const statStdDev = stdDev(input.last_10_game_stats);
+  const statMean = input.last_10_game_stats.length > 0 
+    ? input.last_10_game_stats.reduce((a, b) => a + b, 0) / input.last_10_game_stats.length 
+    : 0;
+  const isVolatile = statMean > 0 && (statStdDev / statMean) > 0.35;
+
+  // 1️⃣ RECENT FORM MEDIAN (M1) - 30% weight (last 7 games, RECENCY-WEIGHTED)
+  // 🆕 FIX #1: Use recency-weighted median instead of raw median
+  const recentStats = input.last_10_game_stats.slice(0, 7);
+  const M1 = recencyWeightedMedian(recentStats);
 
   // 2️⃣ MATCHUP MEDIAN (M2) - 20% weight (games vs specific opponent)
   // If no matchup data, fall back to recent form
-  const M2 = input.matchup_stats.length > 0 
+  let M2 = input.matchup_stats.length > 0 
     ? median(input.matchup_stats) 
     : M1;
+  
+  // 🆕 FIX #4: Apply opponent defense adjustment to matchup median
+  if (input.opponent_def_rank) {
+    M2 = opponentAdjustment(M2, input.opponent_def_rank);
+  }
 
-  // 3️⃣ MINUTES-WEIGHTED MEDIAN (M3) - 20% weight (all 10 games)
+  // 3️⃣ MINUTES-WEIGHTED MEDIAN (M3) - 15% weight (all 10 games)
+  // 🆕 FIX #2: Use log-scaled minutes normalization instead of linear
   const adjustedStats = input.last_10_game_stats.map((stat, idx) => {
     const minutes = input.last_10_game_minutes[idx] || input.expected_minutes;
-    if (minutes <= 0) return stat;
-    return (stat / minutes) * input.expected_minutes;
+    return minutesAdjustedStat(stat, minutes, input.expected_minutes);
   });
   const M3 = median(adjustedStats);
 
   // 4️⃣ USAGE-BASED MEDIAN (M4) - 20% weight
-  const M4 = median(input.usage_metrics);
+  // 🆕 FIX #3: Real usage proxy (per-minute efficiency) instead of double-counting stats
+  const usageProxy = input.last_10_game_stats.map(
+    (stat, i) => stat / (input.last_10_game_minutes[i] || 30)
+  );
+  const M4 = median(usageProxy) * input.expected_minutes;
 
   // 5️⃣ LOCATION SPLIT MEDIAN (M5) - 15% weight
   const M5 = input.game_location === 'home' 
     ? median(input.home_stats) 
     : median(input.away_stats);
 
-  // TRUE MEDIAN CALCULATION (Weighted)
-  let trueMedian = (M1 * 0.25) + (M2 * 0.20) + (M3 * 0.20) + (M4 * 0.20) + (M5 * 0.15);
+  // TRUE MEDIAN CALCULATION (Updated Weights v2)
+  // M1: 30% (up from 25%), M2: 20%, M3: 15% (down from 20%), M4: 20%, M5: 15%
+  let trueMedian = (M1 * 0.30) + (M2 * 0.20) + (M3 * 0.15) + (M4 * 0.20) + (M5 * 0.15);
+
+  // 🆕 FIX #4: Apply opponent defense adjustment to final median
+  if (input.opponent_def_rank) {
+    trueMedian = opponentAdjustment(trueMedian, input.opponent_def_rank);
+  }
 
   // Track adjustments
   const adjustments = {
@@ -131,11 +196,28 @@ function calculateMedianEdge(input: EngineInput): EngineOutput {
     : 'NORMAL';
 
   // EDGE CALCULATION
-  const edge = trueMedian - input.sportsbook_line;
+  let edge = trueMedian - input.sportsbook_line;
+
+  // 🆕 FIX #5: Volatility-aware edge dampening
+  if (isVolatile) {
+    edge *= 0.75;
+  }
 
   // 🧠 BETTING DECISION LOGIC
   let recommendation: string;
-  if (edge >= 3.0) {
+  let reasonSummary = '';
+
+  // 🆕 GUARDRAIL: Insufficient sample size
+  if (input.games_analyzed < 6) {
+    recommendation = 'NO BET';
+    reasonSummary = 'Insufficient sample size (need 6+ games).';
+  }
+  // 🆕 GUARDRAIL: Volatility trap protection
+  else if (isVolatile && Math.abs(edge) < 2.5) {
+    recommendation = 'NO BET';
+    reasonSummary = `Volatile player requires larger edge (current: ${Math.abs(edge).toFixed(1)}, need 2.5+).`;
+  }
+  else if (edge >= 3.0) {
     recommendation = 'STRONG OVER';
   } else if (edge >= 1.5) {
     recommendation = 'LEAN OVER';
@@ -153,26 +235,26 @@ function calculateMedianEdge(input: EngineInput): EngineOutput {
     altLineSuggestion = input.sportsbook_line - 2.5;
   }
 
-  // Calculate volatility using all 10 games
-  const statStdDev = stdDev(input.last_10_game_stats);
-  const statMean = input.last_10_game_stats.length > 0 
-    ? input.last_10_game_stats.reduce((a, b) => a + b, 0) / input.last_10_game_stats.length 
-    : 0;
-  const isVolatile = statMean > 0 && (statStdDev / statMean) > 0.35;
-
-  // 📝 REASON SUMMARY
-  const reasonParts: string[] = [];
-  if (edge > 0) {
-    reasonParts.push(`True median of ${trueMedian.toFixed(1)} exceeds book line of ${input.sportsbook_line} by +${edge.toFixed(1)}`);
-  } else {
-    reasonParts.push(`True median of ${trueMedian.toFixed(1)} is below book line of ${input.sportsbook_line} by ${edge.toFixed(1)}`);
+  // 📝 REASON SUMMARY (only build if not already set by guardrails)
+  if (!reasonSummary) {
+    const reasonParts: string[] = [];
+    if (edge > 0) {
+      reasonParts.push(`True median of ${trueMedian.toFixed(1)} exceeds book line of ${input.sportsbook_line} by +${edge.toFixed(1)}`);
+    } else {
+      reasonParts.push(`True median of ${trueMedian.toFixed(1)} is below book line of ${input.sportsbook_line} by ${edge.toFixed(1)}`);
+    }
+    
+    if (M1 > input.sportsbook_line) reasonParts.push('recent form strong');
+    if (M2 > input.sportsbook_line) reasonParts.push('favorable matchup history');
+    if (input.opponent_def_rank && input.opponent_def_rank >= 25) reasonParts.push('weak opponent defense');
+    if (input.opponent_def_rank && input.opponent_def_rank <= 5) reasonParts.push('elite opponent defense');
+    if (adjustments.injury_boost > 0) reasonParts.push('teammate injury usage boost');
+    if (adjustments.blowout_risk < 0) reasonParts.push('blowout risk adjustment');
+    if (confidenceFlag === 'JUICE_LAG_SHARP') reasonParts.push('sharp line movement detected');
+    if (isVolatile) reasonParts.push('volatility dampening applied');
+    
+    reasonSummary = reasonParts.join(' based on ') + '.';
   }
-  
-  if (M1 > input.sportsbook_line) reasonParts.push('recent form strong');
-  if (M2 > input.sportsbook_line) reasonParts.push('favorable matchup history');
-  if (adjustments.injury_boost > 0) reasonParts.push('teammate injury usage boost');
-  if (adjustments.blowout_risk < 0) reasonParts.push('blowout risk adjustment');
-  if (confidenceFlag === 'JUICE_LAG_SHARP') reasonParts.push('sharp line movement detected');
 
   return {
     player_name: input.player_name,
@@ -183,7 +265,7 @@ function calculateMedianEdge(input: EngineInput): EngineOutput {
     recommendation,
     confidence_flag: confidenceFlag,
     alt_line_suggestion: altLineSuggestion,
-    reason_summary: reasonParts.join(' based on ') + '.',
+    reason_summary: reasonSummary,
     m1_recent_form: Number(M1.toFixed(2)),
     m2_matchup: Number(M2.toFixed(2)),
     m3_minutes_weighted: Number(M3.toFixed(2)),
@@ -384,6 +466,29 @@ serve(async (req) => {
 
       console.log(`[median-edge-engine] Found ${gameLogs?.length || 0} game logs`);
 
+      // 🆕 FIX #4: Fetch opponent defense rankings for matchup adjustments
+      const { data: defenseRankings, error: defError } = await supabase
+        .from('team_defense_rankings')
+        .select('team_abbreviation, team_name, overall_rank')
+        .eq('sport', 'NBA')
+        .eq('is_current', true);
+
+      if (defError) {
+        console.log('[median-edge-engine] Defense rankings fetch error (non-fatal):', defError.message);
+      }
+
+      // Create defense rank lookup map
+      const defRankMap = new Map<string, number>();
+      for (const team of (defenseRankings || [])) {
+        if (team.team_abbreviation) {
+          defRankMap.set(team.team_abbreviation.toLowerCase(), team.overall_rank);
+        }
+        if (team.team_name) {
+          defRankMap.set(team.team_name.toLowerCase(), team.overall_rank);
+        }
+      }
+      console.log(`[median-edge-engine] Loaded ${defRankMap.size} defense ranking entries`);
+
       const results: EngineOutput[] = [];
       
       // Helper to determine if player is home based on game_description
@@ -455,6 +560,11 @@ serve(async (req) => {
         // Determine home/away from game_description
         const gameIsHome = isPlayerHome(prop.game_description || '', prop.team_name || '');
 
+        // 🆕 FIX #4: Look up opponent defense ranking
+        const opponentDefRank = defRankMap.get(opponentName) || 
+                                defRankMap.get(prop.opponent_team?.toLowerCase() || '') || 
+                                undefined;
+
         const input: EngineInput = {
           player_name: playerName,
           stat_type: statType as 'points' | 'rebounds' | 'assists',
@@ -468,7 +578,7 @@ serve(async (req) => {
           last_10_game_stats: last10Stats,
           last_10_game_minutes: last10Minutes,
           matchup_stats: matchupStats,
-          usage_metrics: last10Stats, // Use same stats as proxy
+          usage_metrics: last10Stats, // No longer used for double-counting - FIX #3 handles this internally
           home_stats: homeStats.length > 0 ? homeStats : last10Stats,
           away_stats: awayStats.length > 0 ? awayStats : last10Stats,
           games_analyzed: playerLogs.length,
@@ -476,6 +586,7 @@ serve(async (req) => {
           team_name: prop.team_name,
           opponent_team: prop.opponent_team,
           game_time: prop.commence_time,
+          opponent_def_rank: opponentDefRank, // 🆕 Pass defense ranking
         };
 
         const result = calculateMedianEdge(input);
