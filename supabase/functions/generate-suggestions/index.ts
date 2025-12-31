@@ -140,6 +140,9 @@ interface SuggestionLeg {
   fatigueScore?: number;
   fatigueBoost?: boolean;
   eventId?: string;
+  matchup?: string;
+  side?: string;
+  line?: number;
 }
 
 // Sport key mapping for The Odds API
@@ -2379,9 +2382,16 @@ serve(async (req) => {
             fadeProb *= impliedProb;
             usedPlayers.add(key);
             
+            // Construct full description with matchup info
+            const matchup = move.description || '';
             let description = move.player_name 
               ? `🌅 ${move.player_name} UNDER (fade AM Over)`
-              : `🌅 ${move.description} UNDER`;
+              : matchup 
+                ? `🌅 ${matchup} Under ${move.new_point || ''}`
+                : null;
+            
+            // Skip if no valid description
+            if (!description) continue;
             
             fadeLegs.push({
               description,
@@ -2390,6 +2400,10 @@ serve(async (req) => {
               sport: move.sport,
               betType: move.market_type,
               eventTime: move.commence_time || now.toISOString(),
+              eventId: move.event_id,
+              matchup: matchup,
+              side: 'under',
+              line: move.new_point,
             });
           }
         }
@@ -2451,9 +2465,16 @@ serve(async (req) => {
             injuryProb *= impliedProb;
             usedPlayers.add(key);
             
+            // Construct full description with matchup info
+            const matchup = move.description || '';
             let description = move.player_name 
               ? `🏥 ${move.player_name} UNDER (injury factor)`
-              : `🏥 ${move.description} UNDER`;
+              : matchup 
+                ? `🏥 ${matchup} Under ${move.new_point || ''}`
+                : null;
+            
+            // Skip if no valid description
+            if (!description) continue;
             
             injuryLegs.push({
               description,
@@ -2462,6 +2483,10 @@ serve(async (req) => {
               sport: move.sport,
               betType: move.market_type,
               eventTime: move.commence_time || now.toISOString(),
+              eventId: move.event_id,
+              matchup: matchup,
+              side: 'under',
+              line: move.new_point,
             });
           }
         }

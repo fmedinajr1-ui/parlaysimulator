@@ -112,15 +112,18 @@ export function LivePlayerPropCard({ leg, className }: LivePlayerPropCardProps) 
   // Render game bet (moneyline, spread, total) differently from player props
   if (!isPlayerProp) {
     // Clean description - remove checkmarks/emojis
-    const cleanDesc = (description || '').replace(/[✅❌🔥⚡]/g, '').trim();
+    const cleanDesc = (description || '').replace(/[✅❌🔥⚡🌅🏥⭐🎯💰🔒📈📉🔄🎲🏀🏈⚾🏒]/g, '').trim();
     
-    // Try to extract matchup from description
+    // Use structured matchup from leg data first, then try extraction
+    const structuredMatchup = leg.matchup;
     const matchupInfo = extractMatchupFromDescription(cleanDesc, sport);
     
-    // Get team matchup from gameInfo (matched live game) or extracted from description
-    const teamMatchup = gameInfo 
-      ? formatMatchupAbbreviation(gameInfo.awayTeam, gameInfo.homeTeam, sport)
-      : matchupInfo?.matchup || null;
+    // Get team matchup: prefer structured data > live game data > extracted from description
+    const teamMatchup = structuredMatchup
+      ? formatMatchupAbbreviation(structuredMatchup.split(/[@vs\.]+/)[0]?.trim() || '', structuredMatchup.split(/[@vs\.]+/)[1]?.trim() || '', sport)
+      : gameInfo 
+        ? formatMatchupAbbreviation(gameInfo.awayTeam, gameInfo.homeTeam, sport)
+        : matchupInfo?.matchup || null;
     
     // Format bet label based on bet type
     const getBetLabel = () => {
