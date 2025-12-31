@@ -129,12 +129,23 @@ export function LivePlayerPropCard({ leg, className }: LivePlayerPropCardProps) 
     const getBetLabel = () => {
       const betTypeLower = (betType || '').toLowerCase();
       
+      // Handle moneyline bets first - they should show "TEAM ML"
+      if (betTypeLower.includes('moneyline') || betTypeLower.includes('ml') || cleanDesc.toLowerCase().includes(' ml')) {
+        // Extract team name: "Philadelphia 76ers ML vs Memphis Grizzlies" -> "PHI ML"
+        const mlMatch = cleanDesc.match(/^(.+?)\s*(ML|moneyline)/i);
+        if (mlMatch) {
+          const teamName = mlMatch[1].trim();
+          const abbr = getTeamAbbreviation(teamName, sport);
+          return `${abbr} ML`;
+        }
+        return abbreviateTeamsInDescription(cleanDesc, sport) || 'Moneyline';
+      }
+      
       if (betTypeLower.includes('total')) {
         // For totals: "Over 238.5" or "Under 215.5"
         const sideText = side || (cleanDesc.toLowerCase().includes('under') ? 'Under' : 'Over');
         const capitalizedSide = sideText.charAt(0).toUpperCase() + sideText.slice(1).toLowerCase();
         
-        // Try to get line from prop line, or extract from description
         if (line > 0) return `${capitalizedSide} ${line}`;
         
         const lineMatch = cleanDesc.match(/(\d+\.?\d*)/);
@@ -144,11 +155,10 @@ export function LivePlayerPropCard({ leg, className }: LivePlayerPropCardProps) 
       }
       
       if (betTypeLower.includes('spread')) {
-        // For spreads: abbreviate team name and show spread
         return abbreviateTeamsInDescription(cleanDesc, sport) || cleanDesc;
       }
       
-      // Moneyline or other: abbreviate team names
+      // Other game bets: abbreviate team names
       return abbreviateTeamsInDescription(cleanDesc, sport) || cleanDesc || 'Game Bet';
     };
     
