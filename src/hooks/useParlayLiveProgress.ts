@@ -284,6 +284,25 @@ export function useParlayLiveProgress() {
           }
         }
 
+        // Fallback: try to match by eventTime if available
+        if (!matchedGame && leg.eventTime) {
+          const eventTime = new Date(leg.eventTime);
+          const legSport = (leg.sport || parlay.sport || '').toUpperCase();
+          
+          for (const game of games) {
+            const gameSport = (game.sport || '').toUpperCase();
+            if (legSport && gameSport && gameSport !== legSport) continue;
+            
+            // Match games within 30 minutes of event time
+            const gameTime = new Date(game.startTime);
+            const timeDiff = Math.abs(eventTime.getTime() - gameTime.getTime());
+            if (timeDiff < 30 * 60 * 1000) {
+              matchedGame = game;
+              break;
+            }
+          }
+        }
+
         const currentValue = matchedStat ? getStatValue(matchedStat, propType) : null;
         const gameProgress = matchedGame ? 
           (matchedGame.status === 'in_progress' ? 
