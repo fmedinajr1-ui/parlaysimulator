@@ -77,6 +77,17 @@ const PROP_TO_STAT: Record<string, string | ((s: PlayerStat) => number)> = {
   'turnovers': 'turnovers',
 };
 
+// Normalize game status from various ESPN values
+const normalizeGameStatus = (status: string | undefined): 'scheduled' | 'in_progress' | 'final' | 'halftime' => {
+  if (!status) return 'scheduled';
+  const s = status.toLowerCase();
+  if (s === 'final' || s === 'completed' || s === 'post') return 'final';
+  if (s === 'in_progress' || s === 'live' || s.includes('quarter') || s.includes('period') || s.includes('half') || s.includes('inning')) return 'in_progress';
+  if (s === 'halftime') return 'halftime';
+  // Default: treat as scheduled (including 'pre', 'scheduled', 'postponed', etc.)
+  return 'scheduled';
+};
+
 // Normalize player name for matching
 const normalizePlayerName = (name: string | undefined | null): string => {
   if (!name) return '';
@@ -291,7 +302,7 @@ export function useParlayLiveProgress() {
           side,
           currentValue,
           gameProgress,
-          gameStatus: matchedGame?.status as any || 'scheduled',
+          gameStatus: normalizeGameStatus(matchedGame?.status),
           gameInfo: matchedGame ? {
             homeTeam: matchedGame.homeTeam,
             awayTeam: matchedGame.awayTeam,

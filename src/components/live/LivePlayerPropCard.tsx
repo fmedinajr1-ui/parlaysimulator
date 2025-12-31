@@ -34,6 +34,7 @@ export function LivePlayerPropCard({ leg, className }: LivePlayerPropCardProps) 
 
   const progress = currentValue !== null && line > 0 ? Math.min((currentValue / line) * 100, 150) : 0;
   
+  // Status helpers for player props
   const getStatusColor = () => {
     if (gameStatus === 'scheduled') return 'text-muted-foreground';
     if (isHitting) return 'text-chart-2';
@@ -59,6 +60,32 @@ export function LivePlayerPropCard({ leg, className }: LivePlayerPropCardProps) 
     if (isHitting) return 'HITTING';
     if (isOnPace) return 'On Pace';
     return 'Behind';
+  };
+
+  // Status helpers for game bets (totals, spreads, moneylines)
+  // These can't be evaluated mid-game, only show result when final
+  const getGameBetStatusIcon = () => {
+    if (gameStatus === 'final') {
+      return isHitting ? 
+        <CheckCircle2 className="w-4 h-4 text-chart-2" /> : 
+        <XCircle className="w-4 h-4 text-destructive" />;
+    }
+    if (gameStatus === 'in_progress' || gameStatus === 'halftime') {
+      return <Target className="w-4 h-4 text-chart-4" />;
+    }
+    return <Clock className="w-4 h-4" />;
+  };
+
+  const getGameBetStatusText = () => {
+    if (gameStatus === 'final') return isHitting ? 'HIT' : 'MISS';
+    if (gameStatus === 'in_progress' || gameStatus === 'halftime') return 'Live';
+    return 'Pending';
+  };
+
+  const getGameBetStatusColor = () => {
+    if (gameStatus === 'final') return isHitting ? 'text-chart-2' : 'text-destructive';
+    if (gameStatus === 'in_progress' || gameStatus === 'halftime') return 'text-chart-4';
+    return 'text-muted-foreground';
   };
 
   const formatPropType = (type: string | undefined | null) => {
@@ -112,7 +139,7 @@ export function LivePlayerPropCard({ leg, className }: LivePlayerPropCardProps) 
       <div className={cn('p-3 rounded-lg bg-muted/30 border border-border/30', className)}>
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            {getStatusIcon()}
+            {getGameBetStatusIcon()}
             <div>
               <p className="font-medium text-sm">{betLabel}</p>
               <p className="text-xs text-muted-foreground">
@@ -121,8 +148,8 @@ export function LivePlayerPropCard({ leg, className }: LivePlayerPropCardProps) 
             </div>
           </div>
           <div className="text-right">
-            <span className={cn('text-xs font-medium', getStatusColor())}>
-              {getStatusText()}
+            <span className={cn('text-xs font-medium', getGameBetStatusColor())}>
+              {getGameBetStatusText()}
             </span>
           </div>
         </div>
