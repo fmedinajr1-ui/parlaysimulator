@@ -12,75 +12,111 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 // Parse structured data from legacy description formats
 const parseLegDescription = (desc: string) => {
-  // Clean emojis first
-  const cleanDesc = desc.replace(/[\u{1F300}-\u{1F9FF}]/gu, '').trim();
+  const cleanDesc = desc.replace(/[✅❌🔥⚡🌅🏥⭐🎯💰🔒📈📉🔄🎲🏀🏈⚾🏒]/g, '').trim();
   
   // Player prop patterns
   const propPatterns = [
-    // "Tyrese Maxey assists O6.5" or "Joel Embiid points O35.5"
-    /^(.+?)\s+(points|assists|rebounds|threes|blocks|steals|pts\+reb\+ast|points_rebounds_assists|pra)\s*(O|U|Over|Under)\s*(\d+\.?\d*)/i,
-    // "LaMelo Ball Over 21.5 Player Points"
-    /^(.+?)\s+(Over|Under)\s+(\d+\.?\d*)\s+(?:Player\s+)?(Points|Assists|Rebounds|Threes|Blocks|Steals)/i,
-    // "Player Name O/U line propType"
-    /^(.+?)\s+(O|U)\s*(\d+\.?\d*)\s+(points|assists|rebounds|threes|blocks|steals)/i,
+    /^(.+?)\s+(points|assists|rebounds|threes|blocks|steals|pts\+reb\+ast|points_rebounds_assists|player_points|player_assists|player_rebounds)\s*(O|U|Over|Under)?\s*(\d+\.?\d*)/i,
+    /^(.+?)\s+(Over|Under)\s+(\d+\.?\d*)\s+Player\s+(Points|Assists|Rebounds)/i,
   ];
   
   for (const pattern of propPatterns) {
     const match = cleanDesc.match(pattern);
     if (match) {
       const isAltPattern = pattern.toString().includes('Player');
-      const isThirdPattern = pattern.toString().endsWith('/i') && pattern.toString().includes('(O|U)\\s*(\\d');
-      
-      let playerName, propType, side, line;
-      
-      if (isAltPattern) {
-        playerName = match[1]?.trim();
-        side = match[2]?.toLowerCase().startsWith('o') ? 'over' : 'under';
-        line = parseFloat(match[3]);
-        propType = match[4]?.toLowerCase();
-      } else if (isThirdPattern) {
-        playerName = match[1]?.trim();
-        side = match[2]?.toLowerCase() === 'o' ? 'over' : 'under';
-        line = parseFloat(match[3]);
-        propType = match[4]?.toLowerCase();
-      } else {
-        playerName = match[1]?.trim();
-        propType = match[2]?.toLowerCase();
-        side = match[3]?.toLowerCase().startsWith('o') ? 'over' : 'under';
-        line = parseFloat(match[4]);
-      }
-      
-      return { playerName, propType, side, line, awayTeam: null, homeTeam: null };
+      return {
+        playerName: match[1]?.trim(),
+        propType: isAltPattern ? match[4]?.toLowerCase() : match[2]?.toLowerCase(),
+        side: (isAltPattern ? match[2] : match[3])?.toLowerCase()?.startsWith('o') ? 'over' : 'under',
+        line: parseFloat(isAltPattern ? match[3] : match[4]),
+        awayTeam: null,
+        homeTeam: null,
+        isPlayerProp: true,
+      };
     }
   }
   
-  // Moneyline/game pattern: "Team A @ Team B ML" or "Team A vs Team B"
-  const gameMatch = cleanDesc.match(/(.+?)\s*(ML|spread|moneyline|@|vs\.?)\s*(.+)/i);
-  if (gameMatch) {
+  // Moneyline pattern: "Team Name ML vs Other Team"
+  const mlMatch = cleanDesc.match(/^(.+?)\s*(ML|moneyline)\s*(vs\.?|@)?\s*(.+)?/i);
+  if (mlMatch) {
     return {
       playerName: null,
       propType: 'moneyline',
       side: null,
       line: null,
-      awayTeam: gameMatch[1]?.trim(),
-      homeTeam: gameMatch[3]?.trim().replace(/\s*(ML|spread|moneyline)$/i, ''),
+      awayTeam: mlMatch[1]?.trim(),
+      homeTeam: mlMatch[4]?.trim() || null,
+      isPlayerProp: false,
     };
   }
   
-  return { playerName: null, propType: null, side: null, line: null, awayTeam: null, homeTeam: null };
+  // Total pattern: "Over 238.5" or "Under 215.5"
+  const totalMatch = cleanDesc.match(/(Over|Under)\s*(\d+\.?\d*)/i);
+  if (totalMatch) {
+    return {
+      playerName: null,
+      propType: 'total',
+      side: totalMatch[1].toLowerCase(),
+      line: parseFloat(totalMatch[2]),
+      awayTeam: null,
+      homeTeam: null,
+      isPlayerProp: false,
+    };
+  }
+  
+  return { playerName: null, propType: null, side: null, line: null, awayTeam: null, homeTeam: null, isPlayerProp: false };
 };
 
-// Create a normalized bet key for deduplication
-const normalizeBetKey = (leg: LegLiveProgress): string => {
+// Create a GLOBAL unique bet identifier for deduplication across ALL parlays
+const getUniqueBetId = (leg: LegLiveProgress): string => {
+  const cleanDesc = (leg.description || '')
+    .replace(/[✅❌🔥⚡🌅🏥⭐🎯💰🔒📈📉🔄🎲🏀🏈⚾🏒]/g, '')
+    .trim()
+    .toLowerCase();
+  
   const parsed = parseLegDescription(leg.description || '');
+  const betTypeLower = (leg.betType || parsed.propType || '').toLowerCase();
   
-  const player = (leg.playerName || parsed.playerName || '').toLowerCase().trim();
-  const type = (leg.betType || parsed.propType || '').toLowerCase();
-  const side = (leg.side || parsed.side || '').toLowerCase();
-  const line = leg.line ?? parsed.line ?? 0;
+  // For moneylines: use cleaned description as key
+  if (betTypeLower.includes('moneyline') || betTypeLower.includes('ml') || cleanDesc.includes(' ml ')) {
+    return `ml|${cleanDesc.replace(/\s+/g, '')}`;
+  }
   
-  // Key: player|type|side|line
-  return `${player}|${type}|${side}|${line}`;
+  // For totals: use side + line
+  if (betTypeLower.includes('total') || parsed.propType === 'total') {
+    const side = leg.side || parsed.side || 'over';
+    const lineVal = leg.line ?? parsed.line ?? 0;
+    return `total|${side}|${lineVal}`;
+  }
+  
+  // For player props: use player + propType + side + line
+  const player = (leg.playerName || parsed.playerName || '').toLowerCase().replace(/\s+/g, '');
+  const type = leg.betType || parsed.propType || '';
+  const side = leg.side || parsed.side || '';
+  const lineVal = leg.line ?? parsed.line ?? 0;
+  
+  if (player) {
+    return `prop|${player}|${type}|${side}|${lineVal}`;
+  }
+  
+  // Fallback: use cleaned description hash
+  return `other|${cleanDesc.replace(/\s+/g, '')}`;
+};
+
+// Helper to create a stable game key from various sources
+const getGameKey = (leg: LegLiveProgress): string => {
+  if (leg.eventId) return leg.eventId;
+  if (leg.gameInfo) return `${leg.gameInfo.awayTeam}@${leg.gameInfo.homeTeam}`.toLowerCase();
+  if (leg.matchup) return leg.matchup.replace(/\s+/g, '').toLowerCase();
+  
+  // Parse from description as fallback
+  const parsed = parseLegDescription(leg.description || '');
+  if (parsed.awayTeam && parsed.homeTeam) {
+    return `${parsed.awayTeam}@${parsed.homeTeam}`.toLowerCase();
+  }
+  
+  // Last resort: normalized description prefix
+  return (leg.description || 'unknown').substring(0, 30).toLowerCase().replace(/[\u{1F300}-\u{1F9FF}]/gu, '');
 };
 
 export function LiveBettingDashboard() {
@@ -97,43 +133,29 @@ export function LiveBettingDashboard() {
     triggerSync,
   } = useParlayLiveProgress();
 
-  const allLiveLegs = liveParlays.flatMap(p => 
+  // Get all live legs and GLOBALLY deduplicate BEFORE grouping by game
+  const allLiveLegsRaw = liveParlays.flatMap(p => 
     p.legs.filter(l => l.gameStatus === 'in_progress')
   );
+  
+  // Global deduplication - ensure each unique bet only appears once
+  const seenBetIds = new Set<string>();
+  const allLiveLegs = allLiveLegsRaw.filter(leg => {
+    const betId = getUniqueBetId(leg);
+    if (seenBetIds.has(betId)) return false;
+    seenBetIds.add(betId);
+    return true;
+  });
 
-  // Helper to create a stable game key from various sources
-  const getGameKey = (leg: typeof allLiveLegs[0]): string => {
-    if (leg.eventId) return leg.eventId;
-    if (leg.gameInfo) return `${leg.gameInfo.awayTeam}@${leg.gameInfo.homeTeam}`.toLowerCase();
-    if (leg.matchup) return leg.matchup.replace(/\s+/g, '').toLowerCase();
-    
-    // Parse from description as fallback
-    const parsed = parseLegDescription(leg.description || '');
-    if (parsed.awayTeam && parsed.homeTeam) {
-      return `${parsed.awayTeam}@${parsed.homeTeam}`.toLowerCase();
-    }
-    
-    // Last resort: normalized description prefix
-    return (leg.description || 'unknown').substring(0, 30).toLowerCase().replace(/[\u{1F300}-\u{1F9FF}]/gu, '');
-  };
-
-  // Group legs by game AND deduplicate within each game
+  // Group deduplicated legs by game
   const legsByGame = allLiveLegs.reduce((acc, leg) => {
     const key = getGameKey(leg);
     if (!acc[key]) {
-      acc[key] = { gameInfo: leg.gameInfo, legs: [], seenBets: new Set<string>() };
+      acc[key] = { gameInfo: leg.gameInfo, legs: [] };
     }
-    
-    // Create normalized unique key for this bet
-    const betKey = normalizeBetKey(leg);
-    
-    if (!acc[key].seenBets.has(betKey)) {
-      acc[key].seenBets.add(betKey);
-      acc[key].legs.push(leg);
-    }
-    
+    acc[key].legs.push(leg);
     return acc;
-  }, {} as Record<string, { gameInfo: any; legs: typeof allLiveLegs; seenBets: Set<string> }>);
+  }, {} as Record<string, { gameInfo: any; legs: typeof allLiveLegs }>);
 
   const handleSync = async () => {
     setIsSyncing(true);
