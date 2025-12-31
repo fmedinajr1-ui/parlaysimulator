@@ -1,15 +1,91 @@
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { RefreshCw, Wifi, WifiOff, Radio, Clock, Zap, TrendingUp } from 'lucide-react';
-import { useParlayLiveProgress } from '@/hooks/useParlayLiveProgress';
+import { useParlayLiveProgress, LegLiveProgress } from '@/hooks/useParlayLiveProgress';
 import { LiveParlayCard } from './LiveParlayCard';
 import { LivePlayerPropCard } from './LivePlayerPropCard';
 import { formatDistanceToNow } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 
+// Parse structured data from legacy description formats
+const parseLegDescription = (desc: string) => {
+  // Clean emojis first
+  const cleanDesc = desc.replace(/[\u{1F300}-\u{1F9FF}]/gu, '').trim();
+  
+  // Player prop patterns
+  const propPatterns = [
+    // "Tyrese Maxey assists O6.5" or "Joel Embiid points O35.5"
+    /^(.+?)\s+(points|assists|rebounds|threes|blocks|steals|pts\+reb\+ast|points_rebounds_assists|pra)\s*(O|U|Over|Under)\s*(\d+\.?\d*)/i,
+    // "LaMelo Ball Over 21.5 Player Points"
+    /^(.+?)\s+(Over|Under)\s+(\d+\.?\d*)\s+(?:Player\s+)?(Points|Assists|Rebounds|Threes|Blocks|Steals)/i,
+    // "Player Name O/U line propType"
+    /^(.+?)\s+(O|U)\s*(\d+\.?\d*)\s+(points|assists|rebounds|threes|blocks|steals)/i,
+  ];
+  
+  for (const pattern of propPatterns) {
+    const match = cleanDesc.match(pattern);
+    if (match) {
+      const isAltPattern = pattern.toString().includes('Player');
+      const isThirdPattern = pattern.toString().endsWith('/i') && pattern.toString().includes('(O|U)\\s*(\\d');
+      
+      let playerName, propType, side, line;
+      
+      if (isAltPattern) {
+        playerName = match[1]?.trim();
+        side = match[2]?.toLowerCase().startsWith('o') ? 'over' : 'under';
+        line = parseFloat(match[3]);
+        propType = match[4]?.toLowerCase();
+      } else if (isThirdPattern) {
+        playerName = match[1]?.trim();
+        side = match[2]?.toLowerCase() === 'o' ? 'over' : 'under';
+        line = parseFloat(match[3]);
+        propType = match[4]?.toLowerCase();
+      } else {
+        playerName = match[1]?.trim();
+        propType = match[2]?.toLowerCase();
+        side = match[3]?.toLowerCase().startsWith('o') ? 'over' : 'under';
+        line = parseFloat(match[4]);
+      }
+      
+      return { playerName, propType, side, line, awayTeam: null, homeTeam: null };
+    }
+  }
+  
+  // Moneyline/game pattern: "Team A @ Team B ML" or "Team A vs Team B"
+  const gameMatch = cleanDesc.match(/(.+?)\s*(ML|spread|moneyline|@|vs\.?)\s*(.+)/i);
+  if (gameMatch) {
+    return {
+      playerName: null,
+      propType: 'moneyline',
+      side: null,
+      line: null,
+      awayTeam: gameMatch[1]?.trim(),
+      homeTeam: gameMatch[3]?.trim().replace(/\s*(ML|spread|moneyline)$/i, ''),
+    };
+  }
+  
+  return { playerName: null, propType: null, side: null, line: null, awayTeam: null, homeTeam: null };
+};
+
+// Create a normalized bet key for deduplication
+const normalizeBetKey = (leg: LegLiveProgress): string => {
+  const parsed = parseLegDescription(leg.description || '');
+  
+  const player = (leg.playerName || parsed.playerName || '').toLowerCase().trim();
+  const type = (leg.betType || parsed.propType || '').toLowerCase();
+  const side = (leg.side || parsed.side || '').toLowerCase();
+  const line = leg.line ?? parsed.line ?? 0;
+  
+  // Key: player|type|side|line
+  return `${player}|${type}|${side}|${line}`;
+};
+
 export function LiveBettingDashboard() {
+  const [isSyncing, setIsSyncing] = useState(false);
+  
   const {
     parlayProgress,
     liveParlays,
@@ -28,15 +104,17 @@ export function LiveBettingDashboard() {
   // Helper to create a stable game key from various sources
   const getGameKey = (leg: typeof allLiveLegs[0]): string => {
     if (leg.eventId) return leg.eventId;
-    if (leg.gameInfo) return `${leg.gameInfo.awayTeam}@${leg.gameInfo.homeTeam}`;
+    if (leg.gameInfo) return `${leg.gameInfo.awayTeam}@${leg.gameInfo.homeTeam}`.toLowerCase();
     if (leg.matchup) return leg.matchup.replace(/\s+/g, '').toLowerCase();
     
-    // Extract from description as last resort
-    const desc = (leg.description || '').toLowerCase();
-    const teamMatch = desc.match(/([a-z\s]+)\s*[@vs\.]+\s*([a-z\s]+)/i);
-    if (teamMatch) return `${teamMatch[1].trim()}@${teamMatch[2].trim()}`;
+    // Parse from description as fallback
+    const parsed = parseLegDescription(leg.description || '');
+    if (parsed.awayTeam && parsed.homeTeam) {
+      return `${parsed.awayTeam}@${parsed.homeTeam}`.toLowerCase();
+    }
     
-    return 'unknown';
+    // Last resort: normalized description prefix
+    return (leg.description || 'unknown').substring(0, 30).toLowerCase().replace(/[\u{1F300}-\u{1F9FF}]/gu, '');
   };
 
   // Group legs by game AND deduplicate within each game
@@ -46,8 +124,8 @@ export function LiveBettingDashboard() {
       acc[key] = { gameInfo: leg.gameInfo, legs: [], seenBets: new Set<string>() };
     }
     
-    // Create unique key for this specific bet (to avoid duplicates)
-    const betKey = `${leg.description}-${leg.betType}-${leg.side}-${leg.line}`;
+    // Create normalized unique key for this bet
+    const betKey = normalizeBetKey(leg);
     
     if (!acc[key].seenBets.has(betKey)) {
       acc[key].seenBets.add(betKey);
@@ -58,7 +136,12 @@ export function LiveBettingDashboard() {
   }, {} as Record<string, { gameInfo: any; legs: typeof allLiveLegs; seenBets: Set<string> }>);
 
   const handleSync = async () => {
-    await triggerSync();
+    setIsSyncing(true);
+    try {
+      await triggerSync();
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
   if (isLoading) {
@@ -97,13 +180,14 @@ export function LiveBettingDashboard() {
           )}
         </div>
         <Button 
-          variant="ghost" 
+          variant="outline" 
           size="sm" 
           onClick={handleSync}
+          disabled={isSyncing}
           className="gap-2"
         >
-          <RefreshCw className="w-4 h-4" />
-          Sync
+          <RefreshCw className={cn("w-4 h-4", isSyncing && "animate-spin")} />
+          {isSyncing ? 'Refreshing...' : 'Refresh'}
         </Button>
       </div>
 
