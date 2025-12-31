@@ -393,33 +393,33 @@ serve(async (req) => {
     logStep("Defense data loaded", { teamCount: defenseDataMap.size });
     
     const today = new Date().toISOString().split('T')[0];
+    const MAX_PARLAYS = 5; // Generate up to 5 diverse parlays
     
-    // Check if we already have a parlay for today
-    const { data: existingParlay } = await supabaseClient
+    // Check if we already have parlays for today
+    const { data: existingParlays } = await supabaseClient
       .from('daily_elite_parlays')
       .select('id')
-      .eq('parlay_date', today)
-      .maybeSingle();
+      .eq('parlay_date', today);
     
-    if (existingParlay && !force) {
-      logStep("Parlay already exists for today", { id: existingParlay.id });
+    if (existingParlays && existingParlays.length >= MAX_PARLAYS && !force) {
+      logStep("Parlays already exist for today", { count: existingParlays.length });
       return new Response(JSON.stringify({ 
         success: true, 
         message: "Already generated for today",
-        parlayId: existingParlay.id 
+        parlayCount: existingParlays.length 
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,
       });
     }
     
-    // If force=true, delete existing parlay to regenerate
-    if (existingParlay && force) {
-      logStep("Force regeneration requested, deleting existing parlay", { id: existingParlay.id });
+    // If force=true, delete existing parlays to regenerate
+    if (existingParlays && existingParlays.length > 0 && force) {
+      logStep("Force regeneration requested, deleting existing parlays", { count: existingParlays.length });
       await supabaseClient
         .from('daily_elite_parlays')
         .delete()
-        .eq('id', existingParlay.id);
+        .eq('parlay_date', today);
     }
     
     // =====================================================
@@ -753,86 +753,44 @@ serve(async (req) => {
       });
     }
     
-    const bestCombo = qualityCombinations[0];
+    // Select up to MAX_PARLAYS diverse parlays with player overlap limits
+    const selectedParlays: Combination[] = [];
+    const usedPlayerCounts = new Map<string, number>();
     
-    logStep("Best combination selected", {
-      slipScore: bestCombo.slipScore.toFixed(4),
-      combinedProbability: (bestCombo.combinedProbability * 100).toFixed(2) + '%',
-      legs: bestCombo.legs.map(l => `${l.playerName} ${l.propType} ${l.side} ${l.line} (${(l.p_leg * 100).toFixed(0)}%)`)
-    });
-    
-    // Generate AI selection rationale
-    const engineCounts: Record<string, number> = {};
-    bestCombo.legs.forEach(leg => {
-      leg.engines.forEach(e => {
-        engineCounts[e] = (engineCounts[e] || 0) + 1;
+    for (const combo of qualityCombinations) {
+      if (selectedParlays.length >= MAX_PARLAYS) break;
+      
+      const comboPlayers = combo.legs.map(l => l.playerName);
+      
+      // Check how many times each player appears in already-selected parlays
+      let maxPlayerReuse = 0;
+      for (const player of comboPlayers) {
+        maxPlayerReuse = Math.max(maxPlayerReuse, usedPlayerCounts.get(player) || 0);
+      }
+      
+      // Allow player to appear in max 2 parlays total for diversity
+      if (maxPlayerReuse >= 2) continue;
+      
+      selectedParlays.push(combo);
+      comboPlayers.forEach(p => {
+        usedPlayerCounts.set(p, (usedPlayerCounts.get(p) || 0) + 1);
       });
-    });
-    
-    const topEngines = Object.entries(engineCounts)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 2)
-      .map(([name, count]) => `${name} (${count} legs)`);
-    
-    const avgLegProb = bestCombo.legs.reduce((sum, l) => sum + l.p_leg, 0) / 3;
-    const avgEdge = bestCombo.legs.reduce((sum, l) => sum + (l.edge || 0), 0) / 3;
-    
-    const selectionRationale = `Selected from ${validCombinations.length} valid combinations based on SlipScore optimization. ` +
-      `This parlay has a ${(bestCombo.combinedProbability * 100).toFixed(1)}% combined probability with ` +
-      `${(avgLegProb * 100).toFixed(0)}% average leg confidence. ` +
-      `Primary engine signals: ${topEngines.join(', ')}. ` +
-      `Total edge: +${bestCombo.totalEdge.toFixed(1)}%, Variance penalty: ${bestCombo.variancePenalty.toFixed(2)}.`;
-    
-    logStep("Selection rationale generated", { rationale: selectionRationale });
-    
-    // Calculate total odds
-    let totalOdds = 1;
-    for (const leg of bestCombo.legs) {
-      const decimalOdds = leg.odds < 0 
-        ? 1 + (100 / Math.abs(leg.odds))
-        : 1 + (leg.odds / 100);
-      totalOdds *= decimalOdds;
     }
-    const americanOdds = totalOdds >= 2 
-      ? Math.round((totalOdds - 1) * 100)
-      : Math.round(-100 / (totalOdds - 1));
     
-    // Format legs for storage
-    const formattedLegs = bestCombo.legs.map(leg => ({
-      id: leg.id,
-      playerName: leg.playerName,
-      propType: leg.propType,
-      line: leg.line,
-      side: leg.side,
-      odds: leg.odds,
-      sport: leg.sport,
-      eventId: leg.eventId,
-      gameDescription: leg.gameDescription,
-      commenceTime: leg.commenceTime,
-      p_leg: leg.p_leg,
-      edge: leg.edge,
-      engines: leg.engines,
-    }));
+    logStep("Selected diverse parlays", { 
+      count: selectedParlays.length,
+      uniquePlayers: usedPlayerCounts.size
+    });
     
-    const legProbabilities: Record<string, number> = {};
-    const legEdges: Record<string, number> = {};
-    const engineConsensus = [];
-    const sports = new Set<string>();
-    const allEngines = new Set<string>();
-    
-    for (let i = 0; i < bestCombo.legs.length; i++) {
-      const leg = bestCombo.legs[i];
-      const key = `leg${i + 1}`;
-      legProbabilities[key] = leg.p_leg;
-      legEdges[key] = leg.edge;
-      engineConsensus.push({
-        leg: key,
-        playerName: leg.playerName,
-        engines: leg.engines,
-        confidence: leg.p_leg
+    if (selectedParlays.length === 0) {
+      logStep("No diverse parlays could be selected");
+      return new Response(JSON.stringify({ 
+        success: false, 
+        message: "Could not select diverse parlays meeting quality criteria"
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200,
       });
-      sports.add(leg.sport);
-      leg.engines.forEach(e => allEngines.add(e));
     }
     
     // Get current generation round
@@ -845,48 +803,134 @@ serve(async (req) => {
     
     const generationRound = (latestParlay?.generation_round || 0) + 1;
     
-    // Save to database with selection rationale
-    const { data: newParlay, error: insertError } = await supabaseClient
-      .from('daily_elite_parlays')
-      .insert({
-        parlay_date: today,
-        legs: formattedLegs,
-        slip_score: bestCombo.slipScore,
-        combined_probability: bestCombo.combinedProbability,
-        total_edge: bestCombo.totalEdge,
-        variance_penalty: bestCombo.variancePenalty,
-        leg_probabilities: legProbabilities,
-        leg_edges: legEdges,
-        engine_consensus: engineConsensus,
-        total_odds: americanOdds,
-        sports: Array.from(sports),
-        source_engines: Array.from(allEngines),
-        generation_round: generationRound,
-        selection_rationale: selectionRationale,
-      })
-      .select()
-      .single();
+    // Save all selected parlays with rank
+    const savedParlays = [];
     
-    if (insertError) {
-      logStep("Error saving parlay", { error: insertError.message });
-      throw new Error(`Failed to save parlay: ${insertError.message}`);
+    for (let rank = 0; rank < selectedParlays.length; rank++) {
+      const combo = selectedParlays[rank];
+      
+      logStep(`Saving parlay rank ${rank + 1}`, {
+        slipScore: combo.slipScore.toFixed(4),
+        combinedProbability: (combo.combinedProbability * 100).toFixed(2) + '%',
+        legs: combo.legs.map(l => `${l.playerName} ${l.propType} ${l.side} ${l.line}`)
+      });
+      
+      // Generate AI selection rationale
+      const engineCounts: Record<string, number> = {};
+      combo.legs.forEach(leg => {
+        leg.engines.forEach(e => {
+          engineCounts[e] = (engineCounts[e] || 0) + 1;
+        });
+      });
+      
+      const topEngines = Object.entries(engineCounts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 2)
+        .map(([name, count]) => `${name} (${count} legs)`);
+      
+      const avgLegProb = combo.legs.reduce((sum, l) => sum + l.p_leg, 0) / 3;
+      
+      const selectionRationale = rank === 0 
+        ? `#1 PRIMARY PICK: Selected from ${validCombinations.length} valid combinations. ` +
+          `${(combo.combinedProbability * 100).toFixed(1)}% combined probability, ` +
+          `${(avgLegProb * 100).toFixed(0)}% avg leg confidence. Engines: ${topEngines.join(', ')}.`
+        : `#${rank + 1} ALTERNATIVE: Diverse option with ${(combo.combinedProbability * 100).toFixed(1)}% combined probability. ` +
+          `Engines: ${topEngines.join(', ')}. Total edge: +${combo.totalEdge.toFixed(1)}%.`;
+      
+      // Calculate total odds
+      let totalOdds = 1;
+      for (const leg of combo.legs) {
+        const decimalOdds = leg.odds < 0 
+          ? 1 + (100 / Math.abs(leg.odds))
+          : 1 + (leg.odds / 100);
+        totalOdds *= decimalOdds;
+      }
+      const americanOdds = totalOdds >= 2 
+        ? Math.round((totalOdds - 1) * 100)
+        : Math.round(-100 / (totalOdds - 1));
+      
+      // Format legs for storage
+      const formattedLegs = combo.legs.map(leg => ({
+        id: leg.id,
+        playerName: leg.playerName,
+        propType: leg.propType,
+        line: leg.line,
+        side: leg.side,
+        odds: leg.odds,
+        sport: leg.sport,
+        eventId: leg.eventId,
+        gameDescription: leg.gameDescription,
+        commenceTime: leg.commenceTime,
+        p_leg: leg.p_leg,
+        edge: leg.edge,
+        engines: leg.engines,
+      }));
+      
+      const legProbabilities: Record<string, number> = {};
+      const legEdges: Record<string, number> = {};
+      const engineConsensus = [];
+      const sports = new Set<string>();
+      const allEngines = new Set<string>();
+      
+      for (let i = 0; i < combo.legs.length; i++) {
+        const leg = combo.legs[i];
+        const key = `leg${i + 1}`;
+        legProbabilities[key] = leg.p_leg;
+        legEdges[key] = leg.edge;
+        engineConsensus.push({
+          leg: key,
+          playerName: leg.playerName,
+          engines: leg.engines,
+          confidence: leg.p_leg
+        });
+        sports.add(leg.sport);
+        leg.engines.forEach(e => allEngines.add(e));
+      }
+      
+      // Save to database with rank
+      const { data: newParlay, error: insertError } = await supabaseClient
+        .from('daily_elite_parlays')
+        .insert({
+          parlay_date: today,
+          legs: formattedLegs,
+          slip_score: combo.slipScore,
+          combined_probability: combo.combinedProbability,
+          total_edge: combo.totalEdge,
+          variance_penalty: combo.variancePenalty,
+          leg_probabilities: legProbabilities,
+          leg_edges: legEdges,
+          engine_consensus: engineConsensus,
+          total_odds: americanOdds,
+          sports: Array.from(sports),
+          source_engines: Array.from(allEngines),
+          generation_round: generationRound,
+          selection_rationale: selectionRationale,
+          rank: rank + 1, // 1-based ranking
+        })
+        .select()
+        .single();
+      
+      if (insertError) {
+        logStep(`Error saving parlay rank ${rank + 1}`, { error: insertError.message });
+        continue;
+      }
+      
+      savedParlays.push(newParlay);
     }
     
-    logStep("Daily Elite Hitter generated successfully", { 
-      id: newParlay.id,
-      combinedProbability: (bestCombo.combinedProbability * 100).toFixed(2) + '%',
-      totalOdds: americanOdds
+    logStep("Daily Elite Hitter generation complete", { 
+      savedCount: savedParlays.length,
+      primaryId: savedParlays[0]?.id
     });
     
     return new Response(JSON.stringify({ 
       success: true, 
-      parlay: newParlay,
+      parlays: savedParlays,
       stats: {
         eligiblePicks: eligiblePicks.length,
         highConfidencePicks: highConfidencePicks.length,
         validCombinations: validCombinations.length,
-        combinedProbability: bestCombo.combinedProbability,
-        slipScore: bestCombo.slipScore
+        savedParlays: savedParlays.length
       }
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
