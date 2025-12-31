@@ -1,6 +1,6 @@
 import { cn } from '@/lib/utils';
 import { motion } from 'framer-motion';
-import { TrendingUp, TrendingDown, Minus, CheckCircle2, XCircle, Clock } from 'lucide-react';
+import { TrendingUp, TrendingDown, CheckCircle2, XCircle, Clock, Target } from 'lucide-react';
 import { LegLiveProgress } from '@/hooks/useParlayLiveProgress';
 
 interface LivePlayerPropCardProps {
@@ -15,15 +15,17 @@ export function LivePlayerPropCard({ leg, className }: LivePlayerPropCardProps) 
     line,
     side,
     currentValue,
-    gameProgress,
     gameStatus,
     gameInfo,
     isHitting,
     isOnPace,
     projectedFinal,
+    isPlayerProp,
+    description,
+    betType,
   } = leg;
 
-  const progress = currentValue !== null ? Math.min((currentValue / line) * 100, 150) : 0;
+  const progress = currentValue !== null && line > 0 ? Math.min((currentValue / line) * 100, 150) : 0;
   
   const getStatusColor = () => {
     if (gameStatus === 'scheduled') return 'text-muted-foreground';
@@ -52,7 +54,8 @@ export function LivePlayerPropCard({ leg, className }: LivePlayerPropCardProps) 
     return 'Behind';
   };
 
-  const formatPropType = (type: string) => {
+  const formatPropType = (type: string | undefined | null) => {
+    if (!type) return '';
     return type
       .replace(/_/g, ' ')
       .replace(/player/i, '')
@@ -62,6 +65,30 @@ export function LivePlayerPropCard({ leg, className }: LivePlayerPropCardProps) 
       .join(' ');
   };
 
+  // Render game bet (moneyline, spread, total) differently from player props
+  if (!isPlayerProp) {
+    return (
+      <div className={cn('p-3 rounded-lg bg-muted/30 border border-border/30', className)}>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Target className="w-4 h-4 text-muted-foreground" />
+            <div>
+              <p className="font-medium text-sm">{description || 'Game Bet'}</p>
+              <p className="text-xs text-muted-foreground">
+                {betType ? betType.replace(/_/g, ' ').toUpperCase() : 'BET'}
+              </p>
+            </div>
+          </div>
+          <div className="text-right">
+            <span className="text-xs text-muted-foreground">
+              {gameInfo ? `${gameInfo.awayTeam} @ ${gameInfo.homeTeam}` : 'Pending'}
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={cn('p-3 rounded-lg bg-muted/30 border border-border/30', className)}>
       <div className="flex items-start justify-between gap-2 mb-2">
@@ -70,7 +97,7 @@ export function LivePlayerPropCard({ leg, className }: LivePlayerPropCardProps) 
           <div>
             <p className="font-medium text-sm">{playerName}</p>
             <p className="text-xs text-muted-foreground">
-              {formatPropType(propType)} {side.toUpperCase()} {line}
+              {formatPropType(propType)} {side?.toUpperCase() || ''} {line}
             </p>
           </div>
         </div>
