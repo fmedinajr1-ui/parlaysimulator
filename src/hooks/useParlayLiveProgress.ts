@@ -25,6 +25,9 @@ export interface LegLiveProgress {
   isOnPace: boolean;
   projectedFinal: number | null;
   eventId: string | null;
+  isPlayerProp: boolean;
+  description: string;
+  betType: string;
 }
 
 export interface ParlayLiveProgress {
@@ -183,6 +186,23 @@ export function useParlayLiveProgress() {
     }
   }, [pendingParlays.length]);
 
+  // Detect if leg is a player prop vs game bet
+  const isPlayerPropLeg = (leg: any): boolean => {
+    const betType = (leg.betType || leg.bet_type || '').toLowerCase();
+    const description = (leg.description || '').toLowerCase();
+    const playerName = leg.playerName || leg.player_name || leg.player || '';
+    
+    // Has explicit player name
+    if (playerName && playerName.length > 0) return true;
+    
+    // Bet type indicates player prop
+    if (betType.includes('player')) return true;
+    
+    // Description contains player stat keywords
+    const statKeywords = ['points', 'rebounds', 'assists', 'blocks', 'steals', 'threes', '3pm', 'pts', 'reb', 'ast'];
+    return statKeywords.some(kw => description.includes(kw));
+  };
+
   // Match parlays to live games
   const parlayProgress = useMemo((): ParlayLiveProgress[] => {
     return pendingParlays.map(parlay => {
@@ -190,7 +210,10 @@ export function useParlayLiveProgress() {
         const playerName = leg.playerName || leg.player_name || leg.player || '';
         const propType = leg.propType || leg.prop_type || leg.market || '';
         const line = parseFloat(leg.line) || 0;
-        const side = (leg.side || leg.pick || 'over').toLowerCase() as 'over' | 'under';
+        const side = ((leg.side || leg.pick || 'over').toLowerCase() || 'over') as 'over' | 'under';
+        const description = leg.description || '';
+        const betType = leg.betType || leg.bet_type || '';
+        const isPlayerProp = isPlayerPropLeg(leg);
 
         // Find matching player in live games
         let matchedStat: PlayerStat | null = null;
@@ -247,6 +270,9 @@ export function useParlayLiveProgress() {
           isOnPace,
           projectedFinal,
           eventId: matchedGame?.eventId || null,
+          isPlayerProp,
+          description,
+          betType,
         };
       });
 
