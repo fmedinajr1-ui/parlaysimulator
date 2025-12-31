@@ -28,6 +28,7 @@ export interface LegLiveProgress {
   isPlayerProp: boolean;
   description: string;
   betType: string;
+  sport: string;
 }
 
 export interface ParlayLiveProgress {
@@ -242,6 +243,28 @@ export function useParlayLiveProgress() {
           }
         }
 
+        // For non-player props (totals, spreads, ML), try to match by team name in description
+        if (!isPlayerProp && !matchedGame && description) {
+          const descLower = description.toLowerCase();
+          
+          for (const game of games) {
+            const homeTeam = (game.homeTeam || '').toLowerCase();
+            const awayTeam = (game.awayTeam || '').toLowerCase();
+            
+            // Get last word of team name (usually unique identifier like "Lakers", "Warriors")
+            const homeWords = homeTeam.split(' ').filter(w => w.length > 3);
+            const awayWords = awayTeam.split(' ').filter(w => w.length > 3);
+            
+            const matchesHome = homeWords.some(word => descLower.includes(word));
+            const matchesAway = awayWords.some(word => descLower.includes(word));
+            
+            if (matchesHome || matchesAway) {
+              matchedGame = game;
+              break;
+            }
+          }
+        }
+
         const currentValue = matchedStat ? getStatValue(matchedStat, propType) : null;
         const gameProgress = matchedGame ? 
           (matchedGame.status === 'in_progress' ? 
@@ -284,6 +307,7 @@ export function useParlayLiveProgress() {
           isPlayerProp,
           description,
           betType,
+          sport: leg.sport || parlay.sport || '',
         };
       });
 

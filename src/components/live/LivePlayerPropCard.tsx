@@ -2,6 +2,12 @@ import { cn } from '@/lib/utils';
 import { motion } from 'framer-motion';
 import { TrendingUp, TrendingDown, CheckCircle2, XCircle, Clock, Target } from 'lucide-react';
 import { LegLiveProgress } from '@/hooks/useParlayLiveProgress';
+import { 
+  extractMatchupFromDescription, 
+  abbreviateTeamsInDescription,
+  formatMatchupAbbreviation,
+  getTeamAbbreviation
+} from '@/lib/team-abbreviations';
 
 interface LivePlayerPropCardProps {
   leg: LegLiveProgress;
@@ -23,6 +29,7 @@ export function LivePlayerPropCard({ leg, className }: LivePlayerPropCardProps) 
     isPlayerProp,
     description,
     betType,
+    sport,
   } = leg;
 
   const progress = currentValue !== null && line > 0 ? Math.min((currentValue / line) * 100, 150) : 0;
@@ -67,21 +74,55 @@ export function LivePlayerPropCard({ leg, className }: LivePlayerPropCardProps) 
 
   // Render game bet (moneyline, spread, total) differently from player props
   if (!isPlayerProp) {
+    // Clean description - remove checkmarks/emojis
+    const cleanDesc = (description || '').replace(/[✅❌🔥⚡]/g, '').trim();
+    
+    // Try to extract matchup from description
+    const matchupInfo = extractMatchupFromDescription(cleanDesc, sport);
+    
+    // Get team matchup from gameInfo (matched live game) or extracted from description
+    const teamMatchup = gameInfo 
+      ? formatMatchupAbbreviation(gameInfo.awayTeam, gameInfo.homeTeam, sport)
+      : matchupInfo?.matchup || null;
+    
+    // Format bet label based on bet type
+    const getBetLabel = () => {
+      const betTypeLower = (betType || '').toLowerCase();
+      
+      if (betTypeLower.includes('total')) {
+        // For totals: "Over 238.5" or "Under 215.5"
+        const sideText = side || (cleanDesc.toLowerCase().includes('under') ? 'Under' : 'Over');
+        const capitalizedSide = sideText.charAt(0).toUpperCase() + sideText.slice(1).toLowerCase();
+        return line > 0 ? `${capitalizedSide} ${line}` : capitalizedSide;
+      }
+      
+      if (betTypeLower.includes('spread')) {
+        // For spreads: abbreviate team name and show spread
+        return abbreviateTeamsInDescription(cleanDesc, sport) || cleanDesc;
+      }
+      
+      // Moneyline or other: abbreviate team names
+      return abbreviateTeamsInDescription(cleanDesc, sport) || cleanDesc || 'Game Bet';
+    };
+    
+    const betLabel = getBetLabel();
+    const betTypeLabel = betType ? betType.replace(/_/g, ' ').toUpperCase() : 'GAME BET';
+    
     return (
       <div className={cn('p-3 rounded-lg bg-muted/30 border border-border/30', className)}>
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <Target className="w-4 h-4 text-muted-foreground" />
+            {getStatusIcon()}
             <div>
-              <p className="font-medium text-sm">{description || 'Game Bet'}</p>
+              <p className="font-medium text-sm">{betLabel}</p>
               <p className="text-xs text-muted-foreground">
-                {betType ? betType.replace(/_/g, ' ').toUpperCase() : 'BET'}
+                {teamMatchup || betTypeLabel}
               </p>
             </div>
           </div>
           <div className="text-right">
-            <span className="text-xs text-muted-foreground">
-              {gameInfo ? `${gameInfo.awayTeam} @ ${gameInfo.homeTeam}` : 'Pending'}
+            <span className={cn('text-xs font-medium', getStatusColor())}>
+              {getStatusText()}
             </span>
           </div>
         </div>
