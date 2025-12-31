@@ -1077,6 +1077,7 @@ export type Database = {
           model_version: string | null
           outcome: string
           parlay_date: string
+          rank: number | null
           selection_rationale: string | null
           settled_at: string | null
           slip_score: number | null
@@ -1099,6 +1100,7 @@ export type Database = {
           model_version?: string | null
           outcome?: string
           parlay_date: string
+          rank?: number | null
           selection_rationale?: string | null
           settled_at?: string | null
           slip_score?: number | null
@@ -1121,6 +1123,7 @@ export type Database = {
           model_version?: string | null
           outcome?: string
           parlay_date?: string
+          rank?: number | null
           selection_rationale?: string | null
           settled_at?: string | null
           slip_score?: number | null
