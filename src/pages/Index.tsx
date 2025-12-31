@@ -17,11 +17,12 @@ import { useHapticFeedback } from "@/hooks/useHapticFeedback";
 import { Button } from "@/components/ui/button";
 import { Link, useNavigate } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
-import { Zap, BarChart3, Sparkles, Trophy, Calculator, GitCompare, LogIn, LogOut } from "lucide-react";
+import { Zap, BarChart3, Sparkles, Trophy, Calculator, GitCompare, LogIn, LogOut, Radio } from "lucide-react";
 import { usePilotUser } from "@/hooks/usePilotUser";
 import { useAuth } from "@/contexts/AuthContext";
 import { SmartAnalyzeButton } from "@/components/SmartAnalyzeButton";
 import { EngineStatusBar } from "@/components/EngineStatusBar";
+import { LiveDashboardCard } from "@/components/live/LiveDashboardCard";
 
 function QuickAction({ to, icon: Icon, label, iconClass }: { 
   to: string; 
@@ -72,10 +73,12 @@ const Index = () => {
 
   // Quick actions based on user type
   const quickActions = isPilotRestricted ? [
+    { to: "/live-dashboard", icon: Radio, label: "Live", iconClass: "text-destructive" },
     { to: "/upload", icon: BarChart3, label: "Analyze", iconClass: "text-primary" },
     { to: "/compare", icon: GitCompare, label: "Compare", iconClass: "text-chart-3" },
     { to: "/kelly", icon: Calculator, label: "Kelly", iconClass: "text-chart-4" },
   ] : [
+    { to: "/live-dashboard", icon: Radio, label: "Live", iconClass: "text-destructive" },
     { to: "/upload", icon: BarChart3, label: "Analyze", iconClass: "text-primary" },
     { to: "/compare", icon: GitCompare, label: "Compare", iconClass: "text-chart-3" },
     { to: "/sharp", icon: Zap, label: "Sharp Money", iconClass: "text-neon-yellow" },
@@ -103,6 +106,13 @@ const Index = () => {
         <div className="mb-4 -mx-4">
           <CriticalAlertsTicker />
         </div>
+
+        {/* Live Dashboard Card - Show for logged in users */}
+        {user && (
+          <div className="mb-4">
+            <LiveDashboardCard />
+          </div>
+        )}
 
         {/* Auth Button */}
         <div className="flex justify-end mb-4">
