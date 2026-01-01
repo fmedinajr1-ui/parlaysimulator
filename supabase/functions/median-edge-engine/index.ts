@@ -22,32 +22,22 @@ function stdDev(arr: number[]): number {
   return Math.sqrt(variance);
 }
 
-// 🆕 FIX #1: Recency-Weighted Median - gives higher weight to recent games
+// 🆕 Recency-weighted median: game[0] is most recent (weights: 10, 5, 3, 2, 2...)
 function recencyWeightedMedian(values: number[]): number {
-  if (values.length === 0) return 0;
-  
-  // Game 1 (most recent) gets highest weight, exponentially decreasing
-  const weights = values.map((_, i) => 1 / (i + 1));
+  if (!values || values.length === 0) return 0;
   const weighted: number[] = [];
-  
-  values.forEach((val, i) => {
-    const count = Math.round(weights[i] * 10);
-    for (let j = 0; j < count; j++) weighted.push(val);
+  values.forEach((v, i) => {
+    const w = Math.max(1, Math.round(10 / (i + 1))); // 10,5,3,2,2...
+    for (let k = 0; k < w; k++) weighted.push(v);
   });
-  
   return median(weighted);
 }
 
-// 🆕 FIX #2: Log-Scaled Minutes Normalization - prevents over-projection of low-minute spikes
-function minutesAdjustedStat(
-  stat: number,
-  actualMinutes: number,
-  expectedMinutes: number
-): number {
-  if (actualMinutes <= 0) return stat;
-  const ratio = expectedMinutes / actualMinutes;
-  // Log scaling prevents over-projection of low-minute spikes
-  return stat * Math.log2(1 + ratio);
+// 🆕 Log-scaled minutes normalization: prevents low-min spikes from exploding projections
+function minutesAdjustedStat(stat: number, minutes: number, expectedMinutes: number): number {
+  if (!minutes || minutes <= 0) return stat;
+  const ratio = expectedMinutes / minutes;
+  return stat * Math.log2(1 + Math.max(0, ratio));
 }
 
 // 🆕 FIX #4: Opponent Defense Adjustment - adjusts for matchup difficulty
@@ -144,11 +134,12 @@ function calculateMedianEdge(input: EngineInput): EngineOutput {
   const M3 = median(adjustedStats);
 
   // 4️⃣ USAGE-BASED MEDIAN (M4) - 20% weight
-  // 🆕 FIX #3: Real usage proxy (per-minute efficiency) instead of double-counting stats
-  const usageProxy = input.last_10_game_stats.map(
-    (stat, i) => stat / (input.last_10_game_minutes[i] || 30)
-  );
-  const M4 = median(usageProxy) * input.expected_minutes;
+  // 🆕 FIX: Proxy using per-minute production (no double counting)
+  const perMinute = input.last_10_game_stats.map((stat, i) => {
+    const min = input.last_10_game_minutes[i] || input.expected_minutes || 30;
+    return min > 0 ? stat / min : stat / 30;
+  });
+  const M4 = median(perMinute) * input.expected_minutes;
 
   // 5️⃣ LOCATION SPLIT MEDIAN (M5) - 15% weight
   const M5 = input.game_location === 'home' 
@@ -203,67 +194,66 @@ function calculateMedianEdge(input: EngineInput): EngineOutput {
     edge *= 0.75;
   }
 
-  // 🧠 BETTING DECISION LOGIC
-  let recommendation: string;
+  // 🎯 ACCURACY MODE THRESHOLDS
+  const LEAN_EDGE = 1.5;
+  const STRONG_EDGE = 4.0;      // moved up from 3.0
+  const TRAP_EDGE = 5.0;        // volatile + extreme -> downgrade
+  const HARD_NO_BET_EDGE = 8.0; // too extreme = missing context
+
+  let recommendation: string = 'NO BET';
   let reasonSummary = '';
 
-  // 🆕 GUARDRAIL: Insufficient sample size
-  if (input.games_analyzed < 6) {
-    recommendation = 'NO BET';
-    reasonSummary = 'Insufficient sample size (need 6+ games).';
-  }
-  // 🆕 GUARDRAIL: Volatility trap protection
-  else if (isVolatile && Math.abs(edge) < 2.5) {
-    recommendation = 'NO BET';
-    reasonSummary = `Volatile player requires larger edge (current: ${Math.abs(edge).toFixed(1)}, need 2.5+).`;
-  }
-  // 🆕 FIX: Extreme edge trap detection (edge > 8 is suspicious)
-  else if (Math.abs(edge) >= 8.0) {
+  // Hard no-bet: edge too extreme (likely missing context / mispricing)
+  if (Math.abs(edge) >= HARD_NO_BET_EDGE) {
     recommendation = 'NO BET';
     reasonSummary = 'Edge too extreme - likely mispriced or missing context.';
-  }
-  // 🆕 FIX: Tightened STRONG thresholds (4.0+) with volatility gates
-  else if (edge >= 4.0 && !isVolatile && statStdDev < 3.0) {
-    recommendation = 'STRONG OVER';
-  }
-  // 🆕 FIX: Extreme edge with volatility = downgrade to LEAN
-  else if (edge >= 5.0 && isVolatile) {
-    recommendation = 'LEAN OVER';
-    reasonSummary = 'Extreme edge downgraded due to volatility - potential trap line.';
-  }
-  else if (edge >= 1.5) {
-    recommendation = 'LEAN OVER';
-  }
-  // 🆕 FIX: Tightened STRONG UNDER thresholds
-  else if (edge <= -4.0 && !isVolatile && statStdDev < 3.0) {
-    recommendation = 'STRONG UNDER';
-  }
-  // 🆕 FIX: Extreme negative edge with volatility = downgrade to LEAN
-  else if (edge <= -5.0 && isVolatile) {
-    recommendation = 'LEAN UNDER';
-    reasonSummary = 'Extreme edge downgraded due to volatility - potential trap line.';
-  }
-  else if (edge <= -1.5) {
-    recommendation = 'LEAN UNDER';
-  } else {
+  } else if (input.games_analyzed < 6) {
+    // Low sample size protection
     recommendation = 'NO BET';
-  }
+    reasonSummary = 'Insufficient sample size (need 6+ games).';
+  } else {
+    // Default: Lean zones (primary picks)
+    if (edge >= LEAN_EDGE) recommendation = 'LEAN OVER';
+    if (edge <= -LEAN_EDGE) recommendation = 'LEAN UNDER';
 
-  // 🆕 FIX: High volatility caps at LEAN (stdDev >= 3.5)
-  if (statStdDev >= 3.5 && recommendation.includes('STRONG')) {
-    if (recommendation === 'STRONG OVER') {
-      recommendation = 'LEAN OVER';
-      reasonSummary = (reasonSummary || '') + ' Capped at LEAN due to high variance.';
-    } else if (recommendation === 'STRONG UNDER') {
-      recommendation = 'LEAN UNDER';
+    // STRONG requires strict gates (rare, high trust)
+    if (
+      edge >= STRONG_EDGE &&
+      !isVolatile &&
+      statStdDev <= 3.0 &&
+      input.games_analyzed >= 7
+    ) {
+      recommendation = 'STRONG OVER';
+    }
+
+    if (
+      edge <= -STRONG_EDGE &&
+      !isVolatile &&
+      statStdDev <= 3.0 &&
+      input.games_analyzed >= 7
+    ) {
+      recommendation = 'STRONG UNDER';
+    }
+
+    // Trap detection: volatile + big edge => downgrade to LEAN
+    if (Math.abs(edge) >= TRAP_EDGE && isVolatile) {
+      recommendation = edge > 0 ? 'LEAN OVER' : 'LEAN UNDER';
+      reasonSummary = 'Extreme edge downgraded due to volatility - potential trap line.';
+    }
+
+    // High variance cap: never allow STRONG
+    if (statStdDev >= 3.5 && recommendation.includes('STRONG')) {
+      recommendation = recommendation.includes('OVER') ? 'LEAN OVER' : 'LEAN UNDER';
       reasonSummary = (reasonSummary || '') + ' Capped at LEAN due to high variance.';
     }
   }
 
-  // 🔄 OPTIONAL PROP REDUCTION LOGIC (ALT LINE ENGINE)
+  // 🔄 ALT LINE SUGGESTION (only for LEAN with thin edge)
   let altLineSuggestion: number | null = null;
-  if (recommendation === 'NO BET' && Math.abs(edge) >= 1.0 && Math.abs(edge) < 2.0) {
-    altLineSuggestion = input.sportsbook_line - 2.5;
+  if (recommendation.includes('LEAN') && Math.abs(edge) >= 1.0 && Math.abs(edge) < 2.0) {
+    altLineSuggestion = recommendation.includes('OVER')
+      ? input.sportsbook_line - 1.5
+      : input.sportsbook_line + 1.5;
   }
 
   // 📝 REASON SUMMARY (only build if not already set by guardrails)
@@ -284,7 +274,7 @@ function calculateMedianEdge(input: EngineInput): EngineOutput {
     if (confidenceFlag === 'JUICE_LAG_SHARP') reasonParts.push('sharp line movement detected');
     if (isVolatile) reasonParts.push('volatility dampening applied');
     
-    reasonSummary = reasonParts.join(' based on ') + '.';
+    reasonSummary = reasonParts.join(' | ') + '.';
   }
 
   return {
