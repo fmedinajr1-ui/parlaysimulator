@@ -350,11 +350,6 @@ export function DailyEliteHitterCard() {
         rank: p.rank || 1,
         leg_count: 2,
       })) as EliteParlay[];
-        sports: (p.sports || []) as unknown as string[],
-        source_engines: (p.source_engines || []) as unknown as string[],
-        rank: p.rank || 1,
-        leg_count: 2,
-      })) as EliteParlay[];
     },
     staleTime: 1000 * 60 * 5,
   });
