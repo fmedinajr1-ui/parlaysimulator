@@ -443,7 +443,12 @@ serve(async (req) => {
     
     const eligiblePicks: PickCandidate[] = [];
     
-    // 1. MedianLock candidates (LOCK/STRONG with high edge) - TODAY ONLY
+    const now = new Date().toISOString();
+    const nowTimestamp = Date.now();
+    const next24h = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const last48h = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    
+    // 1. MedianLock candidates - Use game_start_time for upcoming games (next 24h)
     logStep("Fetching MedianLock candidates");
     
     const { data: medianLockData, error: mlError } = await supabaseClient
@@ -452,7 +457,8 @@ serve(async (req) => {
       .in('classification', ['LOCK', 'STRONG'])
       .gte('adjusted_edge', 1.0)
       .eq('outcome', 'pending')
-      .eq('slate_date', today)
+      .gte('game_start_time', now)
+      .lte('game_start_time', next24h)
       .order('adjusted_edge', { ascending: false })
       .limit(50);
     
@@ -494,18 +500,43 @@ serve(async (req) => {
       }
     }
     
-    // 2. Hit Rate props - Use analyzed_at for recent analysis, filter future games
+    // 2. Hit Rate props - Use commence_time for upcoming games (next 24h)
     logStep("Fetching Hit Rate candidates");
-    const now = new Date().toISOString();
-    const todayStart = today + 'T00:00:00Z';
-    const nowTimestamp = Date.now();
     
-    // Query using analyzed_at for today's props
-    const { data: hitRateData, error: hrError } = await supabaseClient
+    // Primary query: games starting in next 24 hours
+    let hitRateData: any[] | null = null;
+    const { data: hitRatePrimary, error: hrError } = await supabaseClient
       .from('player_prop_hitrates')
       .select('*')
-      .gte('analyzed_at', todayStart) // Today's analysis
+      .gte('commence_time', now)
+      .lte('commence_time', next24h)
       .or('hit_rate_over.gte.0.65,hit_rate_under.gte.0.65');
+    
+    hitRateData = hitRatePrimary;
+    
+    if (hrError) {
+      logStep("HitRate query error", { error: hrError.message });
+    }
+    
+    // Fallback: If no results with commence_time, use analyzed_at for recently analyzed props
+    if (!hitRateData || hitRateData.length === 0) {
+      logStep("No HitRate data with commence_time, trying fallback with analyzed_at");
+      
+      const { data: hitRateFallback, error: hrFallbackError } = await supabaseClient
+        .from('player_prop_hitrates')
+        .select('*')
+        .gte('analyzed_at', last48h)
+        .or('hit_rate_over.gte.0.65,hit_rate_under.gte.0.65');
+      
+      if (hrFallbackError) {
+        logStep("HitRate fallback error", { error: hrFallbackError.message });
+      }
+      
+      hitRateData = hitRateFallback;
+      logStep("HitRate fallback results", { count: hitRateData?.length || 0 });
+    } else {
+      logStep("HitRate primary results", { count: hitRateData?.length || 0 });
+    }
     
     if (hrError) {
       logStep("HitRate query error", { error: hrError.message });
@@ -564,9 +595,9 @@ serve(async (req) => {
       logStep("Skipped already-started games from HitRate", { count: skippedStartedGames });
     }
     
-    // 3. Sharp Money signals - Use detected_at with 24-hour window, filter future games only
+    // 3. Sharp Money signals - Extend to 7 days detected_at, filter by upcoming games
     logStep("Fetching Sharp Money candidates");
-    const sharpCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const sharpCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     
     const { data: sharpData, error: sharpError } = await supabaseClient
       .from('line_movements')
@@ -574,6 +605,7 @@ serve(async (req) => {
       .gte('sharp_edge_score', 35)
       .gte('authenticity_confidence', 0.7)
       .gte('detected_at', sharpCutoff)
+      .gte('commence_time', now)
       .is('outcome_verified', null);
     
     if (sharpError) {
@@ -621,15 +653,16 @@ serve(async (req) => {
       }
     }
     
-    // 4. PVS high-scoring props - Use created_at for today's picks, filter future games only
+    // 4. PVS high-scoring props - Lower threshold to 60, filter by upcoming games
     logStep("Fetching PVS candidates");
     
     const { data: pvsData, error: pvsError } = await supabaseClient
       .from('unified_props')
       .select('*')
-      .gte('pvs_final_score', 75)
-      .gte('created_at', todayStart)
-      .eq('outcome', 'pending');
+      .gte('pvs_final_score', 60)
+      .eq('outcome', 'pending')
+      .gte('commence_time', now)
+      .lte('commence_time', next24h);
     
     if (pvsError) {
       logStep("PVS query error", { error: pvsError.message });
