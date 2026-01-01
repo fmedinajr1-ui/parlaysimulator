@@ -434,11 +434,19 @@ export function DailyEliteHitterCard() {
           </CardTitle>
         </CardHeader>
         <CardContent className="text-center py-6">
-          <p className="text-muted-foreground mb-4">No elite parlays generated yet for today</p>
-          <Button onClick={handleRefresh} disabled={isRefreshing} size="sm">
-            {isRefreshing ? <RefreshCw className="w-4 h-4 animate-spin mr-2" /> : <Sparkles className="w-4 h-4 mr-2" />}
-            Generate Now
-          </Button>
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center">
+              <Target className="w-6 h-6 text-muted-foreground" />
+            </div>
+            <div className="space-y-1">
+              <p className="text-muted-foreground">No elite parlays available right now</p>
+              <p className="text-xs text-muted-foreground/70">Games may have already started or no high-confidence picks found</p>
+            </div>
+            <Button onClick={handleRefresh} disabled={isRefreshing} size="sm" className="mt-2">
+              {isRefreshing ? <RefreshCw className="w-4 h-4 animate-spin mr-2" /> : <Sparkles className="w-4 h-4 mr-2" />}
+              Check for New Picks
+            </Button>
+          </div>
         </CardContent>
       </Card>
     );

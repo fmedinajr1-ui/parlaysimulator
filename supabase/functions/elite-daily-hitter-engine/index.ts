@@ -494,15 +494,18 @@ serve(async (req) => {
       }
     }
     
-    // 2. Hit Rate props - FIX: Use expires_at instead of commence_time, lower threshold to 65%
+    // 2. Hit Rate props - Use analyzed_at for recent analysis, filter future games
     logStep("Fetching Hit Rate candidates");
     const now = new Date().toISOString();
+    const todayStart = today + 'T00:00:00Z';
+    const nowTimestamp = Date.now();
     
+    // Query using analyzed_at for today's props
     const { data: hitRateData, error: hrError } = await supabaseClient
       .from('player_prop_hitrates')
       .select('*')
-      .gte('expires_at', now) // FIX: Use expires_at instead of commence_time
-      .or('hit_rate_over.gte.0.65,hit_rate_under.gte.0.65'); // FIX: Lowered to 65%
+      .gte('analyzed_at', todayStart) // Today's analysis
+      .or('hit_rate_over.gte.0.65,hit_rate_under.gte.0.65');
     
     if (hrError) {
       logStep("HitRate query error", { error: hrError.message });
@@ -510,7 +513,16 @@ serve(async (req) => {
     
     logStep("HitRate results", { count: hitRateData?.length || 0 });
     
+    let skippedStartedGames = 0;
+    
     for (const h of hitRateData || []) {
+      // Filter out games that have already started
+      const gameTime = h.commence_time ? new Date(h.commence_time).getTime() : null;
+      if (gameTime && gameTime < nowTimestamp) {
+        skippedStartedGames++;
+        continue; // Skip games that already started
+      }
+      
       const side = h.hit_rate_over >= h.hit_rate_under ? 'over' : 'under';
       const hitRate = side === 'over' ? h.hit_rate_over : h.hit_rate_under;
       
@@ -548,7 +560,11 @@ serve(async (req) => {
       }
     }
     
-    // 3. Sharp Money signals - FIX: Use detected_at with 24-hour window
+    if (skippedStartedGames > 0) {
+      logStep("Skipped already-started games from HitRate", { count: skippedStartedGames });
+    }
+    
+    // 3. Sharp Money signals - Use detected_at with 24-hour window, filter future games only
     logStep("Fetching Sharp Money candidates");
     const sharpCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     
@@ -557,7 +573,7 @@ serve(async (req) => {
       .select('*')
       .gte('sharp_edge_score', 35)
       .gte('authenticity_confidence', 0.7)
-      .gte('detected_at', sharpCutoff) // FIX: Use detected_at instead of commence_time
+      .gte('detected_at', sharpCutoff)
       .is('outcome_verified', null);
     
     if (sharpError) {
@@ -568,6 +584,12 @@ serve(async (req) => {
     
     for (const s of sharpData || []) {
       if (!s.player_name) continue;
+      
+      // Filter out games that have already started
+      const gameTime = s.commence_time ? new Date(s.commence_time).getTime() : null;
+      if (gameTime && gameTime < nowTimestamp) {
+        continue; // Skip games that already started
+      }
       
       const existing = eligiblePicks.find(p => 
         p.playerName === s.player_name && 
@@ -599,15 +621,14 @@ serve(async (req) => {
       }
     }
     
-    // 4. PVS high-scoring props - FIX: Use created_at with 48-hour window
+    // 4. PVS high-scoring props - Use created_at for today's picks, filter future games only
     logStep("Fetching PVS candidates");
-    const pvsCutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
     
     const { data: pvsData, error: pvsError } = await supabaseClient
       .from('unified_props')
       .select('*')
       .gte('pvs_final_score', 75)
-      .gte('created_at', pvsCutoff) // FIX: Use created_at instead of commence_time
+      .gte('created_at', todayStart)
       .eq('outcome', 'pending');
     
     if (pvsError) {
@@ -617,6 +638,12 @@ serve(async (req) => {
     logStep("PVS results", { count: pvsData?.length || 0 });
     
     for (const p of pvsData || []) {
+      // Filter out games that have already started
+      const gameTime = p.commence_time ? new Date(p.commence_time).getTime() : null;
+      if (gameTime && gameTime < nowTimestamp) {
+        continue; // Skip games that already started
+      }
+      
       const existing = eligiblePicks.find(ep => 
         ep.playerName === p.player_name && 
         ep.propType === p.prop_type
