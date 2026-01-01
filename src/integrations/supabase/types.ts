@@ -1071,6 +1071,7 @@ export type Database = {
           engine_consensus: Json | null
           generation_round: number | null
           id: string
+          leg_count: number | null
           leg_edges: Json | null
           leg_probabilities: Json | null
           legs: Json
@@ -1094,6 +1095,7 @@ export type Database = {
           engine_consensus?: Json | null
           generation_round?: number | null
           id?: string
+          leg_count?: number | null
           leg_edges?: Json | null
           leg_probabilities?: Json | null
           legs?: Json
@@ -1117,6 +1119,7 @@ export type Database = {
           engine_consensus?: Json | null
           generation_round?: number | null
           id?: string
+          leg_count?: number | null
           leg_edges?: Json | null
           leg_probabilities?: Json | null
           legs?: Json
