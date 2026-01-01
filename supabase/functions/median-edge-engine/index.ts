@@ -40,6 +40,22 @@ function minutesAdjustedStat(stat: number, minutes: number, expectedMinutes: num
   return stat * Math.log2(1 + Math.max(0, ratio));
 }
 
+// 🆕 Winsorize to clip extreme outliers (removes 1-game spike inflation)
+function winsorize(values: number[], lowerPct = 0.10, upperPct = 0.10): number[] {
+  if (!values || values.length < 5) return values;
+  const sorted = [...values].sort((a, b) => a - b);
+  const lo = sorted[Math.floor(sorted.length * lowerPct)];
+  const hi = sorted[Math.ceil(sorted.length * (1 - upperPct)) - 1];
+  return values.map(v => Math.min(Math.max(v, lo), hi));
+}
+
+// 🎯 Stat-type specific edge thresholds (accuracy-tuned)
+const STAT_THRESHOLDS: Record<string, { lean: number; strong: number }> = {
+  points:   { lean: 2.0, strong: 5.0 }, // highest variance
+  rebounds: { lean: 1.5, strong: 4.0 },
+  assists:  { lean: 1.5, strong: 3.5 }, // lowest variance
+};
+
 // 🆕 FIX #4: Opponent Defense Adjustment - adjusts for matchup difficulty
 function opponentAdjustment(stat: number, opponentDefRank?: number): number {
   if (!opponentDefRank || opponentDefRank <= 0) return stat;
@@ -102,16 +118,20 @@ interface EngineOutput {
 }
 
 function calculateMedianEdge(input: EngineInput): EngineOutput {
-  // Calculate volatility FIRST (needed for dampening)
-  const statStdDev = stdDev(input.last_10_game_stats);
-  const statMean = input.last_10_game_stats.length > 0 
-    ? input.last_10_game_stats.reduce((a, b) => a + b, 0) / input.last_10_game_stats.length 
+  // 🔒 Outlier control: clip last-10 stats before any median math
+  const clippedLast10 = winsorize(input.last_10_game_stats, 0.10, 0.10);
+  const wasClipped = clippedLast10.some((v, i) => v !== input.last_10_game_stats[i]);
+
+  // Calculate volatility FIRST (needed for dampening) - use clipped stats
+  const statStdDev = stdDev(clippedLast10);
+  const statMean = clippedLast10.length > 0 
+    ? clippedLast10.reduce((a, b) => a + b, 0) / clippedLast10.length 
     : 0;
   const isVolatile = statMean > 0 && (statStdDev / statMean) > 0.35;
 
   // 1️⃣ RECENT FORM MEDIAN (M1) - 30% weight (last 7 games, RECENCY-WEIGHTED)
   // 🆕 FIX #1: Use recency-weighted median instead of raw median
-  const recentStats = input.last_10_game_stats.slice(0, 7);
+  const recentStats = clippedLast10.slice(0, 7);
   const M1 = recencyWeightedMedian(recentStats);
 
   // 2️⃣ MATCHUP MEDIAN (M2) - 20% weight (games vs specific opponent)
@@ -127,7 +147,7 @@ function calculateMedianEdge(input: EngineInput): EngineOutput {
 
   // 3️⃣ MINUTES-WEIGHTED MEDIAN (M3) - 15% weight (all 10 games)
   // 🆕 FIX #2: Use log-scaled minutes normalization instead of linear
-  const adjustedStats = input.last_10_game_stats.map((stat, idx) => {
+  const adjustedStats = clippedLast10.map((stat, idx) => {
     const minutes = input.last_10_game_minutes[idx] || input.expected_minutes;
     return minutesAdjustedStat(stat, minutes, input.expected_minutes);
   });
@@ -135,7 +155,7 @@ function calculateMedianEdge(input: EngineInput): EngineOutput {
 
   // 4️⃣ USAGE-BASED MEDIAN (M4) - 20% weight
   // 🆕 FIX: Proxy using per-minute production (no double counting)
-  const perMinute = input.last_10_game_stats.map((stat, i) => {
+  const perMinute = clippedLast10.map((stat, i) => {
     const min = input.last_10_game_minutes[i] || input.expected_minutes || 30;
     return min > 0 ? stat / min : stat / 30;
   });
@@ -194,11 +214,19 @@ function calculateMedianEdge(input: EngineInput): EngineOutput {
     edge *= 0.75;
   }
 
-  // 🎯 ACCURACY MODE THRESHOLDS
-  const LEAN_EDGE = 1.5;
-  const STRONG_EDGE = 4.0;      // moved up from 3.0
+  // 🎯 ACCURACY MODE THRESHOLDS (stat-type specific)
+  const statKey = input.stat_type;
+  const thresholds = STAT_THRESHOLDS[statKey] || { lean: 1.5, strong: 4.0 };
+  const LEAN_EDGE = thresholds.lean;
+  const STRONG_EDGE = thresholds.strong;
   const TRAP_EDGE = 5.0;        // volatile + extreme -> downgrade
   const HARD_NO_BET_EDGE = 8.0; // too extreme = missing context
+
+  // Stat-type specific stdDev limits for STRONG
+  const maxStdDevForStrong = 
+    (input.stat_type === 'points' && statStdDev <= 2.8) ||
+    (input.stat_type === 'rebounds' && statStdDev <= 3.2) ||
+    (input.stat_type === 'assists' && statStdDev <= 2.5);
 
   let recommendation: string = 'NO BET';
   let reasonSummary = '';
@@ -216,11 +244,11 @@ function calculateMedianEdge(input: EngineInput): EngineOutput {
     if (edge >= LEAN_EDGE) recommendation = 'LEAN OVER';
     if (edge <= -LEAN_EDGE) recommendation = 'LEAN UNDER';
 
-    // STRONG requires strict gates (rare, high trust)
+    // STRONG requires strict gates (rare, high trust) + stat-type specific stdDev
     if (
       edge >= STRONG_EDGE &&
       !isVolatile &&
-      statStdDev <= 3.0 &&
+      maxStdDevForStrong &&
       input.games_analyzed >= 7
     ) {
       recommendation = 'STRONG OVER';
@@ -229,7 +257,7 @@ function calculateMedianEdge(input: EngineInput): EngineOutput {
     if (
       edge <= -STRONG_EDGE &&
       !isVolatile &&
-      statStdDev <= 3.0 &&
+      maxStdDevForStrong &&
       input.games_analyzed >= 7
     ) {
       recommendation = 'STRONG UNDER';
@@ -239,6 +267,15 @@ function calculateMedianEdge(input: EngineInput): EngineOutput {
     if (Math.abs(edge) >= TRAP_EDGE && isVolatile) {
       recommendation = edge > 0 ? 'LEAN OVER' : 'LEAN UNDER';
       reasonSummary = 'Extreme edge downgraded due to volatility - potential trap line.';
+    }
+
+    // Extra protection for POINTS (most volatile stat)
+    if (
+      input.stat_type === 'points' &&
+      isVolatile &&
+      Math.abs(edge) >= 3.0
+    ) {
+      recommendation = edge > 0 ? 'LEAN OVER' : 'LEAN UNDER';
     }
 
     // High variance cap: never allow STRONG
@@ -273,6 +310,8 @@ function calculateMedianEdge(input: EngineInput): EngineOutput {
     if (adjustments.blowout_risk < 0) reasonParts.push('blowout risk adjustment');
     if (confidenceFlag === 'JUICE_LAG_SHARP') reasonParts.push('sharp line movement detected');
     if (isVolatile) reasonParts.push('volatility dampening applied');
+    if (wasClipped) reasonParts.push('outlier games clipped for stability');
+    if (input.stat_type === 'points' && isVolatile) reasonParts.push('points volatility capped');
     
     reasonSummary = reasonParts.join(' | ') + '.';
   }
