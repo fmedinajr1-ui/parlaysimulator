@@ -35,6 +35,7 @@ interface PickCandidate {
   edge: number;
   variance: number;
   engines: string[];
+  sourceEngine?: string; // Primary source engine
 }
 
 interface Combination {
@@ -54,17 +55,15 @@ function calculateLegProbability(pick: PickCandidate): number {
   const signals: number[] = [];
   const weights: number[] = [];
   
-  // Hit rate signal (most reliable)
-  // FIX: Check if hit_rate is already decimal (0-1) or percentage (0-100)
+  // Hit rate signal (most reliable - BOOSTED WEIGHT)
   if (pick.hitRate && pick.hitRate > 0) {
     const normalizedHitRate = pick.hitRate <= 1 ? pick.hitRate : pick.hitRate / 100;
     signals.push(normalizedHitRate);
-    weights.push(1.5);
+    weights.push(2.0); // INCREASED from 1.5 to prioritize HitRate
   }
   
   // MedianLock edge (calibrated signal)
   if (pick.medianLockEdge && pick.medianLockEdge > 0) {
-    // Convert edge to probability boost
     const edgeProb = 0.55 + (pick.medianLockEdge / 100) * 0.2;
     signals.push(Math.min(edgeProb, 0.85));
     weights.push(1.2);
@@ -131,7 +130,6 @@ function getVariance(propType: string): number {
 // Calculate engine diversity bonus - reward parlays with picks from different engines
 function calculateEngineDiversityBonus(legs: PickCandidate[]): number {
   const uniqueEngines = new Set(legs.flatMap(l => l.engines));
-  // Bonus: +0.1 for 2 different engines, +0.2 for 3 different engines
   return Math.max(0, (uniqueEngines.size - 1) * 0.1);
 }
 
@@ -247,7 +245,6 @@ function calculateSlipScore(
   const EDGE_WEIGHT = 0.3;
   const VARIANCE_PENALTY_WEIGHT = 0.2;
   
-  // Log-probability sum (higher is better probability)
   let logProbSum = 0;
   let combinedProbability = 1;
   let totalEdge = 0;
@@ -260,14 +257,11 @@ function calculateSlipScore(
     variancePenalty += leg.variance;
   }
   
-  // Add engine diversity bonus to prioritize mixed-engine parlays
   const engineDiversityBonus = calculateEngineDiversityBonus(legs);
   
-  // Apply learned pattern penalties
-  const { totalPenalty: patternPenalty, blockedPatterns, appliedPenalties } = 
-    patterns ? applyPatternPenalties(legs, patterns) : { totalPenalty: 0, blockedPatterns: [], appliedPenalties: [] };
+  const { totalPenalty: patternPenalty, blockedPatterns } = 
+    patterns ? applyPatternPenalties(legs, patterns) : { totalPenalty: 0, blockedPatterns: [] };
   
-  // Apply matchup-based penalties/boosts
   let matchupPenalty = 0;
   if (matchupPatterns && matchupPatterns.length > 0 && defenseDataMap) {
     for (const leg of legs) {
@@ -284,15 +278,13 @@ function calculateSlipScore(
           p.side === side &&
           p.defense_tier === tier &&
           p.is_active &&
-          p.total_count >= 3 // Only use patterns with sufficient data
+          p.total_count >= 3
         );
         
         if (matchupPattern) {
           if (matchupPattern.is_boost && matchupPattern.accuracy_rate >= 0.65) {
-            // Favorable matchup - apply boost (negative penalty)
             matchupPenalty -= matchupPattern.penalty_amount;
           } else if (!matchupPattern.is_boost && matchupPattern.accuracy_rate < 0.50) {
-            // Unfavorable matchup - apply penalty
             matchupPenalty += matchupPattern.penalty_amount;
           }
         }
@@ -317,6 +309,27 @@ function hasSameEventOrTeam(legs: PickCandidate[]): boolean {
   return false;
 }
 
+// Check if two legs have the same player
+function hasSamePlayer(legs: PickCandidate[]): boolean {
+  const players = new Set<string>();
+  
+  for (const leg of legs) {
+    const playerKey = leg.playerName?.toLowerCase();
+    if (playerKey && players.has(playerKey)) return true;
+    if (playerKey) players.add(playerKey);
+  }
+  
+  return false;
+}
+
+// Check if a parlay has minimum HitRate backing
+function hasMinHitRateLegs(legs: PickCandidate[], minCount: number = 2): boolean {
+  const hitRateLegs = legs.filter(leg => 
+    leg.sourceEngine === 'HitRate' || (leg.hitRate && leg.hitRate >= 0.65)
+  );
+  return hitRateLegs.length >= minCount;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -329,19 +342,18 @@ serve(async (req) => {
   );
 
   try {
-    logStep("Starting Elite Daily Hitter Engine");
+    logStep("Starting Elite Daily Hitter Engine v2");
     
-    // Parse request body for force flag
     let force = false;
     try {
       const body = await req.json();
       force = body?.force === true;
       logStep("Request parsed", { force });
     } catch {
-      // No body or invalid JSON, use defaults
+      // No body or invalid JSON
     }
     
-    // Load learned loss patterns for penalty application
+    // Load learned loss patterns
     logStep("Loading learned loss patterns");
     const { data: lossPatterns, error: patternsError } = await supabaseClient
       .from('elite_hitter_loss_patterns')
@@ -357,13 +369,13 @@ serve(async (req) => {
       });
     }
     
-    // Load matchup patterns for defense-correlated penalties
+    // Load matchup patterns
     logStep("Loading matchup patterns");
     const { data: matchupPatterns, error: matchupError } = await supabaseClient
       .from('elite_hitter_matchup_patterns')
       .select('*')
       .eq('is_active', true)
-      .gte('total_count', 3); // Only use patterns with sufficient data
+      .gte('total_count', 3);
     
     if (matchupError) {
       logStep("Error loading matchup patterns", { error: matchupError.message });
@@ -374,13 +386,12 @@ serve(async (req) => {
       });
     }
     
-    // Load defense rankings for opponent lookup
+    // Load defense rankings
     logStep("Loading defense rankings");
     const { data: defenseData } = await supabaseClient
       .from('nba_opponent_defense_stats')
       .select('team_name, defense_rank, defense_rating');
     
-    // Create a lookup map for defense data
     const defenseDataMap = new Map<string, { defense_rank: number; defense_rating: number }>();
     for (const team of defenseData || []) {
       if (team.team_name) {
@@ -393,27 +404,31 @@ serve(async (req) => {
     logStep("Defense data loaded", { teamCount: defenseDataMap.size });
     
     const today = new Date().toISOString().split('T')[0];
-    const MAX_PARLAYS = 5; // Generate up to 5 diverse parlays
+    const MAX_3LEG_PARLAYS = 5;
+    const MAX_2LEG_PARLAYS = 3;
     
-    // Check if we already have parlays for today
+    // Check existing parlays
     const { data: existingParlays } = await supabaseClient
       .from('daily_elite_parlays')
-      .select('id')
+      .select('id, leg_count')
       .eq('parlay_date', today);
     
-    if (existingParlays && existingParlays.length >= MAX_PARLAYS && !force) {
-      logStep("Parlays already exist for today", { count: existingParlays.length });
+    const existing3Leg = existingParlays?.filter(p => p.leg_count === 3 || !p.leg_count).length || 0;
+    const existing2Leg = existingParlays?.filter(p => p.leg_count === 2).length || 0;
+    
+    if (existing3Leg >= MAX_3LEG_PARLAYS && existing2Leg >= MAX_2LEG_PARLAYS && !force) {
+      logStep("Parlays already exist for today", { threeleg: existing3Leg, twoleg: existing2Leg });
       return new Response(JSON.stringify({ 
         success: true, 
         message: "Already generated for today",
-        parlayCount: existingParlays.length 
+        parlayCount: existingParlays?.length || 0 
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,
       });
     }
     
-    // If force=true, delete existing parlays to regenerate
+    // If force=true, delete existing parlays
     if (existingParlays && existingParlays.length > 0 && force) {
       logStep("Force regeneration requested, deleting existing parlays", { count: existingParlays.length });
       await supabaseClient
@@ -427,7 +442,6 @@ serve(async (req) => {
     // =====================================================
     
     const eligiblePicks: PickCandidate[] = [];
-    const now = new Date();
     
     // 1. MedianLock candidates (LOCK/STRONG with high edge) - TODAY ONLY
     logStep("Fetching MedianLock candidates");
@@ -465,7 +479,7 @@ serve(async (req) => {
           line: m.book_line,
           side: (m.bet_side?.toLowerCase() || 'over') as 'over' | 'under',
           odds: m.current_price || -110,
-          sport: 'NBA', // MedianLock is NBA only
+          sport: 'NBA',
           eventId: m.event_id || m.id,
           gameDescription: `${m.team_name} vs ${m.opponent}`,
           commenceTime: m.game_start_time || m.slate_date || new Date().toISOString(),
@@ -475,18 +489,24 @@ serve(async (req) => {
           edge: m.adjusted_edge || 0,
           variance: 0,
           engines: ['MedianLock'],
+          sourceEngine: 'MedianLock',
         });
       }
     }
     
-    // 2. Hit Rate props (≥75% hit rate) - FIX: hit_rate is stored as decimal (0-1)
+    // 2. Hit Rate props - FIX: Use expires_at instead of commence_time, lower threshold to 65%
     logStep("Fetching Hit Rate candidates");
-    const upcomingCutoff = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10-min buffer
-    const { data: hitRateData } = await supabaseClient
+    const now = new Date().toISOString();
+    
+    const { data: hitRateData, error: hrError } = await supabaseClient
       .from('player_prop_hitrates')
       .select('*')
-      .gte('hit_rate_over', 0.75) // FIX: Use decimal format (0.75 = 75%)
-      .gte('commence_time', upcomingCutoff);
+      .gte('expires_at', now) // FIX: Use expires_at instead of commence_time
+      .or('hit_rate_over.gte.0.65,hit_rate_under.gte.0.65'); // FIX: Lowered to 65%
+    
+    if (hrError) {
+      logStep("HitRate query error", { error: hrError.message });
+    }
     
     logStep("HitRate results", { count: hitRateData?.length || 0 });
     
@@ -494,8 +514,8 @@ serve(async (req) => {
       const side = h.hit_rate_over >= h.hit_rate_under ? 'over' : 'under';
       const hitRate = side === 'over' ? h.hit_rate_over : h.hit_rate_under;
       
-      // FIX: Use decimal comparison (0.75 = 75%)
-      if (hitRate < 0.75) continue;
+      // Check threshold (65% = 0.65)
+      if (hitRate < 0.65) continue;
       
       const existing = eligiblePicks.find(p => 
         p.playerName === h.player_name && 
@@ -505,6 +525,7 @@ serve(async (req) => {
       if (existing) {
         existing.hitRate = hitRate;
         existing.engines.push('HitRate');
+        if (!existing.sourceEngine) existing.sourceEngine = 'HitRate';
       } else {
         eligiblePicks.push({
           id: h.id,
@@ -516,69 +537,84 @@ serve(async (req) => {
           sport: h.sport || 'NBA',
           eventId: h.event_id || h.id,
           gameDescription: h.game_description,
-          commenceTime: h.commence_time,
+          commenceTime: h.commence_time || h.expires_at || now,
           hitRate,
           p_leg: 0,
-          edge: (hitRate - 50) / 10,
+          edge: (hitRate - 0.50) * 20, // Convert to edge percentage
           variance: 0,
           engines: ['HitRate'],
+          sourceEngine: 'HitRate',
         });
       }
     }
     
-    // 3. Sharp Money signals (high authenticity) - FIX: Use correct column names
+    // 3. Sharp Money signals - FIX: Use detected_at with 24-hour window
     logStep("Fetching Sharp Money candidates");
-    const { data: sharpData } = await supabaseClient
+    const sharpCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    
+    const { data: sharpData, error: sharpError } = await supabaseClient
       .from('line_movements')
       .select('*')
-      .gte('sharp_edge_score', 35) // FIX: Use correct column name
+      .gte('sharp_edge_score', 35)
       .gte('authenticity_confidence', 0.7)
-      .gte('commence_time', upcomingCutoff)
+      .gte('detected_at', sharpCutoff) // FIX: Use detected_at instead of commence_time
       .is('outcome_verified', null);
+    
+    if (sharpError) {
+      logStep("Sharp query error", { error: sharpError.message });
+    }
     
     logStep("Sharp results", { count: sharpData?.length || 0 });
     
     for (const s of sharpData || []) {
-      // Skip team-level spreads (no player name) - we only want player props
       if (!s.player_name) continue;
       
       const existing = eligiblePicks.find(p => 
         p.playerName === s.player_name && 
-        p.propType === s.market_type // FIX: Use market_type instead of prop_type
+        p.propType === s.market_type
       );
       
       if (existing) {
-        existing.sharpScore = s.sharp_edge_score; // FIX: Use correct column
+        existing.sharpScore = s.sharp_edge_score;
         existing.engines.push('Sharp');
       } else if (s.market_type) {
         eligiblePicks.push({
           id: s.id,
           playerName: s.player_name,
-          propType: s.market_type, // FIX: Use market_type
+          propType: s.market_type,
           line: s.current_line || 0,
           side: (s.recommendation?.includes('OVER') ? 'over' : 'under') as 'over' | 'under',
           odds: -110,
           sport: s.sport || 'NBA',
           eventId: s.event_id || s.id,
           gameDescription: s.description,
-          commenceTime: s.commence_time,
-          sharpScore: s.sharp_edge_score, // FIX: Use correct column
+          commenceTime: s.commence_time || s.detected_at || now,
+          sharpScore: s.sharp_edge_score,
           p_leg: 0,
           edge: (s.sharp_edge_score || 0) / 20,
           variance: 0,
           engines: ['Sharp'],
+          sourceEngine: 'Sharp',
         });
       }
     }
     
-    // 4. PVS high-scoring props (≥75) - Lowered threshold for more candidates
+    // 4. PVS high-scoring props - FIX: Use created_at with 48-hour window
     logStep("Fetching PVS candidates");
-    const { data: pvsData } = await supabaseClient
+    const pvsCutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    
+    const { data: pvsData, error: pvsError } = await supabaseClient
       .from('unified_props')
       .select('*')
-      .gte('pvs_final_score', 75) // FIX: Lowered from 80 to 75
-      .gte('commence_time', upcomingCutoff)
+      .gte('pvs_final_score', 75)
+      .gte('created_at', pvsCutoff) // FIX: Use created_at instead of commence_time
       .eq('outcome', 'pending');
+    
+    if (pvsError) {
+      logStep("PVS query error", { error: pvsError.message });
+    }
+    
+    logStep("PVS results", { count: pvsData?.length || 0 });
     
     for (const p of pvsData || []) {
       const existing = eligiblePicks.find(ep => 
@@ -600,12 +636,13 @@ serve(async (req) => {
           sport: p.sport,
           eventId: p.event_id,
           gameDescription: p.game_description,
-          commenceTime: p.commence_time,
+          commenceTime: p.commence_time || p.created_at || now,
           pvsScore: p.pvs_final_score,
           p_leg: 0,
           edge: (p.pvs_final_score - 50) / 10,
           variance: 0,
           engines: ['PVS'],
+          sourceEngine: 'PVS',
         });
       }
     }
@@ -616,46 +653,35 @@ serve(async (req) => {
     // CALCULATE p_leg AND FILTER
     // =====================================================
     
-    const MIN_LEG_PROBABILITY = 0.55;  // Minimum 55% per leg
-    const MIN_COMBINED_PROBABILITY = 0.15;  // Minimum 15% combined
-    const IDEAL_LEG_PROBABILITY = 0.70;  // Ideal threshold
+    const MIN_LEG_PROBABILITY = 0.55;
+    const PRIMARY_MIN_PROB = 0.15;      // 15% for #1 pick
+    const ALTERNATIVE_MIN_PROB = 0.12;  // 12% for #2-5 picks
+    const IDEAL_LEG_PROBABILITY = 0.70;
+    const TWO_LEG_MIN_PROB = 0.25;      // 25% for 2-leg parlays
     
     for (const pick of eligiblePicks) {
       pick.p_leg = calculateLegProbability(pick);
       pick.variance = getVariance(pick.propType);
     }
     
-    // First, filter out picks below absolute minimum threshold
     const qualityPicks = eligiblePicks.filter(p => p.p_leg >= MIN_LEG_PROBABILITY);
     
     logStep("Quality picks after minimum filter", { 
       count: qualityPicks.length,
-      picks: qualityPicks.map(p => ({ 
-        player: p.playerName, 
-        prop: p.propType, 
-        p_leg: p.p_leg.toFixed(3),
-        hitRate: p.hitRate,
-        engines: p.engines.length 
-      }))
+      byEngine: {
+        hitRate: qualityPicks.filter(p => p.sourceEngine === 'HitRate').length,
+        medianLock: qualityPicks.filter(p => p.sourceEngine === 'MedianLock').length,
+        sharp: qualityPicks.filter(p => p.sourceEngine === 'Sharp').length,
+        pvs: qualityPicks.filter(p => p.sourceEngine === 'PVS').length,
+      }
     });
     
-    // Then filter for high confidence picks (70%+)
     let highConfidencePicks = qualityPicks.filter(p => p.p_leg >= IDEAL_LEG_PROBABILITY);
     
-    logStep("High-confidence picks (70%+)", { 
-      count: highConfidencePicks.length,
-      picks: highConfidencePicks.map(p => ({ 
-        player: p.playerName, 
-        prop: p.propType, 
-        p_leg: p.p_leg.toFixed(3),
-        engines: p.engines.length 
-      }))
-    });
+    logStep("High-confidence picks (70%+)", { count: highConfidencePicks.length });
     
-    // If not enough 70%+ picks, fall back to quality picks (55%+)
     if (highConfidencePicks.length < 3) {
       logStep("Not enough 70%+ picks, falling back to 55%+ quality threshold");
-      // Sort by p_leg descending and take top picks
       const sorted = qualityPicks.sort((a, b) => b.p_leg - a.p_leg);
       highConfidencePicks = sorted.slice(0, Math.min(15, sorted.length));
     }
@@ -663,14 +689,13 @@ serve(async (req) => {
     if (highConfidencePicks.length < 3) {
       logStep("Not enough quality picks to generate parlay - AI CHOOSING NOT TO PRODUCE", { 
         count: highConfidencePicks.length,
-        reason: "Quality threshold not met - refusing to generate subpar parlay"
+        reason: "Quality threshold not met"
       });
       return new Response(JSON.stringify({ 
         success: false, 
         message: "No high-quality picks available today. AI refuses to generate a parlay below quality standards.",
         picksFound: highConfidencePicks.length,
-        minimumRequired: 3,
-        qualityThreshold: `${MIN_LEG_PROBABILITY * 100}% per leg`
+        minimumRequired: 3
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,
@@ -688,28 +713,11 @@ serve(async (req) => {
         for (let k = j + 1; k < highConfidencePicks.length; k++) {
           const combo = [highConfidencePicks[i], highConfidencePicks[j], highConfidencePicks[k]];
           
-          // Skip if same event/team
           if (hasSameEventOrTeam(combo)) continue;
           
-          // Calculate slip score WITH learned pattern penalties AND matchup penalties
           const scores = calculateSlipScore(combo, lossPatterns || [], matchupPatterns || [], defenseDataMap);
           
-          // Skip combinations with blocked patterns
-          if (scores.blockedPatterns.length > 0) {
-            logStep("Skipping blocked combination", { 
-              legs: combo.map(l => l.playerName),
-              blockedPatterns: scores.blockedPatterns 
-            });
-            continue;
-          }
-          
-          // Log matchup penalty if significant
-          if (scores.matchupPenalty !== 0) {
-            logStep("Matchup adjustment applied", { 
-              legs: combo.map(l => l.playerName),
-              matchupPenalty: scores.matchupPenalty.toFixed(2)
-            });
-          }
+          if (scores.blockedPatterns.length > 0) continue;
           
           validCombinations.push({
             legs: combo,
@@ -719,56 +727,34 @@ serve(async (req) => {
       }
     }
     
-    logStep("Valid combinations generated", { count: validCombinations.length });
+    logStep("Valid 3-leg combinations generated", { count: validCombinations.length });
     
-    if (validCombinations.length === 0) {
-      logStep("No valid combinations found");
-      return new Response(JSON.stringify({ 
-        success: false, 
-        message: "No valid 3-leg combinations found"
-      }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 200,
-      });
-    }
-    
-    // Sort by slip score and select the best
+    // Sort by slip score
     validCombinations.sort((a, b) => b.slipScore - a.slipScore);
     
-    // Filter combinations that meet minimum combined probability
-    const qualityCombinations = validCombinations.filter(c => c.combinedProbability >= MIN_COMBINED_PROBABILITY);
-    
-    if (qualityCombinations.length === 0) {
-      logStep("No combinations meet minimum combined probability - AI CHOOSING NOT TO PRODUCE", {
-        bestAvailable: (validCombinations[0]?.combinedProbability * 100).toFixed(2) + '%',
-        required: (MIN_COMBINED_PROBABILITY * 100) + '%'
-      });
-      return new Response(JSON.stringify({ 
-        success: false, 
-        message: `No parlay combinations meet the ${MIN_COMBINED_PROBABILITY * 100}% minimum probability threshold. AI refuses to generate.`,
-        bestAvailableProbability: validCombinations[0]?.combinedProbability
-      }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 200,
-      });
-    }
-    
-    // Select up to MAX_PARLAYS diverse parlays with player overlap limits
+    // Select up to MAX_3LEG_PARLAYS diverse parlays with HitRate priority for #1
     const selectedParlays: Combination[] = [];
     const usedPlayerCounts = new Map<string, number>();
     
-    for (const combo of qualityCombinations) {
-      if (selectedParlays.length >= MAX_PARLAYS) break;
+    for (const combo of validCombinations) {
+      if (selectedParlays.length >= MAX_3LEG_PARLAYS) break;
+      
+      // Tiered probability thresholds
+      const minProb = selectedParlays.length === 0 ? PRIMARY_MIN_PROB : ALTERNATIVE_MIN_PROB;
+      if (combo.combinedProbability < minProb) continue;
+      
+      // Require HitRate backing for #1 pick (at least 2 HitRate-backed legs)
+      if (selectedParlays.length === 0 && !hasMinHitRateLegs(combo.legs, 2)) {
+        continue;
+      }
       
       const comboPlayers = combo.legs.map(l => l.playerName);
       
-      // Check how many times each player appears in already-selected parlays
       let maxPlayerReuse = 0;
       for (const player of comboPlayers) {
         maxPlayerReuse = Math.max(maxPlayerReuse, usedPlayerCounts.get(player) || 0);
       }
       
-      // Allow player to appear in max 2 parlays total for diversity
       if (maxPlayerReuse >= 2) continue;
       
       selectedParlays.push(combo);
@@ -777,23 +763,87 @@ serve(async (req) => {
       });
     }
     
-    logStep("Selected diverse parlays", { 
+    // If no #1 parlay with HitRate backing, try without that requirement
+    if (selectedParlays.length === 0) {
+      logStep("No parlays with HitRate backing, relaxing requirement");
+      for (const combo of validCombinations) {
+        if (selectedParlays.length >= MAX_3LEG_PARLAYS) break;
+        if (combo.combinedProbability < PRIMARY_MIN_PROB) continue;
+        
+        const comboPlayers = combo.legs.map(l => l.playerName);
+        let maxPlayerReuse = 0;
+        for (const player of comboPlayers) {
+          maxPlayerReuse = Math.max(maxPlayerReuse, usedPlayerCounts.get(player) || 0);
+        }
+        if (maxPlayerReuse >= 2) continue;
+        
+        selectedParlays.push(combo);
+        comboPlayers.forEach(p => {
+          usedPlayerCounts.set(p, (usedPlayerCounts.get(p) || 0) + 1);
+        });
+      }
+    }
+    
+    logStep("Selected 3-leg parlays", { 
       count: selectedParlays.length,
       uniquePlayers: usedPlayerCounts.size
     });
     
-    if (selectedParlays.length === 0) {
-      logStep("No diverse parlays could be selected");
-      return new Response(JSON.stringify({ 
-        success: false, 
-        message: "Could not select diverse parlays meeting quality criteria"
-      }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 200,
-      });
+    // =====================================================
+    // GENERATE 2-LEG SAFE PARLAYS
+    // =====================================================
+    
+    const twoLegPicks = qualityPicks.filter(p => p.p_leg >= 0.70); // Only 70%+ for 2-leggers
+    
+    logStep("Generating 2-leg safe parlays", { eligiblePicks: twoLegPicks.length });
+    
+    const twoLegCombinations: Combination[] = [];
+    
+    for (let i = 0; i < twoLegPicks.length; i++) {
+      for (let j = i + 1; j < twoLegPicks.length; j++) {
+        const leg1 = twoLegPicks[i];
+        const leg2 = twoLegPicks[j];
+        
+        if (leg1.eventId === leg2.eventId) continue;
+        if (leg1.playerName?.toLowerCase() === leg2.playerName?.toLowerCase()) continue;
+        
+        const combo = [leg1, leg2];
+        const scores = calculateSlipScore(combo, lossPatterns || [], matchupPatterns || [], defenseDataMap);
+        
+        if (scores.blockedPatterns.length > 0) continue;
+        
+        twoLegCombinations.push({
+          legs: combo,
+          ...scores
+        });
+      }
     }
     
-    // Get current generation round
+    // Sort by combined probability (safer = higher)
+    twoLegCombinations.sort((a, b) => b.combinedProbability - a.combinedProbability);
+    
+    // Select top 3 diverse 2-leg parlays
+    const selected2Leg: Combination[] = [];
+    const used2LegPlayers = new Set<string>();
+    
+    for (const combo of twoLegCombinations) {
+      if (selected2Leg.length >= MAX_2LEG_PARLAYS) break;
+      if (combo.combinedProbability < TWO_LEG_MIN_PROB) continue;
+      
+      const players = combo.legs.map(l => l.playerName?.toLowerCase());
+      const hasUsedPlayer = players.some(p => p && used2LegPlayers.has(p));
+      if (hasUsedPlayer) continue;
+      
+      selected2Leg.push(combo);
+      players.forEach(p => { if (p) used2LegPlayers.add(p); });
+    }
+    
+    logStep("Selected 2-leg parlays", { count: selected2Leg.length });
+    
+    // =====================================================
+    // SAVE ALL PARLAYS
+    // =====================================================
+    
     const { data: latestParlay } = await supabaseClient
       .from('daily_elite_parlays')
       .select('generation_round')
@@ -803,19 +853,12 @@ serve(async (req) => {
     
     const generationRound = (latestParlay?.generation_round || 0) + 1;
     
-    // Save all selected parlays with rank
     const savedParlays = [];
     
+    // Save 3-leg parlays
     for (let rank = 0; rank < selectedParlays.length; rank++) {
       const combo = selectedParlays[rank];
       
-      logStep(`Saving parlay rank ${rank + 1}`, {
-        slipScore: combo.slipScore.toFixed(4),
-        combinedProbability: (combo.combinedProbability * 100).toFixed(2) + '%',
-        legs: combo.legs.map(l => `${l.playerName} ${l.propType} ${l.side} ${l.line}`)
-      });
-      
-      // Generate AI selection rationale
       const engineCounts: Record<string, number> = {};
       combo.legs.forEach(leg => {
         leg.engines.forEach(e => {
@@ -837,7 +880,6 @@ serve(async (req) => {
         : `#${rank + 1} ALTERNATIVE: Diverse option with ${(combo.combinedProbability * 100).toFixed(1)}% combined probability. ` +
           `Engines: ${topEngines.join(', ')}. Total edge: +${combo.totalEdge.toFixed(1)}%.`;
       
-      // Calculate total odds
       let totalOdds = 1;
       for (const leg of combo.legs) {
         const decimalOdds = leg.odds < 0 
@@ -849,7 +891,6 @@ serve(async (req) => {
         ? Math.round((totalOdds - 1) * 100)
         : Math.round(-100 / (totalOdds - 1));
       
-      // Format legs for storage
       const formattedLegs = combo.legs.map(leg => ({
         id: leg.id,
         playerName: leg.playerName,
@@ -864,6 +905,7 @@ serve(async (req) => {
         p_leg: leg.p_leg,
         edge: leg.edge,
         engines: leg.engines,
+        hitRate: leg.hitRate,
       }));
       
       const legProbabilities: Record<string, number> = {};
@@ -887,7 +929,6 @@ serve(async (req) => {
         leg.engines.forEach(e => allEngines.add(e));
       }
       
-      // Save to database with rank
       const { data: newParlay, error: insertError } = await supabaseClient
         .from('daily_elite_parlays')
         .insert({
@@ -905,13 +946,87 @@ serve(async (req) => {
           source_engines: Array.from(allEngines),
           generation_round: generationRound,
           selection_rationale: selectionRationale,
-          rank: rank + 1, // 1-based ranking
+          rank: rank + 1,
+          leg_count: 3,
         })
         .select()
         .single();
       
       if (insertError) {
-        logStep(`Error saving parlay rank ${rank + 1}`, { error: insertError.message });
+        logStep(`Error saving 3-leg parlay rank ${rank + 1}`, { error: insertError.message });
+        continue;
+      }
+      
+      savedParlays.push(newParlay);
+    }
+    
+    // Save 2-leg parlays
+    for (let rank = 0; rank < selected2Leg.length; rank++) {
+      const combo = selected2Leg[rank];
+      
+      const avgLegProb = combo.legs.reduce((sum, l) => sum + l.p_leg, 0) / 2;
+      
+      const selectionRationale = `2-LEG SAFE PICK #${rank + 1}: High-confidence legs for safer returns. ` +
+        `${(combo.combinedProbability * 100).toFixed(1)}% combined probability, ` +
+        `${(avgLegProb * 100).toFixed(0)}% avg leg confidence.`;
+      
+      let totalOdds = 1;
+      for (const leg of combo.legs) {
+        const decimalOdds = leg.odds < 0 
+          ? 1 + (100 / Math.abs(leg.odds))
+          : 1 + (leg.odds / 100);
+        totalOdds *= decimalOdds;
+      }
+      const americanOdds = totalOdds >= 2 
+        ? Math.round((totalOdds - 1) * 100)
+        : Math.round(-100 / (totalOdds - 1));
+      
+      const formattedLegs = combo.legs.map(leg => ({
+        id: leg.id,
+        playerName: leg.playerName,
+        propType: leg.propType,
+        line: leg.line,
+        side: leg.side,
+        odds: leg.odds,
+        sport: leg.sport,
+        eventId: leg.eventId,
+        gameDescription: leg.gameDescription,
+        commenceTime: leg.commenceTime,
+        p_leg: leg.p_leg,
+        edge: leg.edge,
+        engines: leg.engines,
+        hitRate: leg.hitRate,
+      }));
+      
+      const sports = new Set<string>();
+      const allEngines = new Set<string>();
+      combo.legs.forEach(leg => {
+        sports.add(leg.sport);
+        leg.engines.forEach(e => allEngines.add(e));
+      });
+      
+      const { data: newParlay, error: insertError } = await supabaseClient
+        .from('daily_elite_parlays')
+        .insert({
+          parlay_date: today,
+          legs: formattedLegs,
+          slip_score: combo.slipScore,
+          combined_probability: combo.combinedProbability,
+          total_edge: combo.totalEdge,
+          variance_penalty: combo.variancePenalty,
+          total_odds: americanOdds,
+          sports: Array.from(sports),
+          source_engines: Array.from(allEngines),
+          generation_round: generationRound,
+          selection_rationale: selectionRationale,
+          rank: rank + 1,
+          leg_count: 2,
+        })
+        .select()
+        .single();
+      
+      if (insertError) {
+        logStep(`Error saving 2-leg parlay rank ${rank + 1}`, { error: insertError.message });
         continue;
       }
       
@@ -919,8 +1034,9 @@ serve(async (req) => {
     }
     
     logStep("Daily Elite Hitter generation complete", { 
-      savedCount: savedParlays.length,
-      primaryId: savedParlays[0]?.id
+      saved3Leg: selectedParlays.length,
+      saved2Leg: selected2Leg.length,
+      totalSaved: savedParlays.length
     });
     
     return new Response(JSON.stringify({ 
@@ -929,8 +1045,10 @@ serve(async (req) => {
       stats: {
         eligiblePicks: eligiblePicks.length,
         highConfidencePicks: highConfidencePicks.length,
-        validCombinations: validCombinations.length,
-        savedParlays: savedParlays.length
+        valid3LegCombinations: validCombinations.length,
+        valid2LegCombinations: twoLegCombinations.length,
+        saved3Leg: selectedParlays.length,
+        saved2Leg: selected2Leg.length
       }
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
