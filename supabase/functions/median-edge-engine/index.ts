@@ -49,11 +49,11 @@ function winsorize(values: number[], lowerPct = 0.10, upperPct = 0.10): number[]
   return values.map(v => Math.min(Math.max(v, lo), hi));
 }
 
-// 🎯 Stat-type specific edge thresholds (accuracy-tuned)
+// 🎯 Stat-type specific edge thresholds (balanced accuracy mode)
 const STAT_THRESHOLDS: Record<string, { lean: number; strong: number }> = {
-  points:   { lean: 2.0, strong: 5.0 }, // highest variance
-  rebounds: { lean: 1.5, strong: 4.0 },
-  assists:  { lean: 1.5, strong: 3.5 }, // lowest variance
+  points:   { lean: 1.5, strong: 4.5 }, // relaxed from 2.0/5.0
+  rebounds: { lean: 1.3, strong: 3.5 }, // relaxed from 1.5/4.0
+  assists:  { lean: 1.3, strong: 3.0 }, // relaxed from 1.5/3.5
 };
 
 // 🆕 FIX #4: Opponent Defense Adjustment - adjusts for matchup difficulty
@@ -209,9 +209,9 @@ function calculateMedianEdge(input: EngineInput): EngineOutput {
   // EDGE CALCULATION
   let edge = trueMedian - input.sportsbook_line;
 
-  // 🆕 FIX #5: Volatility-aware edge dampening
+  // 🆕 FIX #5: Volatility-aware edge dampening (less aggressive)
   if (isVolatile) {
-    edge *= 0.75;
+    edge *= 0.85; // Was 0.75 - too aggressive
   }
 
   // 🎯 ACCURACY MODE THRESHOLDS (stat-type specific)
@@ -222,11 +222,11 @@ function calculateMedianEdge(input: EngineInput): EngineOutput {
   const TRAP_EDGE = 5.0;        // volatile + extreme -> downgrade
   const HARD_NO_BET_EDGE = 8.0; // too extreme = missing context
 
-  // Stat-type specific stdDev limits for STRONG
+  // Stat-type specific stdDev limits for STRONG (relaxed for balanced mode)
   const maxStdDevForStrong = 
-    (input.stat_type === 'points' && statStdDev <= 2.8) ||
-    (input.stat_type === 'rebounds' && statStdDev <= 3.2) ||
-    (input.stat_type === 'assists' && statStdDev <= 2.5);
+    (input.stat_type === 'points' && statStdDev <= 4.0) ||   // Was 2.8
+    (input.stat_type === 'rebounds' && statStdDev <= 3.5) || // Was 3.2
+    (input.stat_type === 'assists' && statStdDev <= 3.0);    // Was 2.5
 
   let recommendation: string = 'NO BET';
   let reasonSummary = '';
@@ -235,10 +235,10 @@ function calculateMedianEdge(input: EngineInput): EngineOutput {
   if (Math.abs(edge) >= HARD_NO_BET_EDGE) {
     recommendation = 'NO BET';
     reasonSummary = 'Edge too extreme - likely mispriced or missing context.';
-  } else if (input.games_analyzed < 6) {
-    // Low sample size protection
+  } else if (input.games_analyzed < 3) {
+    // Low sample size protection (minimum 3 games)
     recommendation = 'NO BET';
-    reasonSummary = 'Insufficient sample size (need 6+ games).';
+    reasonSummary = 'Insufficient sample size (need 3+ games).';
   } else {
     // Default: Lean zones (primary picks)
     if (edge >= LEAN_EDGE) recommendation = 'LEAN OVER';
@@ -469,12 +469,13 @@ serve(async (req) => {
         console.log('[median-edge-engine] Delete error (may be empty):', deleteError.message);
       }
 
-      // Fetch player props from unified_props table (correct table name)
+      // Fetch player props from unified_props table - NBA ONLY
       const { data: playerProps, error: propsError } = await supabase
         .from('unified_props')
         .select('*')
         .gte('commence_time', now)
         .eq('is_active', true)
+        .eq('sport', 'basketball_nba') // Filter to NBA only
         .in('prop_type', ['player_points', 'player_rebounds', 'player_assists']);
 
       if (propsError) {
@@ -513,12 +514,12 @@ serve(async (req) => {
       const dedupedProps = Array.from(propsByPlayerStat.values());
       console.log(`[median-edge-engine] Deduped ${playerProps?.length || 0} props to ${dedupedProps.length} unique player/stat combos`);
 
-      // Fetch game logs for recent stats
+      // Fetch ALL game logs for recent stats (explicit high limit to override default 1000)
       const { data: gameLogs, error: logsError } = await supabase
         .from('nba_player_game_logs')
         .select('*')
         .order('game_date', { ascending: false })
-        .limit(1000);
+        .limit(10000); // Override default 1000 limit
 
       if (logsError) {
         console.error('[median-edge-engine] Game logs error:', logsError);
@@ -578,6 +579,11 @@ serve(async (req) => {
           .filter((log: any) => log.player_name?.toLowerCase() === playerName?.toLowerCase())
           .slice(0, 10);
 
+        // Debug: log first few players' game counts
+        if (playerLogs.length < 5 && playerLogs.length > 0) {
+          console.log(`[median-edge-engine] DEBUG: ${playerName} has ${playerLogs.length} game logs. Total gameLogs: ${gameLogs?.length || 0}`);
+        }
+
         if (playerLogs.length < 3) {
           continue; // Skip silently to reduce log noise
         }
@@ -590,9 +596,12 @@ serve(async (req) => {
           return 0;
         };
 
-        // Get last 10 games stats and minutes
+        // Get last 10 games stats and minutes (handle minutes=0 edge case)
         const last10Stats = playerLogs.map(getStatValue);
-        const last10Minutes = playerLogs.map((log: any) => log.minutes || log.min || 30);
+        const last10Minutes = playerLogs.map((log: any) => {
+          const mins = log.minutes_played || log.minutes || log.min || 0;
+          return mins > 0 ? mins : 30; // Default to 30 if 0 or missing
+        });
         const avgMinutes = last10Minutes.reduce((a: number, b: number) => a + b, 0) / last10Minutes.length;
 
         // Skip if minutes too low
@@ -650,6 +659,11 @@ serve(async (req) => {
         };
 
         const result = calculateMedianEdge(input);
+        
+        // Debug logging for filtered picks
+        if (result.recommendation === 'NO BET') {
+          console.log(`[median-edge-engine] FILTERED: ${playerName} ${statType} - edge: ${result.edge.toFixed(2)}, volatile: ${result.is_volatile}, stdDev: ${result.std_dev?.toFixed(2)}, games: ${input.games_analyzed}, reason: ${result.reason_summary}`);
+        }
         
         // Only save if it's actionable
         if (result.recommendation !== 'NO BET') {
