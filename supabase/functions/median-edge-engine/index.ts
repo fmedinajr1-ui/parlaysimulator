@@ -217,16 +217,47 @@ function calculateMedianEdge(input: EngineInput): EngineOutput {
     recommendation = 'NO BET';
     reasonSummary = `Volatile player requires larger edge (current: ${Math.abs(edge).toFixed(1)}, need 2.5+).`;
   }
-  else if (edge >= 3.0) {
+  // 🆕 FIX: Extreme edge trap detection (edge > 8 is suspicious)
+  else if (Math.abs(edge) >= 8.0) {
+    recommendation = 'NO BET';
+    reasonSummary = 'Edge too extreme - likely mispriced or missing context.';
+  }
+  // 🆕 FIX: Tightened STRONG thresholds (4.0+) with volatility gates
+  else if (edge >= 4.0 && !isVolatile && statStdDev < 3.0) {
     recommendation = 'STRONG OVER';
-  } else if (edge >= 1.5) {
+  }
+  // 🆕 FIX: Extreme edge with volatility = downgrade to LEAN
+  else if (edge >= 5.0 && isVolatile) {
     recommendation = 'LEAN OVER';
-  } else if (edge <= -3.0) {
+    reasonSummary = 'Extreme edge downgraded due to volatility - potential trap line.';
+  }
+  else if (edge >= 1.5) {
+    recommendation = 'LEAN OVER';
+  }
+  // 🆕 FIX: Tightened STRONG UNDER thresholds
+  else if (edge <= -4.0 && !isVolatile && statStdDev < 3.0) {
     recommendation = 'STRONG UNDER';
-  } else if (edge <= -1.5) {
+  }
+  // 🆕 FIX: Extreme negative edge with volatility = downgrade to LEAN
+  else if (edge <= -5.0 && isVolatile) {
+    recommendation = 'LEAN UNDER';
+    reasonSummary = 'Extreme edge downgraded due to volatility - potential trap line.';
+  }
+  else if (edge <= -1.5) {
     recommendation = 'LEAN UNDER';
   } else {
     recommendation = 'NO BET';
+  }
+
+  // 🆕 FIX: High volatility caps at LEAN (stdDev >= 3.5)
+  if (statStdDev >= 3.5 && recommendation.includes('STRONG')) {
+    if (recommendation === 'STRONG OVER') {
+      recommendation = 'LEAN OVER';
+      reasonSummary = (reasonSummary || '') + ' Capped at LEAN due to high variance.';
+    } else if (recommendation === 'STRONG UNDER') {
+      recommendation = 'LEAN UNDER';
+      reasonSummary = (reasonSummary || '') + ' Capped at LEAN due to high variance.';
+    }
   }
 
   // 🔄 OPTIONAL PROP REDUCTION LOGIC (ALT LINE ENGINE)

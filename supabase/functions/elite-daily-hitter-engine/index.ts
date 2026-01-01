@@ -59,14 +59,17 @@ function calculateLegProbability(pick: PickCandidate): number {
   if (pick.hitRate && pick.hitRate > 0) {
     const normalizedHitRate = pick.hitRate <= 1 ? pick.hitRate : pick.hitRate / 100;
     signals.push(normalizedHitRate);
-    weights.push(2.0); // INCREASED from 1.5 to prioritize HitRate
+    weights.push(2.0); // Prioritize HitRate
   }
   
-  // MedianLock edge (calibrated signal)
+  // MedianLock edge (calibrated signal) - 🆕 FIX: Reduce STRONG weight, boost LEAN
   if (pick.medianLockEdge && pick.medianLockEdge > 0) {
     const edgeProb = 0.55 + (pick.medianLockEdge / 100) * 0.2;
+    // 🆕 FIX: Distinguish between STRONG and LEAN recommendations
+    const isStrong = pick.medianLockEdge >= 4.0;
+    const weight = isStrong ? 1.0 : 1.4; // LEAN gets 1.4, STRONG gets 1.0 (reduced)
     signals.push(Math.min(edgeProb, 0.85));
-    weights.push(1.2);
+    weights.push(weight);
   }
   
   // Sharp money signal
@@ -113,6 +116,15 @@ function calculateLegProbability(pick: PickCandidate): number {
   const engineBoost = Math.min(0.05, (pick.engines.length - 1) * 0.015);
   
   return Math.min(0.85, rawProbability + engineBoost);
+}
+
+// 🆕 FIX: Check if a pick is a STRONG recommendation (to limit per parlay)
+function isStrongPick(pick: PickCandidate): boolean {
+  // Check if MedianLock edge indicates STRONG (>= 4.0)
+  if (pick.medianLockEdge && pick.medianLockEdge >= 4.0) return true;
+  // Check classification from source data
+  if (pick.sourceEngine === 'medianlock' && pick.medianLockEdge && pick.medianLockEdge >= 4.0) return true;
+  return false;
 }
 
 // Calculate variance for a prop type
@@ -775,6 +787,10 @@ serve(async (req) => {
           
           if (hasSameEventOrTeam(combo)) continue;
           
+          // 🆕 FIX: Limit to max 1 STRONG pick per parlay to reduce volatility exposure
+          const strongCount = combo.filter(leg => isStrongPick(leg)).length;
+          if (strongCount > 1) continue;
+          
           const scores = calculateSlipScore(combo, lossPatterns || [], matchupPatterns || [], defenseDataMap);
           
           if (scores.blockedPatterns.length > 0) continue;
@@ -867,7 +883,11 @@ serve(async (req) => {
         if (leg1.eventId === leg2.eventId) continue;
         if (leg1.playerName?.toLowerCase() === leg2.playerName?.toLowerCase()) continue;
         
+        // 🆕 FIX: For 2-leg parlays, avoid having any STRONG picks (prefer LEAN for stability)
         const combo = [leg1, leg2];
+        const strongCount = combo.filter(leg => isStrongPick(leg)).length;
+        if (strongCount > 0) continue; // 2-leg safe picks should be LEAN only
+        
         const scores = calculateSlipScore(combo, lossPatterns || [], matchupPatterns || [], defenseDataMap);
         
         if (scores.blockedPatterns.length > 0) continue;
