@@ -775,15 +775,44 @@ serve(async (req) => {
     }
     
     // =====================================================
-    // GENERATE ALL VALID 3-LEG COMBINATIONS
+    // 🆕 CPU OPTIMIZATION: Cap pick pool to prevent timeout
+    // =====================================================
+    const MAX_PICKS_FOR_COMBINATIONS = 50;
+    const MAX_VALID_COMBINATIONS = 10000;
+    
+    // Prioritize HitRate picks (they should always be included for #1 parlay requirement)
+    const hitRatePicks = highConfidencePicks.filter(p => p.sourceEngine === 'HitRate');
+    const otherPicks = highConfidencePicks.filter(p => p.sourceEngine !== 'HitRate');
+    
+    // Sort non-HitRate picks by probability
+    otherPicks.sort((a, b) => b.p_leg - a.p_leg);
+    
+    // Combine: all HitRate + top remaining up to MAX
+    const picksForCombinations = [
+      ...hitRatePicks,
+      ...otherPicks.slice(0, MAX_PICKS_FOR_COMBINATIONS - hitRatePicks.length)
+    ].slice(0, MAX_PICKS_FOR_COMBINATIONS);
+    
+    logStep("Picks capped for combination generation", { 
+      original: highConfidencePicks.length,
+      capped: picksForCombinations.length,
+      hitRatePicks: hitRatePicks.length
+    });
+    
+    // =====================================================
+    // GENERATE VALID 3-LEG COMBINATIONS (with early exit)
     // =====================================================
     
     const validCombinations: Combination[] = [];
     
-    for (let i = 0; i < highConfidencePicks.length; i++) {
-      for (let j = i + 1; j < highConfidencePicks.length; j++) {
-        for (let k = j + 1; k < highConfidencePicks.length; k++) {
-          const combo = [highConfidencePicks[i], highConfidencePicks[j], highConfidencePicks[k]];
+    outerLoop:
+    for (let i = 0; i < picksForCombinations.length; i++) {
+      for (let j = i + 1; j < picksForCombinations.length; j++) {
+        for (let k = j + 1; k < picksForCombinations.length; k++) {
+          // Early exit if we have enough combinations
+          if (validCombinations.length >= MAX_VALID_COMBINATIONS) break outerLoop;
+          
+          const combo = [picksForCombinations[i], picksForCombinations[j], picksForCombinations[k]];
           
           if (hasSameEventOrTeam(combo)) continue;
           
@@ -803,7 +832,10 @@ serve(async (req) => {
       }
     }
     
-    logStep("Valid 3-leg combinations generated", { count: validCombinations.length });
+    logStep("Valid 3-leg combinations generated", { 
+      count: validCombinations.length,
+      cappedEarly: validCombinations.length >= MAX_VALID_COMBINATIONS
+    });
     
     // Sort by slip score
     validCombinations.sort((a, b) => b.slipScore - a.slipScore);
@@ -866,17 +898,31 @@ serve(async (req) => {
     });
     
     // =====================================================
-    // GENERATE 2-LEG SAFE PARLAYS
+    // GENERATE 2-LEG SAFE PARLAYS (with CPU optimization)
     // =====================================================
     
-    const twoLegPicks = qualityPicks.filter(p => p.p_leg >= 0.70); // Only 70%+ for 2-leggers
+    const MAX_2LEG_PICKS = 60;
+    const MAX_2LEG_COMBINATIONS = 5000;
     
-    logStep("Generating 2-leg safe parlays", { eligiblePicks: twoLegPicks.length });
+    // Cap 2-leg picks and sort by probability
+    const twoLegPicks = qualityPicks
+      .filter(p => p.p_leg >= 0.70) // Only 70%+ for 2-leggers
+      .sort((a, b) => b.p_leg - a.p_leg)
+      .slice(0, MAX_2LEG_PICKS);
+    
+    logStep("Generating 2-leg safe parlays", { 
+      eligiblePicks: twoLegPicks.length,
+      capped: qualityPicks.filter(p => p.p_leg >= 0.70).length > MAX_2LEG_PICKS
+    });
     
     const twoLegCombinations: Combination[] = [];
     
+    twoLegLoop:
     for (let i = 0; i < twoLegPicks.length; i++) {
       for (let j = i + 1; j < twoLegPicks.length; j++) {
+        // Early exit if we have enough combinations
+        if (twoLegCombinations.length >= MAX_2LEG_COMBINATIONS) break twoLegLoop;
+        
         const leg1 = twoLegPicks[i];
         const leg2 = twoLegPicks[j];
         
