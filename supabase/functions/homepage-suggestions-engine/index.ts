@@ -209,8 +209,7 @@ serve(async (req) => {
       .select('*')
       .eq('game_date', today)
       .eq('engine_version', 'v2')
-      .in('recommendation', ['LEAN OVER', 'LEAN UNDER', 'STRONG OVER', 'STRONG UNDER'])
-      .gte('commence_time', now);
+      .in('recommendation', ['LEAN OVER', 'LEAN UNDER', 'STRONG OVER', 'STRONG UNDER']);
 
     if (medianError) {
       console.error('[homepage-suggestions-engine] Median fetch error:', medianError);
@@ -219,11 +218,11 @@ serve(async (req) => {
 
     console.log(`[homepage-suggestions-engine] Found ${medianPicks?.length || 0} Median v2 picks`);
 
-    // Fetch HitRate picks for upcoming games
+    // Fetch HitRate picks - use expire check since commence_time may be past for some
     const { data: hitratePicks, error: hitrateError } = await supabase
       .from('player_prop_hitrates')
       .select('*')
-      .gte('commence_time', now)
+      .gte('expires_at', now)
       .gte('games_analyzed', 8);
 
     if (hitrateError) {
@@ -235,6 +234,9 @@ serve(async (req) => {
 
     // Join picks by player + stat + line tolerance
     const unifiedLegs: UnifiedLeg[] = [];
+    const hasHitrateData = (hitratePicks?.length || 0) > 0;
+
+    console.log(`[homepage-suggestions-engine] HitRate data available: ${hasHitrateData}`);
 
     for (const median of (medianPicks || [])) {
       const normalizedMedianStat = normalizeStatType(median.stat_type);
@@ -245,37 +247,62 @@ serve(async (req) => {
       if ((median.expected_minutes || 30) < 24) continue;
       if (!['A', 'B', 'C'].includes(median.confidence_tier || 'D')) continue;
 
-      // Find matching HitRate pick
-      const matchingHitrate = (hitratePicks || []).find(hr => {
-        const normalizedHrStat = normalizeStatType(hr.stat_type);
-        const playerMatch = hr.player_name?.toLowerCase().trim() === median.player_name?.toLowerCase().trim();
-        const statMatch = normalizedHrStat === normalizedMedianStat;
-        const lineTolerance = Math.abs((hr.line || 0) - (median.sportsbook_line || 0)) <= 0.5;
+      // Get hit rate - from external HitRate table or Median's built-in hit rates
+      let finalHitRate: number;
+      let hasUnifiedAgreement = false;
+
+      if (hasHitrateData) {
+        // Find matching HitRate pick (hitrate uses prop_type and current_line)
+        const matchingHitrate = (hitratePicks || []).find(hr => {
+          const normalizedHrStat = normalizeStatType(hr.prop_type || '');
+          const playerMatch = hr.player_name?.toLowerCase().trim() === median.player_name?.toLowerCase().trim();
+          const statMatch = normalizedHrStat === normalizedMedianStat;
+          const lineTolerance = Math.abs((hr.current_line || 0) - (median.sportsbook_line || 0)) <= 0.5;
+          
+          return playerMatch && statMatch && lineTolerance;
+        });
+
+        if (matchingHitrate) {
+          // Check HitRate direction agreement
+          const hrHitRateOver = matchingHitrate.hit_rate_over || 0;
+          const hrHitRateUnder = matchingHitrate.hit_rate_under || 0;
+          
+          const isStrong = median.recommendation.includes('STRONG');
+          const hitRateThreshold = isStrong ? 0.70 : 0.65;
+          
+          let hrDirection: string | null = null;
+          if (hrHitRateOver >= hitRateThreshold && hrHitRateOver > hrHitRateUnder) {
+            hrDirection = 'OVER';
+          } else if (hrHitRateUnder >= hitRateThreshold && hrHitRateUnder > hrHitRateOver) {
+            hrDirection = 'UNDER';
+          }
+
+          if (hrDirection && hrDirection === medianDirection) {
+            finalHitRate = medianDirection === 'OVER' ? hrHitRateOver : hrHitRateUnder;
+            hasUnifiedAgreement = true;
+          } else {
+            continue; // No agreement, skip
+          }
+        } else {
+          continue; // No matching hitrate data, skip
+        }
+      } else {
+        // FALLBACK: Use Median v2's built-in hit rates when no external HitRate data
+        const medianHitRateOver = median.hit_rate_over_10 || 0;
+        const medianHitRateUnder = median.hit_rate_under_10 || 0;
         
-        return playerMatch && statMatch && lineTolerance;
-      });
-
-      if (!matchingHitrate) continue;
-
-      // Check HitRate direction agreement
-      const hrHitRateOver = matchingHitrate.hit_rate_over || 0;
-      const hrHitRateUnder = matchingHitrate.hit_rate_under || 0;
-      
-      // Determine HitRate's preferred direction based on thresholds
-      let hrDirection: string | null = null;
-      const isStrong = median.recommendation.includes('STRONG');
-      const hitRateThreshold = isStrong ? 0.70 : 0.65;
-      
-      if (hrHitRateOver >= hitRateThreshold && hrHitRateOver > hrHitRateUnder) {
-        hrDirection = 'OVER';
-      } else if (hrHitRateUnder >= hitRateThreshold && hrHitRateUnder > hrHitRateOver) {
-        hrDirection = 'UNDER';
+        finalHitRate = medianDirection === 'OVER' ? medianHitRateOver : medianHitRateUnder;
+        
+        // Require at least 60% hit rate for fallback mode
+        if (finalHitRate < 0.60) continue;
+        
+        // Only Tier A/B in fallback mode for higher quality
+        if (!['A', 'B'].includes(median.confidence_tier || 'D')) continue;
+        
+        hasUnifiedAgreement = true; // Median's internal agreement
       }
 
-      // Skip if no qualifying HitRate direction or directions don't match
-      if (!hrDirection || hrDirection !== medianDirection) continue;
-
-      const hitRate = medianDirection === 'OVER' ? hrHitRateOver : hrHitRateUnder;
+      if (!hasUnifiedAgreement) continue;
 
       unifiedLegs.push({
         player_name: median.player_name,
@@ -284,27 +311,27 @@ serve(async (req) => {
         line: median.sportsbook_line,
         odds: -110, // Default odds
         direction: medianDirection,
-        hit_rate: hitRate,
-        median10: median.median10 || 0,
+        hit_rate: finalHitRate,
+        median10: median.true_median || 0,
         median5: median.median5 || 0,
         adjusted_median: median.adjusted_median || 0,
         edge: median.edge || 0,
         confidence_tier: median.confidence_tier || 'C',
         defense_code: median.defense_code || 50,
         event_id: median.event_id || '',
-        game_description: median.game_description || '',
-        commence_time: median.commence_time || '',
+        game_description: `${median.team_name || ''} vs ${median.opponent_team || ''}`,
+        commence_time: median.game_time || '',
       });
     }
 
-    console.log(`[homepage-suggestions-engine] Found ${unifiedLegs.length} unified legs with agreement`);
+    console.log(`[homepage-suggestions-engine] Found ${unifiedLegs.length} unified legs`);
 
     if (unifiedLegs.length < 2) {
       return new Response(JSON.stringify({
         success: true,
         mode,
         parlays: [],
-        no_bet_reason: 'Insufficient unified picks - board is weak today',
+        no_bet_reason: 'Insufficient quality picks today - board is weak',
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
