@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Calculator, Database, ChevronDown, ChevronUp, RefreshCw, Activity, TrendingUp, TrendingDown, Loader2, Sparkles, Shield, Zap, Target } from "lucide-react";
+import { Calculator, Database, ChevronDown, ChevronUp, RefreshCw, Activity, TrendingUp, TrendingDown, Loader2, Sparkles, Shield, Zap, Target, Users, Layers, Trophy, Star } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -8,10 +8,9 @@ import { useToast } from "@/hooks/use-toast";
 import { MedianEdgeCalculator } from "./MedianEdgeCalculator";
 import { AutoPicksPaywall } from "./AutoPicksPaywall";
 import { usePilotUser } from "@/hooks/usePilotUser";
-import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
-type ViewMode = "calculator" | "auto";
+type ViewMode = "calculator" | "auto" | "parlays";
 
 interface MedianEdgePick {
   id: string;
@@ -28,7 +27,6 @@ interface MedianEdgePick {
   adjustments?: Record<string, number>;
   reason_summary: string;
   created_at: string;
-  // V2 fields
   adjusted_median?: number;
   defense_code?: number;
   defense_multiplier?: number;
@@ -38,6 +36,45 @@ interface MedianEdgePick {
   volatility?: number;
   confidence_tier?: 'A' | 'B' | 'C' | 'D';
   engine_version?: string;
+}
+
+interface ParlayLeg {
+  player_name: string;
+  stat_type: string;
+  line: number;
+  edge: number;
+  recommendation: string;
+  confidence_tier: string;
+  hit_rate: number;
+  volatility: number;
+  defense_code: number | null;
+  is_duo: boolean;
+  pick_score: number;
+}
+
+interface GeneratedParlay {
+  id?: string;
+  parlay_type: string;
+  legs: ParlayLeg[];
+  total_edge: number;
+  combined_hit_rate: number;
+  confidence_score: number;
+  stat_breakdown: Record<string, number>;
+  duo_stacks: { player: string; type: string; boost: number }[];
+  defense_advantage_score: number;
+  outcome?: string;
+  legs_won?: number;
+  legs_lost?: number;
+}
+
+interface DuoOpportunity {
+  player: string;
+  stats: string[];
+  direction: "OVER" | "UNDER";
+  combined_edge: number;
+  avg_hit_rate: number;
+  boost: number;
+  confidence: "ELITE" | "STRONG" | "MODERATE";
 }
 
 // Confidence Tier Badge Component
@@ -155,13 +192,182 @@ function VolatilityIndicator({ volatility }: { volatility?: number }) {
   );
 }
 
+// Duo Stack Badge Component
+function DuoStackBadge({ duo }: { duo: { player: string; type: string; boost: number } }) {
+  const typeLabel = duo.type.includes('+') ? duo.type : duo.type.toUpperCase();
+  
+  return (
+    <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-gradient-to-r from-purple-500/20 to-pink-500/20 border border-purple-500/30">
+      <Users className="w-3 h-3 text-purple-400" />
+      <span className="text-xs font-semibold text-purple-300">{duo.player}</span>
+      <span className="text-xs text-purple-400/70">{typeLabel}</span>
+      <span className="text-[10px] px-1 py-0.5 rounded bg-purple-500/30 text-purple-300 font-bold">+{duo.boost}%</span>
+    </div>
+  );
+}
+
+// Parlay Type Badge
+function ParlayTypeBadge({ type, confidence }: { type: string; confidence: number }) {
+  const config = {
+    SAFE: { bg: 'from-emerald-500/20 to-emerald-600/10', border: 'border-emerald-500/40', text: 'text-emerald-400', icon: Shield },
+    BALANCED: { bg: 'from-cyan-500/20 to-cyan-600/10', border: 'border-cyan-500/40', text: 'text-cyan-400', icon: Layers },
+    VALUE: { bg: 'from-amber-500/20 to-amber-600/10', border: 'border-amber-500/40', text: 'text-amber-400', icon: Trophy },
+  };
+  
+  const c = config[type as keyof typeof config] || config.BALANCED;
+  const Icon = c.icon;
+  
+  return (
+    <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl bg-gradient-to-r ${c.bg} border ${c.border}`}>
+      <Icon className={`w-4 h-4 ${c.text}`} />
+      <span className={`font-bold ${c.text}`}>{type}</span>
+      <div className={`px-2 py-0.5 rounded-md bg-background/30 ${c.text} text-xs font-semibold`}>
+        {confidence.toFixed(0)}%
+      </div>
+    </div>
+  );
+}
+
+// Duo Opportunity Card
+function DuoOpportunityCard({ duo }: { duo: DuoOpportunity }) {
+  const confidenceColors = {
+    ELITE: 'from-emerald-500/20 to-emerald-600/10 border-emerald-500/40 text-emerald-400',
+    STRONG: 'from-cyan-500/20 to-cyan-600/10 border-cyan-500/40 text-cyan-400',
+    MODERATE: 'from-amber-500/20 to-amber-600/10 border-amber-500/40 text-amber-400',
+  };
+  
+  const colors = confidenceColors[duo.confidence];
+  const directionColor = duo.direction === 'OVER' ? 'text-emerald-400' : 'text-red-400';
+  
+  return (
+    <div className={`p-3 rounded-xl bg-gradient-to-r ${colors} border`}>
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <Users className="w-4 h-4" />
+          <span className="font-semibold">{duo.player}</span>
+        </div>
+        <span className={`text-xs font-bold px-2 py-0.5 rounded-md bg-background/30 ${directionColor}`}>
+          {duo.direction}
+        </span>
+      </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        {duo.stats.map((stat, i) => (
+          <span key={i} className="text-xs px-2 py-0.5 rounded bg-background/30 capitalize">{stat}</span>
+        ))}
+      </div>
+      <div className="flex items-center justify-between mt-2 text-xs">
+        <span>Edge: <span className="font-mono font-semibold">+{duo.combined_edge.toFixed(1)}</span></span>
+        <span>Hit: <span className="font-mono font-semibold">{(duo.avg_hit_rate * 100).toFixed(0)}%</span></span>
+        <span className="px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 font-bold">+{duo.boost}%</span>
+      </div>
+    </div>
+  );
+}
+
+// Parlay Card Component
+function ParlayCard({ parlay }: { parlay: GeneratedParlay }) {
+  const [expanded, setExpanded] = useState(false);
+  
+  const outcomeColors = {
+    won: 'border-emerald-500/50 bg-emerald-500/10',
+    lost: 'border-red-500/50 bg-red-500/10',
+    pending: 'border-border/50 bg-card/50',
+    partial: 'border-amber-500/50 bg-amber-500/10',
+  };
+  
+  const borderColor = outcomeColors[parlay.outcome as keyof typeof outcomeColors] || outcomeColors.pending;
+  
+  return (
+    <div className={`rounded-xl border ${borderColor} overflow-hidden`}>
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full p-4 text-left"
+      >
+        <div className="flex items-center justify-between mb-3">
+          <ParlayTypeBadge type={parlay.parlay_type} confidence={parlay.confidence_score} />
+          <div className="flex items-center gap-2">
+            {parlay.outcome && parlay.outcome !== 'pending' && (
+              <span className={`text-xs font-bold px-2 py-1 rounded-lg ${
+                parlay.outcome === 'won' ? 'bg-emerald-500/20 text-emerald-400' :
+                parlay.outcome === 'lost' ? 'bg-red-500/20 text-red-400' :
+                'bg-amber-500/20 text-amber-400'
+              }`}>
+                {parlay.outcome.toUpperCase()} {parlay.legs_won !== undefined && `(${parlay.legs_won}/${parlay.legs.length})`}
+              </span>
+            )}
+            {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </div>
+        </div>
+        
+        {/* Duo Stacks */}
+        {parlay.duo_stacks && parlay.duo_stacks.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-3">
+            {parlay.duo_stacks.map((duo, i) => (
+              <DuoStackBadge key={i} duo={duo} />
+            ))}
+          </div>
+        )}
+        
+        {/* Summary Stats */}
+        <div className="grid grid-cols-3 gap-3">
+          <div className="text-center p-2 rounded-lg bg-background/30">
+            <p className="text-xs text-muted-foreground">Total Edge</p>
+            <p className="font-mono font-bold text-cyan-400">+{parlay.total_edge.toFixed(1)}</p>
+          </div>
+          <div className="text-center p-2 rounded-lg bg-background/30">
+            <p className="text-xs text-muted-foreground">Avg Hit Rate</p>
+            <p className="font-mono font-bold text-emerald-400">{(parlay.combined_hit_rate * 100).toFixed(0)}%</p>
+          </div>
+          <div className="text-center p-2 rounded-lg bg-background/30">
+            <p className="text-xs text-muted-foreground">Def Advantage</p>
+            <p className="font-mono font-bold text-purple-400">{(parlay.defense_advantage_score * 100).toFixed(0)}%</p>
+          </div>
+        </div>
+      </button>
+      
+      {expanded && (
+        <div className="px-4 pb-4 space-y-2 border-t border-border/20 pt-3">
+          <p className="text-xs text-muted-foreground mb-2">6 Legs • {Object.keys(parlay.stat_breakdown).length} Stat Types</p>
+          {parlay.legs.map((leg, i) => (
+            <div key={i} className={`p-2 rounded-lg border ${
+              leg.recommendation.includes('OVER') ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-red-500/30 bg-red-500/5'
+            }`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  {leg.is_duo && <Star className="w-3 h-3 text-purple-400" />}
+                  <ConfidenceTierBadge tier={leg.confidence_tier} />
+                  <span className="font-semibold text-sm">{leg.player_name}</span>
+                  <span className="text-xs text-muted-foreground capitalize">{leg.stat_type}</span>
+                </div>
+                <span className={`text-xs font-semibold ${
+                  leg.recommendation.includes('OVER') ? 'text-emerald-400' : 'text-red-400'
+                }`}>
+                  {leg.recommendation}
+                </span>
+              </div>
+              <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                <span>Line: <span className="font-mono">{leg.line}</span></span>
+                <span>Edge: <span className="font-mono text-cyan-400">{leg.edge > 0 ? '+' : ''}{leg.edge.toFixed(1)}</span></span>
+                <span>Hit: <span className="font-mono">{(leg.hit_rate * 100).toFixed(0)}%</span></span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function MedianEdgePicksCard() {
   const [viewMode, setViewMode] = useState<ViewMode>("calculator");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isGeneratingParlays, setIsGeneratingParlays] = useState(false);
   const { toast } = useToast();
   const { isAdmin, isSubscribed, isLoading: isUserLoading } = usePilotUser();
   
   const hasAutoPicksAccess = isAdmin || isSubscribed;
+  
+  // Picks query
   const { data: picks, isLoading, refetch, isFetching } = useQuery({
     queryKey: ['median-edge-picks'],
     queryFn: async () => {
@@ -181,6 +387,20 @@ export function MedianEdgePicksCard() {
     enabled: viewMode === "auto"
   });
 
+  // Parlays query
+  const { data: parlaysData, isLoading: isParlaysLoading, refetch: refetchParlays, isFetching: isParlaysFetching } = useQuery({
+    queryKey: ['median-parlays'],
+    queryFn: async () => {
+      const { data, error } = await supabase.functions.invoke('nba-median-matchup-engine', {
+        body: { action: 'get_parlays' }
+      });
+      
+      if (error) throw error;
+      return data as { parlays: GeneratedParlay[]; duo_opportunities: DuoOpportunity[] };
+    },
+    enabled: viewMode === "parlays"
+  });
+
   const handleRefresh = async () => {
     await refetch();
     toast({
@@ -192,7 +412,6 @@ export function MedianEdgePicksCard() {
   const handleGenerate = async () => {
     setIsGenerating(true);
     try {
-      // Use the new v2 engine
       const { data, error } = await supabase.functions.invoke('nba-median-matchup-engine', {
         body: { action: 'analyze_auto' }
       });
@@ -217,10 +436,42 @@ export function MedianEdgePicksCard() {
     }
   };
 
+  const handleGenerateParlays = async () => {
+    setIsGeneratingParlays(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('nba-median-matchup-engine', {
+        body: { action: 'generate_parlays' }
+      });
+      
+      if (error) throw error;
+      
+      const parlayCounts = [
+        data?.parlays?.SAFE ? 'SAFE' : null,
+        data?.parlays?.BALANCED ? 'BALANCED' : null,
+        data?.parlays?.VALUE ? 'VALUE' : null,
+      ].filter(Boolean).join(', ');
+      
+      toast({
+        title: "AI Parlays Generated",
+        description: `Created ${data?.summary?.parlays_generated || 0} parlays (${parlayCounts || 'none'}) with ${data?.summary?.duo_stacks_found || 0} duo stacks detected`
+      });
+      
+      await refetchParlays();
+    } catch (error: any) {
+      console.error('Parlay generation error:', error);
+      toast({
+        title: "Generation Failed",
+        description: error.message || "Failed to generate parlays",
+        variant: "destructive"
+      });
+    } finally {
+      setIsGeneratingParlays(false);
+    }
+  };
+
   const strongPicks = picks?.filter(p => p.recommendation.includes('STRONG')) || [];
   const leanPicks = picks?.filter(p => p.recommendation.includes('LEAN')) || [];
   
-  // V2 tier breakdown
   const tierA = picks?.filter(p => p.confidence_tier === 'A') || [];
   const tierB = picks?.filter(p => p.confidence_tier === 'B') || [];
   const tierC = picks?.filter(p => p.confidence_tier === 'C') || [];
@@ -238,17 +489,24 @@ export function MedianEdgePicksCard() {
         >
           <ToggleGroupItem 
             value="calculator" 
-            className="px-4 py-2 data-[state=on]:bg-cyan-500/20 data-[state=on]:text-cyan-300 rounded-lg transition-all gap-2"
+            className="px-3 py-2 data-[state=on]:bg-cyan-500/20 data-[state=on]:text-cyan-300 rounded-lg transition-all gap-2"
           >
             <Calculator className="w-4 h-4" />
-            <span>Calculator</span>
+            <span className="hidden sm:inline">Calculator</span>
           </ToggleGroupItem>
           <ToggleGroupItem 
             value="auto" 
-            className="px-4 py-2 data-[state=on]:bg-primary/20 data-[state=on]:text-primary rounded-lg transition-all gap-2"
+            className="px-3 py-2 data-[state=on]:bg-primary/20 data-[state=on]:text-primary rounded-lg transition-all gap-2"
           >
             <Database className="w-4 h-4" />
-            <span>Auto Picks</span>
+            <span className="hidden sm:inline">Auto Picks</span>
+          </ToggleGroupItem>
+          <ToggleGroupItem 
+            value="parlays" 
+            className="px-3 py-2 data-[state=on]:bg-purple-500/20 data-[state=on]:text-purple-300 rounded-lg transition-all gap-2"
+          >
+            <Layers className="w-4 h-4" />
+            <span className="hidden sm:inline">AI Parlays</span>
           </ToggleGroupItem>
         </ToggleGroup>
       </div>
@@ -332,7 +590,6 @@ export function MedianEdgePicksCard() {
 
             {!isLoading && picks && picks.length > 0 && (
               <div className="space-y-4">
-                {/* V2 Tier Summary */}
                 {isV2 ? (
                   <div className="grid grid-cols-3 gap-3">
                     <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-center">
@@ -361,7 +618,6 @@ export function MedianEdgePicksCard() {
                   </div>
                 )}
 
-                {/* Strong Picks */}
                 {strongPicks.length > 0 && (
                   <div className="space-y-2">
                     <h4 className="text-sm font-semibold text-emerald-400 flex items-center gap-2">
@@ -374,7 +630,6 @@ export function MedianEdgePicksCard() {
                   </div>
                 )}
 
-                {/* Lean Picks */}
                 {leanPicks.length > 0 && (
                   <div className="space-y-2">
                     <h4 className="text-sm font-semibold text-amber-400 flex items-center gap-2">
@@ -386,6 +641,113 @@ export function MedianEdgePicksCard() {
                     ))}
                   </div>
                 )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* AI Parlays View */}
+      {viewMode === "parlays" && !hasAutoPicksAccess && !isUserLoading && (
+        <AutoPicksPaywall />
+      )}
+
+      {viewMode === "parlays" && hasAutoPicksAccess && (
+        <div className="relative overflow-hidden rounded-2xl border border-purple-500/30 bg-gradient-to-br from-card/90 via-card/70 to-purple-500/10 backdrop-blur-sm">
+          <div className="absolute -top-20 -right-20 w-40 h-40 bg-purple-500/10 rounded-full blur-3xl" />
+          
+          <div className="relative p-5 space-y-4">
+            {/* Header */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-purple-500/20 border border-purple-500/30">
+                  <Layers className="w-5 h-5 text-purple-400" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-lg flex items-center gap-2">
+                    AI Parlay Builder
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 border border-purple-500/30">v1</span>
+                  </h3>
+                  <p className="text-xs text-muted-foreground">6-leg parlays with duo stack detection</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  onClick={handleGenerateParlays}
+                  disabled={isGeneratingParlays || isParlaysFetching}
+                  variant="default"
+                  size="sm"
+                  className="gap-2 bg-purple-600 hover:bg-purple-700"
+                >
+                  {isGeneratingParlays ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                  {parlaysData?.parlays?.length ? 'Regenerate' : 'Generate'}
+                </Button>
+                <Button
+                  onClick={() => refetchParlays()}
+                  disabled={isParlaysFetching || isGeneratingParlays}
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
+                >
+                  {isParlaysFetching ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                </Button>
+              </div>
+            </div>
+
+            {isParlaysLoading && (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-8 h-8 animate-spin text-purple-400" />
+              </div>
+            )}
+
+            {!isParlaysLoading && (!parlaysData?.parlays || parlaysData.parlays.length === 0) && (
+              <div className="text-center py-12">
+                <Layers className="w-12 h-12 text-muted-foreground mx-auto mb-3 opacity-50" />
+                <p className="text-muted-foreground">No AI parlays available today.</p>
+                <p className="text-xs text-muted-foreground mt-1 mb-4">Generate picks first, then create AI parlays.</p>
+                <Button onClick={handleGenerateParlays} disabled={isGeneratingParlays} className="gap-2 bg-purple-600 hover:bg-purple-700">
+                  {isGeneratingParlays ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      Generate AI Parlays
+                    </>
+                  )}
+                </Button>
+              </div>
+            )}
+
+            {!isParlaysLoading && parlaysData?.parlays && parlaysData.parlays.length > 0 && (
+              <div className="space-y-4">
+                {/* Duo Opportunities */}
+                {parlaysData.duo_opportunities && parlaysData.duo_opportunities.length > 0 && (
+                  <div className="space-y-2">
+                    <h4 className="text-sm font-semibold text-purple-400 flex items-center gap-2">
+                      <Users className="w-4 h-4" />
+                      Duo Stack Opportunities ({parlaysData.duo_opportunities.length})
+                    </h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {parlaysData.duo_opportunities.slice(0, 4).map((duo, i) => (
+                        <DuoOpportunityCard key={i} duo={duo} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Parlays */}
+                <div className="space-y-3">
+                  <h4 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                    <Trophy className="w-4 h-4 text-amber-400" />
+                    Generated Parlays
+                  </h4>
+                  {parlaysData.parlays.map((parlay, i) => (
+                    <ParlayCard key={parlay.id || i} parlay={parlay} />
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -408,7 +770,6 @@ function PickCard({ pick }: { pick: MedianEdgePick }) {
   
   const textColor = isOver ? 'text-emerald-400' : 'text-red-400';
   
-  // Get the relevant hit rate based on direction
   const hitRate = isOver ? pick.hit_rate_over_10 : pick.hit_rate_under_10;
 
   return (
@@ -450,7 +811,6 @@ function PickCard({ pick }: { pick: MedianEdgePick }) {
       
       {expanded && (
         <div className="px-3 pb-3 pt-0 space-y-3 border-t border-border/20">
-          {/* V2 Metrics */}
           {isV2 && hitRate !== undefined && (
             <div className="space-y-2">
               <div className="flex items-center gap-2">
@@ -476,7 +836,6 @@ function PickCard({ pick }: { pick: MedianEdgePick }) {
           
           <p className="text-sm text-muted-foreground">{pick.reason_summary}</p>
           
-          {/* Legacy v1 metrics (fallback) */}
           {!isV2 && (
             <div className="grid grid-cols-3 gap-2 text-xs">
               <div className="text-center p-2 rounded-lg bg-background/30">
