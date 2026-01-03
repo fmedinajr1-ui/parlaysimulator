@@ -162,7 +162,7 @@ serve(async (req) => {
       // 3) Pull game logs (paginated for large tables)
       const { data: logs, error: logsErr } = await supabase
         .from("nba_player_game_logs")
-        .select("player_name, game_date, opponent, is_home, minutes, points, rebounds, assists")
+        .select("player_name, game_date, opponent, is_home, minutes_played, points, rebounds, assists")
         .order("game_date", { ascending: false })
         .range(0, 15000);
 
@@ -190,7 +190,7 @@ serve(async (req) => {
         if (!Number.isFinite(line) || line <= 0) continue;
 
         const playerLogs = (byPlayer.get(player.toLowerCase()) || [])
-          .filter(l => (l.minutes ?? 0) > 0)
+          .filter(l => (l.minutes_played ?? 0) > 0)
           .slice(0, 10);
 
         // Minimum 8 games required (v2 spec)
