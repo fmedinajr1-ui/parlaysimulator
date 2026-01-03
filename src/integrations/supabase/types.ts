@@ -3111,15 +3111,22 @@ export type Database = {
       median_edge_picks: {
         Row: {
           actual_value: number | null
+          adjusted_median: number | null
           adjustments: Json | null
           alt_line_suggestion: number | null
           confidence_flag: string | null
+          confidence_tier: string | null
           created_at: string | null
+          defense_code: number | null
+          defense_multiplier: number | null
           edge: number | null
+          engine_version: string | null
           event_id: string | null
           expected_minutes: number | null
           game_date: string | null
           game_time: string | null
+          hit_rate_over_10: number | null
+          hit_rate_under_10: number | null
           id: string
           injury_context: string | null
           is_volatile: boolean | null
@@ -3128,6 +3135,7 @@ export type Database = {
           m3_minutes_weighted: number | null
           m4_usage: number | null
           m5_location: number | null
+          median5: number | null
           odds_current: number | null
           odds_open: number | null
           opponent_team: string | null
@@ -3143,18 +3151,26 @@ export type Database = {
           team_name: string | null
           true_median: number | null
           verified_at: string | null
+          volatility: number | null
         }
         Insert: {
           actual_value?: number | null
+          adjusted_median?: number | null
           adjustments?: Json | null
           alt_line_suggestion?: number | null
           confidence_flag?: string | null
+          confidence_tier?: string | null
           created_at?: string | null
+          defense_code?: number | null
+          defense_multiplier?: number | null
           edge?: number | null
+          engine_version?: string | null
           event_id?: string | null
           expected_minutes?: number | null
           game_date?: string | null
           game_time?: string | null
+          hit_rate_over_10?: number | null
+          hit_rate_under_10?: number | null
           id?: string
           injury_context?: string | null
           is_volatile?: boolean | null
@@ -3163,6 +3179,7 @@ export type Database = {
           m3_minutes_weighted?: number | null
           m4_usage?: number | null
           m5_location?: number | null
+          median5?: number | null
           odds_current?: number | null
           odds_open?: number | null
           opponent_team?: string | null
@@ -3178,18 +3195,26 @@ export type Database = {
           team_name?: string | null
           true_median?: number | null
           verified_at?: string | null
+          volatility?: number | null
         }
         Update: {
           actual_value?: number | null
+          adjusted_median?: number | null
           adjustments?: Json | null
           alt_line_suggestion?: number | null
           confidence_flag?: string | null
+          confidence_tier?: string | null
           created_at?: string | null
+          defense_code?: number | null
+          defense_multiplier?: number | null
           edge?: number | null
+          engine_version?: string | null
           event_id?: string | null
           expected_minutes?: number | null
           game_date?: string | null
           game_time?: string | null
+          hit_rate_over_10?: number | null
+          hit_rate_under_10?: number | null
           id?: string
           injury_context?: string | null
           is_volatile?: boolean | null
@@ -3198,6 +3223,7 @@ export type Database = {
           m3_minutes_weighted?: number | null
           m4_usage?: number | null
           m5_location?: number | null
+          median5?: number | null
           odds_current?: number | null
           odds_open?: number | null
           opponent_team?: string | null
@@ -3213,6 +3239,7 @@ export type Database = {
           team_name?: string | null
           true_median?: number | null
           verified_at?: string | null
+          volatility?: number | null
         }
         Relationships: []
       }
@@ -3555,6 +3582,45 @@ export type Database = {
           slip_type?: string
           stake_tier?: string | null
           verified_at?: string | null
+        }
+        Relationships: []
+      }
+      nba_defense_codes: {
+        Row: {
+          created_at: string | null
+          id: string
+          pace_code: number | null
+          season: string | null
+          team_abbreviation: string | null
+          team_name: string
+          updated_at: string | null
+          vs_assists_code: number | null
+          vs_points_code: number | null
+          vs_rebounds_code: number | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          pace_code?: number | null
+          season?: string | null
+          team_abbreviation?: string | null
+          team_name: string
+          updated_at?: string | null
+          vs_assists_code?: number | null
+          vs_points_code?: number | null
+          vs_rebounds_code?: number | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          pace_code?: number | null
+          season?: string | null
+          team_abbreviation?: string | null
+          team_name?: string
+          updated_at?: string | null
+          vs_assists_code?: number | null
+          vs_points_code?: number | null
+          vs_rebounds_code?: number | null
         }
         Relationships: []
       }
