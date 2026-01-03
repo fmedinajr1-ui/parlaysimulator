@@ -13,12 +13,18 @@ const SPORT_KEYS: Record<string, string> = {
 };
 
 const NBA_MARKETS = [
+  // Individual stats
   'player_points',
   'player_rebounds', 
   'player_assists',
   'player_threes',
   'player_blocks',
-  'player_steals'
+  'player_steals',
+  // Combo props
+  'player_points_rebounds_assists',
+  'player_points_rebounds',
+  'player_points_assists',
+  'player_rebounds_assists'
 ];
 
 const NFL_MARKETS = [
@@ -91,7 +97,7 @@ serve(async (req) => {
 
       // For each relevant event, fetch player props
       for (const event of relevantEvents.slice(0, 5)) { // Limit to 5 events per sport
-        for (const market of marketsToScan.slice(0, 4)) { // Limit markets to save API calls
+        for (const market of marketsToScan.slice(0, 10)) { // Include combo props
           try {
             const propsUrl = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${event.id}/odds?apiKey=${apiKey}&regions=us&markets=${market}&oddsFormat=american`;
             const propsRes = await fetch(propsUrl);

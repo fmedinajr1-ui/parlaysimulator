@@ -16,9 +16,16 @@ const SPORT_KEYS: Record<string, string> = {
 };
 
 const PROP_MARKETS = [
+  // Individual stats
   'player_points', 'player_rebounds', 'player_assists',
   'player_threes', 'player_blocks', 'player_steals',
-  'player_points_rebounds_assists', 'player_goals', 'player_shots_on_goal'
+  // Combo props (NBA)
+  'player_points_rebounds_assists',
+  'player_points_rebounds',
+  'player_points_assists',
+  'player_rebounds_assists',
+  // Other sports
+  'player_goals', 'player_shots_on_goal'
 ];
 
 interface UnifiedProp {
@@ -265,7 +272,7 @@ serve(async (req) => {
 
         for (const event of upcomingEvents) {
           // Fetch props for this event
-          for (const market of PROP_MARKETS.slice(0, 6)) { // Process 6 markets
+          for (const market of PROP_MARKETS.slice(0, 10)) { // Process 10 markets including combos
             try {
               const propsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${oddsApiKey}&regions=us&markets=${market}&oddsFormat=american`;
               const propsRes = await fetch(propsUrl);
