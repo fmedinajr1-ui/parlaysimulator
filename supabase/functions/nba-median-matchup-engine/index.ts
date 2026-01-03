@@ -263,11 +263,23 @@ function scorePick(pick: any, duoPlayers: Set<string>): number {
   return score;
 }
 
+// Configurable parlay config type
+interface ParlayConfig {
+  tierA: number;
+  tierBC: number;
+  minHitRate: number;
+  maxVol: number;
+  duoBoost?: number;
+  defenseWeight?: number;
+  minEdge?: number;
+}
+
 function buildParlay(
   picks: any[],
   duos: DuoStack[],
   type: "SAFE" | "BALANCED" | "VALUE",
-  usedPlayers: Set<string>
+  usedPlayers: Set<string>,
+  configOverride?: Partial<ParlayConfig>
 ): GeneratedParlay | null {
   const duoPlayers = new Set(duos.map(d => d.player.toLowerCase()));
   
@@ -278,14 +290,16 @@ function buildParlay(
     is_duo: duoPlayers.has(p.player_name.toLowerCase())
   })).sort((a, b) => b.pick_score - a.pick_score);
   
-  // Parlay configuration by type
-  const config = {
+  // Default parlay configuration by type
+  const defaultConfig: Record<"SAFE" | "BALANCED" | "VALUE", ParlayConfig> = {
     SAFE: { tierA: 4, tierBC: 2, minHitRate: 0.75, maxVol: 0.30 },
     BALANCED: { tierA: 3, tierBC: 3, minHitRate: 0.65, maxVol: 0.35 },
     VALUE: { tierA: 2, tierBC: 4, minHitRate: 0.60, maxVol: 0.40 }
   };
   
-  const cfg = config[type];
+  // Apply config override if provided
+  const cfg: ParlayConfig = { ...defaultConfig[type], ...configOverride };
+  
   const legs: ParlayLeg[] = [];
   const statCount: Record<string, number> = {};
   const playerCount: Record<string, number> = {};
@@ -307,6 +321,9 @@ function buildParlay(
       const vol = pick.volatility || 0.3;
       
       if (hitRate < cfg.minHitRate || vol > cfg.maxVol) continue;
+      
+      // Apply minEdge filter if specified
+      if (cfg.minEdge && Math.abs(pick.edge || 0) < cfg.minEdge) continue;
       
       const stat = pick.stat_type;
       if ((statCount[stat] || 0) >= 2) continue;
@@ -333,7 +350,7 @@ function buildParlay(
       includedDuos.push({
         player: duo.player,
         type: duo.stats.join('+'),
-        boost: duo.boost
+        boost: cfg.duoBoost ?? duo.boost
       });
     }
   }
@@ -350,6 +367,9 @@ function buildParlay(
     const vol = pick.volatility || 0.3;
     
     if (hitRate < cfg.minHitRate || vol > cfg.maxVol) continue;
+    
+    // Apply minEdge filter if specified
+    if (cfg.minEdge && Math.abs(pick.edge || 0) < cfg.minEdge) continue;
     
     const stat = pick.stat_type;
     if ((statCount[stat] || 0) >= 2) continue;
@@ -387,15 +407,16 @@ function buildParlay(
   const tierACount = legs.filter(l => l.confidence_tier === 'A').length;
   const tierBCount = legs.filter(l => l.confidence_tier === 'B').length;
   
-  if (type === 'SAFE' && tierACount < 4) return null;
-  if (type === 'BALANCED' && tierACount < 3) return null;
-  if (type === 'VALUE' && tierACount < 2) return null;
+  if (type === 'SAFE' && tierACount < cfg.tierA) return null;
+  if (type === 'BALANCED' && tierACount < cfg.tierA) return null;
+  if (type === 'VALUE' && tierACount < cfg.tierA) return null;
   
   // Calculate parlay metrics
   const totalEdge = legs.reduce((sum, l) => sum + Math.abs(l.edge), 0);
   const combinedHitRate = legs.reduce((sum, l) => sum + l.hit_rate, 0) / legs.length;
   
   // Defense advantage score
+  const defenseWeight = cfg.defenseWeight ?? 5;
   const avgDefCode = legs.reduce((sum, l) => sum + (l.defense_code ?? 50), 0) / legs.length;
   const softDefenseLegs = legs.filter(l => {
     const isOver = l.recommendation.includes('OVER');
@@ -413,9 +434,11 @@ function buildParlay(
   }, 0);
   const avgTierWeight = tierWeightSum / legs.length;
   
+  // Apply configurable duo boost
+  const duoBoostMultiplier = (cfg.duoBoost ?? 15) / 100;
   let confidence = avgTierWeight * combinedHitRate * 100;
-  confidence *= (1 + includedDuos.length * 0.05);
-  confidence *= (1 + defenseAdvantage * 0.1);
+  confidence *= (1 + includedDuos.length * duoBoostMultiplier * 0.33);
+  confidence *= (1 + defenseAdvantage * (defenseWeight / 50));
   confidence = Math.min(100, Math.max(0, confidence));
   
   return {
@@ -482,6 +505,13 @@ serve(async (req) => {
       const duoStacks = detectDuoStacks(dedupedPicks);
       console.log(`[NBA-PARLAY-BUILDER] Detected ${duoStacks.length} duo stacks`);
       
+      // Check for active A/B experiments
+      const { data: activeExperiments } = await supabase
+        .from('parlay_ab_experiments')
+        .select('*')
+        .eq('status', 'active')
+        .lte('start_date', today);
+      
       // Build parlays of each type
       const usedPlayers = new Set<string>();
       const safeParlay = buildParlay(dedupedPicks, duoStacks, "SAFE", usedPlayers);
@@ -495,13 +525,46 @@ serve(async (req) => {
       
       console.log(`[NBA-PARLAY-BUILDER] Built ${parlays.length} parlays`);
       
+      // Build A/B experiment parlays if experiments are active
+      const experimentParlays: { experiment_id: string; variant: string; parlay: GeneratedParlay }[] = [];
+      
+      for (const experiment of activeExperiments || []) {
+        console.log(`[NBA-PARLAY-BUILDER] Processing experiment: ${experiment.experiment_name}`);
+        
+        const controlConfig = experiment.control_config as any;
+        const variantConfig = experiment.variant_config as any;
+        
+        // Generate control parlay
+        const controlParlay = buildParlay(dedupedPicks, duoStacks, "BALANCED", new Set(), controlConfig);
+        if (controlParlay) {
+          experimentParlays.push({
+            experiment_id: experiment.id,
+            variant: 'control',
+            parlay: controlParlay
+          });
+        }
+        
+        // Generate variant parlay
+        const variantParlay = buildParlay(dedupedPicks, duoStacks, "BALANCED", new Set(), variantConfig);
+        if (variantParlay) {
+          experimentParlays.push({
+            experiment_id: experiment.id,
+            variant: 'variant',
+            parlay: variantParlay
+          });
+        }
+      }
+      
+      console.log(`[NBA-PARLAY-BUILDER] Built ${experimentParlays.length} A/B experiment parlays`);
+      
       // Save parlays to database
       if (parlays.length > 0) {
         // Clear today's old parlays first
         await supabase
           .from('median_parlay_picks')
           .delete()
-          .eq('parlay_date', today);
+          .eq('parlay_date', today)
+          .is('experiment_id', null);
         
         const parlaysToSave = parlays.map(p => ({
           parlay_date: today,
@@ -527,6 +590,62 @@ serve(async (req) => {
         }
       }
       
+      // Save experiment parlays and track assignments
+      for (const expParlay of experimentParlays) {
+        // Clear today's experiment parlays for this variant
+        await supabase
+          .from('median_parlay_picks')
+          .delete()
+          .eq('parlay_date', today)
+          .eq('experiment_id', expParlay.experiment_id)
+          .eq('experiment_variant', expParlay.variant);
+        
+        // Insert the experiment parlay
+        const { data: savedParlay, error: expInsertErr } = await supabase
+          .from('median_parlay_picks')
+          .insert({
+            parlay_date: today,
+            parlay_type: expParlay.parlay.type,
+            legs: expParlay.parlay.legs,
+            total_edge: expParlay.parlay.total_edge,
+            combined_hit_rate: expParlay.parlay.combined_hit_rate,
+            confidence_score: expParlay.parlay.confidence_score,
+            stat_breakdown: expParlay.parlay.stat_breakdown,
+            duo_stacks: expParlay.parlay.duo_stacks,
+            defense_advantage_score: expParlay.parlay.defense_advantage_score,
+            engine_version: 'v2',
+            experiment_id: expParlay.experiment_id,
+            experiment_variant: expParlay.variant
+          })
+          .select()
+          .single();
+        
+        if (expInsertErr) {
+          console.error(`[NBA-PARLAY-BUILDER] Experiment insert error:`, expInsertErr);
+          continue;
+        }
+        
+        // Track assignment
+        const { error: assignErr } = await supabase
+          .from('parlay_experiment_assignments')
+          .insert({
+            experiment_id: expParlay.experiment_id,
+            parlay_id: savedParlay.id,
+            variant: expParlay.variant,
+            parlay_type: expParlay.parlay.type,
+            confidence_at_creation: expParlay.parlay.confidence_score,
+            total_edge_at_creation: expParlay.parlay.total_edge,
+            duo_stacks_count: expParlay.parlay.duo_stacks.length,
+            config_snapshot: expParlay.variant === 'control' 
+              ? activeExperiments?.find(e => e.id === expParlay.experiment_id)?.control_config
+              : activeExperiments?.find(e => e.id === expParlay.experiment_id)?.variant_config
+          });
+        
+        if (assignErr) {
+          console.error(`[NBA-PARLAY-BUILDER] Assignment error:`, assignErr);
+        }
+      }
+      
       return new Response(JSON.stringify({
         success: true,
         engine: "NBA_PARLAY_BUILDER_V1",
@@ -539,7 +658,9 @@ serve(async (req) => {
         summary: {
           total_picks_analyzed: dedupedPicks.length,
           duo_stacks_found: duoStacks.length,
-          parlays_generated: parlays.length
+          parlays_generated: parlays.length,
+          experiment_parlays_generated: experimentParlays.length,
+          active_experiments: activeExperiments?.length || 0
         }
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" }});
     }

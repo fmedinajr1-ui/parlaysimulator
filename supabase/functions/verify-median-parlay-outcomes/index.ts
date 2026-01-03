@@ -199,6 +199,24 @@ serve(async (req) => {
 
         verifiedCount++;
         
+        // Update experiment assignment if this parlay is part of an A/B test
+        if (parlay.experiment_id) {
+          const { error: assignmentError } = await supabase
+            .from('parlay_experiment_assignments')
+            .update({
+              outcome: parlayOutcome,
+              legs_hit: legsWon,
+              verified_at: new Date().toISOString()
+            })
+            .eq('parlay_id', parlay.id);
+          
+          if (assignmentError) {
+            console.error(`[PARLAY-VERIFY] Error updating assignment for parlay ${parlay.id}:`, assignmentError);
+          } else {
+            console.log(`[PARLAY-VERIFY] Updated A/B assignment for parlay ${parlay.id} (${parlay.experiment_variant}): ${parlayOutcome}`);
+          }
+        }
+        
         // Track by type
         const parlayType = parlay.parlay_type || 'UNKNOWN';
         if (resultsByType[parlayType]) {

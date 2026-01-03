@@ -353,3 +353,6 @@ verify_jwt = false
 
 [functions.verify-median-parlay-outcomes]
 verify_jwt = false
+
+[functions.parlay-ab-testing]
+verify_jwt = false
