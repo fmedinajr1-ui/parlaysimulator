@@ -3585,6 +3585,66 @@ export type Database = {
         }
         Relationships: []
       }
+      median_parlay_picks: {
+        Row: {
+          combined_hit_rate: number | null
+          confidence_score: number | null
+          created_at: string | null
+          defense_advantage_score: number | null
+          duo_stacks: Json | null
+          engine_version: string | null
+          id: string
+          leg_outcomes: Json | null
+          legs: Json
+          legs_lost: number | null
+          legs_won: number | null
+          outcome: string | null
+          parlay_date: string
+          parlay_type: string
+          stat_breakdown: Json | null
+          total_edge: number | null
+          verified_at: string | null
+        }
+        Insert: {
+          combined_hit_rate?: number | null
+          confidence_score?: number | null
+          created_at?: string | null
+          defense_advantage_score?: number | null
+          duo_stacks?: Json | null
+          engine_version?: string | null
+          id?: string
+          leg_outcomes?: Json | null
+          legs?: Json
+          legs_lost?: number | null
+          legs_won?: number | null
+          outcome?: string | null
+          parlay_date: string
+          parlay_type: string
+          stat_breakdown?: Json | null
+          total_edge?: number | null
+          verified_at?: string | null
+        }
+        Update: {
+          combined_hit_rate?: number | null
+          confidence_score?: number | null
+          created_at?: string | null
+          defense_advantage_score?: number | null
+          duo_stacks?: Json | null
+          engine_version?: string | null
+          id?: string
+          leg_outcomes?: Json | null
+          legs?: Json
+          legs_lost?: number | null
+          legs_won?: number | null
+          outcome?: string | null
+          parlay_date?: string
+          parlay_type?: string
+          stat_breakdown?: Json | null
+          total_edge?: number | null
+          verified_at?: string | null
+        }
+        Relationships: []
+      }
       nba_defense_codes: {
         Row: {
           created_at: string | null

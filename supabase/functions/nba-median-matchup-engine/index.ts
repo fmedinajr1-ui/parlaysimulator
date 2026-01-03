@@ -114,6 +114,322 @@ type EngineResult = {
   opponent_team?: string;
 };
 
+// ========== DUO STACK DETECTION ==========
+interface DuoStack {
+  player: string;
+  stats: string[];
+  direction: "OVER" | "UNDER";
+  combined_edge: number;
+  avg_hit_rate: number;
+  boost: number;
+  confidence: "ELITE" | "STRONG" | "MODERATE";
+  picks: any[];
+}
+
+function detectDuoStacks(picks: any[]): DuoStack[] {
+  const byPlayer = new Map<string, any[]>();
+  
+  for (const pick of picks) {
+    const key = pick.player_name.toLowerCase();
+    if (!byPlayer.has(key)) byPlayer.set(key, []);
+    byPlayer.get(key)!.push(pick);
+  }
+  
+  const duos: DuoStack[] = [];
+  
+  for (const [playerKey, playerPicks] of byPlayer) {
+    if (playerPicks.length < 2) continue;
+    
+    // Group by direction
+    const overPicks = playerPicks.filter(p => p.recommendation.includes('OVER'));
+    const underPicks = playerPicks.filter(p => p.recommendation.includes('UNDER'));
+    
+    // Check OVER duos
+    if (overPicks.length >= 2) {
+      const stats = overPicks.map(p => p.stat_type);
+      const combinedEdge = overPicks.reduce((sum, p) => sum + Math.abs(p.edge), 0);
+      const avgHitRate = overPicks.reduce((sum, p) => sum + (p.hit_rate_over_10 || 0.5), 0) / overPicks.length;
+      
+      // Calculate boost based on tier composition
+      const strongCount = overPicks.filter(p => p.recommendation.includes('STRONG')).length;
+      let boost = 5;
+      if (strongCount >= 2) boost = 15;
+      else if (strongCount >= 1) boost = 10;
+      
+      // Confidence level
+      let confidence: DuoStack["confidence"] = "MODERATE";
+      if (avgHitRate >= 0.70 && strongCount >= 2) confidence = "ELITE";
+      else if (avgHitRate >= 0.65 || strongCount >= 1) confidence = "STRONG";
+      
+      duos.push({
+        player: playerPicks[0].player_name,
+        stats,
+        direction: "OVER",
+        combined_edge: Number(combinedEdge.toFixed(2)),
+        avg_hit_rate: Number(avgHitRate.toFixed(3)),
+        boost,
+        confidence,
+        picks: overPicks
+      });
+    }
+    
+    // Check UNDER duos
+    if (underPicks.length >= 2) {
+      const stats = underPicks.map(p => p.stat_type);
+      const combinedEdge = underPicks.reduce((sum, p) => sum + Math.abs(p.edge), 0);
+      const avgHitRate = underPicks.reduce((sum, p) => sum + (p.hit_rate_under_10 || 0.5), 0) / underPicks.length;
+      
+      const strongCount = underPicks.filter(p => p.recommendation.includes('STRONG')).length;
+      let boost = 5;
+      if (strongCount >= 2) boost = 15;
+      else if (strongCount >= 1) boost = 10;
+      
+      let confidence: DuoStack["confidence"] = "MODERATE";
+      if (avgHitRate >= 0.70 && strongCount >= 2) confidence = "ELITE";
+      else if (avgHitRate >= 0.65 || strongCount >= 1) confidence = "STRONG";
+      
+      duos.push({
+        player: playerPicks[0].player_name,
+        stats,
+        direction: "UNDER",
+        combined_edge: Number(combinedEdge.toFixed(2)),
+        avg_hit_rate: Number(avgHitRate.toFixed(3)),
+        boost,
+        confidence,
+        picks: underPicks
+      });
+    }
+  }
+  
+  return duos.sort((a, b) => b.combined_edge - a.combined_edge);
+}
+
+// ========== PARLAY BUILDER ==========
+interface ParlayLeg {
+  player_name: string;
+  stat_type: string;
+  line: number;
+  edge: number;
+  recommendation: string;
+  confidence_tier: string;
+  hit_rate: number;
+  volatility: number;
+  defense_code: number | null;
+  is_duo: boolean;
+  pick_score: number;
+}
+
+interface GeneratedParlay {
+  type: "SAFE" | "BALANCED" | "VALUE";
+  legs: ParlayLeg[];
+  total_edge: number;
+  combined_hit_rate: number;
+  confidence_score: number;
+  stat_breakdown: Record<string, number>;
+  duo_stacks: { player: string; type: string; boost: number }[];
+  defense_advantage_score: number;
+}
+
+function scorePick(pick: any, duoPlayers: Set<string>): number {
+  const absEdge = Math.abs(pick.edge || 0);
+  const isOver = pick.recommendation.includes('OVER');
+  const hitRate = isOver ? (pick.hit_rate_over_10 || 0.5) : (pick.hit_rate_under_10 || 0.5);
+  const volatility = pick.volatility || 0.3;
+  const defCode = pick.defense_code ?? 50;
+  
+  // Base score: edge × hit rate × (1 - volatility dampening)
+  let score = absEdge * hitRate * (1 - volatility / 2);
+  
+  // Defense bonus (soft defense for OVER = +5, hard defense = -5)
+  if (isOver) {
+    if (defCode < 40) score += 5;
+    else if (defCode >= 60) score -= 5;
+  } else {
+    // For UNDER, hard defense is good
+    if (defCode >= 60) score += 5;
+    else if (defCode < 40) score -= 5;
+  }
+  
+  // Tier bonus
+  const tier = pick.confidence_tier || 'D';
+  if (tier === 'A') score += 10;
+  else if (tier === 'B') score += 5;
+  
+  // Duo bonus
+  if (duoPlayers.has(pick.player_name.toLowerCase())) {
+    score += 8;
+  }
+  
+  return score;
+}
+
+function buildParlay(
+  picks: any[],
+  duos: DuoStack[],
+  type: "SAFE" | "BALANCED" | "VALUE",
+  usedPlayers: Set<string>
+): GeneratedParlay | null {
+  const duoPlayers = new Set(duos.map(d => d.player.toLowerCase()));
+  
+  // Score all picks
+  const scoredPicks = picks.map(p => ({
+    ...p,
+    pick_score: scorePick(p, duoPlayers),
+    is_duo: duoPlayers.has(p.player_name.toLowerCase())
+  })).sort((a, b) => b.pick_score - a.pick_score);
+  
+  // Parlay configuration by type
+  const config = {
+    SAFE: { tierA: 4, tierBC: 2, minHitRate: 0.75, maxVol: 0.30 },
+    BALANCED: { tierA: 3, tierBC: 3, minHitRate: 0.65, maxVol: 0.35 },
+    VALUE: { tierA: 2, tierBC: 4, minHitRate: 0.60, maxVol: 0.40 }
+  };
+  
+  const cfg = config[type];
+  const legs: ParlayLeg[] = [];
+  const statCount: Record<string, number> = {};
+  const playerCount: Record<string, number> = {};
+  const includedDuos: { player: string; type: string; boost: number }[] = [];
+  
+  // First, try to include duo picks
+  for (const duo of duos) {
+    if (legs.length >= 6) break;
+    
+    const playerKey = duo.player.toLowerCase();
+    if ((playerCount[playerKey] || 0) >= 2) continue;
+    
+    // Add up to 2 picks from this duo
+    for (const pick of duo.picks.slice(0, 2)) {
+      if (legs.length >= 6) break;
+      
+      const isOver = pick.recommendation.includes('OVER');
+      const hitRate = isOver ? (pick.hit_rate_over_10 || 0.5) : (pick.hit_rate_under_10 || 0.5);
+      const vol = pick.volatility || 0.3;
+      
+      if (hitRate < cfg.minHitRate || vol > cfg.maxVol) continue;
+      
+      const stat = pick.stat_type;
+      if ((statCount[stat] || 0) >= 2) continue;
+      
+      legs.push({
+        player_name: pick.player_name,
+        stat_type: stat,
+        line: pick.sportsbook_line,
+        edge: pick.edge,
+        recommendation: pick.recommendation,
+        confidence_tier: pick.confidence_tier || 'D',
+        hit_rate: hitRate,
+        volatility: vol,
+        defense_code: pick.defense_code,
+        is_duo: true,
+        pick_score: pick.pick_score
+      });
+      
+      statCount[stat] = (statCount[stat] || 0) + 1;
+      playerCount[playerKey] = (playerCount[playerKey] || 0) + 1;
+    }
+    
+    if (playerCount[playerKey] >= 2) {
+      includedDuos.push({
+        player: duo.player,
+        type: duo.stats.join('+'),
+        boost: duo.boost
+      });
+    }
+  }
+  
+  // Fill remaining slots with best non-duo picks
+  for (const pick of scoredPicks) {
+    if (legs.length >= 6) break;
+    
+    const playerKey = pick.player_name.toLowerCase();
+    if ((playerCount[playerKey] || 0) >= 2) continue;
+    
+    const isOver = pick.recommendation.includes('OVER');
+    const hitRate = isOver ? (pick.hit_rate_over_10 || 0.5) : (pick.hit_rate_under_10 || 0.5);
+    const vol = pick.volatility || 0.3;
+    
+    if (hitRate < cfg.minHitRate || vol > cfg.maxVol) continue;
+    
+    const stat = pick.stat_type;
+    if ((statCount[stat] || 0) >= 2) continue;
+    
+    // Check if already added as duo
+    const alreadyAdded = legs.some(l => 
+      l.player_name.toLowerCase() === playerKey && l.stat_type === stat
+    );
+    if (alreadyAdded) continue;
+    
+    legs.push({
+      player_name: pick.player_name,
+      stat_type: stat,
+      line: pick.sportsbook_line,
+      edge: pick.edge,
+      recommendation: pick.recommendation,
+      confidence_tier: pick.confidence_tier || 'D',
+      hit_rate: hitRate,
+      volatility: vol,
+      defense_code: pick.defense_code,
+      is_duo: pick.is_duo,
+      pick_score: pick.pick_score
+    });
+    
+    statCount[stat] = (statCount[stat] || 0) + 1;
+    playerCount[playerKey] = (playerCount[playerKey] || 0) + 1;
+  }
+  
+  // Validate we have 6 legs with stat diversity (3+ different stat types)
+  if (legs.length < 6) return null;
+  const uniqueStats = Object.keys(statCount).length;
+  if (uniqueStats < 3) return null;
+  
+  // Validate tier composition
+  const tierACount = legs.filter(l => l.confidence_tier === 'A').length;
+  const tierBCount = legs.filter(l => l.confidence_tier === 'B').length;
+  
+  if (type === 'SAFE' && tierACount < 4) return null;
+  if (type === 'BALANCED' && tierACount < 3) return null;
+  if (type === 'VALUE' && tierACount < 2) return null;
+  
+  // Calculate parlay metrics
+  const totalEdge = legs.reduce((sum, l) => sum + Math.abs(l.edge), 0);
+  const combinedHitRate = legs.reduce((sum, l) => sum + l.hit_rate, 0) / legs.length;
+  
+  // Defense advantage score
+  const avgDefCode = legs.reduce((sum, l) => sum + (l.defense_code ?? 50), 0) / legs.length;
+  const softDefenseLegs = legs.filter(l => {
+    const isOver = l.recommendation.includes('OVER');
+    const defCode = l.defense_code ?? 50;
+    return (isOver && defCode < 40) || (!isOver && defCode >= 60);
+  }).length;
+  const defenseAdvantage = softDefenseLegs / legs.length;
+  
+  // Confidence score calculation
+  const tierWeightSum = legs.reduce((sum, l) => {
+    if (l.confidence_tier === 'A') return sum + 1.0;
+    if (l.confidence_tier === 'B') return sum + 0.75;
+    if (l.confidence_tier === 'C') return sum + 0.5;
+    return sum + 0.25;
+  }, 0);
+  const avgTierWeight = tierWeightSum / legs.length;
+  
+  let confidence = avgTierWeight * combinedHitRate * 100;
+  confidence *= (1 + includedDuos.length * 0.05);
+  confidence *= (1 + defenseAdvantage * 0.1);
+  confidence = Math.min(100, Math.max(0, confidence));
+  
+  return {
+    type,
+    legs,
+    total_edge: Number(totalEdge.toFixed(2)),
+    combined_hit_rate: Number(combinedHitRate.toFixed(3)),
+    confidence_score: Number(confidence.toFixed(1)),
+    stat_breakdown: statCount,
+    duo_stacks: includedDuos,
+    defense_advantage_score: Number(defenseAdvantage.toFixed(2))
+  };
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -125,6 +441,136 @@ serve(async (req) => {
   try {
     const body = await req.json().catch(() => ({}));
     const action = body?.action ?? "analyze_auto";
+
+    // ========== GENERATE PARLAYS ACTION ==========
+    if (action === "generate_parlays") {
+      console.log('[NBA-PARLAY-BUILDER] Starting parlay generation...');
+      const today = new Date().toISOString().split('T')[0];
+      
+      // Fetch today's actionable picks
+      const { data: picks, error: picksErr } = await supabase
+        .from('median_edge_picks')
+        .select('*')
+        .eq('game_date', today)
+        .neq('recommendation', 'NO BET')
+        .order('edge', { ascending: false });
+      
+      if (picksErr) throw picksErr;
+      
+      console.log(`[NBA-PARLAY-BUILDER] Found ${picks?.length || 0} actionable picks`);
+      
+      if (!picks || picks.length < 6) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: "Not enough actionable picks to build parlays (need at least 6)"
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" }});
+      }
+      
+      // Deduplicate: keep best line per player/stat combo
+      const deduped = new Map<string, any>();
+      for (const pick of picks) {
+        const key = `${pick.player_name.toLowerCase()}_${pick.stat_type}`;
+        const existing = deduped.get(key);
+        if (!existing || Math.abs(pick.edge) > Math.abs(existing.edge)) {
+          deduped.set(key, pick);
+        }
+      }
+      const dedupedPicks = Array.from(deduped.values());
+      console.log(`[NBA-PARLAY-BUILDER] Deduplicated to ${dedupedPicks.length} picks`);
+      
+      // Detect duo stacks
+      const duoStacks = detectDuoStacks(dedupedPicks);
+      console.log(`[NBA-PARLAY-BUILDER] Detected ${duoStacks.length} duo stacks`);
+      
+      // Build parlays of each type
+      const usedPlayers = new Set<string>();
+      const safeParlay = buildParlay(dedupedPicks, duoStacks, "SAFE", usedPlayers);
+      const balancedParlay = buildParlay(dedupedPicks, duoStacks, "BALANCED", usedPlayers);
+      const valueParlay = buildParlay(dedupedPicks, duoStacks, "VALUE", usedPlayers);
+      
+      const parlays: GeneratedParlay[] = [];
+      if (safeParlay) parlays.push(safeParlay);
+      if (balancedParlay) parlays.push(balancedParlay);
+      if (valueParlay) parlays.push(valueParlay);
+      
+      console.log(`[NBA-PARLAY-BUILDER] Built ${parlays.length} parlays`);
+      
+      // Save parlays to database
+      if (parlays.length > 0) {
+        // Clear today's old parlays first
+        await supabase
+          .from('median_parlay_picks')
+          .delete()
+          .eq('parlay_date', today);
+        
+        const parlaysToSave = parlays.map(p => ({
+          parlay_date: today,
+          parlay_type: p.type,
+          legs: p.legs,
+          total_edge: p.total_edge,
+          combined_hit_rate: p.combined_hit_rate,
+          confidence_score: p.confidence_score,
+          stat_breakdown: p.stat_breakdown,
+          duo_stacks: p.duo_stacks,
+          defense_advantage_score: p.defense_advantage_score,
+          engine_version: 'v2'
+        }));
+        
+        const { error: insertErr } = await supabase
+          .from('median_parlay_picks')
+          .insert(parlaysToSave);
+        
+        if (insertErr) {
+          console.error('[NBA-PARLAY-BUILDER] Insert error:', insertErr);
+        } else {
+          console.log(`[NBA-PARLAY-BUILDER] Saved ${parlaysToSave.length} parlays`);
+        }
+      }
+      
+      return new Response(JSON.stringify({
+        success: true,
+        engine: "NBA_PARLAY_BUILDER_V1",
+        parlays: {
+          SAFE: safeParlay,
+          BALANCED: balancedParlay,
+          VALUE: valueParlay
+        },
+        duo_opportunities: duoStacks.slice(0, 10),
+        summary: {
+          total_picks_analyzed: dedupedPicks.length,
+          duo_stacks_found: duoStacks.length,
+          parlays_generated: parlays.length
+        }
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" }});
+    }
+
+    // ========== GET PARLAYS ACTION ==========
+    if (action === "get_parlays") {
+      const today = new Date().toISOString().split('T')[0];
+      
+      const { data: parlays, error } = await supabase
+        .from('median_parlay_picks')
+        .select('*')
+        .eq('parlay_date', today)
+        .order('confidence_score', { ascending: false });
+      
+      if (error) throw error;
+      
+      // Also get duo opportunities from today's picks
+      const { data: picks } = await supabase
+        .from('median_edge_picks')
+        .select('*')
+        .eq('game_date', today)
+        .neq('recommendation', 'NO BET');
+      
+      const duoStacks = picks ? detectDuoStacks(picks) : [];
+      
+      return new Response(JSON.stringify({
+        success: true,
+        parlays: parlays || [],
+        duo_opportunities: duoStacks.slice(0, 10)
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" }});
+    }
 
     // --------- AUTO MODE: pull NBA props and compute results ----------
     if (action === "analyze_auto") {
@@ -433,7 +879,9 @@ serve(async (req) => {
         "Hit rate validation (60%+ for LEAN, 70%+ for STRONG)",
         "Per-stat thresholds",
         "Volatility dampening",
-        "Confidence tiers (A/B/C/D)"
+        "Confidence tiers (A/B/C/D)",
+        "Duo stack detection",
+        "AI parlay builder (SAFE/BALANCED/VALUE)"
       ],
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" }});
 

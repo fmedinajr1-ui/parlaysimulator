@@ -350,3 +350,6 @@ verify_jwt = false
 
 [functions.nba-median-matchup-engine]
 verify_jwt = false
+
+[functions.verify-median-parlay-outcomes]
+verify_jwt = false
