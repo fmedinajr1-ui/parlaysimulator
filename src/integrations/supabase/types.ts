@@ -3593,6 +3593,8 @@ export type Database = {
           defense_advantage_score: number | null
           duo_stacks: Json | null
           engine_version: string | null
+          experiment_id: string | null
+          experiment_variant: string | null
           id: string
           leg_outcomes: Json | null
           legs: Json
@@ -3612,6 +3614,8 @@ export type Database = {
           defense_advantage_score?: number | null
           duo_stacks?: Json | null
           engine_version?: string | null
+          experiment_id?: string | null
+          experiment_variant?: string | null
           id?: string
           leg_outcomes?: Json | null
           legs?: Json
@@ -3631,6 +3635,8 @@ export type Database = {
           defense_advantage_score?: number | null
           duo_stacks?: Json | null
           engine_version?: string | null
+          experiment_id?: string | null
+          experiment_variant?: string | null
           id?: string
           leg_outcomes?: Json | null
           legs?: Json
@@ -3643,7 +3649,15 @@ export type Database = {
           total_edge?: number | null
           verified_at?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "median_parlay_picks_experiment_id_fkey"
+            columns: ["experiment_id"]
+            isOneToOne: false
+            referencedRelation: "parlay_ab_experiments"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       nba_defense_codes: {
         Row: {
@@ -4494,6 +4508,196 @@ export type Database = {
           sport?: string
         }
         Relationships: []
+      }
+      parlay_ab_experiments: {
+        Row: {
+          completed_at: string | null
+          conclusion: string | null
+          confidence_interval: Json | null
+          control_config: Json
+          control_legs_hit_avg: number | null
+          control_parlays_total: number | null
+          control_parlays_won: number | null
+          created_at: string | null
+          description: string | null
+          end_date: string | null
+          experiment_name: string
+          hypothesis: string | null
+          id: string
+          lift_percentage: number | null
+          min_sample_size: number | null
+          start_date: string
+          statistical_significance: number | null
+          status: string | null
+          test_variables: Json | null
+          variant_config: Json
+          variant_legs_hit_avg: number | null
+          variant_parlays_total: number | null
+          variant_parlays_won: number | null
+          winner: string | null
+        }
+        Insert: {
+          completed_at?: string | null
+          conclusion?: string | null
+          confidence_interval?: Json | null
+          control_config: Json
+          control_legs_hit_avg?: number | null
+          control_parlays_total?: number | null
+          control_parlays_won?: number | null
+          created_at?: string | null
+          description?: string | null
+          end_date?: string | null
+          experiment_name: string
+          hypothesis?: string | null
+          id?: string
+          lift_percentage?: number | null
+          min_sample_size?: number | null
+          start_date: string
+          statistical_significance?: number | null
+          status?: string | null
+          test_variables?: Json | null
+          variant_config: Json
+          variant_legs_hit_avg?: number | null
+          variant_parlays_total?: number | null
+          variant_parlays_won?: number | null
+          winner?: string | null
+        }
+        Update: {
+          completed_at?: string | null
+          conclusion?: string | null
+          confidence_interval?: Json | null
+          control_config?: Json
+          control_legs_hit_avg?: number | null
+          control_parlays_total?: number | null
+          control_parlays_won?: number | null
+          created_at?: string | null
+          description?: string | null
+          end_date?: string | null
+          experiment_name?: string
+          hypothesis?: string | null
+          id?: string
+          lift_percentage?: number | null
+          min_sample_size?: number | null
+          start_date?: string
+          statistical_significance?: number | null
+          status?: string | null
+          test_variables?: Json | null
+          variant_config?: Json
+          variant_legs_hit_avg?: number | null
+          variant_parlays_total?: number | null
+          variant_parlays_won?: number | null
+          winner?: string | null
+        }
+        Relationships: []
+      }
+      parlay_experiment_assignments: {
+        Row: {
+          confidence_at_creation: number | null
+          config_snapshot: Json | null
+          created_at: string | null
+          duo_stacks_count: number | null
+          experiment_id: string | null
+          id: string
+          legs_hit: number | null
+          legs_total: number | null
+          outcome: string | null
+          parlay_id: string
+          parlay_type: string | null
+          total_edge_at_creation: number | null
+          variant: string
+          verified_at: string | null
+        }
+        Insert: {
+          confidence_at_creation?: number | null
+          config_snapshot?: Json | null
+          created_at?: string | null
+          duo_stacks_count?: number | null
+          experiment_id?: string | null
+          id?: string
+          legs_hit?: number | null
+          legs_total?: number | null
+          outcome?: string | null
+          parlay_id: string
+          parlay_type?: string | null
+          total_edge_at_creation?: number | null
+          variant: string
+          verified_at?: string | null
+        }
+        Update: {
+          confidence_at_creation?: number | null
+          config_snapshot?: Json | null
+          created_at?: string | null
+          duo_stacks_count?: number | null
+          experiment_id?: string | null
+          id?: string
+          legs_hit?: number | null
+          legs_total?: number | null
+          outcome?: string | null
+          parlay_id?: string
+          parlay_type?: string | null
+          total_edge_at_creation?: number | null
+          variant?: string
+          verified_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "parlay_experiment_assignments_experiment_id_fkey"
+            columns: ["experiment_id"]
+            isOneToOne: false
+            referencedRelation: "parlay_ab_experiments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      parlay_experiment_daily_metrics: {
+        Row: {
+          avg_confidence: number | null
+          avg_edge: number | null
+          avg_legs_hit: number | null
+          cumulative_win_rate: number | null
+          experiment_id: string | null
+          id: string
+          metric_date: string
+          parlays_generated: number | null
+          parlays_lost: number | null
+          parlays_won: number | null
+          variant: string
+        }
+        Insert: {
+          avg_confidence?: number | null
+          avg_edge?: number | null
+          avg_legs_hit?: number | null
+          cumulative_win_rate?: number | null
+          experiment_id?: string | null
+          id?: string
+          metric_date: string
+          parlays_generated?: number | null
+          parlays_lost?: number | null
+          parlays_won?: number | null
+          variant: string
+        }
+        Update: {
+          avg_confidence?: number | null
+          avg_edge?: number | null
+          avg_legs_hit?: number | null
+          cumulative_win_rate?: number | null
+          experiment_id?: string | null
+          id?: string
+          metric_date?: string
+          parlays_generated?: number | null
+          parlays_lost?: number | null
+          parlays_won?: number | null
+          variant?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "parlay_experiment_daily_metrics_experiment_id_fkey"
+            columns: ["experiment_id"]
+            isOneToOne: false
+            referencedRelation: "parlay_ab_experiments"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       parlay_history: {
         Row: {
