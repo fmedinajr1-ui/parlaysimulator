@@ -89,6 +89,19 @@ serve(async (req) => {
     console.log('[UnifiedEngine] Starting unified props analysis with PVS scoring for:', sports);
     const startTime = Date.now();
 
+    // Clean up stale props from past games before fetching new ones
+    console.log('[UnifiedEngine] Cleaning up stale props from past games...');
+    const { error: cleanupError } = await supabase
+      .from('unified_props')
+      .delete()
+      .lt('commence_time', new Date().toISOString());
+
+    if (cleanupError) {
+      console.error('[UnifiedEngine] Cleanup error:', cleanupError);
+    } else {
+      console.log('[UnifiedEngine] Cleaned up stale props successfully');
+    }
+
     // Fetch all supporting data for PVS calculations including season standings
     const [hitRates, lineMovements, trapPatterns, fatigueScores, defenseStats, paceStats, gameLogs, injuryReports, seasonStandings] = await Promise.all([
       supabase.from('player_prop_hitrates').select('*').gte('expires_at', new Date().toISOString()),
