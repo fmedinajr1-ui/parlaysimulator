@@ -305,48 +305,53 @@ function buildParlay(
   const playerCount: Record<string, number> = {};
   const includedDuos: { player: string; type: string; boost: number }[] = [];
   
-  // First, try to include duo picks
+  // First, try to include BEST pick from each duo (one player per parlay rule)
   for (const duo of duos) {
     if (legs.length >= 6) break;
     
     const playerKey = duo.player.toLowerCase();
-    if ((playerCount[playerKey] || 0) >= 2) continue;
+    if (playerCount[playerKey]) continue; // Already have this player
     
-    // Add up to 2 picks from this duo
-    for (const pick of duo.picks.slice(0, 2)) {
-      if (legs.length >= 6) break;
-      
+    // Find the best pick from this duo (highest hit rate * edge combo)
+    let bestPick = null;
+    let bestScore = -Infinity;
+    
+    for (const pick of duo.picks) {
       const isOver = pick.recommendation.includes('OVER');
       const hitRate = isOver ? (pick.hit_rate_over_10 || 0.5) : (pick.hit_rate_under_10 || 0.5);
       const vol = pick.volatility || 0.3;
       
       if (hitRate < cfg.minHitRate || vol > cfg.maxVol) continue;
-      
-      // Apply minEdge filter if specified
       if (cfg.minEdge && Math.abs(pick.edge || 0) < cfg.minEdge) continue;
       
       const stat = pick.stat_type;
       if ((statCount[stat] || 0) >= 2) continue;
       
-      legs.push({
-        player_name: pick.player_name,
-        stat_type: stat,
-        line: pick.sportsbook_line,
-        edge: pick.edge,
-        recommendation: pick.recommendation,
-        confidence_tier: pick.confidence_tier || 'D',
-        hit_rate: hitRate,
-        volatility: vol,
-        defense_code: pick.defense_code,
-        is_duo: true,
-        pick_score: pick.pick_score
-      });
-      
-      statCount[stat] = (statCount[stat] || 0) + 1;
-      playerCount[playerKey] = (playerCount[playerKey] || 0) + 1;
+      const score = hitRate * 100 + Math.abs(pick.edge) * 10;
+      if (score > bestScore) {
+        bestScore = score;
+        bestPick = { ...pick, hitRate, vol, stat };
+      }
     }
     
-    if (playerCount[playerKey] >= 2) {
+    if (bestPick) {
+      legs.push({
+        player_name: bestPick.player_name,
+        stat_type: bestPick.stat,
+        line: bestPick.sportsbook_line,
+        edge: bestPick.edge,
+        recommendation: bestPick.recommendation,
+        confidence_tier: bestPick.confidence_tier || 'D',
+        hit_rate: bestPick.hitRate,
+        volatility: bestPick.vol,
+        defense_code: bestPick.defense_code,
+        is_duo: true, // Mark as duo pick (has multiple strong signals)
+        pick_score: bestPick.pick_score || bestScore
+      });
+      
+      statCount[bestPick.stat] = (statCount[bestPick.stat] || 0) + 1;
+      playerCount[playerKey] = 1;
+      
       includedDuos.push({
         player: duo.player,
         type: duo.stats.join('+'),
@@ -355,30 +360,22 @@ function buildParlay(
     }
   }
   
-  // Fill remaining slots with best non-duo picks
+  // Fill remaining slots with best picks (one player per parlay rule)
   for (const pick of scoredPicks) {
     if (legs.length >= 6) break;
     
     const playerKey = pick.player_name.toLowerCase();
-    if ((playerCount[playerKey] || 0) >= 2) continue;
+    if (playerCount[playerKey]) continue; // Already have this player - skip
     
     const isOver = pick.recommendation.includes('OVER');
     const hitRate = isOver ? (pick.hit_rate_over_10 || 0.5) : (pick.hit_rate_under_10 || 0.5);
     const vol = pick.volatility || 0.3;
     
     if (hitRate < cfg.minHitRate || vol > cfg.maxVol) continue;
-    
-    // Apply minEdge filter if specified
     if (cfg.minEdge && Math.abs(pick.edge || 0) < cfg.minEdge) continue;
     
     const stat = pick.stat_type;
     if ((statCount[stat] || 0) >= 2) continue;
-    
-    // Check if already added as duo
-    const alreadyAdded = legs.some(l => 
-      l.player_name.toLowerCase() === playerKey && l.stat_type === stat
-    );
-    if (alreadyAdded) continue;
     
     legs.push({
       player_name: pick.player_name,
@@ -395,7 +392,7 @@ function buildParlay(
     });
     
     statCount[stat] = (statCount[stat] || 0) + 1;
-    playerCount[playerKey] = (playerCount[playerKey] || 0) + 1;
+    playerCount[playerKey] = 1;
   }
   
   // Validate we have 6 legs with stat diversity (3+ different stat types)
