@@ -159,20 +159,35 @@ serve(async (req) => {
 
       console.log(`[NBA-MEDIAN-V2] Loaded ${defRows?.length || 0} defense codes`);
 
-      // 3) Pull game logs (paginated for large tables)
-      const { data: logs, error: logsErr } = await supabase
-        .from("nba_player_game_logs")
-        .select("player_name, game_date, opponent, is_home, minutes_played, points, rebounds, assists")
-        .order("game_date", { ascending: false })
-        .range(0, 15000);
+      // 3) Pull game logs with pagination (overcome 1000 row limit)
+      let allLogs: any[] = [];
+      let page = 0;
+      const pageSize = 1000;
+      let hasMore = true;
 
-      if (logsErr) throw logsErr;
+      while (hasMore) {
+        const { data: pageLogs, error: logsErr } = await supabase
+          .from("nba_player_game_logs")
+          .select("player_name, game_date, opponent, is_home, minutes_played, points, rebounds, assists")
+          .order("game_date", { ascending: false })
+          .range(page * pageSize, (page + 1) * pageSize - 1);
 
-      console.log(`[NBA-MEDIAN-V2] Loaded ${logs?.length || 0} game logs`);
+        if (logsErr) throw logsErr;
+        
+        if (pageLogs && pageLogs.length > 0) {
+          allLogs = allLogs.concat(pageLogs);
+          hasMore = pageLogs.length === pageSize;
+          page++;
+        } else {
+          hasMore = false;
+        }
+      }
+
+      console.log(`[NBA-MEDIAN-V2] Loaded ${allLogs.length} game logs (${page} pages)`);
 
       // Index logs by player_name
       const byPlayer = new Map<string, any[]>();
-      for (const l of logs || []) {
+      for (const l of allLogs) {
         const key = (l.player_name || "").toLowerCase();
         if (!key) continue;
         if (!byPlayer.has(key)) byPlayer.set(key, []);
@@ -227,8 +242,22 @@ serve(async (req) => {
         const { over, under } = hitRates(series10, line);
         const vol = volatilityRatio(series10);
 
-        // Defense code lookup (opponent team)
-        const opp = (p.opponent_team || "").toLowerCase();
+        // Defense code lookup - parse opponent from game_description
+        // Format: "Away Team @ Home Team" or check for direct opponent_team field
+        let opp = "";
+        if (p.opponent_team) {
+          opp = p.opponent_team.toLowerCase();
+        } else if (p.game_description) {
+          const gameDesc = p.game_description;
+          const atIdx = gameDesc.indexOf(" @ ");
+          if (atIdx > -1) {
+            const awayTeam = gameDesc.substring(0, atIdx).toLowerCase();
+            const homeTeam = gameDesc.substring(atIdx + 3).toLowerCase();
+            const playerTeam = (p.team_name || "").toLowerCase();
+            // Determine which team is the opponent
+            opp = playerTeam && homeTeam.includes(playerTeam) ? awayTeam : homeTeam;
+          }
+        }
         const def = defMap.get(opp) || null;
 
         let defCode: number | null = null;
