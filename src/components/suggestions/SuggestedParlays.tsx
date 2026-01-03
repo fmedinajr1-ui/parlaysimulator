@@ -1,38 +1,42 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { SuggestedParlayCard } from "./SuggestedParlayCard";
-import { DoubleDownSuggestion } from "./DoubleDownSuggestion";
+import { HomepageParlayCard } from "./HomepageParlayCard";
 import { AISuggestionHistory } from "./AISuggestionHistory";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, Sparkles, RefreshCw, Lock, History } from "lucide-react";
+import { Loader2, Sparkles, RefreshCw, Lock, History, Shield, Zap, AlertTriangle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useSubscription } from "@/hooks/useSubscription";
 import { useNavigate } from "react-router-dom";
 
-interface SuggestedLeg {
-  description: string;
+interface UnifiedLeg {
+  player_name: string;
+  prop_type: string;
+  stat_type: string;
+  line: number;
   odds: number;
-  impliedProbability: number;
-  sport: string;
-  betType: string;
-  eventTime: string;
-  bestBook?: string;
-  lineEdge?: number;
-  availableAt?: string[];
+  direction: string;
+  hit_rate: number;
+  median10: number;
+  median5: number;
+  adjusted_median: number;
+  edge: number;
+  confidence_tier: string;
+  defense_code: number;
+  event_id: string;
+  game_description: string;
+  commence_time: string;
 }
 
-interface SuggestedParlay {
+interface UnifiedParlay {
   id: string;
-  legs: SuggestedLeg[];
+  legs: UnifiedLeg[];
   total_odds: number;
-  combined_probability: number;
-  suggestion_reason: string;
-  sport: string;
-  confidence_score: number;
-  expires_at: string;
-  is_hybrid?: boolean;
+  win_probability_est: number;
+  risk_label: string;
+  tags: string[];
 }
 
 export function SuggestedParlays() {
@@ -40,85 +44,62 @@ export function SuggestedParlays() {
   const { toast } = useToast();
   const navigate = useNavigate();
   const { isSubscribed, isAdmin } = useSubscription();
-  const [suggestions, setSuggestions] = useState<SuggestedParlay[]>([]);
+  const [parlays, setParlays] = useState<UnifiedParlay[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [hasGenerated, setHasGenerated] = useState(false);
+  const [mode, setMode] = useState<'safe' | 'high_risk'>('safe');
+  const [noBetReason, setNoBetReason] = useState<string | null>(null);
+  const [hasLoaded, setHasLoaded] = useState(false);
 
   useEffect(() => {
     if (user && (isSubscribed || isAdmin)) {
-      fetchSuggestions();
+      fetchHomepageSuggestions(mode);
     }
   }, [user, isSubscribed, isAdmin]);
 
-  const fetchSuggestions = async () => {
-    if (!user) return;
-    
+  const fetchHomepageSuggestions = async (selectedMode: 'safe' | 'high_risk') => {
     setIsLoading(true);
+    setNoBetReason(null);
+    
     try {
-      const { data, error } = await supabase
-        .from('suggested_parlays')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('is_active', true)
-        .gte('expires_at', new Date().toISOString())
-        .order('confidence_score', { ascending: false });
-
-      if (error) throw error;
-
-      // Type cast the legs properly
-      const typedData = (data || []).map(item => ({
-        ...item,
-        legs: item.legs as unknown as SuggestedLeg[],
-      }));
-
-      setSuggestions(typedData);
-      setHasGenerated(typedData.length > 0);
-    } catch (error) {
-      console.error('Error fetching suggestions:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const generateSuggestions = async () => {
-    if (!user) {
-      navigate('/auth');
-      return;
-    }
-
-    setIsGenerating(true);
-    try {
-      const { data, error } = await supabase.functions.invoke('generate-suggestions', {
-        body: { userId: user.id },
+      const { data, error } = await supabase.functions.invoke('homepage-suggestions-engine', {
+        body: { mode: selectedMode },
       });
 
       if (error) throw error;
 
-      if (data.suggestions && data.suggestions.length > 0) {
-        toast({
-          title: "Suggestions Generated!",
-          description: `Found ${data.suggestions.length} parlays based on your betting patterns`,
-        });
-        await fetchSuggestions();
+      if (data?.success && data.parlays?.length > 0) {
+        // Sort by win probability for deterministic display
+        const sortedParlays = [...data.parlays].sort(
+          (a: UnifiedParlay, b: UnifiedParlay) => b.win_probability_est - a.win_probability_est
+        );
+        setParlays(sortedParlays);
+        setNoBetReason(null);
       } else {
-        toast({
-          title: "No Suggestions",
-          description: data.message || "No games found. Try again later.",
-          variant: "destructive",
-        });
+        setParlays([]);
+        setNoBetReason(data?.no_bet_reason || 'No qualifying plays today');
       }
     } catch (error) {
-      console.error('Error generating suggestions:', error);
+      console.error('Error fetching homepage suggestions:', error);
+      setParlays([]);
+      setNoBetReason('Failed to load suggestions');
       toast({
         title: "Error",
-        description: "Failed to generate suggestions. Please try again.",
+        description: "Failed to load suggestions. Please try again.",
         variant: "destructive",
       });
     } finally {
-      setIsGenerating(false);
-      setHasGenerated(true);
+      setIsLoading(false);
+      setHasLoaded(true);
     }
+  };
+
+  const handleModeChange = (newMode: 'safe' | 'high_risk') => {
+    setMode(newMode);
+    fetchHomepageSuggestions(newMode);
+  };
+
+  const handleRefresh = () => {
+    fetchHomepageSuggestions(mode);
   };
 
   // Not logged in
@@ -131,7 +112,7 @@ export function SuggestedParlays() {
         </div>
         <div className="bg-card/50 border border-border/50 rounded-xl p-6 text-center">
           <Lock className="w-8 h-8 text-muted-foreground mx-auto mb-3" />
-          <p className="text-muted-foreground mb-4">Sign in to get personalized parlay suggestions</p>
+          <p className="text-muted-foreground mb-4">Sign in to get AI-powered parlay suggestions</p>
           <Button onClick={() => navigate('/auth')}>Sign In</Button>
         </div>
       </div>
@@ -150,7 +131,7 @@ export function SuggestedParlays() {
           <Sparkles className="w-8 h-8 text-primary mx-auto mb-3" />
           <h3 className="font-semibold text-foreground mb-2">Pro Feature</h3>
           <p className="text-muted-foreground text-sm mb-4">
-            Get AI-powered parlay suggestions based on your betting patterns and real-time odds
+            Get AI-powered parlay suggestions using unified HitRate + Median engine agreement
           </p>
           <Button onClick={() => navigate('/profile')} className="gradient-fire">
             Upgrade to Pro
@@ -182,73 +163,88 @@ export function SuggestedParlays() {
         </TabsList>
 
         <TabsContent value="today" className="space-y-4">
-          <div className="flex justify-end">
+          {/* Mode Toggle + Refresh */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Badge 
+                variant={mode === 'safe' ? 'default' : 'outline'} 
+                onClick={() => handleModeChange('safe')}
+                className={`cursor-pointer transition-all ${
+                  mode === 'safe' 
+                    ? 'bg-green-500/20 text-green-400 border-green-500/30 hover:bg-green-500/30' 
+                    : 'hover:bg-muted'
+                }`}
+              >
+                <Shield className="w-3 h-3 mr-1" />
+                Safe AI
+              </Badge>
+              <Badge 
+                variant={mode === 'high_risk' ? 'default' : 'outline'}
+                onClick={() => handleModeChange('high_risk')}
+                className={`cursor-pointer transition-all ${
+                  mode === 'high_risk' 
+                    ? 'bg-orange-500/20 text-orange-400 border-orange-500/30 hover:bg-orange-500/30' 
+                    : 'hover:bg-muted'
+                }`}
+              >
+                <Zap className="w-3 h-3 mr-1" />
+                High Risk
+              </Badge>
+            </div>
             <Button
               variant="outline"
               size="sm"
-              onClick={generateSuggestions}
-              disabled={isGenerating}
+              onClick={handleRefresh}
+              disabled={isLoading}
             >
-              {isGenerating ? (
+              {isLoading ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
                 <RefreshCw className="w-4 h-4" />
               )}
-              {hasGenerated ? "Refresh" : "Generate"}
+              Refresh
             </Button>
+          </div>
+
+          {/* Mode Description */}
+          <div className="text-xs text-muted-foreground">
+            {mode === 'safe' 
+              ? '2-leg uncorrelated parlays from different games • HitRate + Median agreement required'
+              : 'Up to 3 legs allowed • Same game allowed (no same player)'
+            }
           </div>
 
           {isLoading ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
             </div>
-          ) : suggestions.length > 0 ? (
-            <div className="space-y-4">
-              {/* Double Down Pick at top */}
-              <DoubleDownSuggestion suggestions={suggestions} />
-              
-              <div className="grid gap-4 md:grid-cols-2">
-                {suggestions.map((suggestion) => (
-                  <SuggestedParlayCard
-                    key={suggestion.id}
-                    legs={suggestion.legs}
-                    totalOdds={suggestion.total_odds}
-                    combinedProbability={suggestion.combined_probability}
-                    suggestionReason={suggestion.suggestion_reason}
-                    sport={suggestion.sport}
-                    confidenceScore={suggestion.confidence_score}
-                    expiresAt={suggestion.expires_at}
-                    isHybrid={suggestion.is_hybrid}
-                  />
-                ))}
-              </div>
+          ) : noBetReason ? (
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-6 text-center">
+              <AlertTriangle className="w-8 h-8 text-amber-500 mx-auto mb-3" />
+              <h3 className="font-semibold text-foreground mb-2">No Bet Today</h3>
+              <p className="text-muted-foreground text-sm mb-4">{noBetReason}</p>
+              <Button variant="outline" onClick={handleRefresh}>
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Check Again
+              </Button>
             </div>
-          ) : (
+          ) : parlays.length > 0 ? (
+            <div className="grid gap-4 md:grid-cols-2">
+              {parlays.map((parlay) => (
+                <HomepageParlayCard
+                  key={parlay.id}
+                  parlay={parlay}
+                />
+              ))}
+            </div>
+          ) : hasLoaded ? (
             <div className="bg-card/50 border border-border/50 rounded-xl p-6 text-center">
               <Sparkles className="w-8 h-8 text-muted-foreground mx-auto mb-3" />
-              <p className="text-muted-foreground mb-4">
-                {hasGenerated 
-                  ? "No suggestions available right now. Try again when more games are scheduled."
-                  : "Click Generate to get personalized parlay suggestions based on your betting history and live odds"
-                }
+              <p className="text-muted-foreground">
+                No unified picks available. Check back when more games are scheduled.
               </p>
-              {!hasGenerated && (
-                <Button onClick={generateSuggestions} disabled={isGenerating}>
-                  {isGenerating ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Generating...
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="w-4 h-4 mr-2" />
-                      Generate Suggestions
-                    </>
-                  )}
-                </Button>
-              )}
             </div>
-          )}
+          ) : null}
         </TabsContent>
 
         <TabsContent value="history">
