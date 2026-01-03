@@ -347,3 +347,6 @@ verify_jwt = false
 
 [functions.analyze-elite-hitter-losses]
 verify_jwt = false
+
+[functions.nba-median-matchup-engine]
+verify_jwt = false
