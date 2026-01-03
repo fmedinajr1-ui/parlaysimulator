@@ -93,6 +93,88 @@ const THRESH: Record<StatKey, { lean: number; strong: number; volCapStrong: numb
   ra:       { lean: 1.4, strong: 2.6, volCapStrong: 0.32 },
 };
 
+// ========== ONE PLAYER PER PARLAY HELPERS ==========
+
+// Stat Safety Ranking - Bias toward safer stat types
+const STAT_SAFETY: Record<string, number> = {
+  ra: 5,
+  rebounds: 4,
+  assists: 3,
+  points: 2,
+  pra: 1,
+  pr: 2,
+  pa: 2,
+};
+
+// Hard veto: Only allow one leg per player
+function canAddPlayerLeg(
+  playerCount: Record<string, number>,
+  playerName: string
+): boolean {
+  const key = playerName.toLowerCase().trim();
+  return (playerCount[key] || 0) === 0;
+}
+
+// Combo overlap veto: Prevents base+combo for same player
+function violatesComboOverlap(existingLegs: any[], candidate: any): boolean {
+  const player = (candidate.player_name || candidate.playerName || '').toLowerCase().trim();
+  const stat = (candidate.stat_type || '').toLowerCase();
+
+  const existingStats = existingLegs
+    .filter(l => (l.player_name || l.playerName || '').toLowerCase().trim() === player)
+    .map(l => (l.stat_type || '').toLowerCase());
+
+  if (existingStats.length === 0) return false;
+
+  const comboStats = ['pra', 'pa', 'pr', 'ra', 
+    'points_rebounds_assists', 'points_rebounds', 'points_assists', 'rebounds_assists'];
+  const baseStats = ['points', 'rebounds', 'assists'];
+
+  // If candidate is a combo stat
+  if (comboStats.includes(stat)) {
+    const bases: Record<string, string[]> = {
+      pra: ['points', 'rebounds', 'assists'],
+      points_rebounds_assists: ['points', 'rebounds', 'assists'],
+      pr: ['points', 'rebounds'],
+      points_rebounds: ['points', 'rebounds'],
+      pa: ['points', 'assists'],
+      points_assists: ['points', 'assists'],
+      ra: ['rebounds', 'assists'],
+      rebounds_assists: ['rebounds', 'assists'],
+    };
+    const baseComponents = bases[stat] || [];
+    if (existingStats.some(s => baseComponents.includes(s))) return true;
+    if (existingStats.some(s => comboStats.includes(s))) return true;
+    return true; // Block combo if player already has any leg
+  }
+
+  // If candidate is a base stat, check if a combo exists
+  if (baseStats.includes(stat)) {
+    if (existingStats.some(s => comboStats.includes(s))) return true;
+  }
+
+  return false;
+}
+
+// Select best single prop from a list (by quality score)
+function selectBestPropFromDuo(picks: any[]): any {
+  if (!picks || picks.length === 0) return null;
+  
+  return picks
+    .map(p => {
+      const hitRate = p.hit_rate_over_10 || p.hit_rate_under_10 || 0.5;
+      return {
+        ...p,
+        quality_score:
+          (hitRate * 100) +
+          Math.abs(p.edge || 0) * 8 -
+          ((p.volatility || 0) * 40) +
+          (STAT_SAFETY[p.stat_type as StatKey] || 1) * 5
+      };
+    })
+    .sort((a, b) => b.quality_score - a.quality_score)[0];
+}
+
 type EngineResult = {
   player_name: string;
   stat_type: StatKey;
@@ -310,62 +392,60 @@ function buildParlay(
     if (legs.length >= 6) break;
     
     const playerKey = duo.player.toLowerCase();
-    if (playerCount[playerKey]) continue; // Already have this player
     
-    // Find the best pick from this duo (highest hit rate * edge combo)
-    let bestPick = null;
-    let bestScore = -Infinity;
+    // Hard veto: one player per parlay
+    if (!canAddPlayerLeg(playerCount, duo.player)) continue;
     
-    for (const pick of duo.picks) {
-      const isOver = pick.recommendation.includes('OVER');
-      const hitRate = isOver ? (pick.hit_rate_over_10 || 0.5) : (pick.hit_rate_under_10 || 0.5);
-      const vol = pick.volatility || 0.3;
-      
-      if (hitRate < cfg.minHitRate || vol > cfg.maxVol) continue;
-      if (cfg.minEdge && Math.abs(pick.edge || 0) < cfg.minEdge) continue;
-      
-      const stat = pick.stat_type;
-      if ((statCount[stat] || 0) >= 2) continue;
-      
-      const score = hitRate * 100 + Math.abs(pick.edge) * 10;
-      if (score > bestScore) {
-        bestScore = score;
-        bestPick = { ...pick, hitRate, vol, stat };
-      }
-    }
+    // Select BEST single prop from duo using quality scoring
+    const bestPick = selectBestPropFromDuo(duo.picks);
+    if (!bestPick) continue;
     
-    if (bestPick) {
-      legs.push({
-        player_name: bestPick.player_name,
-        stat_type: bestPick.stat,
-        line: bestPick.sportsbook_line,
-        edge: bestPick.edge,
-        recommendation: bestPick.recommendation,
-        confidence_tier: bestPick.confidence_tier || 'D',
-        hit_rate: bestPick.hitRate,
-        volatility: bestPick.vol,
-        defense_code: bestPick.defense_code,
-        is_duo: true, // Mark as duo pick (has multiple strong signals)
-        pick_score: bestPick.pick_score || bestScore
-      });
-      
-      statCount[bestPick.stat] = (statCount[bestPick.stat] || 0) + 1;
-      playerCount[playerKey] = 1;
-      
-      includedDuos.push({
-        player: duo.player,
-        type: duo.stats.join('+'),
-        boost: cfg.duoBoost ?? duo.boost
-      });
-    }
+    // Check combo overlap veto
+    if (violatesComboOverlap(legs, bestPick)) continue;
+    
+    const isOver = bestPick.recommendation.includes('OVER');
+    const hitRate = isOver ? (bestPick.hit_rate_over_10 || 0.5) : (bestPick.hit_rate_under_10 || 0.5);
+    const vol = bestPick.volatility || 0.3;
+    
+    if (hitRate < cfg.minHitRate || vol > cfg.maxVol) continue;
+    if (cfg.minEdge && Math.abs(bestPick.edge || 0) < cfg.minEdge) continue;
+    
+    const stat = bestPick.stat_type;
+    if ((statCount[stat] || 0) >= 2) continue;
+    
+    legs.push({
+      player_name: bestPick.player_name,
+      stat_type: stat,
+      line: bestPick.sportsbook_line,
+      edge: bestPick.edge,
+      recommendation: bestPick.recommendation,
+      confidence_tier: bestPick.confidence_tier || 'D',
+      hit_rate: hitRate,
+      volatility: vol,
+      defense_code: bestPick.defense_code,
+      is_duo: true, // Mark as duo pick (has multiple strong signals)
+      pick_score: bestPick.quality_score || 0
+    });
+    
+    statCount[stat] = (statCount[stat] || 0) + 1;
+    playerCount[playerKey] = 1;
+    
+    includedDuos.push({
+      player: duo.player,
+      type: duo.stats.join('+'),
+      boost: cfg.duoBoost ?? duo.boost
+    });
   }
   
   // Fill remaining slots with best picks (one player per parlay rule)
   for (const pick of scoredPicks) {
     if (legs.length >= 6) break;
     
-    const playerKey = pick.player_name.toLowerCase();
-    if (playerCount[playerKey]) continue; // Already have this player - skip
+    // Hard veto: one player per parlay
+    if (!canAddPlayerLeg(playerCount, pick.player_name)) continue;
+    
+    // Combo overlap veto
+    if (violatesComboOverlap(legs, pick)) continue;
     
     const isOver = pick.recommendation.includes('OVER');
     const hitRate = isOver ? (pick.hit_rate_over_10 || 0.5) : (pick.hit_rate_under_10 || 0.5);
@@ -392,7 +472,15 @@ function buildParlay(
     });
     
     statCount[stat] = (statCount[stat] || 0) + 1;
-    playerCount[playerKey] = 1;
+    playerCount[pick.player_name.toLowerCase()] = 1;
+  }
+  
+  // INVARIANT ASSERTION: Fail fast if duplicate player detected
+  const uniquePlayers = new Set(legs.map(l => l.player_name.toLowerCase()));
+  if (uniquePlayers.size !== legs.length) {
+    console.error('[NBA-PARLAY-BUILDER] INVARIANT VIOLATION: Duplicate player detected!', 
+      legs.map(l => l.player_name));
+    throw new Error('Invariant violation: duplicate player detected in parlay');
   }
   
   // Validate we have 6 legs with stat diversity (3+ different stat types)

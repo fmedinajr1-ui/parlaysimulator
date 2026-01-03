@@ -189,6 +189,51 @@ function extractOpponent(gameDescription: string): string {
   return parts[1] || parts[0] || '';
 }
 
+// ========== ONE PLAYER PER PARLAY HELPERS ==========
+
+// Stat Safety Ranking - Bias toward safer stat types
+const STAT_SAFETY: Record<string, number> = {
+  rebounds: 5,
+  assists: 4,
+  fantasy: 4,
+  points: 3,
+  threes: 2,
+};
+
+// Hard veto: Only allow one leg per player
+function canAddPlayerLegVeto(
+  playerCount: Record<string, number>,
+  playerName: string
+): boolean {
+  const key = (playerName || '').toLowerCase().trim();
+  return (playerCount[key] || 0) === 0;
+}
+
+// Combo overlap veto: Prevents base+combo for same player
+function violatesComboOverlapVeto(existingLegs: PickCandidate[], candidate: PickCandidate): boolean {
+  const player = (candidate.playerName || '').toLowerCase().trim();
+  const stat = (candidate.propType || '').toLowerCase();
+
+  const existingStats = existingLegs
+    .filter(l => (l.playerName || '').toLowerCase().trim() === player)
+    .map(l => (l.propType || '').toLowerCase());
+
+  if (existingStats.length === 0) return false;
+
+  const comboKeywords = ['pra', 'pa', 'pr', 'ra', 
+    'points_rebounds_assists', 'points_rebounds', 'points_assists', 'rebounds_assists'];
+  
+  // Check if candidate is a combo prop
+  const isCombo = comboKeywords.some(c => stat.includes(c));
+  
+  // Check if any existing is a combo prop
+  const hasExistingCombo = existingStats.some(s => comboKeywords.some(c => s.includes(c)));
+  
+  if (isCombo || hasExistingCombo) return true;
+
+  return false;
+}
+
 // Apply penalties based on learned loss patterns
 function applyPatternPenalties(legs: PickCandidate[], patterns: LossPattern[]): { totalPenalty: number; blockedPatterns: string[]; appliedPenalties: { pattern: string; penalty: number }[] } {
   let totalPenalty = 0;
@@ -814,7 +859,20 @@ serve(async (req) => {
           
           const combo = [picksForCombinations[i], picksForCombinations[j], picksForCombinations[k]];
           
+          // HARD VETO: No same player in parlay
+          if (hasSamePlayer(combo)) continue;
+          
           if (hasSameEventOrTeam(combo)) continue;
+          
+          // HARD VETO: No base+combo overlap for same player
+          let hasComboOverlap = false;
+          for (let idx = 1; idx < combo.length; idx++) {
+            if (violatesComboOverlapVeto(combo.slice(0, idx), combo[idx])) {
+              hasComboOverlap = true;
+              break;
+            }
+          }
+          if (hasComboOverlap) continue;
           
           // 🆕 FIX: Limit to max 1 STRONG pick per parlay to reduce volatility exposure
           const strongCount = combo.filter(leg => isStrongPick(leg)).length;
@@ -892,7 +950,17 @@ serve(async (req) => {
       }
     }
     
-    logStep("Selected 3-leg parlays", { 
+    // INVARIANT: Verify no duplicate players within each parlay
+    for (const combo of selectedParlays) {
+      const players = combo.legs.map(l => (l.playerName || '').toLowerCase());
+      const uniquePlayers = new Set(players);
+      if (uniquePlayers.size !== players.length) {
+        console.error('[ELITE-DAILY-HITTER] INVARIANT VIOLATION: Duplicate player!', players);
+        throw new Error('Invariant violation: duplicate player detected in 3-leg parlay');
+      }
+    }
+    
+    logStep("Selected 3-leg parlays", {
       count: selectedParlays.length,
       uniquePlayers: usedPlayerCounts.size
     });
@@ -929,8 +997,11 @@ serve(async (req) => {
         if (leg1.eventId === leg2.eventId) continue;
         if (leg1.playerName?.toLowerCase() === leg2.playerName?.toLowerCase()) continue;
         
-        // 🆕 FIX: For 2-leg parlays, avoid having any STRONG picks (prefer LEAN for stability)
+        // HARD VETO: Combo overlap check
         const combo = [leg1, leg2];
+        if (violatesComboOverlapVeto([leg1], leg2)) continue;
+        
+        // 🆕 FIX: For 2-leg parlays, avoid having any STRONG picks (prefer LEAN for stability)
         const strongCount = combo.filter(leg => isStrongPick(leg)).length;
         if (strongCount > 0) continue; // 2-leg safe picks should be LEAN only
         
@@ -962,6 +1033,15 @@ serve(async (req) => {
       
       selected2Leg.push(combo);
       players.forEach(p => { if (p) used2LegPlayers.add(p); });
+    }
+    
+    // INVARIANT: Verify no duplicate players in 2-leg parlays
+    for (const combo of selected2Leg) {
+      const players = combo.legs.map(l => (l.playerName || '').toLowerCase());
+      if (players[0] === players[1]) {
+        console.error('[ELITE-DAILY-HITTER] INVARIANT VIOLATION: Same player in 2-leg!', players);
+        throw new Error('Invariant violation: duplicate player detected in 2-leg parlay');
+      }
     }
     
     logStep("Selected 2-leg parlays", { count: selected2Leg.length });
