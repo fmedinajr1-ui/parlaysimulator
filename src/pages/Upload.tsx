@@ -63,6 +63,10 @@ interface QueuedSlip {
   extractedStake?: string;
   extractedGameTime?: string;
   error?: string;
+  // PrizePicks-specific
+  platform?: 'fanduel' | 'draftkings' | 'betmgm' | 'prizepicks' | 'underdog' | 'other';
+  playType?: 'power_play' | 'flex_play' | 'parlay' | 'sgp';
+  payoutMultiplier?: number;
 }
 
 const Upload = () => {
@@ -117,6 +121,9 @@ const Upload = () => {
   const [showExtractionNudge, setShowExtractionNudge] = useState(false);
   const [showRestoredBanner, setShowRestoredBanner] = useState(false);
   const [lastUploadedSlipUrl, setLastUploadedSlipUrl] = useState<string | null>(null);
+  const [extractedPlatform, setExtractedPlatform] = useState<string | null>(null);
+  const [extractedPlayType, setExtractedPlayType] = useState<string | null>(null);
+  const [extractedMultiplier, setExtractedMultiplier] = useState<number | null>(null);
 
   // Show restored session banner on mount if data was restored
   useEffect(() => {
@@ -399,6 +406,9 @@ const Upload = () => {
     setStake("10");
     setQuickCheckResults(null);
     setShowOptimizer(false);
+    setExtractedPlatform(null);
+    setExtractedPlayType(null);
+    setExtractedMultiplier(null);
     clearPersistedData();
     haptics.mediumTap();
     
@@ -514,10 +524,16 @@ const Upload = () => {
           if (data?.earliestGameTime) setExtractedGameTime(data.earliestGameTime);
           // stake is now returned as a number from the API
           if (data?.stake !== null && data?.stake !== undefined) setStake(String(data.stake));
+          
+          // PrizePicks-specific data
+          if (data?.platform) setExtractedPlatform(data.platform);
+          if (data?.playType) setExtractedPlayType(data.playType);
+          if (data?.payoutMultiplier) setExtractedMultiplier(data.payoutMultiplier);
 
+          const platformLabel = data?.platform === 'prizepicks' ? 'PrizePicks' : 'betting slip';
           toast({
             title: `Extracted ${extractedLegs.length} legs from video! 🎬`,
-            description: `Found betting slip in ${data?.framesWithSlips || 1} of ${data?.framesProcessed || frames.length} frames`,
+            description: `Found ${platformLabel} in ${data?.framesWithSlips || 1} of ${data?.framesProcessed || frames.length} frames`,
           });
 
           // For video, we don't store the original video file (too large), just note no slip image
@@ -586,6 +602,9 @@ const Upload = () => {
     let lastGameTime: string | null = null;
     let lastTotalOdds: number | null = null;
     let lastStake: string | null = null;
+    let lastPlatform: string | null = null;
+    let lastPlayType: string | null = null;
+    let lastMultiplier: number | null = null;
     let successCount = 0;
     let rateLimitHit = false;
 
@@ -652,10 +671,20 @@ const Upload = () => {
           if (result.data?.totalOdds) lastTotalOdds = parseInt(result.data.totalOdds.replace('+', ''));
           if (result.data?.earliestGameTime) lastGameTime = result.data.earliestGameTime;
           if (result.data?.stake !== null && result.data?.stake !== undefined) lastStake = String(result.data.stake);
+          if (result.data?.platform) lastPlatform = result.data.platform;
+          if (result.data?.playType) lastPlayType = result.data.playType;
+          if (result.data?.payoutMultiplier) lastMultiplier = result.data.payoutMultiplier;
 
-          // Update status to success
+          // Update status to success with platform info
           setUploadQueue(prev => prev.map((item, idx) => 
-            idx === result.queueIdx ? { ...item, status: 'success', extractedLegs } : item
+            idx === result.queueIdx ? { 
+              ...item, 
+              status: 'success', 
+              extractedLegs,
+              platform: result.data?.platform,
+              playType: result.data?.playType,
+              payoutMultiplier: result.data?.payoutMultiplier
+            } : item
           ));
 
           if (extractedLegs.length > 0) {
@@ -702,6 +731,9 @@ const Upload = () => {
     if (lastTotalOdds) setExtractedTotalOdds(lastTotalOdds);
     if (lastGameTime) setExtractedGameTime(lastGameTime);
     if (lastStake) setStake(lastStake);
+    if (lastPlatform) setExtractedPlatform(lastPlatform);
+    if (lastPlayType) setExtractedPlayType(lastPlayType);
+    if (lastMultiplier) setExtractedMultiplier(lastMultiplier);
 
     setIsProcessing(false);
     setProcessingIndex(-1);
@@ -1145,13 +1177,51 @@ const Upload = () => {
 
         {/* Extracted Data Banners */}
         <div className="space-y-2 mb-4">
+          {/* PrizePicks Platform Banner */}
+          {extractedPlatform === 'prizepicks' && (
+            <div className="bg-purple-500/10 border border-purple-500/30 rounded-xl p-3 flex items-center justify-between slide-up">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-purple-400" />
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-semibold text-purple-300">PrizePicks</p>
+                    {extractedPlayType && (
+                      <Badge variant="outline" className="text-xs border-purple-400/50 text-purple-300">
+                        {extractedPlayType === 'power_play' ? 'Power Play' : 'Flex Play'}
+                      </Badge>
+                    )}
+                  </div>
+                  {extractedMultiplier && (
+                    <p className="text-xs text-muted-foreground">
+                      {extractedMultiplier}x Payout Multiplier
+                    </p>
+                  )}
+                </div>
+              </div>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={() => {
+                  setExtractedPlatform(null);
+                  setExtractedPlayType(null);
+                  setExtractedMultiplier(null);
+                }}
+                className="text-muted-foreground hover:text-destructive"
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+          )}
+
           {/* Extracted Total Odds Banner */}
           {extractedTotalOdds && (
             <div className="bg-neon-green/10 border border-neon-green/30 rounded-xl p-3 flex items-center justify-between slide-up">
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="w-5 h-5 text-neon-green" />
                 <div>
-                  <p className="text-xs text-muted-foreground">Total Parlay Odds (from slip)</p>
+                  <p className="text-xs text-muted-foreground">
+                    {extractedPlatform === 'prizepicks' ? 'Estimated Odds (from multiplier)' : 'Total Parlay Odds (from slip)'}
+                  </p>
                   <p className="text-lg font-bold text-neon-green">
                     {extractedTotalOdds > 0 ? '+' : ''}{extractedTotalOdds}
                   </p>
