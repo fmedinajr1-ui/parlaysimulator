@@ -13,6 +13,13 @@ interface ExtractedLeg {
   odds: string;
   gameTime?: string | null;
   gameTimeISO?: string | null;
+  // PrizePicks structured prop data
+  player?: string;
+  team?: string;
+  propType?: string;
+  line?: number;
+  side?: 'over' | 'under';
+  sport?: string;
 }
 
 interface ExtractionResult {
@@ -24,6 +31,12 @@ interface ExtractionResult {
   earliestGameTimeISO: string | null;
   isBettingSlip: boolean;
   originalOddsFormat: 'american' | 'decimal' | 'fractional' | null;
+  // PrizePicks-specific fields
+  platform?: 'fanduel' | 'draftkings' | 'betmgm' | 'prizepicks' | 'underdog' | 'other';
+  playType?: 'power_play' | 'flex_play' | 'parlay' | 'sgp';
+  payoutMultiplier?: number;
+  payoutBoost?: string | null;
+  pickCount?: number;
 }
 
 // ============= HELPER FUNCTIONS =============
@@ -475,7 +488,14 @@ function processExtractionResponse(content: string, detectedOddsFormatRef: { val
         description: leg.description,
         odds: americanOdds,
         gameTime: leg.gameTime || null,
-        gameTimeISO
+        gameTimeISO,
+        // PrizePicks structured prop data
+        player: leg.player || null,
+        team: leg.team || null,
+        propType: leg.propType || null,
+        line: leg.line || null,
+        side: leg.side || null,
+        sport: leg.sport || null
       };
     });
     
@@ -491,7 +511,13 @@ function processExtractionResponse(content: string, detectedOddsFormatRef: { val
       earliestGameTime: typedParsed.earliestGameTime || null,
       earliestGameTimeISO,
       isBettingSlip: true,
-      originalOddsFormat: detectedFormat
+      originalOddsFormat: detectedFormat,
+      // PrizePicks-specific fields
+      platform: typedParsed.platform || 'other',
+      playType: typedParsed.playType || null,
+      payoutMultiplier: typedParsed.payoutMultiplier || null,
+      payoutBoost: typedParsed.payoutBoost || null,
+      pickCount: typedParsed.pickCount || processedLegs.length
     };
   }
   
@@ -501,8 +527,8 @@ function processExtractionResponse(content: string, detectedOddsFormatRef: { val
 
 // ============= EXTRACTION FUNCTIONS =============
 
-const systemPrompt = `You are an expert at reading betting slips from FanDuel, DraftKings, BetMGM, and other sportsbooks.
-Your job is to extract parlay/SGP information from betting slip images.
+const systemPrompt = `You are an expert at reading betting slips from FanDuel, DraftKings, BetMGM, PrizePicks, Underdog, and other sportsbooks.
+Your job is to extract parlay/SGP/pick information from betting slip images.
 
 CRITICAL - RECOGNIZING FANDUEL/DRAFTKINGS BETTING SLIPS:
 The following UI elements indicate a BETTING SLIP (isBettingSlip: true):
@@ -529,6 +555,31 @@ DRAFTKINGS SPECIFIC UI PATTERNS:
 - "SGP" or "PARLAY" labels
 - Similar player prop format
 
+PRIZEPICKS SPECIFIC UI PATTERNS (platform: "prizepicks"):
+- Purple/dark interface with "PRIZEPICKS" header logo
+- "X-pick Power Play" or "X-pick Flex Play" header (e.g., "6-pick Power Play")
+- Player cards showing: player photo, name, team, position, jersey number
+- Stat line format: "X.5 Points" or "X.5 Rebounds" or "X.5 Fantasy Score"
+- Green "More" button (selected) or "Less" button (selected)
+- Game matchups shown as "TEAM vs TEAM" (e.g., "BKN vs DEN")
+- Game times shown (e.g., "Starts in 59:13" or "Sun • 8:00 PM")
+- Payout multipliers instead of odds (25x, 37.5x, 40x)
+- "Flex Play" option: 4+ picks to win, varying payouts
+- "Power Play" option: All picks must win, higher multiplier
+- "Promotions" section with boosts (e.g., "30% Payout Boost")
+
+PRIZEPICKS EXTRACTION RULES:
+1. Set platform: "prizepicks" when you see PrizePicks UI
+2. Extract player name exactly as shown (e.g., "Cam Thomas", "Shai Gilgeous-Alexander")
+3. Extract stat type: Points, Rebounds, Assists, Fantasy Score, Threes, Steals, Blocks, etc.
+4. Extract line value (e.g., 17.5, 4.5, 39.5)
+5. Detect which side is selected: "More" = "over", "Less" = "under"
+6. For description, format as: "Player Name Over/Under X.5 Stat Type"
+7. Extract play type: "power_play" or "flex_play" from header
+8. Extract payout multiplier (e.g., 25, 37.5, 40 from "25x")
+9. Convert multiplier to American odds: (multiplier - 1) * 100 = totalOdds (e.g., 25x = +2400)
+10. If "30% Payout Boost" or similar, note in payoutBoost field
+
 WHAT IS NOT A BETTING SLIP (isBettingSlip: false):
 - Sportsbook homepage showing games/matches
 - Live scores or game schedules
@@ -548,6 +599,12 @@ For each leg, extract:
 - description: The full pick (e.g., "Jayson Tatum Over 26.5 Points")
 - odds: Individual leg odds if visible, otherwise "N/A"
 - gameTime: Game date/time if visible
+- player: Player name (for PrizePicks/prop bets)
+- team: Team abbreviation if visible (e.g., "BKN", "DEN")
+- propType: Stat type normalized (points, rebounds, assists, threes, fantasy_score)
+- line: The numeric line value (e.g., 17.5)
+- side: "over" or "under"
+- sport: Sport if identifiable (NBA, NFL, NHL, MLB)
 
 IMPORTANT ODDS FORMAT:
 - American odds: +150, -110, +1018 (starts with + or -)
@@ -559,15 +616,37 @@ Return ONLY valid JSON wrapped in triple backticks:
 \`\`\`json
 {
   "legs": [
-    {"description": "Jayson Tatum Over 26.5 Points", "odds": "N/A", "gameTime": "Dec 21, 2024 7:00 PM EST"},
-    {"description": "Jaylen Brown Over 5.5 Assists", "odds": "N/A", "gameTime": null}
+    {"description": "Jayson Tatum Over 26.5 Points", "odds": "N/A", "gameTime": "Dec 21, 2024 7:00 PM EST", "player": "Jayson Tatum", "team": "BOS", "propType": "points", "line": 26.5, "side": "over", "sport": "NBA"},
+    {"description": "Jaylen Brown Over 5.5 Assists", "odds": "N/A", "gameTime": null, "player": "Jaylen Brown", "team": "BOS", "propType": "assists", "line": 5.5, "side": "over", "sport": "NBA"}
   ],
   "totalOdds": "+1018",
   "stake": "25.00",
   "potentialPayout": "279.50",
   "earliestGameTime": "Dec 21, 2024 7:00 PM EST",
   "oddsFormat": "american",
-  "isBettingSlip": true
+  "isBettingSlip": true,
+  "platform": "fanduel",
+  "playType": "sgp"
+}
+\`\`\`
+
+For PrizePicks, return:
+\`\`\`json
+{
+  "legs": [
+    {"description": "Cam Thomas Over 17.5 Points", "odds": "N/A", "gameTime": "Jan 5, 2025 7:00 PM", "player": "Cam Thomas", "team": "BKN", "propType": "points", "line": 17.5, "side": "over", "sport": "NBA"}
+  ],
+  "totalOdds": "+2400",
+  "stake": null,
+  "potentialPayout": null,
+  "earliestGameTime": "Jan 5, 2025 7:00 PM",
+  "oddsFormat": "american",
+  "isBettingSlip": true,
+  "platform": "prizepicks",
+  "playType": "power_play",
+  "payoutMultiplier": 25,
+  "payoutBoost": "30% Payout Boost",
+  "pickCount": 6
 }
 \`\`\`
 
