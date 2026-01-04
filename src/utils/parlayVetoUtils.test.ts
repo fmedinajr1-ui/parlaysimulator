@@ -378,3 +378,31 @@ describe('Edge cases', () => {
     expect(canAddPlayerLeg(playerCount, longName)).toBe(false);
   });
 });
+
+describe('Unified Props Engine regression', () => {
+  it('prevents Isaiah Stewart II duplicate', () => {
+    const legs: LegBase[] = [
+      { player_name: 'Isaiah Stewart II', stat_type: 'player_rebounds' },
+      { player_name: 'Isaiah Stewart II', stat_type: 'player_rebounds' },
+    ];
+    expect(noSamePlayer(legs)).toBe(false);
+  });
+
+  it('prevents Kevin Porter Jr. triple duplicate', () => {
+    const legs: LegBase[] = [
+      { player_name: 'Kevin Porter Jr.', stat_type: 'player_points' },
+      { player_name: 'Kevin Porter Jr.', stat_type: 'player_points' },
+      { player_name: 'Kevin Porter Jr.', stat_type: 'player_points' },
+    ];
+    expect(noSamePlayer(legs)).toBe(false);
+  });
+
+  it('allows unique players from unified engine', () => {
+    const legs: LegBase[] = [
+      { player_name: 'Isaiah Stewart II', stat_type: 'player_rebounds' },
+      { player_name: 'Kevin Porter Jr.', stat_type: 'player_points' },
+      { player_name: 'Jayson Tatum', stat_type: 'player_assists' },
+    ];
+    expect(noSamePlayer(legs)).toBe(true);
+  });
+});

@@ -28,6 +28,56 @@ const PROP_MARKETS = [
   'player_goals', 'player_shots_on_goal'
 ];
 
+// ========== ONE PLAYER PER PARLAY HELPERS ==========
+
+// Combo stat types mapped to their base components
+const COMBO_STAT_BASES: Record<string, string[]> = {
+  'player_points_rebounds_assists': ['player_points', 'player_rebounds', 'player_assists'],
+  'player_points_rebounds': ['player_points', 'player_rebounds'],
+  'player_points_assists': ['player_points', 'player_assists'],
+  'player_rebounds_assists': ['player_rebounds', 'player_assists'],
+};
+
+// One Player Per Parlay - Hard Veto Helper
+function noSamePlayer(legs: { player_name: string }[]): boolean {
+  const players = legs.map(l => l.player_name.toLowerCase().trim());
+  return players.length === new Set(players).size;
+}
+
+// Combo overlap veto for same player
+function noBaseComboOverlap(legs: { player_name: string; prop_type: string }[]): boolean {
+  const playerStats = new Map<string, Set<string>>();
+  
+  for (const leg of legs) {
+    const player = leg.player_name.toLowerCase().trim();
+    const stat = leg.prop_type.toLowerCase();
+    
+    if (!playerStats.has(player)) {
+      playerStats.set(player, new Set());
+    }
+    
+    const existing = playerStats.get(player)!;
+    
+    // Check combo overlaps
+    const comboBases = COMBO_STAT_BASES[stat];
+    if (comboBases) {
+      for (const base of comboBases) {
+        if (existing.has(base)) return false;
+      }
+    }
+    
+    for (const [combo, bases] of Object.entries(COMBO_STAT_BASES)) {
+      if (existing.has(combo) && bases.includes(stat)) {
+        return false;
+      }
+    }
+    
+    existing.add(stat);
+  }
+  
+  return true;
+}
+
 interface UnifiedProp {
   event_id: string;
   sport: string;
@@ -954,14 +1004,36 @@ async function distributeToCategories(supabase: any, props: UnifiedProp[]): Prom
     });
   }
 
-  // Create suggested parlays from top composite scores
-  const suggestedProps = props
+  // Create suggested parlays from top composite scores WITH PLAYER DEDUPLICATION
+  const sortedProps = props
     .filter(p => p.recommendation === 'pick' && p.composite_score >= 60)
-    .sort((a, b) => b.composite_score - a.composite_score)
-    .slice(0, 6);
+    .sort((a, b) => b.composite_score - a.composite_score);
 
-  if (suggestedProps.length >= 2) {
-    const suggestionLegs = suggestedProps.slice(0, 3).map(p => ({
+  // Select up to 3 legs with player veto
+  const selectedLegs: typeof sortedProps = [];
+  const usedPlayers = new Set<string>();
+
+  for (const prop of sortedProps) {
+    if (selectedLegs.length >= 3) break;
+    
+    const playerKey = prop.player_name.toLowerCase().trim();
+    
+    // Hard veto: one player per parlay
+    if (usedPlayers.has(playerKey)) continue;
+    
+    // Check combo overlap
+    const testLegs = [...selectedLegs, prop];
+    if (!noBaseComboOverlap(testLegs.map(p => ({
+      player_name: p.player_name,
+      prop_type: p.prop_type
+    })))) continue;
+    
+    selectedLegs.push(prop);
+    usedPlayers.add(playerKey);
+  }
+
+  if (selectedLegs.length >= 2) {
+    const suggestionLegs = selectedLegs.map(p => ({
       description: `${p.player_name} ${p.recommended_side || 'over'} ${p.current_line} ${p.prop_type}`,
       player: p.player_name,
       prop_type: p.prop_type,
@@ -971,22 +1043,30 @@ async function distributeToCategories(supabase: any, props: UnifiedProp[]): Prom
       signals: p.signal_sources
     }));
 
+    // INVARIANT ASSERTION: Verify no duplicate players
+    if (!noSamePlayer(suggestionLegs.map(l => ({ player_name: l.player })))) {
+      console.error('[UnifiedEngine] INVARIANT VIOLATION: Duplicate player detected!', suggestionLegs.map(l => l.player));
+      throw new Error('Invariant violation: duplicate player detected in suggested parlay');
+    }
+
     await supabase.from('suggested_parlays').insert({
       legs: suggestionLegs,
-      combined_probability: suggestedProps.slice(0, 3).reduce((acc, p) => acc * p.confidence, 1),
+      combined_probability: selectedLegs.reduce((acc, p) => acc * p.confidence, 1),
       total_odds: 350,
-      sport: suggestedProps[0]?.sport || 'mixed',
+      sport: selectedLegs[0]?.sport || 'mixed',
       suggestion_reason: 'AI-driven unified pipeline: High composite score across multiple signals',
-      confidence_score: suggestedProps[0]?.confidence || 0.5,
+      confidence_score: selectedLegs[0]?.confidence || 0.5,
       expires_at: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
       is_active: true,
       is_hybrid: true,
       hybrid_scores: {
-        hit_rate: suggestedProps[0]?.hit_rate_score,
-        sharp: suggestedProps[0]?.sharp_money_score,
-        fatigue: suggestedProps[0]?.fatigue_score
+        hit_rate: selectedLegs[0]?.hit_rate_score,
+        sharp: selectedLegs[0]?.sharp_money_score,
+        fatigue: selectedLegs[0]?.fatigue_score
       }
     });
+
+    console.log('[UnifiedEngine] Created suggested parlay with unique players:', usedPlayers);
   }
 
   return counts;
