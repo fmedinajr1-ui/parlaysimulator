@@ -148,13 +148,24 @@ const Profile = () => {
   };
 
   if (authLoading || isLoading) {
-    return <FullPageWolfLoader />;
+    return <FullPageWolfLoader text="Loading profile..." />;
   }
 
   if (!profile) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <p className="text-muted-foreground">Failed to load profile</p>
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4 p-4">
+        <p className="text-lg text-foreground">Unable to load profile</p>
+        <p className="text-sm text-muted-foreground text-center">There was an issue loading your profile data.</p>
+        <div className="flex gap-3">
+          <Button variant="outline" onClick={() => window.location.reload()}>
+            <RefreshCw className="w-4 h-4 mr-2" />
+            Retry
+          </Button>
+          <Button variant="ghost" onClick={handleSignOut}>
+            <LogOut className="w-4 h-4 mr-2" />
+            Sign Out
+          </Button>
+        </div>
       </div>
     );
   }
