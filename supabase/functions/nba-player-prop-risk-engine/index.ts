@@ -326,7 +326,7 @@ serve(async (req) => {
         .select('*')
         .eq('sport', 'basketball_nba')
         .eq('is_active', true)
-        .gte('game_time', today);
+        .gte('commence_time', today);
 
       if (propsError) {
         console.error('[Risk Engine] Error fetching props:', propsError);
@@ -359,14 +359,15 @@ serve(async (req) => {
       const processedPlayers = new Set<string>();
 
       for (const prop of (props || [])) {
-        // Skip if we already have a prop from this player (no multiple props from same player)
-        if (processedPlayers.has(prop.player_name)) {
-          rejectedProps.push({
-            ...prop,
-            rejection_reason: 'Multiple props from same player not allowed'
-          });
-          continue;
-        }
+        try {
+          // Skip if we already have a prop from this player (no multiple props from same player)
+          if (processedPlayers.has(prop.player_name)) {
+            rejectedProps.push({
+              ...prop,
+              rejection_reason: 'Multiple props from same player not allowed'
+            });
+            continue;
+          }
 
         // Find game context
         const game = games?.find(g => 
@@ -375,7 +376,12 @@ serve(async (req) => {
           prop.description?.includes(g.away_team)
         );
         
-        const spread = game?.spread || 0;
+        // Try to get spread from game, fallback to record differential estimate
+        let spread = game?.spread || 0;
+        if (spread === 0 && prop.record_differential) {
+          // Each 0.1 win % differential ~ 3 point spread
+          spread = prop.record_differential * 30;
+        }
         
         // STEP 1: Game Script Classification
         const gameScript = classifyGameScript(spread);
@@ -538,6 +544,15 @@ serve(async (req) => {
         });
         
         processedPlayers.add(prop.player_name);
+        } catch (propError: unknown) {
+          const errorMessage = propError instanceof Error ? propError.message : 'Unknown error';
+          console.error(`[Risk Engine] Error processing ${prop.player_name}:`, propError);
+          rejectedProps.push({
+            ...prop,
+            rejection_reason: `Processing error: ${errorMessage}`
+          });
+          continue;
+        }
       }
       
       // Sort by confidence
