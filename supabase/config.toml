@@ -359,3 +359,6 @@ verify_jwt = false
 
 [functions.parlay-ab-testing]
 verify_jwt = false
+
+[functions.nba-player-prop-risk-engine]
+verify_jwt = false

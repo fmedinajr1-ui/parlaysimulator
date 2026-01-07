@@ -10,6 +10,7 @@ import { HistoricalInsights } from "@/components/suggestions/HistoricalInsights"
 import { SmartBettingEdge } from "@/components/suggestions/SmartBettingEdge";
 import { DailyEliteHitterCard } from "@/components/suggestions/DailyEliteHitterCard";
 import { MedianEdgePicksCard } from "@/components/suggestions/MedianEdgePicksCard";
+import { RiskEnginePicksCard } from "@/components/suggestions/RiskEnginePicksCard";
 import { CriticalAlertsTicker } from "@/components/news";
 import { PullToRefreshContainer, PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
@@ -24,7 +25,7 @@ import { SmartAnalyzeButton } from "@/components/SmartAnalyzeButton";
 import { EngineStatusBar } from "@/components/EngineStatusBar";
 import { LiveDashboardCard } from "@/components/live/LiveDashboardCard";
 
-function QuickAction({ to, icon: Icon, label, iconClass }: { 
+function QuickAction({ to, icon: Icon, label, iconClass }: {
   to: string; 
   icon: React.ElementType; 
   label: string;
@@ -188,6 +189,13 @@ const Index = () => {
         {(isPilotUser || isSubscribed || isAdmin) && (
           <div className="mb-4">
             <MedianEdgePicksCard />
+          </div>
+        )}
+
+        {/* NBA Risk Engine - Pilot + Subscriber + Admin Access */}
+        {(isPilotUser || isSubscribed || isAdmin) && (
+          <div className="mb-4">
+            <RiskEnginePicksCard />
           </div>
         )}
 

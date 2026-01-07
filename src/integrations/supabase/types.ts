@@ -3946,6 +3946,96 @@ export type Database = {
         }
         Relationships: []
       }
+      nba_risk_engine_picks: {
+        Row: {
+          actual_value: number | null
+          avg_minutes: number | null
+          bad_game_floor: number | null
+          confidence_factors: Json | null
+          confidence_score: number
+          created_at: string | null
+          edge: number | null
+          event_id: string | null
+          game_date: string
+          game_script: string
+          id: string
+          line: number
+          minutes_class: string
+          mode: string | null
+          opponent: string | null
+          outcome: string | null
+          player_name: string
+          player_role: string
+          prop_type: string
+          reason: string | null
+          rejection_reason: string | null
+          settled_at: string | null
+          side: string
+          spread: number | null
+          team_name: string | null
+          true_median: number | null
+          usage_rate: number | null
+        }
+        Insert: {
+          actual_value?: number | null
+          avg_minutes?: number | null
+          bad_game_floor?: number | null
+          confidence_factors?: Json | null
+          confidence_score: number
+          created_at?: string | null
+          edge?: number | null
+          event_id?: string | null
+          game_date: string
+          game_script: string
+          id?: string
+          line: number
+          minutes_class: string
+          mode?: string | null
+          opponent?: string | null
+          outcome?: string | null
+          player_name: string
+          player_role: string
+          prop_type: string
+          reason?: string | null
+          rejection_reason?: string | null
+          settled_at?: string | null
+          side: string
+          spread?: number | null
+          team_name?: string | null
+          true_median?: number | null
+          usage_rate?: number | null
+        }
+        Update: {
+          actual_value?: number | null
+          avg_minutes?: number | null
+          bad_game_floor?: number | null
+          confidence_factors?: Json | null
+          confidence_score?: number
+          created_at?: string | null
+          edge?: number | null
+          event_id?: string | null
+          game_date?: string
+          game_script?: string
+          id?: string
+          line?: number
+          minutes_class?: string
+          mode?: string | null
+          opponent?: string | null
+          outcome?: string | null
+          player_name?: string
+          player_role?: string
+          prop_type?: string
+          reason?: string | null
+          rejection_reason?: string | null
+          settled_at?: string | null
+          side?: string
+          spread?: number | null
+          team_name?: string | null
+          true_median?: number | null
+          usage_rate?: number | null
+        }
+        Relationships: []
+      }
       nba_schedule_cache: {
         Row: {
           created_at: string
