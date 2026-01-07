@@ -8,8 +8,6 @@ import { SuggestedParlays } from "@/components/suggestions/SuggestedParlays";
 import { CompareTeaser } from "@/components/CompareTeaser";
 import { HistoricalInsights } from "@/components/suggestions/HistoricalInsights";
 import { SmartBettingEdge } from "@/components/suggestions/SmartBettingEdge";
-import { DailyEliteHitterCard } from "@/components/suggestions/DailyEliteHitterCard";
-import { MedianEdgePicksCard } from "@/components/suggestions/MedianEdgePicksCard";
 import { RiskEnginePicksCard } from "@/components/suggestions/RiskEnginePicksCard";
 import { CriticalAlertsTicker } from "@/components/news";
 import { PullToRefreshContainer, PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
@@ -178,19 +176,7 @@ const Index = () => {
         {/* Example Cards */}
         <ExampleCarousel />
 
-        {/* Daily Elite Hitter - Pilot + Elite + Admin Access */}
-        {(hasEliteAccess || isPilotUser) && (
-          <div className="mb-4">
-            <DailyEliteHitterCard />
-          </div>
-        )}
-
-        {/* 5-Median Edge Engine - Pilot + Subscriber + Admin Access */}
-        {(isPilotUser || isSubscribed || isAdmin) && (
-          <div className="mb-4">
-            <MedianEdgePicksCard />
-          </div>
-        )}
+        {/* NBA Risk Engine - Pilot + Subscriber + Admin Access */}
 
         {/* NBA Risk Engine - Pilot + Subscriber + Admin Access */}
         {(isPilotUser || isSubscribed || isAdmin) && (
