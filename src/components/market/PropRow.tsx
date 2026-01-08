@@ -1,6 +1,13 @@
 import { cn } from "@/lib/utils";
 import { HeatBadge, HeatLevel } from "./HeatBadge";
-import { Clock, Crown, Star, Shield, Crosshair, Users } from "lucide-react";
+import { Clock, Crown, Star, Shield, Crosshair, Users, Zap, AlertTriangle } from "lucide-react";
+
+interface SharpAlertData {
+  level: string;
+  movementPts: number;
+  direction: string;
+  isTrap: boolean;
+}
 
 interface PropRowProps {
   playerName: string;
@@ -17,6 +24,7 @@ interface PropRowProps {
   overPrice?: number | null;
   underPrice?: number | null;
   bookmaker?: string | null;
+  sharpAlert?: SharpAlertData;
   onClick?: () => void;
 }
 
@@ -86,11 +94,16 @@ export function PropRow({
   overPrice,
   underPrice,
   bookmaker,
+  sharpAlert,
   onClick,
 }: PropRowProps) {
   const RoleIcon = ROLE_ICONS[playerRole] || Star;
   const roleLabel = ROLE_LABELS[playerRole] || playerRole;
   const bookLabel = bookmaker ? BOOKMAKER_LABELS[bookmaker.toLowerCase()] || bookmaker.toUpperCase().slice(0, 3) : null;
+  
+  // Sharp alert styling
+  const hasSharpAlert = !!sharpAlert;
+  const isTrap = sharpAlert?.isTrap;
   
   return (
     <div 
@@ -98,16 +111,47 @@ export function PropRow({
       className={cn(
         "p-3 rounded-lg border border-border/50 bg-card/50",
         "hover:bg-accent/50 hover:border-primary/30 transition-all cursor-pointer",
-        "active:scale-[0.99]"
+        "active:scale-[0.99]",
+        hasSharpAlert && !isTrap && "border-red-500/50 bg-red-500/5",
+        isTrap && "border-yellow-500/50 bg-yellow-500/5"
       )}
     >
-      {/* Top Row: Heat + Player + Scores */}
+      {/* Top Row: Heat + Player + Scores + Sharp Alert */}
       <div className="flex items-center gap-3">
         <HeatBadge level={heatLevel} />
         
         <div className="flex-1 min-w-0">
-          <div className="font-semibold text-foreground truncate">
-            {playerName}
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-foreground truncate">
+              {playerName}
+            </span>
+            {/* Sharp Alert Badge */}
+            {hasSharpAlert && (
+              <div className={cn(
+                "flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-semibold animate-pulse",
+                isTrap 
+                  ? "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30" 
+                  : "bg-red-500/20 text-red-400 border border-red-500/30"
+              )}>
+                {isTrap ? (
+                  <>
+                    <AlertTriangle className="w-3 h-3" />
+                    <span>TRAP</span>
+                  </>
+                ) : (
+                  <>
+                    <Zap className="w-3 h-3" />
+                    <span>SHARP</span>
+                  </>
+                )}
+                {sharpAlert && sharpAlert.movementPts > 0 && (
+                  <span className="opacity-80">
+                    {sharpAlert.direction === 'shortened' ? '↓' : '↑'}
+                    {Math.round(sharpAlert.movementPts)}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
           <div className="text-sm text-muted-foreground flex items-center gap-1">
             {formatPropType(propType)} <span className={side === 'over' ? 'text-green-400' : 'text-red-400'}>

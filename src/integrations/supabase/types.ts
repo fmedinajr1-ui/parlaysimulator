@@ -3963,6 +3963,7 @@ export type Database = {
           id: string
           is_ball_dominant: boolean | null
           is_pra: boolean | null
+          is_trap_indicator: boolean | null
           line: number
           minutes_class: string
           mode: string | null
@@ -3976,6 +3977,11 @@ export type Database = {
           reason: string | null
           rejection_reason: string | null
           settled_at: string | null
+          sharp_alert: boolean | null
+          sharp_alert_level: string | null
+          sharp_detected_at: string | null
+          sharp_direction: string | null
+          sharp_movement_pts: number | null
           side: string
           spread: number | null
           team_name: string | null
@@ -3999,6 +4005,7 @@ export type Database = {
           id?: string
           is_ball_dominant?: boolean | null
           is_pra?: boolean | null
+          is_trap_indicator?: boolean | null
           line: number
           minutes_class: string
           mode?: string | null
@@ -4012,6 +4019,11 @@ export type Database = {
           reason?: string | null
           rejection_reason?: string | null
           settled_at?: string | null
+          sharp_alert?: boolean | null
+          sharp_alert_level?: string | null
+          sharp_detected_at?: string | null
+          sharp_direction?: string | null
+          sharp_movement_pts?: number | null
           side: string
           spread?: number | null
           team_name?: string | null
@@ -4035,6 +4047,7 @@ export type Database = {
           id?: string
           is_ball_dominant?: boolean | null
           is_pra?: boolean | null
+          is_trap_indicator?: boolean | null
           line?: number
           minutes_class?: string
           mode?: string | null
@@ -4048,6 +4061,11 @@ export type Database = {
           reason?: string | null
           rejection_reason?: string | null
           settled_at?: string | null
+          sharp_alert?: boolean | null
+          sharp_alert_level?: string | null
+          sharp_detected_at?: string | null
+          sharp_direction?: string | null
+          sharp_movement_pts?: number | null
           side?: string
           spread?: number | null
           team_name?: string | null

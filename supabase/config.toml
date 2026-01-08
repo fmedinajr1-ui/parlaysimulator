@@ -362,3 +362,6 @@ verify_jwt = false
 
 [functions.nba-player-prop-risk-engine]
 verify_jwt = false
+
+[functions.prop-sharp-sync]
+verify_jwt = false

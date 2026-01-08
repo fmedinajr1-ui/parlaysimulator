@@ -1,15 +1,16 @@
+import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { PropRow } from "./PropRow";
 import { HeatLevel } from "./HeatBadge";
-import { Flame, ArrowRight, RefreshCw, Loader2 } from "lucide-react";
+import { Flame, ArrowRight, RefreshCw, Loader2, Zap } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useRefreshPropMarketOdds } from "@/hooks/useLiveOdds";
+import { useSharpMovementSync } from "@/hooks/useSharpMovementSync";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-
 interface RiskEnginePick {
   id: string;
   player_name: string;
@@ -25,6 +26,11 @@ interface RiskEnginePick {
   under_price?: number;
   bookmaker?: string;
   odds_updated_at?: string;
+  sharp_alert?: boolean;
+  sharp_alert_level?: string;
+  sharp_movement_pts?: number;
+  sharp_direction?: string;
+  is_trap_indicator?: boolean;
 }
 
 function calculateHeatLevel(engineScore: number, marketScore: number | null): { heat: number; level: HeatLevel } {
@@ -51,13 +57,14 @@ function calculateHeatLevel(engineScore: number, marketScore: number | null): { 
 export function PropMarketWidget() {
   const queryClient = useQueryClient();
   const { refreshAll, isRefreshing, lastRefresh } = useRefreshPropMarketOdds();
+  const { sharpAlerts, isConnected, alertCount, hasSharpAlert } = useSharpMovementSync({ showToasts: true });
 
   const { data: picks, isLoading } = useQuery({
     queryKey: ['risk-engine-picks-widget'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('nba_risk_engine_picks')
-        .select('id, player_name, prop_type, line, side, confidence_score, player_role, game_script, game_date, current_line, over_price, under_price, bookmaker, odds_updated_at')
+        .select('id, player_name, prop_type, line, side, confidence_score, player_role, game_script, game_date, current_line, over_price, under_price, bookmaker, odds_updated_at, sharp_alert, sharp_alert_level, sharp_movement_pts, sharp_direction, is_trap_indicator')
         .gte('confidence_score', 7.5)
         .order('game_date', { ascending: false })
         .order('confidence_score', { ascending: false })
@@ -68,6 +75,28 @@ export function PropMarketWidget() {
     },
     refetchInterval: 60000, // Refetch every minute
   });
+
+  // Real-time subscription for pick updates
+  useEffect(() => {
+    const channel = supabase
+      .channel('prop-heat-map-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'nba_risk_engine_picks'
+        },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ['risk-engine-picks-widget'] });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [queryClient]);
 
   const handleRefreshOdds = async () => {
     const result = await refreshAll();
@@ -88,6 +117,23 @@ export function PropMarketWidget() {
           <div className="flex items-center gap-2">
             <Flame className="w-5 h-5 text-orange-500" />
             <CardTitle className="text-lg">Prop Heat Map</CardTitle>
+            {/* Live indicator */}
+            {isConnected && (
+              <div className="flex items-center gap-1">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                </span>
+                <span className="text-xs text-muted-foreground">LIVE</span>
+              </div>
+            )}
+            {/* Sharp alert count */}
+            {alertCount > 0 && (
+              <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/20 border border-red-500/30">
+                <Zap className="w-3 h-3 text-red-400" />
+                <span className="text-xs font-medium text-red-400">{alertCount}</span>
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <Button 
@@ -140,6 +186,20 @@ export function PropMarketWidget() {
             const { heat, level } = calculateHeatLevel(pick.confidence_score, null);
             const hoursToTip = 2; // Placeholder - would come from game time
             
+            // Check for sharp alert from pick data or hook
+            const hookAlert = hasSharpAlert(pick.player_name, pick.prop_type);
+            const sharpAlertData = pick.sharp_alert ? {
+              level: pick.sharp_alert_level || 'warning',
+              movementPts: pick.sharp_movement_pts || 0,
+              direction: pick.sharp_direction || 'unknown',
+              isTrap: pick.is_trap_indicator || false
+            } : hookAlert ? {
+              level: hookAlert.alertLevel || 'warning',
+              movementPts: hookAlert.movementPts || 0,
+              direction: hookAlert.direction || 'unknown',
+              isTrap: hookAlert.isTrap || false
+            } : undefined;
+            
             return (
               <PropRow
                 key={pick.id}
@@ -157,6 +217,7 @@ export function PropMarketWidget() {
                 overPrice={pick.over_price}
                 underPrice={pick.under_price}
                 bookmaker={pick.bookmaker}
+                sharpAlert={sharpAlertData}
               />
             );
           })
