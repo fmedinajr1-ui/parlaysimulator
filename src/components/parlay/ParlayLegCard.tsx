@@ -6,6 +6,7 @@ import { SportsCoachingSignal } from '@/hooks/useSportsCoachingSignals';
 import { CoachingWarningBadge } from './CoachingWarningBadge';
 import { MarketSignalBadge, type MarketSignal } from './MarketSignalBadge';
 import { TrapProbabilityBadge } from './TrapProbabilityBadge';
+import { PlayerRoleBadge } from './PlayerRoleBadge';
 import { cn } from '@/lib/utils';
 import { abbreviateTeamsInDescription, extractMatchupFromDescription } from '@/lib/team-abbreviations';
 
@@ -42,6 +43,9 @@ export const ParlayLegCard = ({ leg, onRemove, coachingSignal, marketSignal, tra
   // Get abbreviated description and matchup
   const abbreviatedDescription = abbreviateTeamsInDescription(leg.description, leg.sport);
   const matchupInfo = extractMatchupFromDescription(leg.description, leg.sport);
+  
+  // Extract player role from sourceData if available
+  const playerRole = leg.sourceData?.role as string | undefined;
 
   // Determine if we should show a border highlight based on coaching signal or trap
   const getBorderStyle = () => {
@@ -82,6 +86,9 @@ export const ParlayLegCard = ({ leg, onRemove, coachingSignal, marketSignal, tra
               <span className="text-[10px] font-medium text-purple-400">
                 {Math.round(leg.confidenceScore)}% score
               </span>
+            )}
+            {playerRole && (
+              <PlayerRoleBadge role={playerRole} compact />
             )}
           </div>
           <p className="text-sm font-medium truncate">{abbreviatedDescription}</p>
