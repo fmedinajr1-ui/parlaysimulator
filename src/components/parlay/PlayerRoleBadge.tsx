@@ -14,6 +14,12 @@ const roleConfig: Record<string, {
   label: string;
   emoji: string;
 }> = {
+  'BALL_DOMINANT_STAR': { 
+    icon: Star, 
+    color: 'bg-amber-500/20 text-amber-300 border-amber-500/30', 
+    label: 'Ball Dom',
+    emoji: '👑'
+  },
   'STAR': { 
     icon: Star, 
     color: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30', 

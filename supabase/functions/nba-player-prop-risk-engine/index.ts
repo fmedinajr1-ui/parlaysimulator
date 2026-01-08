@@ -6,24 +6,77 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// ============ NEVER FADE PRA BLACKLIST ============
+// Tier 1 - Absolute: PRA UNDER always disabled
+const NEVER_FADE_PRA_TIER1 = [
+  'jaylen brown',
+  'jayson tatum',
+  'devin booker'
+];
+
+// Tier 2 - Conditional: PRA fade disabled by default
+const NEVER_FADE_PRA_TIER2 = [
+  'luka doncic',
+  'luka dončić',
+  'nikola jokic',
+  'nikola jokić',
+  'giannis antetokounmpo'
+];
+
+// Ball-dominant stars: High usage + primary FT taker + clutch player
+const BALL_DOMINANT_STARS = [
+  'luka doncic', 'luka dončić',
+  'shai gilgeous-alexander', 'shai gilgeous alexander',
+  'jayson tatum',
+  'giannis antetokounmpo',
+  'nikola jokic', 'nikola jokić',
+  'anthony edwards',
+  'ja morant',
+  'trae young',
+  'damian lillard',
+  'kyrie irving',
+  'donovan mitchell',
+  'de\'aaron fox', 'deaaron fox',
+  'tyrese haliburton',
+  'lamelo ball'
+];
+
+function isOnNeverFadePRAList(playerName: string): { tier: 1 | 2 | null } {
+  const normalized = playerName.toLowerCase();
+  if (NEVER_FADE_PRA_TIER1.some(p => normalized.includes(p))) return { tier: 1 };
+  if (NEVER_FADE_PRA_TIER2.some(p => normalized.includes(p))) return { tier: 2 };
+  return { tier: null };
+}
+
+function isBallDominantStar(playerName: string): boolean {
+  const normalized = playerName.toLowerCase();
+  return BALL_DOMINANT_STARS.some(p => normalized.includes(p));
+}
+
 // ============ STEP 1: GAME SCRIPT CLASSIFICATION ============
 type GameScript = 'COMPETITIVE' | 'SOFT_BLOWOUT' | 'HARD_BLOWOUT';
 
 function classifyGameScript(spread: number): GameScript {
   const absSpread = Math.abs(spread);
   if (absSpread <= 7) return 'COMPETITIVE';
-  if (absSpread <= 12) return 'SOFT_BLOWOUT';
-  return 'HARD_BLOWOUT';
+  if (absSpread <= 11) return 'SOFT_BLOWOUT'; // Updated: 8-11 = Soft Blowout
+  return 'HARD_BLOWOUT'; // >= 12 = Hard Blowout
 }
 
 // ============ STEP 2: PLAYER ROLE CLASSIFICATION ============
-type PlayerRole = 'STAR' | 'SECONDARY_GUARD' | 'WING' | 'BIG';
+type PlayerRole = 'STAR' | 'BALL_DOMINANT_STAR' | 'SECONDARY_GUARD' | 'WING' | 'BIG';
 
 function classifyPlayerRole(
   usageRate: number,
   avgMinutes: number,
-  position: string
+  position: string,
+  playerName: string
 ): PlayerRole {
+  // Check ball-dominant first (overrides other classifications)
+  if (isBallDominantStar(playerName)) {
+    return 'BALL_DOMINANT_STAR';
+  }
+  
   // STAR: Usage >= 28% OR team's primary scorer
   if (usageRate >= 28) return 'STAR';
   
@@ -40,33 +93,55 @@ function classifyPlayerRole(
   return ['PG', 'SG', 'G', 'G-F'].includes(position) ? 'SECONDARY_GUARD' : 'WING';
 }
 
-// ============ STEP 3: STAT TYPE BLACKLIST ============
+// ============ STEP 3 & 4: PRA STAT TYPE RULES (GLOBAL) ============
+function isPRAPlay(propType: string): boolean {
+  const statLower = propType.toLowerCase();
+  return statLower.includes('points_rebounds_assists') || 
+         statLower.includes('pra') ||
+         statLower === 'player_points_rebounds_assists';
+}
+
 function isStatBlacklisted(
   propType: string,
   side: string,
   role: PlayerRole,
   gameScript: GameScript,
+  playerName: string,
   threePtAttempts?: number
 ): { blocked: boolean; reason?: string } {
   const statLower = propType.toLowerCase();
   const isOver = side.toLowerCase() === 'over';
+  const isPRA = isPRAPlay(propType);
   
-  // Guard PRA - NEVER
-  if ((role === 'SECONDARY_GUARD') && 
-      (statLower.includes('points_rebounds_assists') || statLower.includes('pra'))) {
+  // ❌ PRA OVER - NEVER ALLOWED (any role, any game) - STEP 4
+  if (isPRA && isOver) {
+    return { blocked: true, reason: 'PRA OVER globally disabled' };
+  }
+  
+  // ❌ PRA UNDER on Never Fade list (Tier 1 or Tier 2) - STEP 3
+  const neverFade = isOnNeverFadePRAList(playerName);
+  if (isPRA && !isOver && neverFade.tier !== null) {
+    return { 
+      blocked: true, 
+      reason: `PRA UNDER disabled for Tier ${neverFade.tier} player (Never Fade list: ${playerName})` 
+    };
+  }
+  
+  // ❌ PRA UNDER for ball-dominant stars in COMPETITIVE games - STEP 3
+  if (isPRA && !isOver && role === 'BALL_DOMINANT_STAR' && gameScript === 'COMPETITIVE') {
+    return { 
+      blocked: true, 
+      reason: 'PRA UNDER disabled for ball-dominant star in competitive game' 
+    };
+  }
+  
+  // Guard PRA - NEVER (applies to SECONDARY_GUARD, not BALL_DOMINANT)
+  if (role === 'SECONDARY_GUARD' && isPRA) {
     return { blocked: true, reason: 'Guard PRA blacklisted' };
   }
   
-  // Big PRA OVER - NEVER
-  if (role === 'BIG' && (statLower.includes('points_rebounds_assists') || statLower.includes('pra')) && isOver) {
-    return { blocked: true, reason: 'Big PRA OVER blacklisted' };
-  }
-  
-  // Any PRA OVER in Blowout games - NEVER
-  if ((statLower.includes('points_rebounds_assists') || statLower.includes('pra')) && isOver && 
-      gameScript !== 'COMPETITIVE') {
-    return { blocked: true, reason: 'PRA OVER in blowout blacklisted' };
-  }
+  // Big PRA OVER - NEVER (already covered by global PRA OVER rule)
+  // Big PRA UNDER - only in non-dominant + blowout (checked in kill switch)
   
   // Guard Rebounds - NEVER
   if (role === 'SECONDARY_GUARD' && statLower === 'player_rebounds') {
@@ -81,26 +156,99 @@ function isStatBlacklisted(
   return { blocked: false };
 }
 
-// ============ STEP 4: ALLOWED STAT TYPES BY ROLE ============
+// ============ STEP 5: GAME-STATE PRA KILL SWITCH (NEW) ============
+function passesPRAKillSwitch(
+  playerName: string,
+  role: PlayerRole,
+  gameScript: GameScript,
+  spread: number,
+  propType: string,
+  side: string
+): { passes: boolean; reason?: string } {
+  const isPRA = isPRAPlay(propType);
+  const isUnder = side.toLowerCase() === 'under';
+  
+  // Only applies to PRA UNDER plays
+  if (!isPRA || !isUnder) {
+    return { passes: true };
+  }
+  
+  // Condition 1: Spread must be >= 12 (hard blowout)
+  if (Math.abs(spread) < 12) {
+    return { passes: false, reason: 'PRA UNDER requires spread >= 12 (Hard Blowout only)' };
+  }
+  
+  // Condition 2: Player must NOT be ball-dominant
+  if (role === 'BALL_DOMINANT_STAR') {
+    return { passes: false, reason: 'PRA UNDER disabled for ball-dominant stars' };
+  }
+  
+  // Condition 3: Player NOT on Never Fade list (already checked in blacklist, but double-check)
+  const neverFade = isOnNeverFadePRAList(playerName);
+  if (neverFade.tier !== null) {
+    return { passes: false, reason: `PRA UNDER disabled for Never Fade Tier ${neverFade.tier} player` };
+  }
+  
+  // Condition 4: Game must be projected non-competitive
+  if (gameScript === 'COMPETITIVE') {
+    return { passes: false, reason: 'PRA UNDER not allowed in competitive games' };
+  }
+  
+  return { passes: true };
+}
+
+// ============ STEP 6: CLUTCH FAILURE PROTECTION (NEW) ============
+function failsClutchProtection(
+  role: PlayerRole,
+  gameScript: GameScript,
+  propType: string,
+  side: string
+): { fails: boolean; reason?: string } {
+  const isPRA = isPRAPlay(propType);
+  const isUnder = side.toLowerCase() === 'under';
+  
+  // Only applies to PRA UNDER for ball-dominant stars in competitive games
+  if (!isPRA || !isUnder) {
+    return { fails: false };
+  }
+  
+  // Ball-dominant star + competitive game = clutch risk
+  // Late FTs + assists kill PRA unders fastest
+  if (role === 'BALL_DOMINANT_STAR' && gameScript === 'COMPETITIVE') {
+    return { 
+      fails: true, 
+      reason: 'Clutch protection: Ball-dominant star PRA UNDER in close game (late FTs + assists risk)' 
+    };
+  }
+  
+  return { fails: false };
+}
+
+// ============ STEP 7: ALLOWED STAT TYPES BY ROLE ============
 function getAllowedStats(role: PlayerRole, gameScript: GameScript): string[] {
   switch (role) {
+    case 'BALL_DOMINANT_STAR':
+      // Points UNDER, Rebounds UNDER only
+      // NO PRA fade unless all kill-switch conditions met (checked separately)
+      return ['points_under', 'rebounds_under'];
+      
     case 'STAR':
       if (gameScript === 'COMPETITIVE') {
         return ['points', 'rebounds'];
       }
-      // Blowout: only UNDERs for stars
-      return ['points_under', 'pra_under', 'points_rebounds_assists_under'];
+      // Blowout: only UNDERs for stars (NO PRA allowed)
+      return ['points_under', 'rebounds_under'];
       
     case 'SECONDARY_GUARD':
       return ['assists', 'points_assists'];
       
     case 'WING':
-      return ['rebounds', 'points'];
+      return ['rebounds', 'points']; // Low-threshold points only (enforced elsewhere)
       
     case 'BIG':
       const bigStats = ['rebounds', 'points_under'];
-      // PRA UNDER only in blowouts
-      if (gameScript !== 'COMPETITIVE') {
+      // PRA UNDER only in hard blowouts AND non-dominant (checked via kill switch)
+      if (gameScript === 'HARD_BLOWOUT') {
         bigStats.push('pra_under', 'points_rebounds_assists_under');
       }
       return bigStats;
@@ -139,7 +287,7 @@ function isStatAllowed(
   return false;
 }
 
-// ============ STEP 5: MEDIAN BAD GAME CHECK ============
+// ============ STEP 8: MEDIAN BAD GAME SURVIVAL TEST ============
 function passesMedianBadGameCheck(
   gameLogs: number[],
   line: number,
@@ -154,6 +302,7 @@ function passesMedianBadGameCheck(
   const badGames = sorted.slice(0, 3);
   const badGameFloor = Math.min(...badGames);
   
+  // "Does this hit in a bad game?" - If NO → Reject
   if (side.toLowerCase() === 'over') {
     // All bad games must still clear the line
     const passes = badGames.every(g => g > line);
@@ -165,7 +314,7 @@ function passesMedianBadGameCheck(
   }
 }
 
-// ============ STEP 6: MINUTES CONFIDENCE FILTER ============
+// ============ STEP 9: MINUTES CONFIDENCE FILTER ============
 type MinutesConfidence = 'LOCKED' | 'MEDIUM' | 'RISKY';
 
 function classifyMinutes(avgMinutes: number): MinutesConfidence {
@@ -174,13 +323,14 @@ function classifyMinutes(avgMinutes: number): MinutesConfidence {
   return 'RISKY';
 }
 
-// ============ STEP 7: CONFIDENCE SCORING ============
+// ============ STEP 10: CONFIDENCE SCORING ============
 interface ConfidenceFactors {
   roleStatAlignment: number;
   minutesCertainty: number;
   gameScriptFit: number;
   medianDistance: number;
   badGameSurvival: number;
+  praCompliance: number; // NEW: Bonus for avoiding PRA or safe PRA plays
 }
 
 function calculateConfidence(
@@ -192,12 +342,15 @@ function calculateConfidence(
   edge: number,
   passesBadGameCheck: boolean
 ): { score: number; factors: ConfidenceFactors } {
+  const isPRA = isPRAPlay(propType);
+  
   const factors: ConfidenceFactors = {
     roleStatAlignment: 0,
     minutesCertainty: 0,
     gameScriptFit: 0,
     medianDistance: 0,
     badGameSurvival: 0,
+    praCompliance: 0,
   };
   
   // Role + Stat Alignment (0-2.5)
@@ -238,6 +391,14 @@ function calculateConfidence(
   // Bad Game Survival (0-1.0)
   factors.badGameSurvival = passesBadGameCheck ? 1.0 : 0;
   
+  // PRA Compliance Bonus (0-0.5) - NEW
+  // Prefer Points/Rebounds UNDERS over PRA UNDERS
+  if (!isPRA) {
+    factors.praCompliance = 0.5; // Bonus for avoiding PRA entirely
+  } else {
+    factors.praCompliance = 0; // No bonus for PRA plays
+  }
+  
   const totalScore = Object.values(factors).reduce((a, b) => a + b, 0);
   
   return { score: totalScore, factors };
@@ -256,11 +417,12 @@ function generateReason(
   gameScript: GameScript,
   edge: number,
   minutesClass: MinutesConfidence,
-  side: string
+  side: string,
+  isPRA: boolean
 ): string {
   const parts: string[] = [];
   
-  parts.push(`${role} in ${gameScript.toLowerCase().replace('_', ' ')} game`);
+  parts.push(`${role.replace('_', ' ')} in ${gameScript.toLowerCase().replace('_', ' ')} game`);
   
   if (edge > 0) {
     parts.push(`+${edge.toFixed(1)} edge`);
@@ -273,6 +435,10 @@ function generateReason(
   }
   
   parts.push(`${side.toUpperCase()} play`);
+  
+  if (!isPRA) {
+    parts.push('✓ non-PRA');
+  }
   
   return parts.join(', ');
 }
@@ -315,7 +481,7 @@ serve(async (req) => {
 
     const { action, mode = 'full_slate' } = await req.json();
 
-    console.log(`[Risk Engine] Action: ${action}, Mode: ${mode}`);
+    console.log(`[Risk Engine v2] Action: ${action}, Mode: ${mode}`);
 
     if (action === 'analyze_slate') {
       const today = new Date().toISOString().split('T')[0];
@@ -329,11 +495,11 @@ serve(async (req) => {
         .gte('commence_time', today);
 
       if (propsError) {
-        console.error('[Risk Engine] Error fetching props:', propsError);
+        console.error('[Risk Engine v2] Error fetching props:', propsError);
         throw propsError;
       }
 
-      console.log(`[Risk Engine] Found ${props?.length || 0} active props`);
+      console.log(`[Risk Engine v2] Found ${props?.length || 0} active props`);
 
       // 2. Fetch upcoming games with spreads
       const { data: games } = await supabase
@@ -369,184 +535,220 @@ serve(async (req) => {
             continue;
           }
 
-        // Find game context
-        const game = games?.find(g => 
-          g.event_id === prop.event_id ||
-          prop.description?.includes(g.home_team) ||
-          prop.description?.includes(g.away_team)
-        );
-        
-        // Try to get spread from game, fallback to record differential estimate
-        let spread = game?.spread || 0;
-        if (spread === 0 && prop.record_differential) {
-          // Each 0.1 win % differential ~ 3 point spread
-          spread = prop.record_differential * 30;
-        }
-        
-        // STEP 1: Game Script Classification
-        const gameScript = classifyGameScript(spread);
-        
-        // Get player metrics
-        const playerUsage = usageMetrics?.find(u => 
-          u.player_name?.toLowerCase() === prop.player_name?.toLowerCase()
-        );
-        
-        const avgMinutes = playerUsage?.avg_minutes || 28;
-        const usageRate = playerUsage?.usage_rate || 20;
-        const position = playerUsage?.position || inferPosition(prop.player_name);
-        
-        // STEP 2: Player Role Classification
-        const role = classifyPlayerRole(usageRate, avgMinutes, position);
-        
-        // Determine side (over/under)
-        const side = prop.recommended_side || 
-          (prop.edge && prop.edge > 0 ? 'over' : 'under') ||
-          'over';
-        
-        // STEP 3: Blacklist Check
-        const threePtAttempts = playerUsage?.avg_3pt_attempts || 0;
-        const blacklistCheck = isStatBlacklisted(
-          prop.prop_type,
-          side,
-          role,
-          gameScript,
-          threePtAttempts
-        );
-        
-        if (blacklistCheck.blocked) {
-          rejectedProps.push({
-            ...prop,
-            rejection_reason: blacklistCheck.reason,
-            player_role: role,
-            game_script: gameScript
-          });
-          continue;
-        }
-        
-        // STEP 4: Allowed Stats Check
-        if (!isStatAllowed(prop.prop_type, side, role, gameScript)) {
-          rejectedProps.push({
-            ...prop,
-            rejection_reason: `Stat not allowed for ${role} in ${gameScript}`,
-            player_role: role,
-            game_script: gameScript
-          });
-          continue;
-        }
-        
-        // Get player's recent game logs for this stat
-        const column = getColumnForProp(prop.prop_type);
-        const playerLogs = gameLogs?.filter(log => 
-          log.player_name?.toLowerCase() === prop.player_name?.toLowerCase()
-        ).slice(0, 10);
-        
-        const statValues = playerLogs?.map(log => {
-          if (column === 'pts_reb_ast') {
-            return (log.pts || 0) + (log.reb || 0) + (log.ast || 0);
+          // Find game context
+          const game = games?.find(g => 
+            g.event_id === prop.event_id ||
+            prop.description?.includes(g.home_team) ||
+            prop.description?.includes(g.away_team)
+          );
+          
+          // Try to get spread from game, fallback to record differential estimate
+          let spread = game?.spread || 0;
+          if (spread === 0 && prop.record_differential) {
+            // Each 0.1 win % differential ~ 3 point spread
+            spread = prop.record_differential * 30;
           }
-          if (column === 'pts_reb') {
-            return (log.pts || 0) + (log.reb || 0);
+          
+          // STEP 1: Game Script Classification
+          const gameScript = classifyGameScript(spread);
+          
+          // Get player metrics
+          const playerUsage = usageMetrics?.find(u => 
+            u.player_name?.toLowerCase() === prop.player_name?.toLowerCase()
+          );
+          
+          const avgMinutes = playerUsage?.avg_minutes || 28;
+          const usageRate = playerUsage?.usage_rate || 20;
+          const position = playerUsage?.position || inferPosition(prop.player_name);
+          
+          // STEP 2: Player Role Classification (now includes ball-dominant check)
+          const role = classifyPlayerRole(usageRate, avgMinutes, position, prop.player_name);
+          
+          // Determine side (over/under)
+          const side = prop.recommended_side || 
+            (prop.edge && prop.edge > 0 ? 'over' : 'under') ||
+            'over';
+          
+          // STEP 3 & 4: Blacklist Check (includes Never Fade PRA list and global rules)
+          const threePtAttempts = playerUsage?.avg_3pt_attempts || 0;
+          const blacklistCheck = isStatBlacklisted(
+            prop.prop_type,
+            side,
+            role,
+            gameScript,
+            prop.player_name,
+            threePtAttempts
+          );
+          
+          if (blacklistCheck.blocked) {
+            rejectedProps.push({
+              ...prop,
+              rejection_reason: blacklistCheck.reason,
+              player_role: role,
+              game_script: gameScript
+            });
+            continue;
           }
-          if (column === 'pts_ast') {
-            return (log.pts || 0) + (log.ast || 0);
+          
+          // STEP 5: PRA Kill Switch (for PRA UNDER plays)
+          const killSwitchCheck = passesPRAKillSwitch(
+            prop.player_name,
+            role,
+            gameScript,
+            spread,
+            prop.prop_type,
+            side
+          );
+          
+          if (!killSwitchCheck.passes) {
+            rejectedProps.push({
+              ...prop,
+              rejection_reason: killSwitchCheck.reason,
+              player_role: role,
+              game_script: gameScript
+            });
+            continue;
           }
-          if (column === 'reb_ast') {
-            return (log.reb || 0) + (log.ast || 0);
+          
+          // STEP 6: Clutch Failure Protection
+          const clutchCheck = failsClutchProtection(role, gameScript, prop.prop_type, side);
+          if (clutchCheck.fails) {
+            rejectedProps.push({
+              ...prop,
+              rejection_reason: clutchCheck.reason,
+              player_role: role,
+              game_script: gameScript
+            });
+            continue;
           }
-          return log[column] || 0;
-        }) || [];
-        
-        // STEP 5: Median Bad Game Check
-        const { passes: passesBadGame, badGameFloor } = passesMedianBadGameCheck(
-          statValues,
-          prop.current_line || prop.line,
-          side
-        );
-        
-        if (!passesBadGame && statValues.length >= 5) {
-          rejectedProps.push({
-            ...prop,
-            rejection_reason: 'Fails bad game survival check',
+          
+          // STEP 7: Allowed Stats Check
+          if (!isStatAllowed(prop.prop_type, side, role, gameScript)) {
+            rejectedProps.push({
+              ...prop,
+              rejection_reason: `Stat not allowed for ${role} in ${gameScript}`,
+              player_role: role,
+              game_script: gameScript
+            });
+            continue;
+          }
+          
+          // Get player's recent game logs for this stat
+          const column = getColumnForProp(prop.prop_type);
+          const playerLogs = gameLogs?.filter(log => 
+            log.player_name?.toLowerCase() === prop.player_name?.toLowerCase()
+          ).slice(0, 10);
+          
+          const statValues = playerLogs?.map(log => {
+            if (column === 'pts_reb_ast') {
+              return (log.pts || 0) + (log.reb || 0) + (log.ast || 0);
+            }
+            if (column === 'pts_reb') {
+              return (log.pts || 0) + (log.reb || 0);
+            }
+            if (column === 'pts_ast') {
+              return (log.pts || 0) + (log.ast || 0);
+            }
+            if (column === 'reb_ast') {
+              return (log.reb || 0) + (log.ast || 0);
+            }
+            return log[column] || 0;
+          }) || [];
+          
+          // STEP 8: Median Bad Game Survival Test
+          const { passes: passesBadGame, badGameFloor } = passesMedianBadGameCheck(
+            statValues,
+            prop.current_line || prop.line,
+            side
+          );
+          
+          if (!passesBadGame && statValues.length >= 5) {
+            rejectedProps.push({
+              ...prop,
+              rejection_reason: 'Fails bad game survival check ("Does this hit in a bad game?" = NO)',
+              player_role: role,
+              game_script: gameScript,
+              bad_game_floor: badGameFloor
+            });
+            continue;
+          }
+          
+          // STEP 9: Minutes Confidence Filter
+          const minutesClass = classifyMinutes(avgMinutes);
+          const isOver = side.toLowerCase() === 'over';
+          
+          if (minutesClass === 'RISKY' && isOver) {
+            rejectedProps.push({
+              ...prop,
+              rejection_reason: 'Risky minutes (≤23) + OVER not allowed',
+              player_role: role,
+              game_script: gameScript,
+              minutes_class: minutesClass
+            });
+            continue;
+          }
+          
+          // Calculate median and edge
+          const trueMedian = calculateMedian(statValues);
+          const line = prop.current_line || prop.line;
+          const edge = isOver ? trueMedian - line : line - trueMedian;
+          
+          // STEP 10: Confidence Scoring
+          const { score, factors } = calculateConfidence(
+            role,
+            prop.prop_type,
+            side,
+            minutesClass,
+            gameScript,
+            edge,
+            passesBadGame
+          );
+          
+          // Minimum confidence threshold: 7.7
+          if (score < 7.7) {
+            rejectedProps.push({
+              ...prop,
+              rejection_reason: `Confidence ${score.toFixed(1)} < 7.7 threshold`,
+              player_role: role,
+              game_script: gameScript,
+              confidence_score: score
+            });
+            continue;
+          }
+          
+          // APPROVED!
+          const isPRA = isPRAPlay(prop.prop_type);
+          const reason = generateReason(role, gameScript, edge, minutesClass, side, isPRA);
+          
+          approvedProps.push({
+            player_name: prop.player_name,
+            team_name: prop.team_name,
+            opponent: game?.away_team === prop.team_name ? game?.home_team : game?.away_team,
+            prop_type: prop.prop_type,
+            line,
+            side,
             player_role: role,
             game_script: gameScript,
-            bad_game_floor: badGameFloor
+            minutes_class: minutesClass,
+            avg_minutes: avgMinutes,
+            usage_rate: usageRate,
+            spread,
+            true_median: trueMedian,
+            edge,
+            bad_game_floor: badGameFloor,
+            confidence_score: score,
+            confidence_factors: factors,
+            reason,
+            event_id: prop.event_id,
+            game_date: today,
+            is_pra: isPRA,
+            is_ball_dominant: role === 'BALL_DOMINANT_STAR'
           });
-          continue;
-        }
-        
-        // STEP 6: Minutes Confidence Filter
-        const minutesClass = classifyMinutes(avgMinutes);
-        const isOver = side.toLowerCase() === 'over';
-        
-        if (minutesClass === 'RISKY' && isOver) {
-          rejectedProps.push({
-            ...prop,
-            rejection_reason: 'Risky minutes + OVER not allowed',
-            player_role: role,
-            game_script: gameScript,
-            minutes_class: minutesClass
-          });
-          continue;
-        }
-        
-        // Calculate median and edge
-        const trueMedian = calculateMedian(statValues);
-        const line = prop.current_line || prop.line;
-        const edge = isOver ? trueMedian - line : line - trueMedian;
-        
-        // STEP 7: Confidence Scoring
-        const { score, factors } = calculateConfidence(
-          role,
-          prop.prop_type,
-          side,
-          minutesClass,
-          gameScript,
-          edge,
-          passesBadGame
-        );
-        
-        // Minimum confidence threshold: 7.7
-        if (score < 7.7) {
-          rejectedProps.push({
-            ...prop,
-            rejection_reason: `Confidence ${score.toFixed(1)} < 7.7 threshold`,
-            player_role: role,
-            game_script: gameScript,
-            confidence_score: score
-          });
-          continue;
-        }
-        
-        // APPROVED!
-        const reason = generateReason(role, gameScript, edge, minutesClass, side);
-        
-        approvedProps.push({
-          player_name: prop.player_name,
-          team_name: prop.team_name,
-          opponent: game?.away_team === prop.team_name ? game?.home_team : game?.away_team,
-          prop_type: prop.prop_type,
-          line,
-          side,
-          player_role: role,
-          game_script: gameScript,
-          minutes_class: minutesClass,
-          avg_minutes: avgMinutes,
-          usage_rate: usageRate,
-          spread,
-          true_median: trueMedian,
-          edge,
-          bad_game_floor: badGameFloor,
-          confidence_score: score,
-          confidence_factors: factors,
-          reason,
-          event_id: prop.event_id,
-          game_date: today
-        });
-        
-        processedPlayers.add(prop.player_name);
+          
+          processedPlayers.add(prop.player_name);
         } catch (propError: unknown) {
           const errorMessage = propError instanceof Error ? propError.message : 'Unknown error';
-          console.error(`[Risk Engine] Error processing ${prop.player_name}:`, propError);
+          console.error(`[Risk Engine v2] Error processing ${prop.player_name}:`, propError);
           rejectedProps.push({
             ...prop,
             rejection_reason: `Processing error: ${errorMessage}`
@@ -555,15 +757,33 @@ serve(async (req) => {
         }
       }
       
-      // Sort by confidence
-      approvedProps.sort((a, b) => b.confidence_score - a.confidence_score);
+      // Sort by confidence (prefer non-PRA plays with equal confidence)
+      approvedProps.sort((a, b) => {
+        // First by confidence
+        if (b.confidence_score !== a.confidence_score) {
+          return b.confidence_score - a.confidence_score;
+        }
+        // Prefer non-PRA plays
+        if (a.is_pra !== b.is_pra) {
+          return a.is_pra ? 1 : -1;
+        }
+        return 0;
+      });
       
       // Daily Hitter Mode: Filter to >= 8.2 confidence, max 3 picks
       let finalPicks = approvedProps;
+      let noPlayWarning: string | null = null;
+      
       if (mode === 'daily_hitter') {
         finalPicks = approvedProps
           .filter(p => p.confidence_score >= 8.2)
           .slice(0, 3);
+      }
+      
+      // NO PLAY Logic: If fewer than 2 props qualify → warn
+      if (finalPicks.length < 2) {
+        noPlayWarning = 'NO_PLAY_RECOMMENDED: Fewer than 2 props qualify - consider skipping this slate';
+        console.log(`[Risk Engine v2] ${noPlayWarning}`);
       }
       
       // Store approved picks in database
@@ -580,11 +800,11 @@ serve(async (req) => {
           );
         
         if (insertError) {
-          console.error('[Risk Engine] Error storing picks:', insertError);
+          console.error('[Risk Engine v2] Error storing picks:', insertError);
         }
       }
       
-      console.log(`[Risk Engine] Approved: ${finalPicks.length}, Rejected: ${rejectedProps.length}`);
+      console.log(`[Risk Engine v2] Approved: ${finalPicks.length}, Rejected: ${rejectedProps.length}`);
       
       return new Response(JSON.stringify({
         success: true,
@@ -593,7 +813,9 @@ serve(async (req) => {
         approved: finalPicks,
         rejected: rejectedProps.slice(0, 20), // Limit rejected for response size
         mode,
-        gameDate: today
+        gameDate: today,
+        warning: noPlayWarning,
+        engineVersion: 'v2.0 - Never Fade PRA + Kill Switch + Clutch Protection'
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
@@ -621,7 +843,8 @@ serve(async (req) => {
       return new Response(JSON.stringify({
         success: true,
         picks: picks || [],
-        mode
+        mode,
+        engineVersion: 'v2.0'
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
@@ -635,7 +858,7 @@ serve(async (req) => {
     });
 
   } catch (error) {
-    console.error('[Risk Engine] Error:', error);
+    console.error('[Risk Engine v2] Error:', error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return new Response(JSON.stringify({ 
       success: false,
