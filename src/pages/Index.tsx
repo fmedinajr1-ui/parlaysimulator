@@ -9,6 +9,7 @@ import { CompareTeaser } from "@/components/CompareTeaser";
 import { HistoricalInsights } from "@/components/suggestions/HistoricalInsights";
 import { SmartBettingEdge } from "@/components/suggestions/SmartBettingEdge";
 import { RiskEnginePicksCard } from "@/components/suggestions/RiskEnginePicksCard";
+import { PropMarketWidget } from "@/components/market/PropMarketWidget";
 import { CriticalAlertsTicker } from "@/components/news";
 import { PullToRefreshContainer, PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
@@ -176,7 +177,12 @@ const Index = () => {
         {/* Example Cards */}
         <ExampleCarousel />
 
-        {/* NBA Risk Engine - Pilot + Subscriber + Admin Access */}
+        {/* Prop Market Widget - Pilot + Subscriber + Admin Access */}
+        {(isPilotUser || isSubscribed || isAdmin) && (
+          <div className="mb-4">
+            <PropMarketWidget />
+          </div>
+        )}
 
         {/* NBA Risk Engine - Pilot + Subscriber + Admin Access */}
         {(isPilotUser || isSubscribed || isAdmin) && (
