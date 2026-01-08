@@ -274,8 +274,8 @@ async function buildSharpParlays(supabase: any): Promise<any> {
   const { data: props, error: propsError } = await supabase
     .from('nba_risk_engine_picks')
     .select('*')
-    .eq('pick_date', today)
-    .eq('is_approved', true);
+    .eq('game_date', today)
+    .is('rejection_reason', null);
   
   if (propsError) {
     console.error('[Sharp Parlay Builder] Error fetching props:', propsError);
