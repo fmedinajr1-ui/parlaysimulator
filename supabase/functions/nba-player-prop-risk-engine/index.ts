@@ -228,25 +228,27 @@ function failsClutchProtection(
 function getAllowedStats(role: PlayerRole, gameScript: GameScript): string[] {
   switch (role) {
     case 'BALL_DOMINANT_STAR':
-      // Points UNDER, Rebounds UNDER only
-      // NO PRA fade unless all kill-switch conditions met (checked separately)
-      return ['points_under', 'rebounds_under'];
+      // Ball-dominant stars: UNDERs only, but include assists
+      return ['points_under', 'rebounds_under', 'assists_under'];
       
     case 'STAR':
       if (gameScript === 'COMPETITIVE') {
-        return ['points', 'rebounds'];
+        // Stars in competitive games: all 3 core stats
+        return ['points', 'rebounds', 'assists'];
       }
-      // Blowout: only UNDERs for stars (NO PRA allowed)
-      return ['points_under', 'rebounds_under'];
+      // Blowout: only UNDERs for stars
+      return ['points_under', 'rebounds_under', 'assists_under'];
       
     case 'SECONDARY_GUARD':
-      return ['assists', 'points_assists'];
+      // Guards: all 3 core stats + combo props
+      return ['assists', 'points_assists', 'points', 'rebounds'];
       
     case 'WING':
-      return ['rebounds', 'points']; // Low-threshold points only (enforced elsewhere)
+      // Wings: all 3 core stats
+      return ['rebounds', 'points', 'assists'];
       
     case 'BIG':
-      const bigStats = ['rebounds', 'points_under'];
+      const bigStats = ['rebounds', 'points_under', 'assists'];
       // PRA UNDER only in hard blowouts AND non-dominant (checked via kill switch)
       if (gameScript === 'HARD_BLOWOUT') {
         bigStats.push('pra_under', 'points_rebounds_assists_under');
@@ -254,7 +256,8 @@ function getAllowedStats(role: PlayerRole, gameScript: GameScript): string[] {
       return bigStats;
       
     default:
-      return [];
+      // Fallback: allow all core stats
+      return ['points', 'rebounds', 'assists'];
   }
 }
 
