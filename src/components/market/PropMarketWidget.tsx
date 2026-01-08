@@ -1,184 +1,167 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { FeedCard, FeedCardHeader } from "@/components/FeedCard";
-import { PropRow } from "./PropRow";
-import { calculateHeatLevel, HeatLevel } from "./HeatBadge";
-import { Brain, ChevronRight, Flame } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
+import { PropRow } from "./PropRow";
+import { HeatLevel } from "./HeatBadge";
+import { Flame, ArrowRight, RefreshCw, Loader2 } from "lucide-react";
+import { Link } from "react-router-dom";
+import { useRefreshPropMarketOdds } from "@/hooks/useLiveOdds";
+import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
-interface PropMarketItem {
+interface RiskEnginePick {
   id: string;
-  playerName: string;
-  propType: string;
+  player_name: string;
+  prop_type: string;
   line: number;
-  side: 'over' | 'under';
-  engineScore: number;
-  marketScore: number;
-  heatScore: number;
-  heatLevel: HeatLevel;
-  playerRole: string;
-  gameScript: string;
-  hoursToTip: number;
+  side: string;
+  confidence_score: number;
+  player_role: string;
+  game_script: string;
+  game_date: string;
+  current_line?: number;
+  over_price?: number;
+  under_price?: number;
+  bookmaker?: string;
+  odds_updated_at?: string;
+}
+
+function calculateHeatLevel(engineScore: number, marketScore: number | null): { heat: number; level: HeatLevel } {
+  // If no market score, use engine-only mode with adjusted thresholds
+  if (marketScore === null || marketScore === undefined) {
+    const engineHeat = (engineScore / 10) * 100;
+    if (engineHeat >= 85) return { heat: Math.round(engineHeat), level: 'RED' };
+    if (engineHeat >= 75) return { heat: Math.round(engineHeat), level: 'ORANGE' };
+    if (engineHeat >= 65) return { heat: Math.round(engineHeat), level: 'YELLOW' };
+    return { heat: Math.round(engineHeat), level: 'GREEN' };
+  }
+  
+  // Combined engine + market score
+  const engineWeight = 0.6;
+  const marketWeight = 0.4;
+  const heat = (engineScore / 10) * 100 * engineWeight + marketScore * marketWeight;
+  
+  if (heat >= 80) return { heat: Math.round(heat), level: 'RED' };
+  if (heat >= 65) return { heat: Math.round(heat), level: 'ORANGE' };
+  if (heat >= 50) return { heat: Math.round(heat), level: 'YELLOW' };
+  return { heat: Math.round(heat), level: 'GREEN' };
 }
 
 export function PropMarketWidget() {
-  // Fetch risk engine picks - get most recent high-confidence picks
-  const { data: picks, isLoading: picksLoading } = useQuery({
+  const queryClient = useQueryClient();
+  const { refreshAll, isRefreshing, lastRefresh } = useRefreshPropMarketOdds();
+
+  const { data: picks, isLoading } = useQuery({
     queryKey: ['risk-engine-picks-widget'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('nba_risk_engine_picks')
-        .select('id, player_name, prop_type, line, side, confidence_score, player_role, game_script, game_date')
+        .select('id, player_name, prop_type, line, side, confidence_score, player_role, game_script, game_date, current_line, over_price, under_price, bookmaker, odds_updated_at')
         .gte('confidence_score', 7.5)
         .order('game_date', { ascending: false })
         .order('confidence_score', { ascending: false })
         .limit(10);
       
       if (error) throw error;
-      return data;
+      return data as RiskEnginePick[];
     },
-    staleTime: 2 * 60 * 1000, // 2 minutes
+    refetchInterval: 60000, // Refetch every minute
   });
 
-  // Fetch market signals
-  const { data: signals, isLoading: signalsLoading } = useQuery({
-    queryKey: ['market-signals-widget'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('market_signals')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(50);
-      
-      if (error) throw error;
-      return data;
-    },
-    staleTime: 2 * 60 * 1000,
-  });
+  const handleRefreshOdds = async () => {
+    const result = await refreshAll();
+    if (result.success) {
+      toast.success('Odds refreshed from FanDuel & DraftKings');
+      queryClient.invalidateQueries({ queryKey: ['risk-engine-picks-widget'] });
+    } else {
+      toast.error(result.error || 'Failed to refresh odds');
+    }
+  };
 
-  const isLoading = picksLoading || signalsLoading;
-
-  // Combine and calculate heat scores
-  const combinedData: PropMarketItem[] = picks?.map(pick => {
-    // Find matching market signal
-    const signal = signals?.find(s => 
-      s.player_name?.toLowerCase() === pick.player_name?.toLowerCase() ||
-      s.outcome_name?.toLowerCase().includes(pick.player_name?.toLowerCase())
-    );
-    
-    const marketScore = signal?.market_score ?? 50;
-    const { heat, level } = calculateHeatLevel(pick.confidence_score ?? 7.5, marketScore);
-    
-    // Calculate hours to tip (mock for now - would use game time)
-    const hoursToTip = Math.random() * 12 + 1; // 1-13 hours
-    
-    return {
-      id: pick.id,
-      playerName: pick.player_name,
-      propType: pick.prop_type,
-      line: pick.line,
-      side: pick.side?.toLowerCase() as 'over' | 'under',
-      engineScore: pick.confidence_score ?? 7.5,
-      marketScore,
-      heatScore: heat,
-      heatLevel: level,
-      playerRole: pick.player_role ?? 'STAR',
-      gameScript: pick.game_script ?? 'Competitive',
-      hoursToTip,
-    };
-  }).sort((a, b) => b.heatScore - a.heatScore).slice(0, 3) ?? [];
-
-  // Count by heat level
-  const sharpRisingCount = combinedData.filter(p => p.heatLevel === 'RED' || p.heatLevel === 'ORANGE').length;
-
-  if (isLoading) {
-    return (
-      <FeedCard variant="glass">
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <Skeleton className="h-6 w-48" />
-            <Skeleton className="h-8 w-20" />
-          </div>
-          <Skeleton className="h-4 w-64" />
-          <div className="space-y-2 pt-2">
-            <Skeleton className="h-20 w-full" />
-            <Skeleton className="h-20 w-full" />
-            <Skeleton className="h-20 w-full" />
-          </div>
-        </div>
-      </FeedCard>
-    );
-  }
-
-  if (!combinedData.length) {
-    return (
-      <FeedCard variant="glass">
-        <FeedCardHeader 
-          title="Prop Market Engine"
-          subtitle="We bet later, sharper, and less often"
-          icon={<Brain className="w-5 h-5" />}
-        />
-        <div className="text-center py-6">
-          <Brain className="w-8 h-8 text-muted-foreground mx-auto mb-2 opacity-50" />
-          <p className="text-sm text-muted-foreground">No sharp pressure detected</p>
-          <p className="text-xs text-muted-foreground mt-1">Markets are quiet — check back later</p>
-        </div>
-      </FeedCard>
-    );
-  }
+  const topPicks = picks?.slice(0, 5) || [];
 
   return (
-    <FeedCard variant="glass">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-1">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-            <Brain className="w-4 h-4 text-primary" />
+    <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Flame className="w-5 h-5 text-orange-500" />
+            <CardTitle className="text-lg">Prop Heat Map</CardTitle>
           </div>
-          <div>
-            <h3 className="font-semibold text-foreground">Prop Market Engine</h3>
+          <div className="flex items-center gap-2">
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={handleRefreshOdds}
+              disabled={isRefreshing}
+              className="h-8 px-2"
+            >
+              {isRefreshing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
+              <span className="ml-1 text-xs">Live Odds</span>
+            </Button>
+            <Link to="/prop-market">
+              <Button variant="ghost" size="sm" className="h-8">
+                View All <ArrowRight className="w-4 h-4 ml-1" />
+              </Button>
+            </Link>
           </div>
         </div>
-        <Link to="/prop-market">
-          <Button variant="ghost" size="sm" className="gap-1 text-xs">
-            View All
-            <ChevronRight className="w-3 h-3" />
-          </Button>
-        </Link>
-      </div>
-      
-      <p className="text-xs text-muted-foreground mb-4 italic">
-        "We bet later, sharper, and less often"
-      </p>
-
-      {/* Sharp Rising Header */}
-      <div className="flex items-center gap-2 mb-3">
-        <Flame className="w-4 h-4 text-orange-400" />
-        <span className="text-sm font-medium text-foreground">Sharp Rising</span>
-        <span className="text-xs text-muted-foreground">({sharpRisingCount})</span>
-      </div>
-
-      {/* Prop Rows */}
-      <div className="space-y-2">
-        {combinedData.map((prop) => (
-          <PropRow
-            key={prop.id}
-            playerName={prop.playerName}
-            propType={prop.propType}
-            line={prop.line}
-            side={prop.side}
-            engineScore={prop.engineScore}
-            marketScore={prop.marketScore}
-            heatScore={prop.heatScore}
-            heatLevel={prop.heatLevel}
-            playerRole={prop.playerRole}
-            gameScript={prop.gameScript}
-            hoursToTip={prop.hoursToTip}
-          />
-        ))}
-      </div>
-    </FeedCard>
+        {lastRefresh && (
+          <p className="text-xs text-muted-foreground mt-1">
+            Last refresh: {lastRefresh.toLocaleTimeString()}
+          </p>
+        )}
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {isLoading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : topPicks.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground">
+            <p>No hot props right now</p>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="mt-2"
+              onClick={handleRefreshOdds}
+              disabled={isRefreshing}
+            >
+              Scan Today's Games
+            </Button>
+          </div>
+        ) : (
+          topPicks.map((pick) => {
+            const { heat, level } = calculateHeatLevel(pick.confidence_score, null);
+            const hoursToTip = 2; // Placeholder - would come from game time
+            
+            return (
+              <PropRow
+                key={pick.id}
+                playerName={pick.player_name}
+                propType={pick.prop_type}
+                line={pick.current_line || pick.line}
+                side={pick.side as 'over' | 'under'}
+                engineScore={pick.confidence_score}
+                marketScore={50}
+                heatScore={heat}
+                heatLevel={level}
+                playerRole={pick.player_role}
+                gameScript={pick.game_script}
+                hoursToTip={hoursToTip}
+                overPrice={pick.over_price}
+                underPrice={pick.under_price}
+                bookmaker={pick.bookmaker}
+              />
+            );
+          })
+        )}
+      </CardContent>
+    </Card>
   );
 }

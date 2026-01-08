@@ -479,9 +479,49 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { action, mode = 'full_slate' } = await req.json();
+    const { action, mode = 'full_slate', use_live_odds = false, preferred_bookmakers = ['fanduel', 'draftkings'] } = await req.json();
 
-    console.log(`[Risk Engine v2] Action: ${action}, Mode: ${mode}`);
+    console.log(`[Risk Engine v2] Action: ${action}, Mode: ${mode}, Live Odds: ${use_live_odds}`);
+
+    // Helper function to fetch live odds from FanDuel/DraftKings
+    async function fetchLiveOdds(eventId: string, playerName: string, propType: string): Promise<{
+      line: number | null;
+      overPrice: number | null;
+      underPrice: number | null;
+      bookmaker: string | null;
+    } | null> {
+      try {
+        const response = await fetch(`${supabaseUrl}/functions/v1/fetch-current-odds`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${supabaseKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            event_id: eventId,
+            sport: 'basketball_nba',
+            player_name: playerName,
+            prop_type: propType,
+            preferred_bookmakers: preferred_bookmakers,
+            search_all_books: true,
+          }),
+        });
+
+        const data = await response.json();
+        if (data?.success && data?.odds) {
+          return {
+            line: data.odds.line,
+            overPrice: data.odds.over_price,
+            underPrice: data.odds.under_price,
+            bookmaker: data.odds.bookmaker,
+          };
+        }
+        return null;
+      } catch (err) {
+        console.error(`[Risk Engine v2] Error fetching live odds for ${playerName}:`, err);
+        return null;
+      }
+    }
 
     if (action === 'analyze_slate') {
       const today = new Date().toISOString().split('T')[0];
@@ -720,6 +760,13 @@ serve(async (req) => {
           const isPRA = isPRAPlay(prop.prop_type);
           const reason = generateReason(role, gameScript, edge, minutesClass, side, isPRA);
           
+          // Fetch live odds if enabled
+          let liveOdds = null;
+          if (use_live_odds && prop.event_id) {
+            liveOdds = await fetchLiveOdds(prop.event_id, prop.player_name, prop.prop_type);
+            console.log(`[Risk Engine v2] Live odds for ${prop.player_name}: ${JSON.stringify(liveOdds)}`);
+          }
+          
           approvedProps.push({
             player_name: prop.player_name,
             team_name: prop.team_name,
@@ -742,7 +789,13 @@ serve(async (req) => {
             event_id: prop.event_id,
             game_date: today,
             is_pra: isPRA,
-            is_ball_dominant: role === 'BALL_DOMINANT_STAR'
+            is_ball_dominant: role === 'BALL_DOMINANT_STAR',
+            // Live odds data
+            current_line: liveOdds?.line || line,
+            over_price: liveOdds?.overPrice,
+            under_price: liveOdds?.underPrice,
+            bookmaker: liveOdds?.bookmaker || prop.bookmaker,
+            odds_updated_at: liveOdds ? new Date().toISOString() : null
           });
           
           processedPlayers.add(prop.player_name);

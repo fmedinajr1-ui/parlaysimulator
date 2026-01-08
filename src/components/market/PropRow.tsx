@@ -14,6 +14,9 @@ interface PropRowProps {
   playerRole: string;
   gameScript: string;
   hoursToTip: number;
+  overPrice?: number | null;
+  underPrice?: number | null;
+  bookmaker?: string | null;
   onClick?: () => void;
 }
 
@@ -31,6 +34,14 @@ const ROLE_LABELS: Record<string, string> = {
   'WING': 'Wing',
   'BIG': 'Big',
   'SECONDARY_GUARD': 'Guard',
+};
+
+const BOOKMAKER_LABELS: Record<string, string> = {
+  'fanduel': 'FD',
+  'draftkings': 'DK',
+  'betmgm': 'MGM',
+  'caesars': 'CZR',
+  'pointsbet': 'PB',
 };
 
 function formatPropType(propType: string): string {
@@ -55,6 +66,11 @@ function formatHoursToTip(hours: number): string {
   return `${Math.floor(hours / 24)}d`;
 }
 
+function formatOdds(price: number | null | undefined): string {
+  if (price === null || price === undefined) return '-';
+  return price > 0 ? `+${price}` : `${price}`;
+}
+
 export function PropRow({
   playerName,
   propType,
@@ -67,10 +83,14 @@ export function PropRow({
   playerRole,
   gameScript,
   hoursToTip,
+  overPrice,
+  underPrice,
+  bookmaker,
   onClick,
 }: PropRowProps) {
   const RoleIcon = ROLE_ICONS[playerRole] || Star;
   const roleLabel = ROLE_LABELS[playerRole] || playerRole;
+  const bookLabel = bookmaker ? BOOKMAKER_LABELS[bookmaker.toLowerCase()] || bookmaker.toUpperCase().slice(0, 3) : null;
   
   return (
     <div 
@@ -89,10 +109,18 @@ export function PropRow({
           <div className="font-semibold text-foreground truncate">
             {playerName}
           </div>
-          <div className="text-sm text-muted-foreground">
+          <div className="text-sm text-muted-foreground flex items-center gap-1">
             {formatPropType(propType)} <span className={side === 'over' ? 'text-green-400' : 'text-red-400'}>
               {side === 'over' ? 'O' : 'U'}
             </span> {line}
+            {/* Live Odds Display */}
+            {(overPrice !== null || underPrice !== null) && (
+              <span className="ml-2 font-mono text-xs">
+                <span className="text-green-400">{formatOdds(overPrice)}</span>
+                <span className="text-muted-foreground">/</span>
+                <span className="text-red-400">{formatOdds(underPrice)}</span>
+              </span>
+            )}
           </div>
         </div>
         
@@ -101,10 +129,11 @@ export function PropRow({
             <div className="text-xs text-muted-foreground uppercase tracking-wide">Engine</div>
             <div className="font-mono font-semibold text-foreground">{engineScore.toFixed(1)}</div>
           </div>
-          <div>
-            <div className="text-xs text-muted-foreground uppercase tracking-wide">Market</div>
-            <div className="font-mono font-semibold text-foreground">{marketScore}</div>
-          </div>
+          {bookLabel && (
+            <div className="px-2 py-1 rounded bg-primary/10 text-primary text-xs font-semibold">
+              {bookLabel}
+            </div>
+          )}
         </div>
       </div>
       

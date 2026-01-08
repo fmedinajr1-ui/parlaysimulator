@@ -3951,9 +3951,11 @@ export type Database = {
           actual_value: number | null
           avg_minutes: number | null
           bad_game_floor: number | null
+          bookmaker: string | null
           confidence_factors: Json | null
           confidence_score: number
           created_at: string | null
+          current_line: number | null
           edge: number | null
           event_id: string | null
           game_date: string
@@ -3962,8 +3964,10 @@ export type Database = {
           line: number
           minutes_class: string
           mode: string | null
+          odds_updated_at: string | null
           opponent: string | null
           outcome: string | null
+          over_price: number | null
           player_name: string
           player_role: string
           prop_type: string
@@ -3974,15 +3978,18 @@ export type Database = {
           spread: number | null
           team_name: string | null
           true_median: number | null
+          under_price: number | null
           usage_rate: number | null
         }
         Insert: {
           actual_value?: number | null
           avg_minutes?: number | null
           bad_game_floor?: number | null
+          bookmaker?: string | null
           confidence_factors?: Json | null
           confidence_score: number
           created_at?: string | null
+          current_line?: number | null
           edge?: number | null
           event_id?: string | null
           game_date: string
@@ -3991,8 +3998,10 @@ export type Database = {
           line: number
           minutes_class: string
           mode?: string | null
+          odds_updated_at?: string | null
           opponent?: string | null
           outcome?: string | null
+          over_price?: number | null
           player_name: string
           player_role: string
           prop_type: string
@@ -4003,15 +4012,18 @@ export type Database = {
           spread?: number | null
           team_name?: string | null
           true_median?: number | null
+          under_price?: number | null
           usage_rate?: number | null
         }
         Update: {
           actual_value?: number | null
           avg_minutes?: number | null
           bad_game_floor?: number | null
+          bookmaker?: string | null
           confidence_factors?: Json | null
           confidence_score?: number
           created_at?: string | null
+          current_line?: number | null
           edge?: number | null
           event_id?: string | null
           game_date?: string
@@ -4020,8 +4032,10 @@ export type Database = {
           line?: number
           minutes_class?: string
           mode?: string | null
+          odds_updated_at?: string | null
           opponent?: string | null
           outcome?: string | null
+          over_price?: number | null
           player_name?: string
           player_role?: string
           prop_type?: string
@@ -4032,6 +4046,7 @@ export type Database = {
           spread?: number | null
           team_name?: string | null
           true_median?: number | null
+          under_price?: number | null
           usage_rate?: number | null
         }
         Relationships: []
@@ -7091,9 +7106,11 @@ export type Database = {
           id: string
           is_active: boolean | null
           is_trap_favorite: boolean | null
+          odds_updated_at: string | null
           outcome: string | null
           over_price: number | null
           player_name: string
+          preferred_bookmaker: string | null
           prop_type: string
           pvs_accuracy_score: number | null
           pvs_confidence_score: number | null
@@ -7139,9 +7156,11 @@ export type Database = {
           id?: string
           is_active?: boolean | null
           is_trap_favorite?: boolean | null
+          odds_updated_at?: string | null
           outcome?: string | null
           over_price?: number | null
           player_name: string
+          preferred_bookmaker?: string | null
           prop_type: string
           pvs_accuracy_score?: number | null
           pvs_confidence_score?: number | null
@@ -7187,9 +7206,11 @@ export type Database = {
           id?: string
           is_active?: boolean | null
           is_trap_favorite?: boolean | null
+          odds_updated_at?: string | null
           outcome?: string | null
           over_price?: number | null
           player_name?: string
+          preferred_bookmaker?: string | null
           prop_type?: string
           pvs_accuracy_score?: number | null
           pvs_confidence_score?: number | null
