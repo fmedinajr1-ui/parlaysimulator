@@ -34,11 +34,10 @@ Deno.serve(async (req) => {
     const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1000);
     const threeHoursFromNow = new Date(now.getTime() + 3 * 60 * 60 * 1000);
 
-    // Fetch risk engine picks for upcoming games
+    // Fetch risk engine picks for today's games
     const { data: picks, error: picksError } = await supabase
       .from('nba_risk_engine_picks')
       .select('*')
-      .eq('status', 'pending')
       .gte('game_date', now.toISOString().split('T')[0])
       .order('confidence_score', { ascending: false });
 
