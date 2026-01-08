@@ -365,3 +365,6 @@ verify_jwt = false
 
 [functions.prop-sharp-sync]
 verify_jwt = false
+
+[functions.sharp-parlay-builder]
+verify_jwt = false

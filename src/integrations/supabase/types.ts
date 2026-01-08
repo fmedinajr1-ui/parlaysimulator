@@ -5967,6 +5967,54 @@ export type Database = {
         }
         Relationships: []
       }
+      sharp_ai_parlays: {
+        Row: {
+          combined_probability: number | null
+          created_at: string | null
+          generation_round: number | null
+          id: string
+          legs: Json
+          model_version: string | null
+          outcome: string | null
+          parlay_date: string
+          parlay_type: string
+          rule_compliance: Json | null
+          settled_at: string | null
+          sport: string | null
+          total_odds: number | null
+        }
+        Insert: {
+          combined_probability?: number | null
+          created_at?: string | null
+          generation_round?: number | null
+          id?: string
+          legs?: Json
+          model_version?: string | null
+          outcome?: string | null
+          parlay_date: string
+          parlay_type: string
+          rule_compliance?: Json | null
+          settled_at?: string | null
+          sport?: string | null
+          total_odds?: number | null
+        }
+        Update: {
+          combined_probability?: number | null
+          created_at?: string | null
+          generation_round?: number | null
+          id?: string
+          legs?: Json
+          model_version?: string | null
+          outcome?: string | null
+          parlay_date?: string
+          parlay_type?: string
+          rule_compliance?: Json | null
+          settled_at?: string | null
+          sport?: string | null
+          total_odds?: number | null
+        }
+        Relationships: []
+      }
       sharp_engine_config: {
         Row: {
           category: string | null
