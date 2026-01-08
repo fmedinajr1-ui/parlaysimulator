@@ -24,16 +24,15 @@ interface PropMarketItem {
 }
 
 export function PropMarketWidget() {
-  // Fetch risk engine picks
+  // Fetch risk engine picks - get most recent high-confidence picks
   const { data: picks, isLoading: picksLoading } = useQuery({
     queryKey: ['risk-engine-picks-widget'],
     queryFn: async () => {
-      const today = new Date().toISOString().split('T')[0];
       const { data, error } = await supabase
         .from('nba_risk_engine_picks')
         .select('id, player_name, prop_type, line, side, confidence_score, player_role, game_script, game_date')
-        .eq('game_date', today)
         .gte('confidence_score', 7.5)
+        .order('game_date', { ascending: false })
         .order('confidence_score', { ascending: false })
         .limit(10);
       

@@ -65,10 +65,19 @@ export function HeatBadge({ level, score, showScore = false, size = 'md', classN
   );
 }
 
-export function calculateHeatLevel(engineScore: number, marketScore: number): {
+export function calculateHeatLevel(engineScore: number, marketScore: number | null): {
   heat: number;
   level: HeatLevel;
 } {
+  // If no market data, use engine-only mode
+  if (marketScore === null || marketScore === undefined) {
+    const engineHeat = Math.round((engineScore / 10) * 100);
+    if (engineHeat >= 85) return { heat: engineHeat, level: 'RED' };
+    if (engineHeat >= 78) return { heat: engineHeat, level: 'ORANGE' };
+    if (engineHeat >= 70) return { heat: engineHeat, level: 'YELLOW' };
+    return { heat: engineHeat, level: 'GREEN' };
+  }
+
   // Normalize engine score (0-10) to 0-50
   const normalizedEngine = (engineScore / 10) * 50;
   

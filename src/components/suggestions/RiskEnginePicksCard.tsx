@@ -176,16 +176,16 @@ export function RiskEnginePicksCard() {
   const { data: picks, isLoading, error } = useQuery({
     queryKey: ['risk-engine-picks', activeTab],
     queryFn: async () => {
-      const today = new Date().toISOString().split('T')[0];
-      
       let query = supabase
         .from('nba_risk_engine_picks')
         .select('*')
-        .eq('game_date', today)
+        .order('game_date', { ascending: false })
         .order('confidence_score', { ascending: false });
       
       if (activeTab === 'daily') {
         query = query.gte('confidence_score', 8.2).limit(3);
+      } else {
+        query = query.gte('confidence_score', 7.5).limit(20);
       }
       
       const { data, error } = await query;
