@@ -3961,6 +3961,8 @@ export type Database = {
           game_date: string
           game_script: string
           id: string
+          is_ball_dominant: boolean | null
+          is_pra: boolean | null
           line: number
           minutes_class: string
           mode: string | null
@@ -3995,6 +3997,8 @@ export type Database = {
           game_date: string
           game_script: string
           id?: string
+          is_ball_dominant?: boolean | null
+          is_pra?: boolean | null
           line: number
           minutes_class: string
           mode?: string | null
@@ -4029,6 +4033,8 @@ export type Database = {
           game_date?: string
           game_script?: string
           id?: string
+          is_ball_dominant?: boolean | null
+          is_pra?: boolean | null
           line?: number
           minutes_class?: string
           mode?: string | null
