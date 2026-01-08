@@ -565,15 +565,32 @@ serve(async (req) => {
 
       const approvedProps: any[] = [];
       const rejectedProps: any[] = [];
-      const processedPlayers = new Set<string>();
+      // Track player+prop_type combinations instead of just player
+      const processedPlayerProps = new Set<string>();
 
       for (const prop of (props || [])) {
         try {
-          // Skip if we already have a prop from this player (no multiple props from same player)
-          if (processedPlayers.has(prop.player_name)) {
+          // Create unique key: player_name + prop_type
+          const playerPropKey = `${prop.player_name?.toLowerCase()}_${prop.prop_type}`;
+          
+          // Skip if we already have this exact prop type from this player
+          if (processedPlayerProps.has(playerPropKey)) {
             rejectedProps.push({
               ...prop,
-              rejection_reason: 'Multiple props from same player not allowed'
+              rejection_reason: 'Duplicate prop type from same player'
+            });
+            continue;
+          }
+          
+          // Limit total props per player to 2 (e.g., points + rebounds, but not all 3)
+          const playerPropsCount = [...processedPlayerProps].filter(
+            key => key.startsWith(prop.player_name?.toLowerCase() + '_')
+          ).length;
+          
+          if (playerPropsCount >= 2) {
+            rejectedProps.push({
+              ...prop,
+              rejection_reason: 'Max 2 props per player reached'
             });
             continue;
           }
@@ -801,7 +818,7 @@ serve(async (req) => {
             odds_updated_at: liveOdds ? new Date().toISOString() : null
           });
           
-          processedPlayers.add(prop.player_name);
+          processedPlayerProps.add(playerPropKey);
         } catch (propError: unknown) {
           const errorMessage = propError instanceof Error ? propError.message : 'Unknown error';
           console.error(`[Risk Engine v2] Error processing ${prop.player_name}:`, propError);
