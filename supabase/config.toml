@@ -371,3 +371,6 @@ verify_jwt = false
 
 [functions.heat-prop-engine]
 verify_jwt = false
+
+[functions.prop-engine-v2]
+verify_jwt = false

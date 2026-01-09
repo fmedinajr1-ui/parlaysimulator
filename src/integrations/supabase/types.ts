@@ -6173,6 +6173,96 @@ export type Database = {
         }
         Relationships: []
       }
+      prop_engine_v2_picks: {
+        Row: {
+          auto_fail_reason: string | null
+          blowout_risk: boolean | null
+          created_at: string
+          decision: string
+          decision_emoji: string
+          event_id: string | null
+          game_date: string
+          id: string
+          key_reason: string | null
+          line: number
+          line_structure: string
+          market_type: string | null
+          median_gap: number | null
+          minutes_certainty: string | null
+          odds: number | null
+          opponent_name: string | null
+          outcome: string | null
+          player_archetype: string | null
+          player_name: string
+          prop_type: string
+          rolling_median: number | null
+          ses_components: Json | null
+          ses_score: number
+          side: string
+          team_name: string | null
+          updated_at: string
+          verified_at: string | null
+        }
+        Insert: {
+          auto_fail_reason?: string | null
+          blowout_risk?: boolean | null
+          created_at?: string
+          decision?: string
+          decision_emoji?: string
+          event_id?: string | null
+          game_date?: string
+          id?: string
+          key_reason?: string | null
+          line: number
+          line_structure?: string
+          market_type?: string | null
+          median_gap?: number | null
+          minutes_certainty?: string | null
+          odds?: number | null
+          opponent_name?: string | null
+          outcome?: string | null
+          player_archetype?: string | null
+          player_name: string
+          prop_type: string
+          rolling_median?: number | null
+          ses_components?: Json | null
+          ses_score?: number
+          side: string
+          team_name?: string | null
+          updated_at?: string
+          verified_at?: string | null
+        }
+        Update: {
+          auto_fail_reason?: string | null
+          blowout_risk?: boolean | null
+          created_at?: string
+          decision?: string
+          decision_emoji?: string
+          event_id?: string | null
+          game_date?: string
+          id?: string
+          key_reason?: string | null
+          line?: number
+          line_structure?: string
+          market_type?: string | null
+          median_gap?: number | null
+          minutes_certainty?: string | null
+          odds?: number | null
+          opponent_name?: string | null
+          outcome?: string | null
+          player_archetype?: string | null
+          player_name?: string
+          prop_type?: string
+          rolling_median?: number | null
+          ses_components?: Json | null
+          ses_score?: number
+          side?: string
+          team_name?: string | null
+          updated_at?: string
+          verified_at?: string | null
+        }
+        Relationships: []
+      }
       push_subscriptions: {
         Row: {
           auth_key: string

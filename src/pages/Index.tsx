@@ -3,6 +3,7 @@ import { HeroBanner } from "@/components/HeroBanner";
 import { HowItWorks } from "@/components/HowItWorks";
 import { SampleParlayButton } from "@/components/SampleParlayButton";
 import { RiskEnginePicksCard } from "@/components/suggestions/RiskEnginePicksCard";
+import { PropEngineV2Card } from "@/components/suggestions/PropEngineV2Card";
 import SharpParlayCards from "@/components/sharp/SharpParlayCard";
 import { PropMarketWidget } from "@/components/market/PropMarketWidget";
 import { PullToRefreshContainer, PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
@@ -164,6 +165,13 @@ const Index = () => {
         {(isPilotUser || isSubscribed || isAdmin) && (
           <div className="mb-4">
             <RiskEnginePicksCard />
+          </div>
+        )}
+
+        {/* Prop Engine v2.1 - THIRD */}
+        {(isPilotUser || isSubscribed || isAdmin) && (
+          <div className="mb-4">
+            <PropEngineV2Card />
           </div>
         )}
 
