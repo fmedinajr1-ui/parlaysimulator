@@ -166,33 +166,86 @@ function calculateMarketSignalScore(
 }
 
 // ============================================================================
-// BASE ROLE SCORE (0-50)
+// BASE ROLE SCORE (0-50) - Now with role-based granularity
 // ============================================================================
+const ROLE_BASE_SCORES: Record<string, number> = {
+  'BALL_DOMINANT_STAR': 45,
+  'STAR': 42,
+  'SECONDARY_GUARD': 38,
+  'WING': 35,
+  'BIG': 40
+};
+
 function calculateBaseRoleScore(
   sport: string,
   marketType: string,
-  playerRoleTag: string | null
+  playerRoleTag: string | null,
+  playerRole?: string | null  // From nba_risk_engine_picks.player_role
 ): number {
   const rules = STAT_SAFETY_RULES[sport];
-  if (!rules) return 25;
+  
+  // Start with role-based score for granularity
+  let baseScore = playerRole ? (ROLE_BASE_SCORES[playerRole] || 38) : 38;
+  
+  if (!rules) return baseScore;
   
   const lowerMarket = marketType.toLowerCase();
   
-  // Higher score for preferred stats
+  // Bonus for preferred stats (+8-12)
   for (const preferred of rules.prefer) {
     if (lowerMarket.includes(preferred)) {
-      return 40 + (playerRoleTag === 'star' ? 10 : 0);
+      const preferBonus = playerRoleTag === 'star' ? 12 : 8;
+      return baseScore + preferBonus;
     }
   }
   
-  // Lower score for avoided stats
+  // Penalty for avoided stats (-15)
   for (const avoided of rules.avoid) {
     if (lowerMarket.includes(avoided)) {
-      return 15;
+      return baseScore - 15;
     }
   }
   
-  return 25; // Neutral
+  return baseScore;
+}
+
+// ============================================================================
+// DERIVE SIGNAL FROM RISK ENGINE DATA (until real-time movement available)
+// ============================================================================
+function deriveSignalFromPick(pick: any): { label: string; score: number } {
+  const confidence = pick.confidence_score || 0;
+  const lineDelta = pick.line_delta || (pick.current_line && pick.line ? pick.current_line - pick.line : 0);
+  const isBallDominant = pick.is_ball_dominant || pick.player_role === 'BALL_DOMINANT_STAR';
+  const isPra = pick.is_pra || pick.prop_type?.toLowerCase().includes('pra');
+  const gameScript = pick.game_script || 'competitive';
+  
+  // High confidence with line movement = SHARP_LEAN
+  if (confidence >= 8.5 && Math.abs(lineDelta) >= 0.5) {
+    return { label: 'SHARP_LEAN', score: 70 };
+  }
+  
+  // Very high confidence = STRONG_SHARP
+  if (confidence >= 9.0) {
+    return { label: 'STRONG_SHARP', score: 85 };
+  }
+  
+  // Good confidence = SHARP_LEAN
+  if (confidence >= 8.0) {
+    return { label: 'SHARP_LEAN', score: 65 };
+  }
+  
+  // Ball-dominant star on competitive game with public appeal = PUBLIC_LEAN
+  if (isBallDominant && gameScript === 'competitive' && isPra) {
+    return { label: 'PUBLIC_LEAN', score: 45 };
+  }
+  
+  // Low confidence with high public appeal (PRA) = PUBLIC_TRAP
+  if (confidence < 7.5 && isPra) {
+    return { label: 'PUBLIC_TRAP', score: 30 };
+  }
+  
+  // Default neutral
+  return { label: 'NEUTRAL', score: 50 };
 }
 
 // ============================================================================
@@ -359,8 +412,11 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
       const projectedMinutes = pick.avg_minutes || null;
       const roleTag = pick.player_role || null;
       
-      // Calculate signals
-      const { score: signalScore, signals } = calculateMarketSignalScore(
+      // Derive signal from Risk Engine data first (for better accuracy)
+      const derivedSignal = deriveSignalFromPick(pick);
+      
+      // Calculate market signals (will be combined with derived signal)
+      const { score: marketSignalScore, signals } = calculateMarketSignalScore(
         lineDelta,
         priceDelta,
         null, // public_pct not available
@@ -369,19 +425,23 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
         1 // confirming_books default
       );
       
-      // Calculate base role score
+      // Use better of derived signal score or market signal score
+      const signalScore = Math.max(derivedSignal.score, marketSignalScore);
+      const signalLabel = derivedSignal.label !== 'NEUTRAL' ? derivedSignal.label : getSignalLabel(marketSignalScore);
+      
+      // Calculate base role score with player role for granularity
       const baseRoleScore = calculateBaseRoleScore(
         sport,
         pick.prop_type,
-        roleTag
+        roleTag,
+        pick.player_role  // Pass player role for score variation
       );
       
       // Calculate time decay
-      const signalLabel = getSignalLabel(signalScore);
       const timeDecay = calculateTimeDecay(hoursToGame, signalLabel);
       
-      // Final score
-      const finalScore = baseRoleScore + signalScore + timeDecay;
+      // Final score (now has more variance)
+      const finalScore = Math.min(100, Math.max(0, baseRoleScore + signalScore + timeDecay));
       
       // Validation
       const statSafety = passesStatSafety(sport, pick.prop_type);
@@ -515,44 +575,84 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
       corePlayerNames  // Exclude CORE players for differentiation
     );
     
-    // Build Watchlist (top 5 approaching entry)
-    const watchlistCandidates = eligibleProps
-      .filter((p: any) => p.final_score >= 65 && p.final_score < 78)
-      .slice(0, 5)
-      .map((p: any) => ({
-        watchlist_date: today,
-        player_name: p.player_name,
-        market_type: p.market_type,
-        line: p.latest_line,
-        side: p.side,
-        sport: p.sport,
-        event_id: p.event_id,
-        signal_label: p.signal_label,
-        approaching_entry: p.final_score >= 73,
-        final_score: p.final_score,
-        reason: `Score ${p.final_score}/100, needs ${78 - p.final_score} more for CORE`
-      }));
-    
-    // Build Do-Not-Bet list (PUBLIC_TRAP flagged)
-    const { data: allTracked } = await supabase
+    // Build Watchlist (top 5 approaching entry) - expanded range to 55-77
+    const { data: allTrackedForWatchlist } = await supabase
       .from('heat_prop_tracker')
       .select('*')
       .gte('start_time_utc', today)
-      .eq('signal_label', 'PUBLIC_TRAP')
-      .order('final_score', { ascending: true })
+      .gte('final_score', 55)
+      .lt('final_score', 78)
+      .order('final_score', { ascending: false })
       .limit(5);
     
-    const dnbList = (allTracked || []).map((p: any) => ({
-      dnb_date: today,
+    const watchlistCandidates = (allTrackedForWatchlist || []).map((p: any) => ({
+      watchlist_date: today,
       player_name: p.player_name,
       market_type: p.market_type,
       line: p.latest_line,
       side: p.side,
       sport: p.sport,
       event_id: p.event_id,
-      trap_reason: `PUBLIC_TRAP - Score ${p.final_score}/100, signals: ${p.signal_label}`,
-      final_score: p.final_score
+      signal_label: p.signal_label,
+      approaching_entry: p.final_score >= 70,
+      final_score: p.final_score,
+      reason: `Score ${p.final_score}/100, needs ${78 - p.final_score} more for CORE entry`
     }));
+    
+    console.log(`[Heat Engine] Watchlist candidates: ${watchlistCandidates.length}`);
+    
+    // Build Do-Not-Bet list (PUBLIC_TRAP + PUBLIC_LEAN + failed stat safety)
+    const { data: trapProps } = await supabase
+      .from('heat_prop_tracker')
+      .select('*')
+      .gte('start_time_utc', today)
+      .in('signal_label', ['PUBLIC_TRAP', 'PUBLIC_LEAN'])
+      .order('final_score', { ascending: true })
+      .limit(3);
+    
+    const { data: failedSafetyProps } = await supabase
+      .from('heat_prop_tracker')
+      .select('*')
+      .gte('start_time_utc', today)
+      .eq('passes_stat_safety', false)
+      .order('final_score', { ascending: true })
+      .limit(3);
+    
+    // Combine and deduplicate
+    const allDnbCandidates = [...(trapProps || []), ...(failedSafetyProps || [])];
+    const uniqueDnb = allDnbCandidates.reduce((acc: any[], p: any) => {
+      if (!acc.find(x => x.player_name === p.player_name && x.market_type === p.market_type)) {
+        acc.push(p);
+      }
+      return acc;
+    }, []).slice(0, 5);
+    
+    const dnbList = uniqueDnb.map((p: any) => {
+      let trapReason = '';
+      if (p.signal_label === 'PUBLIC_TRAP') {
+        trapReason = `PUBLIC_TRAP - High public exposure, low sharp action`;
+      } else if (p.signal_label === 'PUBLIC_LEAN') {
+        trapReason = `PUBLIC_LEAN - Popular pick, proceed with caution`;
+      } else if (!p.passes_stat_safety) {
+        trapReason = `HIGH_VARIANCE - ${p.market_type} is a volatile stat type`;
+      } else {
+        trapReason = `AVOID - Score ${p.final_score}/100, risky profile`;
+      }
+      
+      return {
+        dnb_date: today,
+        player_name: p.player_name,
+        market_type: p.market_type,
+        line: p.latest_line,
+        side: p.side,
+        sport: p.sport,
+        event_id: p.event_id,
+        trap_reason: trapReason,
+        final_score: p.final_score
+      };
+    });
+    
+    console.log(`[Heat Engine] Do-Not-Bet candidates: ${dnbList.length}`);
     
     // Save parlays
     const parlaysToSave: any[] = [];
