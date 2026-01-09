@@ -309,17 +309,13 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
   
   if (action === 'scan' || action === 'ingest') {
     // Fetch props from nba_risk_engine_picks as source data
-    const query = supabase
+    // Filter by mode='full_slate' and no rejection_reason (these are approved picks)
+    const { data: picks, error: picksError } = await supabase
       .from('nba_risk_engine_picks')
       .select('*')
       .gte('game_date', today)
-      .eq('is_approved', true);
-    
-    if (sport) {
-      query.eq('sport', sport);
-    }
-    
-    const { data: picks, error: picksError } = await query;
+      .eq('mode', 'full_slate')
+      .is('rejection_reason', null);
     
     if (picksError) {
       console.error('Error fetching picks:', picksError);
@@ -344,23 +340,29 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
         ? (new Date(pick.game_date).getTime() - now.getTime()) / (1000 * 60 * 60)
         : 24;
       
+      // Map fields from nba_risk_engine_picks schema
+      const sport = 'basketball_nba';
+      const side = pick.side?.toLowerCase() || 'over';
+      const lineDelta = (pick.current_line && pick.line) ? (pick.current_line - pick.line) : 0;
+      const priceDelta = 0; // Not available in source
+      const projectedMinutes = pick.avg_minutes || null;
+      const roleTag = pick.player_role || null;
+      
       // Calculate signals
-      const lineDelta = pick.line_movement || 0;
-      const priceDelta = pick.odds_movement || 0;
       const { score: signalScore, signals } = calculateMarketSignalScore(
         lineDelta,
         priceDelta,
-        pick.public_pct || null,
-        pick.is_promo || false,
+        null, // public_pct not available
+        false, // is_promo not available
         hoursToGame,
-        pick.confirming_books || 1
+        1 // confirming_books default
       );
       
       // Calculate base role score
       const baseRoleScore = calculateBaseRoleScore(
-        pick.sport || 'basketball_nba',
+        sport,
         pick.prop_type,
-        pick.role_tag || null
+        roleTag
       );
       
       // Calculate time decay
@@ -371,12 +373,12 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
       const finalScore = baseRoleScore + signalScore + timeDecay;
       
       // Validation
-      const statSafety = passesStatSafety(pick.sport || 'basketball_nba', pick.prop_type);
+      const statSafety = passesStatSafety(sport, pick.prop_type);
       const roleValidation = passesRoleValidation(
-        pick.sport || 'basketball_nba',
-        pick.pick_side?.toLowerCase() || 'over',
-        pick.projected_minutes || null,
-        pick.role_tag || null,
+        sport,
+        side,
+        projectedMinutes,
+        roleTag,
         pick.player_name,
         pick.prop_type
       );
@@ -393,11 +395,11 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
       
       trackerUpserts.push({
         event_id: pick.event_id || `${pick.player_name}-${pick.prop_type}-${today}`,
-        sport: pick.sport || 'basketball_nba',
+        sport: sport,
         league: 'NBA',
         start_time_utc: pick.game_date || new Date(now.getTime() + hoursToGame * 60 * 60 * 1000).toISOString(),
-        home_team: pick.home_team,
-        away_team: pick.away_team,
+        home_team: null, // Not available in source
+        away_team: null, // Not available in source
         player_name: pick.player_name,
         market_type: pick.prop_type,
         opening_line: pick.line,
