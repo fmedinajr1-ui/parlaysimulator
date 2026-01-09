@@ -226,44 +226,68 @@ function calculateBaseRoleScore(
   marketType: string,
   playerRoleTag: string | null,
   playerRole?: string | null,  // From nba_risk_engine_picks.player_role
-  playerName?: string | null   // NEW: for star check
+  playerName?: string | null,  // For star check
+  confidenceScore?: number,    // NEW: for score variance
+  hoursToGame?: number         // NEW: for time-based variance
 ): number {
   const rules = STAT_SAFETY_RULES[sport];
   
-  // Start with role-based score for granularity
+  // Start with role-based score for granularity (range: 35-45)
   let baseScore = playerRole ? (ROLE_BASE_SCORES[playerRole] || 38) : 38;
   
-  if (!rules) return baseScore;
+  if (!rules) return Math.min(baseScore, 85); // Cap at 85 to ensure watchlist range
   
   const lowerMarket = marketType.toLowerCase();
   
-  // NEW: Stat priority multiplier (rebounds/assists get boost, points get penalty)
+  // Stat priority adjustments (range: -10 to +15)
   const statPriority = getStatPriorityScore(marketType);
   if (statPriority >= 9) baseScore += 15;       // Rebounds/Assists: +15
   else if (statPriority >= 7) baseScore += 8;   // Blocks/Steals: +8
+  else if (statPriority >= 4) baseScore += 0;   // Threes: neutral
   else if (statPriority <= 2) baseScore -= 10;  // Points: -10
   
-  // NEW: Additional penalty for star player + points
+  // Star player + points = heavy penalty
   if (playerName && isStarPlayer(playerName) && lowerMarket.includes('points')) {
-    baseScore -= 15;  // Heavy penalty for star points
+    baseScore -= 15;
+  }
+  
+  // NEW: Confidence-based variance (range: -8 to +10)
+  if (confidenceScore !== undefined) {
+    if (confidenceScore >= 9.5) baseScore += 10;
+    else if (confidenceScore >= 9.0) baseScore += 6;
+    else if (confidenceScore >= 8.5) baseScore += 3;
+    else if (confidenceScore >= 8.0) baseScore += 0;
+    else if (confidenceScore >= 7.5) baseScore -= 4;
+    else baseScore -= 8;  // Low confidence penalty
+  }
+  
+  // NEW: Time-to-game variance (range: -5 to +5)
+  if (hoursToGame !== undefined) {
+    if (hoursToGame >= 4 && hoursToGame <= 8) baseScore += 5;  // Optimal window
+    else if (hoursToGame >= 2 && hoursToGame < 4) baseScore += 2;
+    else if (hoursToGame > 8) baseScore -= 3;  // Too early
+    else if (hoursToGame < 2) baseScore -= 5;  // Too late
   }
   
   // Bonus for preferred stats (+8-12)
   for (const preferred of rules.prefer) {
     if (lowerMarket.includes(preferred)) {
       const preferBonus = playerRoleTag === 'star' ? 12 : 8;
-      return baseScore + preferBonus;
+      baseScore += preferBonus;
+      break;  // Only apply once
     }
   }
   
   // Penalty for avoided stats (-15)
   for (const avoided of rules.avoid) {
     if (lowerMarket.includes(avoided)) {
-      return baseScore - 15;
+      baseScore -= 15;
+      break;  // Only apply once
     }
   }
   
-  return baseScore;
+  // Clamp final score to ensure proper distribution (30-95)
+  return Math.max(30, Math.min(95, baseScore));
 }
 
 // ============================================================================
@@ -522,8 +546,10 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
         sport,
         pick.prop_type,
         roleTag,
-        pick.player_role,  // Pass player role for score variation
-        pick.player_name   // NEW: Pass player name for star check
+        pick.player_role,      // Pass player role for score variation
+        pick.player_name,      // Pass player name for star check
+        pick.confidence_score, // NEW: Pass confidence for score variance
+        hoursToGame            // NEW: Pass hours to game for time variance
       );
       
       // Calculate time decay
