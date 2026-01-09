@@ -20,18 +20,49 @@ const BLOWOUT_IMMUNITY_STARS = [
   'trae young', 'devin booker', 'tyrese haliburton', 'anthony davis'
 ];
 
+// All star players (for one-star-per-parlay rule)
+const ALL_STAR_PLAYERS = [
+  ...BLOWOUT_IMMUNITY_STARS,
+  'jaylen brown', 'kyrie irving', 'jalen brunson', 'lamelo ball',
+  'de\'aaron fox', 'deaaron fox', 'ja morant', 'tyrese maxey'
+];
+
+function isStarPlayer(playerName: string): boolean {
+  const normalized = playerName?.toLowerCase() || '';
+  return ALL_STAR_PLAYERS.some(star => normalized.includes(star));
+}
+
 // Never fade PRA on these players regardless of spread
 const NEVER_FADE_PRA = [
   'luka doncic', 'nikola jokic', 'jayson tatum', 'giannis antetokounmpo',
   'shai gilgeous-alexander', 'lebron james', 'kevin durant'
 ];
 
-// Role locks by stat type
+// Role locks by stat type - POINTS REMOVED (role player first)
 const ROLE_STAT_LOCKS = {
-  rebounds: ['C', 'PF', 'F-C', 'C-F'],
-  assists: ['PG', 'SG', 'G', 'PG-SG', 'SG-PG'],
+  rebounds: ['C', 'PF', 'F-C', 'C-F', 'SF'],  // Expanded to include SF
+  assists: ['PG', 'SG', 'G', 'PG-SG', 'SG-PG', 'SF'],  // Expanded
   threes: 'VOLUME_CHECK'
+  // POINTS REMOVED - deprioritized for all roles
 };
+
+// Stat priority for scoring (rebounds/assists >> points)
+const STAT_PRIORITY: Record<string, number> = {
+  'rebounds': 10,
+  'assists': 9,
+  'blocks': 7,
+  'steals': 6,
+  'threes': 4,
+  'points': 2  // Lowest - deprioritized
+};
+
+function getStatPriority(propType: string): number {
+  const lower = propType?.toLowerCase() || '';
+  for (const [stat, priority] of Object.entries(STAT_PRIORITY)) {
+    if (lower.includes(stat)) return priority;
+  }
+  return 5;
+}
 
 // High volatility stats (limit in parlays)
 const HIGH_VOLATILITY_STATS = ['blocks', 'steals', 'turnovers', 'threes', '3-pointers'];
@@ -255,6 +286,8 @@ interface CandidateLeg {
   edge: number;
   confidence_score: number;
   is_volatile: boolean;
+  is_star?: boolean;
+  stat_priority?: number;
   rationale: string;
   rules_passed: {
     minutes: boolean;
@@ -401,10 +434,23 @@ async function buildSharpParlays(supabase: any): Promise<any> {
     // Penalty for volatility
     if (isVolatile) adjustedConfidence -= 0.05;
     
+    // NEW: Stat priority boost (rebounds/assists >> points)
+    const statPriority = getStatPriority(prop.prop_type);
+    if (statPriority >= 9) adjustedConfidence += 0.15;  // Rebounds/assists boost
+    else if (statPriority >= 7) adjustedConfidence += 0.08;  // Blocks/steals boost
+    else if (statPriority <= 2) adjustedConfidence -= 0.20;  // Points penalty
+    
+    // NEW: Star player with points = heavy penalty
+    const isStar = isStarPlayer(prop.player_name);
+    if (isStar && prop.prop_type?.toLowerCase().includes('points')) {
+      adjustedConfidence -= 0.25;  // Stars should use rebounds/assists
+    }
+    
     adjustedConfidence = Math.max(0.1, Math.min(0.95, adjustedConfidence));
     
     // Build rationale (one-line, role + median based)
-    const rationale = `${position || 'Player'}, L5 median ${medianResult.median5.toFixed(1)}, L10 median ${medianResult.median10.toFixed(1)}, ${medianResult.edge > 0 ? '+' : ''}${medianResult.edge.toFixed(1)}% edge`;
+    const statType = statPriority >= 9 ? '(preferred)' : statPriority <= 2 ? '(low priority)' : '';
+    const rationale = `${position || 'Player'}, L5 median ${medianResult.median5.toFixed(1)}, L10 median ${medianResult.median10.toFixed(1)}, ${medianResult.edge > 0 ? '+' : ''}${medianResult.edge.toFixed(1)}% edge ${statType}`;
     
     candidates.push({
       player_name: prop.player_name,
@@ -419,6 +465,8 @@ async function buildSharpParlays(supabase: any): Promise<any> {
       edge: medianResult.edge,
       confidence_score: adjustedConfidence,
       is_volatile: isVolatile,
+      is_star: isStar,
+      stat_priority: statPriority,
       rationale,
       rules_passed: {
         minutes: minutesResult.passes,
@@ -516,6 +564,7 @@ function buildParlay(candidates: CandidateLeg[], parlayType: keyof typeof PARLAY
   const legs: CandidateLeg[] = [];
   const usedPlayers = new Set<string>();
   let volatileCount = 0;
+  let starCount = 0;  // NEW: Track star count (max 1 per parlay)
   
   // Filter candidates by confidence threshold
   const eligibleCandidates = candidates.filter(c => c.confidence_score >= config.confidenceThreshold);
@@ -525,9 +574,23 @@ function buildParlay(candidates: CandidateLeg[], parlayType: keyof typeof PARLAY
     ? candidates.filter(c => c.confidence_score >= 0.35)
     : eligibleCandidates;
   
+  // Sort by stat priority (rebounds/assists first), then confidence
+  pool.sort((a, b) => {
+    // First by stat priority (higher = better)
+    const aPriority = (a as any).stat_priority || getStatPriority(a.prop_type);
+    const bPriority = (b as any).stat_priority || getStatPriority(b.prop_type);
+    if (bPriority !== aPriority) return bPriority - aPriority;
+    // Then by confidence
+    return b.confidence_score - a.confidence_score;
+  });
+  
   for (const candidate of pool) {
     // Skip if we already have a leg from this player
     if (usedPlayers.has(normalizePlayerName(candidate.player_name))) continue;
+    
+    // NEW: Max 1 star per parlay rule
+    const isStar = (candidate as any).is_star || isStarPlayer(candidate.player_name);
+    if (isStar && starCount >= 1) continue;
     
     // Check volatility limits
     if (candidate.is_volatile) {
@@ -537,6 +600,7 @@ function buildParlay(candidates: CandidateLeg[], parlayType: keyof typeof PARLAY
     
     legs.push(candidate);
     usedPlayers.add(normalizePlayerName(candidate.player_name));
+    if (isStar) starCount++;
     
     // Stop when we reach max legs
     if (legs.length >= config.maxLegs) break;
