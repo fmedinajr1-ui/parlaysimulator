@@ -6,6 +6,67 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// ============ STAR PLAYERS BY TEAM (ONE STAR PER TEAM RULE) ============
+const STAR_PLAYERS_BY_TEAM: Record<string, string[]> = {
+  'BOS': ['jayson tatum', 'jaylen brown'],
+  'PHX': ['devin booker', 'kevin durant'],
+  'DAL': ['luka doncic', 'luka dončić', 'kyrie irving'],
+  'DEN': ['nikola jokic', 'nikola jokić'],
+  'MIL': ['giannis antetokounmpo', 'damian lillard'],
+  'MIN': ['anthony edwards'],
+  'OKC': ['shai gilgeous-alexander', 'shai gilgeous alexander'],
+  'LAL': ['lebron james', 'anthony davis'],
+  'PHI': ['joel embiid', 'tyrese maxey'],
+  'CLE': ['donovan mitchell'],
+  'MEM': ['ja morant'],
+  'ATL': ['trae young'],
+  'SAC': ['de\'aaron fox', 'deaaron fox'],
+  'IND': ['tyrese haliburton'],
+  'CHA': ['lamelo ball'],
+  'GSW': ['stephen curry'],
+  'NYK': ['jalen brunson'],
+};
+
+// Flatten for quick lookup
+const ALL_STAR_PLAYERS = Object.values(STAR_PLAYERS_BY_TEAM).flat();
+
+function isStarPlayer(playerName: string): boolean {
+  const normalized = playerName.toLowerCase();
+  return ALL_STAR_PLAYERS.some(star => normalized.includes(star));
+}
+
+function getPlayerTeamFromName(playerName: string): string | null {
+  const normalized = playerName.toLowerCase();
+  for (const [team, stars] of Object.entries(STAR_PLAYERS_BY_TEAM)) {
+    if (stars.some(star => normalized.includes(star))) {
+      return team;
+    }
+  }
+  return null;
+}
+
+// ============ STAT PRIORITY SYSTEM (REBOUNDS/ASSISTS > POINTS) ============
+const STAT_PRIORITY: Record<string, number> = {
+  'rebounds': 10,      // HIGHEST
+  'assists': 9,
+  'blocks': 7,
+  'steals': 6,
+  'turnovers': 5,
+  '3pt_attempts': 4,
+  'threes': 3,
+  'points': 2,         // LOWEST - deprioritized for stars
+  'pra': 1,            // AVOID
+  'fantasy': 0         // NEVER
+};
+
+function getStatPriority(propType: string): number {
+  const lower = propType.toLowerCase();
+  for (const [stat, priority] of Object.entries(STAT_PRIORITY)) {
+    if (lower.includes(stat)) return priority;
+  }
+  return 5; // default
+}
+
 // ============ NEVER FADE PRA BLACKLIST ============
 // Tier 1 - Absolute: PRA UNDER always disabled
 const NEVER_FADE_PRA_TIER1 = [
@@ -51,6 +112,16 @@ function isOnNeverFadePRAList(playerName: string): { tier: 1 | 2 | null } {
 function isBallDominantStar(playerName: string): boolean {
   const normalized = playerName.toLowerCase();
   return BALL_DOMINANT_STARS.some(p => normalized.includes(p));
+}
+
+// ============ FAVORABLE MATCHUP CHECK FOR STARS ============
+function hasFavorableMatchup(spread: number, gameScript: GameScript): boolean {
+  // Star needs:
+  // 1. Competitive or soft blowout (not hard blowout)
+  // 2. Team favored OR close game (spread between -8 and +8)
+  if (gameScript === 'HARD_BLOWOUT') return false;
+  if (Math.abs(spread) > 8) return false;
+  return true;
 }
 
 // ============ STEP 1: GAME SCRIPT CLASSIFICATION ============
@@ -225,39 +296,40 @@ function failsClutchProtection(
 }
 
 // ============ STEP 7: ALLOWED STAT TYPES BY ROLE ============
+// ROLE PLAYER-FIRST: Prioritize rebounds/assists, deprioritize points (especially for stars)
 function getAllowedStats(role: PlayerRole, gameScript: GameScript): string[] {
   switch (role) {
     case 'BALL_DOMINANT_STAR':
-      // Ball-dominant stars: UNDERs only, but include assists
-      return ['points_under', 'rebounds_under', 'assists_under'];
+      // Ball-dominant stars: ONLY rebounds/assists (NO points!)
+      return ['rebounds', 'rebounds_under', 'assists', 'assists_under'];
       
     case 'STAR':
+      // Stars: rebounds/assists first, NO points (deprioritized)
       if (gameScript === 'COMPETITIVE') {
-        // Stars in competitive games: all 3 core stats
-        return ['points', 'rebounds', 'assists'];
+        return ['rebounds', 'assists']; // No points for stars!
       }
-      // Blowout: only UNDERs for stars
-      return ['points_under', 'rebounds_under', 'assists_under'];
+      // Blowout: only rebounds/assists UNDERs for stars
+      return ['rebounds_under', 'assists_under'];
       
     case 'SECONDARY_GUARD':
-      // Guards: all 3 core stats + combo props
-      return ['assists', 'points_assists', 'points', 'rebounds'];
+      // Guards: assists primary, rebounds secondary, NO points
+      return ['assists', 'rebounds', 'steals'];
       
     case 'WING':
-      // Wings: all 3 core stats
-      return ['rebounds', 'points', 'assists'];
+      // Wings: rebounds/assists primary, steals/blocks secondary, NO points
+      return ['rebounds', 'assists', 'steals', 'blocks'];
       
     case 'BIG':
-      const bigStats = ['rebounds', 'points_under', 'assists'];
-      // PRA UNDER only in hard blowouts AND non-dominant (checked via kill switch)
+      // Bigs: rebounds first, assists/blocks secondary, NO points
+      const bigStats = ['rebounds', 'assists', 'blocks'];
       if (gameScript === 'HARD_BLOWOUT') {
-        bigStats.push('pra_under', 'points_rebounds_assists_under');
+        bigStats.push('rebounds_under');
       }
       return bigStats;
       
     default:
-      // Fallback: allow all core stats
-      return ['points', 'rebounds', 'assists'];
+      // Fallback: rebounds/assists only (no points)
+      return ['rebounds', 'assists'];
   }
 }
 
@@ -567,6 +639,8 @@ serve(async (req) => {
       const rejectedProps: any[] = [];
       // Track player+prop_type combinations instead of just player
       const processedPlayerProps = new Set<string>();
+      // NEW: Track stars used per team (ONE STAR PER TEAM rule)
+      const starsUsedByTeam: Record<string, string[]> = {};
 
       for (const prop of (props || [])) {
         try {
@@ -582,7 +656,7 @@ serve(async (req) => {
             continue;
           }
           
-          // Limit total props per player to 2 (e.g., points + rebounds, but not all 3)
+          // Limit total props per player to 2 (e.g., rebounds + assists, but not all 3)
           const playerPropsCount = [...processedPlayerProps].filter(
             key => key.startsWith(prop.player_name?.toLowerCase() + '_')
           ).length;
@@ -591,6 +665,33 @@ serve(async (req) => {
             rejectedProps.push({
               ...prop,
               rejection_reason: 'Max 2 props per player reached'
+            });
+            continue;
+          }
+          
+          // NEW: Check if this is a star player
+          const isStar = isStarPlayer(prop.player_name);
+          const playerTeam = getPlayerTeamFromName(prop.player_name);
+          
+          // ONE STAR PER TEAM RULE
+          if (isStar && playerTeam) {
+            const teamStars = starsUsedByTeam[playerTeam] || [];
+            if (teamStars.length >= 1 && !teamStars.includes(prop.player_name?.toLowerCase())) {
+              rejectedProps.push({
+                ...prop,
+                rejection_reason: `One star per team limit: ${teamStars[0]} already selected from ${playerTeam}`
+              });
+              continue;
+            }
+          }
+          
+          // STAR POINTS BLOCK: Deprioritize points for star players
+          if (isStar && prop.prop_type?.toLowerCase().includes('points') && 
+              !prop.prop_type?.toLowerCase().includes('rebounds') && 
+              !prop.prop_type?.toLowerCase().includes('assists')) {
+            rejectedProps.push({
+              ...prop,
+              rejection_reason: 'Star player points blocked - use rebounds/assists instead'
             });
             continue;
           }
@@ -780,12 +881,29 @@ serve(async (req) => {
           const isPRA = isPRAPlay(prop.prop_type);
           const reason = generateReason(role, gameScript, edge, minutesClass, side, isPRA);
           
+          // For stars, check favorable matchup
+          const propIsStar = isStarPlayer(prop.player_name);
+          const propTeam = getPlayerTeamFromName(prop.player_name);
+          
+          if (propIsStar && !hasFavorableMatchup(spread, gameScript)) {
+            rejectedProps.push({
+              ...prop,
+              rejection_reason: `Star player ${prop.player_name} lacks favorable matchup (spread: ${spread}, script: ${gameScript})`
+            });
+            continue;
+          }
+          
           // Fetch live odds if enabled
           let liveOdds = null;
           if (use_live_odds && prop.event_id) {
             liveOdds = await fetchLiveOdds(prop.event_id, prop.player_name, prop.prop_type);
             console.log(`[Risk Engine v2] Live odds for ${prop.player_name}: ${JSON.stringify(liveOdds)}`);
           }
+          
+          // Calculate stat priority boost (higher = better)
+          const statPriority = getStatPriority(prop.prop_type);
+          const priorityBoost = statPriority >= 9 ? 0.3 : (statPriority >= 7 ? 0.15 : 0);
+          const adjustedScore = score + priorityBoost;
           
           approvedProps.push({
             player_name: prop.player_name,
@@ -803,13 +921,15 @@ serve(async (req) => {
             true_median: trueMedian,
             edge,
             bad_game_floor: badGameFloor,
-            confidence_score: score,
+            confidence_score: adjustedScore,
             confidence_factors: factors,
             reason,
             event_id: prop.event_id,
             game_date: today,
             is_pra: isPRA,
             is_ball_dominant: role === 'BALL_DOMINANT_STAR',
+            is_star: propIsStar,
+            stat_priority: statPriority,
             // Live odds data
             current_line: liveOdds?.line || line,
             over_price: liveOdds?.overPrice,
@@ -819,6 +939,16 @@ serve(async (req) => {
           });
           
           processedPlayerProps.add(playerPropKey);
+          
+          // Track star usage per team
+          if (propIsStar && propTeam) {
+            if (!starsUsedByTeam[propTeam]) {
+              starsUsedByTeam[propTeam] = [];
+            }
+            if (!starsUsedByTeam[propTeam].includes(prop.player_name?.toLowerCase())) {
+              starsUsedByTeam[propTeam].push(prop.player_name?.toLowerCase());
+            }
+          }
         } catch (propError: unknown) {
           const errorMessage = propError instanceof Error ? propError.message : 'Unknown error';
           console.error(`[Risk Engine v2] Error processing ${prop.player_name}:`, propError);

@@ -27,12 +27,12 @@ function getSignalLabel(score: number): string {
 }
 
 // ============================================================================
-// MODULE 3: STAT-TYPE SAFETY FILTER
+// MODULE 3: STAT-TYPE SAFETY FILTER (ROLE PLAYER-FIRST)
 // ============================================================================
 const STAT_SAFETY_RULES: Record<string, { prefer: string[], avoid: string[] }> = {
   basketball_nba: {
-    prefer: ['rebounds', 'assists', '3pt_attempts', 'turnovers', 'steals', 'blocks'],
-    avoid: ['points', '3pt_made', 'fantasy_points', 'pra', 'double_double']
+    prefer: ['rebounds', 'assists', 'blocks', 'steals', 'turnovers'],  // Reb/Ast first
+    avoid: ['points', '3pt_made', 'fantasy_points', 'pra', 'double_double']  // Points blocked
   },
   icehockey_nhl: {
     prefer: ['shots_on_goal', 'blocked_shots', 'hits', 'faceoffs_won'],
@@ -47,6 +47,39 @@ const STAT_SAFETY_RULES: Record<string, { prefer: string[], avoid: string[] }> =
     avoid: ['set_winner', 'tiebreak']
   }
 };
+
+// Star players registry (for one-star-per-team rule)
+const ALL_STAR_PLAYERS = [
+  'jaylen brown', 'jayson tatum', 'devin booker', 'kevin durant',
+  'luka doncic', 'nikola jokic', 'giannis antetokounmpo', 'damian lillard',
+  'shai gilgeous-alexander', 'anthony edwards', 'lebron james', 'anthony davis',
+  'joel embiid', 'tyrese maxey', 'donovan mitchell', 'ja morant', 'trae young',
+  'stephen curry', 'kyrie irving', 'jalen brunson', 'lamelo ball', 
+  'de\'aaron fox', 'tyrese haliburton'
+];
+
+function isStarPlayer(playerName: string): boolean {
+  const normalized = playerName?.toLowerCase() || '';
+  return ALL_STAR_PLAYERS.some(star => normalized.includes(star));
+}
+
+// Stat priority for scoring (rebounds/assists >> points)
+const STAT_PRIORITY: Record<string, number> = {
+  'rebounds': 10,
+  'assists': 9,
+  'blocks': 7,
+  'steals': 6,
+  'threes': 4,
+  'points': 2  // Lowest - deprioritized
+};
+
+function getStatPriorityScore(propType: string): number {
+  const lower = propType?.toLowerCase() || '';
+  for (const [stat, priority] of Object.entries(STAT_PRIORITY)) {
+    if (lower.includes(stat)) return priority;
+  }
+  return 5;
+}
 
 // Star players with role-based exceptions
 const NEVER_FADE_PRA = [
@@ -85,11 +118,18 @@ function passesRoleValidation(
   return { passes: true };
 }
 
-function passesStatSafety(sport: string, marketType: string): { passes: boolean; reason?: string } {
+function passesStatSafety(sport: string, marketType: string, playerName?: string): { passes: boolean; reason?: string } {
   const rules = STAT_SAFETY_RULES[sport];
   if (!rules) return { passes: true };
   
   const lowerMarket = marketType.toLowerCase();
+  
+  // NEW: Hard block points for star players
+  if (playerName && isStarPlayer(playerName)) {
+    if (lowerMarket.includes('points') && !lowerMarket.includes('rebounds') && !lowerMarket.includes('assists')) {
+      return { passes: false, reason: `Star player ${playerName} - use rebounds/assists instead of points` };
+    }
+  }
   
   // Check if in avoid list
   for (const avoided of rules.avoid) {
@@ -180,7 +220,8 @@ function calculateBaseRoleScore(
   sport: string,
   marketType: string,
   playerRoleTag: string | null,
-  playerRole?: string | null  // From nba_risk_engine_picks.player_role
+  playerRole?: string | null,  // From nba_risk_engine_picks.player_role
+  playerName?: string | null   // NEW: for star check
 ): number {
   const rules = STAT_SAFETY_RULES[sport];
   
@@ -190,6 +231,17 @@ function calculateBaseRoleScore(
   if (!rules) return baseScore;
   
   const lowerMarket = marketType.toLowerCase();
+  
+  // NEW: Stat priority multiplier (rebounds/assists get boost, points get penalty)
+  const statPriority = getStatPriorityScore(marketType);
+  if (statPriority >= 9) baseScore += 15;       // Rebounds/Assists: +15
+  else if (statPriority >= 7) baseScore += 8;   // Blocks/Steals: +8
+  else if (statPriority <= 2) baseScore -= 10;  // Points: -10
+  
+  // NEW: Additional penalty for star player + points
+  if (playerName && isStarPlayer(playerName) && lowerMarket.includes('points')) {
+    baseScore -= 15;  // Heavy penalty for star points
+  }
   
   // Bonus for preferred stats (+8-12)
   for (const preferred of rules.prefer) {
@@ -280,33 +332,64 @@ function buildParlays(
   // CORE: Reject PUBLIC_TRAP, prefer low-variance stats
   if (parlayType === 'CORE') {
     candidates = candidates.filter(p => p.signal_label !== 'PUBLIC_TRAP');
-    // Sort by final_score descending
-    candidates.sort((a, b) => b.final_score - a.final_score);
+    // Sort by stat priority first (rebounds/assists > points), then score
+    candidates.sort((a, b) => {
+      const aPriority = getStatPriorityScore(a.market_type);
+      const bPriority = getStatPriorityScore(b.market_type);
+      if (bPriority !== aPriority) return bPriority - aPriority;
+      return b.final_score - a.final_score;
+    });
   }
   
   // UPSIDE: Prioritize sharp-confirmed legs for variety
   if (parlayType === 'UPSIDE') {
-    // Boost STRONG_SHARP and SHARP_LEAN to the top, then sort by score
+    // Boost STRONG_SHARP and SHARP_LEAN to the top, then sort by stat priority, then score
     candidates.sort((a, b) => {
       const aSharp = ['STRONG_SHARP', 'SHARP_LEAN'].includes(a.signal_label) ? 1 : 0;
       const bSharp = ['STRONG_SHARP', 'SHARP_LEAN'].includes(b.signal_label) ? 1 : 0;
       if (bSharp !== aSharp) return bSharp - aSharp;
+      const aPriority = getStatPriorityScore(a.market_type);
+      const bPriority = getStatPriorityScore(b.market_type);
+      if (bPriority !== aPriority) return bPriority - aPriority;
       return b.final_score - a.final_score;
     });
   }
   
   if (candidates.length < 2) return null;
   
-  // Select two legs from different games/players
-  let leg1 = candidates[0];
-  let leg2 = candidates.find(c => 
-    c.event_id !== leg1.event_id && 
-    c.player_name !== leg1.player_name
-  );
+  // NEW: Track stars used (max 1 per parlay, max 1 per team)
+  const starsInParlay: Record<string, string> = {};  // team -> player name
   
-  // If no different game, allow same game with different player
+  // Select first leg (prefer role players with rebounds/assists)
+  let leg1 = candidates[0];
+  const leg1IsStar = isStarPlayer(leg1.player_name);
+  
+  if (leg1IsStar) {
+    // Track this star
+    starsInParlay['leg1'] = leg1.player_name;
+  }
+  
+  // Find leg2: different player, respect one-star limit
+  let leg2 = candidates.find(c => {
+    if (c.player_name === leg1.player_name) return false;
+    if (c.event_id === leg1.event_id) return false;  // Different games preferred
+    
+    const isStar = isStarPlayer(c.player_name);
+    
+    // If leg1 is a star, leg2 cannot be a star
+    if (leg1IsStar && isStar) return false;
+    
+    return true;
+  });
+  
+  // If no different game, allow same game but still respect star rule
   if (!leg2) {
-    leg2 = candidates.find(c => c.player_name !== leg1.player_name);
+    leg2 = candidates.find(c => {
+      if (c.player_name === leg1.player_name) return false;
+      const isStar = isStarPlayer(c.player_name);
+      if (leg1IsStar && isStar) return false;
+      return true;
+    });
   }
   
   if (!leg2) return null;
@@ -328,8 +411,8 @@ function buildParlays(
     leg_1: formatLeg(leg1),
     leg_2: formatLeg(leg2),
     summary: parlayType === 'CORE' 
-      ? 'Low-variance volume stats with strong market signals' 
-      : 'Higher upside with sharp-confirmed legs',
+      ? 'Role player rebounds/assists with strong market signals' 
+      : 'Higher upside with sharp-confirmed legs (max 1 star)',
     risk_level: parlayType === 'CORE' ? 'Low' : 'Med'
   };
 }
@@ -434,7 +517,8 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
         sport,
         pick.prop_type,
         roleTag,
-        pick.player_role  // Pass player role for score variation
+        pick.player_role,  // Pass player role for score variation
+        pick.player_name   // NEW: Pass player name for star check
       );
       
       // Calculate time decay
@@ -443,8 +527,8 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
       // Final score (now has more variance)
       const finalScore = Math.min(100, Math.max(0, baseRoleScore + signalScore + timeDecay));
       
-      // Validation
-      const statSafety = passesStatSafety(sport, pick.prop_type);
+      // Validation (now includes star player check)
+      const statSafety = passesStatSafety(sport, pick.prop_type, pick.player_name);
       const roleValidation = passesRoleValidation(
         sport,
         side,
