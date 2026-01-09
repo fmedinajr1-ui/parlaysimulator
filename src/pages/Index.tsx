@@ -6,6 +6,7 @@ import { RiskEnginePicksCard } from "@/components/suggestions/RiskEnginePicksCar
 import { PropEngineV2Card } from "@/components/suggestions/PropEngineV2Card";
 import SharpParlayCards from "@/components/sharp/SharpParlayCard";
 import { PropMarketWidget } from "@/components/market/PropMarketWidget";
+import { HeatParlaySection } from "@/components/heat/HeatParlaySection";
 import { PullToRefreshContainer, PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
 import { useHapticFeedback } from "@/hooks/useHapticFeedback";
@@ -158,6 +159,13 @@ const Index = () => {
         {(isPilotUser || isSubscribed || isAdmin) && (
           <div className="mb-4">
             <SharpParlayCards />
+          </div>
+        )}
+
+        {/* Heat Engine Parlays - SECOND */}
+        {(isPilotUser || isSubscribed || isAdmin) && (
+          <div className="mb-4">
+            <HeatParlaySection />
           </div>
         )}
 
