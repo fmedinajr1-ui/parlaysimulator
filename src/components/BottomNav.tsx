@@ -1,4 +1,4 @@
-import { Home, BarChart3, User, GitCompare, WifiOff, Users, Radio } from "lucide-react";
+import { Home, BarChart3, User, WifiOff, Users, Radio, Activity } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { usePWA } from "@/hooks/usePWA";
@@ -13,7 +13,7 @@ import { useHapticFeedback } from "@/hooks/useHapticFeedback";
 const allNavItems = [
   { icon: Home, label: "Home", path: "/" },
   { icon: BarChart3, label: "Analyze", path: "/upload" },
-  { icon: Radio, label: "Live", path: "/live-dashboard" },
+  { icon: Activity, label: "Engines", path: "/engine-dashboard" },
   { icon: Users, label: "Pools", path: "/pools" },
   { icon: User, label: "Profile", path: "/profile" },
 ];
