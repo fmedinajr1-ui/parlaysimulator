@@ -245,3 +245,6 @@ verify_jwt = false
 
 [functions.create-elite-hitter-checkout]
 verify_jwt = false
+
+[functions.refresh-todays-props]
+verify_jwt = false
