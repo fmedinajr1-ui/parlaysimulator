@@ -192,9 +192,23 @@ export function SharpParlayCards() {
       
       if (error) throw error;
       
-      toast.success(`Built ${data.saved?.length || 0} sharp parlays`, {
-        description: `Evaluated ${data.candidates_evaluated} props, ${data.candidates_passed} passed all rules`
-      });
+      const parlaysBuilt = data.saved?.length || 0;
+      const evaluated = data.candidates_evaluated ?? 0;
+      const passed = data.candidates_passed ?? 0;
+      
+      if (evaluated === 0) {
+        toast.warning('No Risk Engine picks available', {
+          description: 'Run the Risk Engine first to generate prop candidates for today'
+        });
+      } else if (parlaysBuilt === 0) {
+        toast.warning('No parlays built', {
+          description: `Evaluated ${evaluated} props, ${passed} passed all rules`
+        });
+      } else {
+        toast.success(`Built ${parlaysBuilt} sharp parlays`, {
+          description: `Evaluated ${evaluated} props, ${passed} passed all rules`
+        });
+      }
       
       refetch();
     } catch (err) {
