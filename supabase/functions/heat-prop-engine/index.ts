@@ -213,34 +213,45 @@ interface ParlayLeg {
 
 function buildParlays(
   eligibleProps: any[],
-  parlayType: 'CORE' | 'UPSIDE'
+  parlayType: 'CORE' | 'UPSIDE',
+  excludePlayerNames: string[] = []  // Exclude these players (used for UPSIDE to avoid CORE overlap)
 ): { leg_1: ParlayLeg; leg_2: ParlayLeg; summary: string; risk_level: string } | null {
   const minScore = parlayType === 'CORE' ? 78 : 70;
   
-  // Filter by score threshold
-  let candidates = eligibleProps.filter(p => p.final_score >= minScore);
+  // Filter by score threshold AND exclude already-used players
+  let candidates = eligibleProps.filter(p => 
+    p.final_score >= minScore && 
+    !excludePlayerNames.includes(p.player_name)
+  );
   
-  // CORE: Reject PUBLIC_TRAP
+  // CORE: Reject PUBLIC_TRAP, prefer low-variance stats
   if (parlayType === 'CORE') {
     candidates = candidates.filter(p => p.signal_label !== 'PUBLIC_TRAP');
+    // Sort by final_score descending
+    candidates.sort((a, b) => b.final_score - a.final_score);
   }
   
-  // UPSIDE: Allow ONE higher-variance leg if STRONG_SHARP or SHARP_LEAN
-  // (stat safety already filtered, but we can relax for upside)
-  
-  // Sort by final_score descending
-  candidates.sort((a, b) => b.final_score - a.final_score);
+  // UPSIDE: Prioritize sharp-confirmed legs for variety
+  if (parlayType === 'UPSIDE') {
+    // Boost STRONG_SHARP and SHARP_LEAN to the top, then sort by score
+    candidates.sort((a, b) => {
+      const aSharp = ['STRONG_SHARP', 'SHARP_LEAN'].includes(a.signal_label) ? 1 : 0;
+      const bSharp = ['STRONG_SHARP', 'SHARP_LEAN'].includes(b.signal_label) ? 1 : 0;
+      if (bSharp !== aSharp) return bSharp - aSharp;
+      return b.final_score - a.final_score;
+    });
+  }
   
   if (candidates.length < 2) return null;
   
-  // Select two legs from different games
+  // Select two legs from different games/players
   let leg1 = candidates[0];
   let leg2 = candidates.find(c => 
     c.event_id !== leg1.event_id && 
     c.player_name !== leg1.player_name
   );
   
-  // If no different game, allow same game with low correlation
+  // If no different game, allow same game with different player
   if (!leg2) {
     leg2 = candidates.find(c => c.player_name !== leg1.player_name);
   }
@@ -483,16 +494,25 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
       };
     }
     
-    // Build CORE parlay
+    // Build CORE parlay first
     const coreParlay = buildParlays(
       eligibleProps.filter((p: any) => p.is_eligible_core),
-      'CORE'
+      'CORE',
+      []  // No exclusions for CORE
     );
     
-    // Build UPSIDE parlay
+    // Extract CORE player names to exclude from UPSIDE
+    const corePlayerNames = coreParlay 
+      ? [coreParlay.leg_1.player_name, coreParlay.leg_2.player_name]
+      : [];
+    
+    console.log(`[Heat Engine] CORE players to exclude from UPSIDE: ${corePlayerNames.join(', ')}`);
+    
+    // Build UPSIDE parlay with CORE players excluded for variety
     const upsideParlay = buildParlays(
       eligibleProps.filter((p: any) => p.is_eligible_upside),
-      'UPSIDE'
+      'UPSIDE',
+      corePlayerNames  // Exclude CORE players for differentiation
     );
     
     // Build Watchlist (top 5 approaching entry)
