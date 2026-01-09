@@ -4268,6 +4268,7 @@ export type Database = {
           id: string
           is_ball_dominant: boolean | null
           is_pra: boolean | null
+          is_star: boolean | null
           is_trap_indicator: boolean | null
           line: number
           minutes_class: string
@@ -4289,6 +4290,7 @@ export type Database = {
           sharp_movement_pts: number | null
           side: string
           spread: number | null
+          stat_priority: number | null
           team_name: string | null
           true_median: number | null
           under_price: number | null
@@ -4310,6 +4312,7 @@ export type Database = {
           id?: string
           is_ball_dominant?: boolean | null
           is_pra?: boolean | null
+          is_star?: boolean | null
           is_trap_indicator?: boolean | null
           line: number
           minutes_class: string
@@ -4331,6 +4334,7 @@ export type Database = {
           sharp_movement_pts?: number | null
           side: string
           spread?: number | null
+          stat_priority?: number | null
           team_name?: string | null
           true_median?: number | null
           under_price?: number | null
@@ -4352,6 +4356,7 @@ export type Database = {
           id?: string
           is_ball_dominant?: boolean | null
           is_pra?: boolean | null
+          is_star?: boolean | null
           is_trap_indicator?: boolean | null
           line?: number
           minutes_class?: string
@@ -4373,6 +4378,7 @@ export type Database = {
           sharp_movement_pts?: number | null
           side?: string
           spread?: number | null
+          stat_priority?: number | null
           team_name?: string | null
           true_median?: number | null
           under_price?: number | null
