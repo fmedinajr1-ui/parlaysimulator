@@ -7,6 +7,7 @@ import { PropEngineV2Card } from "@/components/suggestions/PropEngineV2Card";
 import SharpParlayCards from "@/components/sharp/SharpParlayCard";
 import { PropMarketWidget } from "@/components/market/PropMarketWidget";
 import { HeatParlaySection } from "@/components/heat/HeatParlaySection";
+import { WeeklyParlayHistory } from "@/components/dashboard/WeeklyParlayHistory";
 import { PullToRefreshContainer, PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
 import { useHapticFeedback } from "@/hooks/useHapticFeedback";
@@ -187,6 +188,13 @@ const Index = () => {
         {(isPilotUser || isSubscribed || isAdmin) && (
           <div className="mb-4">
             <PropMarketWidget />
+          </div>
+        )}
+
+        {/* 7-Day Performance History */}
+        {(isPilotUser || isSubscribed || isAdmin) && (
+          <div className="mb-4">
+            <WeeklyParlayHistory />
           </div>
         )}
 
