@@ -5,11 +5,15 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PropRow } from "@/components/market/PropRow";
 import { HeatLevel } from "@/components/market/HeatBadge";
-import { Flame, ArrowLeft, RefreshCw, Loader2, Zap } from "lucide-react";
+import { Flame, ArrowLeft, RefreshCw, Loader2, Zap, Shield, TrendingUp } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useRefreshPropMarketOdds } from "@/hooks/useLiveOdds";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { HeatParlayCard } from "@/components/heat/HeatParlayCard";
+import { WatchlistSection } from "@/components/heat/WatchlistSection";
+import { DoNotBetSection } from "@/components/heat/DoNotBetSection";
+import { useHeatPropEngine, useHeatEngineScan } from "@/hooks/useHeatPropEngine";
 
 type HeatFilter = 'ALL' | HeatLevel;
 
@@ -50,6 +54,10 @@ export default function PropMarket() {
   const [heatFilter, setHeatFilter] = useState<HeatFilter>('ALL');
   const queryClient = useQueryClient();
   const { refreshAll, isRefreshing, lastRefresh } = useRefreshPropMarketOdds();
+  
+  // Heat Prop Engine data
+  const { data: heatData, isLoading: heatLoading } = useHeatPropEngine();
+  const { mutate: runHeatScan, isPending: isHeatScanning } = useHeatEngineScan();
 
   const { data: picks, isLoading, error } = useQuery({
     queryKey: ['prop-market-all-picks'],
@@ -76,6 +84,10 @@ export default function PropMarket() {
     } else {
       toast.error(result.error || 'Failed to refresh odds');
     }
+  };
+
+  const handleRunHeatEngine = () => {
+    runHeatScan(undefined);
   };
 
   // Process and filter picks
@@ -110,18 +122,33 @@ export default function PropMarket() {
               <h1 className="text-2xl font-bold">Prop Market Engine</h1>
             </div>
           </div>
-          <Button 
-            onClick={handleRefreshOdds}
-            disabled={isRefreshing}
-            className="gap-2"
-          >
-            {isRefreshing ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Zap className="w-4 h-4" />
-            )}
-            Scan Live Odds
-          </Button>
+          <div className="flex gap-2">
+            <Button 
+              onClick={handleRunHeatEngine}
+              disabled={isHeatScanning}
+              variant="outline"
+              className="gap-2"
+            >
+              {isHeatScanning ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Flame className="w-4 h-4 text-orange-500" />
+              )}
+              Build Parlays
+            </Button>
+            <Button 
+              onClick={handleRefreshOdds}
+              disabled={isRefreshing}
+              className="gap-2"
+            >
+              {isRefreshing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Zap className="w-4 h-4" />
+              )}
+              Scan Live Odds
+            </Button>
+          </div>
         </div>
 
         {/* Refresh Status */}
@@ -130,6 +157,24 @@ export default function PropMarket() {
             Last scan: {lastRefresh.toLocaleTimeString()} • Pulling from FanDuel & DraftKings
           </p>
         )}
+
+        {/* Heat Engine Parlays - CORE & UPSIDE */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          <HeatParlayCard 
+            parlay={heatData?.core_parlay || null} 
+            type="CORE" 
+          />
+          <HeatParlayCard 
+            parlay={heatData?.upside_parlay || null} 
+            type="UPSIDE" 
+          />
+        </div>
+
+        {/* Watchlist & Do Not Bet */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          <WatchlistSection items={heatData?.watchlist || []} />
+          <DoNotBetSection items={heatData?.do_not_bet || []} />
+        </div>
 
         {/* Heat Filters */}
         <div className="flex flex-wrap gap-2 mb-6">
