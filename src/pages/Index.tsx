@@ -1,6 +1,5 @@
 import React from "react";
 import { HeroBanner } from "@/components/HeroBanner";
-import { ExampleCarousel } from "@/components/ExampleCarousel";
 import { HowItWorks } from "@/components/HowItWorks";
 import { SampleParlayButton } from "@/components/SampleParlayButton";
 import { RiskEnginePicksCard } from "@/components/suggestions/RiskEnginePicksCard";
@@ -154,9 +153,6 @@ const Index = () => {
           <SampleParlayButton />
         </div>
         
-        {/* Example Cards */}
-        <ExampleCarousel />
-
         {/* Sharp AI Parlays - FIRST */}
         {(isPilotUser || isSubscribed || isAdmin) && (
           <div className="mb-4">
