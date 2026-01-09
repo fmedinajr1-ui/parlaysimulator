@@ -368,3 +368,6 @@ verify_jwt = false
 
 [functions.sharp-parlay-builder]
 verify_jwt = false
+
+[functions.heat-prop-engine]
+verify_jwt = false
