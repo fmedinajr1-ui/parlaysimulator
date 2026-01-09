@@ -10,7 +10,7 @@ const corsHeaders = {
 // CONFIGURATION & CONSTANTS
 // ========================
 
-const MINUTES_THRESHOLD = 28;
+const MINUTES_THRESHOLD = 24;
 
 // Stars with proven blowout immunity - never fade their PRA
 const BLOWOUT_IMMUNITY_STARS = [
@@ -38,12 +38,12 @@ const NEVER_FADE_PRA = [
   'shai gilgeous-alexander', 'lebron james', 'kevin durant'
 ];
 
-// Role locks by stat type - POINTS REMOVED (role player first)
+// Role locks by stat type - BIG allowed for rebounds, WING for all core stats
 const ROLE_STAT_LOCKS = {
-  rebounds: ['C', 'PF', 'F-C', 'C-F', 'SF'],  // Expanded to include SF
-  assists: ['PG', 'SG', 'G', 'PG-SG', 'SG-PG', 'SF'],  // Expanded
+  rebounds: ['C', 'PF', 'F-C', 'C-F', 'SF', 'BIG', 'WING'],  // BIG + WING allowed
+  assists: ['PG', 'SG', 'G', 'PG-SG', 'SG-PG', 'SF', 'GUARD', 'WING'],  // GUARD + WING allowed
+  points: ['PG', 'SG', 'SF', 'G', 'GUARD', 'WING'],  // Allow for non-BIG roles
   threes: 'VOLUME_CHECK'
-  // POINTS REMOVED - deprioritized for all roles
 };
 
 // Stat priority for scoring (rebounds/assists >> points)
@@ -169,27 +169,41 @@ function passesRoleLock(
   propType: string, 
   position: string, 
   threeAttempts?: number, 
-  threeMakes?: number
+  threeMakes?: number,
+  playerRole?: string
 ): { passes: boolean; reason: string } {
   const normalizedProp = normalizePropType(propType);
   const normalizedPosition = position?.toUpperCase() || '';
+  const role = playerRole?.toUpperCase() || '';
   
-  // Rebounds: Centers and Forwards only
+  // Rebounds: BIG, WING, or traditional big positions
   if (normalizedProp.includes('rebound')) {
-    const validPositions = ROLE_STAT_LOCKS.rebounds;
-    if (validPositions.some(p => normalizedPosition.includes(p))) {
-      return { passes: true, reason: `${normalizedPosition} valid for rebounds` };
+    const validPositions = ROLE_STAT_LOCKS.rebounds as string[];
+    const positionMatch = validPositions.some(p => normalizedPosition.includes(p));
+    const roleMatch = role === 'BIG' || role === 'WING' || role === 'STAR';
+    if (positionMatch || roleMatch) {
+      return { passes: true, reason: `${role || normalizedPosition} valid for rebounds` };
     }
-    return { passes: false, reason: `${normalizedPosition} not ideal for rebounds` };
+    return { passes: false, reason: `${role || normalizedPosition} not ideal for rebounds` };
   }
   
-  // Assists: Primary/secondary ball handlers only
+  // Assists: GUARD, WING, or ball handler positions
   if (normalizedProp.includes('assist')) {
-    const validPositions = ROLE_STAT_LOCKS.assists;
-    if (validPositions.some(p => normalizedPosition.includes(p))) {
-      return { passes: true, reason: `${normalizedPosition} is ball handler` };
+    const validPositions = ROLE_STAT_LOCKS.assists as string[];
+    const positionMatch = validPositions.some(p => normalizedPosition.includes(p));
+    const roleMatch = role === 'GUARD' || role === 'SECONDARY_GUARD' || role === 'WING' || role === 'STAR' || role === 'BALL_DOMINANT_STAR';
+    if (positionMatch || roleMatch) {
+      return { passes: true, reason: `${role || normalizedPosition} is ball handler` };
     }
-    return { passes: false, reason: `${normalizedPosition} not primary ball handler` };
+    return { passes: false, reason: `${role || normalizedPosition} not primary ball handler` };
+  }
+  
+  // Points: Allow all except pure BIG role
+  if (normalizedProp.includes('points') && !normalizedProp.includes('rebound') && !normalizedProp.includes('assist')) {
+    if (role === 'BIG') {
+      return { passes: false, reason: `BIG role not ideal for points-only` };
+    }
+    return { passes: true, reason: `${role || normalizedPosition} valid for points` };
   }
   
   // Threes: Volume check (attempts > makes)
@@ -197,10 +211,10 @@ function passesRoleLock(
     if (threeAttempts && threeMakes && threeAttempts > threeMakes) {
       return { passes: true, reason: `Volume shooter (${threeAttempts.toFixed(1)} 3PA)` };
     }
-    return { passes: true, reason: 'Volume check skipped (no data)' }; // Allow if no data
+    return { passes: true, reason: 'Volume check skipped (no data)' };
   }
   
-  // Points, PRA, etc. - all positions valid
+  // PRA, combo stats - all positions valid
   return { passes: true, reason: 'Position-agnostic stat' };
 }
 
@@ -408,7 +422,8 @@ async function buildSharpParlays(supabase: any): Promise<any> {
       prop.prop_type, 
       position, 
       usage.avg_three_attempts, 
-      usage.avg_three_made
+      usage.avg_three_made,
+      prop.player_role  // Pass player_role from Risk Engine picks
     );
     if (!roleResult.passes) {
       console.log(`[Sharp Builder] ${prop.player_name} failed role lock: ${roleResult.reason}`);
