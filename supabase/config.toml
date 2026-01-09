@@ -1,48 +1,12 @@
 project_id = "pajakaqphlxoqjtrxzmi"
 
-[functions.homepage-suggestions-engine]
-verify_jwt = false
-
-[functions.verify-median-edge-outcomes]
-verify_jwt = false
-
-[functions.verify-suggested-parlay-outcomes]
-verify_jwt = false
-
-[functions.median-edge-engine]
-verify_jwt = false
-
-[functions.ai-continuous-parlay-generator]
-verify_jwt = false
-
-[functions.predict-upsets]
-verify_jwt = false
-
-[functions.verify-upset-outcomes]
-verify_jwt = false
-
 [functions.extract-parlay]
-verify_jwt = false
-
-[functions.quick-sharp-check]
-verify_jwt = false
-
-[functions.analyze-sharp-line]
-verify_jwt = false
-
-[functions.scan-opening-lines]
 verify_jwt = false
 
 [functions.fetch-current-odds]
 verify_jwt = false
 
 [functions.generate-roasts]
-verify_jwt = false
-
-[functions.analyze-parlay]
-verify_jwt = false
-
-[functions.ai-learning-engine]
 verify_jwt = false
 
 [functions.fetch-game-scores]
@@ -66,13 +30,7 @@ verify_jwt = false
 [functions.customer-portal]
 verify_jwt = false
 
-[functions.generate-suggestions]
-verify_jwt = false
-
 [functions.send-parlay-alert]
-verify_jwt = false
-
-[functions.daily-suggestions-job]
 verify_jwt = false
 
 [functions.fetch-injury-updates]
@@ -87,22 +45,7 @@ verify_jwt = false
 [functions.betting-calendar-insights]
 verify_jwt = false
 
-[functions.upset-tracker]
-verify_jwt = false
-
-[functions.morning-props-scanner]
-verify_jwt = false
-
-[functions.lock-final-picks]
-verify_jwt = false
-
 [functions.finalize-line-determination]
-verify_jwt = false
-
-[functions.analyze-hitrate-props]
-verify_jwt = false
-
-[functions.build-hitrate-parlays]
 verify_jwt = false
 
 [functions.verify-sharp-outcomes]
@@ -129,15 +72,6 @@ verify_jwt = false
 [functions.recalibrate-sharp-signals]
 verify_jwt = false
 
-[functions.verify-hitrate-outcomes]
-verify_jwt = false
-
-[functions.unified-props-engine]
-verify_jwt = false
-
-[functions.verify-unified-outcomes]
-verify_jwt = false
-
 [functions.pvs-data-ingestion]
 verify_jwt = false
 
@@ -159,16 +93,7 @@ verify_jwt = false
 [functions.record-trap-pattern]
 verify_jwt = false
 
-[functions.sharp-engine-v2]
-verify_jwt = false
-
-[functions.god-mode-upset-engine]
-verify_jwt = false
-
 [functions.stream-live-odds]
-verify_jwt = false
-
-[functions.verify-god-mode-outcomes]
 verify_jwt = false
 
 [functions.auto-refresh-sharp-tracker]
@@ -183,13 +108,7 @@ verify_jwt = false
 [functions.seed-historical-fatigue]
 verify_jwt = false
 
-[functions.scan-best-bets]
-verify_jwt = false
-
 [functions.calculate-line-value]
-verify_jwt = false
-
-[functions.ai-best-bets-engine]
 verify_jwt = false
 
 [functions.nhl-stats-fetcher]
@@ -210,28 +129,10 @@ verify_jwt = false
 [functions.backfill-player-stats]
 verify_jwt = false
 
-[functions.fanduel-trap-scanner]
-verify_jwt = false
-
-[functions.fanduel-daily-parlay-builder]
-verify_jwt = false
-
-[functions.verify-fanduel-trap-outcomes]
-verify_jwt = false
-
 [functions.unified-live-feed]
 verify_jwt = false
 
 [functions.calculate-brier-scores]
-verify_jwt = false
-
-[functions.median-lock-engine]
-verify_jwt = false
-
-[functions.median-lock-backtest]
-verify_jwt = false
-
-[functions.verify-median-lock-outcomes]
 verify_jwt = false
 
 [functions.send-phone-verification]
@@ -246,12 +147,6 @@ verify_jwt = false
 [functions.populate-calibration-data]
 verify_jwt = false
 
-[functions.compare-parlays-ai]
-verify_jwt = false
-
-[functions.coach-tendencies-engine]
-verify_jwt = false
-
 [functions.auto-refresh-projections]
 verify_jwt = false
 
@@ -262,12 +157,6 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.sync-median-lock-game-status]
-verify_jwt = false
-
-[functions.verify-sharp-tracker-outcomes]
-verify_jwt = false
-
-[functions.verify-coaching-outcomes]
 verify_jwt = false
 
 [functions.calculate-rolling-performance]
@@ -282,19 +171,10 @@ verify_jwt = false
 [functions.decrement-pilot-scan]
 verify_jwt = false
 
-[functions.elite-daily-hitter-engine]
-verify_jwt = false
-
 [functions.nfl-team-defense-fetcher]
 verify_jwt = false
 
 [functions.nhl-team-stats-fetcher]
-verify_jwt = false
-
-[functions.first-scorer-engine]
-verify_jwt = false
-
-[functions.generate-combo-props]
 verify_jwt = false
 
 [functions.fetch-nfl-injuries]
@@ -330,13 +210,7 @@ verify_jwt = false
 [functions.fetch-parlay-comparison]
 verify_jwt = false
 
-[functions.market-signal-engine]
-verify_jwt = false
-
 [functions.check-device]
-verify_jwt = false
-
-[functions.trap-probability-engine]
 verify_jwt = false
 
 [functions.game-news-aggregator]
@@ -348,16 +222,7 @@ verify_jwt = false
 [functions.sync-live-scores]
 verify_jwt = false
 
-[functions.analyze-elite-hitter-losses]
-verify_jwt = false
-
-[functions.nba-median-matchup-engine]
-verify_jwt = false
-
-[functions.verify-median-parlay-outcomes]
-verify_jwt = false
-
-[functions.parlay-ab-testing]
+[functions.verify-best-bets-outcomes]
 verify_jwt = false
 
 [functions.nba-player-prop-risk-engine]
@@ -373,4 +238,10 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.prop-engine-v2]
+verify_jwt = false
+
+[functions.calibrate-sharp-signals]
+verify_jwt = false
+
+[functions.create-elite-hitter-checkout]
 verify_jwt = false
