@@ -152,12 +152,12 @@ function checkAutoFailRules(prop: PropInput, archetype: string): { fail: boolean
     };
   }
 
-  // RULE 2: MEDIAN DEAD-ZONE FILTER
-  // If line within ±1 of median AND direction is UNDER → AUTO NO BET
-  if (prop.rolling_median && isUnder && Math.abs(medianGap) <= 1) {
+  // RULE 2: MEDIAN DEAD-ZONE FILTER (±0.5 for ALL sides)
+  // If line within ±0.5 of median → AUTO NO BET (coin-flip with no edge)
+  if (prop.rolling_median && Math.abs(medianGap) <= 0.5) {
     return { 
       fail: true, 
-      reason: 'RULE 2: MEDIAN DEAD-ZONE - Line within ±1 of median on UNDER is a bookmaker coin-flip trap' 
+      reason: 'RULE 2: MEDIAN DEAD-ZONE - Line within ±0.5 of median is a coin-flip with no edge' 
     };
   }
 

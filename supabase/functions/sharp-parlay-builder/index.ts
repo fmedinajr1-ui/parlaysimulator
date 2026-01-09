@@ -112,7 +112,7 @@ function passesMinutesRule(avgMinutes: number, playerName: string): { passes: bo
   return { passes: false, reason: `${avgMinutes.toFixed(1)} min < ${MINUTES_THRESHOLD} threshold` };
 }
 
-// RULE 2: Median Engine (L5 & L10 games)
+// RULE 2: Median Engine (L5 & L10 games) + Dead-Zone Filter
 function passesMedianRule(
   gameLogs: number[], 
   line: number, 
@@ -124,12 +124,25 @@ function passesMedianRule(
   const median5 = calculateMedian(last5);
   const median10 = calculateMedian(last10);
   
+  const bestMedian = Math.max(median5, median10);
+  const edge = ((bestMedian - line) / line) * 100;
+  
+  // DEAD-ZONE CHECK: If line is within ±0.5 of median → NO EDGE (coin-flip)
+  const medianGap = Math.abs(line - bestMedian);
+  if (medianGap <= 0.5) {
+    return {
+      passes: false,
+      median5,
+      median10,
+      edge: 0,
+      reason: `DEAD ZONE: Line ${line} within ±0.5 of median ${bestMedian.toFixed(1)} - no edge`
+    };
+  }
+  
   // Upside builds allow 10% buffer below line
   const isUpsideBuild = parlayType === 'UPSIDE';
   const threshold = isUpsideBuild ? line * 0.90 : line;
   
-  const bestMedian = Math.max(median5, median10);
-  const edge = ((bestMedian - line) / line) * 100;
   const passes = median5 >= threshold || median10 >= threshold;
   
   if (passes) {

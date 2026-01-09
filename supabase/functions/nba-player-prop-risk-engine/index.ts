@@ -487,6 +487,11 @@ function calculateMedian(values: number[]): number {
   return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
+// MEDIAN DEAD-ZONE FILTER: If line is within ±0.5 of median → no edge (coin-flip)
+function isInMedianDeadZone(line: number, median: number): boolean {
+  return Math.abs(line - median) <= 0.5;
+}
+
 function generateReason(
   role: PlayerRole,
   gameScript: GameScript,
@@ -853,6 +858,19 @@ serve(async (req) => {
           const trueMedian = calculateMedian(statValues);
           const line = prop.current_line || prop.line;
           const edge = isOver ? trueMedian - line : line - trueMedian;
+          
+          // STEP 9.5: MEDIAN DEAD-ZONE FILTER (±0.5)
+          // If line is within ±0.5 of median → coin-flip with no edge
+          if (trueMedian > 0 && isInMedianDeadZone(line, trueMedian)) {
+            rejectedProps.push({
+              ...prop,
+              rejection_reason: `DEAD ZONE: Line ${line} within ±0.5 of median ${trueMedian.toFixed(1)} - no edge`,
+              player_role: role,
+              game_script: gameScript,
+              rolling_median: trueMedian
+            });
+            continue;
+          }
           
           // STEP 10: Confidence Scoring
           const { score, factors } = calculateConfidence(
