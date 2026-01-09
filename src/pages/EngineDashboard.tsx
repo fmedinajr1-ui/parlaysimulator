@@ -19,28 +19,32 @@ export default function EngineDashboard() {
 
   const runFullScan = async () => {
     setIsScanning(true);
-    toast.info("Starting full slate scan...");
+    toast.info("Starting full slate refresh...");
 
     try {
-      // Step 1: Fetch fresh props
+      // Step 1: Clean old props and fetch fresh from Odds API
       setRunningEngines({ props: true });
-      toast.info("Step 1/5: Fetching live odds...");
-      await supabase.functions.invoke('unified-props-engine', {
-        body: { action: 'refresh', sport: 'basketball_nba' }
+      toast.info("Step 1/5: Cleaning stale props & fetching today's slate...");
+      const refreshResult = await supabase.functions.invoke('refresh-todays-props', {
+        body: { sport: 'basketball_nba' }
       });
+      
+      if (refreshResult.data?.success) {
+        toast.success(`Loaded ${refreshResult.data.inserted} fresh props from ${refreshResult.data.events} games`);
+      }
 
       // Step 2: Run risk engine
       setRunningEngines({ risk: true });
       toast.info("Step 2/5: Running NBA Risk Engine...");
       await supabase.functions.invoke('nba-player-prop-risk-engine', {
-        body: { action: 'scan' }
+        body: { action: 'analyze_slate', use_live_odds: true }
       });
 
       // Step 3: Run prop engine v2
       setRunningEngines({ propv2: true });
       toast.info("Step 3/5: Running Prop Engine v2...");
       await supabase.functions.invoke('prop-engine-v2', {
-        body: { action: 'analyze_all' }
+        body: { action: 'analyze' }
       });
 
       // Step 4: Build sharp parlays
@@ -57,7 +61,7 @@ export default function EngineDashboard() {
         body: { action: 'build' }
       });
 
-      toast.success("Full slate scan complete!");
+      toast.success("Full slate refresh complete - all engines updated!");
       refetch();
     } catch (error) {
       console.error('Full scan error:', error);
