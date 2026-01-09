@@ -3,6 +3,7 @@ import { useEngineDashboard } from "@/hooks/useEngineDashboard";
 import { EngineStatusCard } from "@/components/dashboard/EngineStatusCard";
 import { EngineActivityFeed } from "@/components/dashboard/EngineActivityFeed";
 import { EngineDashboardStats } from "@/components/dashboard/EngineDashboardStats";
+import { EngineComparisonView } from "@/components/dashboard/EngineComparisonView";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -282,6 +283,9 @@ export default function EngineDashboard() {
             ]}
           />
         </div>
+
+        {/* Engine Comparison View */}
+        <EngineComparisonView />
 
         {/* Activity Feed */}
         <EngineActivityFeed />
