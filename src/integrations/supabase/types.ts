@@ -2296,6 +2296,311 @@ export type Database = {
         }
         Relationships: []
       }
+      heat_do_not_bet: {
+        Row: {
+          created_at: string | null
+          dnb_date: string
+          event_id: string | null
+          final_score: number | null
+          id: string
+          line: number | null
+          market_type: string
+          player_name: string
+          side: string | null
+          sport: string | null
+          trap_reason: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          dnb_date: string
+          event_id?: string | null
+          final_score?: number | null
+          id?: string
+          line?: number | null
+          market_type: string
+          player_name: string
+          side?: string | null
+          sport?: string | null
+          trap_reason?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          dnb_date?: string
+          event_id?: string | null
+          final_score?: number | null
+          id?: string
+          line?: number | null
+          market_type?: string
+          player_name?: string
+          side?: string | null
+          sport?: string | null
+          trap_reason?: string | null
+        }
+        Relationships: []
+      }
+      heat_parlays: {
+        Row: {
+          combined_probability: number | null
+          created_at: string | null
+          engine_version: string | null
+          estimated_odds: number | null
+          id: string
+          leg_1: Json
+          leg_2: Json
+          no_bet_flags: string[] | null
+          outcome: string | null
+          parlay_date: string
+          parlay_type: string
+          risk_level: string | null
+          settled_at: string | null
+          summary: string | null
+        }
+        Insert: {
+          combined_probability?: number | null
+          created_at?: string | null
+          engine_version?: string | null
+          estimated_odds?: number | null
+          id?: string
+          leg_1: Json
+          leg_2: Json
+          no_bet_flags?: string[] | null
+          outcome?: string | null
+          parlay_date: string
+          parlay_type: string
+          risk_level?: string | null
+          settled_at?: string | null
+          summary?: string | null
+        }
+        Update: {
+          combined_probability?: number | null
+          created_at?: string | null
+          engine_version?: string | null
+          estimated_odds?: number | null
+          id?: string
+          leg_1?: Json
+          leg_2?: Json
+          no_bet_flags?: string[] | null
+          outcome?: string | null
+          parlay_date?: string
+          parlay_type?: string
+          risk_level?: string | null
+          settled_at?: string | null
+          summary?: string | null
+        }
+        Relationships: []
+      }
+      heat_prop_snapshots: {
+        Row: {
+          created_at: string | null
+          id: string
+          line: number
+          price: number
+          snapshot_time: string
+          tracker_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          line: number
+          price: number
+          snapshot_time: string
+          tracker_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          line?: number
+          price?: number
+          snapshot_time?: string
+          tracker_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "heat_prop_snapshots_tracker_id_fkey"
+            columns: ["tracker_id"]
+            isOneToOne: false
+            referencedRelation: "heat_prop_tracker"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      heat_prop_tracker: {
+        Row: {
+          away_team: string | null
+          base_role_score: number | null
+          book_name: string
+          created_at: string | null
+          event_id: string
+          final_score: number | null
+          home_team: string | null
+          id: string
+          is_eligible_core: boolean | null
+          is_eligible_upside: boolean | null
+          latest_line: number
+          latest_price: number
+          latest_time: string
+          league: string | null
+          line_delta: number | null
+          market_signal_score: number | null
+          market_type: string
+          movement_15m: Json | null
+          movement_60m: Json | null
+          movement_6h: Json | null
+          movement_since_open: Json | null
+          opening_line: number
+          opening_price: number
+          opening_time: string
+          passes_role_validation: boolean | null
+          passes_stat_safety: boolean | null
+          player_id: string | null
+          player_name: string
+          player_role_tag: string | null
+          price_delta: number | null
+          projected_minutes: number | null
+          promo_flag: boolean | null
+          public_pct_handle: number | null
+          public_pct_tickets: number | null
+          side: string
+          signal_label: string | null
+          sport: string
+          start_time_utc: string
+          update_count: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          away_team?: string | null
+          base_role_score?: number | null
+          book_name: string
+          created_at?: string | null
+          event_id: string
+          final_score?: number | null
+          home_team?: string | null
+          id?: string
+          is_eligible_core?: boolean | null
+          is_eligible_upside?: boolean | null
+          latest_line: number
+          latest_price: number
+          latest_time: string
+          league?: string | null
+          line_delta?: number | null
+          market_signal_score?: number | null
+          market_type: string
+          movement_15m?: Json | null
+          movement_60m?: Json | null
+          movement_6h?: Json | null
+          movement_since_open?: Json | null
+          opening_line: number
+          opening_price: number
+          opening_time: string
+          passes_role_validation?: boolean | null
+          passes_stat_safety?: boolean | null
+          player_id?: string | null
+          player_name: string
+          player_role_tag?: string | null
+          price_delta?: number | null
+          projected_minutes?: number | null
+          promo_flag?: boolean | null
+          public_pct_handle?: number | null
+          public_pct_tickets?: number | null
+          side: string
+          signal_label?: string | null
+          sport: string
+          start_time_utc: string
+          update_count?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          away_team?: string | null
+          base_role_score?: number | null
+          book_name?: string
+          created_at?: string | null
+          event_id?: string
+          final_score?: number | null
+          home_team?: string | null
+          id?: string
+          is_eligible_core?: boolean | null
+          is_eligible_upside?: boolean | null
+          latest_line?: number
+          latest_price?: number
+          latest_time?: string
+          league?: string | null
+          line_delta?: number | null
+          market_signal_score?: number | null
+          market_type?: string
+          movement_15m?: Json | null
+          movement_60m?: Json | null
+          movement_6h?: Json | null
+          movement_since_open?: Json | null
+          opening_line?: number
+          opening_price?: number
+          opening_time?: string
+          passes_role_validation?: boolean | null
+          passes_stat_safety?: boolean | null
+          player_id?: string | null
+          player_name?: string
+          player_role_tag?: string | null
+          price_delta?: number | null
+          projected_minutes?: number | null
+          promo_flag?: boolean | null
+          public_pct_handle?: number | null
+          public_pct_tickets?: number | null
+          side?: string
+          signal_label?: string | null
+          sport?: string
+          start_time_utc?: string
+          update_count?: number | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      heat_watchlist: {
+        Row: {
+          approaching_entry: boolean | null
+          created_at: string | null
+          event_id: string | null
+          final_score: number | null
+          id: string
+          line: number | null
+          market_type: string
+          player_name: string
+          reason: string | null
+          side: string | null
+          signal_label: string | null
+          sport: string | null
+          watchlist_date: string
+        }
+        Insert: {
+          approaching_entry?: boolean | null
+          created_at?: string | null
+          event_id?: string | null
+          final_score?: number | null
+          id?: string
+          line?: number | null
+          market_type: string
+          player_name: string
+          reason?: string | null
+          side?: string | null
+          signal_label?: string | null
+          sport?: string | null
+          watchlist_date: string
+        }
+        Update: {
+          approaching_entry?: boolean | null
+          created_at?: string | null
+          event_id?: string | null
+          final_score?: number | null
+          id?: string
+          line?: number | null
+          market_type?: string
+          player_name?: string
+          reason?: string | null
+          side?: string | null
+          signal_label?: string | null
+          sport?: string | null
+          watchlist_date?: string
+        }
+        Relationships: []
+      }
       hitrate_accuracy_metrics: {
         Row: {
           avg_actual_probability: number
