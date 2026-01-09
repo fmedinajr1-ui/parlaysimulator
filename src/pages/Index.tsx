@@ -9,6 +9,7 @@ import { CompareTeaser } from "@/components/CompareTeaser";
 import { HistoricalInsights } from "@/components/suggestions/HistoricalInsights";
 import { SmartBettingEdge } from "@/components/suggestions/SmartBettingEdge";
 import { RiskEnginePicksCard } from "@/components/suggestions/RiskEnginePicksCard";
+import SharpParlayCards from "@/components/sharp/SharpParlayCard";
 import { PropMarketWidget } from "@/components/market/PropMarketWidget";
 import { CriticalAlertsTicker } from "@/components/news";
 import { PullToRefreshContainer, PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
@@ -188,6 +189,13 @@ const Index = () => {
         {(isPilotUser || isSubscribed || isAdmin) && (
           <div className="mb-4">
             <RiskEnginePicksCard />
+          </div>
+        )}
+
+        {/* Sharp AI Parlays - Pilot + Subscriber + Admin Access */}
+        {(isPilotUser || isSubscribed || isAdmin) && (
+          <div className="mb-4">
+            <SharpParlayCards />
           </div>
         )}
 
