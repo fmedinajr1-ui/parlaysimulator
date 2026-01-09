@@ -81,6 +81,11 @@ function getStatPriorityScore(propType: string): number {
   return 5;
 }
 
+// MEDIAN DEAD-ZONE FILTER: If line is within ±0.5 of median → no edge (coin-flip)
+function isInMedianDeadZone(line: number, median: number): boolean {
+  return Math.abs(line - median) <= 0.5;
+}
+
 // Star players with role-based exceptions
 const NEVER_FADE_PRA = [
   'jaylen brown', 'jayson tatum', 'devin booker',
@@ -538,15 +543,26 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
         pick.prop_type
       );
       
-      // Eligibility
+      // MEDIAN DEAD-ZONE FILTER (±0.5): If line is within ±0.5 of median → no edge
+      const rollingMedian = pick.rolling_median || pick.median_l10;
+      const currentLine = pick.line + lineDelta;
+      const inDeadZone = rollingMedian && isInMedianDeadZone(currentLine, rollingMedian);
+      
+      if (inDeadZone) {
+        console.log(`[Heat] Dead zone skip: ${pick.player_name} line ${currentLine} vs median ${rollingMedian}`);
+      }
+      
+      // Eligibility (now includes dead-zone filter)
       const isEligibleCore = finalScore >= 78 && 
         statSafety.passes && 
         roleValidation.passes && 
-        signalLabel !== 'PUBLIC_TRAP';
+        signalLabel !== 'PUBLIC_TRAP' &&
+        !inDeadZone;
       
       const isEligibleUpside = finalScore >= 70 && 
         roleValidation.passes &&
-        (signalLabel === 'STRONG_SHARP' || signalLabel === 'SHARP_LEAN' || statSafety.passes);
+        (signalLabel === 'STRONG_SHARP' || signalLabel === 'SHARP_LEAN' || statSafety.passes) &&
+        !inDeadZone;
       
       trackerUpserts.push({
         event_id: pick.event_id || `${pick.player_name}-${pick.prop_type}-${today}`,
