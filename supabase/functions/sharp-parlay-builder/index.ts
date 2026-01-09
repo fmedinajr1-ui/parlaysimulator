@@ -285,7 +285,13 @@ async function buildSharpParlays(supabase: any): Promise<any> {
   console.log(`[Sharp Parlay Builder] Found ${props?.length || 0} approved props for ${today}`);
   
   if (!props || props.length === 0) {
-    return { message: 'No approved props available for today', parlays: null };
+    return { 
+      message: 'No approved props available for today', 
+      parlays: null,
+      candidates_evaluated: 0,
+      candidates_passed: 0,
+      saved: []
+    };
   }
   
   // Fetch game logs for median calculation
