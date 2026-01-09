@@ -26,7 +26,7 @@ interface HeatParlay {
   no_bet_flags: string[];
 }
 
-interface WatchlistItem {
+export interface WatchlistItem {
   id: string;
   player_name: string;
   market_type: string;
@@ -39,7 +39,7 @@ interface WatchlistItem {
   reason: string;
 }
 
-interface DoNotBetItem {
+export interface DoNotBetItem {
   id: string;
   player_name: string;
   market_type: string;
@@ -58,6 +58,46 @@ interface HeatEngineResult {
   do_not_bet: DoNotBetItem[];
   message?: string;
   error?: string;
+}
+
+// Direct database query for Watchlist - updates in real-time
+export function useHeatWatchlist() {
+  const today = new Date().toISOString().split('T')[0];
+  
+  return useQuery({
+    queryKey: ['heat-watchlist', today],
+    queryFn: async (): Promise<WatchlistItem[]> => {
+      const { data, error } = await supabase
+        .from('heat_watchlist')
+        .select('*')
+        .gte('watchlist_date', today)
+        .order('final_score', { ascending: false });
+      
+      if (error) throw error;
+      return data || [];
+    },
+    refetchInterval: 30000, // 30 second backup polling
+  });
+}
+
+// Direct database query for Do Not Bet - updates in real-time
+export function useHeatDoNotBet() {
+  const today = new Date().toISOString().split('T')[0];
+  
+  return useQuery({
+    queryKey: ['heat-do-not-bet', today],
+    queryFn: async (): Promise<DoNotBetItem[]> => {
+      const { data, error } = await supabase
+        .from('heat_do_not_bet')
+        .select('*')
+        .gte('do_not_bet_date', today)
+        .order('final_score', { ascending: false });
+      
+      if (error) throw error;
+      return data || [];
+    },
+    refetchInterval: 30000,
+  });
 }
 
 export function useHeatPropEngine(sport?: string) {

@@ -13,7 +13,8 @@ import { cn } from "@/lib/utils";
 import { HeatParlayCard } from "@/components/heat/HeatParlayCard";
 import { WatchlistSection } from "@/components/heat/WatchlistSection";
 import { DoNotBetSection } from "@/components/heat/DoNotBetSection";
-import { useHeatPropEngine, useHeatEngineScan } from "@/hooks/useHeatPropEngine";
+import { useHeatPropEngine, useHeatEngineScan, useHeatWatchlist, useHeatDoNotBet } from "@/hooks/useHeatPropEngine";
+import { useHeatPropRealtime } from "@/hooks/useHeatPropRealtime";
 
 type HeatFilter = 'ALL' | HeatLevel;
 
@@ -55,9 +56,16 @@ export default function PropMarket() {
   const queryClient = useQueryClient();
   const { refreshAll, isRefreshing, lastRefresh } = useRefreshPropMarketOdds();
   
-  // Heat Prop Engine data
+  // Heat Prop Engine data - parlays from edge function
   const { data: heatData, isLoading: heatLoading } = useHeatPropEngine();
   const { mutate: runHeatScan, isPending: isHeatScanning } = useHeatEngineScan();
+  
+  // Direct database queries for real-time updates
+  const { data: watchlistItems } = useHeatWatchlist();
+  const { data: doNotBetItems } = useHeatDoNotBet();
+  
+  // Enable real-time subscriptions
+  useHeatPropRealtime();
 
   const { data: picks, isLoading, error } = useQuery({
     queryKey: ['prop-market-all-picks'],
@@ -170,10 +178,10 @@ export default function PropMarket() {
           />
         </div>
 
-        {/* Watchlist & Do Not Bet */}
+        {/* Watchlist & Do Not Bet - Real-time from database */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-          <WatchlistSection items={heatData?.watchlist || []} />
-          <DoNotBetSection items={heatData?.do_not_bet || []} />
+          <WatchlistSection items={watchlistItems || []} />
+          <DoNotBetSection items={doNotBetItems || []} />
         </div>
 
         {/* Heat Filters */}
