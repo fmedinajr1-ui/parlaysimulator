@@ -2,16 +2,10 @@ import React from "react";
 import { HeroBanner } from "@/components/HeroBanner";
 import { ExampleCarousel } from "@/components/ExampleCarousel";
 import { HowItWorks } from "@/components/HowItWorks";
-import { FeatureTeaser } from "@/components/FeatureTeaser";
 import { SampleParlayButton } from "@/components/SampleParlayButton";
-import { SuggestedParlays } from "@/components/suggestions/SuggestedParlays";
-import { CompareTeaser } from "@/components/CompareTeaser";
-import { HistoricalInsights } from "@/components/suggestions/HistoricalInsights";
-import { SmartBettingEdge } from "@/components/suggestions/SmartBettingEdge";
 import { RiskEnginePicksCard } from "@/components/suggestions/RiskEnginePicksCard";
 import SharpParlayCards from "@/components/sharp/SharpParlayCard";
 import { PropMarketWidget } from "@/components/market/PropMarketWidget";
-import { CriticalAlertsTicker } from "@/components/news";
 import { PullToRefreshContainer, PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
 import { useHapticFeedback } from "@/hooks/useHapticFeedback";
@@ -21,9 +15,6 @@ import { AppShell } from "@/components/layout/AppShell";
 import { Zap, BarChart3, Sparkles, Trophy, Calculator, GitCompare, LogIn, LogOut, Radio } from "lucide-react";
 import { usePilotUser } from "@/hooks/usePilotUser";
 import { useAuth } from "@/contexts/AuthContext";
-import { SmartAnalyzeButton } from "@/components/SmartAnalyzeButton";
-import { EngineStatusBar } from "@/components/EngineStatusBar";
-import { LiveDashboardCard } from "@/components/live/LiveDashboardCard";
 
 function QuickAction({ to, icon: Icon, label, iconClass }: {
   to: string; 
@@ -103,18 +94,6 @@ const Index = () => {
       >
         <HeroBanner />
 
-        {/* Critical Alerts Ticker - Visible to all users */}
-        <div className="mb-4 -mx-4">
-          <CriticalAlertsTicker />
-        </div>
-
-        {/* Live Dashboard Card - Show for logged in users */}
-        {user && (
-          <div className="mb-4">
-            <LiveDashboardCard />
-          </div>
-        )}
-
         {/* Auth Button */}
         <div className="flex justify-end mb-4">
           <Button 
@@ -178,52 +157,28 @@ const Index = () => {
         {/* Example Cards */}
         <ExampleCarousel />
 
-        {/* Prop Market Widget - Pilot + Subscriber + Admin Access */}
-        {(isPilotUser || isSubscribed || isAdmin) && (
-          <div className="mb-4">
-            <PropMarketWidget />
-          </div>
-        )}
-
-        {/* NBA Risk Engine - Pilot + Subscriber + Admin Access */}
-        {(isPilotUser || isSubscribed || isAdmin) && (
-          <div className="mb-4">
-            <RiskEnginePicksCard />
-          </div>
-        )}
-
-        {/* Sharp AI Parlays - Pilot + Subscriber + Admin Access */}
+        {/* Sharp AI Parlays - FIRST */}
         {(isPilotUser || isSubscribed || isAdmin) && (
           <div className="mb-4">
             <SharpParlayCards />
           </div>
         )}
 
-        {/* Compare Parlays - Available to all users */}
-        <CompareTeaser />
+        {/* NBA Risk Engine - SECOND */}
+        {(isPilotUser || isSubscribed || isAdmin) && (
+          <div className="mb-4">
+            <RiskEnginePicksCard />
+          </div>
+        )}
 
-        {/* Premium Sections - Hidden for Pilot Users */}
-        {!isPilotRestricted && (
-          <>
-            {/* AI Suggested Parlays */}
-            <div className="mb-4 content-visibility-auto">
-              <SuggestedParlays />
-            </div>
-
-            {/* Historical Trends */}
-            <div className="mb-4 content-visibility-auto">
-              <HistoricalInsights compact />
-            </div>
-
-            {/* Smart Betting Edge */}
-            <div className="mb-4 content-visibility-auto">
-              <SmartBettingEdge compact />
-            </div>
-          </>
+        {/* Prop Heat Map - THIRD */}
+        {(isPilotUser || isSubscribed || isAdmin) && (
+          <div className="mb-4">
+            <PropMarketWidget />
+          </div>
         )}
 
         <HowItWorks />
-        {!isPilotRestricted && <FeatureTeaser />}
       </div>
     </AppShell>
   );
