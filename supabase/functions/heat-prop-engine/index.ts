@@ -575,15 +575,19 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
       corePlayerNames  // Exclude CORE players for differentiation
     );
     
-    // Build Watchlist (top 5 approaching entry) - expanded range to 55-77
-    const { data: allTrackedForWatchlist } = await supabase
+    // Build Watchlist (top 5 approaching entry) - range 70-84 (just below CORE threshold)
+    const todayStart = `${today}T00:00:00Z`;
+    const { data: allTrackedForWatchlist, error: watchlistError } = await supabase
       .from('heat_prop_tracker')
       .select('*')
-      .gte('start_time_utc', today)
-      .gte('final_score', 55)
-      .lt('final_score', 78)
+      .gte('start_time_utc', todayStart)
+      .gte('final_score', 70)
+      .lt('final_score', 85)
+      .neq('signal_label', 'PUBLIC_TRAP')
       .order('final_score', { ascending: false })
       .limit(5);
+    
+    console.log(`[Heat Engine] Watchlist query result: ${allTrackedForWatchlist?.length || 0} items, error: ${watchlistError?.message || 'none'}`);
     
     const watchlistCandidates = (allTrackedForWatchlist || []).map((p: any) => ({
       watchlist_date: today,
@@ -594,9 +598,9 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
       sport: p.sport,
       event_id: p.event_id,
       signal_label: p.signal_label,
-      approaching_entry: p.final_score >= 70,
+      approaching_entry: p.final_score >= 78,
       final_score: p.final_score,
-      reason: `Score ${p.final_score}/100, needs ${78 - p.final_score} more for CORE entry`
+      reason: `Score ${p.final_score}/100, needs ${85 - p.final_score} more for CORE entry`
     }));
     
     console.log(`[Heat Engine] Watchlist candidates: ${watchlistCandidates.length}`);
