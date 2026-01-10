@@ -603,8 +603,20 @@ serve(async (req) => {
       }
     }
 
+    // Helper function to get today's date in Eastern Time (NBA game time)
+    function getEasternDate(): string {
+      const now = new Date();
+      const formatter = new Intl.DateTimeFormat('en-CA', { 
+        timeZone: 'America/New_York',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      });
+      return formatter.format(now); // Returns 'YYYY-MM-DD'
+    }
+
     if (action === 'analyze_slate') {
-      const today = new Date().toISOString().split('T')[0];
+      const today = getEasternDate();
       
       // 1. Fetch active NBA props from unified_props
       const { data: props, error: propsError } = await supabase

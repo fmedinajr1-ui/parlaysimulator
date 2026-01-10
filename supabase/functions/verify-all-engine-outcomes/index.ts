@@ -144,8 +144,20 @@ serve(async (req) => {
     let riskResult: VerificationResult = { engine: 'risk', verified: 0, partial: 0, hits: 0, misses: 0, pushes: 0 };
 
     for (const pick of (riskPicks || [])) {
-      const lookupKey = `${normalizePlayerName(pick.player_name)}_${pick.game_date}`;
-      const gameLog = logMap.get(lookupKey);
+      const normalizedPlayer = normalizePlayerName(pick.player_name);
+      const lookupKey = `${normalizedPlayer}_${pick.game_date}`;
+      let gameLog = logMap.get(lookupKey);
+
+      // Fallback: check previous day (timezone mismatch recovery)
+      if (!gameLog && pick.game_date) {
+        const prevDate = new Date(pick.game_date);
+        prevDate.setDate(prevDate.getDate() - 1);
+        const prevDateStr = prevDate.toISOString().split('T')[0];
+        gameLog = logMap.get(`${normalizedPlayer}_${prevDateStr}`);
+        if (gameLog) {
+          console.log(`[verify-all] Risk: Found ${pick.player_name} on fallback date ${prevDateStr}`);
+        }
+      }
 
       if (!gameLog) continue;
 
@@ -198,8 +210,20 @@ serve(async (req) => {
         const line = leg.line || leg.target || 0;
         const side = leg.side || leg.pick || 'over';
 
-        const lookupKey = `${normalizePlayerName(playerName)}_${parlay.parlay_date}`;
-        const gameLog = logMap.get(lookupKey);
+        const normalizedPlayer = normalizePlayerName(playerName);
+        const lookupKey = `${normalizedPlayer}_${parlay.parlay_date}`;
+        let gameLog = logMap.get(lookupKey);
+
+        // Fallback: check previous day (timezone mismatch recovery)
+        if (!gameLog && parlay.parlay_date) {
+          const prevDate = new Date(parlay.parlay_date);
+          prevDate.setDate(prevDate.getDate() - 1);
+          const prevDateStr = prevDate.toISOString().split('T')[0];
+          gameLog = logMap.get(`${normalizedPlayer}_${prevDateStr}`);
+          if (gameLog) {
+            console.log(`[verify-all] Sharp: Found ${playerName} on fallback date ${prevDateStr}`);
+          }
+        }
 
         if (!gameLog) {
           legResults.push({ ...leg, outcome: 'pending' });
@@ -307,8 +331,20 @@ serve(async (req) => {
         const line = leg.line || 0;
         const side = leg.side || 'over';
 
-        const lookupKey = `${normalizePlayerName(playerName)}_${parlay.parlay_date}`;
-        const gameLog = logMap.get(lookupKey);
+        const normalizedPlayer = normalizePlayerName(playerName);
+        const lookupKey = `${normalizedPlayer}_${parlay.parlay_date}`;
+        let gameLog = logMap.get(lookupKey);
+
+        // Fallback: check previous day (timezone mismatch recovery)
+        if (!gameLog && parlay.parlay_date) {
+          const prevDate = new Date(parlay.parlay_date);
+          prevDate.setDate(prevDate.getDate() - 1);
+          const prevDateStr = prevDate.toISOString().split('T')[0];
+          gameLog = logMap.get(`${normalizedPlayer}_${prevDateStr}`);
+          if (gameLog) {
+            console.log(`[verify-all] Heat: Found ${playerName} on fallback date ${prevDateStr}`);
+          }
+        }
 
         if (!gameLog) {
           updatedLegs.push({ ...leg, outcome: 'pending' });
