@@ -109,14 +109,18 @@ async function resolvePlayerNames(
             const name = `${data.data.first_name} ${data.data.last_name}`;
             playerMap.set(playerId, name);
             
-            // Cache for future use
-            await supabase.from('bdl_player_cache').upsert({
+            // Cache for future use - use player_name as unique constraint
+            const { error: cacheError } = await supabase.from('bdl_player_cache').upsert({
               bdl_player_id: playerId,
               player_name: name,
               position: data.data.position || null,
               team_name: data.data.team?.full_name || null,
               last_updated: new Date().toISOString(),
-            }, { onConflict: 'bdl_player_id' });
+            }, { onConflict: 'player_name' });
+            
+            if (cacheError) {
+              console.warn(`[bdl-fetch-odds] Cache upsert error for ${name}:`, cacheError.message);
+            }
           }
         }
         await delay(50); // Rate limiting
