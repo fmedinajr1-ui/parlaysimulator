@@ -500,7 +500,7 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
     const { data: nbaProps, error: propsCheckError } = await supabase
       .from('unified_props')
       .select('event_id')
-      .eq('sport_key', 'basketball_nba')
+      .eq('sport', 'basketball_nba')
       .gte('commence_time', today)
       .limit(1);
     
