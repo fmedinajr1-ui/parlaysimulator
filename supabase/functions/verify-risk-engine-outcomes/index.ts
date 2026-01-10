@@ -196,7 +196,7 @@ serve(async (req) => {
           .update({
             outcome: update.outcome,
             actual_value: update.actual_value,
-            verified_at: new Date().toISOString()
+            settled_at: new Date().toISOString()
           })
           .eq('id', update.id);
 

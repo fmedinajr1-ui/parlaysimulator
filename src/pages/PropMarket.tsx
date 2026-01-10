@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PropRow } from "@/components/market/PropRow";
 import { HeatLevel } from "@/components/market/HeatBadge";
-import { Flame, ArrowLeft, RefreshCw, Loader2, Zap, Shield, TrendingUp } from "lucide-react";
+import { Flame, ArrowLeft, RefreshCw, Loader2, Zap, Trophy } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useRefreshPropMarketOdds } from "@/hooks/useLiveOdds";
 import { toast } from "sonner";
@@ -156,6 +156,12 @@ export default function PropMarket() {
               )}
               Scan Live Odds
             </Button>
+            <Link to="/prop-results">
+              <Button variant="ghost" className="gap-2">
+                <Trophy className="w-4 h-4 text-primary" />
+                Results
+              </Button>
+            </Link>
           </div>
         </div>
 
