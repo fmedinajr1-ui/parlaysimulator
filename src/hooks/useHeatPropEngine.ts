@@ -90,7 +90,7 @@ export function useHeatDoNotBet() {
       const { data, error } = await supabase
         .from('heat_do_not_bet')
         .select('*')
-        .gte('do_not_bet_date', today)
+        .gte('dnb_date', today)
         .order('final_score', { ascending: false });
       
       if (error) throw error;
