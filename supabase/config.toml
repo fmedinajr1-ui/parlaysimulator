@@ -254,3 +254,6 @@ verify_jwt = false
 
 [functions.verify-risk-engine-outcomes]
 verify_jwt = false
+
+[functions.verify-all-engine-outcomes]
+verify_jwt = false
