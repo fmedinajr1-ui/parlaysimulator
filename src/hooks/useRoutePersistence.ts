@@ -1,5 +1,5 @@
-import { useEffect, useRef, useContext } from 'react';
-import { useLocation, useNavigate, UNSAFE_NavigationContext } from 'react-router-dom';
+import { useEffect, useRef } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { 
   ROUTE_STORAGE_KEY, 
   SCROLL_STORAGE_KEY, 
@@ -16,15 +16,7 @@ export { saveCurrentRoute } from '@/utils/routePersistence';
  * Also handles popstate events for proper swipe-back navigation.
  */
 export function useRoutePersistence() {
-  // Safety check: bail out if router context is not available
-  // This can happen with stale PWA cache serving old React chunks
-  const navigationContext = useContext(UNSAFE_NavigationContext);
-  
-  // Must call hooks unconditionally, so we use refs to track validity
-  const isContextValid = navigationContext !== null;
-  
   // Call hooks unconditionally at top level (React Rules of Hooks)
-  // They will throw if context is missing, but we guard usage in effects
   const location = useLocation();
   const navigate = useNavigate();
   
@@ -34,7 +26,6 @@ export function useRoutePersistence() {
 
   // Restore route on initial mount (only once)
   useEffect(() => {
-    if (!isContextValid) return;
     if (hasRestoredRef.current) return;
     hasRestoredRef.current = true;
 
@@ -69,12 +60,10 @@ export function useRoutePersistence() {
     } catch (error) {
       console.warn('[useRoutePersistence] Failed to restore route:', error);
     }
-  }, [navigate, isContextValid]);
+  }, [navigate]);
 
   // Save route on every location change
   useEffect(() => {
-    if (!isContextValid) return;
-    
     // Skip saving on initial mount to avoid overwriting stored route
     if (isInitialMountRef.current) {
       isInitialMountRef.current = false;
@@ -98,7 +87,7 @@ export function useRoutePersistence() {
     } catch (error) {
       console.warn('[useRoutePersistence] Failed to save route:', error);
     }
-  }, [location.pathname, location.search, isContextValid]);
+  }, [location.pathname, location.search]);
 
   // Handle popstate events (swipe-back, forward/back buttons)
   // React Router handles this automatically, but we need to track it
@@ -115,8 +104,6 @@ export function useRoutePersistence() {
 
   // Save scroll position on scroll (debounced)
   useEffect(() => {
-    if (!isContextValid) return;
-    
     let scrollTimeout: ReturnType<typeof setTimeout>;
 
     const handleScroll = () => {
@@ -141,5 +128,5 @@ export function useRoutePersistence() {
       clearTimeout(scrollTimeout);
       window.removeEventListener('scroll', handleScroll);
     };
-  }, [isContextValid]);
+  }, []);
 }
