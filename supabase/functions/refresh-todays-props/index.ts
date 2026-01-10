@@ -6,7 +6,9 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const BDL_BASE_URL = 'https://api.balldontlie.io/v2';
+// V1 for games, players, stats - V2 for betting endpoints only
+const BDL_V1_URL = 'https://api.balldontlie.io/v1';
+const BDL_V2_URL = 'https://api.balldontlie.io/v2';
 
 // Map BDL prop types to our unified format
 const BDL_PROP_TYPE_MAP: Record<string, string> = {
@@ -55,8 +57,8 @@ async function fetchBDLProps(bdlApiKey: string, today: string): Promise<any[]> {
   };
 
   // Step 1: Get today's games
-  const gamesUrl = `${BDL_BASE_URL}/games?dates[]=${today}`;
-  console.log(`[BDL Fallback] Fetching games from: ${gamesUrl}`);
+  const gamesUrl = `${BDL_V1_URL}/games?dates[]=${today}`;
+  console.log(`[BDL Fallback] Fetching games from V1: ${gamesUrl}`);
   
   const gamesResponse = await fetch(gamesUrl, { headers });
   if (!gamesResponse.ok) {
@@ -75,7 +77,8 @@ async function fetchBDLProps(bdlApiKey: string, today: string): Promise<any[]> {
   // Step 2: Fetch props for each game
   for (const game of games) {
     try {
-      const propsUrl = `${BDL_BASE_URL}/odds/player_props?game_id=${game.id}`;
+      const propsUrl = `${BDL_V2_URL}/odds/player_props?game_id=${game.id}`;
+      console.log(`[BDL Fallback] Fetching props from V2: ${propsUrl}`);
       const propsResponse = await fetch(propsUrl, { headers });
       
       if (!propsResponse.ok) {

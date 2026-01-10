@@ -6,7 +6,9 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const BDL_BASE_URL = 'https://api.balldontlie.io/v2';
+// V1 for games, players, stats - V2 for betting endpoints only
+const BDL_V1_URL = 'https://api.balldontlie.io/v1';
+const BDL_V2_URL = 'https://api.balldontlie.io/v2';
 
 // Map BDL prop types to our unified format
 const PROP_TYPE_MAP: Record<string, string> = {
@@ -80,7 +82,7 @@ serve(async (req) => {
     // Action: Fetch today's games
     if (action === 'fetch_games') {
       const today = new Date().toISOString().split('T')[0];
-      const gamesUrl = `${BDL_BASE_URL}/games?dates[]=${today}`;
+      const gamesUrl = `${BDL_V1_URL}/games?dates[]=${today}`;
       
       console.log(`[bdl-fetch-odds] Fetching games from: ${gamesUrl}`);
       
@@ -113,7 +115,7 @@ serve(async (req) => {
     // Action: Fetch game odds (spreads, moneylines, totals)
     if (action === 'fetch_game_odds') {
       const today = new Date().toISOString().split('T')[0];
-      const oddsUrl = `${BDL_BASE_URL}/odds?dates[]=${today}`;
+      const oddsUrl = `${BDL_V2_URL}/odds?dates[]=${today}`;
       
       console.log(`[bdl-fetch-odds] Fetching game odds from: ${oddsUrl}`);
       
@@ -153,7 +155,7 @@ serve(async (req) => {
         throw new Error('game_id is required for fetch_player_props');
       }
 
-      const propsUrl = `${BDL_BASE_URL}/odds/player_props?game_id=${game_id}`;
+      const propsUrl = `${BDL_V2_URL}/odds/player_props?game_id=${game_id}`;
       
       console.log(`[bdl-fetch-odds] Fetching player props from: ${propsUrl}`);
       
@@ -206,7 +208,7 @@ serve(async (req) => {
     if (action === 'sync_to_unified_props') {
       // Step 1: Get today's games from BDL
       const today = new Date().toISOString().split('T')[0];
-      const gamesUrl = `${BDL_BASE_URL}/games?dates[]=${today}`;
+      const gamesUrl = `${BDL_V1_URL}/games?dates[]=${today}`;
       
       const gamesResponse = await fetch(gamesUrl, { headers });
       if (!gamesResponse.ok) {
@@ -231,7 +233,7 @@ serve(async (req) => {
 
       // Step 2: Fetch props for each game
       for (const game of games) {
-        const propsUrl = `${BDL_BASE_URL}/odds/player_props?game_id=${game.id}`;
+        const propsUrl = `${BDL_V2_URL}/odds/player_props?game_id=${game.id}`;
         
         try {
           const propsResponse = await fetch(propsUrl, { headers });
