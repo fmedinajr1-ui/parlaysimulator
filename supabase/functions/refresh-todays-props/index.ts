@@ -37,7 +37,7 @@ interface BDLGame {
 interface BDLPlayerProp {
   game_id: number;
   player_id: number;
-  player: { first_name: string; last_name: string };
+  player?: { first_name: string; last_name: string }; // May or may not be present
   vendor: string;
   prop_type: string;
   line_value: string;
@@ -47,6 +47,14 @@ interface BDLPlayerProp {
     under_odds?: number;
     odds?: number;
   };
+}
+
+// Helper to get player name from prop (handles both formats)
+function getPlayerName(prop: BDLPlayerProp): string {
+  if (prop.player && prop.player.first_name && prop.player.last_name) {
+    return `${prop.player.first_name} ${prop.player.last_name}`;
+  }
+  return `Player_${prop.player_id}`;
 }
 
 // Fetch props from BallDontLie API
@@ -99,24 +107,21 @@ async function fetchBDLProps(bdlApiKey: string, today: string): Promise<any[]> {
       
       for (const prop of props) {
         const propType = BDL_PROP_TYPE_MAP[prop.prop_type] || prop.prop_type;
+        const gameDescription = `${game.visitor_team.full_name} @ ${game.home_team.full_name}`;
         
         allProps.push({
           event_id: eventId,
-          sport_key: 'basketball_nba',
-          sport_title: 'NBA',
-          home_team: game.home_team.full_name,
-          away_team: game.visitor_team.full_name,
+          sport: 'basketball_nba',
+          game_description: gameDescription,
           commence_time: gameDate.toISOString(),
           bookmaker: prop.vendor.toLowerCase(),
-          market_key: `player_${propType}`,
-          player_name: `${prop.player.first_name} ${prop.player.last_name}`,
+          player_name: getPlayerName(prop),
           prop_type: propType,
-          line: parseFloat(prop.line_value),
+          current_line: parseFloat(prop.line_value),
           over_price: prop.market.over_odds || null,
           under_price: prop.market.under_odds || null,
-          last_update: new Date().toISOString(),
           is_active: true,
-          data_source: 'balldontlie',
+          category: 'balldontlie',
         });
       }
       
@@ -259,23 +264,20 @@ serve(async (req) => {
             for (const bookmaker of propsData.bookmakers || []) {
               for (const marketData of bookmaker.markets || []) {
                 for (const outcome of marketData.outcomes || []) {
+                  const gameDescription = `${event.away_team} @ ${event.home_team}`;
                   const prop = {
                     event_id: event.id,
-                    sport_key: sport,
-                    sport_title: 'NBA',
-                    home_team: event.home_team,
-                    away_team: event.away_team,
+                    sport: sport,
+                    game_description: gameDescription,
                     commence_time: event.commence_time,
                     bookmaker: bookmaker.key,
-                    market_key: marketData.key,
                     player_name: outcome.description,
                     prop_type: market.replace('player_', ''),
-                    line: outcome.point,
+                    current_line: outcome.point,
                     over_price: outcome.name === 'Over' ? outcome.price : null,
                     under_price: outcome.name === 'Under' ? outcome.price : null,
-                    last_update: bookmaker.last_update || new Date().toISOString(),
                     is_active: true,
-                    data_source: 'the_odds_api',
+                    category: 'the_odds_api',
                   };
                   
                   allProps.push(prop);
