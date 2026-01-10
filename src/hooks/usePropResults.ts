@@ -10,7 +10,7 @@ export interface PropResult {
   prop_type: string;
   line: number;
   side: string;
-  outcome: 'hit' | 'miss' | 'push';
+  outcome: 'hit' | 'miss' | 'push' | 'partial' | 'pending';
   actual_value: number | null;
   confidence_score: number;
   game_date: string;
@@ -21,6 +21,7 @@ export interface PropResult {
   parlay_type?: string;
   legs?: ParlayLeg[];
   total_odds?: number;
+  verified_legs_count?: number;
 }
 
 export interface ParlayLeg {
@@ -36,12 +37,13 @@ export interface PropResultsStats {
   totalWins: number;
   totalLosses: number;
   totalPushes: number;
+  totalPending: number;
   winRate: number;
   totalSettled: number;
   byEngine: {
-    risk: { wins: number; losses: number; pushes: number };
-    sharp: { wins: number; losses: number; pushes: number };
-    heat: { wins: number; losses: number; pushes: number };
+    risk: { wins: number; losses: number; pushes: number; pending: number };
+    sharp: { wins: number; losses: number; pushes: number; pending: number };
+    heat: { wins: number; losses: number; pushes: number; pending: number };
   };
 }
 
@@ -59,7 +61,7 @@ export function usePropResults(days: number = 7) {
 
       const results: PropResult[] = [];
 
-      // Fetch Risk Engine picks
+      // Fetch Risk Engine picks (settled only)
       const { data: riskData, error: riskError } = await supabase
         .from('nba_risk_engine_picks')
         .select('id, player_name, prop_type, line, side, outcome, actual_value, confidence_score, game_date, settled_at, team_name, opponent')
@@ -80,11 +82,10 @@ export function usePropResults(days: number = 7) {
         });
       }
 
-      // Fetch Sharp AI parlays
+      // Fetch Sharp AI parlays (including partial and pending)
       const { data: sharpData, error: sharpError } = await supabase
         .from('sharp_ai_parlays')
-        .select('id, parlay_date, parlay_type, legs, outcome, settled_at, total_odds')
-        .in('outcome', ['hit', 'miss', 'push'])
+        .select('id, parlay_date, parlay_type, legs, outcome, settled_at, total_odds, verified_legs_count')
         .gte('parlay_date', startDateStr)
         .order('parlay_date', { ascending: false })
         .limit(50);
@@ -93,6 +94,8 @@ export function usePropResults(days: number = 7) {
 
       for (const parlay of (sharpData || [])) {
         const legs = parlay.legs as any[];
+        const outcome = parlay.outcome || 'pending';
+        
         results.push({
           id: parlay.id,
           source: 'sharp',
@@ -101,7 +104,7 @@ export function usePropResults(days: number = 7) {
           prop_type: parlay.parlay_type || 'SHARP',
           line: 0,
           side: '',
-          outcome: parlay.outcome as 'hit' | 'miss' | 'push',
+          outcome: outcome as 'hit' | 'miss' | 'push' | 'partial' | 'pending',
           actual_value: null,
           confidence_score: 0,
           game_date: parlay.parlay_date,
@@ -112,18 +115,18 @@ export function usePropResults(days: number = 7) {
             prop_type: leg.prop_type || leg.market || '',
             line: leg.line || leg.target || 0,
             side: leg.side || leg.pick || 'over',
-            outcome: leg.outcome,
+            outcome: leg.outcome || 'pending',
             actual_value: leg.actual_value,
           })),
           total_odds: parlay.total_odds,
+          verified_legs_count: parlay.verified_legs_count || 0,
         });
       }
 
-      // Fetch Heat parlays
+      // Fetch Heat parlays (including partial and pending)
       const { data: heatData, error: heatError } = await supabase
         .from('heat_parlays')
-        .select('id, parlay_date, parlay_type, leg_1, leg_2, outcome, settled_at')
-        .in('outcome', ['hit', 'miss', 'push'])
+        .select('id, parlay_date, parlay_type, leg_1, leg_2, outcome, settled_at, verified_legs_count')
         .gte('parlay_date', startDateStr)
         .order('parlay_date', { ascending: false })
         .limit(50);
@@ -132,6 +135,8 @@ export function usePropResults(days: number = 7) {
 
       for (const parlay of (heatData || [])) {
         const legs = [parlay.leg_1, parlay.leg_2].filter(Boolean) as any[];
+        const outcome = parlay.outcome || 'pending';
+        
         results.push({
           id: parlay.id,
           source: 'heat',
@@ -140,7 +145,7 @@ export function usePropResults(days: number = 7) {
           prop_type: parlay.parlay_type || 'HEAT',
           line: 0,
           side: '',
-          outcome: parlay.outcome as 'hit' | 'miss' | 'push',
+          outcome: outcome as 'hit' | 'miss' | 'push' | 'partial' | 'pending',
           actual_value: null,
           confidence_score: 0,
           game_date: parlay.parlay_date,
@@ -151,9 +156,10 @@ export function usePropResults(days: number = 7) {
             prop_type: leg.market_type || leg.prop_type || '',
             line: leg.line || 0,
             side: leg.side || 'over',
-            outcome: leg.outcome,
+            outcome: leg.outcome || 'pending',
             actual_value: leg.actual_value,
           })),
+          verified_legs_count: parlay.verified_legs_count || 0,
         });
       }
 
@@ -215,27 +221,34 @@ export function usePropResults(days: number = 7) {
   }, [queryClient]);
 
   // Calculate stats from results
+  const settledResults = query.data?.filter(p => ['hit', 'miss', 'push'].includes(p.outcome)) || [];
+  const pendingResults = query.data?.filter(p => ['partial', 'pending'].includes(p.outcome)) || [];
+  
   const stats: PropResultsStats = {
-    totalWins: query.data?.filter(p => p.outcome === 'hit').length || 0,
-    totalLosses: query.data?.filter(p => p.outcome === 'miss').length || 0,
-    totalPushes: query.data?.filter(p => p.outcome === 'push').length || 0,
-    totalSettled: query.data?.length || 0,
+    totalWins: settledResults.filter(p => p.outcome === 'hit').length,
+    totalLosses: settledResults.filter(p => p.outcome === 'miss').length,
+    totalPushes: settledResults.filter(p => p.outcome === 'push').length,
+    totalPending: pendingResults.length,
+    totalSettled: settledResults.length,
     winRate: 0,
     byEngine: {
       risk: {
-        wins: query.data?.filter(p => p.source === 'risk' && p.outcome === 'hit').length || 0,
-        losses: query.data?.filter(p => p.source === 'risk' && p.outcome === 'miss').length || 0,
-        pushes: query.data?.filter(p => p.source === 'risk' && p.outcome === 'push').length || 0,
+        wins: settledResults.filter(p => p.source === 'risk' && p.outcome === 'hit').length,
+        losses: settledResults.filter(p => p.source === 'risk' && p.outcome === 'miss').length,
+        pushes: settledResults.filter(p => p.source === 'risk' && p.outcome === 'push').length,
+        pending: query.data?.filter(p => p.source === 'risk' && ['partial', 'pending'].includes(p.outcome)).length || 0,
       },
       sharp: {
-        wins: query.data?.filter(p => p.source === 'sharp' && p.outcome === 'hit').length || 0,
-        losses: query.data?.filter(p => p.source === 'sharp' && p.outcome === 'miss').length || 0,
-        pushes: query.data?.filter(p => p.source === 'sharp' && p.outcome === 'push').length || 0,
+        wins: settledResults.filter(p => p.source === 'sharp' && p.outcome === 'hit').length,
+        losses: settledResults.filter(p => p.source === 'sharp' && p.outcome === 'miss').length,
+        pushes: settledResults.filter(p => p.source === 'sharp' && p.outcome === 'push').length,
+        pending: query.data?.filter(p => p.source === 'sharp' && ['partial', 'pending'].includes(p.outcome)).length || 0,
       },
       heat: {
-        wins: query.data?.filter(p => p.source === 'heat' && p.outcome === 'hit').length || 0,
-        losses: query.data?.filter(p => p.source === 'heat' && p.outcome === 'miss').length || 0,
-        pushes: query.data?.filter(p => p.source === 'heat' && p.outcome === 'push').length || 0,
+        wins: settledResults.filter(p => p.source === 'heat' && p.outcome === 'hit').length,
+        losses: settledResults.filter(p => p.source === 'heat' && p.outcome === 'miss').length,
+        pushes: settledResults.filter(p => p.source === 'heat' && p.outcome === 'push').length,
+        pending: query.data?.filter(p => p.source === 'heat' && ['partial', 'pending'].includes(p.outcome)).length || 0,
       },
     },
   };

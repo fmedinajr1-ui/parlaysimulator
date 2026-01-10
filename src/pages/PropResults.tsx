@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { ArrowLeft, Trophy, XCircle, MinusCircle, TrendingUp, Loader2, RefreshCw, CalendarDays, Target, Zap, Flame } from "lucide-react";
+import { ArrowLeft, Trophy, XCircle, MinusCircle, TrendingUp, Loader2, RefreshCw, CalendarDays, Target, Zap, Flame, Clock } from "lucide-react";
 import { usePropResults, PropResult, EngineFilter } from "@/hooks/usePropResults";
 import { PropResultCard } from "@/components/market/PropResultCard";
 import { ParlayResultCard } from "@/components/market/ParlayResultCard";
@@ -12,7 +12,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 
-type OutcomeFilter = 'all' | 'hit' | 'miss' | 'push';
+type OutcomeFilter = 'all' | 'hit' | 'miss' | 'push' | 'pending';
 
 function formatDateHeader(dateStr: string): string {
   const date = parseISO(dateStr);
@@ -76,7 +76,9 @@ export default function PropResults() {
     }
     
     // Apply outcome filter
-    if (outcomeFilter !== 'all') {
+    if (outcomeFilter === 'pending') {
+      filtered = filtered.filter(p => p.outcome === 'partial' || p.outcome === 'pending');
+    } else if (outcomeFilter !== 'all') {
       filtered = filtered.filter(p => p.outcome === outcomeFilter);
     }
     
@@ -204,10 +206,11 @@ export default function PropResults() {
         {/* Outcome Filters */}
         <div className="flex flex-wrap gap-2 mb-6">
           {[
-            { key: 'all' as const, label: 'All Results', count: filteredStats.totalSettled, color: '' },
-            { key: 'hit' as const, label: 'Wins', count: filteredStats.totalWins, color: 'text-green-400' },
-            { key: 'miss' as const, label: 'Losses', count: filteredStats.totalLosses, color: 'text-red-400' },
-            { key: 'push' as const, label: 'Pushes', count: filteredStats.totalPushes, color: 'text-amber-400' },
+            { key: 'all' as const, label: 'All Results', count: filteredStats.totalSettled + stats.totalPending, color: '', icon: null },
+            { key: 'hit' as const, label: 'Wins', count: filteredStats.totalWins, color: 'text-green-400', icon: Trophy },
+            { key: 'miss' as const, label: 'Losses', count: filteredStats.totalLosses, color: 'text-red-400', icon: XCircle },
+            { key: 'push' as const, label: 'Pushes', count: filteredStats.totalPushes, color: 'text-amber-400', icon: MinusCircle },
+            { key: 'pending' as const, label: 'In Progress', count: stats.totalPending, color: 'text-blue-400', icon: Clock },
           ].map(filter => (
             <Button
               key={filter.key}
@@ -215,15 +218,16 @@ export default function PropResults() {
               size="sm"
               onClick={() => setOutcomeFilter(filter.key)}
               className={cn(
-                "transition-all",
+                "transition-all gap-1.5",
                 outcomeFilter === filter.key 
                   ? "bg-primary/20 text-primary ring-2 ring-primary ring-offset-2 ring-offset-background"
                   : "bg-muted/50 hover:bg-muted",
                 filter.color
               )}
             >
+              {filter.icon && <filter.icon className="w-3.5 h-3.5" />}
               {filter.label}
-              <span className="ml-1.5 opacity-70">({filter.count})</span>
+              <span className="ml-0.5 opacity-70">({filter.count})</span>
             </Button>
           ))}
         </div>

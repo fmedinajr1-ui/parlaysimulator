@@ -2354,6 +2354,7 @@ export type Database = {
           risk_level: string | null
           settled_at: string | null
           summary: string | null
+          verified_legs_count: number | null
         }
         Insert: {
           combined_probability?: number | null
@@ -2370,6 +2371,7 @@ export type Database = {
           risk_level?: string | null
           settled_at?: string | null
           summary?: string | null
+          verified_legs_count?: number | null
         }
         Update: {
           combined_probability?: number | null
@@ -2386,6 +2388,7 @@ export type Database = {
           risk_level?: string | null
           settled_at?: string | null
           summary?: string | null
+          verified_legs_count?: number | null
         }
         Relationships: []
       }
@@ -6383,6 +6386,7 @@ export type Database = {
           settled_at: string | null
           sport: string | null
           total_odds: number | null
+          verified_legs_count: number | null
         }
         Insert: {
           combined_probability?: number | null
@@ -6398,6 +6402,7 @@ export type Database = {
           settled_at?: string | null
           sport?: string | null
           total_odds?: number | null
+          verified_legs_count?: number | null
         }
         Update: {
           combined_probability?: number | null
@@ -6413,6 +6418,7 @@ export type Database = {
           settled_at?: string | null
           sport?: string | null
           total_odds?: number | null
+          verified_legs_count?: number | null
         }
         Relationships: []
       }
