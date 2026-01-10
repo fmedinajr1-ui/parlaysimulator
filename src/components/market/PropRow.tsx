@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 import { HeatBadge, HeatLevel } from "./HeatBadge";
-import { Clock, Crown, Star, Shield, Crosshair, Users, Zap, AlertTriangle } from "lucide-react";
+import { Clock, Crown, Star, Shield, Crosshair, Users, Zap, AlertTriangle, CheckCircle, XCircle, Minus } from "lucide-react";
 
 interface SharpAlertData {
   level: string;
@@ -25,6 +25,8 @@ interface PropRowProps {
   underPrice?: number | null;
   bookmaker?: string | null;
   sharpAlert?: SharpAlertData;
+  outcome?: 'pending' | 'hit' | 'miss' | 'push' | null;
+  actualValue?: number | null;
   onClick?: () => void;
 }
 
@@ -95,6 +97,8 @@ export function PropRow({
   underPrice,
   bookmaker,
   sharpAlert,
+  outcome,
+  actualValue,
   onClick,
 }: PropRowProps) {
   const RoleIcon = ROLE_ICONS[playerRole] || Star;
@@ -116,17 +120,45 @@ export function PropRow({
         isTrap && "border-yellow-500/50 bg-yellow-500/5"
       )}
     >
-      {/* Top Row: Heat + Player + Scores + Sharp Alert */}
+      {/* Top Row: Heat + Player + Scores + Sharp Alert + Outcome */}
       <div className="flex items-center gap-3">
         <HeatBadge level={heatLevel} />
         
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="font-semibold text-foreground truncate">
               {playerName}
             </span>
+            {/* Outcome Badge */}
+            {outcome === 'hit' && (
+              <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-bold border border-emerald-500/30">
+                <CheckCircle className="w-3 h-3" />
+                <span>WON</span>
+                {actualValue !== null && actualValue !== undefined && (
+                  <span className="opacity-80">({actualValue})</span>
+                )}
+              </div>
+            )}
+            {outcome === 'miss' && (
+              <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-red-500/20 text-red-400 text-xs font-bold border border-red-500/30">
+                <XCircle className="w-3 h-3" />
+                <span>LOST</span>
+                {actualValue !== null && actualValue !== undefined && (
+                  <span className="opacity-80">({actualValue})</span>
+                )}
+              </div>
+            )}
+            {outcome === 'push' && (
+              <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 text-xs font-bold border border-amber-500/30">
+                <Minus className="w-3 h-3" />
+                <span>PUSH</span>
+                {actualValue !== null && actualValue !== undefined && (
+                  <span className="opacity-80">({actualValue})</span>
+                )}
+              </div>
+            )}
             {/* Sharp Alert Badge */}
-            {hasSharpAlert && (
+            {hasSharpAlert && !outcome && (
               <div className={cn(
                 "flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-semibold animate-pulse",
                 isTrap 

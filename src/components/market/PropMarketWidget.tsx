@@ -31,6 +31,8 @@ interface RiskEnginePick {
   sharp_movement_pts?: number;
   sharp_direction?: string;
   is_trap_indicator?: boolean;
+  outcome?: string;
+  actual_value?: number;
 }
 
 function calculateHeatLevel(engineScore: number, marketScore: number | null): { heat: number; level: HeatLevel } {
@@ -64,7 +66,7 @@ export function PropMarketWidget() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('nba_risk_engine_picks')
-        .select('id, player_name, prop_type, line, side, confidence_score, player_role, game_script, game_date, current_line, over_price, under_price, bookmaker, odds_updated_at, sharp_alert, sharp_alert_level, sharp_movement_pts, sharp_direction, is_trap_indicator')
+        .select('id, player_name, prop_type, line, side, confidence_score, player_role, game_script, game_date, current_line, over_price, under_price, bookmaker, odds_updated_at, sharp_alert, sharp_alert_level, sharp_movement_pts, sharp_direction, is_trap_indicator, outcome, actual_value')
         .gte('confidence_score', 7.5)
         .order('game_date', { ascending: false })
         .order('confidence_score', { ascending: false })
@@ -73,7 +75,7 @@ export function PropMarketWidget() {
       if (error) throw error;
       return data as RiskEnginePick[];
     },
-    refetchInterval: 60000, // Refetch every minute
+    refetchInterval: 30000, // Refetch every 30 seconds for outcome updates
   });
 
   // Real-time subscription for pick updates
@@ -218,6 +220,8 @@ export function PropMarketWidget() {
                 underPrice={pick.under_price}
                 bookmaker={pick.bookmaker}
                 sharpAlert={sharpAlertData}
+                outcome={pick.outcome as 'pending' | 'hit' | 'miss' | 'push' | undefined}
+                actualValue={pick.actual_value}
               />
             );
           })
