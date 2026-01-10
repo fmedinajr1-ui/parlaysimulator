@@ -78,6 +78,14 @@ function determineOutcome(actualValue: number, line: number, side: string): 'hit
   return 'miss';
 }
 
+// Strict date validation: only match picks against game logs from the same date
+function validateGameLogDate(gameLog: any, expectedDate: string): boolean {
+  if (!gameLog || !expectedDate) return false;
+  const logDate = gameLog.game_date;
+  if (!logDate) return false;
+  return logDate === expectedDate;
+}
+
 interface VerificationResult {
   engine: string;
   verified: number;
@@ -146,20 +154,15 @@ serve(async (req) => {
     for (const pick of (riskPicks || [])) {
       const normalizedPlayer = normalizePlayerName(pick.player_name);
       const lookupKey = `${normalizedPlayer}_${pick.game_date}`;
-      let gameLog = logMap.get(lookupKey);
+      const gameLog = logMap.get(lookupKey);
 
-      // Fallback: check previous day (timezone mismatch recovery)
-      if (!gameLog && pick.game_date) {
-        const prevDate = new Date(pick.game_date);
-        prevDate.setDate(prevDate.getDate() - 1);
-        const prevDateStr = prevDate.toISOString().split('T')[0];
-        gameLog = logMap.get(`${normalizedPlayer}_${prevDateStr}`);
+      // Strict date validation: only match if game log date equals pick's game date
+      if (!gameLog || !validateGameLogDate(gameLog, pick.game_date)) {
         if (gameLog) {
-          console.log(`[verify-all] Risk: Found ${pick.player_name} on fallback date ${prevDateStr}`);
+          console.log(`[verify-all] Risk: Skipping ${pick.player_name} - game log date ${gameLog.game_date} != pick date ${pick.game_date}`);
         }
+        continue;
       }
-
-      if (!gameLog) continue;
 
       const actualValue = calculateActualValue(gameLog, pick.prop_type);
       if (actualValue === null) continue;
@@ -212,20 +215,13 @@ serve(async (req) => {
 
         const normalizedPlayer = normalizePlayerName(playerName);
         const lookupKey = `${normalizedPlayer}_${parlay.parlay_date}`;
-        let gameLog = logMap.get(lookupKey);
+        const gameLog = logMap.get(lookupKey);
 
-        // Fallback: check previous day (timezone mismatch recovery)
-        if (!gameLog && parlay.parlay_date) {
-          const prevDate = new Date(parlay.parlay_date);
-          prevDate.setDate(prevDate.getDate() - 1);
-          const prevDateStr = prevDate.toISOString().split('T')[0];
-          gameLog = logMap.get(`${normalizedPlayer}_${prevDateStr}`);
+        // Strict date validation: only match if game log date equals parlay's date
+        if (!gameLog || !validateGameLogDate(gameLog, parlay.parlay_date)) {
           if (gameLog) {
-            console.log(`[verify-all] Sharp: Found ${playerName} on fallback date ${prevDateStr}`);
+            console.log(`[verify-all] Sharp: Skipping ${playerName} - game log date ${gameLog.game_date} != parlay date ${parlay.parlay_date}`);
           }
-        }
-
-        if (!gameLog) {
           legResults.push({ ...leg, outcome: 'pending' });
           continue;
         }
@@ -333,20 +329,13 @@ serve(async (req) => {
 
         const normalizedPlayer = normalizePlayerName(playerName);
         const lookupKey = `${normalizedPlayer}_${parlay.parlay_date}`;
-        let gameLog = logMap.get(lookupKey);
+        const gameLog = logMap.get(lookupKey);
 
-        // Fallback: check previous day (timezone mismatch recovery)
-        if (!gameLog && parlay.parlay_date) {
-          const prevDate = new Date(parlay.parlay_date);
-          prevDate.setDate(prevDate.getDate() - 1);
-          const prevDateStr = prevDate.toISOString().split('T')[0];
-          gameLog = logMap.get(`${normalizedPlayer}_${prevDateStr}`);
+        // Strict date validation: only match if game log date equals parlay's date
+        if (!gameLog || !validateGameLogDate(gameLog, parlay.parlay_date)) {
           if (gameLog) {
-            console.log(`[verify-all] Heat: Found ${playerName} on fallback date ${prevDateStr}`);
+            console.log(`[verify-all] Heat: Skipping ${playerName} - game log date ${gameLog.game_date} != parlay date ${parlay.parlay_date}`);
           }
-        }
-
-        if (!gameLog) {
           updatedLegs.push({ ...leg, outcome: 'pending' });
           continue;
         }
