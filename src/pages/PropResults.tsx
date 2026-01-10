@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowLeft, Trophy, XCircle, MinusCircle, TrendingUp, Loader2, RefreshCw, CalendarDays } from "lucide-react";
-import { usePropResults, PropResult } from "@/hooks/usePropResults";
+import { Card, CardContent } from "@/components/ui/card";
+import { ArrowLeft, Trophy, XCircle, MinusCircle, TrendingUp, Loader2, RefreshCw, CalendarDays, Target, Zap, Flame } from "lucide-react";
+import { usePropResults, PropResult, EngineFilter } from "@/hooks/usePropResults";
 import { PropResultCard } from "@/components/market/PropResultCard";
+import { ParlayResultCard } from "@/components/market/ParlayResultCard";
 import { cn } from "@/lib/utils";
 import { format, parseISO, isToday, isYesterday } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
@@ -22,19 +23,22 @@ function formatDateHeader(dateStr: string): string {
 
 export default function PropResults() {
   const [outcomeFilter, setOutcomeFilter] = useState<OutcomeFilter>('all');
+  const [engineFilter, setEngineFilter] = useState<EngineFilter>('all');
   const [isVerifying, setIsVerifying] = useState(false);
   const queryClient = useQueryClient();
   const { data: results, isLoading, stats, groupedByDate } = usePropResults(14);
 
   const handleVerifyOutcomes = async () => {
     setIsVerifying(true);
+    toast.info("Verifying all engines...");
     try {
-      const { data, error } = await supabase.functions.invoke('verify-risk-engine-outcomes');
+      const { data, error } = await supabase.functions.invoke('verify-all-engine-outcomes');
       
       if (error) throw error;
       
       if (data.success) {
-        toast.success(`Verified ${data.verified} picks: ${data.hits}W - ${data.misses}L - ${data.pushes}P`);
+        const { summary } = data;
+        toast.success(`Verified ${summary.verified} results: ${summary.hits}W - ${summary.misses}L - ${summary.pushes}P`);
         queryClient.invalidateQueries({ queryKey: ['prop-results'] });
       } else {
         toast.error(data.error || 'Verification failed');
@@ -47,11 +51,20 @@ export default function PropResults() {
     }
   };
 
-  // Filter results by outcome
+  // Filter results by outcome and engine
   const filteredGrouped = Object.entries(groupedByDate).reduce((acc, [date, picks]) => {
-    const filtered = outcomeFilter === 'all' 
-      ? picks 
-      : picks.filter(p => p.outcome === outcomeFilter);
+    let filtered = picks;
+    
+    // Apply engine filter
+    if (engineFilter !== 'all') {
+      filtered = filtered.filter(p => p.source === engineFilter);
+    }
+    
+    // Apply outcome filter
+    if (outcomeFilter !== 'all') {
+      filtered = filtered.filter(p => p.outcome === outcomeFilter);
+    }
+    
     if (filtered.length > 0) {
       acc[date] = filtered;
     }
@@ -61,6 +74,17 @@ export default function PropResults() {
   const sortedDates = Object.keys(filteredGrouped).sort((a, b) => 
     parseISO(b).getTime() - parseISO(a).getTime()
   );
+
+  // Calculate filtered stats
+  const filteredStats = engineFilter === 'all' ? stats : {
+    totalWins: stats.byEngine[engineFilter].wins,
+    totalLosses: stats.byEngine[engineFilter].losses,
+    totalPushes: stats.byEngine[engineFilter].pushes,
+    totalSettled: stats.byEngine[engineFilter].wins + stats.byEngine[engineFilter].losses + stats.byEngine[engineFilter].pushes,
+    winRate: (stats.byEngine[engineFilter].wins + stats.byEngine[engineFilter].losses) > 0
+      ? (stats.byEngine[engineFilter].wins / (stats.byEngine[engineFilter].wins + stats.byEngine[engineFilter].losses)) * 100
+      : 0,
+  };
 
   return (
     <div className="min-h-screen bg-background pb-24">
@@ -93,6 +117,37 @@ export default function PropResults() {
           </Button>
         </div>
 
+        {/* Engine Filter Tabs */}
+        <div className="flex gap-2 mb-4 overflow-x-auto pb-2">
+          {[
+            { key: 'all' as const, label: 'All Engines', icon: null },
+            { key: 'risk' as const, label: 'Risk Engine', icon: Target, color: 'text-blue-400' },
+            { key: 'sharp' as const, label: 'Sharp AI', icon: Zap, color: 'text-amber-400' },
+            { key: 'heat' as const, label: 'Heat Engine', icon: Flame, color: 'text-orange-400' },
+          ].map(engine => (
+            <Button
+              key={engine.key}
+              variant="ghost"
+              size="sm"
+              onClick={() => setEngineFilter(engine.key)}
+              className={cn(
+                "flex items-center gap-2 whitespace-nowrap",
+                engineFilter === engine.key 
+                  ? "bg-primary/20 text-primary ring-2 ring-primary ring-offset-2 ring-offset-background"
+                  : "bg-muted/50 hover:bg-muted"
+              )}
+            >
+              {engine.icon && <engine.icon className={cn("w-4 h-4", engine.color)} />}
+              {engine.label}
+              <span className="opacity-70">
+                ({engine.key === 'all' 
+                  ? stats.totalSettled 
+                  : stats.byEngine[engine.key].wins + stats.byEngine[engine.key].losses + stats.byEngine[engine.key].pushes})
+              </span>
+            </Button>
+          ))}
+        </div>
+
         {/* Stats Banner */}
         <Card className="mb-6 bg-gradient-to-br from-primary/10 via-background to-background border-primary/20">
           <CardContent className="py-4">
@@ -100,21 +155,21 @@ export default function PropResults() {
               <div>
                 <div className="flex items-center justify-center gap-2 mb-1">
                   <Trophy className="w-4 h-4 text-green-400" />
-                  <span className="text-2xl font-bold text-green-400">{stats.totalWins}</span>
+                  <span className="text-2xl font-bold text-green-400">{filteredStats.totalWins}</span>
                 </div>
                 <span className="text-xs text-muted-foreground">Wins</span>
               </div>
               <div>
                 <div className="flex items-center justify-center gap-2 mb-1">
                   <XCircle className="w-4 h-4 text-red-400" />
-                  <span className="text-2xl font-bold text-red-400">{stats.totalLosses}</span>
+                  <span className="text-2xl font-bold text-red-400">{filteredStats.totalLosses}</span>
                 </div>
                 <span className="text-xs text-muted-foreground">Losses</span>
               </div>
               <div>
                 <div className="flex items-center justify-center gap-2 mb-1">
                   <MinusCircle className="w-4 h-4 text-amber-400" />
-                  <span className="text-2xl font-bold text-amber-400">{stats.totalPushes}</span>
+                  <span className="text-2xl font-bold text-amber-400">{filteredStats.totalPushes}</span>
                 </div>
                 <span className="text-xs text-muted-foreground">Pushes</span>
               </div>
@@ -122,7 +177,7 @@ export default function PropResults() {
                 <div className="flex items-center justify-center gap-2 mb-1">
                   <TrendingUp className="w-4 h-4 text-primary" />
                   <span className="text-2xl font-bold text-primary">
-                    {stats.winRate.toFixed(1)}%
+                    {filteredStats.winRate.toFixed(1)}%
                   </span>
                 </div>
                 <span className="text-xs text-muted-foreground">Win Rate</span>
@@ -134,10 +189,10 @@ export default function PropResults() {
         {/* Outcome Filters */}
         <div className="flex flex-wrap gap-2 mb-6">
           {[
-            { key: 'all' as const, label: 'All Results', count: stats.totalSettled, color: '' },
-            { key: 'hit' as const, label: 'Wins', count: stats.totalWins, color: 'text-green-400' },
-            { key: 'miss' as const, label: 'Losses', count: stats.totalLosses, color: 'text-red-400' },
-            { key: 'push' as const, label: 'Pushes', count: stats.totalPushes, color: 'text-amber-400' },
+            { key: 'all' as const, label: 'All Results', count: filteredStats.totalSettled, color: '' },
+            { key: 'hit' as const, label: 'Wins', count: filteredStats.totalWins, color: 'text-green-400' },
+            { key: 'miss' as const, label: 'Losses', count: filteredStats.totalLosses, color: 'text-red-400' },
+            { key: 'push' as const, label: 'Pushes', count: filteredStats.totalPushes, color: 'text-amber-400' },
           ].map(filter => (
             <Button
               key={filter.key}
@@ -201,7 +256,11 @@ export default function PropResults() {
                 {/* Results for this date */}
                 <div className="space-y-2">
                   {filteredGrouped[date].map(result => (
-                    <PropResultCard key={result.id} result={result} />
+                    result.type === 'parlay' ? (
+                      <ParlayResultCard key={result.id} result={result} />
+                    ) : (
+                      <PropResultCard key={result.id} result={result} />
+                    )
                   ))}
                 </div>
               </div>

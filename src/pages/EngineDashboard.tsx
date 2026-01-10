@@ -91,14 +91,18 @@ export default function EngineDashboard() {
 
   const handleVerifyOutcomes = async () => {
     setIsVerifying(true);
-    toast.info("Verifying outcomes from game logs...");
+    toast.info("Verifying all engine outcomes...");
     try {
-      const { data, error } = await supabase.functions.invoke('verify-risk-engine-outcomes');
+      const { data, error } = await supabase.functions.invoke('verify-all-engine-outcomes');
       if (error) throw error;
       
       if (data?.success) {
-        toast.success(`Verified ${data.verified} picks: ${data.hits}W / ${data.misses}L / ${data.pushes}P`);
+        const { summary, results } = data;
+        const details = results.map((r: any) => `${r.engine}: ${r.verified}`).join(', ');
+        toast.success(`Verified ${summary.verified} total: ${summary.hits}W / ${summary.misses}L / ${summary.pushes}P`);
+        console.log('Verification details:', details);
         queryClient.invalidateQueries({ queryKey: ['risk-engine-picks-widget'] });
+        queryClient.invalidateQueries({ queryKey: ['prop-results'] });
         refetch();
       } else {
         toast.error(data?.error || 'Verification failed');
