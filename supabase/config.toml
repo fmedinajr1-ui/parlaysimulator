@@ -260,3 +260,6 @@ verify_jwt = false
 
 [functions.verify-all-engine-outcomes]
 verify_jwt = false
+
+[functions.bdl-fetch-odds]
+verify_jwt = false
