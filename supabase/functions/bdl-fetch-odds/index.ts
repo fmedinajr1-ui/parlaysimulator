@@ -362,8 +362,8 @@ serve(async (req) => {
       
       console.log(`[bdl-fetch-odds] Resolved ${playerNames.size} player names`);
 
-      // Step 4: Transform props with resolved names
-      const allUnifiedProps: any[] = [];
+      // Step 4: Transform props with resolved names (using Map for deduplication)
+      const propsMap = new Map<string, any>();
       
       for (const { prop, game } of allRawProps) {
         const propType = PROP_TYPE_MAP[prop.prop_type] || prop.prop_type;
@@ -378,23 +378,37 @@ serve(async (req) => {
           playerName = getPlayerName(prop);
         }
         
-        allUnifiedProps.push({
-          event_id: eventId,
-          sport: 'basketball_nba',
-          game_description: gameDescription,
-          commence_time: gameDate.toISOString(),
-          bookmaker: prop.vendor.toLowerCase(),
-          player_name: playerName,
-          prop_type: propType,
-          current_line: parseFloat(prop.line_value),
-          over_price: prop.market.over_odds || null,
-          under_price: prop.market.under_odds || null,
-          is_active: true,
-          category: 'balldontlie',
-        });
+        const bookmaker = prop.vendor.toLowerCase();
+        const line = parseFloat(prop.line_value);
+        
+        // Create unique key matching DB constraint: event_id,player_name,prop_type,bookmaker
+        const key = `${eventId}-${playerName}-${propType}-${bookmaker}`;
+        
+        if (propsMap.has(key)) {
+          // Merge over/under prices
+          const existing = propsMap.get(key);
+          if (prop.market.over_odds) existing.over_price = prop.market.over_odds;
+          if (prop.market.under_odds) existing.under_price = prop.market.under_odds;
+        } else {
+          propsMap.set(key, {
+            event_id: eventId,
+            sport: 'basketball_nba',
+            game_description: gameDescription,
+            commence_time: gameDate.toISOString(),
+            bookmaker: bookmaker,
+            player_name: playerName,
+            prop_type: propType,
+            current_line: line,
+            over_price: prop.market.over_odds || null,
+            under_price: prop.market.under_odds || null,
+            is_active: true,
+            category: 'balldontlie',
+          });
+        }
       }
 
-      console.log(`[bdl-fetch-odds] Collected ${allUnifiedProps.length} props to sync`);
+      const allUnifiedProps = Array.from(propsMap.values());
+      console.log(`[bdl-fetch-odds] Deduplicated to ${allUnifiedProps.length} props to sync`);
 
       // Step 5: Upsert to unified_props
       if (allUnifiedProps.length > 0) {
@@ -438,10 +452,98 @@ serve(async (req) => {
       }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
+    // Action: Pre-populate player cache for all players in today's games
+    if (action === 'populate_player_cache') {
+      const today = new Date().toISOString().split('T')[0];
+      const gamesUrl = `${BDL_V1_URL}/games?dates[]=${today}`;
+      
+      console.log(`[bdl-fetch-odds] Populating player cache for ${today}`);
+      
+      const gamesResponse = await fetch(gamesUrl, { headers });
+      if (!gamesResponse.ok) {
+        throw new Error(`Failed to fetch games: ${gamesResponse.status}`);
+      }
+      
+      const gamesData = await gamesResponse.json();
+      const games: BDLGame[] = gamesData.data || [];
+      
+      if (games.length === 0) {
+        return new Response(JSON.stringify({
+          success: true,
+          message: 'No NBA games today to cache players for',
+          cached: 0,
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      console.log(`[bdl-fetch-odds] Found ${games.length} games - fetching player props to extract IDs`);
+
+      const allPlayerIds: Set<number> = new Set();
+
+      // Fetch props for each game to extract player IDs
+      for (const game of games) {
+        try {
+          const propsUrl = `${BDL_V2_URL}/odds/player_props?game_id=${game.id}`;
+          const propsResponse = await fetch(propsUrl, { headers });
+          
+          if (!propsResponse.ok) {
+            if (propsResponse.status === 403) {
+              console.warn(`[bdl-fetch-odds] GOAT tier required`);
+              return new Response(JSON.stringify({
+                success: false,
+                error: 'BDL Player Props requires GOAT tier subscription',
+                tier_required: 'GOAT',
+              }), { 
+                status: 403,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+              });
+            }
+            continue;
+          }
+          
+          const propsData = await propsResponse.json();
+          const props: BDLPlayerProp[] = propsData.data || [];
+          
+          for (const prop of props) {
+            if (prop.player_id > 0) {
+              allPlayerIds.add(prop.player_id);
+            }
+          }
+          
+          await delay(150);
+        } catch (err) {
+          console.error(`[bdl-fetch-odds] Error fetching props for game ${game.id}:`, err);
+        }
+      }
+
+      console.log(`[bdl-fetch-odds] Found ${allPlayerIds.size} unique player IDs to resolve`);
+
+      if (allPlayerIds.size === 0) {
+        return new Response(JSON.stringify({
+          success: true,
+          message: 'No player IDs found to cache',
+          games: games.length,
+          cached: 0,
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      // Resolve all player names (this will populate the cache)
+      const playerNames = await resolvePlayerNames(Array.from(allPlayerIds), headers, supabase);
+
+      console.log(`[bdl-fetch-odds] Cached ${playerNames.size} player names`);
+
+      return new Response(JSON.stringify({
+        success: true,
+        message: `Populated player cache with ${playerNames.size} players`,
+        games: games.length,
+        playersFound: allPlayerIds.size,
+        cached: playerNames.size,
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
     return new Response(JSON.stringify({
       success: false,
       error: `Unknown action: ${action}`,
-      valid_actions: ['fetch_games', 'fetch_game_odds', 'fetch_player_props', 'sync_to_unified_props'],
+      valid_actions: ['fetch_games', 'fetch_game_odds', 'fetch_player_props', 'sync_to_unified_props', 'populate_player_cache'],
     }), { 
       status: 400,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' } 

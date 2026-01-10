@@ -187,8 +187,8 @@ async function fetchBDLProps(bdlApiKey: string, today: string, supabase: any): P
   
   console.log(`[BDL Fallback] Resolved ${playerNames.size} player names`);
 
-  // Step 4: Transform props with resolved names
-  const allProps: any[] = [];
+  // Step 4: Transform props with resolved names (using Map for deduplication)
+  const propsMap = new Map<string, any>();
   
   for (const { prop, game } of allRawProps) {
     const propType = BDL_PROP_TYPE_MAP[prop.prop_type] || prop.prop_type;
@@ -203,23 +203,37 @@ async function fetchBDLProps(bdlApiKey: string, today: string, supabase: any): P
       playerName = getPlayerName(prop);
     }
     
-    allProps.push({
-      event_id: eventId,
-      sport: 'basketball_nba',
-      game_description: gameDescription,
-      commence_time: gameDate.toISOString(),
-      bookmaker: prop.vendor.toLowerCase(),
-      player_name: playerName,
-      prop_type: propType,
-      current_line: parseFloat(prop.line_value),
-      over_price: prop.market.over_odds || null,
-      under_price: prop.market.under_odds || null,
-      is_active: true,
-      category: 'balldontlie',
-    });
+    const bookmaker = prop.vendor.toLowerCase();
+    const line = parseFloat(prop.line_value);
+    
+    // Create unique key matching DB constraint: event_id,player_name,prop_type,bookmaker
+    const key = `${eventId}-${playerName}-${propType}-${bookmaker}`;
+    
+    if (propsMap.has(key)) {
+      // Merge over/under prices
+      const existing = propsMap.get(key);
+      if (prop.market.over_odds) existing.over_price = prop.market.over_odds;
+      if (prop.market.under_odds) existing.under_price = prop.market.under_odds;
+    } else {
+      propsMap.set(key, {
+        event_id: eventId,
+        sport: 'basketball_nba',
+        game_description: gameDescription,
+        commence_time: gameDate.toISOString(),
+        bookmaker: bookmaker,
+        player_name: playerName,
+        prop_type: propType,
+        current_line: line,
+        over_price: prop.market.over_odds || null,
+        under_price: prop.market.under_odds || null,
+        is_active: true,
+        category: 'balldontlie',
+      });
+    }
   }
 
-  return allProps;
+  console.log(`[BDL Fallback] Deduplicated to ${propsMap.size} unique props`);
+  return Array.from(propsMap.values());
 }
 
 serve(async (req) => {
@@ -257,7 +271,7 @@ serve(async (req) => {
       const { error: forceClearError } = await supabase
         .from('unified_props')
         .delete()
-        .eq('sport_key', sport);
+        .eq('sport', sport);
       
       if (forceClearError) {
         console.error('[refresh-todays-props] Force clear error:', forceClearError);
@@ -316,15 +330,38 @@ serve(async (req) => {
 
       console.log(`[refresh-todays-props] ${todaysEvents.length} events are today`);
 
+      // If no events from The Odds API, try BDL fallback BEFORE returning empty
       if (todaysEvents.length === 0) {
-        return new Response(JSON.stringify({
-          success: true,
-          message: 'No games today',
-          deleted: 0,
-          inserted: 0,
-          events: 0,
-          data_source: dataSource,
-        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        if (sport === 'basketball_nba' && use_bdl_fallback && bdlApiKey) {
+          console.log(`[refresh-todays-props] No Odds API events for today - trying BDL fallback`);
+          finalProps = await fetchBDLProps(bdlApiKey, todayStr, supabase);
+          dataSource = 'balldontlie';
+          
+          if (finalProps.length > 0) {
+            console.log(`[refresh-todays-props] BDL fallback returned ${finalProps.length} props - continuing to insert`);
+            // Continue to Step 5 (insertion) instead of returning early
+          } else {
+            console.log(`[refresh-todays-props] BDL fallback also returned no props`);
+            return new Response(JSON.stringify({
+              success: true,
+              message: 'No games today from any source',
+              deleted: 0,
+              inserted: 0,
+              events: 0,
+              data_source: 'none',
+              bdl_checked: true,
+            }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+          }
+        } else {
+          return new Response(JSON.stringify({
+            success: true,
+            message: 'No games today',
+            deleted: 0,
+            inserted: 0,
+            events: 0,
+            data_source: dataSource,
+          }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
       }
 
       // Step 3: Fetch player props for each event from The Odds API
