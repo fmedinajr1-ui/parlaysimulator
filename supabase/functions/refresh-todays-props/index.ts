@@ -57,8 +57,75 @@ function getPlayerName(prop: BDLPlayerProp): string {
   return `Player_${prop.player_id}`;
 }
 
-// Fetch props from BallDontLie API
-async function fetchBDLProps(bdlApiKey: string, today: string): Promise<any[]> {
+// Delay helper for rate limiting
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Resolve player IDs to names with caching
+async function resolvePlayerNames(
+  playerIds: number[],
+  headers: HeadersInit,
+  supabase: any
+): Promise<Map<number, string>> {
+  const playerMap = new Map<number, string>();
+  const uniqueIds = [...new Set(playerIds.filter(id => id > 0))];
+  
+  if (uniqueIds.length === 0) return playerMap;
+  
+  console.log(`[refresh-todays-props] Resolving ${uniqueIds.length} unique player IDs`);
+  
+  // Step 1: Check cache first
+  const { data: cached } = await supabase
+    .from('bdl_player_cache')
+    .select('bdl_player_id, player_name')
+    .in('bdl_player_id', uniqueIds);
+  
+  for (const player of cached || []) {
+    if (player.bdl_player_id && player.player_name) {
+      playerMap.set(player.bdl_player_id, player.player_name);
+    }
+  }
+  
+  console.log(`[refresh-todays-props] Found ${playerMap.size} players in cache`);
+  
+  // Step 2: Fetch missing players from BDL API
+  const missingIds = uniqueIds.filter(id => !playerMap.has(id));
+  
+  if (missingIds.length > 0) {
+    console.log(`[refresh-todays-props] Fetching ${missingIds.length} missing players from BDL API`);
+    
+    for (const playerId of missingIds) {
+      try {
+        const response = await fetch(`${BDL_V1_URL}/players/${playerId}`, { headers });
+        if (response.ok) {
+          const data = await response.json();
+          if (data.data && data.data.first_name && data.data.last_name) {
+            const name = `${data.data.first_name} ${data.data.last_name}`;
+            playerMap.set(playerId, name);
+            
+            // Cache for future use
+            await supabase.from('bdl_player_cache').upsert({
+              bdl_player_id: playerId,
+              player_name: name,
+              position: data.data.position || null,
+              team_name: data.data.team?.full_name || null,
+              last_updated: new Date().toISOString(),
+            }, { onConflict: 'bdl_player_id' });
+          }
+        }
+        await delay(50); // Rate limiting
+      } catch (err) {
+        console.warn(`[refresh-todays-props] Failed to fetch player ${playerId}`);
+      }
+    }
+    
+    console.log(`[refresh-todays-props] Resolved ${playerMap.size} total players`);
+  }
+  
+  return playerMap;
+}
+
+// Fetch props from BallDontLie API with player name resolution
+async function fetchBDLProps(bdlApiKey: string, today: string, supabase: any): Promise<any[]> {
   const headers = {
     'Authorization': bdlApiKey,
     'Content-Type': 'application/json',
@@ -80,7 +147,7 @@ async function fetchBDLProps(bdlApiKey: string, today: string): Promise<any[]> {
 
   if (games.length === 0) return [];
 
-  const allProps: any[] = [];
+  const allRawProps: { prop: BDLPlayerProp; game: BDLGame }[] = [];
 
   // Step 2: Fetch props for each game
   for (const game of games) {
@@ -100,29 +167,8 @@ async function fetchBDLProps(bdlApiKey: string, today: string): Promise<any[]> {
       const propsData = await propsResponse.json();
       const props: BDLPlayerProp[] = propsData.data || [];
       
-      // Generate event_id compatible with our system
-      const eventId = `bdl_nba_${game.id}`;
-      const gameDate = new Date(game.date);
-      gameDate.setHours(19, 0, 0, 0);
-      
       for (const prop of props) {
-        const propType = BDL_PROP_TYPE_MAP[prop.prop_type] || prop.prop_type;
-        const gameDescription = `${game.visitor_team.full_name} @ ${game.home_team.full_name}`;
-        
-        allProps.push({
-          event_id: eventId,
-          sport: 'basketball_nba',
-          game_description: gameDescription,
-          commence_time: gameDate.toISOString(),
-          bookmaker: prop.vendor.toLowerCase(),
-          player_name: getPlayerName(prop),
-          prop_type: propType,
-          current_line: parseFloat(prop.line_value),
-          over_price: prop.market.over_odds || null,
-          under_price: prop.market.under_odds || null,
-          is_active: true,
-          category: 'balldontlie',
-        });
+        allRawProps.push({ prop, game });
       }
       
       // Rate limiting
@@ -131,6 +177,46 @@ async function fetchBDLProps(bdlApiKey: string, today: string): Promise<any[]> {
     } catch (err) {
       console.error(`[BDL Fallback] Error fetching props for game ${game.id}:`, err);
     }
+  }
+
+  if (allRawProps.length === 0) return [];
+
+  // Step 3: Resolve all player IDs to names
+  const playerIds = allRawProps.map(r => r.prop.player_id);
+  const playerNames = await resolvePlayerNames(playerIds, headers, supabase);
+  
+  console.log(`[BDL Fallback] Resolved ${playerNames.size} player names`);
+
+  // Step 4: Transform props with resolved names
+  const allProps: any[] = [];
+  
+  for (const { prop, game } of allRawProps) {
+    const propType = BDL_PROP_TYPE_MAP[prop.prop_type] || prop.prop_type;
+    const gameDescription = `${game.visitor_team.full_name} @ ${game.home_team.full_name}`;
+    const eventId = `bdl_nba_${game.id}`;
+    const gameDate = new Date(game.date);
+    gameDate.setHours(19, 0, 0, 0);
+    
+    // Use resolved name or fallback
+    let playerName = playerNames.get(prop.player_id);
+    if (!playerName) {
+      playerName = getPlayerName(prop);
+    }
+    
+    allProps.push({
+      event_id: eventId,
+      sport: 'basketball_nba',
+      game_description: gameDescription,
+      commence_time: gameDate.toISOString(),
+      bookmaker: prop.vendor.toLowerCase(),
+      player_name: playerName,
+      prop_type: propType,
+      current_line: parseFloat(prop.line_value),
+      over_price: prop.market.over_odds || null,
+      under_price: prop.market.under_odds || null,
+      is_active: true,
+      category: 'balldontlie',
+    });
   }
 
   return allProps;
@@ -199,7 +285,7 @@ serve(async (req) => {
     // If bdl_only mode for NBA, skip The Odds API
     if (bdl_only && sport === 'basketball_nba' && bdlApiKey) {
       console.log(`[refresh-todays-props] BDL-only mode - fetching from BallDontLie`);
-      finalProps = await fetchBDLProps(bdlApiKey, todayStr);
+      finalProps = await fetchBDLProps(bdlApiKey, todayStr, supabase);
       dataSource = 'balldontlie';
       
       if (finalProps.length > 0) {
@@ -318,7 +404,7 @@ serve(async (req) => {
       if (finalProps.length === 0 && sport === 'basketball_nba' && use_bdl_fallback && bdlApiKey) {
         console.log(`[refresh-todays-props] No props from The Odds API - trying BallDontLie fallback`);
         
-        finalProps = await fetchBDLProps(bdlApiKey, todayStr);
+        finalProps = await fetchBDLProps(bdlApiKey, todayStr, supabase);
         dataSource = 'balldontlie';
         
         if (finalProps.length > 0) {
