@@ -398,6 +398,103 @@ function classifyMinutes(avgMinutes: number): MinutesConfidence {
   return 'RISKY';
 }
 
+// ============ FADE MODE: HIGH-EDGE UNDER SPECIALIST ============
+type FadeEdgeTag = 'FADE_ELITE' | 'FADE_EDGE' | 'FADE_COMBO' | 'AST_FADE_RISK' | 'BLOWOUT_FADE_RISK' | null;
+
+interface FadeEdgeResult {
+  bonus: number;
+  tag: FadeEdgeTag;
+  reason: string;
+}
+
+// Calculate Fade Edge Bonus based on historical win rates
+// WING + Rebounds Under + COMPETITIVE: 71.4% (ELITE)
+// Rebounds Under (any): 68.3% (EDGE)
+// Pts+Reb Under (WING): 64.7% (COMBO)
+// Assists Under: 52% (RISK - near coin-flip)
+function calculateFadeEdgeBonus(
+  role: PlayerRole,
+  propType: string,
+  side: string,
+  gameScript: GameScript
+): FadeEdgeResult {
+  const isUnder = side.toLowerCase() === 'under';
+  if (!isUnder) {
+    return { bonus: 0, tag: null, reason: 'Not an under play' };
+  }
+
+  const propLower = propType.toLowerCase();
+  const isRebounds = propLower.includes('rebounds') && !propLower.includes('points') && !propLower.includes('assists');
+  const isPtsReb = propLower.includes('points') && propLower.includes('rebounds') && !propLower.includes('assists');
+  const isAssists = propLower.includes('assists') && !propLower.includes('points') && !propLower.includes('rebounds');
+
+  // FADE ELITE: WING + Rebounds Under + COMPETITIVE (71.4% historical)
+  if (role === 'WING' && isRebounds && gameScript === 'COMPETITIVE') {
+    return { 
+      bonus: 1.5, 
+      tag: 'FADE_ELITE', 
+      reason: 'WING Rebounds Under in COMPETITIVE (71.4% historical)' 
+    };
+  }
+
+  // FADE EDGE: Any Rebounds Under (68.3% historical)
+  if (isRebounds) {
+    const gameBonus = gameScript === 'COMPETITIVE' ? 0.3 : 0;
+    return { 
+      bonus: 0.8 + gameBonus, 
+      tag: 'FADE_EDGE', 
+      reason: `Rebounds Under (68.3% historical)${gameScript === 'COMPETITIVE' ? ' + COMPETITIVE' : ''}` 
+    };
+  }
+
+  // FADE COMBO: WING + Pts+Reb Under (64.7% historical)
+  if (role === 'WING' && isPtsReb) {
+    return { 
+      bonus: 0.5, 
+      tag: 'FADE_COMBO', 
+      reason: 'WING Pts+Reb Under (64.7% historical)' 
+    };
+  }
+
+  // AST FADE RISK: Assists Under is only 52% - near coin-flip
+  if (isAssists) {
+    return { 
+      bonus: -0.5, 
+      tag: 'AST_FADE_RISK', 
+      reason: 'Assists Under only 52% historical - near coin-flip' 
+    };
+  }
+
+  // HARD BLOWOUT risk for all unders
+  if (gameScript === 'HARD_BLOWOUT') {
+    return { 
+      bonus: -1.0, 
+      tag: 'BLOWOUT_FADE_RISK', 
+      reason: 'Hard Blowout Under risk - stars get pulled' 
+    };
+  }
+
+  // Default under with no special edge
+  return { bonus: 0, tag: null, reason: 'Standard under play' };
+}
+
+// Check if pick qualifies as Fade Specialist
+function qualifiesAsFadeSpecialist(
+  fadeResult: FadeEdgeResult,
+  role: PlayerRole,
+  side: string
+): boolean {
+  const isUnder = side.toLowerCase() === 'under';
+  if (!isUnder) return false;
+  
+  // Fade Specialist requires positive edge tag
+  if (fadeResult.tag === 'FADE_ELITE' || fadeResult.tag === 'FADE_EDGE' || fadeResult.tag === 'FADE_COMBO') {
+    return fadeResult.bonus >= 0.5;
+  }
+  
+  return false;
+}
+
 // ============ STEP 10: CONFIDENCE SCORING ============
 interface ConfidenceFactors {
   roleStatAlignment: number;
@@ -405,7 +502,8 @@ interface ConfidenceFactors {
   gameScriptFit: number;
   medianDistance: number;
   badGameSurvival: number;
-  praCompliance: number; // NEW: Bonus for avoiding PRA or safe PRA plays
+  praCompliance: number;
+  fadeEdgeBonus: number; // NEW: Fade specialist bonus
 }
 
 function calculateConfidence(
@@ -416,8 +514,11 @@ function calculateConfidence(
   gameScript: GameScript,
   edge: number,
   passesBadGameCheck: boolean
-): { score: number; factors: ConfidenceFactors } {
+): { score: number; factors: ConfidenceFactors; fadeEdge: FadeEdgeResult } {
   const isPRA = isPRAPlay(propType);
+  
+  // Calculate fade edge bonus
+  const fadeEdge = calculateFadeEdgeBonus(role, propType, side, gameScript);
   
   const factors: ConfidenceFactors = {
     roleStatAlignment: 0,
@@ -426,6 +527,7 @@ function calculateConfidence(
     medianDistance: 0,
     badGameSurvival: 0,
     praCompliance: 0,
+    fadeEdgeBonus: fadeEdge.bonus,
   };
   
   // Role + Stat Alignment (0-2.5)
@@ -466,7 +568,7 @@ function calculateConfidence(
   // Bad Game Survival (0-1.0)
   factors.badGameSurvival = passesBadGameCheck ? 1.0 : 0;
   
-  // PRA Compliance Bonus (0-0.5) - NEW
+  // PRA Compliance Bonus (0-0.5)
   // Prefer Points/Rebounds UNDERS over PRA UNDERS
   if (!isPRA) {
     factors.praCompliance = 0.5; // Bonus for avoiding PRA entirely
@@ -476,7 +578,7 @@ function calculateConfidence(
   
   const totalScore = Object.values(factors).reduce((a, b) => a + b, 0);
   
-  return { score: totalScore, factors };
+  return { score: totalScore, factors, fadeEdge };
 }
 
 // ============ HELPER FUNCTIONS ============
@@ -885,7 +987,7 @@ serve(async (req) => {
           }
           
           // STEP 10: Confidence Scoring
-          const { score, factors } = calculateConfidence(
+          const { score, factors, fadeEdge } = calculateConfidence(
             role,
             prop.prop_type,
             side,
@@ -894,6 +996,9 @@ serve(async (req) => {
             edge,
             passesBadGame
           );
+          
+          // Check if this qualifies as a Fade Specialist pick
+          const isFadeSpecialist = qualifiesAsFadeSpecialist(fadeEdge, role, side);
           
           // Minimum confidence threshold: 7.7
           if (score < 7.7) {
@@ -965,7 +1070,10 @@ serve(async (req) => {
             over_price: liveOdds?.overPrice,
             under_price: liveOdds?.underPrice,
             bookmaker: liveOdds?.bookmaker || prop.bookmaker,
-            odds_updated_at: liveOdds ? new Date().toISOString() : null
+            odds_updated_at: liveOdds ? new Date().toISOString() : null,
+            // Fade Mode fields
+            is_fade_specialist: isFadeSpecialist,
+            fade_edge_tag: fadeEdge.tag,
           });
           
           processedPlayerProps.add(playerPropKey);
@@ -1003,7 +1111,7 @@ serve(async (req) => {
         return 0;
       });
       
-      // Daily Hitter Mode: Filter to >= 8.2 confidence, max 3 picks
+      // Mode-based filtering
       let finalPicks = approvedProps;
       let noPlayWarning: string | null = null;
       
@@ -1011,6 +1119,23 @@ serve(async (req) => {
         finalPicks = approvedProps
           .filter(p => p.confidence_score >= 8.2)
           .slice(0, 3);
+      } else if (mode === 'fade_specialist') {
+        // FADE MODE: Only high-edge Under plays
+        finalPicks = approvedProps
+          .filter(p => p.is_fade_specialist === true)
+          .sort((a, b) => {
+            // Sort by fade edge tag priority: ELITE > EDGE > COMBO
+            const tagPriority: Record<string, number> = {
+              'FADE_ELITE': 3,
+              'FADE_EDGE': 2,
+              'FADE_COMBO': 1,
+            };
+            const aPriority = tagPriority[a.fade_edge_tag] || 0;
+            const bPriority = tagPriority[b.fade_edge_tag] || 0;
+            if (bPriority !== aPriority) return bPriority - aPriority;
+            return b.confidence_score - a.confidence_score;
+          })
+          .slice(0, 10); // Max 10 fade specialist picks
       }
       
       // NO PLAY Logic: If fewer than 2 props qualify → warn
@@ -1065,6 +1190,8 @@ serve(async (req) => {
       
       if (mode === 'daily_hitter') {
         query = query.gte('confidence_score', 8.2).limit(3);
+      } else if (mode === 'fade_specialist') {
+        query = query.eq('is_fade_specialist', true).limit(10);
       }
       
       const { data: picks, error } = await query;

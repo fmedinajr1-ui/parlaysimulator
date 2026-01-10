@@ -316,6 +316,8 @@ interface CandidateLeg {
   is_star?: boolean;
   stat_priority?: number;
   rationale: string;
+  is_fade_specialist?: boolean;
+  fade_edge_tag?: string | null;
   rules_passed: {
     minutes: boolean;
     median: boolean;
@@ -486,11 +488,23 @@ async function buildSharpParlays(supabase: any): Promise<any> {
       adjustedConfidence -= 0.25;  // Stars should use rebounds/assists
     }
     
+    // NEW: Fade Specialist bonus from Risk Engine
+    const isFadeSpecialist = prop.is_fade_specialist === true;
+    const fadeEdgeTag = prop.fade_edge_tag || null;
+    
+    if (isFadeSpecialist) {
+      // Boost based on fade edge tier
+      if (fadeEdgeTag === 'FADE_ELITE') adjustedConfidence += 0.20;
+      else if (fadeEdgeTag === 'FADE_EDGE') adjustedConfidence += 0.12;
+      else if (fadeEdgeTag === 'FADE_COMBO') adjustedConfidence += 0.08;
+    }
+    
     adjustedConfidence = Math.max(0.1, Math.min(0.95, adjustedConfidence));
     
     // Build rationale (one-line, role + median based)
     const statType = statPriority >= 9 ? '(preferred)' : statPriority <= 2 ? '(low priority)' : '';
-    const rationale = `${position || 'Player'}, L5 median ${medianResult.median5.toFixed(1)}, L10 median ${medianResult.median10.toFixed(1)}, ${medianResult.edge > 0 ? '+' : ''}${medianResult.edge.toFixed(1)}% edge ${statType}`;
+    const fadeTag = isFadeSpecialist ? ` [${fadeEdgeTag}]` : '';
+    const rationale = `${position || 'Player'}, L5 median ${medianResult.median5.toFixed(1)}, L10 median ${medianResult.median10.toFixed(1)}, ${medianResult.edge > 0 ? '+' : ''}${medianResult.edge.toFixed(1)}% edge ${statType}${fadeTag}`;
     
     candidates.push({
       player_name: prop.player_name,
@@ -507,6 +521,8 @@ async function buildSharpParlays(supabase: any): Promise<any> {
       is_volatile: isVolatile,
       is_star: isStar,
       stat_priority: statPriority,
+      is_fade_specialist: isFadeSpecialist,
+      fade_edge_tag: fadeEdgeTag,
       rationale,
       rules_passed: {
         minutes: minutesResult.passes,
@@ -549,7 +565,9 @@ async function buildSharpParlays(supabase: any): Promise<any> {
             side: l.side,
             odds: l.odds,
             confidence_tier: getConfidenceTier(l.confidence_score),
-            rationale: l.rationale
+            rationale: l.rationale,
+            is_fade_specialist: l.is_fade_specialist || false,
+            fade_edge_tag: l.fade_edge_tag || null
           })),
           total_odds: totalOdds,
           combined_probability: combinedProb,
@@ -614,13 +632,21 @@ function buildParlay(candidates: CandidateLeg[], parlayType: keyof typeof PARLAY
     ? candidates.filter(c => c.confidence_score >= 0.35)
     : eligibleCandidates;
   
-  // Sort by stat priority (rebounds/assists first), then confidence
+  // Sort by stat priority (rebounds/assists first), then by fade specialist status, then confidence
   pool.sort((a, b) => {
-    // First by stat priority (higher = better)
+    // First: Prioritize fade specialists in SAFE parlays
+    if (parlayType === 'SAFE') {
+      const aFade = (a as any).is_fade_specialist ? 1 : 0;
+      const bFade = (b as any).is_fade_specialist ? 1 : 0;
+      if (bFade !== aFade) return bFade - aFade;
+    }
+    
+    // Second: by stat priority (higher = better)
     const aPriority = (a as any).stat_priority || getStatPriority(a.prop_type);
     const bPriority = (b as any).stat_priority || getStatPriority(b.prop_type);
     if (bPriority !== aPriority) return bPriority - aPriority;
-    // Then by confidence
+    
+    // Third: by confidence
     return b.confidence_score - a.confidence_score;
   });
   

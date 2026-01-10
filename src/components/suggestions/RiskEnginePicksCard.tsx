@@ -13,7 +13,8 @@ import {
   TrendingDown,
   Clock,
   Zap,
-  CalendarDays
+  CalendarDays,
+  ArrowDownCircle
 } from "lucide-react";
 import { toast } from "sonner";
 import { PlayerRoleBadge } from "@/components/parlay/PlayerRoleBadge";
@@ -38,6 +39,8 @@ interface RiskEnginePick {
   true_median: number | null;
   reason: string | null;
   outcome: string | null;
+  is_fade_specialist?: boolean;
+  fade_edge_tag?: string | null;
 }
 
 // Game script indicator
@@ -96,6 +99,24 @@ function ConfidenceScore({ score }: { score: number }) {
   );
 }
 
+// Fade Edge Badge
+function FadeEdgeBadge({ tag }: { tag: string }) {
+  const config: Record<string, { icon: string; className: string; label: string }> = {
+    'FADE_ELITE': { icon: '🎯', className: 'bg-purple-500/20 text-purple-400 border-purple-500/30', label: 'Elite Fade' },
+    'FADE_EDGE': { icon: '📉', className: 'bg-blue-500/20 text-blue-400 border-blue-500/30', label: 'Fade Edge' },
+    'FADE_COMBO': { icon: '🔗', className: 'bg-teal-500/20 text-teal-400 border-teal-500/30', label: 'Combo Fade' },
+  };
+  
+  const cfg = config[tag];
+  if (!cfg) return null;
+  
+  return (
+    <Badge variant="outline" className={`${cfg.className} text-xs`}>
+      {cfg.icon} {cfg.label}
+    </Badge>
+  );
+}
+
 // Format prop type for display
 function formatPropType(propType: string): string {
   return propType
@@ -142,6 +163,9 @@ function PickCard({ pick }: { pick: RiskEnginePick }) {
       <div className="flex flex-wrap gap-2">
         <PlayerRoleBadge role={pick.player_role} />
         <GameScriptBadge script={pick.game_script} />
+        {pick.is_fade_specialist && pick.fade_edge_tag && (
+          <FadeEdgeBadge tag={pick.fade_edge_tag} />
+        )}
       </div>
       
       {/* Minutes meter */}
@@ -172,7 +196,7 @@ function PickCard({ pick }: { pick: RiskEnginePick }) {
 }
 
 export function RiskEnginePicksCard() {
-  const [activeTab, setActiveTab] = useState<'all' | 'daily'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'daily' | 'fade'>('all');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const queryClient = useQueryClient();
   
@@ -192,6 +216,8 @@ export function RiskEnginePicksCard() {
       
       if (activeTab === 'daily') {
         query = query.gte('confidence_score', 8.2).limit(3);
+      } else if (activeTab === 'fade') {
+        query = query.eq('is_fade_specialist', true).limit(10);
       } else {
         query = query.gte('confidence_score', 7.5).limit(20);
       }
@@ -217,16 +243,23 @@ export function RiskEnginePicksCard() {
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
+      const modeMap: Record<string, string> = {
+        'all': 'full_slate',
+        'daily': 'daily_hitter',
+        'fade': 'fade_specialist'
+      };
+      
       const { data, error } = await supabase.functions.invoke('nba-player-prop-risk-engine', {
         body: { 
           action: 'analyze_slate',
-          mode: activeTab === 'daily' ? 'daily_hitter' : 'full_slate'
+          mode: modeMap[activeTab] || 'full_slate'
         }
       });
       
       if (error) throw error;
       
-      toast.success(`Risk Engine: ${data.approvedCount} picks approved`);
+      const fadeCount = data.approved?.filter((p: any) => p.is_fade_specialist).length || 0;
+      toast.success(`Risk Engine: ${data.approvedCount} picks approved${fadeCount > 0 ? ` (${fadeCount} fade specialists)` : ''}`);
       queryClient.invalidateQueries({ queryKey: ['risk-engine-picks'] });
     } catch (err) {
       console.error('Risk engine error:', err);
@@ -272,15 +305,19 @@ export function RiskEnginePicksCard() {
       </CardHeader>
       
       <CardContent className="space-y-4">
-        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'all' | 'daily')}>
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'all' | 'daily' | 'fade')}>
           <TabsList className="w-full">
             <TabsTrigger value="all" className="flex-1">
-              <Target className="w-4 h-4 mr-2" />
-              All Picks
+              <Target className="w-4 h-4 mr-1" />
+              All
+            </TabsTrigger>
+            <TabsTrigger value="fade" className="flex-1">
+              <ArrowDownCircle className="w-4 h-4 mr-1" />
+              Fade
             </TabsTrigger>
             <TabsTrigger value="daily" className="flex-1">
-              <Zap className="w-4 h-4 mr-2" />
-              Daily Hitters
+              <Zap className="w-4 h-4 mr-1" />
+              Elite
             </TabsTrigger>
           </TabsList>
           
@@ -317,11 +354,56 @@ export function RiskEnginePicksCard() {
             )}
           </TabsContent>
           
+          <TabsContent value="fade" className="mt-4">
+            {isLoading ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2" />
+                Loading fade picks...
+              </div>
+            ) : error ? (
+              <div className="text-center py-8 text-destructive">
+                Error loading picks
+              </div>
+            ) : !picks?.length ? (
+              <div className="text-center py-8">
+                <ArrowDownCircle className="w-10 h-10 text-muted-foreground mx-auto mb-2" />
+                <p className="text-muted-foreground">No fade specialist picks today</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Fade Mode targets high-edge Under plays
+                </p>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="mt-3"
+                  onClick={handleRefresh}
+                  disabled={isRefreshing}
+                >
+                  Run Fade Analysis
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <ArrowDownCircle className="w-4 h-4 text-purple-400" />
+                  <span className="text-sm font-medium text-foreground">
+                    Fade Specialists ({picks.length})
+                  </span>
+                </div>
+                <div className="text-xs text-muted-foreground mb-3 p-2 bg-purple-500/10 rounded-lg border border-purple-500/20">
+                  🎯 High-edge Under plays based on 65-71% historical win rates
+                </div>
+                {picks.map((pick) => (
+                  <PickCard key={pick.id} pick={pick} />
+                ))}
+              </div>
+            )}
+          </TabsContent>
+          
           <TabsContent value="daily" className="mt-4">
             {isLoading ? (
               <div className="text-center py-8 text-muted-foreground">
                 <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2" />
-                Loading daily hitters...
+                Loading elite picks...
               </div>
             ) : error ? (
               <div className="text-center py-8 text-destructive">
@@ -332,7 +414,7 @@ export function RiskEnginePicksCard() {
                 <Zap className="w-10 h-10 text-muted-foreground mx-auto mb-2" />
                 <p className="text-muted-foreground">No elite picks (8.2+) today</p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Daily Hitters require confidence ≥ 8.2
+                  Elite picks require confidence ≥ 8.2
                 </p>
               </div>
             ) : (
@@ -353,13 +435,13 @@ export function RiskEnginePicksCard() {
         
         {/* Legend */}
         <div className="pt-3 border-t border-border/50">
-          <p className="text-xs text-muted-foreground mb-2">Confidence Tiers:</p>
+          <p className="text-xs text-muted-foreground mb-2">Fade Edge Tiers:</p>
           <div className="flex flex-wrap gap-2 text-xs">
-            <span className="text-green-400">8.5+ Elite</span>
+            <span className="text-purple-400">🎯 Elite (71%)</span>
             <span className="text-muted-foreground">•</span>
-            <span className="text-emerald-400">8.0-8.4 Strong</span>
+            <span className="text-blue-400">📉 Edge (68%)</span>
             <span className="text-muted-foreground">•</span>
-            <span className="text-yellow-400">7.7-7.9 Playable</span>
+            <span className="text-teal-400">🔗 Combo (65%)</span>
           </div>
         </div>
       </CardContent>
