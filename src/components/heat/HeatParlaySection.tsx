@@ -33,7 +33,7 @@ interface HeatParlay {
 export function HeatParlaySection() {
   const today = new Date().toISOString().split('T')[0];
   
-  const { data: parlays, isLoading } = useQuery({
+  const { data: parlays, isLoading, refetch } = useQuery({
     queryKey: ['heat-parlays-homepage', today],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -42,7 +42,16 @@ export function HeatParlaySection() {
         .eq('parlay_date', today);
       
       if (error) throw error;
-      return data as unknown as HeatParlay[];
+      
+      // Filter out stale parlays that have already been settled
+      const freshParlays = (data || []).filter((p: any) => {
+        // Check if legs have outcome set (meaning they're settled/stale)
+        const leg1Settled = p.leg_1?.outcome && p.leg_1.outcome !== 'pending';
+        const leg2Settled = p.leg_2?.outcome && p.leg_2.outcome !== 'pending';
+        return !leg1Settled && !leg2Settled;
+      });
+      
+      return freshParlays as unknown as HeatParlay[];
     },
     refetchInterval: 60000,
   });
@@ -51,9 +60,17 @@ export function HeatParlaySection() {
 
   const coreParlay = parlays?.find(p => p.parlay_type === 'CORE') || null;
   const upsideParlay = parlays?.find(p => p.parlay_type === 'UPSIDE') || null;
+  
+  // Check if we have NO fresh parlays (all were stale or none exist)
+  const hasNoParlays = !isLoading && !coreParlay && !upsideParlay;
 
   const handleScanAndBuild = () => {
-    scanMutation.mutate(undefined);
+    scanMutation.mutate(undefined, {
+      onSuccess: () => {
+        // Refetch parlays after successful scan
+        refetch();
+      }
+    });
   };
 
   return (
@@ -82,6 +99,14 @@ export function HeatParlaySection() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <SkeletonCard variant="bet" />
           <SkeletonCard variant="bet" />
+        </div>
+      ) : hasNoParlays ? (
+        <div className="rounded-lg border border-dashed border-muted-foreground/30 p-6 text-center">
+          <Flame className="h-8 w-8 text-muted-foreground/50 mx-auto mb-2" />
+          <p className="text-sm font-medium text-muted-foreground">No Parlays Available</p>
+          <p className="text-xs text-muted-foreground/70 mt-1">
+            Click "Scan & Build" to generate today's parlays
+          </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

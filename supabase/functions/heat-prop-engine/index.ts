@@ -496,6 +496,27 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
   console.log(`[Heat Prop Engine] Running action: ${action}, sport: ${sport || 'all'}, date: ${today}`);
   
   if (action === 'scan' || action === 'ingest') {
+    // First, verify we have source data (unified_props with NBA games)
+    const { data: nbaProps, error: propsCheckError } = await supabase
+      .from('unified_props')
+      .select('event_id')
+      .eq('sport_key', 'basketball_nba')
+      .gte('commence_time', today)
+      .limit(1);
+    
+    if (propsCheckError) {
+      console.error('[Heat Engine] Error checking unified_props:', propsCheckError);
+    }
+    
+    if (!nbaProps || nbaProps.length === 0) {
+      console.warn('[Heat Engine] NO NBA PROPS in unified_props - run refresh-todays-props first');
+      return {
+        success: false,
+        error: 'NO_SOURCE_DATA',
+        message: 'No NBA props available. Run refresh-todays-props for basketball_nba first.'
+      };
+    }
+    
     // Fetch props from nba_risk_engine_picks as source data
     // Filter by mode='full_slate' and no rejection_reason (these are approved picks)
     const { data: picks, error: picksError } = await supabase
@@ -510,12 +531,13 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
       return { success: false, error: picksError.message };
     }
     
-    console.log(`[Heat Engine] Found ${picks?.length || 0} approved picks`);
+    console.log(`[Heat Engine] Found ${picks?.length || 0} approved picks from Risk Engine`);
     
     if (!picks || picks.length === 0) {
       return { 
-        success: true, 
-        message: 'No approved picks available',
+        success: false, 
+        error: 'NO_RISK_ENGINE_DATA',
+        message: 'No approved picks from Risk Engine for today. Run nba-player-prop-risk-engine first.',
         processed: 0
       };
     }
@@ -661,6 +683,29 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
   }
   
   if (action === 'build') {
+    // CRITICAL: Clear stale parlays FIRST before rebuilding
+    // This prevents yesterday's settled parlays from showing as today's
+    console.log(`[Heat Engine] Clearing stale data for ${today}...`);
+    
+    const { error: clearParlaysError } = await supabase
+      .from('heat_parlays')
+      .delete()
+      .eq('parlay_date', today);
+    
+    if (clearParlaysError) {
+      console.error('[Heat Engine] Error clearing parlays:', clearParlaysError);
+    }
+    
+    // Also clear stale tracker entries from previous days
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().split('T')[0];
+    
+    await supabase
+      .from('heat_prop_tracker')
+      .delete()
+      .lt('start_time_utc', today);
+    
     // Fetch eligible props from tracker
     const { data: eligibleProps, error: fetchError } = await supabase
       .from('heat_prop_tracker')
@@ -674,17 +719,17 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
       return { success: false, error: fetchError.message };
     }
     
-    console.log(`[Heat Engine] Found ${eligibleProps?.length || 0} eligible props`);
+    console.log(`[Heat Engine] Found ${eligibleProps?.length || 0} eligible props for today`);
     
     if (!eligibleProps || eligibleProps.length < 2) {
-      // Clear today's parlays
-      await supabase.from('heat_parlays').delete().eq('parlay_date', today);
+      // Clear today's supporting data
       await supabase.from('heat_watchlist').delete().eq('watchlist_date', today);
       await supabase.from('heat_do_not_bet').delete().eq('dnb_date', today);
       
       return {
-        success: true,
-        message: 'NO CORE PLAY TODAY - insufficient eligible props',
+        success: false,
+        error: 'INSUFFICIENT_PROPS',
+        message: 'NO CORE PLAY TODAY - insufficient eligible props. Need at least 2 eligible props.',
         core_parlay: null,
         upside_parlay: null,
         watchlist: [],

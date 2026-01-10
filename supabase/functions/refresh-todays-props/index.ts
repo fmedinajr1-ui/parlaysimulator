@@ -21,19 +21,35 @@ serve(async (req) => {
     }
 
     const supabase = createClient(supabaseUrl, supabaseKey);
-    const { sport = 'basketball_nba' } = await req.json().catch(() => ({}));
+    const { sport = 'basketball_nba', force_clear = false } = await req.json().catch(() => ({}));
 
-    console.log(`[refresh-todays-props] Starting refresh for ${sport}`);
+    console.log(`[refresh-todays-props] Starting refresh for ${sport}, force_clear: ${force_clear}`);
 
     // Step 1: Delete old props (commence_time in the past)
     const now = new Date().toISOString();
+    
+    // If force_clear, delete ALL props for this sport (not just stale ones)
+    if (force_clear) {
+      const { error: forceClearError, count } = await supabase
+        .from('unified_props')
+        .delete()
+        .eq('sport_key', sport);
+      
+      if (forceClearError) {
+        console.error('[refresh-todays-props] Force clear error:', forceClearError);
+      } else {
+        console.log(`[refresh-todays-props] Force cleared all ${sport} props`);
+      }
+    }
+    
+    // Always delete stale props (past games)
     const { error: deleteError } = await supabase
       .from('unified_props')
       .delete()
       .lt('commence_time', now);
 
     if (deleteError) {
-      console.error('[refresh-todays-props] Delete error:', deleteError);
+      console.error('[refresh-todays-props] Delete stale error:', deleteError);
     } else {
       console.log(`[refresh-todays-props] Deleted stale props`);
     }
