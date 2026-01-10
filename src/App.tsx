@@ -137,12 +137,19 @@ function AnimatedRoutes() {
   );
 }
 
+// Safe wrapper that catches hook errors from stale PWA cache
+function SafeRoutePersistence() {
+  try {
+    useRoutePersistence();
+    usePageLifecycle();
+  } catch (error) {
+    console.warn('[SafeRoutePersistence] Hook failed, likely stale cache:', error);
+  }
+  return null;
+}
+
 function AppContent() {
   const [isMobile, setIsMobile] = React.useState(false);
-  
-  // Enable route persistence and page lifecycle handling for mobile PWA
-  useRoutePersistence();
-  usePageLifecycle();
   
   React.useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 768);
@@ -154,6 +161,7 @@ function AppContent() {
   return (
     <EmailVerificationGuard>
       <PilotRouteGuard>
+        <SafeRoutePersistence />
         <Toaster />
         <Sonner />
         <PWAUpdatePrompt />
