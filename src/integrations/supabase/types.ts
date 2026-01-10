@@ -4266,10 +4266,12 @@ export type Database = {
           current_line: number | null
           edge: number | null
           event_id: string | null
+          fade_edge_tag: string | null
           game_date: string
           game_script: string
           id: string
           is_ball_dominant: boolean | null
+          is_fade_specialist: boolean | null
           is_pra: boolean | null
           is_star: boolean | null
           is_trap_indicator: boolean | null
@@ -4310,10 +4312,12 @@ export type Database = {
           current_line?: number | null
           edge?: number | null
           event_id?: string | null
+          fade_edge_tag?: string | null
           game_date: string
           game_script: string
           id?: string
           is_ball_dominant?: boolean | null
+          is_fade_specialist?: boolean | null
           is_pra?: boolean | null
           is_star?: boolean | null
           is_trap_indicator?: boolean | null
@@ -4354,10 +4358,12 @@ export type Database = {
           current_line?: number | null
           edge?: number | null
           event_id?: string | null
+          fade_edge_tag?: string | null
           game_date?: string
           game_script?: string
           id?: string
           is_ball_dominant?: boolean | null
+          is_fade_specialist?: boolean | null
           is_pra?: boolean | null
           is_star?: boolean | null
           is_trap_indicator?: boolean | null
