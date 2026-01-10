@@ -193,7 +193,7 @@ serve(async (req) => {
 
       for (const leg of legs) {
         const playerName = leg.player_name || leg.player || '';
-        const propType = leg.prop_type || leg.market || '';
+        const propType = leg.prop_type || leg.market || leg.prop || '';
         const line = leg.line || leg.target || 0;
         const side = leg.side || leg.pick || 'over';
 

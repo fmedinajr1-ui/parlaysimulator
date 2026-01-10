@@ -28,24 +28,39 @@ export default function PropResults() {
   const queryClient = useQueryClient();
   const { data: results, isLoading, stats, groupedByDate } = usePropResults(14);
 
-  const handleVerifyOutcomes = async () => {
+  const handleSyncAndVerify = async () => {
     setIsVerifying(true);
-    toast.info("Verifying all engines...");
     try {
+      // Step 1: Sync game stats from ESPN
+      toast.info("Step 1/2: Syncing game stats...");
+      const syncResult = await supabase.functions.invoke('nba-stats-fetcher', {
+        body: { mode: 'sync', daysBack: 1, useESPN: true }
+      });
+      
+      if (syncResult.error) {
+        toast.error('Failed to sync game stats');
+        return;
+      }
+      
+      const statsCount = syncResult.data?.espnStats?.length || syncResult.data?.totalGameLogs || 0;
+      toast.success(`Synced ${statsCount} game logs`);
+
+      // Step 2: Verify outcomes
+      toast.info("Step 2/2: Verifying outcomes...");
       const { data, error } = await supabase.functions.invoke('verify-all-engine-outcomes');
       
       if (error) throw error;
       
       if (data.success) {
         const { summary } = data;
-        toast.success(`Verified ${summary.verified} results: ${summary.hits}W - ${summary.misses}L - ${summary.pushes}P`);
+        toast.success(`Verified ${summary.verified}: ${summary.hits}W - ${summary.misses}L - ${summary.pushes}P`);
         queryClient.invalidateQueries({ queryKey: ['prop-results'] });
       } else {
         toast.error(data.error || 'Verification failed');
       }
     } catch (error) {
-      console.error('Verification error:', error);
-      toast.error('Failed to verify outcomes');
+      console.error('Sync & verify error:', error);
+      toast.error('Failed to sync and verify');
     } finally {
       setIsVerifying(false);
     }
@@ -103,7 +118,7 @@ export default function PropResults() {
             </div>
           </div>
           <Button
-            onClick={handleVerifyOutcomes}
+            onClick={handleSyncAndVerify}
             disabled={isVerifying}
             variant="outline"
             className="gap-2"
@@ -113,7 +128,7 @@ export default function PropResults() {
             ) : (
               <RefreshCw className="w-4 h-4" />
             )}
-            Verify Outcomes
+            Sync & Verify
           </Button>
         </div>
 
@@ -229,7 +244,7 @@ export default function PropResults() {
               <Button 
                 variant="outline" 
                 className="mt-4"
-                onClick={handleVerifyOutcomes}
+                onClick={handleSyncAndVerify}
                 disabled={isVerifying}
               >
                 Check for Results
