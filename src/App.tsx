@@ -52,6 +52,7 @@ const Changelog = React.lazy(() => import("./pages/Changelog"));
 const ReleaseManager = React.lazy(() => import("./pages/admin/ReleaseManager"));
 const LiveDashboard = React.lazy(() => import("./pages/LiveDashboard"));
 const PropMarket = React.lazy(() => import("./pages/PropMarket"));
+const PropResults = React.lazy(() => import("./pages/PropResults"));
 const EngineDashboard = React.lazy(() => import("./pages/EngineDashboard"));
 
 // QueryClient with optimized defaults
@@ -124,6 +125,8 @@ function AnimatedRoutes() {
               <Route path="/admin/releases" element={<ReleaseManager />} />
               <Route path="/live-dashboard" element={<LiveDashboard />} />
               <Route path="/prop-market" element={<PropMarket />} />
+              <Route path="/prop-results" element={<PropResults />} />
+              <Route path="/engine-dashboard" element={<EngineDashboard />} />
               <Route path="/engine-dashboard" element={<EngineDashboard />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
