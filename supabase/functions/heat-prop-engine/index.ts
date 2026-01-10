@@ -474,11 +474,23 @@ function generateLegReason(prop: any): string {
   return parts.length > 0 ? parts.join('; ') : 'Meets all validation rules';
 }
 
+// Helper function to get today's date in Eastern Time (NBA game time)
+function getEasternDate(): string {
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat('en-CA', { 
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  return formatter.format(now); // Returns 'YYYY-MM-DD'
+}
+
 // ============================================================================
 // MAIN ENGINE
 // ============================================================================
 async function runHeatEngine(supabase: any, action: string, sport?: string) {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getEasternDate();
   const now = new Date();
   
   console.log(`[Heat Prop Engine] Running action: ${action}, sport: ${sport || 'all'}, date: ${today}`);

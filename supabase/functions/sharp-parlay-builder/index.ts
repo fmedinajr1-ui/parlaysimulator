@@ -325,11 +325,23 @@ interface CandidateLeg {
   };
 }
 
+// Helper function to get today's date in Eastern Time (NBA game time)
+function getEasternDate(): string {
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat('en-CA', { 
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  return formatter.format(now); // Returns 'YYYY-MM-DD'
+}
+
 async function buildSharpParlays(supabase: any): Promise<any> {
   console.log('[Sharp Parlay Builder] Starting engine...');
   
   // Fetch today's props from unified_props or nba_risk_engine_picks
-  const today = new Date().toISOString().split('T')[0];
+  const today = getEasternDate();
   
   const { data: props, error: propsError } = await supabase
     .from('nba_risk_engine_picks')
