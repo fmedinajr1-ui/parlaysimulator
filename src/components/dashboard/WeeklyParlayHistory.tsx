@@ -23,18 +23,20 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 
-function OutcomeBadge({ outcome }: { outcome: 'won' | 'lost' | 'push' | 'pending' | null }) {
+function OutcomeBadge({ outcome }: { outcome: string | null }) {
   if (!outcome) return <span className="text-xs text-muted-foreground">-</span>;
   
-  const config = {
+  const config: Record<string, { icon: string; className: string }> = {
     won: { icon: '✅', className: 'text-green-500' },
+    win: { icon: '✅', className: 'text-green-500' },
     lost: { icon: '❌', className: 'text-red-500' },
+    loss: { icon: '❌', className: 'text-red-500' },
     push: { icon: '➡️', className: 'text-yellow-500' },
     pending: { icon: '⏳', className: 'text-muted-foreground' },
   };
   
-  const { icon, className } = config[outcome];
-  return <span className={cn("text-xs", className)}>{icon}</span>;
+  const result = config[outcome] ?? config.pending;
+  return <span className={cn("text-xs", result.className)}>{result.icon}</span>;
 }
 
 function StatBox({ value, label, className }: { value: number; label: string; className?: string }) {
