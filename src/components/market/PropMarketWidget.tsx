@@ -1,16 +1,18 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { PropRow } from "./PropRow";
 import { HeatLevel } from "./HeatBadge";
-import { Flame, ArrowRight, RefreshCw, Loader2, Zap } from "lucide-react";
+import { Flame, ArrowRight, RefreshCw, Loader2, Zap, AlertTriangle, CalendarDays } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useRefreshPropMarketOdds } from "@/hooks/useLiveOdds";
 import { useSharpMovementSync } from "@/hooks/useSharpMovementSync";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { format, isToday, parseISO, differenceInHours } from "date-fns";
 interface RiskEnginePick {
   id: string;
   player_name: string;
@@ -61,14 +63,19 @@ export function PropMarketWidget() {
   const { refreshAll, isRefreshing, lastRefresh } = useRefreshPropMarketOdds();
   const { sharpAlerts, isConnected, alertCount, hasSharpAlert } = useSharpMovementSync({ showToasts: true });
 
+  // Get today's date in YYYY-MM-DD format for filtering
+  const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
+
   const { data: picks, isLoading } = useQuery({
-    queryKey: ['risk-engine-picks-widget'],
+    queryKey: ['risk-engine-picks-widget', todayStr],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('nba_risk_engine_picks')
         .select('id, player_name, prop_type, line, side, confidence_score, player_role, game_script, game_date, current_line, over_price, under_price, bookmaker, odds_updated_at, sharp_alert, sharp_alert_level, sharp_movement_pts, sharp_direction, is_trap_indicator, outcome, actual_value')
         .gte('confidence_score', 7.5)
-        .order('game_date', { ascending: false })
+        .gte('game_date', todayStr) // Only show today's or future picks
+        .or('outcome.is.null,outcome.eq.pending') // Only pending/unsettled
+        .order('game_date', { ascending: true })
         .order('confidence_score', { ascending: false })
         .limit(10);
       
@@ -77,6 +84,21 @@ export function PropMarketWidget() {
     },
     refetchInterval: 30000, // Refetch every 30 seconds for outcome updates
   });
+
+  // Check if data is stale (showing yesterday's props)
+  const { isStale, propsDate, formattedDate } = useMemo(() => {
+    if (!picks?.length) return { isStale: false, propsDate: null, formattedDate: null };
+    
+    const firstPickDate = picks[0].game_date;
+    const parsedDate = parseISO(firstPickDate);
+    const stale = !isToday(parsedDate);
+    
+    return {
+      isStale: stale,
+      propsDate: parsedDate,
+      formattedDate: format(parsedDate, 'EEEE, MMMM d')
+    };
+  }, [picks]);
 
   // Real-time subscription for pick updates
   useEffect(() => {
@@ -159,11 +181,28 @@ export function PropMarketWidget() {
             </Link>
           </div>
         </div>
-        {lastRefresh && (
-          <p className="text-xs text-muted-foreground mt-1">
-            Last refresh: {lastRefresh.toLocaleTimeString()}
-          </p>
-        )}
+        {/* Date indicator and last refresh */}
+        <div className="flex items-center justify-between mt-2">
+          {picks?.length > 0 && formattedDate && (
+            <div className="flex items-center gap-2">
+              <CalendarDays className="w-3 h-3 text-muted-foreground" />
+              <span className="text-xs text-muted-foreground">
+                Props for: <span className="font-medium text-foreground">{formattedDate}</span>
+              </span>
+              {isStale && (
+                <Badge variant="destructive" className="text-[10px] h-5 gap-1">
+                  <AlertTriangle className="w-3 h-3" />
+                  Stale
+                </Badge>
+              )}
+            </div>
+          )}
+          {lastRefresh && (
+            <span className="text-[10px] text-muted-foreground">
+              Updated: {lastRefresh.toLocaleTimeString()}
+            </span>
+          )}
+        </div>
       </CardHeader>
       <CardContent className="space-y-2">
         {isLoading ? (

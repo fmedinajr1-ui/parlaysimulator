@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,10 +12,12 @@ import {
   TrendingUp, 
   TrendingDown,
   Clock,
-  Zap
+  Zap,
+  CalendarDays
 } from "lucide-react";
 import { toast } from "sonner";
 import { PlayerRoleBadge } from "@/components/parlay/PlayerRoleBadge";
+import { format, parseISO, isToday } from "date-fns";
 
 interface RiskEnginePick {
   id: string;
@@ -27,6 +29,7 @@ interface RiskEnginePick {
   side: string;
   player_role: string;
   game_script: string;
+  game_date: string;
   minutes_class: string;
   avg_minutes: number | null;
   confidence_score: number;
@@ -173,13 +176,18 @@ export function RiskEnginePicksCard() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const queryClient = useQueryClient();
   
+  // Get today's date for filtering
+  const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
+  
   const { data: picks, isLoading, error } = useQuery({
-    queryKey: ['risk-engine-picks', activeTab],
+    queryKey: ['risk-engine-picks', activeTab, todayStr],
     queryFn: async () => {
       let query = supabase
         .from('nba_risk_engine_picks')
         .select('*')
-        .order('game_date', { ascending: false })
+        .gte('game_date', todayStr) // Only today's or future picks
+        .or('outcome.is.null,outcome.eq.pending') // Only pending/unsettled
+        .order('game_date', { ascending: true })
         .order('confidence_score', { ascending: false });
       
       if (activeTab === 'daily') {
@@ -195,6 +203,16 @@ export function RiskEnginePicksCard() {
     },
     refetchInterval: 60000, // Refresh every minute
   });
+  
+  // Calculate props date info for display
+  const { formattedDate, isStale } = useMemo(() => {
+    if (!picks?.length) return { formattedDate: null, isStale: false };
+    const firstDate = parseISO(picks[0].game_date);
+    return {
+      formattedDate: format(firstDate, 'EEE, MMM d'),
+      isStale: !isToday(firstDate)
+    };
+  }, [picks]);
   
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -228,7 +246,18 @@ export function RiskEnginePicksCard() {
             </div>
             <div>
               <CardTitle className="text-lg">Risk Engine</CardTitle>
-              <p className="text-xs text-muted-foreground">8-Step NBA Prop Analysis</p>
+              <div className="flex items-center gap-2">
+                <p className="text-xs text-muted-foreground">8-Step NBA Prop Analysis</p>
+                {formattedDate && (
+                  <div className="flex items-center gap-1">
+                    <CalendarDays className="w-3 h-3 text-muted-foreground" />
+                    <span className="text-xs text-muted-foreground">{formattedDate}</span>
+                    {isStale && (
+                      <Badge variant="destructive" className="text-[10px] h-4 px-1">Stale</Badge>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
           <Button
