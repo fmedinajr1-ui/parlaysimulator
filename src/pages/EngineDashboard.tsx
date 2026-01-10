@@ -89,10 +89,26 @@ export default function EngineDashboard() {
     }
   };
 
-  const handleVerifyOutcomes = async () => {
+  const handleSyncAndVerify = async () => {
     setIsVerifying(true);
-    toast.info("Verifying all engine outcomes...");
     try {
+      // Step 1: Sync game stats from ESPN
+      toast.info("Step 1/2: Syncing game stats from ESPN...");
+      const syncResult = await supabase.functions.invoke('nba-stats-fetcher', {
+        body: { mode: 'sync', daysBack: 1, useESPN: true }
+      });
+      
+      if (syncResult.error) {
+        console.error('Stats sync error:', syncResult.error);
+        toast.error('Failed to sync game stats');
+        return;
+      }
+      
+      const statsCount = syncResult.data?.espnStats?.length || syncResult.data?.totalGameLogs || 0;
+      toast.success(`Synced ${statsCount} player game logs`);
+
+      // Step 2: Verify outcomes
+      toast.info("Step 2/2: Verifying all engine outcomes...");
       const { data, error } = await supabase.functions.invoke('verify-all-engine-outcomes');
       if (error) throw error;
       
@@ -108,8 +124,8 @@ export default function EngineDashboard() {
         toast.error(data?.error || 'Verification failed');
       }
     } catch (error) {
-      console.error('Verify outcomes error:', error);
-      toast.error('Failed to verify outcomes');
+      console.error('Sync & verify error:', error);
+      toast.error('Failed to sync and verify');
     } finally {
       setIsVerifying(false);
     }
@@ -127,7 +143,7 @@ export default function EngineDashboard() {
             </div>
             <div className="flex items-center gap-2">
               <Button
-                onClick={handleVerifyOutcomes}
+                onClick={handleSyncAndVerify}
                 disabled={isVerifying}
                 variant="outline"
                 size="sm"
@@ -135,12 +151,12 @@ export default function EngineDashboard() {
                 {isVerifying ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Verifying...
+                    Syncing...
                   </>
                 ) : (
                   <>
                     <CheckCircle className="w-4 h-4 mr-2" />
-                    Verify Outcomes
+                    Sync & Verify
                   </>
                 )}
               </Button>
