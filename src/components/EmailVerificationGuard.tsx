@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useState } from 'react';
+import { ReactNode, useEffect, useState, useRef } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -11,11 +11,34 @@ interface EmailVerificationGuardProps {
 // Public paths that don't require verification - include /profile for sign-out access
 const PUBLIC_PATHS = ['/', '/auth', '/verify-email', '/install', '/offline', '/profile'];
 
+// Max time to wait for verification check before allowing through
+const VERIFICATION_TIMEOUT_MS = 5000;
+
 export function EmailVerificationGuard({ children }: EmailVerificationGuardProps) {
   const { user, isLoading: authLoading } = useAuth();
   const location = useLocation();
   const [emailVerified, setEmailVerified] = useState<boolean | null>(null);
   const [isChecking, setIsChecking] = useState(true);
+  const [timedOut, setTimedOut] = useState(false);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Timeout fallback to prevent infinite loading
+  useEffect(() => {
+    timeoutRef.current = setTimeout(() => {
+      if (isChecking) {
+        console.warn('[EmailVerificationGuard] Verification check timed out, allowing through');
+        setTimedOut(true);
+        setIsChecking(false);
+        setEmailVerified(true); // Allow through on timeout
+      }
+    }, VERIFICATION_TIMEOUT_MS);
+
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const checkVerification = async () => {
@@ -50,28 +73,36 @@ export function EmailVerificationGuard({ children }: EmailVerificationGuardProps
 
         if (error) {
           console.error('Error checking verification:', error);
-          setEmailVerified(false);
+          // On error, allow through rather than blocking forever
+          setEmailVerified(true);
         } else {
           setEmailVerified(data?.email_verified ?? false);
         }
       } catch (err) {
         console.error('Error checking verification:', err);
-        setEmailVerified(false);
+        // On error, allow through rather than blocking forever
+        setEmailVerified(true);
       } finally {
         setIsChecking(false);
       }
     };
 
-    // Reset checking state when user changes
-    setIsChecking(true);
-    
+    // Reset checking state when user changes (but not on initial mount)
     if (!authLoading) {
+      setIsChecking(true);
       checkVerification();
     }
-  }, [user, authLoading]);
+  }, [user?.id, authLoading]);
 
-  // Still loading
-  if (authLoading || isChecking) {
+  // Clear timeout when checking completes
+  useEffect(() => {
+    if (!isChecking && timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+  }, [isChecking]);
+
+  // Still loading (but respect timeout)
+  if ((authLoading || isChecking) && !timedOut) {
     return <FullPageWolfLoader />;
   }
 
