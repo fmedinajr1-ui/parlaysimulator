@@ -43,7 +43,7 @@ interface BDLGame {
 interface BDLPlayerProp {
   game_id: number;
   player_id: number;
-  player: { first_name: string; last_name: string };
+  player?: { first_name: string; last_name: string }; // May or may not be present
   vendor: string;
   prop_type: string;
   line_value: string;
@@ -53,6 +53,31 @@ interface BDLPlayerProp {
     under_odds?: number;
     odds?: number;
   };
+}
+
+// Helper to get player name from prop (handles both formats)
+function getPlayerName(prop: BDLPlayerProp): string {
+  if (prop.player && prop.player.first_name && prop.player.last_name) {
+    return `${prop.player.first_name} ${prop.player.last_name}`;
+  }
+  // Fallback: use player_id as placeholder (will need to be resolved)
+  return `Player_${prop.player_id}`;
+}
+
+// Fetch player name from BDL API
+async function fetchPlayerName(playerId: number, headers: HeadersInit): Promise<string> {
+  try {
+    const response = await fetch(`${BDL_V1_URL}/players/${playerId}`, { headers });
+    if (response.ok) {
+      const data = await response.json();
+      if (data.data) {
+        return `${data.data.first_name} ${data.data.last_name}`;
+      }
+    }
+  } catch (err) {
+    console.warn(`[bdl-fetch-odds] Failed to fetch player ${playerId}`);
+  }
+  return `Player_${playerId}`;
 }
 
 serve(async (req) => {
@@ -186,7 +211,7 @@ serve(async (req) => {
       // Transform to unified format
       const transformedProps = props.map(p => ({
         bdl_game_id: p.game_id,
-        player_name: `${p.player.first_name} ${p.player.last_name}`,
+        player_name: getPlayerName(p),
         vendor: p.vendor,
         prop_type: PROP_TYPE_MAP[p.prop_type] || p.prop_type,
         original_prop_type: p.prop_type,
@@ -267,24 +292,21 @@ serve(async (req) => {
           // Transform to unified_props format
           for (const prop of props) {
             const propType = PROP_TYPE_MAP[prop.prop_type] || prop.prop_type;
+            const gameDescription = `${game.visitor_team.full_name} @ ${game.home_team.full_name}`;
             
             allUnifiedProps.push({
               event_id: eventId,
-              sport_key: 'basketball_nba',
-              sport_title: 'NBA',
-              home_team: game.home_team.full_name,
-              away_team: game.visitor_team.full_name,
+              sport: 'basketball_nba',
+              game_description: gameDescription,
               commence_time: gameDate.toISOString(),
               bookmaker: prop.vendor.toLowerCase(),
-              market_key: `player_${propType}`,
-              player_name: `${prop.player.first_name} ${prop.player.last_name}`,
+              player_name: getPlayerName(prop),
               prop_type: propType,
-              line: parseFloat(prop.line_value),
+              current_line: parseFloat(prop.line_value),
               over_price: prop.market.over_odds || null,
               under_price: prop.market.under_odds || null,
-              last_update: new Date().toISOString(),
               is_active: true,
-              bdl_game_id: game.id,
+              category: 'balldontlie',
             });
           }
           
