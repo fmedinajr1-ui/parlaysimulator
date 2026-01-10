@@ -7,15 +7,18 @@ import { EngineComparisonView } from "@/components/dashboard/EngineComparisonVie
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Target, BarChart3, Zap, Flame, RefreshCw, Loader2 } from "lucide-react";
+import { Target, BarChart3, Zap, Flame, RefreshCw, Loader2, CheckCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 
 export default function EngineDashboard() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { riskEngine, propEngineV2, sharpBuilder, heatEngine, overall, refetch } = useEngineDashboard();
   const [isScanning, setIsScanning] = useState(false);
   const [runningEngines, setRunningEngines] = useState<Record<string, boolean>>({});
+  const [isVerifying, setIsVerifying] = useState(false);
 
   const runFullScan = async () => {
     setIsScanning(true);
@@ -86,6 +89,28 @@ export default function EngineDashboard() {
     }
   };
 
+  const handleVerifyOutcomes = async () => {
+    setIsVerifying(true);
+    toast.info("Verifying outcomes from game logs...");
+    try {
+      const { data, error } = await supabase.functions.invoke('verify-risk-engine-outcomes');
+      if (error) throw error;
+      
+      if (data?.success) {
+        toast.success(`Verified ${data.verified} picks: ${data.hits}W / ${data.misses}L / ${data.pushes}P`);
+        queryClient.invalidateQueries({ queryKey: ['risk-engine-picks-widget'] });
+        refetch();
+      } else {
+        toast.error(data?.error || 'Verification failed');
+      }
+    } catch (error) {
+      console.error('Verify outcomes error:', error);
+      toast.error('Failed to verify outcomes');
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background pb-24">
       {/* Header */}
@@ -96,23 +121,43 @@ export default function EngineDashboard() {
               <h1 className="text-xl font-bold text-foreground">Engine Command Center</h1>
               <p className="text-sm text-muted-foreground">Real-time status across all systems</p>
             </div>
-            <Button
-              onClick={runFullScan}
-              disabled={isScanning}
-              className="bg-primary hover:bg-primary/90"
-            >
-              {isScanning ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Scanning...
-                </>
-              ) : (
-                <>
-                  <RefreshCw className="w-4 h-4 mr-2" />
-                  Full Scan
-                </>
-              )}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                onClick={handleVerifyOutcomes}
+                disabled={isVerifying}
+                variant="outline"
+                size="sm"
+              >
+                {isVerifying ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Verifying...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle className="w-4 h-4 mr-2" />
+                    Verify Outcomes
+                  </>
+                )}
+              </Button>
+              <Button
+                onClick={runFullScan}
+                disabled={isScanning}
+                className="bg-primary hover:bg-primary/90"
+              >
+                {isScanning ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Scanning...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="w-4 h-4 mr-2" />
+                    Full Scan
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
         </div>
       </div>

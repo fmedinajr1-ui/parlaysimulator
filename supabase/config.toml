@@ -251,3 +251,6 @@ verify_jwt = false
 
 [functions.cleanup-stale-props]
 verify_jwt = false
+
+[functions.verify-risk-engine-outcomes]
+verify_jwt = false
