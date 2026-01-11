@@ -504,6 +504,178 @@ Deno.serve(async (req) => {
 
     console.log(`[Prop Engine v2] Action: ${action}, Props: ${props?.length || 0}, Mode: ${mode}`);
 
+    // Helper function to extract stat values from game logs
+    function getStatValue(log: any, propType: string): number {
+      const type = propType.toLowerCase();
+      
+      // Combo stats
+      if ((type.includes('pts') && type.includes('reb') && type.includes('ast')) || type.includes('pra')) {
+        return (log.points || 0) + (log.rebounds || 0) + (log.assists || 0);
+      }
+      if (type.includes('pts') && type.includes('reb')) {
+        return (log.points || 0) + (log.rebounds || 0);
+      }
+      if (type.includes('pts') && type.includes('ast')) {
+        return (log.points || 0) + (log.assists || 0);
+      }
+      if (type.includes('reb') && type.includes('ast')) {
+        return (log.rebounds || 0) + (log.assists || 0);
+      }
+      
+      // Single stats
+      if (type.includes('rebound') || type === 'reb') return log.rebounds || 0;
+      if (type.includes('assist') || type === 'ast') return log.assists || 0;
+      if (type.includes('point') || type === 'pts') return log.points || 0;
+      if (type.includes('three') || type.includes('3pt') || type.includes('3-pointer')) return log.threes_made || 0;
+      if (type.includes('block') || type === 'blk') return log.blocks || 0;
+      if (type.includes('steal') || type === 'stl') return log.steals || 0;
+      if (type.includes('turnover') || type === 'to') return log.turnovers || 0;
+      
+      return 0;
+    }
+
+    // ============================================
+    // FULL SLATE MODE - Auto-fetch from Risk Engine
+    // ============================================
+    if (action === 'full_slate' || action === 'analyze_all' || mode === 'full_slate') {
+      const today = new Date().toISOString().split('T')[0];
+      console.log(`[Prop Engine v2] Full slate mode for ${today}`);
+      
+      // Fetch approved props from Risk Engine (uses nba_risk_engine_picks table)
+      const { data: approvedProps, error: fetchError } = await supabase
+        .from('nba_risk_engine_picks')
+        .select('*')
+        .eq('game_date', today);
+      
+      if (fetchError) {
+        console.error('[Prop Engine v2] Error fetching approved props:', fetchError);
+        throw fetchError;
+      }
+      
+      if (!approvedProps || approvedProps.length === 0) {
+        return new Response(
+          JSON.stringify({ 
+            success: false, 
+            message: 'No approved props found from Risk Engine for today',
+            total: 0
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      
+      console.log(`[Prop Engine v2] Full slate: Processing ${approvedProps.length} approved props`);
+      
+      // Convert Risk Engine props to PropInput format with median calculation
+      const propsToAnalyze: PropInput[] = [];
+      
+      for (const prop of approvedProps) {
+        // Fetch game logs for median calculation and recent games
+        const { data: gameLogs } = await supabase
+          .from('nba_player_game_logs')
+          .select('*')
+          .eq('player_name', prop.player_name)
+          .order('game_date', { ascending: false })
+          .limit(10);
+        
+        // Calculate stats from game logs
+        let recentGames: number[] = [];
+        let rollingMedian = prop.true_median || 0;
+        
+        if (gameLogs && gameLogs.length > 0) {
+          recentGames = gameLogs.map(log => getStatValue(log, prop.prop_type));
+          
+          // Calculate median if not provided
+          if (!rollingMedian || rollingMedian <= 0) {
+            rollingMedian = calculateMedian(recentGames);
+          }
+        }
+        
+        propsToAnalyze.push({
+          player_name: prop.player_name,
+          prop_type: prop.prop_type,
+          line: prop.current_line || prop.line,
+          side: (prop.side?.toLowerCase() || 'over') as 'over' | 'under',
+          event_id: prop.event_id,
+          team_name: prop.team_name,
+          opponent_name: prop.opponent,
+          rolling_median: rollingMedian,
+          recent_games: recentGames,
+          avg_minutes: prop.avg_minutes,
+          spread: prop.spread,
+          position: prop.player_role,
+          market_type: 'Standard',
+        });
+      }
+      
+      console.log(`[Prop Engine v2] Prepared ${propsToAnalyze.length} props for analysis`);
+      
+      // Run engine on all props
+      const results = propsToAnalyze.map(prop => runPropEngineV2(prop));
+      
+      // Save results to prop_engine_v2_picks
+      const picksToInsert = results.map(r => ({
+        player_name: r.player_name,
+        prop_type: r.prop_type,
+        line: r.line,
+        line_structure: r.line_structure,
+        side: r.side,
+        ses_score: r.ses_score,
+        decision: r.decision,
+        decision_emoji: r.decision_emoji,
+        key_reason: r.key_reason,
+        player_archetype: r.player_archetype,
+        market_type: r.market_type,
+        rolling_median: r.rolling_median,
+        median_gap: r.median_gap,
+        minutes_certainty: r.minutes_certainty,
+        blowout_risk: r.blowout_risk,
+        auto_fail_reason: r.auto_fail_reason,
+        ses_components: r.ses_components,
+        game_date: today,
+        event_id: r.event_id,
+        team_name: r.team_name,
+        opponent_name: r.opponent_name,
+        odds: r.odds,
+      }));
+
+      const { error: saveError } = await supabase
+        .from('prop_engine_v2_picks')
+        .upsert(picksToInsert, { 
+          onConflict: 'player_name,prop_type,game_date',
+          ignoreDuplicates: false 
+        });
+
+      if (saveError) {
+        console.error('[Prop Engine v2] Save error:', saveError);
+      } else {
+        console.log(`[Prop Engine v2] Saved ${picksToInsert.length} picks`);
+      }
+      
+      // Build bankroll parlay
+      const bankrollBuilder = buildBankrollParlay(results);
+      
+      const summary = {
+        total: results.length,
+        bets: results.filter(r => r.decision === 'BET').length,
+        leans: results.filter(r => r.decision === 'LEAN').length,
+        passes: results.filter(r => r.decision === 'NO_BET').length,
+        avg_ses: results.length > 0 ? Math.round(results.reduce((sum, r) => sum + r.ses_score, 0) / results.length) : 0,
+      };
+      
+      console.log(`[Prop Engine v2] Full slate complete: ${summary.bets} BETs, ${summary.leans} LEANs, ${summary.passes} PASSes`);
+      
+      return new Response(
+        JSON.stringify({
+          success: true,
+          results,
+          bankroll_builder: bankrollBuilder,
+          summary,
+          source: 'full_slate_from_risk_engine',
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     if (action === 'analyze') {
       // Analyze provided props
       if (!props || !Array.isArray(props) || props.length === 0) {
