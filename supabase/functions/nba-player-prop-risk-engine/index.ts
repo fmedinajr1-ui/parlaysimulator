@@ -790,12 +790,14 @@ serve(async (req) => {
         .from('player_usage_metrics')
         .select('*');
 
-      // 4. Fetch recent game logs
+      // 4. Fetch recent game logs - increased limit to ensure all players covered
       const { data: gameLogs } = await supabase
         .from('nba_player_game_logs')
         .select('*')
         .order('game_date', { ascending: false })
-        .limit(5000);
+        .limit(10000);
+      
+      console.log(`[Risk Engine] Fetched ${gameLogs?.length || 0} game logs`);
 
       const approvedProps: any[] = [];
       const rejectedProps: any[] = [];
@@ -962,6 +964,19 @@ serve(async (req) => {
             log.player_name?.toLowerCase() === prop.player_name?.toLowerCase()
           ).slice(0, 10);
           
+          // VALIDATION: Reject props with no game log data
+          if (!playerLogs || playerLogs.length === 0) {
+            console.log(`[Risk Engine] No game logs for ${prop.player_name} - rejecting`);
+            rejectedProps.push({
+              ...prop,
+              rejection_reason: 'No game log data available - cannot calculate median',
+              player_role: role,
+              game_script: gameScript,
+              true_median: -1
+            });
+            continue;
+          }
+          
           const statValues = playerLogs?.map(log => {
             // FIXED: Use correct DB column names (points, rebounds, assists)
             if (column === 'pts_reb_ast') {
@@ -978,6 +993,11 @@ serve(async (req) => {
             }
             return log[column] || 0;
           }) || [];
+          
+          // DEBUG: Log when statValues is empty despite having logs
+          if (statValues.length === 0 || statValues.every(v => v === 0)) {
+            console.log(`[Risk Engine] Empty/zero stats for ${prop.player_name} (${prop.prop_type}): column=${column}, logs=${playerLogs.length}`);
+          }
           
           // STEP 8: Median Bad Game Survival Test (ENHANCED FOR UNDER)
           const { passes: passesBadGame, badGameFloor, reason: badGameReason } = passesMedianBadGameCheck(
