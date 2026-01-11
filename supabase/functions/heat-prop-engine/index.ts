@@ -367,6 +367,18 @@ interface ParlayLeg {
   sport: string;
 }
 
+// Helper to categorize prop types for diversity
+function getPropCategory(propType: string): string {
+  const lower = propType?.toLowerCase() || '';
+  if (lower.includes('rebound')) return 'rebounds';
+  if (lower.includes('assist')) return 'assists';
+  if (lower.includes('point') && !lower.includes('rebound') && !lower.includes('assist')) return 'points';
+  if (lower.includes('three') || lower.includes('3pt')) return 'threes';
+  if (lower.includes('block')) return 'blocks';
+  if (lower.includes('steal')) return 'steals';
+  return 'other';
+}
+
 function buildParlays(
   eligibleProps: any[],
   parlayType: 'CORE' | 'UPSIDE',
@@ -408,32 +420,26 @@ function buildParlays(
   
   if (candidates.length < 2) return null;
   
-  // NEW: Track stars used (max 1 per parlay, max 1 per team)
-  const starsInParlay: Record<string, string> = {};  // team -> player name
-  
-  // Select first leg (prefer role players with rebounds/assists)
+  // NEW: Prop type diversity requirement - try to get different prop types
+  const propCategories = new Set<string>();
   let leg1 = candidates[0];
+  propCategories.add(getPropCategory(leg1.market_type));
   const leg1IsStar = isStarPlayer(leg1.player_name);
   
-  if (leg1IsStar) {
-    // Track this star
-    starsInParlay['leg1'] = leg1.player_name;
-  }
-  
-  // Find leg2: different player, respect one-star limit
+  // Find leg2: different player, respect one-star limit, PREFER different prop type
   let leg2 = candidates.find(c => {
     if (c.player_name === leg1.player_name) return false;
     if (c.event_id === leg1.event_id) return false;  // Different games preferred
     
     const isStar = isStarPlayer(c.player_name);
-    
-    // If leg1 is a star, leg2 cannot be a star
     if (leg1IsStar && isStar) return false;
     
-    return true;
+    // DIVERSITY: Prefer different prop category
+    const category = getPropCategory(c.market_type);
+    return !propCategories.has(category);
   });
   
-  // If no different game, allow same game but still respect star rule
+  // If no diverse option found, fall back to any valid leg
   if (!leg2) {
     leg2 = candidates.find(c => {
       if (c.player_name === leg1.player_name) return false;
@@ -458,12 +464,17 @@ function buildParlays(
     sport: p.sport
   });
   
+  // Log diversity status
+  const leg1Cat = getPropCategory(leg1.market_type);
+  const leg2Cat = getPropCategory(leg2.market_type);
+  console.log(`[Heat Engine] ${parlayType} parlay diversity: ${leg1Cat} + ${leg2Cat} (diverse: ${leg1Cat !== leg2Cat})`);
+  
   return {
     leg_1: formatLeg(leg1),
     leg_2: formatLeg(leg2),
     summary: parlayType === 'CORE' 
-      ? 'Role player rebounds/assists with strong market signals' 
-      : 'Higher upside with sharp-confirmed legs (max 1 star)',
+      ? `Role player ${leg1Cat}/${leg2Cat} with strong market signals` 
+      : `Higher upside with sharp-confirmed legs (${leg1Cat}/${leg2Cat})`,
     risk_level: parlayType === 'CORE' ? 'Low' : 'Med'
   };
 }
