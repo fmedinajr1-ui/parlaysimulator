@@ -11,6 +11,8 @@ const engineConfig: Record<string, { label: string; icon: typeof Target; color: 
   risk: { label: 'Risk Engine', icon: Target, color: 'text-blue-400' },
   sharp: { label: 'Sharp AI', icon: Zap, color: 'text-amber-400' },
   heat: { label: 'Heat Engine', icon: Flame, color: 'text-orange-400' },
+  unified: { label: 'Props', icon: TrendingUp, color: 'text-emerald-400' },
+  prop_v2: { label: 'Prop V2', icon: Target, color: 'text-purple-400' },
 };
 
 export function ArchiveStatsCard({ stats }: ArchiveStatsCardProps) {

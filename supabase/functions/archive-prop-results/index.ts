@@ -11,6 +11,7 @@ interface ArchiveResult {
   sharp_parlays_archived: number;
   heat_parlays_archived: number;
   prop_v2_archived: number;
+  unified_props_archived: number;
   monthly_snapshots_updated: number;
   errors: string[];
 }
@@ -38,6 +39,7 @@ serve(async (req) => {
     sharp_parlays_archived: 0,
     heat_parlays_archived: 0,
     prop_v2_archived: 0,
+    unified_props_archived: 0,
     monthly_snapshots_updated: 0,
     errors: [],
   };
@@ -334,8 +336,72 @@ serve(async (req) => {
       }
     }
 
-    // 5. Update monthly accuracy snapshots
-    console.log('[Archive] Step 5: Updating monthly accuracy snapshots...');
+    // 5. Archive unified_props (individual props from all sources)
+    console.log('[Archive] Step 5: Archiving unified_props...');
+    const now = new Date().toISOString();
+    const { data: unifiedProps, error: unifiedError } = await supabase
+      .from('unified_props')
+      .select('*')
+      .lt('commence_time', now)
+      .not('outcome', 'is', null);
+
+    if (unifiedError) {
+      console.error('[Archive] Error fetching unified props:', unifiedError);
+      results.errors.push(`unified_props fetch: ${unifiedError.message}`);
+    } else if (unifiedProps && unifiedProps.length > 0) {
+      const sourceIds = unifiedProps.map(p => p.id);
+      const { data: existing } = await supabase
+        .from('prop_results_archive')
+        .select('source_id')
+        .eq('engine', 'unified')
+        .in('source_id', sourceIds);
+      
+      const existingIds = new Set((existing || []).map(e => e.source_id));
+      const newProps = unifiedProps.filter(p => !existingIds.has(p.id));
+
+      if (newProps.length > 0) {
+        const archiveRecords = newProps.map(prop => {
+          const gameDate = prop.commence_time ? prop.commence_time.split('T')[0] : today;
+          return {
+            engine: 'unified',
+            source_id: prop.id,
+            game_date: gameDate,
+            game_month: getMonthStart(gameDate),
+            created_at: prop.created_at,
+            settled_at: prop.updated_at,
+            player_name: prop.player_name || 'Unknown',
+            prop_type: prop.prop_type || 'unknown',
+            line: prop.current_line || 0,
+            side: prop.recommended_side || 'over',
+            team_name: prop.team_name || null,
+            opponent: prop.opponent || null,
+            sport: prop.sport || 'NBA',
+            outcome: prop.outcome,
+            actual_value: prop.actual_stat || null,
+            confidence_score: prop.pvs_final_score || null,
+            edge: prop.edge_pct || null,
+            signal_label: prop.pvs_tier || prop.recommendation || null,
+            reason: prop.category || null,
+            is_parlay: false,
+          };
+        });
+
+        const { error: insertError } = await supabase
+          .from('prop_results_archive')
+          .insert(archiveRecords);
+
+        if (insertError) {
+          console.error('[Archive] Error archiving unified props:', insertError);
+          results.errors.push(`unified_props insert: ${insertError.message}`);
+        } else {
+          results.unified_props_archived = newProps.length;
+          console.log(`[Archive] Archived ${newProps.length} unified props`);
+        }
+      }
+    }
+
+    // 6. Update monthly accuracy snapshots
+    console.log('[Archive] Step 6: Updating monthly accuracy snapshots...');
     const { data: archiveData, error: archiveError } = await supabase
       .from('prop_results_archive')
       .select('game_month, engine, sport, outcome, prop_type, signal_label')
