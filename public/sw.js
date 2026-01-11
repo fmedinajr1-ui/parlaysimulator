@@ -1,7 +1,7 @@
-// Service Worker for PWA - Parlay Farm - v20260111-hooks-fix
-// Force cache bust on version change - bumped to fix useState null error from stale cache
+// Service Worker for PWA - Parlay Farm - v20260111-live-tracking
+// Force cache bust on version change - bumped to enable live prop tracking
 
-const CACHE_NAME = 'parlay-farm-v20260111-hooks-fix';
+const CACHE_NAME = 'parlay-farm-v20260111-live-tracking';
 const OFFLINE_URL = '/offline';
 
 // Assets to cache immediately on install
