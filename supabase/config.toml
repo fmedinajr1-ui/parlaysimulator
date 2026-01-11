@@ -266,3 +266,6 @@ verify_jwt = false
 
 [functions.archive-prop-results]
 verify_jwt = false
+
+[functions.engine-cascade-runner]
+verify_jwt = false
