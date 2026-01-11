@@ -291,7 +291,7 @@ function calculateBaseRoleScore(
 }
 
 // ============================================================================
-// DERIVE SIGNAL FROM RISK ENGINE DATA (until real-time movement available)
+// DERIVE SIGNAL FROM RISK ENGINE DATA (ENHANCED FOR UNDER VALIDATION)
 // ============================================================================
 function deriveSignalFromPick(pick: any): { label: string; score: number } {
   const confidence = pick.confidence_score || 0;
@@ -299,6 +299,28 @@ function deriveSignalFromPick(pick: any): { label: string; score: number } {
   const isBallDominant = pick.is_ball_dominant || pick.player_role === 'BALL_DOMINANT_STAR';
   const isPra = pick.is_pra || pick.prop_type?.toLowerCase().includes('pra');
   const gameScript = pick.game_script || 'competitive';
+  const side = pick.side?.toLowerCase() || 'over';
+  const trueMedian = pick.true_median || pick.rolling_median || 0;
+  const line = pick.current_line || pick.line || 0;
+  
+  // CRITICAL: For UNDER bets, validate median is BELOW line
+  // If median > line for under bet → PUBLIC_TRAP (player exceeds line on average)
+  if (side === 'under' && trueMedian > 0 && line > 0) {
+    if (trueMedian > line) {
+      // Median is above line for an UNDER bet → This is a trap!
+      return { label: 'PUBLIC_TRAP', score: 25 };
+    }
+    
+    // For valid unders: reward when median is significantly below line
+    const underEdge = line - trueMedian;
+    if (underEdge >= 2.0) {
+      // Strong under edge: median is 2+ below line
+      if (confidence >= 8.5) {
+        return { label: 'STRONG_SHARP', score: 88 };
+      }
+      return { label: 'SHARP_LEAN', score: 72 };
+    }
+  }
   
   // High confidence with line movement = SHARP_LEAN
   if (confidence >= 8.5 && Math.abs(lineDelta) >= 0.5) {
