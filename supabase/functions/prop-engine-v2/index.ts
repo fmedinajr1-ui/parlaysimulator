@@ -187,6 +187,19 @@ function checkAutoFailRules(prop: PropInput, archetype: string): { fail: boolean
     };
   }
 
+  // RULE 5: CEILING CHECK (50% MAX RULE)
+  // Reject UNDER if player's L10 MAX exceeds line by >50%
+  if (isUnder && prop.recent_games && prop.recent_games.length >= 5) {
+    const ceiling = Math.max(...prop.recent_games);
+    const ceilingRatio = ceiling / prop.line;
+    if (ceilingRatio > 1.5) {
+      return { 
+        fail: true, 
+        reason: `RULE 5: CEILING CHECK - Player hit ${ceiling} in L10 (${Math.round((ceilingRatio - 1) * 100)}% above line ${prop.line})` 
+      };
+    }
+  }
+
   return { fail: false, reason: null };
 }
 

@@ -362,6 +362,47 @@ function isStatAllowed(
   return false;
 }
 
+// ============ STEP 7.5: CEILING CHECK FOR UNDERS (50% MAX RULE) ============
+// Rejects UNDER bets where player's MAX in L10 exceeds line by >50%
+// Example: Line 6.5, MAX 16 → 16/6.5 = 2.46 (146% above) → REJECT
+function failsCeilingCheck(
+  gameLogs: number[],
+  line: number,
+  side: string
+): { fails: boolean; ceiling: number; ceilingRatio: number; reason: string } {
+  const isUnder = side.toLowerCase() === 'under';
+  
+  // Only applies to UNDER bets
+  if (!isUnder) {
+    return { fails: false, ceiling: 0, ceilingRatio: 0, reason: 'Not an under play' };
+  }
+  
+  if (gameLogs.length < 5) {
+    return { fails: false, ceiling: 0, ceilingRatio: 0, reason: 'Insufficient game logs for ceiling check' };
+  }
+  
+  // Get MAX performance in the sample
+  const ceiling = Math.max(...gameLogs);
+  const ceilingRatio = ceiling / line;
+  
+  // REJECT if ceiling exceeds line by more than 50%
+  if (ceilingRatio > 1.5) {
+    return {
+      fails: true,
+      ceiling,
+      ceilingRatio,
+      reason: `CEILING CHECK FAILED: Player hit ${ceiling} in L${gameLogs.length} (${Math.round((ceilingRatio - 1) * 100)}% above line ${line})`
+    };
+  }
+  
+  return {
+    fails: false,
+    ceiling,
+    ceilingRatio,
+    reason: `Ceiling check passed: MAX ${ceiling} is within 50% of line ${line}`
+  };
+}
+
 // ============ STEP 8: MEDIAN BAD GAME SURVIVAL TEST (ENHANCED FOR UNDER) ============
 function passesMedianBadGameCheck(
   gameLogs: number[],
@@ -1013,6 +1054,24 @@ serve(async (req) => {
               player_role: role,
               game_script: gameScript,
               bad_game_floor: badGameFloor
+            });
+            continue;
+          }
+          
+          // STEP 8.5: CEILING CHECK FOR UNDERS (50% MAX RULE)
+          // Reject UNDER bets where player's L10 MAX exceeds line by >50%
+          const ceilingCheck = failsCeilingCheck(statValues, prop.current_line || prop.line, side);
+          console.log(`[Risk Engine] Ceiling check for ${prop.player_name} (${prop.prop_type} ${side}): MAX=${ceilingCheck.ceiling}, ratio=${ceilingCheck.ceilingRatio.toFixed(2)}, fails=${ceilingCheck.fails}`);
+          if (ceilingCheck.fails) {
+            console.log(`[Risk Engine] CEILING REJECT: ${prop.player_name} ${prop.prop_type} - ${ceilingCheck.reason}`);
+            rejectedProps.push({
+              ...prop,
+              rejection_reason: ceilingCheck.reason,
+              player_role: role,
+              game_script: gameScript,
+              ceiling: ceilingCheck.ceiling,
+              ceiling_ratio: ceilingCheck.ceilingRatio,
+              true_median: calculateMedian(statValues)
             });
             continue;
           }
