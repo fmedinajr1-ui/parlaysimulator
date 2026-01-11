@@ -3967,6 +3967,54 @@ export type Database = {
           },
         ]
       }
+      monthly_accuracy_snapshot: {
+        Row: {
+          created_at: string | null
+          engine: string
+          hit_rate: number | null
+          id: string
+          month_year: string
+          prop_type_breakdown: Json | null
+          signal_breakdown: Json | null
+          sport: string | null
+          total_hits: number | null
+          total_misses: number | null
+          total_picks: number | null
+          total_pushes: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          engine: string
+          hit_rate?: number | null
+          id?: string
+          month_year: string
+          prop_type_breakdown?: Json | null
+          signal_breakdown?: Json | null
+          sport?: string | null
+          total_hits?: number | null
+          total_misses?: number | null
+          total_picks?: number | null
+          total_pushes?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          engine?: string
+          hit_rate?: number | null
+          id?: string
+          month_year?: string
+          prop_type_breakdown?: Json | null
+          signal_breakdown?: Json | null
+          sport?: string | null
+          total_hits?: number | null
+          total_misses?: number | null
+          total_picks?: number | null
+          total_pushes?: number | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       nba_defense_codes: {
         Row: {
           created_at: string | null
@@ -6275,6 +6323,87 @@ export type Database = {
           team_name?: string | null
           updated_at?: string
           verified_at?: string | null
+        }
+        Relationships: []
+      }
+      prop_results_archive: {
+        Row: {
+          actual_value: number | null
+          archived_at: string | null
+          confidence_score: number | null
+          created_at: string | null
+          edge: number | null
+          engine: string
+          game_date: string
+          game_month: string | null
+          id: string
+          is_parlay: boolean | null
+          line: number
+          opponent: string | null
+          outcome: string | null
+          parlay_legs: Json | null
+          parlay_type: string | null
+          player_name: string
+          prop_type: string
+          reason: string | null
+          settled_at: string | null
+          side: string
+          signal_label: string | null
+          source_id: string | null
+          sport: string | null
+          team_name: string | null
+        }
+        Insert: {
+          actual_value?: number | null
+          archived_at?: string | null
+          confidence_score?: number | null
+          created_at?: string | null
+          edge?: number | null
+          engine: string
+          game_date: string
+          game_month?: string | null
+          id?: string
+          is_parlay?: boolean | null
+          line: number
+          opponent?: string | null
+          outcome?: string | null
+          parlay_legs?: Json | null
+          parlay_type?: string | null
+          player_name: string
+          prop_type: string
+          reason?: string | null
+          settled_at?: string | null
+          side: string
+          signal_label?: string | null
+          source_id?: string | null
+          sport?: string | null
+          team_name?: string | null
+        }
+        Update: {
+          actual_value?: number | null
+          archived_at?: string | null
+          confidence_score?: number | null
+          created_at?: string | null
+          edge?: number | null
+          engine?: string
+          game_date?: string
+          game_month?: string | null
+          id?: string
+          is_parlay?: boolean | null
+          line?: number
+          opponent?: string | null
+          outcome?: string | null
+          parlay_legs?: Json | null
+          parlay_type?: string | null
+          player_name?: string
+          prop_type?: string
+          reason?: string | null
+          settled_at?: string | null
+          side?: string
+          signal_label?: string | null
+          source_id?: string | null
+          sport?: string | null
+          team_name?: string | null
         }
         Relationships: []
       }

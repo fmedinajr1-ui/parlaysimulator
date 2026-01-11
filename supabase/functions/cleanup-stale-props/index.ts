@@ -12,14 +12,15 @@ serve(async (req) => {
   }
 
   const startTime = Date.now();
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL') ?? '',
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-  );
+  const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
+  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+  const supabase = createClient(supabaseUrl, supabaseKey);
 
   console.log('[Cleanup] Starting daily cleanup job...');
 
   const results = {
+    archive_completed: false,
+    archive_results: null as any,
     unified_props_deleted: 0,
     sharp_parlays_old_deleted: 0,
     sharp_parlays_duplicates_deleted: 0,
@@ -31,9 +32,36 @@ serve(async (req) => {
 
   const now = new Date().toISOString();
   const today = now.split('T')[0];
-  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  // Extended retention: 30 days instead of 7
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
   try {
+    // STEP 0: Archive all settled picks FIRST before any cleanup
+    console.log('[Cleanup] Step 0: Running archive-prop-results first...');
+    try {
+      const archiveResponse = await fetch(`${supabaseUrl}/functions/v1/archive-prop-results`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      if (archiveResponse.ok) {
+        const archiveData = await archiveResponse.json();
+        results.archive_completed = true;
+        results.archive_results = archiveData.results;
+        console.log('[Cleanup] Archive completed:', JSON.stringify(archiveData.results));
+      } else {
+        const errorText = await archiveResponse.text();
+        console.error('[Cleanup] Archive failed:', errorText);
+        results.errors.push(`archive: ${errorText}`);
+      }
+    } catch (archiveErr) {
+      console.error('[Cleanup] Archive error:', archiveErr);
+      results.errors.push(`archive: ${archiveErr instanceof Error ? archiveErr.message : 'Unknown error'}`);
+    }
+
     // 1. Delete stale props from unified_props (games already started)
     console.log('[Cleanup] Step 1: Cleaning unified_props...');
     const { data: staleProps, error: stalePropsError } = await supabase
@@ -50,12 +78,12 @@ serve(async (req) => {
       console.log(`[Cleanup] Deleted ${results.unified_props_deleted} stale props`);
     }
 
-    // 2. Delete old sharp_ai_parlays (older than 7 days)
+    // 2. Delete old sharp_ai_parlays (older than 30 days - extended from 7)
     console.log('[Cleanup] Step 2: Cleaning old sharp_ai_parlays...');
     const { data: oldSharpParlays, error: oldSharpError } = await supabase
       .from('sharp_ai_parlays')
       .delete()
-      .lt('parlay_date', sevenDaysAgo)
+      .lt('parlay_date', thirtyDaysAgo)
       .select('id');
 
     if (oldSharpError) {
@@ -63,13 +91,12 @@ serve(async (req) => {
       results.errors.push(`sharp_ai_parlays (old): ${oldSharpError.message}`);
     } else {
       results.sharp_parlays_old_deleted = oldSharpParlays?.length || 0;
-      console.log(`[Cleanup] Deleted ${results.sharp_parlays_old_deleted} old sharp parlays`);
+      console.log(`[Cleanup] Deleted ${results.sharp_parlays_old_deleted} old sharp parlays (30+ days)`);
     }
 
     // 3. Deduplicate sharp_ai_parlays - keep only newest per date/type
     console.log('[Cleanup] Step 3: Deduplicating sharp_ai_parlays...');
     
-    // Get all parlays grouped by date and type
     const { data: allSharpParlays, error: fetchError } = await supabase
       .from('sharp_ai_parlays')
       .select('id, parlay_date, parlay_type, created_at')
@@ -79,7 +106,6 @@ serve(async (req) => {
       console.error('[Cleanup] Error fetching sharp parlays for dedup:', fetchError);
       results.errors.push(`sharp_ai_parlays (dedup fetch): ${fetchError.message}`);
     } else if (allSharpParlays && allSharpParlays.length > 0) {
-      // Group by date + type and find duplicates
       const groups: Record<string, typeof allSharpParlays> = {};
       for (const parlay of allSharpParlays) {
         const key = `${parlay.parlay_date}_${parlay.parlay_type}`;
@@ -87,11 +113,9 @@ serve(async (req) => {
         groups[key].push(parlay);
       }
 
-      // Collect IDs to delete (all but the first/newest in each group)
       const idsToDelete: string[] = [];
       for (const key in groups) {
         if (groups[key].length > 1) {
-          // Skip first (newest), delete the rest
           for (let i = 1; i < groups[key].length; i++) {
             idsToDelete.push(groups[key][i].id);
           }
@@ -114,12 +138,12 @@ serve(async (req) => {
       }
     }
 
-    // 4. Delete old heat_parlays (older than 7 days)
+    // 4. Delete old heat_parlays (older than 30 days - extended from 7)
     console.log('[Cleanup] Step 4: Cleaning old heat_parlays...');
     const { data: oldHeatParlays, error: oldHeatError } = await supabase
       .from('heat_parlays')
       .delete()
-      .lt('parlay_date', sevenDaysAgo)
+      .lt('parlay_date', thirtyDaysAgo)
       .select('id');
 
     if (oldHeatError) {
@@ -127,15 +151,16 @@ serve(async (req) => {
       results.errors.push(`heat_parlays: ${oldHeatError.message}`);
     } else {
       results.heat_parlays_deleted = oldHeatParlays?.length || 0;
-      console.log(`[Cleanup] Deleted ${results.heat_parlays_deleted} old heat parlays`);
+      console.log(`[Cleanup] Deleted ${results.heat_parlays_deleted} old heat parlays (30+ days)`);
     }
 
-    // 5. Delete stale nba_risk_engine_picks (past game dates)
-    console.log('[Cleanup] Step 5: Cleaning nba_risk_engine_picks...');
+    // 5. Delete old nba_risk_engine_picks (older than 30 days, after archive)
+    // Changed from deleting all past dates to only 30+ days old
+    console.log('[Cleanup] Step 5: Cleaning old nba_risk_engine_picks...');
     const { data: stalePicks, error: stalePicksError } = await supabase
       .from('nba_risk_engine_picks')
       .delete()
-      .lt('game_date', today)
+      .lt('game_date', thirtyDaysAgo)
       .select('id');
 
     if (stalePicksError) {
@@ -143,15 +168,15 @@ serve(async (req) => {
       results.errors.push(`nba_risk_engine_picks: ${stalePicksError.message}`);
     } else {
       results.risk_engine_picks_deleted = stalePicks?.length || 0;
-      console.log(`[Cleanup] Deleted ${results.risk_engine_picks_deleted} stale risk engine picks`);
+      console.log(`[Cleanup] Deleted ${results.risk_engine_picks_deleted} old risk engine picks (30+ days)`);
     }
 
-    // 6. Delete stale prop_engine_v2_picks (past game dates)
-    console.log('[Cleanup] Step 6: Cleaning prop_engine_v2_picks...');
+    // 6. Delete old prop_engine_v2_picks (older than 30 days, after archive)
+    console.log('[Cleanup] Step 6: Cleaning old prop_engine_v2_picks...');
     const { data: staleV2Picks, error: staleV2Error } = await supabase
       .from('prop_engine_v2_picks')
       .delete()
-      .lt('game_date', today)
+      .lt('game_date', thirtyDaysAgo)
       .select('id');
 
     if (staleV2Error) {
@@ -159,7 +184,7 @@ serve(async (req) => {
       results.errors.push(`prop_engine_v2_picks: ${staleV2Error.message}`);
     } else {
       results.prop_v2_picks_deleted = staleV2Picks?.length || 0;
-      console.log(`[Cleanup] Deleted ${results.prop_v2_picks_deleted} stale prop v2 picks`);
+      console.log(`[Cleanup] Deleted ${results.prop_v2_picks_deleted} old prop v2 picks (30+ days)`);
     }
 
   } catch (err) {

@@ -263,3 +263,6 @@ verify_jwt = false
 
 [functions.bdl-fetch-odds]
 verify_jwt = false
+
+[functions.archive-prop-results]
+verify_jwt = false
