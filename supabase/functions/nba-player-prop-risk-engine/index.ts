@@ -370,6 +370,8 @@ function failsCeilingCheck(
   line: number,
   side: string
 ): { fails: boolean; ceiling: number; ceilingRatio: number; reason: string } {
+  console.log(`[failsCeilingCheck] Input: logs=${gameLogs?.length || 0}, line=${line}, side=${side}`);
+  
   const isUnder = side.toLowerCase() === 'under';
   
   // Only applies to UNDER bets
@@ -377,13 +379,15 @@ function failsCeilingCheck(
     return { fails: false, ceiling: 0, ceilingRatio: 0, reason: 'Not an under play' };
   }
   
-  if (gameLogs.length < 5) {
+  if (!gameLogs || gameLogs.length < 5) {
+    console.log(`[failsCeilingCheck] Insufficient logs: ${gameLogs?.length || 0}`);
     return { fails: false, ceiling: 0, ceilingRatio: 0, reason: 'Insufficient game logs for ceiling check' };
   }
   
-  // Get MAX performance in the sample
-  const ceiling = Math.max(...gameLogs);
-  const ceilingRatio = ceiling / line;
+  // Get MAX performance in the sample - use reduce to avoid spread operator issues
+  const ceiling = gameLogs.reduce((max, val) => val > max ? val : max, 0);
+  const ceilingRatio = line > 0 ? ceiling / line : 0;
+  console.log(`[Ceiling Check Debug] logs=${gameLogs.length}, ceiling=${ceiling}, line=${line}, ratio=${ceilingRatio}`);
   
   // REJECT if ceiling exceeds line by more than 50%
   if (ceilingRatio > 1.5) {
@@ -1019,7 +1023,7 @@ serve(async (req) => {
           }
           
           const statValues = playerLogs?.map(log => {
-            // FIXED: Use correct DB column names (points, rebounds, assists)
+            // COMBO STATS
             if (column === 'pts_reb_ast') {
               return (log.points || 0) + (log.rebounds || 0) + (log.assists || 0);
             }
@@ -1032,7 +1036,19 @@ serve(async (req) => {
             if (column === 'reb_ast') {
               return (log.rebounds || 0) + (log.assists || 0);
             }
-            return log[column] || 0;
+            
+            // SINGLE STATS - Explicit handling (dynamic access fails in Deno)
+            if (column === 'rebounds') return log.rebounds || 0;
+            if (column === 'assists') return log.assists || 0;
+            if (column === 'points') return log.points || 0;
+            if (column === 'threes_made') return log.threes_made || 0;
+            if (column === 'blocks') return log.blocks || 0;
+            if (column === 'steals') return log.steals || 0;
+            if (column === 'turnovers') return log.turnovers || 0;
+            if (column === 'minutes') return log.minutes || 0;
+            
+            // Fallback
+            return (log as Record<string, number>)[column] || 0;
           }) || [];
           
           // DEBUG: Log when statValues is empty despite having logs
@@ -1060,6 +1076,8 @@ serve(async (req) => {
           
           // STEP 8.5: CEILING CHECK FOR UNDERS (50% MAX RULE)
           // Reject UNDER bets where player's L10 MAX exceeds line by >50%
+          const actualMax = statValues.length > 0 ? Math.max(...statValues) : 0;
+          console.log(`[Risk Engine] Pre-ceiling stats for ${prop.player_name}: statValues=[${statValues.slice(0,5).join(',')}...], max=${actualMax}`);
           const ceilingCheck = failsCeilingCheck(statValues, prop.current_line || prop.line, side);
           console.log(`[Risk Engine] Ceiling check for ${prop.player_name} (${prop.prop_type} ${side}): MAX=${ceilingCheck.ceiling}, ratio=${ceilingCheck.ceilingRatio.toFixed(2)}, fails=${ceilingCheck.fails}`);
           if (ceilingCheck.fails) {
