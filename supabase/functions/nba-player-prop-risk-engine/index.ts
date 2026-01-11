@@ -296,40 +296,40 @@ function failsClutchProtection(
 }
 
 // ============ STEP 7: ALLOWED STAT TYPES BY ROLE ============
-// ROLE PLAYER-FIRST: Prioritize rebounds/assists, deprioritize points (especially for stars)
+// DIVERSIFIED STATS: Allow points for non-stars, threes for shooters
 function getAllowedStats(role: PlayerRole, gameScript: GameScript): string[] {
   switch (role) {
     case 'BALL_DOMINANT_STAR':
-      // Ball-dominant stars: ONLY rebounds/assists (NO points!)
+      // Ball-dominant stars: rebounds/assists only (NO points - too volatile)
       return ['rebounds', 'rebounds_under', 'assists', 'assists_under'];
       
     case 'STAR':
-      // Stars: rebounds/assists first, NO points (deprioritized)
+      // Stars: rebounds/assists primary, points OVER allowed in blowouts only
       if (gameScript === 'COMPETITIVE') {
-        return ['rebounds', 'assists']; // No points for stars!
+        return ['rebounds', 'assists'];
       }
-      // Blowout: only rebounds/assists UNDERs for stars
-      return ['rebounds_under', 'assists_under'];
+      // Blowout: allow rebounds/assists UNDERs, points OVER (garbage time scoring)
+      return ['rebounds', 'rebounds_under', 'assists', 'assists_under', 'points'];
       
     case 'SECONDARY_GUARD':
-      // Guards: assists primary, rebounds secondary, NO points
-      return ['assists', 'rebounds', 'steals'];
+      // Guards: assists primary, points allowed (scoring guards), threes for shooters
+      return ['assists', 'points', 'threes', 'steals', 'rebounds'];
       
     case 'WING':
-      // Wings: rebounds/assists primary, steals/blocks secondary, NO points
-      return ['rebounds', 'assists', 'steals', 'blocks'];
+      // Wings: FULL stat access - most versatile role
+      return ['rebounds', 'assists', 'points', 'threes', 'steals', 'blocks'];
       
     case 'BIG':
-      // Bigs: rebounds first, assists/blocks secondary, NO points
-      const bigStats = ['rebounds', 'assists', 'blocks'];
+      // Bigs: rebounds primary, points/blocks secondary
+      const bigStats = ['rebounds', 'points', 'assists', 'blocks'];
       if (gameScript === 'HARD_BLOWOUT') {
         bigStats.push('rebounds_under');
       }
       return bigStats;
       
     default:
-      // Fallback: rebounds/assists only (no points)
-      return ['rebounds', 'assists'];
+      // Fallback: allow core stats
+      return ['rebounds', 'assists', 'points'];
   }
 }
 

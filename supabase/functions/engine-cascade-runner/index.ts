@@ -37,7 +37,7 @@ serve(async (req) => {
   const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const supabase = createClient(supabaseUrl, supabaseKey);
 
-  let requestBody: { scheduled?: boolean; trigger?: string } = {};
+  let requestBody: { scheduled?: boolean; trigger?: string; skip_preflight?: boolean } = {};
   try {
     requestBody = await req.json();
   } catch {
@@ -45,9 +45,67 @@ serve(async (req) => {
   }
 
   const trigger = requestBody.trigger || 'manual';
+  const skipPreflight = requestBody.skip_preflight || false;
   const jobName = `engine-cascade-runner`;
 
   console.log(`[Engine Cascade] Starting cascade run - trigger: ${trigger}`);
+
+  // ========== PRE-FLIGHT CHECKS ==========
+  const preflightResults: { check: string; status: string; detail: string }[] = [];
+  
+  if (!skipPreflight) {
+    console.log('[Engine Cascade] Running pre-flight checks...');
+    
+    // Check 1: Unified props freshness
+    const now = new Date();
+    const { data: upcomingProps, error: propsError } = await supabase
+      .from('unified_props')
+      .select('id, commence_time')
+      .gt('commence_time', now.toISOString())
+      .limit(10);
+    
+    if (propsError) {
+      preflightResults.push({ check: 'unified_props', status: 'error', detail: propsError.message });
+    } else if (!upcomingProps || upcomingProps.length === 0) {
+      preflightResults.push({ check: 'unified_props', status: 'warning', detail: 'No upcoming props found - all games may have started' });
+    } else {
+      preflightResults.push({ check: 'unified_props', status: 'ok', detail: `${upcomingProps.length}+ upcoming props available` });
+    }
+    
+    // Check 2: Game logs freshness (last 24h)
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const { count: recentLogs, error: logsError } = await supabase
+      .from('nba_player_game_logs')
+      .select('*', { count: 'exact', head: true })
+      .gte('game_date', yesterday);
+    
+    if (logsError) {
+      preflightResults.push({ check: 'game_logs', status: 'error', detail: logsError.message });
+    } else if (!recentLogs || recentLogs === 0) {
+      preflightResults.push({ check: 'game_logs', status: 'warning', detail: 'No game logs from last 24h - medians may be stale' });
+    } else {
+      preflightResults.push({ check: 'game_logs', status: 'ok', detail: `${recentLogs} logs from last 24h` });
+    }
+    
+    // Check 3: Risk engine picks exist for today
+    const today = new Date().toISOString().split('T')[0];
+    const { count: riskPicks, error: riskError } = await supabase
+      .from('nba_risk_engine_picks')
+      .select('*', { count: 'exact', head: true })
+      .eq('game_date', today);
+    
+    if (riskError) {
+      preflightResults.push({ check: 'risk_engine_picks', status: 'error', detail: riskError.message });
+    } else {
+      preflightResults.push({ 
+        check: 'risk_engine_picks', 
+        status: riskPicks && riskPicks > 0 ? 'ok' : 'info', 
+        detail: `${riskPicks || 0} picks for today (will be refreshed)` 
+      });
+    }
+    
+    console.log('[Engine Cascade] Pre-flight results:', JSON.stringify(preflightResults));
+  }
 
   // Log job start
   const { data: jobRecord, error: jobStartError } = await supabase
@@ -56,7 +114,7 @@ serve(async (req) => {
       job_name: jobName,
       status: 'running',
       started_at: new Date().toISOString(),
-      result: { trigger, steps_total: CASCADE_STEPS.length }
+      result: { trigger, steps_total: CASCADE_STEPS.length, preflight: preflightResults }
     })
     .select()
     .single();

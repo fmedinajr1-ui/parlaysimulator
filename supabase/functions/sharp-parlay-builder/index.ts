@@ -679,12 +679,25 @@ function extractStatValues(logs: any[], propType: string): number[] {
   }).filter((v: number) => v > 0);
 }
 
+// Helper to categorize prop types for diversity
+function getPropCategory(propType: string): string {
+  const lower = propType?.toLowerCase() || '';
+  if (lower.includes('rebound')) return 'rebounds';
+  if (lower.includes('assist')) return 'assists';
+  if (lower.includes('point') && !lower.includes('rebound') && !lower.includes('assist')) return 'points';
+  if (lower.includes('three') || lower.includes('3pt')) return 'threes';
+  if (lower.includes('block')) return 'blocks';
+  if (lower.includes('steal')) return 'steals';
+  return 'other';
+}
+
 function buildParlay(candidates: CandidateLeg[], parlayType: keyof typeof PARLAY_CONFIGS): CandidateLeg[] {
   const config = PARLAY_CONFIGS[parlayType];
   const legs: CandidateLeg[] = [];
   const usedPlayers = new Set<string>();
+  const usedCategories = new Set<string>();  // NEW: Track prop categories for diversity
   let volatileCount = 0;
-  let starCount = 0;  // NEW: Track star count (max 1 per parlay)
+  let starCount = 0;  // Track star count (max 1 per parlay)
   
   // Filter candidates by confidence threshold
   const eligibleCandidates = candidates.filter(c => c.confidence_score >= config.confidenceThreshold);
@@ -712,15 +725,18 @@ function buildParlay(candidates: CandidateLeg[], parlayType: keyof typeof PARLAY
     return b.confidence_score - a.confidence_score;
   });
   
+  // First pass: prefer diverse prop types
   for (const candidate of pool) {
-    // Skip if we already have a leg from this player
     if (usedPlayers.has(normalizePlayerName(candidate.player_name))) continue;
     
-    // NEW: Max 1 star per parlay rule
     const isStar = (candidate as any).is_star || isStarPlayer(candidate.player_name);
     if (isStar && starCount >= 1) continue;
     
-    // Check volatility limits
+    const category = getPropCategory(candidate.prop_type);
+    
+    // DIVERSITY: Skip if we already have this category (first pass only)
+    if (usedCategories.has(category) && legs.length < config.maxLegs - 1) continue;
+    
     if (candidate.is_volatile) {
       if (volatileCount >= config.maxVolatilityLegs) continue;
       volatileCount++;
@@ -728,11 +744,37 @@ function buildParlay(candidates: CandidateLeg[], parlayType: keyof typeof PARLAY
     
     legs.push(candidate);
     usedPlayers.add(normalizePlayerName(candidate.player_name));
+    usedCategories.add(category);
     if (isStar) starCount++;
     
-    // Stop when we reach max legs
     if (legs.length >= config.maxLegs) break;
   }
+  
+  // Second pass: fill remaining slots ignoring diversity
+  if (legs.length < config.minLegs) {
+    for (const candidate of pool) {
+      if (usedPlayers.has(normalizePlayerName(candidate.player_name))) continue;
+      
+      const isStar = (candidate as any).is_star || isStarPlayer(candidate.player_name);
+      if (isStar && starCount >= 1) continue;
+      
+      if (candidate.is_volatile) {
+        if (volatileCount >= config.maxVolatilityLegs) continue;
+        volatileCount++;
+      }
+      
+      legs.push(candidate);
+      usedPlayers.add(normalizePlayerName(candidate.player_name));
+      if (isStar) starCount++;
+      
+      if (legs.length >= config.maxLegs) break;
+    }
+  }
+  
+  // Log diversity status
+  const categories = legs.map(l => getPropCategory(l.prop_type));
+  const uniqueCategories = new Set(categories).size;
+  console.log(`[Sharp Builder] ${parlayType} parlay: ${legs.length} legs, ${uniqueCategories} unique categories: ${categories.join(', ')}`);
   
   return legs;
 }
