@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { getEasternDate } from "@/lib/dateUtils";
 
 interface ParlayLeg {
   player_name: string;
@@ -62,7 +63,7 @@ interface HeatEngineResult {
 
 // Direct database query for Watchlist - updates in real-time
 export function useHeatWatchlist() {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getEasternDate();
   
   return useQuery({
     queryKey: ['heat-watchlist', today],
@@ -82,7 +83,7 @@ export function useHeatWatchlist() {
 
 // Direct database query for Do Not Bet - updates in real-time
 export function useHeatDoNotBet() {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getEasternDate();
   
   return useQuery({
     queryKey: ['heat-do-not-bet', today],
@@ -164,7 +165,7 @@ export function useHeatEngineScan() {
 }
 
 export function useHeatTrackerStats() {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getEasternDate();
   
   return useQuery({
     queryKey: ['heat-tracker-stats', today],

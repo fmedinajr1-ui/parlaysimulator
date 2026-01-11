@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { getEasternDate, getEasternDateDaysAgo } from "@/lib/dateUtils";
 
 interface EngineStats {
   picksToday: number;
@@ -36,8 +37,8 @@ interface EngineDashboardData {
 }
 
 export function useEngineDashboard(): EngineDashboardData {
-  const today = new Date().toISOString().split('T')[0];
-  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const today = getEasternDate();
+  const sevenDaysAgo = getEasternDateDaysAgo(7);
 
   // Risk Engine stats
   const { data: riskEngineData, refetch: refetchRisk } = useQuery({

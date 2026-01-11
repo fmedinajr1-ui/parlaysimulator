@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { getEasternDate } from '@/lib/dateUtils';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -78,7 +79,7 @@ interface AccuracyMetric {
 export default function FanDuelTraps() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const today = new Date().toISOString().split('T')[0];
+  const today = getEasternDate();
   
   const { data: trapAnalysis, isLoading: loadingTraps } = useQuery({
     queryKey: ['fanduel-traps', today],

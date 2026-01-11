@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { getEasternDate } from "@/lib/dateUtils";
 
 interface EnginePick {
   player_name: string;
@@ -25,7 +26,7 @@ interface ComparisonRow {
 }
 
 export function useEngineComparison() {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getEasternDate();
 
   return useQuery({
     queryKey: ['engine-comparison', today],

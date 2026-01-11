@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { getEasternDate } from '@/lib/dateUtils';
 
 export interface SharpAlert {
   pickId: string;
@@ -157,7 +158,7 @@ export function useSharpMovementSync(options: UseSharpMovementSyncOptions = {}) 
     if (!enabled) return;
 
     const fetchExistingAlerts = async () => {
-      const today = new Date().toISOString().split('T')[0];
+      const today = getEasternDate();
       
       const { data, error } = await supabase
         .from('nba_risk_engine_picks')
