@@ -1,10 +1,13 @@
 import { cn } from "@/lib/utils";
-import { Check, X, Minus, TrendingUp, TrendingDown } from "lucide-react";
+import { Check, X, Minus, TrendingUp, TrendingDown, Clock } from "lucide-react";
 import { PropResult } from "@/hooks/usePropResults";
+import { LivePropData } from "@/hooks/useLivePropTracking";
+import { LivePropProgress } from "./LivePropProgress";
 import { format, parseISO } from "date-fns";
 
 interface PropResultCardProps {
   result: PropResult;
+  liveData?: LivePropData | null;
 }
 
 function formatPropType(propType: string): string {
@@ -28,10 +31,14 @@ function formatPropType(propType: string): string {
   return typeMap[propType.toLowerCase()] || propType.toUpperCase();
 }
 
-export function PropResultCard({ result }: PropResultCardProps) {
+export function PropResultCard({ result, liveData }: PropResultCardProps) {
   const isWin = result.outcome === 'hit';
   const isLoss = result.outcome === 'miss';
   const isPush = result.outcome === 'push';
+  const isPending = result.outcome === 'pending' || result.outcome === 'partial';
+
+  // Show live progress if game is in progress
+  const showLiveProgress = isPending && liveData?.isLive;
 
   const outcomeConfig = {
     hit: {
@@ -55,12 +62,70 @@ export function PropResultCard({ result }: PropResultCardProps) {
       badgeClass: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
       iconClass: 'text-amber-400',
     },
+    pending: {
+      label: 'PENDING',
+      icon: Clock,
+      bgClass: 'bg-blue-500/10 border-blue-500/30',
+      badgeClass: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+      iconClass: 'text-blue-400',
+    },
+    partial: {
+      label: 'PENDING',
+      icon: Clock,
+      bgClass: 'bg-blue-500/10 border-blue-500/30',
+      badgeClass: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+      iconClass: 'text-blue-400',
+    },
   };
 
-  const config = outcomeConfig[result.outcome];
+  const config = outcomeConfig[result.outcome] || outcomeConfig.pending;
   const Icon = config.icon;
   const TrendIcon = result.side === 'over' ? TrendingUp : TrendingDown;
 
+  // Live progress card
+  if (showLiveProgress && liveData) {
+    return (
+      <div className={cn(
+        "p-3 rounded-lg border transition-colors",
+        "bg-gradient-to-br from-blue-500/10 via-background to-background border-blue-500/30"
+      )}>
+        {/* Player name header */}
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-foreground">
+              {result.player_name}
+            </span>
+            {result.team_name && (
+              <span className="text-xs text-muted-foreground">
+                {result.team_name}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="text-xs text-muted-foreground">Confidence:</span>
+            <span className="text-xs font-medium text-foreground">
+              {result.confidence_score.toFixed(1)}
+            </span>
+          </div>
+        </div>
+
+        {/* Live Progress */}
+        <LivePropProgress
+          playerName={result.player_name}
+          propType={result.prop_type}
+          line={result.line}
+          side={result.side as 'over' | 'under'}
+          currentValue={liveData.currentValue}
+          gameProgress={liveData.gameProgress}
+          period={liveData.period}
+          clock={liveData.clock}
+          isLive={liveData.isLive}
+        />
+      </div>
+    );
+  }
+
+  // Standard static card
   return (
     <div className={cn(
       "flex items-center justify-between p-3 rounded-lg border transition-colors",

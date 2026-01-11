@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { ArrowLeft, Trophy, XCircle, MinusCircle, TrendingUp, Loader2, RefreshCw, CalendarDays, Target, Zap, Flame, Clock, Archive } from "lucide-react";
+import { ArrowLeft, Trophy, XCircle, MinusCircle, TrendingUp, Loader2, RefreshCw, CalendarDays, Target, Zap, Flame, Clock, Archive, Radio } from "lucide-react";
 import { usePropResults, PropResult, EngineFilter } from "@/hooks/usePropResults";
 import { useArchiveResults } from "@/hooks/useArchiveResults";
+import { useLivePropTracking } from "@/hooks/useLivePropTracking";
 import { PropResultCard } from "@/components/market/PropResultCard";
 import { ParlayResultCard } from "@/components/market/ParlayResultCard";
 import { MonthSelector } from "@/components/results/MonthSelector";
@@ -36,6 +37,24 @@ export default function PropResults() {
   const queryClient = useQueryClient();
   const { data: results, isLoading, stats, groupedByDate } = usePropResults(14);
   const { results: archiveResults, stats: archiveStats, groupedByDate: archiveGroupedByDate, isLoading: archiveLoading } = useArchiveResults(selectedMonth);
+  
+  // Get all pending picks for live tracking
+  const pendingPicks = useMemo(() => 
+    results?.filter(r => r.outcome === 'pending' || r.outcome === 'partial') || [], 
+    [results]
+  );
+  const { propsWithLiveData, livePropsCount } = useLivePropTracking(pendingPicks);
+  
+  // Create a map for quick lookup of live data by prop ID
+  const liveDataMap = useMemo(() => {
+    const map = new Map<string, typeof propsWithLiveData[0]['liveData']>();
+    propsWithLiveData.forEach(({ prop, liveData }) => {
+      if (liveData) {
+        map.set(prop.id, liveData);
+      }
+    });
+    return map;
+  }, [propsWithLiveData]);
 
   const handleSyncAndVerify = async () => {
     setIsVerifying(true);
@@ -312,6 +331,19 @@ export default function PropResults() {
               </CardContent>
             </Card>
 
+            {/* Live Games Indicator */}
+            {livePropsCount > 0 && (
+              <div className="flex items-center gap-2 mb-4 p-3 rounded-lg bg-blue-500/10 border border-blue-500/30">
+                <Radio className="w-4 h-4 text-red-400 animate-pulse" />
+                <span className="text-sm font-medium text-blue-400">
+                  {livePropsCount} prop{livePropsCount !== 1 ? 's' : ''} tracking live
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  • Stats update every 30 seconds
+                </span>
+              </div>
+            )}
+
             {/* Outcome Filters */}
             <div className="flex flex-wrap gap-2 mb-6">
               {[
@@ -387,7 +419,11 @@ export default function PropResults() {
                         result.type === 'parlay' ? (
                           <ParlayResultCard key={result.id} result={result} />
                         ) : (
-                          <PropResultCard key={result.id} result={result} />
+                          <PropResultCard 
+                            key={result.id} 
+                            result={result} 
+                            liveData={liveDataMap.get(result.id)}
+                          />
                         )
                       ))}
                     </div>
