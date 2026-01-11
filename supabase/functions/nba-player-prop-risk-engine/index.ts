@@ -656,24 +656,41 @@ function inferPosition(playerName: string): string {
   return 'SF';
 }
 
-// Prop type to game log column mapping
+// Prop type to game log column mapping - FIXED: Use actual DB column names
 const PROP_TO_COLUMN: Record<string, string> = {
-  'player_points': 'pts',
-  'player_rebounds': 'reb',
-  'player_assists': 'ast',
-  'player_points_rebounds_assists': 'pts_reb_ast',
-  'player_threes': 'fg3m',
-  'player_steals': 'stl',
-  'player_blocks': 'blk',
-  'player_turnovers': 'tov',
-  'player_points_rebounds': 'pts_reb',
-  'player_points_assists': 'pts_ast',
-  'player_rebounds_assists': 'reb_ast',
+  'player_points': 'points',
+  'player_rebounds': 'rebounds',
+  'player_assists': 'assists',
+  'player_points_rebounds_assists': 'pts_reb_ast',  // Computed
+  'player_threes': 'threes_made',
+  'player_steals': 'steals',
+  'player_blocks': 'blocks',
+  'player_turnovers': 'turnovers',
+  'player_points_rebounds': 'pts_reb',  // Computed
+  'player_points_assists': 'pts_ast',   // Computed
+  'player_rebounds_assists': 'reb_ast', // Computed
 };
 
 function getColumnForProp(propType: string): string {
   const normalized = propType.toLowerCase().replace(/\s+/g, '_');
-  return PROP_TO_COLUMN[normalized] || 'pts';
+  
+  // Direct lookup first
+  if (PROP_TO_COLUMN[normalized]) return PROP_TO_COLUMN[normalized];
+  
+  // Fallback: search for keywords
+  if (normalized.includes('rebound')) return 'rebounds';
+  if (normalized.includes('assist')) return 'assists';
+  if (normalized.includes('point') && normalized.includes('rebound') && normalized.includes('assist')) return 'pts_reb_ast';
+  if (normalized.includes('point') && normalized.includes('rebound')) return 'pts_reb';
+  if (normalized.includes('point') && normalized.includes('assist')) return 'pts_ast';
+  if (normalized.includes('rebound') && normalized.includes('assist')) return 'reb_ast';
+  if (normalized.includes('point')) return 'points';
+  if (normalized.includes('three') || normalized.includes('3pt')) return 'threes_made';
+  if (normalized.includes('block')) return 'blocks';
+  if (normalized.includes('steal')) return 'steals';
+  if (normalized.includes('turnover')) return 'turnovers';
+  
+  return 'points'; // Ultimate fallback
 }
 
 serve(async (req) => {
@@ -946,17 +963,18 @@ serve(async (req) => {
           ).slice(0, 10);
           
           const statValues = playerLogs?.map(log => {
+            // FIXED: Use correct DB column names (points, rebounds, assists)
             if (column === 'pts_reb_ast') {
-              return (log.pts || 0) + (log.reb || 0) + (log.ast || 0);
+              return (log.points || 0) + (log.rebounds || 0) + (log.assists || 0);
             }
             if (column === 'pts_reb') {
-              return (log.pts || 0) + (log.reb || 0);
+              return (log.points || 0) + (log.rebounds || 0);
             }
             if (column === 'pts_ast') {
-              return (log.pts || 0) + (log.ast || 0);
+              return (log.points || 0) + (log.assists || 0);
             }
             if (column === 'reb_ast') {
-              return (log.reb || 0) + (log.ast || 0);
+              return (log.rebounds || 0) + (log.assists || 0);
             }
             return log[column] || 0;
           }) || [];
