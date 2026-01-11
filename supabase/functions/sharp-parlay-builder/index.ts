@@ -510,6 +510,17 @@ async function buildSharpParlays(supabase: any): Promise<any> {
     // RULE 5: Check volatility (for later filtering)
     const isVolatile = isVolatileLeg(prop.prop_type);
     
+    // RULE 5.5: CEILING CHECK (50% MAX RULE) - For UNDER bets only
+    const isUnderBet = propSide?.toLowerCase() === 'under';
+    if (isUnderBet && statValues.length >= 5) {
+      const ceiling = Math.max(...statValues);
+      const ceilingRatio = ceiling / prop.line;
+      if (ceilingRatio > 1.5) {
+        console.log(`[Sharp Builder] ${prop.player_name} ${prop.prop_type} UNDER failed ceiling check: MAX ${ceiling} is ${Math.round((ceilingRatio - 1) * 100)}% above line ${prop.line}`);
+        continue;
+      }
+    }
+    
     // RULE 6: Public trap detection
     const trapResult = detectPublicTrap(prop.odds || -110, prop.line_movement, prop.has_injury_news);
     
