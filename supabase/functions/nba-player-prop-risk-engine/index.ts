@@ -362,30 +362,53 @@ function isStatAllowed(
   return false;
 }
 
-// ============ STEP 8: MEDIAN BAD GAME SURVIVAL TEST ============
+// ============ STEP 8: MEDIAN BAD GAME SURVIVAL TEST (ENHANCED FOR UNDER) ============
 function passesMedianBadGameCheck(
   gameLogs: number[],
   line: number,
   side: string
-): { passes: boolean; badGameFloor: number } {
+): { passes: boolean; badGameFloor: number; reason: string } {
   if (gameLogs.length < 5) {
-    return { passes: false, badGameFloor: 0 };
+    return { passes: false, badGameFloor: 0, reason: 'Insufficient game logs (need 5+)' };
   }
   
-  // Sort and take the "bad games" (bottom 3)
-  const sorted = [...gameLogs].sort((a, b) => a - b);
-  const badGames = sorted.slice(0, 3);
-  const badGameFloor = Math.min(...badGames);
+  const isUnder = side.toLowerCase() === 'under';
   
-  // "Does this hit in a bad game?" - If NO → Reject
-  if (side.toLowerCase() === 'over') {
+  // Sort games - ascending for OVER (bad = low), descending for UNDER (bad = high)
+  const sorted = [...gameLogs].sort((a, b) => a - b);
+  
+  if (isUnder) {
+    // FOR UNDER: "Bad games" = games where player exceeded line (TOP 3)
+    // We want to check: even in player's BEST games, did they stay under?
+    const topGames = sorted.slice(-3);  // Top 3 performances
+    const ceiling = Math.max(...topGames);
+    
+    // STRICT: All top performances must still go UNDER the line
+    // If player hit 10+ in their best games but line is 7.5 → REJECT
+    const passes = topGames.every(g => g < line);
+    
+    return { 
+      passes, 
+      badGameFloor: ceiling,  // For unders, report the ceiling (worst case)
+      reason: passes 
+        ? `UNDER survives: Top games (${topGames.join(', ')}) all < line ${line}`
+        : `UNDER FAILS: Top games (${topGames.join(', ')}) include games >= line ${line}`
+    };
+  } else {
+    // FOR OVER: "Bad games" = games where player scored low (BOTTOM 3)
+    const badGames = sorted.slice(0, 3);
+    const badGameFloor = Math.min(...badGames);
+    
     // All bad games must still clear the line
     const passes = badGames.every(g => g > line);
-    return { passes, badGameFloor };
-  } else {
-    // For under: all bad games must still go under
-    const passes = badGames.every(g => g < line);
-    return { passes, badGameFloor: Math.max(...badGames) };
+    
+    return { 
+      passes, 
+      badGameFloor,
+      reason: passes 
+        ? `OVER survives: Bad games (${badGames.join(', ')}) all > line ${line}`
+        : `OVER FAILS: Bad games (${badGames.join(', ')}) include games <= line ${line}`
+    };
   }
 }
 
@@ -428,12 +451,15 @@ function calculateFadeEdgeBonus(
   const isPtsReb = propLower.includes('points') && propLower.includes('rebounds') && !propLower.includes('assists');
   const isAssists = propLower.includes('assists') && !propLower.includes('points') && !propLower.includes('rebounds');
 
-  // FADE ELITE: WING + Rebounds Under + COMPETITIVE (71.4% historical)
+// FADE ELITE: WING + Rebounds Under + COMPETITIVE (71.4% historical)
+  // CRITICAL: Only award if median is actually below line (real edge exists)
   if (role === 'WING' && isRebounds && gameScript === 'COMPETITIVE') {
+    // This tag is a placeholder - actual median validation happens in main flow
+    // The bonus is only meaningful if the pick passes median validation
     return { 
       bonus: 1.5, 
       tag: 'FADE_ELITE', 
-      reason: 'WING Rebounds Under in COMPETITIVE (71.4% historical)' 
+      reason: 'WING Rebounds Under in COMPETITIVE (71.4% historical) - REQUIRES median < line'
     };
   }
 
@@ -935,8 +961,8 @@ serve(async (req) => {
             return log[column] || 0;
           }) || [];
           
-          // STEP 8: Median Bad Game Survival Test
-          const { passes: passesBadGame, badGameFloor } = passesMedianBadGameCheck(
+          // STEP 8: Median Bad Game Survival Test (ENHANCED FOR UNDER)
+          const { passes: passesBadGame, badGameFloor, reason: badGameReason } = passesMedianBadGameCheck(
             statValues,
             prop.current_line || prop.line,
             side
@@ -945,7 +971,7 @@ serve(async (req) => {
           if (!passesBadGame && statValues.length >= 5) {
             rejectedProps.push({
               ...prop,
-              rejection_reason: 'Fails bad game survival check ("Does this hit in a bad game?" = NO)',
+              rejection_reason: badGameReason,
               player_role: role,
               game_script: gameScript,
               bad_game_floor: badGameFloor
@@ -984,6 +1010,22 @@ serve(async (req) => {
               rolling_median: trueMedian
             });
             continue;
+          }
+          
+          // STEP 9.6: SNEAKY LINE TRAP DETECTION FOR UNDERS
+          // If betting UNDER but median is ABOVE line → TRAP (player exceeds line on average)
+          if (!isOver && trueMedian > line) {
+            const sneakyGap = trueMedian - line;
+            if (sneakyGap > 0 && sneakyGap <= 2.5) {  // Median is 0-2.5 above line
+              rejectedProps.push({
+                ...prop,
+                rejection_reason: `SNEAKY LINE TRAP: Median ${trueMedian.toFixed(1)} > line ${line} for UNDER bet`,
+                player_role: role,
+                game_script: gameScript,
+                rolling_median: trueMedian
+              });
+              continue;
+            }
           }
           
           // STEP 10: Confidence Scoring

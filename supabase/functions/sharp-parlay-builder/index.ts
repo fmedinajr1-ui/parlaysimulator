@@ -112,11 +112,12 @@ function passesMinutesRule(avgMinutes: number, playerName: string): { passes: bo
   return { passes: false, reason: `${avgMinutes.toFixed(1)} min < ${MINUTES_THRESHOLD} threshold` };
 }
 
-// RULE 2: Median Engine (L5 & L10 games) + Dead-Zone Filter
+// RULE 2: Median Engine (L5 & L10 games) + Dead-Zone Filter + SIDE-AWARE LOGIC
 function passesMedianRule(
   gameLogs: number[], 
   line: number, 
-  parlayType: string
+  parlayType: string,
+  side: string  // NEW: 'over' or 'under' - CRITICAL for correct validation
 ): { passes: boolean; median5: number; median10: number; edge: number; reason: string } {
   const last5 = gameLogs.slice(0, 5);
   const last10 = gameLogs.slice(0, 10);
@@ -124,8 +125,16 @@ function passesMedianRule(
   const median5 = calculateMedian(last5);
   const median10 = calculateMedian(last10);
   
-  const bestMedian = Math.max(median5, median10);
-  const edge = ((bestMedian - line) / line) * 100;
+  const isUnder = side?.toLowerCase() === 'under';
+  
+  // CRITICAL FIX: For UNDER, use LOWER median; for OVER, use HIGHER median
+  const bestMedian = isUnder 
+    ? Math.min(median5, median10)  // For UNDER, pessimistic = lower median
+    : Math.max(median5, median10); // For OVER, optimistic = higher median
+  
+  // Edge calculation: positive = good for OVER, flip for UNDER
+  const rawEdge = ((bestMedian - line) / line) * 100;
+  const edge = isUnder ? -rawEdge : rawEdge;  // Flip sign for under (negative rawEdge = good)
   
   // DEAD-ZONE CHECK: If line is within ±0.5 of median → NO EDGE (coin-flip)
   const medianGap = Math.abs(line - bestMedian);
@@ -139,29 +148,70 @@ function passesMedianRule(
     };
   }
   
-  // Upside builds allow 10% buffer below line
+  // SNEAKY LINE TRAP DETECTION: Vegas sets line just above median for unders
+  // Example: Player averages 8 rebounds, line is 7.5 under → TRAP
+  if (isUnder && bestMedian > line) {
+    const sneakyGap = bestMedian - line;
+    if (sneakyGap <= 2.0) {  // Line is set 0.5-2.0 below median → SNEAKY TRAP
+      return {
+        passes: false,
+        median5,
+        median10,
+        edge: 0,
+        reason: `SNEAKY LINE: Median ${bestMedian.toFixed(1)} > line ${line} → under is trap`
+      };
+    }
+  }
+  
+  // Upside builds allow 10% buffer
   const isUpsideBuild = parlayType === 'UPSIDE';
-  const threshold = isUpsideBuild ? line * 0.90 : line;
   
-  const passes = median5 >= threshold || median10 >= threshold;
-  
-  if (passes) {
+  if (isUnder) {
+    // FOR UNDER: Median must be BELOW line (player underperforms line)
+    // Require at least 10% buffer for safety
+    const threshold = isUpsideBuild ? line * 1.05 : line * 0.90;  // 10% below line
+    const passes = median5 <= threshold || median10 <= threshold;
+    
+    if (passes) {
+      return { 
+        passes: true, 
+        median5, 
+        median10, 
+        edge,
+        reason: `UNDER valid: L5 ${median5.toFixed(1)}, L10 ${median10.toFixed(1)} below line ${line}`
+      };
+    }
+    
     return { 
-      passes: true, 
+      passes: false, 
       median5, 
       median10, 
       edge,
-      reason: `L5 median ${median5.toFixed(1)}, L10 median ${median10.toFixed(1)}, edge ${edge > 0 ? '+' : ''}${edge.toFixed(1)}%`
+      reason: `UNDER INVALID: Medians (${median5.toFixed(1)}/${median10.toFixed(1)}) >= line ${line} - player exceeds line`
+    };
+  } else {
+    // FOR OVER: Median must be ABOVE line (player exceeds line)
+    const threshold = isUpsideBuild ? line * 0.90 : line;
+    const passes = median5 >= threshold || median10 >= threshold;
+    
+    if (passes) {
+      return { 
+        passes: true, 
+        median5, 
+        median10, 
+        edge,
+        reason: `OVER valid: L5 ${median5.toFixed(1)}, L10 ${median10.toFixed(1)}, edge ${edge > 0 ? '+' : ''}${edge.toFixed(1)}%`
+      };
+    }
+    
+    return { 
+      passes: false, 
+      median5, 
+      median10, 
+      edge,
+      reason: `OVER INVALID: Medians (${median5.toFixed(1)}/${median10.toFixed(1)}) below threshold ${threshold.toFixed(1)}`
     };
   }
-  
-  return { 
-    passes: false, 
-    median5, 
-    median10, 
-    edge,
-    reason: `Medians (${median5.toFixed(1)}/${median10.toFixed(1)}) below threshold ${threshold.toFixed(1)}`
-  };
 }
 
 // RULE 3: Role Lock (Position-based stat validation)
@@ -419,13 +469,14 @@ async function buildSharpParlays(supabase: any): Promise<any> {
       continue;
     }
     
-    // RULE 2: Median check
-    const medianResult = passesMedianRule(statValues, prop.line, 'SAFE'); // Start with SAFE threshold
+    // RULE 2: Median check - NOW SIDE-AWARE (CRITICAL FIX)
+    const propSide = prop.side || 'over';
+    const medianResult = passesMedianRule(statValues, prop.line, 'SAFE', propSide);
     if (!medianResult.passes) {
       // Try again with UPSIDE threshold
-      const upsideMedianResult = passesMedianRule(statValues, prop.line, 'UPSIDE');
+      const upsideMedianResult = passesMedianRule(statValues, prop.line, 'UPSIDE', propSide);
       if (!upsideMedianResult.passes) {
-        console.log(`[Sharp Builder] ${prop.player_name} ${prop.prop_type} failed median: ${medianResult.reason}`);
+        console.log(`[Sharp Builder] ${prop.player_name} ${prop.prop_type} ${propSide} failed median: ${medianResult.reason}`);
         continue;
       }
     }
