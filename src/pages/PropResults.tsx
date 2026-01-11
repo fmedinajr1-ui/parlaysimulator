@@ -2,10 +2,14 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { ArrowLeft, Trophy, XCircle, MinusCircle, TrendingUp, Loader2, RefreshCw, CalendarDays, Target, Zap, Flame, Clock } from "lucide-react";
+import { ArrowLeft, Trophy, XCircle, MinusCircle, TrendingUp, Loader2, RefreshCw, CalendarDays, Target, Zap, Flame, Clock, Archive } from "lucide-react";
 import { usePropResults, PropResult, EngineFilter } from "@/hooks/usePropResults";
+import { useArchiveResults } from "@/hooks/useArchiveResults";
 import { PropResultCard } from "@/components/market/PropResultCard";
 import { ParlayResultCard } from "@/components/market/ParlayResultCard";
+import { MonthSelector } from "@/components/results/MonthSelector";
+import { ArchiveStatsCard } from "@/components/results/ArchiveStatsCard";
+import { ArchiveResultCard } from "@/components/results/ArchiveResultCard";
 import { cn } from "@/lib/utils";
 import { format, parseISO, isToday, isYesterday } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
@@ -13,6 +17,7 @@ import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 
 type OutcomeFilter = 'all' | 'hit' | 'miss' | 'push' | 'pending';
+type ViewMode = 'live' | 'archive';
 
 function formatDateHeader(dateStr: string): string {
   const date = parseISO(dateStr);
@@ -25,8 +30,12 @@ export default function PropResults() {
   const [outcomeFilter, setOutcomeFilter] = useState<OutcomeFilter>('all');
   const [engineFilter, setEngineFilter] = useState<EngineFilter>('all');
   const [isVerifying, setIsVerifying] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>('live');
+  const [selectedMonth, setSelectedMonth] = useState(new Date());
+  
   const queryClient = useQueryClient();
   const { data: results, isLoading, stats, groupedByDate } = usePropResults(14);
+  const { results: archiveResults, stats: archiveStats, groupedByDate: archiveGroupedByDate, isLoading: archiveLoading } = useArchiveResults(selectedMonth);
 
   const handleSyncAndVerify = async () => {
     setIsVerifying(true);
@@ -92,6 +101,11 @@ export default function PropResults() {
     parseISO(b).getTime() - parseISO(a).getTime()
   );
 
+  // Archive filtered and sorted dates
+  const archiveSortedDates = Object.keys(archiveGroupedByDate).sort((a, b) => 
+    parseISO(b).getTime() - parseISO(a).getTime()
+  );
+
   // Calculate filtered stats
   const filteredStats = engineFilter === 'all' ? stats : {
     totalWins: stats.byEngine[engineFilter].wins,
@@ -119,172 +133,269 @@ export default function PropResults() {
               <h1 className="text-2xl font-bold">Prop Results</h1>
             </div>
           </div>
+          {viewMode === 'live' && (
+            <Button
+              onClick={handleSyncAndVerify}
+              disabled={isVerifying}
+              variant="outline"
+              className="gap-2"
+            >
+              {isVerifying ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
+              Sync & Verify
+            </Button>
+          )}
+        </div>
+
+        {/* View Mode Toggle */}
+        <div className="flex gap-2 mb-4">
           <Button
-            onClick={handleSyncAndVerify}
-            disabled={isVerifying}
-            variant="outline"
-            className="gap-2"
-          >
-            {isVerifying ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <RefreshCw className="w-4 h-4" />
+            variant="ghost"
+            onClick={() => setViewMode('live')}
+            className={cn(
+              "flex-1 gap-2",
+              viewMode === 'live' 
+                ? "bg-primary/20 text-primary ring-2 ring-primary ring-offset-2 ring-offset-background"
+                : "bg-muted/50 hover:bg-muted"
             )}
-            Sync & Verify
+          >
+            <TrendingUp className="w-4 h-4" />
+            Live Results
+            <span className="text-xs opacity-70">(14 days)</span>
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={() => setViewMode('archive')}
+            className={cn(
+              "flex-1 gap-2",
+              viewMode === 'archive' 
+                ? "bg-primary/20 text-primary ring-2 ring-primary ring-offset-2 ring-offset-background"
+                : "bg-muted/50 hover:bg-muted"
+            )}
+          >
+            <Archive className="w-4 h-4" />
+            Monthly Archive
           </Button>
         </div>
 
-        {/* Engine Filter Tabs */}
-        <div className="flex gap-2 mb-4 overflow-x-auto pb-2">
-          {[
-            { key: 'all' as const, label: 'All Engines', icon: null },
-            { key: 'risk' as const, label: 'Risk Engine', icon: Target, color: 'text-blue-400' },
-            { key: 'sharp' as const, label: 'Sharp AI', icon: Zap, color: 'text-amber-400' },
-            { key: 'heat' as const, label: 'Heat Engine', icon: Flame, color: 'text-orange-400' },
-          ].map(engine => (
-            <Button
-              key={engine.key}
-              variant="ghost"
-              size="sm"
-              onClick={() => setEngineFilter(engine.key)}
-              className={cn(
-                "flex items-center gap-2 whitespace-nowrap",
-                engineFilter === engine.key 
-                  ? "bg-primary/20 text-primary ring-2 ring-primary ring-offset-2 ring-offset-background"
-                  : "bg-muted/50 hover:bg-muted"
-              )}
-            >
-              {engine.icon && <engine.icon className={cn("w-4 h-4", engine.color)} />}
-              {engine.label}
-              <span className="opacity-70">
-                ({engine.key === 'all' 
-                  ? stats.totalSettled 
-                  : stats.byEngine[engine.key].wins + stats.byEngine[engine.key].losses + stats.byEngine[engine.key].pushes})
-              </span>
-            </Button>
-          ))}
-        </div>
-
-        {/* Stats Banner */}
-        <Card className="mb-6 bg-gradient-to-br from-primary/10 via-background to-background border-primary/20">
-          <CardContent className="py-4">
-            <div className="grid grid-cols-4 gap-4 text-center">
-              <div>
-                <div className="flex items-center justify-center gap-2 mb-1">
-                  <Trophy className="w-4 h-4 text-green-400" />
-                  <span className="text-2xl font-bold text-green-400">{filteredStats.totalWins}</span>
-                </div>
-                <span className="text-xs text-muted-foreground">Wins</span>
-              </div>
-              <div>
-                <div className="flex items-center justify-center gap-2 mb-1">
-                  <XCircle className="w-4 h-4 text-red-400" />
-                  <span className="text-2xl font-bold text-red-400">{filteredStats.totalLosses}</span>
-                </div>
-                <span className="text-xs text-muted-foreground">Losses</span>
-              </div>
-              <div>
-                <div className="flex items-center justify-center gap-2 mb-1">
-                  <MinusCircle className="w-4 h-4 text-amber-400" />
-                  <span className="text-2xl font-bold text-amber-400">{filteredStats.totalPushes}</span>
-                </div>
-                <span className="text-xs text-muted-foreground">Pushes</span>
-              </div>
-              <div>
-                <div className="flex items-center justify-center gap-2 mb-1">
-                  <TrendingUp className="w-4 h-4 text-primary" />
-                  <span className="text-2xl font-bold text-primary">
-                    {filteredStats.winRate.toFixed(1)}%
-                  </span>
-                </div>
-                <span className="text-xs text-muted-foreground">Win Rate</span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Outcome Filters */}
-        <div className="flex flex-wrap gap-2 mb-6">
-          {[
-            { key: 'all' as const, label: 'All Results', count: filteredStats.totalSettled + stats.totalPending, color: '', icon: null },
-            { key: 'hit' as const, label: 'Wins', count: filteredStats.totalWins, color: 'text-green-400', icon: Trophy },
-            { key: 'miss' as const, label: 'Losses', count: filteredStats.totalLosses, color: 'text-red-400', icon: XCircle },
-            { key: 'push' as const, label: 'Pushes', count: filteredStats.totalPushes, color: 'text-amber-400', icon: MinusCircle },
-            { key: 'pending' as const, label: 'In Progress', count: stats.totalPending, color: 'text-blue-400', icon: Clock },
-          ].map(filter => (
-            <Button
-              key={filter.key}
-              variant="ghost"
-              size="sm"
-              onClick={() => setOutcomeFilter(filter.key)}
-              className={cn(
-                "transition-all gap-1.5",
-                outcomeFilter === filter.key 
-                  ? "bg-primary/20 text-primary ring-2 ring-primary ring-offset-2 ring-offset-background"
-                  : "bg-muted/50 hover:bg-muted",
-                filter.color
-              )}
-            >
-              {filter.icon && <filter.icon className="w-3.5 h-3.5" />}
-              {filter.label}
-              <span className="ml-0.5 opacity-70">({filter.count})</span>
-            </Button>
-          ))}
-        </div>
-
-        {/* Results by Date */}
-        {isLoading ? (
-          <div className="flex items-center justify-center py-20">
-            <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-          </div>
-        ) : sortedDates.length === 0 ? (
-          <Card className="border-border/50">
-            <CardContent className="py-16 text-center">
-              <Trophy className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-              <p className="text-muted-foreground">No settled picks yet</p>
-              <p className="text-sm text-muted-foreground mt-1">
-                Results will appear here once games are completed
-              </p>
-              <Button 
-                variant="outline" 
-                className="mt-4"
-                onClick={handleSyncAndVerify}
-                disabled={isVerifying}
-              >
-                Check for Results
-              </Button>
-            </CardContent>
-          </Card>
-        ) : (
+        {viewMode === 'archive' ? (
+          /* ARCHIVE VIEW */
           <div className="space-y-6">
-            {sortedDates.map(date => (
-              <div key={date}>
-                {/* Date Header */}
-                <div className="flex items-center gap-2 mb-3">
-                  <CalendarDays className="w-4 h-4 text-muted-foreground" />
-                  <h2 className="text-sm font-semibold text-muted-foreground">
-                    {formatDateHeader(date)}
-                  </h2>
-                  <div className="flex-1 h-px bg-border/50" />
-                  <span className="text-xs text-muted-foreground">
-                    {filteredGrouped[date].filter(p => p.outcome === 'hit').length}W - {' '}
-                    {filteredGrouped[date].filter(p => p.outcome === 'miss').length}L
-                  </span>
-                </div>
+            {/* Month Selector */}
+            <div className="flex justify-center">
+              <MonthSelector 
+                selectedMonth={selectedMonth} 
+                onMonthChange={setSelectedMonth} 
+              />
+            </div>
 
-                {/* Results for this date */}
-                <div className="space-y-2">
-                  {filteredGrouped[date].map(result => (
-                    result.type === 'parlay' ? (
-                      <ParlayResultCard key={result.id} result={result} />
-                    ) : (
-                      <PropResultCard key={result.id} result={result} />
-                    )
+            {/* Archive Stats */}
+            {archiveLoading ? (
+              <div className="flex items-center justify-center py-20">
+                <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+              </div>
+            ) : archiveResults && archiveResults.length > 0 ? (
+              <>
+                <ArchiveStatsCard stats={archiveStats} />
+
+                {/* Archived Results by Date */}
+                <div className="space-y-6">
+                  {archiveSortedDates.map(date => (
+                    <div key={date}>
+                      {/* Date Header */}
+                      <div className="flex items-center gap-2 mb-3">
+                        <CalendarDays className="w-4 h-4 text-muted-foreground" />
+                        <h2 className="text-sm font-semibold text-muted-foreground">
+                          {formatDateHeader(date)}
+                        </h2>
+                        <div className="flex-1 h-px bg-border/50" />
+                        <span className="text-xs text-muted-foreground">
+                          {archiveGroupedByDate[date].filter(p => p.outcome === 'hit').length}W - {' '}
+                          {archiveGroupedByDate[date].filter(p => p.outcome === 'miss').length}L
+                        </span>
+                      </div>
+
+                      {/* Results for this date */}
+                      <div className="space-y-2">
+                        {archiveGroupedByDate[date].map(result => (
+                          <ArchiveResultCard key={result.id} result={result} />
+                        ))}
+                      </div>
+                    </div>
                   ))}
                 </div>
-              </div>
-            ))}
+              </>
+            ) : (
+              <Card className="border-border/50">
+                <CardContent className="py-16 text-center">
+                  <Archive className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                  <p className="text-muted-foreground">No archived results for {format(selectedMonth, 'MMMM yyyy')}</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Results are archived after games are settled
+                  </p>
+                </CardContent>
+              </Card>
+            )}
           </div>
+        ) : (
+          /* LIVE VIEW */
+          <>
+            {/* Engine Filter Tabs */}
+            <div className="flex gap-2 mb-4 overflow-x-auto pb-2">
+              {[
+                { key: 'all' as const, label: 'All Engines', icon: null },
+                { key: 'risk' as const, label: 'Risk Engine', icon: Target, color: 'text-blue-400' },
+                { key: 'sharp' as const, label: 'Sharp AI', icon: Zap, color: 'text-amber-400' },
+                { key: 'heat' as const, label: 'Heat Engine', icon: Flame, color: 'text-orange-400' },
+              ].map(engine => (
+                <Button
+                  key={engine.key}
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setEngineFilter(engine.key)}
+                  className={cn(
+                    "flex items-center gap-2 whitespace-nowrap",
+                    engineFilter === engine.key 
+                      ? "bg-primary/20 text-primary ring-2 ring-primary ring-offset-2 ring-offset-background"
+                      : "bg-muted/50 hover:bg-muted"
+                  )}
+                >
+                  {engine.icon && <engine.icon className={cn("w-4 h-4", engine.color)} />}
+                  {engine.label}
+                  <span className="opacity-70">
+                    ({engine.key === 'all' 
+                      ? stats.totalSettled 
+                      : stats.byEngine[engine.key].wins + stats.byEngine[engine.key].losses + stats.byEngine[engine.key].pushes})
+                  </span>
+                </Button>
+              ))}
+            </div>
+
+            {/* Stats Banner */}
+            <Card className="mb-6 bg-gradient-to-br from-primary/10 via-background to-background border-primary/20">
+              <CardContent className="py-4">
+                <div className="grid grid-cols-4 gap-4 text-center">
+                  <div>
+                    <div className="flex items-center justify-center gap-2 mb-1">
+                      <Trophy className="w-4 h-4 text-green-400" />
+                      <span className="text-2xl font-bold text-green-400">{filteredStats.totalWins}</span>
+                    </div>
+                    <span className="text-xs text-muted-foreground">Wins</span>
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-center gap-2 mb-1">
+                      <XCircle className="w-4 h-4 text-red-400" />
+                      <span className="text-2xl font-bold text-red-400">{filteredStats.totalLosses}</span>
+                    </div>
+                    <span className="text-xs text-muted-foreground">Losses</span>
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-center gap-2 mb-1">
+                      <MinusCircle className="w-4 h-4 text-amber-400" />
+                      <span className="text-2xl font-bold text-amber-400">{filteredStats.totalPushes}</span>
+                    </div>
+                    <span className="text-xs text-muted-foreground">Pushes</span>
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-center gap-2 mb-1">
+                      <TrendingUp className="w-4 h-4 text-primary" />
+                      <span className="text-2xl font-bold text-primary">
+                        {filteredStats.winRate.toFixed(1)}%
+                      </span>
+                    </div>
+                    <span className="text-xs text-muted-foreground">Win Rate</span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Outcome Filters */}
+            <div className="flex flex-wrap gap-2 mb-6">
+              {[
+                { key: 'all' as const, label: 'All Results', count: filteredStats.totalSettled + stats.totalPending, color: '', icon: null },
+                { key: 'hit' as const, label: 'Wins', count: filteredStats.totalWins, color: 'text-green-400', icon: Trophy },
+                { key: 'miss' as const, label: 'Losses', count: filteredStats.totalLosses, color: 'text-red-400', icon: XCircle },
+                { key: 'push' as const, label: 'Pushes', count: filteredStats.totalPushes, color: 'text-amber-400', icon: MinusCircle },
+                { key: 'pending' as const, label: 'In Progress', count: stats.totalPending, color: 'text-blue-400', icon: Clock },
+              ].map(filter => (
+                <Button
+                  key={filter.key}
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setOutcomeFilter(filter.key)}
+                  className={cn(
+                    "transition-all gap-1.5",
+                    outcomeFilter === filter.key 
+                      ? "bg-primary/20 text-primary ring-2 ring-primary ring-offset-2 ring-offset-background"
+                      : "bg-muted/50 hover:bg-muted",
+                    filter.color
+                  )}
+                >
+                  {filter.icon && <filter.icon className="w-3.5 h-3.5" />}
+                  {filter.label}
+                  <span className="ml-0.5 opacity-70">({filter.count})</span>
+                </Button>
+              ))}
+            </div>
+
+            {/* Results by Date */}
+            {isLoading ? (
+              <div className="flex items-center justify-center py-20">
+                <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+              </div>
+            ) : sortedDates.length === 0 ? (
+              <Card className="border-border/50">
+                <CardContent className="py-16 text-center">
+                  <Trophy className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                  <p className="text-muted-foreground">No settled picks yet</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Results will appear here once games are completed
+                  </p>
+                  <Button 
+                    variant="outline" 
+                    className="mt-4"
+                    onClick={handleSyncAndVerify}
+                    disabled={isVerifying}
+                  >
+                    Check for Results
+                  </Button>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="space-y-6">
+                {sortedDates.map(date => (
+                  <div key={date}>
+                    {/* Date Header */}
+                    <div className="flex items-center gap-2 mb-3">
+                      <CalendarDays className="w-4 h-4 text-muted-foreground" />
+                      <h2 className="text-sm font-semibold text-muted-foreground">
+                        {formatDateHeader(date)}
+                      </h2>
+                      <div className="flex-1 h-px bg-border/50" />
+                      <span className="text-xs text-muted-foreground">
+                        {filteredGrouped[date].filter(p => p.outcome === 'hit').length}W - {' '}
+                        {filteredGrouped[date].filter(p => p.outcome === 'miss').length}L
+                      </span>
+                    </div>
+
+                    {/* Results for this date */}
+                    <div className="space-y-2">
+                      {filteredGrouped[date].map(result => (
+                        result.type === 'parlay' ? (
+                          <ParlayResultCard key={result.id} result={result} />
+                        ) : (
+                          <PropResultCard key={result.id} result={result} />
+                        )
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
