@@ -1,6 +1,7 @@
 // Fatigue data hook - NBA team fatigue scores
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { getEasternDate } from '@/lib/dateUtils';
 
 interface FatigueScore {
   id: string;
@@ -19,9 +20,9 @@ interface FatigueScore {
 
 export function useFatigueData() {
   return useQuery({
-    queryKey: ['nba-fatigue-scores', new Date().toISOString().split('T')[0]],
+    queryKey: ['nba-fatigue-scores', getEasternDate()],
     queryFn: async () => {
-      const today = new Date().toISOString().split('T')[0];
+      const today = getEasternDate();
       
       const { data, error } = await supabase
         .from('nba_fatigue_scores')

@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { Link } from "react-router-dom";
+import { getEasternDate } from "@/lib/dateUtils";
 import { FatigueMeter } from "@/components/fatigue/FatigueMeter";
 import { FatigueEdgeROI } from "@/components/fatigue/FatigueEdgeROI";
 import { toast } from "sonner";
@@ -82,7 +83,7 @@ export default function NBAFatigue() {
 
   const fetchFatigueData = useCallback(async () => {
     try {
-      const today = new Date().toISOString().split('T')[0];
+      const today = getEasternDate();
       const { data, error } = await supabase
         .from('nba_fatigue_scores')
         .select('*')

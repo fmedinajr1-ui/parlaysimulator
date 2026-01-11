@@ -5,6 +5,7 @@ import { useHeatEngineScan } from "@/hooks/useHeatPropEngine";
 import { Button } from "@/components/ui/button";
 import { Flame, RefreshCw } from "lucide-react";
 import { SkeletonCard } from "@/components/ui/skeleton-card";
+import { getEasternDate } from "@/lib/dateUtils";
 
 interface ParlayLeg {
   player_name: string;
@@ -31,7 +32,7 @@ interface HeatParlay {
 }
 
 export function HeatParlaySection() {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getEasternDate();
   
   const { data: parlays, isLoading, refetch } = useQuery({
     queryKey: ['heat-parlays-homepage', today],

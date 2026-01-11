@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { getEasternDate } from "@/lib/dateUtils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -201,7 +202,7 @@ export function RiskEnginePicksCard() {
   const queryClient = useQueryClient();
   
   // Get today's date for filtering
-  const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
+  const todayStr = useMemo(() => getEasternDate(), []);
   
   const { data: picks, isLoading, error } = useQuery({
     queryKey: ['risk-engine-picks', activeTab, todayStr],
