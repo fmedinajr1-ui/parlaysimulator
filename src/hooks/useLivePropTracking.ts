@@ -124,6 +124,10 @@ function findGameForProp(games: LiveGame[], prop: PropResult): LiveGame | null {
 export function useLivePropTracking(props: PropResult[]) {
   const { games, liveGames, isLoading, getGameProgress } = useLiveScores({ autoRefresh: true });
   
+  // Debug logging
+  console.log('[LivePropTracking] Props received:', props.length, 'pending:', props.filter(p => p.outcome === 'pending').length);
+  console.log('[LivePropTracking] Live games available:', games.length, 'in-progress:', liveGames.length);
+  
   const propsWithLiveData = useMemo(() => {
     if (!games.length) return props.map(p => ({ prop: p, liveData: null }));
     

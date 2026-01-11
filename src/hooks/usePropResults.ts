@@ -61,14 +61,14 @@ export function usePropResults(days: number = 7) {
 
       const results: PropResult[] = [];
 
-      // Fetch Risk Engine picks (settled only)
+      // Fetch Risk Engine picks (including pending for live tracking)
       const { data: riskData, error: riskError } = await supabase
         .from('nba_risk_engine_picks')
         .select('id, player_name, prop_type, line, side, outcome, actual_value, confidence_score, game_date, settled_at, team_name, opponent')
-        .in('outcome', ['hit', 'miss', 'push'])
+        .in('outcome', ['hit', 'miss', 'push', 'pending'])
         .gte('game_date', startDateStr)
         .order('game_date', { ascending: false })
-        .order('settled_at', { ascending: false })
+        .order('settled_at', { ascending: false, nullsFirst: true })
         .limit(200);
 
       if (riskError) console.error('Risk fetch error:', riskError);
