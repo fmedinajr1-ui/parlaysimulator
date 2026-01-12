@@ -12,58 +12,63 @@ const corsHeaders = {
 
 const MINUTES_THRESHOLD = 24;
 
-// Stars with proven blowout immunity - never fade their PRA
-const BLOWOUT_IMMUNITY_STARS = [
-  'luka doncic', 'jayson tatum', 'nikola jokic', 'giannis antetokounmpo',
-  'shai gilgeous-alexander', 'anthony edwards', 'kevin durant', 'stephen curry',
-  'lebron james', 'joel embiid', 'damian lillard', 'donovan mitchell',
-  'trae young', 'devin booker', 'tyrese haliburton', 'anthony davis'
-];
+// ARCHETYPE-PROP ALIGNMENT MATRIX (Dream Team Core Rule)
+const ARCHETYPE_PROP_ALLOWED: Record<string, { primary: string[], secondary: string[] }> = {
+  'ELITE_REBOUNDER': { primary: ['rebounds'], secondary: ['points', 'blocks'] },
+  'GLASS_CLEANER': { primary: ['rebounds'], secondary: ['blocks'] },
+  'PURE_SHOOTER': { primary: ['points', 'threes'], secondary: ['assists'] },
+  'PLAYMAKER': { primary: ['assists'], secondary: ['points', 'rebounds'] },
+  'COMBO_GUARD': { primary: ['points', 'assists'], secondary: ['rebounds'] },
+  'TWO_WAY_WING': { primary: ['points', 'rebounds'], secondary: ['assists', 'steals'] },
+  'STRETCH_BIG': { primary: ['points', 'rebounds', 'threes'], secondary: ['blocks'] },
+  'RIM_PROTECTOR': { primary: ['blocks', 'rebounds'], secondary: ['points'] },
+  'SCORING_WING': { primary: ['points'], secondary: ['rebounds', 'threes'] },
+  'SCORING_GUARD': { primary: ['points', 'assists'], secondary: ['threes'] },
+  'ROLE_PLAYER': { primary: [], secondary: [] } // BLOCKED from parlays
+};
 
-// All star players (for one-star-per-parlay rule)
-const ALL_STAR_PLAYERS = [
-  ...BLOWOUT_IMMUNITY_STARS,
-  'jaylen brown', 'kyrie irving', 'jalen brunson', 'lamelo ball',
-  'de\'aaron fox', 'deaaron fox', 'ja morant', 'tyrese maxey'
-];
+// Runtime archetype data (populated from database)
+let archetypeMap: Record<string, { archetype: string; team?: string }> = {};
 
-function isStarPlayer(playerName: string): boolean {
-  const normalized = playerName?.toLowerCase() || '';
-  return ALL_STAR_PLAYERS.some(star => normalized.includes(star));
+async function loadArchetypes(supabase: any): Promise<void> {
+  const { data: archetypes } = await supabase
+    .from('player_archetypes')
+    .select('player_name, primary_archetype');
+  
+  archetypeMap = {};
+  for (const a of (archetypes || [])) {
+    archetypeMap[a.player_name.toLowerCase()] = { 
+      archetype: a.primary_archetype 
+    };
+  }
+  console.log(`[Sharp Builder] Loaded ${Object.keys(archetypeMap).length} player archetypes`);
 }
 
-// Never fade PRA on these players regardless of spread
-const NEVER_FADE_PRA = [
-  'luka doncic', 'nikola jokic', 'jayson tatum', 'giannis antetokounmpo',
-  'shai gilgeous-alexander', 'lebron james', 'kevin durant'
-];
+function getPlayerArchetype(playerName: string): string {
+  return archetypeMap[playerName?.toLowerCase()]?.archetype || 'UNKNOWN';
+}
 
-// ============ ELITE REBOUNDER BLACKLIST (NEVER FADE REBOUNDS UNDER) ============
-const NEVER_FADE_REBOUNDS_TIER1 = [
-  'andre drummond', 'nikola jokic', 'domantas sabonis', 'rudy gobert',
-  'steven adams', 'victor wembanyama', 'anthony davis', 'giannis antetokounmpo',
-  'jonas valanciunas', 'deandre ayton', 'bam adebayo', 'jarrett allen'
-];
-
-const NEVER_FADE_REBOUNDS_TIER2 = [
-  'santi aldama', 'dayron sharpe', 'mitchell robinson', 'goga bitadze',
-  'wendell carter jr', 'julius randle', 'ivica zubac', 'alperen sengun',
-  'donovan clingan', 'nick richards', 'jalen duren', 'nic claxton',
-  'mark williams', 'mason plumlee', 'robert williams', 'kristaps porzingis'
-];
-
-function isEliteRebounder(playerName: string): { tier: 1 | 2 | null } {
-  const normalized = playerName?.toLowerCase() || '';
-  if (NEVER_FADE_REBOUNDS_TIER1.some(p => normalized.includes(p))) return { tier: 1 };
-  if (NEVER_FADE_REBOUNDS_TIER2.some(p => normalized.includes(p))) return { tier: 2 };
-  return { tier: null };
+function isArchetypePropAligned(archetype: string, propType: string): { aligned: boolean; isPrimary: boolean } {
+  const rules = ARCHETYPE_PROP_ALLOWED[archetype];
+  if (!rules) return { aligned: false, isPrimary: false };
+  
+  const propLower = propType?.toLowerCase() || '';
+  const propCategory = propLower.includes('rebound') ? 'rebounds' :
+                       propLower.includes('assist') ? 'assists' :
+                       propLower.includes('block') ? 'blocks' :
+                       propLower.includes('steal') ? 'steals' :
+                       propLower.includes('three') || propLower.includes('3pt') ? 'threes' : 'points';
+  
+  if (rules.primary.includes(propCategory)) return { aligned: true, isPrimary: true };
+  if (rules.secondary.includes(propCategory)) return { aligned: true, isPrimary: false };
+  return { aligned: false, isPrimary: false };
 }
 
 // Role locks by stat type - BIG allowed for rebounds, WING for all core stats
 const ROLE_STAT_LOCKS = {
-  rebounds: ['C', 'PF', 'F-C', 'C-F', 'SF', 'BIG', 'WING'],  // BIG + WING allowed
+  rebounds: ['C', 'PF', 'F-C', 'C-F', 'SF', 'BIG', 'WING'],
   assists: ['PG', 'SG', 'G', 'PG-SG', 'SG-PG', 'SF', 'GUARD', 'WING', 'SECONDARY_GUARD', 'BALL_DOMINANT_STAR'],
-  points: ['PG', 'SG', 'SF', 'G', 'GUARD', 'WING', 'SECONDARY_GUARD'],  // Allow for non-BIG roles
+  points: ['PG', 'SG', 'SF', 'G', 'GUARD', 'WING', 'SECONDARY_GUARD'],
   threes: 'VOLUME_CHECK'
 };
 
@@ -74,7 +79,7 @@ const STAT_PRIORITY: Record<string, number> = {
   'blocks': 7,
   'steals': 6,
   'threes': 4,
-  'points': 2  // Lowest - deprioritized
+  'points': 2
 };
 
 function getStatPriority(propType: string): number {
@@ -88,11 +93,13 @@ function getStatPriority(propType: string): number {
 // High volatility stats (limit in parlays)
 const HIGH_VOLATILITY_STATS = ['blocks', 'steals', 'turnovers', 'threes', '3-pointers'];
 
-// Parlay configuration - TIGHTENED for Dream Team
+// Parlay configuration - DREAM TEAM includes 5-leg option
 const PARLAY_CONFIGS = {
-  SAFE: { minLegs: 2, maxLegs: 3, maxVolatilityLegs: 0, confidenceThreshold: 0.70, minEdge: 12 },
-  BALANCED: { minLegs: 3, maxLegs: 4, maxVolatilityLegs: 1, confidenceThreshold: 0.60, minEdge: 8 },
-  UPSIDE: { minLegs: 3, maxLegs: 4, maxVolatilityLegs: 1, confidenceThreshold: 0.50, minEdge: 5 }
+  DREAM_TEAM_5: { minLegs: 5, maxLegs: 5, maxVolatilityLegs: 1, confidenceThreshold: 0.55, minEdge: 10, requireTeamDiversity: true },
+  DREAM_TEAM_3: { minLegs: 3, maxLegs: 3, maxVolatilityLegs: 0, confidenceThreshold: 0.65, minEdge: 12, requireTeamDiversity: true },
+  SAFE: { minLegs: 2, maxLegs: 3, maxVolatilityLegs: 0, confidenceThreshold: 0.70, minEdge: 12, requireTeamDiversity: false },
+  BALANCED: { minLegs: 3, maxLegs: 4, maxVolatilityLegs: 1, confidenceThreshold: 0.60, minEdge: 8, requireTeamDiversity: false },
+  UPSIDE: { minLegs: 3, maxLegs: 4, maxVolatilityLegs: 1, confidenceThreshold: 0.50, minEdge: 5, requireTeamDiversity: false }
 };
 
 // ========================

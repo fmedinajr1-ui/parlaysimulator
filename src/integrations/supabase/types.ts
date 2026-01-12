@@ -2340,6 +2340,7 @@ export type Database = {
       }
       heat_parlays: {
         Row: {
+          archetype_diversity: number | null
           combined_probability: number | null
           created_at: string | null
           engine_version: string | null
@@ -2354,9 +2355,11 @@ export type Database = {
           risk_level: string | null
           settled_at: string | null
           summary: string | null
+          team_diversity: number | null
           verified_legs_count: number | null
         }
         Insert: {
+          archetype_diversity?: number | null
           combined_probability?: number | null
           created_at?: string | null
           engine_version?: string | null
@@ -2371,9 +2374,11 @@ export type Database = {
           risk_level?: string | null
           settled_at?: string | null
           summary?: string | null
+          team_diversity?: number | null
           verified_legs_count?: number | null
         }
         Update: {
+          archetype_diversity?: number | null
           combined_probability?: number | null
           created_at?: string | null
           engine_version?: string | null
@@ -2388,6 +2393,7 @@ export type Database = {
           risk_level?: string | null
           settled_at?: string | null
           summary?: string | null
+          team_diversity?: number | null
           verified_legs_count?: number | null
         }
         Relationships: []
@@ -6610,10 +6616,12 @@ export type Database = {
       }
       sharp_ai_parlays: {
         Row: {
+          archetype_diversity: number | null
           combined_probability: number | null
           created_at: string | null
           generation_round: number | null
           id: string
+          is_dream_team: boolean | null
           legs: Json
           model_version: string | null
           outcome: string | null
@@ -6622,14 +6630,17 @@ export type Database = {
           rule_compliance: Json | null
           settled_at: string | null
           sport: string | null
+          team_diversity: number | null
           total_odds: number | null
           verified_legs_count: number | null
         }
         Insert: {
+          archetype_diversity?: number | null
           combined_probability?: number | null
           created_at?: string | null
           generation_round?: number | null
           id?: string
+          is_dream_team?: boolean | null
           legs?: Json
           model_version?: string | null
           outcome?: string | null
@@ -6638,14 +6649,17 @@ export type Database = {
           rule_compliance?: Json | null
           settled_at?: string | null
           sport?: string | null
+          team_diversity?: number | null
           total_odds?: number | null
           verified_legs_count?: number | null
         }
         Update: {
+          archetype_diversity?: number | null
           combined_probability?: number | null
           created_at?: string | null
           generation_round?: number | null
           id?: string
+          is_dream_team?: boolean | null
           legs?: Json
           model_version?: string | null
           outcome?: string | null
@@ -6654,6 +6668,7 @@ export type Database = {
           rule_compliance?: Json | null
           settled_at?: string | null
           sport?: string | null
+          team_diversity?: number | null
           total_odds?: number | null
           verified_legs_count?: number | null
         }
