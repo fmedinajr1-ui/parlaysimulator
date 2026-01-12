@@ -27,6 +27,29 @@ const STAR_PLAYERS_BY_TEAM: Record<string, string[]> = {
   'NYK': ['jalen brunson'],
 };
 
+// ============ ELITE REBOUNDER BLACKLIST (NEVER FADE REBOUNDS UNDER) ============
+// Tier 1: Elite rebounders (avg >= 9.0) - ALWAYS block rebounds UNDER
+const NEVER_FADE_REBOUNDS_TIER1 = [
+  'andre drummond', 'nikola jokic', 'domantas sabonis', 'rudy gobert',
+  'steven adams', 'victor wembanyama', 'anthony davis', 'giannis antetokounmpo',
+  'jonas valanciunas', 'deandre ayton', 'bam adebayo', 'jarrett allen'
+];
+
+// Tier 2: High-ceiling rebounders (avg 6.0-9.0) - Block unless HARD_BLOWOUT
+const NEVER_FADE_REBOUNDS_TIER2 = [
+  'santi aldama', 'dayron sharpe', 'mitchell robinson', 'goga bitadze',
+  'wendell carter jr', 'julius randle', 'ivica zubac', 'alperen sengun',
+  'donovan clingan', 'nick richards', 'jalen duren', 'nic claxton',
+  'mark williams', 'mason plumlee', 'robert williams', 'kristaps porzingis'
+];
+
+function isEliteRebounder(playerName: string): { tier: 1 | 2 | null } {
+  const normalized = playerName?.toLowerCase() || '';
+  if (NEVER_FADE_REBOUNDS_TIER1.some(p => normalized.includes(p))) return { tier: 1 };
+  if (NEVER_FADE_REBOUNDS_TIER2.some(p => normalized.includes(p))) return { tier: 2 };
+  return { tier: null };
+}
+
 // Flatten for quick lookup
 const ALL_STAR_PLAYERS = Object.values(STAR_PLAYERS_BY_TEAM).flat();
 
@@ -134,7 +157,7 @@ function classifyGameScript(spread: number): GameScript {
   return 'HARD_BLOWOUT'; // >= 12 = Hard Blowout
 }
 
-// ============ STEP 2: PLAYER ROLE CLASSIFICATION ============
+// ============ STEP 2: PLAYER ROLE CLASSIFICATION (FIXED FOR ACCURATE ROLES) ============
 type PlayerRole = 'STAR' | 'BALL_DOMINANT_STAR' | 'SECONDARY_GUARD' | 'WING' | 'BIG';
 
 function classifyPlayerRole(
@@ -143,25 +166,51 @@ function classifyPlayerRole(
   position: string,
   playerName: string
 ): PlayerRole {
-  // Check ball-dominant first (overrides other classifications)
+  const normalizedPosition = position?.toUpperCase() || '';
+  
+  // 1. Check ball-dominant first (overrides all)
   if (isBallDominantStar(playerName)) {
     return 'BALL_DOMINANT_STAR';
   }
   
-  // STAR: Usage >= 28% OR team's primary scorer
-  if (usageRate >= 28) return 'STAR';
+  // 2. Check if star player
+  if (isStarPlayer(playerName)) {
+    return 'STAR';
+  }
   
-  // BIG: Center / interior forward
-  if (['C', 'PF', 'F-C', 'C-F'].includes(position)) return 'BIG';
+  // 3. BIG: Center or Power Forward positions
+  const bigPositions = ['C', 'PF', 'F-C', 'C-F', 'FC', 'CF'];
+  if (bigPositions.some(p => normalizedPosition.includes(p))) {
+    return 'BIG';
+  }
   
-  // SECONDARY GUARD: Ball handler but not primary
-  if (['PG', 'SG', 'G', 'G-F'].includes(position) && usageRate >= 18) return 'SECONDARY_GUARD';
+  // 4. SECONDARY GUARD: Point Guard or Shooting Guard with decent usage
+  const guardPositions = ['PG', 'SG', 'G'];
+  if (guardPositions.some(p => normalizedPosition === p || normalizedPosition.startsWith(p + '-'))) {
+    if (usageRate >= 18 || avgMinutes >= 25) {
+      return 'SECONDARY_GUARD';
+    }
+  }
   
-  // WING: 2-way perimeter player, minutes >= 30
-  if (avgMinutes >= 30) return 'WING';
+  // 5. WING: SF or versatile forward/guard swingman
+  const wingPositions = ['SF', 'GF', 'FG', 'F', 'G-F', 'F-G'];
+  if (wingPositions.some(p => normalizedPosition.includes(p))) {
+    return 'WING';
+  }
   
-  // Default fallback
-  return ['PG', 'SG', 'G', 'G-F'].includes(position) ? 'SECONDARY_GUARD' : 'WING';
+  // 6. High usage but unknown position = likely primary player
+  if (usageRate >= 25) return 'STAR';
+  if (usageRate >= 20) return 'WING';
+  
+  // 7. Default by minutes - high minutes = starter/key rotation player
+  if (avgMinutes >= 32) return 'WING';
+  if (avgMinutes >= 25) return 'SECONDARY_GUARD';
+  
+  // 8. Ultimate fallback based on position string patterns
+  if (normalizedPosition.includes('G')) return 'SECONDARY_GUARD';
+  if (normalizedPosition.includes('F') || normalizedPosition.includes('C')) return 'BIG';
+  
+  return 'WING';  // Safe default for unknown players
 }
 
 // ============ STEP 3 & 4: PRA STAT TYPE RULES (GLOBAL) ============
@@ -182,7 +231,9 @@ function isStatBlacklisted(
 ): { blocked: boolean; reason?: string } {
   const statLower = propType.toLowerCase();
   const isOver = side.toLowerCase() === 'over';
+  const isUnder = !isOver;
   const isPRA = isPRAPlay(propType);
+  const isRebounds = statLower.includes('rebounds') || statLower === 'player_rebounds';
   
   // ❌ PRA OVER - NEVER ALLOWED (any role, any game) - STEP 4
   if (isPRA && isOver) {
@@ -191,7 +242,7 @@ function isStatBlacklisted(
   
   // ❌ PRA UNDER on Never Fade list (Tier 1 or Tier 2) - STEP 3
   const neverFade = isOnNeverFadePRAList(playerName);
-  if (isPRA && !isOver && neverFade.tier !== null) {
+  if (isPRA && isUnder && neverFade.tier !== null) {
     return { 
       blocked: true, 
       reason: `PRA UNDER disabled for Tier ${neverFade.tier} player (Never Fade list: ${playerName})` 
@@ -199,11 +250,33 @@ function isStatBlacklisted(
   }
   
   // ❌ PRA UNDER for ball-dominant stars in COMPETITIVE games - STEP 3
-  if (isPRA && !isOver && role === 'BALL_DOMINANT_STAR' && gameScript === 'COMPETITIVE') {
+  if (isPRA && isUnder && role === 'BALL_DOMINANT_STAR' && gameScript === 'COMPETITIVE') {
     return { 
       blocked: true, 
       reason: 'PRA UNDER disabled for ball-dominant star in competitive game' 
     };
+  }
+  
+  // ============ ELITE REBOUNDER BLACKLIST ============
+  // Block UNDER bets for elite rebounders (they have eruption potential)
+  if (isRebounds && isUnder) {
+    const rebounderTier = isEliteRebounder(playerName);
+    
+    // Tier 1: ALWAYS block (avg >= 9 rebounds)
+    if (rebounderTier.tier === 1) {
+      return { 
+        blocked: true, 
+        reason: `ELITE REBOUNDER (Tier 1): ${playerName} never fade rebounds under` 
+      };
+    }
+    
+    // Tier 2: Block unless HARD_BLOWOUT (avg 6-9 with eruption potential)
+    if (rebounderTier.tier === 2 && gameScript !== 'HARD_BLOWOUT') {
+      return { 
+        blocked: true, 
+        reason: `HIGH-CEILING REBOUNDER (Tier 2): ${playerName} rebounds under blocked except hard blowouts` 
+      };
+    }
   }
   
   // Guard PRA - NEVER (applies to SECONDARY_GUARD, not BALL_DOMINANT)
@@ -211,11 +284,8 @@ function isStatBlacklisted(
     return { blocked: true, reason: 'Guard PRA blacklisted' };
   }
   
-  // Big PRA OVER - NEVER (already covered by global PRA OVER rule)
-  // Big PRA UNDER - only in non-dominant + blowout (checked in kill switch)
-  
-  // Guard Rebounds - NEVER
-  if (role === 'SECONDARY_GUARD' && statLower === 'player_rebounds') {
+  // Guard Rebounds - NEVER (guards don't consistently rebound)
+  if (role === 'SECONDARY_GUARD' && isRebounds) {
     return { blocked: true, reason: 'Guard rebounds blacklisted' };
   }
   
