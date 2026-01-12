@@ -4362,11 +4362,13 @@ export type Database = {
       nba_risk_engine_picks: {
         Row: {
           actual_value: number | null
+          archetype: string | null
           avg_minutes: number | null
           bad_game_floor: number | null
           bookmaker: string | null
           confidence_factors: Json | null
           confidence_score: number
+          consistency_score: number | null
           created_at: string | null
           current_line: number | null
           edge: number | null
@@ -4374,6 +4376,9 @@ export type Database = {
           fade_edge_tag: string | null
           game_date: string
           game_script: string
+          h2h_avg: number | null
+          h2h_games: number | null
+          h2h_hit_rate: number | null
           id: string
           is_ball_dominant: boolean | null
           is_fade_specialist: boolean | null
@@ -4402,17 +4407,21 @@ export type Database = {
           spread: number | null
           stat_priority: number | null
           team_name: string | null
+          trend_direction: string | null
           true_median: number | null
           under_price: number | null
           usage_rate: number | null
+          volatility_pct: number | null
         }
         Insert: {
           actual_value?: number | null
+          archetype?: string | null
           avg_minutes?: number | null
           bad_game_floor?: number | null
           bookmaker?: string | null
           confidence_factors?: Json | null
           confidence_score: number
+          consistency_score?: number | null
           created_at?: string | null
           current_line?: number | null
           edge?: number | null
@@ -4420,6 +4429,9 @@ export type Database = {
           fade_edge_tag?: string | null
           game_date: string
           game_script: string
+          h2h_avg?: number | null
+          h2h_games?: number | null
+          h2h_hit_rate?: number | null
           id?: string
           is_ball_dominant?: boolean | null
           is_fade_specialist?: boolean | null
@@ -4448,17 +4460,21 @@ export type Database = {
           spread?: number | null
           stat_priority?: number | null
           team_name?: string | null
+          trend_direction?: string | null
           true_median?: number | null
           under_price?: number | null
           usage_rate?: number | null
+          volatility_pct?: number | null
         }
         Update: {
           actual_value?: number | null
+          archetype?: string | null
           avg_minutes?: number | null
           bad_game_floor?: number | null
           bookmaker?: string | null
           confidence_factors?: Json | null
           confidence_score?: number
+          consistency_score?: number | null
           created_at?: string | null
           current_line?: number | null
           edge?: number | null
@@ -4466,6 +4482,9 @@ export type Database = {
           fade_edge_tag?: string | null
           game_date?: string
           game_script?: string
+          h2h_avg?: number | null
+          h2h_games?: number | null
+          h2h_hit_rate?: number | null
           id?: string
           is_ball_dominant?: boolean | null
           is_fade_specialist?: boolean | null
@@ -4494,9 +4513,11 @@ export type Database = {
           spread?: number | null
           stat_priority?: number | null
           team_name?: string | null
+          trend_direction?: string | null
           true_median?: number | null
           under_price?: number | null
           usage_rate?: number | null
+          volatility_pct?: number | null
         }
         Relationships: []
       }
