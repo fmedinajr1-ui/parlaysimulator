@@ -66,6 +66,9 @@ const ARCHETYPE_PROP_ALLOWED: Record<string, string[]> = {
 // Runtime archetype data (populated from database)
 let archetypeMap: Record<string, string> = {};
 
+// Runtime team data (populated from database)
+let playerTeamMap: Record<string, string> = {};
+
 async function loadArchetypes(supabase: any): Promise<void> {
   const { data } = await supabase.from('player_archetypes').select('player_name, primary_archetype');
   archetypeMap = {};
@@ -73,6 +76,24 @@ async function loadArchetypes(supabase: any): Promise<void> {
     archetypeMap[a.player_name.toLowerCase()] = a.primary_archetype;
   }
   console.log(`[Heat Engine] Loaded ${Object.keys(archetypeMap).length} archetypes from DB`);
+}
+
+async function loadPlayerTeams(supabase: any): Promise<void> {
+  const { data: players } = await supabase
+    .from('bdl_player_cache')
+    .select('player_name, team_name');
+  
+  playerTeamMap = {};
+  for (const p of (players || [])) {
+    if (p.player_name && p.team_name) {
+      playerTeamMap[p.player_name.toLowerCase()] = p.team_name;
+    }
+  }
+  console.log(`[Heat Engine] Loaded ${Object.keys(playerTeamMap).length} player-team mappings`);
+}
+
+function getPlayerTeam(playerName: string): string {
+  return playerTeamMap[playerName?.toLowerCase()] || 'UNKNOWN';
 }
 
 function getPlayerArchetype(playerName: string): string {
@@ -385,6 +406,7 @@ function deriveSignalFromPick(pick: any): { label: string; score: number } {
 // ============================================================================
 interface ParlayLeg {
   player_name: string;
+  team: string;  // Player's team for diversity enforcement
   market_type: string;
   line: number;
   side: string;
@@ -412,7 +434,7 @@ function buildParlays(
   eligibleProps: any[],
   parlayType: 'CORE' | 'UPSIDE',
   excludePlayerNames: string[] = []  // Exclude these players (used for UPSIDE to avoid CORE overlap)
-): { leg_1: ParlayLeg; leg_2: ParlayLeg; summary: string; risk_level: string } | null {
+): { leg_1: ParlayLeg; leg_2: ParlayLeg; summary: string; risk_level: string; team_diversity: number } | null {
   const minScore = parlayType === 'CORE' ? 78 : 70;
   
   // Filter by score threshold AND exclude already-used players
@@ -454,11 +476,19 @@ function buildParlays(
   let leg1 = candidates[0];
   propCategories.add(getPropCategory(leg1.market_type));
   const leg1IsStar = isStarPlayer(leg1.player_name);
+  const leg1Team = getPlayerTeam(leg1.player_name);
   
-  // Find leg2: different player, respect one-star limit, PREFER different prop type
+  // Find leg2: different player, different team, respect one-star limit, PREFER different prop type
   let leg2 = candidates.find(c => {
     if (c.player_name === leg1.player_name) return false;
     if (c.event_id === leg1.event_id) return false;  // Different games preferred
+    
+    // NEW: Team diversity enforcement - must be different team
+    const candidateTeam = getPlayerTeam(c.player_name);
+    if (candidateTeam === leg1Team && candidateTeam !== 'UNKNOWN' && leg1Team !== 'UNKNOWN') {
+      console.log(`[Heat Engine] Skipping ${c.player_name} (${candidateTeam}) - same team as ${leg1.player_name}`);
+      return false;
+    }
     
     const isStar = isStarPlayer(c.player_name);
     if (leg1IsStar && isStar) return false;
@@ -468,7 +498,24 @@ function buildParlays(
     return !propCategories.has(category);
   });
   
-  // If no diverse option found, fall back to any valid leg
+  // If no diverse option found with different team, fall back to any valid leg with different team
+  if (!leg2) {
+    leg2 = candidates.find(c => {
+      if (c.player_name === leg1.player_name) return false;
+      
+      // Still enforce team diversity in fallback
+      const candidateTeam = getPlayerTeam(c.player_name);
+      if (candidateTeam === leg1Team && candidateTeam !== 'UNKNOWN' && leg1Team !== 'UNKNOWN') {
+        return false;
+      }
+      
+      const isStar = isStarPlayer(c.player_name);
+      if (leg1IsStar && isStar) return false;
+      return true;
+    });
+  }
+  
+  // Last resort: if still no leg2 found, accept any different player (log warning)
   if (!leg2) {
     leg2 = candidates.find(c => {
       if (c.player_name === leg1.player_name) return false;
@@ -476,12 +523,16 @@ function buildParlays(
       if (leg1IsStar && isStar) return false;
       return true;
     });
+    if (leg2) {
+      console.warn(`[Heat Engine] Warning: ${parlayType} parlay has same-team players - no team diversity available`);
+    }
   }
   
   if (!leg2) return null;
   
   const formatLeg = (p: any): ParlayLeg => ({
     player_name: p.player_name,
+    team: getPlayerTeam(p.player_name),  // Get team from bdl_player_cache
     market_type: p.market_type,
     line: p.latest_line,
     side: p.side,
@@ -493,10 +544,14 @@ function buildParlays(
     sport: p.sport
   });
   
+  // Calculate team diversity
+  const leg2Team = getPlayerTeam(leg2.player_name);
+  const teamDiversity = (leg1Team !== leg2Team && leg1Team !== 'UNKNOWN' && leg2Team !== 'UNKNOWN') ? 2 : 1;
+  
   // Log diversity status
   const leg1Cat = getPropCategory(leg1.market_type);
   const leg2Cat = getPropCategory(leg2.market_type);
-  console.log(`[Heat Engine] ${parlayType} parlay diversity: ${leg1Cat} + ${leg2Cat} (diverse: ${leg1Cat !== leg2Cat})`);
+  console.log(`[Heat Engine] ${parlayType} parlay: ${leg1Cat} + ${leg2Cat} (diverse: ${leg1Cat !== leg2Cat}), teams: ${leg1Team} + ${leg2Team}`);
   
   return {
     leg_1: formatLeg(leg1),
@@ -504,7 +559,8 @@ function buildParlays(
     summary: parlayType === 'CORE' 
       ? `Role player ${leg1Cat}/${leg2Cat} with strong market signals` 
       : `Higher upside with sharp-confirmed legs (${leg1Cat}/${leg2Cat})`,
-    risk_level: parlayType === 'CORE' ? 'Low' : 'Med'
+    risk_level: parlayType === 'CORE' ? 'Low' : 'Med',
+    team_diversity: teamDiversity
   };
 }
 
@@ -554,6 +610,10 @@ function getEasternDate(): string {
 async function runHeatEngine(supabase: any, action: string, sport?: string) {
   const today = getEasternDate();
   const now = new Date();
+  
+  // Load runtime data at start
+  await loadArchetypes(supabase);
+  await loadPlayerTeams(supabase);
   
   console.log(`[Heat Prop Engine] Running action: ${action}, sport: ${sport || 'all'}, date: ${today}`);
   
@@ -953,6 +1013,7 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
         summary: coreParlay.summary,
         risk_level: coreParlay.risk_level,
         no_bet_flags: [],
+        team_diversity: coreParlay.team_diversity,  // Track team diversity
         engine_version: 'v1'
       });
     }
@@ -966,6 +1027,7 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
         summary: upsideParlay.summary,
         risk_level: upsideParlay.risk_level,
         no_bet_flags: [],
+        team_diversity: upsideParlay.team_diversity,  // Track team diversity
         engine_version: 'v1'
       });
     }
