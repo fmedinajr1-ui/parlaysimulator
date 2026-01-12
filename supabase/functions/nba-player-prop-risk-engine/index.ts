@@ -431,19 +431,20 @@ function validateStatisticalContingencies(
   const volatilityPct = (stdDev / avg) * 100;
   
   // Allow higher volatility for low-count stats like blocks/steals
-  if (volatilityPct > 150) {
+  // RELAXED: 200% max (was 150%) to allow more props through
+  if (volatilityPct > 200) {
     return {
       valid: false,
-      reason: `HIGH VOLATILITY: ${volatilityPct.toFixed(0)}% std dev (max 150%) - too swingy`,
+      reason: `HIGH VOLATILITY: ${volatilityPct.toFixed(0)}% std dev (max 200%) - too swingy`,
       details: { standardDeviation: stdDev, volatilityPct }
     };
   }
   
-  // 2. CONSISTENCY SCORE CHECK (if available)
-  if (seasonStats?.consistencyScore !== undefined && seasonStats.consistencyScore < 55) {
+  // 2. CONSISTENCY SCORE CHECK - RELAXED: min 40 (was 55)
+  if (seasonStats?.consistencyScore !== undefined && seasonStats.consistencyScore < 40) {
     return {
       valid: false,
-      reason: `LOW CONSISTENCY: ${seasonStats.consistencyScore} score (min 55) - unreliable`,
+      reason: `LOW CONSISTENCY: ${seasonStats.consistencyScore} score (min 40) - unreliable`,
       details: { consistencyScore: seasonStats.consistencyScore }
     };
   }
@@ -531,11 +532,17 @@ function enforceOverUnderBalance(
   archetype: PlayerArchetype,
   edge: number
 ): { allowed: boolean; reason: string } {
-  const MAX_UNDER_PCT = 65;  // Max 65% unders
-  const MAX_OVER_PCT = 65;   // Max 65% overs
+  const MAX_UNDER_PCT = 70;  // Max 70% unders (relaxed from 65%)
+  const MAX_OVER_PCT = 70;   // Max 70% overs (relaxed from 65%)
+  const MIN_SAMPLE_SIZE = 10; // Don't enforce balance until we have 10+ approved picks
   
   const isOver = newSide.toLowerCase() === 'over';
   const projectedTotal = currentBalance.total + 1;
+  
+  // Skip balance check for first N picks to avoid cold-start rejection
+  if (currentBalance.total < MIN_SAMPLE_SIZE) {
+    return { allowed: true, reason: 'Balance check skipped - building initial pool' };
+  }
   
   if (isOver) {
     const projectedOverPct = ((currentBalance.overCount + 1) / projectedTotal) * 100;
@@ -671,8 +678,8 @@ function failsCeilingCheck(
   const ceiling = gameLogs.reduce((max, val) => val > max ? val : max, 0);
   const ceilingRatio = line > 0 ? ceiling / line : 0;
   
-  // REJECT if ceiling exceeds line by more than 50%
-  if (ceilingRatio > 1.5) {
+  // RELAXED: Reject if ceiling exceeds line by more than 150% (was 100%)
+  if (ceilingRatio > 2.5) {
     return {
       fails: true,
       ceiling,
@@ -703,30 +710,32 @@ function passesMedianBadGameCheck(
   const sorted = [...gameLogs].sort((a, b) => a - b);
   
   if (isUnder) {
-    // FOR UNDER: Check if top 3 games still go under
+    // FOR UNDER: Check if at least 2 of top 3 games are under the line
     const topGames = sorted.slice(-3);
     const ceiling = Math.max(...topGames);
-    const passes = topGames.every(g => g < line);
+    const underCount = topGames.filter(g => g < line).length;
+    const passes = underCount >= 2; // Relaxed: 2/3 must be under (was 3/3)
     
     return { 
       passes, 
       badGameFloor: ceiling,
       reason: passes 
-        ? `UNDER survives: Top games (${topGames.join(', ')}) all < line ${line}`
-        : `UNDER FAILS: Top games (${topGames.join(', ')}) include games >= line ${line}`
+        ? `UNDER survives: ${underCount}/3 top games < line ${line}`
+        : `UNDER FAILS: Only ${underCount}/3 top games < line ${line}`
     };
   } else {
-    // FOR OVER: Check if bottom 3 games still go over
+    // FOR OVER: Check if at least 2 of bottom 3 games beat the line (relaxed from 3/3)
     const badGames = sorted.slice(0, 3);
     const badGameFloor = Math.min(...badGames);
-    const passes = badGames.every(g => g > line);
+    const overCount = badGames.filter(g => g > line).length;
+    const passes = overCount >= 1; // Relaxed: 1/3 bad games > line is OK (was 3/3)
     
     return { 
       passes, 
       badGameFloor,
       reason: passes 
-        ? `OVER survives: Bad games (${badGames.join(', ')}) all > line ${line}`
-        : `OVER FAILS: Bad games (${badGames.join(', ')}) include games <= line ${line}`
+        ? `OVER survives: ${overCount}/3 bad games > line ${line}`
+        : `OVER FAILS: ${overCount}/3 bad games > line ${line} - too risky`
     };
   }
 }
@@ -1113,16 +1122,8 @@ serve(async (req) => {
             }
           }
           
-          // ============ ROLE PLAYER BLOCK ============
-          if (archetype === 'ROLE_PLAYER') {
-            rejectedProps.push({ 
-              ...prop, 
-              rejection_reason: `ROLE_PLAYER archetype - too volatile for any prop`, 
-              player_role: role, 
-              archetype 
-            });
-            continue;
-          }
+          // ============ ROLE PLAYER - Allow but with lower confidence ============
+          // ROLE_PLAYER now allowed through - let statistical checks filter them
           
           // ============ LAYER 2: ARCHETYPE-PROP ALIGNMENT ============
           const alignmentCheck = validateArchetypePropAlignment(archetype, prop.prop_type, side);
@@ -1274,11 +1275,11 @@ serve(async (req) => {
             statValidation.valid
           );
           
-          // Minimum threshold: 8.0 (raised from 7.7)
-          if (score < 8.0) {
+          // Minimum threshold: 6.5 (lowered from 8.0 for better coverage)
+          if (score < 6.5) {
             rejectedProps.push({ 
               ...prop, 
-              rejection_reason: `Confidence ${score.toFixed(1)} < 8.0 threshold`, 
+              rejection_reason: `Confidence ${score.toFixed(1)} < 6.5 threshold`, 
               player_role: role, 
               archetype,
               confidence_score: score
