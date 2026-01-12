@@ -28,7 +28,10 @@ const ARCHETYPE_PROP_ALLOWED: Record<string, { primary: string[], secondary: str
 };
 
 // Runtime archetype data (populated from database)
-let archetypeMap: Record<string, { archetype: string; team?: string }> = {};
+let archetypeMap: Record<string, { archetype: string }> = {};
+
+// Runtime team data (populated from database)
+let playerTeamMap: Record<string, string> = {};
 
 async function loadArchetypes(supabase: any): Promise<void> {
   const { data: archetypes } = await supabase
@@ -42,6 +45,24 @@ async function loadArchetypes(supabase: any): Promise<void> {
     };
   }
   console.log(`[Sharp Builder] Loaded ${Object.keys(archetypeMap).length} player archetypes`);
+}
+
+async function loadPlayerTeams(supabase: any): Promise<void> {
+  const { data: players } = await supabase
+    .from('bdl_player_cache')
+    .select('player_name, team_name');
+  
+  playerTeamMap = {};
+  for (const p of (players || [])) {
+    if (p.player_name && p.team_name) {
+      playerTeamMap[p.player_name.toLowerCase()] = p.team_name;
+    }
+  }
+  console.log(`[Sharp Builder] Loaded ${Object.keys(playerTeamMap).length} player-team mappings`);
+}
+
+function getPlayerTeam(playerName: string): string {
+  return playerTeamMap[playerName?.toLowerCase()] || 'UNKNOWN';
 }
 
 function getPlayerArchetype(playerName: string): string {
@@ -475,6 +496,7 @@ function detectPublicTrap(
 
 interface CandidateLeg {
   player_name: string;
+  team: string;  // Player's team for diversity enforcement
   prop_type: string;
   line: number;
   side: string;
@@ -515,6 +537,10 @@ function getEasternDate(): string {
 
 async function buildSharpParlays(supabase: any): Promise<any> {
   console.log('[Sharp Parlay Builder] Starting engine...');
+  
+  // Load runtime data
+  await loadArchetypes(supabase);
+  await loadPlayerTeams(supabase);
   
   // Fetch today's props from unified_props or nba_risk_engine_picks
   const today = getEasternDate();
@@ -709,6 +735,7 @@ async function buildSharpParlays(supabase: any): Promise<any> {
     
     candidates.push({
       player_name: prop.player_name,
+      team: getPlayerTeam(prop.player_name),  // Get team from bdl_player_cache
       prop_type: prop.prop_type,
       line: prop.line,
       side: prop.side || 'over',
@@ -755,6 +782,10 @@ async function buildSharpParlays(supabase: any): Promise<any> {
       const totalOdds = calculateParlayOdds(legs);
       const combinedProb = calculateCombinedProbability(legs);
       
+      // Calculate team diversity
+      const uniqueTeams = new Set(legs.map(l => l.team?.toLowerCase()).filter(t => t && t !== 'unknown')).size;
+      const isDreamTeam = uniqueTeams === legs.length && legs.length >= 3;
+      
       const { data: saved, error: saveError } = await supabase
         .from('sharp_ai_parlays')
         .insert({
@@ -762,6 +793,7 @@ async function buildSharpParlays(supabase: any): Promise<any> {
           parlay_type: parlayType,
           legs: legs.map(l => ({
             player: l.player_name,
+            team: l.team,  // Include team in saved leg data
             prop: l.prop_type,
             line: l.line,
             side: l.side,
@@ -773,7 +805,7 @@ async function buildSharpParlays(supabase: any): Promise<any> {
           })),
           total_odds: totalOdds,
           combined_probability: combinedProb,
-          rule_compliance: { all_rules_passed: true },
+          rule_compliance: { all_rules_passed: true, team_diversity: uniqueTeams, is_dream_team: isDreamTeam },
           model_version: 'v1'
         })
         .select()
@@ -835,6 +867,7 @@ function buildParlay(candidates: CandidateLeg[], parlayType: keyof typeof PARLAY
   const config = PARLAY_CONFIGS[parlayType];
   const legs: CandidateLeg[] = [];
   const usedPlayers = new Set<string>();
+  const usedTeams = new Set<string>();  // NEW: Track used teams for diversity
   const usedCategories = new Set<string>();
   let volatileCount = 0;
   let starCount = 0;
@@ -879,9 +912,16 @@ function buildParlay(candidates: CandidateLeg[], parlayType: keyof typeof PARLAY
     return b.confidence_score - a.confidence_score;
   });
   
-  // First pass: prefer diverse prop types (Dream Team requires variety)
+  // First pass: prefer diverse prop types AND teams (Dream Team requires variety)
   for (const candidate of pool) {
     if (usedPlayers.has(normalizePlayerName(candidate.player_name))) continue;
+    
+    // NEW: Team diversity enforcement for Dream Team parlays
+    const team = candidate.team?.toLowerCase() || 'unknown';
+    if (config.requireTeamDiversity && usedTeams.has(team) && team !== 'unknown') {
+      console.log(`[Sharp Builder] Skipping ${candidate.player_name} (${candidate.team}) - team already in parlay`);
+      continue;
+    }
     
     const isStar = candidate.is_star || isStarPlayer(candidate.player_name);
     if (isStar && starCount >= 1) continue;
@@ -898,16 +938,24 @@ function buildParlay(candidates: CandidateLeg[], parlayType: keyof typeof PARLAY
     
     legs.push(candidate);
     usedPlayers.add(normalizePlayerName(candidate.player_name));
+    usedTeams.add(team);  // Track team
     usedCategories.add(category);
     if (isStar) starCount++;
     
     if (legs.length >= config.maxLegs) break;
   }
   
-  // Second pass: fill remaining slots ignoring diversity
+  // Second pass: fill remaining slots ignoring prop diversity (but still enforce team diversity for Dream Team)
   if (legs.length < config.minLegs) {
     for (const candidate of pool) {
       if (usedPlayers.has(normalizePlayerName(candidate.player_name))) continue;
+      
+      // Still enforce team diversity for Dream Team in second pass
+      const team = candidate.team?.toLowerCase() || 'unknown';
+      if (config.requireTeamDiversity && usedTeams.has(team) && team !== 'unknown') {
+        console.log(`[Sharp Builder] Skipping ${candidate.player_name} (${candidate.team}) - team already in parlay (2nd pass)`);
+        continue;
+      }
       
       const isStar = (candidate as any).is_star || isStarPlayer(candidate.player_name);
       if (isStar && starCount >= 1) continue;
@@ -919,6 +967,7 @@ function buildParlay(candidates: CandidateLeg[], parlayType: keyof typeof PARLAY
       
       legs.push(candidate);
       usedPlayers.add(normalizePlayerName(candidate.player_name));
+      usedTeams.add(team);
       if (isStar) starCount++;
       
       if (legs.length >= config.maxLegs) break;
@@ -928,7 +977,9 @@ function buildParlay(candidates: CandidateLeg[], parlayType: keyof typeof PARLAY
   // Log diversity status
   const categories = legs.map(l => getPropCategory(l.prop_type));
   const uniqueCategories = new Set(categories).size;
-  console.log(`[Sharp Builder] ${parlayType} parlay: ${legs.length} legs, ${uniqueCategories} unique categories: ${categories.join(', ')}`);
+  const teams = legs.map(l => l.team || 'UNKNOWN');
+  const uniqueTeamsCount = new Set(teams.map(t => t.toLowerCase()).filter(t => t !== 'unknown')).size;
+  console.log(`[Sharp Builder] ${parlayType} parlay: ${legs.length} legs, ${uniqueCategories} categories, ${uniqueTeamsCount} unique teams: ${teams.join(', ')}`);
   
   return legs;
 }
