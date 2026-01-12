@@ -5,6 +5,18 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Eastern Time helper for consistent NBA game dates
+function getEasternDate(): string {
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat('en-CA', { 
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  return formatter.format(now);
+}
+
 // ============================================
 // 🔥 PROP ENGINE v2.1 - Sharp-Aligned | Trap-Aware | Bankroll-First
 // ============================================
@@ -538,7 +550,7 @@ Deno.serve(async (req) => {
     // FULL SLATE MODE - Auto-fetch from Risk Engine
     // ============================================
     if (action === 'full_slate' || action === 'analyze_all' || mode === 'full_slate') {
-      const today = new Date().toISOString().split('T')[0];
+      const today = getEasternDate();
       console.log(`[Prop Engine v2] Full slate mode for ${today}`);
       
       // Fetch approved props from Risk Engine (uses nba_risk_engine_picks table)
@@ -695,7 +707,7 @@ Deno.serve(async (req) => {
 
       // Save results if requested
       if (save_results) {
-        const today = new Date().toISOString().split('T')[0];
+        const today = getEasternDate();
         
         const picksToInsert = results.map(r => ({
           player_name: r.player_name,
@@ -755,7 +767,7 @@ Deno.serve(async (req) => {
 
     if (action === 'get_picks') {
       // Fetch today's analyzed picks
-      const today = new Date().toISOString().split('T')[0];
+      const today = getEasternDate();
       
       const { data: picks, error } = await supabase
         .from('prop_engine_v2_picks')
