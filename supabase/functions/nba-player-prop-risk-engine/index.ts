@@ -30,48 +30,48 @@ type PlayerArchetype =
   | 'RIM_PROTECTOR'        // Shot blockers (blocks >= 1.5)
   | 'ROLE_PLAYER';         // Bench/rotation players
 
-// Archetype-to-Prop alignment matrix - Strategic restrictions
-// Key principle: Play to player strengths, avoid volatility
+// Archetype-to-Prop alignment matrix - FULLY EXPANDED for maximum coverage
+// Key principle: Allow most props through, let statistical checks filter
 const ARCHETYPE_PROP_ALLOWED: Record<PlayerArchetype, { over: string[], under: string[] }> = {
   'ELITE_REBOUNDER': {
-    over: ['rebounds', 'points', 'pts_rebs_asts', 'pts_rebs', 'rebs_asts'],  // Board beasts + scoring
-    under: ['assists', 'threes']                                              // Only fade playmaking/shooting
+    over: ['rebounds', 'points', 'blocks', 'pts_rebs_asts', 'pts_rebs', 'rebs_asts', 'steals', 'assists', 'threes'],
+    under: ['assists', 'threes', 'points', 'steals', 'blocks', 'rebounds']
   },
   'GLASS_CLEANER': {
-    over: ['rebounds', 'pts_rebs', 'rebs_asts'],  // Board potential
-    under: ['points', 'assists', 'threes']         // Can fade offense
+    over: ['rebounds', 'blocks', 'pts_rebs', 'rebs_asts', 'points', 'steals', 'assists', 'threes'],
+    under: ['points', 'assists', 'threes', 'steals', 'blocks', 'rebounds']
   },
   'PURE_SHOOTER': {
-    over: ['points', 'threes', 'pts_rebs_asts'],   // Scoring props + combos
-    under: ['rebounds', 'assists']                  // Fade non-scoring stats
+    over: ['points', 'threes', 'pts_rebs_asts', 'assists', 'steals', 'rebounds', 'blocks'],
+    under: ['rebounds', 'assists', 'blocks', 'steals', 'threes', 'points']
   },
   'PLAYMAKER': {
-    over: ['assists', 'points', 'pts_rebs_asts'],  // Assists + scoring combos
-    under: ['rebounds', 'threes']                   // Fade boards/3s
+    over: ['assists', 'points', 'pts_rebs_asts', 'threes', 'steals', 'rebounds', 'blocks'],
+    under: ['rebounds', 'threes', 'points', 'blocks', 'steals', 'assists']
   },
   'SCORING_GUARD': {
-    over: ['points', 'threes', 'assists', 'pts_rebs_asts'],  // Scoring + creation
-    under: ['rebounds']                                       // Fade rebounds only
+    over: ['points', 'threes', 'assists', 'pts_rebs_asts', 'steals', 'rebounds', 'blocks'],
+    under: ['rebounds', 'blocks', 'assists', 'threes', 'steals', 'points']
   },
   'TWO_WAY_WING': {
-    over: ['points', 'rebounds', 'assists', 'steals', 'pts_rebs_asts', 'pts_rebs', 'rebs_asts'],  // Most flexible
-    under: ['points', 'rebounds', 'assists', 'threes']                                             // Can fade any
+    over: ['points', 'rebounds', 'assists', 'steals', 'blocks', 'threes', 'pts_rebs_asts', 'pts_rebs', 'rebs_asts'],
+    under: ['points', 'rebounds', 'assists', 'threes', 'steals', 'blocks']
   },
   'STRETCH_BIG': {
-    over: ['points', 'threes', 'rebounds', 'pts_rebs'],  // Spacing + boards
-    under: ['assists', 'steals']                          // Fade playmaking
+    over: ['points', 'threes', 'rebounds', 'pts_rebs', 'blocks', 'steals', 'assists'],
+    under: ['assists', 'steals', 'points', 'blocks', 'threes', 'rebounds']
   },
   'RIM_PROTECTOR': {
-    over: ['rebounds', 'blocks', 'pts_rebs', 'rebs_asts'],  // Defense + boards
-    under: ['points', 'assists', 'threes']                   // Fade offense
+    over: ['rebounds', 'blocks', 'pts_rebs', 'rebs_asts', 'points', 'steals', 'assists', 'threes'],
+    under: ['points', 'assists', 'threes', 'steals', 'blocks', 'rebounds']
   },
   'COMBO_GUARD': {
-    over: ['points', 'assists', 'threes', 'pts_rebs_asts'],  // Balanced scoring + playmaking
-    under: ['rebounds']                                       // Only fade rebounds
+    over: ['points', 'assists', 'threes', 'pts_rebs_asts', 'steals', 'rebounds', 'blocks'],
+    under: ['rebounds', 'blocks', 'threes', 'steals', 'assists', 'points']
   },
   'ROLE_PLAYER': {
-    over: ['rebounds', 'assists'],   // Safe floor stats only
-    under: ['points', 'threes']      // Fade scoring - too streaky
+    over: ['rebounds', 'assists', 'steals', 'blocks', 'points', 'threes'],
+    under: ['points', 'threes', 'assists', 'rebounds', 'steals', 'blocks']
   }
 };
 
@@ -430,10 +430,11 @@ function validateStatisticalContingencies(
   const stdDev = Math.sqrt(variance);
   const volatilityPct = (stdDev / avg) * 100;
   
-  if (volatilityPct > 35) {
+  // Allow higher volatility for low-count stats like blocks/steals
+  if (volatilityPct > 150) {
     return {
       valid: false,
-      reason: `HIGH VOLATILITY: ${volatilityPct.toFixed(0)}% std dev (max 35%) - too swingy`,
+      reason: `HIGH VOLATILITY: ${volatilityPct.toFixed(0)}% std dev (max 150%) - too swingy`,
       details: { standardDeviation: stdDev, volatilityPct }
     };
   }
@@ -1047,6 +1048,36 @@ serve(async (req) => {
           const avgBlocks = stats?.avg_blocks || 0;
           const avgMinutes = stats?.avg_minutes || 28;
           
+          // ============ LAYER 0: GET GAME LOGS & CALCULATE MEDIAN FIRST ============
+          // FIX: Calculate median BEFORE determining side to avoid defaulting all to 'under'
+          const column = getColumnForProp(prop.prop_type);
+          const playerLogs = gameLogs?.filter(log => 
+            log.player_name?.toLowerCase() === playerNameLower
+          ).slice(0, 15) || [];
+          
+          if (playerLogs.length < 5) {
+            rejectedProps.push({ 
+              ...prop, 
+              rejection_reason: `Insufficient data: only ${playerLogs.length} games (need 5+)`, 
+              player_role: 'UNKNOWN', 
+              archetype: 'UNKNOWN' 
+            });
+            continue;
+          }
+          
+          const statValues = playerLogs.map(log => extractStatFromLog(log, column));
+          const line = prop.current_line || prop.line;
+          const trueMedian = calculateMedian(statValues);
+          const seasonAvg = statValues.reduce((a, b) => a + b, 0) / statValues.length;
+          
+          // FIXED: Calculate edge from median BEFORE side determination
+          const calculatedEdge = trueMedian - line; // positive = over edge, negative = under edge
+          const side = prop.recommended_side || (calculatedEdge >= 0 ? 'over' : 'under');
+          const isOver = side.toLowerCase() === 'over';
+          const edge = isOver ? calculatedEdge : -calculatedEdge;
+          
+          console.log(`[SIDE-FIX] ${prop.player_name} ${prop.prop_type}: median=${trueMedian.toFixed(1)}, line=${line}, edge=${calculatedEdge.toFixed(1)} → side=${side}`);
+          
           // ============ LAYER 1: ARCHETYPE CLASSIFICATION ============
           let archetype = archetypeMap[playerNameLower];
           if (!archetype) {
@@ -1063,9 +1094,6 @@ serve(async (req) => {
           }
           
           const role = archetypeToRole(archetype, prop.player_name);
-          const side = prop.recommended_side || 
-            (prop.edge && prop.edge > 0 ? 'over' : 'under') || 'over';
-          const isOver = side.toLowerCase() === 'over';
           
           // ============ PRA GLOBAL BLOCK ============
           const isPRA = isPRAPlay(prop.prop_type);
@@ -1107,28 +1135,6 @@ serve(async (req) => {
             });
             continue;
           }
-          
-          // Get game logs
-          const column = getColumnForProp(prop.prop_type);
-          const playerLogs = gameLogs?.filter(log => 
-            log.player_name?.toLowerCase() === playerNameLower
-          ).slice(0, 15) || [];
-          
-          if (playerLogs.length < 5) {
-            rejectedProps.push({ 
-              ...prop, 
-              rejection_reason: `Insufficient data: only ${playerLogs.length} games (need 5+)`, 
-              player_role: role, 
-              archetype 
-            });
-            continue;
-          }
-          
-          const statValues = playerLogs.map(log => extractStatFromLog(log, column));
-          const line = prop.current_line || prop.line;
-          const trueMedian = calculateMedian(statValues);
-          const edge = isOver ? trueMedian - line : line - trueMedian;
-          const seasonAvg = statValues.reduce((a, b) => a + b, 0) / statValues.length;
           
           // ============ LAYER 3: HEAD-TO-HEAD MATCHUP ============
           const matchup = analyzeMatchupHistory(
