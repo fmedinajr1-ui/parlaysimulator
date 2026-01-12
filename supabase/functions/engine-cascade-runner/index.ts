@@ -6,6 +6,18 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Eastern Time helper for consistent NBA game dates
+function getEasternDate(): string {
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat('en-CA', { 
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  return formatter.format(now);
+}
+
 interface CascadeStep {
   name: string;
   body: Record<string, unknown>;
@@ -88,7 +100,7 @@ serve(async (req) => {
     }
     
     // Check 3: Risk engine picks exist for today
-    const today = new Date().toISOString().split('T')[0];
+    const today = getEasternDate();
     const { count: riskPicks, error: riskError } = await supabase
       .from('nba_risk_engine_picks')
       .select('*', { count: 'exact', head: true })
