@@ -1,7 +1,7 @@
-// Service Worker for PWA - Parlay Farm - v20260111-live-tracking
-// Force cache bust on version change - bumped to enable live prop tracking
+// Service Worker for PWA - Parlay Farm - v20260112-team-tracking
+// Force cache bust on version change - bumped for team diversity tracking
 
-const CACHE_NAME = 'parlay-farm-v20260111-live-tracking';
+const CACHE_NAME = 'parlay-farm-v20260112-team-tracking';
 const OFFLINE_URL = '/offline';
 
 // Assets to cache immediately on install
@@ -15,13 +15,13 @@ const PRECACHE_ASSETS = [
 
 // Install event - skip waiting to activate immediately
 self.addEventListener('install', (event) => {
-  console.log('[SW] Installing service worker v20260111-hooks-fix...');
+  console.log('[SW] Installing service worker v20260112-team-tracking...');
   self.skipWaiting();
 });
 
 // Activate event - clean up ALL old caches and claim clients
 self.addEventListener('activate', (event) => {
-  console.log('[SW] Activating service worker v20260111-hooks-fix...');
+  console.log('[SW] Activating service worker v20260112-team-tracking...');
   
   event.waitUntil(
     caches.keys()
