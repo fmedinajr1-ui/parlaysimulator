@@ -17,6 +17,57 @@ const corsHeaders = {
 // Layer 5: Balanced Over/Under Distribution
 // ============================================================================
 
+// ============ PROP TYPE PERFORMANCE TIERS (BASED ON HISTORICAL HIT RATES) ============
+// Points: 55.2% hit rate → ELITE
+// Assists: 50.0% hit rate → SOLID
+// Rebounds: 45.9% hit rate → RISKY (55% of volume but underperforming)
+const PROP_TYPE_PERFORMANCE_TIERS: Record<string, { 
+  tier: 'ELITE' | 'SOLID' | 'RISKY', 
+  confidenceBonus: number,
+  minEdgeRequired: number 
+}> = {
+  'points': { tier: 'ELITE', confidenceBonus: 0.5, minEdgeRequired: 1.0 },
+  'assists': { tier: 'SOLID', confidenceBonus: 0, minEdgeRequired: 1.5 },
+  'rebounds': { tier: 'RISKY', confidenceBonus: -1.0, minEdgeRequired: 2.5 },
+  'threes': { tier: 'SOLID', confidenceBonus: 0, minEdgeRequired: 1.5 },
+  'threes_made': { tier: 'SOLID', confidenceBonus: 0, minEdgeRequired: 1.5 },
+  'blocks': { tier: 'RISKY', confidenceBonus: -0.5, minEdgeRequired: 2.0 },
+  'steals': { tier: 'RISKY', confidenceBonus: -0.5, minEdgeRequired: 2.0 },
+  'pts_rebs_asts': { tier: 'RISKY', confidenceBonus: -1.0, minEdgeRequired: 3.0 },
+  'pts_reb_ast': { tier: 'RISKY', confidenceBonus: -1.0, minEdgeRequired: 3.0 },
+  'pts_rebs': { tier: 'SOLID', confidenceBonus: 0, minEdgeRequired: 1.5 },
+  'pts_reb': { tier: 'SOLID', confidenceBonus: 0, minEdgeRequired: 1.5 },
+  'rebs_asts': { tier: 'RISKY', confidenceBonus: -0.5, minEdgeRequired: 2.0 },
+  'reb_ast': { tier: 'RISKY', confidenceBonus: -0.5, minEdgeRequired: 2.0 }
+};
+
+// Max percentage for any single prop type to prevent volume imbalance
+const MAX_PROP_TYPE_PCT = 0.35; // Max 35% can be any one prop type
+
+// Helper to normalize prop type for lookup
+function normalizePropTypeForTier(propType: string): string {
+  const normalized = propType.toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace('player_', '')
+    .replace('_over', '')
+    .replace('_under', '');
+  
+  if (normalized.includes('point') && normalized.includes('rebound') && normalized.includes('assist')) {
+    return 'pts_reb_ast';
+  }
+  if (normalized.includes('point') && normalized.includes('rebound')) return 'pts_reb';
+  if (normalized.includes('point') && normalized.includes('assist')) return 'pts_ast';
+  if (normalized.includes('rebound') && normalized.includes('assist')) return 'reb_ast';
+  if (normalized.includes('point')) return 'points';
+  if (normalized.includes('rebound')) return 'rebounds';
+  if (normalized.includes('assist')) return 'assists';
+  if (normalized.includes('three') || normalized.includes('3pt')) return 'threes';
+  if (normalized.includes('block')) return 'blocks';
+  if (normalized.includes('steal')) return 'steals';
+  
+  return normalized;
+}
+
 // ============ LAYER 1: ELITE PLAYER ARCHETYPE SYSTEM ============
 type PlayerArchetype = 
   | 'ELITE_REBOUNDER'      // avg >= 9 reb (Drummond, Gobert, Jokic)
@@ -782,7 +833,7 @@ function calculateConfidenceV3(
   passesBadGameCheck: boolean,
   matchupValid: boolean,
   statisticsValid: boolean
-): { score: number; factors: ConfidenceFactors } {
+): { score: number; factors: ConfidenceFactors; propTypeTier: string } {
   const factors: ConfidenceFactors = {
     archetypeAlignment: 0,
     minutesCertainty: 0,
@@ -829,9 +880,13 @@ function calculateConfidenceV3(
   // Statistical Safety (0-1.0)
   factors.statisticalSafety = statisticsValid ? 1.0 : 0.3;
   
-  const totalScore = Object.values(factors).reduce((a, b) => a + b, 0);
+  // Apply prop type performance bonus/penalty
+  const normalizedPropType = normalizePropTypeForTier(propType);
+  const propPerf = PROP_TYPE_PERFORMANCE_TIERS[normalizedPropType] || { tier: 'SOLID', confidenceBonus: 0, minEdgeRequired: 1.5 };
   
-  return { score: totalScore, factors };
+  const totalScore = Object.values(factors).reduce((a, b) => a + b, 0) + propPerf.confidenceBonus;
+  
+  return { score: totalScore, factors, propTypeTier: propPerf.tier };
 }
 
 // ============ PROP TYPE TO COLUMN MAPPING ============
@@ -998,6 +1053,9 @@ serve(async (req) => {
       
       // Balance tracker
       const balanceTracker: BalanceTracker = { overCount: 0, underCount: 0, total: 0 };
+      
+      // Track prop type distribution to cap any single type at MAX_PROP_TYPE_PCT
+      const propTypeCounter: Record<string, number> = {};
 
       for (const prop of (props || [])) {
         try {
@@ -1085,7 +1143,38 @@ serve(async (req) => {
           const isOver = side.toLowerCase() === 'over';
           const edge = isOver ? calculatedEdge : -calculatedEdge;
           
-          console.log(`[SIDE-FIX] ${prop.player_name} ${prop.prop_type}: median=${trueMedian.toFixed(1)}, line=${line}, edge=${calculatedEdge.toFixed(1)} → side=${side}`);
+          // ============ PROP TYPE PERFORMANCE TIER CHECK ============
+          const normalizedPropType = normalizePropTypeForTier(prop.prop_type);
+          const propPerf = PROP_TYPE_PERFORMANCE_TIERS[normalizedPropType] || { tier: 'SOLID', confidenceBonus: 0, minEdgeRequired: 1.5 };
+          
+          // Check minimum edge requirement for this prop type tier
+          if (Math.abs(calculatedEdge) < propPerf.minEdgeRequired) {
+            rejectedProps.push({ 
+              ...prop, 
+              rejection_reason: `EDGE TOO THIN: ${normalizedPropType} (${propPerf.tier}) needs edge ≥${propPerf.minEdgeRequired}, got ${Math.abs(calculatedEdge).toFixed(1)}`,
+              player_role: 'UNKNOWN',
+              archetype: 'UNKNOWN'
+            });
+            continue;
+          }
+          
+          // Check prop type volume cap (only enforce after 10+ approved)
+          if (balanceTracker.total >= 10) {
+            const currentPropTypeCount = propTypeCounter[normalizedPropType] || 0;
+            const projectedPct = (currentPropTypeCount + 1) / (balanceTracker.total + 1);
+            
+            if (projectedPct > MAX_PROP_TYPE_PCT) {
+              rejectedProps.push({ 
+                ...prop, 
+                rejection_reason: `VOLUME CAP: ${normalizedPropType} would be ${(projectedPct * 100).toFixed(0)}% of picks (max ${MAX_PROP_TYPE_PCT * 100}%)`,
+                player_role: 'UNKNOWN',
+                archetype: 'UNKNOWN'
+              });
+              continue;
+            }
+          }
+          
+          console.log(`[TIER-CHECK] ${prop.player_name} ${prop.prop_type}: tier=${propPerf.tier}, edge=${Math.abs(calculatedEdge).toFixed(1)} (min ${propPerf.minEdgeRequired})`);
           
           // ============ LAYER 1: ARCHETYPE CLASSIFICATION ============
           let archetype = archetypeMap[playerNameLower];
@@ -1262,8 +1351,8 @@ serve(async (req) => {
             continue;
           }
           
-          // ============ CONFIDENCE SCORING ============
-          const { score, factors } = calculateConfidenceV3(
+          // ============ CONFIDENCE SCORING (with prop type tier penalty/bonus) ============
+          const { score, factors, propTypeTier } = calculateConfidenceV3(
             archetype,
             prop.prop_type,
             side,
@@ -1331,6 +1420,9 @@ serve(async (req) => {
             consistency_score: stats?.consistency_score,
             trend_direction: stats?.trend_direction,
           });
+          
+          // Track prop type for volume cap
+          propTypeCounter[normalizedPropType] = (propTypeCounter[normalizedPropType] || 0) + 1;
           
           // Update tracking
           processedPlayerProps.add(playerPropKey);
