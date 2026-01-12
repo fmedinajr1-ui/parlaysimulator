@@ -269,3 +269,6 @@ verify_jwt = false
 
 [functions.engine-cascade-runner]
 verify_jwt = false
+
+[functions.cleanup-heat-tracker]
+verify_jwt = false
