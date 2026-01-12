@@ -22,7 +22,7 @@ interface StepResult {
 const CASCADE_STEPS: CascadeStep[] = [
   { name: 'refresh-todays-props', body: { sport: 'basketball_nba', force_clear: true } },
   { name: 'nba-player-prop-risk-engine', body: { action: 'analyze_slate', use_live_odds: true } },
-  { name: 'prop-engine-v2', body: { action: 'analyze' } },
+  { name: 'prop-engine-v2', body: { action: 'full_slate' } },
   { name: 'sharp-parlay-builder', body: { action: 'build' } },
   { name: 'heat-prop-engine', body: { action: 'build' } },
 ];
