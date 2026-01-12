@@ -529,12 +529,14 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
   console.log(`[Heat Prop Engine] Running action: ${action}, sport: ${sport || 'all'}, date: ${today}`);
   
   if (action === 'scan' || action === 'ingest') {
+    const nowISO = now.toISOString();
+    
     // First, verify we have source data (unified_props with NBA games)
     const { data: nbaProps, error: propsCheckError } = await supabase
       .from('unified_props')
       .select('event_id')
       .eq('sport', 'basketball_nba')
-      .gte('commence_time', today)
+      .gt('commence_time', nowISO)  // Only FUTURE games
       .limit(1);
     
     if (propsCheckError) {
@@ -549,6 +551,24 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
         message: 'No NBA props available. Run refresh-todays-props for basketball_nba first.'
       };
     }
+    
+    // CRITICAL: Fetch actual commence times from unified_props (source of truth)
+    const { data: unifiedPropsData } = await supabase
+      .from('unified_props')
+      .select('player_name, prop_type, commence_time, event_id')
+      .eq('sport', 'basketball_nba')
+      .gt('commence_time', nowISO);  // Only FUTURE games
+    
+    // Build lookup map for commence times (player+prop -> commence_time)
+    const commenceTimeMap: Record<string, { commence_time: string; event_id: string }> = {};
+    for (const p of (unifiedPropsData || [])) {
+      const key = `${p.player_name?.toLowerCase()}|${p.prop_type?.toLowerCase()}`;
+      commenceTimeMap[key] = { 
+        commence_time: p.commence_time, 
+        event_id: p.event_id 
+      };
+    }
+    console.log(`[Heat Engine] Loaded ${Object.keys(commenceTimeMap).length} future props from unified_props`);
     
     // Fetch props from nba_risk_engine_picks as source data
     // Filter by mode='full_slate' and no rejection_reason (these are approved picks)
@@ -577,11 +597,28 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
     
     // Process each pick and upsert to heat_prop_tracker
     const trackerUpserts: any[] = [];
+    let skippedStale = 0;
     
     for (const pick of picks) {
-      const hoursToGame = pick.game_date 
-        ? (new Date(pick.game_date).getTime() - now.getTime()) / (1000 * 60 * 60)
-        : 24;
+      // CRITICAL: Get real commence time from unified_props
+      const propKey = `${pick.player_name?.toLowerCase()}|${pick.prop_type?.toLowerCase()}`;
+      const commenceInfo = commenceTimeMap[propKey];
+      
+      // Skip props where game has already started or no commence time found
+      if (!commenceInfo) {
+        console.log(`[Heat] Skipping ${pick.player_name} ${pick.prop_type} - no future game found`);
+        skippedStale++;
+        continue;
+      }
+      
+      const gameStartTime = new Date(commenceInfo.commence_time);
+      if (gameStartTime <= now) {
+        console.log(`[Heat] Skipping ${pick.player_name} - game already started at ${commenceInfo.commence_time}`);
+        skippedStale++;
+        continue;
+      }
+      
+      const hoursToGame = (gameStartTime.getTime() - now.getTime()) / (1000 * 60 * 60);
       
       // Map fields from nba_risk_engine_picks schema
       const sport = 'basketball_nba';
@@ -658,10 +695,10 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
         !inDeadZone;
       
       trackerUpserts.push({
-        event_id: pick.event_id || `${pick.player_name}-${pick.prop_type}-${today}`,
+        event_id: commenceInfo.event_id || pick.event_id || `${pick.player_name}-${pick.prop_type}-${today}`,
         sport: sport,
         league: 'NBA',
-        start_time_utc: pick.game_date || new Date(now.getTime() + hoursToGame * 60 * 60 * 1000).toISOString(),
+        start_time_utc: commenceInfo.commence_time,  // Use REAL game time from unified_props
         home_team: null, // Not available in source
         away_team: null, // Not available in source
         player_name: pick.player_name,
@@ -705,17 +742,20 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
       }
     }
     
-    console.log(`[Heat Engine] Upserted ${trackerUpserts.length} props to tracker`);
+    console.log(`[Heat Engine] Upserted ${trackerUpserts.length} props to tracker, skipped ${skippedStale} stale`);
     
     return {
       success: true,
       processed: trackerUpserts.length,
+      skipped_stale: skippedStale,
       eligible_core: trackerUpserts.filter(t => t.is_eligible_core).length,
       eligible_upside: trackerUpserts.filter(t => t.is_eligible_upside).length
     };
   }
   
   if (action === 'build') {
+    const nowISO = now.toISOString();
+    
     // CRITICAL: Clear stale parlays FIRST before rebuilding
     // This prevents yesterday's settled parlays from showing as today's
     console.log(`[Heat Engine] Clearing stale data for ${today}...`);
@@ -729,21 +769,19 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
       console.error('[Heat Engine] Error clearing parlays:', clearParlaysError);
     }
     
-    // Also clear stale tracker entries from previous days
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = yesterday.toISOString().split('T')[0];
-    
-    await supabase
+    // CRITICAL: Delete ALL tracker entries for games that have ALREADY STARTED (UTC-aware)
+    const { error: cleanupError, count: cleanedCount } = await supabase
       .from('heat_prop_tracker')
       .delete()
-      .lt('start_time_utc', today);
+      .lt('start_time_utc', nowISO);
     
-    // Fetch eligible props from tracker
+    console.log(`[Heat Engine] Cleaned ${cleanedCount || 0} stale tracker entries (games started before ${nowISO})`);
+    
+    // Fetch eligible props from tracker - only FUTURE games
     const { data: eligibleProps, error: fetchError } = await supabase
       .from('heat_prop_tracker')
       .select('*')
-      .gte('start_time_utc', today)
+      .gt('start_time_utc', nowISO)  // Only games that haven't started yet
       .or('is_eligible_core.eq.true,is_eligible_upside.eq.true')
       .order('final_score', { ascending: false });
     
