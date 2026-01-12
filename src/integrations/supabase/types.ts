@@ -3416,6 +3416,57 @@ export type Database = {
         }
         Relationships: []
       }
+      matchup_history: {
+        Row: {
+          avg_stat: number | null
+          created_at: string | null
+          games_played: number | null
+          hit_rate_over: number | null
+          hit_rate_under: number | null
+          id: string
+          last_game_date: string | null
+          last_game_stat: number | null
+          last_updated: string | null
+          max_stat: number | null
+          min_stat: number | null
+          opponent: string
+          player_name: string
+          prop_type: string
+        }
+        Insert: {
+          avg_stat?: number | null
+          created_at?: string | null
+          games_played?: number | null
+          hit_rate_over?: number | null
+          hit_rate_under?: number | null
+          id?: string
+          last_game_date?: string | null
+          last_game_stat?: number | null
+          last_updated?: string | null
+          max_stat?: number | null
+          min_stat?: number | null
+          opponent: string
+          player_name: string
+          prop_type: string
+        }
+        Update: {
+          avg_stat?: number | null
+          created_at?: string | null
+          games_played?: number | null
+          hit_rate_over?: number | null
+          hit_rate_under?: number | null
+          id?: string
+          last_game_date?: string | null
+          last_game_stat?: number | null
+          last_updated?: string | null
+          max_stat?: number | null
+          min_stat?: number | null
+          opponent?: string
+          player_name?: string
+          prop_type?: string
+        }
+        Relationships: []
+      }
       median_edge_picks: {
         Row: {
           actual_value: number | null
@@ -5605,6 +5656,57 @@ export type Database = {
           paid_scan_balance?: number
           updated_at?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      player_archetypes: {
+        Row: {
+          archetype_confidence: number | null
+          avg_assists: number | null
+          avg_minutes: number | null
+          avg_points: number | null
+          avg_rebounds: number | null
+          avg_threes: number | null
+          created_at: string | null
+          games_played: number | null
+          id: string
+          last_updated: string | null
+          manual_override: boolean | null
+          player_name: string
+          primary_archetype: string
+          secondary_archetype: string | null
+        }
+        Insert: {
+          archetype_confidence?: number | null
+          avg_assists?: number | null
+          avg_minutes?: number | null
+          avg_points?: number | null
+          avg_rebounds?: number | null
+          avg_threes?: number | null
+          created_at?: string | null
+          games_played?: number | null
+          id?: string
+          last_updated?: string | null
+          manual_override?: boolean | null
+          player_name: string
+          primary_archetype: string
+          secondary_archetype?: string | null
+        }
+        Update: {
+          archetype_confidence?: number | null
+          avg_assists?: number | null
+          avg_minutes?: number | null
+          avg_points?: number | null
+          avg_rebounds?: number | null
+          avg_threes?: number | null
+          created_at?: string | null
+          games_played?: number | null
+          id?: string
+          last_updated?: string | null
+          manual_override?: boolean | null
+          player_name?: string
+          primary_archetype?: string
+          secondary_archetype?: string | null
         }
         Relationships: []
       }
