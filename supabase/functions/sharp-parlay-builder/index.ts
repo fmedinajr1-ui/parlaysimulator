@@ -48,6 +48,38 @@ function getPlayerArchetype(playerName: string): string {
   return archetypeMap[playerName?.toLowerCase()]?.archetype || 'UNKNOWN';
 }
 
+// Archetype-based helper functions (replaces hardcoded lists)
+function isEliteRebounder(playerName: string): { tier: number | null; reason: string } {
+  const archetype = getPlayerArchetype(playerName);
+  if (archetype === 'ELITE_REBOUNDER') {
+    return { tier: 1, reason: 'Elite Rebounder archetype' };
+  }
+  if (archetype === 'GLASS_CLEANER') {
+    return { tier: 2, reason: 'Glass Cleaner archetype' };
+  }
+  return { tier: null, reason: 'Not an elite rebounder' };
+}
+
+function isStarPlayer(playerName: string): boolean {
+  const archetype = getPlayerArchetype(playerName);
+  const starArchetypes = ['ELITE_REBOUNDER', 'PURE_SHOOTER', 'PLAYMAKER', 'COMBO_GUARD', 'BALL_DOMINANT_STAR'];
+  return starArchetypes.includes(archetype);
+}
+
+// Blowout immunity stars - derived from archetypes
+const BLOWOUT_IMMUNITY_ARCHETYPES = ['ELITE_REBOUNDER', 'GLASS_CLEANER', 'PLAYMAKER', 'PURE_SHOOTER', 'COMBO_GUARD'];
+function hasBlowoutImmunity(playerName: string): boolean {
+  const archetype = getPlayerArchetype(playerName);
+  return BLOWOUT_IMMUNITY_ARCHETYPES.includes(archetype);
+}
+
+// Never fade PRA - stars who are volume-guaranteed
+const NEVER_FADE_PRA_ARCHETYPES = ['ELITE_REBOUNDER', 'PLAYMAKER', 'COMBO_GUARD'];
+function isNeverFadePRA(playerName: string): boolean {
+  const archetype = getPlayerArchetype(playerName);
+  return NEVER_FADE_PRA_ARCHETYPES.includes(archetype);
+}
+
 function isArchetypePropAligned(archetype: string, propType: string): { aligned: boolean; isPrimary: boolean } {
   const rules = ARCHETYPE_PROP_ALLOWED[archetype];
   if (!rules) return { aligned: false, isPrimary: false };
@@ -196,7 +228,7 @@ function passesMinutesRule(avgMinutes: number, playerName: string): { passes: bo
     return { passes: true, reason: `${avgMinutes.toFixed(1)} min avg ≥ ${MINUTES_THRESHOLD}` };
   }
   
-  if (BLOWOUT_IMMUNITY_STARS.includes(normalizedName)) {
+  if (hasBlowoutImmunity(playerName)) {
     return { passes: true, reason: `Star exception (${avgMinutes.toFixed(1)} min)` };
   }
   
@@ -379,7 +411,7 @@ function passesBlowoutFilter(
   const isUnder = normalizedSide === 'under';
   
   // Never fade PRA override
-  if (NEVER_FADE_PRA.includes(normalizedName)) {
+  if (isNeverFadePRA(playerName)) {
     return { passes: true, reason: `${playerName} never-fade star (blowout override)` };
   }
   
