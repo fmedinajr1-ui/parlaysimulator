@@ -24,11 +24,12 @@ const corsHeaders = {
 const PROP_TYPE_PERFORMANCE_TIERS: Record<string, { 
   tier: 'ELITE' | 'SOLID' | 'RISKY', 
   confidenceBonus: number,
-  minEdgeRequired: number 
+  minEdgeRequired: number,
+  maxEdgeAllowed?: number  // Optional cap on edge (high edge can be a trap)
 }> = {
   'points': { tier: 'ELITE', confidenceBonus: 0.5, minEdgeRequired: 1.0 },
   'assists': { tier: 'SOLID', confidenceBonus: 0, minEdgeRequired: 1.5 },
-  'rebounds': { tier: 'RISKY', confidenceBonus: -1.0, minEdgeRequired: 2.5 },
+  'rebounds': { tier: 'RISKY', confidenceBonus: -1.0, minEdgeRequired: 1.5, maxEdgeAllowed: 2.5 },  // Updated: lower min, cap max
   'threes': { tier: 'SOLID', confidenceBonus: 0, minEdgeRequired: 1.5 },
   'threes_made': { tier: 'SOLID', confidenceBonus: 0, minEdgeRequired: 1.5 },
   'blocks': { tier: 'RISKY', confidenceBonus: -0.5, minEdgeRequired: 2.0 },
@@ -40,6 +41,89 @@ const PROP_TYPE_PERFORMANCE_TIERS: Record<string, {
   'rebs_asts': { tier: 'RISKY', confidenceBonus: -0.5, minEdgeRequired: 2.0 },
   'reb_ast': { tier: 'RISKY', confidenceBonus: -0.5, minEdgeRequired: 2.0 }
 };
+
+// ============ REBOUNDS-SPECIFIC VALIDATION ============
+// Based on historical analysis:
+// - High edge (3+) = 37.7% hit rate (TRAP)
+// - Zero median = 41.7% hit rate (BAD DATA)
+// - Lines 7-9.5 = 30.8% hit rate (DEAD ZONE)
+// - Lines 10+ with ELITE_REBOUNDER = 71.4% hit rate (BEST)
+interface ReboundsValidation {
+  approved: boolean;
+  reason: string;
+  confidenceAdjust: number;
+}
+
+function validateReboundsProp(
+  line: number,
+  edge: number,
+  trueMedian: number,
+  archetype: string,
+  side: string
+): ReboundsValidation {
+  
+  // RULE 1: Block Zero Median Props (hit 8% lower than normal)
+  if (trueMedian <= 0) {
+    return { 
+      approved: false, 
+      reason: 'REB_ZERO_MEDIAN: No valid median data - blocks pick', 
+      confidenceAdjust: 0 
+    };
+  }
+  
+  // RULE 2: Block "Dead Zone" Lines (7-9.5) - Only 30.8% hit rate historically
+  if (line >= 7 && line <= 9.5) {
+    return { 
+      approved: false, 
+      reason: `REB_DEAD_ZONE: Line ${line} in volatile 7-9.5 range (30.8% hit rate)`, 
+      confidenceAdjust: 0 
+    };
+  }
+  
+  // RULE 3: Cap Edge at 2.5 (Edge >= 3 only hits 37.7% - TRAP signal)
+  if (Math.abs(edge) > 2.5) {
+    return { 
+      approved: false, 
+      reason: `REB_EDGE_TRAP: Edge ${Math.abs(edge).toFixed(1)} > 2.5 cap (high edge = trap)`, 
+      confidenceAdjust: 0 
+    };
+  }
+  
+  // RULE 4: Boost Elite Rebounders (Lines 10+) - 71.4% hit rate
+  if (line >= 10 && archetype === 'ELITE_REBOUNDER') {
+    return { 
+      approved: true, 
+      reason: 'REB_ELITE_BOOST: Elite rebounder with high line (71.4% hit rate)', 
+      confidenceAdjust: +1.0 
+    };
+  }
+  
+  // RULE 5: Require Tighter Edge for Mid-Volume Lines (4-6.5)
+  if (line >= 4 && line <= 6.5) {
+    if (Math.abs(edge) < 1.5) {
+      return { 
+        approved: false, 
+        reason: `REB_MID_THIN: Mid-volume line ${line} needs edge ≥1.5, got ${Math.abs(edge).toFixed(1)}`, 
+        confidenceAdjust: 0 
+      };
+    }
+  }
+  
+  // RULE 6: Glass Cleaners get slight boost for lines 6+
+  if (line >= 6 && archetype === 'GLASS_CLEANER') {
+    return { 
+      approved: true, 
+      reason: 'REB_GLASS_CLEANER: Glass cleaner approved for rebounds', 
+      confidenceAdjust: +0.5 
+    };
+  }
+  
+  return { 
+    approved: true, 
+    reason: 'REB_STANDARD_PASS: Rebounds passed specialized validation', 
+    confidenceAdjust: 0 
+  };
+}
 
 // Max percentage for any single prop type to prevent volume imbalance
 const MAX_PROP_TYPE_PCT = 0.35; // Max 35% can be any one prop type
@@ -1177,6 +1261,7 @@ serve(async (req) => {
           console.log(`[TIER-CHECK] ${prop.player_name} ${prop.prop_type}: tier=${propPerf.tier}, edge=${Math.abs(calculatedEdge).toFixed(1)} (min ${propPerf.minEdgeRequired})`);
           
           // ============ LAYER 1: ARCHETYPE CLASSIFICATION ============
+          // Get archetype early for rebounds check
           let archetype = archetypeMap[playerNameLower];
           if (!archetype) {
             archetype = classifyPlayerArchetype(
@@ -1192,6 +1277,38 @@ serve(async (req) => {
           }
           
           const role = archetypeToRole(archetype, prop.player_name);
+          
+          // ============ REBOUNDS SPECIALIZED VALIDATION ============
+          // Must run BEFORE other filters for rebounds props
+          if (normalizedPropType === 'rebounds') {
+            // RULE 0: Block ROLE_PLAYER rebounds entirely (too volatile)
+            if (archetype === 'ROLE_PLAYER') {
+              rejectedProps.push({ 
+                ...prop, 
+                rejection_reason: 'REB_ROLE_BLOCK: ROLE_PLAYER rebounds blocked (too volatile)',
+                player_role: role,
+                archetype
+              });
+              continue;
+            }
+            
+            const reboundCheck = validateReboundsProp(line, edge, trueMedian, archetype, side);
+            console.log(`[REB-CHECK] ${prop.player_name}: line=${line}, edge=${edge.toFixed(1)}, median=${trueMedian.toFixed(1)}, archetype=${archetype} → ${reboundCheck.approved ? 'PASS' : 'BLOCK'}: ${reboundCheck.reason}`);
+            
+            if (!reboundCheck.approved) {
+              rejectedProps.push({ 
+                ...prop, 
+                rejection_reason: reboundCheck.reason,
+                player_role: role,
+                archetype,
+                true_median: trueMedian
+              });
+              continue;
+            }
+            
+            // Store confidence adjustment for later application
+            (prop as any)._reboundConfidenceAdjust = reboundCheck.confidenceAdjust;
+          }
           
           // ============ PRA GLOBAL BLOCK ============
           const isPRA = isPRAPlay(prop.prop_type);
