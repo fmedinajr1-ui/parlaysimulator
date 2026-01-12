@@ -78,7 +78,7 @@ export default defineConfig(({ mode }) => ({
             urlPattern: /\.js$/,
             handler: 'NetworkFirst',
             options: {
-              cacheName: 'js-cache-v4',
+              cacheName: 'js-cache-v5',
               expiration: {
                 maxAgeSeconds: 60 * 30, // 30 minutes
               },
@@ -103,7 +103,7 @@ export default defineConfig(({ mode }) => ({
       "react/jsx-dev-runtime": path.resolve(__dirname, "node_modules/react/jsx-dev-runtime"),
       "react-router-dom": path.resolve(__dirname, "node_modules/react-router-dom"),
     },
-    dedupe: ["react", "react-dom", "react-router-dom"],
+    dedupe: ["react", "react-dom", "react-router-dom", "@tanstack/react-query"],
   },
   optimizeDeps: {
     force: true,
@@ -113,6 +113,7 @@ export default defineConfig(({ mode }) => ({
       "react/jsx-runtime",
       "react/jsx-dev-runtime",
       "react-router-dom",
+      "@tanstack/react-query",
     ],
   },
   build: {
