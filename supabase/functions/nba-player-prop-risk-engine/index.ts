@@ -24,48 +24,54 @@ type PlayerArchetype =
   | 'PURE_SHOOTER'         // Points specialists (Curry, Booker, Lillard)
   | 'PLAYMAKER'            // Primary playmakers (Haliburton, Trae, CP3)
   | 'SCORING_GUARD'        // Scoring guards (Mitchell, Maxey, Edwards)
+  | 'COMBO_GUARD'          // Balanced scoring + playmaking
   | 'TWO_WAY_WING'         // Versatile wings (Butler, Tatum)
   | 'STRETCH_BIG'          // Floor-spacing bigs (3PT attempts >= 4)
   | 'RIM_PROTECTOR'        // Shot blockers (blocks >= 1.5)
   | 'ROLE_PLAYER';         // Bench/rotation players
 
-// Archetype-to-Prop alignment matrix - ONLY allow props that match archetype
+// Archetype-to-Prop alignment matrix - Strategic restrictions
+// Key principle: Play to player strengths, avoid volatility
 const ARCHETYPE_PROP_ALLOWED: Record<PlayerArchetype, { over: string[], under: string[] }> = {
   'ELITE_REBOUNDER': {
-    over: ['rebounds', 'points'],      // Can go over on boards and points
-    under: []                           // NEVER bet under on elite rebounders
+    over: ['rebounds', 'points', 'pts_rebs_asts', 'pts_rebs', 'rebs_asts'],  // Board beasts + scoring
+    under: ['assists', 'threes']                                              // Only fade playmaking/shooting
   },
   'GLASS_CLEANER': {
-    over: ['rebounds'],                 // Only rebounds over
-    under: []                           // NEVER bet under - eruption risk
+    over: ['rebounds', 'pts_rebs', 'rebs_asts'],  // Board potential
+    under: ['points', 'assists', 'threes']         // Can fade offense
   },
   'PURE_SHOOTER': {
-    over: ['points', 'threes'],         // Scoring props only
-    under: ['rebounds', 'assists']      // Can fade non-scoring stats
+    over: ['points', 'threes', 'pts_rebs_asts'],   // Scoring props + combos
+    under: ['rebounds', 'assists']                  // Fade non-scoring stats
   },
   'PLAYMAKER': {
-    over: ['assists'],                  // Primary: assists
-    under: ['points', 'rebounds']       // Can fade scoring/boards
+    over: ['assists', 'points', 'pts_rebs_asts'],  // Assists + scoring combos
+    under: ['rebounds', 'threes']                   // Fade boards/3s
   },
   'SCORING_GUARD': {
-    over: ['points', 'threes'],         // Scoring + 3s
-    under: ['rebounds']                 // Can fade rebounds
+    over: ['points', 'threes', 'assists', 'pts_rebs_asts'],  // Scoring + creation
+    under: ['rebounds']                                       // Fade rebounds only
   },
   'TWO_WAY_WING': {
-    over: ['points', 'rebounds', 'assists', 'steals'],  // Most flexible
-    under: ['points', 'rebounds', 'assists', 'threes']  // Can fade any
+    over: ['points', 'rebounds', 'assists', 'steals', 'pts_rebs_asts', 'pts_rebs', 'rebs_asts'],  // Most flexible
+    under: ['points', 'rebounds', 'assists', 'threes']                                             // Can fade any
   },
   'STRETCH_BIG': {
-    over: ['points', 'threes', 'rebounds'],  // Spacing + boards
-    under: ['assists']                        // Can fade assists
+    over: ['points', 'threes', 'rebounds', 'pts_rebs'],  // Spacing + boards
+    under: ['assists', 'steals']                          // Fade playmaking
   },
   'RIM_PROTECTOR': {
-    over: ['rebounds', 'blocks'],       // Defense + boards
-    under: ['points', 'assists']        // Can fade offense
+    over: ['rebounds', 'blocks', 'pts_rebs', 'rebs_asts'],  // Defense + boards
+    under: ['points', 'assists', 'threes']                   // Fade offense
+  },
+  'COMBO_GUARD': {
+    over: ['points', 'assists', 'threes', 'pts_rebs_asts'],  // Balanced scoring + playmaking
+    under: ['rebounds']                                       // Only fade rebounds
   },
   'ROLE_PLAYER': {
-    over: [],                           // TOO VOLATILE - minimal overs
-    under: []                           // TOO VOLATILE - minimal unders
+    over: ['rebounds', 'assists'],   // Safe floor stats only
+    under: ['points', 'threes']      // Fade scoring - too streaky
   }
 };
 
@@ -940,14 +946,27 @@ serve(async (req) => {
       }
       console.log(`[Risk Engine v3.0] Loaded ${Object.keys(seasonStatsMap).length} season stats`);
 
-      // 5. Fetch game logs (last 15 games per player)
-      const { data: gameLogs } = await supabase
-        .from('nba_player_game_logs')
-        .select('*')
-        .order('game_date', { ascending: false })
-        .limit(15000);
+      // 5. Fetch game logs for players in the props (all games for proper analysis)
+      const playerNames = [...new Set((props || []).map((p: any) => p.player_name).filter(Boolean))];
+      let allGameLogs: any[] = [];
       
-      console.log(`[Risk Engine v3.0] Fetched ${gameLogs?.length || 0} game logs`);
+      // Fetch game logs in batches of 50 players to avoid query limits
+      const batchSize = 50;
+      for (let i = 0; i < playerNames.length; i += batchSize) {
+        const batch = playerNames.slice(i, i + batchSize);
+        const { data: batchLogs } = await supabase
+          .from('nba_player_game_logs')
+          .select('*')
+          .in('player_name', batch)
+          .order('game_date', { ascending: false });
+        
+        if (batchLogs) {
+          allGameLogs = [...allGameLogs, ...batchLogs];
+        }
+      }
+      const gameLogs = allGameLogs;
+      
+      console.log(`[Risk Engine v3.0] Fetched ${gameLogs?.length || 0} game logs for ${playerNames.length} players`);
 
       // 6. Fetch player archetypes (if exists)
       const { data: archetypes } = await supabase
