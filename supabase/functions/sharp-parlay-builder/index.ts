@@ -38,11 +38,32 @@ const NEVER_FADE_PRA = [
   'shai gilgeous-alexander', 'lebron james', 'kevin durant'
 ];
 
+// ============ ELITE REBOUNDER BLACKLIST (NEVER FADE REBOUNDS UNDER) ============
+const NEVER_FADE_REBOUNDS_TIER1 = [
+  'andre drummond', 'nikola jokic', 'domantas sabonis', 'rudy gobert',
+  'steven adams', 'victor wembanyama', 'anthony davis', 'giannis antetokounmpo',
+  'jonas valanciunas', 'deandre ayton', 'bam adebayo', 'jarrett allen'
+];
+
+const NEVER_FADE_REBOUNDS_TIER2 = [
+  'santi aldama', 'dayron sharpe', 'mitchell robinson', 'goga bitadze',
+  'wendell carter jr', 'julius randle', 'ivica zubac', 'alperen sengun',
+  'donovan clingan', 'nick richards', 'jalen duren', 'nic claxton',
+  'mark williams', 'mason plumlee', 'robert williams', 'kristaps porzingis'
+];
+
+function isEliteRebounder(playerName: string): { tier: 1 | 2 | null } {
+  const normalized = playerName?.toLowerCase() || '';
+  if (NEVER_FADE_REBOUNDS_TIER1.some(p => normalized.includes(p))) return { tier: 1 };
+  if (NEVER_FADE_REBOUNDS_TIER2.some(p => normalized.includes(p))) return { tier: 2 };
+  return { tier: null };
+}
+
 // Role locks by stat type - BIG allowed for rebounds, WING for all core stats
 const ROLE_STAT_LOCKS = {
   rebounds: ['C', 'PF', 'F-C', 'C-F', 'SF', 'BIG', 'WING'],  // BIG + WING allowed
-  assists: ['PG', 'SG', 'G', 'PG-SG', 'SG-PG', 'SF', 'GUARD', 'WING'],  // GUARD + WING allowed
-  points: ['PG', 'SG', 'SF', 'G', 'GUARD', 'WING'],  // Allow for non-BIG roles
+  assists: ['PG', 'SG', 'G', 'PG-SG', 'SG-PG', 'SF', 'GUARD', 'WING', 'SECONDARY_GUARD', 'BALL_DOMINANT_STAR'],
+  points: ['PG', 'SG', 'SF', 'G', 'GUARD', 'WING', 'SECONDARY_GUARD'],  // Allow for non-BIG roles
   threes: 'VOLUME_CHECK'
 };
 
@@ -67,12 +88,75 @@ function getStatPriority(propType: string): number {
 // High volatility stats (limit in parlays)
 const HIGH_VOLATILITY_STATS = ['blocks', 'steals', 'turnovers', 'threes', '3-pointers'];
 
-// Parlay configuration
+// Parlay configuration - TIGHTENED for Dream Team
 const PARLAY_CONFIGS = {
-  SAFE: { minLegs: 2, maxLegs: 3, maxVolatilityLegs: 0, confidenceThreshold: 0.65 },
-  BALANCED: { minLegs: 3, maxLegs: 4, maxVolatilityLegs: 1, confidenceThreshold: 0.55 },
-  UPSIDE: { minLegs: 3, maxLegs: 4, maxVolatilityLegs: 1, confidenceThreshold: 0.45 }
+  SAFE: { minLegs: 2, maxLegs: 3, maxVolatilityLegs: 0, confidenceThreshold: 0.70, minEdge: 12 },
+  BALANCED: { minLegs: 3, maxLegs: 4, maxVolatilityLegs: 1, confidenceThreshold: 0.60, minEdge: 8 },
+  UPSIDE: { minLegs: 3, maxLegs: 4, maxVolatilityLegs: 1, confidenceThreshold: 0.50, minEdge: 5 }
 };
+
+// ========================
+// DREAM TEAM VALIDATION
+// ========================
+
+// Check if a candidate qualifies as a "Dream Team" leg
+function isDreamTeamLeg(candidate: any, parlayType: keyof typeof PARLAY_CONFIGS): { 
+  passes: boolean; 
+  reason: string 
+} {
+  const config = PARLAY_CONFIGS[parlayType];
+  const side = candidate.side?.toLowerCase() || 'over';
+  const isUnder = side === 'under';
+  const propType = candidate.prop_type?.toLowerCase() || '';
+  const role = candidate.player_role?.toUpperCase() || 'WING';
+  
+  // 1. Minimum edge threshold
+  const edge = Math.abs(candidate.edge || 0);
+  if (edge < config.minEdge) {
+    return { passes: false, reason: `Edge ${edge.toFixed(1)}% < ${config.minEdge}% minimum` };
+  }
+  
+  // 2. Zero-median data rejection
+  const median5 = candidate.median5 || 0;
+  const median10 = candidate.median10 || 0;
+  if (median5 <= 0 && median10 <= 0) {
+    return { passes: false, reason: 'Zero median data - no historical performance' };
+  }
+  
+  // 3. Role-stat alignment (Dream Team requires perfect match)
+  const isRebounds = propType.includes('rebound');
+  const isAssists = propType.includes('assist');
+  const isPoints = propType.includes('point') && !isRebounds && !isAssists;
+  
+  // BIG should do rebounds
+  if (role === 'BIG' && !isRebounds) {
+    // Allow but don't boost
+  }
+  
+  // GUARD should do assists
+  if ((role === 'SECONDARY_GUARD' || role === 'BALL_DOMINANT_STAR') && isRebounds) {
+    return { passes: false, reason: `${role} should not have rebounds - use assists` };
+  }
+  
+  // 4. Elite rebounder check for UNDER bets
+  if (isUnder && isRebounds) {
+    const rebounderTier = isEliteRebounder(candidate.player_name);
+    if (rebounderTier.tier !== null) {
+      return { passes: false, reason: `Elite rebounder (Tier ${rebounderTier.tier}) - never fade rebounds under` };
+    }
+  }
+  
+  // 5. Minutes locked (28+ for Dream Team)
+  const avgMinutes = candidate.avg_minutes || 0;
+  if (avgMinutes < 28 && parlayType === 'SAFE') {
+    return { passes: false, reason: `Minutes ${avgMinutes.toFixed(1)} < 28 for SAFE parlay` };
+  }
+  if (avgMinutes < 24) {
+    return { passes: false, reason: `Minutes ${avgMinutes.toFixed(1)} < 24 minimum` };
+  }
+  
+  return { passes: true, reason: 'Dream Team qualified' };
+}
 
 // ========================
 // UTILITY FUNCTIONS
@@ -368,6 +452,7 @@ interface CandidateLeg {
   rationale: string;
   is_fade_specialist?: boolean;
   fade_edge_tag?: string | null;
+  player_role?: string;  // Added for Dream Team validation
   rules_passed: {
     minutes: boolean;
     median: boolean;
@@ -521,52 +606,67 @@ async function buildSharpParlays(supabase: any): Promise<any> {
       }
     }
     
+    // RULE 5.6: ELITE REBOUNDER CHECK (NEVER FADE REBOUNDS UNDER)
+    const propLower = prop.prop_type?.toLowerCase() || '';
+    const isRebounds = propLower.includes('rebound');
+    if (isUnderBet && isRebounds) {
+      const rebounderTier = isEliteRebounder(prop.player_name);
+      if (rebounderTier.tier !== null) {
+        console.log(`[Sharp Builder] ${prop.player_name} rebounds UNDER blocked - Elite Rebounder Tier ${rebounderTier.tier}`);
+        continue;
+      }
+    }
+    
     // RULE 6: Public trap detection
     const trapResult = detectPublicTrap(prop.odds || -110, prop.line_movement, prop.has_injury_news);
     
-    // Calculate confidence score
-    const baseConfidence = prop.confidence_score || 0.5;
-    let adjustedConfidence = baseConfidence;
+    // Calculate confidence score - FIXED: Normalize to 0-1 range
+    // Risk Engine returns scores in 0-12 range, normalize here
+    const rawConfidence = prop.confidence_score || 5;
+    const baseConfidence = rawConfidence > 1 ? rawConfidence / 12 : rawConfidence;  // Normalize if > 1
+    let adjustedConfidence = Math.min(1, Math.max(0, baseConfidence));
     
     // Boost for strong median edge
-    if (medianResult.edge > 10) adjustedConfidence += 0.1;
+    if (medianResult.edge > 10) adjustedConfidence += 0.10;
     else if (medianResult.edge > 5) adjustedConfidence += 0.05;
     
     // Penalty for trap signals
-    if (trapResult.isTrap) adjustedConfidence -= 0.1;
+    if (trapResult.isTrap) adjustedConfidence -= 0.10;
     
     // Penalty for volatility
     if (isVolatile) adjustedConfidence -= 0.05;
     
-    // NEW: Stat priority boost (rebounds/assists >> points)
+    // Stat priority boost (rebounds/assists >> points)
     const statPriority = getStatPriority(prop.prop_type);
-    if (statPriority >= 9) adjustedConfidence += 0.15;  // Rebounds/assists boost
-    else if (statPriority >= 7) adjustedConfidence += 0.08;  // Blocks/steals boost
-    else if (statPriority <= 2) adjustedConfidence -= 0.20;  // Points penalty
+    if (statPriority >= 9) adjustedConfidence += 0.12;  // Rebounds/assists boost
+    else if (statPriority >= 7) adjustedConfidence += 0.06;  // Blocks/steals boost
+    else if (statPriority <= 2) adjustedConfidence -= 0.15;  // Points penalty
     
-    // NEW: Star player with points = heavy penalty
+    // Star player with points = heavy penalty
     const isStar = isStarPlayer(prop.player_name);
     if (isStar && prop.prop_type?.toLowerCase().includes('points')) {
-      adjustedConfidence -= 0.25;  // Stars should use rebounds/assists
+      adjustedConfidence -= 0.20;  // Stars should use rebounds/assists
     }
     
-    // NEW: Fade Specialist bonus from Risk Engine
+    // Fade Specialist bonus from Risk Engine
     const isFadeSpecialist = prop.is_fade_specialist === true;
     const fadeEdgeTag = prop.fade_edge_tag || null;
     
     if (isFadeSpecialist) {
       // Boost based on fade edge tier
-      if (fadeEdgeTag === 'FADE_ELITE') adjustedConfidence += 0.20;
-      else if (fadeEdgeTag === 'FADE_EDGE') adjustedConfidence += 0.12;
-      else if (fadeEdgeTag === 'FADE_COMBO') adjustedConfidence += 0.08;
+      if (fadeEdgeTag === 'FADE_ELITE') adjustedConfidence += 0.15;
+      else if (fadeEdgeTag === 'FADE_EDGE') adjustedConfidence += 0.10;
+      else if (fadeEdgeTag === 'FADE_COMBO') adjustedConfidence += 0.06;
     }
     
-    adjustedConfidence = Math.max(0.1, Math.min(0.95, adjustedConfidence));
+    // CLAMP to 0-1 range
+    adjustedConfidence = Math.max(0.10, Math.min(0.95, adjustedConfidence));
     
-    // Build rationale (one-line, role + median based)
+    // Build rationale with role info
+    const playerRole = prop.player_role || 'WING';
     const statType = statPriority >= 9 ? '(preferred)' : statPriority <= 2 ? '(low priority)' : '';
     const fadeTag = isFadeSpecialist ? ` [${fadeEdgeTag}]` : '';
-    const rationale = `${position || 'Player'}, L5 median ${medianResult.median5.toFixed(1)}, L10 median ${medianResult.median10.toFixed(1)}, ${medianResult.edge > 0 ? '+' : ''}${medianResult.edge.toFixed(1)}% edge ${statType}${fadeTag}`;
+    const rationale = `${playerRole} ${position || ''}, L5: ${medianResult.median5.toFixed(1)}, L10: ${medianResult.median10.toFixed(1)}, ${medianResult.edge > 0 ? '+' : ''}${medianResult.edge.toFixed(1)}% edge ${statType}${fadeTag}`;
     
     candidates.push({
       player_name: prop.player_name,
@@ -585,6 +685,7 @@ async function buildSharpParlays(supabase: any): Promise<any> {
       stat_priority: statPriority,
       is_fade_specialist: isFadeSpecialist,
       fade_edge_tag: fadeEdgeTag,
+      player_role: playerRole,  // Added for Dream Team validation
       rationale,
       rules_passed: {
         minutes: minutesResult.passes,
@@ -695,41 +796,55 @@ function buildParlay(candidates: CandidateLeg[], parlayType: keyof typeof PARLAY
   const config = PARLAY_CONFIGS[parlayType];
   const legs: CandidateLeg[] = [];
   const usedPlayers = new Set<string>();
-  const usedCategories = new Set<string>();  // NEW: Track prop categories for diversity
+  const usedCategories = new Set<string>();
   let volatileCount = 0;
-  let starCount = 0;  // Track star count (max 1 per parlay)
+  let starCount = 0;
   
-  // Filter candidates by confidence threshold
-  const eligibleCandidates = candidates.filter(c => c.confidence_score >= config.confidenceThreshold);
+  // DREAM TEAM: Filter candidates through strict validation
+  const dreamTeamCandidates = candidates.filter(c => {
+    const dtCheck = isDreamTeamLeg(c, parlayType);
+    if (!dtCheck.passes) {
+      console.log(`[Sharp Builder] Dream Team reject: ${c.player_name} ${c.prop_type} - ${dtCheck.reason}`);
+      return false;
+    }
+    return c.confidence_score >= config.confidenceThreshold;
+  });
   
-  // For UPSIDE, include lower confidence candidates but still sort by confidence
-  const pool = parlayType === 'UPSIDE' 
+  console.log(`[Sharp Builder] ${parlayType}: ${dreamTeamCandidates.length}/${candidates.length} passed Dream Team validation`);
+  
+  // For UPSIDE, include lower confidence candidates if Dream Team pool is small
+  const pool = parlayType === 'UPSIDE' && dreamTeamCandidates.length < config.minLegs
     ? candidates.filter(c => c.confidence_score >= 0.35)
-    : eligibleCandidates;
+    : dreamTeamCandidates;
   
-  // Sort by stat priority (rebounds/assists first), then by fade specialist status, then confidence
+  // Sort by: fade specialists > stat priority > edge > confidence
   pool.sort((a, b) => {
     // First: Prioritize fade specialists in SAFE parlays
     if (parlayType === 'SAFE') {
-      const aFade = (a as any).is_fade_specialist ? 1 : 0;
-      const bFade = (b as any).is_fade_specialist ? 1 : 0;
+      const aFade = a.is_fade_specialist ? 1 : 0;
+      const bFade = b.is_fade_specialist ? 1 : 0;
       if (bFade !== aFade) return bFade - aFade;
     }
     
-    // Second: by stat priority (higher = better)
-    const aPriority = (a as any).stat_priority || getStatPriority(a.prop_type);
-    const bPriority = (b as any).stat_priority || getStatPriority(b.prop_type);
+    // Second: by stat priority (higher = better) - rebounds/assists first
+    const aPriority = a.stat_priority || getStatPriority(a.prop_type);
+    const bPriority = b.stat_priority || getStatPriority(b.prop_type);
     if (bPriority !== aPriority) return bPriority - aPriority;
     
-    // Third: by confidence
+    // Third: by edge (Dream Team prioritizes high edge)
+    const aEdge = Math.abs(a.edge || 0);
+    const bEdge = Math.abs(b.edge || 0);
+    if (Math.abs(bEdge - aEdge) > 5) return bEdge - aEdge;
+    
+    // Fourth: by confidence
     return b.confidence_score - a.confidence_score;
   });
   
-  // First pass: prefer diverse prop types
+  // First pass: prefer diverse prop types (Dream Team requires variety)
   for (const candidate of pool) {
     if (usedPlayers.has(normalizePlayerName(candidate.player_name))) continue;
     
-    const isStar = (candidate as any).is_star || isStarPlayer(candidate.player_name);
+    const isStar = candidate.is_star || isStarPlayer(candidate.player_name);
     if (isStar && starCount >= 1) continue;
     
     const category = getPropCategory(candidate.prop_type);
