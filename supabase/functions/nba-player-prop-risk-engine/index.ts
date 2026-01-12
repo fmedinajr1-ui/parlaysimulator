@@ -180,21 +180,26 @@ function classifyPlayerRole(
   
   // 3. BIG: Center or Power Forward positions
   const bigPositions = ['C', 'PF', 'F-C', 'C-F', 'FC', 'CF'];
-  if (bigPositions.some(p => normalizedPosition.includes(p))) {
+  if (bigPositions.some(p => normalizedPosition === p || normalizedPosition.includes(p))) {
     return 'BIG';
   }
   
-  // 4. SECONDARY GUARD: Point Guard or Shooting Guard with decent usage
-  const guardPositions = ['PG', 'SG', 'G'];
-  if (guardPositions.some(p => normalizedPosition === p || normalizedPosition.startsWith(p + '-'))) {
+  // 4. SECONDARY GUARD: Point Guard or Shooting Guard
+  // Handle single 'G' as guard (common in bdl_player_cache)
+  if (normalizedPosition === 'G' || normalizedPosition === 'PG' || normalizedPosition === 'SG') {
+    return 'SECONDARY_GUARD';
+  }
+  // Handle hybrid guard positions
+  if (normalizedPosition.startsWith('G-') || normalizedPosition.endsWith('-G')) {
     if (usageRate >= 18 || avgMinutes >= 25) {
       return 'SECONDARY_GUARD';
     }
+    return 'WING'; // Lower usage hybrid guard-forward = wing
   }
   
-  // 5. WING: SF or versatile forward/guard swingman
-  const wingPositions = ['SF', 'GF', 'FG', 'F', 'G-F', 'F-G'];
-  if (wingPositions.some(p => normalizedPosition.includes(p))) {
+  // 5. WING: SF or versatile forward
+  const wingPositions = ['SF', 'F', 'GF', 'FG', 'F-G', 'G-F'];
+  if (wingPositions.some(p => normalizedPosition === p || normalizedPosition.includes(p))) {
     return 'WING';
   }
   
@@ -914,6 +919,20 @@ serve(async (req) => {
       
       console.log(`[Risk Engine] Fetched ${gameLogs?.length || 0} game logs`);
 
+      // 5. Fetch player positions from bdl_player_cache (CRITICAL FOR ROLE CLASSIFICATION)
+      const { data: playerPositions } = await supabase
+        .from('bdl_player_cache')
+        .select('player_name, position');
+      
+      // Build position lookup map (case-insensitive)
+      const positionMap: Record<string, string> = {};
+      for (const p of (playerPositions || [])) {
+        if (p.player_name && p.position) {
+          positionMap[p.player_name.toLowerCase()] = p.position;
+        }
+      }
+      console.log(`[Risk Engine] Loaded ${Object.keys(positionMap).length} player positions from cache`);
+
       const approvedProps: any[] = [];
       const rejectedProps: any[] = [];
       // Track player+prop_type combinations instead of just player
@@ -999,9 +1018,11 @@ serve(async (req) => {
           
           const avgMinutes = playerUsage?.avg_minutes || 28;
           const usageRate = playerUsage?.usage_rate || 20;
-          const position = playerUsage?.position || inferPosition(prop.player_name);
+          // Use position from bdl_player_cache (priority) or fallback to usage metrics
+          const playerNameLower = prop.player_name?.toLowerCase() || '';
+          const position = positionMap[playerNameLower] || playerUsage?.position || 'SF';
           
-          // STEP 2: Player Role Classification (now includes ball-dominant check)
+          // STEP 2: Player Role Classification (now uses real position data)
           const role = classifyPlayerRole(usageRate, avgMinutes, position, prop.player_name);
           
           // Determine side (over/under)
