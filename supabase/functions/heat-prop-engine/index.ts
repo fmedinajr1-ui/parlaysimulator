@@ -48,19 +48,48 @@ const STAT_SAFETY_RULES: Record<string, { prefer: string[], avoid: string[] }> =
   }
 };
 
-// Star players registry (for one-star-per-team rule)
-const ALL_STAR_PLAYERS = [
-  'jaylen brown', 'jayson tatum', 'devin booker', 'kevin durant',
-  'luka doncic', 'nikola jokic', 'giannis antetokounmpo', 'damian lillard',
-  'shai gilgeous-alexander', 'anthony edwards', 'lebron james', 'anthony davis',
-  'joel embiid', 'tyrese maxey', 'donovan mitchell', 'ja morant', 'trae young',
-  'stephen curry', 'kyrie irving', 'jalen brunson', 'lamelo ball', 
-  'de\'aaron fox', 'tyrese haliburton'
-];
+// ARCHETYPE-PROP ALIGNMENT (Dream Team validation)
+const ARCHETYPE_PROP_ALLOWED: Record<string, string[]> = {
+  'ELITE_REBOUNDER': ['rebounds', 'blocks'],
+  'GLASS_CLEANER': ['rebounds'],
+  'PURE_SHOOTER': ['points', 'threes'],
+  'PLAYMAKER': ['assists', 'points'],
+  'COMBO_GUARD': ['points', 'assists'],
+  'TWO_WAY_WING': ['points', 'rebounds', 'steals'],
+  'STRETCH_BIG': ['points', 'rebounds', 'threes'],
+  'RIM_PROTECTOR': ['blocks', 'rebounds'],
+  'SCORING_WING': ['points', 'threes'],
+  'SCORING_GUARD': ['points', 'assists'],
+  'ROLE_PLAYER': [] // BLOCKED
+};
+
+// Runtime archetype data (populated from database)
+let archetypeMap: Record<string, string> = {};
+
+async function loadArchetypes(supabase: any): Promise<void> {
+  const { data } = await supabase.from('player_archetypes').select('player_name, primary_archetype');
+  archetypeMap = {};
+  for (const a of (data || [])) {
+    archetypeMap[a.player_name.toLowerCase()] = a.primary_archetype;
+  }
+  console.log(`[Heat Engine] Loaded ${Object.keys(archetypeMap).length} archetypes from DB`);
+}
+
+function getPlayerArchetype(playerName: string): string {
+  return archetypeMap[playerName?.toLowerCase()] || 'UNKNOWN';
+}
 
 function isStarPlayer(playerName: string): boolean {
-  const normalized = playerName?.toLowerCase() || '';
-  return ALL_STAR_PLAYERS.some(star => normalized.includes(star));
+  const archetype = getPlayerArchetype(playerName);
+  // Stars are ELITE_REBOUNDER, PLAYMAKER, PURE_SHOOTER, or COMBO_GUARD with high stats
+  return ['ELITE_REBOUNDER', 'PLAYMAKER', 'PURE_SHOOTER', 'COMBO_GUARD', 'SCORING_WING'].includes(archetype);
+}
+
+function isArchetypeAligned(playerName: string, propType: string): boolean {
+  const archetype = getPlayerArchetype(playerName);
+  const allowed = ARCHETYPE_PROP_ALLOWED[archetype] || [];
+  const propLower = propType?.toLowerCase() || '';
+  return allowed.some(p => propLower.includes(p));
 }
 
 // Stat priority for scoring (rebounds/assists >> points)
