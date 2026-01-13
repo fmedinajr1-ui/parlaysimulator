@@ -10,6 +10,9 @@ const corsHeaders = {
 const BDL_V1_URL = 'https://api.balldontlie.io/v1';
 const BDL_V2_URL = 'https://api.balldontlie.io/v2';
 
+// Trusted bookmakers only - filter out unreliable sources with bad lines
+const TRUSTED_BOOKMAKERS = ['fanduel', 'draftkings', 'caesars', 'betmgm', 'pinnacle', 'bovada'];
+
 // Map BDL prop types to our unified format
 const BDL_PROP_TYPE_MAP: Record<string, string> = {
   'points': 'points',
@@ -207,11 +210,17 @@ async function fetchBDLProps(bdlApiKey: string, today: string, supabase: any): P
       playerName = getPlayerName(prop);
     }
     
-    const bookmaker = prop.vendor.toLowerCase();
-    const line = parseFloat(prop.line_value);
-    
-    // Create unique key matching DB constraint: event_id,player_name,prop_type,bookmaker
-    const key = `${eventId}-${playerName}-${propType}-${bookmaker}`;
+        const bookmaker = prop.vendor.toLowerCase();
+        const line = parseFloat(prop.line_value);
+        
+        // FILTER: Skip untrusted bookmakers (they often have bad lines)
+        if (!TRUSTED_BOOKMAKERS.includes(bookmaker)) {
+          console.log(`[BDL Fallback] Skipping untrusted bookmaker: ${bookmaker} for ${playerName}`);
+          continue;
+        }
+        
+        // Create unique key matching DB constraint: event_id,player_name,prop_type,bookmaker
+        const key = `${eventId}-${playerName}-${propType}-${bookmaker}`;
     
     if (propsMap.has(key)) {
       // Merge over/under prices
