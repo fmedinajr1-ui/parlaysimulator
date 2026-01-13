@@ -6,6 +6,7 @@ import { RiskEnginePicksCard } from "@/components/suggestions/RiskEnginePicksCar
 import { PropEngineV2Card } from "@/components/suggestions/PropEngineV2Card";
 import SharpParlayCards from "@/components/sharp/SharpParlayCard";
 import { PropMarketWidget } from "@/components/market/PropMarketWidget";
+import { SweetSpotPicksCard } from "@/components/market/SweetSpotPicksCard";
 import { HeatParlaySection } from "@/components/heat/HeatParlaySection";
 import { WeeklyParlayHistory } from "@/components/dashboard/WeeklyParlayHistory";
 import { PullToRefreshContainer, PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
@@ -167,6 +168,13 @@ const Index = () => {
         {(isPilotUser || isSubscribed || isAdmin) && (
           <div className="mb-4">
             <HeatParlaySection />
+          </div>
+        )}
+
+        {/* Sweet Spot Picks - Optimal Confidence Ranges */}
+        {(isPilotUser || isSubscribed || isAdmin) && (
+          <div className="mb-4">
+            <SweetSpotPicksCard />
           </div>
         )}
 
