@@ -4384,12 +4384,14 @@ export type Database = {
           is_fade_specialist: boolean | null
           is_pra: boolean | null
           is_star: boolean | null
+          is_sweet_spot: boolean | null
           is_trap_indicator: boolean | null
           line: number
           minutes_class: string
           mode: string | null
           odds_updated_at: string | null
           opponent: string | null
+          original_confidence: number | null
           outcome: string | null
           over_price: number | null
           player_name: string
@@ -4406,6 +4408,7 @@ export type Database = {
           side: string
           spread: number | null
           stat_priority: number | null
+          sweet_spot_reason: string | null
           team_name: string | null
           trend_direction: string | null
           true_median: number | null
@@ -4437,12 +4440,14 @@ export type Database = {
           is_fade_specialist?: boolean | null
           is_pra?: boolean | null
           is_star?: boolean | null
+          is_sweet_spot?: boolean | null
           is_trap_indicator?: boolean | null
           line: number
           minutes_class: string
           mode?: string | null
           odds_updated_at?: string | null
           opponent?: string | null
+          original_confidence?: number | null
           outcome?: string | null
           over_price?: number | null
           player_name: string
@@ -4459,6 +4464,7 @@ export type Database = {
           side: string
           spread?: number | null
           stat_priority?: number | null
+          sweet_spot_reason?: string | null
           team_name?: string | null
           trend_direction?: string | null
           true_median?: number | null
@@ -4490,12 +4496,14 @@ export type Database = {
           is_fade_specialist?: boolean | null
           is_pra?: boolean | null
           is_star?: boolean | null
+          is_sweet_spot?: boolean | null
           is_trap_indicator?: boolean | null
           line?: number
           minutes_class?: string
           mode?: string | null
           odds_updated_at?: string | null
           opponent?: string | null
+          original_confidence?: number | null
           outcome?: string | null
           over_price?: number | null
           player_name?: string
@@ -4512,6 +4520,7 @@ export type Database = {
           side?: string
           spread?: number | null
           stat_priority?: number | null
+          sweet_spot_reason?: string | null
           team_name?: string | null
           trend_direction?: string | null
           true_median?: number | null
