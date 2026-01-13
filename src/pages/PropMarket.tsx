@@ -14,6 +14,7 @@ import { HeatParlayCard } from "@/components/heat/HeatParlayCard";
 import { WatchlistSection } from "@/components/heat/WatchlistSection";
 import { DoNotBetSection } from "@/components/heat/DoNotBetSection";
 import { SweetSpotPicksCard } from "@/components/market/SweetSpotPicksCard";
+import { SweetSpotDreamTeamParlay } from "@/components/market/SweetSpotDreamTeamParlay";
 import { useHeatPropEngine, useHeatEngineScan, useHeatWatchlist, useHeatDoNotBet } from "@/hooks/useHeatPropEngine";
 import { useHeatPropRealtime } from "@/hooks/useHeatPropRealtime";
 
@@ -183,6 +184,11 @@ export default function PropMarket() {
             parlay={heatData?.upside_parlay || null} 
             type="UPSIDE" 
           />
+        </div>
+
+        {/* Sweet Spot Dream Team Parlay - Auto-built optimal 6-leg */}
+        <div className="mb-6">
+          <SweetSpotDreamTeamParlay />
         </div>
 
         {/* Sweet Spot Picks - Optimal confidence ranges */}
