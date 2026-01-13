@@ -157,6 +157,42 @@ function validateReboundsProp(
   };
 }
 
+// ============ LINE SANITY CHECK (PREVENTS BAD BOOKMAKER DATA) ============
+// Rejects lines that are wildly off from the true median (bad data)
+function isLineSane(
+  playerName: string,
+  propType: string,
+  line: number,
+  trueMedian: number
+): { sane: boolean; reason: string } {
+  // Skip check if we don't have median data
+  if (!trueMedian || trueMedian <= 0) {
+    return { sane: true, reason: 'No median for comparison' };
+  }
+  
+  // Calculate deviation percentage
+  const deviation = Math.abs(line - trueMedian) / trueMedian;
+  
+  // Reject lines more than 60% off from true median (obvious bad data)
+  if (deviation > 0.6) {
+    return { 
+      sane: false, 
+      reason: `LINE_INSANE: ${playerName} ${propType} line=${line} is ${(deviation * 100).toFixed(0)}% off from median=${trueMedian.toFixed(1)} (max 60%)` 
+    };
+  }
+  
+  // Extra check for points: star players shouldn't have lines below 15
+  const normalizedProp = propType.toLowerCase().replace('player_', '');
+  if (normalizedProp === 'points' && trueMedian > 20 && line < 15) {
+    return { 
+      sane: false, 
+      reason: `POINTS_LINE_TOO_LOW: ${playerName} median=${trueMedian.toFixed(1)} but line=${line} (suspect bad data)` 
+    };
+  }
+  
+  return { sane: true, reason: 'Line within acceptable range' };
+}
+
 // Max percentage for any single prop type to prevent volume imbalance
 const MAX_PROP_TYPE_PCT = 0.35; // Max 35% can be any one prop type
 
@@ -1252,6 +1288,19 @@ serve(async (req) => {
           const line = prop.current_line || prop.line;
           const trueMedian = calculateMedian(statValues);
           const seasonAvg = statValues.reduce((a, b) => a + b, 0) / statValues.length;
+          
+          // ============ LINE SANITY CHECK (PREVENT BAD BOOKMAKER DATA) ============
+          const sanityCheck = isLineSane(prop.player_name, prop.prop_type, line, trueMedian);
+          if (!sanityCheck.sane) {
+            rejectedProps.push({ 
+              ...prop, 
+              rejection_reason: sanityCheck.reason,
+              player_role: 'UNKNOWN', 
+              archetype: 'UNKNOWN' 
+            });
+            console.warn(`[SANITY] Rejected: ${sanityCheck.reason}`);
+            continue;
+          }
           
           // FIXED: Calculate edge from median BEFORE side determination
           const calculatedEdge = trueMedian - line; // positive = over edge, negative = under edge
