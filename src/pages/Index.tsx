@@ -4,7 +4,7 @@ import { HowItWorks } from "@/components/HowItWorks";
 import { SampleParlayButton } from "@/components/SampleParlayButton";
 import { RiskEnginePicksCard } from "@/components/suggestions/RiskEnginePicksCard";
 import { PropEngineV2Card } from "@/components/suggestions/PropEngineV2Card";
-import SharpParlayCards from "@/components/sharp/SharpParlayCard";
+import { SweetSpotDreamTeamParlay } from "@/components/market/SweetSpotDreamTeamParlay";
 import { PropMarketWidget } from "@/components/market/PropMarketWidget";
 import { SweetSpotPicksCard } from "@/components/market/SweetSpotPicksCard";
 import { HeatParlaySection } from "@/components/heat/HeatParlaySection";
@@ -157,24 +157,24 @@ const Index = () => {
           <SampleParlayButton />
         </div>
         
-        {/* Sharp AI Parlays - FIRST */}
+        {/* Sweet Spot Dream Team Parlay - FIRST */}
         {(isPilotUser || isSubscribed || isAdmin) && (
           <div className="mb-4">
-            <SharpParlayCards />
+            <SweetSpotDreamTeamParlay />
           </div>
         )}
 
-        {/* Heat Engine Parlays - SECOND */}
-        {(isPilotUser || isSubscribed || isAdmin) && (
-          <div className="mb-4">
-            <HeatParlaySection />
-          </div>
-        )}
-
-        {/* Sweet Spot Picks - Optimal Confidence Ranges */}
+        {/* Sweet Spot Individual Picks - SECOND */}
         {(isPilotUser || isSubscribed || isAdmin) && (
           <div className="mb-4">
             <SweetSpotPicksCard />
+          </div>
+        )}
+
+        {/* Heat Engine Parlays - THIRD */}
+        {(isPilotUser || isSubscribed || isAdmin) && (
+          <div className="mb-4">
+            <HeatParlaySection />
           </div>
         )}
 
