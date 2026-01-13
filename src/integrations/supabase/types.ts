@@ -7457,6 +7457,60 @@ export type Database = {
           },
         ]
       }
+      sweet_spot_tracking: {
+        Row: {
+          actual_value: number | null
+          archetype: string | null
+          confidence_score: number
+          created_at: string | null
+          edge: number
+          game_date: string
+          id: string
+          line: number
+          outcome: string | null
+          pick_id: string | null
+          player_name: string
+          prop_type: string
+          side: string
+          sweet_spot_reason: string
+          verified_at: string | null
+        }
+        Insert: {
+          actual_value?: number | null
+          archetype?: string | null
+          confidence_score: number
+          created_at?: string | null
+          edge: number
+          game_date: string
+          id?: string
+          line: number
+          outcome?: string | null
+          pick_id?: string | null
+          player_name: string
+          prop_type: string
+          side: string
+          sweet_spot_reason: string
+          verified_at?: string | null
+        }
+        Update: {
+          actual_value?: number | null
+          archetype?: string | null
+          confidence_score?: number
+          created_at?: string | null
+          edge?: number
+          game_date?: string
+          id?: string
+          line?: number
+          outcome?: string | null
+          pick_id?: string | null
+          player_name?: string
+          prop_type?: string
+          side?: string
+          sweet_spot_reason?: string
+          verified_at?: string | null
+        }
+        Relationships: []
+      }
       team_aliases: {
         Row: {
           aliases: Json | null

@@ -7,15 +7,47 @@ const corsHeaders = {
 };
 
 // ============================================================================
-// 🏀 NBA RISK ENGINE v3.0 - ELITE PLAYER ARCHETYPE SYSTEM
+// 🏀 NBA RISK ENGINE v3.1 - SWEET SPOT OPTIMIZATION SYSTEM
 // ============================================================================
-// 5-LAYER SHARP FUNNEL:
+// 6-LAYER SHARP FUNNEL:
 // Layer 1: Elite Player Archetype Classification
 // Layer 2: Role-Prop Alignment Enforcement
 // Layer 3: Head-to-Head Matchup Analysis
 // Layer 4: Stricter Statistical Contingencies
 // Layer 5: Balanced Over/Under Distribution
+// Layer 6: Sweet Spot Confidence Calibration (NEW)
 // ============================================================================
+// SWEET SPOT RANGES (based on historical analysis):
+// - Points: 8.5-9.5 confidence = 80% hit rate (optimal)
+// - Rebounds: 9.0-9.8 confidence = 71%+ hit rate (optimal)
+// - Points MID tier (15-21.5 lines) = 42.9% hit rate (AVOID unless edge ≥2.0)
+// - Points confidence 8.2 = 0% hit rate (BLOCK)
+// ============================================================================
+
+// ============ SWEET SPOT CONFIGURATION ============
+const SWEET_SPOT_CONFIG = {
+  points: { min: 8.5, max: 9.5, scaleHigh: true },
+  rebounds: { min: 9.0, max: 9.8, scaleHigh: false },
+  assists: { min: 7.5, max: 9.0, scaleHigh: false }
+};
+
+// Prop-type specific minimum confidence thresholds
+const MIN_CONFIDENCE_BY_TYPE: Record<string, number> = {
+  'points': 5.5,      // Lower min for points (best performer historically)
+  'rebounds': 7.0,    // Higher min for rebounds (needs more filtering)
+  'assists': 6.5,     // Standard for assists
+  'default': 6.5
+};
+
+// Points line tiers based on historical performance
+const POINTS_LINE_TIERS = {
+  LOW: { min: 0, max: 14.5, hitRate: 57.9, edgeRequired: 1.0 },
+  MID: { min: 15, max: 21.5, hitRate: 42.9, edgeRequired: 2.0 },  // TRAP ZONE
+  HIGH: { min: 22, max: 50, hitRate: 66.7, edgeRequired: 1.0 }
+};
+
+// Confidence values to block (0% hit rate historically)
+const BLOCKED_CONFIDENCE_VALUES = [8.2];  // Points at 8.2 = 0% hit rate
 
 // ============ PROP TYPE PERFORMANCE TIERS (BASED ON HISTORICAL HIT RATES) ============
 // Points: 55.2% hit rate → ELITE
@@ -1045,11 +1077,11 @@ serve(async (req) => {
 
     const { action, mode = 'full_slate', use_live_odds = false, preferred_bookmakers = ['fanduel', 'draftkings'] } = await req.json();
 
-    console.log(`[Risk Engine v3.0] Action: ${action}, Mode: ${mode}, Live Odds: ${use_live_odds}`);
+    console.log(`[Risk Engine v3.1] Action: ${action}, Mode: ${mode}, Live Odds: ${use_live_odds}`);
 
     if (action === 'analyze_slate') {
       const today = getEasternDate();
-      console.log(`[Risk Engine v3.0] Analyzing slate for ${today}`);
+      console.log(`[Risk Engine v3.1] Analyzing slate for ${today}`);
       
       // 1. Fetch active NBA props
       const { data: props, error: propsError } = await supabase
@@ -1060,7 +1092,7 @@ serve(async (req) => {
         .gte('commence_time', today);
 
       if (propsError) throw propsError;
-      console.log(`[Risk Engine v3.0] Found ${props?.length || 0} active props`);
+      console.log(`[Risk Engine v3.1] Found ${props?.length || 0} active props`);
 
       // 2. Fetch upcoming games
       const { data: games } = await supabase
@@ -1080,7 +1112,7 @@ serve(async (req) => {
           positionMap[p.player_name.toLowerCase()] = p.position;
         }
       }
-      console.log(`[Risk Engine v3.0] Loaded ${Object.keys(positionMap).length} player positions`);
+      console.log(`[Risk Engine v3.1] Loaded ${Object.keys(positionMap).length} player positions`);
 
       // 4. Fetch player season stats
       const { data: seasonStats } = await supabase
@@ -1093,7 +1125,7 @@ serve(async (req) => {
           seasonStatsMap[s.player_name.toLowerCase()] = s;
         }
       }
-      console.log(`[Risk Engine v3.0] Loaded ${Object.keys(seasonStatsMap).length} season stats`);
+      console.log(`[Risk Engine v3.1] Loaded ${Object.keys(seasonStatsMap).length} season stats`);
 
       // 5. Fetch game logs for players in the props (all games for proper analysis)
       const playerNames = [...new Set((props || []).map((p: any) => p.player_name).filter(Boolean))];
@@ -1115,7 +1147,7 @@ serve(async (req) => {
       }
       const gameLogs = allGameLogs;
       
-      console.log(`[Risk Engine v3.0] Fetched ${gameLogs?.length || 0} game logs for ${playerNames.length} players`);
+      console.log(`[Risk Engine v3.1] Fetched ${gameLogs?.length || 0} game logs for ${playerNames.length} players`);
 
       // 6. Fetch player archetypes (if exists)
       const { data: archetypes } = await supabase
@@ -1128,7 +1160,7 @@ serve(async (req) => {
           archetypeMap[a.player_name.toLowerCase()] = a.primary_archetype as PlayerArchetype;
         }
       }
-      console.log(`[Risk Engine v3.0] Loaded ${Object.keys(archetypeMap).length} archetypes`);
+      console.log(`[Risk Engine v3.1] Loaded ${Object.keys(archetypeMap).length} archetypes`);
 
       const approvedProps: any[] = [];
       const rejectedProps: any[] = [];
@@ -1469,7 +1501,7 @@ serve(async (req) => {
           }
           
           // ============ CONFIDENCE SCORING (with prop type tier penalty/bonus) ============
-          const { score, factors, propTypeTier } = calculateConfidenceV3(
+          let { score, factors, propTypeTier } = calculateConfidenceV3(
             archetype,
             prop.prop_type,
             side,
@@ -1481,14 +1513,82 @@ serve(async (req) => {
             statValidation.valid
           );
           
-          // Minimum threshold: 6.5 (lowered from 8.0 for better coverage)
-          if (score < 6.5) {
+          // ============ LAYER 6: SWEET SPOT CONFIDENCE CALIBRATION (NEW) ============
+          let adjustedScore = score;
+          let sweetSpotReason: string | null = null;
+          
+          // POINTS: Scale high confidence down to sweet spot (8.5-9.5)
+          if (normalizedPropType === 'points') {
+            // Block confidence 8.2 exactly (0% hit rate historically)
+            if (score >= 8.1 && score <= 8.3) {
+              rejectedProps.push({
+                ...prop,
+                rejection_reason: `POINTS_CONFIDENCE_TRAP: Score ${score.toFixed(1)} in blocked range (8.1-8.3 = 0% hit rate)`,
+                player_role: role,
+                archetype,
+                confidence_score: score
+              });
+              continue;
+            }
+            
+            // Scale down high confidence scores to hit sweet spot (8.5-9.5)
+            if (adjustedScore > 10.0) {
+              // Compress: scores 10-12 become 8.5-9.5
+              adjustedScore = 8.5 + ((adjustedScore - 10.0) * 0.5);
+              adjustedScore = Math.min(adjustedScore, 9.5); // Cap at 9.5
+              console.log(`[SWEET-SPOT] ${prop.player_name} POINTS: ${score.toFixed(1)} → ${adjustedScore.toFixed(1)} (scaled to sweet spot)`);
+            }
+            
+            // Check if in sweet spot
+            if (adjustedScore >= 8.5 && adjustedScore <= 9.5) {
+              sweetSpotReason = 'POINTS_SWEET_SPOT_8.5-9.5';
+            }
+            
+            // Points MID tier (15-21.5) requires higher edge
+            if (line >= 15 && line <= 21.5 && Math.abs(calculatedEdge) < 2.0) {
+              rejectedProps.push({
+                ...prop,
+                rejection_reason: `POINTS_MID_TIER_TRAP: Line ${line} in MID tier (42.9% hit rate), needs edge ≥2.0, got ${Math.abs(calculatedEdge).toFixed(1)}`,
+                player_role: role,
+                archetype,
+                confidence_score: adjustedScore
+              });
+              continue;
+            }
+          }
+          
+          // REBOUNDS: Cap at 10.0 (high confidence = trap for rebounds)
+          if (normalizedPropType === 'rebounds') {
+            adjustedScore = Math.min(adjustedScore, 10.0);
+            
+            // Apply rebound-specific boost/penalty if stored
+            if ((prop as any)._reboundConfidenceAdjust) {
+              adjustedScore += (prop as any)._reboundConfidenceAdjust;
+            }
+            
+            // Check if in sweet spot
+            if (adjustedScore >= 9.0 && adjustedScore <= 9.8) {
+              sweetSpotReason = 'REBOUNDS_SWEET_SPOT_9.0-9.8';
+            }
+          }
+          
+          // ASSISTS: Check sweet spot (7.5-9.0)
+          if (normalizedPropType === 'assists') {
+            if (adjustedScore >= 7.5 && adjustedScore <= 9.0) {
+              sweetSpotReason = 'ASSISTS_SWEET_SPOT_7.5-9.0';
+            }
+          }
+          
+          // Use prop-type specific minimum threshold
+          const minConfidence = MIN_CONFIDENCE_BY_TYPE[normalizedPropType] || MIN_CONFIDENCE_BY_TYPE['default'];
+          
+          if (adjustedScore < minConfidence) {
             rejectedProps.push({ 
               ...prop, 
-              rejection_reason: `Confidence ${score.toFixed(1)} < 6.5 threshold`, 
+              rejection_reason: `Confidence ${adjustedScore.toFixed(1)} < ${minConfidence} threshold for ${normalizedPropType}`, 
               player_role: role, 
               archetype,
-              confidence_score: score
+              confidence_score: adjustedScore
             });
             continue;
           }
@@ -1505,7 +1605,7 @@ serve(async (req) => {
           }
           
           // ============ APPROVED! ============
-          approvedProps.push({
+          const approvedPick = {
             player_name: prop.player_name,
             team_name: prop.team_name,
             opponent,
@@ -1521,13 +1621,16 @@ serve(async (req) => {
             true_median: trueMedian,
             edge,
             bad_game_floor: badGameFloor,
-            confidence_score: score,
+            confidence_score: adjustedScore,  // Use adjusted score
+            original_confidence: score,       // Store original for reference
             confidence_factors: factors,
             event_id: prop.event_id,
             game_date: today,
             is_pra: isPRA,
             is_ball_dominant: role === 'BALL_DOMINANT_STAR',
             is_star: isStar,
+            is_sweet_spot: sweetSpotReason !== null,
+            sweet_spot_reason: sweetSpotReason,
             // H2H data
             h2h_games: matchup?.gamesVsOpponent || 0,
             h2h_avg: matchup?.avgStatVsOpponent || 0,
@@ -1536,7 +1639,14 @@ serve(async (req) => {
             volatility_pct: statValidation.details.volatilityPct,
             consistency_score: stats?.consistency_score,
             trend_direction: stats?.trend_direction,
-          });
+          };
+          
+          approvedProps.push(approvedPick);
+          
+          // Log sweet spot picks
+          if (sweetSpotReason) {
+            console.log(`[SWEET-SPOT-PICK] ${prop.player_name} ${prop.prop_type} ${side} @ ${line}: ${adjustedScore.toFixed(1)} (${sweetSpotReason})`);
+          }
           
           // Track prop type for volume cap
           propTypeCounter[normalizedPropType] = (propTypeCounter[normalizedPropType] || 0) + 1;
@@ -1564,6 +1674,33 @@ serve(async (req) => {
         }
       }
       
+      // ============ SWEET SPOT TRACKING ============
+      // Insert sweet spot picks to tracking table for verification
+      const sweetSpotPicks = approvedProps.filter(p => p.is_sweet_spot);
+      if (sweetSpotPicks.length > 0) {
+        const trackingRecords = sweetSpotPicks.map(p => ({
+          game_date: today,
+          player_name: p.player_name,
+          prop_type: normalizePropTypeForTier(p.prop_type),
+          line: p.line,
+          side: p.side,
+          confidence_score: p.confidence_score,
+          edge: p.edge,
+          archetype: p.archetype,
+          sweet_spot_reason: p.sweet_spot_reason
+        }));
+        
+        const { error: trackError } = await supabase
+          .from('sweet_spot_tracking')
+          .upsert(trackingRecords, { onConflict: 'player_name,game_date,prop_type' });
+        
+        if (trackError) {
+          console.error('[Risk Engine v3.1] Error tracking sweet spots:', trackError);
+        } else {
+          console.log(`[Risk Engine v3.1] Tracked ${sweetSpotPicks.length} sweet spot picks`);
+        }
+      }
+      
       // Sort by confidence
       approvedProps.sort((a, b) => b.confidence_score - a.confidence_score);
       
@@ -1581,7 +1718,7 @@ serve(async (req) => {
           );
         
         if (insertError) {
-          console.error('[Risk Engine v3.0] Error storing picks:', insertError);
+          console.error('[Risk Engine v3.1] Error storing picks:', insertError);
         }
       }
       
@@ -1592,8 +1729,9 @@ serve(async (req) => {
         ? ((balanceTracker.underCount / balanceTracker.total) * 100).toFixed(0) 
         : '0';
       
-      console.log(`[Risk Engine v3.0] Approved: ${approvedProps.length}, Rejected: ${rejectedProps.length}`);
-      console.log(`[Risk Engine v3.0] Balance: ${overPct}% OVER / ${underPct}% UNDER`);
+      console.log(`[Risk Engine v3.1] Approved: ${approvedProps.length}, Rejected: ${rejectedProps.length}`);
+      console.log(`[Risk Engine v3.1] Balance: ${overPct}% OVER / ${underPct}% UNDER`);
+      console.log(`[Risk Engine v3.1] Sweet Spot Picks: ${sweetSpotPicks.length}`);
       
       return new Response(JSON.stringify({
         success: true,
@@ -1609,7 +1747,8 @@ serve(async (req) => {
           overPct,
           underPct
         },
-        engineVersion: 'v3.0 - Elite Player Archetype System'
+        engineVersion: 'v3.1 - Sweet Spot Optimization System',
+        sweetSpotCount: sweetSpotPicks.length
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
@@ -1643,7 +1782,7 @@ serve(async (req) => {
 
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error('[Risk Engine v3.0] Error:', error);
+    console.error('[Risk Engine v3.1] Error:', error);
     return new Response(JSON.stringify({ error: errorMessage }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
