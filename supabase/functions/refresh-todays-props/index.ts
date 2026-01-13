@@ -105,12 +105,20 @@ async function resolvePlayerNames(
             const name = `${data.data.first_name} ${data.data.last_name}`;
             playerMap.set(playerId, name);
             
-            // Cache for future use - use player_name as unique constraint
+            // Cache for future use - include jersey number for video analysis
             const { error: cacheError } = await supabase.from('bdl_player_cache').upsert({
               bdl_player_id: playerId,
               player_name: name,
               position: data.data.position || null,
               team_name: data.data.team?.full_name || null,
+              jersey_number: data.data.jersey_number || null,
+              height: data.data.height || null,
+              weight: data.data.weight || null,
+              college: data.data.college || null,
+              country: data.data.country || null,
+              draft_year: data.data.draft_year || null,
+              draft_round: data.data.draft_round || null,
+              draft_number: data.data.draft_number || null,
               last_updated: new Date().toISOString(),
             }, { onConflict: 'player_name' });
             
