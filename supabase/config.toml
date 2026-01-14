@@ -281,3 +281,9 @@ verify_jwt = false
 
 [functions.compile-halftime-analysis]
 verify_jwt = false
+
+[functions.scout-agent-loop]
+verify_jwt = false
+
+[functions.fetch-live-pbp]
+verify_jwt = false
