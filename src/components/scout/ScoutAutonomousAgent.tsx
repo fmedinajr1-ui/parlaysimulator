@@ -1,11 +1,11 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Slider } from '@/components/ui/slider';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Switch } from '@/components/ui/switch';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { useScoutAgentState } from '@/hooks/useScoutAgentState';
 import { PlayerStateCard } from './PlayerStateCard';
@@ -17,6 +17,9 @@ import {
   stopScreenCapture,
   captureFrame,
   isScreenCaptureSupported,
+  isCameraSupported,
+  getVideoDevices,
+  requestCameraCapture,
 } from '@/lib/live-stream-capture';
 import {
   Bot,
@@ -29,9 +32,8 @@ import {
   Target,
   Zap,
   Monitor,
-  RefreshCw,
+  Camera,
   AlertTriangle,
-  TrendingUp,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -49,6 +51,11 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
   const [showSettings, setShowSettings] = useState(false);
   const [activeTab, setActiveTab] = useState('players');
   
+  // Capture mode state
+  const [captureMode, setCaptureMode] = useState<'screen' | 'camera'>('screen');
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+  
   const {
     state,
     startAgent,
@@ -63,7 +70,19 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
     getStateForAPI,
   } = useScoutAgentState({ gameContext });
 
-  const isSupported = isScreenCaptureSupported();
+  const isSupported = isScreenCaptureSupported() || isCameraSupported();
+
+  // Load video devices on mount
+  useEffect(() => {
+    async function loadDevices() {
+      const devices = await getVideoDevices();
+      setVideoDevices(devices);
+      if (devices.length > 0 && !selectedDeviceId) {
+        setSelectedDeviceId(devices[0].deviceId);
+      }
+    }
+    loadDevices();
+  }, []);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -155,7 +174,14 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
 
   const handleStart = async () => {
     try {
-      const stream = await requestScreenCapture();
+      let stream: MediaStream;
+      
+      if (captureMode === 'camera') {
+        stream = await requestCameraCapture(selectedDeviceId || undefined);
+      } else {
+        stream = await requestScreenCapture();
+      }
+      
       setMediaStream(stream);
       
       if (videoRef.current) {
@@ -243,7 +269,11 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
                   </Button>
                 </>
               ) : (
-                <Button onClick={handleStart} className="gap-2">
+                <Button 
+                  onClick={handleStart} 
+                  className="gap-2"
+                  disabled={captureMode === 'camera' && videoDevices.length === 0}
+                >
                   <Play className="w-4 h-4" />
                   Start Autopilot
                 </Button>
@@ -261,7 +291,51 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
 
         {/* Settings Panel */}
         {showSettings && (
-          <CardContent className="pt-0 border-t">
+          <CardContent className="pt-0 border-t space-y-3">
+            {/* Capture Mode Toggle */}
+            {!state.isRunning && (
+              <div className="flex gap-2 pt-3">
+                <Button
+                  variant={captureMode === 'screen' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setCaptureMode('screen')}
+                  className="flex-1"
+                >
+                  <Monitor className="w-4 h-4 mr-2" />
+                  Screen Share
+                </Button>
+                <Button
+                  variant={captureMode === 'camera' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setCaptureMode('camera')}
+                  className="flex-1"
+                >
+                  <Camera className="w-4 h-4 mr-2" />
+                  Capture Card
+                </Button>
+              </div>
+            )}
+
+            {/* Device Selector (camera mode) */}
+            {!state.isRunning && captureMode === 'camera' && (
+              <Select value={selectedDeviceId} onValueChange={setSelectedDeviceId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select capture device" />
+                </SelectTrigger>
+                <SelectContent>
+                  {videoDevices.length === 0 ? (
+                    <SelectItem value="none" disabled>No devices found</SelectItem>
+                  ) : (
+                    videoDevices.map((device, index) => (
+                      <SelectItem key={device.deviceId} value={device.deviceId}>
+                        {device.label || `Camera ${index + 1}`}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            )}
+
             <div className="flex items-center gap-4 py-3">
               <span className="text-sm text-muted-foreground w-24">Capture Rate</span>
               <Slider
