@@ -15,7 +15,7 @@ import { useHapticFeedback } from "@/hooks/useHapticFeedback";
 import { Button } from "@/components/ui/button";
 import { Link, useNavigate } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
-import { Zap, BarChart3, Sparkles, Trophy, Calculator, GitCompare, LogIn, LogOut, Radio } from "lucide-react";
+import { Zap, BarChart3, Sparkles, Trophy, Calculator, GitCompare, LogIn, LogOut, Radio, Video } from "lucide-react";
 import { usePilotUser } from "@/hooks/usePilotUser";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -68,11 +68,13 @@ const Index = () => {
 
   // Quick actions based on user type
   const quickActions = isPilotRestricted ? [
+    { to: "/scout", icon: Video, label: "Scout", iconClass: "text-orange-500" },
     { to: "/live-dashboard", icon: Radio, label: "Live", iconClass: "text-destructive" },
     { to: "/upload", icon: BarChart3, label: "Analyze", iconClass: "text-primary" },
     { to: "/compare", icon: GitCompare, label: "Compare", iconClass: "text-chart-3" },
     { to: "/kelly", icon: Calculator, label: "Kelly", iconClass: "text-chart-4" },
   ] : [
+    { to: "/scout", icon: Video, label: "Scout", iconClass: "text-orange-500" },
     { to: "/live-dashboard", icon: Radio, label: "Live", iconClass: "text-destructive" },
     { to: "/upload", icon: BarChart3, label: "Analyze", iconClass: "text-primary" },
     { to: "/compare", icon: GitCompare, label: "Compare", iconClass: "text-chart-3" },
