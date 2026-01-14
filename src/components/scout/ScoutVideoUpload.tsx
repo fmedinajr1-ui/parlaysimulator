@@ -130,7 +130,7 @@ export function ScoutVideoUpload({
       // Send to edge function
       const { data, error } = await supabase.functions.invoke('analyze-game-footage', {
         body: {
-          frames: uniqueFrames.slice(0, 15).map(f => f.base64), // Limit to 15 frames
+          frames: uniqueFrames.slice(0, 30).map(f => f.base64), // Send up to 30 frames, edge function will select based on strategy
           gameContext: {
             homeTeam: gameContext.homeTeam,
             awayTeam: gameContext.awayTeam,

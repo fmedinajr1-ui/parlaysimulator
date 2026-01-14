@@ -16,7 +16,8 @@ import {
   ChevronUp,
   AlertTriangle,
   CheckCircle,
-  XCircle
+  XCircle,
+  DollarSign
 } from "lucide-react";
 import type { AnalysisResult, PlayerObservation, PropRecommendation, GameContext } from "@/pages/Scout";
 
@@ -147,9 +148,34 @@ export function ScoutAnalysisResults({ result, frames, gameContext }: ScoutAnaly
                 <p className="text-sm text-muted-foreground mb-2">
                   {rec.reasoning}
                 </p>
+
+                {/* Real Bookmaker Lines */}
+                {rec.propAvailable ? (
+                  <div className="flex flex-wrap items-center gap-2 mt-3 p-2 bg-background/50 rounded text-sm border border-border/50">
+                    <Badge variant="secondary" className="flex items-center gap-1">
+                      <DollarSign className="w-3 h-3" />
+                      {rec.bookmaker}
+                    </Badge>
+                    <span className="text-muted-foreground">Line:</span>
+                    <span className="font-mono font-medium">{rec.actualLine}</span>
+                    <span className="text-muted-foreground">|</span>
+                    <span className="text-green-500 font-mono">O {rec.overPrice}</span>
+                    <span className="text-red-500 font-mono">U {rec.underPrice}</span>
+                    {rec.lineDelta !== null && rec.lineDelta !== 0 && (
+                      <Badge variant="outline" className="ml-auto text-xs">
+                        AI: {rec.line} ({rec.lineDelta > 0 ? '+' : ''}{rec.lineDelta})
+                      </Badge>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 mt-3 text-sm text-yellow-500">
+                    <AlertTriangle className="w-4 h-4" />
+                    <span>No prop available at bookmakers</span>
+                  </div>
+                )}
                 
                 {rec.visualEvidence.length > 0 && (
-                  <div className="text-xs space-y-1">
+                  <div className="text-xs space-y-1 mt-3">
                     <p className="text-muted-foreground font-medium">Visual Evidence:</p>
                     {rec.visualEvidence.map((evidence, j) => (
                       <div key={j} className="flex items-start gap-2">
