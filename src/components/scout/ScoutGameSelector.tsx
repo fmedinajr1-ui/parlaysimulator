@@ -262,9 +262,24 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
         <CardTitle className="text-base flex items-center gap-2">
           <Calendar className="w-4 h-4 text-primary" />
           Today's Games
-          <Badge variant="secondary" className="ml-auto">
-            {games.length} games
-          </Badge>
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2"
+              onClick={() => {
+                localStorage.removeItem(CACHE_KEY);
+                setRefreshAttempted(false);
+                triggerAutoRefresh();
+              }}
+              disabled={isRefreshing}
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+            </Button>
+            <Badge variant="secondary">
+              {games.length} games
+            </Badge>
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
