@@ -278,3 +278,6 @@ verify_jwt = false
 
 [functions.analyze-live-frame]
 verify_jwt = false
+
+[functions.compile-halftime-analysis]
+verify_jwt = false
