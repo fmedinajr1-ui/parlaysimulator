@@ -275,3 +275,6 @@ verify_jwt = false
 
 [functions.analyze-game-footage]
 verify_jwt = false
+
+[functions.analyze-live-frame]
+verify_jwt = false
