@@ -6,6 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { 
   Video, 
@@ -20,7 +21,8 @@ import {
   Monitor,
   Loader2,
   Activity,
-  Camera
+  Camera,
+  Bot
 } from "lucide-react";
 import { GameContext, AnalysisResult } from "@/pages/Scout";
 import {
@@ -96,8 +98,14 @@ export function ScoutLiveCapture({
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
   
+  // Auto-detect state
+  const [autoDetectEnabled, setAutoDetectEnabled] = useState(true);
+  const [autoDetectCooldown, setAutoDetectCooldown] = useState(false);
+  const [lastDetectedGameTime, setLastDetectedGameTime] = useState<string | null>(null);
+  
   // Auto-capture interval ref
   const captureIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const autoDetectIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Check browser support
   const isSupported = isScreenCaptureSupported() || isCameraSupported();
@@ -122,8 +130,105 @@ export function ScoutLiveCapture({
       if (captureIntervalRef.current) {
         clearInterval(captureIntervalRef.current);
       }
+      if (autoDetectIntervalRef.current) {
+        clearInterval(autoDetectIntervalRef.current);
+      }
     };
   }, [mediaStream]);
+
+  // Auto-detection interval
+  useEffect(() => {
+    if (isCapturing && autoDetectEnabled) {
+      autoDetectIntervalRef.current = setInterval(() => {
+        runAutoDetection();
+      }, 6000); // Every 6 seconds
+    } else {
+      if (autoDetectIntervalRef.current) {
+        clearInterval(autoDetectIntervalRef.current);
+        autoDetectIntervalRef.current = null;
+      }
+    }
+    
+    return () => {
+      if (autoDetectIntervalRef.current) {
+        clearInterval(autoDetectIntervalRef.current);
+      }
+    };
+  }, [isCapturing, autoDetectEnabled]);
+
+  const runAutoDetection = async () => {
+    if (!videoRef.current || !isCapturing || autoDetectCooldown || isMarkingMoment) return;
+    
+    try {
+      const frame = captureFrame(videoRef.current);
+      
+      const { data, error } = await supabase.functions.invoke('analyze-live-frame', {
+        body: {
+          frames: [frame],
+          gameContext,
+          momentType: 'auto',
+          isPriority: false,
+          isAutoDetect: true,
+        },
+      });
+      
+      if (error) {
+        console.error('Auto-detection error:', error);
+        return;
+      }
+      
+      // Always update game time if detected
+      if (data?.gameTime) {
+        setLastDetectedGameTime(data.gameTime);
+      }
+      
+      // Check if a key moment was detected with sufficient confidence
+      if (data?.detectedMoment && data.confidence !== 'low') {
+        toast({
+          title: `🚨 ${data.detectedMoment.toUpperCase()} Detected!`,
+          description: data.reason || 'AI spotted a key moment',
+        });
+        
+        // Set cooldown to prevent spam (15 seconds)
+        setAutoDetectCooldown(true);
+        setTimeout(() => setAutoDetectCooldown(false), 15000);
+        
+        // Auto-capture with detected type
+        await autoMarkKeyMoment(data.detectedMoment, data.gameTime);
+      }
+    } catch (error) {
+      console.error('Auto-detection failed:', error);
+    }
+  };
+
+  const autoMarkKeyMoment = async (momentType: string, detectedGameTime: string | null) => {
+    if (!videoRef.current || !isCapturing) return;
+    
+    playHapticFeedback();
+    
+    try {
+      // Capture burst of 5 frames
+      const frames = await captureFrameBurst(videoRef.current, 5, 200);
+      
+      const moment: KeyMoment = {
+        id: crypto.randomUUID(),
+        timestamp: new Date(),
+        type: momentType as KeyMoment['type'],
+        label: `🤖 ${getMomentLabel(momentType)}`,
+        frames,
+        priority: 'high',
+        analyzed: false,
+        gameTime: detectedGameTime || lastDetectedGameTime || undefined,
+      };
+      
+      setKeyMoments(prev => [...prev, moment]);
+      
+      // Run detailed analysis
+      analyzeKeyMoment(moment);
+    } catch (error) {
+      console.error('Auto mark key moment failed:', error);
+    }
+  };
 
   // Update parent when observations change
   useEffect(() => {
@@ -391,6 +496,21 @@ export function ScoutLiveCapture({
             <div className="absolute top-3 left-3 flex items-center gap-2 bg-black/50 px-3 py-1.5 rounded-full">
               <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
               <span className="text-white text-sm font-medium">LIVE</span>
+              {lastDetectedGameTime && (
+                <Badge variant="outline" className="text-white border-white/50 text-xs font-mono">
+                  {lastDetectedGameTime}
+                </Badge>
+              )}
+            </div>
+          )}
+          
+          {/* Auto-detect indicator */}
+          {isCapturing && autoDetectEnabled && (
+            <div className="absolute top-3 right-3 flex items-center gap-2 bg-black/50 px-3 py-1.5 rounded-full">
+              <Bot className={`w-4 h-4 ${autoDetectCooldown ? 'text-yellow-400' : 'text-green-400'}`} />
+              {!autoDetectCooldown && (
+                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+              )}
             </div>
           )}
 
@@ -454,6 +574,26 @@ export function ScoutLiveCapture({
                 )}
               </SelectContent>
             </Select>
+          )}
+
+          {/* Auto-Detect Toggle */}
+          {isCapturing && (
+            <div className="flex items-center justify-between p-3 bg-muted/30 rounded-lg border border-border/30">
+              <div className="flex items-center gap-2">
+                <Bot className="w-4 h-4 text-primary" />
+                <span className="text-sm font-medium">Auto-Detect Moments</span>
+                {autoDetectEnabled && !autoDetectCooldown && (
+                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                )}
+                {autoDetectCooldown && (
+                  <Badge variant="secondary" className="text-xs">Cooldown</Badge>
+                )}
+              </div>
+              <Switch
+                checked={autoDetectEnabled}
+                onCheckedChange={setAutoDetectEnabled}
+              />
+            </div>
           )}
 
           {/* Start/Stop Button */}

@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
 import { Calendar, Clock, Users, ChevronRight, RefreshCw } from "lucide-react";
 import type { GameContext } from "@/pages/Scout";
+import { toZonedTime, format } from "date-fns-tz";
 
 const CACHE_KEY = 'scout_props_last_refresh';
 const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
@@ -83,17 +84,25 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
 
   const fetchTodaysGames = async (): Promise<number> => {
     try {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
+      // Use Eastern Time for "today" to match NBA schedule
+      const now = new Date();
+      const easternTimeZone = 'America/New_York';
+      const easternNow = toZonedTime(now, easternTimeZone);
+      
+      // Get start of today in Eastern Time
+      const todayStart = new Date(easternNow);
+      todayStart.setHours(0, 0, 0, 0);
+      
+      // Get end of today in Eastern Time
+      const todayEnd = new Date(easternNow);
+      todayEnd.setHours(23, 59, 59, 999);
 
       const { data, error } = await supabase
         .from('unified_props')
         .select('event_id, game_description, commence_time')
         .eq('sport', 'basketball_nba')
-        .gte('commence_time', today.toISOString())
-        .lt('commence_time', tomorrow.toISOString())
+        .gte('commence_time', todayStart.toISOString())
+        .lt('commence_time', todayEnd.toISOString())
         .order('commence_time', { ascending: true });
 
       if (error) throw error;
@@ -172,11 +181,10 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
   };
 
   const formatTime = (isoString: string) => {
-    return new Date(isoString).toLocaleTimeString('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-    });
+    // Convert to Eastern Time for display (NBA schedule times)
+    const date = new Date(isoString);
+    const easternDate = toZonedTime(date, 'America/New_York');
+    return format(easternDate, 'h:mm a', { timeZone: 'America/New_York' });
   };
 
   const getGameStatus = (commenceTime: string) => {
