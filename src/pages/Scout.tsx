@@ -8,8 +8,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScoutVideoUpload } from "@/components/scout/ScoutVideoUpload";
 import { ScoutAnalysisResults } from "@/components/scout/ScoutAnalysisResults";
 import { ScoutGameSelector } from "@/components/scout/ScoutGameSelector";
+import { ScoutLiveCapture, LiveObservation } from "@/components/scout/ScoutLiveCapture";
 import { useToast } from "@/hooks/use-toast";
-import { Video, Eye, Zap, Clock, Users } from "lucide-react";
+import { Video, Eye, Zap, Clock, Users, Upload, Radio } from "lucide-react";
 
 export interface GameContext {
   eventId: string;
@@ -72,6 +73,22 @@ const Scout = () => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [extractedFrames, setExtractedFrames] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState("upload");
+  const [scoutMode, setScoutMode] = useState<'upload' | 'live'>('upload');
+  const [liveObservations, setLiveObservations] = useState<LiveObservation[]>([]);
+
+  const handleLiveObservationsUpdate = useCallback((observations: LiveObservation[]) => {
+    setLiveObservations(observations);
+  }, []);
+
+  const handleLiveAnalysisComplete = useCallback((result: AnalysisResult, frames: string[]) => {
+    setAnalysisResult(result);
+    setExtractedFrames(frames);
+    setActiveTab("results");
+    toast({
+      title: "Halftime Analysis Complete",
+      description: `Found ${result.recommendations.length} prop recommendations`,
+    });
+  }, [toast]);
 
   const handleGameSelect = useCallback((game: GameContext) => {
     setSelectedGame(game);
@@ -121,72 +138,109 @@ const Scout = () => {
 
         {selectedGame && (
           <>
-            {/* Clip Category Selector */}
-            <Card className="border-border/50">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Video className="w-4 h-4 text-chart-3" />
-                  Clip Category
-                </CardTitle>
-                <CardDescription>
-                  Select what type of footage you're uploading for targeted analysis
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Select value={clipCategory} onValueChange={setClipCategory}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Select clip type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="timeout">
-                      <div className="flex items-center gap-2">
-                        <Clock className="w-4 h-4" />
-                        Timeout / Huddle - Fatigue indicators
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="fastbreak">
-                      <div className="flex items-center gap-2">
-                        <Zap className="w-4 h-4" />
-                        Fast Break - Explosion & pace
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="freethrow">
-                      <div className="flex items-center gap-2">
-                        <span>🎯</span>
-                        Free Throws - Shot mechanics
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="defense">
-                      <div className="flex items-center gap-2">
-                        <Users className="w-4 h-4" />
-                        Half-court Defense - Rotation discipline
-                      </div>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </CardContent>
-            </Card>
-
-            {/* Main Content Tabs */}
-            <Tabs value={activeTab} onValueChange={setActiveTab}>
+            {/* Mode Toggle */}
+            <Tabs value={scoutMode} onValueChange={(v) => setScoutMode(v as 'upload' | 'live')} className="w-full">
               <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="upload">Upload & Analyze</TabsTrigger>
-                <TabsTrigger value="results" disabled={!analysisResult}>
-                  Results {analysisResult && `(${analysisResult.recommendations.length})`}
+                <TabsTrigger value="upload" className="gap-2">
+                  <Upload className="w-4 h-4" />
+                  Upload Clips
+                </TabsTrigger>
+                <TabsTrigger value="live" className="gap-2">
+                  <Radio className="w-4 h-4" />
+                  Live Stream
                 </TabsTrigger>
               </TabsList>
-              
-              <TabsContent value="upload" className="mt-4">
-                <ScoutVideoUpload
+            </Tabs>
+
+            {scoutMode === 'upload' && (
+              <>
+                {/* Clip Category Selector */}
+                <Card className="border-border/50">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <Video className="w-4 h-4 text-chart-3" />
+                      Clip Category
+                    </CardTitle>
+                    <CardDescription>
+                      Select what type of footage you're uploading for targeted analysis
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Select value={clipCategory} onValueChange={setClipCategory}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Select clip type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="timeout">
+                          <div className="flex items-center gap-2">
+                            <Clock className="w-4 h-4" />
+                            Timeout / Huddle - Fatigue indicators
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="fastbreak">
+                          <div className="flex items-center gap-2">
+                            <Zap className="w-4 h-4" />
+                            Fast Break - Explosion & pace
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="freethrow">
+                          <div className="flex items-center gap-2">
+                            <span>🎯</span>
+                            Free Throws - Shot mechanics
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="defense">
+                          <div className="flex items-center gap-2">
+                            <Users className="w-4 h-4" />
+                            Half-court Defense - Rotation discipline
+                          </div>
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </CardContent>
+                </Card>
+
+                {/* Main Content Tabs */}
+                <Tabs value={activeTab} onValueChange={setActiveTab}>
+                  <TabsList className="grid w-full grid-cols-2">
+                    <TabsTrigger value="upload">Upload & Analyze</TabsTrigger>
+                    <TabsTrigger value="results" disabled={!analysisResult}>
+                      Results {analysisResult && `(${analysisResult.recommendations.length})`}
+                    </TabsTrigger>
+                  </TabsList>
+                  
+                  <TabsContent value="upload" className="mt-4">
+                    <ScoutVideoUpload
+                      gameContext={selectedGame}
+                      clipCategory={clipCategory}
+                      onAnalysisComplete={handleAnalysisComplete}
+                      isAnalyzing={isAnalyzing}
+                      setIsAnalyzing={setIsAnalyzing}
+                    />
+                  </TabsContent>
+                  
+                  <TabsContent value="results" className="mt-4">
+                    {analysisResult && (
+                      <ScoutAnalysisResults
+                        result={analysisResult}
+                        frames={extractedFrames}
+                        gameContext={selectedGame}
+                      />
+                    )}
+                  </TabsContent>
+                </Tabs>
+              </>
+            )}
+
+            {scoutMode === 'live' && (
+              <div className="space-y-4">
+                <ScoutLiveCapture
                   gameContext={selectedGame}
-                  clipCategory={clipCategory}
-                  onAnalysisComplete={handleAnalysisComplete}
-                  isAnalyzing={isAnalyzing}
-                  setIsAnalyzing={setIsAnalyzing}
+                  onObservationsUpdate={handleLiveObservationsUpdate}
+                  onHalftimeAnalysis={handleLiveAnalysisComplete}
                 />
-              </TabsContent>
-              
-              <TabsContent value="results" className="mt-4">
+                
+                {/* Show results after halftime analysis */}
                 {analysisResult && (
                   <ScoutAnalysisResults
                     result={analysisResult}
@@ -194,8 +248,8 @@ const Scout = () => {
                     gameContext={selectedGame}
                   />
                 )}
-              </TabsContent>
-            </Tabs>
+              </div>
+            )}
           </>
         )}
 
