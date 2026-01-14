@@ -75,9 +75,11 @@ export function SweetSpotPicksCard() {
   const { data: trackedPicks, isLoading: trackingLoading, refetch: refetchTracking } = useQuery({
     queryKey: ["sweet-spot-tracking"],
     queryFn: async () => {
+      const today = format(new Date(), "yyyy-MM-dd");
       const { data, error } = await supabase
         .from("sweet_spot_tracking")
         .select("*")
+        .gte("game_date", today)
         .order("created_at", { ascending: false })
         .limit(20);
 
