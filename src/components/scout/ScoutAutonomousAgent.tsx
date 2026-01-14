@@ -139,7 +139,7 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
     }
   };
 
-  const runAgentLoop = async () => {
+  const runAgentLoop = async (retryCount = 0) => {
     if (!videoRef.current || !state.isRunning || state.isPaused) return;
     
     try {
@@ -156,7 +156,15 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
         },
       });
       
+      // Handle transient errors with retry
+      if (data?.retryAfter && retryCount < 2) {
+        console.log(`[Autopilot] Transient error, retrying in ${data.retryAfter}ms...`);
+        setTimeout(() => runAgentLoop(retryCount + 1), data.retryAfter);
+        return;
+      }
+      
       if (!error && data) {
+        // Process response even if it has warnings
         processAgentResponse(data);
         
         // Show notification if warranted
@@ -168,6 +176,7 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
         }
       }
     } catch (error) {
+      // Only log, don't show toast for transient errors
       console.error('[Autopilot] Agent loop error:', error);
     }
   };
