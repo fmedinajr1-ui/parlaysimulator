@@ -42,6 +42,7 @@ serve(async (req) => {
     heat_parlays_deleted: 0,
     risk_engine_picks_deleted: 0,
     prop_v2_picks_deleted: 0,
+    sweet_spot_tracking_deleted: 0,
     errors: [] as string[],
   };
 
@@ -98,6 +99,21 @@ serve(async (req) => {
       } else {
         results.prop_v2_picks_deleted = staleV2Picks?.length || 0;
         console.log(`[Cleanup] Deleted ${results.prop_v2_picks_deleted} past prop v2 picks`);
+      }
+
+      // 4. Delete sweet_spot_tracking for past game dates
+      const { data: staleSweetSpot, error: staleSweetSpotError } = await supabase
+        .from('sweet_spot_tracking')
+        .delete()
+        .lt('game_date', todayEastern)
+        .select('id');
+
+      if (staleSweetSpotError) {
+        console.error('[Cleanup] Error deleting stale sweet spot tracking:', staleSweetSpotError);
+        results.errors.push(`sweet_spot_tracking: ${staleSweetSpotError.message}`);
+      } else {
+        results.sweet_spot_tracking_deleted = staleSweetSpot?.length || 0;
+        console.log(`[Cleanup] Deleted ${results.sweet_spot_tracking_deleted} past sweet spot picks`);
       }
 
       const durationMs = Date.now() - startTime;
