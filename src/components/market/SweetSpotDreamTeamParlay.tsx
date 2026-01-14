@@ -1,8 +1,11 @@
+import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Target, Trophy, Zap, Users, Plus, Loader2, TrendingUp } from "lucide-react";
+import { Target, Trophy, Zap, Users, Plus, Loader2, TrendingUp, RefreshCw } from "lucide-react";
 import { useSweetSpotParlayBuilder } from "@/hooks/useSweetSpotParlayBuilder";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 
 const getPropTypeColor = (propType: string): string => {
   const type = propType.toLowerCase();
@@ -20,12 +23,30 @@ const getConfidenceColor = (confidence: number): string => {
 };
 
 export function SweetSpotDreamTeamParlay() {
+  const [isRegenerating, setIsRegenerating] = useState(false);
   const { 
     optimalParlay, 
     combinedStats, 
     isLoading, 
-    addOptimalParlayToBuilder 
+    addOptimalParlayToBuilder,
+    refetch 
   } = useSweetSpotParlayBuilder();
+
+  const handleRegenerate = async () => {
+    setIsRegenerating(true);
+    try {
+      await supabase.functions.invoke('nba-player-prop-risk-engine', {
+        body: { action: 'analyze_slate', mode: 'full_slate' }
+      });
+      await refetch();
+      toast.success('Dream Team parlay regenerated!');
+    } catch (err) {
+      console.error('Regeneration error:', err);
+      toast.error('Failed to regenerate picks');
+    } finally {
+      setIsRegenerating(false);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -61,14 +82,25 @@ export function SweetSpotDreamTeamParlay() {
               <p className="text-xs text-muted-foreground">Optimal {combinedStats.legCount}-leg parlay</p>
             </div>
           </div>
-          <Button 
-            size="sm" 
-            onClick={addOptimalParlayToBuilder}
-            className="gap-1"
-          >
-            <Plus className="h-4 w-4" />
-            Add to Builder
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button 
+              variant="ghost"
+              size="sm"
+              onClick={handleRegenerate}
+              disabled={isRegenerating || isLoading}
+              className="h-8 w-8 p-0"
+            >
+              <RefreshCw className={`h-4 w-4 ${isRegenerating ? 'animate-spin' : ''}`} />
+            </Button>
+            <Button 
+              size="sm" 
+              onClick={addOptimalParlayToBuilder}
+              className="gap-1"
+            >
+              <Plus className="h-4 w-4" />
+              Add to Builder
+            </Button>
+          </div>
         </div>
 
         {/* Stats Row */}
