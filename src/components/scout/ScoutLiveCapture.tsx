@@ -19,7 +19,8 @@ import {
   Square,
   Monitor,
   Loader2,
-  Activity
+  Activity,
+  Camera
 } from "lucide-react";
 import { GameContext, AnalysisResult } from "@/pages/Scout";
 import {
@@ -29,6 +30,9 @@ import {
   captureFrameBurst,
   playHapticFeedback,
   isScreenCaptureSupported,
+  isCameraSupported,
+  getVideoDevices,
+  requestCameraCapture,
   getMomentLabel,
   formatCaptureTime,
 } from "@/lib/live-stream-capture";
@@ -87,11 +91,29 @@ export function ScoutLiveCapture({
   const [gameTimeMinutes, setGameTimeMinutes] = useState<string>('');
   const [gameTimeSeconds, setGameTimeSeconds] = useState<string>('');
   
+  // Capture mode state (screen share vs capture card)
+  const [captureMode, setCaptureMode] = useState<'screen' | 'camera'>('screen');
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+  
   // Auto-capture interval ref
   const captureIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Check browser support
-  const isSupported = isScreenCaptureSupported();
+  const isSupported = isScreenCaptureSupported() || isCameraSupported();
+
+  // Load video devices on mount
+  useEffect(() => {
+    async function loadDevices() {
+      const devices = await getVideoDevices();
+      setVideoDevices(devices);
+      // Auto-select first device if available
+      if (devices.length > 0 && !selectedDeviceId) {
+        setSelectedDeviceId(devices[0].deviceId);
+      }
+    }
+    loadDevices();
+  }, []);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -110,7 +132,14 @@ export function ScoutLiveCapture({
 
   const startCapture = async () => {
     try {
-      const stream = await requestScreenCapture();
+      let stream: MediaStream;
+      
+      if (captureMode === 'camera') {
+        stream = await requestCameraCapture(selectedDeviceId || undefined);
+      } else {
+        stream = await requestScreenCapture();
+      }
+      
       setMediaStream(stream);
       setIsCapturing(true);
       
@@ -125,17 +154,19 @@ export function ScoutLiveCapture({
 
       toast({
         title: "Live Capture Started",
-        description: "AI is now monitoring your stream",
+        description: captureMode === 'camera' 
+          ? "Capture card connected - AI is now monitoring"
+          : "AI is now monitoring your stream",
       });
 
-      // Handle stream end (user stops sharing)
+      // Handle stream end (user stops sharing or disconnects device)
       stream.getVideoTracks()[0].onended = () => {
         handleStopCapture();
       };
     } catch (error) {
       toast({
         title: "Capture Failed",
-        description: error instanceof Error ? error.message : "Could not start screen capture",
+        description: error instanceof Error ? error.message : "Could not start capture",
         variant: "destructive",
       });
     }
@@ -381,12 +412,57 @@ export function ScoutLiveCapture({
 
         {/* Capture Controls */}
         <CardContent className="p-4 space-y-4">
+          {/* Capture Mode Toggle */}
+          {!isCapturing && (
+            <div className="flex gap-2">
+              <Button
+                variant={captureMode === 'screen' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setCaptureMode('screen')}
+                className="flex-1"
+              >
+                <Monitor className="w-4 h-4 mr-2" />
+                Screen Share
+              </Button>
+              <Button
+                variant={captureMode === 'camera' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setCaptureMode('camera')}
+                className="flex-1"
+              >
+                <Camera className="w-4 h-4 mr-2" />
+                Capture Card
+              </Button>
+            </div>
+          )}
+
+          {/* Device Selector (shown in camera mode when not capturing) */}
+          {!isCapturing && captureMode === 'camera' && (
+            <Select value={selectedDeviceId} onValueChange={setSelectedDeviceId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select capture device" />
+              </SelectTrigger>
+              <SelectContent>
+                {videoDevices.length === 0 ? (
+                  <SelectItem value="none" disabled>No devices found</SelectItem>
+                ) : (
+                  videoDevices.map((device, index) => (
+                    <SelectItem key={device.deviceId} value={device.deviceId}>
+                      {device.label || `Camera ${index + 1}`}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+          )}
+
           {/* Start/Stop Button */}
           {!isCapturing ? (
             <Button 
               onClick={startCapture} 
               size="lg" 
               className="w-full h-14"
+              disabled={captureMode === 'camera' && videoDevices.length === 0}
             >
               <Play className="w-5 h-5 mr-2" />
               Start Watching

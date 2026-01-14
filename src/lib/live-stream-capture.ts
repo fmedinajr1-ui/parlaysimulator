@@ -118,6 +118,58 @@ export function isScreenCaptureSupported(): boolean {
 }
 
 /**
+ * Check if camera access is supported (for capture cards)
+ */
+export function isCameraSupported(): boolean {
+  return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+}
+
+/**
+ * Get list of available video input devices (cameras, capture cards)
+ */
+export async function getVideoDevices(): Promise<MediaDeviceInfo[]> {
+  try {
+    // Request permission first to get device labels
+    await navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+      stream.getTracks().forEach(track => track.stop());
+    }).catch(() => {});
+    
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    return devices.filter(device => device.kind === 'videoinput');
+  } catch (error) {
+    console.error('Failed to enumerate video devices:', error);
+    return [];
+  }
+}
+
+/**
+ * Request camera/capture card access by device ID
+ */
+export async function requestCameraCapture(deviceId?: string): Promise<MediaStream> {
+  try {
+    const constraints: MediaStreamConstraints = {
+      video: deviceId 
+        ? { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
+        : { width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false,
+    };
+    
+    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    return stream;
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.name === 'NotAllowedError') {
+        throw new Error('Camera permission denied');
+      }
+      if (error.name === 'NotFoundError') {
+        throw new Error('No camera or capture card found');
+      }
+    }
+    throw new Error('Failed to access camera/capture card');
+  }
+}
+
+/**
  * Get moment type label for display
  */
 export function getMomentLabel(type: string): string {
