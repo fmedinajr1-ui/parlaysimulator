@@ -9,8 +9,9 @@ import { ScoutVideoUpload } from "@/components/scout/ScoutVideoUpload";
 import { ScoutAnalysisResults } from "@/components/scout/ScoutAnalysisResults";
 import { ScoutGameSelector } from "@/components/scout/ScoutGameSelector";
 import { ScoutLiveCapture, LiveObservation } from "@/components/scout/ScoutLiveCapture";
+import { ScoutAutonomousAgent } from "@/components/scout/ScoutAutonomousAgent";
 import { useToast } from "@/hooks/use-toast";
-import { Video, Eye, Zap, Clock, Users, Upload, Radio } from "lucide-react";
+import { Video, Eye, Zap, Clock, Users, Upload, Radio, Bot } from "lucide-react";
 
 export interface GameContext {
   eventId: string;
@@ -73,7 +74,7 @@ const Scout = () => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [extractedFrames, setExtractedFrames] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState("upload");
-  const [scoutMode, setScoutMode] = useState<'upload' | 'live'>('upload');
+  const [scoutMode, setScoutMode] = useState<'upload' | 'live' | 'autopilot'>('upload');
   const [liveObservations, setLiveObservations] = useState<LiveObservation[]>([]);
 
   const handleLiveObservationsUpdate = useCallback((observations: LiveObservation[]) => {
@@ -139,15 +140,19 @@ const Scout = () => {
         {selectedGame && (
           <>
             {/* Mode Toggle */}
-            <Tabs value={scoutMode} onValueChange={(v) => setScoutMode(v as 'upload' | 'live')} className="w-full">
-              <TabsList className="grid w-full grid-cols-2">
+            <Tabs value={scoutMode} onValueChange={(v) => setScoutMode(v as 'upload' | 'live' | 'autopilot')} className="w-full">
+              <TabsList className="grid w-full grid-cols-3">
                 <TabsTrigger value="upload" className="gap-2">
                   <Upload className="w-4 h-4" />
-                  Upload Clips
+                  Upload
                 </TabsTrigger>
                 <TabsTrigger value="live" className="gap-2">
                   <Radio className="w-4 h-4" />
-                  Live Stream
+                  Live
+                </TabsTrigger>
+                <TabsTrigger value="autopilot" className="gap-2">
+                  <Bot className="w-4 h-4" />
+                  Autopilot
                 </TabsTrigger>
               </TabsList>
             </Tabs>
@@ -249,6 +254,10 @@ const Scout = () => {
                   />
                 )}
               </div>
+            )}
+
+            {scoutMode === 'autopilot' && (
+              <ScoutAutonomousAgent gameContext={selectedGame} />
             )}
           </>
         )}
