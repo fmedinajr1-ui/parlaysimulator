@@ -3,6 +3,9 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { 
   Video, 
@@ -14,7 +17,9 @@ import {
   Star,
   Play,
   Square,
-  Monitor
+  Monitor,
+  Loader2,
+  Activity
 } from "lucide-react";
 import { GameContext, AnalysisResult } from "@/pages/Scout";
 import {
@@ -38,6 +43,7 @@ export interface KeyMoment {
   priority: 'high';
   analyzed: boolean;
   observations?: string[];
+  gameTime?: string; // "Q1 8:42" format
 }
 
 export interface LiveObservation {
@@ -71,6 +77,15 @@ export function ScoutLiveCapture({
   const [observations, setObservations] = useState<LiveObservation[]>([]);
   const [isGeneratingAnalysis, setIsGeneratingAnalysis] = useState(false);
   const [autoFrameCount, setAutoFrameCount] = useState(0);
+  const [capturedFrames, setCapturedFrames] = useState<string[]>([]);
+  
+  // Game time input state
+  const [showGameTimeInput, setShowGameTimeInput] = useState(false);
+  const [pendingMomentType, setPendingMomentType] = useState<string | null>(null);
+  const [tempCapturedFrames, setTempCapturedFrames] = useState<string[]>([]);
+  const [gameTimeQuarter, setGameTimeQuarter] = useState<string>('Q1');
+  const [gameTimeMinutes, setGameTimeMinutes] = useState<string>('');
+  const [gameTimeSeconds, setGameTimeSeconds] = useState<string>('');
   
   // Auto-capture interval ref
   const captureIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -147,52 +162,75 @@ export function ScoutLiveCapture({
     
     try {
       const frame = captureFrame(videoRef.current);
+      setCapturedFrames(prev => [...prev, frame]);
       setAutoFrameCount(prev => prev + 1);
-      // Auto frames are queued but not immediately analyzed
-      // They'll be used in halftime compilation
     } catch (error) {
       console.error('Auto capture failed:', error);
     }
   };
 
-  const markKeyMoment = async (momentType: 'timeout' | 'injury' | 'fastbreak' | 'freethrow' | 'other') => {
-    if (!videoRef.current || !isCapturing) return;
+  const formatGameTime = (quarter: string, minutes: string, seconds: string): string => {
+    const mins = minutes.padStart(2, '0');
+    const secs = (seconds || '00').padStart(2, '0');
+    return `${quarter} ${mins}:${secs}`;
+  };
 
+  const resetGameTimeInput = () => {
+    setShowGameTimeInput(false);
+    setPendingMomentType(null);
+    setTempCapturedFrames([]);
+    setGameTimeQuarter('Q1');
+    setGameTimeMinutes('');
+    setGameTimeSeconds('');
+    setIsMarkingMoment(false);
+  };
+
+  const startMarkKeyMoment = async (momentType: string) => {
+    if (!videoRef.current || !isCapturing) return;
+    
     setIsMarkingMoment(true);
     playHapticFeedback();
-
+    
     try {
-      // Capture 5 frames in rapid succession
+      // Capture 5 frames immediately (rapid burst)
       const frames = await captureFrameBurst(videoRef.current, 5, 200);
-
-      const moment: KeyMoment = {
-        id: crypto.randomUUID(),
-        timestamp: new Date(),
-        type: momentType,
-        label: getMomentLabel(momentType),
-        frames,
-        priority: 'high',
-        analyzed: false,
-      };
-
-      setKeyMoments(prev => [...prev, moment]);
-
-      toast({
-        title: "Key Moment Captured!",
-        description: `${moment.label} - 5 frames saved for priority analysis`,
-      });
-
-      // Analyze key moment immediately
-      analyzeKeyMoment(moment);
+      setTempCapturedFrames(frames);
+      setPendingMomentType(momentType);
+      setShowGameTimeInput(true);
     } catch (error) {
+      console.error('Error capturing frames:', error);
       toast({
         title: "Capture Failed",
         description: "Could not capture key moment frames",
         variant: "destructive",
       });
-    } finally {
       setIsMarkingMoment(false);
     }
+  };
+
+  const confirmKeyMoment = (gameTime: string | null) => {
+    if (!pendingMomentType) return;
+    
+    const moment: KeyMoment = {
+      id: crypto.randomUUID(),
+      timestamp: new Date(),
+      type: pendingMomentType as KeyMoment['type'],
+      label: getMomentLabel(pendingMomentType),
+      frames: tempCapturedFrames,
+      priority: 'high',
+      analyzed: false,
+      gameTime: gameTime || undefined,
+    };
+    
+    setKeyMoments(prev => [...prev, moment]);
+
+    toast({
+      title: "Key Moment Captured!",
+      description: `${moment.label}${gameTime ? ` at ${gameTime}` : ''} - 5 frames saved`,
+    });
+
+    analyzeKeyMoment(moment);
+    resetGameTimeInput();
   };
 
   const analyzeKeyMoment = async (moment: KeyMoment) => {
@@ -212,7 +250,7 @@ export function ScoutLiveCapture({
         const newObservations: LiveObservation[] = data.observations.map((obs: any) => ({
           id: crypto.randomUUID(),
           timestamp: new Date(),
-          gameTime: data.gameTime || 'Unknown',
+          gameTime: moment.gameTime || data.gameTime || 'Unknown',
           type: obs.type || 'fatigue',
           playerName: obs.playerName || 'Unknown',
           observation: obs.observation,
@@ -231,14 +269,13 @@ export function ScoutLiveCapture({
       }
     } catch (error) {
       console.error('Key moment analysis failed:', error);
-      // Don't show error toast for each frame, just log
     }
   };
 
   const generateHalftimeAnalysis = async () => {
-    if (keyMoments.length === 0) {
+    if (keyMoments.length === 0 && capturedFrames.length === 0) {
       toast({
-        title: "No Key Moments",
+        title: "No Data",
         description: "Mark some key moments first for halftime analysis",
         variant: "destructive",
       });
@@ -248,25 +285,32 @@ export function ScoutLiveCapture({
     setIsGeneratingAnalysis(true);
 
     try {
-      // Collect all key moment frames
-      const allFrames = keyMoments.flatMap(m => m.frames);
-      
-      const { data, error } = await supabase.functions.invoke('analyze-game-footage', {
+      const { data, error } = await supabase.functions.invoke('compile-halftime-analysis', {
         body: {
-          frames: allFrames,
           gameContext,
-          clipCategory: 'halftime-compilation',
           keyMoments: keyMoments.map(m => ({
             type: m.type,
+            gameTime: m.gameTime || null,
             timestamp: m.timestamp.toISOString(),
-            frameCount: m.frames.length,
+            frames: m.frames,
+            observations: m.observations,
           })),
+          liveObservations: observations.map(o => ({
+            playerName: o.playerName,
+            type: o.type,
+            observation: o.observation,
+            confidence: o.confidence,
+            gameTime: o.gameTime,
+          })),
+          capturedFrames: capturedFrames.slice(-10),
         },
       });
 
       if (error) throw error;
 
       if (data) {
+        // Collect all frames for the result
+        const allFrames = keyMoments.flatMap(m => m.frames);
         onHalftimeAnalysis(data, allFrames);
         toast({
           title: "Halftime Analysis Complete",
@@ -359,26 +403,114 @@ export function ScoutLiveCapture({
             </Button>
           )}
 
-          {/* Mark Key Moment Button - PROMINENT */}
+          {/* Mark Key Moment Button with Game Time Input */}
           {isCapturing && (
             <>
-              <Button
-                onClick={() => markKeyMoment('other')}
-                size="lg"
-                variant="neon"
-                className="w-full h-16 text-lg font-bold"
-                disabled={isMarkingMoment}
-              >
-                <Zap className="w-6 h-6 mr-2" />
-                {isMarkingMoment ? 'CAPTURING...' : 'MARK KEY MOMENT'}
-              </Button>
+              <Popover open={showGameTimeInput} onOpenChange={(open) => {
+                if (!open) resetGameTimeInput();
+              }}>
+                <PopoverTrigger asChild>
+                  <Button
+                    onClick={() => startMarkKeyMoment('other')}
+                    size="lg"
+                    variant="neon"
+                    className="w-full h-16 text-lg font-bold"
+                    disabled={isMarkingMoment && !showGameTimeInput}
+                  >
+                    {isMarkingMoment && !showGameTimeInput ? (
+                      <>
+                        <Loader2 className="w-6 h-6 mr-2 animate-spin" />
+                        CAPTURING...
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="w-6 h-6 mr-2" />
+                        MARK KEY MOMENT
+                      </>
+                    )}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-72 p-4" align="center">
+                  <div className="space-y-4">
+                    <h4 className="font-medium text-sm">Add Game Time (optional)</h4>
+                    
+                    {/* Quarter Select */}
+                    <Select value={gameTimeQuarter} onValueChange={setGameTimeQuarter}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Quarter" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Q1">Q1</SelectItem>
+                        <SelectItem value="Q2">Q2</SelectItem>
+                        <SelectItem value="Q3">Q3</SelectItem>
+                        <SelectItem value="Q4">Q4</SelectItem>
+                        <SelectItem value="OT">OT</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    
+                    {/* Time Inputs */}
+                    <div className="flex items-center gap-2">
+                      <Input 
+                        type="number" 
+                        placeholder="MM" 
+                        value={gameTimeMinutes}
+                        onChange={(e) => setGameTimeMinutes(e.target.value.slice(0, 2))}
+                        className="w-20 text-center text-lg"
+                        min={0} 
+                        max={12}
+                      />
+                      <span className="text-xl font-bold">:</span>
+                      <Input 
+                        type="number" 
+                        placeholder="SS" 
+                        value={gameTimeSeconds}
+                        onChange={(e) => setGameTimeSeconds(e.target.value.slice(0, 2))}
+                        className="w-20 text-center text-lg"
+                        min={0} 
+                        max={59}
+                      />
+                    </div>
+                    
+                    {/* Pending moment type badge */}
+                    {pendingMomentType && (
+                      <Badge variant="secondary" className="w-full justify-center py-1">
+                        {getMomentLabel(pendingMomentType)}
+                      </Badge>
+                    )}
+                    
+                    {/* Actions */}
+                    <div className="flex gap-2">
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        onClick={() => confirmKeyMoment(null)}
+                        className="flex-1"
+                      >
+                        Skip
+                      </Button>
+                      <Button 
+                        size="sm" 
+                        onClick={() => {
+                          const gt = gameTimeMinutes 
+                            ? formatGameTime(gameTimeQuarter, gameTimeMinutes, gameTimeSeconds)
+                            : null;
+                          confirmKeyMoment(gt);
+                        }}
+                        className="flex-1"
+                      >
+                        Save
+                      </Button>
+                    </div>
+                  </div>
+                </PopoverContent>
+              </Popover>
 
               {/* Quick moment type buttons */}
               <div className="grid grid-cols-4 gap-2">
                 <Button 
                   variant="outline" 
                   size="sm" 
-                  onClick={() => markKeyMoment('timeout')}
+                  onClick={() => startMarkKeyMoment('timeout')}
                   disabled={isMarkingMoment}
                   className="flex flex-col h-auto py-2"
                 >
@@ -388,7 +520,7 @@ export function ScoutLiveCapture({
                 <Button 
                   variant="outline" 
                   size="sm" 
-                  onClick={() => markKeyMoment('injury')}
+                  onClick={() => startMarkKeyMoment('injury')}
                   disabled={isMarkingMoment}
                   className="flex flex-col h-auto py-2"
                 >
@@ -398,7 +530,7 @@ export function ScoutLiveCapture({
                 <Button 
                   variant="outline" 
                   size="sm" 
-                  onClick={() => markKeyMoment('fastbreak')}
+                  onClick={() => startMarkKeyMoment('fastbreak')}
                   disabled={isMarkingMoment}
                   className="flex flex-col h-auto py-2"
                 >
@@ -408,7 +540,7 @@ export function ScoutLiveCapture({
                 <Button 
                   variant="outline" 
                   size="sm" 
-                  onClick={() => markKeyMoment('freethrow')}
+                  onClick={() => startMarkKeyMoment('freethrow')}
                   disabled={isMarkingMoment}
                   className="flex flex-col h-auto py-2"
                 >
@@ -439,25 +571,32 @@ export function ScoutLiveCapture({
                 {keyMoments.map(moment => (
                   <div 
                     key={moment.id} 
-                    className="flex items-center gap-3 p-2 rounded-lg bg-muted/30 border border-border/30"
+                    className="flex items-center gap-2 p-2 rounded-lg bg-muted/30 border border-border/30"
                   >
+                    {moment.gameTime && (
+                      <Badge variant="outline" className="text-xs font-mono shrink-0">
+                        {moment.gameTime}
+                      </Badge>
+                    )}
                     <Badge 
                       variant={moment.analyzed ? "default" : "secondary"}
-                      className="capitalize"
+                      className="capitalize shrink-0"
                     >
                       {moment.type}
                     </Badge>
-                    <span className="text-sm text-muted-foreground flex-1">
-                      {formatCaptureTime(moment.timestamp)}
-                    </span>
-                    <span className="text-xs text-primary">
+                    {!moment.gameTime && (
+                      <span className="text-sm text-muted-foreground">
+                        {formatCaptureTime(moment.timestamp)}
+                      </span>
+                    )}
+                    <span className="text-xs text-primary ml-auto flex items-center gap-1 shrink-0">
+                      {moment.analyzed ? (
+                        <Activity className="w-3 h-3" />
+                      ) : (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      )}
                       {moment.frames.length} frames
                     </span>
-                    {moment.analyzed && (
-                      <Badge variant="outline" className="text-xs bg-green-500/10 text-green-500 border-green-500/20">
-                        Analyzed
-                      </Badge>
-                    )}
                   </div>
                 ))}
               </div>
@@ -484,6 +623,11 @@ export function ScoutLiveCapture({
                     className="p-2 rounded-lg bg-muted/30 border border-border/30"
                   >
                     <div className="flex items-center gap-2 mb-1">
+                      {obs.gameTime && obs.gameTime !== 'Unknown' && (
+                        <Badge variant="outline" className="text-xs font-mono">
+                          {obs.gameTime}
+                        </Badge>
+                      )}
                       <Badge variant="outline" className="text-xs capitalize">
                         {obs.type}
                       </Badge>
@@ -511,7 +655,7 @@ export function ScoutLiveCapture({
         >
           {isGeneratingAnalysis ? (
             <>
-              <div className="w-5 h-5 mr-2 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              <Loader2 className="w-5 h-5 mr-2 animate-spin" />
               Generating Halftime Props...
             </>
           ) : (
