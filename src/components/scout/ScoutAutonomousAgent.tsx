@@ -211,8 +211,9 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
   };
 
   const topEdges = getTopEdges(5);
-  const fatiguedPlayers = getFatiguedPlayers(60);
-  const onCourtPlayers = Array.from(state.playerStates.values()).filter(p => p.onCourt || p.minutesEstimate > 0);
+  const fatiguedPlayers = getFatiguedPlayers(30); // Lowered threshold
+  const allPlayers = Array.from(state.playerStates.values());
+  const onCourtPlayers = allPlayers.filter(p => p.onCourt || p.minutesEstimate > 0);
 
   if (!isSupported) {
     return (
@@ -484,11 +485,20 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
               ))}
           </div>
           
-          {onCourtPlayers.length === 0 && (
+          {onCourtPlayers.length === 0 && allPlayers.length === 0 && (
             <div className="text-center py-8 text-muted-foreground">
               <Users className="w-12 h-12 mx-auto mb-4 opacity-50" />
               <p>No player data yet</p>
               <p className="text-sm">Start autopilot to begin tracking</p>
+            </div>
+          )}
+          
+          {onCourtPlayers.length === 0 && allPlayers.length > 0 && (
+            <div className="text-center py-8 text-muted-foreground">
+              <Activity className="w-12 h-12 mx-auto mb-4 opacity-50 animate-pulse" />
+              <p className="font-medium">Warming up...</p>
+              <p className="text-sm">{allPlayers.length} players loaded, analyzing frames</p>
+              <p className="text-xs mt-2">Frames: {state.framesProcessed} | Analyses: {state.analysisCount}</p>
             </div>
           )}
         </TabsContent>

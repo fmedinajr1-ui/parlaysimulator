@@ -72,13 +72,13 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
         playerName: player.name,
         jersey: player.jersey,
         team,
-        onCourt: false,
+        onCourt: true, // Start as on-court so they show up initially
         role,
-        fatigueScore: 0,
-        effortScore: 50,
-        speedIndex: 70,
+        fatigueScore: 15, // Start with some baseline fatigue
+        effortScore: 55,
+        speedIndex: 65,
         reboundPositionScore: 50,
-        minutesEstimate: 0,
+        minutesEstimate: 5, // Assume they've played some minutes
         foulCount: 0,
         visualFlags: [],
         lastUpdated: 'Pre-game',
@@ -91,6 +91,7 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
     context.homeRoster.forEach(p => initPlayer(p, context.homeTeam));
     context.awayRoster.forEach(p => initPlayer(p, context.awayTeam));
     
+    console.log(`[Scout Agent State] Initialized ${newStates.size} players from rosters`);
     setState(prev => ({ ...prev, playerStates: newStates }));
   }, []);
 
@@ -157,6 +158,13 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
   }, []);
 
   const processAgentResponse = useCallback((response: AgentLoopResponse) => {
+    console.log('[Scout Agent State] Processing response:', {
+      sceneType: response.sceneClassification?.sceneType,
+      isAnalysisWorthy: response.sceneClassification?.isAnalysisWorthy,
+      visionSignals: response.visionSignals?.length || 0,
+      propEdges: response.propEdges?.length || 0,
+    });
+    
     setState(prev => {
       const newSceneHistory = [response.sceneClassification, ...prev.sceneHistory.slice(0, 49)];
       let newCommercialSkipCount = prev.commercialSkipCount;
@@ -178,7 +186,8 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
       }
 
       // Apply vision signals to player states
-      if (response.visionSignals) {
+      if (response.visionSignals && response.visionSignals.length > 0) {
+        console.log('[Scout Agent State] Applying vision signals:', response.visionSignals);
         response.visionSignals.forEach(signal => {
           const existing = updatedPlayerStates.get(signal.player);
           if (existing) {
@@ -285,15 +294,17 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
   }, [state.playerStates]);
 
   const getTopEdges = useCallback((limit: number = 5): PropEdge[] => {
+    // LOWERED: Show edges with confidence >= 50 (was 70)
     return [...state.activePropEdges]
-      .filter(e => e.confidence >= 70)
+      .filter(e => e.confidence >= 50)
       .sort((a, b) => b.confidence - a.confidence)
       .slice(0, limit);
   }, [state.activePropEdges]);
 
-  const getFatiguedPlayers = useCallback((threshold: number = 60): PlayerLiveState[] => {
+  const getFatiguedPlayers = useCallback((threshold: number = 30): PlayerLiveState[] => {
+    // LOWERED: Default threshold is 30 (was 60)
     return Array.from(state.playerStates.values())
-      .filter(p => p.fatigueScore >= threshold && p.onCourt)
+      .filter(p => p.fatigueScore >= threshold && (p.onCourt || p.minutesEstimate > 0))
       .sort((a, b) => b.fatigueScore - a.fatigueScore);
   }, [state.playerStates]);
 
