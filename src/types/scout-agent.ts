@@ -1,17 +1,178 @@
 /**
- * Autonomous Scout Agent Types
- * Persistent player tracking, prop fusion, and real-time betting signals
+ * Autonomous Scout Agent Types V2
+ * Persistent player tracking, prop fusion, halftime lock, and multi-game support
  */
+
+// ===== BASIC ENUMS & TYPES =====
 
 export type PlayerRole = 'PRIMARY' | 'SECONDARY' | 'SPACER' | 'BIG';
 export type PropType = 'Points' | 'Rebounds' | 'Assists' | 'PRA' | 'Steals' | 'Blocks' | 'Threes';
 export type TrendDirection = 'strengthening' | 'weakening' | 'stable';
 export type ConfidenceLevel = 'low' | 'medium' | 'high';
-export type SceneType = 'live_play' | 'timeout' | 'injury' | 'fastbreak' | 'freethrow' | 'commercial' | 'dead_time' | 'unknown';
+export type SceneType = 'live_play' | 'timeout' | 'injury' | 'fastbreak' | 'freethrow' | 'commercial' | 'dead_time' | 'halftime' | 'unknown';
+
+// ===== PLAYER LIVE STATE V2 (CANONICAL SCHEMA) =====
 
 /**
- * Persistent player state maintained throughout the game
- * Fatigue is ACCUMULATIVE - does not reset randomly
+ * Player Identity - LOCKED once identified
+ */
+export interface PlayerIdentity {
+  gameId: string;
+  playerId: string;
+  name: string;
+  jersey: string;
+  team: string;
+  position: string;
+}
+
+/**
+ * On-Court Status
+ */
+export interface CourtStatus {
+  onCourt: boolean;
+  lastSubInTime?: string;
+  lastSubOutTime?: string;
+  minutesPlayed: number;
+  rotationStability: number; // 0-100 (higher = stable minutes)
+}
+
+/**
+ * Role & Usage (VISION + PBP FUSED)
+ */
+export interface RoleProfile {
+  role: PlayerRole;
+  usageScore: number; // 0-100 (touch + action involvement)
+  touchRate: number; // 0-1
+  onBallRate: number; // 0-1
+  offBallRate: number; // 0-1
+  roleConfidence: number; // 0-100
+}
+
+/**
+ * Physical Condition (ACCUMULATIVE - fatigue never resets)
+ */
+export interface PhysicalState {
+  fatigueScore: number; // 0-100 (monotonic upward unless resting)
+  fatigueSlope: number; // + / - rate of change
+  effortScore: number; // 0-100
+  speedIndex: number; // normalized sprint + recovery
+  postureFlags: string[]; // ["hands_on_knees", "hunched"]
+  recoveryEvents: number; // timeouts / stoppages
+  sprintCount: number;
+  handsOnKneesCount: number;
+  slowRecoveryCount: number;
+}
+
+/**
+ * Skill-Specific Vision Metrics
+ */
+export interface VisionMetrics {
+  shotProfile: {
+    rimRate: number; // %
+    openShotRate: number; // %
+    contestedRate: number; // %
+  };
+  freeThrowRoutineStability?: number; // 0-100
+  defenderProximityAvgFt: number;
+  transitionInvolvement: number; // 0-1
+}
+
+/**
+ * Rebounding Intelligence (KEY FOR UNDERS)
+ */
+export interface ReboundProfile {
+  reboundPositionScore: number; // 0-100
+  avgDistanceToRimFt: number;
+  boxOutFrequency: number; // 0-1
+  crashRate: number; // 0-1
+  leakOutRate: number; // 0-1
+}
+
+/**
+ * Play-By-Play Truth Layer
+ */
+export interface BoxScoreLive {
+  points: number;
+  rebounds: number;
+  assists: number;
+  fouls: number;
+  fga: number;
+  fta: number;
+  turnovers: number;
+  threes: number;
+  steals: number;
+  blocks: number;
+}
+
+/**
+ * Prop Context (LIVE COMPARISON ENGINE)
+ */
+export interface PropLineContext {
+  line: number;
+  current: number;
+  projectedFinal: number;
+  pOver: number;
+  pUnder: number;
+}
+
+export interface PropContext {
+  points?: PropLineContext;
+  rebounds?: PropLineContext;
+  assists?: PropLineContext;
+  pra?: PropLineContext;
+  threes?: PropLineContext;
+}
+
+/**
+ * Risk & Flags
+ */
+export interface RiskFlags {
+  foulRisk: boolean;
+  blowoutRisk: boolean;
+  injuryWatch: boolean;
+  minutesVolatility: boolean;
+  rotationRisk: boolean;
+}
+
+/**
+ * Alert & Confidence Memory (ANTI-SPAM)
+ */
+export interface AlertState {
+  lastAlertTime?: number;
+  lastAlertConfidence?: number;
+  lastAlertType?: 'OVER' | 'UNDER';
+  alertCooldownMs: number;
+}
+
+/**
+ * Timing & Metadata
+ */
+export interface StateMeta {
+  lastUpdatedGameTime: string; // "Q3 7:14"
+  lastUpdatedTs: number;
+  dataConfidence: ConfidenceLevel;
+}
+
+/**
+ * CANONICAL PlayerLiveState V2 (Full structured state)
+ */
+export interface PlayerLiveStateV2 {
+  identity: PlayerIdentity;
+  courtStatus: CourtStatus;
+  roleProfile: RoleProfile;
+  physicalState: PhysicalState;
+  visionMetrics: VisionMetrics;
+  reboundProfile: ReboundProfile;
+  boxScoreLive: BoxScoreLive;
+  propContext: PropContext;
+  riskFlags: RiskFlags;
+  alertState: AlertState;
+  meta: StateMeta;
+}
+
+/**
+ * Legacy PlayerLiveState (for backwards compatibility during migration)
+ * @deprecated Use PlayerLiveStateV2 instead
  */
 export interface PlayerLiveState {
   playerName: string;
@@ -19,31 +180,32 @@ export interface PlayerLiveState {
   team: string;
   onCourt: boolean;
   role: PlayerRole;
-  fatigueScore: number;       // 0-100, ACCUMULATIVE
-  effortScore: number;        // 0-100
-  speedIndex: number;         // 0-100
-  reboundPositionScore: number; // 0-100
+  fatigueScore: number;
+  effortScore: number;
+  speedIndex: number;
+  reboundPositionScore: number;
   minutesEstimate: number;
   foulCount: number;
   visualFlags: string[];
-  lastUpdated: string;        // "Q2 5:42"
-  // Tracking for fatigue accumulation
+  lastUpdated: string;
   sprintCount: number;
   handsOnKneesCount: number;
   slowRecoveryCount: number;
   lastSubbedIn?: string;
   lastSubbedOut?: string;
+  // V2 fields (optional for migration)
+  fatigueSlope?: number;
+  boxScore?: Partial<BoxScoreLive>;
 }
 
-/**
- * Prop edge recommendation with confidence and trend
- */
+// ===== PROP EDGE =====
+
 export interface PropEdge {
   player: string;
   prop: PropType;
   line: number;
   lean: 'OVER' | 'UNDER';
-  confidence: number;         // 0-100
+  confidence: number; // 0-100
   expectedFinal: number;
   drivers: string[];
   riskFlags: string[];
@@ -59,9 +221,8 @@ export interface PropEdge {
   underPrice?: number;
 }
 
-/**
- * Scene classification result from auto-detection
- */
+// ===== SCENE CLASSIFICATION =====
+
 export interface SceneClassification {
   sceneType: SceneType;
   isAnalysisWorthy: boolean;
@@ -72,18 +233,40 @@ export interface SceneClassification {
   timestamp: Date;
 }
 
-/**
- * Live play-by-play data from ESPN API
- */
+// ===== HALFTIME LOCK MODE =====
+
+export interface HalftimeLockedProp {
+  mode: 'HALFTIME_LOCK';
+  player: string;
+  prop: PropType;
+  line: number;
+  lean: 'OVER' | 'UNDER';
+  confidence: number;
+  expectedFinal: number;
+  drivers: string[];
+  riskFlags: string[];
+  lockTime: string;
+  firstHalfStats?: Partial<BoxScoreLive>;
+}
+
+export interface HalftimeLockState {
+  isLocked: boolean;
+  lockTime?: string;
+  lockTimestamp?: number;
+  lockedRecommendations: HalftimeLockedProp[];
+}
+
+// ===== LIVE PLAY-BY-PLAY =====
+
 export interface LivePBPData {
-  gameTime: string;           // "Q2 5:42"
+  gameTime: string; // "Q2 5:42"
   period: number;
   clock: string;
   homeScore: number;
   awayScore: number;
   homeTeam: string;
   awayTeam: string;
-  pace: number;               // Possessions per 48
+  pace: number; // Possessions per 48
   players: PBPPlayerStats[];
   recentPlays: RecentPlay[];
   isHalftime: boolean;
@@ -120,25 +303,61 @@ export interface RecentPlay {
   playType?: 'score' | 'rebound' | 'assist' | 'turnover' | 'foul' | 'substitution' | 'timeout' | 'other';
 }
 
-/**
- * Vision signal extracted from frame analysis
- */
+// ===== VISION SIGNALS =====
+
 export interface VisionSignal {
   signalType: 'fatigue' | 'speed' | 'posture' | 'effort' | 'positioning' | 'mechanics';
   player: string;
   jersey: string;
-  value: number;              // Delta to apply
+  value: number; // Delta to apply
   observation: string;
   confidence: ConfidenceLevel;
 }
 
-/**
- * Full agent state for React hook
- */
+// ===== MULTI-GAME MANAGER =====
+
+export interface SingleGameState {
+  eventId: string;
+  homeTeam: string;
+  awayTeam: string;
+  playerStates: Map<string, PlayerLiveState>;
+  propEdges: PropEdge[];
+  sceneHistory: SceneClassification[];
+  halftimeLock: HalftimeLockState;
+  pbpData: LivePBPData | null;
+  priority: number; // 0-100
+  isActive: boolean;
+  lastAnalysisTime: Date | null;
+  analysisCount: number;
+  framesProcessed: number;
+  commercialSkipCount: number;
+  currentGameTime: string | null;
+  currentScore: string | null;
+}
+
+export interface QueuedAlert {
+  gameId: string;
+  gameName: string; // "BOS @ NYK"
+  notification: PropAlertNotification;
+  confidence: number;
+  urgency: number;
+  timestamp: number;
+}
+
+export interface MultiGameState {
+  activeGames: Map<string, SingleGameState>;
+  priorityGameIds: string[];
+  alertQueue: QueuedAlert[];
+  halftimeLocksReady: number;
+  totalFramesProcessed: number;
+}
+
+// ===== AGENT STATE (SINGLE GAME - LEGACY COMPATIBLE) =====
+
 export interface ScoutAgentState {
   isRunning: boolean;
   isPaused: boolean;
-  captureRate: number;        // FPS (1-5)
+  captureRate: number; // FPS (1-5)
   gameContext: {
     eventId: string;
     homeTeam: string;
@@ -156,13 +375,14 @@ export interface ScoutAgentState {
   commercialSkipCount: number;
   currentGameTime: string | null;
   currentScore: string | null;
+  // V2: Halftime Lock
+  halftimeLock: HalftimeLockState;
 }
 
-/**
- * Agent loop analysis request
- */
+// ===== AGENT LOOP REQUEST/RESPONSE =====
+
 export interface AgentLoopRequest {
-  frame: string;              // Base64 image
+  frame: string; // Base64 image
   gameContext: {
     eventId: string;
     homeTeam: string;
@@ -176,9 +396,6 @@ export interface AgentLoopRequest {
   currentGameTime?: string;
 }
 
-/**
- * Agent loop analysis response
- */
 export interface AgentLoopResponse {
   sceneClassification: SceneClassification;
   updatedPlayerStates?: Record<string, Partial<PlayerLiveState>>;
@@ -195,11 +412,13 @@ export interface AgentLoopResponse {
     reason: string;
     gameTime: string;
   };
+  // V2: Halftime Lock
+  isHalftime?: boolean;
+  halftimeRecommendations?: HalftimeLockedProp[];
 }
 
-/**
- * Toast notification for prop alerts
- */
+// ===== NOTIFICATIONS =====
+
 export interface PropAlertNotification {
   type: 'PROP_ALERT';
   player: string;
@@ -208,16 +427,34 @@ export interface PropAlertNotification {
   confidence: number;
   reason: string;
   gameTime: string;
+  gameId?: string;
+  gameName?: string;
 }
 
-/**
- * Fatigue calculation factors
- */
+// ===== FATIGUE CALCULATION =====
+
 export interface FatigueFactors {
-  sprints: number;            // +3-5 per fast break
-  handsOnKnees: number;       // +8-10
-  slowRecovery: number;       // +5
-  timeoutRecovery: number;    // -5
+  sprints: number; // +3-5 per fast break
+  handsOnKnees: number; // +8-10
+  slowRecovery: number; // +5
+  timeoutRecovery: number; // -5
   substitutionReset: boolean; // Reset slope
-  minutesPlayed: number;      // Base fatigue from minutes
+  minutesPlayed: number; // Base fatigue from minutes
+}
+
+// ===== PLAYER STATE DELTA (for Edge/Worker split) =====
+
+export interface PlayerStateDelta {
+  player: string;
+  jersey?: string;
+  deltas: {
+    fatigueScore?: number;
+    effortScore?: number;
+    speedIndex?: number;
+    reboundPositionScore?: number;
+    fatigueSlope?: number;
+  };
+  signals?: VisionSignal[];
+  confidence: ConfidenceLevel;
+  timestamp: string;
 }
