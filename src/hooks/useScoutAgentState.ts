@@ -6,20 +6,30 @@ import {
   SceneClassification,
   LivePBPData,
   PropType,
-  AgentLoopResponse
+  AgentLoopResponse,
+  HalftimeLockState,
+  HalftimeLockedProp,
+  VisionSignal
 } from '@/types/scout-agent';
 import { GameContext } from '@/pages/Scout';
 import { useToast } from '@/hooks/use-toast';
 
 const NOTIFICATION_COOLDOWN_MS = 15000; // 15 seconds between same-player alerts
+const FATIGUE_SLOPE_WINDOW = 5; // Number of updates to track for slope calculation
 
 interface UseScoutAgentStateProps {
   gameContext: GameContext | null;
 }
 
+interface FatigueHistory {
+  scores: number[];
+  timestamps: number[];
+}
+
 export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
   const { toast } = useToast();
   const notificationCooldowns = useRef<Map<string, number>>(new Map());
+  const fatigueHistory = useRef<Map<string, FatigueHistory>>(new Map());
   
   const [state, setState] = useState<ScoutAgentState>({
     isRunning: false,
@@ -42,6 +52,10 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
     commercialSkipCount: 0,
     currentGameTime: null,
     currentScore: null,
+    halftimeLock: {
+      isLocked: false,
+      lockedRecommendations: [],
+    },
   });
 
   // Update game context when it changes
@@ -72,19 +86,38 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
         playerName: player.name,
         jersey: player.jersey,
         team,
-        onCourt: true, // Start as on-court so they show up initially
+        onCourt: true,
         role,
-        fatigueScore: 15, // Start with some baseline fatigue
+        fatigueScore: 15,
         effortScore: 55,
         speedIndex: 65,
         reboundPositionScore: 50,
-        minutesEstimate: 5, // Assume they've played some minutes
+        minutesEstimate: 5,
         foulCount: 0,
         visualFlags: [],
         lastUpdated: 'Pre-game',
         sprintCount: 0,
         handsOnKneesCount: 0,
         slowRecoveryCount: 0,
+        fatigueSlope: 0,
+        boxScore: {
+          points: 0,
+          rebounds: 0,
+          assists: 0,
+          fouls: 0,
+          fga: 0,
+          fta: 0,
+          turnovers: 0,
+          threes: 0,
+          steals: 0,
+          blocks: 0,
+        },
+      });
+      
+      // Initialize fatigue history
+      fatigueHistory.current.set(player.name, {
+        scores: [15],
+        timestamps: [Date.now()],
       });
     };
 
@@ -101,6 +134,35 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
     if (pos.includes('pg') || pos.includes('sg')) return 'SECONDARY';
     return 'SPACER';
   };
+
+  // Calculate fatigue slope based on recent history
+  const calculateFatigueSlope = useCallback((playerName: string, currentFatigue: number): number => {
+    const history = fatigueHistory.current.get(playerName);
+    if (!history || history.scores.length < 2) return 0;
+    
+    // Add current reading
+    history.scores.push(currentFatigue);
+    history.timestamps.push(Date.now());
+    
+    // Keep only last N readings
+    while (history.scores.length > FATIGUE_SLOPE_WINDOW) {
+      history.scores.shift();
+      history.timestamps.shift();
+    }
+    
+    // Calculate slope (change per minute)
+    if (history.scores.length >= 2) {
+      const firstScore = history.scores[0];
+      const lastScore = history.scores[history.scores.length - 1];
+      const timeDiffMinutes = (history.timestamps[history.timestamps.length - 1] - history.timestamps[0]) / 60000;
+      
+      if (timeDiffMinutes > 0) {
+        return (lastScore - firstScore) / timeDiffMinutes;
+      }
+    }
+    
+    return 0;
+  }, []);
 
   const startAgent = useCallback(() => {
     setState(prev => ({ ...prev, isRunning: true, isPaused: false }));
@@ -142,10 +204,29 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
             ...existingState,
             minutesEstimate: pbpPlayer.minutes,
             foulCount: pbpPlayer.fouls,
-            onCourt: pbpPlayer.minutes > 0, // Rough estimate
+            onCourt: pbpPlayer.minutes > 0,
+            boxScore: {
+              points: pbpPlayer.points,
+              rebounds: pbpPlayer.rebounds,
+              assists: pbpPlayer.assists,
+              fouls: pbpPlayer.fouls,
+              fga: pbpPlayer.fga,
+              fta: pbpPlayer.fta,
+              turnovers: 0,
+              threes: pbpPlayer.threePm,
+              steals: pbpPlayer.steals,
+              blocks: pbpPlayer.blocks,
+            },
           });
         }
       });
+
+      // Check for halftime
+      let halftimeLock = prev.halftimeLock;
+      if (data.isHalftime && !prev.halftimeLock.isLocked) {
+        console.log('[Scout Agent State] Halftime detected - triggering lock');
+        halftimeLock = lockHalftimeState(updatedStates, prev.activePropEdges, data.gameTime);
+      }
 
       return {
         ...prev,
@@ -153,8 +234,95 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
         playerStates: updatedStates,
         currentGameTime: data.gameTime,
         currentScore: `${data.homeTeam} ${data.homeScore} - ${data.awayTeam} ${data.awayScore}`,
+        halftimeLock,
       };
     });
+  }, []);
+
+  // Generate halftime locked recommendations
+  const lockHalftimeState = useCallback((
+    playerStates: Map<string, PlayerLiveState>,
+    propEdges: PropEdge[],
+    gameTime: string
+  ): HalftimeLockState => {
+    const lockedRecommendations: HalftimeLockedProp[] = [];
+    
+    // Generate final verdicts for each player with active edges
+    playerStates.forEach((player, name) => {
+      if (player.minutesEstimate < 5) return;
+      
+      // Find existing edges for this player
+      const playerEdges = propEdges.filter(e => e.player === name);
+      
+      // Generate locked recommendation based on fatigue trajectory
+      const slope = player.fatigueSlope || 0;
+      
+      // Points recommendation
+      if (player.role === 'PRIMARY' || player.role === 'SECONDARY') {
+        const isFatigued = player.fatigueScore >= 40 || slope > 2;
+        const isEnergized = player.fatigueScore < 25 && player.effortScore > 60;
+        
+        if (isFatigued || isEnergized) {
+          const existingEdge = playerEdges.find(e => e.prop === 'Points');
+          lockedRecommendations.push({
+            mode: 'HALFTIME_LOCK',
+            player: name,
+            prop: 'Points',
+            line: existingEdge?.line || 22.5,
+            lean: isFatigued ? 'UNDER' : 'OVER',
+            confidence: isFatigued 
+              ? Math.min(90, 50 + player.fatigueScore * 0.5)
+              : Math.min(85, 40 + player.effortScore * 0.4),
+            expectedFinal: 0,
+            drivers: [
+              isFatigued ? `Fatigue: ${player.fatigueScore}/100 (slope: ${slope.toFixed(1)}/min)` : `Energy: ${player.effortScore}/100`,
+              `Speed index: ${player.speedIndex}/100`,
+              `Minutes: ${player.minutesEstimate.toFixed(1)}`,
+            ],
+            riskFlags: player.foulCount >= 3 ? ['foul_trouble'] : [],
+            lockTime: gameTime,
+            firstHalfStats: player.boxScore,
+          });
+        }
+      }
+      
+      // Rebounds recommendation for bigs
+      if (player.role === 'BIG') {
+        const lowPositioning = player.reboundPositionScore < 50;
+        const goodPositioning = player.reboundPositionScore > 70;
+        
+        if (lowPositioning || goodPositioning) {
+          const existingEdge = playerEdges.find(e => e.prop === 'Rebounds');
+          lockedRecommendations.push({
+            mode: 'HALFTIME_LOCK',
+            player: name,
+            prop: 'Rebounds',
+            line: existingEdge?.line || 10.5,
+            lean: lowPositioning ? 'UNDER' : 'OVER',
+            confidence: lowPositioning
+              ? Math.min(85, 50 + (50 - player.reboundPositionScore) * 0.7)
+              : Math.min(80, 40 + player.reboundPositionScore * 0.4),
+            expectedFinal: 0,
+            drivers: [
+              `Rebound positioning: ${player.reboundPositionScore}/100`,
+              player.fatigueScore > 40 ? `Fatigue affecting box-outs` : `Active on glass`,
+            ],
+            riskFlags: [],
+            lockTime: gameTime,
+            firstHalfStats: player.boxScore,
+          });
+        }
+      }
+    });
+    
+    console.log(`[Scout Agent State] Generated ${lockedRecommendations.length} halftime locked recommendations`);
+    
+    return {
+      isLocked: true,
+      lockTime: gameTime,
+      lockTimestamp: Date.now(),
+      lockedRecommendations,
+    };
   }, []);
 
   const processAgentResponse = useCallback((response: AgentLoopResponse) => {
@@ -163,6 +331,7 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
       isAnalysisWorthy: response.sceneClassification?.isAnalysisWorthy,
       visionSignals: response.visionSignals?.length || 0,
       propEdges: response.propEdges?.length || 0,
+      isHalftime: response.isHalftime,
     });
     
     setState(prev => {
@@ -197,7 +366,9 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
 
             switch (signal.signalType) {
               case 'fatigue':
-                updates.fatigueScore = Math.min(100, existing.fatigueScore + signal.value);
+                const newFatigue = Math.min(100, existing.fatigueScore + signal.value);
+                updates.fatigueScore = newFatigue;
+                updates.fatigueSlope = calculateFatigueSlope(signal.player, newFatigue);
                 updates.visualFlags = [...existing.visualFlags.slice(-4), signal.observation];
                 if (signal.observation.toLowerCase().includes('hands on knees')) {
                   updates.handsOnKneesCount = existing.handsOnKneesCount + 1;
@@ -210,7 +381,9 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
                 updates.effortScore = Math.max(0, Math.min(100, existing.effortScore + signal.value));
                 if (signal.observation.toLowerCase().includes('sprint')) {
                   updates.sprintCount = existing.sprintCount + 1;
-                  updates.fatigueScore = Math.min(100, existing.fatigueScore + 4);
+                  const newFatigue = Math.min(100, existing.fatigueScore + 4);
+                  updates.fatigueScore = newFatigue;
+                  updates.fatigueSlope = calculateFatigueSlope(signal.player, newFatigue);
                 }
                 break;
               case 'positioning':
@@ -236,7 +409,7 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
             // Apply exponential moving average for confidence smoothing
             const smoothedConfidence = Math.round(existing.confidence * 0.3 + newEdge.confidence * 0.7);
             
-            // Only change lean if we have 3+ consistent signals
+            // Only change lean if we have consistent signals
             const sameLean = existing.lean === newEdge.lean;
             const newTrend = sameLean && newEdge.confidence > existing.confidence
               ? 'strengthening'
@@ -255,6 +428,23 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
         });
       }
 
+      // Handle halftime lock from response
+      let halftimeLock = prev.halftimeLock;
+      if (response.isHalftime && !prev.halftimeLock.isLocked) {
+        if (response.halftimeRecommendations && response.halftimeRecommendations.length > 0) {
+          halftimeLock = {
+            isLocked: true,
+            lockTime: response.gameTime || prev.currentGameTime || 'Halftime',
+            lockTimestamp: Date.now(),
+            lockedRecommendations: response.halftimeRecommendations,
+          };
+          console.log('[Scout Agent State] Halftime lock engaged with', response.halftimeRecommendations.length, 'recommendations');
+        } else {
+          // Generate locally if not provided
+          halftimeLock = lockHalftimeState(updatedPlayerStates, updatedPropEdges, response.gameTime || 'Halftime');
+        }
+      }
+
       return {
         ...prev,
         sceneHistory: newSceneHistory,
@@ -268,6 +458,7 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
         currentGameTime: response.gameTime || prev.currentGameTime,
         currentScore: response.score || prev.currentScore,
         lastAnalysisTime: new Date(),
+        halftimeLock,
       };
     });
 
@@ -287,14 +478,13 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
         });
       }
     }
-  }, [toast]);
+  }, [toast, calculateFatigueSlope, lockHalftimeState]);
 
   const getPlayerState = useCallback((playerName: string): PlayerLiveState | undefined => {
     return state.playerStates.get(playerName);
   }, [state.playerStates]);
 
   const getTopEdges = useCallback((limit: number = 5): PropEdge[] => {
-    // LOWERED: Show edges with confidence >= 50 (was 70)
     return [...state.activePropEdges]
       .filter(e => e.confidence >= 50)
       .sort((a, b) => b.confidence - a.confidence)
@@ -302,7 +492,6 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
   }, [state.activePropEdges]);
 
   const getFatiguedPlayers = useCallback((threshold: number = 30): PlayerLiveState[] => {
-    // LOWERED: Default threshold is 30 (was 60)
     return Array.from(state.playerStates.values())
       .filter(p => p.fatigueScore >= threshold && (p.onCourt || p.minutesEstimate > 0))
       .sort((a, b) => b.fatigueScore - a.fatigueScore);
@@ -315,6 +504,25 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
     });
     return obj;
   }, [state.playerStates]);
+
+  const getHalftimeRecommendations = useCallback((): HalftimeLockedProp[] => {
+    return state.halftimeLock.lockedRecommendations;
+  }, [state.halftimeLock.lockedRecommendations]);
+
+  const isHalftimeLocked = useCallback((): boolean => {
+    return state.halftimeLock.isLocked;
+  }, [state.halftimeLock.isLocked]);
+
+  // Reset halftime lock for second half
+  const resetHalftimeLock = useCallback(() => {
+    setState(prev => ({
+      ...prev,
+      halftimeLock: {
+        isLocked: false,
+        lockedRecommendations: [],
+      },
+    }));
+  }, []);
 
   return {
     state,
@@ -329,5 +537,9 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
     getTopEdges,
     getFatiguedPlayers,
     getStateForAPI,
+    // V2: Halftime Lock
+    getHalftimeRecommendations,
+    isHalftimeLocked,
+    resetHalftimeLock,
   };
 }

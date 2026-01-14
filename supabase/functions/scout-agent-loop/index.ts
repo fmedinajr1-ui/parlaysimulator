@@ -67,8 +67,13 @@ IGNORE (isAnalysisWorthy: false):
 - Bench B-roll footage
 - Replay footage (indicated by "REPLAY" text, slow-motion, or different angle graphics)
 - Scoreboard-only graphics
-- Halftime show / intermission graphics
 - Pre-game / post-game graphics
+
+HALFTIME (sceneType: "halftime", isAnalysisWorthy: false):
+- Halftime show / intermission graphics
+- Score shows end of Q2 (0:00 or "END Q2" or "HALFTIME")
+- Players walking to locker room
+- Halftime entertainment or studio analysis
 
 ANALYZE (isAnalysisWorthy: true):
 - Live game action (players actively moving, ball in play)
@@ -84,8 +89,9 @@ ALSO EXTRACT from scoreboard if visible:
 
 Return JSON only:
 {
-  "sceneType": "live_play" | "timeout" | "injury" | "fastbreak" | "freethrow" | "commercial" | "dead_time" | "unknown",
+  "sceneType": "live_play" | "timeout" | "injury" | "fastbreak" | "freethrow" | "commercial" | "dead_time" | "halftime" | "unknown",
   "isAnalysisWorthy": true | false,
+  "isHalftime": true | false,
   "confidence": "low" | "medium" | "high",
   "gameTime": "Q2 5:42" or null,
   "score": "LAL 54 - DEN 52" or null,
@@ -342,6 +348,78 @@ function calculatePropEdges(
   return edges;
 }
 
+// Generate halftime locked recommendations
+function generateHalftimeRecommendations(
+  playerStates: Record<string, PlayerLiveState>,
+  existingEdges: PropEdge[],
+  gameTime: string
+): any[] {
+  const recommendations: any[] = [];
+  
+  Object.values(playerStates).forEach(player => {
+    if (player.minutesEstimate < 5) return;
+    
+    const playerEdges = existingEdges.filter(e => e.player === player.playerName);
+    
+    // Points recommendation for scorers
+    if (player.role === 'PRIMARY' || player.role === 'SECONDARY') {
+      const isFatigued = player.fatigueScore >= 40;
+      const isEnergized = player.fatigueScore < 25 && player.effortScore > 60;
+      
+      if (isFatigued || isEnergized) {
+        const existingEdge = playerEdges.find(e => e.prop === 'Points');
+        recommendations.push({
+          mode: 'HALFTIME_LOCK',
+          player: player.playerName,
+          prop: 'Points',
+          line: existingEdge?.line || 22.5,
+          lean: isFatigued ? 'UNDER' : 'OVER',
+          confidence: isFatigued 
+            ? Math.min(90, 50 + player.fatigueScore * 0.5)
+            : Math.min(85, 40 + player.effortScore * 0.4),
+          expectedFinal: 0,
+          drivers: [
+            isFatigued ? `Fatigue: ${player.fatigueScore}/100` : `Energy: ${player.effortScore}/100`,
+            `Speed: ${player.speedIndex}/100`,
+            `Minutes: ${player.minutesEstimate.toFixed(1)}`,
+          ],
+          riskFlags: player.foulCount >= 3 ? ['foul_trouble'] : [],
+          lockTime: gameTime,
+        });
+      }
+    }
+    
+    // Rebounds recommendation for bigs
+    if (player.role === 'BIG') {
+      const lowPositioning = player.reboundPositionScore < 50;
+      const goodPositioning = player.reboundPositionScore > 70;
+      
+      if (lowPositioning || goodPositioning) {
+        const existingEdge = playerEdges.find(e => e.prop === 'Rebounds');
+        recommendations.push({
+          mode: 'HALFTIME_LOCK',
+          player: player.playerName,
+          prop: 'Rebounds',
+          line: existingEdge?.line || 10.5,
+          lean: lowPositioning ? 'UNDER' : 'OVER',
+          confidence: lowPositioning
+            ? Math.min(85, 50 + (50 - player.reboundPositionScore) * 0.7)
+            : Math.min(80, 40 + player.reboundPositionScore * 0.4),
+          expectedFinal: 0,
+          drivers: [
+            `Rebound positioning: ${player.reboundPositionScore}/100`,
+            player.fatigueScore > 40 ? `Fatigue affecting box-outs` : `Active on glass`,
+          ],
+          riskFlags: [],
+          lockTime: gameTime,
+        });
+      }
+    }
+  });
+  
+  return recommendations;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -431,6 +509,7 @@ serve(async (req) => {
     let sceneClassification = {
       sceneType: 'unknown',
       isAnalysisWorthy: false,
+      isHalftime: false,
       confidence: 'low',
       gameTime: null as string | null,
       score: null as string | null,
@@ -443,6 +522,11 @@ serve(async (req) => {
       const jsonStr = jsonMatch ? jsonMatch[1].trim() : classifyContent.trim();
       const parsed = JSON.parse(jsonStr);
       sceneClassification = { ...sceneClassification, ...parsed, timestamp: new Date().toISOString() };
+      
+      // Auto-detect halftime from scene type
+      if (parsed.sceneType === 'halftime') {
+        sceneClassification.isHalftime = true;
+      }
     } catch {
       console.log('[Scout Agent] Scene classification parse failed, using defaults');
     }
@@ -592,17 +676,26 @@ CRITICAL: Match jersey numbers to player names from the roster. Be specific abou
 
     console.log(`[Scout Agent] Analysis complete: ${visionResult.visionSignals?.length || 0} signals, ${propEdges.length} edges`);
 
+    // Generate halftime recommendations if halftime detected
+    let halftimeRecommendations: any[] = [];
+    if (sceneClassification.isHalftime) {
+      halftimeRecommendations = generateHalftimeRecommendations(playerStates, propEdges, gameTime);
+      console.log(`[Scout Agent] Halftime detected - generated ${halftimeRecommendations.length} locked recommendations`);
+    }
+
     return new Response(
       JSON.stringify({
         sceneClassification,
         visionSignals: visionResult.visionSignals,
         propEdges,
-        updatedPlayerStates: {}, // Will be calculated by client based on signals
+        updatedPlayerStates: {},
         gameTime,
         score: sceneClassification.score,
         shouldNotify,
         notification,
         overallAssessment: visionResult.overallAssessment,
+        isHalftime: sceneClassification.isHalftime,
+        halftimeRecommendations: sceneClassification.isHalftime ? halftimeRecommendations : undefined,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
