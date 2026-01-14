@@ -55,6 +55,13 @@ export interface PropRecommendation {
   confidence: "low" | "medium" | "high";
   reasoning: string;
   visualEvidence: string[];
+  // Real bookmaker data (enriched from unified_props)
+  actualLine: number | null;
+  overPrice: number | null;
+  underPrice: number | null;
+  bookmaker: string | null;
+  propAvailable: boolean;
+  lineDelta: number | null;
 }
 
 const Scout = () => {

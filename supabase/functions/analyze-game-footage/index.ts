@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -19,6 +20,71 @@ interface AnalysisRequest {
   clipCategory: string;
 }
 
+interface FrameStrategy {
+  maxFrames: number;
+  interval: 'dense' | 'sparse' | 'focused' | 'moderate';
+}
+
+// Smart frame selection strategy based on clip category
+function getFrameStrategy(category: string, totalFrames: number): FrameStrategy {
+  const strategies: Record<string, FrameStrategy> = {
+    timeout: { maxFrames: 15, interval: 'sparse' },    // Fatigue = fewer, spread frames
+    fastbreak: { maxFrames: 20, interval: 'dense' },   // Motion = more frames, tighter
+    freethrow: { maxFrames: 12, interval: 'focused' }, // Mechanics = key moments
+    defense: { maxFrames: 18, interval: 'moderate' },  // Rotations = good coverage
+  };
+  return strategies[category] || { maxFrames: 20, interval: 'moderate' };
+}
+
+// Select frames based on strategy
+function selectFramesWithStrategy(frames: string[], strategy: FrameStrategy): string[] {
+  const { maxFrames, interval } = strategy;
+  
+  if (frames.length <= maxFrames) {
+    return frames; // Use all if under limit
+  }
+  
+  switch (interval) {
+    case 'dense':
+      // First N frames (most action at start)
+      return frames.slice(0, maxFrames);
+      
+    case 'sparse':
+      // Evenly distributed across video
+      const sparseStep = Math.floor(frames.length / maxFrames);
+      return frames.filter((_, i) => i % sparseStep === 0).slice(0, maxFrames);
+      
+    case 'focused':
+      // First 4, middle 4, last 4 (key moments for mechanics)
+      const third = Math.floor(frames.length / 3);
+      const focusedFrames = [
+        ...frames.slice(0, 4),
+        ...frames.slice(third, third + 4),
+        ...frames.slice(-4)
+      ];
+      return focusedFrames.slice(0, maxFrames);
+      
+    default: // moderate
+      const step = Math.max(1, Math.floor(frames.length / maxFrames));
+      return frames.filter((_, i) => i % step === 0).slice(0, maxFrames);
+  }
+}
+
+// Category-specific AI instructions
+function getCategorySpecificInstructions(category: string): string {
+  const instructions: Record<string, string> = {
+    timeout: `TIMEOUT ANALYSIS: You're seeing frames from a timeout/huddle. 
+Focus on: standing posture, hands on knees, towel usage, breathing patterns, player spacing, fatigue indicators while at rest.`,
+    fastbreak: `FAST BREAK ANALYSIS: Dense frames capturing transition play.
+Focus on: sprint speed, explosion off the floor, effort level, defensive recovery speed, pace of play.`,
+    freethrow: `FREE THROW ANALYSIS: Key moments from free throw routine.
+Focus on: pre-shot routine, stance consistency, release point, follow-through mechanics, focus and composure.`,
+    defense: `DEFENSIVE SEQUENCE: Frames showing half-court defense.
+Focus on: closeout speed, help rotation timing, communication, recovery positioning, lateral movement.`,
+  };
+  return instructions[category] || '';
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -35,13 +101,24 @@ serve(async (req) => {
       throw new Error('No frames provided for analysis');
     }
 
-    console.log(`[analyze-game-footage] Analyzing ${frames.length} frames for ${gameContext.awayTeam} @ ${gameContext.homeTeam}`);
+    console.log(`[analyze-game-footage] Received ${frames.length} frames for ${gameContext.awayTeam} @ ${gameContext.homeTeam}`);
     console.log(`[analyze-game-footage] Clip category: ${clipCategory}`);
+
+    // Smart frame selection based on clip category
+    const strategy = getFrameStrategy(clipCategory, frames.length);
+    const framesToAnalyze = selectFramesWithStrategy(frames, strategy);
+    
+    console.log(`[analyze-game-footage] Strategy: ${strategy.interval}, analyzing ${framesToAnalyze.length} of ${frames.length} frames`);
+
+    // Get category-specific instructions
+    const categoryInstructions = getCategorySpecificInstructions(clipCategory);
 
     // Build the analysis prompt
     const systemPrompt = `You are an expert NBA video analyst specializing in detecting betting-relevant signals from game footage. You identify players by jersey numbers and analyze their movement, fatigue, and mechanics for halftime betting insights.
 
 Your analysis must be grounded in VISUAL OBSERVATIONS from the frames provided. Do not guess or invent observations.
+
+${categoryInstructions}
 
 KEY ANALYSIS AREAS:
 1. PLAYER IDENTIFICATION - Match jersey numbers to roster names
@@ -51,20 +128,17 @@ KEY ANALYSIS AREAS:
 5. SHOT MECHANICS - Release point, follow-through consistency (if visible)
 6. TEAM DYNAMICS - Communication, defensive rotations, pace
 
-CLIP CATEGORY FOCUS:
-- timeout: Look for fatigue indicators (hands on knees, towel usage, heavy breathing)
-- fastbreak: Assess explosion, transition speed, effort levels
-- freethrow: Analyze shot mechanics, routine consistency, focus
-- defense: Evaluate closeout speed, rotation discipline, communication`;
+FRAME COVERAGE: You are analyzing ${framesToAnalyze.length} frames with ${strategy.interval} distribution for ${clipCategory} clip type.`;
 
     const userPrompt = `GAME: ${gameContext.awayTeam} @ ${gameContext.homeTeam}
 CLIP CATEGORY: ${clipCategory}
+FRAMES: ${framesToAnalyze.length} frames (${strategy.interval} selection from ${frames.length} total)
 
 ROSTER CONTEXT:
 ${gameContext.homeTeam}: ${gameContext.homeRoster || 'Not available'}
 ${gameContext.awayTeam}: ${gameContext.awayRoster || 'Not available'}
 
-Analyze the ${frames.length} frames provided and return a JSON object with this exact structure:
+Analyze the ${framesToAnalyze.length} frames provided and return a JSON object with this exact structure:
 
 {
   "observations": [
@@ -117,8 +191,7 @@ IMPORTANT:
       { type: "text", text: userPrompt }
     ];
 
-    // Add frames as images (limit to 10 for token efficiency)
-    const framesToAnalyze = frames.slice(0, 10);
+    // Add frames as images
     for (let i = 0; i < framesToAnalyze.length; i++) {
       const frame = framesToAnalyze[i];
       // Handle both data URL and raw base64
@@ -135,7 +208,7 @@ IMPORTANT:
       });
     }
 
-    console.log(`[analyze-game-footage] Sending ${framesToAnalyze.length} frames to AI`);
+    console.log(`[analyze-game-footage] Sending ${framesToAnalyze.length} frames to AI (${strategy.interval} strategy)`);
 
     // Call Lovable AI Gateway with Gemini 2.5 Pro (multimodal)
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -211,10 +284,89 @@ IMPORTANT:
 
     console.log(`[analyze-game-footage] Analysis complete: ${analysis.observations?.length || 0} players, ${analysis.recommendations?.length || 0} recommendations`);
 
+    // ==================== PROPS MATCHING ====================
+    // Query unified_props for actual bookmaker lines
+    let enrichedRecommendations = analysis.recommendations || [];
+    let availablePropsCount = 0;
+
+    try {
+      const supabaseUrl = Deno.env.get("SUPABASE_URL");
+      const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+      if (supabaseUrl && supabaseServiceKey && gameContext.eventId) {
+        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+        // Get all player names from observations
+        const observedPlayerNames = analysis.observations?.map((o: any) => o.playerName) || [];
+        
+        if (observedPlayerNames.length > 0) {
+          console.log(`[analyze-game-footage] Querying props for ${observedPlayerNames.length} observed players`);
+
+          // Query props for observed players
+          const { data: availableProps, error: propsError } = await supabase
+            .from("unified_props")
+            .select("*")
+            .eq("event_id", gameContext.eventId);
+
+          if (propsError) {
+            console.error('[analyze-game-footage] Props query error:', propsError);
+          } else if (availableProps && availableProps.length > 0) {
+            availablePropsCount = availableProps.length;
+            console.log(`[analyze-game-footage] Found ${availablePropsCount} props for this game`);
+
+            // Enrich recommendations with actual bookmaker lines
+            enrichedRecommendations = (analysis.recommendations || []).map((rec: any) => {
+              // Find matching prop (fuzzy match on player name and prop type)
+              const matchingProp = availableProps.find((p: any) => {
+                const playerMatch = p.player_name?.toLowerCase().includes(rec.playerName?.toLowerCase()) ||
+                                    rec.playerName?.toLowerCase().includes(p.player_name?.toLowerCase());
+                const propMatch = p.prop_type?.toLowerCase().includes(rec.propType?.toLowerCase()) ||
+                                  rec.propType?.toLowerCase().includes(p.prop_type?.toLowerCase());
+                return playerMatch && propMatch;
+              });
+
+              if (matchingProp) {
+                return {
+                  ...rec,
+                  actualLine: matchingProp.current_line ?? matchingProp.line ?? null,
+                  overPrice: matchingProp.over_price ?? matchingProp.over_odds ?? null,
+                  underPrice: matchingProp.under_price ?? matchingProp.under_odds ?? null,
+                  bookmaker: matchingProp.bookmaker ?? 'Unknown',
+                  propAvailable: true,
+                  lineDelta: matchingProp.current_line 
+                    ? Number((rec.line - matchingProp.current_line).toFixed(1))
+                    : null,
+                };
+              }
+
+              return {
+                ...rec,
+                actualLine: null,
+                overPrice: null,
+                underPrice: null,
+                bookmaker: null,
+                propAvailable: false,
+                lineDelta: null,
+              };
+            });
+          }
+        }
+      }
+    } catch (propsMatchError) {
+      console.error('[analyze-game-footage] Props matching error:', propsMatchError);
+      // Continue without props enrichment
+    }
+
+    // Update analysis with enriched recommendations
+    analysis.recommendations = enrichedRecommendations;
+
     return new Response(JSON.stringify({
       success: true,
       analysis,
       framesAnalyzed: framesToAnalyze.length,
+      totalFramesReceived: frames.length,
+      frameStrategy: strategy.interval,
+      availableProps: availablePropsCount,
       clipCategory,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
