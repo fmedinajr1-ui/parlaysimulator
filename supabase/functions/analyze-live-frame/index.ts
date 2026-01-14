@@ -14,9 +14,10 @@ interface LiveFrameRequest {
     homeRoster?: { name: string; jersey: string; position: string }[];
     awayRoster?: { name: string; jersey: string; position: string }[];
   };
-  momentType: 'timeout' | 'injury' | 'fastbreak' | 'freethrow' | 'other';
+  momentType: 'timeout' | 'injury' | 'fastbreak' | 'freethrow' | 'other' | 'auto';
   isPriority: boolean;
   existingObservations?: string[];
+  isAutoDetect?: boolean;
 }
 
 function getMomentSpecificPrompt(momentType: string): string {
@@ -55,13 +56,38 @@ function getMomentSpecificPrompt(momentType: string): string {
   return prompts[momentType] || prompts.other;
 }
 
+function getAutoDetectPrompt(): string {
+  return `QUICK SCENE CLASSIFICATION - Identify what's happening on the basketball court.
+
+DETECT ONE OF THESE MOMENTS:
+- "timeout" = Players in huddle, coach talking to team, bench area activity, players gathered
+- "injury" = Player down on court, trainers attending, player limping, holding body part
+- "fastbreak" = Full court sprint, transition play, fast movement toward basket, players running
+- "freethrow" = Player at free throw line, set formation, other players lined up on lane
+
+ALSO EXTRACT:
+- Game clock if visible (look for scoreboard showing quarter and time like "Q2 5:42" or "2nd 5:42")
+- Score if visible
+
+Return JSON:
+{
+  "detectedMoment": "timeout" | "injury" | "fastbreak" | "freethrow" | null,
+  "confidence": "low" | "medium" | "high",
+  "gameTime": "Q2 5:42" or null,
+  "score": "HOM 45 - AWY 42" or null,
+  "reason": "Brief 5-10 word explanation"
+}
+
+If nothing notable is happening (regular play), return detectedMoment as null.`;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const { frames, gameContext, momentType, isPriority, existingObservations } = await req.json() as LiveFrameRequest;
+    const { frames, gameContext, momentType, isPriority, existingObservations, isAutoDetect } = await req.json() as LiveFrameRequest;
 
     if (!frames || frames.length === 0) {
       return new Response(
@@ -75,6 +101,78 @@ serve(async (req) => {
       throw new Error('LOVABLE_API_KEY is not configured');
     }
 
+    // AUTO-DETECT MODE: Quick classification scan
+    if (isAutoDetect || momentType === 'auto') {
+      console.log('Running auto-detect mode on 1 frame');
+      
+      const frame = frames[0];
+      const base64Data = frame.replace(/^data:image\/\w+;base64,/, '');
+      
+      const autoContent: any[] = [
+        { type: 'text', text: getAutoDetectPrompt() },
+        {
+          type: 'image_url',
+          image_url: {
+            url: `data:image/jpeg;base64,${base64Data}`,
+            detail: 'low',
+          },
+        },
+      ];
+
+      const autoResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'google/gemini-2.5-flash-lite', // Fastest model for classification
+          messages: [
+            { role: 'system', content: `You are a basketball game scene classifier. Game: ${gameContext.awayTeam} @ ${gameContext.homeTeam}` },
+            { role: 'user', content: autoContent },
+          ],
+          max_tokens: 200,
+        }),
+      });
+
+      if (!autoResponse.ok) {
+        if (autoResponse.status === 429) {
+          return new Response(
+            JSON.stringify({ error: 'Rate limit exceeded', detectedMoment: null }),
+            { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+        if (autoResponse.status === 402) {
+          return new Response(
+            JSON.stringify({ error: 'AI credits exhausted', detectedMoment: null }),
+            { status: 402, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+        throw new Error(`AI Gateway error: ${autoResponse.status}`);
+      }
+
+      const autoAiResponse = await autoResponse.json();
+      const autoContentResponse = autoAiResponse.choices?.[0]?.message?.content;
+
+      let autoResult = { detectedMoment: null, confidence: 'low', gameTime: null, reason: null };
+      try {
+        const jsonMatch = autoContentResponse?.match(/```(?:json)?\s*([\s\S]*?)```/);
+        const jsonStr = jsonMatch ? jsonMatch[1].trim() : autoContentResponse?.trim();
+        autoResult = JSON.parse(jsonStr);
+      } catch {
+        console.log('Auto-detect parse failed, returning null detection');
+      }
+
+      return new Response(
+        JSON.stringify({
+          ...autoResult,
+          isAutoDetect: true,
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // STANDARD MODE: Full analysis
     // Build roster context
     let rosterContext = '';
     if (gameContext.homeRoster?.length) {
