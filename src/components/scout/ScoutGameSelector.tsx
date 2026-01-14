@@ -4,12 +4,15 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
-import { Calendar, Clock, Users, ChevronRight, RefreshCw } from "lucide-react";
+import { Calendar, Clock, Users, ChevronRight, RefreshCw, Shirt } from "lucide-react";
 import type { GameContext } from "@/pages/Scout";
 import { toZonedTime, format } from "date-fns-tz";
+import { toast } from "sonner";
 
 const CACHE_KEY = 'scout_props_last_refresh';
 const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
+const ROSTER_SYNC_KEY = 'scout_roster_last_sync';
+const ROSTER_SYNC_DURATION_MS = 60 * 60 * 1000; // 1 hour
 
 interface ScoutGameSelectorProps {
   selectedGame: GameContext | null;
@@ -24,12 +27,24 @@ interface TodaysGame {
   gameDescription: string;
 }
 
+interface RosterSyncResult {
+  success: boolean;
+  summary?: {
+    teamsProcessed: number;
+    totalPlayers: number;
+    totalWithJerseys: number;
+    coveragePercent: number;
+  };
+}
+
 export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelectorProps) {
   const [games, setGames] = useState<TodaysGame[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadingRoster, setLoadingRoster] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshAttempted, setRefreshAttempted] = useState(false);
+  const [isSyncingRosters, setIsSyncingRosters] = useState(false);
+  const [rosterSyncStatus, setRosterSyncStatus] = useState<string | null>(null);
 
   const shouldAutoRefresh = (): boolean => {
     const lastRefresh = localStorage.getItem(CACHE_KEY);
@@ -146,10 +161,87 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
     }
   };
 
+  // Check if roster sync is needed
+  const shouldSyncRosters = (): boolean => {
+    const lastSync = localStorage.getItem(ROSTER_SYNC_KEY);
+    if (!lastSync) return true;
+    
+    const lastSyncTime = parseInt(lastSync, 10);
+    const timeSinceSync = Date.now() - lastSyncTime;
+    
+    return timeSinceSync > ROSTER_SYNC_DURATION_MS;
+  };
+
+  // Sync rosters from BallDontLie API
+  const syncTeamRosters = async (teamNames: string[], forceRefresh: boolean = false): Promise<RosterSyncResult> => {
+    setIsSyncingRosters(true);
+    setRosterSyncStatus('Syncing jersey numbers...');
+    
+    try {
+      console.log(`[ScoutGameSelector] Syncing rosters for: ${teamNames.join(', ')}`);
+      
+      const { data, error } = await supabase.functions.invoke('sync-team-roster', {
+        body: { teamNames, forceRefresh }
+      });
+      
+      if (error) {
+        console.error('[ScoutGameSelector] Roster sync error:', error);
+        setRosterSyncStatus('Sync failed');
+        return { success: false };
+      }
+      
+      if (data?.success) {
+        const { summary } = data;
+        console.log('[ScoutGameSelector] Roster sync successful:', summary);
+        localStorage.setItem(ROSTER_SYNC_KEY, Date.now().toString());
+        setRosterSyncStatus(`${summary.totalWithJerseys} players synced (${summary.coveragePercent}% coverage)`);
+        
+        return { success: true, summary };
+      }
+      
+      return { success: false };
+    } catch (err) {
+      console.error('[ScoutGameSelector] Roster sync error:', err);
+      setRosterSyncStatus('Sync error');
+      return { success: false };
+    } finally {
+      setIsSyncingRosters(false);
+      // Clear status after 3 seconds
+      setTimeout(() => setRosterSyncStatus(null), 3000);
+    }
+  };
+
+  // Manual sync all teams for today's games
+  const syncAllGameRosters = async () => {
+    if (games.length === 0) {
+      toast.error('No games to sync');
+      return;
+    }
+    
+    const allTeams = games.flatMap(g => [g.homeTeam, g.awayTeam]);
+    const uniqueTeams = [...new Set(allTeams)];
+    
+    const result = await syncTeamRosters(uniqueTeams, true);
+    
+    if (result.success && result.summary) {
+      toast.success(`Synced ${result.summary.totalWithJerseys} players with jerseys`, {
+        description: `${result.summary.coveragePercent}% coverage across ${result.summary.teamsProcessed} teams`,
+      });
+    } else {
+      toast.error('Roster sync failed');
+    }
+  };
+
   const loadRosters = async (game: TodaysGame) => {
     setLoadingRoster(game.eventId);
     
     try {
+      // Auto-sync rosters if needed before loading
+      if (shouldSyncRosters()) {
+        console.log('[ScoutGameSelector] Auto-syncing rosters before load...');
+        await syncTeamRosters([game.homeTeam, game.awayTeam], false);
+      }
+      
       // Fetch players from bdl_player_cache for both teams
       const { data: homeRoster, error: homeError } = await supabase
         .from('bdl_player_cache')
@@ -288,6 +380,18 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
           <Calendar className="w-4 h-4 text-primary" />
           Today's Games
           <div className="ml-auto flex items-center gap-2">
+            {/* Roster Sync Button */}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2"
+              onClick={syncAllGameRosters}
+              disabled={isSyncingRosters || games.length === 0}
+              title="Sync jersey numbers from BallDontLie"
+            >
+              <Shirt className={`w-3.5 h-3.5 ${isSyncingRosters ? 'animate-pulse' : ''}`} />
+            </Button>
+            {/* Refresh Games Button */}
             <Button
               variant="ghost"
               size="sm"
@@ -306,6 +410,13 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
             </Badge>
           </div>
         </CardTitle>
+        {/* Roster sync status indicator */}
+        {rosterSyncStatus && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
+            <Shirt className="w-3 h-3" />
+            {rosterSyncStatus}
+          </div>
+        )}
       </CardHeader>
       <CardContent className="space-y-2">
         {games.map((game) => {
