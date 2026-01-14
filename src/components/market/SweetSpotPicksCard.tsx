@@ -1,10 +1,13 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Target, TrendingUp, Loader2, CheckCircle2, XCircle, Clock } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Target, TrendingUp, Loader2, CheckCircle2, XCircle, Clock, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
+import { toast } from "sonner";
 
 interface SweetSpotPick {
   id: string;
@@ -66,8 +69,10 @@ function formatPropType(propType: string): string {
 }
 
 export function SweetSpotPicksCard() {
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
   // Fetch from sweet_spot_tracking table
-  const { data: trackedPicks, isLoading: trackingLoading } = useQuery({
+  const { data: trackedPicks, isLoading: trackingLoading, refetch: refetchTracking } = useQuery({
     queryKey: ["sweet-spot-tracking"],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -83,7 +88,7 @@ export function SweetSpotPicksCard() {
   });
 
   // Also fetch sweet spot picks from risk engine
-  const { data: riskEngineSweetSpots, isLoading: riskLoading } = useQuery({
+  const { data: riskEngineSweetSpots, isLoading: riskLoading, refetch: refetchRiskEngine } = useQuery({
     queryKey: ["sweet-spot-risk-engine"],
     queryFn: async () => {
       const today = format(new Date(), "yyyy-MM-dd");
@@ -102,6 +107,22 @@ export function SweetSpotPicksCard() {
   });
 
   const isLoading = trackingLoading || riskLoading;
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await supabase.functions.invoke('nba-player-prop-risk-engine', {
+        body: { action: 'analyze_slate', mode: 'full_slate' }
+      });
+      await Promise.all([refetchTracking(), refetchRiskEngine()]);
+      toast.success('Sweet spot picks refreshed!');
+    } catch (err) {
+      console.error('Refresh error:', err);
+      toast.error('Failed to refresh picks');
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   // Combine and dedupe picks (prefer tracked picks)
   const allPicks = [
@@ -123,6 +144,15 @@ export function SweetSpotPicksCard() {
           <div className="flex items-center gap-2">
             <Target className="w-5 h-5 text-primary" />
             <CardTitle className="text-lg">Sweet Spot Picks</CardTitle>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleRefresh}
+              disabled={isRefreshing || isLoading}
+              className="h-7 w-7 p-0"
+            >
+              <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            </Button>
           </div>
           {allPicks.length > 0 && (
             <div className="flex items-center gap-2 text-sm">
