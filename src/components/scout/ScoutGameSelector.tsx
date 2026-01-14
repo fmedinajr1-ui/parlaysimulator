@@ -50,9 +50,9 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
     
     setIsRefreshing(true);
     try {
-      console.log('[ScoutGameSelector] Triggering auto-refresh...');
+      console.log('[ScoutGameSelector] Triggering auto-refresh with force_clear...');
       const { data, error } = await supabase.functions.invoke('refresh-todays-props', {
-        body: { sport: 'basketball_nba', use_bdl_fallback: true }
+        body: { sport: 'basketball_nba', use_bdl_fallback: true, force_clear: true }
       });
       
       if (error) {
@@ -85,24 +85,38 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
   const fetchTodaysGames = async (): Promise<number> => {
     try {
       // Use Eastern Time for "today" to match NBA schedule
+      // NBA games run from ~noon to ~11:30 PM Eastern
+      // In UTC, this spans from today 5 PM to tomorrow 5 AM
       const now = new Date();
       const easternTimeZone = 'America/New_York';
       const easternNow = toZonedTime(now, easternTimeZone);
       
-      // Get start of today in Eastern Time
-      const todayStart = new Date(easternNow);
-      todayStart.setHours(0, 0, 0, 0);
+      // Start from 5 AM Eastern today (catches any early games)
+      const queryStartET = new Date(easternNow);
+      queryStartET.setHours(5, 0, 0, 0);
       
-      // Get end of today in Eastern Time
-      const todayEnd = new Date(easternNow);
-      todayEnd.setHours(23, 59, 59, 999);
+      // End at 5 AM Eastern tomorrow (covers late West Coast games)
+      const queryEndET = new Date(easternNow);
+      queryEndET.setDate(queryEndET.getDate() + 1);
+      queryEndET.setHours(5, 0, 0, 0);
+
+      // Convert Eastern bounds to UTC ISO strings for database query
+      // We need to adjust for the timezone offset
+      const etOffset = -5; // EST is UTC-5 (ignoring DST for simplicity)
+      const startUTC = new Date(queryStartET.getTime() - etOffset * 60 * 60 * 1000);
+      const endUTC = new Date(queryEndET.getTime() - etOffset * 60 * 60 * 1000);
+      
+      console.log('[ScoutGameSelector] Query range:', {
+        startUTC: startUTC.toISOString(),
+        endUTC: endUTC.toISOString()
+      });
 
       const { data, error } = await supabase
         .from('unified_props')
         .select('event_id, game_description, commence_time')
         .eq('sport', 'basketball_nba')
-        .gte('commence_time', todayStart.toISOString())
-        .lt('commence_time', todayEnd.toISOString())
+        .gte('commence_time', startUTC.toISOString())
+        .lt('commence_time', endUTC.toISOString())
         .order('commence_time', { ascending: true });
 
       if (error) throw error;
