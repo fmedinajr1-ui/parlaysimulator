@@ -99,13 +99,58 @@ Return JSON only:
 }`;
 }
 
-function getVisionAnalysisPrompt(playerStates: Record<string, PlayerLiveState>, sceneType: string): string {
+function buildRosterLookupTable(gameContext: any): string {
+  const homeRoster = (gameContext.homeRoster || [])
+    .filter((p: any) => p.jersey && p.jersey !== '?' && p.jersey !== 'null')
+    .map((p: any) => `  #${String(p.jersey).padStart(2, '0')} → ${p.name} (${p.position || 'N/A'})`)
+    .join('\n');
+  
+  const awayRoster = (gameContext.awayRoster || [])
+    .filter((p: any) => p.jersey && p.jersey !== '?' && p.jersey !== 'null')
+    .map((p: any) => `  #${String(p.jersey).padStart(2, '0')} → ${p.name} (${p.position || 'N/A'})`)
+    .join('\n');
+
+  return `
+═══════════════════════════════════════════════════════════
+                PLAYER JERSEY LOOKUP TABLE
+     Use this to identify players. Match jersey numbers EXACTLY.
+═══════════════════════════════════════════════════════════
+
+${gameContext.homeTeam} (HOME):
+${homeRoster || '  No roster data available'}
+
+${gameContext.awayTeam} (AWAY):
+${awayRoster || '  No roster data available'}
+
+═══════════════════════════════════════════════════════════`;
+}
+
+function getVisionAnalysisPrompt(playerStates: Record<string, PlayerLiveState>, sceneType: string, gameContext?: any): string {
   const playerContext = Object.values(playerStates)
     .filter(p => p.onCourt || p.minutesEstimate > 0)
     .map(p => `#${p.jersey} ${p.playerName} (${p.team}): Fatigue ${p.fatigueScore}/100, Speed ${p.speedIndex}/100`)
     .join('\n');
 
+  const rosterTable = gameContext ? buildRosterLookupTable(gameContext) : '';
+
   return `BASKETBALL VISION ANALYSIS - Extract betting-relevant signals from this ${sceneType} frame.
+
+${rosterTable}
+
+## ⚠️ MANDATORY JERSEY IDENTIFICATION RULES ⚠️
+
+1. **NEVER GUESS A PLAYER'S NAME** - You MUST see their jersey number first
+2. If you cannot clearly read the jersey number, use "Unknown #?" as the player field
+3. When you see a jersey number (e.g., #23), IMMEDIATELY look it up in the roster table above
+4. Report the player as the EXACT name from the roster lookup
+5. If a jersey number doesn't match any roster player, report as "Unknown #{number}"
+6. ALWAYS include the jersey field with the number you observed
+
+Example identification flow:
+- See jersey number "23" on a player
+- Look up in roster table above
+- Find: "#23 → LeBron James (F)"
+- Report: player: "LeBron James", jersey: "#23"
 
 CURRENT PLAYER STATES:
 ${playerContext || 'No player states available yet'}
@@ -132,15 +177,13 @@ EXTRACT SIGNALS FOR VISIBLE PLAYERS:
    - Court position (perimeter vs paint)
    - Transition involvement
 
-IDENTIFY PLAYERS BY JERSEY NUMBER WHEN VISIBLE.
-
 Return JSON:
 {
   "visionSignals": [
     {
       "signalType": "fatigue" | "speed" | "effort" | "positioning",
-      "player": "Player Name",
-      "jersey": "#23",
+      "player": "Player Name from Roster (MUST match roster exactly)",
+      "jersey": "#23 (the number you observed)",
       "value": -10 to +10 (negative = decrease, positive = increase),
       "observation": "Specific observation (hands on knees after sprint)",
       "confidence": "low" | "medium" | "high"
@@ -158,25 +201,101 @@ Return JSON:
 }`;
 }
 
+// Build jersey-to-player lookup map from game context
+function buildJerseyLookupMap(gameContext: any): Map<string, { name: string; team: string; position: string }> {
+  const jerseyMap = new Map<string, { name: string; team: string; position: string }>();
+  
+  (gameContext.homeRoster || []).forEach((p: any) => {
+    if (p.jersey && p.jersey !== '?' && p.jersey !== 'null') {
+      const jerseyNum = String(p.jersey).replace('#', '').trim();
+      jerseyMap.set(`${gameContext.homeTeam}-${jerseyNum}`, {
+        name: p.name,
+        team: gameContext.homeTeam,
+        position: p.position || '',
+      });
+    }
+  });
+  
+  (gameContext.awayRoster || []).forEach((p: any) => {
+    if (p.jersey && p.jersey !== '?' && p.jersey !== 'null') {
+      const jerseyNum = String(p.jersey).replace('#', '').trim();
+      jerseyMap.set(`${gameContext.awayTeam}-${jerseyNum}`, {
+        name: p.name,
+        team: gameContext.awayTeam,
+        position: p.position || '',
+      });
+    }
+  });
+  
+  console.log(`[Scout Agent] Built jersey lookup map with ${jerseyMap.size} entries`);
+  return jerseyMap;
+}
+
+// Validate and correct vision signals using jersey lookup
+function validateVisionSignals(signals: any[], gameContext: any): any[] {
+  const jerseyMap = buildJerseyLookupMap(gameContext);
+  
+  return signals.map(signal => {
+    if (!signal.jersey) {
+      console.log(`[Scout Agent] Signal missing jersey: ${signal.player}`);
+      return { ...signal, verified: false, warning: 'No jersey number provided' };
+    }
+    
+    const jerseyNum = String(signal.jersey).replace('#', '').trim();
+    
+    // Try home team first
+    const homeMatch = jerseyMap.get(`${gameContext.homeTeam}-${jerseyNum}`);
+    if (homeMatch) {
+      console.log(`[Scout Agent] ✓ Jersey #${jerseyNum} verified: ${homeMatch.name} (${gameContext.homeTeam})`);
+      return {
+        ...signal,
+        player: homeMatch.name, // Override with verified roster name
+        team: homeMatch.team,
+        verified: true,
+      };
+    }
+    
+    // Try away team
+    const awayMatch = jerseyMap.get(`${gameContext.awayTeam}-${jerseyNum}`);
+    if (awayMatch) {
+      console.log(`[Scout Agent] ✓ Jersey #${jerseyNum} verified: ${awayMatch.name} (${gameContext.awayTeam})`);
+      return {
+        ...signal,
+        player: awayMatch.name, // Override with verified roster name
+        team: awayMatch.team,
+        verified: true,
+      };
+    }
+    
+    // Jersey not found in either roster
+    console.log(`[Scout Agent] ✗ Jersey #${jerseyNum} not found in roster for: ${signal.player}`);
+    return {
+      ...signal,
+      verified: false,
+      warning: `Jersey #${jerseyNum} not found in roster`,
+    };
+  });
+}
+
 // Helper: Extract basic signals from text when JSON parsing fails
 function extractBasicSignals(content: string, gameContext: any): any[] {
   const signals: any[] = [];
   const lowerContent = content.toLowerCase();
   
   // Build roster name lookup
-  const rosterNames: { name: string; team: string }[] = [];
+  const rosterNames: { name: string; team: string; jersey: string }[] = [];
   (gameContext.homeRoster || []).forEach((p: any) => {
-    rosterNames.push({ name: p.name.toLowerCase(), team: gameContext.homeTeam });
+    rosterNames.push({ name: p.name.toLowerCase(), team: gameContext.homeTeam, jersey: p.jersey || '?' });
   });
   (gameContext.awayRoster || []).forEach((p: any) => {
-    rosterNames.push({ name: p.name.toLowerCase(), team: gameContext.awayTeam });
+    rosterNames.push({ name: p.name.toLowerCase(), team: gameContext.awayTeam, jersey: p.jersey || '?' });
   });
   
   // Look for fatigue indicators
   const fatigueKeywords = ['tired', 'fatigue', 'hands on knees', 'bent over', 'breathing heavy', 'slow', 'labored'];
   const effortKeywords = ['sprint', 'fast', 'quick', 'explosive', 'active', 'hustl'];
   
-  rosterNames.forEach(({ name }) => {
+  rosterNames.forEach(({ name, jersey }) => {
     const nameParts = name.split(' ');
     const lastName = nameParts[nameParts.length - 1];
     
@@ -188,9 +307,11 @@ function extractBasicSignals(content: string, gameContext: any): any[] {
           signals.push({
             signalType: 'fatigue',
             player: name.split(' ').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
+            jersey: `#${jersey}`,
             value: 8,
             observation: `Detected fatigue indicator: ${keyword}`,
             confidence: 'medium',
+            verified: jersey !== '?',
           });
         }
       });
@@ -201,9 +322,11 @@ function extractBasicSignals(content: string, gameContext: any): any[] {
           signals.push({
             signalType: 'effort',
             player: name.split(' ').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
+            jersey: `#${jersey}`,
             value: 5,
             observation: `Detected effort indicator: ${keyword}`,
             confidence: 'medium',
+            verified: jersey !== '?',
           });
         }
       });
@@ -547,20 +670,7 @@ serve(async (req) => {
     // STEP 2: Vision Analysis (detailed model)
     console.log(`[Scout Agent] Step 2: Vision analysis for ${sceneClassification.sceneType}`);
 
-    // Build roster context
-    let rosterContext = '';
-    if (gameContext.homeRoster?.length) {
-      rosterContext += `\n${gameContext.homeTeam} Roster:\n`;
-      gameContext.homeRoster.forEach(p => {
-        rosterContext += `- #${p.jersey} ${p.name} (${p.position})\n`;
-      });
-    }
-    if (gameContext.awayRoster?.length) {
-      rosterContext += `\n${gameContext.awayTeam} Roster:\n`;
-      gameContext.awayRoster.forEach(p => {
-        rosterContext += `- #${p.jersey} ${p.name} (${p.position})\n`;
-      });
-    }
+    // Note: Roster context is now built into getVisionAnalysisPrompt via gameContext
 
     const visionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
@@ -575,14 +685,13 @@ serve(async (req) => {
             role: 'system', 
             content: `You are an AI sports analyst extracting betting signals from live game footage.
 Game: ${gameContext.awayTeam} @ ${gameContext.homeTeam}
-${rosterContext}
 
-CRITICAL: Match jersey numbers to player names from the roster. Be specific about observations.` 
+CRITICAL RULE: You MUST identify players by their jersey numbers and look them up in the roster table provided in the prompt. NEVER guess player names.` 
           },
           { 
             role: 'user', 
             content: [
-              { type: 'text', text: getVisionAnalysisPrompt(playerStates, sceneClassification.sceneType) },
+              { type: 'text', text: getVisionAnalysisPrompt(playerStates, sceneClassification.sceneType, gameContext) },
               { 
                 type: 'image_url', 
                 image_url: { url: `data:image/jpeg;base64,${base64Data}`, detail: 'low' } 
@@ -645,6 +754,15 @@ CRITICAL: Match jersey numbers to player names from the roster. Be specific abou
       // Strategy 4: Extract signals from natural language
       visionResult.visionSignals = extractBasicSignals(visionContent, gameContext);
       visionResult.overallAssessment = visionContent.slice(0, 200);
+    }
+
+    // STEP 2.5: Validate vision signals against roster (jersey → player name)
+    if (visionResult.visionSignals?.length > 0) {
+      console.log(`[Scout Agent] Validating ${visionResult.visionSignals.length} vision signals against roster`);
+      visionResult.visionSignals = validateVisionSignals(visionResult.visionSignals, gameContext);
+      
+      const verifiedCount = visionResult.visionSignals.filter((s: any) => s.verified).length;
+      console.log(`[Scout Agent] Jersey validation complete: ${verifiedCount}/${visionResult.visionSignals.length} verified`);
     }
 
     // STEP 3: Calculate prop edges
