@@ -302,16 +302,26 @@ serve(async (req) => {
     });
 
     if (!classifyResponse.ok) {
-      if (classifyResponse.status === 429) {
+      const errorStatus = classifyResponse.status;
+      
+      // Handle rate limits (429) and gateway errors (502, 503, 504) gracefully
+      if (errorStatus === 429 || errorStatus === 502 || errorStatus === 503 || errorStatus === 504) {
+        const isRateLimit = errorStatus === 429;
         return new Response(
           JSON.stringify({ 
-            error: 'Rate limit', 
-            sceneClassification: { isAnalysisWorthy: false, reason: 'Rate limited' } 
+            error: isRateLimit ? 'Rate limit' : 'AI gateway temporarily unavailable',
+            sceneClassification: { 
+              sceneType: 'unknown',
+              isAnalysisWorthy: false, 
+              reason: isRateLimit ? 'Rate limited - will retry' : `Gateway error ${errorStatus} - will retry`,
+              timestamp: new Date().toISOString(),
+            },
+            retryAfter: isRateLimit ? 2000 : 5000, // Suggest retry delay in ms
           }),
-          { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          { status: isRateLimit ? 429 : 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
-      throw new Error(`Classification failed: ${classifyResponse.status}`);
+      throw new Error(`Classification failed: ${errorStatus}`);
     }
 
     const classifyData = await classifyResponse.json();
@@ -400,13 +410,19 @@ CRITICAL: Match jersey numbers to player names from the roster. Be specific abou
     });
 
     if (!visionResponse.ok) {
-      console.error('[Scout Agent] Vision analysis failed:', visionResponse.status);
+      const visionErrorStatus = visionResponse.status;
+      console.error('[Scout Agent] Vision analysis failed:', visionErrorStatus);
+      
+      // Still return scene classification data, just without vision signals
       return new Response(
         JSON.stringify({
           sceneClassification,
           gameTime: sceneClassification.gameTime || currentGameTime,
           score: sceneClassification.score,
-          error: 'Vision analysis failed',
+          visionSignals: [],
+          propEdges: [],
+          error: visionErrorStatus === 429 ? 'Vision rate limited' : `Vision analysis failed (${visionErrorStatus})`,
+          retryAfter: visionErrorStatus === 429 ? 2000 : 5000,
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );

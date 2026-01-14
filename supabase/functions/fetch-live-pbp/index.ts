@@ -84,13 +84,68 @@ serve(async (req) => {
       );
     }
 
-    console.log(`[PBP Fetch] Fetching data for event: ${eventId}`);
+    // Extract numeric ESPN ID from various formats
+    // Supports: "401234567", "bdl_nba_18447386", "espn_401234567", etc.
+    let espnEventId = eventId;
+    
+    // If it has a prefix like "bdl_nba_" or "espn_", try to extract or skip
+    if (eventId.includes('_')) {
+      const parts = eventId.split('_');
+      const lastPart = parts[parts.length - 1];
+      // Only use if it's a valid ESPN-length ID (typically 9 digits starting with 40)
+      if (/^\d{9}$/.test(lastPart) && lastPart.startsWith('40')) {
+        espnEventId = lastPart;
+      } else {
+        // This is likely a BallDontLie ID or other non-ESPN format
+        console.log(`[PBP Fetch] Non-ESPN event ID format: ${eventId}, returning empty data`);
+        return new Response(
+          JSON.stringify({
+            gameTime: 'Unknown',
+            period: 1,
+            clock: '12:00',
+            homeScore: 0,
+            awayScore: 0,
+            homeTeam: 'HOME',
+            awayTeam: 'AWAY',
+            pace: 100,
+            players: [],
+            recentPlays: [],
+            isHalftime: false,
+            isGameOver: false,
+            notAvailable: true,
+            reason: 'ESPN data not available for this event ID format',
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+
+    console.log(`[PBP Fetch] Fetching data for ESPN event: ${espnEventId}`);
 
     // Fetch from ESPN Summary API
-    const response = await fetch(`${ESPN_NBA_SUMMARY}?event=${eventId}`);
+    const response = await fetch(`${ESPN_NBA_SUMMARY}?event=${espnEventId}`);
     
     if (!response.ok) {
-      throw new Error(`ESPN API error: ${response.status}`);
+      console.error(`[PBP Fetch] ESPN API error: ${response.status}`);
+      return new Response(
+        JSON.stringify({
+          gameTime: 'Unknown',
+          period: 1,
+          clock: '12:00',
+          homeScore: 0,
+          awayScore: 0,
+          homeTeam: 'HOME',
+          awayTeam: 'AWAY',
+          pace: 100,
+          players: [],
+          recentPlays: [],
+          isHalftime: false,
+          isGameOver: false,
+          notAvailable: true,
+          reason: `ESPN API returned ${response.status}`,
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
     const data = await response.json();
