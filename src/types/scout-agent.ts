@@ -215,6 +215,10 @@ export interface PropEdge {
   // PBP enrichment
   currentStat?: number;
   minutesPlayed?: number;
+  remainingMinutes?: number;
+  // Projection details
+  edgeMargin?: number; // |expected - line|
+  ratePerMinute?: number;
   // Bookmaker data
   actualLine?: number;
   overPrice?: number;
@@ -440,6 +444,75 @@ export interface FatigueFactors {
   timeoutRecovery: number; // -5
   substitutionReset: boolean; // Reset slope
   minutesPlayed: number; // Base fatigue from minutes
+}
+
+// ===== PROJECTION CORE TYPES =====
+
+/**
+ * Live Box Score - Normalized PBP data per player
+ */
+export interface LiveBox {
+  pts: number;
+  reb: number;
+  ast: number;
+  pra: number;
+  min: number;      // decimal minutes (18:34 → 18.566)
+  fouls: number;
+  fga: number;
+  fta: number;
+  threes: number;
+  steals: number;
+  blocks: number;
+}
+
+/**
+ * Per-minute production rates
+ */
+export interface RatePerMinute {
+  pts: number;
+  reb: number;
+  ast: number;
+}
+
+/**
+ * Edge history for trend smoothing
+ */
+export interface EdgeHistory {
+  margins: number[];      // last 5 edge margins
+  confidences: number[];  // last 5 confidences
+  leans: ('OVER' | 'UNDER')[]; // last 5 leans
+  timestamps: number[];
+}
+
+/**
+ * Minutes projection result
+ */
+export interface MinutesProjection {
+  remaining: number;
+  riskFlags: string[];
+  blowoutPenalty: number;
+  foulPenalty: number;
+}
+
+/**
+ * Projection configuration (baseline rates)
+ */
+export interface ProjectionConfig {
+  roleBaselines: Record<PlayerRole, RatePerMinute>;
+  blowoutThresholds: {
+    q4Large: number;   // 15 pts
+    q4Extreme: number; // 20 pts
+    q3Medium: number;  // 20 pts
+  };
+  foulPenalties: Record<number, number>; // fouls -> penalty multiplier
+  confidenceWeights: {
+    edgeMarginMultiplier: number;
+    onCourtBonus: number;
+    offCourtPenalty: number;
+    foulTroublePenalty: number;
+    fatiguePenalty: number;
+    blowoutPenalty: number;
+  };
 }
 
 // ===== PLAYER STATE DELTA (for Edge/Worker split) =====

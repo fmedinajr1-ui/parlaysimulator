@@ -35,7 +35,40 @@ interface PropEdge {
   riskFlags: string[];
   trend: 'strengthening' | 'weakening' | 'stable';
   gameTime: string;
+  // New projection fields
+  currentStat?: number;
+  minutesPlayed?: number;
+  remainingMinutes?: number;
+  edgeMargin?: number;
+  ratePerMinute?: number;
 }
+
+// ===== PROJECTION CORE TYPES =====
+
+interface LiveBox {
+  pts: number;
+  reb: number;
+  ast: number;
+  pra: number;
+  min: number;
+  fouls: number;
+  fga: number;
+  fta: number;
+}
+
+interface RatePerMinute {
+  pts: number;
+  reb: number;
+  ast: number;
+}
+
+interface EdgeHistoryEntry {
+  margins: number[];
+  leans: ('OVER' | 'UNDER')[];
+  timestamps: number[];
+}
+
+type PropTypeKey = 'Points' | 'Rebounds' | 'Assists' | 'PRA';
 
 interface AgentLoopRequest {
   frame: string;
@@ -337,6 +370,375 @@ function extractBasicSignals(content: string, gameContext: any): any[] {
   return signals;
 }
 
+// ===== PROJECTION ENGINE 1: LIVE BOX SCORE PARSER =====
+
+function parseMinutesDecimal(minStr: any): number {
+  if (typeof minStr === 'number') return minStr;
+  if (typeof minStr !== 'string') return 0;
+  const m = minStr.match(/(\d+):(\d+)/);
+  if (!m) return parseFloat(minStr) || 0;
+  return Number(m[1]) + Number(m[2]) / 60;
+}
+
+function getLiveBox(pbpData: any, playerName: string): LiveBox | null {
+  if (!pbpData?.players?.length) return null;
+  
+  const row = pbpData.players.find((p: any) =>
+    (p.playerName || p.name)?.toLowerCase() === playerName.toLowerCase()
+  );
+  if (!row) return null;
+
+  const min = parseMinutesDecimal(row.minutes);
+  const pts = Number(row.points ?? 0);
+  const reb = Number(row.rebounds ?? 0);
+  const ast = Number(row.assists ?? 0);
+
+  return {
+    pts,
+    reb,
+    ast,
+    pra: pts + reb + ast,
+    min: Number.isFinite(min) ? min : 0,
+    fouls: Number(row.fouls ?? 0),
+    fga: Number(row.fga ?? 0),
+    fta: Number(row.fta ?? 0),
+  };
+}
+
+// ===== PROJECTION ENGINE 2: MINUTES ENGINE =====
+
+function calculateRemainingMinutes(
+  state: PlayerLiveState,
+  live: LiveBox | null,
+  scoreDiff: number,
+  period: number
+): { remaining: number; riskFlags: string[]; blowoutPenalty: number; foulPenalty: number } {
+  const played = live?.min ?? 0;
+  const riskFlags: string[] = [];
+  
+  // Expected total minutes (use minutesEstimate or derive from role)
+  const expectedTotal = state.minutesEstimate > 0 ? state.minutesEstimate : 
+    state.role === 'PRIMARY' ? 34 :
+    state.role === 'SECONDARY' ? 28 :
+    state.role === 'BIG' ? 30 : 22;
+  
+  let remaining = Math.max(0, expectedTotal - played);
+  
+  // Foul penalties
+  let foulPenalty = 1.0;
+  const fouls = live?.fouls ?? state.foulCount;
+  if (fouls >= 5) {
+    foulPenalty = 0.55;
+    riskFlags.push('FOUL_TROUBLE');
+  } else if (fouls === 4) {
+    foulPenalty = 0.75;
+    riskFlags.push('FOUL_TROUBLE');
+  } else if (fouls === 3 && period <= 2) {
+    foulPenalty = 0.85;
+    riskFlags.push('FOUL_TROUBLE');
+  }
+  remaining *= foulPenalty;
+  
+  // Off-court penalty
+  if (!state.onCourt) {
+    remaining *= 0.85;
+    riskFlags.push('MINUTES_VOLATILITY');
+  }
+  
+  // Blowout adjustments
+  let blowoutPenalty = 1.0;
+  const absLead = Math.abs(scoreDiff);
+  
+  if (period >= 4) {
+    if (absLead >= 20) {
+      blowoutPenalty = 0.40;
+      riskFlags.push('BLOWOUT_RISK');
+    } else if (absLead >= 15) {
+      blowoutPenalty = 0.60;
+      riskFlags.push('BLOWOUT_RISK');
+    } else if (absLead <= 6) {
+      // Close game boost
+      blowoutPenalty = 1.15;
+      riskFlags.push('CLOSE_GAME_BOOST');
+    }
+  } else if (period === 3 && absLead >= 20) {
+    blowoutPenalty = 0.70;
+    riskFlags.push('BLOWOUT_RISK');
+  }
+  remaining *= blowoutPenalty;
+  
+  // High fatigue penalty
+  if (state.fatigueScore >= 70) {
+    remaining *= 0.90;
+    riskFlags.push('HIGH_FATIGUE');
+  }
+  
+  // Cap remaining minutes
+  remaining = Math.min(remaining, 24);
+  
+  return { remaining, riskFlags, blowoutPenalty, foulPenalty };
+}
+
+// ===== PROJECTION ENGINE 3: RATE ENGINE =====
+
+function baselineRateFromRole(role: PlayerLiveState['role']): RatePerMinute {
+  switch (role) {
+    case 'PRIMARY':   return { pts: 0.70, reb: 0.18, ast: 0.16 };
+    case 'SECONDARY': return { pts: 0.55, reb: 0.16, ast: 0.14 };
+    case 'SPACER':    return { pts: 0.45, reb: 0.12, ast: 0.10 };
+    case 'BIG':       return { pts: 0.50, reb: 0.28, ast: 0.10 };
+    default:          return { pts: 0.55, reb: 0.16, ast: 0.14 };
+  }
+}
+
+function blendedRate(state: PlayerLiveState, live: LiveBox | null): RatePerMinute {
+  const base = baselineRateFromRole(state.role);
+  
+  const played = live?.min ?? 0;
+  const liveRate: RatePerMinute = played > 0
+    ? { 
+        pts: (live!.pts / played), 
+        reb: (live!.reb / played), 
+        ast: (live!.ast / played) 
+      }
+    : base;
+
+  // Weight ramps up as minutes played increases (trust live data more over time)
+  const w = Math.max(0.15, Math.min(0.85, played / 18));
+  
+  return {
+    pts: base.pts * (1 - w) + liveRate.pts * w,
+    reb: base.reb * (1 - w) + liveRate.reb * w,
+    ast: base.ast * (1 - w) + liveRate.ast * w,
+  };
+}
+
+// ===== PROJECTION ENGINE 4: VISUAL MODIFIER ENGINE =====
+
+function calculateRateModifier(state: PlayerLiveState, prop: PropTypeKey): number {
+  const fatigue = state.fatigueScore ?? 0;
+  const effort = state.effortScore ?? 50;
+  const speed = state.speedIndex ?? 50;
+  const handsOnKnees = state.handsOnKneesCount ?? 0;
+  const slowRecovery = state.slowRecoveryCount ?? 0;
+  const sprintCount = state.sprintCount ?? 0;
+
+  // Base modifier
+  let mod = 1.0;
+
+  // Fatigue penalty (above 40 hurts)
+  const fatiguePenalty = (fatigue - 40) / 60;
+  mod *= (1 - 0.10 * Math.max(0, fatiguePenalty));
+
+  // Accumulative fatigue indicators
+  if (handsOnKnees >= 2) mod *= 0.95; // Extra 5% penalty
+  if (slowRecovery >= 2) mod *= 0.96; // Extra 4% penalty
+
+  // Effort/speed boost for scoring props
+  if (prop === 'Points' || prop === 'Assists' || prop === 'PRA') {
+    const effortBoost = (effort - 50) / 50;
+    const speedBoost = (speed - 50) / 50;
+    mod *= (1 + 0.06 * effortBoost);
+    mod *= (1 + 0.06 * speedBoost);
+    
+    // "Hot motor" boost
+    if (sprintCount >= 3 && effort >= 65) {
+      mod *= 1.05;
+    }
+  }
+
+  // Rebound positioning for REB and PRA
+  if (prop === 'Rebounds' || prop === 'PRA') {
+    const pos = state.reboundPositionScore ?? 50;
+    const posBoost = (pos - 50) / 50;
+    mod *= (1 + 0.08 * posBoost);
+  }
+
+  // Clamp modifier
+  return Math.max(0.80, Math.min(1.20, mod));
+}
+
+// ===== PROJECTION ENGINE 5: PROJECTION CORE =====
+
+function projectFinal(
+  state: PlayerLiveState,
+  live: LiveBox | null,
+  prop: PropTypeKey,
+  scoreDiff: number,
+  period: number
+): { expected: number; remaining: number; riskFlags: string[]; rate: number } {
+  const { remaining, riskFlags } = calculateRemainingMinutes(state, live, scoreDiff, period);
+  const rate = blendedRate(state, live);
+  const mod = calculateRateModifier(state, prop);
+
+  const curPTS = live?.pts ?? 0;
+  const curREB = live?.reb ?? 0;
+  const curAST = live?.ast ?? 0;
+
+  const addPTS = rate.pts * remaining * mod;
+  const addREB = rate.reb * remaining * mod;
+  const addAST = rate.ast * remaining * mod;
+
+  let expected: number;
+  let rateUsed: number;
+  
+  switch (prop) {
+    case 'Points':
+      expected = curPTS + addPTS;
+      rateUsed = rate.pts * mod;
+      break;
+    case 'Rebounds':
+      expected = curREB + addREB;
+      rateUsed = rate.reb * mod;
+      break;
+    case 'Assists':
+      expected = curAST + addAST;
+      rateUsed = rate.ast * mod;
+      break;
+    case 'PRA':
+      expected = (curPTS + curREB + curAST) + (addPTS + addREB + addAST);
+      rateUsed = (rate.pts + rate.reb + rate.ast) * mod;
+      break;
+    default:
+      expected = 0;
+      rateUsed = 0;
+  }
+
+  return { expected, remaining, riskFlags, rate: rateUsed };
+}
+
+// ===== CONFIDENCE FORMULA =====
+
+function computeConfidence(
+  edgeMargin: number,
+  state: PlayerLiveState,
+  riskFlags: string[],
+  live: LiveBox | null
+): number {
+  let c = 50;
+
+  // Bigger edge => higher confidence (cap at +25)
+  c += Math.min(25, edgeMargin * 6);
+
+  // Data reliability bonuses
+  if (state.onCourt) c += 8;
+  else c -= 6;
+
+  // Minutes reliability
+  if ((live?.min ?? 0) >= 15) c += 5; // More data = more reliable
+
+  // Risk penalties
+  if (riskFlags.includes('FOUL_TROUBLE')) {
+    const fouls = live?.fouls ?? state.foulCount;
+    c -= fouls >= 5 ? 18 : 10;
+  }
+  if (riskFlags.includes('BLOWOUT_RISK')) c -= 12;
+  if (riskFlags.includes('HIGH_FATIGUE')) c -= 10;
+  if (riskFlags.includes('MINUTES_VOLATILITY')) c -= 8;
+  
+  // Close game boost
+  if (riskFlags.includes('CLOSE_GAME_BOOST')) c += 5;
+
+  return Math.max(1, Math.min(99, Math.round(c)));
+}
+
+// ===== TREND ENGINE =====
+
+const edgeHistoryMap = new Map<string, EdgeHistoryEntry>();
+
+function calculateTrend(
+  historyKey: string,
+  currentMargin: number,
+  currentLean: 'OVER' | 'UNDER'
+): 'strengthening' | 'weakening' | 'stable' {
+  let history = edgeHistoryMap.get(historyKey);
+  
+  if (!history) {
+    history = { margins: [], leans: [], timestamps: [] };
+    edgeHistoryMap.set(historyKey, history);
+  }
+
+  // Add current reading
+  history.margins.push(currentMargin);
+  history.leans.push(currentLean);
+  history.timestamps.push(Date.now());
+
+  // Keep only last 5 readings
+  while (history.margins.length > 5) {
+    history.margins.shift();
+    history.leans.shift();
+    history.timestamps.shift();
+  }
+
+  if (history.margins.length < 2) return 'stable';
+
+  // Check for lean consistency (flip = weakening)
+  const lastLean = history.leans[history.leans.length - 2];
+  if (lastLean !== currentLean) return 'weakening';
+
+  // Calculate slope
+  const firstMargin = history.margins[0];
+  const slope = currentMargin - firstMargin;
+
+  if (slope > 0.5) return 'strengthening';
+  if (slope < -0.5) return 'weakening';
+  return 'stable';
+}
+
+// ===== DRIVER BUILDER =====
+
+function buildDrivers(
+  state: PlayerLiveState,
+  live: LiveBox | null,
+  remaining: number,
+  prop: PropTypeKey
+): string[] {
+  const drivers: string[] = [];
+  
+  // Current stat + projection
+  const current = prop === 'Points' ? live?.pts :
+                  prop === 'Rebounds' ? live?.reb :
+                  prop === 'Assists' ? live?.ast :
+                  live?.pra ?? 0;
+  drivers.push(`Current: ${current ?? 0} in ${(live?.min ?? 0).toFixed(1)} min`);
+  drivers.push(`Est. ${remaining.toFixed(1)} min remaining`);
+  
+  // Key indicators
+  if (state.fatigueScore >= 50) {
+    drivers.push(`Fatigue: ${state.fatigueScore}/100`);
+  }
+  if (state.effortScore >= 65 || state.effortScore <= 35) {
+    drivers.push(`Effort: ${state.effortScore}/100`);
+  }
+  if (state.handsOnKneesCount > 0) {
+    drivers.push(`Hands on knees: ${state.handsOnKneesCount}x`);
+  }
+  if (prop === 'Rebounds' && state.role === 'BIG') {
+    drivers.push(`Reb position: ${state.reboundPositionScore}/100`);
+  }
+  
+  return drivers.slice(0, 4);
+}
+
+// ===== PROP LINE DEFAULTS (until we have actual lines) =====
+
+function getDefaultLine(prop: PropTypeKey, role: PlayerLiveState['role']): number {
+  switch (prop) {
+    case 'Points':
+      return role === 'PRIMARY' ? 24.5 : role === 'SECONDARY' ? 18.5 : role === 'BIG' ? 14.5 : 10.5;
+    case 'Rebounds':
+      return role === 'BIG' ? 10.5 : role === 'PRIMARY' ? 5.5 : 4.5;
+    case 'Assists':
+      return role === 'PRIMARY' ? 6.5 : role === 'SECONDARY' ? 4.5 : 2.5;
+    case 'PRA':
+      return role === 'PRIMARY' ? 35.5 : role === 'SECONDARY' ? 28.5 : role === 'BIG' ? 25.5 : 18.5;
+    default:
+      return 15.5;
+  }
+}
+
+// ===== NEW PROJECTION-BASED calculatePropEdges =====
+
 function calculatePropEdges(
   playerStates: Record<string, PlayerLiveState>,
   visionSignals: any[],
@@ -346,128 +748,92 @@ function calculatePropEdges(
 ): PropEdge[] {
   const edges: PropEdge[] = [];
   
-  console.log(`[Scout Agent] calculatePropEdges: ${Object.keys(playerStates).length} players, ${visionSignals?.length || 0} signals`);
+  const scoreDiff = (pbpData?.homeScore ?? 0) - (pbpData?.awayScore ?? 0);
+  const period = pbpData?.period ?? 1;
+  
+  const propTypes: PropTypeKey[] = ['Points', 'Rebounds', 'Assists', 'PRA'];
+  
+  console.log(`[Scout Agent] calculatePropEdges: ${Object.keys(playerStates).length} players, period ${period}, scoreDiff ${scoreDiff}`);
   
   Object.values(playerStates).forEach(player => {
+    // Skip players with minimal playing time
     if (!player.onCourt && player.minutesEstimate < 5) return;
     
-    // Get PBP stats for this player
-    const pbpStats = pbpData?.players?.find((p: any) => 
-      p.playerName?.toLowerCase() === player.playerName.toLowerCase()
-    );
+    const live = getLiveBox(pbpData, player.playerName);
     
-    // Get vision signals for this player
+    // Apply vision signals to player state temporarily
     const playerSignals = visionSignals?.filter((s: any) => 
       s.player?.toLowerCase() === player.playerName.toLowerCase()
     ) || [];
     
-    // LOWERED: Calculate fatigue-driven unders (threshold: 30 instead of 60)
-    if (player.fatigueScore >= 30) {
-      const fatigueConfidence = Math.min(95, 40 + player.fatigueScore * 0.6);
-      
-      // Points under for scorers
-      if (player.role === 'PRIMARY' || player.role === 'SECONDARY') {
-        edges.push({
-          player: player.playerName,
-          prop: 'Points',
-          line: 22.5,
-          lean: 'UNDER',
-          confidence: Math.round(fatigueConfidence),
-          expectedFinal: 0,
-          drivers: [
-            `Fatigue score: ${player.fatigueScore}/100`,
-            `Speed index: ${player.speedIndex}/100`,
-            player.handsOnKneesCount > 0 ? `Hands on knees x${player.handsOnKneesCount}` : null,
-            playerSignals.length > 0 ? `${playerSignals.length} vision signals` : null,
-          ].filter(Boolean) as string[],
-          riskFlags: player.foulCount >= 3 ? ['foul_trouble'] : [],
-          trend: 'strengthening',
-          gameTime,
-        });
-      }
-      
-      // Rebounds under for bigs
-      if (player.role === 'BIG' && player.reboundPositionScore < 60) {
-        edges.push({
-          player: player.playerName,
-          prop: 'Rebounds',
-          line: 10.5,
-          lean: 'UNDER',
-          confidence: Math.round(fatigueConfidence * 0.9),
-          expectedFinal: 0,
-          drivers: [
-            `Low rebound positioning: ${player.reboundPositionScore}/100`,
-            `Fatigue affecting box-outs`,
-          ],
-          riskFlags: [],
-          trend: 'strengthening',
-          gameTime,
-        });
-      }
+    // Modify player state based on vision signals
+    if (playerSignals.length > 0) {
+      playerSignals.forEach((signal: any) => {
+        if (signal.signalType === 'fatigue' && signal.value > 0) {
+          player.fatigueScore = Math.min(100, (player.fatigueScore || 0) + signal.value);
+        }
+        if (signal.signalType === 'effort') {
+          player.effortScore = Math.max(0, Math.min(100, (player.effortScore || 50) + signal.value));
+        }
+        if (signal.signalType === 'speed') {
+          player.speedIndex = Math.max(0, Math.min(100, (player.speedIndex || 50) + signal.value));
+        }
+      });
     }
     
-    // NEW: Add edges for players with ANY vision signals
-    if (playerSignals.length > 0 && player.fatigueScore < 30) {
-      const hasFatigueSignal = playerSignals.some((s: any) => s.signalType === 'fatigue');
-      const hasEffortSignal = playerSignals.some((s: any) => s.signalType === 'effort');
+    propTypes.forEach(prop => {
+      // Skip certain props based on role
+      if (prop === 'Rebounds' && player.role !== 'BIG' && player.role !== 'PRIMARY') return;
+      if (prop === 'Assists' && player.role === 'SPACER') return;
       
-      if (hasFatigueSignal) {
+      const line = getDefaultLine(prop, player.role);
+      
+      const { expected, remaining, riskFlags, rate } = projectFinal(
+        player, live, prop, scoreDiff, period
+      );
+      
+      const diff = expected - line;
+      const lean: 'OVER' | 'UNDER' = diff >= 0 ? 'OVER' : 'UNDER';
+      const edgeMargin = Math.abs(diff);
+      
+      // Calculate trend
+      const historyKey = `${player.playerName}-${prop}`;
+      const trend = calculateTrend(historyKey, edgeMargin, lean);
+      
+      const confidence = computeConfidence(edgeMargin, player, riskFlags, live);
+      
+      // Only include edges with meaningful margin AND minimum confidence
+      if (edgeMargin >= 1.5 && confidence >= 45) {
+        const currentStat = prop === 'Points' ? live?.pts :
+                           prop === 'Rebounds' ? live?.reb :
+                           prop === 'Assists' ? live?.ast :
+                           live?.pra ?? 0;
+        
         edges.push({
           player: player.playerName,
-          prop: 'PRA',
-          line: 30.5,
-          lean: 'UNDER',
-          confidence: 55,
-          expectedFinal: 0,
-          drivers: playerSignals.map((s: any) => s.observation).slice(0, 3),
-          riskFlags: [],
-          trend: 'stable',
+          prop,
+          line,
+          lean,
+          confidence,
+          expectedFinal: Math.round(expected * 10) / 10,
+          drivers: buildDrivers(player, live, remaining, prop),
+          riskFlags,
+          trend,
           gameTime,
+          currentStat,
+          minutesPlayed: live?.min ?? 0,
+          remainingMinutes: remaining,
+          edgeMargin: Math.round(edgeMargin * 10) / 10,
+          ratePerMinute: Math.round(rate * 100) / 100,
         });
       }
-      
-      if (hasEffortSignal && !hasFatigueSignal) {
-        edges.push({
-          player: player.playerName,
-          prop: 'PRA',
-          line: 30.5,
-          lean: 'OVER',
-          confidence: 55,
-          expectedFinal: 0,
-          drivers: playerSignals.map((s: any) => s.observation).slice(0, 3),
-          riskFlags: [],
-          trend: 'stable',
-          gameTime,
-        });
-      }
-    }
-    
-    // Calculate effort-driven overs (LOWERED thresholds)
-    if (player.effortScore >= 55 && player.speedIndex >= 55 && player.fatigueScore < 30) {
-      const overConfidence = Math.min(90, 35 + player.effortScore * 0.5 + player.speedIndex * 0.2);
-      
-      if (player.role === 'PRIMARY' || player.role === 'SECONDARY') {
-        edges.push({
-          player: player.playerName,
-          prop: 'Points',
-          line: 22.5,
-          lean: 'OVER',
-          confidence: Math.round(overConfidence),
-          expectedFinal: 0,
-          drivers: [
-            `High effort score: ${player.effortScore}/100`,
-            `Low fatigue: ${player.fatigueScore}/100`,
-            `Speed maintained: ${player.speedIndex}/100`,
-          ],
-          riskFlags: [],
-          trend: 'stable',
-          gameTime,
-        });
-      }
-    }
+    });
   });
   
-  console.log(`[Scout Agent] Generated ${edges.length} prop edges`);
+  // Sort by confidence descending
+  edges.sort((a, b) => b.confidence - a.confidence);
+  
+  console.log(`[Scout Agent] Generated ${edges.length} projection-based prop edges`);
   return edges;
 }
 
@@ -483,6 +849,7 @@ function generateHalftimeRecommendations(
     if (player.minutesEstimate < 5) return;
     
     const playerEdges = existingEdges.filter(e => e.player === player.playerName);
+    const live = { pts: 0, reb: 0, ast: 0, pra: 0, min: player.minutesEstimate, fouls: player.foulCount, fga: 0, fta: 0 };
     
     // Points recommendation for scorers
     if (player.role === 'PRIMARY' || player.role === 'SECONDARY') {
@@ -491,22 +858,19 @@ function generateHalftimeRecommendations(
       
       if (isFatigued || isEnergized) {
         const existingEdge = playerEdges.find(e => e.prop === 'Points');
+        const line = existingEdge?.line || getDefaultLine('Points', player.role);
+        const { expected, remaining, riskFlags } = projectFinal(player, live, 'Points', 0, 2);
+        
         recommendations.push({
           mode: 'HALFTIME_LOCK',
           player: player.playerName,
           prop: 'Points',
-          line: existingEdge?.line || 22.5,
+          line,
           lean: isFatigued ? 'UNDER' : 'OVER',
-          confidence: isFatigued 
-            ? Math.min(90, 50 + player.fatigueScore * 0.5)
-            : Math.min(85, 40 + player.effortScore * 0.4),
-          expectedFinal: 0,
-          drivers: [
-            isFatigued ? `Fatigue: ${player.fatigueScore}/100` : `Energy: ${player.effortScore}/100`,
-            `Speed: ${player.speedIndex}/100`,
-            `Minutes: ${player.minutesEstimate.toFixed(1)}`,
-          ],
-          riskFlags: player.foulCount >= 3 ? ['foul_trouble'] : [],
+          confidence: computeConfidence(Math.abs(expected - line), player, riskFlags, live),
+          expectedFinal: Math.round(expected * 10) / 10,
+          drivers: buildDrivers(player, live, remaining, 'Points'),
+          riskFlags,
           lockTime: gameTime,
         });
       }
@@ -519,21 +883,19 @@ function generateHalftimeRecommendations(
       
       if (lowPositioning || goodPositioning) {
         const existingEdge = playerEdges.find(e => e.prop === 'Rebounds');
+        const line = existingEdge?.line || getDefaultLine('Rebounds', player.role);
+        const { expected, remaining, riskFlags } = projectFinal(player, live, 'Rebounds', 0, 2);
+        
         recommendations.push({
           mode: 'HALFTIME_LOCK',
           player: player.playerName,
           prop: 'Rebounds',
-          line: existingEdge?.line || 10.5,
+          line,
           lean: lowPositioning ? 'UNDER' : 'OVER',
-          confidence: lowPositioning
-            ? Math.min(85, 50 + (50 - player.reboundPositionScore) * 0.7)
-            : Math.min(80, 40 + player.reboundPositionScore * 0.4),
-          expectedFinal: 0,
-          drivers: [
-            `Rebound positioning: ${player.reboundPositionScore}/100`,
-            player.fatigueScore > 40 ? `Fatigue affecting box-outs` : `Active on glass`,
-          ],
-          riskFlags: [],
+          confidence: computeConfidence(Math.abs(expected - line), player, riskFlags, live),
+          expectedFinal: Math.round(expected * 10) / 10,
+          drivers: buildDrivers(player, live, remaining, 'Rebounds'),
+          riskFlags,
           lockTime: gameTime,
         });
       }
@@ -543,7 +905,6 @@ function generateHalftimeRecommendations(
   return recommendations;
 }
 
-serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
