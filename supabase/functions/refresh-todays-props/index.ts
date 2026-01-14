@@ -32,6 +32,7 @@ const BDL_PROP_TYPE_MAP: Record<string, string> = {
 interface BDLGame {
   id: number;
   date: string;
+  datetime: string; // ISO timestamp with actual game start time
   home_team: { id: number; full_name: string; abbreviation: string };
   visitor_team: { id: number; full_name: string; abbreviation: string };
   status: string;
@@ -209,8 +210,10 @@ async function fetchBDLProps(bdlApiKey: string, today: string, supabase: any): P
     const propType = BDL_PROP_TYPE_MAP[prop.prop_type] || prop.prop_type;
     const gameDescription = `${game.visitor_team.full_name} @ ${game.home_team.full_name}`;
     const eventId = `bdl_nba_${game.id}`;
-    const gameDate = new Date(game.date);
-    gameDate.setHours(19, 0, 0, 0);
+    // Use the actual game datetime from BDL API (not hardcoded)
+    const gameDate = game.datetime 
+      ? new Date(game.datetime) 
+      : new Date(game.date + 'T19:00:00Z'); // Fallback only if datetime missing
     
     // Use resolved name or fallback
     let playerName = playerNames.get(prop.player_id);
