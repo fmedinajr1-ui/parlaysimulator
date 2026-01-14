@@ -152,6 +152,62 @@ Return JSON:
 }`;
 }
 
+// Helper: Extract basic signals from text when JSON parsing fails
+function extractBasicSignals(content: string, gameContext: any): any[] {
+  const signals: any[] = [];
+  const lowerContent = content.toLowerCase();
+  
+  // Build roster name lookup
+  const rosterNames: { name: string; team: string }[] = [];
+  (gameContext.homeRoster || []).forEach((p: any) => {
+    rosterNames.push({ name: p.name.toLowerCase(), team: gameContext.homeTeam });
+  });
+  (gameContext.awayRoster || []).forEach((p: any) => {
+    rosterNames.push({ name: p.name.toLowerCase(), team: gameContext.awayTeam });
+  });
+  
+  // Look for fatigue indicators
+  const fatigueKeywords = ['tired', 'fatigue', 'hands on knees', 'bent over', 'breathing heavy', 'slow', 'labored'];
+  const effortKeywords = ['sprint', 'fast', 'quick', 'explosive', 'active', 'hustl'];
+  
+  rosterNames.forEach(({ name }) => {
+    const nameParts = name.split(' ');
+    const lastName = nameParts[nameParts.length - 1];
+    
+    // Check if player is mentioned
+    if (lowerContent.includes(lastName)) {
+      // Check for fatigue indicators near player mention
+      fatigueKeywords.forEach(keyword => {
+        if (lowerContent.includes(keyword)) {
+          signals.push({
+            signalType: 'fatigue',
+            player: name.split(' ').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
+            value: 8,
+            observation: `Detected fatigue indicator: ${keyword}`,
+            confidence: 'medium',
+          });
+        }
+      });
+      
+      // Check for effort indicators
+      effortKeywords.forEach(keyword => {
+        if (lowerContent.includes(keyword)) {
+          signals.push({
+            signalType: 'effort',
+            player: name.split(' ').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
+            value: 5,
+            observation: `Detected effort indicator: ${keyword}`,
+            confidence: 'medium',
+          });
+        }
+      });
+    }
+  });
+  
+  console.log(`[Scout Agent] Extracted ${signals.length} basic signals from text`);
+  return signals;
+}
+
 function calculatePropEdges(
   playerStates: Record<string, PlayerLiveState>,
   visionSignals: any[],
@@ -161,6 +217,8 @@ function calculatePropEdges(
 ): PropEdge[] {
   const edges: PropEdge[] = [];
   
+  console.log(`[Scout Agent] calculatePropEdges: ${Object.keys(playerStates).length} players, ${visionSignals?.length || 0} signals`);
+  
   Object.values(playerStates).forEach(player => {
     if (!player.onCourt && player.minutesEstimate < 5) return;
     
@@ -169,23 +227,29 @@ function calculatePropEdges(
       p.playerName?.toLowerCase() === player.playerName.toLowerCase()
     );
     
-    // Calculate fatigue-driven unders
-    if (player.fatigueScore >= 60) {
-      const fatigueConfidence = Math.min(95, 50 + player.fatigueScore * 0.5);
+    // Get vision signals for this player
+    const playerSignals = visionSignals?.filter((s: any) => 
+      s.player?.toLowerCase() === player.playerName.toLowerCase()
+    ) || [];
+    
+    // LOWERED: Calculate fatigue-driven unders (threshold: 30 instead of 60)
+    if (player.fatigueScore >= 30) {
+      const fatigueConfidence = Math.min(95, 40 + player.fatigueScore * 0.6);
       
-      // Points under
+      // Points under for scorers
       if (player.role === 'PRIMARY' || player.role === 'SECONDARY') {
         edges.push({
           player: player.playerName,
           prop: 'Points',
-          line: 22.5, // Will be enriched with actual lines
+          line: 22.5,
           lean: 'UNDER',
           confidence: Math.round(fatigueConfidence),
-          expectedFinal: 0, // Will be calculated with PBP
+          expectedFinal: 0,
           drivers: [
             `Fatigue score: ${player.fatigueScore}/100`,
             `Speed index: ${player.speedIndex}/100`,
             player.handsOnKneesCount > 0 ? `Hands on knees x${player.handsOnKneesCount}` : null,
+            playerSignals.length > 0 ? `${playerSignals.length} vision signals` : null,
           ].filter(Boolean) as string[],
           riskFlags: player.foulCount >= 3 ? ['foul_trouble'] : [],
           trend: 'strengthening',
@@ -194,7 +258,7 @@ function calculatePropEdges(
       }
       
       // Rebounds under for bigs
-      if (player.role === 'BIG' && player.reboundPositionScore < 50) {
+      if (player.role === 'BIG' && player.reboundPositionScore < 60) {
         edges.push({
           player: player.playerName,
           prop: 'Rebounds',
@@ -213,11 +277,47 @@ function calculatePropEdges(
       }
     }
     
-    // Calculate effort-driven overs
-    if (player.effortScore >= 70 && player.speedIndex >= 70 && player.fatigueScore < 40) {
-      const overConfidence = Math.min(90, 40 + player.effortScore * 0.5 + player.speedIndex * 0.2);
+    // NEW: Add edges for players with ANY vision signals
+    if (playerSignals.length > 0 && player.fatigueScore < 30) {
+      const hasFatigueSignal = playerSignals.some((s: any) => s.signalType === 'fatigue');
+      const hasEffortSignal = playerSignals.some((s: any) => s.signalType === 'effort');
       
-      if (player.role === 'PRIMARY') {
+      if (hasFatigueSignal) {
+        edges.push({
+          player: player.playerName,
+          prop: 'PRA',
+          line: 30.5,
+          lean: 'UNDER',
+          confidence: 55,
+          expectedFinal: 0,
+          drivers: playerSignals.map((s: any) => s.observation).slice(0, 3),
+          riskFlags: [],
+          trend: 'stable',
+          gameTime,
+        });
+      }
+      
+      if (hasEffortSignal && !hasFatigueSignal) {
+        edges.push({
+          player: player.playerName,
+          prop: 'PRA',
+          line: 30.5,
+          lean: 'OVER',
+          confidence: 55,
+          expectedFinal: 0,
+          drivers: playerSignals.map((s: any) => s.observation).slice(0, 3),
+          riskFlags: [],
+          trend: 'stable',
+          gameTime,
+        });
+      }
+    }
+    
+    // Calculate effort-driven overs (LOWERED thresholds)
+    if (player.effortScore >= 55 && player.speedIndex >= 55 && player.fatigueScore < 30) {
+      const overConfidence = Math.min(90, 35 + player.effortScore * 0.5 + player.speedIndex * 0.2);
+      
+      if (player.role === 'PRIMARY' || player.role === 'SECONDARY') {
         edges.push({
           player: player.playerName,
           prop: 'Points',
@@ -238,6 +338,7 @@ function calculatePropEdges(
     }
   });
   
+  console.log(`[Scout Agent] Generated ${edges.length} prop edges`);
   return edges;
 }
 
@@ -438,11 +539,28 @@ CRITICAL: Match jersey numbers to player names from the roster. Be specific abou
     };
 
     try {
+      // Strategy 1: Try code block extraction
       const jsonMatch = visionContent.match(/```(?:json)?\s*([\s\S]*?)```/);
-      const jsonStr = jsonMatch ? jsonMatch[1].trim() : visionContent.trim();
-      visionResult = JSON.parse(jsonStr);
+      if (jsonMatch) {
+        visionResult = JSON.parse(jsonMatch[1].trim());
+        console.log('[Scout Agent] Parsed vision via code block');
+      } else {
+        // Strategy 2: Try finding JSON object in content
+        const objectMatch = visionContent.match(/\{[\s\S]*\}/);
+        if (objectMatch) {
+          visionResult = JSON.parse(objectMatch[0]);
+          console.log('[Scout Agent] Parsed vision via object extraction');
+        } else {
+          // Strategy 3: Try direct parse
+          visionResult = JSON.parse(visionContent.trim());
+          console.log('[Scout Agent] Parsed vision via direct parse');
+        }
+      }
     } catch {
-      console.log('[Scout Agent] Vision result parse failed');
+      console.log('[Scout Agent] Vision result parse failed, extracting basic signals from text');
+      // Strategy 4: Extract signals from natural language
+      visionResult.visionSignals = extractBasicSignals(visionContent, gameContext);
+      visionResult.overallAssessment = visionContent.slice(0, 200);
     }
 
     // STEP 3: Calculate prop edges
