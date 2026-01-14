@@ -166,18 +166,29 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
       if (homeError) console.warn('Home roster error:', homeError);
       if (awayError) console.warn('Away roster error:', awayError);
 
+      // Filter out players without valid jersey numbers to ensure accurate AI identification
+      const validHomeRoster = (homeRoster || [])
+        .filter(p => p.jersey_number && p.jersey_number !== '?' && p.jersey_number !== 'null' && p.jersey_number.trim() !== '')
+        .map(p => ({
+          name: p.player_name,
+          jersey: p.jersey_number,
+          position: p.position || '',
+        }));
+
+      const validAwayRoster = (awayRoster || [])
+        .filter(p => p.jersey_number && p.jersey_number !== '?' && p.jersey_number !== 'null' && p.jersey_number.trim() !== '')
+        .map(p => ({
+          name: p.player_name,
+          jersey: p.jersey_number,
+          position: p.position || '',
+        }));
+
+      console.log(`[ScoutGameSelector] Loaded rosters - Home: ${validHomeRoster.length} players, Away: ${validAwayRoster.length} players`);
+
       const gameContext: GameContext = {
         ...game,
-        homeRoster: (homeRoster || []).map(p => ({
-          name: p.player_name,
-          jersey: p.jersey_number || '?',
-          position: p.position || '',
-        })),
-        awayRoster: (awayRoster || []).map(p => ({
-          name: p.player_name,
-          jersey: p.jersey_number || '?',
-          position: p.position || '',
-        })),
+        homeRoster: validHomeRoster,
+        awayRoster: validAwayRoster,
       };
 
       onGameSelect(gameContext);
