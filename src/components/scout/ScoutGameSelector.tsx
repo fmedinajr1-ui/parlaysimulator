@@ -4,8 +4,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
-import { Calendar, Clock, Users, ChevronRight } from "lucide-react";
+import { Calendar, Clock, Users, ChevronRight, RefreshCw } from "lucide-react";
 import type { GameContext } from "@/pages/Scout";
+
+const CACHE_KEY = 'scout_props_last_refresh';
+const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 
 interface ScoutGameSelectorProps {
   selectedGame: GameContext | null;
@@ -24,14 +27,62 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
   const [games, setGames] = useState<TodaysGame[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadingRoster, setLoadingRoster] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshAttempted, setRefreshAttempted] = useState(false);
+
+  const shouldAutoRefresh = (): boolean => {
+    const lastRefresh = localStorage.getItem(CACHE_KEY);
+    if (!lastRefresh) return true;
+    
+    const lastRefreshTime = parseInt(lastRefresh, 10);
+    const timeSinceRefresh = Date.now() - lastRefreshTime;
+    
+    return timeSinceRefresh > CACHE_DURATION_MS;
+  };
+
+  const triggerAutoRefresh = async () => {
+    if (!shouldAutoRefresh()) {
+      console.log('[ScoutGameSelector] Skipping refresh - recently refreshed');
+      setRefreshAttempted(true);
+      return;
+    }
+    
+    setIsRefreshing(true);
+    try {
+      console.log('[ScoutGameSelector] Triggering auto-refresh...');
+      const { data, error } = await supabase.functions.invoke('refresh-todays-props', {
+        body: { sport: 'basketball_nba', use_bdl_fallback: true }
+      });
+      
+      if (error) {
+        console.error('[ScoutGameSelector] Refresh error:', error);
+      } else if (data?.success) {
+        console.log('[ScoutGameSelector] Refresh successful:', data);
+        localStorage.setItem(CACHE_KEY, Date.now().toString());
+        await fetchTodaysGames();
+      }
+    } catch (err) {
+      console.error('[ScoutGameSelector] Auto-refresh error:', err);
+    } finally {
+      setIsRefreshing(false);
+      setRefreshAttempted(true);
+    }
+  };
 
   useEffect(() => {
-    fetchTodaysGames();
+    const loadGames = async () => {
+      const gamesFound = await fetchTodaysGames();
+      
+      if (gamesFound === 0 && !refreshAttempted) {
+        await triggerAutoRefresh();
+      }
+    };
+    
+    loadGames();
   }, []);
 
-  const fetchTodaysGames = async () => {
+  const fetchTodaysGames = async (): Promise<number> => {
     try {
-      // Get unique games from today's props
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const tomorrow = new Date(today);
@@ -47,11 +98,9 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
 
       if (error) throw error;
 
-      // Deduplicate by event_id
       const uniqueGames = new Map<string, TodaysGame>();
       for (const prop of data || []) {
         if (!uniqueGames.has(prop.event_id)) {
-          // Parse teams from game_description (format: "Away Team @ Home Team")
           const parts = prop.game_description?.split(' @ ') || [];
           uniqueGames.set(prop.event_id, {
             eventId: prop.event_id,
@@ -63,9 +112,12 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
         }
       }
 
-      setGames(Array.from(uniqueGames.values()));
+      const gamesList = Array.from(uniqueGames.values());
+      setGames(gamesList);
+      return gamesList.length;
     } catch (err) {
       console.error('Error fetching games:', err);
+      return 0;
     } finally {
       setIsLoading(false);
     }
@@ -161,11 +213,36 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
     return (
       <Card className="border-border/50">
         <CardContent className="py-8 text-center">
-          <Calendar className="w-10 h-10 mx-auto mb-3 text-muted-foreground/50" />
-          <p className="text-muted-foreground">No NBA games today</p>
-          <p className="text-xs text-muted-foreground/70 mt-1">
-            Check back when games are scheduled
-          </p>
+          {isRefreshing ? (
+            <>
+              <RefreshCw className="w-10 h-10 mx-auto mb-3 text-primary animate-spin" />
+              <p className="text-muted-foreground">Loading today's games...</p>
+              <p className="text-xs text-muted-foreground/70 mt-1">
+                Fetching from sportsbooks
+              </p>
+            </>
+          ) : (
+            <>
+              <Calendar className="w-10 h-10 mx-auto mb-3 text-muted-foreground/50" />
+              <p className="text-muted-foreground">No NBA games today</p>
+              <p className="text-xs text-muted-foreground/70 mt-1">
+                Check back when games are scheduled
+              </p>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="mt-4"
+                onClick={() => {
+                  localStorage.removeItem(CACHE_KEY);
+                  setRefreshAttempted(false);
+                  triggerAutoRefresh();
+                }}
+              >
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Retry
+              </Button>
+            </>
+          )}
         </CardContent>
       </Card>
     );
