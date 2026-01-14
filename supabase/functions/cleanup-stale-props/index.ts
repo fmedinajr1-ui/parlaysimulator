@@ -6,6 +6,11 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Get Eastern Time date string
+function getEasternDate(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -16,9 +21,19 @@ serve(async (req) => {
   const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
   const supabase = createClient(supabaseUrl, supabaseKey);
 
-  console.log('[Cleanup] Starting daily cleanup job...');
+  // Parse request body for immediate mode
+  let requestBody: { immediate?: boolean } = {};
+  try {
+    requestBody = await req.json();
+  } catch {
+    // No body or invalid JSON, use defaults
+  }
+
+  const isImmediate = requestBody.immediate === true;
+  console.log(`[Cleanup] Starting cleanup job... Mode: ${isImmediate ? 'IMMEDIATE' : 'FULL'}`);
 
   const results = {
+    mode: isImmediate ? 'immediate' : 'full',
     archive_completed: false,
     archive_results: null as any,
     unified_props_deleted: 0,
@@ -31,11 +46,74 @@ serve(async (req) => {
   };
 
   const now = new Date().toISOString();
-  const today = now.split('T')[0];
+  const todayEastern = getEasternDate();
   // Extended retention: 30 days instead of 7
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
   try {
+    // IMMEDIATE MODE: Quick cleanup of started games only, skip archive
+    if (isImmediate) {
+      console.log('[Cleanup] IMMEDIATE MODE - clearing started games only...');
+      
+      // 1. Delete props where game has already started
+      const { data: staleProps, error: stalePropsError } = await supabase
+        .from('unified_props')
+        .delete()
+        .lt('commence_time', now)
+        .select('id');
+
+      if (stalePropsError) {
+        console.error('[Cleanup] Error deleting stale props:', stalePropsError);
+        results.errors.push(`unified_props: ${stalePropsError.message}`);
+      } else {
+        results.unified_props_deleted = staleProps?.length || 0;
+        console.log(`[Cleanup] Deleted ${results.unified_props_deleted} stale props`);
+      }
+
+      // 2. Delete risk engine picks for past game dates (already settled)
+      const { data: stalePicks, error: stalePicksError } = await supabase
+        .from('nba_risk_engine_picks')
+        .delete()
+        .lt('game_date', todayEastern)
+        .select('id');
+
+      if (stalePicksError) {
+        console.error('[Cleanup] Error deleting stale risk picks:', stalePicksError);
+        results.errors.push(`nba_risk_engine_picks: ${stalePicksError.message}`);
+      } else {
+        results.risk_engine_picks_deleted = stalePicks?.length || 0;
+        console.log(`[Cleanup] Deleted ${results.risk_engine_picks_deleted} past risk engine picks`);
+      }
+
+      // 3. Delete prop v2 picks for past game dates
+      const { data: staleV2Picks, error: staleV2Error } = await supabase
+        .from('prop_engine_v2_picks')
+        .delete()
+        .lt('game_date', todayEastern)
+        .select('id');
+
+      if (staleV2Error) {
+        console.error('[Cleanup] Error deleting stale prop v2 picks:', staleV2Error);
+        results.errors.push(`prop_engine_v2_picks: ${staleV2Error.message}`);
+      } else {
+        results.prop_v2_picks_deleted = staleV2Picks?.length || 0;
+        console.log(`[Cleanup] Deleted ${results.prop_v2_picks_deleted} past prop v2 picks`);
+      }
+
+      const durationMs = Date.now() - startTime;
+      console.log('[Cleanup] IMMEDIATE mode completed in', durationMs, 'ms');
+
+      return new Response(
+        JSON.stringify({
+          success: results.errors.length === 0,
+          message: `Immediate cleanup completed in ${durationMs}ms`,
+          results,
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // FULL MODE: Archive first, then comprehensive cleanup
     // STEP 0: Archive all settled picks FIRST before any cleanup
     console.log('[Cleanup] Step 0: Running archive-prop-results first...');
     try {

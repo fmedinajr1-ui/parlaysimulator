@@ -7,6 +7,7 @@ import { PropEngineV2Card } from "@/components/suggestions/PropEngineV2Card";
 import { SweetSpotDreamTeamParlay } from "@/components/market/SweetSpotDreamTeamParlay";
 import { PropMarketWidget } from "@/components/market/PropMarketWidget";
 import { SweetSpotPicksCard } from "@/components/market/SweetSpotPicksCard";
+import { SlateRefreshControls } from "@/components/market/SlateRefreshControls";
 import { HeatParlaySection } from "@/components/heat/HeatParlaySection";
 import { WeeklyParlayHistory } from "@/components/dashboard/WeeklyParlayHistory";
 import { PullToRefreshContainer, PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
@@ -158,6 +159,13 @@ const Index = () => {
           </Link>
           <SampleParlayButton />
         </div>
+
+        {/* Slate Control - Clear & Refresh */}
+        {(isPilotUser || isSubscribed || isAdmin) && (
+          <div className="mb-4">
+            <SlateRefreshControls />
+          </div>
+        )}
         
         {/* Sweet Spot Dream Team Parlay - FIRST */}
         {(isPilotUser || isSubscribed || isAdmin) && (
