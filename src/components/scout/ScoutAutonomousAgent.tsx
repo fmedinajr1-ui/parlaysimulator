@@ -170,6 +170,13 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
     try {
       const frame = captureFrame(videoRef.current, 0.7); // Lower quality for speed
       
+      // Validate frame before sending - avoid "Unexpected end of JSON input" errors
+      if (!frame || frame.length < 100 || !frame.startsWith('data:image')) {
+        console.warn('[Autopilot] Invalid frame captured, skipping');
+        isRunningLoopRef.current = false;
+        return;
+      }
+      
       const { data, error } = await supabase.functions.invoke('scout-agent-loop', {
         body: {
           frame,

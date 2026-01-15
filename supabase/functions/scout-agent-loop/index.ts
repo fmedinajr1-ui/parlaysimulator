@@ -996,6 +996,18 @@ serve(async (req) => {
   }
 
   try {
+    // Parse request body with error handling for malformed JSON
+    let requestBody: AgentLoopRequest;
+    try {
+      requestBody = await req.json() as AgentLoopRequest;
+    } catch (parseError) {
+      console.error('[Scout Agent] Failed to parse request body:', parseError);
+      return new Response(
+        JSON.stringify({ error: 'Invalid request body - malformed JSON' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
     const { 
       frame, 
       gameContext, 
@@ -1005,11 +1017,11 @@ serve(async (req) => {
       currentGameTime,
       forceAnalysis,
       propLines
-    } = await req.json() as AgentLoopRequest;
+    } = requestBody;
 
-    if (!frame) {
+    if (!frame || frame.length < 100) {
       return new Response(
-        JSON.stringify({ error: 'No frame provided' }),
+        JSON.stringify({ error: 'No valid frame provided' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
