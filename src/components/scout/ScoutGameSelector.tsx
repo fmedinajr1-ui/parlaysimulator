@@ -229,28 +229,41 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
 
       console.log(`[ScoutGameSelector] Team fatigue - Home: ${homeTeamFatigue?.fatigueScore ?? 'N/A'}, Away: ${awayTeamFatigue?.fatigueScore ?? 'N/A'}`);
 
-      // Filter out players without valid jersey numbers from cache
-      let validHomeRoster = (homeRoster || [])
-        .filter(p => p.jersey_number && p.jersey_number !== '?' && p.jersey_number !== 'null' && p.jersey_number.trim() !== '')
-        .map(p => ({
+      // Include ALL players - mark missing jerseys with "?" instead of filtering out
+      let validHomeRoster = (homeRoster || []).map(p => {
+        const hasValidJersey = p.jersey_number && 
+          p.jersey_number !== '?' && 
+          p.jersey_number !== 'null' && 
+          p.jersey_number !== 'NULL' &&
+          p.jersey_number.trim() !== '';
+        return {
           name: p.player_name,
-          jersey: p.jersey_number,
+          jersey: hasValidJersey ? p.jersey_number : '?',
           position: p.position || '',
-        }));
+          hasValidJersey,
+        };
+      });
 
-      let validAwayRoster = (awayRoster || [])
-        .filter(p => p.jersey_number && p.jersey_number !== '?' && p.jersey_number !== 'null' && p.jersey_number.trim() !== '')
-        .map(p => ({
+      let validAwayRoster = (awayRoster || []).map(p => {
+        const hasValidJersey = p.jersey_number && 
+          p.jersey_number !== '?' && 
+          p.jersey_number !== 'null' && 
+          p.jersey_number !== 'NULL' &&
+          p.jersey_number.trim() !== '';
+        return {
           name: p.player_name,
-          jersey: p.jersey_number,
+          jersey: hasValidJersey ? p.jersey_number : '?',
           position: p.position || '',
-        }));
+          hasValidJersey,
+        };
+      });
 
-      // FALLBACK: If roster cache is empty, use players from props data
-      if (validHomeRoster.length === 0 && validAwayRoster.length === 0 && propsData && propsData.length > 0) {
-        console.warn('[ScoutGameSelector] No roster data in cache, using props players as fallback');
+      // Check for players with missing jersey data and trigger background sync
+      const missingJerseyPlayers = [...validHomeRoster, ...validAwayRoster].filter(p => !p.hasValidJersey);
+      if (missingJerseyPlayers.length > 0) {
+        console.log(`[ScoutGameSelector] ${missingJerseyPlayers.length} players missing jersey data, triggering sync`);
         
-        // Trigger roster sync in background (don't await)
+        // Trigger background sync (don't await)
         supabase.functions.invoke('sync-missing-rosters', {
           body: { teams: [game.homeTeam, game.awayTeam] }
         }).then(result => {
@@ -258,6 +271,11 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
         }).catch(err => {
           console.warn('[ScoutGameSelector] Roster sync failed:', err);
         });
+      }
+
+      // FALLBACK: If roster cache is completely empty, use players from props data
+      if (validHomeRoster.length === 0 && validAwayRoster.length === 0 && propsData && propsData.length > 0) {
+        console.warn('[ScoutGameSelector] No roster data in cache, using props players as fallback');
 
         // Extract unique player names from props
         const uniquePlayerNames = [...new Set(propsData.map(p => p.player_name))];
@@ -267,10 +285,10 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
           name,
           jersey: '?',
           position: '',
+          hasValidJersey: false,
         }));
 
         // Split players between teams based on game description
-        // For now, just put all in one roster (home) - the AI will still track them
         validHomeRoster = fallbackRoster.slice(0, Math.ceil(fallbackRoster.length / 2));
         validAwayRoster = fallbackRoster.slice(Math.ceil(fallbackRoster.length / 2));
         

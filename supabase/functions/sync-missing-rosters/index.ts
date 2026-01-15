@@ -66,7 +66,48 @@ serve(async (req) => {
       'Content-Type': 'application/json',
     };
 
-    // Determine which teams to sync
+    // PHASE 1: Fix players with missing jersey numbers
+    console.log('[sync-missing-rosters] Checking for players with missing jersey numbers...');
+    
+    const { data: missingJerseys } = await supabase
+      .from('bdl_player_cache')
+      .select('player_name, bdl_player_id')
+      .is('jersey_number', null)
+      .not('bdl_player_id', 'is', null)
+      .limit(25);
+
+    if (missingJerseys && missingJerseys.length > 0) {
+      console.log(`[sync-missing-rosters] Found ${missingJerseys.length} players with missing jersey numbers`);
+      
+      for (const player of missingJerseys) {
+        try {
+          const response = await fetch(
+            `${BDL_V1_URL}/players/${player.bdl_player_id}`,
+            { headers }
+          );
+          
+          if (response.ok) {
+            const data = await response.json();
+            
+            if (data.jersey_number) {
+              await supabase.from('bdl_player_cache').update({
+                jersey_number: data.jersey_number.toString(),
+                last_updated: new Date().toISOString(),
+              }).eq('bdl_player_id', player.bdl_player_id);
+              
+              console.log(`[sync-missing-rosters] Updated jersey for ${player.player_name}: #${data.jersey_number}`);
+            }
+          }
+          
+          // Rate limiting
+          await delay(150);
+        } catch (err) {
+          console.warn(`[sync-missing-rosters] Error fetching player ${player.player_name}:`, err);
+        }
+      }
+    }
+
+    // PHASE 2: Determine which teams to sync
     let teamsToSync: string[] = teams;
     
     if (teamsToSync.length === 0) {
