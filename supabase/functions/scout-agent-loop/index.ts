@@ -41,6 +41,10 @@ interface PropEdge {
   remainingMinutes?: number;
   edgeMargin?: number;
   ratePerMinute?: number;
+  // Bookmaker prices
+  overPrice?: number;
+  underPrice?: number;
+  bookmaker?: string;
 }
 
 // ===== PROJECTION CORE TYPES =====
@@ -903,6 +907,9 @@ function calculatePropEdges(
           remainingMinutes: remaining,
           edgeMargin: Math.round(edgeMargin * 10) / 10,
           ratePerMinute: Math.round(rate * 100) / 100,
+          overPrice,
+          underPrice,
+          bookmaker,
         });
       }
     });

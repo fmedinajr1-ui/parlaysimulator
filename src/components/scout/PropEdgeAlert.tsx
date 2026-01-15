@@ -176,11 +176,23 @@ export function PropEdgeAlert({ edge, showDetails = true }: PropEdgeAlertProps) 
             {/* Bookmaker Prices */}
             {edge.overPrice && edge.underPrice && (
               <div className="flex items-center justify-between text-xs pt-1 border-t border-border/50">
-                <span className="text-muted-foreground">
+                <span className={cn(
+                  "font-mono",
+                  edge.lean === 'OVER' ? "text-chart-2 font-semibold" : "text-muted-foreground"
+                )}>
                   O {edge.overPrice > 0 ? '+' : ''}{edge.overPrice}
                 </span>
-                <span className="text-xs text-muted-foreground font-mono">{edge.gameTime}</span>
-                <span className="text-muted-foreground">
+                {edge.bookmaker ? (
+                  <Badge variant="outline" className="text-[10px] px-1.5">
+                    {edge.bookmaker}
+                  </Badge>
+                ) : (
+                  <span className="text-xs text-muted-foreground font-mono">{edge.gameTime}</span>
+                )}
+                <span className={cn(
+                  "font-mono",
+                  edge.lean === 'UNDER' ? "text-chart-4 font-semibold" : "text-muted-foreground"
+                )}>
                   U {edge.underPrice > 0 ? '+' : ''}{edge.underPrice}
                 </span>
               </div>
