@@ -13,6 +13,7 @@ import {
 } from '@/types/scout-agent';
 import { GameContext } from '@/pages/Scout';
 import { useToast } from '@/hooks/use-toast';
+import { supabase } from '@/integrations/supabase/client';
 import { parseGameMinutes, type ProjectionSnapshot, PROJECTION_MILESTONES } from '@/components/scout/ProjectionMilestone';
 
 const NOTIFICATION_COOLDOWN_MS = 15000; // 15 seconds between same-player alerts
@@ -67,10 +68,182 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
   const [lastProjectionMilestone, setLastProjectionMilestone] = useState(0);
   const [projectionSnapshots, setProjectionSnapshots] = useState<ProjectionSnapshot[]>([]);
   const [currentGameMinute, setCurrentGameMinute] = useState(0);
+  
+  // Session persistence
+  const [sessionRestored, setSessionRestored] = useState(false);
+  const saveIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Save session to database
+  const saveSession = useCallback(async () => {
+    if (!state.gameContext?.eventId) return;
+    
+    // Convert Map to plain object for JSON storage
+    const playerStatesObj: Record<string, PlayerLiveState> = {};
+    state.playerStates.forEach((value, key) => {
+      playerStatesObj[key] = value;
+    });
+    
+    try {
+      // Use raw SQL-style upsert since types may not be fully synced
+      const sessionData = {
+        event_id: state.gameContext.eventId,
+        home_team: state.gameContext.homeTeam,
+        away_team: state.gameContext.awayTeam,
+        player_states: playerStatesObj,
+        prop_edges: state.activePropEdges,
+        projection_snapshots: projectionSnapshots,
+        halftime_lock: state.halftimeLock,
+        pbp_data: state.pbpData,
+        current_game_time: state.currentGameTime,
+        current_score: state.currentScore,
+        frames_processed: state.framesProcessed,
+        analysis_count: state.analysisCount,
+        commercial_skip_count: state.commercialSkipCount,
+        last_updated_at: new Date().toISOString(),
+      };
+      
+      const { error } = await supabase
+        .from('scout_sessions')
+        .upsert(sessionData as any, { onConflict: 'event_id' });
+      
+      if (error) {
+        console.error('[Scout Session] Save error:', error);
+      } else {
+        console.log('[Scout Session] Saved successfully');
+      }
+    } catch (err) {
+      console.error('[Scout Session] Save exception:', err);
+    }
+  }, [state, projectionSnapshots]);
+
+  // Load existing session from database
+  const loadExistingSession = useCallback(async (eventId: string): Promise<boolean> => {
+    try {
+      const { data: session, error } = await supabase
+        .from('scout_sessions')
+        .select('*')
+        .eq('event_id', eventId)
+        .maybeSingle();
+      
+      if (error) {
+        console.error('[Scout Session] Load error:', error);
+        return false;
+      }
+      
+      if (session && session.player_states) {
+        const lastUpdated = new Date(session.last_updated_at);
+        const hoursSince = (Date.now() - lastUpdated.getTime()) / (1000 * 60 * 60);
+        
+        if (hoursSince < 4) { // Within 4 hours
+          console.log('[Scout Session] Restoring previous session from', session.current_game_time || 'unknown time');
+          
+          // Convert plain object back to Map with proper typing
+          const playerStatesData = session.player_states as unknown as Record<string, PlayerLiveState>;
+          const restoredStates = new Map<string, PlayerLiveState>(
+            Object.entries(playerStatesData || {})
+          );
+          
+          setState(prev => ({
+            ...prev,
+            playerStates: restoredStates,
+            activePropEdges: (session.prop_edges as unknown as PropEdge[]) || [],
+            halftimeLock: (session.halftime_lock as unknown as HalftimeLockState) || { isLocked: false, lockedRecommendations: [] },
+            pbpData: (session.pbp_data as unknown as LivePBPData) || null,
+            currentGameTime: session.current_game_time,
+            currentScore: session.current_score,
+            framesProcessed: session.frames_processed || 0,
+            analysisCount: session.analysis_count || 0,
+            commercialSkipCount: session.commercial_skip_count || 0,
+          }));
+          
+          setProjectionSnapshots((session.projection_snapshots as unknown as ProjectionSnapshot[]) || []);
+          setSessionRestored(true);
+          
+          toast({
+            title: "Session Restored",
+            description: `Resumed from ${session.current_game_time || 'previous state'} with ${session.analysis_count || 0} analyses`,
+          });
+          
+          return true;
+        } else {
+          console.log('[Scout Session] Session too old (', hoursSince.toFixed(1), 'hours), starting fresh');
+        }
+      }
+      return false;
+    } catch (err) {
+      console.error('[Scout Session] Load exception:', err);
+      return false;
+    }
+  }, [toast]);
+
+  // Clear session and start fresh
+  const clearSession = useCallback(async () => {
+    if (!gameContext?.eventId) return;
+    
+    try {
+      await supabase
+        .from('scout_sessions')
+        .delete()
+        .eq('event_id', gameContext.eventId);
+      
+      setSessionRestored(false);
+      initializePlayerStates(gameContext);
+      setProjectionSnapshots([]);
+      setLastProjectionMilestone(0);
+      setCurrentGameMinute(0);
+      
+      setState(prev => ({
+        ...prev,
+        activePropEdges: [],
+        halftimeLock: { isLocked: false, lockedRecommendations: [] },
+        framesProcessed: 0,
+        analysisCount: 0,
+        commercialSkipCount: 0,
+        currentGameTime: null,
+        currentScore: null,
+      }));
+      
+      toast({
+        title: "Session Cleared",
+        description: "Starting fresh tracking",
+      });
+    } catch (err) {
+      console.error('[Scout Session] Clear error:', err);
+    }
+  }, [gameContext, toast]);
+
+  // Auto-save interval while running
+  useEffect(() => {
+    if (state.isRunning && state.gameContext?.eventId && state.analysisCount > 0) {
+      saveIntervalRef.current = setInterval(saveSession, 10000); // Every 10s
+      return () => {
+        if (saveIntervalRef.current) clearInterval(saveIntervalRef.current);
+      };
+    }
+  }, [state.isRunning, state.gameContext?.eventId, state.analysisCount, saveSession]);
+
+  // Save on pause/stop
+  useEffect(() => {
+    if (!state.isRunning && state.analysisCount > 0 && state.gameContext?.eventId) {
+      saveSession();
+    }
+  }, [state.isRunning, state.analysisCount, state.gameContext?.eventId, saveSession]);
 
   // Update game context when it changes
   useEffect(() => {
     if (gameContext) {
+      // Try to load existing session first
+      loadExistingSession(gameContext.eventId).then(restored => {
+        if (!restored) {
+          // Initialize fresh if no session found
+          initializePlayerStates(gameContext);
+          setLastProjectionMilestone(0);
+          setProjectionSnapshots([]);
+          setCurrentGameMinute(0);
+          setSessionRestored(false);
+        }
+      });
+      
       setState(prev => ({
         ...prev,
         gameContext: {
@@ -85,16 +258,8 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
           awayTeamFatigue: gameContext.awayTeamFatigue,
         },
       }));
-      
-      // Initialize player states from rosters with pre-game baselines
-      initializePlayerStates(gameContext);
-      
-      // Reset projection tracking
-      setLastProjectionMilestone(0);
-      setProjectionSnapshots([]);
-      setCurrentGameMinute(0);
     }
-  }, [gameContext?.eventId]);
+  }, [gameContext?.eventId, loadExistingSession]);
 
   const initializePlayerStates = useCallback((context: GameContext) => {
     const newStates = new Map<string, PlayerLiveState>();
@@ -574,5 +739,8 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
     projectionSnapshots,
     currentGameMinute,
     lastProjectionMilestone,
+    // V4: Session Persistence
+    sessionRestored,
+    clearSession,
   };
 }

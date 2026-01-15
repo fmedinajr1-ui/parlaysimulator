@@ -6644,6 +6644,63 @@ export type Database = {
         }
         Relationships: []
       }
+      scout_sessions: {
+        Row: {
+          analysis_count: number | null
+          away_team: string
+          commercial_skip_count: number | null
+          created_at: string | null
+          current_game_time: string | null
+          current_score: string | null
+          event_id: string
+          frames_processed: number | null
+          halftime_lock: Json | null
+          home_team: string
+          id: string
+          last_updated_at: string | null
+          pbp_data: Json | null
+          player_states: Json
+          projection_snapshots: Json
+          prop_edges: Json
+        }
+        Insert: {
+          analysis_count?: number | null
+          away_team: string
+          commercial_skip_count?: number | null
+          created_at?: string | null
+          current_game_time?: string | null
+          current_score?: string | null
+          event_id: string
+          frames_processed?: number | null
+          halftime_lock?: Json | null
+          home_team: string
+          id?: string
+          last_updated_at?: string | null
+          pbp_data?: Json | null
+          player_states?: Json
+          projection_snapshots?: Json
+          prop_edges?: Json
+        }
+        Update: {
+          analysis_count?: number | null
+          away_team?: string
+          commercial_skip_count?: number | null
+          created_at?: string | null
+          current_game_time?: string | null
+          current_score?: string | null
+          event_id?: string
+          frames_processed?: number | null
+          halftime_lock?: Json | null
+          home_team?: string
+          id?: string
+          last_updated_at?: string | null
+          pbp_data?: Json | null
+          player_states?: Json
+          projection_snapshots?: Json
+          prop_edges?: Json
+        }
+        Relationships: []
+      }
       sharp_ai_parlays: {
         Row: {
           archetype_diversity: number | null
