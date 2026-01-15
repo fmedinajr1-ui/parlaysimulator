@@ -7,6 +7,12 @@ import { supabase } from "@/integrations/supabase/client";
 import { Calendar, Clock, Users, ChevronRight, RefreshCw } from "lucide-react";
 import type { GameContext } from "@/pages/Scout";
 import { toZonedTime, format } from "date-fns-tz";
+import { 
+  calculatePreGameBaseline, 
+  type PreGameBaseline, 
+  type TeamFatigueData, 
+  type PlayerSeasonStats 
+} from "@/types/pre-game-baselines";
 
 const CACHE_KEY = 'scout_props_last_refresh';
 const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
@@ -181,6 +187,48 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
 
       console.log(`[ScoutGameSelector] Fetched ${propLines.length} real prop lines for game ${game.eventId}`);
 
+      // Fetch team fatigue scores
+      const { data: homeFatigueData } = await supabase
+        .from('nba_fatigue_scores')
+        .select('team_name, fatigue_score, fatigue_category, is_back_to_back, is_road_back_to_back, is_three_in_four, is_four_in_six, travel_miles')
+        .ilike('team_name', `%${game.homeTeam.replace(/\s+/g, '%')}%`)
+        .order('game_date', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const { data: awayFatigueData } = await supabase
+        .from('nba_fatigue_scores')
+        .select('team_name, fatigue_score, fatigue_category, is_back_to_back, is_road_back_to_back, is_three_in_four, is_four_in_six, travel_miles')
+        .ilike('team_name', `%${game.awayTeam.replace(/\s+/g, '%')}%`)
+        .order('game_date', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      // Map team fatigue
+      const homeTeamFatigue: TeamFatigueData | undefined = homeFatigueData ? {
+        teamName: homeFatigueData.team_name,
+        fatigueScore: homeFatigueData.fatigue_score ?? 10,
+        fatigueCategory: homeFatigueData.fatigue_category ?? 'fresh',
+        isBackToBack: homeFatigueData.is_back_to_back ?? false,
+        isRoadB2B: homeFatigueData.is_road_back_to_back ?? false,
+        isThreeInFour: homeFatigueData.is_three_in_four ?? false,
+        isFourInSix: homeFatigueData.is_four_in_six ?? false,
+        travelMiles: homeFatigueData.travel_miles ? Number(homeFatigueData.travel_miles) : null,
+      } : undefined;
+
+      const awayTeamFatigue: TeamFatigueData | undefined = awayFatigueData ? {
+        teamName: awayFatigueData.team_name,
+        fatigueScore: awayFatigueData.fatigue_score ?? 10,
+        fatigueCategory: awayFatigueData.fatigue_category ?? 'fresh',
+        isBackToBack: awayFatigueData.is_back_to_back ?? false,
+        isRoadB2B: awayFatigueData.is_road_back_to_back ?? false,
+        isThreeInFour: awayFatigueData.is_three_in_four ?? false,
+        isFourInSix: awayFatigueData.is_four_in_six ?? false,
+        travelMiles: awayFatigueData.travel_miles ? Number(awayFatigueData.travel_miles) : null,
+      } : undefined;
+
+      console.log(`[ScoutGameSelector] Team fatigue - Home: ${homeTeamFatigue?.fatigueScore ?? 'N/A'}, Away: ${awayTeamFatigue?.fatigueScore ?? 'N/A'}`);
+
       // Filter out players without valid jersey numbers
       const validHomeRoster = (homeRoster || [])
         .filter(p => p.jersey_number && p.jersey_number !== '?' && p.jersey_number !== 'null' && p.jersey_number.trim() !== '')
@@ -198,6 +246,47 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
           position: p.position || '',
         }));
 
+      // Fetch player season stats for all roster players
+      const allPlayerNames = [...validHomeRoster, ...validAwayRoster].map(p => p.name);
+      
+      const { data: playerStatsData } = await supabase
+        .from('player_season_stats')
+        .select('player_name, avg_minutes, avg_points, avg_rebounds, avg_assists, consistency_score, trend_direction, last_10_avg_points, b2b_avg_points, rest_avg_points')
+        .in('player_name', allPlayerNames);
+
+      // Map player stats
+      const playerStatsMap = new Map<string, PlayerSeasonStats>();
+      (playerStatsData || []).forEach(ps => {
+        playerStatsMap.set(ps.player_name, {
+          playerName: ps.player_name,
+          avgMinutes: Number(ps.avg_minutes) || 25,
+          avgPoints: Number(ps.avg_points) || 0,
+          avgRebounds: Number(ps.avg_rebounds) || 0,
+          avgAssists: Number(ps.avg_assists) || 0,
+          consistencyScore: Number(ps.consistency_score) || 65,
+          trendDirection: (ps.trend_direction as 'hot' | 'cold' | 'stable') || 'stable',
+          last10AvgPoints: ps.last_10_avg_points ? Number(ps.last_10_avg_points) : null,
+          b2bAvgPoints: ps.b2b_avg_points ? Number(ps.b2b_avg_points) : null,
+          restAvgPoints: ps.rest_avg_points ? Number(ps.rest_avg_points) : null,
+        });
+      });
+
+      console.log(`[ScoutGameSelector] Fetched stats for ${playerStatsMap.size} players`);
+
+      // Calculate pre-game baselines for each player
+      const preGameBaselines: PreGameBaseline[] = [];
+      
+      validHomeRoster.forEach(p => {
+        const stats = playerStatsMap.get(p.name) || null;
+        preGameBaselines.push(calculatePreGameBaseline(p.name, stats, homeTeamFatigue || null));
+      });
+      
+      validAwayRoster.forEach(p => {
+        const stats = playerStatsMap.get(p.name) || null;
+        preGameBaselines.push(calculatePreGameBaseline(p.name, stats, awayTeamFatigue || null));
+      });
+
+      console.log(`[ScoutGameSelector] Calculated ${preGameBaselines.length} pre-game baselines`);
       console.log(`[ScoutGameSelector] Loaded rosters - Home: ${validHomeRoster.length} players, Away: ${validAwayRoster.length} players`);
 
       const gameContext: GameContext = {
@@ -205,6 +294,9 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
         homeRoster: validHomeRoster,
         awayRoster: validAwayRoster,
         propLines: propLines,
+        preGameBaselines,
+        homeTeamFatigue,
+        awayTeamFatigue,
       };
 
       onGameSelect(gameContext);

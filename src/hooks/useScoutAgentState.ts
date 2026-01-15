@@ -13,6 +13,7 @@ import {
 } from '@/types/scout-agent';
 import { GameContext } from '@/pages/Scout';
 import { useToast } from '@/hooks/use-toast';
+import { parseGameMinutes, type ProjectionSnapshot, PROJECTION_MILESTONES } from '@/components/scout/ProjectionMilestone';
 
 const NOTIFICATION_COOLDOWN_MS = 15000; // 15 seconds between same-player alerts
 const FATIGUE_SLOPE_WINDOW = 5; // Number of updates to track for slope calculation
@@ -42,6 +43,9 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
       homeRoster: gameContext.homeRoster,
       awayRoster: gameContext.awayRoster,
       propLines: gameContext.propLines,
+      preGameBaselines: gameContext.preGameBaselines,
+      homeTeamFatigue: gameContext.homeTeamFatigue,
+      awayTeamFatigue: gameContext.awayTeamFatigue,
     } : null,
     playerStates: new Map(),
     activePropEdges: [],
@@ -59,6 +63,11 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
     },
   });
 
+  // Projection milestone tracking
+  const [lastProjectionMilestone, setLastProjectionMilestone] = useState(0);
+  const [projectionSnapshots, setProjectionSnapshots] = useState<ProjectionSnapshot[]>([]);
+  const [currentGameMinute, setCurrentGameMinute] = useState(0);
+
   // Update game context when it changes
   useEffect(() => {
     if (gameContext) {
@@ -71,11 +80,19 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
           homeRoster: gameContext.homeRoster,
           awayRoster: gameContext.awayRoster,
           propLines: gameContext.propLines,
+          preGameBaselines: gameContext.preGameBaselines,
+          homeTeamFatigue: gameContext.homeTeamFatigue,
+          awayTeamFatigue: gameContext.awayTeamFatigue,
         },
       }));
       
-      // Initialize player states from rosters
+      // Initialize player states from rosters with pre-game baselines
       initializePlayerStates(gameContext);
+      
+      // Reset projection tracking
+      setLastProjectionMilestone(0);
+      setProjectionSnapshots([]);
+      setCurrentGameMinute(0);
     }
   }, [gameContext?.eventId]);
 
@@ -84,17 +101,24 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
     
     const initPlayer = (player: { name: string; jersey: string; position: string }, team: string) => {
       const role = getInitialRole(player.position);
+      
+      // Find pre-game baseline for this player
+      const baseline = context.preGameBaselines?.find(
+        b => b.playerName.toLowerCase() === player.name.toLowerCase()
+      );
+      
       newStates.set(player.name, {
         playerName: player.name,
         jersey: player.jersey,
         team,
         onCourt: true,
         role,
-        fatigueScore: 15,
-        effortScore: 55,
-        speedIndex: 65,
+        // Use pre-game baselines if available, otherwise defaults
+        fatigueScore: baseline?.fatigueScore ?? 15,
+        effortScore: baseline?.effortScore ?? 55,
+        speedIndex: baseline?.speedIndex ?? 65,
         reboundPositionScore: 50,
-        minutesEstimate: 5,
+        minutesEstimate: baseline?.minutesEstimate ?? 25,
         foulCount: 0,
         visualFlags: [],
         lastUpdated: 'Pre-game',
@@ -114,11 +138,14 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
           steals: 0,
           blocks: 0,
         },
+        // Store baseline metadata for UI
+        preGameTrend: baseline?.trend,
+        preGameConsistency: baseline?.consistency,
       });
       
-      // Initialize fatigue history
+      // Initialize fatigue history with baseline
       fatigueHistory.current.set(player.name, {
-        scores: [15],
+        scores: [baseline?.fatigueScore ?? 15],
         timestamps: [Date.now()],
       });
     };
@@ -126,7 +153,7 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
     context.homeRoster.forEach(p => initPlayer(p, context.homeTeam));
     context.awayRoster.forEach(p => initPlayer(p, context.awayTeam));
     
-    console.log(`[Scout Agent State] Initialized ${newStates.size} players from rosters`);
+    console.log(`[Scout Agent State] Initialized ${newStates.size} players from rosters with pre-game baselines`);
     setState(prev => ({ ...prev, playerStates: newStates }));
   }, []);
 
@@ -543,5 +570,9 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
     getHalftimeRecommendations,
     isHalftimeLocked,
     resetHalftimeLock,
+    // V3: Projection Milestones
+    projectionSnapshots,
+    currentGameMinute,
+    lastProjectionMilestone,
   };
 }
