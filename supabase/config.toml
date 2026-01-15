@@ -287,6 +287,3 @@ verify_jwt = false
 
 [functions.fetch-live-pbp]
 verify_jwt = false
-
-[functions.sync-team-roster]
-verify_jwt = false
