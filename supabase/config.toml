@@ -293,3 +293,6 @@ verify_jwt = false
 
 [functions.scout-data-projection]
 verify_jwt = false
+
+[functions.sync-missing-rosters]
+verify_jwt = false

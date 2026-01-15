@@ -229,8 +229,8 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
 
       console.log(`[ScoutGameSelector] Team fatigue - Home: ${homeTeamFatigue?.fatigueScore ?? 'N/A'}, Away: ${awayTeamFatigue?.fatigueScore ?? 'N/A'}`);
 
-      // Filter out players without valid jersey numbers
-      const validHomeRoster = (homeRoster || [])
+      // Filter out players without valid jersey numbers from cache
+      let validHomeRoster = (homeRoster || [])
         .filter(p => p.jersey_number && p.jersey_number !== '?' && p.jersey_number !== 'null' && p.jersey_number.trim() !== '')
         .map(p => ({
           name: p.player_name,
@@ -238,13 +238,44 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
           position: p.position || '',
         }));
 
-      const validAwayRoster = (awayRoster || [])
+      let validAwayRoster = (awayRoster || [])
         .filter(p => p.jersey_number && p.jersey_number !== '?' && p.jersey_number !== 'null' && p.jersey_number.trim() !== '')
         .map(p => ({
           name: p.player_name,
           jersey: p.jersey_number,
           position: p.position || '',
         }));
+
+      // FALLBACK: If roster cache is empty, use players from props data
+      if (validHomeRoster.length === 0 && validAwayRoster.length === 0 && propsData && propsData.length > 0) {
+        console.warn('[ScoutGameSelector] No roster data in cache, using props players as fallback');
+        
+        // Trigger roster sync in background (don't await)
+        supabase.functions.invoke('sync-missing-rosters', {
+          body: { teams: [game.homeTeam, game.awayTeam] }
+        }).then(result => {
+          console.log('[ScoutGameSelector] Roster sync triggered:', result.data);
+        }).catch(err => {
+          console.warn('[ScoutGameSelector] Roster sync failed:', err);
+        });
+
+        // Extract unique player names from props
+        const uniquePlayerNames = [...new Set(propsData.map(p => p.player_name))];
+        
+        // Create fallback roster entries (no jersey numbers - will show "?" in UI)
+        const fallbackRoster = uniquePlayerNames.map(name => ({
+          name,
+          jersey: '?',
+          position: '',
+        }));
+
+        // Split players between teams based on game description
+        // For now, just put all in one roster (home) - the AI will still track them
+        validHomeRoster = fallbackRoster.slice(0, Math.ceil(fallbackRoster.length / 2));
+        validAwayRoster = fallbackRoster.slice(Math.ceil(fallbackRoster.length / 2));
+        
+        console.log(`[ScoutGameSelector] Created fallback rosters from ${uniquePlayerNames.length} prop players`);
+      }
 
       // Fetch player season stats for all roster players
       const allPlayerNames = [...validHomeRoster, ...validAwayRoster].map(p => p.name);
