@@ -156,11 +156,29 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
         },
       });
       
-      // Handle transient errors with retry
-      if (data?.retryAfter && retryCount < 2) {
-        console.log(`[Autopilot] Transient error, retrying in ${data.retryAfter}ms...`);
-        setTimeout(() => runAgentLoop(retryCount + 1), data.retryAfter);
+      // Handle transient errors with retry - check both data and error for retryAfter
+      // When edge function returns 503, supabase SDK puts response in error.context
+      const retryAfter = data?.retryAfter || (error as any)?.context?.retryAfter;
+      if (retryAfter && retryCount < 2) {
+        console.log(`[Autopilot] Transient error, retrying in ${retryAfter}ms...`);
+        setTimeout(() => runAgentLoop(retryCount + 1), retryAfter);
         return;
+      }
+      
+      // Also handle error responses that contain JSON with retryAfter
+      if (error && retryCount < 2) {
+        try {
+          const errorBody = typeof error.message === 'string' && error.message.includes('retryAfter') 
+            ? JSON.parse(error.message) 
+            : null;
+          if (errorBody?.retryAfter) {
+            console.log(`[Autopilot] Gateway error, retrying in ${errorBody.retryAfter}ms...`);
+            setTimeout(() => runAgentLoop(retryCount + 1), errorBody.retryAfter);
+            return;
+          }
+        } catch {
+          // Not JSON, continue with normal error handling
+        }
       }
       
       if (!error && data) {
