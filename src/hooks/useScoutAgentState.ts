@@ -396,7 +396,8 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
         if (existingState) {
           updatedStates.set(pbpPlayer.playerName, {
             ...existingState,
-            minutesEstimate: pbpPlayer.minutes,
+            // DO NOT overwrite minutesEstimate - that's the expected TOTAL minutes (pre-game baseline)
+            // The current minutes played comes from pbpPlayer.minutes and is sent to edge function via pbpData
             foulCount: pbpPlayer.fouls,
             onCourt: pbpPlayer.minutes > 0,
             boxScore: {

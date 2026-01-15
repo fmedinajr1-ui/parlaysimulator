@@ -432,13 +432,23 @@ function calculateRemainingMinutes(
   const played = live?.min ?? 0;
   const riskFlags: string[] = [];
   
-  // Expected total minutes (use minutesEstimate or derive from role)
-  const expectedTotal = state.minutesEstimate > 0 ? state.minutesEstimate : 
+  // Role-based expected totals
+  const roleBasedExpected = 
     state.role === 'PRIMARY' ? 34 :
     state.role === 'SECONDARY' ? 28 :
     state.role === 'BIG' ? 30 : 22;
   
+  // Expected total minutes - use minutesEstimate (pre-game baseline) or role-based fallback
+  // BUG FIX: If minutesEstimate equals played and played > 10, the client overwrote it incorrectly
+  let expectedTotal = state.minutesEstimate;
+  if (expectedTotal <= 0 || (expectedTotal <= played && played > 10)) {
+    // Either not set or bug scenario detected - use role-based estimate
+    expectedTotal = roleBasedExpected;
+    console.log(`[Minutes Engine] Using role-based estimate for ${state.playerName}: ${expectedTotal} min (role: ${state.role})`);
+  }
+  
   let remaining = Math.max(0, expectedTotal - played);
+  console.log(`[Minutes Engine] ${state.playerName}: ${played.toFixed(1)} played, ${remaining.toFixed(1)} remaining (expected: ${expectedTotal})`);
   
   // Foul penalties
   let foulPenalty = 1.0;
