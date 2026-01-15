@@ -289,8 +289,26 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
       console.log(`[ScoutGameSelector] Calculated ${preGameBaselines.length} pre-game baselines`);
       console.log(`[ScoutGameSelector] Loaded rosters - Home: ${validHomeRoster.length} players, Away: ${validAwayRoster.length} players`);
 
+      // Fetch ESPN event ID for live PBP data
+      let espnEventId: string | undefined;
+      try {
+        const { data: espnData, error: espnError } = await supabase.functions.invoke('get-espn-event-id', {
+          body: { homeTeam: game.homeTeam, awayTeam: game.awayTeam }
+        });
+        
+        if (!espnError && espnData?.espnEventId) {
+          espnEventId = espnData.espnEventId;
+          console.log(`[ScoutGameSelector] Resolved ESPN event ID: ${espnEventId}`);
+        } else {
+          console.warn('[ScoutGameSelector] Could not resolve ESPN event ID:', espnError || 'No match');
+        }
+      } catch (espnErr) {
+        console.warn('[ScoutGameSelector] ESPN lookup failed:', espnErr);
+      }
+
       const gameContext: GameContext = {
         ...game,
+        espnEventId,
         homeRoster: validHomeRoster,
         awayRoster: validAwayRoster,
         propLines: propLines,

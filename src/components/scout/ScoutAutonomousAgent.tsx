@@ -36,6 +36,8 @@ import {
   Camera,
   AlertTriangle,
   Lock,
+  RefreshCw,
+  Save,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -70,6 +72,8 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
     getTopEdges,
     getFatiguedPlayers,
     getStateForAPI,
+    sessionRestored,
+    clearSession,
   } = useScoutAgentState({ gameContext });
 
   const isSupported = isScreenCaptureSupported() || isCameraSupported();
@@ -149,12 +153,18 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
 
   const fetchPBPData = async () => {
     try {
+      // Prefer ESPN event ID if available for accurate PBP data
+      const eventIdToUse = gameContext.espnEventId || gameContext.eventId;
+      console.log(`[Autopilot] Fetching PBP for event: ${eventIdToUse} (ESPN: ${!!gameContext.espnEventId})`);
+      
       const { data, error } = await supabase.functions.invoke('fetch-live-pbp', {
-        body: { eventId: gameContext.eventId },
+        body: { eventId: eventIdToUse },
       });
       
-      if (!error && data) {
+      if (!error && data && !data.notAvailable) {
         updatePBPData(data);
+      } else if (data?.notAvailable) {
+        console.warn('[Autopilot] PBP not available:', data.reason);
       }
     } catch (error) {
       console.error('[Autopilot] PBP fetch error:', error);
@@ -315,10 +325,27 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
                 state.isRunning ? "text-chart-2 animate-pulse" : "text-muted-foreground"
               )} />
               <div>
-                <CardTitle className="text-lg">Scout Autopilot</CardTitle>
-                <CardDescription>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  Scout Autopilot
+                  {sessionRestored && (
+                    <Badge variant="secondary" className="text-xs">
+                      Resumed
+                    </Badge>
+                  )}
+                </CardTitle>
+                <CardDescription className="flex items-center gap-2">
                   {state.isRunning 
-                    ? `Monitoring at ${state.captureRate} FPS` 
+                    ? (
+                      <>
+                        <span>Monitoring at {state.captureRate} FPS</span>
+                        {state.analysisCount > 0 && (
+                          <span className="flex items-center gap-1 text-chart-2">
+                            <Save className="w-3 h-3" />
+                            Auto-saving
+                          </span>
+                        )}
+                      </>
+                    )
                     : 'Autonomous game monitoring'}
                 </CardDescription>
               </div>
@@ -344,14 +371,26 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
                   </Button>
                 </>
               ) : (
-                <Button 
-                  onClick={handleStart} 
-                  className="gap-2"
-                  disabled={captureMode === 'camera' && videoDevices.length === 0}
-                >
-                  <Play className="w-4 h-4" />
-                  Start Autopilot
-                </Button>
+                <>
+                  <Button 
+                    onClick={handleStart} 
+                    className="gap-2"
+                    disabled={captureMode === 'camera' && videoDevices.length === 0}
+                  >
+                    <Play className="w-4 h-4" />
+                    Start Autopilot
+                  </Button>
+                  {sessionRestored && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={clearSession}
+                      title="Clear session and restart fresh"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                    </Button>
+                  )}
+                </>
               )}
               <Button 
                 variant="ghost" 
@@ -626,6 +665,28 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
                       {rec.firstHalfStats && (
                         <div className="mt-2 pt-2 border-t text-xs">
                           1H Stats: {rec.firstHalfStats.points}pts, {rec.firstHalfStats.rebounds}reb, {rec.firstHalfStats.assists}ast
+                        </div>
+                      )}
+                      {/* Bookmaker line prices */}
+                      {(rec.overPrice || rec.underPrice) && (
+                        <div className="flex items-center justify-between text-xs pt-2 border-t mt-2">
+                          <span className={cn(
+                            "font-mono",
+                            rec.lean === 'OVER' && "text-chart-2 font-semibold"
+                          )}>
+                            O {rec.overPrice && rec.overPrice > 0 ? '+' : ''}{rec.overPrice || '-'}
+                          </span>
+                          {rec.bookmaker && (
+                            <Badge variant="outline" className="text-[10px]">
+                              {rec.bookmaker}
+                            </Badge>
+                          )}
+                          <span className={cn(
+                            "font-mono",
+                            rec.lean === 'UNDER' && "text-chart-4 font-semibold"
+                          )}>
+                            U {rec.underPrice && rec.underPrice > 0 ? '+' : ''}{rec.underPrice || '-'}
+                          </span>
                         </div>
                       )}
                     </CardContent>

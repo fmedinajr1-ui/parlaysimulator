@@ -287,3 +287,6 @@ verify_jwt = false
 
 [functions.fetch-live-pbp]
 verify_jwt = false
+
+[functions.get-espn-event-id]
+verify_jwt = false

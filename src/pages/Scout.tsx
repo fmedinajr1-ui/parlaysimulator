@@ -26,6 +26,7 @@ export interface PropLine {
 
 export interface GameContext {
   eventId: string;
+  espnEventId?: string; // ESPN's 9-digit event ID for PBP data
   homeTeam: string;
   awayTeam: string;
   commenceTime: string;

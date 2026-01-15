@@ -255,6 +255,10 @@ export interface HalftimeLockedProp {
   riskFlags: string[];
   lockTime: string;
   firstHalfStats?: Partial<BoxScoreLive>;
+  // Real bookmaker prices
+  overPrice?: number;
+  underPrice?: number;
+  bookmaker?: string;
 }
 
 export interface HalftimeLockState {
