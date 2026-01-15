@@ -41,6 +41,7 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
       awayTeam: gameContext.awayTeam,
       homeRoster: gameContext.homeRoster,
       awayRoster: gameContext.awayRoster,
+      propLines: gameContext.propLines,
     } : null,
     playerStates: new Map(),
     activePropEdges: [],
@@ -69,6 +70,7 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
           awayTeam: gameContext.awayTeam,
           homeRoster: gameContext.homeRoster,
           awayRoster: gameContext.awayRoster,
+          propLines: gameContext.propLines,
         },
       }));
       

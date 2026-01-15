@@ -70,6 +70,16 @@ interface EdgeHistoryEntry {
 
 type PropTypeKey = 'Points' | 'Rebounds' | 'Assists' | 'PRA';
 
+// Prop line from bookmakers
+interface PropLineData {
+  playerName: string;
+  propType: 'points' | 'rebounds' | 'assists';
+  line: number;
+  overPrice?: number;
+  underPrice?: number;
+  bookmaker?: string;
+}
+
 interface AgentLoopRequest {
   frame: string;
   gameContext: {
@@ -90,6 +100,7 @@ interface AgentLoopRequest {
   existingEdges: PropEdge[];
   currentGameTime?: string;
   forceAnalysis?: boolean;
+  propLines?: PropLineData[]; // Real betting lines from unified_props
 }
 
 function getSceneClassificationPrompt(): string {
@@ -721,7 +732,7 @@ function buildDrivers(
   return drivers.slice(0, 4);
 }
 
-// ===== PROP LINE DEFAULTS (until we have actual lines) =====
+// ===== PROP LINE DEFAULTS (fallback when no real lines) =====
 
 function getDefaultLine(prop: PropTypeKey, role: PlayerLiveState['role']): number {
   switch (prop) {
@@ -738,6 +749,58 @@ function getDefaultLine(prop: PropTypeKey, role: PlayerLiveState['role']): numbe
   }
 }
 
+// ===== REAL PROP LINE LOOKUP =====
+
+function buildPropLineLookup(propLines: PropLineData[] | undefined): Map<string, { line: number; overPrice?: number; underPrice?: number; bookmaker?: string }> {
+  const lookup = new Map<string, { line: number; overPrice?: number; underPrice?: number; bookmaker?: string }>();
+  if (!propLines) return lookup;
+  
+  propLines.forEach(p => {
+    // Key: "playername_proptype" (lowercase, normalized)
+    const normalizedName = p.playerName.toLowerCase().trim();
+    const key = `${normalizedName}_${p.propType.toLowerCase()}`;
+    lookup.set(key, {
+      line: p.line,
+      overPrice: p.overPrice,
+      underPrice: p.underPrice,
+      bookmaker: p.bookmaker,
+    });
+  });
+  
+  console.log(`[Scout Agent] Built prop line lookup with ${lookup.size} real lines`);
+  return lookup;
+}
+
+function getLine(
+  propLineLookup: Map<string, { line: number; overPrice?: number; underPrice?: number; bookmaker?: string }>,
+  playerName: string,
+  prop: PropTypeKey,
+  role: PlayerLiveState['role']
+): { line: number; isRealLine: boolean; overPrice?: number; underPrice?: number; bookmaker?: string } {
+  // PRA doesn't have real lines, always use default
+  if (prop === 'PRA') {
+    return { line: getDefaultLine(prop, role), isRealLine: false };
+  }
+  
+  const propKey = prop.toLowerCase();
+  const normalizedName = playerName.toLowerCase().trim();
+  const key = `${normalizedName}_${propKey}`;
+  const realLine = propLineLookup.get(key);
+  
+  if (realLine) {
+    return { 
+      line: realLine.line, 
+      isRealLine: true,
+      overPrice: realLine.overPrice,
+      underPrice: realLine.underPrice,
+      bookmaker: realLine.bookmaker,
+    };
+  }
+  
+  // Fallback to default
+  return { line: getDefaultLine(prop, role), isRealLine: false };
+}
+
 // ===== NEW PROJECTION-BASED calculatePropEdges =====
 
 function calculatePropEdges(
@@ -745,16 +808,20 @@ function calculatePropEdges(
   visionSignals: any[],
   pbpData: any,
   existingEdges: PropEdge[],
-  gameTime: string
+  gameTime: string,
+  propLines?: PropLineData[]
 ): PropEdge[] {
   const edges: PropEdge[] = [];
   
   const scoreDiff = (pbpData?.homeScore ?? 0) - (pbpData?.awayScore ?? 0);
   const period = pbpData?.period ?? 1;
   
+  // Build prop line lookup from real bookmaker data
+  const propLineLookup = buildPropLineLookup(propLines);
+  
   const propTypes: PropTypeKey[] = ['Points', 'Rebounds', 'Assists', 'PRA'];
   
-  console.log(`[Scout Agent] calculatePropEdges: ${Object.keys(playerStates).length} players, period ${period}, scoreDiff ${scoreDiff}`);
+  console.log(`[Scout Agent] calculatePropEdges: ${Object.keys(playerStates).length} players, period ${period}, scoreDiff ${scoreDiff}, realLines: ${propLineLookup.size}`);
   
   Object.values(playerStates).forEach(player => {
     // Skip players with minimal playing time
@@ -787,7 +854,17 @@ function calculatePropEdges(
       if (prop === 'Rebounds' && player.role !== 'BIG' && player.role !== 'PRIMARY') return;
       if (prop === 'Assists' && player.role === 'SPACER') return;
       
-      const line = getDefaultLine(prop, player.role);
+      // Get real line from lookup, or fallback to default
+      const { line, isRealLine, overPrice, underPrice, bookmaker } = getLine(
+        propLineLookup, 
+        player.playerName, 
+        prop, 
+        player.role
+      );
+      
+      // Skip props without real lines (except PRA which is calculated)
+      // This prevents showing confusing default-based projections
+      if (!isRealLine && prop !== 'PRA') return;
       
       const { expected, remaining, riskFlags, rate } = projectFinal(
         player, live, prop, scoreDiff, period
@@ -834,7 +911,7 @@ function calculatePropEdges(
   // Sort by confidence descending
   edges.sort((a, b) => b.confidence - a.confidence);
   
-  console.log(`[Scout Agent] Generated ${edges.length} projection-based prop edges`);
+  console.log(`[Scout Agent] Generated ${edges.length} projection-based prop edges (using real lines)`);
   return edges;
 }
 
@@ -919,7 +996,8 @@ serve(async (req) => {
       pbpData,
       existingEdges,
       currentGameTime,
-      forceAnalysis 
+      forceAnalysis,
+      propLines
     } = await req.json() as AgentLoopRequest;
 
     if (!frame) {
@@ -1141,7 +1219,8 @@ CRITICAL RULE: You MUST identify players by their jersey numbers and look them u
       visionResult.visionSignals || [],
       pbpData,
       existingEdges,
-      gameTime
+      gameTime,
+      propLines
     );
 
     // STEP 4: Determine if notification is warranted

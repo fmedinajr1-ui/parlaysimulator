@@ -13,6 +13,15 @@ import { ScoutAutonomousAgent } from "@/components/scout/ScoutAutonomousAgent";
 import { useToast } from "@/hooks/use-toast";
 import { Video, Eye, Zap, Clock, Users, Upload, Radio, Bot } from "lucide-react";
 
+export interface PropLine {
+  playerName: string;
+  propType: 'points' | 'rebounds' | 'assists';
+  line: number;
+  overPrice?: number;
+  underPrice?: number;
+  bookmaker?: string;
+}
+
 export interface GameContext {
   eventId: string;
   homeTeam: string;
@@ -21,6 +30,7 @@ export interface GameContext {
   gameDescription: string;
   homeRoster: { name: string; jersey: string; position: string }[];
   awayRoster: { name: string; jersey: string; position: string }[];
+  propLines?: PropLine[]; // Real betting lines from unified_props
 }
 
 export interface AnalysisResult {
