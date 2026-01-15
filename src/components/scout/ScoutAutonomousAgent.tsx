@@ -7,6 +7,7 @@ import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { SelectGroup, SelectLabel } from '@/components/ui/select';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { useScoutAgentState } from '@/hooks/useScoutAgentState';
@@ -23,6 +24,7 @@ import {
   isCameraSupported,
   getVideoDevices,
   requestCameraCapture,
+  ClassifiedVideoDevice,
 } from '@/lib/live-stream-capture';
 import {
   Bot,
@@ -59,7 +61,7 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
   
   // Capture mode state
   const [captureMode, setCaptureMode] = useState<'screen' | 'camera'>('screen');
-  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
+  const [videoDevices, setVideoDevices] = useState<ClassifiedVideoDevice[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
   
   // Data-only mode (no video required)
@@ -88,8 +90,11 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
     async function loadDevices() {
       const devices = await getVideoDevices();
       setVideoDevices(devices);
+      
+      // Auto-select first capture card, or first device if none
       if (devices.length > 0 && !selectedDeviceId) {
-        setSelectedDeviceId(devices[0].deviceId);
+        const captureCard = devices.find(d => d.type === 'capture_card');
+        setSelectedDeviceId(captureCard?.device.deviceId || devices[0].device.deviceId);
       }
     }
     loadDevices();
@@ -508,24 +513,56 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
             )}
 
             {/* Device Selector (camera mode) */}
-            {!state.isRunning && captureMode === 'camera' && (
-              <Select value={selectedDeviceId} onValueChange={setSelectedDeviceId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select capture device" />
-                </SelectTrigger>
-                <SelectContent>
-                  {videoDevices.length === 0 ? (
-                    <SelectItem value="none" disabled>No devices found</SelectItem>
-                  ) : (
-                    videoDevices.map((device, index) => (
-                      <SelectItem key={device.deviceId} value={device.deviceId}>
-                        {device.label || `Camera ${index + 1}`}
+            {!state.isRunning && captureMode === 'camera' && (() => {
+              const captureCards = videoDevices.filter(d => d.type === 'capture_card');
+              const otherDevices = videoDevices.filter(d => d.type !== 'capture_card');
+              
+              return (
+                <Select value={selectedDeviceId} onValueChange={setSelectedDeviceId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select capture device" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-popover">
+                    {videoDevices.length === 0 ? (
+                      <SelectItem value="none" disabled>
+                        No devices found - connect a capture card
                       </SelectItem>
-                    ))
-                  )}
-                </SelectContent>
-              </Select>
-            )}
+                    ) : (
+                      <>
+                        {/* Capture Cards group */}
+                        {captureCards.length > 0 && (
+                          <SelectGroup>
+                            <SelectLabel className="flex items-center gap-2 text-xs text-muted-foreground">
+                              <Camera className="w-3 h-3" />
+                              Capture Cards
+                            </SelectLabel>
+                            {captureCards.map((d) => (
+                              <SelectItem key={d.device.deviceId} value={d.device.deviceId}>
+                                {d.displayName}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        )}
+                        
+                        {/* Other Cameras group */}
+                        {otherDevices.length > 0 && (
+                          <SelectGroup>
+                            <SelectLabel className="text-xs text-muted-foreground">
+                              Other Cameras
+                            </SelectLabel>
+                            {otherDevices.map((d) => (
+                              <SelectItem key={d.device.deviceId} value={d.device.deviceId}>
+                                {d.displayName}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        )}
+                      </>
+                    )}
+                  </SelectContent>
+                </Select>
+              );
+            })()}
 
             <div className="flex items-center gap-4 py-3">
               <span className="text-sm text-muted-foreground w-24">Capture Rate</span>

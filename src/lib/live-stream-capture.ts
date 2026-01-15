@@ -125,11 +125,126 @@ export function isCameraSupported(): boolean {
 }
 
 /**
- * Get list of available video input devices (cameras, capture cards)
+ * Known capture card device name patterns
  */
-export async function getVideoDevices(): Promise<MediaDeviceInfo[]> {
+const CAPTURE_CARD_PATTERNS = [
+  'elgato',
+  'avermedia',
+  'magewell',
+  'blackmagic',
+  'razer ripsaw',
+  'corsair',
+  'decklink',
+  'hdmi',
+  'game capture',
+  'usb video',
+  'video capture',
+  'cam link',
+  'hd60',
+  'hd 60',
+  '4k60',
+  '4k capture',
+  'capture device',
+  'genki',
+  'pengo',
+  'startech',
+];
+
+export interface ClassifiedVideoDevice {
+  device: MediaDeviceInfo;
+  type: 'capture_card' | 'webcam' | 'unknown';
+  priority: number;
+  displayName: string;
+}
+
+/**
+ * Classify a video device as capture card, webcam, or unknown
+ */
+function classifyVideoDevice(device: MediaDeviceInfo): ClassifiedVideoDevice {
+  const label = device.label.toLowerCase();
+  
+  // Check for capture card patterns
+  const isCaptureCard = CAPTURE_CARD_PATTERNS.some(pattern => 
+    label.includes(pattern)
+  );
+  
+  // Check for webcam patterns
+  const isWebcam = label.includes('facetime') || 
+                   label.includes('webcam') || 
+                   label.includes('integrated') ||
+                   label.includes('built-in') ||
+                   label.includes('front camera') ||
+                   label.includes('rear camera') ||
+                   label.includes('iphone') ||
+                   label.includes('ipad');
+  
+  const type = isCaptureCard ? 'capture_card' : isWebcam ? 'webcam' : 'unknown';
+  
+  return {
+    device,
+    type,
+    priority: isCaptureCard ? 1 : type === 'unknown' ? 2 : 3,
+    displayName: formatDeviceName(device.label, type),
+  };
+}
+
+/**
+ * Format device name for display
+ */
+function formatDeviceName(label: string, type: 'capture_card' | 'webcam' | 'unknown'): string {
+  if (!label) {
+    return type === 'capture_card' ? 'Capture Card' : type === 'webcam' ? 'Camera' : 'Video Device';
+  }
+  
+  // Clean up the label
+  let name = label
+    .replace(/\s*\([^)]*\)\s*/g, ' ') // Remove parenthetical text
+    .replace(/\s+/g, ' ')
+    .trim();
+  
+  // Add type indicator if not obvious from the name
+  if (type === 'capture_card') {
+    const hasIndicator = CAPTURE_CARD_PATTERNS.some(p => 
+      label.toLowerCase().includes(p) && 
+      (p.includes('capture') || p.includes('hdmi') || p.includes('cam link'))
+    );
+    if (!hasIndicator) {
+      name = `${name} (Capture)`;
+    }
+  }
+  
+  return name || label;
+}
+
+/**
+ * Get list of available video input devices (cameras, capture cards)
+ * Returns devices sorted with capture cards first
+ */
+export async function getVideoDevices(): Promise<ClassifiedVideoDevice[]> {
   try {
     // Request permission first to get device labels
+    await navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+      stream.getTracks().forEach(track => track.stop());
+    }).catch(() => {});
+    
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const videoDevices = devices.filter(device => device.kind === 'videoinput');
+    
+    // Classify and sort devices (capture cards first)
+    return videoDevices
+      .map(device => classifyVideoDevice(device))
+      .sort((a, b) => a.priority - b.priority);
+  } catch (error) {
+    console.error('Failed to enumerate video devices:', error);
+    return [];
+  }
+}
+
+/**
+ * Get raw list of video devices (backwards compatibility)
+ */
+export async function getVideoDevicesRaw(): Promise<MediaDeviceInfo[]> {
+  try {
     await navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
       stream.getTracks().forEach(track => track.stop());
     }).catch(() => {});
