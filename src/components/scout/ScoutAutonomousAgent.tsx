@@ -166,6 +166,7 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
           pbpData: state.pbpData,
           existingEdges: state.activePropEdges,
           currentGameTime: state.currentGameTime,
+          propLines: state.gameContext?.propLines, // Pass real betting lines
         },
       });
       

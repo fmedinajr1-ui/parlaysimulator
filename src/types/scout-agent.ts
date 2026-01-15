@@ -368,6 +368,14 @@ export interface ScoutAgentState {
     awayTeam: string;
     homeRoster: { name: string; jersey: string; position: string }[];
     awayRoster: { name: string; jersey: string; position: string }[];
+    propLines?: { 
+      playerName: string; 
+      propType: 'points' | 'rebounds' | 'assists'; 
+      line: number; 
+      overPrice?: number; 
+      underPrice?: number; 
+      bookmaker?: string; 
+    }[];
   } | null;
   playerStates: Map<string, PlayerLiveState>;
   activePropEdges: PropEdge[];
@@ -385,6 +393,17 @@ export interface ScoutAgentState {
 
 // ===== AGENT LOOP REQUEST/RESPONSE =====
 
+// ===== PROP LINE FROM BOOKMAKERS =====
+
+export interface PropLine {
+  playerName: string;
+  propType: 'points' | 'rebounds' | 'assists';
+  line: number;
+  overPrice?: number;
+  underPrice?: number;
+  bookmaker?: string;
+}
+
 export interface AgentLoopRequest {
   frame: string; // Base64 image
   gameContext: {
@@ -398,6 +417,7 @@ export interface AgentLoopRequest {
   pbpData?: LivePBPData;
   existingEdges: PropEdge[];
   currentGameTime?: string;
+  propLines?: PropLine[]; // Real betting lines from unified_props
 }
 
 export interface AgentLoopResponse {

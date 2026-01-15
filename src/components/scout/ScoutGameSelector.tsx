@@ -159,6 +159,28 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
       if (homeError) console.warn('Home roster error:', homeError);
       if (awayError) console.warn('Away roster error:', awayError);
 
+      // Fetch real prop lines from unified_props for this game
+      const { data: propsData, error: propsError } = await supabase
+        .from('unified_props')
+        .select('player_name, prop_type, current_line, over_price, under_price, bookmaker')
+        .eq('event_id', game.eventId)
+        .eq('is_active', true)
+        .in('prop_type', ['points', 'rebounds', 'assists']);
+
+      if (propsError) console.warn('Props fetch error:', propsError);
+      
+      // Map prop lines
+      const propLines = (propsData || []).map(p => ({
+        playerName: p.player_name,
+        propType: p.prop_type as 'points' | 'rebounds' | 'assists',
+        line: Number(p.current_line),
+        overPrice: p.over_price ? Number(p.over_price) : undefined,
+        underPrice: p.under_price ? Number(p.under_price) : undefined,
+        bookmaker: p.bookmaker || undefined,
+      }));
+
+      console.log(`[ScoutGameSelector] Fetched ${propLines.length} real prop lines for game ${game.eventId}`);
+
       // Filter out players without valid jersey numbers
       const validHomeRoster = (homeRoster || [])
         .filter(p => p.jersey_number && p.jersey_number !== '?' && p.jersey_number !== 'null' && p.jersey_number.trim() !== '')
@@ -182,6 +204,7 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
         ...game,
         homeRoster: validHomeRoster,
         awayRoster: validAwayRoster,
+        propLines: propLines,
       };
 
       onGameSelect(gameContext);
@@ -191,6 +214,7 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
         ...game,
         homeRoster: [],
         awayRoster: [],
+        propLines: [],
       });
     } finally {
       setLoadingRoster(null);
