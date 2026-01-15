@@ -34,6 +34,7 @@ import {
   Monitor,
   Camera,
   AlertTriangle,
+  Lock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -92,6 +93,18 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
       stopScreenCapture(mediaStream);
     };
   }, [mediaStream]);
+
+  // Stop agent when game changes
+  useEffect(() => {
+    // Clean up when game context changes
+    if (captureIntervalRef.current) clearInterval(captureIntervalRef.current);
+    if (pbpIntervalRef.current) clearInterval(pbpIntervalRef.current);
+    if (mediaStream) {
+      stopScreenCapture(mediaStream);
+      setMediaStream(null);
+    }
+    stopAgent();
+  }, [gameContext.eventId]);
 
   // Main capture loop
   useEffect(() => {
@@ -488,7 +501,7 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
 
       {/* Main Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-3">
+        <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="players" className="gap-2">
             <Users className="w-4 h-4" />
             Players ({onCourtPlayers.length})
@@ -496,6 +509,15 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
           <TabsTrigger value="edges" className="gap-2">
             <Target className="w-4 h-4" />
             Edges ({topEdges.length})
+          </TabsTrigger>
+          <TabsTrigger value="bets" className="gap-2">
+            <Lock className="w-4 h-4" />
+            Bets
+            {state.halftimeLock.isLocked && (
+              <Badge variant="secondary" className="ml-1 text-xs">
+                {state.halftimeLock.lockedRecommendations.length}
+              </Badge>
+            )}
           </TabsTrigger>
           <TabsTrigger value="log" className="gap-2">
             <Activity className="w-4 h-4" />
@@ -532,6 +554,62 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
 
         <TabsContent value="edges" className="mt-4">
           <PropEdgeList edges={state.activePropEdges} maxDisplay={10} />
+        </TabsContent>
+
+        <TabsContent value="bets" className="mt-4">
+          {state.halftimeLock.isLocked ? (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 p-3 bg-chart-2/10 rounded-lg border border-chart-2/30">
+                <Lock className="w-5 h-5 text-chart-2" />
+                <div>
+                  <p className="font-semibold">Halftime Locked</p>
+                  <p className="text-xs text-muted-foreground">
+                    Recommendations finalized at {state.halftimeLock.lockTime}
+                  </p>
+                </div>
+              </div>
+              
+              <div className="space-y-3">
+                {state.halftimeLock.lockedRecommendations.map((rec, idx) => (
+                  <Card key={idx} className="border-primary/30">
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-bold text-lg">{rec.player}</span>
+                        <Badge className={rec.lean === 'OVER' ? 'bg-chart-2' : 'bg-chart-4'}>
+                          {rec.lean} {rec.prop} {rec.line}
+                        </Badge>
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        Confidence: {rec.confidence}%
+                      </div>
+                      <div className="mt-2 space-y-1">
+                        {rec.drivers.map((d, i) => (
+                          <p key={i} className="text-xs text-muted-foreground">• {d}</p>
+                        ))}
+                      </div>
+                      {rec.firstHalfStats && (
+                        <div className="mt-2 pt-2 border-t text-xs">
+                          1H Stats: {rec.firstHalfStats.points}pts, {rec.firstHalfStats.rebounds}reb, {rec.firstHalfStats.assists}ast
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="text-center py-8 text-muted-foreground">
+              <Target className="w-12 h-12 mx-auto mb-4 opacity-50" />
+              <p className="font-medium">No Locked Bets Yet</p>
+              <p className="text-sm">
+                Betting recommendations will be locked at halftime based on fatigue 
+                tracking and projection data.
+              </p>
+              <p className="text-xs mt-2">
+                Current game time: {state.currentGameTime || 'Pre-game'}
+              </p>
+            </div>
+          )}
         </TabsContent>
 
         <TabsContent value="log" className="mt-4">
