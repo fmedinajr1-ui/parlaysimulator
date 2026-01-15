@@ -107,12 +107,20 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
     stopAgent();
   }, [gameContext.eventId]);
 
+  // Lock to prevent concurrent agent loop calls
+  const isRunningLoopRef = useRef(false);
+
   // Main capture loop
   useEffect(() => {
     if (state.isRunning && !state.isPaused && mediaStream && videoRef.current) {
       const intervalMs = Math.round(1000 / state.captureRate);
       
       captureIntervalRef.current = setInterval(() => {
+        // Skip if a call is already in progress
+        if (isRunningLoopRef.current) {
+          console.log('[Autopilot] Skipping - previous call still in progress');
+          return;
+        }
         runAgentLoop();
       }, intervalMs);
       
@@ -156,6 +164,9 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
   const runAgentLoop = async (retryCount = 0) => {
     if (!videoRef.current || !state.isRunning || state.isPaused) return;
     
+    // Set lock at start of call
+    isRunningLoopRef.current = true;
+    
     try {
       const frame = captureFrame(videoRef.current, 0.7); // Lower quality for speed
       
@@ -176,8 +187,13 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
       const retryAfter = data?.retryAfter || (error as any)?.context?.retryAfter;
       if (retryAfter && retryCount < 2) {
         console.log(`[Autopilot] Transient error, retrying in ${retryAfter}ms...`);
-        setTimeout(() => runAgentLoop(retryCount + 1), retryAfter);
-        return;
+        // Keep lock held during retry wait, then release after retry completes
+        setTimeout(() => {
+          runAgentLoop(retryCount + 1).finally(() => {
+            isRunningLoopRef.current = false;
+          });
+        }, retryAfter);
+        return; // Don't release lock yet - retry will release it
       }
       
       // Also handle error responses that contain JSON with retryAfter
@@ -188,8 +204,12 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
             : null;
           if (errorBody?.retryAfter) {
             console.log(`[Autopilot] Gateway error, retrying in ${errorBody.retryAfter}ms...`);
-            setTimeout(() => runAgentLoop(retryCount + 1), errorBody.retryAfter);
-            return;
+            setTimeout(() => {
+              runAgentLoop(retryCount + 1).finally(() => {
+                isRunningLoopRef.current = false;
+              });
+            }, errorBody.retryAfter);
+            return; // Don't release lock yet - retry will release it
           }
         } catch {
           // Not JSON, continue with normal error handling
@@ -211,6 +231,11 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
     } catch (error) {
       // Only log, don't show toast for transient errors
       console.error('[Autopilot] Agent loop error:', error);
+    } finally {
+      // Release lock unless we're waiting for a retry
+      if (retryCount === 0) {
+        isRunningLoopRef.current = false;
+      }
     }
   };
 
