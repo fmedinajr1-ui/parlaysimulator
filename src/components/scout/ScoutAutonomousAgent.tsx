@@ -10,6 +10,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useScoutAgentState } from '@/hooks/useScoutAgentState';
 import { PlayerStateCard } from './PlayerStateCard';
 import { PropEdgeList } from './PropEdgeAlert';
+import { PaceMeter } from './PaceMeter';
 import { GameContext } from '@/pages/Scout';
 import { supabase } from '@/integrations/supabase/client';
 import {
@@ -491,9 +492,11 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
             ))}
 
             {state.pbpData && (
-              <div className="pt-2 border-t text-xs text-muted-foreground">
-                <p>Pace: {state.pbpData.pace} poss/48</p>
-                <p>{state.pbpData.isHalftime ? '⏸️ Halftime' : state.pbpData.isGameOver ? '✅ Final' : '🏀 In Progress'}</p>
+              <div className="pt-2 border-t space-y-2">
+                <PaceMeter pace={state.pbpData.pace || 100} />
+                <p className="text-xs text-muted-foreground text-center">
+                  {state.pbpData.isHalftime ? '⏸️ Halftime' : state.pbpData.isGameOver ? '✅ Final' : '🏀 In Progress'}
+                </p>
               </div>
             )}
           </CardContent>

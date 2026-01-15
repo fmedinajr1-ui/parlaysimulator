@@ -196,6 +196,9 @@ export interface PlayerLiveState {
   // V2 fields (optional for migration)
   fatigueSlope?: number;
   boxScore?: Partial<BoxScoreLive>;
+  // Pre-game baseline metadata
+  preGameTrend?: 'hot' | 'cold' | 'stable';
+  preGameConsistency?: number;
 }
 
 // ===== PROP EDGE =====
@@ -358,6 +361,8 @@ export interface MultiGameState {
 
 // ===== AGENT STATE (SINGLE GAME - LEGACY COMPATIBLE) =====
 
+import type { PreGameBaseline, TeamFatigueData } from './pre-game-baselines';
+
 export interface ScoutAgentState {
   isRunning: boolean;
   isPaused: boolean;
@@ -376,6 +381,10 @@ export interface ScoutAgentState {
       underPrice?: number; 
       bookmaker?: string; 
     }[];
+    // Pre-game baselines
+    preGameBaselines?: PreGameBaseline[];
+    homeTeamFatigue?: TeamFatigueData;
+    awayTeamFatigue?: TeamFatigueData;
   } | null;
   playerStates: Map<string, PlayerLiveState>;
   activePropEdges: PropEdge[];

@@ -13,6 +13,8 @@ import { ScoutAutonomousAgent } from "@/components/scout/ScoutAutonomousAgent";
 import { useToast } from "@/hooks/use-toast";
 import { Video, Eye, Zap, Clock, Users, Upload, Radio, Bot } from "lucide-react";
 
+import type { PreGameBaseline, TeamFatigueData } from '@/types/pre-game-baselines';
+
 export interface PropLine {
   playerName: string;
   propType: 'points' | 'rebounds' | 'assists';
@@ -31,6 +33,10 @@ export interface GameContext {
   homeRoster: { name: string; jersey: string; position: string }[];
   awayRoster: { name: string; jersey: string; position: string }[];
   propLines?: PropLine[]; // Real betting lines from unified_props
+  // Pre-game baselines
+  preGameBaselines?: PreGameBaseline[];
+  homeTeamFatigue?: TeamFatigueData;
+  awayTeamFatigue?: TeamFatigueData;
 }
 
 export interface AnalysisResult {
