@@ -89,6 +89,7 @@ interface AgentLoopRequest {
   };
   existingEdges: PropEdge[];
   currentGameTime?: string;
+  forceAnalysis?: boolean;
 }
 
 function getSceneClassificationPrompt(): string {
@@ -917,7 +918,8 @@ serve(async (req) => {
       playerStates, 
       pbpData,
       existingEdges,
-      currentGameTime 
+      currentGameTime,
+      forceAnalysis 
     } = await req.json() as AgentLoopRequest;
 
     if (!frame) {
@@ -1016,8 +1018,8 @@ serve(async (req) => {
       console.log('[Scout Agent] Scene classification parse failed, using defaults');
     }
 
-    // If scene is not analysis-worthy, return early
-    if (!sceneClassification.isAnalysisWorthy) {
+    // If scene is not analysis-worthy, return early (unless forceAnalysis is set)
+    if (!sceneClassification.isAnalysisWorthy && !forceAnalysis) {
       console.log(`[Scout Agent] Skipping analysis: ${sceneClassification.reason}`);
       return new Response(
         JSON.stringify({
@@ -1027,6 +1029,11 @@ serve(async (req) => {
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
+    }
+
+    // Log if forcing analysis
+    if (forceAnalysis && !sceneClassification.isAnalysisWorthy) {
+      console.log('[Scout Agent] Force analysis enabled - bypassing scene check');
     }
 
     // STEP 2: Vision Analysis (detailed model)
