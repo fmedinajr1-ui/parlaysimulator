@@ -161,25 +161,26 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
     }
   }, [state.isRunning, gameContext.eventId]);
   
-  // Data-only projection loop (runs without video)
+  // Data projection loop - ALWAYS runs as backup/complement to vision
   const dataProjectionIntervalRef = useRef<NodeJS.Timeout | null>(null);
   
   useEffect(() => {
-    if (state.isRunning && dataOnlyMode && gameContext.eventId) {
-      console.log('[Autopilot] Data-only mode active - running projections every 15s');
+    // Data projections run whenever agent is running, regardless of video/dataOnlyMode
+    if (state.isRunning && gameContext.eventId) {
+      console.log('[Autopilot] Data projection loop starting (runs alongside vision)');
       
       dataProjectionIntervalRef.current = setInterval(async () => {
         await runDataOnlyProjection();
       }, 15000);
       
-      // Initial run
-      runDataOnlyProjection();
+      // Initial run after short delay to let PBP data load
+      setTimeout(() => runDataOnlyProjection(), 3000);
       
       return () => {
         if (dataProjectionIntervalRef.current) clearInterval(dataProjectionIntervalRef.current);
       };
     }
-  }, [state.isRunning, dataOnlyMode, gameContext.eventId]);
+  }, [state.isRunning, gameContext.eventId]);
   
   const runDataOnlyProjection = async () => {
     if (!state.isRunning || !state.pbpData) return;
@@ -339,6 +340,17 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
   };
 
   const handleStart = async () => {
+    // Data-only mode: start without video capture
+    if (dataOnlyMode) {
+      startAgent();
+      toast({ 
+        title: "Data-Only Mode", 
+        description: "Running projections from box score data (no video)" 
+      });
+      return;
+    }
+    
+    // Normal mode: requires video capture
     try {
       let stream: MediaStream;
       
@@ -577,12 +589,12 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
               <span className="text-sm font-mono w-16">{state.captureRate} FPS</span>
             </div>
             
-            {/* Data-Only Mode Toggle */}
+            {/* Start Without Video Toggle */}
             <div className="flex items-center justify-between py-3 border-t">
               <div>
-                <Label className="text-sm font-medium">Data-Only Mode</Label>
+                <Label className="text-sm font-medium">Start Without Video</Label>
                 <p className="text-xs text-muted-foreground">
-                  Run projections from box score only (no video required)
+                  Box score projections run automatically (video adds vision signals)
                 </p>
               </div>
               <Switch
