@@ -226,6 +226,7 @@ export interface PropEdge {
   actualLine?: number;
   overPrice?: number;
   underPrice?: number;
+  bookmaker?: string;
 }
 
 // ===== SCENE CLASSIFICATION =====
