@@ -386,6 +386,9 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
     setState(prev => ({ ...prev, captureRate: Math.min(5, Math.max(1, rate)) }));
   }, []);
 
+  // Track last period for auto-suggest triggers
+  const lastPeriodRef = useRef(1);
+
   const updatePBPData = useCallback((data: LivePBPData) => {
     setState(prev => {
       // Update player states with PBP stats
@@ -416,12 +419,25 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
         }
       });
 
-      // Check for halftime
+      // Check for halftime via ESPN flag
       let halftimeLock = prev.halftimeLock;
       if (data.isHalftime && !prev.halftimeLock.isLocked) {
-        console.log('[Scout Agent State] Halftime detected - triggering lock');
-        halftimeLock = lockHalftimeState(updatedStates, prev.activePropEdges, data.gameTime);
+        console.log('[Scout Agent State] Halftime detected via ESPN - triggering lock');
+        // Generate inline lock since lockHalftimeState is defined later
+        halftimeLock = generateInlineHalftimeLock(updatedStates, prev.activePropEdges, data.gameTime);
       }
+      
+      // Detect Q3 start for auto-suggest (period changed from 2 to 3)
+      const currentPeriod = data.period;
+      const lastPeriod = lastPeriodRef.current;
+      
+      if (currentPeriod === 3 && lastPeriod === 2 && !halftimeLock.isLocked) {
+        console.log('[Scout Agent State] Q3 started - auto-generating halftime bets');
+        halftimeLock = generateInlineHalftimeLock(updatedStates, prev.activePropEdges, data.gameTime);
+      }
+      
+      // Update last period ref
+      lastPeriodRef.current = currentPeriod;
 
       return {
         ...prev,
@@ -433,6 +449,93 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
       };
     });
   }, []);
+  
+  // Inline halftime lock generator (to avoid forward reference issues)
+  const generateInlineHalftimeLock = (
+    playerStates: Map<string, PlayerLiveState>,
+    propEdges: PropEdge[],
+    gameTime: string
+  ): HalftimeLockState => {
+    const lockedRecommendations: HalftimeLockedProp[] = [];
+    
+    playerStates.forEach((player, name) => {
+      if (player.minutesEstimate < 5) return;
+      
+      const playerEdges = propEdges.filter(e => e.player === name);
+      const slope = player.fatigueSlope || 0;
+      
+      // Points recommendation
+      if (player.role === 'PRIMARY' || player.role === 'SECONDARY') {
+        const isFatigued = player.fatigueScore >= 40 || slope > 2;
+        const isEnergized = player.fatigueScore < 25 && player.effortScore > 60;
+        
+        if (isFatigued || isEnergized) {
+          const existingEdge = playerEdges.find(e => e.prop === 'Points');
+          lockedRecommendations.push({
+            mode: 'HALFTIME_LOCK',
+            player: name,
+            prop: 'Points',
+            line: existingEdge?.line || 22.5,
+            lean: isFatigued ? 'UNDER' : 'OVER',
+            confidence: isFatigued 
+              ? Math.min(90, 50 + player.fatigueScore * 0.5)
+              : Math.min(85, 40 + player.effortScore * 0.4),
+            expectedFinal: existingEdge?.expectedFinal || 0,
+            drivers: [
+              isFatigued ? `Fatigue: ${player.fatigueScore}/100 (slope: ${slope.toFixed(1)}/min)` : `Energy: ${player.effortScore}/100`,
+              `Speed index: ${player.speedIndex}/100`,
+            ],
+            riskFlags: player.foulCount >= 3 ? ['foul_trouble'] : [],
+            lockTime: gameTime,
+            firstHalfStats: player.boxScore,
+            overPrice: existingEdge?.overPrice,
+            underPrice: existingEdge?.underPrice,
+            bookmaker: existingEdge?.bookmaker,
+          });
+        }
+      }
+      
+      // Rebounds recommendation for bigs
+      if (player.role === 'BIG') {
+        const lowPositioning = player.reboundPositionScore < 50;
+        const goodPositioning = player.reboundPositionScore > 70;
+        
+        if (lowPositioning || goodPositioning) {
+          const existingEdge = playerEdges.find(e => e.prop === 'Rebounds');
+          lockedRecommendations.push({
+            mode: 'HALFTIME_LOCK',
+            player: name,
+            prop: 'Rebounds',
+            line: existingEdge?.line || 10.5,
+            lean: lowPositioning ? 'UNDER' : 'OVER',
+            confidence: lowPositioning
+              ? Math.min(85, 50 + (50 - player.reboundPositionScore) * 0.7)
+              : Math.min(80, 40 + player.reboundPositionScore * 0.4),
+            expectedFinal: existingEdge?.expectedFinal || 0,
+            drivers: [
+              `Rebound positioning: ${player.reboundPositionScore}/100`,
+              player.fatigueScore > 40 ? `Fatigue affecting box-outs` : `Active on glass`,
+            ],
+            riskFlags: [],
+            lockTime: gameTime,
+            firstHalfStats: player.boxScore,
+            overPrice: existingEdge?.overPrice,
+            underPrice: existingEdge?.underPrice,
+            bookmaker: existingEdge?.bookmaker,
+          });
+        }
+      }
+    });
+    
+    console.log(`[Scout Agent State] Generated ${lockedRecommendations.length} halftime locked recommendations`);
+    
+    return {
+      isLocked: true,
+      lockTime: gameTime,
+      lockTimestamp: Date.now(),
+      lockedRecommendations,
+    };
+  };
 
   // Generate halftime locked recommendations
   const lockHalftimeState = useCallback((

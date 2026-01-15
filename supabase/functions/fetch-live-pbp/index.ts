@@ -156,6 +156,21 @@ serve(async (req) => {
     const period = status?.period || 1;
     const clock = status?.displayClock || '12:00';
     const isHalftime = status?.type?.description === 'Halftime';
+    
+    // Parse clock to detect period transitions
+    const clockParts = clock.split(':');
+    const clockMinutes = parseInt(clockParts[0]) || 0;
+    const clockSeconds = parseInt(clockParts[1]) || 0;
+    const totalClockSeconds = clockMinutes * 60 + clockSeconds;
+    
+    // Detect Q2 ending (period=2, clock near 0)
+    const isQ2Ending = period === 2 && totalClockSeconds <= 30;
+    
+    // Detect Q3 just started (first 30 seconds of Q3)
+    const isQ3Starting = period === 3 && totalClockSeconds >= 690; // 11:30 or more remaining
+    
+    // Detect Q4 just started (first 30 seconds of Q4)
+    const isQ4Starting = period === 4 && totalClockSeconds >= 690;
     const isGameOver = status?.type?.completed === true;
     
     // Parse scores
@@ -268,6 +283,10 @@ serve(async (req) => {
       recentPlays,
       isHalftime,
       isGameOver,
+      // Period transition flags for auto-suggest
+      isQ2Ending,
+      isQ3Starting,
+      isQ4Starting,
     };
 
     console.log(`[PBP Fetch] Found ${players.length} players, ${recentPlays.length} recent plays`);

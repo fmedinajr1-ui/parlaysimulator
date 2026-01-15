@@ -290,3 +290,6 @@ verify_jwt = false
 
 [functions.get-espn-event-id]
 verify_jwt = false
+
+[functions.scout-data-projection]
+verify_jwt = false
