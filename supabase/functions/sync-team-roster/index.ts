@@ -99,9 +99,9 @@ serve(async (req) => {
       );
     }
 
-    const BDL_API_KEY = Deno.env.get('BDL_API_KEY');
+    const BDL_API_KEY = Deno.env.get('BALLDONTLIE_API_KEY');
     if (!BDL_API_KEY) {
-      throw new Error('BDL_API_KEY not configured');
+      throw new Error('BALLDONTLIE_API_KEY not configured');
     }
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
