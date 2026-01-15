@@ -3,6 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Slider } from '@/components/ui/slider';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -59,6 +61,9 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
   const [captureMode, setCaptureMode] = useState<'screen' | 'camera'>('screen');
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+  
+  // Data-only mode (no video required)
+  const [dataOnlyMode, setDataOnlyMode] = useState(false);
   
   const {
     state,
@@ -150,6 +155,78 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
       };
     }
   }, [state.isRunning, gameContext.eventId]);
+  
+  // Data-only projection loop (runs without video)
+  const dataProjectionIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  
+  useEffect(() => {
+    if (state.isRunning && dataOnlyMode && gameContext.eventId) {
+      console.log('[Autopilot] Data-only mode active - running projections every 15s');
+      
+      dataProjectionIntervalRef.current = setInterval(async () => {
+        await runDataOnlyProjection();
+      }, 15000);
+      
+      // Initial run
+      runDataOnlyProjection();
+      
+      return () => {
+        if (dataProjectionIntervalRef.current) clearInterval(dataProjectionIntervalRef.current);
+      };
+    }
+  }, [state.isRunning, dataOnlyMode, gameContext.eventId]);
+  
+  const runDataOnlyProjection = async () => {
+    if (!state.isRunning || !state.pbpData) return;
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('scout-data-projection', {
+        body: {
+          playerStates: getStateForAPI(),
+          pbpData: state.pbpData,
+          propLines: state.gameContext?.propLines,
+          gameContext: {
+            eventId: gameContext.eventId,
+            homeTeam: gameContext.homeTeam,
+            awayTeam: gameContext.awayTeam,
+          },
+        },
+      });
+      
+      if (!error && data) {
+        // Process the prop edges
+        if (data.propEdges && data.propEdges.length > 0) {
+          processAgentResponse({
+            sceneClassification: {
+              sceneType: 'live_play',
+              isAnalysisWorthy: true,
+              confidence: 'high',
+              gameTime: data.gameTime,
+              score: state.currentScore,
+              reason: 'Data-only projection',
+              timestamp: new Date(),
+            },
+            propEdges: data.propEdges,
+            gameTime: data.gameTime,
+          });
+        }
+        
+        // Handle auto-suggest recommendations
+        if (data.autoSuggestRecommendations && data.autoSuggestRecommendations.length > 0) {
+          console.log('[Autopilot] Auto-suggest recommendations:', data.autoSuggestRecommendations.length);
+          
+          // Show toast for top recommendation
+          const topRec = data.autoSuggestRecommendations[0];
+          toast({
+            title: `🎯 Auto-Suggest: ${topRec.player}`,
+            description: `${topRec.prop} ${topRec.lean} ${topRec.line} | ${topRec.confidence}% conf`,
+          });
+        }
+      }
+    } catch (error) {
+      console.error('[Autopilot] Data projection error:', error);
+    }
+  };
 
   const fetchPBPData = async () => {
     try {
@@ -461,6 +538,20 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
                 className="flex-1"
               />
               <span className="text-sm font-mono w-16">{state.captureRate} FPS</span>
+            </div>
+            
+            {/* Data-Only Mode Toggle */}
+            <div className="flex items-center justify-between py-3 border-t">
+              <div>
+                <Label className="text-sm font-medium">Data-Only Mode</Label>
+                <p className="text-xs text-muted-foreground">
+                  Run projections from box score only (no video required)
+                </p>
+              </div>
+              <Switch
+                checked={dataOnlyMode}
+                onCheckedChange={setDataOnlyMode}
+              />
             </div>
           </CardContent>
         )}

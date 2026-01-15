@@ -283,6 +283,10 @@ export interface LivePBPData {
   recentPlays: RecentPlay[];
   isHalftime: boolean;
   isGameOver: boolean;
+  // Period transition flags for auto-suggest
+  isQ2Ending?: boolean;
+  isQ3Starting?: boolean;
+  isQ4Starting?: boolean;
 }
 
 export interface PBPPlayerStats {
