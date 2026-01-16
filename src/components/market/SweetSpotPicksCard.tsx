@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { toast } from "sonner";
 import { AltLineComparisonCard } from "./AltLineComparisonCard";
+import { PlayerReliabilityBadge } from "@/components/props/PlayerReliabilityBadge";
 
 interface SweetSpotPick {
   id: string;
@@ -27,6 +28,9 @@ interface SweetSpotPick {
   is_juiced?: boolean;
   juice_magnitude?: number;
   line_warning?: string | null;
+  player_hit_rate?: number | null;
+  player_reliability_tier?: string | null;
+  reliability_modifier_applied?: number | null;
 }
 
 interface RiskEngineSweetSpot {
@@ -47,6 +51,9 @@ interface RiskEngineSweetSpot {
   is_juiced?: boolean;
   juice_magnitude?: number;
   line_warning?: string | null;
+  player_hit_rate?: number | null;
+  player_reliability_tier?: string | null;
+  reliability_modifier_applied?: number | null;
 }
 
 const SWEET_SPOT_RANGES = {
@@ -107,7 +114,7 @@ export function SweetSpotPicksCard() {
       const today = format(new Date(), "yyyy-MM-dd");
       const { data, error } = await supabase
         .from("nba_risk_engine_picks")
-        .select("id, player_name, prop_type, line, side, confidence_score, edge, archetype, outcome, game_date, is_sweet_spot, sweet_spot_reason, alt_line_recommendation, alt_line_reason, is_juiced, juice_magnitude, line_warning")
+        .select("id, player_name, prop_type, line, side, confidence_score, edge, archetype, outcome, game_date, is_sweet_spot, sweet_spot_reason, alt_line_recommendation, alt_line_reason, is_juiced, juice_magnitude, line_warning, player_hit_rate, player_reliability_tier, reliability_modifier_applied")
         .eq("is_sweet_spot", true)
         .eq("game_date", today)
         .order("confidence_score", { ascending: false })
@@ -220,6 +227,11 @@ export function SweetSpotPicksCard() {
                     <div>
                       <div className="flex items-center gap-2">
                         <p className="font-medium text-sm">{pick.player_name}</p>
+                        <PlayerReliabilityBadge 
+                          tier={pick.player_reliability_tier}
+                          hitRate={pick.player_hit_rate}
+                          modifier={pick.reliability_modifier_applied}
+                        />
                         {pick.is_juiced && (
                           <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-500/30">
                             JUICED

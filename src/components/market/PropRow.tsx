@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 import { HeatBadge, HeatLevel } from "./HeatBadge";
 import { Clock, Crown, Star, Shield, Crosshair, Users, Zap, AlertTriangle, CheckCircle, XCircle, Minus } from "lucide-react";
+import { PlayerReliabilityBadge } from "@/components/props/PlayerReliabilityBadge";
 
 interface SharpAlertData {
   level: string;
@@ -28,6 +29,9 @@ interface PropRowProps {
   outcome?: 'pending' | 'hit' | 'miss' | 'push' | null;
   actualValue?: number | null;
   onClick?: () => void;
+  playerHitRate?: number | null;
+  playerReliabilityTier?: string | null;
+  reliabilityModifier?: number | null;
 }
 
 const ROLE_ICONS: Record<string, React.ElementType> = {
@@ -100,6 +104,9 @@ export function PropRow({
   outcome,
   actualValue,
   onClick,
+  playerHitRate,
+  playerReliabilityTier,
+  reliabilityModifier,
 }: PropRowProps) {
   const RoleIcon = ROLE_ICONS[playerRole] || Star;
   const roleLabel = ROLE_LABELS[playerRole] || playerRole;
@@ -129,6 +136,11 @@ export function PropRow({
             <span className="font-semibold text-foreground truncate">
               {playerName}
             </span>
+            <PlayerReliabilityBadge 
+              tier={playerReliabilityTier}
+              hitRate={playerHitRate}
+              modifier={reliabilityModifier}
+            />
             {/* Outcome Badge */}
             {outcome === 'hit' && (
               <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-bold border border-emerald-500/30">
