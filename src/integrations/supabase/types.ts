@@ -4405,11 +4405,14 @@ export type Database = {
           original_confidence: number | null
           outcome: string | null
           over_price: number | null
+          player_hit_rate: number | null
           player_name: string
+          player_reliability_tier: string | null
           player_role: string
           prop_type: string
           reason: string | null
           rejection_reason: string | null
+          reliability_modifier_applied: number | null
           settled_at: string | null
           sharp_alert: boolean | null
           sharp_alert_level: string | null
@@ -4466,11 +4469,14 @@ export type Database = {
           original_confidence?: number | null
           outcome?: string | null
           over_price?: number | null
+          player_hit_rate?: number | null
           player_name: string
+          player_reliability_tier?: string | null
           player_role: string
           prop_type: string
           reason?: string | null
           rejection_reason?: string | null
+          reliability_modifier_applied?: number | null
           settled_at?: string | null
           sharp_alert?: boolean | null
           sharp_alert_level?: string | null
@@ -4527,11 +4533,14 @@ export type Database = {
           original_confidence?: number | null
           outcome?: string | null
           over_price?: number | null
+          player_hit_rate?: number | null
           player_name?: string
+          player_reliability_tier?: string | null
           player_role?: string
           prop_type?: string
           reason?: string | null
           rejection_reason?: string | null
+          reliability_modifier_applied?: number | null
           settled_at?: string | null
           sharp_alert?: boolean | null
           sharp_alert_level?: string | null
@@ -5902,6 +5911,75 @@ export type Database = {
           vs_opponent_avg?: number | null
           vs_opponent_games?: number | null
           vs_opponent_hit_rate?: number | null
+        }
+        Relationships: []
+      }
+      player_reliability_scores: {
+        Row: {
+          block_reason: string | null
+          confidence_modifier: number | null
+          created_at: string | null
+          hit_rate: number | null
+          id: string
+          last_10_hit_rate: number | null
+          last_10_hits: number | null
+          last_10_misses: number | null
+          last_outcome: string | null
+          last_pick_date: string | null
+          player_name: string
+          prop_type: string
+          reliability_score: number | null
+          reliability_tier: string | null
+          should_block: boolean | null
+          streak: number | null
+          total_hits: number | null
+          total_misses: number | null
+          total_picks: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          block_reason?: string | null
+          confidence_modifier?: number | null
+          created_at?: string | null
+          hit_rate?: number | null
+          id?: string
+          last_10_hit_rate?: number | null
+          last_10_hits?: number | null
+          last_10_misses?: number | null
+          last_outcome?: string | null
+          last_pick_date?: string | null
+          player_name: string
+          prop_type: string
+          reliability_score?: number | null
+          reliability_tier?: string | null
+          should_block?: boolean | null
+          streak?: number | null
+          total_hits?: number | null
+          total_misses?: number | null
+          total_picks?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          block_reason?: string | null
+          confidence_modifier?: number | null
+          created_at?: string | null
+          hit_rate?: number | null
+          id?: string
+          last_10_hit_rate?: number | null
+          last_10_hits?: number | null
+          last_10_misses?: number | null
+          last_outcome?: string | null
+          last_pick_date?: string | null
+          player_name?: string
+          prop_type?: string
+          reliability_score?: number | null
+          reliability_tier?: string | null
+          should_block?: boolean | null
+          streak?: number | null
+          total_hits?: number | null
+          total_misses?: number | null
+          total_picks?: number | null
+          updated_at?: string | null
         }
         Relationships: []
       }
@@ -8471,6 +8549,7 @@ export type Database = {
         Returns: boolean
       }
       calculate_calibration_factors: { Args: never; Returns: undefined }
+      calculate_player_reliability: { Args: never; Returns: Json }
       check_scan_access: { Args: { p_user_id: string }; Returns: Json }
       cleanup_expired_verification_codes: { Args: never; Returns: undefined }
       decrement_pilot_quota: {

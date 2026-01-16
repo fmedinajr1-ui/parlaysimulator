@@ -1506,6 +1506,20 @@ serve(async (req) => {
       }
       console.log(`[Risk Engine v3.1] Loaded ${Object.keys(archetypeMap).length} archetypes`);
 
+      // 7. Fetch player reliability scores (PRRS - Player Reliability Rating System)
+      const { data: reliabilityData } = await supabase
+        .from('player_reliability_scores')
+        .select('*');
+      
+      const reliabilityMap = new Map<string, any>();
+      for (const r of (reliabilityData || [])) {
+        if (r.player_name && r.prop_type) {
+          const key = `${r.player_name.toLowerCase()}_${r.prop_type}`;
+          reliabilityMap.set(key, r);
+        }
+      }
+      console.log(`[Risk Engine v3.1] Loaded ${reliabilityMap.size} player reliability scores`);
+
       const approvedProps: any[] = [];
       const rejectedProps: any[] = [];
       const processedPlayerProps = new Set<string>();
@@ -1960,6 +1974,24 @@ serve(async (req) => {
             continue;
           }
           
+          // ============ LAYER 6: PLAYER RELIABILITY CHECK (NEW) ============
+          const reliabilityKey = `${playerNameLower}_${normalizedPropType}`;
+          const playerReliability = reliabilityMap.get(reliabilityKey);
+          
+          // Block chronic underperformers
+          if (playerReliability?.should_block) {
+            rejectedProps.push({ 
+              ...prop, 
+              rejection_reason: `RELIABILITY_BLOCK: ${playerReliability.block_reason}`, 
+              player_role: role, 
+              archetype,
+              player_reliability_tier: 'avoid',
+              player_hit_rate: playerReliability.hit_rate
+            });
+            console.log(`[RELIABILITY-BLOCK] ${prop.player_name} ${prop.prop_type}: ${playerReliability.block_reason}`);
+            continue;
+          }
+          
           // ============ CONFIDENCE SCORING (with prop type tier penalty/bonus) ============
           let { score, factors, propTypeTier } = calculateConfidenceV3(
             archetype,
@@ -2045,6 +2077,19 @@ serve(async (req) => {
             }
           }
           
+          // ============ APPLY PLAYER RELIABILITY MODIFIER ============
+          let reliabilityModifierApplied = 0;
+          if (playerReliability) {
+            reliabilityModifierApplied = playerReliability.confidence_modifier || 0;
+            adjustedScore += reliabilityModifierApplied;
+            
+            if (playerReliability.reliability_tier === 'elite') {
+              console.log(`[RELIABILITY-BOOST] ${prop.player_name} ${prop.prop_type}: +${reliabilityModifierApplied} (${playerReliability.hit_rate}% hit rate, ${playerReliability.total_picks} picks)`);
+            } else if (playerReliability.reliability_tier === 'avoid') {
+              console.log(`[RELIABILITY-PENALTY] ${prop.player_name} ${prop.prop_type}: ${reliabilityModifierApplied} (${playerReliability.hit_rate}% hit rate, ${playerReliability.total_picks} picks)`);
+            }
+          }
+          
           // Use prop-type specific minimum threshold
           const minConfidence = MIN_CONFIDENCE_BY_TYPE[normalizedPropType] || MIN_CONFIDENCE_BY_TYPE['default'];
           
@@ -2118,6 +2163,10 @@ serve(async (req) => {
             juice_magnitude: storedJuicedCheck?.juiceMagnitude || 0,
             // Note: juice_tier not stored (column doesn't exist), but available in response
             line_warning: storedJuicedCheck?.isJuiced ? storedJuicedCheck.reason : null,
+            // Player reliability data (PRRS)
+            player_hit_rate: playerReliability?.hit_rate || null,
+            player_reliability_tier: playerReliability?.reliability_tier || 'unknown',
+            reliability_modifier_applied: reliabilityModifierApplied,
           };
           
           approvedProps.push(approvedPick);
@@ -2229,6 +2278,10 @@ serve(async (req) => {
           is_juiced: pick.is_juiced,
           juice_magnitude: pick.juice_magnitude,
           line_warning: pick.line_warning,
+          // Player reliability data
+          player_hit_rate: pick.player_hit_rate,
+          player_reliability_tier: pick.player_reliability_tier,
+          reliability_modifier_applied: pick.reliability_modifier_applied,
           mode,
           created_at: new Date().toISOString()
         }));
