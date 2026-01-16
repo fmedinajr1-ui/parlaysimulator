@@ -348,6 +348,73 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
         if (!espnError && espnData?.espnEventId) {
           espnEventId = espnData.espnEventId;
           console.log(`[ScoutGameSelector] Resolved ESPN event ID: ${espnEventId}`);
+          
+          // Fetch ESPN summary to get live rosters with jersey numbers
+          try {
+            const espnResponse = await fetch(
+              `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event=${espnEventId}`
+            );
+            
+            if (espnResponse.ok) {
+              const espnSummary = await espnResponse.json();
+              const rosters = espnSummary.boxscore?.players || [];
+              const espnJerseys = new Map<string, { jersey: string; position: string }>();
+              
+              for (const team of rosters) {
+                for (const athlete of team.statistics?.[0]?.athletes || []) {
+                  const displayName = athlete.athlete?.displayName;
+                  if (displayName) {
+                    espnJerseys.set(displayName, {
+                      jersey: athlete.athlete?.jersey || '?',
+                      position: athlete.athlete?.position?.abbreviation || '',
+                    });
+                  }
+                }
+              }
+              
+              console.log(`[ScoutGameSelector] ESPN provided jersey data for ${espnJerseys.size} players`);
+              
+              // Fill in missing jerseys from ESPN data and track updates
+              const playersToUpdate: Array<{ name: string; jersey: string }> = [];
+              
+              validHomeRoster = validHomeRoster.map(p => {
+                if (!p.hasValidJersey && espnJerseys.has(p.name)) {
+                  const espnData = espnJerseys.get(p.name)!;
+                  if (espnData.jersey && espnData.jersey !== '?') {
+                    playersToUpdate.push({ name: p.name, jersey: espnData.jersey });
+                    return { ...p, jersey: espnData.jersey, hasValidJersey: true };
+                  }
+                }
+                return p;
+              });
+              
+              validAwayRoster = validAwayRoster.map(p => {
+                if (!p.hasValidJersey && espnJerseys.has(p.name)) {
+                  const espnData = espnJerseys.get(p.name)!;
+                  if (espnData.jersey && espnData.jersey !== '?') {
+                    playersToUpdate.push({ name: p.name, jersey: espnData.jersey });
+                    return { ...p, jersey: espnData.jersey, hasValidJersey: true };
+                  }
+                }
+                return p;
+              });
+              
+              // Update cache with ESPN jersey data (background, don't await)
+              if (playersToUpdate.length > 0) {
+                console.log(`[ScoutGameSelector] Updating ${playersToUpdate.length} jersey numbers from ESPN`);
+                for (const player of playersToUpdate) {
+                  supabase.from('bdl_player_cache')
+                    .update({ jersey_number: player.jersey, last_updated: new Date().toISOString() })
+                    .eq('player_name', player.name)
+                    .then(({ error }) => {
+                      if (error) console.warn(`[ScoutGameSelector] Cache update failed for ${player.name}:`, error);
+                    });
+                }
+              }
+            }
+          } catch (espnSummaryErr) {
+            console.warn('[ScoutGameSelector] ESPN summary fetch failed:', espnSummaryErr);
+          }
         } else {
           console.warn('[ScoutGameSelector] Could not resolve ESPN event ID:', espnError || 'No match');
         }
