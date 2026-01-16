@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { PlayerRoleBadge } from "@/components/parlay/PlayerRoleBadge";
+import { PlayerReliabilityBadge } from "@/components/props/PlayerReliabilityBadge";
 import { format, parseISO, isToday } from "date-fns";
 
 interface RiskEnginePick {
@@ -42,6 +43,9 @@ interface RiskEnginePick {
   outcome: string | null;
   is_fade_specialist?: boolean;
   fade_edge_tag?: string | null;
+  player_hit_rate?: number | null;
+  player_reliability_tier?: string | null;
+  reliability_modifier_applied?: number | null;
 }
 
 // Game script indicator
@@ -137,7 +141,14 @@ function PickCard({ pick }: { pick: RiskEnginePick }) {
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <h4 className="font-semibold text-foreground">{pick.player_name}</h4>
+          <div className="flex items-center gap-2">
+            <h4 className="font-semibold text-foreground">{pick.player_name}</h4>
+            <PlayerReliabilityBadge 
+              tier={pick.player_reliability_tier}
+              hitRate={pick.player_hit_rate}
+              modifier={pick.reliability_modifier_applied}
+            />
+          </div>
           <p className="text-xs text-muted-foreground">
             {pick.team_name} vs {pick.opponent}
           </p>
