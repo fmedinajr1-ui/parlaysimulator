@@ -157,6 +157,55 @@ function validateReboundsProp(
   };
 }
 
+// ============ REBOUNDS ARCHETYPE VALIDATION ============
+// Block guards/shooters from rebound OVER props unless they're exceptional rebounders
+interface ReboundsArchetypeValidation {
+  approved: boolean;
+  reason: string;
+}
+
+function validateReboundsArchetype(
+  archetype: PlayerArchetype,
+  avgRebounds: number,
+  trueMedian: number,
+  side: string
+): ReboundsArchetypeValidation {
+  
+  const NON_REBOUNDER_ARCHETYPES: PlayerArchetype[] = [
+    'PURE_SHOOTER', 'PLAYMAKER', 'SCORING_GUARD', 'COMBO_GUARD'
+  ];
+  
+  const isNonRebounder = NON_REBOUNDER_ARCHETYPES.includes(archetype);
+  const isOver = side.toLowerCase() === 'over';
+  
+  // RULE 1: Block guards/shooters with <6 avg rebounds for OVERS
+  if (isNonRebounder && isOver && avgRebounds < 6) {
+    return {
+      approved: false,
+      reason: `REB_GUARD_BLOCK: ${archetype} with ${avgRebounds.toFixed(1)} avg reb blocked for OVER (need 6+ avg)`
+    };
+  }
+  
+  // RULE 2: Block guards/shooters with <5 median for OVERS (stricter)
+  if (isNonRebounder && isOver && trueMedian < 5) {
+    return {
+      approved: false,
+      reason: `REB_MEDIAN_LOW: ${archetype} with ${trueMedian.toFixed(1)} median blocked for OVER`
+    };
+  }
+  
+  // RULE 3: Exception - high-rebounding guards (6+ avg) can qualify
+  // Example: Dyson Daniels averages 6.6 rebounds - should be allowed
+  if (isNonRebounder && avgRebounds >= 6) {
+    return {
+      approved: true,
+      reason: `REB_GUARD_EXCEPTION: ${archetype} with ${avgRebounds.toFixed(1)} avg reb allowed (6+ qualifies)`
+    };
+  }
+  
+  return { approved: true, reason: 'Rebounds archetype check passed' };
+}
+
 // ============ BIG POINTS PROP VALIDATION ============
 // Based on historical analysis: bigs have volatile scoring
 interface BigPointsValidation {
@@ -466,7 +515,8 @@ const TWO_WAY_WING_LIST = [
   'og anunoby', 'aaron gordon', 'andrew wiggins', 'dillon brooks',
   'brandon ingram', 'franz wagner', 'kawhi leonard', 'paul george',
   'khris middleton', 'tobias harris', 'harrison barnes', 'kelly oubre jr',
-  'dorian finney-smith', 'jae crowder', 'caleb martin', 'royce o\'neale'
+  'dorian finney-smith', 'jae crowder', 'caleb martin', 'royce o\'neale',
+  'trey murphy iii', 'trey murphy'  // High-scoring wings (21+ PPG)
 ];
 
 // STRETCH BIGS: Floor-spacing bigs (3PT threats)
@@ -589,24 +639,31 @@ function classifyPlayerArchetype(
   if (STRETCH_BIG_LIST.some(p => normalized.includes(p))) return 'STRETCH_BIG';
   
   // 2. Infer from stats
-  // Elite rebounder: 9+ rebounds
-  if (avgRebounds >= 9) return 'ELITE_REBOUNDER';
-  
-  // Glass cleaner: 6-9 rebounds
-  if (avgRebounds >= 6 && avgRebounds < 9) return 'GLASS_CLEANER';
-  
-  // Playmaker: 7+ assists
-  if (avgAssists >= 7) return 'PLAYMAKER';
-  
-  // Pure shooter: 20+ points, position is G/SG
   const posUpper = position?.toUpperCase() || '';
-  if (avgPoints >= 20 && (posUpper === 'G' || posUpper === 'SG' || posUpper.includes('G'))) {
+  const isGuardOrWing = posUpper.includes('G') || posUpper === 'SF' || posUpper === 'F' || posUpper.includes('F');
+  
+  // NEW PRIORITY: High-scoring guards/wings get classified BEFORE rebounders
+  // This prevents wings like Trey Murphy (21+ PPG, 6 RPG) from being misclassified as GLASS_CLEANER
+  if (isGuardOrWing && avgPoints >= 18) {
+    // High-scoring wing/guard: PURE_SHOOTER or COMBO_GUARD based on assists
+    if (avgAssists >= 5) return 'COMBO_GUARD';
     return 'PURE_SHOOTER';
   }
+  
+  // Playmaker: 7+ assists (must come before rebounders for guards)
+  if (avgAssists >= 7) return 'PLAYMAKER';
   
   // Scoring guard: 15+ points, guard position
   if (avgPoints >= 15 && (posUpper === 'G' || posUpper === 'SG' || posUpper === 'PG')) {
     return 'SCORING_GUARD';
+  }
+  
+  // Elite rebounder: 9+ rebounds (NOW after scoring checks)
+  if (avgRebounds >= 9) return 'ELITE_REBOUNDER';
+  
+  // Glass cleaner: 6-9 rebounds (ONLY for non-guards/non-wings to avoid misclassification)
+  if (avgRebounds >= 6 && avgRebounds < 9 && !isGuardOrWing) {
+    return 'GLASS_CLEANER';
   }
   
   // Mid-level scorers (10-15 pts) = TWO_WAY_WING (better default than ROLE_PLAYER)
@@ -1617,6 +1674,27 @@ serve(async (req) => {
                 player_role: role,
                 archetype
               });
+              continue;
+            }
+            
+            // NEW: Check archetype eligibility for rebounds FIRST (blocks guards/shooters)
+            const rebArchetypeCheck = validateReboundsArchetype(
+              archetype,
+              effectiveAvgRebounds,
+              trueMedian,
+              side
+            );
+            
+            if (!rebArchetypeCheck.approved) {
+              rejectedProps.push({ 
+                ...prop, 
+                rejection_reason: rebArchetypeCheck.reason,
+                player_role: role,
+                archetype,
+                true_median: trueMedian,
+                avg_rebounds: effectiveAvgRebounds
+              });
+              console.log(`[REB-ARCHETYPE-BLOCK] ${prop.player_name}: ${rebArchetypeCheck.reason}`);
               continue;
             }
             
