@@ -79,6 +79,45 @@ const ESPN_TEAM_IDS: Record<string, string> = {
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+// Normalize player names for fuzzy matching (handles diacritics and suffixes)
+function normalizePlayerName(name: string): string {
+  return name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // Remove diacritics (Şengün → Sengun)
+    .replace(/\s+(Jr\.?|Sr\.?|III|II|IV)$/i, '') // Remove suffixes
+    .toLowerCase()
+    .trim();
+}
+
+// Find best ESPN match for a player name
+function findESPNMatch(playerName: string, espnJerseys: Map<string, string>): string | null {
+  // Exact match first
+  if (espnJerseys.has(playerName)) {
+    return espnJerseys.get(playerName)!;
+  }
+  
+  // Normalized match
+  const normalizedTarget = normalizePlayerName(playerName);
+  for (const [espnName, jersey] of espnJerseys.entries()) {
+    if (normalizePlayerName(espnName) === normalizedTarget) {
+      return jersey;
+    }
+  }
+  
+  // Partial last name match (for unique last names)
+  const targetLastName = normalizedTarget.split(' ').pop();
+  if (targetLastName && targetLastName.length > 4) {
+    for (const [espnName, jersey] of espnJerseys.entries()) {
+      const espnLastName = normalizePlayerName(espnName).split(' ').pop();
+      if (targetLastName === espnLastName) {
+        return jersey;
+      }
+    }
+  }
+  
+  return null;
+}
+
 // Fetch jersey data from ESPN API as fallback
 async function fetchESPNJerseys(teamName: string): Promise<Map<string, string>> {
   const teamId = ESPN_TEAM_IDS[teamName];
@@ -127,7 +166,9 @@ serve(async (req) => {
     }
 
     const supabase = createClient(supabaseUrl, supabaseKey);
-    const { teams = [] } = await req.json().catch(() => ({}));
+    const { teams = [], force_espn = false } = await req.json().catch(() => ({}));
+    
+    console.log(`[sync-missing-rosters] Request: teams=${teams.join(',')}, force_espn=${force_espn}`);
 
     const headers = {
       'Authorization': bdlApiKey,
@@ -186,12 +227,14 @@ serve(async (req) => {
             await delay(100);
           }
           
-          // Fallback to ESPN if BDL didn't have it
+          // Fallback to ESPN with fuzzy matching if BDL didn't have it
           if (!jerseyNumber && player.team_name) {
             const teamJerseys = espnJerseyCache.get(player.team_name);
-            if (teamJerseys?.has(player.player_name)) {
-              jerseyNumber = teamJerseys.get(player.player_name)!;
-              console.log(`[sync-missing-rosters] ESPN: ${player.player_name} -> #${jerseyNumber}`);
+            if (teamJerseys) {
+              jerseyNumber = findESPNMatch(player.player_name, teamJerseys);
+              if (jerseyNumber) {
+                console.log(`[sync-missing-rosters] ESPN (fuzzy): ${player.player_name} -> #${jerseyNumber}`);
+              }
             }
           }
           
