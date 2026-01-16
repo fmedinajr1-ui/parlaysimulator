@@ -80,6 +80,40 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshAttempted, setRefreshAttempted] = useState(false);
   const [isRefreshingRoster, setIsRefreshingRoster] = useState(false);
+  const [isBulkSyncing, setIsBulkSyncing] = useState(false);
+
+  // Bulk sync all NBA jerseys from ESPN
+  const handleBulkSyncJerseys = async () => {
+    setIsBulkSyncing(true);
+    try {
+      console.log('[ScoutGameSelector] Starting bulk jersey sync for all NBA teams...');
+      toast.info('Starting bulk sync for all 30 NBA teams...');
+      
+      const { data, error } = await supabase.functions.invoke('bulk-sync-jerseys', {});
+      
+      if (error) throw error;
+      
+      console.log('[ScoutGameSelector] Bulk sync result:', data);
+      toast.success(`Updated ${data?.updated || 0} players. ${data?.stillMissing || 0} still missing jerseys.`);
+      
+      // Reload current game if selected
+      if (selectedGame) {
+        const gameToReload: TodaysGame = {
+          eventId: selectedGame.eventId,
+          homeTeam: selectedGame.homeTeam,
+          awayTeam: selectedGame.awayTeam,
+          commenceTime: selectedGame.commenceTime,
+          gameDescription: selectedGame.gameDescription,
+        };
+        await loadRosters(gameToReload);
+      }
+    } catch (err) {
+      console.error('[ScoutGameSelector] Bulk sync error:', err);
+      toast.error('Failed to sync jerseys');
+    } finally {
+      setIsBulkSyncing(false);
+    }
+  };
 
   // Manual refresh roster data for current game
   const handleRefreshRoster = async () => {
@@ -631,19 +665,31 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
-        {/* Refresh Roster Data button when game is selected */}
-        {selectedGame && (
+        {/* Roster sync buttons */}
+        <div className="flex gap-2 mb-3">
+          {selectedGame && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleRefreshRoster}
+              disabled={isRefreshingRoster || isBulkSyncing}
+              className="flex-1 border-dashed"
+            >
+              <RefreshCw className={`w-4 h-4 mr-2 ${isRefreshingRoster ? 'animate-spin' : ''}`} />
+              {isRefreshingRoster ? 'Syncing...' : 'Refresh Game'}
+            </Button>
+          )}
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
-            onClick={handleRefreshRoster}
-            disabled={isRefreshingRoster}
-            className="w-full mb-3 border-dashed"
+            onClick={handleBulkSyncJerseys}
+            disabled={isBulkSyncing || isRefreshingRoster}
+            className={selectedGame ? 'flex-1' : 'w-full'}
           >
-            <Database className={`w-4 h-4 mr-2 ${isRefreshingRoster ? 'animate-pulse' : ''}`} />
-            {isRefreshingRoster ? 'Syncing Rosters...' : 'Refresh Roster Data'}
+            <Database className={`w-4 h-4 mr-2 ${isBulkSyncing ? 'animate-pulse' : ''}`} />
+            {isBulkSyncing ? 'Syncing All...' : 'Sync All Jerseys'}
           </Button>
-        )}
+        </div>
         
         {games.map((game) => {
           const status = getGameStatus(game.commenceTime);

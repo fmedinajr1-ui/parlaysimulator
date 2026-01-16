@@ -549,6 +549,7 @@ export type Database = {
           id: string
           jersey_number: string | null
           last_updated: string | null
+          normalized_name: string | null
           player_name: string
           position: string | null
           team_name: string | null
@@ -566,6 +567,7 @@ export type Database = {
           id?: string
           jersey_number?: string | null
           last_updated?: string | null
+          normalized_name?: string | null
           player_name: string
           position?: string | null
           team_name?: string | null
@@ -583,6 +585,7 @@ export type Database = {
           id?: string
           jersey_number?: string | null
           last_updated?: string | null
+          normalized_name?: string | null
           player_name?: string
           position?: string | null
           team_name?: string | null
