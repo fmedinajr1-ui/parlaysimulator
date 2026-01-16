@@ -108,7 +108,31 @@ serve(async (req) => {
 
     console.log('[bulk-sync] Starting bulk jersey sync for all 30 NBA teams...');
 
-    // Fetch all players from cache
+    // Step 1: Fetch ESPN rosters for all teams FIRST
+    const espnData = new Map<string, Map<string, { jersey: string; position: string }>>();
+    const espnActivePlayersByTeam = new Map<string, Set<string>>();
+    
+    for (const [teamName, teamId] of Object.entries(ESPN_TEAM_IDS)) {
+      const roster = await fetchESPNRoster(teamId);
+      espnData.set(teamName, roster);
+      espnActivePlayersByTeam.set(teamName, new Set(roster.keys()));
+      console.log(`[bulk-sync] Fetched ${roster.size} players from ESPN for ${teamName}`);
+      // Small delay to avoid rate limiting
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    // Step 2: Mark ALL players in cache as inactive first
+    console.log('[bulk-sync] Marking all players as inactive...');
+    const { error: deactivateError } = await supabase
+      .from('bdl_player_cache')
+      .update({ is_active: false })
+      .not('id', 'is', null); // Update all rows
+
+    if (deactivateError) {
+      console.error('[bulk-sync] Error deactivating players:', deactivateError);
+    }
+
+    // Step 3: Fetch all players from cache
     const { data: players, error: fetchError } = await supabase
       .from('bdl_player_cache')
       .select('id, player_name, team_name, jersey_number, normalized_name')
@@ -120,60 +144,55 @@ serve(async (req) => {
 
     console.log(`[bulk-sync] Found ${players?.length || 0} players in cache`);
 
-    // Fetch ESPN rosters for all teams
-    const espnData = new Map<string, Map<string, { jersey: string; position: string }>>();
-    
-    for (const [teamName, teamId] of Object.entries(ESPN_TEAM_IDS)) {
-      const roster = await fetchESPNRoster(teamId);
-      espnData.set(teamName, roster);
-      console.log(`[bulk-sync] Fetched ${roster.size} players from ESPN for ${teamName}`);
-      // Small delay to avoid rate limiting
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-
-    // Match players and update jerseys
+    // Step 4: Match players and update jerseys + is_active status
     let updatedCount = 0;
-    let normalizedCount = 0;
-    const updates: Array<{ id: string; jersey_number: string; normalized_name: string }> = [];
+    let activatedCount = 0;
+    const updates: Array<{ id: string; jersey_number: string; normalized_name: string; is_active: boolean }> = [];
 
     for (const player of players || []) {
       const normalizedName = normalizePlayerName(player.player_name);
       
       // Find matching team roster
       const teamRoster = espnData.get(player.team_name);
+      const activePlayersSet = espnActivePlayersByTeam.get(player.team_name);
       
-      let newJersey = player.jersey_number;
-      let needsUpdate = false;
+      let newJersey = player.jersey_number || '';
+      let isActive = false;
 
-      // If we have team roster, try to find jersey
-      if (teamRoster) {
-        const espnPlayer = teamRoster.get(normalizedName);
-        if (espnPlayer?.jersey) {
-          newJersey = espnPlayer.jersey;
-          if (player.jersey_number !== newJersey) {
-            needsUpdate = true;
+      // If we have team roster, check if player is on current ESPN roster
+      if (teamRoster && activePlayersSet) {
+        const isOnCurrentRoster = activePlayersSet.has(normalizedName);
+        
+        if (isOnCurrentRoster) {
+          isActive = true;
+          activatedCount++;
+          
+          const espnPlayer = teamRoster.get(normalizedName);
+          if (espnPlayer?.jersey) {
+            newJersey = espnPlayer.jersey;
           }
         }
       }
 
-      // Update normalized_name if missing or different
-      if (player.normalized_name !== normalizedName) {
-        needsUpdate = true;
-        normalizedCount++;
-      }
+      // Only update if something changed
+      const needsUpdate = 
+        player.normalized_name !== normalizedName ||
+        player.jersey_number !== newJersey ||
+        isActive; // Always update if player should be active
 
       if (needsUpdate) {
         updates.push({
           id: player.id,
           jersey_number: newJersey,
-          normalized_name: normalizedName
+          normalized_name: normalizedName,
+          is_active: isActive
         });
       }
     }
 
-    console.log(`[bulk-sync] Found ${updates.length} players to update`);
+    console.log(`[bulk-sync] Found ${updates.length} players to update, ${activatedCount} will be marked active`);
 
-    // Batch update in chunks of 50
+    // Step 5: Batch update in chunks of 50
     const chunkSize = 50;
     for (let i = 0; i < updates.length; i += chunkSize) {
       const chunk = updates.slice(i, i + chunkSize);
@@ -184,6 +203,7 @@ serve(async (req) => {
           .update({
             jersey_number: update.jersey_number,
             normalized_name: update.normalized_name,
+            is_active: update.is_active,
             last_updated: new Date().toISOString()
           })
           .eq('id', update.id);
@@ -196,21 +216,36 @@ serve(async (req) => {
       }
     }
 
-    // Count remaining missing jerseys
+    // Step 6: Count active players per team for verification
+    const { data: activeCounts } = await supabase
+      .from('bdl_player_cache')
+      .select('team_name')
+      .eq('is_active', true);
+
+    const teamCounts: Record<string, number> = {};
+    (activeCounts || []).forEach(p => {
+      teamCounts[p.team_name] = (teamCounts[p.team_name] || 0) + 1;
+    });
+
+    console.log('[bulk-sync] Active players per team:', teamCounts);
+
+    // Count remaining missing jerseys among active players
     const { count: stillMissing } = await supabase
       .from('bdl_player_cache')
       .select('id', { count: 'exact', head: true })
+      .eq('is_active', true)
       .or('jersey_number.is.null,jersey_number.eq.');
 
-    console.log(`[bulk-sync] Completed: ${updatedCount} players updated, ${stillMissing || 0} still missing jerseys`);
+    console.log(`[bulk-sync] Completed: ${updatedCount} players updated, ${activatedCount} marked active, ${stillMissing || 0} active players still missing jerseys`);
 
     return new Response(
       JSON.stringify({
         success: true,
         updated: updatedCount,
-        normalizedNames: normalizedCount,
+        activated: activatedCount,
         stillMissing: stillMissing || 0,
-        teamsProcessed: Object.keys(ESPN_TEAM_IDS).length
+        teamsProcessed: Object.keys(ESPN_TEAM_IDS).length,
+        activePlayersPerTeam: teamCounts
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
