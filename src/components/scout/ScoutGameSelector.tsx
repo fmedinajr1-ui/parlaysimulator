@@ -4,15 +4,58 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
-import { Calendar, Clock, Users, ChevronRight, RefreshCw } from "lucide-react";
+import { Calendar, Clock, Users, ChevronRight, RefreshCw, Database } from "lucide-react";
 import type { GameContext } from "@/pages/Scout";
 import { toZonedTime, format } from "date-fns-tz";
+import { toast } from "sonner";
 import { 
   calculatePreGameBaseline, 
   type PreGameBaseline, 
   type TeamFatigueData, 
   type PlayerSeasonStats 
 } from "@/types/pre-game-baselines";
+
+// Normalize player names for fuzzy matching (handles diacritics and suffixes)
+const normalizePlayerName = (name: string): string => {
+  return name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // Remove diacritics (Şengün → Sengun)
+    .replace(/\s+(Jr\.?|Sr\.?|III|II|IV)$/i, '') // Remove suffixes
+    .toLowerCase()
+    .trim();
+};
+
+// Find best ESPN match for a player name
+const findESPNMatch = (
+  playerName: string, 
+  espnJerseys: Map<string, { jersey: string; position: string }>
+): { jersey: string; position: string } | null => {
+  // Exact match first
+  if (espnJerseys.has(playerName)) {
+    return espnJerseys.get(playerName)!;
+  }
+  
+  // Normalized match
+  const normalizedTarget = normalizePlayerName(playerName);
+  for (const [espnName, data] of espnJerseys.entries()) {
+    if (normalizePlayerName(espnName) === normalizedTarget) {
+      return data;
+    }
+  }
+  
+  // Partial last name match (for unique last names)
+  const targetLastName = normalizedTarget.split(' ').pop();
+  if (targetLastName && targetLastName.length > 4) {
+    for (const [espnName, data] of espnJerseys.entries()) {
+      const espnLastName = normalizePlayerName(espnName).split(' ').pop();
+      if (targetLastName === espnLastName) {
+        return data;
+      }
+    }
+  }
+  
+  return null;
+};
 
 const CACHE_KEY = 'scout_props_last_refresh';
 const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
@@ -36,6 +79,45 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
   const [loadingRoster, setLoadingRoster] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshAttempted, setRefreshAttempted] = useState(false);
+  const [isRefreshingRoster, setIsRefreshingRoster] = useState(false);
+
+  // Manual refresh roster data for current game
+  const handleRefreshRoster = async () => {
+    if (!selectedGame) return;
+    
+    setIsRefreshingRoster(true);
+    try {
+      console.log('[ScoutGameSelector] Manual roster refresh for:', selectedGame.homeTeam, 'vs', selectedGame.awayTeam);
+      
+      const { data, error } = await supabase.functions.invoke('sync-missing-rosters', {
+        body: { 
+          teams: [selectedGame.homeTeam, selectedGame.awayTeam],
+          force_espn: true
+        }
+      });
+      
+      if (error) throw error;
+      
+      console.log('[ScoutGameSelector] Roster sync result:', data);
+      
+      // Re-load the rosters after sync
+      const gameToReload: TodaysGame = {
+        eventId: selectedGame.eventId,
+        homeTeam: selectedGame.homeTeam,
+        awayTeam: selectedGame.awayTeam,
+        commenceTime: selectedGame.commenceTime,
+        gameDescription: selectedGame.gameDescription,
+      };
+      await loadRosters(gameToReload);
+      
+      toast.success(`Updated roster data for ${data?.synced || 0} players`);
+    } catch (err) {
+      console.error('[ScoutGameSelector] Roster refresh error:', err);
+      toast.error('Failed to refresh roster data');
+    } finally {
+      setIsRefreshingRoster(false);
+    }
+  };
 
   const shouldAutoRefresh = (): boolean => {
     const lastRefresh = localStorage.getItem(CACHE_KEY);
@@ -374,26 +456,26 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
               
               console.log(`[ScoutGameSelector] ESPN provided jersey data for ${espnJerseys.size} players`);
               
-              // Fill in missing jerseys from ESPN data and track updates
+              // Fill in missing jerseys from ESPN data with fuzzy matching
               const playersToUpdate: Array<{ name: string; jersey: string }> = [];
               
               validHomeRoster = validHomeRoster.map(p => {
-                if (!p.hasValidJersey && espnJerseys.has(p.name)) {
-                  const espnData = espnJerseys.get(p.name)!;
-                  if (espnData.jersey && espnData.jersey !== '?') {
-                    playersToUpdate.push({ name: p.name, jersey: espnData.jersey });
-                    return { ...p, jersey: espnData.jersey, hasValidJersey: true };
+                if (!p.hasValidJersey) {
+                  const match = findESPNMatch(p.name, espnJerseys);
+                  if (match && match.jersey && match.jersey !== '?') {
+                    playersToUpdate.push({ name: p.name, jersey: match.jersey });
+                    return { ...p, jersey: match.jersey, hasValidJersey: true };
                   }
                 }
                 return p;
               });
               
               validAwayRoster = validAwayRoster.map(p => {
-                if (!p.hasValidJersey && espnJerseys.has(p.name)) {
-                  const espnData = espnJerseys.get(p.name)!;
-                  if (espnData.jersey && espnData.jersey !== '?') {
-                    playersToUpdate.push({ name: p.name, jersey: espnData.jersey });
-                    return { ...p, jersey: espnData.jersey, hasValidJersey: true };
+                if (!p.hasValidJersey) {
+                  const match = findESPNMatch(p.name, espnJerseys);
+                  if (match && match.jersey && match.jersey !== '?') {
+                    playersToUpdate.push({ name: p.name, jersey: match.jersey });
+                    return { ...p, jersey: match.jersey, hasValidJersey: true };
                   }
                 }
                 return p;
@@ -549,6 +631,20 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
+        {/* Refresh Roster Data button when game is selected */}
+        {selectedGame && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRefreshRoster}
+            disabled={isRefreshingRoster}
+            className="w-full mb-3 border-dashed"
+          >
+            <Database className={`w-4 h-4 mr-2 ${isRefreshingRoster ? 'animate-pulse' : ''}`} />
+            {isRefreshingRoster ? 'Syncing Rosters...' : 'Refresh Roster Data'}
+          </Button>
+        )}
+        
         {games.map((game) => {
           const status = getGameStatus(game.commenceTime);
           const isSelected = selectedGame?.eventId === game.eventId;
