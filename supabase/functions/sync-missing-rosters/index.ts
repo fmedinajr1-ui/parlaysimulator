@@ -7,6 +7,7 @@ const corsHeaders = {
 };
 
 const BDL_V1_URL = 'https://api.balldontlie.io/v1';
+const ESPN_API_URL = 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba';
 
 // NBA Team ID mapping for Ball Don't Lie API
 const NBA_TEAMS: Record<string, number> = {
@@ -42,7 +43,74 @@ const NBA_TEAMS: Record<string, number> = {
   'Washington Wizards': 30,
 };
 
+// ESPN Team ID mapping
+const ESPN_TEAM_IDS: Record<string, string> = {
+  'Atlanta Hawks': '1',
+  'Boston Celtics': '2',
+  'Brooklyn Nets': '17',
+  'Charlotte Hornets': '30',
+  'Chicago Bulls': '4',
+  'Cleveland Cavaliers': '5',
+  'Dallas Mavericks': '6',
+  'Denver Nuggets': '7',
+  'Detroit Pistons': '8',
+  'Golden State Warriors': '9',
+  'Houston Rockets': '10',
+  'Indiana Pacers': '11',
+  'LA Clippers': '12',
+  'Los Angeles Lakers': '13',
+  'Memphis Grizzlies': '29',
+  'Miami Heat': '14',
+  'Milwaukee Bucks': '15',
+  'Minnesota Timberwolves': '16',
+  'New Orleans Pelicans': '3',
+  'New York Knicks': '18',
+  'Oklahoma City Thunder': '25',
+  'Orlando Magic': '19',
+  'Philadelphia 76ers': '20',
+  'Phoenix Suns': '21',
+  'Portland Trail Blazers': '22',
+  'Sacramento Kings': '23',
+  'San Antonio Spurs': '24',
+  'Toronto Raptors': '28',
+  'Utah Jazz': '26',
+  'Washington Wizards': '27',
+};
+
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Fetch jersey data from ESPN API as fallback
+async function fetchESPNJerseys(teamName: string): Promise<Map<string, string>> {
+  const teamId = ESPN_TEAM_IDS[teamName];
+  if (!teamId) {
+    console.log(`[sync-missing-rosters] No ESPN team ID for: ${teamName}`);
+    return new Map();
+  }
+  
+  try {
+    const response = await fetch(`${ESPN_API_URL}/teams/${teamId}/roster`);
+    if (!response.ok) {
+      console.warn(`[sync-missing-rosters] ESPN roster fetch failed for ${teamName}: ${response.status}`);
+      return new Map();
+    }
+    
+    const data = await response.json();
+    const jerseyMap = new Map<string, string>();
+    
+    for (const athlete of data.athletes || []) {
+      const fullName = `${athlete.firstName} ${athlete.lastName}`;
+      if (athlete.jersey) {
+        jerseyMap.set(fullName, athlete.jersey);
+      }
+    }
+    
+    console.log(`[sync-missing-rosters] ESPN returned ${jerseyMap.size} jerseys for ${teamName}`);
+    return jerseyMap;
+  } catch (err) {
+    console.warn(`[sync-missing-rosters] ESPN fetch error for ${teamName}:`, err);
+    return new Map();
+  }
+}
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -66,43 +134,76 @@ serve(async (req) => {
       'Content-Type': 'application/json',
     };
 
-    // PHASE 1: Fix players with missing jersey numbers
+    // PHASE 1: Fix players with missing jersey numbers using BDL then ESPN fallback
     console.log('[sync-missing-rosters] Checking for players with missing jersey numbers...');
     
     const { data: missingJerseys } = await supabase
       .from('bdl_player_cache')
-      .select('player_name, bdl_player_id')
+      .select('player_name, bdl_player_id, team_name')
       .is('jersey_number', null)
-      .not('bdl_player_id', 'is', null)
-      .limit(25);
+      .limit(50);
 
     if (missingJerseys && missingJerseys.length > 0) {
       console.log(`[sync-missing-rosters] Found ${missingJerseys.length} players with missing jersey numbers`);
       
+      // Group players by team for ESPN batch lookup
+      const playersByTeam = new Map<string, typeof missingJerseys>();
+      for (const player of missingJerseys) {
+        if (player.team_name) {
+          const existing = playersByTeam.get(player.team_name) || [];
+          existing.push(player);
+          playersByTeam.set(player.team_name, existing);
+        }
+      }
+      
+      // Fetch ESPN jerseys for each team
+      const espnJerseyCache = new Map<string, Map<string, string>>();
+      for (const teamName of playersByTeam.keys()) {
+        const jerseys = await fetchESPNJerseys(teamName);
+        espnJerseyCache.set(teamName, jerseys);
+        await delay(100); // Rate limit ESPN calls
+      }
+      
+      // Try BDL first, then ESPN fallback
       for (const player of missingJerseys) {
         try {
-          const response = await fetch(
-            `${BDL_V1_URL}/players/${player.bdl_player_id}`,
-            { headers }
-          );
+          let jerseyNumber: string | null = null;
           
-          if (response.ok) {
-            const data = await response.json();
+          // Try BDL API first if we have player ID
+          if (player.bdl_player_id) {
+            const response = await fetch(
+              `${BDL_V1_URL}/players/${player.bdl_player_id}`,
+              { headers }
+            );
             
-            if (data.jersey_number) {
-              await supabase.from('bdl_player_cache').update({
-                jersey_number: data.jersey_number.toString(),
-                last_updated: new Date().toISOString(),
-              }).eq('bdl_player_id', player.bdl_player_id);
-              
-              console.log(`[sync-missing-rosters] Updated jersey for ${player.player_name}: #${data.jersey_number}`);
+            if (response.ok) {
+              const data = await response.json();
+              if (data.jersey_number) {
+                jerseyNumber = data.jersey_number.toString();
+                console.log(`[sync-missing-rosters] BDL: ${player.player_name} -> #${jerseyNumber}`);
+              }
+            }
+            await delay(100);
+          }
+          
+          // Fallback to ESPN if BDL didn't have it
+          if (!jerseyNumber && player.team_name) {
+            const teamJerseys = espnJerseyCache.get(player.team_name);
+            if (teamJerseys?.has(player.player_name)) {
+              jerseyNumber = teamJerseys.get(player.player_name)!;
+              console.log(`[sync-missing-rosters] ESPN: ${player.player_name} -> #${jerseyNumber}`);
             }
           }
           
-          // Rate limiting
-          await delay(150);
+          // Update if we found a jersey number
+          if (jerseyNumber) {
+            await supabase.from('bdl_player_cache').update({
+              jersey_number: jerseyNumber,
+              last_updated: new Date().toISOString(),
+            }).eq('player_name', player.player_name);
+          }
         } catch (err) {
-          console.warn(`[sync-missing-rosters] Error fetching player ${player.player_name}:`, err);
+          console.warn(`[sync-missing-rosters] Error processing ${player.player_name}:`, err);
         }
       }
     }
