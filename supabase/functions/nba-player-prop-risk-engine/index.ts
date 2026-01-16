@@ -157,6 +157,137 @@ function validateReboundsProp(
   };
 }
 
+// ============ BIG POINTS PROP VALIDATION ============
+// Based on historical analysis: bigs have volatile scoring
+interface BigPointsValidation {
+  approved: boolean;
+  reason: string;
+  confidenceAdjust: number;
+  altLineRecommendation: number | null;
+}
+
+function validateBigPointsProp(
+  line: number,
+  edge: number,
+  trueMedian: number,
+  archetype: PlayerArchetype,
+  side: string,
+  statValues: number[],
+  overPrice: number | null,
+  underPrice: number | null
+): BigPointsValidation {
+  const BIG_ARCHETYPES: PlayerArchetype[] = ['ELITE_REBOUNDER', 'GLASS_CLEANER', 'RIM_PROTECTOR'];
+  const isBig = BIG_ARCHETYPES.includes(archetype);
+  
+  if (!isBig) {
+    return { approved: true, reason: 'Not a big - standard points validation', confidenceAdjust: 0, altLineRecommendation: null };
+  }
+  
+  const isOver = side.toLowerCase() === 'over';
+  
+  // RULE 1: Block high-line OVERS for non-stretch bigs (18+ points = volatile)
+  if (isOver && line >= 18 && archetype !== 'STRETCH_BIG') {
+    return {
+      approved: false,
+      reason: `BIG_POINTS_HIGH_LINE: ${archetype} OVER ${line} pts blocked (high variance)`,
+      confidenceAdjust: 0,
+      altLineRecommendation: Math.floor(line - 3) + 0.5
+    };
+  }
+  
+  // RULE 2: Block mid-tier OVERS for GLASS_CLEANER (10-17.5 range volatile)
+  if (isOver && archetype === 'GLASS_CLEANER' && line >= 10 && line <= 17.5) {
+    return {
+      approved: false,
+      reason: `BIG_POINTS_MID_TRAP: GLASS_CLEANER mid-tier OVER ${line} blocked (volatile scoring)`,
+      confidenceAdjust: 0,
+      altLineRecommendation: Math.floor(line - 2) + 0.5
+    };
+  }
+  
+  // RULE 3: Block UNDERS when ceiling is too high (>180% of line)
+  if (!isOver && statValues.length > 0) {
+    const ceiling = Math.max(...statValues);
+    if (ceiling >= line * 1.8) {
+      return {
+        approved: false,
+        reason: `BIG_POINTS_CEILING_TRAP: Ceiling ${ceiling} is ${Math.round((ceiling/line - 1) * 100)}% above line`,
+        confidenceAdjust: 0,
+        altLineRecommendation: Math.ceil(ceiling * 0.85) + 0.5
+      };
+    }
+  }
+  
+  // RULE 4: Apply confidence penalty for all big Points props
+  // STRETCH_BIG gets lighter penalty (they're floor spacers)
+  const confidenceAdjust = archetype === 'STRETCH_BIG' ? -0.5 : -1.0;
+  
+  return {
+    approved: true,
+    reason: `BIG_POINTS_PASS: ${archetype} points allowed with ${confidenceAdjust} confidence penalty`,
+    confidenceAdjust,
+    altLineRecommendation: null
+  };
+}
+
+// ============ JUICED LINE DETECTION ============
+// Detect heavily juiced lines and recommend alternatives
+interface JuicedLineCheck {
+  isJuiced: boolean;
+  juiceDirection: 'over' | 'under' | null;
+  juiceMagnitude: number;
+  recommendedAltLine: number | null;
+  reason: string;
+}
+
+function detectJuicedLine(
+  line: number,
+  overPrice: number | null,
+  underPrice: number | null,
+  side: string
+): JuicedLineCheck {
+  const HEAVY_JUICE_THRESHOLD = -150;  // Odds worse than -150 = heavily juiced
+  
+  if (!overPrice || !underPrice) {
+    return { isJuiced: false, juiceDirection: null, juiceMagnitude: 0, recommendedAltLine: null, reason: 'No odds data' };
+  }
+  
+  const isOver = side.toLowerCase() === 'over';
+  const ourPrice = isOver ? overPrice : underPrice;
+  const oppositePrice = isOver ? underPrice : overPrice;
+  
+  // Check if our side is heavily juiced against us
+  if (ourPrice < HEAVY_JUICE_THRESHOLD) {
+    const juiceMagnitude = Math.abs(ourPrice);
+    
+    // Alt line: go 2.5 points in safer direction
+    const altLineAdjust = isOver ? -2.5 : 2.5;
+    const recommendedAltLine = line + altLineAdjust;
+    
+    return {
+      isJuiced: true,
+      juiceDirection: isOver ? 'over' : 'under',
+      juiceMagnitude,
+      recommendedAltLine,
+      reason: `Line juiced at ${ourPrice}. Consider ALT ${side.toUpperCase()} ${recommendedAltLine} for better value.`
+    };
+  }
+  
+  // Check for trap juice (opposite side is way too good - +150 or better)
+  if (oppositePrice >= 150) {
+    const altLineAdjust = isOver ? -2 : 2;
+    return {
+      isJuiced: true,
+      juiceDirection: isOver ? 'under' : 'over',
+      juiceMagnitude: oppositePrice,
+      recommendedAltLine: line + altLineAdjust,
+      reason: `Opposite side at +${oppositePrice} suggests books expect ${isOver ? 'under' : 'over'}. Consider ALT line.`
+    };
+  }
+  
+  return { isJuiced: false, juiceDirection: null, juiceMagnitude: 0, recommendedAltLine: null, reason: 'Line not juiced' };
+}
+
 // ============ LINE SANITY CHECK (PREVENTS BAD BOOKMAKER DATA) ============
 // Rejects lines that are wildly off from the true median (bad data)
 function isLineSane(
@@ -1391,6 +1522,55 @@ serve(async (req) => {
             (prop as any)._reboundConfidenceAdjust = reboundCheck.confidenceAdjust;
           }
           
+          // ============ POINTS SPECIALIZED VALIDATION FOR BIGS ============
+          // Must run for Points props on big archetypes
+          let bigPointsCheck: BigPointsValidation | null = null;
+          if (normalizedPropType === 'points') {
+            bigPointsCheck = validateBigPointsProp(
+              line, 
+              edge, 
+              trueMedian, 
+              archetype, 
+              side, 
+              statValues,
+              prop.over_price || null,
+              prop.under_price || null
+            );
+            console.log(`[BIG-POINTS-CHECK] ${prop.player_name}: archetype=${archetype}, line=${line}, side=${side} → ${bigPointsCheck.approved ? 'PASS' : 'BLOCK'}: ${bigPointsCheck.reason}`);
+            
+            if (!bigPointsCheck.approved) {
+              rejectedProps.push({ 
+                ...prop, 
+                rejection_reason: bigPointsCheck.reason,
+                player_role: role,
+                archetype,
+                true_median: trueMedian,
+                alt_line_recommendation: bigPointsCheck.altLineRecommendation
+              });
+              continue;
+            }
+            
+            // Store confidence adjustment for later application
+            if (bigPointsCheck.confidenceAdjust !== 0) {
+              (prop as any)._bigPointsConfidenceAdjust = bigPointsCheck.confidenceAdjust;
+            }
+          }
+          
+          // ============ JUICED LINE DETECTION ============
+          const juicedCheck = detectJuicedLine(
+            line,
+            prop.over_price || null,
+            prop.under_price || null,
+            side
+          );
+          
+          // Store for later use
+          (prop as any)._juicedCheck = juicedCheck;
+          
+          if (juicedCheck.isJuiced) {
+            console.log(`[JUICED-CHECK] ${prop.player_name} ${prop.prop_type}: ${juicedCheck.reason}`);
+          }
+          
           // ============ PRA GLOBAL BLOCK ============
           const isPRA = isPRAPlay(prop.prop_type);
           if (isPRA) {
@@ -1604,6 +1784,12 @@ serve(async (req) => {
               });
               continue;
             }
+            
+            // Apply big points confidence penalty if applicable
+            if ((prop as any)._bigPointsConfidenceAdjust) {
+              adjustedScore += (prop as any)._bigPointsConfidenceAdjust;
+              console.log(`[BIG-POINTS-PENALTY] ${prop.player_name}: Applied ${(prop as any)._bigPointsConfidenceAdjust} penalty, new score: ${adjustedScore.toFixed(1)}`);
+            }
           }
           
           // REBOUNDS: Cap at 10.0 (high confidence = trap for rebounds)
@@ -1688,6 +1874,13 @@ serve(async (req) => {
             volatility_pct: statValidation.details.volatilityPct,
             consistency_score: stats?.consistency_score,
             trend_direction: stats?.trend_direction,
+            // Alt line recommendations
+            alt_line_recommendation: (prop as any)._juicedCheck?.recommendedAltLine || 
+              (bigPointsCheck?.altLineRecommendation && !bigPointsCheck.approved ? bigPointsCheck.altLineRecommendation : null),
+            alt_line_reason: (prop as any)._juicedCheck?.isJuiced ? (prop as any)._juicedCheck.reason : null,
+            is_juiced: (prop as any)._juicedCheck?.isJuiced || false,
+            juice_magnitude: (prop as any)._juicedCheck?.juiceMagnitude || 0,
+            line_warning: (prop as any)._juicedCheck?.isJuiced ? (prop as any)._juicedCheck.reason : null,
           };
           
           approvedProps.push(approvedPick);
@@ -1695,6 +1888,11 @@ serve(async (req) => {
           // Log sweet spot picks
           if (sweetSpotReason) {
             console.log(`[SWEET-SPOT-PICK] ${prop.player_name} ${prop.prop_type} ${side} @ ${line}: ${adjustedScore.toFixed(1)} (${sweetSpotReason})`);
+          }
+          
+          // Log juiced line warnings
+          if ((prop as any)._juicedCheck?.isJuiced) {
+            console.log(`[JUICED-WARNING] ${prop.player_name} ${prop.prop_type}: ${(prop as any)._juicedCheck.reason}`);
           }
           
           // Track prop type for volume cap

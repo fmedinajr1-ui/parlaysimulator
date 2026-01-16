@@ -4368,6 +4368,8 @@ export type Database = {
       nba_risk_engine_picks: {
         Row: {
           actual_value: number | null
+          alt_line_reason: string | null
+          alt_line_recommendation: number | null
           archetype: string | null
           avg_minutes: number | null
           bad_game_floor: number | null
@@ -4388,11 +4390,14 @@ export type Database = {
           id: string
           is_ball_dominant: boolean | null
           is_fade_specialist: boolean | null
+          is_juiced: boolean | null
           is_pra: boolean | null
           is_star: boolean | null
           is_sweet_spot: boolean | null
           is_trap_indicator: boolean | null
+          juice_magnitude: number | null
           line: number
+          line_warning: string | null
           minutes_class: string
           mode: string | null
           odds_updated_at: string | null
@@ -4424,6 +4429,8 @@ export type Database = {
         }
         Insert: {
           actual_value?: number | null
+          alt_line_reason?: string | null
+          alt_line_recommendation?: number | null
           archetype?: string | null
           avg_minutes?: number | null
           bad_game_floor?: number | null
@@ -4444,11 +4451,14 @@ export type Database = {
           id?: string
           is_ball_dominant?: boolean | null
           is_fade_specialist?: boolean | null
+          is_juiced?: boolean | null
           is_pra?: boolean | null
           is_star?: boolean | null
           is_sweet_spot?: boolean | null
           is_trap_indicator?: boolean | null
+          juice_magnitude?: number | null
           line: number
+          line_warning?: string | null
           minutes_class: string
           mode?: string | null
           odds_updated_at?: string | null
@@ -4480,6 +4490,8 @@ export type Database = {
         }
         Update: {
           actual_value?: number | null
+          alt_line_reason?: string | null
+          alt_line_recommendation?: number | null
           archetype?: string | null
           avg_minutes?: number | null
           bad_game_floor?: number | null
@@ -4500,11 +4512,14 @@ export type Database = {
           id?: string
           is_ball_dominant?: boolean | null
           is_fade_specialist?: boolean | null
+          is_juiced?: boolean | null
           is_pra?: boolean | null
           is_star?: boolean | null
           is_sweet_spot?: boolean | null
           is_trap_indicator?: boolean | null
+          juice_magnitude?: number | null
           line?: number
+          line_warning?: string | null
           minutes_class?: string
           mode?: string | null
           odds_updated_at?: string | null
@@ -6473,6 +6488,7 @@ export type Database = {
       prop_results_archive: {
         Row: {
           actual_value: number | null
+          archetype: string | null
           archived_at: string | null
           confidence_score: number | null
           created_at: string | null
@@ -6499,6 +6515,7 @@ export type Database = {
         }
         Insert: {
           actual_value?: number | null
+          archetype?: string | null
           archived_at?: string | null
           confidence_score?: number | null
           created_at?: string | null
@@ -6525,6 +6542,7 @@ export type Database = {
         }
         Update: {
           actual_value?: number | null
+          archetype?: string | null
           archived_at?: string | null
           confidence_score?: number | null
           created_at?: string | null

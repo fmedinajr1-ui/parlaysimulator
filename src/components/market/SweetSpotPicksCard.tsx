@@ -8,6 +8,7 @@ import { Target, TrendingUp, Loader2, CheckCircle2, XCircle, Clock, RefreshCw } 
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { toast } from "sonner";
+import { AltLineComparisonCard } from "./AltLineComparisonCard";
 
 interface SweetSpotPick {
   id: string;
@@ -21,6 +22,11 @@ interface SweetSpotPick {
   outcome: string | null;
   game_date: string;
   created_at: string;
+  alt_line_recommendation?: number | null;
+  alt_line_reason?: string | null;
+  is_juiced?: boolean;
+  juice_magnitude?: number;
+  line_warning?: string | null;
 }
 
 interface RiskEngineSweetSpot {
@@ -36,6 +42,11 @@ interface RiskEngineSweetSpot {
   game_date: string;
   is_sweet_spot?: boolean;
   sweet_spot_reason?: string | null;
+  alt_line_recommendation?: number | null;
+  alt_line_reason?: string | null;
+  is_juiced?: boolean;
+  juice_magnitude?: number;
+  line_warning?: string | null;
 }
 
 const SWEET_SPOT_RANGES = {
@@ -96,7 +107,7 @@ export function SweetSpotPicksCard() {
       const today = format(new Date(), "yyyy-MM-dd");
       const { data, error } = await supabase
         .from("nba_risk_engine_picks")
-        .select("id, player_name, prop_type, line, side, confidence_score, edge, archetype, outcome, game_date, is_sweet_spot, sweet_spot_reason")
+        .select("id, player_name, prop_type, line, side, confidence_score, edge, archetype, outcome, game_date, is_sweet_spot, sweet_spot_reason, alt_line_recommendation, alt_line_reason, is_juiced, juice_magnitude, line_warning")
         .eq("is_sweet_spot", true)
         .eq("game_date", today)
         .order("confidence_score", { ascending: false })
@@ -192,50 +203,74 @@ export function SweetSpotPicksCard() {
             <p className="text-xs mt-1">Run the Risk Engine to find optimal plays</p>
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-3">
             {allPicks.map((pick) => (
-              <div
-                key={pick.id}
-                className={cn(
-                  "flex items-center justify-between p-3 rounded-lg border",
-                  "bg-background/50 hover:bg-background/80 transition-colors",
-                  pick.outcome === "hit" && "border-green-500/30 bg-green-500/5",
-                  pick.outcome === "miss" && "border-red-500/30 bg-red-500/5"
-                )}
-              >
-                <div className="flex items-center gap-3">
-                  {getOutcomeIcon(pick.outcome)}
-                  <div>
-                    <p className="font-medium text-sm">{pick.player_name}</p>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <Badge variant="outline" className={cn("text-xs", getPropTypeColor(pick.prop_type))}>
-                        {formatPropType(pick.prop_type)}
-                      </Badge>
-                      <span className="text-xs text-muted-foreground">
-                        {pick.side?.toUpperCase()} {pick.line}
-                      </span>
+              <div key={pick.id}>
+                <div
+                  className={cn(
+                    "flex items-center justify-between p-3 rounded-lg border",
+                    "bg-background/50 hover:bg-background/80 transition-colors",
+                    pick.outcome === "hit" && "border-green-500/30 bg-green-500/5",
+                    pick.outcome === "miss" && "border-red-500/30 bg-red-500/5",
+                    pick.is_juiced && !pick.outcome && "border-amber-500/30"
+                  )}
+                >
+                  <div className="flex items-center gap-3">
+                    {getOutcomeIcon(pick.outcome)}
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <p className="font-medium text-sm">{pick.player_name}</p>
+                        {pick.is_juiced && (
+                          <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-500/30">
+                            JUICED
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <Badge variant="outline" className={cn("text-xs", getPropTypeColor(pick.prop_type))}>
+                          {formatPropType(pick.prop_type)}
+                        </Badge>
+                        <span className="text-xs text-muted-foreground">
+                          {pick.side?.toUpperCase()} {pick.line}
+                        </span>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div className="flex items-center gap-3 text-right">
-                  <div>
-                    <div className="flex items-center gap-1 justify-end">
-                      <TrendingUp className="w-3 h-3 text-primary" />
-                      <span className="text-sm font-semibold text-primary">
-                        {pick.confidence_score?.toFixed(1)}
-                      </span>
+                  <div className="flex items-center gap-3 text-right">
+                    <div>
+                      <div className="flex items-center gap-1 justify-end">
+                        <TrendingUp className="w-3 h-3 text-primary" />
+                        <span className="text-sm font-semibold text-primary">
+                          {pick.confidence_score?.toFixed(1)}
+                        </span>
+                      </div>
+                      {pick.edge && (
+                        <p className="text-xs text-green-400">+{pick.edge.toFixed(1)} edge</p>
+                      )}
                     </div>
-                    {pick.edge && (
-                      <p className="text-xs text-green-400">+{pick.edge.toFixed(1)} edge</p>
+                    {pick.archetype && (
+                      <Badge variant="secondary" className="text-xs hidden sm:inline-flex">
+                        {pick.archetype.replace(/_/g, " ")}
+                      </Badge>
                     )}
                   </div>
-                  {pick.archetype && (
-                    <Badge variant="secondary" className="text-xs hidden sm:inline-flex">
-                      {pick.archetype.replace(/_/g, " ")}
-                    </Badge>
-                  )}
                 </div>
+                
+                {/* Alt Line Comparison Card */}
+                {pick.alt_line_recommendation && (
+                  <AltLineComparisonCard
+                    playerName={pick.player_name}
+                    propType={pick.prop_type}
+                    currentLine={pick.line}
+                    side={pick.side}
+                    altLineRecommendation={pick.alt_line_recommendation}
+                    altLineReason={pick.alt_line_reason || null}
+                    isJuiced={pick.is_juiced || false}
+                    juiceMagnitude={pick.juice_magnitude}
+                    lineWarning={pick.line_warning}
+                  />
+                )}
               </div>
             ))}
           </div>
