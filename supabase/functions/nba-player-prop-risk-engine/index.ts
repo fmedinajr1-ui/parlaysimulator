@@ -281,12 +281,14 @@ function validateBigPointsProp(
 
 // ============ JUICED LINE DETECTION ============
 // Detect heavily juiced lines and recommend alternatives
+// UPDATED: More sensitive thresholds to catch more juiced lines
 interface JuicedLineCheck {
   isJuiced: boolean;
   juiceDirection: 'over' | 'under' | null;
   juiceMagnitude: number;
   recommendedAltLine: number | null;
   reason: string;
+  juiceTier: 'heavy' | 'moderate' | 'light' | 'trap' | null;
 }
 
 function detectJuicedLine(
@@ -295,21 +297,23 @@ function detectJuicedLine(
   underPrice: number | null,
   side: string
 ): JuicedLineCheck {
-  const HEAVY_JUICE_THRESHOLD = -150;  // Odds worse than -150 = heavily juiced
+  // Lowered thresholds for more aggressive detection
+  const HEAVY_JUICE_THRESHOLD = -140;     // Odds worse than -140 = heavily juiced
+  const MODERATE_JUICE_THRESHOLD = -125;  // Odds -125 to -139 = moderately juiced
+  const LIGHT_JUICE_THRESHOLD = -115;     // Odds -115 to -124 = light juice (alt suggestion only)
+  const TRAP_JUICE_THRESHOLD = 130;       // Opposite side +130 or better = trap
   
   if (!overPrice || !underPrice) {
-    return { isJuiced: false, juiceDirection: null, juiceMagnitude: 0, recommendedAltLine: null, reason: 'No odds data' };
+    return { isJuiced: false, juiceDirection: null, juiceMagnitude: 0, recommendedAltLine: null, reason: 'No odds data', juiceTier: null };
   }
   
   const isOver = side.toLowerCase() === 'over';
   const ourPrice = isOver ? overPrice : underPrice;
   const oppositePrice = isOver ? underPrice : overPrice;
   
-  // Check if our side is heavily juiced against us
+  // HEAVY JUICE: -140 or worse
   if (ourPrice < HEAVY_JUICE_THRESHOLD) {
     const juiceMagnitude = Math.abs(ourPrice);
-    
-    // Alt line: go 2.5 points in safer direction
     const altLineAdjust = isOver ? -2.5 : 2.5;
     const recommendedAltLine = line + altLineAdjust;
     
@@ -318,23 +322,56 @@ function detectJuicedLine(
       juiceDirection: isOver ? 'over' : 'under',
       juiceMagnitude,
       recommendedAltLine,
-      reason: `Line juiced at ${ourPrice}. Consider ALT ${side.toUpperCase()} ${recommendedAltLine} for better value.`
+      reason: `Heavy juice at ${ourPrice}. Recommend ALT ${side.toUpperCase()} ${recommendedAltLine} for better value.`,
+      juiceTier: 'heavy'
     };
   }
   
-  // Check for trap juice (opposite side is way too good - +150 or better)
-  if (oppositePrice >= 150) {
+  // MODERATE JUICE: -125 to -139
+  if (ourPrice < MODERATE_JUICE_THRESHOLD) {
+    const juiceMagnitude = Math.abs(ourPrice);
+    const altLineAdjust = isOver ? -1.5 : 1.5;
+    const recommendedAltLine = line + altLineAdjust;
+    
+    return {
+      isJuiced: true,
+      juiceDirection: isOver ? 'over' : 'under',
+      juiceMagnitude,
+      recommendedAltLine,
+      reason: `Moderate juice at ${ourPrice}. Consider ALT ${side.toUpperCase()} ${recommendedAltLine} for value.`,
+      juiceTier: 'moderate'
+    };
+  }
+  
+  // LIGHT JUICE: -115 to -124 (suggest alt but don't flag as juiced)
+  if (ourPrice < LIGHT_JUICE_THRESHOLD) {
+    const altLineAdjust = isOver ? -1 : 1;
+    const recommendedAltLine = line + altLineAdjust;
+    
+    return {
+      isJuiced: false,  // Not flagged as juiced, but alt line recommended
+      juiceDirection: null,
+      juiceMagnitude: 0,
+      recommendedAltLine,  // Still provide alt line for UI display
+      reason: `Line at ${ourPrice}. Better value at ALT ${side.toUpperCase()} ${recommendedAltLine}.`,
+      juiceTier: 'light'
+    };
+  }
+  
+  // TRAP JUICE: Opposite side is +130 or better
+  if (oppositePrice >= TRAP_JUICE_THRESHOLD) {
     const altLineAdjust = isOver ? -2 : 2;
     return {
       isJuiced: true,
       juiceDirection: isOver ? 'under' : 'over',
       juiceMagnitude: oppositePrice,
       recommendedAltLine: line + altLineAdjust,
-      reason: `Opposite side at +${oppositePrice} suggests books expect ${isOver ? 'under' : 'over'}. Consider ALT line.`
+      reason: `Trap detected: opposite side at +${oppositePrice}. Books expect ${isOver ? 'under' : 'over'}.`,
+      juiceTier: 'trap'
     };
   }
   
-  return { isJuiced: false, juiceDirection: null, juiceMagnitude: 0, recommendedAltLine: null, reason: 'Line not juiced' };
+  return { isJuiced: false, juiceDirection: null, juiceMagnitude: 0, recommendedAltLine: null, reason: 'Line not juiced', juiceTier: null };
 }
 
 // ============ LINE SANITY CHECK (PREVENTS BAD BOOKMAKER DATA) ============
@@ -2034,6 +2071,8 @@ serve(async (req) => {
           }
           
           // ============ APPROVED! ============
+          const storedJuicedCheck = (prop as any)._juicedCheck as JuicedLineCheck | null;
+          
           const approvedPick = {
             player_name: prop.player_name,
             team_name: prop.team_name,
@@ -2068,13 +2107,17 @@ serve(async (req) => {
             volatility_pct: statValidation.details.volatilityPct,
             consistency_score: stats?.consistency_score,
             trend_direction: stats?.trend_direction,
-            // Alt line recommendations
-            alt_line_recommendation: (prop as any)._juicedCheck?.recommendedAltLine || 
+            // FIXED: Store over/under prices for UI display
+            over_price: prop.over_price || null,
+            under_price: prop.under_price || null,
+            // Alt line recommendations - FIXED: Always store if present (even for light juice)
+            alt_line_recommendation: storedJuicedCheck?.recommendedAltLine || 
               (bigPointsCheck?.altLineRecommendation && !bigPointsCheck.approved ? bigPointsCheck.altLineRecommendation : null),
-            alt_line_reason: (prop as any)._juicedCheck?.isJuiced ? (prop as any)._juicedCheck.reason : null,
-            is_juiced: (prop as any)._juicedCheck?.isJuiced || false,
-            juice_magnitude: (prop as any)._juicedCheck?.juiceMagnitude || 0,
-            line_warning: (prop as any)._juicedCheck?.isJuiced ? (prop as any)._juicedCheck.reason : null,
+            alt_line_reason: storedJuicedCheck?.reason || null,
+            is_juiced: storedJuicedCheck?.isJuiced || false,
+            juice_magnitude: storedJuicedCheck?.juiceMagnitude || 0,
+            juice_tier: storedJuicedCheck?.juiceTier || null,
+            line_warning: storedJuicedCheck?.isJuiced ? storedJuicedCheck.reason : null,
           };
           
           approvedProps.push(approvedPick);
