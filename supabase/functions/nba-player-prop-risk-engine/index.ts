@@ -2116,7 +2116,7 @@ serve(async (req) => {
             alt_line_reason: storedJuicedCheck?.reason || null,
             is_juiced: storedJuicedCheck?.isJuiced || false,
             juice_magnitude: storedJuicedCheck?.juiceMagnitude || 0,
-            juice_tier: storedJuicedCheck?.juiceTier || null,
+            // Note: juice_tier not stored (column doesn't exist), but available in response
             line_warning: storedJuicedCheck?.isJuiced ? storedJuicedCheck.reason : null,
           };
           
@@ -2188,21 +2188,59 @@ serve(async (req) => {
       // Sort by confidence
       approvedProps.sort((a, b) => b.confidence_score - a.confidence_score);
       
-      // Store approved picks
+      // Store approved picks - explicitly define fields to avoid column mismatch
       if (approvedProps.length > 0) {
+        const picksForDb = approvedProps.map(pick => ({
+          player_name: pick.player_name,
+          team_name: pick.team_name,
+          opponent: pick.opponent,
+          prop_type: pick.prop_type,
+          line: pick.line,
+          side: pick.side,
+          player_role: pick.player_role,
+          archetype: pick.archetype,
+          game_script: pick.game_script,
+          minutes_class: pick.minutes_class,
+          avg_minutes: pick.avg_minutes,
+          spread: pick.spread,
+          true_median: pick.true_median,
+          edge: pick.edge,
+          bad_game_floor: pick.bad_game_floor,
+          confidence_score: pick.confidence_score,
+          original_confidence: pick.original_confidence,
+          confidence_factors: pick.confidence_factors,
+          event_id: pick.event_id,
+          game_date: pick.game_date,
+          is_pra: pick.is_pra,
+          is_ball_dominant: pick.is_ball_dominant,
+          is_star: pick.is_star,
+          is_sweet_spot: pick.is_sweet_spot,
+          sweet_spot_reason: pick.sweet_spot_reason,
+          h2h_games: pick.h2h_games,
+          h2h_avg: pick.h2h_avg,
+          h2h_hit_rate: pick.h2h_hit_rate,
+          volatility_pct: pick.volatility_pct,
+          consistency_score: pick.consistency_score,
+          trend_direction: pick.trend_direction,
+          over_price: pick.over_price,
+          under_price: pick.under_price,
+          alt_line_recommendation: pick.alt_line_recommendation,
+          alt_line_reason: pick.alt_line_reason,
+          is_juiced: pick.is_juiced,
+          juice_magnitude: pick.juice_magnitude,
+          line_warning: pick.line_warning,
+          mode,
+          created_at: new Date().toISOString()
+        }));
+        
         const { error: insertError } = await supabase
           .from('nba_risk_engine_picks')
-          .upsert(
-            approvedProps.map(pick => ({
-              ...pick,
-              mode,
-              created_at: new Date().toISOString()
-            })),
-            { onConflict: 'player_name,game_date,prop_type' }
-          );
+          .upsert(picksForDb, { onConflict: 'player_name,game_date,prop_type' });
         
         if (insertError) {
           console.error('[Risk Engine v3.1] Error storing picks:', insertError);
+        } else {
+          console.log(`[Risk Engine v3.1] Successfully stored ${picksForDb.length} picks`);
         }
       }
       
