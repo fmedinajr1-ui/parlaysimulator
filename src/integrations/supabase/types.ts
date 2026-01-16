@@ -547,6 +547,7 @@ export type Database = {
           draft_year: number | null
           height: string | null
           id: string
+          is_active: boolean | null
           jersey_number: string | null
           last_updated: string | null
           normalized_name: string | null
@@ -565,6 +566,7 @@ export type Database = {
           draft_year?: number | null
           height?: string | null
           id?: string
+          is_active?: boolean | null
           jersey_number?: string | null
           last_updated?: string | null
           normalized_name?: string | null
@@ -583,6 +585,7 @@ export type Database = {
           draft_year?: number | null
           height?: string | null
           id?: string
+          is_active?: boolean | null
           jersey_number?: string | null
           last_updated?: string | null
           normalized_name?: string | null

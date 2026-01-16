@@ -265,18 +265,20 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
     setLoadingRoster(game.eventId);
     
     try {
-      // Fetch players from bdl_player_cache for both teams
+      // Fetch only ACTIVE players from bdl_player_cache (current season only)
       const { data: homeRoster, error: homeError } = await supabase
         .from('bdl_player_cache')
         .select('player_name, jersey_number, position')
         .ilike('team_name', `%${game.homeTeam.replace(/\s+/g, '%')}%`)
-        .limit(15);
+        .eq('is_active', true)
+        .order('player_name');
 
       const { data: awayRoster, error: awayError } = await supabase
         .from('bdl_player_cache')
         .select('player_name, jersey_number, position')
         .ilike('team_name', `%${game.awayTeam.replace(/\s+/g, '%')}%`)
-        .limit(15);
+        .eq('is_active', true)
+        .order('player_name');
 
       if (homeError) console.warn('Home roster error:', homeError);
       if (awayError) console.warn('Away roster error:', awayError);
