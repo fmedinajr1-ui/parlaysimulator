@@ -101,11 +101,29 @@ serve(async (req) => {
     return new Response('ok', { headers: corsHeaders });
   }
 
-  try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+  const startTime = Date.now();
+  const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  const supabase = createClient(supabaseUrl, supabaseKey);
 
+  // Create cron job history record
+  let jobRecordId: string | null = null;
+  try {
+    const { data: jobRecord } = await supabase
+      .from('cron_job_history')
+      .insert({
+        job_name: 'bulk-sync-jerseys',
+        status: 'running',
+        started_at: new Date().toISOString()
+      })
+      .select('id')
+      .single();
+    jobRecordId = jobRecord?.id || null;
+  } catch (e) {
+    console.warn('[bulk-sync] Could not create job history record:', e);
+  }
+
+  try {
     console.log('[bulk-sync] Starting bulk jersey sync for all 30 NBA teams...');
 
     // Step 1: Fetch ESPN rosters for all teams FIRST
@@ -238,21 +256,50 @@ serve(async (req) => {
 
     console.log(`[bulk-sync] Completed: ${updatedCount} players updated, ${activatedCount} marked active, ${stillMissing || 0} active players still missing jerseys`);
 
+    const result = {
+      success: true,
+      updated: updatedCount,
+      activated: activatedCount,
+      stillMissing: stillMissing || 0,
+      teamsProcessed: Object.keys(ESPN_TEAM_IDS).length,
+      activePlayersPerTeam: teamCounts
+    };
+
+    // Update cron job history with success
+    if (jobRecordId) {
+      await supabase
+        .from('cron_job_history')
+        .update({
+          status: 'success',
+          completed_at: new Date().toISOString(),
+          duration_ms: Date.now() - startTime,
+          result: result
+        })
+        .eq('id', jobRecordId);
+    }
+
     return new Response(
-      JSON.stringify({
-        success: true,
-        updated: updatedCount,
-        activated: activatedCount,
-        stillMissing: stillMissing || 0,
-        teamsProcessed: Object.keys(ESPN_TEAM_IDS).length,
-        activePlayersPerTeam: teamCounts
-      }),
+      JSON.stringify(result),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
   } catch (error) {
     console.error('[bulk-sync] Error:', error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+    // Update cron job history with failure
+    if (jobRecordId) {
+      await supabase
+        .from('cron_job_history')
+        .update({
+          status: 'failed',
+          completed_at: new Date().toISOString(),
+          duration_ms: Date.now() - startTime,
+          error_message: errorMessage
+        })
+        .eq('id', jobRecordId);
+    }
+
     return new Response(
       JSON.stringify({ error: errorMessage }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

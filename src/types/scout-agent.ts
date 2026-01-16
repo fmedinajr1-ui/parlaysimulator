@@ -170,6 +170,9 @@ export interface PlayerLiveStateV2 {
   meta: StateMeta;
 }
 
+// Injury status types
+export type InjuryStatus = 'OUT' | 'DOUBTFUL' | 'QUESTIONABLE' | 'GTD' | 'DTD' | null;
+
 /**
  * Legacy PlayerLiveState (for backwards compatibility during migration)
  * @deprecated Use PlayerLiveStateV2 instead
@@ -199,6 +202,9 @@ export interface PlayerLiveState {
   // Pre-game baseline metadata
   preGameTrend?: 'hot' | 'cold' | 'stable';
   preGameConsistency?: number;
+  // Injury status from ESPN
+  injuryStatus?: InjuryStatus;
+  injuryDetail?: string;
 }
 
 // ===== PROP EDGE =====

@@ -24,6 +24,16 @@ export interface PropLine {
   bookmaker?: string;
 }
 
+export type InjuryStatus = 'OUT' | 'DOUBTFUL' | 'QUESTIONABLE' | 'GTD' | 'DTD' | null;
+
+export interface RosterPlayer {
+  name: string;
+  jersey: string;
+  position: string;
+  injuryStatus?: InjuryStatus;
+  injuryDetail?: string;
+}
+
 export interface GameContext {
   eventId: string;
   espnEventId?: string; // ESPN's 9-digit event ID for PBP data
@@ -31,8 +41,8 @@ export interface GameContext {
   awayTeam: string;
   commenceTime: string;
   gameDescription: string;
-  homeRoster: { name: string; jersey: string; position: string }[];
-  awayRoster: { name: string; jersey: string; position: string }[];
+  homeRoster: RosterPlayer[];
+  awayRoster: RosterPlayer[];
   propLines?: PropLine[]; // Real betting lines from unified_props
   // Pre-game baselines
   preGameBaselines?: PreGameBaseline[];
