@@ -484,6 +484,18 @@ serve(async (req) => {
       console.log(`[Archive] Updated ${snapshotsUpdated} monthly snapshots`);
     }
 
+    // 7. Recalculate player reliability scores (PRRS)
+    console.log('[Archive] Step 7: Recalculating player reliability scores...');
+    const { data: reliabilityResult, error: reliabilityError } = await supabase
+      .rpc('calculate_player_reliability');
+    
+    if (reliabilityError) {
+      console.error('[Archive] Error calculating player reliability:', reliabilityError);
+      results.errors.push(`reliability calculation: ${reliabilityError.message}`);
+    } else {
+      console.log('[Archive] Player reliability scores updated:', reliabilityResult);
+    }
+
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : 'Unknown error';
     console.error('[Archive] Unexpected error:', err);
