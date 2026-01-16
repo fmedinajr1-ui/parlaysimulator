@@ -425,7 +425,9 @@ const GLASS_CLEANER_LIST = [
   'wendell carter jr', 'julius randle', 'ivica zubac', 'donovan clingan',
   'nick richards', 'jalen duren', 'nic claxton', 'mark williams',
   'mason plumlee', 'robert williams', 'kristaps porzingis', 'zach edey',
-  'isaiah hartenstein', 'daniel gafford', 'clint capela', 'brook lopez'
+  'isaiah hartenstein', 'daniel gafford', 'clint capela', 'brook lopez',
+  'jusuf nurkic', "kel'el ware", 'jock landale', 'quinten post', 'yves missi',
+  'walker kessler', 'bobby portis', 'precious achiuwa', 'naz reid'
 ];
 
 // PURE SHOOTERS: Points specialists (20+ PPG scorers)
@@ -434,7 +436,9 @@ const PURE_SHOOTER_LIST = [
   'jayson tatum', 'jaylen brown', 'zach lavine', 'bradley beal',
   'cj mccollum', 'klay thompson', 'buddy hield', 'malik monk',
   'desmond bane', 'bogdan bogdanovic', 'collin sexton', 'cam thomas',
-  'austin reaves', 'keegan murray', 'jalen williams', 'michael porter jr'
+  'austin reaves', 'keegan murray', 'jalen williams', 'michael porter jr',
+  'tyler herro', 'payton pritchard', 'jordan poole', 'cam johnson',
+  'norman powell', 'terence mann', 'brandin podziemski', 'malik beasley'
 ];
 
 // PLAYMAKERS: Primary playmakers (7+ APG)
@@ -442,7 +446,8 @@ const PLAYMAKER_LIST = [
   'tyrese haliburton', 'trae young', 'chris paul', 'dejounte murray',
   'fred vanvleet', 'jalen brunson', 'darius garland', 'lamelo ball',
   'cade cunningham', 'tre jones', 'tyus jones', 'james harden',
-  'luka doncic', 'luka dončić', 'shai gilgeous-alexander'
+  'luka doncic', 'luka dončić', 'shai gilgeous-alexander',
+  'keyonte george', 'josh giddey', 'dennis schroder', 'monte morris'
 ];
 
 // SCORING GUARDS: High-volume scoring guards
@@ -450,7 +455,25 @@ const SCORING_GUARD_LIST = [
   'donovan mitchell', 'tyrese maxey', 'anthony edwards', 'de\'aaron fox',
   'jamal murray', 'demar derozan', 'kyrie irving', 'ja morant',
   'anfernee simons', 'jrue holiday', 'mikal bridges', 'coby white',
-  'scoot henderson', 'jordan poole', 'immanuel quickley', 'scottie barnes'
+  'scoot henderson', 'immanuel quickley', 'scottie barnes',
+  'shaedon sharpe', 'jaden ivey', 'stephon castle', 'reed sheppard',
+  'dyson daniels', 'ayo dosunmu', 'max strus', 'gradey dick'
+];
+
+// TWO-WAY WINGS: Versatile scorers with defensive impact
+const TWO_WAY_WING_LIST = [
+  'jimmy butler', 'derrick white', 'amen thompson', 'herb jones',
+  'og anunoby', 'aaron gordon', 'andrew wiggins', 'dillon brooks',
+  'brandon ingram', 'franz wagner', 'kawhi leonard', 'paul george',
+  'khris middleton', 'tobias harris', 'harrison barnes', 'kelly oubre jr',
+  'dorian finney-smith', 'jae crowder', 'caleb martin', 'royce o\'neale'
+];
+
+// STRETCH BIGS: Floor-spacing bigs (3PT threats)
+const STRETCH_BIG_LIST = [
+  'kevin love', 'al horford', 'kelly olynyk', 'lauri markkanen',
+  'karl-anthony towns', 'nikola vucevic', 'jaren jackson jr', 'domantas sabonis',
+  'myles turner', 'christian braun', 'jonathan isaac', 'john collins'
 ];
 
 // BALL-DOMINANT STARS: High usage + primary FT taker + clutch player
@@ -491,6 +514,58 @@ const STAR_PLAYERS_BY_TEAM: Record<string, string[]> = {
 // Flatten for quick lookup
 const ALL_STAR_PLAYERS = Object.values(STAR_PLAYERS_BY_TEAM).flat();
 
+// ============ LINE-BASED ARCHETYPE INFERENCE (FALLBACK) ============
+// When stats are missing, infer archetype from prop line values
+function inferArchetypeFromLine(
+  propType: string,
+  line: number,
+  trueMedian: number
+): PlayerArchetype | null {
+  const propLower = propType.toLowerCase().replace('player_', '');
+  
+  // High-line points (20+) = likely primary scorer
+  if (propLower.includes('points') && trueMedian >= 20) {
+    return 'PURE_SHOOTER';
+  }
+  
+  // Mid-high line points (15-20) = likely starter/scoring guard
+  if (propLower.includes('points') && trueMedian >= 15) {
+    return 'SCORING_GUARD';
+  }
+  
+  // Mid-line points (10-15) = likely TWO_WAY_WING
+  if (propLower.includes('points') && trueMedian >= 10) {
+    return 'TWO_WAY_WING';
+  }
+  
+  // High-line rebounds (9+) = elite rebounder
+  if (propLower.includes('rebounds') && trueMedian >= 9) {
+    return 'ELITE_REBOUNDER';
+  }
+  
+  // Mid-high rebounds (6-9) = glass cleaner
+  if (propLower.includes('rebounds') && trueMedian >= 6) {
+    return 'GLASS_CLEANER';
+  }
+  
+  // High-line assists (7+) = playmaker
+  if (propLower.includes('assists') && trueMedian >= 7) {
+    return 'PLAYMAKER';
+  }
+  
+  // Mid assists (5-7) = combo guard
+  if (propLower.includes('assists') && trueMedian >= 5) {
+    return 'COMBO_GUARD';
+  }
+  
+  // Only return ROLE_PLAYER for genuinely low lines
+  if (propLower.includes('points') && trueMedian < 8) {
+    return 'ROLE_PLAYER';
+  }
+  
+  return null;  // Let other classification handle it
+}
+
 // ============ ARCHETYPE CLASSIFICATION FUNCTIONS ============
 function classifyPlayerArchetype(
   playerName: string,
@@ -510,6 +585,8 @@ function classifyPlayerArchetype(
   if (PLAYMAKER_LIST.some(p => normalized.includes(p))) return 'PLAYMAKER';
   if (PURE_SHOOTER_LIST.some(p => normalized.includes(p))) return 'PURE_SHOOTER';
   if (SCORING_GUARD_LIST.some(p => normalized.includes(p))) return 'SCORING_GUARD';
+  if (TWO_WAY_WING_LIST.some(p => normalized.includes(p))) return 'TWO_WAY_WING';
+  if (STRETCH_BIG_LIST.some(p => normalized.includes(p))) return 'STRETCH_BIG';
   
   // 2. Infer from stats
   // Elite rebounder: 9+ rebounds
@@ -532,6 +609,11 @@ function classifyPlayerArchetype(
     return 'SCORING_GUARD';
   }
   
+  // Mid-level scorers (10-15 pts) = TWO_WAY_WING (better default than ROLE_PLAYER)
+  if (avgPoints >= 10 && avgPoints < 15) {
+    return 'TWO_WAY_WING';
+  }
+  
   // Rim protector: 1.5+ blocks, big position
   if (avgBlocks >= 1.5 && (posUpper === 'C' || posUpper.includes('C'))) {
     return 'RIM_PROTECTOR';
@@ -544,13 +626,14 @@ function classifyPlayerArchetype(
   
   // Two-way wing: SF/F with balanced stats
   if (posUpper === 'SF' || posUpper === 'F' || posUpper.includes('F')) {
-    if (avgPoints >= 12 && avgRebounds >= 4 && avgAssists >= 2) {
+    if (avgPoints >= 10 && avgRebounds >= 3) {
       return 'TWO_WAY_WING';
     }
   }
   
-  // 3. Role player: low minutes or low stats
-  if (avgMinutes < 22 || (avgPoints < 10 && avgRebounds < 5 && avgAssists < 3)) {
+  // 3. Role player: ONLY for genuinely low stats
+  // Tightened: Must have <8 points AND <4 rebounds AND <2 assists
+  if (avgMinutes < 20 || (avgPoints < 8 && avgRebounds < 4 && avgAssists < 2)) {
     return 'ROLE_PLAYER';
   }
   
@@ -1391,12 +1474,6 @@ serve(async (req) => {
           // Get player stats
           const position = positionMap[playerNameLower] || 'SF';
           const stats = seasonStatsMap[playerNameLower];
-          const avgPoints = stats?.avg_points || 0;
-          const avgRebounds = stats?.avg_rebounds || 0;
-          const avgAssists = stats?.avg_assists || 0;
-          const avgThrees = stats?.avg_threes || 0;
-          const avgBlocks = stats?.avg_blocks || 0;
-          const avgMinutes = stats?.avg_minutes || 28;
           
           // ============ LAYER 0: GET GAME LOGS & CALCULATE MEDIAN FIRST ============
           // FIX: Calculate median BEFORE determining side to avoid defaulting all to 'under'
@@ -1414,6 +1491,34 @@ serve(async (req) => {
             });
             continue;
           }
+          
+          // ============ FALLBACK STATS CALCULATION FROM GAME LOGS ============
+          // NEW: Calculate stats from game logs when season stats are missing
+          let fallbackAvgPoints = 0;
+          let fallbackAvgRebounds = 0;
+          let fallbackAvgAssists = 0;
+          let fallbackAvgMinutes = 28;
+          let fallbackAvgThrees = 0;
+          let fallbackAvgBlocks = 0;
+          
+          if (!stats && playerLogs.length >= 5) {
+            fallbackAvgPoints = playerLogs.reduce((sum, log) => sum + (log.pts || log.points || 0), 0) / playerLogs.length;
+            fallbackAvgRebounds = playerLogs.reduce((sum, log) => sum + (log.reb || log.rebounds || 0), 0) / playerLogs.length;
+            fallbackAvgAssists = playerLogs.reduce((sum, log) => sum + (log.ast || log.assists || 0), 0) / playerLogs.length;
+            fallbackAvgMinutes = playerLogs.reduce((sum, log) => sum + (log.min || log.minutes_played || 0), 0) / playerLogs.length;
+            fallbackAvgThrees = playerLogs.reduce((sum, log) => sum + (log.fg3m || log.threes_made || 0), 0) / playerLogs.length;
+            fallbackAvgBlocks = playerLogs.reduce((sum, log) => sum + (log.blk || log.blocks || 0), 0) / playerLogs.length;
+            
+            console.log(`[FALLBACK-STATS] ${prop.player_name}: pts=${fallbackAvgPoints.toFixed(1)}, reb=${fallbackAvgRebounds.toFixed(1)}, ast=${fallbackAvgAssists.toFixed(1)}, min=${fallbackAvgMinutes.toFixed(1)}`);
+          }
+          
+          // Use fallback values if season stats are missing (the fix!)
+          const effectiveAvgPoints = stats?.avg_points || fallbackAvgPoints || 0;
+          const effectiveAvgRebounds = stats?.avg_rebounds || fallbackAvgRebounds || 0;
+          const effectiveAvgAssists = stats?.avg_assists || fallbackAvgAssists || 0;
+          const effectiveAvgThrees = stats?.avg_threes || fallbackAvgThrees || 0;
+          const effectiveAvgBlocks = stats?.avg_blocks || fallbackAvgBlocks || 0;
+          const effectiveAvgMinutes = stats?.avg_minutes || fallbackAvgMinutes || 28;
           
           const statValues = playerLogs.map(log => extractStatFromLog(log, column));
           const line = prop.current_line || prop.line;
@@ -1472,20 +1577,31 @@ serve(async (req) => {
           
           console.log(`[TIER-CHECK] ${prop.player_name} ${prop.prop_type}: tier=${propPerf.tier}, edge=${Math.abs(calculatedEdge).toFixed(1)} (min ${propPerf.minEdgeRequired})`);
           
-          // ============ LAYER 1: ARCHETYPE CLASSIFICATION ============
+          // ============ LAYER 1: ARCHETYPE CLASSIFICATION (IMPROVED) ============
           // Get archetype early for rebounds check
           let archetype = archetypeMap[playerNameLower];
+          
           if (!archetype) {
+            // Try classification with effective (fallback-aware) stats
             archetype = classifyPlayerArchetype(
               prop.player_name,
               position,
-              avgPoints,
-              avgRebounds,
-              avgAssists,
-              avgThrees,
-              avgBlocks,
-              avgMinutes
+              effectiveAvgPoints,
+              effectiveAvgRebounds,
+              effectiveAvgAssists,
+              effectiveAvgThrees,
+              effectiveAvgBlocks,
+              effectiveAvgMinutes
             );
+            
+            // If still ROLE_PLAYER but high median, use line-based inference to override
+            if (archetype === 'ROLE_PLAYER' && trueMedian > 0) {
+              const inferredArchetype = inferArchetypeFromLine(prop.prop_type, line, trueMedian);
+              if (inferredArchetype && inferredArchetype !== 'ROLE_PLAYER') {
+                console.log(`[ARCHETYPE-OVERRIDE] ${prop.player_name}: ${archetype} → ${inferredArchetype} (based on median ${trueMedian.toFixed(1)})`);
+                archetype = inferredArchetype;
+              }
+            }
           }
           
           const role = archetypeToRole(archetype, prop.player_name);
@@ -1706,7 +1822,7 @@ serve(async (req) => {
           }
           
           // Minutes check
-          const minutesClass = classifyMinutes(avgMinutes);
+          const minutesClass = classifyMinutes(effectiveAvgMinutes);
           if (minutesClass === 'RISKY' && isOver) {
             rejectedProps.push({ 
               ...prop, 
@@ -1851,7 +1967,7 @@ serve(async (req) => {
             archetype,
             game_script: gameScript,
             minutes_class: minutesClass,
-            avg_minutes: avgMinutes,
+            avg_minutes: effectiveAvgMinutes,
             spread,
             true_median: trueMedian,
             edge,
