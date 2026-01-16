@@ -264,7 +264,7 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
   const initializePlayerStates = useCallback((context: GameContext) => {
     const newStates = new Map<string, PlayerLiveState>();
     
-    const initPlayer = (player: { name: string; jersey: string; position: string }, team: string) => {
+    const initPlayer = (player: { name: string; jersey: string; position: string; injuryStatus?: 'OUT' | 'DOUBTFUL' | 'QUESTIONABLE' | 'GTD' | 'DTD' | null; injuryDetail?: string }, team: string) => {
       const role = getInitialRole(player.position);
       
       // Find pre-game baseline for this player
@@ -276,7 +276,7 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
         playerName: player.name,
         jersey: player.jersey,
         team,
-        onCourt: true,
+        onCourt: !player.injuryStatus || player.injuryStatus !== 'OUT', // If OUT, not on court
         role,
         // Use pre-game baselines if available, otherwise defaults
         fatigueScore: baseline?.fatigueScore ?? 15,
@@ -306,6 +306,9 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
         // Store baseline metadata for UI
         preGameTrend: baseline?.trend,
         preGameConsistency: baseline?.consistency,
+        // Injury status from ESPN
+        injuryStatus: player.injuryStatus,
+        injuryDetail: player.injuryDetail,
       });
       
       // Initialize fatigue history with baseline

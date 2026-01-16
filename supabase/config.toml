@@ -296,3 +296,6 @@ verify_jwt = false
 
 [functions.sync-missing-rosters]
 verify_jwt = false
+
+[functions.bulk-sync-jerseys]
+verify_jwt = false

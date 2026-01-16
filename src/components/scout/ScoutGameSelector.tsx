@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
 import { Calendar, Clock, Users, ChevronRight, RefreshCw, Database } from "lucide-react";
-import type { GameContext } from "@/pages/Scout";
+import type { GameContext, InjuryStatus, RosterPlayer } from "@/pages/Scout";
 import { toZonedTime, format } from "date-fns-tz";
 import { toast } from "sonner";
 import { 
@@ -348,7 +348,7 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
       console.log(`[ScoutGameSelector] Team fatigue - Home: ${homeTeamFatigue?.fatigueScore ?? 'N/A'}, Away: ${awayTeamFatigue?.fatigueScore ?? 'N/A'}`);
 
       // Include ALL players - mark missing jerseys with "?" instead of filtering out
-      let validHomeRoster = (homeRoster || []).map(p => {
+      let validHomeRoster: RosterPlayer[] = (homeRoster || []).map(p => {
         const hasValidJersey = p.jersey_number && 
           p.jersey_number !== '?' && 
           p.jersey_number !== 'null' && 
@@ -358,11 +358,10 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
           name: p.player_name,
           jersey: hasValidJersey ? p.jersey_number : '?',
           position: p.position || '',
-          hasValidJersey,
         };
       });
 
-      let validAwayRoster = (awayRoster || []).map(p => {
+      let validAwayRoster: RosterPlayer[] = (awayRoster || []).map(p => {
         const hasValidJersey = p.jersey_number && 
           p.jersey_number !== '?' && 
           p.jersey_number !== 'null' && 
@@ -372,14 +371,15 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
           name: p.player_name,
           jersey: hasValidJersey ? p.jersey_number : '?',
           position: p.position || '',
-          hasValidJersey,
         };
       });
+
+      // Track players with missing jersey data
+      const playersWithMissingJerseys = [...validHomeRoster, ...validAwayRoster].filter(p => p.jersey === '?');
 
       // Check for players with missing jersey data and trigger background sync
-      const missingJerseyPlayers = [...validHomeRoster, ...validAwayRoster].filter(p => !p.hasValidJersey);
-      if (missingJerseyPlayers.length > 0) {
-        console.log(`[ScoutGameSelector] ${missingJerseyPlayers.length} players missing jersey data, triggering sync`);
+      if (playersWithMissingJerseys.length > 0) {
+        console.log(`[ScoutGameSelector] ${playersWithMissingJerseys.length} players missing jersey data, triggering sync`);
         
         // Trigger background sync (don't await)
         supabase.functions.invoke('sync-missing-rosters', {
@@ -399,11 +399,10 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
         const uniquePlayerNames = [...new Set(propsData.map(p => p.player_name))];
         
         // Create fallback roster entries (no jersey numbers - will show "?" in UI)
-        const fallbackRoster = uniquePlayerNames.map(name => ({
+        const fallbackRoster: RosterPlayer[] = uniquePlayerNames.map(name => ({
           name,
           jersey: '?',
           position: '',
-          hasValidJersey: false,
         }));
 
         // Split players between teams based on game description
@@ -492,29 +491,114 @@ export function ScoutGameSelector({ selectedGame, onGameSelect }: ScoutGameSelec
               
               console.log(`[ScoutGameSelector] ESPN provided jersey data for ${espnJerseys.size} players`);
               
+              // Extract injury data from ESPN summary
+              const injuryMap = new Map<string, { status: InjuryStatus; detail: string }>();
+              const gameInfo = espnSummary.gameInfo;
+              
+              // Check for injuries in gameInfo.injuries array
+              if (gameInfo?.injuries && Array.isArray(gameInfo.injuries)) {
+                for (const teamInjuries of gameInfo.injuries) {
+                  for (const injury of teamInjuries.injuries || []) {
+                    const athleteName = injury.athlete?.displayName;
+                    const rawStatus = (injury.status || injury.type?.description || '').toUpperCase();
+                    
+                    if (athleteName && rawStatus) {
+                      // Map ESPN status to our InjuryStatus type
+                      let status: InjuryStatus = null;
+                      if (rawStatus.includes('OUT')) status = 'OUT';
+                      else if (rawStatus.includes('DOUBTFUL')) status = 'DOUBTFUL';
+                      else if (rawStatus.includes('QUESTIONABLE')) status = 'QUESTIONABLE';
+                      else if (rawStatus.includes('DAY') || rawStatus.includes('DTD')) status = 'DTD';
+                      else if (rawStatus.includes('GAME TIME') || rawStatus.includes('GTD')) status = 'GTD';
+                      
+                      if (status) {
+                        injuryMap.set(normalizePlayerName(athleteName), {
+                          status,
+                          detail: injury.details?.detail || injury.longComment || ''
+                        });
+                      }
+                    }
+                  }
+                }
+              }
+              
+              // Also check header.competitions for injury info
+              const competition = espnSummary.header?.competitions?.[0];
+              if (competition?.competitors) {
+                for (const competitor of competition.competitors) {
+                  for (const player of competitor.leaders?.[0]?.leaders || []) {
+                    // Check athlete injury status
+                    const athleteInjury = player.athlete?.injuries?.[0];
+                    if (athleteInjury) {
+                      const rawStatus = (athleteInjury.status || '').toUpperCase();
+                      let status: InjuryStatus = null;
+                      if (rawStatus.includes('OUT')) status = 'OUT';
+                      else if (rawStatus.includes('DOUBTFUL')) status = 'DOUBTFUL';
+                      else if (rawStatus.includes('QUESTIONABLE')) status = 'QUESTIONABLE';
+                      else if (rawStatus.includes('DAY') || rawStatus.includes('DTD')) status = 'DTD';
+                      else if (rawStatus.includes('GAME TIME') || rawStatus.includes('GTD')) status = 'GTD';
+                      
+                      if (status && player.athlete?.displayName) {
+                        injuryMap.set(normalizePlayerName(player.athlete.displayName), {
+                          status,
+                          detail: athleteInjury.longComment || ''
+                        });
+                      }
+                    }
+                  }
+                }
+              }
+              
+              console.log(`[ScoutGameSelector] ESPN provided injury data for ${injuryMap.size} players`);
+              
               // Fill in missing jerseys from ESPN data with fuzzy matching
               const playersToUpdate: Array<{ name: string; jersey: string }> = [];
               
+              // Apply jersey updates and injury status
               validHomeRoster = validHomeRoster.map(p => {
-                if (!p.hasValidJersey) {
+                const normalizedName = normalizePlayerName(p.name);
+                const injury = injuryMap.get(normalizedName);
+                
+                if (p.jersey === '?') {
                   const match = findESPNMatch(p.name, espnJerseys);
                   if (match && match.jersey && match.jersey !== '?') {
                     playersToUpdate.push({ name: p.name, jersey: match.jersey });
-                    return { ...p, jersey: match.jersey, hasValidJersey: true };
+                    return { 
+                      ...p, 
+                      jersey: match.jersey,
+                      injuryStatus: injury?.status,
+                      injuryDetail: injury?.detail 
+                    };
                   }
                 }
-                return p;
+                return { 
+                  ...p, 
+                  injuryStatus: injury?.status,
+                  injuryDetail: injury?.detail 
+                };
               });
               
               validAwayRoster = validAwayRoster.map(p => {
-                if (!p.hasValidJersey) {
+                const normalizedName = normalizePlayerName(p.name);
+                const injury = injuryMap.get(normalizedName);
+                
+                if (p.jersey === '?') {
                   const match = findESPNMatch(p.name, espnJerseys);
                   if (match && match.jersey && match.jersey !== '?') {
                     playersToUpdate.push({ name: p.name, jersey: match.jersey });
-                    return { ...p, jersey: match.jersey, hasValidJersey: true };
+                    return { 
+                      ...p, 
+                      jersey: match.jersey,
+                      injuryStatus: injury?.status,
+                      injuryDetail: injury?.detail 
+                    };
                   }
                 }
-                return p;
+                return { 
+                  ...p, 
+                  injuryStatus: injury?.status,
+                  injuryDetail: injury?.detail 
+                };
               });
               
               // Update cache with ESPN jersey data (background, don't await)
