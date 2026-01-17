@@ -282,11 +282,45 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
         },
       });
       
-      // Handle transient errors with retry - check both data and error for retryAfter
-      // When edge function returns 503, supabase SDK puts response in error.context
-      const retryAfter = data?.retryAfter || (error as any)?.context?.retryAfter;
-      if (retryAfter && retryCount < 2) {
-        console.log(`[Autopilot] Transient error, retrying in ${retryAfter}ms...`);
+      // Handle transient errors with retry - check multiple locations for retryAfter
+      // Supabase SDK can put 503 response in different places depending on how it fails
+      let retryAfter: number | undefined;
+      
+      // Check in successful data response
+      if (data?.retryAfter) {
+        retryAfter = data.retryAfter;
+      }
+      
+      // Check in error.context (Supabase SDK v2 pattern)
+      if (!retryAfter && (error as any)?.context?.retryAfter) {
+        retryAfter = (error as any).context.retryAfter;
+      }
+      
+      // Check if error message is JSON containing retryAfter
+      if (!retryAfter && error?.message) {
+        try {
+          // Try parsing the raw error message as JSON
+          const parsed = JSON.parse(error.message);
+          if (parsed?.retryAfter) retryAfter = parsed.retryAfter;
+        } catch {
+          // Check if error message contains the JSON string after a prefix
+          const jsonMatch = error.message.match(/\{.*"retryAfter":\s*(\d+).*\}/);
+          if (jsonMatch) {
+            try {
+              const parsed = JSON.parse(jsonMatch[0]);
+              if (parsed?.retryAfter) retryAfter = parsed.retryAfter;
+            } catch { /* ignore */ }
+          }
+        }
+      }
+      
+      // Also check error.body for edge function responses
+      if (!retryAfter && (error as any)?.body?.retryAfter) {
+        retryAfter = (error as any).body.retryAfter;
+      }
+      
+      if (retryAfter && retryCount < 3) {
+        console.log(`[Autopilot] Transient error, retrying in ${retryAfter}ms (attempt ${retryCount + 1}/3)...`);
         // Keep lock held during retry wait, then release after retry completes
         setTimeout(() => {
           runAgentLoop(retryCount + 1).finally(() => {
@@ -296,25 +330,6 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
         return; // Don't release lock yet - retry will release it
       }
       
-      // Also handle error responses that contain JSON with retryAfter
-      if (error && retryCount < 2) {
-        try {
-          const errorBody = typeof error.message === 'string' && error.message.includes('retryAfter') 
-            ? JSON.parse(error.message) 
-            : null;
-          if (errorBody?.retryAfter) {
-            console.log(`[Autopilot] Gateway error, retrying in ${errorBody.retryAfter}ms...`);
-            setTimeout(() => {
-              runAgentLoop(retryCount + 1).finally(() => {
-                isRunningLoopRef.current = false;
-              });
-            }, errorBody.retryAfter);
-            return; // Don't release lock yet - retry will release it
-          }
-        } catch {
-          // Not JSON, continue with normal error handling
-        }
-      }
       
       if (!error && data) {
         // Process response even if it has warnings
