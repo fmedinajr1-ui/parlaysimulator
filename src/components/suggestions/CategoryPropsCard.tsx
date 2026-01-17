@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { RefreshCw, Shield, Target, TrendingDown, Plus, ChevronDown, ChevronUp, Zap } from 'lucide-react';
+import { RefreshCw, Shield, Target, TrendingDown, Plus, ChevronDown, ChevronUp, Zap, Lock, Unlock } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -97,13 +97,24 @@ const L10StatsRow = ({ avg, min, max, median }: { avg: number | null; min: numbe
   </div>
 );
 
-const CategoryPickCard = ({ pick }: { pick: CategorySweetSpot }) => {
+const CategoryPickCard = ({ 
+  pick, 
+  isLocked, 
+  onToggleLock 
+}: { 
+  pick: CategorySweetSpot; 
+  isLocked: boolean;
+  onToggleLock: () => void;
+}) => {
   const hitRate = pick.l10_hit_rate || 0;
   const isElite = hitRate >= 0.9;
   const description = `${pick.player_name} ${(pick.recommended_side || 'O').toUpperCase()}${pick.recommended_line} ${formatPropType(pick.prop_type)}`;
   
   return (
-    <div className="p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors">
+    <div className={cn(
+      "p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors",
+      isLocked && "ring-2 ring-primary bg-primary/5"
+    )}>
       <div className="flex items-start justify-between gap-2 mb-2">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
@@ -111,6 +122,11 @@ const CategoryPickCard = ({ pick }: { pick: CategorySweetSpot }) => {
             {isElite && (
               <Badge variant="secondary" className="bg-green-500/20 text-green-600 text-[10px] px-1.5">
                 ELITE
+              </Badge>
+            )}
+            {isLocked && (
+              <Badge variant="secondary" className="bg-primary/20 text-primary text-[10px] px-1.5">
+                LOCKED
               </Badge>
             )}
           </div>
@@ -125,26 +141,37 @@ const CategoryPickCard = ({ pick }: { pick: CategorySweetSpot }) => {
             )}
           </div>
         </div>
-        <AddToParlayButton
-          description={description}
-          odds={-110}
-          source="hitrate"
-          playerName={pick.player_name}
-          propType={pick.prop_type}
-          line={pick.recommended_line || undefined}
-          side={pick.recommended_side as 'over' | 'under' | undefined}
-          sport="basketball_nba"
-          confidenceScore={pick.confidence_score || undefined}
-          sourceData={{
-            l10_hit_rate: pick.l10_hit_rate,
-            l10_avg: pick.l10_avg,
-            l10_min: pick.l10_min,
-            l10_max: pick.l10_max,
-            category: pick.category,
-            archetype: pick.archetype
-          }}
-          variant="icon"
-        />
+        <div className="flex items-center gap-1">
+          <Button
+            variant={isLocked ? "default" : "ghost"}
+            size="icon"
+            className="h-8 w-8"
+            onClick={onToggleLock}
+            title={isLocked ? "Unlock pick" : "Lock pick"}
+          >
+            {isLocked ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
+          </Button>
+          <AddToParlayButton
+            description={description}
+            odds={-110}
+            source="hitrate"
+            playerName={pick.player_name}
+            propType={pick.prop_type}
+            line={pick.recommended_line || undefined}
+            side={pick.recommended_side as 'over' | 'under' | undefined}
+            sport="basketball_nba"
+            confidenceScore={pick.confidence_score || undefined}
+            sourceData={{
+              l10_hit_rate: pick.l10_hit_rate,
+              l10_avg: pick.l10_avg,
+              l10_min: pick.l10_min,
+              l10_max: pick.l10_max,
+              category: pick.category,
+              archetype: pick.archetype
+            }}
+            variant="icon"
+          />
+        </div>
       </div>
       
       <HitRateBar rate={hitRate} games={pick.games_played || 10} />
@@ -185,7 +212,11 @@ export const CategoryPropsCard = () => {
     buildCategoryParlay, 
     categoryCounts: todayCategoryCounts, 
     totalAvailable: todayTotalAvailable,
-    isLoading: isCategoryParlayLoading 
+    isLoading: isCategoryParlayLoading,
+    lockedPicks,
+    toggleLockPick,
+    clearLocks,
+    isLocked
   } = useCategoryParlayBuilder();
 
   const today = format(new Date(), 'yyyy-MM-dd');
@@ -287,6 +318,22 @@ export const CategoryPropsCard = () => {
             )}
           </div>
           <div className="flex items-center gap-2">
+            {lockedPicks.size > 0 && (
+              <>
+                <Badge variant="outline" className="gap-1 text-xs">
+                  <Lock className="h-3 w-3" />
+                  {lockedPicks.size} locked
+                </Badge>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={clearLocks}
+                  className="h-8 text-xs"
+                >
+                  Clear
+                </Button>
+              </>
+            )}
             <Button
               variant="default"
               size="sm"
@@ -366,7 +413,12 @@ export const CategoryPropsCard = () => {
                 ) : categoryPicks.length > 0 ? (
                   <div className="grid gap-2 max-h-[400px] overflow-y-auto pr-1">
                     {categoryPicks.slice(0, 10).map((pick) => (
-                      <CategoryPickCard key={pick.id} pick={pick} />
+                      <CategoryPickCard 
+                        key={pick.id} 
+                        pick={pick}
+                        isLocked={isLocked(pick.id)}
+                        onToggleLock={() => toggleLockPick(pick.id)}
+                      />
                     ))}
                     {categoryPicks.length > 10 && (
                       <p className="text-xs text-center text-muted-foreground py-2">
