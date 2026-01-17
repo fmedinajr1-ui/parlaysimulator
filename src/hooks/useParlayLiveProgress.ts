@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useLiveScores, LiveGame, PlayerStat } from './useLiveScores';
+import { useUnifiedLiveFeed, UnifiedPlayer, UnifiedGame } from './useUnifiedLiveFeed';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -163,9 +164,22 @@ export function useParlayLiveProgress() {
   const [pendingParlays, setPendingParlays] = useState<PendingParlay[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   
+  // Use both live scores (for game status) and unified feed (for player projections)
   const { games, liveGames, isConnected, triggerSync, lastUpdated } = useLiveScores({
     autoRefresh: true,
-    refreshInterval: 30000, // Reduced from 60s for more frequent updates
+    refreshInterval: 30000,
+  });
+  
+  // Unified feed provides real-time player projections with 15s refresh
+  const { 
+    games: unifiedGames, 
+    findPlayer: findUnifiedPlayer,
+    getPlayerProjection,
+    isLoading: feedLoading,
+    lastFetched: feedLastFetched,
+  } = useUnifiedLiveFeed({
+    enabled: pendingParlays.length > 0,
+    refreshInterval: 15000, // 15s for live player updates
   });
 
   // Fetch pending parlays
@@ -245,12 +259,22 @@ export function useParlayLiveProgress() {
         const betType = leg.betType || leg.bet_type || '';
         const isPlayerProp = isPlayerPropLeg(leg);
 
-        // Find matching player in live games
+        // Find matching player in live games - prefer unified feed for projections
         let matchedStat: PlayerStat | null = null;
         let matchedGame: LiveGame | null = null;
+        let unifiedPlayer: UnifiedPlayer | null = null;
+        let unifiedGame: UnifiedGame | null = null;
 
         // Only try to match players for player prop bets
         if (isPlayerProp && playerName) {
+          // First try unified feed for accurate projections
+          const unifiedResult = findUnifiedPlayer(playerName);
+          if (unifiedResult) {
+            unifiedPlayer = unifiedResult.player;
+            unifiedGame = unifiedResult.game;
+          }
+          
+          // Also try live scores for fallback
           for (const game of games) {
             const playerStats = game.playerStats || [];
             for (const stat of playerStats) {
@@ -313,55 +337,88 @@ export function useParlayLiveProgress() {
           }
         }
 
-        const currentValue = matchedStat ? getStatValue(matchedStat, propType) : null;
-        const gameProgress = matchedGame ? 
+        // Use unified feed data if available, fallback to live scores
+        let currentValue: number | null = null;
+        let minutesPlayed = 0;
+        let remainingMinutes = 0;
+        let ratePerMinute = 0;
+        let riskFlags: string[] = [];
+        let confidence = 50;
+        let projectedFinal: number | null = null;
+        let trend: 'strengthening' | 'weakening' | 'stable' = 'stable';
+        
+        // Get projection from unified feed (preferred)
+        const unifiedProjection = isPlayerProp && playerName 
+          ? getPlayerProjection(playerName, propType) 
+          : null;
+        
+        if (unifiedPlayer && unifiedProjection) {
+          // Use unified feed data - more accurate projections
+          currentValue = unifiedProjection.current;
+          projectedFinal = unifiedProjection.projected;
+          minutesPlayed = unifiedPlayer.minutesPlayed;
+          remainingMinutes = unifiedPlayer.estimatedRemaining;
+          ratePerMinute = unifiedProjection.ratePerMinute;
+          confidence = unifiedProjection.confidence;
+          riskFlags = unifiedPlayer.riskFlags;
+          trend = unifiedProjection.trend === 'up' ? 'strengthening' : 
+                  unifiedProjection.trend === 'down' ? 'weakening' : 'stable';
+        } else if (matchedStat) {
+          // Fallback to live scores data
+          currentValue = getStatValue(matchedStat, propType);
+          minutesPlayed = matchedStat?.minutes ? parseFloat(matchedStat.minutes.split(':')[0] || '0') : 0;
+          
+          const gameProgress = matchedGame ? 
+            (matchedGame.status === 'in_progress' ? 
+              Math.min(100, (parseInt(matchedGame.period) / 4) * 100) : 
+              matchedGame.status === 'final' ? 100 : 0) : 0;
+          
+          remainingMinutes = gameProgress > 0 && gameProgress < 100 
+            ? Math.max(0, (minutesPlayed / (gameProgress / 100)) - minutesPlayed)
+            : 0;
+          
+          ratePerMinute = minutesPlayed > 0 && currentValue !== null 
+            ? currentValue / minutesPlayed 
+            : 0;
+          
+          projectedFinal = currentValue !== null && gameProgress > 0 && gameProgress < 100
+            ? Math.round((currentValue + (ratePerMinute * remainingMinutes)) * 10) / 10
+            : currentValue;
+            
+          // Detect risk flags from game state
+          if (matchedGame) {
+            const scoreDiff = Math.abs(matchedGame.homeScore - matchedGame.awayScore);
+            const period = parseInt(matchedGame.period || '1');
+            if (scoreDiff >= 15 && period >= 4) riskFlags.push('blowout');
+            else if (scoreDiff >= 20 && period >= 3) riskFlags.push('blowout');
+          }
+          if ((matchedStat as any)?.fouls >= 4) riskFlags.push('foul_trouble');
+          
+          // Calculate confidence
+          if (minutesPlayed > 0) confidence += Math.min(25, minutesPlayed);
+          if (riskFlags.length > 0) confidence -= riskFlags.length * 10;
+          confidence = Math.max(1, Math.min(99, confidence));
+        }
+        
+        // Use unified game for game info if available
+        const effectiveGame = unifiedGame || matchedGame;
+        const gameProgress = unifiedGame?.gameProgress || (matchedGame ? 
           (matchedGame.status === 'in_progress' ? 
             Math.min(100, (parseInt(matchedGame.period) / 4) * 100) : 
-            matchedGame.status === 'final' ? 100 : 0) : 0;
+            matchedGame.status === 'final' ? 100 : 0) : 0);
 
         const isHitting = currentValue !== null && (
           side === 'over' ? currentValue >= line : currentValue <= line
         );
 
-        // Enhanced projection calculation
-        const minutesPlayed = matchedStat?.minutes ? parseFloat(matchedStat.minutes.split(':')[0] || '0') : 0;
-        const remainingMinutes = gameProgress > 0 && gameProgress < 100 
-          ? Math.max(0, (minutesPlayed / (gameProgress / 100)) - minutesPlayed)
-          : 0;
-        
-        const ratePerMinute = minutesPlayed > 0 && currentValue !== null 
-          ? currentValue / minutesPlayed 
-          : 0;
-        
-        // Rate-based projection (more accurate than linear)
-        const projectedFinal = currentValue !== null && gameProgress > 0 && gameProgress < 100
-          ? Math.round((currentValue + (ratePerMinute * remainingMinutes)) * 10) / 10
-          : currentValue;
-
         const isOnPace = projectedFinal !== null && (
           side === 'over' ? projectedFinal >= line : projectedFinal <= line
         );
-
-        // Detect risk flags
-        const riskFlags: string[] = [];
-        if (matchedGame) {
-          const scoreDiff = Math.abs(matchedGame.homeScore - matchedGame.awayScore);
-          const period = parseInt(matchedGame.period || '1');
-          if (scoreDiff >= 15 && period >= 4) riskFlags.push('blowout');
-          else if (scoreDiff >= 20 && period >= 3) riskFlags.push('blowout');
-        }
-        if ((matchedStat as any)?.fouls >= 4) riskFlags.push('foul_trouble');
 
         // Calculate pace percentage
         const pacePercentage = line > 0 && projectedFinal !== null
           ? Math.round((projectedFinal / line) * 100)
           : 100;
-
-        // Calculate confidence (1-99 scale)
-        let confidence = 50;
-        if (minutesPlayed > 0) confidence += Math.min(25, minutesPlayed);
-        if (riskFlags.length > 0) confidence -= riskFlags.length * 10;
-        confidence = Math.max(1, Math.min(99, confidence));
 
         return {
           legIndex: index,
@@ -372,28 +429,28 @@ export function useParlayLiveProgress() {
           side,
           currentValue,
           gameProgress,
-          gameStatus: normalizeGameStatus(matchedGame?.status),
-          gameInfo: matchedGame ? {
-            homeTeam: matchedGame.homeTeam,
-            awayTeam: matchedGame.awayTeam,
-            homeScore: matchedGame.homeScore,
-            awayScore: matchedGame.awayScore,
-            period: matchedGame.period,
-            clock: matchedGame.clock || '',
+          gameStatus: normalizeGameStatus(unifiedGame?.status || matchedGame?.status),
+          gameInfo: effectiveGame ? {
+            homeTeam: effectiveGame.homeTeam,
+            awayTeam: effectiveGame.awayTeam,
+            homeScore: effectiveGame.homeScore,
+            awayScore: effectiveGame.awayScore,
+            period: String(effectiveGame.period || matchedGame?.period || '1'),
+            clock: (effectiveGame as any).clock || matchedGame?.clock || '',
           } : null,
           isHitting,
           isOnPace,
           projectedFinal,
-          eventId: matchedGame?.eventId || null,
+          eventId: unifiedGame?.eventId || matchedGame?.eventId || null,
           isPlayerProp,
           description,
           betType,
           sport: leg.sport || parlay.sport || '',
           matchup: leg.matchup,
-          // Enhanced projection fields
+          // Enhanced projection fields from unified feed
           confidence,
           riskFlags,
-          trend: 'stable' as const, // Could be enhanced with history tracking
+          trend,
           remainingMinutes,
           ratePerMinute,
           pacePercentage,
