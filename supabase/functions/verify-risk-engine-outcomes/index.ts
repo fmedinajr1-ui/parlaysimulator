@@ -41,6 +41,49 @@ function normalizePlayerName(name: string): string {
     .trim();
 }
 
+// Fuzzy name matching - handles variations like "Jr." vs "Jr", spacing differences
+function fuzzyMatchPlayerName(pickName: string, logName: string): boolean {
+  const normPick = normalizePlayerName(pickName);
+  const normLog = normalizePlayerName(logName);
+  
+  // Exact match
+  if (normPick === normLog) return true;
+  
+  // One contains the other (handles Jr./Jr, III, etc.)
+  if (normPick.includes(normLog) || normLog.includes(normPick)) return true;
+  
+  // Split and compare first/last name
+  const pickParts = normPick.split(' ');
+  const logParts = normLog.split(' ');
+  
+  if (pickParts.length >= 2 && logParts.length >= 2) {
+    // Match first name + first 4 chars of last name
+    const pickFirst = pickParts[0];
+    const logFirst = logParts[0];
+    const pickLast = pickParts[pickParts.length - 1].substring(0, 4);
+    const logLast = logParts[logParts.length - 1].substring(0, 4);
+    
+    if (pickFirst === logFirst && pickLast === logLast) return true;
+  }
+  
+  return false;
+}
+
+// Get date range for matching (handles timezone edge cases)
+function getDateRange(dateStr: string): string[] {
+  const date = new Date(dateStr);
+  const prevDay = new Date(date);
+  prevDay.setDate(prevDay.getDate() - 1);
+  const nextDay = new Date(date);
+  nextDay.setDate(nextDay.getDate() + 1);
+  
+  return [
+    prevDay.toISOString().split('T')[0],
+    dateStr,
+    nextDay.toISOString().split('T')[0]
+  ];
+}
+
 function calculateActualValue(gameLog: any, propType: string): number | null {
   const statKey = PROP_TO_STAT_MAP[propType.toLowerCase()];
   
@@ -96,13 +139,18 @@ serve(async (req) => {
     const todayStr = today.toISOString().split('T')[0];
     const yesterdayStr = yesterday.toISOString().split('T')[0];
 
-    // Fetch pending picks from the last 2 days
+    // Fetch pending picks from the last 3 days (handles timezone edge cases)
+    const threeDaysAgo = new Date(today);
+    threeDaysAgo.setDate(threeDaysAgo.getDate() - 2);
+    const threeDaysAgoStr = threeDaysAgo.toISOString().split('T')[0];
+    
     const { data: pendingPicks, error: picksError } = await supabase
       .from('nba_risk_engine_picks')
       .select('id, player_name, prop_type, line, side, game_date, outcome')
-      .in('game_date', [todayStr, yesterdayStr])
+      .gte('game_date', threeDaysAgoStr)
+      .lte('game_date', todayStr)
       .or('outcome.is.null,outcome.eq.pending')
-      .limit(100);
+      .limit(200);
 
     if (picksError) {
       console.error('[verify-risk-engine-outcomes] Error fetching picks:', picksError);
@@ -124,15 +172,12 @@ serve(async (req) => {
       });
     }
 
-    // Get unique player names
-    const playerNames = [...new Set(pendingPicks.map(p => p.player_name))];
-    
-    // Fetch game logs for these players
+    // Fetch game logs for the date range (broader to catch timezone edge cases)
     const { data: gameLogs, error: logsError } = await supabase
       .from('nba_player_game_logs')
       .select('*')
-      .in('player_name', playerNames)
-      .in('game_date', [todayStr, yesterdayStr]);
+      .gte('game_date', threeDaysAgoStr)
+      .lte('game_date', todayStr);
 
     if (logsError) {
       console.error('[verify-risk-engine-outcomes] Error fetching game logs:', logsError);
@@ -141,14 +186,9 @@ serve(async (req) => {
 
     console.log(`[verify-risk-engine-outcomes] Found ${gameLogs?.length || 0} game logs`);
 
-    // Create lookup map for game logs
-    const logMap = new Map<string, any>();
-    for (const log of (gameLogs || [])) {
-      const key = `${normalizePlayerName(log.player_name)}_${log.game_date}`;
-      logMap.set(key, log);
-    }
+    console.log(`[verify-risk-engine-outcomes] Found ${gameLogs?.length || 0} game logs`);
 
-    // Process each pick
+    // Process each pick with fuzzy matching
     let verified = 0;
     let hits = 0;
     let misses = 0;
@@ -156,13 +196,21 @@ serve(async (req) => {
     const updates: { id: string; outcome: string; actual_value: number }[] = [];
 
     for (const pick of pendingPicks) {
-      const lookupKey = `${normalizePlayerName(pick.player_name)}_${pick.game_date}`;
-      const gameLog = logMap.get(lookupKey);
+      // Get date range for this pick (handles timezone edge cases)
+      const dateRange = getDateRange(pick.game_date);
+      
+      // Find matching game log with fuzzy name matching and date tolerance
+      const gameLog = (gameLogs || []).find(log => 
+        fuzzyMatchPlayerName(pick.player_name, log.player_name) &&
+        dateRange.includes(log.game_date)
+      );
 
       if (!gameLog) {
-        console.log(`[verify-risk-engine-outcomes] No game log found for ${pick.player_name} on ${pick.game_date}`);
+        console.log(`[verify-risk-engine-outcomes] No game log found for ${pick.player_name} on ${pick.game_date} (checked ${dateRange.join(', ')})`);
         continue;
       }
+      
+      console.log(`[verify-risk-engine-outcomes] Matched ${pick.player_name} → ${gameLog.player_name} on ${gameLog.game_date}`);
 
       const actualValue = calculateActualValue(gameLog, pick.prop_type);
       
