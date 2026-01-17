@@ -302,3 +302,6 @@ verify_jwt = false
 
 [functions.unified-player-feed]
 verify_jwt = false
+
+[functions.category-props-analyzer]
+verify_jwt = false
