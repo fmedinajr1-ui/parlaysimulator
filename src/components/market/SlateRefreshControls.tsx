@@ -22,6 +22,8 @@ export function SlateRefreshControls() {
     queryClient.invalidateQueries({ queryKey: ['sharpParlays'] });
     queryClient.invalidateQueries({ queryKey: ['heatParlays'] });
     queryClient.invalidateQueries({ queryKey: ['sweetSpotParlay'] });
+    queryClient.invalidateQueries({ queryKey: ['category-sweet-spots-all'] });
+    queryClient.invalidateQueries({ queryKey: ['category-parlay-builder'] });
   };
 
   const handleNextSlate = async () => {
