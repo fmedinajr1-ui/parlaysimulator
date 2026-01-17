@@ -686,6 +686,69 @@ export type Database = {
         }
         Relationships: []
       }
+      category_sweet_spots: {
+        Row: {
+          analysis_date: string | null
+          archetype: string | null
+          category: string
+          confidence_score: number | null
+          created_at: string | null
+          games_played: number | null
+          id: string
+          is_active: boolean | null
+          l10_avg: number | null
+          l10_hit_rate: number | null
+          l10_max: number | null
+          l10_median: number | null
+          l10_min: number | null
+          player_name: string
+          prop_type: string
+          recommended_line: number | null
+          recommended_side: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          analysis_date?: string | null
+          archetype?: string | null
+          category: string
+          confidence_score?: number | null
+          created_at?: string | null
+          games_played?: number | null
+          id?: string
+          is_active?: boolean | null
+          l10_avg?: number | null
+          l10_hit_rate?: number | null
+          l10_max?: number | null
+          l10_median?: number | null
+          l10_min?: number | null
+          player_name: string
+          prop_type: string
+          recommended_line?: number | null
+          recommended_side?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          analysis_date?: string | null
+          archetype?: string | null
+          category?: string
+          confidence_score?: number | null
+          created_at?: string | null
+          games_played?: number | null
+          id?: string
+          is_active?: boolean | null
+          l10_avg?: number | null
+          l10_hit_rate?: number | null
+          l10_max?: number | null
+          l10_median?: number | null
+          l10_min?: number | null
+          player_name?: string
+          prop_type?: string
+          recommended_line?: number | null
+          recommended_side?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       coach_game_tendencies: {
         Row: {
           coach_id: string | null
@@ -4398,6 +4461,9 @@ export type Database = {
           is_trap_indicator: boolean | null
           is_trap_line: boolean | null
           juice_magnitude: number | null
+          l10_avg: number | null
+          l10_games_used: number | null
+          l10_hit_rate: number | null
           line: number
           line_deviation_pct: number | null
           line_warning: string | null
@@ -4466,6 +4532,9 @@ export type Database = {
           is_trap_indicator?: boolean | null
           is_trap_line?: boolean | null
           juice_magnitude?: number | null
+          l10_avg?: number | null
+          l10_games_used?: number | null
+          l10_hit_rate?: number | null
           line: number
           line_deviation_pct?: number | null
           line_warning?: string | null
@@ -4534,6 +4603,9 @@ export type Database = {
           is_trap_indicator?: boolean | null
           is_trap_line?: boolean | null
           juice_magnitude?: number | null
+          l10_avg?: number | null
+          l10_games_used?: number | null
+          l10_hit_rate?: number | null
           line?: number
           line_deviation_pct?: number | null
           line_warning?: string | null

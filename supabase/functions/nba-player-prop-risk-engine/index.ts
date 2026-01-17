@@ -7,23 +7,24 @@ const corsHeaders = {
 };
 
 // ============================================================================
-// 🏀 NBA RISK ENGINE v4.4 - LINE CALIBRATION & TRAP DETECTION SYSTEM
+// 🏀 NBA RISK ENGINE v4.5 - L10 HIT RATE INTEGRATION
 // ============================================================================
-// 7-LAYER SHARP FUNNEL:
+// 8-LAYER SHARP FUNNEL:
 // Layer 1: Elite Player Archetype Classification
 // Layer 2: Role-Prop Alignment Enforcement
 // Layer 3: Head-to-Head Matchup Analysis
 // Layer 4: Stricter Statistical Contingencies
 // Layer 5: Balanced Over/Under Distribution
-// Layer 6: Sweet Spot Confidence Calibration
-// Layer 7: LINE CALIBRATION (NEW v4.4)
+// Layer 6: Player Reliability + L10 Hit Rate Integration (NEW v4.5)
+//   - Fetches L10 hit rates from category_sweet_spots
+//   - Blocks players with <40% L10 hit rate
+//   - Boosts players with ≥70% L10 hit rate
+// Layer 7: Sweet Spot Confidence Calibration
+// Layer 8: LINE CALIBRATION (v4.4)
 //   - Tiered line deviation detection (30%/45%/60%)
 //   - Book intel detection (injury/minutes/blowout suspects)
 //   - Calibrated edge with diminishing returns (cap at 6.5)
 //   - Trap line + high edge combo blocking
-// ============================================================================
-// PROBLEM SOLVED: Egor Demin OVER 7.5 (scored 5) and similar trap lines
-// where books offer lines far below true median to bait OVER bets
 // ============================================================================
 
 // ============ SWEET SPOT CONFIGURATION ============
@@ -1703,6 +1704,22 @@ serve(async (req) => {
       }
       console.log(`[Risk Engine v3.1] Loaded ${reliabilityMap.size} player reliability scores`);
 
+      // 8. Fetch L10 hit rates from category_sweet_spots (v4.5 - L10 Hit Rate Integration)
+      const { data: categoryL10Data } = await supabase
+        .from('category_sweet_spots')
+        .select('*')
+        .eq('analysis_date', today)
+        .eq('is_active', true);
+      
+      const l10HitRateMap = new Map<string, any>();
+      for (const c of (categoryL10Data || [])) {
+        if (c.player_name && c.prop_type) {
+          const key = `${c.player_name.toLowerCase()}_${c.prop_type}`;
+          l10HitRateMap.set(key, c);
+        }
+      }
+      console.log(`[Risk Engine v4.5] Loaded ${l10HitRateMap.size} L10 hit rate records`);
+
       const approvedProps: any[] = [];
       const rejectedProps: any[] = [];
       const processedPlayerProps = new Set<string>();
@@ -2210,11 +2227,35 @@ serve(async (req) => {
             continue;
           }
           
-          // ============ LAYER 6: PLAYER RELIABILITY CHECK (NEW) ============
+          // ============ LAYER 6: PLAYER RELIABILITY CHECK (with L10 hit rate integration) ============
           const reliabilityKey = `${playerNameLower}_${normalizedPropType}`;
           const playerReliability = reliabilityMap.get(reliabilityKey);
           
-          // Block chronic underperformers
+          // v4.5: Check L10 hit rate from category_sweet_spots
+          const l10Key = `${playerNameLower}_${normalizedPropType}`;
+          const l10Data = l10HitRateMap.get(l10Key);
+          
+          // Use L10 hit rate if available (more recent than reliability scores)
+          const effectiveHitRate = l10Data?.l10_hit_rate || playerReliability?.hit_rate || null;
+          const effectiveL10Avg = l10Data?.l10_avg || null;
+          const l10GamesUsed = l10Data?.games_played || 0;
+          
+          // Block if L10 hit rate is below 40% (chronic underperformer)
+          if (l10Data && l10Data.l10_hit_rate < 0.4 && l10GamesUsed >= 5) {
+            rejectedProps.push({ 
+              ...prop, 
+              rejection_reason: `L10_HIT_RATE_BLOCK: Only ${(l10Data.l10_hit_rate * 100).toFixed(0)}% hit rate in last ${l10GamesUsed} games for this prop type`, 
+              player_role: role, 
+              archetype,
+              player_reliability_tier: 'avoid',
+              l10_hit_rate: l10Data.l10_hit_rate,
+              l10_avg: l10Data.l10_avg
+            });
+            console.log(`[L10-BLOCK] ${prop.player_name} ${prop.prop_type}: ${(l10Data.l10_hit_rate * 100).toFixed(0)}% L10 hit rate`);
+            continue;
+          }
+          
+          // Block chronic underperformers from reliability scores
           if (playerReliability?.should_block) {
             rejectedProps.push({ 
               ...prop, 
@@ -2341,16 +2382,33 @@ serve(async (req) => {
           
           // ============ APPLY PLAYER RELIABILITY MODIFIER ============
           let reliabilityModifierApplied = 0;
-          if (playerReliability) {
-            reliabilityModifierApplied = playerReliability.confidence_modifier || 0;
-            adjustedScore += reliabilityModifierApplied;
-            
-            if (playerReliability.reliability_tier === 'elite') {
-              console.log(`[RELIABILITY-BOOST] ${prop.player_name} ${prop.prop_type}: +${reliabilityModifierApplied} (${playerReliability.hit_rate}% hit rate, ${playerReliability.total_picks} picks)`);
-            } else if (playerReliability.reliability_tier === 'avoid') {
-              console.log(`[RELIABILITY-PENALTY] ${prop.player_name} ${prop.prop_type}: ${reliabilityModifierApplied} (${playerReliability.hit_rate}% hit rate, ${playerReliability.total_picks} picks)`);
+          
+          // v4.5: Apply L10 hit rate bonus/penalty if available
+          if (l10Data && l10GamesUsed >= 5) {
+            if (l10Data.l10_hit_rate >= 0.8) {
+              reliabilityModifierApplied += 1.5;
+              console.log(`[L10-BOOST] ${prop.player_name} ${prop.prop_type}: +1.5 (${(l10Data.l10_hit_rate * 100).toFixed(0)}% L10 hit rate)`);
+            } else if (l10Data.l10_hit_rate >= 0.7) {
+              reliabilityModifierApplied += 0.75;
+              console.log(`[L10-BOOST] ${prop.player_name} ${prop.prop_type}: +0.75 (${(l10Data.l10_hit_rate * 100).toFixed(0)}% L10 hit rate)`);
+            } else if (l10Data.l10_hit_rate < 0.5) {
+              reliabilityModifierApplied -= 1.0;
+              console.log(`[L10-PENALTY] ${prop.player_name} ${prop.prop_type}: -1.0 (${(l10Data.l10_hit_rate * 100).toFixed(0)}% L10 hit rate)`);
             }
           }
+          
+          if (playerReliability) {
+            const prrsModifier = playerReliability.confidence_modifier || 0;
+            reliabilityModifierApplied += prrsModifier;
+            
+            if (playerReliability.reliability_tier === 'elite') {
+              console.log(`[RELIABILITY-BOOST] ${prop.player_name} ${prop.prop_type}: +${prrsModifier} (${playerReliability.hit_rate}% hit rate, ${playerReliability.total_picks} picks)`);
+            } else if (playerReliability.reliability_tier === 'avoid') {
+              console.log(`[RELIABILITY-PENALTY] ${prop.player_name} ${prop.prop_type}: ${prrsModifier} (${playerReliability.hit_rate}% hit rate, ${playerReliability.total_picks} picks)`);
+            }
+          }
+          
+          adjustedScore += reliabilityModifierApplied;
           
           // Use prop-type specific minimum threshold
           const minConfidence = MIN_CONFIDENCE_BY_TYPE[normalizedPropType] || MIN_CONFIDENCE_BY_TYPE['default'];
@@ -2439,6 +2497,10 @@ serve(async (req) => {
             is_trap_line: storedSanityCheck?.isTrapLine || false,
             trap_type: storedSanityCheck?.trapType || null,
             calibrated_edge: storedEdgeCalibration?.calibratedEdge || edge,
+            // v4.5: L10 hit rate integration
+            l10_hit_rate: l10Data?.l10_hit_rate || null,
+            l10_avg: l10Data?.l10_avg || null,
+            l10_games_used: l10GamesUsed || null,
           };
           
           approvedProps.push(approvedPick);
@@ -2554,6 +2616,10 @@ serve(async (req) => {
           player_hit_rate: pick.player_hit_rate,
           player_reliability_tier: pick.player_reliability_tier,
           reliability_modifier_applied: pick.reliability_modifier_applied,
+          // v4.5: L10 hit rate data
+          l10_hit_rate: pick.l10_hit_rate,
+          l10_avg: pick.l10_avg,
+          l10_games_used: pick.l10_games_used,
           mode,
           created_at: new Date().toISOString()
         }));
