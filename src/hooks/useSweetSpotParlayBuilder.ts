@@ -3,6 +3,11 @@ import { supabase } from "@/integrations/supabase/client";
 import { useParlayBuilder } from "@/contexts/ParlayBuilderContext";
 import { toast } from "sonner";
 
+// Get today's date in Eastern Time for consistent filtering
+function getEasternDate(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+}
+
 interface SweetSpotPick {
   id: string;
   player_name: string;
@@ -32,11 +37,24 @@ const TARGET_LEG_COUNT = 6;
 export function useSweetSpotParlayBuilder() {
   const { addLeg, clearParlay } = useParlayBuilder();
 
-  // Fetch all sweet spot picks with team data
+  // Fetch all sweet spot picks with team data - cross-reference with active props
   const { data: sweetSpotPicks, isLoading, refetch } = useQuery({
     queryKey: ['sweet-spot-parlay-picks'],
     queryFn: async () => {
-      const today = new Date().toISOString().split('T')[0];
+      const today = getEasternDate();
+      const now = new Date().toISOString();
+      
+      // First get active props (future games only) to filter out stale picks
+      const { data: activeProps } = await supabase
+        .from('unified_props')
+        .select('player_name')
+        .gte('commence_time', now);
+      
+      const activePlayers = new Set(
+        (activeProps || []).map(p => p.player_name?.toLowerCase()).filter(Boolean)
+      );
+      
+      console.log(`[SweetSpotParlay] Found ${activePlayers.size} active players with upcoming props`);
       
       // Get sweet spot picks from risk engine
       const { data: riskPicks, error: riskError } = await supabase
@@ -50,6 +68,13 @@ export function useSweetSpotParlayBuilder() {
         console.error('Error fetching risk engine sweet spots:', riskError);
       }
 
+      // Filter to only include picks with active props (games haven't started)
+      const validRiskPicks = (riskPicks || []).filter(
+        pick => activePlayers.has(pick.player_name?.toLowerCase())
+      );
+      
+      console.log(`[SweetSpotParlay] Filtered ${riskPicks?.length || 0} risk picks to ${validRiskPicks.length} with active props`);
+
       // Get tracked sweet spot picks
       const { data: trackedPicks, error: trackedError } = await supabase
         .from('sweet_spot_tracking')
@@ -60,6 +85,11 @@ export function useSweetSpotParlayBuilder() {
       if (trackedError) {
         console.error('Error fetching tracked sweet spots:', trackedError);
       }
+
+      // Filter tracked picks too
+      const validTrackedPicks = (trackedPicks || []).filter(
+        pick => activePlayers.has(pick.player_name?.toLowerCase())
+      );
 
       // Get player team data from cache
       const { data: playerCache } = await supabase
@@ -78,7 +108,7 @@ export function useSweetSpotParlayBuilder() {
       const seenPlayers = new Set<string>();
 
       // Add risk engine picks first (higher priority)
-      riskPicks?.forEach(pick => {
+      validRiskPicks.forEach(pick => {
         const playerKey = pick.player_name?.toLowerCase();
         if (playerKey && !seenPlayers.has(playerKey)) {
           seenPlayers.add(playerKey);
@@ -99,7 +129,7 @@ export function useSweetSpotParlayBuilder() {
       });
 
       // Add tracked picks that aren't duplicates
-      trackedPicks?.forEach(pick => {
+      validTrackedPicks.forEach(pick => {
         const playerKey = pick.player_name?.toLowerCase();
         if (playerKey && !seenPlayers.has(playerKey)) {
           seenPlayers.add(playerKey);
