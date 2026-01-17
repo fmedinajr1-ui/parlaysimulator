@@ -1,6 +1,9 @@
 import { cn } from '@/lib/utils';
 import { motion } from 'framer-motion';
-import { TrendingUp, TrendingDown, CheckCircle2, XCircle, Clock, Target } from 'lucide-react';
+import { 
+  TrendingUp, TrendingDown, CheckCircle2, XCircle, Clock, Target, 
+  AlertTriangle, Zap, Timer
+} from 'lucide-react';
 import { LegLiveProgress } from '@/hooks/useParlayLiveProgress';
 import { 
   extractMatchupFromDescription, 
@@ -8,10 +11,86 @@ import {
   formatMatchupAbbreviation,
   getTeamAbbreviation
 } from '@/lib/team-abbreviations';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 
 interface LivePlayerPropCardProps {
   leg: LegLiveProgress & { parlayCount?: number };
   className?: string;
+}
+
+// Confidence badge component
+function ConfidenceBadge({ confidence, size = 'sm' }: { confidence: number; size?: 'sm' | 'md' }) {
+  const getColor = () => {
+    if (confidence >= 70) return 'bg-chart-2/20 text-chart-2';
+    if (confidence >= 50) return 'bg-chart-4/20 text-chart-4';
+    if (confidence >= 30) return 'bg-amber-500/20 text-amber-500';
+    return 'bg-destructive/20 text-destructive';
+  };
+  
+  return (
+    <span className={cn(
+      'font-medium rounded px-1.5 py-0.5',
+      size === 'sm' ? 'text-[10px]' : 'text-xs',
+      getColor()
+    )}>
+      {confidence}%
+    </span>
+  );
+}
+
+// Trend indicator component
+function TrendIndicator({ trend }: { trend: 'strengthening' | 'weakening' | 'stable' }) {
+  if (trend === 'stable') return null;
+  
+  return (
+    <span className={cn(
+      'inline-flex items-center gap-0.5 text-[10px] font-medium',
+      trend === 'strengthening' ? 'text-chart-2' : 'text-destructive'
+    )}>
+      {trend === 'strengthening' ? (
+        <>
+          <TrendingUp className="w-3 h-3" />
+          <span>↑</span>
+        </>
+      ) : (
+        <>
+          <TrendingDown className="w-3 h-3" />
+          <span>↓</span>
+        </>
+      )}
+    </span>
+  );
+}
+
+// Risk flag badge component
+function RiskFlagBadge({ flag }: { flag: string }) {
+  const getConfig = () => {
+    switch (flag) {
+      case 'blowout':
+        return { icon: AlertTriangle, label: 'Blowout', color: 'text-amber-500' };
+      case 'foul_trouble':
+        return { icon: AlertTriangle, label: 'Foul Risk', color: 'text-destructive' };
+      case 'losing_blowout':
+        return { icon: AlertTriangle, label: 'Losing Big', color: 'text-destructive' };
+      default:
+        return { icon: AlertTriangle, label: flag, color: 'text-muted-foreground' };
+    }
+  };
+  
+  const config = getConfig();
+  const Icon = config.icon;
+  
+  return (
+    <span className={cn('inline-flex items-center gap-0.5 text-[10px]', config.color)}>
+      <Icon className="w-3 h-3" />
+      {config.label}
+    </span>
+  );
 }
 
 export function LivePlayerPropCard({ leg, className }: LivePlayerPropCardProps) {
@@ -30,6 +109,13 @@ export function LivePlayerPropCard({ leg, className }: LivePlayerPropCardProps) 
     description,
     betType,
     sport,
+    confidence = 50,
+    riskFlags = [],
+    trend = 'stable',
+    remainingMinutes = 0,
+    ratePerMinute = 0,
+    pacePercentage = 100,
+    minutesPlayed = 0,
   } = leg;
 
   const progress = currentValue !== null && line > 0 ? Math.min((currentValue / line) * 100, 150) : 0;
@@ -212,96 +298,140 @@ export function LivePlayerPropCard({ leg, className }: LivePlayerPropCardProps) 
   const parlayCount = (leg as any).parlayCount || 1;
 
   return (
-    <div className={cn('p-3 rounded-lg bg-muted/30 border border-border/30', className)}>
-      <div className="flex items-start justify-between gap-2 mb-2">
-        <div className="flex items-start gap-2">
-          {getStatusIcon()}
-          <div>
-            <div className="flex items-center gap-2">
-              <p className="font-medium text-sm">{playerName}</p>
-              {parlayCount > 1 && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary whitespace-nowrap">
-                  in {parlayCount} parlays
-                </span>
-              )}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {formatPropType(propType)} {side?.toUpperCase() || ''} {line}
-            </p>
-          </div>
-        </div>
-        <div className="text-right">
-          {currentValue !== null ? (
-            <>
-              <div className="flex items-center gap-1 justify-end">
-                <span className={cn('text-lg font-bold tabular-nums', getStatusColor())}>
-                  {currentValue}
-                </span>
-                <span className="text-muted-foreground">/</span>
-                <span className="text-sm text-muted-foreground">{line}</span>
+    <TooltipProvider>
+      <div className={cn('p-3 rounded-lg bg-muted/30 border border-border/30', className)}>
+        {/* Header with player name and confidence */}
+        <div className="flex items-start justify-between gap-2 mb-2">
+          <div className="flex items-start gap-2">
+            {getStatusIcon()}
+            <div>
+              <div className="flex items-center gap-2">
+                <p className="font-medium text-sm">{playerName}</p>
+                {gameStatus === 'in_progress' && confidence > 0 && (
+                  <ConfidenceBadge confidence={confidence} />
+                )}
+                {parlayCount > 1 && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary whitespace-nowrap">
+                    in {parlayCount} parlays
+                  </span>
+                )}
               </div>
-              <span className={cn('text-xs font-medium', getStatusColor())}>
-                {getStatusText()}
-              </span>
-            </>
-          ) : (
-            <span className="text-xs text-muted-foreground">
-              {gameInfo ? `${gameInfo.awayTeam} @ ${gameInfo.homeTeam}` : 'Upcoming'}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Progress bar */}
-      {gameStatus !== 'scheduled' && (
-        <div className="space-y-1">
-          <div className="relative h-2 bg-muted rounded-full overflow-hidden">
-            <motion.div
-              initial={{ width: 0 }}
-              animate={{ width: `${Math.min(progress, 100)}%` }}
-              transition={{ duration: 0.5, ease: 'easeOut' }}
-              className={cn(
-                'absolute left-0 top-0 h-full rounded-full',
-                isHitting ? 'bg-chart-2' : isOnPace ? 'bg-chart-4' : 'bg-primary'
-              )}
-            />
-            {/* Line marker */}
-            <div 
-              className="absolute top-0 w-0.5 h-full bg-foreground/50"
-              style={{ left: `${Math.min((line / (line * 1.5)) * 100, 100)}%` }}
-            />
+              <p className="text-xs text-muted-foreground">
+                {formatPropType(propType)} {side?.toUpperCase() || ''} {line}
+              </p>
+            </div>
           </div>
-
-          {/* Game info and projection */}
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-muted-foreground">
-              {gameStatus === 'final' ? 'Final' : 
-               gameInfo ? `${gameInfo.period} • ${gameInfo.clock}` : ''}
-            </span>
-            {projectedFinal !== null && gameStatus === 'in_progress' && (
-              <span className={cn(
-                'font-medium',
-                projectedFinal >= line ? 'text-chart-2' : 'text-muted-foreground'
-              )}>
-                Proj: {projectedFinal}
+          <div className="text-right">
+            {currentValue !== null ? (
+              <>
+                <div className="flex items-center gap-1 justify-end">
+                  <span className={cn('text-lg font-bold tabular-nums', getStatusColor())}>
+                    {currentValue}
+                  </span>
+                  <span className="text-muted-foreground">/</span>
+                  <span className="text-sm text-muted-foreground">{line}</span>
+                </div>
+                <div className="flex items-center gap-1 justify-end">
+                  <span className={cn('text-xs font-medium', getStatusColor())}>
+                    {getStatusText()}
+                  </span>
+                  <TrendIndicator trend={trend} />
+                </div>
+              </>
+            ) : (
+              <span className="text-xs text-muted-foreground">
+                {gameInfo ? `${gameInfo.awayTeam} @ ${gameInfo.homeTeam}` : 'Upcoming'}
               </span>
             )}
           </div>
         </div>
-      )}
 
-      {/* Game score for in-progress */}
-      {gameInfo && gameStatus === 'in_progress' && (
-        <div className="mt-2 pt-2 border-t border-border/30">
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-muted-foreground">{gameInfo.awayTeam}</span>
-            <span className="font-medium tabular-nums">
-              {gameInfo.awayScore} - {gameInfo.homeScore}
-            </span>
-            <span className="text-muted-foreground">{gameInfo.homeTeam}</span>
+        {/* Risk flags */}
+        {riskFlags.length > 0 && gameStatus === 'in_progress' && (
+          <div className="flex items-center gap-2 mb-2">
+            {riskFlags.map((flag, i) => (
+              <RiskFlagBadge key={i} flag={flag} />
+            ))}
           </div>
-        </div>
-      )}
-    </div>
+        )}
+
+        {/* Progress bar */}
+        {gameStatus !== 'scheduled' && (
+          <div className="space-y-1">
+            <div className="relative h-2 bg-muted rounded-full overflow-hidden">
+              <motion.div
+                initial={{ width: 0 }}
+                animate={{ width: `${Math.min(progress, 100)}%` }}
+                transition={{ duration: 0.5, ease: 'easeOut' }}
+                className={cn(
+                  'absolute left-0 top-0 h-full rounded-full',
+                  isHitting ? 'bg-chart-2' : isOnPace ? 'bg-chart-4' : 'bg-primary'
+                )}
+              />
+              {/* Line marker */}
+              <div 
+                className="absolute top-0 w-0.5 h-full bg-foreground/50"
+                style={{ left: `${Math.min((line / (line * 1.5)) * 100, 100)}%` }}
+              />
+            </div>
+
+            {/* Game info, projection, and pace */}
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground">
+                {gameStatus === 'final' ? 'Final' : 
+                 gameInfo ? `${gameInfo.period} • ${gameInfo.clock}` : ''}
+              </span>
+              <div className="flex items-center gap-2">
+                {gameStatus === 'in_progress' && minutesPlayed > 0 && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="text-muted-foreground flex items-center gap-0.5 cursor-help">
+                        <Timer className="w-3 h-3" />
+                        {Math.round(remainingMinutes)}m left
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p className="text-xs">
+                        {Math.round(minutesPlayed)}min played • {ratePerMinute.toFixed(2)}/min rate
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+                {projectedFinal !== null && gameStatus === 'in_progress' && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className={cn(
+                        'font-medium cursor-help',
+                        isOnPace ? 'text-chart-2' : 'text-muted-foreground'
+                      )}>
+                        Proj: {projectedFinal}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p className="text-xs">
+                        {pacePercentage}% pace • {isOnPace ? 'On track' : 'Behind pace'}
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Game score for in-progress */}
+        {gameInfo && gameStatus === 'in_progress' && (
+          <div className="mt-2 pt-2 border-t border-border/30">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground">{gameInfo.awayTeam}</span>
+              <span className="font-medium tabular-nums">
+                {gameInfo.awayScore} - {gameInfo.homeScore}
+              </span>
+              <span className="text-muted-foreground">{gameInfo.homeTeam}</span>
+            </div>
+          </div>
+        )}
+      </div>
+    </TooltipProvider>
   );
 }
