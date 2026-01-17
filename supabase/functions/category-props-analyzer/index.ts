@@ -1,4 +1,4 @@
-// Category Props Analyzer v1.0
+// Category Props Analyzer v1.1
 // Analyzes props by player category with accurate L10 hit rates
 // Categories: BIG_REBOUNDER, LOW_LINE_REBOUNDER, NON_SCORING_SHOOTER
 
@@ -13,13 +13,13 @@ const corsHeaders = {
 interface GameLog {
   player_name: string;
   game_date: string;
-  pts: number;
-  reb: number;
-  ast: number;
-  stl: number;
-  blk: number;
-  fg3m: number;
-  min: number;
+  points: number;
+  rebounds: number;
+  assists: number;
+  steals: number;
+  blocks: number;
+  threes_made: number;
+  minutes_played: number;
 }
 
 interface CategoryConfig {
@@ -75,12 +75,12 @@ function calculateHitRate(values: number[], line: number, side: 'over' | 'under'
 
 function getStatValue(log: GameLog, propType: string): number {
   switch (propType) {
-    case 'points': return log.pts || 0;
-    case 'rebounds': return log.reb || 0;
-    case 'assists': return log.ast || 0;
-    case 'steals': return log.stl || 0;
-    case 'blocks': return log.blk || 0;
-    case 'threes': return log.fg3m || 0;
+    case 'points': return log.points || 0;
+    case 'rebounds': return log.rebounds || 0;
+    case 'assists': return log.assists || 0;
+    case 'steals': return log.steals || 0;
+    case 'blocks': return log.blocks || 0;
+    case 'threes': return log.threes_made || 0;
     default: return 0;
   }
 }
@@ -114,7 +114,7 @@ serve(async (req) => {
         console.log(`[Category Analyzer] Found ${existingData.length} existing sweet spots for today`);
         
         if (category) {
-          const filtered = existingData.filter(d => d.category === category);
+          const filtered = existingData.filter((d: any) => d.category === category);
           return new Response(JSON.stringify({
             success: true,
             data: filtered,
@@ -133,23 +133,39 @@ serve(async (req) => {
     }
 
     // Fetch all game logs from last 30 days to ensure we have L10 for most players
+    // Use pagination to get all logs (Supabase has 1000 row limit)
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    const { data: gameLogs, error: logsError } = await supabase
-      .from('nba_player_game_logs')
-      .select('player_name, game_date, pts, reb, ast, stl, blk, fg3m, min')
-      .gte('game_date', thirtyDaysAgo.toISOString().split('T')[0])
-      .order('game_date', { ascending: false });
+    let allGameLogs: GameLog[] = [];
+    let page = 0;
+    const pageSize = 1000;
+    
+    while (true) {
+      const { data: gameLogs, error: logsError } = await supabase
+        .from('nba_player_game_logs')
+        .select('player_name, game_date, points, rebounds, assists, steals, blocks, threes_made, minutes_played')
+        .gte('game_date', thirtyDaysAgo.toISOString().split('T')[0])
+        .order('game_date', { ascending: false })
+        .range(page * pageSize, (page + 1) * pageSize - 1);
 
-    if (logsError) {
-      console.error('[Category Analyzer] Error fetching game logs:', logsError);
-      throw new Error(`Failed to fetch game logs: ${logsError.message}`);
+      if (logsError) {
+        console.error('[Category Analyzer] Error fetching game logs:', logsError);
+        throw new Error(`Failed to fetch game logs: ${logsError.message}`);
+      }
+
+      if (!gameLogs || gameLogs.length === 0) break;
+      
+      allGameLogs = allGameLogs.concat(gameLogs as GameLog[]);
+      console.log(`[Category Analyzer] Fetched page ${page + 1} with ${gameLogs.length} logs`);
+      
+      if (gameLogs.length < pageSize) break;
+      page++;
     }
 
-    console.log(`[Category Analyzer] Fetched ${gameLogs?.length || 0} game logs`);
+    console.log(`[Category Analyzer] Total game logs fetched: ${allGameLogs.length}`);
 
-    if (!gameLogs || gameLogs.length === 0) {
+    if (allGameLogs.length === 0) {
       return new Response(JSON.stringify({
         success: false,
         error: 'No game logs found',
@@ -159,11 +175,13 @@ serve(async (req) => {
 
     // Group logs by player
     const playerLogs: Record<string, GameLog[]> = {};
-    for (const log of gameLogs) {
+    for (const log of allGameLogs) {
       const name = log.player_name;
       if (!playerLogs[name]) playerLogs[name] = [];
-      playerLogs[name].push(log as GameLog);
+      playerLogs[name].push(log);
     }
+
+    console.log(`[Category Analyzer] Grouped logs for ${Object.keys(playerLogs).length} players`);
 
     // Analyze each category
     const categoriesToAnalyze = category ? [category] : Object.keys(CATEGORIES);
@@ -174,6 +192,8 @@ serve(async (req) => {
       if (!config) continue;
 
       console.log(`[Category Analyzer] Analyzing category: ${catKey}`);
+      let playersInRange = 0;
+      let qualifiedPlayers = 0;
 
       for (const [playerName, logs] of Object.entries(playerLogs)) {
         // Take last 10 games only
@@ -185,6 +205,8 @@ serve(async (req) => {
 
         // Check if player fits this category's average range
         if (l10Avg < config.avgRange.min || l10Avg > config.avgRange.max) continue;
+        
+        playersInRange++;
 
         const l10Min = Math.min(...statValues);
         const l10Max = Math.max(...statValues);
@@ -203,7 +225,14 @@ serve(async (req) => {
           }
         }
 
+        // Log top candidates even if they don't qualify
+        if (playersInRange <= 5) {
+          console.log(`[Category Analyzer] ${catKey} - ${playerName}: avg=${l10Avg.toFixed(1)}, bestLine=${bestLine}, hitRate=${(bestHitRate * 100).toFixed(0)}%, values=[${statValues.join(',')}]`);
+        }
+
         if (bestLine !== null && bestHitRate >= (minHitRate || config.minHitRate)) {
+          qualifiedPlayers++;
+          
           // Calculate confidence score based on consistency and hit rate
           const stdDev = Math.sqrt(
             statValues.reduce((sum, v) => sum + Math.pow(v - l10Avg, 2), 0) / statValues.length
@@ -230,9 +259,11 @@ serve(async (req) => {
           });
         }
       }
+      
+      console.log(`[Category Analyzer] ${catKey}: ${playersInRange} players in range, ${qualifiedPlayers} qualified (70%+ hit rate)`);
     }
 
-    console.log(`[Category Analyzer] Found ${sweetSpots.length} sweet spots`);
+    console.log(`[Category Analyzer] Found ${sweetSpots.length} total sweet spots`);
 
     // Sort by confidence score
     sweetSpots.sort((a, b) => b.confidence_score - a.confidence_score);
