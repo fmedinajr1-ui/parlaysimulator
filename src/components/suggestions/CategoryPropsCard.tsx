@@ -411,8 +411,8 @@ export const CategoryPropsCard = () => {
                     ))}
                   </div>
                 ) : categoryPicks.length > 0 ? (
-                  <div className="grid gap-2 max-h-[400px] overflow-y-auto pr-1">
-                    {categoryPicks.slice(0, 10).map((pick) => (
+                  <div className="grid gap-2 max-h-[500px] overflow-y-auto pr-1">
+                    {categoryPicks.map((pick) => (
                       <CategoryPickCard 
                         key={pick.id} 
                         pick={pick}
@@ -420,11 +420,6 @@ export const CategoryPropsCard = () => {
                         onToggleLock={() => toggleLockPick(pick.id)}
                       />
                     ))}
-                    {categoryPicks.length > 10 && (
-                      <p className="text-xs text-center text-muted-foreground py-2">
-                        +{categoryPicks.length - 10} more picks available
-                      </p>
-                    )}
                   </div>
                 ) : (
                   <div className="text-center py-6 text-muted-foreground">
