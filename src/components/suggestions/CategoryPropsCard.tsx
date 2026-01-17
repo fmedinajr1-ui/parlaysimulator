@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { RefreshCw, Shield, Target, TrendingDown, Plus, ChevronDown, ChevronUp } from 'lucide-react';
+import { RefreshCw, Shield, Target, TrendingDown, Plus, ChevronDown, ChevronUp, Zap } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -10,6 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { supabase } from '@/integrations/supabase/client';
 import { AddToParlayButton } from '@/components/parlay/AddToParlayButton';
 import { useParlayBuilder } from '@/contexts/ParlayBuilderContext';
+import { useCategoryParlayBuilder } from '@/hooks/useCategoryParlayBuilder';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -180,6 +181,12 @@ export const CategoryPropsCard = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const queryClient = useQueryClient();
   const { addLeg, hasLeg } = useParlayBuilder();
+  const { 
+    buildCategoryParlay, 
+    categoryCounts: todayCategoryCounts, 
+    totalAvailable: todayTotalAvailable,
+    isLoading: isCategoryParlayLoading 
+  } = useCategoryParlayBuilder();
 
   const today = format(new Date(), 'yyyy-MM-dd');
 
@@ -281,6 +288,16 @@ export const CategoryPropsCard = () => {
           </div>
           <div className="flex items-center gap-2">
             <Button
+              variant="default"
+              size="sm"
+              onClick={buildCategoryParlay}
+              disabled={isCategoryParlayLoading || todayTotalAvailable === 0}
+              className="h-8 text-xs gap-1"
+            >
+              <Zap className="h-3.5 w-3.5" />
+              Build 1+2+1
+            </Button>
+            <Button
               variant="ghost"
               size="sm"
               onClick={handleRefresh}
@@ -300,7 +317,7 @@ export const CategoryPropsCard = () => {
           </div>
         </div>
         <p className="text-xs text-muted-foreground">
-          L10-validated picks with 70%+ historical hit rates
+          L10-validated picks with 70%+ historical hit rates • Today: {todayCategoryCounts.BIG_REBOUNDER} Big, {todayCategoryCounts.LOW_LINE_REBOUNDER} Low Line, {todayCategoryCounts.NON_SCORING_SHOOTER} Non-Scoring
         </p>
       </CardHeader>
 
