@@ -4374,6 +4374,7 @@ export type Database = {
           avg_minutes: number | null
           bad_game_floor: number | null
           bookmaker: string | null
+          calibrated_edge: number | null
           confidence_factors: Json | null
           confidence_score: number
           consistency_score: number | null
@@ -4395,8 +4396,10 @@ export type Database = {
           is_star: boolean | null
           is_sweet_spot: boolean | null
           is_trap_indicator: boolean | null
+          is_trap_line: boolean | null
           juice_magnitude: number | null
           line: number
+          line_deviation_pct: number | null
           line_warning: string | null
           minutes_class: string
           mode: string | null
@@ -4424,6 +4427,7 @@ export type Database = {
           stat_priority: number | null
           sweet_spot_reason: string | null
           team_name: string | null
+          trap_type: string | null
           trend_direction: string | null
           true_median: number | null
           under_price: number | null
@@ -4438,6 +4442,7 @@ export type Database = {
           avg_minutes?: number | null
           bad_game_floor?: number | null
           bookmaker?: string | null
+          calibrated_edge?: number | null
           confidence_factors?: Json | null
           confidence_score: number
           consistency_score?: number | null
@@ -4459,8 +4464,10 @@ export type Database = {
           is_star?: boolean | null
           is_sweet_spot?: boolean | null
           is_trap_indicator?: boolean | null
+          is_trap_line?: boolean | null
           juice_magnitude?: number | null
           line: number
+          line_deviation_pct?: number | null
           line_warning?: string | null
           minutes_class: string
           mode?: string | null
@@ -4488,6 +4495,7 @@ export type Database = {
           stat_priority?: number | null
           sweet_spot_reason?: string | null
           team_name?: string | null
+          trap_type?: string | null
           trend_direction?: string | null
           true_median?: number | null
           under_price?: number | null
@@ -4502,6 +4510,7 @@ export type Database = {
           avg_minutes?: number | null
           bad_game_floor?: number | null
           bookmaker?: string | null
+          calibrated_edge?: number | null
           confidence_factors?: Json | null
           confidence_score?: number
           consistency_score?: number | null
@@ -4523,8 +4532,10 @@ export type Database = {
           is_star?: boolean | null
           is_sweet_spot?: boolean | null
           is_trap_indicator?: boolean | null
+          is_trap_line?: boolean | null
           juice_magnitude?: number | null
           line?: number
+          line_deviation_pct?: number | null
           line_warning?: string | null
           minutes_class?: string
           mode?: string | null
@@ -4552,6 +4563,7 @@ export type Database = {
           stat_priority?: number | null
           sweet_spot_reason?: string | null
           team_name?: string | null
+          trap_type?: string | null
           trend_direction?: string | null
           true_median?: number | null
           under_price?: number | null

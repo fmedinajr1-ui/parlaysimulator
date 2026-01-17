@@ -7,21 +7,23 @@ const corsHeaders = {
 };
 
 // ============================================================================
-// 🏀 NBA RISK ENGINE v3.1 - SWEET SPOT OPTIMIZATION SYSTEM
+// 🏀 NBA RISK ENGINE v4.4 - LINE CALIBRATION & TRAP DETECTION SYSTEM
 // ============================================================================
-// 6-LAYER SHARP FUNNEL:
+// 7-LAYER SHARP FUNNEL:
 // Layer 1: Elite Player Archetype Classification
 // Layer 2: Role-Prop Alignment Enforcement
 // Layer 3: Head-to-Head Matchup Analysis
 // Layer 4: Stricter Statistical Contingencies
 // Layer 5: Balanced Over/Under Distribution
-// Layer 6: Sweet Spot Confidence Calibration (NEW)
+// Layer 6: Sweet Spot Confidence Calibration
+// Layer 7: LINE CALIBRATION (NEW v4.4)
+//   - Tiered line deviation detection (30%/45%/60%)
+//   - Book intel detection (injury/minutes/blowout suspects)
+//   - Calibrated edge with diminishing returns (cap at 6.5)
+//   - Trap line + high edge combo blocking
 // ============================================================================
-// SWEET SPOT RANGES (based on historical analysis):
-// - Points: 8.5-9.5 confidence = 80% hit rate (optimal)
-// - Rebounds: 9.0-9.8 confidence = 71%+ hit rate (optimal)
-// - Points MID tier (15-21.5 lines) = 42.9% hit rate (AVOID unless edge ≥2.0)
-// - Points confidence 8.2 = 0% hit rate (BLOCK)
+// PROBLEM SOLVED: Egor Demin OVER 7.5 (scored 5) and similar trap lines
+// where books offer lines far below true median to bait OVER bets
 // ============================================================================
 
 // ============ SWEET SPOT CONFIGURATION ============
@@ -375,26 +377,72 @@ function detectJuicedLine(
 }
 
 // ============ LINE SANITY CHECK (PREVENTS BAD BOOKMAKER DATA) ============
-// Rejects lines that are wildly off from the true median (bad data)
+// v4.4: TIERED DEVIATION SYSTEM - More sensitive trap detection
+// UPDATED: Tighter thresholds to reject "trap lines" where book knows something
+interface LineSanityCheck {
+  sane: boolean;
+  reason: string;
+  deviationPct: number;
+  isTrapLine: boolean;
+  trapType: 'LOW_LINE_BAIT' | 'HIGH_LINE_BAIT' | 'SUSPICIOUS_DEVIATION' | null;
+  confidencePenalty: number;
+}
+
 function isLineSane(
   playerName: string,
   propType: string,
   line: number,
   trueMedian: number
-): { sane: boolean; reason: string } {
+): LineSanityCheck {
   // Skip check if we don't have median data
   if (!trueMedian || trueMedian <= 0) {
-    return { sane: true, reason: 'No median for comparison' };
+    return { 
+      sane: true, 
+      reason: 'No median for comparison',
+      deviationPct: 0,
+      isTrapLine: false,
+      trapType: null,
+      confidencePenalty: 0
+    };
   }
   
   // Calculate deviation percentage
   const deviation = Math.abs(line - trueMedian) / trueMedian;
+  const deviationPct = deviation * 100;
   
-  // Reject lines more than 60% off from true median (obvious bad data)
+  // TIER 4: >60% deviation = BLOCK (obvious bad data or extreme trap)
   if (deviation > 0.6) {
     return { 
       sane: false, 
-      reason: `LINE_INSANE: ${playerName} ${propType} line=${line} is ${(deviation * 100).toFixed(0)}% off from median=${trueMedian.toFixed(1)} (max 60%)` 
+      reason: `LINE_INSANE: ${playerName} ${propType} line=${line} is ${deviationPct.toFixed(0)}% off from median=${trueMedian.toFixed(1)} (max 60%)`,
+      deviationPct,
+      isTrapLine: true,
+      trapType: line < trueMedian ? 'LOW_LINE_BAIT' : 'HIGH_LINE_BAIT',
+      confidencePenalty: -5.0
+    };
+  }
+  
+  // TIER 3: 45-60% deviation = BLOCK with trap flag (book likely knows something)
+  if (deviation > 0.45) {
+    return { 
+      sane: false, 
+      reason: `TRAP_LINE_BLOCK: ${playerName} ${propType} line=${line} is ${deviationPct.toFixed(0)}% off median=${trueMedian.toFixed(1)} (45-60% = trap zone)`,
+      deviationPct,
+      isTrapLine: true,
+      trapType: line < trueMedian ? 'LOW_LINE_BAIT' : 'HIGH_LINE_BAIT',
+      confidencePenalty: -3.0
+    };
+  }
+  
+  // TIER 2: 30-45% deviation = SUSPICIOUS (heavy penalty, but allow if edge is good)
+  if (deviation > 0.30) {
+    return { 
+      sane: true, 
+      reason: `SUSPICIOUS_LINE: ${playerName} ${propType} line=${line} is ${deviationPct.toFixed(0)}% off median=${trueMedian.toFixed(1)} (-1.5 penalty applied)`,
+      deviationPct,
+      isTrapLine: true,
+      trapType: 'SUSPICIOUS_DEVIATION',
+      confidencePenalty: -1.5
     };
   }
   
@@ -403,11 +451,146 @@ function isLineSane(
   if (normalizedProp === 'points' && trueMedian > 20 && line < 15) {
     return { 
       sane: false, 
-      reason: `POINTS_LINE_TOO_LOW: ${playerName} median=${trueMedian.toFixed(1)} but line=${line} (suspect bad data)` 
+      reason: `POINTS_LINE_TOO_LOW: ${playerName} median=${trueMedian.toFixed(1)} but line=${line} (suspect bad data)`,
+      deviationPct,
+      isTrapLine: true,
+      trapType: 'LOW_LINE_BAIT',
+      confidencePenalty: -3.0
     };
   }
   
-  return { sane: true, reason: 'Line within acceptable range' };
+  // TIER 1: 0-30% deviation = NORMAL (no penalty)
+  return { 
+    sane: true, 
+    reason: 'Line within acceptable range',
+    deviationPct,
+    isTrapLine: false,
+    trapType: null,
+    confidencePenalty: 0
+  };
+}
+
+// ============ BOOK INTEL DETECTION ============
+// Detect when the book is offering suspiciously favorable lines (they know something)
+interface BookIntelCheck {
+  hasBookIntel: boolean;
+  intelType: 'INJURY_SUSPECT' | 'MINUTES_RESTRICT' | 'BLOWOUT_EXPECTED' | 'STAR_REST' | null;
+  recommendation: 'BLOCK' | 'FAVOR_UNDER' | 'FAVOR_OVER' | 'PROCEED' | null;
+  confidencePenalty: number;
+  reason: string;
+}
+
+function detectBookIntel(
+  line: number,
+  trueMedian: number,
+  side: string,
+  overPrice: number | null,
+  underPrice: number | null
+): BookIntelCheck {
+  if (!trueMedian || trueMedian <= 0) {
+    return { hasBookIntel: false, intelType: null, recommendation: null, confidencePenalty: 0, reason: 'No median data' };
+  }
+  
+  const isOver = side.toLowerCase() === 'over';
+  const lineToMedianRatio = line / trueMedian;
+  
+  // SIGNAL 1: Suspiciously LOW line (book expects underperformance)
+  // Line is <60% of median = book likely has injury/minutes intel
+  if (lineToMedianRatio < 0.6) {
+    return {
+      hasBookIntel: true,
+      intelType: 'INJURY_SUSPECT',
+      recommendation: 'BLOCK',
+      confidencePenalty: -3.0,
+      reason: `LOW_LINE_BAIT: Line ${line} is only ${(lineToMedianRatio * 100).toFixed(0)}% of median ${trueMedian.toFixed(1)} - book expects underperformance`
+    };
+  }
+  
+  // SIGNAL 2: Suspiciously HIGH line (book expects overperformance / blowout)
+  // Line is >140% of median = unusual, possible blowout/rest scenario
+  if (lineToMedianRatio > 1.4) {
+    return {
+      hasBookIntel: true,
+      intelType: 'BLOWOUT_EXPECTED',
+      recommendation: 'FAVOR_UNDER',
+      confidencePenalty: isOver ? -2.0 : 0,
+      reason: `HIGH_LINE_BAIT: Line ${line} is ${(lineToMedianRatio * 100).toFixed(0)}% of median ${trueMedian.toFixed(1)} - book expects underperformance on OVER`
+    };
+  }
+  
+  // SIGNAL 3: Heavy juice on opposite side (book loading up against us)
+  if (overPrice && underPrice) {
+    const ourPrice = isOver ? overPrice : underPrice;
+    const oppositePrice = isOver ? underPrice : overPrice;
+    
+    // If opposite side has very favorable odds (+150 or better), book is baiting our side
+    if (oppositePrice >= 150) {
+      return {
+        hasBookIntel: true,
+        intelType: 'STAR_REST',
+        recommendation: 'BLOCK',
+        confidencePenalty: -2.5,
+        reason: `OPPOSITE_BAIT: Opposite side at +${oppositePrice} - book heavily favoring against our ${side.toUpperCase()}`
+      };
+    }
+  }
+  
+  return { hasBookIntel: false, intelType: null, recommendation: null, confidencePenalty: 0, reason: 'No book intel detected' };
+}
+
+// ============ CALIBRATED EDGE CALCULATION ============
+// Apply diminishing returns to prevent unrealistic edges from inflating confidence
+interface CalibratedEdgeResult {
+  rawEdge: number;
+  calibratedEdge: number;
+  edgeCapped: boolean;
+  reason: string;
+}
+
+function calculateCalibratedEdge(
+  trueMedian: number,
+  line: number,
+  side: string
+): CalibratedEdgeResult {
+  const isOver = side.toLowerCase() === 'over';
+  const rawEdge = isOver ? (trueMedian - line) : (line - trueMedian);
+  
+  // Edge should never be negative for a properly selected side
+  if (rawEdge < 0) {
+    return {
+      rawEdge,
+      calibratedEdge: 0,
+      edgeCapped: true,
+      reason: `NEGATIVE_EDGE: Side ${side} has negative edge ${rawEdge.toFixed(1)} - possible wrong side`
+    };
+  }
+  
+  // CALIBRATION: Apply diminishing returns for edges > 5
+  // This prevents trap lines from generating unrealistic confidence
+  // E.g., raw edge 9 → calibrated edge 6.2 (not 9)
+  let calibratedEdge = rawEdge;
+  let edgeCapped = false;
+  
+  if (rawEdge > 5) {
+    // Diminishing returns formula: 5 + (edge - 5) * 0.3
+    calibratedEdge = 5 + (rawEdge - 5) * 0.3;
+    edgeCapped = true;
+  }
+  
+  // Hard cap at 6.5 (prevents any edge from being too influential)
+  if (calibratedEdge > 6.5) {
+    calibratedEdge = 6.5;
+    edgeCapped = true;
+  }
+  
+  return {
+    rawEdge,
+    calibratedEdge,
+    edgeCapped,
+    reason: edgeCapped 
+      ? `EDGE_CALIBRATED: Raw ${rawEdge.toFixed(1)} → Calibrated ${calibratedEdge.toFixed(1)} (diminishing returns applied)`
+      : `EDGE_OK: ${rawEdge.toFixed(1)} within normal range`
+  };
 }
 
 // Max percentage for any single prop type to prevent volume imbalance
@@ -1634,36 +1817,89 @@ serve(async (req) => {
           const seasonAvg = statValues.reduce((a, b) => a + b, 0) / statValues.length;
           
           // ============ LINE SANITY CHECK (PREVENT BAD BOOKMAKER DATA) ============
+          // v4.4: Now with tiered deviation penalties and trap line detection
           const sanityCheck = isLineSane(prop.player_name, prop.prop_type, line, trueMedian);
           if (!sanityCheck.sane) {
             rejectedProps.push({ 
               ...prop, 
               rejection_reason: sanityCheck.reason,
               player_role: 'UNKNOWN', 
-              archetype: 'UNKNOWN' 
+              archetype: 'UNKNOWN',
+              line_deviation_pct: sanityCheck.deviationPct,
+              is_trap_line: sanityCheck.isTrapLine,
+              trap_type: sanityCheck.trapType
             });
             console.warn(`[SANITY] Rejected: ${sanityCheck.reason}`);
             continue;
           }
           
+          // Store sanity check for later use
+          (prop as any)._sanityCheck = sanityCheck;
+          
           // FIXED: Calculate edge from median BEFORE side determination
           const calculatedEdge = trueMedian - line; // positive = over edge, negative = under edge
           const side = prop.recommended_side || (calculatedEdge >= 0 ? 'over' : 'under');
           const isOver = side.toLowerCase() === 'over';
-          const edge = isOver ? calculatedEdge : -calculatedEdge;
+          
+          // v4.4: Calculate CALIBRATED edge with diminishing returns
+          const edgeCalibration = calculateCalibratedEdge(trueMedian, line, side);
+          const edge = edgeCalibration.calibratedEdge;  // Use calibrated edge for confidence scoring
+          const rawEdge = edgeCalibration.rawEdge;      // Store raw edge for reference
+          
+          if (edgeCalibration.edgeCapped) {
+            console.log(`[EDGE-CALIBRATION] ${prop.player_name} ${prop.prop_type}: ${edgeCalibration.reason}`);
+          }
+          
+          // v4.4: Detect if book has insider intel (injury, rest, etc.)
+          const bookIntelCheck = detectBookIntel(line, trueMedian, side, prop.over_price || null, prop.under_price || null);
+          if (bookIntelCheck.hasBookIntel && bookIntelCheck.recommendation === 'BLOCK') {
+            rejectedProps.push({ 
+              ...prop, 
+              rejection_reason: bookIntelCheck.reason,
+              player_role: 'UNKNOWN', 
+              archetype: 'UNKNOWN',
+              line_deviation_pct: sanityCheck.deviationPct,
+              is_trap_line: true,
+              trap_type: bookIntelCheck.intelType
+            });
+            console.warn(`[BOOK-INTEL] Rejected: ${bookIntelCheck.reason}`);
+            continue;
+          }
+          
+          // Store book intel check for confidence penalty later
+          (prop as any)._bookIntelCheck = bookIntelCheck;
+          (prop as any)._edgeCalibration = edgeCalibration;
           
           // ============ PROP TYPE PERFORMANCE TIER CHECK ============
           const normalizedPropType = normalizePropTypeForTier(prop.prop_type);
           const propPerf = PROP_TYPE_PERFORMANCE_TIERS[normalizedPropType] || { tier: 'SOLID', confidenceBonus: 0, minEdgeRequired: 1.5 };
           
           // Check minimum edge requirement for this prop type tier
-          if (Math.abs(calculatedEdge) < propPerf.minEdgeRequired) {
+          // v4.4: Use raw edge for minimum check (calibration is for confidence, not filtering)
+          if (Math.abs(rawEdge) < propPerf.minEdgeRequired) {
             rejectedProps.push({ 
               ...prop, 
-              rejection_reason: `EDGE TOO THIN: ${normalizedPropType} (${propPerf.tier}) needs edge ≥${propPerf.minEdgeRequired}, got ${Math.abs(calculatedEdge).toFixed(1)}`,
+              rejection_reason: `EDGE TOO THIN: ${normalizedPropType} (${propPerf.tier}) needs edge ≥${propPerf.minEdgeRequired}, got ${Math.abs(rawEdge).toFixed(1)}`,
               player_role: 'UNKNOWN',
               archetype: 'UNKNOWN'
             });
+            continue;
+          }
+          
+          // v4.4: Check maximum edge allowed (trap signal detection)
+          // If calibrated edge is capped AND deviation is suspicious, block
+          if (edgeCalibration.edgeCapped && sanityCheck.isTrapLine) {
+            rejectedProps.push({ 
+              ...prop, 
+              rejection_reason: `TRAP_EDGE_COMBO: Raw edge ${rawEdge.toFixed(1)} with ${sanityCheck.deviationPct.toFixed(0)}% deviation = trap signal`,
+              player_role: 'UNKNOWN',
+              archetype: 'UNKNOWN',
+              line_deviation_pct: sanityCheck.deviationPct,
+              is_trap_line: true,
+              trap_type: sanityCheck.trapType,
+              calibrated_edge: edge
+            });
+            console.warn(`[TRAP-COMBO] Rejected: High edge ${rawEdge.toFixed(1)} + suspicious deviation ${sanityCheck.deviationPct.toFixed(0)}%`);
             continue;
           }
           
@@ -2009,6 +2245,21 @@ serve(async (req) => {
           let adjustedScore = score;
           let sweetSpotReason: string | null = null;
           
+          // v4.4: Apply line deviation penalties FIRST
+          const storedSanity = (prop as any)._sanityCheck as LineSanityCheck | null;
+          const storedBookIntel = (prop as any)._bookIntelCheck as BookIntelCheck | null;
+          
+          if (storedSanity && storedSanity.confidencePenalty !== 0) {
+            adjustedScore += storedSanity.confidencePenalty;
+            console.log(`[LINE-DEVIATION-PENALTY] ${prop.player_name} ${prop.prop_type}: ${storedSanity.confidencePenalty} penalty for ${storedSanity.deviationPct.toFixed(0)}% deviation, new score: ${adjustedScore.toFixed(1)}`);
+          }
+          
+          // v4.4: Apply book intel penalty
+          if (storedBookIntel && storedBookIntel.confidencePenalty !== 0) {
+            adjustedScore += storedBookIntel.confidencePenalty;
+            console.log(`[BOOK-INTEL-PENALTY] ${prop.player_name} ${prop.prop_type}: ${storedBookIntel.confidencePenalty} penalty for ${storedBookIntel.intelType}, new score: ${adjustedScore.toFixed(1)}`);
+          }
+          
           // POINTS: Scale high confidence down to sweet spot (8.5-9.5)
           if (normalizedPropType === 'points') {
             // Block confidence 8.2 exactly (0% hit rate historically)
@@ -2037,10 +2288,13 @@ serve(async (req) => {
             }
             
             // Points MID tier (15-21.5) requires higher edge
-            if (line >= 15 && line <= 21.5 && Math.abs(calculatedEdge) < 2.0) {
+            // v4.4: Use rawEdge (stored in _edgeCalibration) for this check
+            const storedEdgeCal = (prop as any)._edgeCalibration as CalibratedEdgeResult | null;
+            const rawEdgeForCheck = storedEdgeCal?.rawEdge || edge;
+            if (line >= 15 && line <= 21.5 && Math.abs(rawEdgeForCheck) < 2.0) {
               rejectedProps.push({
                 ...prop,
-                rejection_reason: `POINTS_MID_TIER_TRAP: Line ${line} in MID tier (42.9% hit rate), needs edge ≥2.0, got ${Math.abs(calculatedEdge).toFixed(1)}`,
+                rejection_reason: `POINTS_MID_TIER_TRAP: Line ${line} in MID tier (42.9% hit rate), needs edge ≥2.0, got ${Math.abs(rawEdgeForCheck).toFixed(1)}`,
                 player_role: role,
                 archetype,
                 confidence_score: adjustedScore
@@ -2075,6 +2329,14 @@ serve(async (req) => {
             if (adjustedScore >= 7.5 && adjustedScore <= 9.0) {
               sweetSpotReason = 'ASSISTS_SWEET_SPOT_7.5-9.0';
             }
+          }
+          
+          // v4.4: FINAL SWEET SPOT GATE - Reject if trap line AND still trying to qualify as sweet spot
+          // This catches edge cases where penalties weren't enough to disqualify
+          if (sweetSpotReason && storedSanity?.isTrapLine) {
+            // Suspicious lines should NOT be sweet spot picks
+            sweetSpotReason = null;
+            console.log(`[SWEET-SPOT-BLOCKED] ${prop.player_name} ${prop.prop_type}: Trap line (${storedSanity.trapType}) cannot be sweet spot`);
           }
           
           // ============ APPLY PLAYER RELIABILITY MODIFIER ============
@@ -2118,6 +2380,11 @@ serve(async (req) => {
           // ============ APPROVED! ============
           const storedJuicedCheck = (prop as any)._juicedCheck as JuicedLineCheck | null;
           
+          // Get stored calibration data
+          const storedSanityCheck = (prop as any)._sanityCheck as LineSanityCheck | null;
+          const storedEdgeCalibration = (prop as any)._edgeCalibration as CalibratedEdgeResult | null;
+          const storedBookIntelCheck = (prop as any)._bookIntelCheck as BookIntelCheck | null;
+          
           const approvedPick = {
             player_name: prop.player_name,
             team_name: prop.team_name,
@@ -2132,7 +2399,7 @@ serve(async (req) => {
             avg_minutes: effectiveAvgMinutes,
             spread,
             true_median: trueMedian,
-            edge,
+            edge,  // Now using calibrated edge
             bad_game_floor: badGameFloor,
             confidence_score: adjustedScore,  // Use adjusted score
             original_confidence: score,       // Store original for reference
@@ -2167,6 +2434,11 @@ serve(async (req) => {
             player_hit_rate: playerReliability?.hit_rate || null,
             player_reliability_tier: playerReliability?.reliability_tier || 'unknown',
             reliability_modifier_applied: reliabilityModifierApplied,
+            // v4.4: Line calibration tracking columns
+            line_deviation_pct: storedSanityCheck?.deviationPct || 0,
+            is_trap_line: storedSanityCheck?.isTrapLine || false,
+            trap_type: storedSanityCheck?.trapType || null,
+            calibrated_edge: storedEdgeCalibration?.calibratedEdge || edge,
           };
           
           approvedProps.push(approvedPick);
