@@ -32,10 +32,17 @@ interface StepResult {
 }
 
 const CASCADE_STEPS: CascadeStep[] = [
+  // Step 0: Category L10 analyzer - runs first to populate sweet spots before risk engine
+  { name: 'category-props-analyzer', body: { forceRefresh: true } },
+  // Step 1: Refresh props from odds API
   { name: 'refresh-todays-props', body: { sport: 'basketball_nba', force_clear: true } },
+  // Step 2: Main risk engine analysis
   { name: 'nba-player-prop-risk-engine', body: { action: 'analyze_slate', use_live_odds: true } },
+  // Step 3: SES scoring engine
   { name: 'prop-engine-v2', body: { action: 'full_slate' } },
+  // Step 4: Dream Team parlay builder
   { name: 'sharp-parlay-builder', body: { action: 'build' } },
+  // Step 5: Heat prop engine
   { name: 'heat-prop-engine', body: { action: 'build' } },
 ];
 

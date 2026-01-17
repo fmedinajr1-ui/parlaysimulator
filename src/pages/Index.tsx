@@ -4,6 +4,7 @@ import { HowItWorks } from "@/components/HowItWorks";
 import { SampleParlayButton } from "@/components/SampleParlayButton";
 import { RiskEnginePicksCard } from "@/components/suggestions/RiskEnginePicksCard";
 import { PropEngineV2Card } from "@/components/suggestions/PropEngineV2Card";
+import { CategoryPropsCard } from "@/components/suggestions/CategoryPropsCard";
 import { SweetSpotDreamTeamParlay } from "@/components/market/SweetSpotDreamTeamParlay";
 import { PropMarketWidget } from "@/components/market/PropMarketWidget";
 import { SweetSpotPicksCard } from "@/components/market/SweetSpotPicksCard";
@@ -178,6 +179,13 @@ const Index = () => {
         {(isPilotUser || isSubscribed || isAdmin) && (
           <div className="mb-4">
             <SweetSpotPicksCard />
+          </div>
+        )}
+
+        {/* Category L10 Sweet Spots - NEW */}
+        {(isPilotUser || isSubscribed || isAdmin) && (
+          <div className="mb-4">
+            <CategoryPropsCard />
           </div>
         )}
 
