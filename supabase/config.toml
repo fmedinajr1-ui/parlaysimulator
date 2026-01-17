@@ -299,3 +299,6 @@ verify_jwt = false
 
 [functions.bulk-sync-jerseys]
 verify_jwt = false
+
+[functions.unified-player-feed]
+verify_jwt = false
