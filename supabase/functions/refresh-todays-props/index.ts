@@ -61,6 +61,27 @@ function getPlayerName(prop: BDLPlayerProp): string {
   return `Player_${prop.player_id}`;
 }
 
+// Get today's date boundaries in Eastern Time
+function getEasternTodayBoundaries(): { start: Date; end: Date } {
+  const now = new Date();
+  
+  // Get current date in Eastern Time (format: YYYY-MM-DD)
+  const easternDate = new Intl.DateTimeFormat('en-CA', { 
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(now);
+  
+  // Create boundaries: Eastern midnight to next Eastern midnight in UTC
+  // EST = UTC-5, EDT = UTC-4
+  // Using -05:00 (EST) as a safe default - games will still match during EDT
+  const startET = new Date(`${easternDate}T00:00:00-05:00`);
+  const endET = new Date(`${easternDate}T23:59:59-05:00`);
+  
+  return { start: startET, end: endET };
+}
+
 // Delay helper for rate limiting
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -342,17 +363,16 @@ serve(async (req) => {
       const events = await eventsResponse.json();
       console.log(`[refresh-todays-props] Found ${events.length} upcoming events`);
 
-      // Filter to today's games only
-      today.setHours(0, 0, 0, 0);
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
+      // Filter to today's games only (using Eastern Time boundaries)
+      const { start: todayStart, end: todayEnd } = getEasternTodayBoundaries();
+      console.log(`[refresh-todays-props] Eastern day bounds: ${todayStart.toISOString()} to ${todayEnd.toISOString()}`);
 
       const todaysEvents = events.filter((event: any) => {
         const eventDate = new Date(event.commence_time);
-        return eventDate >= today && eventDate < tomorrow;
+        return eventDate >= todayStart && eventDate <= todayEnd;
       });
 
-      console.log(`[refresh-todays-props] ${todaysEvents.length} events are today`);
+      console.log(`[refresh-todays-props] ${todaysEvents.length} events are today (Eastern Time)`);
 
       // If no events from The Odds API, try BDL fallback BEFORE returning empty
       if (todaysEvents.length === 0) {
