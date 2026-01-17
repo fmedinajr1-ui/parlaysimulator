@@ -1,9 +1,13 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useParlayBuilder } from "@/contexts/ParlayBuilderContext";
 import { toast } from "sonner";
 
+// Get today's date in Eastern Time for consistent filtering
+function getEasternDate(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+}
 interface CategoryPick {
   id: string;
   player_name: string;
@@ -50,7 +54,24 @@ const weightedRandomPick = (
 
 export function useCategoryParlayBuilder() {
   const { addLeg, clearParlay } = useParlayBuilder();
-  const [lockedPicks, setLockedPicks] = useState<Set<string>>(new Set());
+  // Locked picks state with sessionStorage persistence
+  const [lockedPicks, setLockedPicks] = useState<Set<string>>(() => {
+    try {
+      const saved = sessionStorage.getItem('category-locked-picks');
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+
+  // Persist locks to sessionStorage
+  useEffect(() => {
+    if (lockedPicks.size > 0) {
+      sessionStorage.setItem('category-locked-picks', JSON.stringify([...lockedPicks]));
+    } else {
+      sessionStorage.removeItem('category-locked-picks');
+    }
+  }, [lockedPicks]);
 
   // Toggle lock for a pick by ID
   const toggleLockPick = useCallback((pickId: string) => {
@@ -75,7 +96,7 @@ export function useCategoryParlayBuilder() {
   const { data: todaysCategoryPicks, isLoading, refetch } = useQuery({
     queryKey: ['category-parlay-picks-today'],
     queryFn: async () => {
-      const today = new Date().toISOString().split('T')[0];
+      const today = getEasternDate();
 
       // Get today's players from unified_props
       const { data: todaysProps, error: propsError } = await supabase
