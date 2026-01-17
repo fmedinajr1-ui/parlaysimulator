@@ -224,6 +224,19 @@ export const CategoryPropsCard = () => {
   const { data: allCategoryData, isLoading, refetch } = useQuery({
     queryKey: ['category-sweet-spots-all', today],
     queryFn: async () => {
+      // Step 1: Get players with upcoming games from unified_props
+      const { data: upcomingProps } = await supabase
+        .from('unified_props')
+        .select('player_name')
+        .gte('commence_time', new Date().toISOString());
+      
+      const activePlayers = new Set(
+        (upcomingProps || []).map(p => p.player_name?.toLowerCase())
+      );
+      
+      console.log(`[CategoryPropsCard] Found ${activePlayers.size} active players with upcoming games`);
+      
+      // Step 2: Get category sweet spots for today
       const { data, error } = await supabase
         .from('category_sweet_spots')
         .select('*')
@@ -233,9 +246,17 @@ export const CategoryPropsCard = () => {
         .order('l10_hit_rate', { ascending: false });
 
       if (error) throw error;
-      return data as CategorySweetSpot[];
+      
+      // Step 3: Filter to only players with upcoming games
+      const filteredData = (data || []).filter(pick => 
+        activePlayers.has(pick.player_name?.toLowerCase())
+      );
+      
+      console.log(`[CategoryPropsCard] Filtered from ${data?.length || 0} to ${filteredData.length} picks`);
+      
+      return filteredData as CategorySweetSpot[];
     },
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: 60000, // 1 minute for more responsive updates
   });
 
   const categoryPicks = allCategoryData?.filter(p => p.category === selectedCategory) || [];
