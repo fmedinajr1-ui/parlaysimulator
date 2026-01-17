@@ -116,6 +116,50 @@ serve(async (req) => {
         console.log(`[Cleanup] Deleted ${results.sweet_spot_tracking_deleted} past sweet spot picks`);
       }
 
+      // 5. NEW: Delete risk engine picks for games that have already started today
+      // (their props are gone from unified_props but picks remain)
+      console.log('[Cleanup] Step 5: Cleaning orphaned risk picks for started games...');
+      
+      // Get all player names from active props (future games only)
+      const { data: activeProps } = await supabase
+        .from('unified_props')
+        .select('player_name')
+        .gte('commence_time', now);
+      
+      const activePlayers = new Set(
+        (activeProps || []).map(p => p.player_name?.toLowerCase()).filter(Boolean)
+      );
+      
+      console.log(`[Cleanup] Found ${activePlayers.size} active players with upcoming props`);
+      
+      // Get today's risk picks
+      const { data: todayPicks } = await supabase
+        .from('nba_risk_engine_picks')
+        .select('id, player_name')
+        .eq('game_date', todayEastern);
+      
+      // Find picks that don't have matching active props (game already started)
+      const orphanedPickIds = (todayPicks || [])
+        .filter(pick => !activePlayers.has(pick.player_name?.toLowerCase()))
+        .map(pick => pick.id);
+      
+      if (orphanedPickIds.length > 0) {
+        const { error: orphanDeleteError } = await supabase
+          .from('nba_risk_engine_picks')
+          .delete()
+          .in('id', orphanedPickIds);
+        
+        if (!orphanDeleteError) {
+          console.log(`[Cleanup] Deleted ${orphanedPickIds.length} orphaned risk picks (games started)`);
+          results.risk_engine_picks_deleted += orphanedPickIds.length;
+        } else {
+          console.error('[Cleanup] Error deleting orphaned picks:', orphanDeleteError);
+          results.errors.push(`orphaned_picks: ${orphanDeleteError.message}`);
+        }
+      } else {
+        console.log('[Cleanup] No orphaned risk picks found');
+      }
+
       const durationMs = Date.now() - startTime;
       console.log('[Cleanup] IMMEDIATE mode completed in', durationMs, 'ms');
 

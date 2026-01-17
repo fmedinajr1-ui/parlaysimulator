@@ -6,10 +6,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Target, TrendingUp, Loader2, CheckCircle2, XCircle, Clock, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { format } from "date-fns";
 import { toast } from "sonner";
 import { AltLineComparisonCard } from "./AltLineComparisonCard";
 import { PlayerReliabilityBadge } from "@/components/props/PlayerReliabilityBadge";
+
+// Get today's date in Eastern Time for consistent filtering
+function getEasternDate(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+}
 
 interface SweetSpotPick {
   id: string;
@@ -89,11 +93,23 @@ function formatPropType(propType: string): string {
 export function SweetSpotPicksCard() {
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Fetch from sweet_spot_tracking table
+  // Fetch from sweet_spot_tracking table - cross-reference with active props
   const { data: trackedPicks, isLoading: trackingLoading, refetch: refetchTracking } = useQuery({
     queryKey: ["sweet-spot-tracking"],
     queryFn: async () => {
-      const today = format(new Date(), "yyyy-MM-dd");
+      const today = getEasternDate();
+      const now = new Date().toISOString();
+      
+      // First get active players (games haven't started)
+      const { data: activeProps } = await supabase
+        .from("unified_props")
+        .select("player_name")
+        .gte("commence_time", now);
+      
+      const activePlayers = new Set(
+        (activeProps || []).map(p => p.player_name?.toLowerCase()).filter(Boolean)
+      );
+      
       const { data, error } = await supabase
         .from("sweet_spot_tracking")
         .select("*")
@@ -102,16 +118,34 @@ export function SweetSpotPicksCard() {
         .limit(20);
 
       if (error) throw error;
-      return data as SweetSpotPick[];
+      
+      // Filter to only include picks with active props
+      const validPicks = (data || []).filter(
+        pick => activePlayers.has(pick.player_name?.toLowerCase())
+      );
+      
+      return validPicks as SweetSpotPick[];
     },
     refetchInterval: 60000,
   });
 
-  // Also fetch sweet spot picks from risk engine
+  // Also fetch sweet spot picks from risk engine - cross-reference with active props
   const { data: riskEngineSweetSpots, isLoading: riskLoading, refetch: refetchRiskEngine } = useQuery({
     queryKey: ["sweet-spot-risk-engine"],
     queryFn: async () => {
-      const today = format(new Date(), "yyyy-MM-dd");
+      const today = getEasternDate();
+      const now = new Date().toISOString();
+      
+      // First get active players (games haven't started)
+      const { data: activeProps } = await supabase
+        .from("unified_props")
+        .select("player_name")
+        .gte("commence_time", now);
+      
+      const activePlayers = new Set(
+        (activeProps || []).map(p => p.player_name?.toLowerCase()).filter(Boolean)
+      );
+      
       const { data, error } = await supabase
         .from("nba_risk_engine_picks")
         .select("id, player_name, prop_type, line, side, confidence_score, edge, archetype, outcome, game_date, is_sweet_spot, sweet_spot_reason, alt_line_recommendation, alt_line_reason, is_juiced, juice_magnitude, line_warning, player_hit_rate, player_reliability_tier, reliability_modifier_applied")
@@ -121,7 +155,13 @@ export function SweetSpotPicksCard() {
         .limit(10);
 
       if (error) throw error;
-      return data as RiskEngineSweetSpot[];
+      
+      // Filter to only include picks with active props
+      const validPicks = (data || []).filter(
+        pick => activePlayers.has(pick.player_name?.toLowerCase())
+      );
+      
+      return validPicks as RiskEngineSweetSpot[];
     },
     refetchInterval: 60000,
   });
