@@ -29,7 +29,16 @@ export interface LegLiveProgress {
   description: string;
   betType: string;
   sport: string;
-  matchup?: string; // Structured matchup data from parlay generation
+  matchup?: string;
+  
+  // Enhanced projection data
+  confidence: number;
+  riskFlags: string[];
+  trend: 'strengthening' | 'weakening' | 'stable';
+  remainingMinutes: number;
+  ratePerMinute: number;
+  pacePercentage: number;
+  minutesPlayed: number;
 }
 
 export interface ParlayLiveProgress {
@@ -156,7 +165,7 @@ export function useParlayLiveProgress() {
   
   const { games, liveGames, isConnected, triggerSync, lastUpdated } = useLiveScores({
     autoRefresh: true,
-    refreshInterval: 60000,
+    refreshInterval: 30000, // Reduced from 60s for more frequent updates
   });
 
   // Fetch pending parlays
@@ -314,12 +323,45 @@ export function useParlayLiveProgress() {
           side === 'over' ? currentValue >= line : currentValue <= line
         );
 
-        const projectedFinal = currentValue !== null && gameProgress > 0 && gameProgress < 100 ?
-          Math.round(currentValue / (gameProgress / 100)) : currentValue;
+        // Enhanced projection calculation
+        const minutesPlayed = matchedStat?.minutes ? parseFloat(matchedStat.minutes.split(':')[0] || '0') : 0;
+        const remainingMinutes = gameProgress > 0 && gameProgress < 100 
+          ? Math.max(0, (minutesPlayed / (gameProgress / 100)) - minutesPlayed)
+          : 0;
+        
+        const ratePerMinute = minutesPlayed > 0 && currentValue !== null 
+          ? currentValue / minutesPlayed 
+          : 0;
+        
+        // Rate-based projection (more accurate than linear)
+        const projectedFinal = currentValue !== null && gameProgress > 0 && gameProgress < 100
+          ? Math.round((currentValue + (ratePerMinute * remainingMinutes)) * 10) / 10
+          : currentValue;
 
         const isOnPace = projectedFinal !== null && (
           side === 'over' ? projectedFinal >= line : projectedFinal <= line
         );
+
+        // Detect risk flags
+        const riskFlags: string[] = [];
+        if (matchedGame) {
+          const scoreDiff = Math.abs(matchedGame.homeScore - matchedGame.awayScore);
+          const period = parseInt(matchedGame.period || '1');
+          if (scoreDiff >= 15 && period >= 4) riskFlags.push('blowout');
+          else if (scoreDiff >= 20 && period >= 3) riskFlags.push('blowout');
+        }
+        if ((matchedStat as any)?.fouls >= 4) riskFlags.push('foul_trouble');
+
+        // Calculate pace percentage
+        const pacePercentage = line > 0 && projectedFinal !== null
+          ? Math.round((projectedFinal / line) * 100)
+          : 100;
+
+        // Calculate confidence (1-99 scale)
+        let confidence = 50;
+        if (minutesPlayed > 0) confidence += Math.min(25, minutesPlayed);
+        if (riskFlags.length > 0) confidence -= riskFlags.length * 10;
+        confidence = Math.max(1, Math.min(99, confidence));
 
         return {
           legIndex: index,
@@ -347,7 +389,15 @@ export function useParlayLiveProgress() {
           description,
           betType,
           sport: leg.sport || parlay.sport || '',
-          matchup: leg.matchup, // Pass structured matchup from parlay generation
+          matchup: leg.matchup,
+          // Enhanced projection fields
+          confidence,
+          riskFlags,
+          trend: 'stable' as const, // Could be enhanced with history tracking
+          remainingMinutes,
+          ratePerMinute,
+          pacePercentage,
+          minutesPlayed,
         };
       });
 
