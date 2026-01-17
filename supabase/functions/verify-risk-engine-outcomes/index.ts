@@ -188,14 +188,42 @@ serve(async (req) => {
 
     console.log(`[verify-risk-engine-outcomes] Found ${gameLogs?.length || 0} game logs`);
 
+    // Fetch upcoming game times from unified_props to avoid grading future games
+    const { data: upcomingProps } = await supabase
+      .from('unified_props')
+      .select('player_name, commence_time')
+      .gte('commence_time', new Date().toISOString());
+    
+    const upcomingPlayersMap = new Map<string, Date>();
+    for (const prop of upcomingProps || []) {
+      if (prop.player_name && prop.commence_time) {
+        upcomingPlayersMap.set(
+          prop.player_name.toLowerCase().trim(),
+          new Date(prop.commence_time)
+        );
+      }
+    }
+    console.log(`[verify-risk-engine-outcomes] Found ${upcomingPlayersMap.size} players with upcoming games`);
+
     // Process each pick with fuzzy matching
     let verified = 0;
     let hits = 0;
     let misses = 0;
     let pushes = 0;
+    let skippedFuture = 0;
     const updates: { id: string; outcome: string; actual_value: number }[] = [];
 
     for (const pick of pendingPicks) {
+      // Check if this player has an upcoming game (hasn't started yet)
+      const normalizedPickName = pick.player_name.toLowerCase().trim();
+      const upcomingGameTime = upcomingPlayersMap.get(normalizedPickName);
+      
+      if (upcomingGameTime && upcomingGameTime > new Date()) {
+        console.log(`[verify-risk-engine-outcomes] Skipping ${pick.player_name} - game hasn't started yet (${upcomingGameTime.toISOString()})`);
+        skippedFuture++;
+        continue;
+      }
+
       // Get date range for this pick (handles timezone edge cases)
       const dateRange = getDateRange(pick.game_date);
       
@@ -260,7 +288,7 @@ serve(async (req) => {
       status: 'success',
       started_at: new Date().toISOString(),
       completed_at: new Date().toISOString(),
-      result: { verified, hits, misses, pushes, total_pending: pendingPicks.length }
+      result: { verified, hits, misses, pushes, skippedFuture, total_pending: pendingPicks.length }
     });
 
     console.log(`[verify-risk-engine-outcomes] Complete: ${verified} verified (${hits}H/${misses}M/${pushes}P)`);
