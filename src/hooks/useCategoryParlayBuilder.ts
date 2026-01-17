@@ -1,3 +1,4 @@
+import { useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useParlayBuilder } from "@/contexts/ParlayBuilderContext";
@@ -24,8 +25,51 @@ const CATEGORY_TARGETS: Record<CategoryType, number> = {
   'NON_SCORING_SHOOTER': 1,
 };
 
+// Weighted random selection - higher hit rates have better odds but not guaranteed
+const weightedRandomPick = (
+  picks: CategoryPick[], 
+  usedPlayers: Set<string>
+): CategoryPick | null => {
+  const available = picks.filter(
+    p => !usedPlayers.has(p.player_name.toLowerCase())
+  );
+  if (available.length === 0) return null;
+  
+  // Weight by hit rate (90% hit rate = weight of 90)
+  const weights = available.map(p => (p.l10_hit_rate || 0.5) * 100);
+  const totalWeight = weights.reduce((a, b) => a + b, 0);
+  
+  let random = Math.random() * totalWeight;
+  for (let i = 0; i < available.length; i++) {
+    random -= weights[i];
+    if (random <= 0) return available[i];
+  }
+  
+  return available[0];
+};
+
 export function useCategoryParlayBuilder() {
   const { addLeg, clearParlay } = useParlayBuilder();
+  const [lockedPicks, setLockedPicks] = useState<Set<string>>(new Set());
+
+  // Toggle lock for a pick by ID
+  const toggleLockPick = useCallback((pickId: string) => {
+    setLockedPicks(prev => {
+      const next = new Set(prev);
+      if (next.has(pickId)) {
+        next.delete(pickId);
+      } else {
+        next.add(pickId);
+      }
+      return next;
+    });
+  }, []);
+
+  // Clear all locks
+  const clearLocks = useCallback(() => setLockedPicks(new Set()), []);
+
+  // Check if pick is locked
+  const isLocked = useCallback((pickId: string) => lockedPicks.has(pickId), [lockedPicks]);
 
   // Fetch category picks that have games today
   const { data: todaysCategoryPicks, isLoading, refetch } = useQuery({
@@ -84,7 +128,7 @@ export function useCategoryParlayBuilder() {
       .sort((a, b) => (b.l10_hit_rate || 0) - (a.l10_hit_rate || 0));
   };
 
-  // Build the 1+2+1 category parlay
+  // Build the 1+2+1 category parlay with locked picks and weighted random selection
   const buildCategoryParlay = () => {
     if (!todaysCategoryPicks || todaysCategoryPicks.length === 0) {
       toast.error('No category picks available for today\'s games');
@@ -95,30 +139,46 @@ export function useCategoryParlayBuilder() {
     const lowLineRebounders = getPicksByCategory('LOW_LINE_REBOUNDER');
     const nonScoringShooters = getPicksByCategory('NON_SCORING_SHOOTER');
 
-    const selectedLegs: CategoryPick[] = [];
-    const usedPlayers = new Set<string>();
+    // Get all locked picks first
+    const lockedLegs = todaysCategoryPicks.filter(pick => lockedPicks.has(pick.id));
+    
+    const usedPlayers = new Set<string>(
+      lockedLegs.map(p => p.player_name.toLowerCase())
+    );
 
-    // Add 1 Big Rebounder
-    const bigReb = bigRebounders.find(p => !usedPlayers.has(p.player_name.toLowerCase()));
-    if (bigReb) {
-      selectedLegs.push(bigReb);
-      usedPlayers.add(bigReb.player_name.toLowerCase());
-    }
+    // Count locked picks by category
+    const lockedBig = lockedLegs.filter(l => l.category === 'BIG_REBOUNDER').length;
+    const lockedLow = lockedLegs.filter(l => l.category === 'LOW_LINE_REBOUNDER').length;
+    const lockedNon = lockedLegs.filter(l => l.category === 'NON_SCORING_SHOOTER').length;
 
-    // Add up to 2 Low Line Rebounders
-    for (const lowReb of lowLineRebounders) {
-      if (selectedLegs.filter(l => l.category === 'LOW_LINE_REBOUNDER').length >= 2) break;
-      if (!usedPlayers.has(lowReb.player_name.toLowerCase())) {
-        selectedLegs.push(lowReb);
-        usedPlayers.add(lowReb.player_name.toLowerCase());
+    const selectedLegs = [...lockedLegs];
+
+    // Fill remaining Big Rebounder slots (need 1 total)
+    if (lockedBig < 1) {
+      const pick = weightedRandomPick(bigRebounders, usedPlayers);
+      if (pick) {
+        selectedLegs.push(pick);
+        usedPlayers.add(pick.player_name.toLowerCase());
       }
     }
 
-    // Add 1 Non-Scoring Shooter
-    const nonScoring = nonScoringShooters.find(p => !usedPlayers.has(p.player_name.toLowerCase()));
-    if (nonScoring) {
-      selectedLegs.push(nonScoring);
-      usedPlayers.add(nonScoring.player_name.toLowerCase());
+    // Fill remaining Low Line Rebounder slots (need 2 total)
+    const lowNeeded = 2 - lockedLow;
+    for (let i = 0; i < lowNeeded; i++) {
+      const pick = weightedRandomPick(lowLineRebounders, usedPlayers);
+      if (pick) {
+        selectedLegs.push(pick);
+        usedPlayers.add(pick.player_name.toLowerCase());
+      }
+    }
+
+    // Fill remaining Non-Scoring slots (need 1 total)
+    if (lockedNon < 1) {
+      const pick = weightedRandomPick(nonScoringShooters, usedPlayers);
+      if (pick) {
+        selectedLegs.push(pick);
+        usedPlayers.add(pick.player_name.toLowerCase());
+      }
     }
 
     if (selectedLegs.length === 0) {
@@ -152,8 +212,10 @@ export function useCategoryParlayBuilder() {
     const bigCount = selectedLegs.filter(l => l.category === 'BIG_REBOUNDER').length;
     const lowCount = selectedLegs.filter(l => l.category === 'LOW_LINE_REBOUNDER').length;
     const nonCount = selectedLegs.filter(l => l.category === 'NON_SCORING_SHOOTER').length;
+    const lockedCount = lockedLegs.length;
 
-    toast.success(`Built ${selectedLegs.length}-leg Category Parlay: ${bigCount} Big + ${lowCount} Low Line + ${nonCount} Non-Scoring`);
+    const lockedMsg = lockedCount > 0 ? ` (${lockedCount} locked)` : '';
+    toast.success(`Built ${selectedLegs.length}-leg Category Parlay: ${bigCount} Big + ${lowCount} Low Line + ${nonCount} Non-Scoring${lockedMsg}`);
   };
 
   // Get counts per category for today
@@ -173,5 +235,10 @@ export function useCategoryParlayBuilder() {
     refetch,
     buildCategoryParlay,
     getPicksByCategory,
+    // Lock pick functionality
+    lockedPicks,
+    toggleLockPick,
+    clearLocks,
+    isLocked,
   };
 }
