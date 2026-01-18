@@ -5,6 +5,7 @@ import { SampleParlayButton } from "@/components/SampleParlayButton";
 import { RiskEnginePicksCard } from "@/components/suggestions/RiskEnginePicksCard";
 import { PropEngineV2Card } from "@/components/suggestions/PropEngineV2Card";
 import { CategoryPropsCard } from "@/components/suggestions/CategoryPropsCard";
+import { OversPropsCard } from "@/components/suggestions/OversPropsCard";
 import { SweetSpotDreamTeamParlay } from "@/components/market/SweetSpotDreamTeamParlay";
 import { PropMarketWidget } from "@/components/market/PropMarketWidget";
 import { SweetSpotPicksCard } from "@/components/market/SweetSpotPicksCard";
@@ -182,10 +183,17 @@ const Index = () => {
           </div>
         )}
 
-        {/* Category L10 Sweet Spots - NEW */}
+        {/* Category L10 Sweet Spots */}
         {(isPilotUser || isSubscribed || isAdmin) && (
           <div className="mb-4">
             <CategoryPropsCard />
+          </div>
+        )}
+
+        {/* L10 OVERS Sweet Spots - Separate Section */}
+        {(isPilotUser || isSubscribed || isAdmin) && (
+          <div className="mb-4">
+            <OversPropsCard />
           </div>
         )}
 
