@@ -55,6 +55,31 @@ const CATEGORIES: Record<string, CategoryConfig> = {
     lines: [10.5, 11.5, 12.5, 13.5, 14.5],
     side: 'under',
     minHitRate: 0.7
+  },
+  // NEW OVERS Categories
+  VOLUME_SCORER: {
+    name: 'Volume Scorer',
+    propType: 'points',
+    avgRange: { min: 15, max: 40 },
+    lines: [14.5, 16.5, 18.5, 20.5, 22.5, 24.5, 26.5, 28.5, 30.5],
+    side: 'over',
+    minHitRate: 0.7
+  },
+  HIGH_ASSIST: {
+    name: 'Playmaker',
+    propType: 'assists',
+    avgRange: { min: 4, max: 15 },
+    lines: [3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5],
+    side: 'over',
+    minHitRate: 0.7
+  },
+  THREE_POINT_SHOOTER: {
+    name: '3-Point Shooter',
+    propType: 'threes',
+    avgRange: { min: 1.5, max: 6 },
+    lines: [0.5, 1.5, 2.5, 3.5, 4.5],
+    side: 'over',
+    minHitRate: 0.7
   }
 };
 
