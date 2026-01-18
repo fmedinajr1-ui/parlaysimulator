@@ -263,13 +263,102 @@ serve(async (req) => {
       console.log(`[Category Analyzer] ${catKey}: ${playersInRange} players in range, ${qualifiedPlayers} qualified (70%+ hit rate)`);
     }
 
-    console.log(`[Category Analyzer] Found ${sweetSpots.length} total sweet spots`);
+    console.log(`[Category Analyzer] Found ${sweetSpots.length} total sweet spots before validation`);
 
-    // Sort by confidence score
-    sweetSpots.sort((a, b) => b.confidence_score - a.confidence_score);
+    // ======= NEW: Validate against actual bookmaker lines from unified_props =======
+    console.log(`[Category Analyzer] Fetching actual lines from unified_props...`);
+    
+    // Fetch actual lines from unified_props for upcoming games
+    const { data: upcomingProps, error: propsError } = await supabase
+      .from('unified_props')
+      .select('player_name, prop_type, current_line, over_price, under_price, bookmaker, commence_time')
+      .gte('commence_time', new Date().toISOString())
+      .order('commence_time', { ascending: true });
+
+    if (propsError) {
+      console.error('[Category Analyzer] Error fetching unified_props:', propsError);
+    }
+
+    console.log(`[Category Analyzer] Found ${upcomingProps?.length || 0} upcoming props`);
+
+    // Create lookup map for actual lines (key: playername_proptype)
+    const actualLineMap = new Map<string, { line: number; overPrice: number; underPrice: number; bookmaker: string }>();
+    for (const prop of upcomingProps || []) {
+      if (!prop.player_name || !prop.prop_type || prop.current_line == null) continue;
+      
+      const key = `${prop.player_name.toLowerCase().trim()}_${prop.prop_type.toLowerCase()}`;
+      // Only keep first occurrence (most recent)
+      if (!actualLineMap.has(key)) {
+        actualLineMap.set(key, {
+          line: prop.current_line,
+          overPrice: prop.over_price,
+          underPrice: prop.under_price,
+          bookmaker: prop.bookmaker
+        });
+      }
+    }
+
+    console.log(`[Category Analyzer] Built lookup map with ${actualLineMap.size} unique player/prop combinations`);
+
+    // Validate each sweet spot against actual lines and recalculate hit rates
+    const validatedSpots: any[] = [];
+    let validatedCount = 0;
+    let droppedCount = 0;
+    let noGameCount = 0;
+
+    for (const spot of sweetSpots) {
+      const key = `${spot.player_name.toLowerCase().trim()}_${spot.prop_type.toLowerCase()}`;
+      const actualData = actualLineMap.get(key);
+      
+      if (!actualData) {
+        // No upcoming game found - mark as inactive
+        spot.is_active = false;
+        spot.actual_line = null;
+        spot.actual_hit_rate = null;
+        spot.line_difference = null;
+        spot.bookmaker = null;
+        validatedSpots.push(spot);
+        noGameCount++;
+        continue;
+      }
+      
+      // Recalculate L10 hit rate against actual bookmaker line
+      const logs = playerLogs[spot.player_name];
+      if (logs && logs.length >= 5) {
+        const l10Logs = logs.slice(0, 10);
+        const statValues = l10Logs.map(log => getStatValue(log, spot.prop_type));
+        const actualHitRate = calculateHitRate(statValues, actualData.line, spot.recommended_side);
+        
+        spot.actual_line = actualData.line;
+        spot.actual_hit_rate = Math.round(actualHitRate * 100) / 100;
+        spot.line_difference = Math.round((actualData.line - spot.recommended_line) * 10) / 10;
+        spot.bookmaker = actualData.bookmaker;
+        
+        // Only mark as active if actual hit rate is still >= 70%
+        spot.is_active = actualHitRate >= 0.70;
+        
+        if (spot.is_active) {
+          validatedCount++;
+          console.log(`[Category Analyzer] ✓ ${spot.player_name} ${spot.prop_type}: recommended=${spot.recommended_line}, actual=${actualData.line}, hitRate=${spot.l10_hit_rate}->${actualHitRate.toFixed(2)}`);
+        } else {
+          droppedCount++;
+          console.log(`[Category Analyzer] ✗ ${spot.player_name} ${spot.prop_type}: dropped (hitRate ${(actualHitRate * 100).toFixed(0)}% < 70% at actual line ${actualData.line})`);
+        }
+      }
+      
+      validatedSpots.push(spot);
+    }
+
+    console.log(`[Category Analyzer] Validation complete: ${validatedCount} active, ${droppedCount} dropped (<70%), ${noGameCount} no game today`);
+
+    // Sort by confidence score (active first, then by score)
+    validatedSpots.sort((a, b) => {
+      if (a.is_active !== b.is_active) return b.is_active ? 1 : -1;
+      return b.confidence_score - a.confidence_score;
+    });
 
     // Upsert to database (clear old data first for today)
-    if (sweetSpots.length > 0) {
+    if (validatedSpots.length > 0) {
       // Delete existing data for today
       await supabase
         .from('category_sweet_spots')
@@ -279,27 +368,31 @@ serve(async (req) => {
       // Insert new data
       const { error: insertError } = await supabase
         .from('category_sweet_spots')
-        .insert(sweetSpots);
+        .insert(validatedSpots);
 
       if (insertError) {
         console.error('[Category Analyzer] Error inserting sweet spots:', insertError);
       } else {
-        console.log(`[Category Analyzer] Inserted ${sweetSpots.length} sweet spots`);
+        console.log(`[Category Analyzer] Inserted ${validatedSpots.length} sweet spots (${validatedCount} active)`);
       }
     }
 
-    // Group by category for response
+    // Group by category for response (only active ones)
+    const activeSpots = validatedSpots.filter(s => s.is_active);
     const grouped: Record<string, any[]> = {};
-    for (const spot of sweetSpots) {
+    for (const spot of activeSpots) {
       if (!grouped[spot.category]) grouped[spot.category] = [];
       grouped[spot.category].push(spot);
     }
 
     return new Response(JSON.stringify({
       success: true,
-      data: sweetSpots,
+      data: activeSpots,
       grouped,
-      count: sweetSpots.length,
+      count: activeSpots.length,
+      totalAnalyzed: validatedSpots.length,
+      droppedBelowThreshold: droppedCount,
+      noUpcomingGame: noGameCount,
       categories: Object.keys(grouped),
       analyzedAt: new Date().toISOString()
     }), {

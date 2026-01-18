@@ -688,8 +688,11 @@ export type Database = {
       }
       category_sweet_spots: {
         Row: {
+          actual_hit_rate: number | null
+          actual_line: number | null
           analysis_date: string | null
           archetype: string | null
+          bookmaker: string | null
           category: string
           confidence_score: number | null
           created_at: string | null
@@ -701,6 +704,7 @@ export type Database = {
           l10_max: number | null
           l10_median: number | null
           l10_min: number | null
+          line_difference: number | null
           player_name: string
           prop_type: string
           recommended_line: number | null
@@ -708,8 +712,11 @@ export type Database = {
           updated_at: string | null
         }
         Insert: {
+          actual_hit_rate?: number | null
+          actual_line?: number | null
           analysis_date?: string | null
           archetype?: string | null
+          bookmaker?: string | null
           category: string
           confidence_score?: number | null
           created_at?: string | null
@@ -721,6 +728,7 @@ export type Database = {
           l10_max?: number | null
           l10_median?: number | null
           l10_min?: number | null
+          line_difference?: number | null
           player_name: string
           prop_type: string
           recommended_line?: number | null
@@ -728,8 +736,11 @@ export type Database = {
           updated_at?: string | null
         }
         Update: {
+          actual_hit_rate?: number | null
+          actual_line?: number | null
           analysis_date?: string | null
           archetype?: string | null
+          bookmaker?: string | null
           category?: string
           confidence_score?: number | null
           created_at?: string | null
@@ -741,6 +752,7 @@ export type Database = {
           l10_max?: number | null
           l10_median?: number | null
           l10_min?: number | null
+          line_difference?: number | null
           player_name?: string
           prop_type?: string
           recommended_line?: number | null
