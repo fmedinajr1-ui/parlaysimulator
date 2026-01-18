@@ -146,7 +146,7 @@ serve(async (req) => {
     
     const { data: pendingPicks, error: picksError } = await supabase
       .from('nba_risk_engine_picks')
-      .select('id, player_name, prop_type, line, side, game_date, outcome')
+      .select('id, player_name, prop_type, line, side, game_date, outcome, created_at')
       .gte('game_date', threeDaysAgoStr)
       .lte('game_date', todayStr)
       .or('outcome.is.null,outcome.eq.pending')
@@ -194,13 +194,18 @@ serve(async (req) => {
       .select('player_name, commence_time')
       .gte('commence_time', new Date().toISOString());
     
-    const upcomingPlayersMap = new Map<string, Date>();
+    // Map player -> earliest upcoming game time AND game date
+    const upcomingPlayersMap = new Map<string, { gameTime: Date; gameDate: string }>();
     for (const prop of upcomingProps || []) {
       if (prop.player_name && prop.commence_time) {
-        upcomingPlayersMap.set(
-          prop.player_name.toLowerCase().trim(),
-          new Date(prop.commence_time)
-        );
+        const playerKey = prop.player_name.toLowerCase().trim();
+        const gameTime = new Date(prop.commence_time);
+        const gameDate = gameTime.toISOString().split('T')[0];
+        
+        // Only store if not already set (keep earliest)
+        if (!upcomingPlayersMap.has(playerKey)) {
+          upcomingPlayersMap.set(playerKey, { gameTime, gameDate });
+        }
       }
     }
     console.log(`[verify-risk-engine-outcomes] Found ${upcomingPlayersMap.size} players with upcoming games`);
@@ -214,24 +219,47 @@ serve(async (req) => {
     const updates: { id: string; outcome: string; actual_value: number }[] = [];
 
     for (const pick of pendingPicks) {
-      // Check if this player has an upcoming game (hasn't started yet)
       const normalizedPickName = pick.player_name.toLowerCase().trim();
-      const upcomingGameTime = upcomingPlayersMap.get(normalizedPickName);
+      const upcomingGame = upcomingPlayersMap.get(normalizedPickName);
+      const now = new Date();
       
-      if (upcomingGameTime && upcomingGameTime > new Date()) {
-        console.log(`[verify-risk-engine-outcomes] Skipping ${pick.player_name} - game hasn't started yet (${upcomingGameTime.toISOString()})`);
+      // Check 1: Skip if game hasn't started yet
+      if (upcomingGame && upcomingGame.gameTime > now) {
+        console.log(`[verify-risk-engine-outcomes] Skipping ${pick.player_name} - game hasn't started yet (${upcomingGame.gameTime.toISOString()})`);
         skippedFuture++;
         continue;
       }
+      
+      // Check 2: Skip if pick's game_date matches an upcoming game date (prevents grading with yesterday's logs)
+      if (upcomingGame && pick.game_date === upcomingGame.gameDate) {
+        // Game might have started but estimate ~3 hours to complete
+        const estimatedGameEnd = new Date(upcomingGame.gameTime.getTime() + 3 * 60 * 60 * 1000);
+        if (now < estimatedGameEnd) {
+          console.log(`[verify-risk-engine-outcomes] Skipping ${pick.player_name} - game in progress, ends ~${estimatedGameEnd.toISOString()}`);
+          skippedFuture++;
+          continue;
+        }
+      }
 
-      // Get date range for this pick (handles timezone edge cases)
-      const dateRange = getDateRange(pick.game_date);
+      // Check 3: For recent picks (created in last 24h), require EXACT date match to prevent cross-day grading
+      const pickCreatedAt = new Date(pick.created_at || pick.game_date);
+      const isRecentPick = (now.getTime() - pickCreatedAt.getTime()) < 24 * 60 * 60 * 1000;
+      
+      // Recent picks = exact date only. Older picks = ±1 day tolerance for timezone edge cases
+      const dateRange = isRecentPick ? [pick.game_date] : getDateRange(pick.game_date);
       
       // Find matching game log with fuzzy name matching and date tolerance
       const gameLog = (gameLogs || []).find(log => 
         fuzzyMatchPlayerName(pick.player_name, log.player_name) &&
         dateRange.includes(log.game_date)
       );
+      
+      // Extra safety: if we found a log but pick.game_date != log.game_date for today's picks, skip
+      if (gameLog && pick.game_date === todayStr && gameLog.game_date !== todayStr) {
+        console.log(`[verify-risk-engine-outcomes] Skipping ${pick.player_name} - pick is for today but matched yesterday's log`);
+        skippedFuture++;
+        continue;
+      }
 
       if (!gameLog) {
         console.log(`[verify-risk-engine-outcomes] No game log found for ${pick.player_name} on ${pick.game_date} (checked ${dateRange.join(', ')})`);
