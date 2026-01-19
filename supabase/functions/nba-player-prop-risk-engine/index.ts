@@ -7,7 +7,7 @@ const corsHeaders = {
 };
 
 // ============================================================================
-// 🏀 NBA RISK ENGINE v4.5 - L10 HIT RATE INTEGRATION
+// 🏀 NBA RISK ENGINE v4.6 - EXPANDED SWEET SPOT ELIGIBILITY
 // ============================================================================
 // 8-LAYER SHARP FUNNEL:
 // Layer 1: Elite Player Archetype Classification
@@ -15,11 +15,13 @@ const corsHeaders = {
 // Layer 3: Head-to-Head Matchup Analysis
 // Layer 4: Stricter Statistical Contingencies
 // Layer 5: Balanced Over/Under Distribution
-// Layer 6: Player Reliability + L10 Hit Rate Integration (NEW v4.5)
+// Layer 6: Player Reliability + L10 Hit Rate Integration
 //   - Fetches L10 hit rates from category_sweet_spots
 //   - Blocks players with <40% L10 hit rate
 //   - Boosts players with ≥70% L10 hit rate
-// Layer 7: Sweet Spot Confidence Calibration
+// Layer 7: Sweet Spot Confidence Calibration (v4.6 RELAXED)
+//   - Lower thresholds: confidence >= 8.0 AND edge >= 1.0
+//   - More picks qualify for Dream Team parlay
 // Layer 8: LINE CALIBRATION (v4.4)
 //   - Tiered line deviation detection (30%/45%/60%)
 //   - Book intel detection (injury/minutes/blowout suspects)
@@ -27,11 +29,12 @@ const corsHeaders = {
 //   - Trap line + high edge combo blocking
 // ============================================================================
 
-// ============ SWEET SPOT CONFIGURATION ============
+// ============ SWEET SPOT CONFIGURATION (v4.6 RELAXED) ============
+// Lowered thresholds to include more picks for Dream Team parlay
 const SWEET_SPOT_CONFIG = {
-  points: { min: 8.5, max: 9.5, scaleHigh: true },
-  rebounds: { min: 9.0, max: 9.8, scaleHigh: false },
-  assists: { min: 7.5, max: 9.0, scaleHigh: false }
+  points: { min: 8.0, max: 10.0, scaleHigh: true },      // Was 8.5-9.5
+  rebounds: { min: 8.0, max: 10.0, scaleHigh: false },   // Was 9.0-9.8
+  assists: { min: 7.0, max: 9.5, scaleHigh: false }      // Was 7.5-9.0
 };
 
 // Prop-type specific minimum confidence thresholds
@@ -2324,8 +2327,9 @@ serve(async (req) => {
             }
             
             // Check if in sweet spot
-            if (adjustedScore >= 8.5 && adjustedScore <= 9.5) {
-              sweetSpotReason = 'POINTS_SWEET_SPOT_8.5-9.5';
+            // v4.6: Relaxed sweet spot range (8.0-10.0)
+            if (adjustedScore >= 8.0 && adjustedScore <= 10.0) {
+              sweetSpotReason = 'POINTS_SWEET_SPOT_8.0-10.0';
             }
             
             // Points MID tier (15-21.5) requires higher edge
@@ -2359,17 +2363,24 @@ serve(async (req) => {
               adjustedScore += (prop as any)._reboundConfidenceAdjust;
             }
             
-            // Check if in sweet spot
-            if (adjustedScore >= 9.0 && adjustedScore <= 9.8) {
-              sweetSpotReason = 'REBOUNDS_SWEET_SPOT_9.0-9.8';
+            // v4.6: Relaxed sweet spot range (8.0-10.0)
+            if (adjustedScore >= 8.0 && adjustedScore <= 10.0) {
+              sweetSpotReason = 'REBOUNDS_SWEET_SPOT_8.0-10.0';
             }
           }
           
-          // ASSISTS: Check sweet spot (7.5-9.0)
+          // v4.6: ASSISTS: Relaxed sweet spot (7.0-9.5)
           if (normalizedPropType === 'assists') {
-            if (adjustedScore >= 7.5 && adjustedScore <= 9.0) {
-              sweetSpotReason = 'ASSISTS_SWEET_SPOT_7.5-9.0';
+            if (adjustedScore >= 7.0 && adjustedScore <= 9.5) {
+              sweetSpotReason = 'ASSISTS_SWEET_SPOT_7.0-9.5';
             }
+          }
+          
+          // v4.6: FALLBACK SWEET SPOT - Any prop with confidence >= 8.0 AND edge >= 1.0
+          // This ensures Dream Team parlay gets enough candidates
+          if (!sweetSpotReason && adjustedScore >= 8.0 && Math.abs(edge) >= 1.0) {
+            sweetSpotReason = 'GENERAL_SWEET_SPOT_CONF_8.0_EDGE_1.0';
+            console.log(`[SWEET-SPOT-FALLBACK] ${prop.player_name} ${prop.prop_type}: conf=${adjustedScore.toFixed(1)}, edge=${edge.toFixed(1)}`);
           }
           
           // v4.4: FINAL SWEET SPOT GATE - Reject if trap line AND still trying to qualify as sweet spot
