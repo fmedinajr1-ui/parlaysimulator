@@ -391,6 +391,7 @@ serve(async (req) => {
             
             if (underHitRate >= underThreshold) {
               spot.recommended_side = 'under';
+              spot.recommended_line = actualData.line;
               spot.actual_hit_rate = Math.round(underHitRate * 100) / 100;
               spot.is_active = true;
               droppedCount--; // Undo the drop count
