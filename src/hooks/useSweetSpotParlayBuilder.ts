@@ -34,43 +34,89 @@ const MAX_PLAYERS_PER_ARCHETYPE = 2;
 const MIN_PROP_TYPES = 2;
 const TARGET_LEG_COUNT = 6;
 
+interface SlateStatus {
+  currentDate: string;
+  displayedDate: string;
+  isNextSlate: boolean;
+}
+
+interface QueryResult {
+  picks: SweetSpotPick[];
+  slateStatus: SlateStatus;
+}
+
 export function useSweetSpotParlayBuilder() {
   const { addLeg, clearParlay } = useParlayBuilder();
 
   // Fetch all sweet spot picks with team data - cross-reference with active props
-  const { data: sweetSpotPicks, isLoading, refetch } = useQuery({
+  const { data: queryResult, isLoading, refetch } = useQuery({
     queryKey: ['sweet-spot-parlay-picks'],
-    queryFn: async () => {
+    queryFn: async (): Promise<QueryResult> => {
       const today = getEasternDate();
       const now = new Date().toISOString();
       
       // First get active props (future games only) to filter out stale picks
       const { data: activeProps } = await supabase
         .from('unified_props')
-        .select('player_name')
+        .select('player_name, commence_time')
         .gte('commence_time', now);
       
-      const activePlayers = new Set(
-        (activeProps || []).map(p => p.player_name?.toLowerCase()).filter(Boolean)
+      // Check if today has any remaining active games
+      const todayActiveProps = (activeProps || []).filter(p => {
+        const propDate = new Date(p.commence_time).toLocaleDateString('en-CA', { 
+          timeZone: 'America/New_York' 
+        });
+        return propDate === today;
+      });
+
+      // Determine target date - today or next available slate
+      let targetDate = today;
+      let targetPlayers = new Set(
+        todayActiveProps.map(p => p.player_name?.toLowerCase()).filter(Boolean)
       );
+      let isNextSlate = false;
+
+      if (todayActiveProps.length === 0 && activeProps && activeProps.length > 0) {
+        // Find the earliest future date with props
+        const futureProps = (activeProps || [])
+          .map(p => ({
+            ...p,
+            gameDate: new Date(p.commence_time).toLocaleDateString('en-CA', { 
+              timeZone: 'America/New_York' 
+            })
+          }))
+          .sort((a, b) => new Date(a.commence_time).getTime() - new Date(b.commence_time).getTime());
+
+        if (futureProps.length > 0) {
+          targetDate = futureProps[0].gameDate;
+          targetPlayers = new Set(
+            futureProps
+              .filter(p => p.gameDate === targetDate)
+              .map(p => p.player_name?.toLowerCase())
+              .filter(Boolean)
+          );
+          isNextSlate = true;
+          console.log(`[SweetSpotParlay] Today's slate complete. Switching to next slate: ${targetDate}`);
+        }
+      }
+
+      console.log(`[SweetSpotParlay] Target date: ${targetDate}, Active players: ${targetPlayers.size}`);
       
-      console.log(`[SweetSpotParlay] Found ${activePlayers.size} active players with upcoming props`);
-      
-      // Get sweet spot picks from risk engine
+      // Get sweet spot picks from risk engine for target date
       const { data: riskPicks, error: riskError } = await supabase
         .from('nba_risk_engine_picks')
         .select('*')
         .eq('is_sweet_spot', true)
-        .eq('game_date', today)
+        .eq('game_date', targetDate)
         .order('confidence_score', { ascending: false });
 
       if (riskError) {
         console.error('Error fetching risk engine sweet spots:', riskError);
       }
 
-      // Filter to only include picks with active props (games haven't started)
+      // Filter to only include picks with active props
       const validRiskPicks = (riskPicks || []).filter(
-        pick => activePlayers.has(pick.player_name?.toLowerCase())
+        pick => targetPlayers.has(pick.player_name?.toLowerCase())
       );
       
       console.log(`[SweetSpotParlay] Filtered ${riskPicks?.length || 0} risk picks to ${validRiskPicks.length} with active props`);
@@ -88,7 +134,7 @@ export function useSweetSpotParlayBuilder() {
 
       // Filter tracked picks too
       const validTrackedPicks = (trackedPicks || []).filter(
-        pick => activePlayers.has(pick.player_name?.toLowerCase())
+        pick => targetPlayers.has(pick.player_name?.toLowerCase())
       );
 
       // Get player team data from cache
@@ -147,10 +193,20 @@ export function useSweetSpotParlayBuilder() {
         }
       });
 
-      return allPicks;
+      return {
+        picks: allPicks,
+        slateStatus: {
+          currentDate: today,
+          displayedDate: targetDate,
+          isNextSlate,
+        }
+      };
     },
     staleTime: 60000,
   });
+
+  const sweetSpotPicks = queryResult?.picks;
+  const slateStatus = queryResult?.slateStatus || { currentDate: getEasternDate(), displayedDate: getEasternDate(), isNextSlate: false };
 
   // Build optimal 6-leg parlay with Dream Team constraints
   const buildOptimalParlay = (): DreamTeamLeg[] => {
@@ -255,5 +311,6 @@ export function useSweetSpotParlayBuilder() {
     refetch,
     addOptimalParlayToBuilder,
     buildOptimalParlay,
+    slateStatus,
   };
 }
