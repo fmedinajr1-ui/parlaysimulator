@@ -2,10 +2,11 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Target, Trophy, Zap, Users, Plus, Loader2, TrendingUp, RefreshCw } from "lucide-react";
+import { Target, Trophy, Zap, Users, Plus, Loader2, TrendingUp, RefreshCw, Calendar } from "lucide-react";
 import { useSweetSpotParlayBuilder } from "@/hooks/useSweetSpotParlayBuilder";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { format, parseISO } from "date-fns";
 
 const getPropTypeColor = (propType: string): string => {
   const type = propType.toLowerCase();
@@ -29,7 +30,8 @@ export function SweetSpotDreamTeamParlay() {
     combinedStats, 
     isLoading, 
     addOptimalParlayToBuilder,
-    refetch 
+    refetch,
+    slateStatus
   } = useSweetSpotParlayBuilder();
 
   const handleRegenerate = async () => {
@@ -78,8 +80,18 @@ export function SweetSpotDreamTeamParlay() {
               <Trophy className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <CardTitle className="text-lg font-bold">Sweet Spot Dream Team</CardTitle>
-              <p className="text-xs text-muted-foreground">Optimal {combinedStats.legCount}-leg parlay</p>
+              <div className="flex items-center gap-2">
+                <CardTitle className="text-lg font-bold">Sweet Spot Dream Team</CardTitle>
+                {slateStatus?.isNextSlate && (
+                  <Badge variant="outline" className="gap-1 bg-blue-500/10 text-blue-400 border-blue-500/30 text-[10px]">
+                    <Calendar className="h-3 w-3" />
+                    {format(parseISO(slateStatus.displayedDate), 'EEE MMM d')}
+                  </Badge>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {slateStatus?.isNextSlate ? "Tomorrow's" : "Optimal"} {combinedStats.legCount}-leg parlay
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
