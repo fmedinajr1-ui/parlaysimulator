@@ -1,7 +1,8 @@
-// Category Props Analyzer v1.2
+// Category Props Analyzer v1.3
 // Analyzes props by player category with accurate L10 hit rates
-// Categories: BIG_REBOUNDER, LOW_LINE_REBOUNDER, NON_SCORING_SHOOTER
+// Categories: BIG_REBOUNDER, LOW_LINE_REBOUNDER, NON_SCORING_SHOOTER, VOLUME_SCORER, HIGH_ASSIST, THREE_POINT_SHOOTER
 // v1.2: Tiered BIG_REBOUNDER validation (60-70% based on line)
+// v1.3: Added UNDER detection for BIG_REBOUNDER and VOLUME_SCORER when OVER fails
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -381,6 +382,22 @@ serve(async (req) => {
         } else {
           droppedCount++;
           console.log(`[Category Analyzer] ✗ ${spot.player_name} ${spot.prop_type}: dropped (hitRate ${(actualHitRate * 100).toFixed(0)}% < ${(requiredHitRate * 100).toFixed(0)}% at actual line ${actualData.line})`);
+          
+          // v1.3: Check UNDER side if OVER fails for BIG_REBOUNDER or VOLUME_SCORER
+          if (spot.category === 'BIG_REBOUNDER' || spot.category === 'VOLUME_SCORER') {
+            const underHitRate = calculateHitRate(statValues, actualData.line, 'under');
+            // VOLUME_SCORER requires 65% UNDER, BIG_REBOUNDER requires 60%
+            const underThreshold = spot.category === 'VOLUME_SCORER' ? 0.65 : 0.60;
+            
+            if (underHitRate >= underThreshold) {
+              spot.recommended_side = 'under';
+              spot.actual_hit_rate = Math.round(underHitRate * 100) / 100;
+              spot.is_active = true;
+              droppedCount--; // Undo the drop count
+              validatedCount++;
+              console.log(`[Category Analyzer] ↔ ${spot.player_name} ${spot.prop_type}: Switched to UNDER (${(underHitRate * 100).toFixed(0)}% hit rate against ${actualData.line})`);
+            }
+          }
         }
       }
       
