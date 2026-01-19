@@ -7,7 +7,7 @@ const corsHeaders = {
 };
 
 // ============================================================================
-// 🏀 NBA RISK ENGINE v4.6 - EXPANDED SWEET SPOT ELIGIBILITY
+// 🏀 NBA RISK ENGINE v4.7 - STRICTER SWEET SPOT ELIGIBILITY
 // ============================================================================
 // 8-LAYER SHARP FUNNEL:
 // Layer 1: Elite Player Archetype Classification
@@ -19,9 +19,10 @@ const corsHeaders = {
 //   - Fetches L10 hit rates from category_sweet_spots
 //   - Blocks players with <40% L10 hit rate
 //   - Boosts players with ≥70% L10 hit rate
-// Layer 7: Sweet Spot Confidence Calibration (v4.6 RELAXED)
-//   - Lower thresholds: confidence >= 8.0 AND edge >= 1.0
-//   - More picks qualify for Dream Team parlay
+// Layer 7: Sweet Spot Confidence Calibration (v4.7 STRICTER)
+//   - Higher thresholds: confidence >= 8.5 AND edge >= 1.5
+//   - Requires L10 >= 70% OR known reliability tier
+//   - Final gates to block unqualified picks
 // Layer 8: LINE CALIBRATION (v4.4)
 //   - Tiered line deviation detection (30%/45%/60%)
 //   - Book intel detection (injury/minutes/blowout suspects)
@@ -29,12 +30,20 @@ const corsHeaders = {
 //   - Trap line + high edge combo blocking
 // ============================================================================
 
-// ============ SWEET SPOT CONFIGURATION (v4.6 RELAXED) ============
-// Lowered thresholds to include more picks for Dream Team parlay
+// ============ SWEET SPOT CONFIGURATION (v4.7 STRICTER) ============
+// Raised thresholds for accuracy while maintaining daily volume
 const SWEET_SPOT_CONFIG = {
-  points: { min: 8.0, max: 10.0, scaleHigh: true },      // Was 8.5-9.5
-  rebounds: { min: 8.0, max: 10.0, scaleHigh: false },   // Was 9.0-9.8
-  assists: { min: 7.0, max: 9.5, scaleHigh: false }      // Was 7.5-9.0
+  points: { min: 8.5, max: 10.0, scaleHigh: true },      // Was 8.0 → 8.5
+  rebounds: { min: 8.5, max: 10.0, scaleHigh: false },   // Was 8.0 → 8.5
+  assists: { min: 7.5, max: 9.5, scaleHigh: false }      // Was 7.0 → 7.5
+};
+
+// v4.7: Stricter sweet spot requirements
+const SWEET_SPOT_REQUIREMENTS = {
+  minConfidence: 8.5,         // Was 8.0
+  minEdge: 1.5,               // Was 1.0
+  minL10HitRate: 0.70,        // NEW: Require 70%+ L10 hit rate
+  blockUnknownReliability: true,  // NEW: Block unknown tier with history
 };
 
 // Prop-type specific minimum confidence thresholds
@@ -2363,32 +2372,53 @@ serve(async (req) => {
               adjustedScore += (prop as any)._reboundConfidenceAdjust;
             }
             
-            // v4.6: Relaxed sweet spot range (8.0-10.0)
-            if (adjustedScore >= 8.0 && adjustedScore <= 10.0) {
-              sweetSpotReason = 'REBOUNDS_SWEET_SPOT_8.0-10.0';
+            // v4.7: Stricter sweet spot range (8.5-10.0)
+            if (adjustedScore >= SWEET_SPOT_CONFIG.rebounds.min && adjustedScore <= SWEET_SPOT_CONFIG.rebounds.max) {
+              sweetSpotReason = 'REBOUNDS_SWEET_SPOT_8.5-10.0';
             }
           }
           
-          // v4.6: ASSISTS: Relaxed sweet spot (7.0-9.5)
+          // v4.7: ASSISTS: Stricter sweet spot (7.5-9.5)
           if (normalizedPropType === 'assists') {
-            if (adjustedScore >= 7.0 && adjustedScore <= 9.5) {
-              sweetSpotReason = 'ASSISTS_SWEET_SPOT_7.0-9.5';
+            if (adjustedScore >= SWEET_SPOT_CONFIG.assists.min && adjustedScore <= SWEET_SPOT_CONFIG.assists.max) {
+              sweetSpotReason = 'ASSISTS_SWEET_SPOT_7.5-9.5';
             }
           }
           
-          // v4.6: FALLBACK SWEET SPOT - Any prop with confidence >= 8.0 AND edge >= 1.0
-          // This ensures Dream Team parlay gets enough candidates
-          if (!sweetSpotReason && adjustedScore >= 8.0 && Math.abs(edge) >= 1.0) {
-            sweetSpotReason = 'GENERAL_SWEET_SPOT_CONF_8.0_EDGE_1.0';
-            console.log(`[SWEET-SPOT-FALLBACK] ${prop.player_name} ${prop.prop_type}: conf=${adjustedScore.toFixed(1)}, edge=${edge.toFixed(1)}`);
+          // v4.7: FALLBACK SWEET SPOT - Requires multiple quality signals
+          // Must have: confidence >= 8.5, edge >= 1.5, AND (L10 >= 70% OR known reliability)
+          const hasValidL10 = l10Data && l10GamesUsed >= 5 && l10Data.l10_hit_rate >= SWEET_SPOT_REQUIREMENTS.minL10HitRate;
+          const hasKnownReliability = playerReliability && playerReliability.reliability_tier !== 'unknown';
+          
+          if (!sweetSpotReason && adjustedScore >= SWEET_SPOT_REQUIREMENTS.minConfidence && Math.abs(edge) >= SWEET_SPOT_REQUIREMENTS.minEdge) {
+            if (hasValidL10 || hasKnownReliability) {
+              sweetSpotReason = 'GENERAL_SWEET_SPOT_V4.7_MULTI_SIGNAL';
+              console.log(`[SWEET-SPOT-FALLBACK] ${prop.player_name} ${prop.prop_type}: conf=${adjustedScore.toFixed(1)}, edge=${edge.toFixed(1)}, l10=${l10Data?.l10_hit_rate ? (l10Data.l10_hit_rate * 100).toFixed(0) + '%' : 'N/A'}, tier=${playerReliability?.reliability_tier || 'unknown'}`);
+            } else {
+              console.log(`[SWEET-SPOT-BLOCKED-V4.7] ${prop.player_name} ${prop.prop_type}: Missing L10 (${l10Data?.l10_hit_rate ? (l10Data.l10_hit_rate * 100).toFixed(0) + '%' : 'N/A'}) or reliability data (${playerReliability?.reliability_tier || 'unknown'})`);
+            }
           }
           
-          // v4.4: FINAL SWEET SPOT GATE - Reject if trap line AND still trying to qualify as sweet spot
-          // This catches edge cases where penalties weren't enough to disqualify
+          // v4.4: FINAL SWEET SPOT GATE - Reject if trap line
           if (sweetSpotReason && storedSanity?.isTrapLine) {
-            // Suspicious lines should NOT be sweet spot picks
             sweetSpotReason = null;
             console.log(`[SWEET-SPOT-BLOCKED] ${prop.player_name} ${prop.prop_type}: Trap line (${storedSanity.trapType}) cannot be sweet spot`);
+          }
+          
+          // v4.7: FINAL L10 GATE - Block any sweet spot with L10 < 70% (if data exists with enough games)
+          if (sweetSpotReason && l10Data && l10GamesUsed >= 5) {
+            if (l10Data.l10_hit_rate < SWEET_SPOT_REQUIREMENTS.minL10HitRate) {
+              console.log(`[SWEET-SPOT-L10-BLOCKED] ${prop.player_name} ${prop.prop_type}: L10 hit rate ${(l10Data.l10_hit_rate * 100).toFixed(0)}% < 70% threshold`);
+              sweetSpotReason = null;
+            }
+          }
+          
+          // v4.7: RELIABILITY GATE - Block unknown tier (when we have ≥5 historical picks)
+          if (sweetSpotReason && playerReliability && SWEET_SPOT_REQUIREMENTS.blockUnknownReliability) {
+            if (playerReliability.reliability_tier === 'unknown' && (playerReliability.total_picks || 0) >= 5) {
+              console.log(`[SWEET-SPOT-RELIABILITY-BLOCKED] ${prop.player_name} ${prop.prop_type}: Unknown tier with ${playerReliability.total_picks} historical picks`);
+              sweetSpotReason = null;
+            }
           }
           
           // ============ APPLY PLAYER RELIABILITY MODIFIER ============
