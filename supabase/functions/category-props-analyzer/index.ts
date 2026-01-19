@@ -1,8 +1,9 @@
-// Category Props Analyzer v1.3
+// Category Props Analyzer v1.4
 // Analyzes props by player category with accurate L10 hit rates
 // Categories: BIG_REBOUNDER, LOW_LINE_REBOUNDER, NON_SCORING_SHOOTER, VOLUME_SCORER, HIGH_ASSIST, THREE_POINT_SHOOTER
 // v1.2: Tiered BIG_REBOUNDER validation (60-70% based on line)
 // v1.3: Added UNDER detection for BIG_REBOUNDER and VOLUME_SCORER when OVER fails
+// v1.4: Added BOUNCE_BACK detection for players with high lines but depressed L10 (regression to mean)
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -28,19 +29,32 @@ interface CategoryConfig {
   name: string;
   propType: string;
   avgRange: { min: number; max: number };
+  lineRange?: { min: number; max: number }; // NEW: Line-based eligibility
   lines: number[];
   side: 'over' | 'under';
   minHitRate: number;
+  supportsBounceBack?: boolean; // NEW: Enable bounce back detection
 }
+
+// Bounce Back Configuration
+const BOUNCE_BACK_CONFIG = {
+  minSeasonVsL10Gap: 1.5,    // Season avg must be 1.5+ higher than L10
+  minStdDevGap: 0.5,         // Gap must be at least 0.5 std deviations
+  maxLineVsSeasonGap: 2.0,   // Line should be within 2.0 of season avg
+  minL10HitRateForOVER: 0.20, // L10 OVER hit rate between 20-50% = due for bounce
+  maxL10HitRateForOVER: 0.50,
+};
 
 const CATEGORIES: Record<string, CategoryConfig> = {
   BIG_REBOUNDER: {
     name: 'Big Rebounder',
     propType: 'rebounds',
     avgRange: { min: 9, max: 20 },
+    lineRange: { min: 9, max: 20 }, // NEW: Bookmaker line 9+ also qualifies
     lines: [6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5],
     side: 'over',
-    minHitRate: 0.7
+    minHitRate: 0.7,
+    supportsBounceBack: true // NEW: Enable bounce back for rebounders
   },
   LOW_LINE_REBOUNDER: {
     name: 'Low Line Rebounder',
@@ -63,9 +77,11 @@ const CATEGORIES: Record<string, CategoryConfig> = {
     name: 'Volume Scorer',
     propType: 'points',
     avgRange: { min: 15, max: 40 },
+    lineRange: { min: 18, max: 40 }, // NEW: Line-based eligibility for scorers
     lines: [14.5, 16.5, 18.5, 20.5, 22.5, 24.5, 26.5, 28.5, 30.5],
     side: 'over',
-    minHitRate: 0.7
+    minHitRate: 0.7,
+    supportsBounceBack: true // NEW: Enable bounce back for scorers
   },
   HIGH_ASSIST: {
     name: 'Playmaker',
@@ -92,6 +108,13 @@ function calculateMedian(values: number[]): number {
   return sorted.length % 2 !== 0
     ? sorted[mid]
     : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function calculateStdDev(values: number[]): number {
+  if (values.length === 0) return 0;
+  const avg = values.reduce((a, b) => a + b, 0) / values.length;
+  const squaredDiffs = values.map(v => Math.pow(v - avg, 2));
+  return Math.sqrt(squaredDiffs.reduce((a, b) => a + b, 0) / values.length);
 }
 
 function calculateHitRate(values: number[], line: number, side: 'over' | 'under'): number {
@@ -229,9 +252,17 @@ serve(async (req) => {
 
         const statValues = l10Logs.map(log => getStatValue(log, config.propType));
         const l10Avg = statValues.reduce((a, b) => a + b, 0) / statValues.length;
+        const l10StdDev = calculateStdDev(statValues);
 
-        // Check if player fits this category's average range
-        if (l10Avg < config.avgRange.min || l10Avg > config.avgRange.max) continue;
+        // v1.4: DUAL ELIGIBILITY - Check avgRange OR lineRange
+        const avgEligible = l10Avg >= config.avgRange.min && l10Avg <= config.avgRange.max;
+        
+        // For line-based eligibility, we need to check against actual bookmaker line later
+        // For now, mark players who might qualify via lineRange for later validation
+        const potentialLineEligible = config.lineRange !== undefined;
+        
+        // If neither eligibility path is possible, skip
+        if (!avgEligible && !potentialLineEligible) continue;
         
         playersInRange++;
 
@@ -254,17 +285,15 @@ serve(async (req) => {
 
         // Log top candidates even if they don't qualify
         if (playersInRange <= 5) {
-          console.log(`[Category Analyzer] ${catKey} - ${playerName}: avg=${l10Avg.toFixed(1)}, bestLine=${bestLine}, hitRate=${(bestHitRate * 100).toFixed(0)}%, values=[${statValues.join(',')}]`);
+          console.log(`[Category Analyzer] ${catKey} - ${playerName}: avg=${l10Avg.toFixed(1)}, bestLine=${bestLine}, hitRate=${(bestHitRate * 100).toFixed(0)}%, avgEligible=${avgEligible}, potentialLineEligible=${potentialLineEligible}`);
         }
+
+        // Calculate confidence score based on consistency and hit rate
+        const consistency = l10Avg > 0 ? 1 - (l10StdDev / l10Avg) : 0;
 
         if (bestLine !== null && bestHitRate >= (minHitRate || config.minHitRate)) {
           qualifiedPlayers++;
           
-          // Calculate confidence score based on consistency and hit rate
-          const stdDev = Math.sqrt(
-            statValues.reduce((sum, v) => sum + Math.pow(v - l10Avg, 2), 0) / statValues.length
-          );
-          const consistency = 1 - (stdDev / l10Avg); // Higher is more consistent
           const confidenceScore = (bestHitRate * 0.6) + (Math.max(0, consistency) * 0.4);
 
           sweetSpots.push({
@@ -282,7 +311,31 @@ serve(async (req) => {
             archetype: catKey,
             confidence_score: Math.round(confidenceScore * 100) / 100,
             analysis_date: today,
-            is_active: true
+            is_active: true,
+            eligibility_type: 'AVG_RANGE' // Track how they qualified
+          });
+        } else if (!avgEligible && potentialLineEligible) {
+          // v1.4: Player doesn't meet avgRange but might qualify via lineRange
+          // Add as potential bounce-back candidate for later validation
+          sweetSpots.push({
+            category: catKey,
+            player_name: playerName,
+            prop_type: config.propType,
+            recommended_line: null, // Will be set during validation
+            recommended_side: config.side,
+            l10_hit_rate: null,
+            l10_avg: Math.round(l10Avg * 10) / 10,
+            l10_min: l10Min,
+            l10_max: l10Max,
+            l10_median: Math.round(l10Median * 10) / 10,
+            l10_std_dev: Math.round(l10StdDev * 10) / 10,
+            games_played: l10Logs.length,
+            archetype: catKey,
+            confidence_score: 0, // Will be calculated during validation
+            analysis_date: today,
+            is_active: false, // Will be activated during validation if eligible
+            eligibility_type: 'LINE_RANGE_PENDING', // Needs line-based validation
+            requires_bounce_back_check: config.supportsBounceBack || false
           });
         }
       }
@@ -332,6 +385,20 @@ serve(async (req) => {
     let validatedCount = 0;
     let droppedCount = 0;
     let noGameCount = 0;
+    let bounceBackCount = 0;
+    let lineEligibleCount = 0;
+
+    // Fetch season stats for bounce back detection
+    const { data: seasonStats } = await supabase
+      .from('player_season_stats')
+      .select('player_name, avg_points, avg_rebounds, avg_assists, avg_threes');
+    
+    const seasonStatsMap = new Map<string, any>();
+    for (const stat of seasonStats || []) {
+      seasonStatsMap.set(stat.player_name?.toLowerCase().trim(), stat);
+    }
+    
+    console.log(`[Category Analyzer] Loaded season stats for ${seasonStatsMap.size} players`);
 
     for (const spot of sweetSpots) {
       const key = `${spot.player_name.toLowerCase().trim()}_${spot.prop_type.toLowerCase()}`;
@@ -354,11 +421,113 @@ serve(async (req) => {
       if (logs && logs.length >= 5) {
         const l10Logs = logs.slice(0, 10);
         const statValues = l10Logs.map(log => getStatValue(log, spot.prop_type));
+        const l10Avg = statValues.reduce((a, b) => a + b, 0) / statValues.length;
+        const l10StdDev = calculateStdDev(statValues);
+        
+        // v1.4: Handle LINE_RANGE_PENDING spots (line-based eligibility)
+        if (spot.eligibility_type === 'LINE_RANGE_PENDING') {
+          const config = CATEGORIES[spot.category];
+          
+          // Check if actual line qualifies via lineRange
+          const lineEligible = config.lineRange && 
+            actualData.line >= config.lineRange.min && 
+            actualData.line <= config.lineRange.max;
+          
+          if (!lineEligible) {
+            spot.is_active = false;
+            validatedSpots.push(spot);
+            continue;
+          }
+          
+          lineEligibleCount++;
+          console.log(`[Category Analyzer] [LINE-ELIGIBLE] ${spot.player_name}: L10 avg ${l10Avg.toFixed(1)} below range but line ${actualData.line} qualifies`);
+          
+          // Get season average for bounce back detection
+          const playerSeasonStats = seasonStatsMap.get(spot.player_name.toLowerCase().trim());
+          let seasonAvg = 0;
+          if (playerSeasonStats) {
+            switch (spot.prop_type) {
+              case 'points': seasonAvg = playerSeasonStats.avg_points || 0; break;
+              case 'rebounds': seasonAvg = playerSeasonStats.avg_rebounds || 0; break;
+              case 'assists': seasonAvg = playerSeasonStats.avg_assists || 0; break;
+              case 'threes': seasonAvg = playerSeasonStats.avg_threes || 0; break;
+            }
+          }
+          
+          // Check for bounce back candidate
+          const seasonVsL10Gap = seasonAvg - l10Avg;
+          const stdDevGap = l10StdDev > 0 ? seasonVsL10Gap / l10StdDev : 0;
+          const lineVsSeasonGap = Math.abs(actualData.line - seasonAvg);
+          
+          const isBounceBackCandidate = 
+            config.supportsBounceBack &&
+            seasonVsL10Gap >= BOUNCE_BACK_CONFIG.minSeasonVsL10Gap &&
+            stdDevGap >= BOUNCE_BACK_CONFIG.minStdDevGap &&
+            lineVsSeasonGap <= BOUNCE_BACK_CONFIG.maxLineVsSeasonGap;
+          
+          if (isBounceBackCandidate) {
+            // Check OVER hit rate - low L10 OVER hit rate = due for bounce
+            const l10OverHitRate = calculateHitRate(statValues, actualData.line, 'over');
+            
+            // Ideal bounce back: Low L10 hit rate (20-50%) + Season avg >= line
+            if (l10OverHitRate >= BOUNCE_BACK_CONFIG.minL10HitRateForOVER &&
+                l10OverHitRate <= BOUNCE_BACK_CONFIG.maxL10HitRateForOVER &&
+                seasonAvg >= actualData.line * 0.95) { // Season avg within 5% of line
+              
+              bounceBackCount++;
+              spot.recommended_side = 'over';
+              spot.recommended_line = actualData.line;
+              spot.actual_line = actualData.line;
+              spot.actual_hit_rate = Math.round(l10OverHitRate * 100) / 100;
+              spot.bookmaker = actualData.bookmaker;
+              spot.is_active = true;
+              spot.eligibility_type = 'BOUNCE_BACK';
+              spot.bounce_back_score = Math.round(stdDevGap * 100) / 100;
+              spot.season_avg = Math.round(seasonAvg * 10) / 10;
+              
+              // Confidence based on how far below mean + season baseline
+              const confidenceScore = Math.min(0.85, 0.5 + (stdDevGap * 0.15) + ((seasonAvg - actualData.line) / actualData.line * 0.5));
+              spot.confidence_score = Math.round(confidenceScore * 100) / 100;
+              
+              validatedCount++;
+              console.log(`[Category Analyzer] 🔥 BOUNCE-BACK ${spot.player_name} ${spot.prop_type} OVER ${actualData.line}: Season ${seasonAvg.toFixed(1)} vs L10 ${l10Avg.toFixed(1)} (${stdDevGap.toFixed(2)} std devs below)`);
+              validatedSpots.push(spot);
+              continue;
+            }
+          }
+          
+          // If not a bounce back candidate, check UNDER for line-eligible players
+          const underHitRate = calculateHitRate(statValues, actualData.line, 'under');
+          if (underHitRate >= 0.70) {
+            spot.recommended_side = 'under';
+            spot.recommended_line = actualData.line;
+            spot.actual_line = actualData.line;
+            spot.actual_hit_rate = Math.round(underHitRate * 100) / 100;
+            spot.bookmaker = actualData.bookmaker;
+            spot.is_active = true;
+            spot.eligibility_type = 'LINE_ELIGIBLE_UNDER';
+            
+            const consistency = l10Avg > 0 ? 1 - (l10StdDev / l10Avg) : 0;
+            spot.confidence_score = Math.round((underHitRate * 0.6 + Math.max(0, consistency) * 0.4) * 100) / 100;
+            
+            validatedCount++;
+            console.log(`[Category Analyzer] ✓ LINE-ELIGIBLE-UNDER ${spot.player_name} ${spot.prop_type}: UNDER ${actualData.line} (${(underHitRate * 100).toFixed(0)}% hit rate)`);
+            validatedSpots.push(spot);
+            continue;
+          }
+          
+          // Line-eligible player didn't qualify for bounce back or UNDER
+          spot.is_active = false;
+          validatedSpots.push(spot);
+          continue;
+        }
+        
+        // Standard validation for AVG_RANGE qualified spots
         const actualHitRate = calculateHitRate(statValues, actualData.line, spot.recommended_side);
         
         spot.actual_line = actualData.line;
         spot.actual_hit_rate = Math.round(actualHitRate * 100) / 100;
-        spot.line_difference = Math.round((actualData.line - spot.recommended_line) * 10) / 10;
+        spot.line_difference = spot.recommended_line ? Math.round((actualData.line - spot.recommended_line) * 10) / 10 : null;
         spot.bookmaker = actualData.bookmaker;
         
         // v1.2: TIERED HIT RATE REQUIREMENTS for BIG_REBOUNDER
@@ -405,7 +574,7 @@ serve(async (req) => {
       validatedSpots.push(spot);
     }
 
-    console.log(`[Category Analyzer] Validation complete: ${validatedCount} active, ${droppedCount} dropped (<70%), ${noGameCount} no game today`);
+    console.log(`[Category Analyzer] Validation complete: ${validatedCount} active, ${droppedCount} dropped, ${noGameCount} no game today, ${bounceBackCount} bounce-back, ${lineEligibleCount} line-eligible`);
 
     // Sort by confidence score (active first, then by score)
     validatedSpots.sort((a, b) => {
@@ -449,6 +618,8 @@ serve(async (req) => {
       totalAnalyzed: validatedSpots.length,
       droppedBelowThreshold: droppedCount,
       noUpcomingGame: noGameCount,
+      bounceBackPicks: bounceBackCount,
+      lineEligiblePicks: lineEligibleCount,
       categories: Object.keys(grouped),
       analyzedAt: new Date().toISOString()
     }), {
