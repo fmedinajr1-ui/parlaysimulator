@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { RefreshCw, Flame, Users, Crosshair, Plus, ChevronDown, ChevronUp, Zap, Lock, Unlock } from 'lucide-react';
+import { RefreshCw, Flame, Users, Crosshair, Plus, ChevronDown, ChevronUp, Zap, Lock, Unlock, TrendingUp, TrendingDown } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -108,7 +108,9 @@ const OversPickCard = ({
 }) => {
   const hitRate = pick.l10_hit_rate || 0;
   const isElite = hitRate >= 0.9;
-  const description = `${pick.player_name} ${(pick.recommended_side || 'O').toUpperCase()}${pick.recommended_line} ${formatPropType(pick.prop_type)}`;
+  const isUnder = pick.recommended_side === 'under';
+  const sidePrefix = isUnder ? 'U' : 'O';
+  const description = `${pick.player_name} ${sidePrefix}${pick.recommended_line} ${formatPropType(pick.prop_type)}`;
   
   return (
     <div className={cn(
@@ -131,8 +133,21 @@ const OversPickCard = ({
             )}
           </div>
           <div className="flex items-center gap-2 mt-1">
-            <Badge variant="outline" className="text-xs border-orange-500/30 text-orange-500">
-              {(pick.recommended_side || 'O').toUpperCase()}{pick.recommended_line} {formatPropType(pick.prop_type)}
+            <Badge 
+              variant="outline" 
+              className={cn(
+                "text-xs flex items-center gap-1",
+                isUnder 
+                  ? "bg-red-500/10 border-red-500/30 text-red-600" 
+                  : "bg-green-500/10 border-green-500/30 text-green-600"
+              )}
+            >
+              {isUnder ? (
+                <TrendingDown className="h-3 w-3" />
+              ) : (
+                <TrendingUp className="h-3 w-3" />
+              )}
+              {sidePrefix}{pick.recommended_line} {formatPropType(pick.prop_type)}
             </Badge>
             {pick.confidence_score && (
               <span className="text-xs text-muted-foreground">
