@@ -1,6 +1,7 @@
-// Category Props Analyzer v1.1
+// Category Props Analyzer v1.2
 // Analyzes props by player category with accurate L10 hit rates
 // Categories: BIG_REBOUNDER, LOW_LINE_REBOUNDER, NON_SCORING_SHOOTER
+// v1.2: Tiered BIG_REBOUNDER validation (60-70% based on line)
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -359,15 +360,27 @@ serve(async (req) => {
         spot.line_difference = Math.round((actualData.line - spot.recommended_line) * 10) / 10;
         spot.bookmaker = actualData.bookmaker;
         
-        // Only mark as active if actual hit rate is still >= 70%
-        spot.is_active = actualHitRate >= 0.70;
+        // v1.2: TIERED HIT RATE REQUIREMENTS for BIG_REBOUNDER
+        // High-volume rebounders against tough lines still have value at lower thresholds
+        let requiredHitRate = 0.70; // Default 70%
+        
+        if (spot.category === 'BIG_REBOUNDER') {
+          if (actualData.line > 10.5) {
+            requiredHitRate = 0.60; // 60% for very high lines (10.5+)
+          } else if (actualData.line >= 8.5) {
+            requiredHitRate = 0.65; // 65% for high lines (8.5-10.5)
+          }
+          // Lines <= 8.5 keep 70% requirement
+        }
+        
+        spot.is_active = actualHitRate >= requiredHitRate;
         
         if (spot.is_active) {
           validatedCount++;
-          console.log(`[Category Analyzer] ✓ ${spot.player_name} ${spot.prop_type}: recommended=${spot.recommended_line}, actual=${actualData.line}, hitRate=${spot.l10_hit_rate}->${actualHitRate.toFixed(2)}`);
+          console.log(`[Category Analyzer] ✓ ${spot.player_name} ${spot.prop_type}: recommended=${spot.recommended_line}, actual=${actualData.line}, hitRate=${(actualHitRate * 100).toFixed(0)}% (req: ${(requiredHitRate * 100).toFixed(0)}%)`);
         } else {
           droppedCount++;
-          console.log(`[Category Analyzer] ✗ ${spot.player_name} ${spot.prop_type}: dropped (hitRate ${(actualHitRate * 100).toFixed(0)}% < 70% at actual line ${actualData.line})`);
+          console.log(`[Category Analyzer] ✗ ${spot.player_name} ${spot.prop_type}: dropped (hitRate ${(actualHitRate * 100).toFixed(0)}% < ${(requiredHitRate * 100).toFixed(0)}% at actual line ${actualData.line})`);
         }
       }
       
