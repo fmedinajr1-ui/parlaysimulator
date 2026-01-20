@@ -1,141 +1,130 @@
 import React, { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Sparkles, Trash2, RefreshCw, Loader2 } from "lucide-react";
+import { RefreshCw, Loader2, CheckCircle2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
+import { Progress } from "@/components/ui/progress";
+
+interface EngineStep {
+  name: string;
+  function: string;
+  body?: object;
+}
+
+const ENGINE_STEPS: EngineStep[] = [
+  { name: 'Cleaning stale props', function: 'cleanup-stale-props', body: { immediate: true } },
+  { name: 'Analyzing categories', function: 'category-props-analyzer', body: { forceRefresh: true } },
+  { name: 'Running risk engine', function: 'nba-player-prop-risk-engine', body: { action: 'analyze_slate', mode: 'full_slate' } },
+  { name: 'Building sharp parlays', function: 'sharp-parlay-builder' },
+  { name: 'Building heat parlays', function: 'heat-prop-engine' },
+];
 
 export function SlateRefreshControls() {
-  const [isClearing, setIsClearing] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [currentStep, setCurrentStep] = useState(0);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const queryClient = useQueryClient();
 
-  const isLoading = isClearing || isRefreshing;
-
   const invalidateAllQueries = () => {
+    // Daily parlay hub queries
+    queryClient.invalidateQueries({ queryKey: ['sweet-spot-parlay-picks'] });
+    queryClient.invalidateQueries({ queryKey: ['sharp-parlays-daily'] });
+    queryClient.invalidateQueries({ queryKey: ['heat-parlays-daily'] });
+    // Legacy queries
     queryClient.invalidateQueries({ queryKey: ['riskEnginePicks'] });
     queryClient.invalidateQueries({ queryKey: ['sweetSpotTracking'] });
     queryClient.invalidateQueries({ queryKey: ['propEngineV2'] });
     queryClient.invalidateQueries({ queryKey: ['sharpParlays'] });
     queryClient.invalidateQueries({ queryKey: ['heatParlays'] });
-    queryClient.invalidateQueries({ queryKey: ['sweetSpotParlay'] });
     queryClient.invalidateQueries({ queryKey: ['category-sweet-spots-all'] });
     queryClient.invalidateQueries({ queryKey: ['category-parlay-picks-today'] });
-    queryClient.invalidateQueries({ queryKey: ['sweet-spot-parlay-picks'] });
   };
 
-  const handleNextSlate = async () => {
-    setIsClearing(true);
-    toast.info('Clearing stale props...');
-    
-    try {
-      // Step 1: Run cleanup to clear ended games
-      const { error: cleanupError } = await supabase.functions.invoke('cleanup-stale-props', {
-        body: { immediate: true }
-      });
-      
-      if (cleanupError) {
-        console.error('Cleanup error:', cleanupError);
-      }
-      
-      toast.info('Running engine cascade...');
-      
-      // Step 2: Run full engine cascade for fresh picks
-      const { error: cascadeError } = await supabase.functions.invoke('engine-cascade-runner', {
-        body: { trigger: 'manual_next_slate', skipPreflight: false }
-      });
-      
-      if (cascadeError) {
-        console.error('Cascade error:', cascadeError);
-      }
-      
-      // Step 3: Invalidate all queries to refresh UI
-      invalidateAllQueries();
-      setLastRefresh(new Date());
-      
-      toast.success('Next slate loaded! 🎯');
-    } catch (err) {
-      console.error('Next slate error:', err);
-      toast.error('Failed to load next slate');
-    } finally {
-      setIsClearing(false);
-    }
-  };
-
-  const handleRefreshEngines = async () => {
+  const handleRefreshAllEngines = async () => {
     setIsRefreshing(true);
-    toast.info('Running full engine refresh...');
+    setCurrentStep(0);
+    
+    toast.info('Starting full engine refresh...');
     
     try {
-      const { error } = await supabase.functions.invoke('engine-cascade-runner', {
-        body: { trigger: 'manual_refresh' }
-      });
-      
-      if (error) {
-        console.error('Refresh error:', error);
+      for (let i = 0; i < ENGINE_STEPS.length; i++) {
+        const step = ENGINE_STEPS[i];
+        setCurrentStep(i + 1);
+        
+        console.log(`[SlateRefresh] Running: ${step.name}`);
+        
+        const { error } = await supabase.functions.invoke(step.function, {
+          body: step.body || {}
+        });
+        
+        if (error) {
+          console.error(`[SlateRefresh] ${step.name} error:`, error);
+          // Continue with other engines even if one fails
+        }
       }
       
-      // Invalidate queries
+      // Invalidate all queries to refresh UI
       invalidateAllQueries();
       setLastRefresh(new Date());
       
-      toast.success('All engines refreshed! ✨');
+      toast.success('All engines refreshed! 🎯');
     } catch (err) {
-      console.error('Refresh error:', err);
+      console.error('[SlateRefresh] Error:', err);
       toast.error('Failed to refresh engines');
     } finally {
       setIsRefreshing(false);
+      setCurrentStep(0);
     }
   };
+
+  const progress = isRefreshing ? (currentStep / ENGINE_STEPS.length) * 100 : 0;
 
   return (
     <Card className="border-primary/20 bg-gradient-to-r from-primary/5 to-background">
       <CardContent className="py-3 px-4">
         <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-5 w-5 text-primary" />
-            <div>
-              <span className="font-medium text-sm">Slate Control</span>
-              <p className="text-xs text-muted-foreground">
-                {lastRefresh 
-                  ? `Updated ${formatDistanceToNow(lastRefresh, { addSuffix: true })}` 
-                  : 'Clear ended games & load fresh picks'}
-              </p>
-            </div>
+          <div className="flex-1">
+            {isRefreshing ? (
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                  <span className="text-sm font-medium">
+                    {ENGINE_STEPS[currentStep - 1]?.name || 'Starting...'}
+                  </span>
+                </div>
+                <Progress value={progress} className="h-1.5" />
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                {lastRefresh ? (
+                  <>
+                    <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                    <span className="text-sm text-muted-foreground">
+                      Updated {formatDistanceToNow(lastRefresh, { addSuffix: true })}
+                    </span>
+                  </>
+                ) : (
+                  <span className="text-sm text-muted-foreground">
+                    Click to generate today's AI parlays
+                  </span>
+                )}
+              </div>
+            )}
           </div>
           
-          <div className="flex gap-2">
-            {/* Next Slate - Clear & Generate */}
-            <Button 
-              variant="neon"
-              size="sm"
-              onClick={handleNextSlate}
-              disabled={isLoading}
-              className="gap-2"
-            >
-              {isClearing ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Trash2 className="h-4 w-4" />
-              )}
-              {isClearing ? 'Clearing...' : 'Next Slate'}
-            </Button>
-            
-            {/* Refresh All Engines */}
-            <Button 
-              variant="outline"
-              size="sm"
-              onClick={handleRefreshEngines}
-              disabled={isLoading}
-              className="gap-2"
-            >
-              <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-              {isRefreshing ? 'Running...' : 'Refresh'}
-            </Button>
-          </div>
+          <Button 
+            variant="neon"
+            size="sm"
+            onClick={handleRefreshAllEngines}
+            disabled={isRefreshing}
+            className="gap-2 shrink-0"
+          >
+            <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            {isRefreshing ? 'Running...' : 'Refresh All Engines'}
+          </Button>
         </div>
       </CardContent>
     </Card>
