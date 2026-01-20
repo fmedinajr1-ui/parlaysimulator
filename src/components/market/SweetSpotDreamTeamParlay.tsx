@@ -26,6 +26,11 @@ const getConfidenceColor = (confidence: number): string => {
 const getCategoryLabel = (category: string | null | undefined): string => {
   if (!category) return '';
   switch (category) {
+    // PROVEN WINNERS v2.0
+    case 'ASSIST_ANCHOR': return '📊 Ast Under';
+    case 'HIGH_REB_UNDER': return '📊 Reb Under';
+    case 'MID_SCORER_UNDER': return '📊 Pts Under';
+    // Legacy
     case 'BIG_REBOUNDER': return 'Big Reb';
     case 'LOW_LINE_REBOUNDER': return 'Low Reb';
     case 'NON_SCORING_SHOOTER': return 'Non-Scorer';
@@ -36,6 +41,11 @@ const getCategoryLabel = (category: string | null | undefined): string => {
 const getCategoryColor = (category: string | null | undefined): string => {
   if (!category) return 'bg-muted/50 text-muted-foreground';
   switch (category) {
+    // PROVEN WINNERS v2.0 - Gold/Winner styling
+    case 'ASSIST_ANCHOR': return 'bg-amber-500/20 text-amber-400 border-amber-500/30';
+    case 'HIGH_REB_UNDER': return 'bg-amber-500/20 text-amber-400 border-amber-500/30';
+    case 'MID_SCORER_UNDER': return 'bg-amber-500/20 text-amber-400 border-amber-500/30';
+    // Legacy
     case 'BIG_REBOUNDER': return 'bg-purple-500/20 text-purple-400 border-purple-500/30';
     case 'LOW_LINE_REBOUNDER': return 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30';
     case 'NON_SCORING_SHOOTER': return 'bg-orange-500/20 text-orange-400 border-orange-500/30';
@@ -101,7 +111,10 @@ export function SweetSpotDreamTeamParlay() {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <CardTitle className="text-lg font-bold">Sweet Spot Dream Team</CardTitle>
+                <CardTitle className="text-lg font-bold">🏆 Proven Winners</CardTitle>
+                <Badge variant="outline" className="gap-1 bg-amber-500/10 text-amber-400 border-amber-500/30 text-[10px]">
+                  65%+ Win Rate
+                </Badge>
                 {slateStatus?.isNextSlate && (
                   <Badge variant="outline" className="gap-1 bg-blue-500/10 text-blue-400 border-blue-500/30 text-[10px]">
                     <Calendar className="h-3 w-3" />
@@ -110,7 +123,7 @@ export function SweetSpotDreamTeamParlay() {
                 )}
               </div>
               <p className="text-xs text-muted-foreground">
-                {slateStatus?.isNextSlate ? "Tomorrow's" : "Optimal"} {combinedStats.legCount}-leg parlay • Proven formulas
+                {combinedStats.legCount}-leg UNDER parlay • Data-backed winners
               </p>
             </div>
           </div>

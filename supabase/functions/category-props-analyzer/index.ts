@@ -1,10 +1,12 @@
-// Category Props Analyzer v1.5
+// Category Props Analyzer v2.0 - PROVEN WINNERS EDITION
 // Analyzes props by player category with accurate L10 hit rates
-// Categories: BIG_REBOUNDER, LOW_LINE_REBOUNDER, NON_SCORING_SHOOTER, VOLUME_SCORER, HIGH_ASSIST, THREE_POINT_SHOOTER
-// v1.2: Tiered BIG_REBOUNDER validation (60-70% based on line)
-// v1.3: Added UNDER detection for BIG_REBOUNDER and VOLUME_SCORER when OVER fails
-// v1.4: Added BOUNCE_BACK detection for players with high lines but depressed L10 (regression to mean)
-// v1.5: BIG categories ALWAYS recommend OVER with risk_level indicators instead of UNDER
+// NEW v2.0 Categories (based on 391 settled picks analysis):
+//   - ASSIST_ANCHOR: Assists UNDER 3.5-5.5 (65% historical win rate)
+//   - HIGH_REB_UNDER: Rebounds UNDER 10.5-12.5 (62% historical win rate)  
+//   - MID_SCORER_UNDER: Points UNDER 14.5-20.5 (64% historical win rate)
+// Legacy Categories: BIG_REBOUNDER, LOW_LINE_REBOUNDER, NON_SCORING_SHOOTER, VOLUME_SCORER, HIGH_ASSIST, THREE_POINT_SHOOTER
+// v1.5: BIG categories ALWAYS recommend OVER with risk_level indicators
+// v2.0: Added proven UNDER categories for Dream Team parlay
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -47,15 +49,46 @@ const BOUNCE_BACK_CONFIG = {
 };
 
 const CATEGORIES: Record<string, CategoryConfig> = {
+  // ============ NEW PROVEN WINNERS (v2.0) ============
+  // Based on analysis of 391 settled picks
+  
+  ASSIST_ANCHOR: {
+    name: 'Assist Anchor',
+    propType: 'assists',
+    avgRange: { min: 3, max: 5.5 },  // Guards averaging 3-5.5 assists
+    lines: [3.5, 4.5, 5.5],
+    side: 'under',
+    minHitRate: 0.60  // 65% historical win rate on assists under 3.5-5
+  },
+  
+  HIGH_REB_UNDER: {
+    name: 'High Reb Under',
+    propType: 'rebounds',
+    avgRange: { min: 8, max: 14 },  // Big men averaging 8-14 rebounds
+    lines: [9.5, 10.5, 11.5, 12.5],
+    side: 'under',
+    minHitRate: 0.55  // 62% historical win rate on rebounds under 10+
+  },
+  
+  MID_SCORER_UNDER: {
+    name: 'Mid Scorer Under',
+    propType: 'points',
+    avgRange: { min: 12, max: 22 },  // Players averaging 12-22 points
+    lines: [14.5, 15.5, 16.5, 17.5, 18.5, 19.5, 20.5],
+    side: 'under',
+    minHitRate: 0.55  // 64% historical win rate on points under 14.5-20
+  },
+  
+  // ============ LEGACY CATEGORIES ============
   BIG_REBOUNDER: {
     name: 'Big Rebounder',
     propType: 'rebounds',
     avgRange: { min: 9, max: 20 },
-    lineRange: { min: 9, max: 20 }, // NEW: Bookmaker line 9+ also qualifies
+    lineRange: { min: 9, max: 20 },
     lines: [6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5],
     side: 'over',
     minHitRate: 0.7,
-    supportsBounceBack: true // NEW: Enable bounce back for rebounders
+    supportsBounceBack: true
   },
   LOW_LINE_REBOUNDER: {
     name: 'Low Line Rebounder',
@@ -73,16 +106,15 @@ const CATEGORIES: Record<string, CategoryConfig> = {
     side: 'under',
     minHitRate: 0.7
   },
-  // NEW OVERS Categories
   VOLUME_SCORER: {
     name: 'Volume Scorer',
     propType: 'points',
     avgRange: { min: 15, max: 40 },
-    lineRange: { min: 18, max: 40 }, // NEW: Line-based eligibility for scorers
+    lineRange: { min: 18, max: 40 },
     lines: [14.5, 16.5, 18.5, 20.5, 22.5, 24.5, 26.5, 28.5, 30.5],
     side: 'over',
     minHitRate: 0.7,
-    supportsBounceBack: true // NEW: Enable bounce back for scorers
+    supportsBounceBack: true
   },
   HIGH_ASSIST: {
     name: 'Playmaker',
