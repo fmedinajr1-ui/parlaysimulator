@@ -1,12 +1,13 @@
-// Category Props Analyzer v2.0 - PROVEN WINNERS EDITION
-// Analyzes props by player category with accurate L10 hit rates
-// NEW v2.0 Categories (based on 391 settled picks analysis):
+// Category Props Analyzer v3.0 - ARCHETYPE-ENFORCED WINNING FORMULAS
+// Analyzes props by player category with strict archetype validation
+// v3.0: Added archetype enforcement to prevent misaligned picks
+// v2.0 Categories (based on 391 settled picks analysis):
 //   - ASSIST_ANCHOR: Assists UNDER 3.5-5.5 (65% historical win rate)
 //   - HIGH_REB_UNDER: Rebounds UNDER 10.5-12.5 (62% historical win rate)  
 //   - MID_SCORER_UNDER: Points UNDER 14.5-20.5 (64% historical win rate)
 // Legacy Categories: BIG_REBOUNDER, LOW_LINE_REBOUNDER, NON_SCORING_SHOOTER, VOLUME_SCORER, HIGH_ASSIST, THREE_POINT_SHOOTER
 // v1.5: BIG categories ALWAYS recommend OVER with risk_level indicators
-// v2.0: Added proven UNDER categories for Dream Team parlay
+// v3.0: Strict archetype validation - BIG_ASSIST = only bigs, ROLE_PLAYER = no stars
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -37,7 +38,36 @@ interface CategoryConfig {
   side: 'over' | 'under';
   minHitRate: number;
   supportsBounceBack?: boolean; // NEW: Enable bounce back detection
+  // v3.0: Archetype enforcement
+  requiredArchetypes?: string[]; // Only these archetypes allowed
+  blockedArchetypes?: string[];  // These archetypes are blocked
 }
+
+// ============ ARCHETYPE DEFINITIONS (v3.0) ============
+// Centralized archetype lists for validation
+const ARCHETYPE_GROUPS = {
+  BIGS: ['ELITE_REBOUNDER', 'GLASS_CLEANER', 'STRETCH_BIG', 'RIM_PROTECTOR'],
+  GUARDS: ['PLAYMAKER', 'COMBO_GUARD', 'SCORING_GUARD', 'PURE_SHOOTER'],
+  WINGS: ['TWO_WAY_WING', 'SCORING_WING'],
+  STARS: ['ELITE_REBOUNDER', 'PLAYMAKER', 'PURE_SHOOTER', 'COMBO_GUARD', 'SCORING_WING'],
+  ROLE_PLAYERS: ['TWO_WAY_WING', 'STRETCH_BIG', 'RIM_PROTECTOR', 'ROLE_PLAYER', 'UNKNOWN']
+};
+
+// Archetype-to-allowed-props mapping
+const ARCHETYPE_PROP_ALIGNMENT: Record<string, { primary: string[], blocked: string[] }> = {
+  'ELITE_REBOUNDER': { primary: ['rebounds', 'blocks'], blocked: ['threes'] },
+  'GLASS_CLEANER': { primary: ['rebounds'], blocked: ['points', 'threes', 'assists'] },
+  'PURE_SHOOTER': { primary: ['points', 'threes'], blocked: ['rebounds', 'blocks'] },
+  'PLAYMAKER': { primary: ['assists'], blocked: ['rebounds', 'blocks'] },
+  'COMBO_GUARD': { primary: ['points', 'assists'], blocked: ['rebounds', 'blocks'] },
+  'TWO_WAY_WING': { primary: ['points', 'rebounds'], blocked: ['blocks'] },
+  'STRETCH_BIG': { primary: ['points', 'rebounds', 'threes'], blocked: [] },
+  'RIM_PROTECTOR': { primary: ['blocks', 'rebounds'], blocked: ['points', 'threes'] },
+  'SCORING_WING': { primary: ['points'], blocked: ['assists', 'blocks'] },
+  'SCORING_GUARD': { primary: ['points', 'assists'], blocked: ['rebounds', 'blocks'] },
+  'ROLE_PLAYER': { primary: [], blocked: ['points'] }, // Role players avoid points
+  'UNKNOWN': { primary: [], blocked: [] }
+};
 
 // Bounce Back Configuration
 const BOUNCE_BACK_CONFIG = {
@@ -79,8 +109,8 @@ const CATEGORIES: Record<string, CategoryConfig> = {
     minHitRate: 0.55  // 64% historical win rate on points under 14.5-20
   },
   
-  // ============ NEW OPTIMAL WINNERS (v3.0) ============
-  // Based on user's winning bet slip patterns
+  // ============ OPTIMAL WINNERS (v3.0) - ARCHETYPE ENFORCED ============
+  // Based on user's winning bet slip patterns with STRICT archetype validation
   
   ELITE_REB_OVER: {
     name: 'Elite Rebounder OVER',
@@ -89,7 +119,10 @@ const CATEGORIES: Record<string, CategoryConfig> = {
     lines: [9.5, 10.5, 11.5, 12.5],
     side: 'over',
     minHitRate: 0.55,  // ~65% win rate on elite big boards
-    supportsBounceBack: true
+    supportsBounceBack: true,
+    // v3.0: ONLY elite rebounders/glass cleaners allowed
+    requiredArchetypes: ['ELITE_REBOUNDER', 'GLASS_CLEANER', 'RIM_PROTECTOR'],
+    blockedArchetypes: ['PLAYMAKER', 'COMBO_GUARD', 'PURE_SHOOTER', 'SCORING_GUARD']
   },
   
   ROLE_PLAYER_REB: {
@@ -98,16 +131,22 @@ const CATEGORIES: Record<string, CategoryConfig> = {
     avgRange: { min: 3, max: 6 },  // Finney-Smith, Kyshawn George type
     lines: [2.5, 3.5, 4.5],
     side: 'over',
-    minHitRate: 0.60  // ~60% win rate on low line reb overs
+    minHitRate: 0.60,  // ~60% win rate on low line reb overs
+    // v3.0: Block stars and guards - only wings/bigs allowed
+    requiredArchetypes: ['TWO_WAY_WING', 'STRETCH_BIG', 'SCORING_WING', 'ROLE_PLAYER', 'UNKNOWN'],
+    blockedArchetypes: ['ELITE_REBOUNDER', 'PLAYMAKER', 'COMBO_GUARD', 'PURE_SHOOTER', 'SCORING_GUARD']
   },
   
   BIG_ASSIST_OVER: {
     name: 'Big Man Assists OVER',
     propType: 'assists',
-    avgRange: { min: 2, max: 6 },  // Passing bigs (Vucevic, Sabonis, Jokic)
+    avgRange: { min: 2, max: 6 },  // Passing bigs (Vucevic, Sabonis, Jokic, Sengun)
     lines: [2.5, 3.5, 4.5],
     side: 'over',
-    minHitRate: 0.60  // ~70% win rate on low assist lines for bigs
+    minHitRate: 0.60,  // ~70% win rate on low assist lines for bigs
+    // v3.0: ONLY bigs allowed - no guards/wings
+    requiredArchetypes: ['ELITE_REBOUNDER', 'GLASS_CLEANER', 'STRETCH_BIG', 'RIM_PROTECTOR'],
+    blockedArchetypes: ['PLAYMAKER', 'COMBO_GUARD', 'PURE_SHOOTER', 'SCORING_GUARD', 'SCORING_WING']
   },
   
   LOW_SCORER_UNDER: {
@@ -116,7 +155,9 @@ const CATEGORIES: Record<string, CategoryConfig> = {
     avgRange: { min: 5, max: 12 },  // Lu Dort, Reed Sheppard type
     lines: [7.5, 8.5, 9.5, 10.5, 11.5, 12.5],
     side: 'under',
-    minHitRate: 0.55  // ~65% win rate on role player pts under
+    minHitRate: 0.55,  // ~65% win rate on role player pts under
+    // v3.0: Block star scorers
+    blockedArchetypes: ['PURE_SHOOTER', 'COMBO_GUARD', 'SCORING_GUARD', 'SCORING_WING']
   },
   
   STAR_FLOOR_OVER: {
@@ -125,7 +166,9 @@ const CATEGORIES: Record<string, CategoryConfig> = {
     avgRange: { min: 20, max: 40 },  // Stars like Ja Morant, Booker
     lines: [14.5, 15.5, 16.5, 17.5, 18.5, 19.5],  // Well below their avg
     side: 'over',
-    minHitRate: 0.65  // ~75% win rate on star floor plays
+    minHitRate: 0.65,  // ~75% win rate on star floor plays
+    // v3.0: ONLY star scorers
+    requiredArchetypes: ['PURE_SHOOTER', 'COMBO_GUARD', 'PLAYMAKER', 'SCORING_GUARD', 'SCORING_WING']
   },
   
   // ============ LEGACY CATEGORIES ============
@@ -137,7 +180,8 @@ const CATEGORIES: Record<string, CategoryConfig> = {
     lines: [6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5],
     side: 'over',
     minHitRate: 0.7,
-    supportsBounceBack: true
+    supportsBounceBack: true,
+    requiredArchetypes: ['ELITE_REBOUNDER', 'GLASS_CLEANER', 'STRETCH_BIG', 'RIM_PROTECTOR']
   },
   LOW_LINE_REBOUNDER: {
     name: 'Low Line Rebounder',
@@ -182,6 +226,48 @@ const CATEGORIES: Record<string, CategoryConfig> = {
     minHitRate: 0.7
   }
 };
+
+// Runtime archetype lookup
+let archetypeMap: Record<string, string> = {};
+
+async function loadArchetypes(supabase: any): Promise<void> {
+  const { data } = await supabase
+    .from('player_archetypes')
+    .select('player_name, primary_archetype');
+  
+  archetypeMap = {};
+  for (const a of (data || [])) {
+    archetypeMap[a.player_name?.toLowerCase().trim() || ''] = a.primary_archetype;
+  }
+  console.log(`[Category Analyzer] Loaded ${Object.keys(archetypeMap).length} player archetypes`);
+}
+
+function getPlayerArchetype(playerName: string): string {
+  return archetypeMap[playerName?.toLowerCase().trim() || ''] || 'UNKNOWN';
+}
+
+// v3.0: Check if player passes archetype requirements for a category
+function passesArchetypeValidation(playerName: string, config: CategoryConfig): { passes: boolean; reason: string } {
+  const archetype = getPlayerArchetype(playerName);
+  
+  // Check blocked archetypes first
+  if (config.blockedArchetypes && config.blockedArchetypes.includes(archetype)) {
+    return { passes: false, reason: `Archetype ${archetype} is blocked for this category` };
+  }
+  
+  // If required archetypes specified, player must match one
+  if (config.requiredArchetypes && config.requiredArchetypes.length > 0) {
+    if (!config.requiredArchetypes.includes(archetype)) {
+      // Allow UNKNOWN archetype if no required match (fallback for missing data)
+      if (archetype === 'UNKNOWN') {
+        return { passes: true, reason: `Archetype unknown - allowing with caution` };
+      }
+      return { passes: false, reason: `Archetype ${archetype} not in required list: ${config.requiredArchetypes.join(', ')}` };
+    }
+  }
+  
+  return { passes: true, reason: `Archetype ${archetype} valid for category` };
+}
 
 function calculateMedian(values: number[]): number {
   if (values.length === 0) return 0;
@@ -229,7 +315,10 @@ serve(async (req) => {
 
     const { category, minHitRate = 0.7, forceRefresh = false } = await req.json().catch(() => ({}));
 
-    console.log(`[Category Analyzer] Starting analysis for category: ${category || 'ALL'}`);
+    console.log(`[Category Analyzer v3.0] Starting analysis for category: ${category || 'ALL'} (archetype-enforced)`);
+
+    // v3.0: Load player archetypes for validation
+    await loadArchetypes(supabase);
 
     // Get today's date for analysis
     const today = new Date().toISOString().split('T')[0];
@@ -318,6 +407,7 @@ serve(async (req) => {
     // Analyze each category
     const categoriesToAnalyze = category ? [category] : Object.keys(CATEGORIES);
     const sweetSpots: any[] = [];
+    let archetypeBlockedCount = 0;
 
     for (const catKey of categoriesToAnalyze) {
       const config = CATEGORIES[catKey];
@@ -326,6 +416,7 @@ serve(async (req) => {
       console.log(`[Category Analyzer] Analyzing category: ${catKey}`);
       let playersInRange = 0;
       let qualifiedPlayers = 0;
+      let blockedByArchetype = 0;
 
       for (const [playerName, logs] of Object.entries(playerLogs)) {
         // Take last 10 games only
@@ -342,6 +433,17 @@ serve(async (req) => {
         // For line-based eligibility, we need to check against actual bookmaker line later
         // For now, mark players who might qualify via lineRange for later validation
         const potentialLineEligible = config.lineRange !== undefined;
+
+        // v3.0: ARCHETYPE VALIDATION - Must pass before being considered
+        const archetypeCheck = passesArchetypeValidation(playerName, config);
+        if (!archetypeCheck.passes) {
+          if (avgEligible && playersInRange < 5) {
+            // Only log first few blocked for debugging
+            console.log(`[Category Analyzer] ⛔ ${catKey}: ${playerName} blocked - ${archetypeCheck.reason}`);
+          }
+          blockedByArchetype++;
+          continue; // Skip this player for this category
+        }
         
         // If neither eligibility path is possible, skip
         if (!avgEligible && !potentialLineEligible) continue;
@@ -390,7 +492,7 @@ serve(async (req) => {
             l10_max: l10Max,
             l10_median: Math.round(l10Median * 10) / 10,
             games_played: l10Logs.length,
-            archetype: catKey,
+            archetype: getPlayerArchetype(playerName), // v3.0: Store actual archetype
             confidence_score: Math.round(confidenceScore * 100) / 100,
             analysis_date: today,
             is_active: true,
@@ -412,7 +514,7 @@ serve(async (req) => {
             l10_median: Math.round(l10Median * 10) / 10,
             l10_std_dev: Math.round(l10StdDev * 10) / 10,
             games_played: l10Logs.length,
-            archetype: catKey,
+            archetype: getPlayerArchetype(playerName), // v3.0: Store actual archetype
             confidence_score: 0, // Will be calculated during validation
             analysis_date: today,
             is_active: false, // Will be activated during validation if eligible
@@ -422,10 +524,12 @@ serve(async (req) => {
         }
       }
       
-      console.log(`[Category Analyzer] ${catKey}: ${playersInRange} players in range, ${qualifiedPlayers} qualified (70%+ hit rate)`);
+      console.log(`[Category Analyzer] ${catKey}: ${playersInRange} in range, ${qualifiedPlayers} qualified, ${blockedByArchetype} blocked by archetype`);
+      archetypeBlockedCount += blockedByArchetype;
     }
 
-    console.log(`[Category Analyzer] Found ${sweetSpots.length} total sweet spots before validation`);
+    console.log(`[Category Analyzer] Found ${sweetSpots.length} total sweet spots before validation (${archetypeBlockedCount} total blocked by archetype)`);
+
 
     // ======= NEW: Validate against actual bookmaker lines from unified_props =======
     console.log(`[Category Analyzer] Fetching actual lines from unified_props...`);

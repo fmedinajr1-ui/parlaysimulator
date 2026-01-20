@@ -25,6 +25,34 @@ export interface SweetSpotPick {
   l10HitRate?: number | null;
 }
 
+// v3.0: ARCHETYPE-PROP ALIGNMENT VALIDATION
+const ARCHETYPE_PROP_BLOCKED: Record<string, string[]> = {
+  'ELITE_REBOUNDER': ['points', 'threes'],
+  'GLASS_CLEANER': ['points', 'threes', 'assists'],
+  'RIM_PROTECTOR': ['points', 'threes'],
+  'PURE_SHOOTER': ['rebounds', 'blocks'],
+  'PLAYMAKER': ['rebounds', 'blocks'],
+  'COMBO_GUARD': ['rebounds', 'blocks'],
+  'SCORING_GUARD': ['rebounds', 'blocks'],
+};
+
+function isPickArchetypeAligned(pick: SweetSpotPick): boolean {
+  if (!pick.archetype || pick.archetype === 'UNKNOWN') return true;
+  
+  const blockedProps = ARCHETYPE_PROP_BLOCKED[pick.archetype];
+  if (!blockedProps) return true;
+  
+  const propLower = pick.prop_type.toLowerCase();
+  for (const blocked of blockedProps) {
+    if (propLower.includes(blocked)) {
+      console.warn(`[SweetSpot] Filtering misaligned: ${pick.player_name} (${pick.archetype}) for ${pick.prop_type}`);
+      return false;
+    }
+  }
+  
+  return true;
+}
+
 export interface DreamTeamLeg {
   pick: SweetSpotPick;
   team: string;
