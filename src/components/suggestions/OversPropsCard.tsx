@@ -31,6 +31,8 @@ interface OversSweetSpot {
   archetype: string | null;
   analysis_date: string | null;
   is_active: boolean | null;
+  risk_level: string | null;
+  recommendation: string | null;
 }
 
 type OversCategory = 'VOLUME_SCORER' | 'HIGH_ASSIST' | 'THREE_POINT_SHOOTER';
@@ -112,6 +114,17 @@ const OversPickCard = ({
   const sidePrefix = isUnder ? 'U' : 'O';
   const description = `${pick.player_name} ${sidePrefix}${pick.recommended_line} ${formatPropType(pick.prop_type)}`;
   
+  // Risk level styling
+  const getRiskBadgeStyle = (risk: string | null) => {
+    switch (risk) {
+      case 'LOW': return 'bg-emerald-500/20 text-emerald-600 border-emerald-500/30';
+      case 'MEDIUM': return 'bg-amber-500/20 text-amber-600 border-amber-500/30';
+      case 'HIGH': return 'bg-orange-500/20 text-orange-600 border-orange-500/30';
+      case 'EXTREME': return 'bg-red-500/20 text-red-600 border-red-500/30';
+      default: return '';
+    }
+  };
+  
   return (
     <div className={cn(
       "p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors",
@@ -119,11 +132,16 @@ const OversPickCard = ({
     )}>
       <div className="flex items-start justify-between gap-2 mb-2">
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="font-medium truncate">{pick.player_name}</span>
             {isElite && (
-              <Badge variant="secondary" className="bg-green-500/20 text-green-600 text-[10px] px-1.5">
+              <Badge variant="secondary" className="bg-emerald-500/20 text-emerald-600 text-[10px] px-1.5">
                 ELITE
+              </Badge>
+            )}
+            {pick.risk_level && pick.risk_level !== 'LOW' && (
+              <Badge variant="outline" className={cn("text-[10px] px-1.5", getRiskBadgeStyle(pick.risk_level))}>
+                {pick.risk_level}
               </Badge>
             )}
             {isLocked && (
@@ -138,8 +156,8 @@ const OversPickCard = ({
               className={cn(
                 "text-xs flex items-center gap-1",
                 isUnder 
-                  ? "bg-red-500/10 border-red-500/30 text-red-600" 
-                  : "bg-green-500/10 border-green-500/30 text-green-600"
+                  ? "bg-destructive/10 border-destructive/30 text-destructive" 
+                  : "bg-emerald-500/10 border-emerald-500/30 text-emerald-600"
               )}
             >
               {isUnder ? (
@@ -155,6 +173,11 @@ const OversPickCard = ({
               </span>
             )}
           </div>
+          {pick.recommendation && (
+            <p className="text-[10px] text-muted-foreground mt-1.5 line-clamp-1">
+              {pick.recommendation}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-1">
           <Button
