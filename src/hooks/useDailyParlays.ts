@@ -18,6 +18,7 @@ export interface UnifiedParlayLeg {
   category?: string;
   confidence?: number;
   l10HitRate?: number;
+  archetype?: string;
 }
 
 // Unified parlay structure
@@ -45,6 +46,7 @@ interface SharpLegJson {
   category?: string;
   confidence?: number;
   l10_hit_rate?: number;
+  archetype?: string;
 }
 
 interface HeatLegJson {
@@ -55,6 +57,36 @@ interface HeatLegJson {
   team?: string;
   signal_label?: string;
   final_score?: number;
+}
+
+// v3.0: ARCHETYPE-PROP ALIGNMENT VALIDATION
+// Prevents misaligned picks like rebounders for points, guards for rebounds
+const ARCHETYPE_PROP_BLOCKED: Record<string, string[]> = {
+  'ELITE_REBOUNDER': ['points', 'threes'],
+  'GLASS_CLEANER': ['points', 'threes', 'assists'],
+  'RIM_PROTECTOR': ['points', 'threes'],
+  'PURE_SHOOTER': ['rebounds', 'blocks'],
+  'PLAYMAKER': ['rebounds', 'blocks'],
+  'COMBO_GUARD': ['rebounds', 'blocks'],
+  'SCORING_GUARD': ['rebounds', 'blocks'],
+};
+
+// v3.0: Validate leg is not misaligned
+function isLegArchetypeAligned(leg: UnifiedParlayLeg): boolean {
+  if (!leg.archetype || leg.archetype === 'UNKNOWN') return true; // Allow if no archetype data
+  
+  const blockedProps = ARCHETYPE_PROP_BLOCKED[leg.archetype];
+  if (!blockedProps) return true;
+  
+  const propLower = leg.propType.toLowerCase();
+  for (const blocked of blockedProps) {
+    if (propLower.includes(blocked)) {
+      console.warn(`[DailyParlays] Blocking misaligned leg: ${leg.playerName} (${leg.archetype}) for ${leg.propType}`);
+      return false;
+    }
+  }
+  
+  return true;
 }
 
 // Parse sharp parlay legs from JSONB
@@ -70,7 +102,8 @@ function parseSharpLegs(legs: Json): UnifiedParlayLeg[] {
     category: leg.category,
     confidence: leg.confidence,
     l10HitRate: leg.l10_hit_rate,
-  }));
+    archetype: leg.archetype,
+  })).filter(isLegArchetypeAligned); // v3.0: Filter misaligned
 }
 
 // Parse heat parlay legs from JSONB
@@ -78,7 +111,7 @@ function parseHeatLeg(leg: Json): UnifiedParlayLeg | null {
   if (!leg || typeof leg !== 'object') return null;
   const heatLeg = leg as HeatLegJson;
   
-  return {
+  const parsed: UnifiedParlayLeg = {
     playerName: heatLeg.player_name || '',
     propType: heatLeg.market_type || '',
     line: heatLeg.line || 0,
@@ -87,6 +120,8 @@ function parseHeatLeg(leg: Json): UnifiedParlayLeg | null {
     category: heatLeg.signal_label,
     confidence: heatLeg.final_score ? heatLeg.final_score / 100 : undefined,
   };
+  
+  return isLegArchetypeAligned(parsed) ? parsed : null; // v3.0: Filter misaligned
 }
 
 // Extract patterns from legs
