@@ -161,10 +161,10 @@ export function useSweetSpotParlayBuilder() {
       const yesterdayStr = yesterday.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 
       // PRIORITY 1: Get OPTIMAL WINNERS from category_sweet_spots (v3.0 categories)
+      // Use l10_hit_rate as primary filter - picks with 55%+ L10 hit rate are valid
       const { data: categoryPicks, error: categoryError } = await supabase
         .from('category_sweet_spots')
         .select('*')
-        .eq('is_active', true)
         .gte('analysis_date', yesterdayStr)
         .lte('analysis_date', targetDate)
         .in('category', [
@@ -174,7 +174,9 @@ export function useSweetSpotParlayBuilder() {
           // v2.0 Proven winners (still valid)
           'ASSIST_ANCHOR', 'HIGH_REB_UNDER', 'MID_SCORER_UNDER'
         ])
-        .order('confidence_score', { ascending: false });
+        .or('is_active.eq.true,l10_hit_rate.gte.0.55')  // Active OR high L10 hit rate
+        .not('actual_line', 'is', null)  // Must have upcoming game
+        .order('l10_hit_rate', { ascending: false });  // Prioritize by L10 hit rate
 
       if (categoryError) {
         console.error('Error fetching category sweet spots:', categoryError);
