@@ -67,9 +67,18 @@ export function SweetSpotDreamTeamParlay() {
   const handleRegenerate = async () => {
     setIsRegenerating(true);
     try {
+      toast.info('Refreshing proven winner categories...');
+      
+      // Step 1: Refresh proven winner categories first
+      await supabase.functions.invoke('category-props-analyzer', {
+        body: { forceRefresh: true }
+      });
+      
+      // Step 2: Refresh risk engine picks  
       await supabase.functions.invoke('nba-player-prop-risk-engine', {
         body: { action: 'analyze_slate', mode: 'full_slate' }
       });
+      
       await refetch();
       toast.success('Dream Team parlay regenerated!');
     } catch (err) {

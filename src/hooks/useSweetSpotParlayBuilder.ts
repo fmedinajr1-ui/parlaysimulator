@@ -148,12 +148,18 @@ export function useSweetSpotParlayBuilder() {
         }
       });
 
+      // Calculate date range (today or yesterday in case of late analysis)
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayStr = yesterday.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+
       // PRIORITY 1: Get PROVEN WINNERS from category_sweet_spots (new v2.0 categories)
       const { data: categoryPicks, error: categoryError } = await supabase
         .from('category_sweet_spots')
         .select('*')
         .eq('is_active', true)
-        .gte('analysis_date', targetDate)
+        .gte('analysis_date', yesterdayStr)
+        .lte('analysis_date', targetDate)
         .in('category', ['ASSIST_ANCHOR', 'HIGH_REB_UNDER', 'MID_SCORER_UNDER'])
         .order('confidence_score', { ascending: false });
 
