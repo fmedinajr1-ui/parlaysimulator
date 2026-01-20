@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Target, Trophy, Zap, Users, Plus, Loader2, TrendingUp, RefreshCw, Calendar } from "lucide-react";
+import { Target, Trophy, Zap, Users, Plus, Loader2, TrendingUp, RefreshCw, Calendar, AlertTriangle } from "lucide-react";
 import { useSweetSpotParlayBuilder } from "@/hooks/useSweetSpotParlayBuilder";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -21,6 +21,26 @@ const getConfidenceColor = (confidence: number): string => {
   if (confidence >= 9.0) return 'text-emerald-400';
   if (confidence >= 8.5) return 'text-yellow-400';
   return 'text-muted-foreground';
+};
+
+const getCategoryLabel = (category: string | null | undefined): string => {
+  if (!category) return '';
+  switch (category) {
+    case 'BIG_REBOUNDER': return 'Big Reb';
+    case 'LOW_LINE_REBOUNDER': return 'Low Reb';
+    case 'NON_SCORING_SHOOTER': return 'Non-Scorer';
+    default: return category.replace(/_/g, ' ');
+  }
+};
+
+const getCategoryColor = (category: string | null | undefined): string => {
+  if (!category) return 'bg-muted/50 text-muted-foreground';
+  switch (category) {
+    case 'BIG_REBOUNDER': return 'bg-purple-500/20 text-purple-400 border-purple-500/30';
+    case 'LOW_LINE_REBOUNDER': return 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30';
+    case 'NON_SCORING_SHOOTER': return 'bg-orange-500/20 text-orange-400 border-orange-500/30';
+    default: return 'bg-muted/50 text-muted-foreground';
+  }
 };
 
 export function SweetSpotDreamTeamParlay() {
@@ -90,7 +110,7 @@ export function SweetSpotDreamTeamParlay() {
                 )}
               </div>
               <p className="text-xs text-muted-foreground">
-                {slateStatus?.isNextSlate ? "Tomorrow's" : "Optimal"} {combinedStats.legCount}-leg parlay
+                {slateStatus?.isNextSlate ? "Tomorrow's" : "Optimal"} {combinedStats.legCount}-leg parlay • Proven formulas
               </p>
             </div>
           </div>
@@ -117,13 +137,15 @@ export function SweetSpotDreamTeamParlay() {
 
         {/* Stats Row */}
         <div className="flex gap-3 mt-3 flex-wrap">
+          {combinedStats.avgL10HitRate > 0 && (
+            <Badge variant="outline" className="gap-1 bg-emerald-500/10 text-emerald-400 border-emerald-500/30">
+              <Target className="h-3 w-3" />
+              L10: {(combinedStats.avgL10HitRate * 100).toFixed(0)}%
+            </Badge>
+          )}
           <Badge variant="outline" className="gap-1 bg-green-500/10 text-green-400 border-green-500/30">
-            <Target className="h-3 w-3" />
-            Avg Conf: {combinedStats.avgConfidence.toFixed(2)}
-          </Badge>
-          <Badge variant="outline" className="gap-1 bg-blue-500/10 text-blue-400 border-blue-500/30">
             <TrendingUp className="h-3 w-3" />
-            Avg Edge: +{combinedStats.avgEdge.toFixed(1)}
+            Avg Conf: {combinedStats.avgConfidence.toFixed(2)}
           </Badge>
           <Badge variant="outline" className="gap-1 bg-purple-500/10 text-purple-400 border-purple-500/30">
             <Users className="h-3 w-3" />
@@ -153,6 +175,12 @@ export function SweetSpotDreamTeamParlay() {
                     <Badge variant="outline" className="text-[10px] px-1.5 py-0">
                       {leg.team}
                     </Badge>
+                    {leg.pick.injuryStatus && (
+                      <Badge className="text-[10px] px-1.5 py-0 bg-amber-500/20 text-amber-400 border-amber-500/30 gap-0.5">
+                        <AlertTriangle className="h-2.5 w-2.5" />
+                        {leg.pick.injuryStatus}
+                      </Badge>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 mt-0.5">
                     <Badge className={`text-[10px] px-1.5 py-0 ${getPropTypeColor(leg.pick.prop_type)}`}>
@@ -161,39 +189,45 @@ export function SweetSpotDreamTeamParlay() {
                     <span className="text-xs text-muted-foreground">
                       {leg.pick.side.toUpperCase()} {leg.pick.line}
                     </span>
+                    {leg.pick.category && (
+                      <Badge className={`text-[10px] px-1.5 py-0 ${getCategoryColor(leg.pick.category)}`}>
+                        {getCategoryLabel(leg.pick.category)}
+                      </Badge>
+                    )}
                   </div>
                 </div>
               </div>
 
               <div className="flex items-center gap-4 text-right">
+                {leg.pick.l10HitRate && (
+                  <div>
+                    <div className="text-sm font-bold text-emerald-400">
+                      {(leg.pick.l10HitRate * 100).toFixed(0)}%
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">L10</div>
+                  </div>
+                )}
                 <div>
                   <div className={`text-sm font-bold ${getConfidenceColor(leg.pick.confidence_score)}`}>
                     {leg.pick.confidence_score.toFixed(1)}
                   </div>
                   <div className="text-[10px] text-muted-foreground">conf</div>
                 </div>
-                <div>
-                  <div className="text-sm font-medium text-blue-400">
-                    +{leg.pick.edge.toFixed(1)}
-                  </div>
-                  <div className="text-[10px] text-muted-foreground">edge</div>
-                </div>
               </div>
             </div>
           ))}
         </div>
 
-        {/* Archetype breakdown */}
-        {optimalParlay.length > 0 && (
+        {/* Category breakdown */}
+        {combinedStats.categories.length > 0 && (
           <div className="mt-4 pt-3 border-t border-border/50">
             <div className="flex flex-wrap gap-1.5">
-              {[...new Set(optimalParlay.map(l => l.pick.archetype).filter(Boolean))].map(archetype => (
+              {combinedStats.categories.map(category => (
                 <Badge 
-                  key={archetype} 
-                  variant="outline" 
-                  className="text-[10px] bg-background/50"
+                  key={category} 
+                  className={`text-[10px] ${getCategoryColor(category)}`}
                 >
-                  {archetype}
+                  {getCategoryLabel(category)}
                 </Badge>
               ))}
             </div>
