@@ -1,6 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { subDays, format } from "date-fns";
+import { useEffect } from "react";
 
 interface DailyRecord {
   date: string;
@@ -59,7 +60,52 @@ interface HeatParlay {
   outcome: string;
 }
 
+// Normalize outcome values from different formats (hit/miss, won/lost, partial)
+function normalizeOutcome(outcome: string | null | undefined): ParlayOutcome {
+  if (!outcome) return 'pending';
+  const normalized = outcome.toLowerCase().trim();
+  
+  // Map hit/miss to won/lost
+  if (normalized === 'hit' || normalized === 'won') return 'won';
+  if (normalized === 'miss' || normalized === 'lost') return 'lost';
+  if (normalized === 'push') return 'push';
+  
+  // Partial means still in progress
+  if (normalized === 'partial') return 'pending';
+  
+  return 'pending';
+}
+
 export function useWeeklyParlayHistory() {
+  const queryClient = useQueryClient();
+  
+  // Set up realtime subscription for parlay updates
+  useEffect(() => {
+    const channel = supabase
+      .channel('weekly-parlay-updates')
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'sharp_ai_parlays' },
+        () => {
+          console.log('[weekly-history] Sharp parlay updated, refetching...');
+          queryClient.invalidateQueries({ queryKey: ['weekly-parlay-history'] });
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'heat_parlays' },
+        () => {
+          console.log('[weekly-history] Heat parlay updated, refetching...');
+          queryClient.invalidateQueries({ queryKey: ['weekly-parlay-history'] });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [queryClient]);
+
   return useQuery({
     queryKey: ['weekly-parlay-history'],
     queryFn: async (): Promise<WeeklyStats> => {
@@ -103,12 +149,13 @@ export function useWeeklyParlayHistory() {
         const getOutcome = (parlays: { parlay_type: string; outcome: string }[], type: string): ParlayOutcome | null => {
           const parlay = parlays.find(p => p.parlay_type?.toUpperCase() === type.toUpperCase());
           if (!parlay) return null;
-          return (parlay.outcome as ParlayOutcome) || 'pending';
+          return normalizeOutcome(parlay.outcome);
         };
 
+        // Normalize all outcomes when aggregating
         const allOutcomes = [
-          ...daySharp.map(p => p.outcome || 'pending'),
-          ...dayHeat.map(p => p.outcome || 'pending')
+          ...daySharp.map(p => normalizeOutcome(p.outcome)),
+          ...dayHeat.map(p => normalizeOutcome(p.outcome))
         ];
 
         dailyRecords.push({
@@ -131,12 +178,12 @@ export function useWeeklyParlayHistory() {
         });
       }
 
-      // Calculate overall stats
-      const allSharpOutcomes = sharpParlays.map(p => p.outcome || 'pending');
-      const allHeatOutcomes = heatParlays.map(p => p.outcome || 'pending');
+      // Calculate overall stats - normalize all outcomes
+      const allSharpOutcomes = sharpParlays.map(p => normalizeOutcome(p.outcome));
+      const allHeatOutcomes = heatParlays.map(p => normalizeOutcome(p.outcome));
       const allOutcomes = [...allSharpOutcomes, ...allHeatOutcomes];
 
-      const calculateStats = (outcomes: string[]): SystemStats => {
+      const calculateStats = (outcomes: ParlayOutcome[]): SystemStats => {
         const won = outcomes.filter(o => o === 'won').length;
         const lost = outcomes.filter(o => o === 'lost').length;
         const push = outcomes.filter(o => o === 'push').length;
@@ -157,7 +204,7 @@ export function useWeeklyParlayHistory() {
 
       // Calculate streak (from most recent settled)
       let streak: { type: 'W' | 'L' | null; count: number } = { type: null, count: 0 };
-      const settledOutcomes: string[] = [];
+      const settledOutcomes: ParlayOutcome[] = [];
       
       for (const record of dailyRecords) {
         const dayOutcomes = [
@@ -166,7 +213,7 @@ export function useWeeklyParlayHistory() {
           record.sharpParlays.upside,
           record.heatParlays.core,
           record.heatParlays.upside,
-        ].filter(o => o === 'won' || o === 'lost') as string[];
+        ].filter((o): o is 'won' | 'lost' => o === 'won' || o === 'lost');
         settledOutcomes.push(...dayOutcomes);
       }
 
@@ -194,6 +241,6 @@ export function useWeeklyParlayHistory() {
         streak,
       };
     },
-    refetchInterval: 60000,
+    refetchInterval: 30000, // Refetch every 30 seconds for more responsive updates
   });
 }

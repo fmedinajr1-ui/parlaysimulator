@@ -66,16 +66,16 @@ function calculateActualValue(gameLog: any, propType: string): number | null {
   }
 }
 
-function determineOutcome(actualValue: number, line: number, side: string): 'hit' | 'miss' | 'push' {
+function determineOutcome(actualValue: number, line: number, side: string): 'won' | 'lost' | 'push' {
   if (actualValue === line) return 'push';
   
   const wentOver = actualValue > line;
   const betOver = side.toLowerCase() === 'over';
   
   if ((wentOver && betOver) || (!wentOver && !betOver)) {
-    return 'hit';
+    return 'won';
   }
-  return 'miss';
+  return 'lost';
 }
 
 // Strict date validation: only match picks against game logs from the same date
@@ -90,8 +90,8 @@ interface VerificationResult {
   engine: string;
   verified: number;
   partial: number;
-  hits: number;
-  misses: number;
+  won: number;
+  lost: number;
   pushes: number;
 }
 
@@ -149,7 +149,7 @@ serve(async (req) => {
 
     if (riskError) throw riskError;
 
-    let riskResult: VerificationResult = { engine: 'risk', verified: 0, partial: 0, hits: 0, misses: 0, pushes: 0 };
+    let riskResult: VerificationResult = { engine: 'risk', verified: 0, partial: 0, won: 0, lost: 0, pushes: 0 };
 
     for (const pick of (riskPicks || [])) {
       const normalizedPlayer = normalizePlayerName(pick.player_name);
@@ -174,8 +174,8 @@ serve(async (req) => {
         .update({ outcome, actual_value: actualValue, settled_at: new Date().toISOString() })
         .eq('id', pick.id);
 
-      if (outcome === 'hit') riskResult.hits++;
-      else if (outcome === 'miss') riskResult.misses++;
+      if (outcome === 'won') riskResult.won++;
+      else if (outcome === 'lost') riskResult.lost++;
       else riskResult.pushes++;
       riskResult.verified++;
 
@@ -195,7 +195,7 @@ serve(async (req) => {
 
     if (sharpError) throw sharpError;
 
-    let sharpResult: VerificationResult = { engine: 'sharp', verified: 0, partial: 0, hits: 0, misses: 0, pushes: 0 };
+    let sharpResult: VerificationResult = { engine: 'sharp', verified: 0, partial: 0, won: 0, lost: 0, pushes: 0 };
 
     for (const parlay of (sharpParlays || [])) {
       const legs = parlay.legs as any[];
@@ -236,7 +236,7 @@ serve(async (req) => {
         legResults.push({ ...leg, outcome: legOutcome, actual_value: actualValue });
         verifiedCount++;
 
-        if (legOutcome === 'miss') {
+        if (legOutcome === 'lost') {
           anyMiss = true;
           allHit = false;
         } else if (legOutcome === 'push') {
@@ -253,17 +253,17 @@ serve(async (req) => {
       let parlayOutcome: string;
       if (anyMiss) {
         // Early bust detection: if ANY leg misses, parlay is lost
-        parlayOutcome = 'miss';
-        sharpResult.misses++;
+        parlayOutcome = 'lost';
+        sharpResult.lost++;
         sharpResult.verified++;
-        console.log(`[verify-all] Sharp parlay ${parlay.id} → EARLY BUST (miss detected)`);
+        console.log(`[verify-all] Sharp parlay ${parlay.id} → EARLY BUST (lost detected)`);
       } else if (allVerified) {
         if (anyPush && allHit) {
           parlayOutcome = 'push';
           sharpResult.pushes++;
         } else {
-          parlayOutcome = 'hit';
-          sharpResult.hits++;
+          parlayOutcome = 'won';
+          sharpResult.won++;
         }
         sharpResult.verified++;
         console.log(`[verify-all] Sharp parlay ${parlay.id} → ${parlayOutcome}`);
@@ -309,7 +309,7 @@ serve(async (req) => {
 
     if (heatError) throw heatError;
 
-    let heatResult: VerificationResult = { engine: 'heat', verified: 0, partial: 0, hits: 0, misses: 0, pushes: 0 };
+    let heatResult: VerificationResult = { engine: 'heat', verified: 0, partial: 0, won: 0, lost: 0, pushes: 0 };
 
     for (const parlay of (heatParlays || [])) {
       const legs = [parlay.leg_1, parlay.leg_2].filter(Boolean) as any[];
@@ -350,7 +350,7 @@ serve(async (req) => {
         updatedLegs.push({ ...leg, outcome: legOutcome, actual_value: actualValue });
         verifiedCount++;
 
-        if (legOutcome === 'miss') {
+        if (legOutcome === 'lost') {
           anyMiss = true;
           allHit = false;
         } else if (legOutcome === 'push') {
@@ -367,17 +367,17 @@ serve(async (req) => {
       let parlayOutcome: string;
       if (anyMiss) {
         // Early bust detection
-        parlayOutcome = 'miss';
-        heatResult.misses++;
+        parlayOutcome = 'lost';
+        heatResult.lost++;
         heatResult.verified++;
-        console.log(`[verify-all] Heat parlay ${parlay.id} → EARLY BUST (miss detected)`);
+        console.log(`[verify-all] Heat parlay ${parlay.id} → EARLY BUST (lost detected)`);
       } else if (allVerified) {
         if (anyPush && allHit) {
           parlayOutcome = 'push';
           heatResult.pushes++;
         } else {
-          parlayOutcome = 'hit';
-          heatResult.hits++;
+          parlayOutcome = 'won';
+          heatResult.won++;
         }
         heatResult.verified++;
         console.log(`[verify-all] Heat parlay ${parlay.id} → ${parlayOutcome}`);
@@ -415,8 +415,8 @@ serve(async (req) => {
     // Log to cron job history
     const totalVerified = results.reduce((sum, r) => sum + r.verified, 0);
     const totalPartial = results.reduce((sum, r) => sum + r.partial, 0);
-    const totalHits = results.reduce((sum, r) => sum + r.hits, 0);
-    const totalMisses = results.reduce((sum, r) => sum + r.misses, 0);
+    const totalWon = results.reduce((sum, r) => sum + r.won, 0);
+    const totalLost = results.reduce((sum, r) => sum + r.lost, 0);
     const totalPushes = results.reduce((sum, r) => sum + r.pushes, 0);
 
     await supabase.from('cron_job_history').insert({
@@ -424,10 +424,10 @@ serve(async (req) => {
       status: 'success',
       started_at: new Date().toISOString(),
       completed_at: new Date().toISOString(),
-      result: { results, totalVerified, totalPartial, totalHits, totalMisses, totalPushes }
+      result: { results, totalVerified, totalPartial, totalWon, totalLost, totalPushes }
     });
 
-    console.log(`[verify-all] Complete: ${totalVerified} verified, ${totalPartial} partial (${totalHits}H/${totalMisses}M/${totalPushes}P)`);
+    console.log(`[verify-all] Complete: ${totalVerified} verified, ${totalPartial} partial (${totalWon}W/${totalLost}L/${totalPushes}P)`);
 
     return new Response(JSON.stringify({
       success: true,
@@ -435,10 +435,10 @@ serve(async (req) => {
       summary: {
         verified: totalVerified,
         partial: totalPartial,
-        hits: totalHits,
-        misses: totalMisses,
+        won: totalWon,
+        lost: totalLost,
         pushes: totalPushes,
-        hitRate: totalVerified > 0 ? ((totalHits / (totalHits + totalMisses)) * 100).toFixed(1) : '0'
+        winRate: totalVerified > 0 ? ((totalWon / (totalWon + totalLost)) * 100).toFixed(1) : '0'
       }
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
