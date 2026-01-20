@@ -8,7 +8,7 @@ function getEasternDate(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 }
 
-interface SweetSpotPick {
+export interface SweetSpotPick {
   id: string;
   player_name: string;
   prop_type: string;
@@ -17,21 +17,29 @@ interface SweetSpotPick {
   confidence_score: number;
   edge: number;
   archetype: string | null;
+  category?: string | null;
   team_name?: string;
   event_id?: string;
   game_date?: string;
+  injuryStatus?: string | null;
+  l10HitRate?: number | null;
 }
 
-interface DreamTeamLeg {
+export interface DreamTeamLeg {
   pick: SweetSpotPick;
   team: string;
   score: number;
 }
 
+// Proven category formulas with their target counts
+const PROVEN_FORMULA = [
+  { category: 'BIG_REBOUNDER', side: 'over', count: 2 },
+  { category: 'LOW_LINE_REBOUNDER', side: 'over', count: 2 },
+  { category: 'NON_SCORING_SHOOTER', side: 'under', count: 2 },
+];
+
 // Dream Team constraints
 const MAX_PLAYERS_PER_TEAM = 1;
-const MAX_PLAYERS_PER_ARCHETYPE = 2;
-const MIN_PROP_TYPES = 2;
 const TARGET_LEG_COUNT = 6;
 
 interface SlateStatus {
@@ -48,7 +56,7 @@ interface QueryResult {
 export function useSweetSpotParlayBuilder() {
   const { addLeg, clearParlay } = useParlayBuilder();
 
-  // Fetch all sweet spot picks with team data - cross-reference with active props
+  // Fetch all sweet spot picks with team data - cross-reference with active props and injuries
   const { data: queryResult, isLoading, refetch } = useQuery({
     queryKey: ['sweet-spot-parlay-picks'],
     queryFn: async (): Promise<QueryResult> => {
@@ -101,41 +109,28 @@ export function useSweetSpotParlayBuilder() {
       }
 
       console.log(`[SweetSpotParlay] Target date: ${targetDate}, Active players: ${targetPlayers.size}`);
-      
-      // Get sweet spot picks from risk engine for target date
-      const { data: riskPicks, error: riskError } = await supabase
-        .from('nba_risk_engine_picks')
-        .select('*')
-        .eq('is_sweet_spot', true)
-        .eq('game_date', targetDate)
-        .order('confidence_score', { ascending: false });
 
-      if (riskError) {
-        console.error('Error fetching risk engine sweet spots:', riskError);
-      }
+      // Fetch injury reports for target date
+      const { data: injuryReports } = await supabase
+        .from('nba_injury_reports')
+        .select('player_name, status, injury_type')
+        .eq('game_date', targetDate);
 
-      // Filter to only include picks with active props
-      const validRiskPicks = (riskPicks || []).filter(
-        pick => targetPlayers.has(pick.player_name?.toLowerCase())
+      // Create sets for different injury statuses
+      const outPlayers = new Set(
+        (injuryReports || [])
+          .filter(r => r.status?.toLowerCase().includes('out'))
+          .map(r => r.player_name?.toLowerCase())
+          .filter(Boolean)
       );
-      
-      console.log(`[SweetSpotParlay] Filtered ${riskPicks?.length || 0} risk picks to ${validRiskPicks.length} with active props`);
 
-      // Get tracked sweet spot picks
-      const { data: trackedPicks, error: trackedError } = await supabase
-        .from('sweet_spot_tracking')
-        .select('*')
-        .is('outcome', null)
-        .order('confidence_score', { ascending: false });
-
-      if (trackedError) {
-        console.error('Error fetching tracked sweet spots:', trackedError);
-      }
-
-      // Filter tracked picks too
-      const validTrackedPicks = (trackedPicks || []).filter(
-        pick => targetPlayers.has(pick.player_name?.toLowerCase())
+      const questionablePlayers = new Map<string, string>(
+        (injuryReports || [])
+          .filter(r => !r.status?.toLowerCase().includes('out'))
+          .map(r => [r.player_name?.toLowerCase() || '', r.status || ''])
       );
+
+      console.log(`[SweetSpotParlay] Injury check: ${outPlayers.size} OUT, ${questionablePlayers.size} questionable/GTD`);
 
       // Get player team data from cache
       const { data: playerCache } = await supabase
@@ -149,36 +144,95 @@ export function useSweetSpotParlayBuilder() {
         }
       });
 
-      // Combine and deduplicate picks
+      // PRIORITY 1: Get proven category picks from category_sweet_spots
+      const { data: categoryPicks, error: categoryError } = await supabase
+        .from('category_sweet_spots')
+        .select('*')
+        .eq('is_active', true)
+        .gte('analysis_date', targetDate)
+        .in('category', ['BIG_REBOUNDER', 'LOW_LINE_REBOUNDER', 'NON_SCORING_SHOOTER'])
+        .order('confidence_score', { ascending: false });
+
+      if (categoryError) {
+        console.error('Error fetching category sweet spots:', categoryError);
+      }
+
+      // Filter category picks to active players and exclude OUT injuries
+      const validCategoryPicks = (categoryPicks || []).filter(pick => {
+        const playerKey = pick.player_name?.toLowerCase();
+        if (!playerKey) return false;
+        if (!targetPlayers.has(playerKey)) return false;
+        if (outPlayers.has(playerKey)) {
+          console.log(`[SweetSpotParlay] Excluding OUT player from categories: ${pick.player_name}`);
+          return false;
+        }
+        return true;
+      });
+
+      console.log(`[SweetSpotParlay] Proven category picks: ${validCategoryPicks.length} (from ${categoryPicks?.length || 0})`);
+
+      // PRIORITY 2: Get risk engine picks as fallback
+      const { data: riskPicks, error: riskError } = await supabase
+        .from('nba_risk_engine_picks')
+        .select('*')
+        .eq('is_sweet_spot', true)
+        .eq('game_date', targetDate)
+        .order('confidence_score', { ascending: false });
+
+      if (riskError) {
+        console.error('Error fetching risk engine sweet spots:', riskError);
+      }
+
+      // Filter risk picks to active players and exclude OUT injuries
+      const validRiskPicks = (riskPicks || []).filter(pick => {
+        const playerKey = pick.player_name?.toLowerCase();
+        if (!playerKey) return false;
+        if (!targetPlayers.has(playerKey)) return false;
+        if (outPlayers.has(playerKey)) {
+          console.log(`[SweetSpotParlay] Excluding OUT player from risk engine: ${pick.player_name}`);
+          return false;
+        }
+        return true;
+      });
+
+      console.log(`[SweetSpotParlay] Risk engine picks: ${validRiskPicks.length} (filtered from ${riskPicks?.length || 0})`);
+
+      // Combine picks with category picks taking priority
       const allPicks: SweetSpotPick[] = [];
       const seenPlayers = new Set<string>();
 
-      // Add risk engine picks first (higher priority)
-      validRiskPicks.forEach(pick => {
+      // Add category picks first (proven formulas)
+      validCategoryPicks.forEach(pick => {
         const playerKey = pick.player_name?.toLowerCase();
         if (playerKey && !seenPlayers.has(playerKey)) {
           seenPlayers.add(playerKey);
+          const injuryStatus = questionablePlayers.get(playerKey) || null;
+          
           allPicks.push({
             id: pick.id,
             player_name: pick.player_name || '',
             prop_type: pick.prop_type || '',
-            line: pick.line || 0,
-            side: pick.side || 'over',
-            confidence_score: pick.confidence_score || 0,
-            edge: pick.edge || 0,
+            line: pick.actual_line || pick.recommended_line || 0,
+            side: pick.recommended_side || 'over',
+            confidence_score: pick.confidence_score || 0.8,
+            edge: (pick.l10_hit_rate || 0.7) * 10 - 5, // Convert hit rate to edge
             archetype: pick.archetype,
-            team_name: teamMap.get(playerKey) || pick.team_name || 'Unknown',
-            event_id: pick.event_id,
-            game_date: pick.game_date,
+            category: pick.category,
+            team_name: teamMap.get(playerKey) || 'Unknown',
+            game_date: pick.analysis_date,
+            injuryStatus,
+            l10HitRate: pick.l10_hit_rate,
           });
         }
       });
 
-      // Add tracked picks that aren't duplicates
-      validTrackedPicks.forEach(pick => {
+      // Add risk engine picks that aren't duplicates
+      validRiskPicks.forEach(pick => {
         const playerKey = pick.player_name?.toLowerCase();
         if (playerKey && !seenPlayers.has(playerKey)) {
           seenPlayers.add(playerKey);
+          const injuryStatus = questionablePlayers.get(playerKey) || null;
+          
           allPicks.push({
             id: pick.id,
             player_name: pick.player_name || '',
@@ -188,7 +242,11 @@ export function useSweetSpotParlayBuilder() {
             confidence_score: pick.confidence_score || 0,
             edge: pick.edge || 0,
             archetype: pick.archetype,
-            team_name: teamMap.get(playerKey) || 'Unknown',
+            category: null,
+            team_name: teamMap.get(playerKey) || pick.team_name || 'Unknown',
+            event_id: pick.event_id,
+            game_date: pick.game_date,
+            injuryStatus,
           });
         }
       });
@@ -208,52 +266,69 @@ export function useSweetSpotParlayBuilder() {
   const sweetSpotPicks = queryResult?.picks;
   const slateStatus = queryResult?.slateStatus || { currentDate: getEasternDate(), displayedDate: getEasternDate(), isNextSlate: false };
 
-  // Build optimal 6-leg parlay with Dream Team constraints
+  // Build optimal 6-leg parlay prioritizing proven category formulas
   const buildOptimalParlay = (): DreamTeamLeg[] => {
     if (!sweetSpotPicks || sweetSpotPicks.length === 0) {
       return [];
     }
 
-    // Score each pick: (confidence * 0.6) + (edge * 0.4)
-    const scoredPicks = sweetSpotPicks.map(pick => ({
-      pick,
-      team: pick.team_name || 'Unknown',
-      score: (pick.confidence_score * 0.6) + (Math.min(pick.edge, 10) * 0.4),
-    }));
-
-    // Sort by score descending
-    scoredPicks.sort((a, b) => b.score - a.score);
-
-    // Apply Dream Team constraints
     const selectedLegs: DreamTeamLeg[] = [];
     const usedTeams = new Set<string>();
-    const archetypeCounts = new Map<string, number>();
-    const propTypeCounts = new Map<string, number>();
+    const usedPlayers = new Set<string>();
 
-    for (const leg of scoredPicks) {
-      if (selectedLegs.length >= TARGET_LEG_COUNT) break;
+    // Step 1: Fill from proven categories first
+    for (const formula of PROVEN_FORMULA) {
+      const categoryPicks = sweetSpotPicks
+        .filter(p => 
+          p.category === formula.category && 
+          p.side.toLowerCase() === formula.side &&
+          !usedPlayers.has(p.player_name.toLowerCase()) &&
+          !usedTeams.has((p.team_name || '').toLowerCase())
+        )
+        .sort((a, b) => (b.l10HitRate || 0) - (a.l10HitRate || 0)); // Sort by L10 hit rate
 
-      const team = leg.team.toLowerCase();
-      const archetype = leg.pick.archetype || 'UNKNOWN';
-      const propType = leg.pick.prop_type;
+      let added = 0;
+      for (const pick of categoryPicks) {
+        if (added >= formula.count) break;
+        if (selectedLegs.length >= TARGET_LEG_COUNT) break;
 
-      // Check team constraint
-      if (usedTeams.has(team)) continue;
+        const team = (pick.team_name || 'Unknown').toLowerCase();
+        
+        selectedLegs.push({
+          pick,
+          team: pick.team_name || 'Unknown',
+          score: (pick.confidence_score * 0.4) + ((pick.l10HitRate || 0.7) * 6),
+        });
+        usedTeams.add(team);
+        usedPlayers.add(pick.player_name.toLowerCase());
+        added++;
+      }
 
-      // Check archetype constraint
-      const currentArchetypeCount = archetypeCounts.get(archetype) || 0;
-      if (currentArchetypeCount >= MAX_PLAYERS_PER_ARCHETYPE) continue;
-
-      // Add to selection
-      selectedLegs.push(leg);
-      usedTeams.add(team);
-      archetypeCounts.set(archetype, currentArchetypeCount + 1);
-      propTypeCounts.set(propType, (propTypeCounts.get(propType) || 0) + 1);
+      console.log(`[SweetSpotParlay] Added ${added}/${formula.count} ${formula.category} picks`);
     }
 
-    // Validate prop type diversity
-    if (propTypeCounts.size < MIN_PROP_TYPES && selectedLegs.length >= MIN_PROP_TYPES) {
-      console.warn('Parlay has limited prop type diversity:', propTypeCounts);
+    // Step 2: Fill remaining slots from risk engine picks if needed
+    if (selectedLegs.length < TARGET_LEG_COUNT) {
+      const remainingPicks = sweetSpotPicks
+        .filter(p => 
+          !usedPlayers.has(p.player_name.toLowerCase()) &&
+          !usedTeams.has((p.team_name || '').toLowerCase())
+        )
+        .sort((a, b) => b.confidence_score - a.confidence_score);
+
+      for (const pick of remainingPicks) {
+        if (selectedLegs.length >= TARGET_LEG_COUNT) break;
+
+        const team = (pick.team_name || 'Unknown').toLowerCase();
+        
+        selectedLegs.push({
+          pick,
+          team: pick.team_name || 'Unknown',
+          score: (pick.confidence_score * 0.6) + (Math.min(pick.edge, 10) * 0.4),
+        });
+        usedTeams.add(team);
+        usedPlayers.add(pick.player_name.toLowerCase());
+      }
     }
 
     return selectedLegs;
@@ -298,9 +373,13 @@ export function useSweetSpotParlayBuilder() {
     avgEdge: optimalParlay.length > 0 
       ? optimalParlay.reduce((sum, l) => sum + l.pick.edge, 0) / optimalParlay.length 
       : 0,
+    avgL10HitRate: optimalParlay.length > 0
+      ? optimalParlay.reduce((sum, l) => sum + (l.pick.l10HitRate || 0), 0) / optimalParlay.length
+      : 0,
     uniqueTeams: new Set(optimalParlay.map(l => l.team)).size,
     propTypes: [...new Set(optimalParlay.map(l => l.pick.prop_type))],
     legCount: optimalParlay.length,
+    categories: [...new Set(optimalParlay.map(l => l.pick.category).filter(Boolean))],
   };
 
   return {
