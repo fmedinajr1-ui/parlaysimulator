@@ -635,21 +635,51 @@ serve(async (req) => {
     // Upsert to database (clear old data first for today)
     if (validatedSpots.length > 0) {
       // Delete existing data for today
-      await supabase
+      const { error: deleteError } = await supabase
         .from('category_sweet_spots')
         .delete()
         .eq('analysis_date', today);
 
-      // Insert new data
-      const { error: insertError } = await supabase
-        .from('category_sweet_spots')
-        .insert(validatedSpots);
-
-      if (insertError) {
-        console.error('[Category Analyzer] Error inserting sweet spots:', insertError);
+      if (deleteError) {
+        console.error('[Category Analyzer] Error deleting old data:', deleteError);
       } else {
-        console.log(`[Category Analyzer] Inserted ${validatedSpots.length} sweet spots (${validatedCount} active)`);
+        console.log(`[Category Analyzer] Deleted old data for ${today}`);
       }
+
+      // Deduplicate spots by player_name + prop_type (keep highest confidence per player/prop)
+      const deduped = new Map<string, any>();
+      for (const spot of validatedSpots) {
+        const key = `${spot.player_name.toLowerCase()}_${spot.prop_type}`;
+        const existing = deduped.get(key);
+        if (!existing || (spot.is_active && !existing.is_active) || 
+            (spot.is_active === existing.is_active && (spot.confidence_score || 0) > (existing.confidence_score || 0))) {
+          deduped.set(key, spot);
+        }
+      }
+      
+      const dedupedSpots = Array.from(deduped.values());
+      console.log(`[Category Analyzer] Deduplicated ${validatedSpots.length} spots to ${dedupedSpots.length}`);
+
+      // Insert in batches of 100 to avoid hitting limits
+      const BATCH_SIZE = 100;
+      let insertedCount = 0;
+      let insertErrors = 0;
+      
+      for (let i = 0; i < dedupedSpots.length; i += BATCH_SIZE) {
+        const batch = dedupedSpots.slice(i, i + BATCH_SIZE);
+        const { error: insertError } = await supabase
+          .from('category_sweet_spots')
+          .insert(batch);
+
+        if (insertError) {
+          console.error(`[Category Analyzer] Batch ${Math.floor(i/BATCH_SIZE) + 1} error:`, insertError.message);
+          insertErrors++;
+        } else {
+          insertedCount += batch.length;
+        }
+      }
+      
+      console.log(`[Category Analyzer] Inserted ${insertedCount}/${dedupedSpots.length} sweet spots (${insertErrors} errors)`);
     }
 
     // Group by category for response (only active ones)
