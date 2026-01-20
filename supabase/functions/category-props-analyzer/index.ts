@@ -79,6 +79,55 @@ const CATEGORIES: Record<string, CategoryConfig> = {
     minHitRate: 0.55  // 64% historical win rate on points under 14.5-20
   },
   
+  // ============ NEW OPTIMAL WINNERS (v3.0) ============
+  // Based on user's winning bet slip patterns
+  
+  ELITE_REB_OVER: {
+    name: 'Elite Rebounder OVER',
+    propType: 'rebounds',
+    avgRange: { min: 9, max: 20 },  // Elite centers (Gobert, Nurkic, Wemby)
+    lines: [9.5, 10.5, 11.5, 12.5],
+    side: 'over',
+    minHitRate: 0.55,  // ~65% win rate on elite big boards
+    supportsBounceBack: true
+  },
+  
+  ROLE_PLAYER_REB: {
+    name: 'Role Player Reb OVER',
+    propType: 'rebounds',
+    avgRange: { min: 3, max: 6 },  // Finney-Smith, Kyshawn George type
+    lines: [2.5, 3.5, 4.5],
+    side: 'over',
+    minHitRate: 0.60  // ~60% win rate on low line reb overs
+  },
+  
+  BIG_ASSIST_OVER: {
+    name: 'Big Man Assists OVER',
+    propType: 'assists',
+    avgRange: { min: 2, max: 6 },  // Passing bigs (Vucevic, Sabonis, Jokic)
+    lines: [2.5, 3.5, 4.5],
+    side: 'over',
+    minHitRate: 0.60  // ~70% win rate on low assist lines for bigs
+  },
+  
+  LOW_SCORER_UNDER: {
+    name: 'Low Scorer UNDER',
+    propType: 'points',
+    avgRange: { min: 5, max: 12 },  // Lu Dort, Reed Sheppard type
+    lines: [7.5, 8.5, 9.5, 10.5, 11.5, 12.5],
+    side: 'under',
+    minHitRate: 0.55  // ~65% win rate on role player pts under
+  },
+  
+  STAR_FLOOR_OVER: {
+    name: 'Star Floor OVER',
+    propType: 'points',
+    avgRange: { min: 20, max: 40 },  // Stars like Ja Morant, Booker
+    lines: [14.5, 15.5, 16.5, 17.5, 18.5, 19.5],  // Well below their avg
+    side: 'over',
+    minHitRate: 0.65  // ~75% win rate on star floor plays
+  },
+  
   // ============ LEGACY CATEGORIES ============
   BIG_REBOUNDER: {
     name: 'Big Rebounder',
