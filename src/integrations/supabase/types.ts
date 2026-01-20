@@ -693,6 +693,7 @@ export type Database = {
           analysis_date: string | null
           archetype: string | null
           bookmaker: string | null
+          bounce_back_score: number | null
           category: string
           confidence_score: number | null
           created_at: string | null
@@ -705,6 +706,7 @@ export type Database = {
           l10_max: number | null
           l10_median: number | null
           l10_min: number | null
+          l10_std_dev: number | null
           line_difference: number | null
           player_name: string
           prop_type: string
@@ -712,6 +714,7 @@ export type Database = {
           recommended_line: number | null
           recommended_side: string | null
           risk_level: string | null
+          season_avg: number | null
           updated_at: string | null
         }
         Insert: {
@@ -720,6 +723,7 @@ export type Database = {
           analysis_date?: string | null
           archetype?: string | null
           bookmaker?: string | null
+          bounce_back_score?: number | null
           category: string
           confidence_score?: number | null
           created_at?: string | null
@@ -732,6 +736,7 @@ export type Database = {
           l10_max?: number | null
           l10_median?: number | null
           l10_min?: number | null
+          l10_std_dev?: number | null
           line_difference?: number | null
           player_name: string
           prop_type: string
@@ -739,6 +744,7 @@ export type Database = {
           recommended_line?: number | null
           recommended_side?: string | null
           risk_level?: string | null
+          season_avg?: number | null
           updated_at?: string | null
         }
         Update: {
@@ -747,6 +753,7 @@ export type Database = {
           analysis_date?: string | null
           archetype?: string | null
           bookmaker?: string | null
+          bounce_back_score?: number | null
           category?: string
           confidence_score?: number | null
           created_at?: string | null
@@ -759,6 +766,7 @@ export type Database = {
           l10_max?: number | null
           l10_median?: number | null
           l10_min?: number | null
+          l10_std_dev?: number | null
           line_difference?: number | null
           player_name?: string
           prop_type?: string
@@ -766,6 +774,7 @@ export type Database = {
           recommended_line?: number | null
           recommended_side?: string | null
           risk_level?: string | null
+          season_avg?: number | null
           updated_at?: string | null
         }
         Relationships: []
