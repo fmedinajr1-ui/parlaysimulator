@@ -26,6 +26,12 @@ const getConfidenceColor = (confidence: number): string => {
 const getCategoryLabel = (category: string | null | undefined): string => {
   if (!category) return '';
   switch (category) {
+    // OPTIMAL WINNERS v3.0 (User's winning patterns)
+    case 'ELITE_REB_OVER': return '🏀 Elite Reb';
+    case 'ROLE_PLAYER_REB': return '📈 Role Reb';
+    case 'BIG_ASSIST_OVER': return '🎯 Big Ast';
+    case 'LOW_SCORER_UNDER': return '📉 Low Pts';
+    case 'STAR_FLOOR_OVER': return '⭐ Star Floor';
     // PROVEN WINNERS v2.0
     case 'ASSIST_ANCHOR': return '📊 Ast Under';
     case 'HIGH_REB_UNDER': return '📊 Reb Under';
@@ -41,6 +47,13 @@ const getCategoryLabel = (category: string | null | undefined): string => {
 const getCategoryColor = (category: string | null | undefined): string => {
   if (!category) return 'bg-muted/50 text-muted-foreground';
   switch (category) {
+    // OPTIMAL WINNERS v3.0 - Green/Winner styling for OVERS
+    case 'ELITE_REB_OVER': return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30';
+    case 'ROLE_PLAYER_REB': return 'bg-teal-500/20 text-teal-400 border-teal-500/30';
+    case 'BIG_ASSIST_OVER': return 'bg-green-500/20 text-green-400 border-green-500/30';
+    case 'STAR_FLOOR_OVER': return 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30';
+    // OPTIMAL WINNERS v3.0 - Red styling for UNDERS
+    case 'LOW_SCORER_UNDER': return 'bg-rose-500/20 text-rose-400 border-rose-500/30';
     // PROVEN WINNERS v2.0 - Gold/Winner styling
     case 'ASSIST_ANCHOR': return 'bg-amber-500/20 text-amber-400 border-amber-500/30';
     case 'HIGH_REB_UNDER': return 'bg-amber-500/20 text-amber-400 border-amber-500/30';
@@ -120,9 +133,9 @@ export function SweetSpotDreamTeamParlay() {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <CardTitle className="text-lg font-bold">🏆 Proven Winners</CardTitle>
-                <Badge variant="outline" className="gap-1 bg-amber-500/10 text-amber-400 border-amber-500/30 text-[10px]">
-                  65%+ Win Rate
+                <CardTitle className="text-lg font-bold">💰 Optimal Parlay</CardTitle>
+                <Badge variant="outline" className="gap-1 bg-emerald-500/10 text-emerald-400 border-emerald-500/30 text-[10px]">
+                  $714+ Pattern
                 </Badge>
                 {slateStatus?.isNextSlate && (
                   <Badge variant="outline" className="gap-1 bg-blue-500/10 text-blue-400 border-blue-500/30 text-[10px]">
@@ -132,7 +145,7 @@ export function SweetSpotDreamTeamParlay() {
                 )}
               </div>
               <p className="text-xs text-muted-foreground">
-                {combinedStats.legCount}-leg UNDER parlay • Data-backed winners
+                {combinedStats.legCount}-leg parlay • Based on winning slip patterns
               </p>
             </div>
           </div>
