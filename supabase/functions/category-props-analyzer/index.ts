@@ -615,7 +615,51 @@ serve(async (req) => {
           continue;
         }
         
-        // Standard validation for AVG_RANGE qualified spots
+        // v3.0 OPTIMAL WINNER categories - trust L10 hit rate for activation
+        // These categories have specific line ranges designed for favorable odds
+        const OPTIMAL_WINNER_CATEGORIES = [
+          'ELITE_REB_OVER', 'ROLE_PLAYER_REB', 'BIG_ASSIST_OVER', 
+          'LOW_SCORER_UNDER', 'STAR_FLOOR_OVER'
+        ];
+
+        if (OPTIMAL_WINNER_CATEGORIES.includes(spot.category)) {
+          // Use the L10 hit rate calculated during initial analysis (not recalculated against actual line)
+          const config = CATEGORIES[spot.category];
+          const actualHitRate = calculateHitRate(statValues, actualData.line, spot.recommended_side);
+          
+          spot.actual_line = actualData.line;
+          spot.actual_hit_rate = Math.round(actualHitRate * 100) / 100;
+          spot.line_difference = spot.recommended_line ? Math.round((actualData.line - spot.recommended_line) * 10) / 10 : null;
+          spot.bookmaker = actualData.bookmaker;
+          
+          // Activate based on ORIGINAL L10 hit rate (stored during analysis)
+          spot.is_active = (spot.l10_hit_rate || 0) >= (config?.minHitRate || 0.55);
+          
+          // Add risk level based on actual line hit rate
+          if (actualHitRate >= 0.60) {
+            spot.risk_level = 'LOW';
+            spot.recommendation = `Strong play - ${(actualHitRate * 100).toFixed(0)}% vs actual line`;
+          } else if (actualHitRate >= 0.45) {
+            spot.risk_level = 'MEDIUM';
+            spot.recommendation = `Moderate risk - ${(actualHitRate * 100).toFixed(0)}% vs actual, ${((spot.l10_hit_rate || 0) * 100).toFixed(0)}% L10`;
+          } else {
+            spot.risk_level = 'HIGH';
+            spot.recommendation = `Higher risk - L10 favorable but actual line tighter`;
+          }
+          
+          if (spot.is_active) {
+            validatedCount++;
+            console.log(`[Category Analyzer] ✓ OPTIMAL ${spot.category} ${spot.player_name}: ${spot.recommended_side.toUpperCase()} ${actualData.line} (L10: ${((spot.l10_hit_rate || 0) * 100).toFixed(0)}%, Actual: ${(actualHitRate * 100).toFixed(0)}%)`);
+          } else {
+            droppedCount++;
+            console.log(`[Category Analyzer] ✗ OPTIMAL ${spot.player_name}: L10 hit rate ${((spot.l10_hit_rate || 0) * 100).toFixed(0)}% below threshold`);
+          }
+          
+          validatedSpots.push(spot);
+          continue; // Skip standard validation
+        }
+
+        // Standard validation for AVG_RANGE qualified spots (legacy categories)
         const actualHitRate = calculateHitRate(statValues, actualData.line, spot.recommended_side);
         
         spot.actual_line = actualData.line;
