@@ -696,6 +696,7 @@ export type Database = {
           category: string
           confidence_score: number | null
           created_at: string | null
+          eligibility_type: string | null
           games_played: number | null
           id: string
           is_active: boolean | null
@@ -722,6 +723,7 @@ export type Database = {
           category: string
           confidence_score?: number | null
           created_at?: string | null
+          eligibility_type?: string | null
           games_played?: number | null
           id?: string
           is_active?: boolean | null
@@ -748,6 +750,7 @@ export type Database = {
           category?: string
           confidence_score?: number | null
           created_at?: string | null
+          eligibility_type?: string | null
           games_played?: number | null
           id?: string
           is_active?: boolean | null
