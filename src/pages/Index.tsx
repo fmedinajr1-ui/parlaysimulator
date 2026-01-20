@@ -2,15 +2,8 @@ import React from "react";
 import { HeroBanner } from "@/components/HeroBanner";
 import { HowItWorks } from "@/components/HowItWorks";
 import { SampleParlayButton } from "@/components/SampleParlayButton";
-import { RiskEnginePicksCard } from "@/components/suggestions/RiskEnginePicksCard";
-import { PropEngineV2Card } from "@/components/suggestions/PropEngineV2Card";
-import { CategoryPropsCard } from "@/components/suggestions/CategoryPropsCard";
-import { OversPropsCard } from "@/components/suggestions/OversPropsCard";
-import { SweetSpotDreamTeamParlay } from "@/components/market/SweetSpotDreamTeamParlay";
-import { PropMarketWidget } from "@/components/market/PropMarketWidget";
-import { SweetSpotPicksCard } from "@/components/market/SweetSpotPicksCard";
 import { SlateRefreshControls } from "@/components/market/SlateRefreshControls";
-import { HeatParlaySection } from "@/components/heat/HeatParlaySection";
+import { DailyParlayHub } from "@/components/parlays/DailyParlayHub";
 import { WeeklyParlayHistory } from "@/components/dashboard/WeeklyParlayHistory";
 import { PullToRefreshContainer, PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
@@ -18,7 +11,7 @@ import { useHapticFeedback } from "@/hooks/useHapticFeedback";
 import { Button } from "@/components/ui/button";
 import { Link, useNavigate } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
-import { Zap, BarChart3, Sparkles, Trophy, Calculator, GitCompare, LogIn, LogOut, Radio, Video } from "lucide-react";
+import { BarChart3, GitCompare, LogIn, LogOut, Radio, Video, Trophy } from "lucide-react";
 import { usePilotUser } from "@/hooks/usePilotUser";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -69,20 +62,12 @@ const Index = () => {
     threshold: 80,
   });
 
-  // Quick actions based on user type
-  const quickActions = isPilotRestricted ? [
+  // Reduced quick actions - 5 key tools
+  const quickActions = [
     { to: "/scout", icon: Video, label: "Scout", iconClass: "text-orange-500" },
     { to: "/live-dashboard", icon: Radio, label: "Live", iconClass: "text-destructive" },
     { to: "/upload", icon: BarChart3, label: "Analyze", iconClass: "text-primary" },
     { to: "/compare", icon: GitCompare, label: "Compare", iconClass: "text-chart-3" },
-    { to: "/kelly", icon: Calculator, label: "Kelly", iconClass: "text-chart-4" },
-  ] : [
-    { to: "/scout", icon: Video, label: "Scout", iconClass: "text-orange-500" },
-    { to: "/live-dashboard", icon: Radio, label: "Live", iconClass: "text-destructive" },
-    { to: "/upload", icon: BarChart3, label: "Analyze", iconClass: "text-primary" },
-    { to: "/compare", icon: GitCompare, label: "Compare", iconClass: "text-chart-3" },
-    { to: "/sharp", icon: Zap, label: "Sharp Money", iconClass: "text-neon-yellow" },
-    { to: "/suggestions", icon: Sparkles, label: "AI Picks", iconClass: "text-neon-purple" },
     { to: "/best-bets", icon: Trophy, label: "Best Bets", iconClass: "text-chart-4" },
   ];
 
@@ -128,7 +113,7 @@ const Index = () => {
         {isPilotRestricted && (
           <div className="mb-5 p-4 rounded-lg bg-primary/10 border border-primary/20">
             <h3 className="font-semibold text-primary flex items-center gap-2">
-              <Sparkles className="w-4 h-4" /> Welcome to the Pilot! 🎉
+              🎉 Welcome to the Pilot!
             </h3>
             <p className="text-sm text-muted-foreground mt-1">
               You have access to Analyze, Compare, and Kelly tools. More features coming soon!
@@ -151,7 +136,6 @@ const Index = () => {
           </div>
         </div>
 
-
         {/* Main CTA - Side by Side */}
         <div className="flex items-center gap-4 mb-4">
           <Link to="/upload" className="flex-1" onClick={lightTap}>
@@ -162,66 +146,17 @@ const Index = () => {
           <SampleParlayButton />
         </div>
 
-        {/* Slate Control - Clear & Refresh */}
+        {/* Slate Control - Unified Refresh All Engines */}
         {(isPilotUser || isSubscribed || isAdmin) && (
           <div className="mb-4">
             <SlateRefreshControls />
           </div>
         )}
         
-        {/* Sweet Spot Dream Team Parlay - FIRST */}
+        {/* ★ DAILY PARLAY HUB - Primary Content ★ */}
         {(isPilotUser || isSubscribed || isAdmin) && (
           <div className="mb-4">
-            <SweetSpotDreamTeamParlay />
-          </div>
-        )}
-
-        {/* Sweet Spot Individual Picks - SECOND */}
-        {(isPilotUser || isSubscribed || isAdmin) && (
-          <div className="mb-4">
-            <SweetSpotPicksCard />
-          </div>
-        )}
-
-        {/* Category L10 Sweet Spots */}
-        {(isPilotUser || isSubscribed || isAdmin) && (
-          <div className="mb-4">
-            <CategoryPropsCard />
-          </div>
-        )}
-
-        {/* L10 OVERS Sweet Spots - Separate Section */}
-        {(isPilotUser || isSubscribed || isAdmin) && (
-          <div className="mb-4">
-            <OversPropsCard />
-          </div>
-        )}
-
-        {/* Heat Engine Parlays - THIRD */}
-        {(isPilotUser || isSubscribed || isAdmin) && (
-          <div className="mb-4">
-            <HeatParlaySection />
-          </div>
-        )}
-
-        {/* NBA Risk Engine - SECOND */}
-        {(isPilotUser || isSubscribed || isAdmin) && (
-          <div className="mb-4">
-            <RiskEnginePicksCard />
-          </div>
-        )}
-
-        {/* Prop Engine v2.1 - THIRD */}
-        {(isPilotUser || isSubscribed || isAdmin) && (
-          <div className="mb-4">
-            <PropEngineV2Card />
-          </div>
-        )}
-
-        {/* Prop Heat Map - THIRD */}
-        {(isPilotUser || isSubscribed || isAdmin) && (
-          <div className="mb-4">
-            <PropMarketWidget />
+            <DailyParlayHub />
           </div>
         )}
 
