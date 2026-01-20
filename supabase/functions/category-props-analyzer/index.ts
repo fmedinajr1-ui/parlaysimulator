@@ -1,9 +1,10 @@
-// Category Props Analyzer v1.4
+// Category Props Analyzer v1.5
 // Analyzes props by player category with accurate L10 hit rates
 // Categories: BIG_REBOUNDER, LOW_LINE_REBOUNDER, NON_SCORING_SHOOTER, VOLUME_SCORER, HIGH_ASSIST, THREE_POINT_SHOOTER
 // v1.2: Tiered BIG_REBOUNDER validation (60-70% based on line)
 // v1.3: Added UNDER detection for BIG_REBOUNDER and VOLUME_SCORER when OVER fails
 // v1.4: Added BOUNCE_BACK detection for players with high lines but depressed L10 (regression to mean)
+// v1.5: BIG categories ALWAYS recommend OVER with risk_level indicators instead of UNDER
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -496,28 +497,39 @@ serve(async (req) => {
             }
           }
           
-          // If not a bounce back candidate, check UNDER for line-eligible players
-          const underHitRate = calculateHitRate(statValues, actualData.line, 'under');
-          if (underHitRate >= 0.70) {
-            spot.recommended_side = 'under';
-            spot.recommended_line = actualData.line;
-            spot.actual_line = actualData.line;
-            spot.actual_hit_rate = Math.round(underHitRate * 100) / 100;
-            spot.bookmaker = actualData.bookmaker;
-            spot.is_active = true;
-            spot.eligibility_type = 'LINE_ELIGIBLE_UNDER';
-            
-            const consistency = l10Avg > 0 ? 1 - (l10StdDev / l10Avg) : 0;
-            spot.confidence_score = Math.round((underHitRate * 0.6 + Math.max(0, consistency) * 0.4) * 100) / 100;
-            
-            validatedCount++;
-            console.log(`[Category Analyzer] ✓ LINE-ELIGIBLE-UNDER ${spot.player_name} ${spot.prop_type}: UNDER ${actualData.line} (${(underHitRate * 100).toFixed(0)}% hit rate)`);
-            validatedSpots.push(spot);
-            continue;
+          // v1.5: For BIG categories, ALWAYS recommend OVER with risk indicator
+          const overHitRate = calculateHitRate(statValues, actualData.line, 'over');
+          
+          spot.recommended_side = 'over';
+          spot.recommended_line = actualData.line;
+          spot.actual_line = actualData.line;
+          spot.actual_hit_rate = Math.round(overHitRate * 100) / 100;
+          spot.bookmaker = actualData.bookmaker;
+          spot.is_active = true;
+          spot.eligibility_type = 'LINE_ELIGIBLE_OVER';
+          
+          // Add risk level based on L10 hit rate
+          if (overHitRate >= 0.70) {
+            spot.risk_level = 'LOW';
+            spot.recommendation = 'Strong play - 70%+ L10 hit rate';
+          } else if (overHitRate >= 0.50) {
+            spot.risk_level = 'MEDIUM';
+            spot.recommendation = 'Decent value - watch for variance';
+          } else if (overHitRate >= 0.30) {
+            spot.risk_level = 'HIGH';
+            spot.recommendation = 'High variance - potential regression play';
+          } else {
+            spot.risk_level = 'EXTREME';
+            spot.recommendation = 'Extreme variance - use caution';
           }
           
-          // Line-eligible player didn't qualify for bounce back or UNDER
-          spot.is_active = false;
+          // Confidence adjusted by hit rate (scaled 0.4-0.9)
+          const confidence = Math.max(0.4, Math.min(0.9, overHitRate * 0.8 + 0.3));
+          spot.confidence_score = Math.round(confidence * 100) / 100;
+          
+          lineEligibleCount++;
+          validatedCount++;
+          console.log(`[Category Analyzer] ✓ LINE-ELIGIBLE-OVER ${spot.player_name} ${spot.prop_type}: OVER ${actualData.line} (${(overHitRate * 100).toFixed(0)}% L10, ${spot.risk_level} risk)`);
           validatedSpots.push(spot);
           continue;
         }
@@ -552,21 +564,27 @@ serve(async (req) => {
           droppedCount++;
           console.log(`[Category Analyzer] ✗ ${spot.player_name} ${spot.prop_type}: dropped (hitRate ${(actualHitRate * 100).toFixed(0)}% < ${(requiredHitRate * 100).toFixed(0)}% at actual line ${actualData.line})`);
           
-          // v1.3: Check UNDER side if OVER fails for BIG_REBOUNDER or VOLUME_SCORER
+          // v1.5: For BIG categories, keep as OVER with risk indicator instead of switching to UNDER
           if (spot.category === 'BIG_REBOUNDER' || spot.category === 'VOLUME_SCORER') {
-            const underHitRate = calculateHitRate(statValues, actualData.line, 'under');
-            // VOLUME_SCORER requires 65% UNDER, BIG_REBOUNDER requires 60%
-            const underThreshold = spot.category === 'VOLUME_SCORER' ? 0.65 : 0.60;
+            // Re-enable with risk indicator
+            spot.is_active = true;
+            spot.recommended_side = 'over'; // Keep as OVER
+            droppedCount--; // Undo the drop
+            validatedCount++;
             
-            if (underHitRate >= underThreshold) {
-              spot.recommended_side = 'under';
-              spot.recommended_line = actualData.line;
-              spot.actual_hit_rate = Math.round(underHitRate * 100) / 100;
-              spot.is_active = true;
-              droppedCount--; // Undo the drop count
-              validatedCount++;
-              console.log(`[Category Analyzer] ↔ ${spot.player_name} ${spot.prop_type}: Switched to UNDER (${(underHitRate * 100).toFixed(0)}% hit rate against ${actualData.line})`);
+            // Set risk level based on actual hit rate
+            if (actualHitRate >= 0.50) {
+              spot.risk_level = 'MEDIUM';
+              spot.recommendation = `Moderate risk - ${(actualHitRate * 100).toFixed(0)}% L10 hit rate`;
+            } else if (actualHitRate >= 0.30) {
+              spot.risk_level = 'HIGH';
+              spot.recommendation = `High variance - ${(actualHitRate * 100).toFixed(0)}% L10, regression possible`;
+            } else {
+              spot.risk_level = 'EXTREME';
+              spot.recommendation = `Extreme variance - ${(actualHitRate * 100).toFixed(0)}% L10, use caution`;
             }
+            
+            console.log(`[Category Analyzer] ⚠ ${spot.player_name} ${spot.prop_type}: OVER ${actualData.line} with ${spot.risk_level} risk (${(actualHitRate * 100).toFixed(0)}% L10)`);
           }
         }
       }

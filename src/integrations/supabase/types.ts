@@ -707,8 +707,10 @@ export type Database = {
           line_difference: number | null
           player_name: string
           prop_type: string
+          recommendation: string | null
           recommended_line: number | null
           recommended_side: string | null
+          risk_level: string | null
           updated_at: string | null
         }
         Insert: {
@@ -731,8 +733,10 @@ export type Database = {
           line_difference?: number | null
           player_name: string
           prop_type: string
+          recommendation?: string | null
           recommended_line?: number | null
           recommended_side?: string | null
+          risk_level?: string | null
           updated_at?: string | null
         }
         Update: {
@@ -755,8 +759,10 @@ export type Database = {
           line_difference?: number | null
           player_name?: string
           prop_type?: string
+          recommendation?: string | null
           recommended_line?: number | null
           recommended_side?: string | null
+          risk_level?: string | null
           updated_at?: string | null
         }
         Relationships: []
