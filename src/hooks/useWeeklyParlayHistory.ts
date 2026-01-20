@@ -2,6 +2,26 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { subDays, format } from "date-fns";
 import { useEffect } from "react";
+import type { Json } from "@/integrations/supabase/types";
+
+export interface LegData {
+  player: string;
+  prop: string;
+  line: number;
+  side: 'over' | 'under' | string;
+  outcome?: 'hit' | 'miss' | 'push' | 'won' | 'lost' | 'pending' | null;
+  actual_value?: number | null;
+}
+
+export interface ParlayRecord {
+  id: string;
+  date: string;
+  system: 'sharp' | 'heat';
+  type: string;
+  outcome: 'won' | 'lost' | 'push' | 'pending';
+  legs: LegData[];
+  total_odds?: number;
+}
 
 interface DailyRecord {
   date: string;
@@ -20,6 +40,7 @@ interface DailyRecord {
     push: number;
     pending: number;
   };
+  parlays: ParlayRecord[];
 }
 
 interface SystemStats {
@@ -43,25 +64,33 @@ interface WeeklyStats {
     heat: SystemStats;
   };
   dailyRecords: DailyRecord[];
+  allParlays: ParlayRecord[];
   streak: { type: 'W' | 'L' | null; count: number };
 }
 
 type ParlayOutcome = 'won' | 'lost' | 'push' | 'pending';
 
-interface SharpParlay {
+interface SharpParlayRow {
+  id: string;
   parlay_date: string;
   parlay_type: string;
-  outcome: string;
+  outcome: string | null;
+  legs: Json;
+  total_odds: number | null;
 }
 
-interface HeatParlay {
+interface HeatParlayRow {
+  id: string;
   parlay_date: string;
   parlay_type: string;
-  outcome: string;
+  outcome: string | null;
+  leg_1: Json;
+  leg_2: Json;
+  estimated_odds: number | null;
 }
 
 // Normalize outcome values from different formats (hit/miss, won/lost, partial)
-function normalizeOutcome(outcome: string | null | undefined): ParlayOutcome {
+export function normalizeOutcome(outcome: string | null | undefined): ParlayOutcome {
   if (!outcome) return 'pending';
   const normalized = outcome.toLowerCase().trim();
   
@@ -74,6 +103,36 @@ function normalizeOutcome(outcome: string | null | undefined): ParlayOutcome {
   if (normalized === 'partial') return 'pending';
   
   return 'pending';
+}
+
+// Parse leg data from JSON
+function parseLegData(legJson: Json | null): LegData | null {
+  if (!legJson || typeof legJson !== 'object' || Array.isArray(legJson)) return null;
+  const leg = legJson as Record<string, unknown>;
+  
+  const rawOutcome = leg.outcome ? String(leg.outcome).toLowerCase().trim() : null;
+  const validOutcomes = ['hit', 'miss', 'push', 'won', 'lost', 'pending'] as const;
+  const outcome = rawOutcome && validOutcomes.includes(rawOutcome as typeof validOutcomes[number]) 
+    ? rawOutcome as LegData['outcome']
+    : null;
+  
+  return {
+    player: String(leg.player_name || leg.player || ''),
+    prop: String(leg.prop_type || leg.prop || ''),
+    line: Number(leg.line) || 0,
+    side: String(leg.side || 'over'),
+    outcome,
+    actual_value: leg.actual_value != null ? Number(leg.actual_value) : null,
+  };
+}
+
+// Parse legs array from JSON
+function parseLegsArray(legsJson: Json | null): LegData[] {
+  if (!legsJson) return [];
+  if (Array.isArray(legsJson)) {
+    return legsJson.map(parseLegData).filter((l): l is LegData => l !== null);
+  }
+  return [];
 }
 
 export function useWeeklyParlayHistory() {
@@ -115,17 +174,17 @@ export function useWeeklyParlayHistory() {
       const startDate = format(sevenDaysAgo, 'yyyy-MM-dd');
       const endDate = format(today, 'yyyy-MM-dd');
 
-      // Fetch both tables in parallel
+      // Fetch both tables in parallel with full leg data
       const [sharpResult, heatResult] = await Promise.all([
         supabase
           .from('sharp_ai_parlays')
-          .select('parlay_date, parlay_type, outcome')
+          .select('id, parlay_date, parlay_type, outcome, legs, total_odds')
           .gte('parlay_date', startDate)
           .lte('parlay_date', endDate)
           .order('parlay_date', { ascending: false }),
         supabase
           .from('heat_parlays')
-          .select('parlay_date, parlay_type, outcome')
+          .select('id, parlay_date, parlay_type, outcome, leg_1, leg_2, estimated_odds')
           .gte('parlay_date', startDate)
           .lte('parlay_date', endDate)
           .order('parlay_date', { ascending: false })
@@ -134,8 +193,39 @@ export function useWeeklyParlayHistory() {
       if (sharpResult.error) throw sharpResult.error;
       if (heatResult.error) throw heatResult.error;
 
-      const sharpParlays = (sharpResult.data || []) as SharpParlay[];
-      const heatParlays = (heatResult.data || []) as HeatParlay[];
+      const sharpRows = (sharpResult.data || []) as SharpParlayRow[];
+      const heatRows = (heatResult.data || []) as HeatParlayRow[];
+
+      // Convert to unified ParlayRecord format
+      const sharpParlayRecords: ParlayRecord[] = sharpRows.map(row => ({
+        id: row.id,
+        date: row.parlay_date,
+        system: 'sharp' as const,
+        type: row.parlay_type || 'UNKNOWN',
+        outcome: normalizeOutcome(row.outcome),
+        legs: parseLegsArray(row.legs),
+        total_odds: row.total_odds ?? undefined,
+      }));
+
+      const heatParlayRecords: ParlayRecord[] = heatRows.map(row => {
+        const legs: LegData[] = [];
+        const leg1 = parseLegData(row.leg_1);
+        const leg2 = parseLegData(row.leg_2);
+        if (leg1) legs.push(leg1);
+        if (leg2) legs.push(leg2);
+        
+        return {
+          id: row.id,
+          date: row.parlay_date,
+          system: 'heat' as const,
+          type: row.parlay_type || 'UNKNOWN',
+          outcome: normalizeOutcome(row.outcome),
+          legs,
+          total_odds: row.estimated_odds ?? undefined,
+        };
+      });
+
+      const allParlays = [...sharpParlayRecords, ...heatParlayRecords];
 
       // Build daily records
       const dailyRecords: DailyRecord[] = [];
@@ -143,20 +233,17 @@ export function useWeeklyParlayHistory() {
       for (let i = 0; i < 7; i++) {
         const date = format(subDays(today, i), 'yyyy-MM-dd');
         
-        const daySharp = sharpParlays.filter(p => p.parlay_date === date);
-        const dayHeat = heatParlays.filter(p => p.parlay_date === date);
+        const daySharp = sharpParlayRecords.filter(p => p.date === date);
+        const dayHeat = heatParlayRecords.filter(p => p.date === date);
+        const dayParlays = [...daySharp, ...dayHeat];
 
-        const getOutcome = (parlays: { parlay_type: string; outcome: string }[], type: string): ParlayOutcome | null => {
-          const parlay = parlays.find(p => p.parlay_type?.toUpperCase() === type.toUpperCase());
-          if (!parlay) return null;
-          return normalizeOutcome(parlay.outcome);
+        const getOutcome = (parlays: ParlayRecord[], type: string): ParlayOutcome | null => {
+          const parlay = parlays.find(p => p.type?.toUpperCase() === type.toUpperCase());
+          return parlay?.outcome ?? null;
         };
 
-        // Normalize all outcomes when aggregating
-        const allOutcomes = [
-          ...daySharp.map(p => normalizeOutcome(p.outcome)),
-          ...dayHeat.map(p => normalizeOutcome(p.outcome))
-        ];
+        // Aggregate outcomes
+        const allOutcomes = dayParlays.map(p => p.outcome);
 
         dailyRecords.push({
           date,
@@ -174,13 +261,14 @@ export function useWeeklyParlayHistory() {
             lost: allOutcomes.filter(o => o === 'lost').length,
             push: allOutcomes.filter(o => o === 'push').length,
             pending: allOutcomes.filter(o => o === 'pending').length,
-          }
+          },
+          parlays: dayParlays,
         });
       }
 
-      // Calculate overall stats - normalize all outcomes
-      const allSharpOutcomes = sharpParlays.map(p => normalizeOutcome(p.outcome));
-      const allHeatOutcomes = heatParlays.map(p => normalizeOutcome(p.outcome));
+      // Calculate overall stats
+      const allSharpOutcomes = sharpParlayRecords.map(p => p.outcome);
+      const allHeatOutcomes = heatParlayRecords.map(p => p.outcome);
       const allOutcomes = [...allSharpOutcomes, ...allHeatOutcomes];
 
       const calculateStats = (outcomes: ParlayOutcome[]): SystemStats => {
@@ -238,6 +326,7 @@ export function useWeeklyParlayHistory() {
           heat: heatStats,
         },
         dailyRecords,
+        allParlays,
         streak,
       };
     },
