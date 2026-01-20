@@ -1,4 +1,4 @@
-import { useWeeklyParlayHistory } from "@/hooks/useWeeklyParlayHistory";
+import { useWeeklyParlayHistory, type ParlayRecord } from "@/hooks/useWeeklyParlayHistory";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -22,22 +22,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-
-function OutcomeBadge({ outcome }: { outcome: string | null }) {
-  if (!outcome) return <span className="text-xs text-muted-foreground">-</span>;
-  
-  const config: Record<string, { icon: string; className: string }> = {
-    won: { icon: '✅', className: 'text-green-500' },
-    win: { icon: '✅', className: 'text-green-500' },
-    lost: { icon: '❌', className: 'text-red-500' },
-    loss: { icon: '❌', className: 'text-red-500' },
-    push: { icon: '➡️', className: 'text-yellow-500' },
-    pending: { icon: '⏳', className: 'text-muted-foreground' },
-  };
-  
-  const result = config[outcome] ?? config.pending;
-  return <span className={cn("text-xs", result.className)}>{result.icon}</span>;
-}
+import { ParlayBreakdownCard, type ParlayData } from "./ParlayBreakdownCard";
 
 function StatBox({ value, label, className }: { value: number; label: string; className?: string }) {
   return (
@@ -83,83 +68,98 @@ function SystemRow({
   );
 }
 
-function DailyRow({ record }: { record: {
+function convertToParlayData(parlay: ParlayRecord): ParlayData {
+  return {
+    id: parlay.id,
+    date: parlay.date,
+    system: parlay.system,
+    type: parlay.type,
+    outcome: parlay.outcome,
+    legs: parlay.legs,
+    total_odds: parlay.total_odds,
+  };
+}
+
+function DailySection({ 
+  date, 
+  parlays,
+  isToday 
+}: { 
   date: string;
-  sharpParlays: { safe: 'won' | 'lost' | 'push' | 'pending' | null; balanced: 'won' | 'lost' | 'push' | 'pending' | null; upside: 'won' | 'lost' | 'push' | 'pending' | null };
-  heatParlays: { core: 'won' | 'lost' | 'push' | 'pending' | null; upside: 'won' | 'lost' | 'push' | 'pending' | null };
-  totals: { won: number; lost: number; push: number; pending: number };
-}}) {
-  const { date, sharpParlays, heatParlays, totals } = record;
-  const isToday = date === format(new Date(), 'yyyy-MM-dd');
-  const settled = totals.won + totals.lost;
-  const winRate = settled > 0 ? (totals.won / settled) * 100 : null;
+  parlays: ParlayRecord[];
+  isToday: boolean;
+}) {
+  const [isExpanded, setIsExpanded] = useState(isToday);
   
-  const hasParlays = sharpParlays.safe || sharpParlays.balanced || sharpParlays.upside || 
-                     heatParlays.core || heatParlays.upside;
-  
-  if (!hasParlays) {
+  const wonCount = parlays.filter(p => p.outcome === 'won').length;
+  const lostCount = parlays.filter(p => p.outcome === 'lost').length;
+  const pendingCount = parlays.filter(p => p.outcome === 'pending').length;
+  const settledCount = wonCount + lostCount;
+  const winRate = settledCount > 0 ? (wonCount / settledCount) * 100 : null;
+
+  if (parlays.length === 0) {
     return (
-      <div className="flex items-center justify-between py-2 text-sm text-muted-foreground">
-        <span>{format(parseISO(date), 'MMM d')}</span>
+      <div className="flex items-center justify-between py-2 text-sm text-muted-foreground border-b border-border/30 last:border-0">
+        <span>{isToday ? 'Today' : format(parseISO(date), 'EEE, MMM d')}</span>
         <span className="text-xs">No parlays</span>
       </div>
     );
   }
 
   return (
-    <div className="py-2 border-b border-border/50 last:border-0">
-      <div className="flex items-center justify-between mb-1">
-        <div className="flex items-center gap-2">
-          <span className={cn("font-medium text-sm", isToday && "text-primary")}>
-            {isToday ? 'Today' : format(parseISO(date), 'MMM d')}
-          </span>
-          {totals.pending > 0 && (
-            <span className="text-xs text-muted-foreground">
-              ⏳ {totals.pending} pending
+    <Collapsible open={isExpanded} onOpenChange={setIsExpanded} className="border-b border-border/30 last:border-0">
+      <CollapsibleTrigger asChild>
+        <div className="flex items-center justify-between py-2 cursor-pointer hover:bg-muted/10 transition-colors rounded-lg px-2 -mx-2">
+          <div className="flex items-center gap-2">
+            <span className={cn("font-medium text-sm", isToday && "text-primary")}>
+              {isToday ? 'Today' : format(parseISO(date), 'EEE, MMM d')}
             </span>
-          )}
-        </div>
-        {settled > 0 && (
-          <div className="flex items-center gap-1.5">
-            <span className={cn(
-              "text-sm font-semibold",
-              winRate && winRate >= 50 ? "text-green-500" : "text-red-500"
-            )}>
-              {totals.won}-{totals.lost}
-            </span>
-            <span className="text-xs text-muted-foreground">
-              ({winRate?.toFixed(0)}%)
-            </span>
+            {pendingCount > 0 && (
+              <span className="text-xs text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded">
+                ⏳ {pendingCount}
+              </span>
+            )}
           </div>
-        )}
-      </div>
-      
-      <div className="grid grid-cols-2 gap-2 text-xs">
-        <div className="flex items-center gap-1.5">
-          <Zap className="h-3 w-3 text-neon-yellow" />
-          <span className="text-muted-foreground">Sharp:</span>
-          <div className="flex gap-1">
-            <span title="SAFE"><OutcomeBadge outcome={sharpParlays.safe} /></span>
-            <span title="BALANCED"><OutcomeBadge outcome={sharpParlays.balanced} /></span>
-            <span title="UPSIDE"><OutcomeBadge outcome={sharpParlays.upside} /></span>
-          </div>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <Flame className="h-3 w-3 text-orange-500" />
-          <span className="text-muted-foreground">Heat:</span>
-          <div className="flex gap-1">
-            <span title="CORE"><OutcomeBadge outcome={heatParlays.core} /></span>
-            <span title="UPSIDE"><OutcomeBadge outcome={heatParlays.upside} /></span>
+          <div className="flex items-center gap-2">
+            {settledCount > 0 && (
+              <div className="flex items-center gap-1.5">
+                <span className={cn(
+                  "text-sm font-semibold",
+                  winRate !== null && winRate >= 50 ? "text-green-500" : "text-red-500"
+                )}>
+                  {wonCount}-{lostCount}
+                </span>
+                {winRate !== null && (
+                  <span className="text-xs text-muted-foreground">
+                    ({winRate.toFixed(0)}%)
+                  </span>
+                )}
+              </div>
+            )}
+            {isExpanded ? (
+              <ChevronUp className="h-4 w-4 text-muted-foreground" />
+            ) : (
+              <ChevronDown className="h-4 w-4 text-muted-foreground" />
+            )}
           </div>
         </div>
-      </div>
-    </div>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="pt-2 pb-3 space-y-2">
+        {parlays.map((parlay) => (
+          <ParlayBreakdownCard 
+            key={parlay.id} 
+            parlay={convertToParlayData(parlay)}
+            defaultOpen={isToday && parlay.outcome === 'lost'}
+          />
+        ))}
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
 export function WeeklyParlayHistory() {
   const { data, isLoading, refetch, isRefetching } = useWeeklyParlayHistory();
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [showDaily, setShowDaily] = useState(true);
   const queryClient = useQueryClient();
 
   const handleRefresh = () => {
@@ -198,6 +198,7 @@ export function WeeklyParlayHistory() {
   const { overall, bySystem, dailyRecords, streak } = data;
   const winRateColor = overall.winRate >= 60 ? 'text-green-500' : 
                        overall.winRate >= 40 ? 'text-yellow-500' : 'text-red-500';
+  const today = format(new Date(), 'yyyy-MM-dd');
 
   return (
     <Card className="glass-card">
@@ -281,24 +282,27 @@ export function WeeklyParlayHistory() {
           />
         </div>
 
-        {/* Daily Breakdown */}
-        <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
+        {/* Daily Breakdown with Expandable Parlays */}
+        <Collapsible open={showDaily} onOpenChange={setShowDaily}>
           <CollapsibleTrigger asChild>
             <Button variant="ghost" className="w-full justify-between h-8 px-2">
               <span className="text-sm font-medium text-muted-foreground">Daily Breakdown</span>
-              {isExpanded ? (
+              {showDaily ? (
                 <ChevronUp className="h-4 w-4" />
               ) : (
                 <ChevronDown className="h-4 w-4" />
               )}
             </Button>
           </CollapsibleTrigger>
-          <CollapsibleContent className="mt-2">
-            <div className="space-y-0">
-              {dailyRecords.map((record) => (
-                <DailyRow key={record.date} record={record} />
-              ))}
-            </div>
+          <CollapsibleContent className="mt-2 space-y-1">
+            {dailyRecords.map((record) => (
+              <DailySection 
+                key={record.date} 
+                date={record.date}
+                parlays={record.parlays}
+                isToday={record.date === today}
+              />
+            ))}
           </CollapsibleContent>
         </Collapsible>
       </CardContent>
