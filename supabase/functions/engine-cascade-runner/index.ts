@@ -32,17 +32,23 @@ interface StepResult {
 }
 
 const CASCADE_STEPS: CascadeStep[] = [
-  // Step 0: Category L10 analyzer - runs first to populate sweet spots before risk engine
+  // Step 0: Fetch team defensive ratings (populates opponent defense data first)
+  { name: 'fetch-team-defense-ratings', body: { action: 'refresh' } },
+  // Step 1: Fetch Vegas lines for game environment (blowout detection, implied totals)
+  { name: 'fetch-vegas-lines', body: { action: 'refresh' } },
+  // Step 2: Category L10 analyzer - populate sweet spots before risk engine
   { name: 'category-props-analyzer', body: { forceRefresh: true } },
-  // Step 1: Refresh props from odds API
+  // Step 3: Refresh props from odds API
   { name: 'refresh-todays-props', body: { sport: 'basketball_nba', force_clear: true } },
-  // Step 2: Main risk engine analysis
+  // Step 4: Main risk engine analysis
   { name: 'nba-player-prop-risk-engine', body: { action: 'analyze_slate', use_live_odds: true } },
-  // Step 3: SES scoring engine
+  // Step 5: SES scoring engine
   { name: 'prop-engine-v2', body: { action: 'full_slate' } },
-  // Step 4: Dream Team parlay builder
+  // Step 6: Matchup intelligence - analyze & block bad picks BEFORE parlay builders
+  { name: 'matchup-intelligence-analyzer', body: { action: 'analyze_batch' } },
+  // Step 7: Dream Team parlay builder (uses matchup intelligence to filter blocked picks)
   { name: 'sharp-parlay-builder', body: { action: 'build' } },
-  // Step 5: Heat prop engine
+  // Step 8: Heat prop engine (uses matchup intelligence to filter blocked picks)
   { name: 'heat-prop-engine', body: { action: 'build' } },
 ];
 
