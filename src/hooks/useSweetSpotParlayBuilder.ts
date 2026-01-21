@@ -102,6 +102,24 @@ export function useSweetSpotParlayBuilder() {
       const today = getEasternDate();
       const now = new Date().toISOString();
       
+      // ========== DIAGNOSTIC TRACKING ==========
+      const diagnostics = {
+        timestamp: new Date().toISOString(),
+        targetDate: '',
+        totalCandidates: { category: 0, riskEngine: 0 },
+        filters: {
+          archetypeBlocked: { count: 0, players: [] as string[] },
+          matchupBlocked: { count: 0, players: [] as string[] },
+          outPlayers: { count: 0, players: [] as string[] },
+          sideConflicts: { count: 0, players: [] as string[] },
+          notInActiveSlate: { count: 0, players: [] as string[] },
+        },
+        passedValidation: { category: 0, riskEngine: 0 },
+      };
+      
+      console.group('🎯 [Optimal Parlay Diagnostics]');
+      console.log(`📅 Query started at: ${diagnostics.timestamp}`);
+      
       // First get active props (future games only) to filter out stale picks
       const { data: activeProps } = await supabase
         .from('unified_props')
@@ -143,11 +161,13 @@ export function useSweetSpotParlayBuilder() {
               .filter(Boolean)
           );
           isNextSlate = true;
-          console.log(`[SweetSpotParlay] Today's slate complete. Switching to next slate: ${targetDate}`);
+          console.log(`⏭️ Today's slate complete. Switching to next slate: ${targetDate}`);
         }
       }
 
-      console.log(`[SweetSpotParlay] Target date: ${targetDate}, Active players: ${targetPlayers.size}`);
+      diagnostics.targetDate = targetDate;
+      console.log(`📆 Target date: ${targetDate}`);
+      console.log(`👥 Active players in slate: ${targetPlayers.size}`);
 
       // Fetch injury reports for target date
       const { data: injuryReports } = await supabase
@@ -169,7 +189,7 @@ export function useSweetSpotParlayBuilder() {
           .map(r => [r.player_name?.toLowerCase() || '', r.status || ''])
       );
 
-      console.log(`[SweetSpotParlay] Injury check: ${outPlayers.size} OUT, ${questionablePlayers.size} questionable/GTD`);
+      console.log(`🏥 Injuries: ${outPlayers.size} OUT, ${questionablePlayers.size} questionable/GTD`);
 
       // NEW: Fetch blocked picks from matchup intelligence (head-to-head logic)
       const { data: blockedPicks } = await supabase
@@ -184,7 +204,16 @@ export function useSweetSpotParlayBuilder() {
         )
       );
       
-      console.log(`[SweetSpotParlay] Matchup blocked picks: ${blockedSet.size}`);
+      // Log blocked picks details
+      console.log(`🚫 Matchup Intelligence Blocks: ${blockedSet.size}`);
+      if (blockedPicks && blockedPicks.length > 0) {
+        console.table(blockedPicks.map(p => ({
+          player: p.player_name,
+          prop: p.prop_type,
+          side: p.side,
+          reason: p.block_reason
+        })));
+      }
 
       // Get player team data from cache
       const { data: playerCache } = await supabase
@@ -401,21 +430,34 @@ export function useSweetSpotParlayBuilder() {
 
   // Build optimal 6-leg parlay prioritizing proven category formulas
   const buildOptimalParlay = (): DreamTeamLeg[] => {
+    console.group('🏆 [Optimal Parlay Builder v3.0]');
+    
     if (!sweetSpotPicks || sweetSpotPicks.length === 0) {
-      console.log('[Optimal] No sweet spot picks available');
+      console.log('❌ No sweet spot picks available');
+      console.groupEnd();
       return [];
     }
+
+    console.log(`📊 Total candidates: ${sweetSpotPicks.length}`);
+    
+    // Track archetype blocks for diagnostics
+    const archetypeBlocked: string[] = [];
 
     // v3.0: Final archetype alignment filter (defense in depth)
     const alignedPicks = sweetSpotPicks.filter(pick => {
       const aligned = isPickArchetypeAligned(pick);
       if (!aligned) {
-        console.log(`[Optimal] BLOCKED by archetype: ${pick.player_name} (${pick.archetype}) for ${pick.prop_type}`);
+        archetypeBlocked.push(`${pick.player_name} (${pick.archetype}) → ${pick.prop_type}`);
       }
       return aligned;
     });
     
-    console.log(`[Optimal] Aligned picks: ${alignedPicks.length}/${sweetSpotPicks.length}`);
+    if (archetypeBlocked.length > 0) {
+      console.log(`🚫 Archetype Blocked (${archetypeBlocked.length}):`);
+      archetypeBlocked.forEach(b => console.log(`   ❌ ${b}`));
+    }
+    
+    console.log(`✅ Aligned picks: ${alignedPicks.length}/${sweetSpotPicks.length}`);
 
     const selectedLegs: DreamTeamLeg[] = [];
     const usedTeams = new Set<string>();
@@ -481,6 +523,24 @@ export function useSweetSpotParlayBuilder() {
         usedPlayers.add(pick.player_name.toLowerCase());
       }
     }
+
+    // ========== FINAL DIAGNOSTIC SUMMARY ==========
+    console.log(`\n📋 FINAL SELECTION (${selectedLegs.length}/${TARGET_LEG_COUNT} legs):`);
+    console.table(selectedLegs.map((leg, i) => ({
+      '#': i + 1,
+      player: leg.pick.player_name,
+      prop: `${leg.pick.prop_type} ${leg.pick.side.toUpperCase()} ${leg.pick.line}`,
+      category: leg.pick.category || 'Risk Engine',
+      archetype: leg.pick.archetype || 'UNKNOWN',
+      L10: leg.pick.l10HitRate ? `${Math.round(leg.pick.l10HitRate * 100)}%` : 'N/A',
+      team: leg.team,
+      score: leg.score.toFixed(2)
+    })));
+    
+    const categoryCount = selectedLegs.filter(l => l.pick.category).length;
+    const riskEngineCount = selectedLegs.length - categoryCount;
+    console.log(`\n📈 Sources: ${categoryCount} Category picks, ${riskEngineCount} Risk Engine picks`);
+    console.groupEnd();
 
     return selectedLegs;
   };

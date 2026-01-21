@@ -320,3 +320,6 @@ verify_jwt = false
 
 [functions.fetch-vegas-lines]
 verify_jwt = false
+
+[functions.sync-archetypes]
+verify_jwt = false

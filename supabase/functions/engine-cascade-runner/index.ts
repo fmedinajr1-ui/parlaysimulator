@@ -47,6 +47,8 @@ const CASCADE_STEPS: CascadeStep[] = [
   // ========== PHASE 2: PROP REFRESH & ANALYSIS ==========
   // Step 5: Category L10 analyzer (sweet spots, hit rates)
   { name: 'category-props-analyzer', body: { forceRefresh: true } },
+  // Step 5b: Sync archetypes from player_archetypes to category_sweet_spots
+  { name: 'sync-archetypes', body: {} },
   // Step 6: Refresh today's props from odds API
   { name: 'refresh-todays-props', body: { sport: 'basketball_nba', force_clear: true } },
   // Step 7: Main risk engine analysis (generates picks)
