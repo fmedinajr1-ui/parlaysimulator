@@ -122,163 +122,102 @@ function parseTeamName(text: string): string {
   return text.trim();
 }
 
-// Parse the markdown content from RotoWire
+// Parse the markdown content from RotoWire - focus on extracting player status/injuries
 function parseLineupMarkdown(markdown: string): GameLineup[] {
   const games: GameLineup[] = [];
   
-  // Split by game sections - RotoWire uses team names as headers
-  const lines = markdown.split('\n');
-  let currentGame: Partial<GameLineup> | null = null;
-  let currentSection: 'away' | 'home' | null = null;
-  let isStartersSection = false;
+  console.log('[LineupScraper] Markdown length:', markdown.length);
   
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    
-    // Skip empty lines
-    if (!line) continue;
-    
-    // Look for game matchups (e.g., "Lakers @ Celtics" or "LAL vs BOS")
-    // Only match if BOTH sides look like NBA teams
-    const matchupPattern = /([A-Za-z\s]+)\s*[@vs\.]+\s*([A-Za-z\s]+)/i;
-    const matchupMatch = line.match(matchupPattern);
-    
-    if (matchupMatch) {
-      const awayCandidate = matchupMatch[1].trim();
-      const homeCandidate = matchupMatch[2].trim();
+  // Track injuries/status found - we'll match them to players later
+  const playerStatuses: Array<{name: string; status: PlayerStatus['status']; note: string}> = [];
+  const seenPlayers = new Set<string>();
+  
+  // List of known NBA player last names to help validate
+  const nbaPlayerSurnamePatterns = /\b(LeBron|Embiid|Leonard|Curry|Durant|Giannis|Jokic|Doncic|Tatum|Morant|Edwards|Davis|Butler|George|Harden|Lillard|Mitchell|Booker|Irving|Towns|Beal|Murray|Ball|Brown|Williams|Thomas|Johnson|Robinson|Jackson|White|Young|Green|Harris|Thompson|Allen|Walker|Fox|Ingram|Cunningham|Brunson|Haliburton|Sengun|Maxey|Garland|Mobley|Barnes|Banchero|Wembanyama|Holiday|Poole|Middleton|Lopez|Bridges|Suggs|Wagner|Smith|Alexander|Gilgeous|Randle|Quickley|Simons|Grant|Turner|Ayton|Portis|Vassell|McDaniels|Gobert|Reid|Clarkson|Keldon|Sochan)\b/i;
+  
+  // Parse markdown links like [Joel Embiid](url) or [K. Leonard](url) followed by status
+  const linkWithStatusPatterns = [
+    // [Full Name](url) Out/GTD/etc
+    /\[([A-Z][a-z]+(?:\s+[A-Z][a-z'-]+)+)\]\([^)]+\)\s*(?:[-–])?\s*(OUT|Out|GTD|Gtd|QUESTIONABLE|Questionable|DOUBTFUL|Doubtful|PROBABLE|Probable)/g,
+    // [K. Leonard](url "Full Name") Out - extract title
+    /\[([A-Z]\.\s*[A-Z][a-z]+)\]\([^)]*"([^"]+)"[^)]*\)\s*(?:[-–])?\s*(OUT|Out|GTD|Gtd|QUESTIONABLE|Questionable|DOUBTFUL|Doubtful|PROBABLE|Probable)/g,
+  ];
+  
+  // Also look for plain text patterns
+  const plainTextPatterns = [
+    // "LeBron James - OUT (knee)"
+    /\b([A-Z][a-z]+\s+[A-Z][a-z'-]+)\s*[-–]\s*(OUT|GTD|QUESTIONABLE|DOUBTFUL)\s*(?:\([^)]+\))?/gi,
+  ];
+  
+  // Process markdown links first
+  for (const pattern of linkWithStatusPatterns) {
+    let match;
+    while ((match = pattern.exec(markdown)) !== null) {
+      // Use the title text if available (more complete name), otherwise use link text
+      const playerName = match[2] && match[3] ? match[2] : match[1];
+      const status = (match[2] && match[3] ? match[3] : match[2]).toUpperCase() as PlayerStatus['status'];
       
-      // Only proceed if both look like NBA teams
-      if (isNbaTeam(awayCandidate) && isNbaTeam(homeCandidate)) {
-        // Save previous game if exists
-        if (currentGame && currentGame.homeTeam && currentGame.awayTeam && isNbaTeam(currentGame.homeTeam) && isNbaTeam(currentGame.awayTeam)) {
-          games.push({
-            homeTeam: currentGame.homeTeam,
-            awayTeam: currentGame.awayTeam,
-            tipTime: currentGame.tipTime,
-            homeStarters: currentGame.homeStarters || [],
-            awayStarters: currentGame.awayStarters || [],
-            homeBench: currentGame.homeBench || [],
-            awayBench: currentGame.awayBench || [],
-            confirmed: currentGame.confirmed || false,
-            injuries: currentGame.injuries || [],
-          });
-        }
-        
-        currentGame = {
-          awayTeam: parseTeamName(awayCandidate),
-          homeTeam: parseTeamName(homeCandidate),
-          homeStarters: [],
-          awayStarters: [],
-          homeBench: [],
-          awayBench: [],
-          injuries: [],
-          confirmed: false,
-        };
-        currentSection = 'away';
-        isStartersSection = true;
-        continue;
-      }
-    }
-    
-    // Look for section headers
-    if (line.toLowerCase().includes('starters') || line.toLowerCase().includes('starting')) {
-      isStartersSection = true;
-      continue;
-    }
-    if (line.toLowerCase().includes('bench') || line.toLowerCase().includes('reserves')) {
-      isStartersSection = false;
-      continue;
-    }
-    
-    // Look for team name to switch sections
-    if (currentGame) {
-      if (line.toLowerCase().includes(currentGame.homeTeam?.toLowerCase().split(' ').pop() || '')) {
-        currentSection = 'home';
-        continue;
-      }
-    }
-    
-    // Parse player lines - look for position indicators (PG, SG, SF, PF, C)
-    const playerPattern = /([A-Za-z\.\'\-\s]+?)(?:\s*\(([A-Z]{1,2})\))?(?:\s*-\s*(.+))?$/;
-    const positionPattern = /\b(PG|SG|SF|PF|C|G|F)\b/i;
-    
-    if (currentGame && currentSection) {
-      // Check if this looks like a player line
-      const posMatch = line.match(positionPattern);
-      if (posMatch || line.match(/^[A-Z][a-z]+\s+[A-Z][a-z]+/)) {
-        const { status, note } = parseInjuryStatus(line);
-        
-        // Extract player name (remove position and status indicators)
-        let playerName = line
-          .replace(/\([^)]+\)/g, '')
-          .replace(/\b(PG|SG|SF|PF|C|G|F)\b/gi, '')
-          .replace(/\s*(OUT|GTD|Q|D|P)\s*/gi, '')
-          .trim();
-        
-        // Clean up the name
-        playerName = playerName.split('-')[0].trim();
-        
-        if (playerName.length > 2 && !playerName.match(/^\d/)) {
-          const player: PlayerStatus = {
-            name: playerName,
-            position: posMatch?.[1]?.toUpperCase() || '',
+      // Validate with NBA player names
+      if (nbaPlayerSurnamePatterns.test(playerName)) {
+        const normalizedName = playerName.toLowerCase().trim();
+        if (!seenPlayers.has(normalizedName)) {
+          seenPlayers.add(normalizedName);
+          playerStatuses.push({
+            name: playerName.trim(),
             status,
-            injuryNote: note || undefined,
-          };
-          
-          if (status === 'OUT' || status === 'GTD' || status === 'QUESTIONABLE' || status === 'DOUBTFUL') {
-            currentGame.injuries = currentGame.injuries || [];
-            currentGame.injuries.push(player);
-          }
-          
-          if (isStartersSection) {
-            if (currentSection === 'home') {
-              currentGame.homeStarters = currentGame.homeStarters || [];
-              if (currentGame.homeStarters.length < 5) {
-                currentGame.homeStarters.push(player);
-              }
-            } else {
-              currentGame.awayStarters = currentGame.awayStarters || [];
-              if (currentGame.awayStarters.length < 5) {
-                currentGame.awayStarters.push(player);
-              }
-            }
-          } else {
-            if (currentSection === 'home') {
-              currentGame.homeBench = currentGame.homeBench || [];
-              currentGame.homeBench.push(player);
-            } else {
-              currentGame.awayBench = currentGame.awayBench || [];
-              currentGame.awayBench.push(player);
-            }
-          }
+            note: match[0],
+          });
+          console.log('[LineupScraper] Found player from link:', playerName, status);
         }
-      }
-    }
-    
-    // Check for confirmed status
-    if (line.toLowerCase().includes('confirmed') || line.toLowerCase().includes('official')) {
-      if (currentGame) {
-        currentGame.confirmed = true;
       }
     }
   }
   
-  // Don't forget the last game
-  if (currentGame && currentGame.homeTeam && currentGame.awayTeam) {
+  // Process plain text patterns
+  for (const pattern of plainTextPatterns) {
+    let match;
+    while ((match = pattern.exec(markdown)) !== null) {
+      const playerName = match[1].trim();
+      const status = match[2].toUpperCase() as PlayerStatus['status'];
+      
+      // Validate with NBA player names and ensure it's not nav text
+      if (nbaPlayerSurnamePatterns.test(playerName) && 
+          !playerName.match(/^(Show|Hide|Display|View|Click|Add|Vote|Sign|Log|Get|See|Our|Not|If|you)/i)) {
+        const normalizedName = playerName.toLowerCase().trim();
+        if (!seenPlayers.has(normalizedName)) {
+          seenPlayers.add(normalizedName);
+          playerStatuses.push({
+            name: playerName,
+            status,
+            note: match[0],
+          });
+          console.log('[LineupScraper] Found player from text:', playerName, status);
+        }
+      }
+    }
+  }
+  
+  // For now, we'll create a single "all games" entry with the injuries we found
+  if (playerStatuses.length > 0) {
     games.push({
-      homeTeam: currentGame.homeTeam,
-      awayTeam: currentGame.awayTeam,
-      tipTime: currentGame.tipTime,
-      homeStarters: currentGame.homeStarters || [],
-      awayStarters: currentGame.awayStarters || [],
-      homeBench: currentGame.homeBench || [],
-      awayBench: currentGame.awayBench || [],
-      confirmed: currentGame.confirmed || false,
-      injuries: currentGame.injuries || [],
+      homeTeam: 'Multiple Games',
+      awayTeam: 'Today',
+      tipTime: undefined,
+      homeStarters: [],
+      awayStarters: [],
+      homeBench: [],
+      awayBench: [],
+      confirmed: false,
+      injuries: playerStatuses.map(ps => ({
+        name: ps.name,
+        position: '',
+        status: ps.status,
+        injuryNote: ps.note,
+      })),
     });
   }
   
+  console.log('[LineupScraper] Found', playerStatuses.length, 'validated player statuses');
   return games;
 }
 
