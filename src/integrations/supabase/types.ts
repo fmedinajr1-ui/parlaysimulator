@@ -3359,6 +3359,7 @@ export type Database = {
           injury_note: string | null
           normalized_name: string | null
           player_name: string
+          source: string | null
           team: string
           updated_at: string | null
         }
@@ -3373,6 +3374,7 @@ export type Database = {
           injury_note?: string | null
           normalized_name?: string | null
           player_name: string
+          source?: string | null
           team: string
           updated_at?: string | null
         }
@@ -3387,6 +3389,7 @@ export type Database = {
           injury_note?: string | null
           normalized_name?: string | null
           player_name?: string
+          source?: string | null
           team?: string
           updated_at?: string | null
         }
