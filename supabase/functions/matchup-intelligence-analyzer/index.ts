@@ -67,7 +67,28 @@ const RISK_FLAGS: Record<string, RiskFlag> = {
   HIGH_PACE_GAME: { code: 'HIGH_PACE', label: 'High Pace Game', severity: 'low', confidenceAdjustment: 1 },
   LOW_PACE_GAME: { code: 'LOW_PACE', label: 'Low Pace Game', severity: 'low', confidenceAdjustment: -1 },
   FAVORABLE_MATCHUP: { code: 'FAV_MATCHUP', label: 'Favorable Matchup', severity: 'low', confidenceAdjustment: 2 },
+  ARCHETYPE_MISMATCH: { code: 'ARCH_MISMATCH', label: 'Archetype-Prop Mismatch', severity: 'critical', confidenceAdjustment: -15 },
+  CATEGORY_SIDE_CONFLICT: { code: 'CAT_CONFLICT', label: 'Category Side Conflict', severity: 'high', confidenceAdjustment: -8 },
 };
+
+// v3.0: ARCHETYPE-PROP BLOCKING (strict)
+const ARCHETYPE_PROP_BLOCKED: Record<string, string[]> = {
+  'ELITE_REBOUNDER': ['points', 'threes'],
+  'GLASS_CLEANER': ['points', 'threes', 'assists'],
+  'RIM_PROTECTOR': ['points', 'threes'],
+  'PURE_SHOOTER': ['rebounds', 'blocks'],
+  'PLAYMAKER': ['rebounds', 'blocks'],
+  'COMBO_GUARD': ['rebounds', 'blocks'],
+  'SCORING_GUARD': ['rebounds', 'blocks'],
+};
+
+function isArchetypePropBlocked(archetype: string | undefined, propType: string): boolean {
+  if (!archetype || archetype === 'UNKNOWN') return false;
+  const blockedProps = ARCHETYPE_PROP_BLOCKED[archetype.toUpperCase()];
+  if (!blockedProps) return false;
+  const propLower = propType.toLowerCase();
+  return blockedProps.some(b => propLower.includes(b));
+}
 
 interface MatchupInput {
   playerName: string;
@@ -80,6 +101,8 @@ interface MatchupInput {
   l10HitRate?: number;
   archetype?: string;
   isStarter?: boolean;
+  categorySide?: string; // NEW: category recommendation
+  categoryHitRate?: number; // NEW: category L10 hit rate
 }
 
 interface MatchupResult {
@@ -102,22 +125,42 @@ interface MatchupResult {
   analysisNotes: string[];
 }
 
-// Blocking rules based on today's failures
+// Blocking rules based on v3.0 rules + today's failures
 function applyBlockingRules(
   input: MatchupInput,
   defensiveRank: number | null,
   gameEnv: { vegasSpread: number | null; vegasTotal: number | null; blowoutProb: number } | null
 ): { blocked: boolean; reason: string | null; flags: string[] } {
   const flags: string[] = [];
-  const notes: string[] = [];
   
   const side = input.side.toLowerCase();
   const propType = input.propType.toLowerCase();
-  const archetype = input.archetype?.toLowerCase() || '';
-  const isElite = ['star', 'elite', 'primary'].some(a => archetype.includes(a));
+  const archetype = input.archetype?.toUpperCase() || '';
+  const isElite = ['STAR', 'ELITE', 'PRIMARY'].some(a => archetype.includes(a));
+  
+  // v3.0 Rule 0: ARCHETYPE-PROP MISMATCH BLOCK (CRITICAL)
+  if (isArchetypePropBlocked(input.archetype, input.propType)) {
+    console.log(`[Matchup] ARCHETYPE BLOCKED: ${input.playerName} (${input.archetype}) for ${input.propType}`);
+    return {
+      blocked: true,
+      reason: `BLOCKED: Archetype ${input.archetype} cannot bet ${input.propType}`,
+      flags: [RISK_FLAGS.ARCHETYPE_MISMATCH.code]
+    };
+  }
+  
+  // v3.0 Rule 0b: CATEGORY SIDE CONFLICT BLOCK
+  if (input.categorySide && input.categoryHitRate && input.categoryHitRate >= 0.7) {
+    if (input.categorySide.toLowerCase() !== side) {
+      console.log(`[Matchup] CATEGORY CONFLICT: ${input.playerName} ${propType} - Category says ${input.categorySide} (${Math.round(input.categoryHitRate * 100)}% L10), pick says ${side}`);
+      return {
+        blocked: true,
+        reason: `BLOCKED: Category recommends ${input.categorySide.toUpperCase()} with ${Math.round(input.categoryHitRate * 100)}% L10 hit rate`,
+        flags: [RISK_FLAGS.CATEGORY_SIDE_CONFLICT.code]
+      };
+    }
+  }
   
   // Rule 1: Star UNDER vs Weak Defense BLOCK
-  // Would have blocked: Bam Adebayo Under 17.5 vs Kings (bottom-5 defense)
   if (isElite && side === 'under' && propType.includes('point') && defensiveRank && defensiveRank > 20) {
     return {
       blocked: true,
@@ -127,11 +170,10 @@ function applyBlockingRules(
   }
   
   // Rule 2: Blowout Favorite Playmaker UNDER Block (assists)
-  // Would have blocked: Coby White Under 4.5 Assists
   if (gameEnv?.vegasSpread && gameEnv.vegasSpread < -5 && side === 'under' && 
       (propType.includes('assist') || propType.includes('ast'))) {
     flags.push(RISK_FLAGS.BLOWOUT_RISK_UNDER.code);
-    if (archetype.includes('guard') || archetype.includes('playmaker')) {
+    if (archetype.includes('GUARD') || archetype.includes('PLAYMAKER')) {
       return {
         blocked: true,
         reason: `BLOCKED: Blowout wins increase assist opportunities (spread: ${gameEnv.vegasSpread})`,
@@ -141,7 +183,6 @@ function applyBlockingRules(
   }
   
   // Rule 3: Heavy Underdog Star OVER Block
-  // Would have blocked: James Harden Over 30.5 Points (Clippers lost by 28)
   if (gameEnv?.vegasSpread && gameEnv.vegasSpread > 8 && side === 'over' && 
       propType.includes('point') && input.line >= 25 && isElite) {
     return {
@@ -152,17 +193,13 @@ function applyBlockingRules(
   }
   
   // Rule 4: Tight Line Variance Penalty
-  // Would have flagged: Julius Randle Over 19.5 (avg 22.7, line tight)
   if (input.median && Math.abs(input.median - input.line) < 1.0) {
     flags.push(RISK_FLAGS.TIGHT_LINE.code);
-    notes.push(`Line within 1 point of median (${input.median.toFixed(1)} vs ${input.line})`);
   }
   
   // Rule 5: Role Player Extreme Hit Rate Skepticism
-  // Would have flagged: Royce O'Neale Rebounds OVER (100% L10 hit rate)
   if (input.l10HitRate && input.l10HitRate >= 0.95 && !isElite && !input.isStarter) {
     flags.push(RISK_FLAGS.UNSUSTAINABLE_RATE.code);
-    notes.push(`Unsustainable ${(input.l10HitRate * 100).toFixed(0)}% hit rate for role player`);
   }
   
   // Rule 6: Strong Defense OVER penalty
@@ -267,6 +304,21 @@ serve(async (req) => {
         .select('*')
         .eq('game_date', today);
       
+      // NEW: Fetch category sweet spots for side enforcement
+      const { data: categoryData } = await supabase
+        .from('category_sweet_spots')
+        .select('player_name, prop_type, recommended_side, l10_hit_rate')
+        .gte('l10_hit_rate', 0.7);
+      
+      // Create category recommendations map
+      const categoryMap = new Map<string, { side: string; hitRate: number }>();
+      (categoryData || []).forEach((c: { player_name: string; prop_type: string; recommended_side: string; l10_hit_rate: number }) => {
+        const key = `${c.player_name?.toLowerCase()}_${c.prop_type?.toLowerCase()}`;
+        categoryMap.set(key, { side: c.recommended_side, hitRate: c.l10_hit_rate });
+      });
+      
+      console.log(`[Matchup] Loaded ${categoryMap.size} category recommendations for side enforcement`);
+      
       type GameEnvRecord = {
         game_id: string;
         game_date: string;
@@ -325,7 +377,11 @@ serve(async (req) => {
           blowoutProb = gameEnv.blowout_probability || 0.15;
         }
         
-        // Apply blocking rules
+        // Lookup category recommendation for this player/prop
+        const catKey = `${prop.playerName?.toLowerCase()}_${prop.propType?.toLowerCase()}`;
+        const categoryRec = categoryMap.get(catKey);
+        
+        // Apply blocking rules with category data
         const blockResult = applyBlockingRules(
           {
             playerName: prop.playerName,
@@ -338,6 +394,8 @@ serve(async (req) => {
             l10HitRate: prop.l10HitRate,
             archetype: prop.archetype,
             isStarter: prop.isStarter,
+            categorySide: categoryRec?.side,
+            categoryHitRate: categoryRec?.hitRate,
           },
           defense?.rank || null,
           gameEnv ? { vegasSpread, vegasTotal: gameEnv.vegas_total, blowoutProb } : null

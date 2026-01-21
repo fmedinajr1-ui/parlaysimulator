@@ -402,12 +402,20 @@ export function useSweetSpotParlayBuilder() {
   // Build optimal 6-leg parlay prioritizing proven category formulas
   const buildOptimalParlay = (): DreamTeamLeg[] => {
     if (!sweetSpotPicks || sweetSpotPicks.length === 0) {
+      console.log('[Optimal] No sweet spot picks available');
       return [];
     }
 
     // v3.0: Final archetype alignment filter (defense in depth)
-    const alignedPicks = sweetSpotPicks.filter(isPickArchetypeAligned);
-    console.log(`[SweetSpotParlay] Aligned picks after final filter: ${alignedPicks.length}/${sweetSpotPicks.length}`);
+    const alignedPicks = sweetSpotPicks.filter(pick => {
+      const aligned = isPickArchetypeAligned(pick);
+      if (!aligned) {
+        console.log(`[Optimal] BLOCKED by archetype: ${pick.player_name} (${pick.archetype}) for ${pick.prop_type}`);
+      }
+      return aligned;
+    });
+    
+    console.log(`[Optimal] Aligned picks: ${alignedPicks.length}/${sweetSpotPicks.length}`);
 
     const selectedLegs: DreamTeamLeg[] = [];
     const usedTeams = new Set<string>();
@@ -422,7 +430,7 @@ export function useSweetSpotParlayBuilder() {
           !usedPlayers.has(p.player_name.toLowerCase()) &&
           !usedTeams.has((p.team_name || '').toLowerCase())
         )
-        .sort((a, b) => (b.l10HitRate || 0) - (a.l10HitRate || 0)); // Sort by L10 hit rate
+        .sort((a, b) => (b.l10HitRate || 0) - (a.l10HitRate || 0));
 
       let added = 0;
       for (const pick of categoryPicks) {
@@ -430,6 +438,8 @@ export function useSweetSpotParlayBuilder() {
         if (selectedLegs.length >= TARGET_LEG_COUNT) break;
 
         const team = (pick.team_name || 'Unknown').toLowerCase();
+        
+        console.log(`[Optimal] ✅ SELECTED: ${pick.player_name} ${pick.prop_type} ${pick.side} | Cat: ${pick.category} | Arch: ${pick.archetype || 'N/A'} | L10: ${pick.l10HitRate ? Math.round(pick.l10HitRate * 100) + '%' : 'N/A'}`);
         
         selectedLegs.push({
           pick,
@@ -441,11 +451,15 @@ export function useSweetSpotParlayBuilder() {
         added++;
       }
 
-      console.log(`[SweetSpotParlay] Added ${added}/${formula.count} ${formula.category} picks`);
+      if (added > 0) {
+        console.log(`[Optimal] ${formula.category}: Added ${added}/${formula.count}`);
+      }
     }
 
     // Step 2: Fill remaining slots from aligned picks if needed
     if (selectedLegs.length < TARGET_LEG_COUNT) {
+      console.log(`[Optimal] Need ${TARGET_LEG_COUNT - selectedLegs.length} more legs, checking remaining picks...`);
+      
       const remainingPicks = alignedPicks
         .filter(p => 
           !usedPlayers.has(p.player_name.toLowerCase()) &&
