@@ -255,7 +255,7 @@ serve(async (req) => {
           .select('*')
           .eq('game_date', today)
           .is('rejection_reason', null)
-          .gte('confidence_score', 7.0);  // Only picks with good confidence
+          .gte('confidence_score', 5.0);  // Lower threshold to analyze more picks for blocking
         
         if (riskError) {
           console.error('[Matchup] Error fetching risk picks:', riskError);
