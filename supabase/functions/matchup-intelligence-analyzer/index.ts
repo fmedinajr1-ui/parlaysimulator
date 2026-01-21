@@ -40,13 +40,38 @@ Object.entries(TEAM_ABBREV_MAP).forEach(([abbrev, name]) => {
 
 function normalizeTeamName(team: string): string {
   const lower = team.toLowerCase().trim();
-  // Check direct mapping
   if (NAME_TO_ABBREV[lower]) return NAME_TO_ABBREV[lower];
-  // Check partial match
   for (const [name, abbrev] of Object.entries(NAME_TO_ABBREV)) {
     if (lower.includes(name) || name.includes(lower)) return abbrev;
   }
   return team;
+}
+
+// Position group classification
+type PositionGroup = 'guards' | 'wings' | 'bigs';
+
+function classifyPositionGroup(position: string | undefined, archetype: string | undefined): PositionGroup {
+  const pos = (position || '').toUpperCase();
+  const arch = (archetype || '').toUpperCase();
+  
+  // Check archetype first (more accurate)
+  if (['ELITE_REBOUNDER', 'GLASS_CLEANER', 'RIM_PROTECTOR', 'STRETCH_BIG', 'POST_SCORER'].some(a => arch.includes(a))) {
+    return 'bigs';
+  }
+  if (['GUARD', 'PLAYMAKER', 'COMBO_GUARD', 'SCORING_GUARD', 'POINT_GUARD', 'FLOOR_GENERAL'].some(a => arch.includes(a))) {
+    return 'guards';
+  }
+  if (['WING', 'SMALL_FORWARD', 'SWINGMAN', '3_AND_D'].some(a => arch.includes(a))) {
+    return 'wings';
+  }
+  
+  // Fall back to position
+  if (['PG', 'SG', 'G'].includes(pos)) return 'guards';
+  if (['C', 'PF'].includes(pos)) return 'bigs';
+  if (['SF', 'F', 'GF', 'FC'].includes(pos)) return 'wings';
+  
+  // Default to wings (safest assumption)
+  return 'wings';
 }
 
 // Risk flag definitions
@@ -58,6 +83,7 @@ interface RiskFlag {
 }
 
 const RISK_FLAGS: Record<string, RiskFlag> = {
+  // Original flags
   WEAK_DEFENSE_UNDER: { code: 'WEAK_DEF_UNDER', label: 'Weak Defense for Under', severity: 'critical', confidenceAdjustment: -10 },
   STRONG_DEFENSE_OVER: { code: 'STRONG_DEF_OVER', label: 'Strong Defense for Over', severity: 'high', confidenceAdjustment: -3 },
   BLOWOUT_RISK_OVER: { code: 'BLOWOUT_OVER', label: 'Blowout Risk for Over', severity: 'critical', confidenceAdjustment: -8 },
@@ -69,6 +95,19 @@ const RISK_FLAGS: Record<string, RiskFlag> = {
   FAVORABLE_MATCHUP: { code: 'FAV_MATCHUP', label: 'Favorable Matchup', severity: 'low', confidenceAdjustment: 2 },
   ARCHETYPE_MISMATCH: { code: 'ARCH_MISMATCH', label: 'Archetype-Prop Mismatch', severity: 'critical', confidenceAdjustment: -15 },
   CATEGORY_SIDE_CONFLICT: { code: 'CAT_CONFLICT', label: 'Category Side Conflict', severity: 'high', confidenceAdjustment: -8 },
+  
+  // NEW: Position-specific defense flags
+  POS_DEFENSE_WEAK: { code: 'POS_DEF_WEAK', label: 'Weak Position Defense', severity: 'low', confidenceAdjustment: 2 },
+  POS_DEFENSE_STRONG: { code: 'POS_DEF_STRONG', label: 'Strong Position Defense', severity: 'medium', confidenceAdjustment: -2 },
+  POS_DEFENSE_ELITE: { code: 'POS_DEF_ELITE', label: 'Elite Position Defense', severity: 'high', confidenceAdjustment: -4 },
+  
+  // NEW: Game script flags
+  SHOOTOUT_POINTS_BOOST: { code: 'SHOOTOUT_PTS', label: 'Shootout Boosts Points', severity: 'low', confidenceAdjustment: 3 },
+  SHOOTOUT_REB_PENALTY: { code: 'SHOOTOUT_REB', label: 'Shootout Hurts Rebounds Under', severity: 'medium', confidenceAdjustment: -2 },
+  GRIND_POINTS_PENALTY: { code: 'GRIND_PTS', label: 'Grind-Out Hurts Points Over', severity: 'medium', confidenceAdjustment: -2 },
+  GRIND_REB_BOOST: { code: 'GRIND_REB', label: 'Grind-Out Boosts Rebounds', severity: 'low', confidenceAdjustment: 2 },
+  GARBAGE_TIME_RISK: { code: 'GARBAGE_TIME', label: 'Garbage Time Risk', severity: 'critical', confidenceAdjustment: -6 },
+  STARTER_BLOWOUT_BLOCK: { code: 'STARTER_BLOWOUT', label: 'Starter in Blowout', severity: 'critical', confidenceAdjustment: -8 },
 };
 
 // v3.0: ARCHETYPE-PROP BLOCKING (strict)
@@ -100,9 +139,28 @@ interface MatchupInput {
   median?: number;
   l10HitRate?: number;
   archetype?: string;
+  position?: string;
   isStarter?: boolean;
-  categorySide?: string; // NEW: category recommendation
-  categoryHitRate?: number; // NEW: category L10 hit rate
+  isStar?: boolean;
+  categorySide?: string;
+  categoryHitRate?: number;
+}
+
+interface GameEnvRecord {
+  game_id: string;
+  game_date: string;
+  home_team: string;
+  away_team: string;
+  vegas_total: number | null;
+  vegas_spread: number | null;
+  home_implied_total: number | null;
+  away_implied_total: number | null;
+  blowout_probability: number | null;
+  game_script: string | null;
+  game_script_confidence: number | null;
+  shootout_factor: number | null;
+  grind_factor: number | null;
+  garbage_time_risk: number | null;
 }
 
 interface MatchupResult {
@@ -110,13 +168,19 @@ interface MatchupResult {
   propType: string;
   side: string;
   line: number;
+  positionGroup: PositionGroup;
   opponentDefensiveRank: number | null;
   opponentStatAllowed: number | null;
+  positionDefenseRank: number | null;
+  positionDefenseAllowed: number | null;
   matchupScore: number;
   vegasTotal: number | null;
   vegasSpread: number | null;
   impliedTeamTotal: number | null;
+  gameScript: string | null;
+  gameScriptConfidence: number | null;
   blowoutRisk: number;
+  garbageTimeRisk: number;
   isBlocked: boolean;
   blockReason: string | null;
   riskFlags: string[];
@@ -125,18 +189,38 @@ interface MatchupResult {
   analysisNotes: string[];
 }
 
-// Blocking rules based on v3.0 rules + today's failures
+interface DefenseRecord {
+  team_name: string;
+  stat_type: string;
+  position_group: string;
+  defensive_rank: number;
+  stat_allowed_per_game: number;
+  vs_guards_rank: number | null;
+  vs_guards_allowed: number | null;
+  vs_wings_rank: number | null;
+  vs_wings_allowed: number | null;
+  vs_bigs_rank: number | null;
+  vs_bigs_allowed: number | null;
+}
+
+// Enhanced blocking rules with game script and position defense
 function applyBlockingRules(
   input: MatchupInput,
-  defensiveRank: number | null,
-  gameEnv: { vegasSpread: number | null; vegasTotal: number | null; blowoutProb: number } | null
+  overallDefense: { rank: number; allowed: number } | null,
+  positionDefense: { rank: number; allowed: number } | null,
+  gameEnv: GameEnvRecord | null,
+  positionGroup: PositionGroup
 ): { blocked: boolean; reason: string | null; flags: string[] } {
   const flags: string[] = [];
   
   const side = input.side.toLowerCase();
   const propType = input.propType.toLowerCase();
   const archetype = input.archetype?.toUpperCase() || '';
-  const isElite = ['STAR', 'ELITE', 'PRIMARY'].some(a => archetype.includes(a));
+  const isElite = input.isStar || ['STAR', 'ELITE', 'PRIMARY'].some(a => archetype.includes(a));
+  const gameScript = gameEnv?.game_script || 'COMPETITIVE';
+  const garbageTimeRisk = gameEnv?.garbage_time_risk || 0;
+  const shootoutFactor = gameEnv?.shootout_factor || 0.5;
+  const grindFactor = gameEnv?.grind_factor || 0.5;
   
   // v3.0 Rule 0: ARCHETYPE-PROP MISMATCH BLOCK (CRITICAL)
   if (isArchetypePropBlocked(input.archetype, input.propType)) {
@@ -160,34 +244,103 @@ function applyBlockingRules(
     }
   }
   
-  // Rule 1: Star UNDER vs Weak Defense BLOCK
-  if (isElite && side === 'under' && propType.includes('point') && defensiveRank && defensiveRank > 20) {
+  // NEW: Position-specific defense blocking
+  if (positionDefense) {
+    if (side === 'over' && positionDefense.rank <= 5 && propType.includes('point')) {
+      flags.push(RISK_FLAGS.POS_DEFENSE_ELITE.code);
+      // Block if elite position defense
+      if (positionDefense.rank <= 3) {
+        return {
+          blocked: true,
+          reason: `BLOCKED: Elite ${positionGroup} defense (Rank #${positionDefense.rank}) for points OVER`,
+          flags
+        };
+      }
+    }
+    
+    if (side === 'under' && positionDefense.rank >= 25 && propType.includes('point')) {
+      // Weak position defense = bad for under
+      flags.push(RISK_FLAGS.POS_DEFENSE_WEAK.code);
+      if (isElite && positionDefense.rank >= 28) {
+        return {
+          blocked: true,
+          reason: `BLOCKED: Terrible ${positionGroup} defense (Rank #${positionDefense.rank}) for points UNDER`,
+          flags
+        };
+      }
+    }
+    
+    // Position defense advantage for overs
+    if (side === 'over' && positionDefense.rank >= 20) {
+      flags.push(RISK_FLAGS.POS_DEFENSE_WEAK.code);
+    }
+    
+    // Position defense disadvantage for overs
+    if (side === 'over' && positionDefense.rank <= 10) {
+      flags.push(RISK_FLAGS.POS_DEFENSE_STRONG.code);
+    }
+  }
+  
+  // NEW: Game Script Blocking Rules
+  if (gameScript === 'HARD_BLOWOUT' && garbageTimeRisk >= 0.6) {
+    if (side === 'over' && (input.isStarter || isElite) && input.line >= 20) {
+      return {
+        blocked: true,
+        reason: `BLOCKED: Hard blowout (${Math.round(garbageTimeRisk * 100)}% garbage time risk) - starters will sit`,
+        flags: [RISK_FLAGS.STARTER_BLOWOUT_BLOCK.code]
+      };
+    }
+    flags.push(RISK_FLAGS.GARBAGE_TIME_RISK.code);
+  }
+  
+  // Shootout game script implications
+  if (gameScript === 'SHOOTOUT' || shootoutFactor >= 0.7) {
+    if (side === 'over' && propType.includes('point')) {
+      flags.push(RISK_FLAGS.SHOOTOUT_POINTS_BOOST.code);
+    }
+    if (side === 'under' && propType.includes('rebound')) {
+      flags.push(RISK_FLAGS.SHOOTOUT_REB_PENALTY.code);
+    }
+  }
+  
+  // Grind-out game script implications
+  if (gameScript === 'GRIND_OUT' || grindFactor >= 0.7) {
+    if (side === 'over' && propType.includes('point')) {
+      flags.push(RISK_FLAGS.GRIND_POINTS_PENALTY.code);
+    }
+    if (side === 'over' && propType.includes('rebound')) {
+      flags.push(RISK_FLAGS.GRIND_REB_BOOST.code);
+    }
+  }
+  
+  // Original Rule 1: Star UNDER vs Weak Defense BLOCK
+  if (isElite && side === 'under' && propType.includes('point') && overallDefense?.rank && overallDefense.rank > 20) {
     return {
       blocked: true,
-      reason: `BLOCKED: Cannot bet UNDER on stars vs weak defense (Rank #${defensiveRank})`,
+      reason: `BLOCKED: Cannot bet UNDER on stars vs weak defense (Rank #${overallDefense.rank})`,
       flags: [RISK_FLAGS.WEAK_DEFENSE_UNDER.code]
     };
   }
   
   // Rule 2: Blowout Favorite Playmaker UNDER Block (assists)
-  if (gameEnv?.vegasSpread && gameEnv.vegasSpread < -5 && side === 'under' && 
+  if (gameEnv?.vegas_spread && gameEnv.vegas_spread < -5 && side === 'under' && 
       (propType.includes('assist') || propType.includes('ast'))) {
     flags.push(RISK_FLAGS.BLOWOUT_RISK_UNDER.code);
     if (archetype.includes('GUARD') || archetype.includes('PLAYMAKER')) {
       return {
         blocked: true,
-        reason: `BLOCKED: Blowout wins increase assist opportunities (spread: ${gameEnv.vegasSpread})`,
+        reason: `BLOCKED: Blowout wins increase assist opportunities (spread: ${gameEnv.vegas_spread})`,
         flags
       };
     }
   }
   
   // Rule 3: Heavy Underdog Star OVER Block
-  if (gameEnv?.vegasSpread && gameEnv.vegasSpread > 8 && side === 'over' && 
+  if (gameEnv?.vegas_spread && gameEnv.vegas_spread > 8 && side === 'over' && 
       propType.includes('point') && input.line >= 25 && isElite) {
     return {
       blocked: true,
-      reason: `BLOCKED: Blowout loss reduces star minutes/touches (spread: +${gameEnv.vegasSpread})`,
+      reason: `BLOCKED: Blowout loss reduces star minutes/touches (spread: +${gameEnv.vegas_spread})`,
       flags: [RISK_FLAGS.BLOWOUT_RISK_OVER.code]
     };
   }
@@ -203,27 +356,27 @@ function applyBlockingRules(
   }
   
   // Rule 6: Strong Defense OVER penalty
-  if (side === 'over' && propType.includes('point') && defensiveRank && defensiveRank <= 10) {
+  if (side === 'over' && propType.includes('point') && overallDefense?.rank && overallDefense.rank <= 10) {
     flags.push(RISK_FLAGS.STRONG_DEFENSE_OVER.code);
   }
   
   // Rule 7: Weak Defense OVER boost (favorable)
-  if (side === 'over' && propType.includes('point') && defensiveRank && defensiveRank > 20) {
+  if (side === 'over' && propType.includes('point') && overallDefense?.rank && overallDefense.rank > 20) {
     flags.push(RISK_FLAGS.FAVORABLE_MATCHUP.code);
   }
   
   // Rule 8: High blowout probability general warning
-  if (gameEnv?.blowoutProb && gameEnv.blowoutProb > 0.5) {
+  if (gameEnv?.blowout_probability && gameEnv.blowout_probability > 0.5) {
     flags.push(side === 'over' ? RISK_FLAGS.BLOWOUT_RISK_OVER.code : RISK_FLAGS.BLOWOUT_RISK_UNDER.code);
   }
   
   // Rule 9: High pace game boost for overs
-  if (gameEnv?.vegasTotal && gameEnv.vegasTotal > 230 && side === 'over') {
+  if (gameEnv?.vegas_total && gameEnv.vegas_total > 230 && side === 'over') {
     flags.push(RISK_FLAGS.HIGH_PACE_GAME.code);
   }
   
   // Rule 10: Low pace game penalty for overs
-  if (gameEnv?.vegasTotal && gameEnv.vegasTotal < 215 && side === 'over') {
+  if (gameEnv?.vegas_total && gameEnv.vegas_total < 215 && side === 'over') {
     flags.push(RISK_FLAGS.LOW_PACE_GAME.code);
   }
   
@@ -255,7 +408,7 @@ serve(async (req) => {
           .select('*')
           .eq('game_date', today)
           .is('rejection_reason', null)
-          .gte('confidence_score', 5.0);  // Lower threshold to analyze more picks for blocking
+          .gte('confidence_score', 5.0);
         
         if (riskError) {
           console.error('[Matchup] Error fetching risk picks:', riskError);
@@ -272,7 +425,9 @@ serve(async (req) => {
           median: pick.true_median,
           l10HitRate: pick.l10_hit_rate,
           archetype: pick.archetype || pick.player_role,
+          position: pick.position,
           isStarter: pick.is_star || pick.is_ball_dominant,
+          isStar: pick.is_star,
         }));
         
         console.log(`[Matchup] Fetched ${propsToAnalyze.length} approved picks from risk engine`);
@@ -293,18 +448,18 @@ serve(async (req) => {
       
       console.log(`[Matchup] Analyzing ${propsToAnalyze.length} props for matchup intelligence`);
       
-      // Fetch all defensive ratings
+      // Fetch all defensive ratings (including position-specific)
       const { data: defenseData } = await supabase
         .from('team_defensive_ratings')
         .select('*');
       
-      // Fetch today's game environments
+      // Fetch today's game environments (with game script)
       const { data: gameEnvData } = await supabase
         .from('game_environment')
         .select('*')
         .eq('game_date', today);
       
-      // NEW: Fetch category sweet spots for side enforcement
+      // Fetch category sweet spots for side enforcement
       const { data: categoryData } = await supabase
         .from('category_sweet_spots')
         .select('player_name, prop_type, recommended_side, l10_hit_rate')
@@ -317,29 +472,18 @@ serve(async (req) => {
         categoryMap.set(key, { side: c.recommended_side, hitRate: c.l10_hit_rate });
       });
       
-      console.log(`[Matchup] Loaded ${categoryMap.size} category recommendations for side enforcement`);
-      
-      type GameEnvRecord = {
-        game_id: string;
-        game_date: string;
-        home_team: string;
-        away_team: string;
-        vegas_total: number | null;
-        vegas_spread: number | null;
-        home_implied_total: number | null;
-        away_implied_total: number | null;
-        blowout_probability: number | null;
-      };
+      console.log(`[Matchup] Loaded ${categoryMap.size} category recommendations`);
       
       // Create lookup maps
-      const defenseMap = new Map<string, { rank: number; allowed: number }>();
-      (defenseData || []).forEach((d: { team_name: string; stat_type: string; defensive_rank: number; stat_allowed_per_game: number }) => {
-        const key = `${normalizeTeamName(d.team_name)}_${d.stat_type}`.toLowerCase();
-        defenseMap.set(key, { rank: d.defensive_rank, allowed: d.stat_allowed_per_game });
+      // Defense map: team_stat_position -> { rank, allowed }
+      const defenseMap = new Map<string, DefenseRecord>();
+      (defenseData || []).forEach((d: DefenseRecord) => {
+        const key = `${normalizeTeamName(d.team_name)}_${d.stat_type}_${d.position_group}`.toLowerCase();
+        defenseMap.set(key, d);
       });
       
       const gameEnvMap = new Map<string, GameEnvRecord>();
-      (gameEnvData || []).forEach(g => {
+      (gameEnvData || []).forEach((g: GameEnvRecord) => {
         gameEnvMap.set(normalizeTeamName(g.home_team), g);
         gameEnvMap.set(normalizeTeamName(g.away_team), g);
       });
@@ -350,38 +494,54 @@ serve(async (req) => {
         const oppTeam = normalizeTeamName(prop.opponentTeam || '');
         const playerTeam = normalizeTeamName(prop.playerTeam || '');
         
+        // Classify player position group
+        const positionGroup = classifyPositionGroup(prop.position, prop.archetype);
+        
         // Get prop type for defense lookup
         let defenseStatType = 'points';
         if (prop.propType?.toLowerCase().includes('rebound')) defenseStatType = 'rebounds';
         else if (prop.propType?.toLowerCase().includes('assist')) defenseStatType = 'assists';
         else if (prop.propType?.toLowerCase().includes('three')) defenseStatType = 'threes';
         
-        const defenseKey = `${oppTeam}_${defenseStatType}`.toLowerCase();
-        const defense = defenseMap.get(defenseKey);
+        // Get overall defense (position_group = 'all')
+        const overallDefenseKey = `${oppTeam}_${defenseStatType}_all`.toLowerCase();
+        const overallDefenseRecord = defenseMap.get(overallDefenseKey);
+        const overallDefense = overallDefenseRecord 
+          ? { rank: overallDefenseRecord.defensive_rank, allowed: overallDefenseRecord.stat_allowed_per_game }
+          : null;
+        
+        // Get position-specific defense
+        const posDefenseKey = `${oppTeam}_${defenseStatType}_${positionGroup}`.toLowerCase();
+        const posDefenseRecord = defenseMap.get(posDefenseKey);
+        const positionDefense = posDefenseRecord
+          ? { rank: posDefenseRecord.defensive_rank, allowed: posDefenseRecord.stat_allowed_per_game }
+          : null;
         
         // Find game environment
-        const gameEnv = gameEnvMap.get(oppTeam) || gameEnvMap.get(playerTeam);
+        const gameEnv = gameEnvMap.get(oppTeam) || gameEnvMap.get(playerTeam) || null;
         let vegasSpread = gameEnv?.vegas_spread || null;
         let impliedTotal = null;
         let blowoutProb = 0.15;
+        let garbageTimeRisk = 0.15;
         
         if (gameEnv) {
           // Adjust spread perspective based on which team the player is on
           if (gameEnv.home_team && normalizeTeamName(gameEnv.home_team) === playerTeam) {
-            vegasSpread = gameEnv.vegas_spread; // Negative = player's team favored
+            vegasSpread = gameEnv.vegas_spread;
             impliedTotal = gameEnv.home_implied_total;
           } else {
-            vegasSpread = gameEnv.vegas_spread ? -gameEnv.vegas_spread : null; // Flip for away team
+            vegasSpread = gameEnv.vegas_spread ? -gameEnv.vegas_spread : null;
             impliedTotal = gameEnv.away_implied_total;
           }
           blowoutProb = gameEnv.blowout_probability || 0.15;
+          garbageTimeRisk = gameEnv.garbage_time_risk || 0.15;
         }
         
         // Lookup category recommendation for this player/prop
         const catKey = `${prop.playerName?.toLowerCase()}_${prop.propType?.toLowerCase()}`;
         const categoryRec = categoryMap.get(catKey);
         
-        // Apply blocking rules with category data
+        // Apply blocking rules with position defense and game script
         const blockResult = applyBlockingRules(
           {
             playerName: prop.playerName,
@@ -393,12 +553,16 @@ serve(async (req) => {
             median: prop.median,
             l10HitRate: prop.l10HitRate,
             archetype: prop.archetype,
+            position: prop.position,
             isStarter: prop.isStarter,
+            isStar: prop.isStar,
             categorySide: categoryRec?.side,
             categoryHitRate: categoryRec?.hitRate,
           },
-          defense?.rank || null,
-          gameEnv ? { vegasSpread, vegasTotal: gameEnv.vegas_total, blowoutProb } : null
+          overallDefense,
+          positionDefense,
+          gameEnv,
+          positionGroup
         );
         
         // Calculate confidence adjustment from flags
@@ -413,13 +577,22 @@ serve(async (req) => {
           }
         }
         
-        // Calculate matchup score (-10 to +10)
+        // Calculate matchup score (-10 to +10) using position-specific defense
         let matchupScore = 0;
-        if (defense?.rank) {
-          // For OVER bets, high rank (weak defense) is good
-          // For UNDER bets, low rank (strong defense) is good
-          const rankFactor = (defense.rank - 15) / 3; // -5 to +5 scale
+        const defenseToUse = positionDefense || overallDefense;
+        if (defenseToUse?.rank) {
+          const rankFactor = (defenseToUse.rank - 15) / 3;
           matchupScore = prop.side?.toLowerCase() === 'over' ? rankFactor : -rankFactor;
+        }
+        
+        // Add game script factor to matchup score
+        if (gameEnv?.game_script) {
+          if (gameEnv.game_script === 'SHOOTOUT' && prop.side?.toLowerCase() === 'over' && prop.propType?.includes('point')) {
+            matchupScore += 1.5;
+          }
+          if (gameEnv.game_script === 'GRIND_OUT' && prop.side?.toLowerCase() === 'over' && prop.propType?.includes('point')) {
+            matchupScore -= 1.5;
+          }
         }
         
         // Determine recommendation
@@ -437,13 +610,19 @@ serve(async (req) => {
           propType: prop.propType,
           side: prop.side,
           line: prop.line,
-          opponentDefensiveRank: defense?.rank || null,
-          opponentStatAllowed: defense?.allowed || null,
+          positionGroup,
+          opponentDefensiveRank: overallDefense?.rank || null,
+          opponentStatAllowed: overallDefense?.allowed || null,
+          positionDefenseRank: positionDefense?.rank || null,
+          positionDefenseAllowed: positionDefense?.allowed || null,
           matchupScore,
           vegasTotal: gameEnv?.vegas_total || null,
           vegasSpread,
           impliedTeamTotal: impliedTotal,
+          gameScript: gameEnv?.game_script || null,
+          gameScriptConfidence: gameEnv?.game_script_confidence || null,
           blowoutRisk: blowoutProb,
+          garbageTimeRisk,
           isBlocked: blockResult.blocked,
           blockReason: blockResult.reason,
           riskFlags: blockResult.flags,
@@ -461,13 +640,23 @@ serve(async (req) => {
         side: r.side,
         line: r.line,
         game_date: today,
+        position_group: r.positionGroup,
+        player_position: propsToAnalyze.find((p: any) => p.playerName === r.playerName)?.position || null,
         opponent_defensive_rank: r.opponentDefensiveRank,
         opponent_stat_allowed: r.opponentStatAllowed,
+        position_defense_rank: r.positionDefenseRank,
+        position_defense_allowed: r.positionDefenseAllowed,
         matchup_score: r.matchupScore,
         vegas_total: r.vegasTotal,
         vegas_spread: r.vegasSpread,
         implied_team_total: r.impliedTeamTotal,
+        game_script: r.gameScript,
+        game_script_confidence: r.gameScriptConfidence,
         blowout_risk: r.blowoutRisk,
+        prop_implications: {
+          garbageTimeRisk: r.garbageTimeRisk,
+          analysisNotes: r.analysisNotes,
+        },
         is_blocked: r.isBlocked,
         block_reason: r.blockReason,
         risk_flags: r.riskFlags,
@@ -484,13 +673,14 @@ serve(async (req) => {
       const blockedCount = results.filter(r => r.isBlocked).length;
       const cautionCount = results.filter(r => r.recommendation === 'CAUTION' || r.recommendation === 'AVOID').length;
       
-      console.log(`[Matchup] Analysis complete: ${blockedCount} blocked, ${cautionCount} caution/avoid`);
+      console.log(`[Matchup] Analysis complete: ${blockedCount} blocked, ${cautionCount} caution/avoid, ${results.length - blockedCount - cautionCount} proceed`);
       
       return new Response(JSON.stringify({
         success: true,
         analyzed: results.length,
         blocked: blockedCount,
         caution: cautionCount,
+        proceed: results.length - blockedCount - cautionCount,
         results,
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -531,7 +721,23 @@ serve(async (req) => {
       });
     }
     
-    return new Response(JSON.stringify({ error: 'Invalid action' }), {
+    // Action: get_all - Get all matchup intelligence for today
+    if (action === 'get_all') {
+      const { data } = await supabase
+        .from('matchup_intelligence')
+        .select('*')
+        .eq('game_date', today)
+        .order('matchup_score', { ascending: false });
+      
+      return new Response(JSON.stringify({
+        success: true,
+        intelligence: data || [],
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    
+    return new Response(JSON.stringify({ error: 'Invalid action. Use: analyze_batch, get_intelligence, get_blocked, get_all' }), {
       status: 400,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

@@ -2153,6 +2153,10 @@ export type Database = {
           created_at: string | null
           game_date: string
           game_id: string
+          game_script: string | null
+          game_script_confidence: number | null
+          garbage_time_risk: number | null
+          grind_factor: number | null
           home_implied_total: number | null
           home_team: string
           home_team_abbrev: string | null
@@ -2160,6 +2164,7 @@ export type Database = {
           moneyline_away: number | null
           moneyline_home: number | null
           pace_rating: string | null
+          shootout_factor: number | null
           updated_at: string | null
           vegas_spread: number | null
           vegas_total: number | null
@@ -2173,6 +2178,10 @@ export type Database = {
           created_at?: string | null
           game_date: string
           game_id: string
+          game_script?: string | null
+          game_script_confidence?: number | null
+          garbage_time_risk?: number | null
+          grind_factor?: number | null
           home_implied_total?: number | null
           home_team: string
           home_team_abbrev?: string | null
@@ -2180,6 +2189,7 @@ export type Database = {
           moneyline_away?: number | null
           moneyline_home?: number | null
           pace_rating?: string | null
+          shootout_factor?: number | null
           updated_at?: string | null
           vegas_spread?: number | null
           vegas_total?: number | null
@@ -2193,6 +2203,10 @@ export type Database = {
           created_at?: string | null
           game_date?: string
           game_id?: string
+          game_script?: string | null
+          game_script_confidence?: number | null
+          garbage_time_risk?: number | null
+          grind_factor?: number | null
           home_implied_total?: number | null
           home_team?: string
           home_team_abbrev?: string | null
@@ -2200,6 +2214,7 @@ export type Database = {
           moneyline_away?: number | null
           moneyline_home?: number | null
           pace_rating?: string | null
+          shootout_factor?: number | null
           updated_at?: string | null
           vegas_spread?: number | null
           vegas_total?: number | null
@@ -3732,6 +3747,8 @@ export type Database = {
           confidence_adjustment: number | null
           created_at: string | null
           game_date: string
+          game_script: string | null
+          game_script_confidence: number | null
           id: string
           implied_team_total: number | null
           is_blocked: boolean | null
@@ -3741,6 +3758,11 @@ export type Database = {
           opponent_stat_allowed: number | null
           opponent_team: string
           player_name: string
+          player_position: string | null
+          position_defense_allowed: number | null
+          position_defense_rank: number | null
+          position_group: string | null
+          prop_implications: Json | null
           prop_type: string
           risk_flags: string[] | null
           side: string
@@ -3754,6 +3776,8 @@ export type Database = {
           confidence_adjustment?: number | null
           created_at?: string | null
           game_date: string
+          game_script?: string | null
+          game_script_confidence?: number | null
           id?: string
           implied_team_total?: number | null
           is_blocked?: boolean | null
@@ -3763,6 +3787,11 @@ export type Database = {
           opponent_stat_allowed?: number | null
           opponent_team: string
           player_name: string
+          player_position?: string | null
+          position_defense_allowed?: number | null
+          position_defense_rank?: number | null
+          position_group?: string | null
+          prop_implications?: Json | null
           prop_type: string
           risk_flags?: string[] | null
           side: string
@@ -3776,6 +3805,8 @@ export type Database = {
           confidence_adjustment?: number | null
           created_at?: string | null
           game_date?: string
+          game_script?: string | null
+          game_script_confidence?: number | null
           id?: string
           implied_team_total?: number | null
           is_blocked?: boolean | null
@@ -3785,6 +3816,11 @@ export type Database = {
           opponent_stat_allowed?: number | null
           opponent_team?: string
           player_name?: string
+          player_position?: string | null
+          position_defense_allowed?: number | null
+          position_defense_rank?: number | null
+          position_group?: string | null
+          prop_implications?: Json | null
           prop_type?: string
           risk_flags?: string[] | null
           side?: string
@@ -8160,6 +8196,12 @@ export type Database = {
           team_abbrev: string | null
           team_name: string
           updated_at: string | null
+          vs_bigs_allowed: number | null
+          vs_bigs_rank: number | null
+          vs_guards_allowed: number | null
+          vs_guards_rank: number | null
+          vs_wings_allowed: number | null
+          vs_wings_rank: number | null
         }
         Insert: {
           created_at?: string | null
@@ -8173,6 +8215,12 @@ export type Database = {
           team_abbrev?: string | null
           team_name: string
           updated_at?: string | null
+          vs_bigs_allowed?: number | null
+          vs_bigs_rank?: number | null
+          vs_guards_allowed?: number | null
+          vs_guards_rank?: number | null
+          vs_wings_allowed?: number | null
+          vs_wings_rank?: number | null
         }
         Update: {
           created_at?: string | null
@@ -8186,6 +8234,12 @@ export type Database = {
           team_abbrev?: string | null
           team_name?: string
           updated_at?: string | null
+          vs_bigs_allowed?: number | null
+          vs_bigs_rank?: number | null
+          vs_guards_allowed?: number | null
+          vs_guards_rank?: number | null
+          vs_wings_allowed?: number | null
+          vs_wings_rank?: number | null
         }
         Relationships: []
       }
