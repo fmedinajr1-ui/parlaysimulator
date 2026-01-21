@@ -10,7 +10,8 @@ import {
   Shield,
   Users,
   PanelLeftClose,
-  PanelLeft
+  PanelLeft,
+  Hammer
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
@@ -22,6 +23,7 @@ import { usePilotUser } from "@/hooks/usePilotUser";
 const mainNavItems = [
   { icon: Home, label: "Home", path: "/" },
   { icon: BarChart3, label: "Analyze", path: "/upload" },
+  { icon: Hammer, label: "Build", path: "/manual-builder" },
   { icon: Users, label: "Pools", path: "/pools" },
   { icon: GitCompare, label: "Compare", path: "/compare" },
   { icon: User, label: "Profile", path: "/profile" },
