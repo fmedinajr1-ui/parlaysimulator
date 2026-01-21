@@ -615,6 +615,26 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
   await loadArchetypes(supabase);
   await loadPlayerTeams(supabase);
   
+  // MATCHUP INTELLIGENCE INTEGRATION: Fetch blocked picks first
+  const { data: blockedPicks, error: blockedError } = await supabase
+    .from('matchup_intelligence')
+    .select('player_name, prop_type, side, line, block_reason')
+    .eq('game_date', today)
+    .eq('is_blocked', true);
+  
+  if (blockedError) {
+    console.warn('[Heat Engine] Warning: Could not fetch blocked picks:', blockedError.message);
+  }
+  
+  // Create lookup set for blocked picks
+  const blockedSet = new Set(
+    (blockedPicks || []).map((p: any) => 
+      `${p.player_name?.toLowerCase()}_${p.prop_type?.toLowerCase()}_${p.side?.toLowerCase()}_${p.line}`
+    )
+  );
+  
+  console.log(`[Heat Engine] Loaded ${blockedSet.size} blocked picks from matchup intelligence`);
+  
   console.log(`[Heat Prop Engine] Running action: ${action}, sport: ${sport || 'all'}, date: ${today}`);
   
   if (action === 'scan' || action === 'ingest') {
@@ -689,6 +709,17 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
     let skippedStale = 0;
     
     for (const pick of picks) {
+      // MATCHUP INTELLIGENCE: Skip blocked picks
+      const blockKey = `${pick.player_name?.toLowerCase()}_${pick.prop_type?.toLowerCase()}_${(pick.side || 'over')?.toLowerCase()}_${pick.line}`;
+      if (blockedSet.has(blockKey)) {
+        const blockReason = blockedPicks?.find((bp: any) => 
+          bp.player_name?.toLowerCase() === pick.player_name?.toLowerCase() && 
+          bp.prop_type?.toLowerCase() === pick.prop_type?.toLowerCase()
+        )?.block_reason || 'Blocked by matchup intelligence';
+        console.log(`[Heat Engine] BLOCKED: ${pick.player_name} ${pick.prop_type} ${pick.side} - ${blockReason}`);
+        continue;
+      }
+      
       // CRITICAL: Get real commence time from unified_props
       const propKey = `${pick.player_name?.toLowerCase()}|${pick.prop_type?.toLowerCase()}`;
       const commenceInfo = commenceTimeMap[propKey];
