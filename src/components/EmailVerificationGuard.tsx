@@ -9,7 +9,7 @@ interface EmailVerificationGuardProps {
 }
 
 // Public paths that don't require verification - include /profile for sign-out access
-const PUBLIC_PATHS = ['/', '/auth', '/verify-email', '/install', '/offline', '/profile'];
+const PUBLIC_PATHS = ['/', '/auth', '/verify-email', '/install', '/offline', '/profile', '/draft'];
 
 // Max time to wait for verification check before allowing through
 const VERIFICATION_TIMEOUT_MS = 5000;
