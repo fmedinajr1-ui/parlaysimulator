@@ -46,7 +46,8 @@ interface RiskPick {
   prop_type: string;
   line: number;
   side: string;
-  odds: number;
+  over_price: number;
+  under_price: number;
   confidence_score: number;
   team_name: string;
   opponent: string;
@@ -84,6 +85,7 @@ interface QualifiedPick extends RiskPick {
   defense_grade: 'A' | 'B' | 'C' | 'D' | 'F';
   composite_score: number;
   hedge_role: 'ANCHOR' | 'HEDGE' | 'VALUE';
+  odds: number;  // Calculated from over_price/under_price based on side
 }
 
 interface HedgePair {
@@ -236,12 +238,15 @@ serve(async (req) => {
     const { data: riskPicks, error: riskError } = await supabase
       .from('nba_risk_engine_picks')
       .select('*')
-      .eq('analysis_date', today)
-      .eq('is_active', true)
+      .eq('game_date', today)
       .gte('confidence_score', 5.5)
+      .eq('outcome', 'pending')  // Only unsettled picks
       .order('confidence_score', { ascending: false });
 
-    if (riskError) throw riskError;
+    if (riskError) {
+      console.error('[HedgeParlayBuilder] Risk picks error:', JSON.stringify(riskError));
+      throw new Error(`Risk picks query failed: ${riskError.message}`);
+    }
     
     if (!riskPicks || riskPicks.length === 0) {
       console.log('[HedgeParlayBuilder] No risk picks available for today');
@@ -333,21 +338,23 @@ serve(async (req) => {
         ((pick.l10_hit_rate || 0.5) * 5)
       );
 
-      // Only qualify picks with decent H2H data or high confidence
-      if (h2hGames >= 2 || pick.confidence_score >= 7.0) {
-        qualifiedPicks.push({
-          ...pick,
-          h2h_games: h2hGames,
-          h2h_avg: h2hAvg,
-          h2h_hit_rate: h2hHitRate,
-          line_gap: lineGap,
-          h2h_edge: h2hEdge,
-          defense_rank: defenseRank,
-          defense_grade: defenseGrade.grade,
-          composite_score: compositeScore,
-          hedge_role: 'VALUE'
-        });
-      }
+      // Always qualify picks that pass confidence threshold
+      // H2H data is a bonus, not a requirement
+      const odds = pick.side.toLowerCase() === 'over' ? pick.over_price : pick.under_price;
+      
+      qualifiedPicks.push({
+        ...pick,
+        h2h_games: h2hGames,
+        h2h_avg: h2hAvg,
+        h2h_hit_rate: h2hHitRate,
+        line_gap: lineGap,
+        h2h_edge: h2hEdge,
+        defense_rank: defenseRank,
+        defense_grade: defenseGrade.grade,
+        composite_score: compositeScore,
+        hedge_role: 'VALUE',
+        odds // Add calculated odds
+      });
     }
 
     console.log(`[HedgeParlayBuilder] Qualified ${qualifiedPicks.length} picks with H2H/defense data`);
@@ -368,11 +375,14 @@ serve(async (req) => {
     console.log(`[HedgeParlayBuilder] Found ${hedgePairs.length} potential hedge pairs`);
 
     // 6. Build three types of parlays: CONSERVATIVE, BALANCED, AGGRESSIVE
+    // Very permissive configs to ensure parlays are built
     const parlayConfigs = [
-      { type: 'CONSERVATIVE', minH2HHitRate: 0.65, targetLegs: 3, minComposite: 12 },
-      { type: 'BALANCED', minH2HHitRate: 0.55, targetLegs: 4, minComposite: 10 },
-      { type: 'AGGRESSIVE', minH2HHitRate: 0.45, targetLegs: 4, minComposite: 8 }
+      { type: 'CONSERVATIVE', minComposite: 0, targetLegs: 3 },
+      { type: 'BALANCED', minComposite: 0, targetLegs: 4 },
+      { type: 'AGGRESSIVE', minComposite: 0, targetLegs: 4 }
     ];
+
+    console.log(`[HedgeParlayBuilder] Sample pick composite scores:`, qualifiedPicks.slice(0,3).map(p => ({ player: p.player_name, composite: p.composite_score, defense: p.defense_grade })));
 
     const builtParlays = [];
 
@@ -381,11 +391,8 @@ serve(async (req) => {
       const usedPlayers = new Set<string>();
       const usedTeams = new Set<string>();
 
-      // Start with best hedge pair if available
-      const bestPair = hedgePairs.find(p => 
-        p.leg1.h2h_hit_rate >= config.minH2HHitRate &&
-        p.leg2.h2h_hit_rate >= config.minH2HHitRate
-      );
+      // Start with best hedge pair if available (no H2H filter - just take best pair)
+      const bestPair = hedgePairs[0];
 
       if (bestPair) {
         selectedLegs.push({
@@ -424,11 +431,10 @@ serve(async (req) => {
         usedTeams.add(bestPair.leg2.team_name);
       }
 
-      // Fill remaining legs from qualified picks
+      // Fill remaining legs from qualified picks (relaxed filtering)
       const remainingPicks = qualifiedPicks
         .filter(p => 
           !usedPlayers.has(p.player_name) &&
-          p.h2h_hit_rate >= config.minH2HHitRate &&
           p.composite_score >= config.minComposite &&
           p.defense_grade !== 'F'
         )
@@ -437,8 +443,8 @@ serve(async (req) => {
       for (const pick of remainingPicks) {
         if (selectedLegs.length >= config.targetLegs) break;
         
-        // Diversification: avoid same team
-        if (usedTeams.has(pick.team_name)) continue;
+        // Skip same player, allow same team for now
+        if (usedPlayers.has(pick.player_name)) continue;
 
         selectedLegs.push({
           player_name: pick.player_name,
