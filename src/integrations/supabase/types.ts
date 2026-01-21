@@ -2772,6 +2772,48 @@ export type Database = {
         }
         Relationships: []
       }
+      hedge_parlays: {
+        Row: {
+          correlation_score: number | null
+          created_at: string | null
+          h2h_confidence: number | null
+          hedge_score: number | null
+          id: string
+          legs: Json
+          outcome: string | null
+          parlay_date: string
+          parlay_type: string
+          settled_at: string | null
+          total_odds: number | null
+        }
+        Insert: {
+          correlation_score?: number | null
+          created_at?: string | null
+          h2h_confidence?: number | null
+          hedge_score?: number | null
+          id?: string
+          legs?: Json
+          outcome?: string | null
+          parlay_date: string
+          parlay_type: string
+          settled_at?: string | null
+          total_odds?: number | null
+        }
+        Update: {
+          correlation_score?: number | null
+          created_at?: string | null
+          h2h_confidence?: number | null
+          hedge_score?: number | null
+          id?: string
+          legs?: Json
+          outcome?: string | null
+          parlay_date?: string
+          parlay_type?: string
+          settled_at?: string | null
+          total_odds?: number | null
+        }
+        Relationships: []
+      }
       hitrate_accuracy_metrics: {
         Row: {
           avg_actual_probability: number
@@ -9331,6 +9373,14 @@ export type Database = {
       }
       increment_scan_count: { Args: { p_user_id: string }; Returns: undefined }
       is_collaborator: { Args: { _user_id: string }; Returns: boolean }
+      sync_matchup_history_from_logs: {
+        Args: never
+        Returns: {
+          players_synced: number
+          prop_types_synced: number
+          total_records: number
+        }[]
+      }
       sync_sharp_follow_outcomes: { Args: never; Returns: undefined }
       update_strategy_performance: { Args: never; Returns: undefined }
       update_upset_calibration: { Args: never; Returns: undefined }
