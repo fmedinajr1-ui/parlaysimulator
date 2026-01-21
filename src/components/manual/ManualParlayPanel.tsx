@@ -1,11 +1,13 @@
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { X, Trash2, Calculator, Save, TrendingUp, TrendingDown } from "lucide-react";
+import { X, Trash2, Calculator, Save, TrendingUp, TrendingDown, Share2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useParlayBuilder } from "@/contexts/ParlayBuilderContext";
 import { toast } from "sonner";
+import { ShareDraftModal } from "@/components/draft/ShareDraftModal";
 import type { ManualProp } from "@/hooks/useManualBuilder";
 
 export interface SelectedLeg {
@@ -42,6 +44,7 @@ export function ManualParlayPanel({
   onClear,
 }: ManualParlayPanelProps) {
   const { addLeg } = useParlayBuilder();
+  const [shareModalOpen, setShareModalOpen] = useState(false);
 
   // Calculate combined odds
   const combinedDecimalOdds = selectedLegs.reduce((acc, leg) => {
@@ -181,14 +184,30 @@ export function ManualParlayPanel({
           <p className="font-bold text-xl text-primary">${potentialPayout}</p>
         </div>
 
-        <Button 
-          className="w-full" 
-          onClick={handleAddToMainBuilder}
-        >
-          <Save className="w-4 h-4 mr-2" />
-          Add to Parlay Builder
-        </Button>
+        <div className="flex gap-2">
+          <Button 
+            variant="outline"
+            className="flex-1"
+            onClick={() => setShareModalOpen(true)}
+          >
+            <Share2 className="w-4 h-4 mr-2" />
+            Share
+          </Button>
+          <Button 
+            className="flex-1" 
+            onClick={handleAddToMainBuilder}
+          >
+            <Save className="w-4 h-4 mr-2" />
+            Add
+          </Button>
+        </div>
       </div>
+
+      <ShareDraftModal
+        open={shareModalOpen}
+        onOpenChange={setShareModalOpen}
+        legs={selectedLegs}
+      />
     </Card>
   );
 }
