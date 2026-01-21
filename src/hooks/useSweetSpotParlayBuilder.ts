@@ -95,7 +95,7 @@ interface QueryResult {
 export function useSweetSpotParlayBuilder() {
   const { addLeg, clearParlay } = useParlayBuilder();
 
-  // Fetch all sweet spot picks with team data - cross-reference with active props and injuries
+  // Fetch all sweet spot picks with team data - cross-reference with active props, injuries, and matchup intelligence
   const { data: queryResult, isLoading, refetch } = useQuery({
     queryKey: ['sweet-spot-parlay-picks'],
     queryFn: async (): Promise<QueryResult> => {
@@ -171,6 +171,21 @@ export function useSweetSpotParlayBuilder() {
 
       console.log(`[SweetSpotParlay] Injury check: ${outPlayers.size} OUT, ${questionablePlayers.size} questionable/GTD`);
 
+      // NEW: Fetch blocked picks from matchup intelligence (head-to-head logic)
+      const { data: blockedPicks } = await supabase
+        .from('matchup_intelligence')
+        .select('player_name, prop_type, side, line, block_reason')
+        .eq('game_date', targetDate)
+        .eq('is_blocked', true);
+
+      const blockedSet = new Set(
+        (blockedPicks || []).map(p => 
+          `${p.player_name?.toLowerCase()}_${p.prop_type?.toLowerCase()}_${p.side?.toLowerCase()}`
+        )
+      );
+      
+      console.log(`[SweetSpotParlay] Matchup blocked picks: ${blockedSet.size}`);
+
       // Get player team data from cache
       const { data: playerCache } = await supabase
         .from('bdl_player_cache')
@@ -189,7 +204,6 @@ export function useSweetSpotParlayBuilder() {
       const yesterdayStr = yesterday.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 
       // PRIORITY 1: Get OPTIMAL WINNERS from category_sweet_spots (v3.0 categories)
-      // Use l10_hit_rate as primary filter - picks with 55%+ L10 hit rate are valid
       const { data: categoryPicks, error: categoryError } = await supabase
         .from('category_sweet_spots')
         .select('*')
@@ -202,15 +216,27 @@ export function useSweetSpotParlayBuilder() {
           // v2.0 Proven winners (still valid)
           'ASSIST_ANCHOR', 'HIGH_REB_UNDER', 'MID_SCORER_UNDER'
         ])
-        .or('is_active.eq.true,l10_hit_rate.gte.0.55')  // Active OR high L10 hit rate
-        .not('actual_line', 'is', null)  // Must have upcoming game
-        .order('l10_hit_rate', { ascending: false });  // Prioritize by L10 hit rate
+        .or('is_active.eq.true,l10_hit_rate.gte.0.55')
+        .not('actual_line', 'is', null)
+        .order('l10_hit_rate', { ascending: false });
 
       if (categoryError) {
         console.error('Error fetching category sweet spots:', categoryError);
       }
 
-      // Filter category picks to active players and exclude OUT injuries
+      // Build category recommendations map for side enforcement
+      const categoryRecommendations = new Map<string, { side: string; l10HitRate: number }>();
+      (categoryPicks || []).forEach(pick => {
+        const key = `${pick.player_name?.toLowerCase()}_${pick.prop_type?.toLowerCase()}`;
+        if (pick.recommended_side) {
+          categoryRecommendations.set(key, {
+            side: pick.recommended_side.toLowerCase(),
+            l10HitRate: pick.l10_hit_rate || 0
+          });
+        }
+      });
+
+      // Filter category picks with ALL validation rules
       const validCategoryPicks = (categoryPicks || []).filter(pick => {
         const playerKey = pick.player_name?.toLowerCase();
         if (!playerKey) return false;
@@ -219,6 +245,29 @@ export function useSweetSpotParlayBuilder() {
           console.log(`[SweetSpotParlay] Excluding OUT player from categories: ${pick.player_name}`);
           return false;
         }
+        
+        // v3.0: Apply archetype alignment check
+        if (!isPickArchetypeAligned({
+          id: pick.id,
+          player_name: pick.player_name || '',
+          prop_type: pick.prop_type || '',
+          line: pick.actual_line || 0,
+          side: pick.recommended_side || 'over',
+          confidence_score: pick.confidence_score || 0,
+          edge: 0,
+          archetype: pick.archetype,
+        })) {
+          console.log(`[SweetSpotParlay] Blocking archetype-misaligned category: ${pick.player_name} (${pick.archetype}) for ${pick.prop_type}`);
+          return false;
+        }
+        
+        // Check matchup intelligence blocking
+        const blockKey = `${playerKey}_${pick.prop_type?.toLowerCase()}_${pick.recommended_side?.toLowerCase()}`;
+        if (blockedSet.has(blockKey)) {
+          console.log(`[SweetSpotParlay] Blocking matchup-blocked category: ${pick.player_name} ${pick.prop_type} ${pick.recommended_side}`);
+          return false;
+        }
+        
         return true;
       });
 
@@ -236,7 +285,7 @@ export function useSweetSpotParlayBuilder() {
         console.error('Error fetching risk engine sweet spots:', riskError);
       }
 
-      // Filter risk picks to active players and exclude OUT injuries
+      // Filter risk picks with ALL validation rules
       const validRiskPicks = (riskPicks || []).filter(pick => {
         const playerKey = pick.player_name?.toLowerCase();
         if (!playerKey) return false;
@@ -245,6 +294,37 @@ export function useSweetSpotParlayBuilder() {
           console.log(`[SweetSpotParlay] Excluding OUT player from risk engine: ${pick.player_name}`);
           return false;
         }
+        
+        // v3.0: Apply archetype alignment check
+        if (!isPickArchetypeAligned({
+          id: pick.id,
+          player_name: pick.player_name || '',
+          prop_type: pick.prop_type || '',
+          line: pick.line || 0,
+          side: pick.side || 'over',
+          confidence_score: pick.confidence_score || 0,
+          edge: pick.edge || 0,
+          archetype: pick.archetype,
+        })) {
+          console.log(`[SweetSpotParlay] Blocking archetype-misaligned risk: ${pick.player_name} (${pick.archetype}) for ${pick.prop_type}`);
+          return false;
+        }
+        
+        // Check matchup intelligence blocking
+        const blockKey = `${playerKey}_${pick.prop_type?.toLowerCase()}_${pick.side?.toLowerCase()}`;
+        if (blockedSet.has(blockKey)) {
+          console.log(`[SweetSpotParlay] Blocking matchup-blocked risk: ${pick.player_name} ${pick.prop_type} ${pick.side}`);
+          return false;
+        }
+        
+        // Check if category has a DIFFERENT side recommendation - skip if conflict
+        const catKey = `${playerKey}_${pick.prop_type?.toLowerCase()}`;
+        const categoryRec = categoryRecommendations.get(catKey);
+        if (categoryRec && categoryRec.side !== pick.side?.toLowerCase()) {
+          console.log(`[SweetSpotParlay] Skipping risk pick - category recommends ${categoryRec.side}, risk says ${pick.side}: ${pick.player_name}`);
+          return false;
+        }
+        
         return true;
       });
 
@@ -254,7 +334,7 @@ export function useSweetSpotParlayBuilder() {
       const allPicks: SweetSpotPick[] = [];
       const seenPlayers = new Set<string>();
 
-      // Add category picks first (proven formulas)
+      // Add category picks first (proven formulas) - ALWAYS use recommended_side
       validCategoryPicks.forEach(pick => {
         const playerKey = pick.player_name?.toLowerCase();
         if (playerKey && !seenPlayers.has(playerKey)) {
@@ -266,9 +346,9 @@ export function useSweetSpotParlayBuilder() {
             player_name: pick.player_name || '',
             prop_type: pick.prop_type || '',
             line: pick.actual_line || pick.recommended_line || 0,
-            side: pick.recommended_side || 'over',
+            side: pick.recommended_side || 'over', // ENFORCE category recommendation
             confidence_score: pick.confidence_score || 0.8,
-            edge: (pick.l10_hit_rate || 0.7) * 10 - 5, // Convert hit rate to edge
+            edge: (pick.l10_hit_rate || 0.7) * 10 - 5,
             archetype: pick.archetype,
             category: pick.category,
             team_name: teamMap.get(playerKey) || 'Unknown',
@@ -279,7 +359,7 @@ export function useSweetSpotParlayBuilder() {
         }
       });
 
-      // Add risk engine picks that aren't duplicates
+      // Add risk engine picks that aren't duplicates and don't conflict with categories
       validRiskPicks.forEach(pick => {
         const playerKey = pick.player_name?.toLowerCase();
         if (playerKey && !seenPlayers.has(playerKey)) {
@@ -325,13 +405,17 @@ export function useSweetSpotParlayBuilder() {
       return [];
     }
 
+    // v3.0: Final archetype alignment filter (defense in depth)
+    const alignedPicks = sweetSpotPicks.filter(isPickArchetypeAligned);
+    console.log(`[SweetSpotParlay] Aligned picks after final filter: ${alignedPicks.length}/${sweetSpotPicks.length}`);
+
     const selectedLegs: DreamTeamLeg[] = [];
     const usedTeams = new Set<string>();
     const usedPlayers = new Set<string>();
 
     // Step 1: Fill from proven categories first
     for (const formula of PROVEN_FORMULA) {
-      const categoryPicks = sweetSpotPicks
+      const categoryPicks = alignedPicks
         .filter(p => 
           p.category === formula.category && 
           p.side.toLowerCase() === formula.side &&
@@ -360,9 +444,9 @@ export function useSweetSpotParlayBuilder() {
       console.log(`[SweetSpotParlay] Added ${added}/${formula.count} ${formula.category} picks`);
     }
 
-    // Step 2: Fill remaining slots from risk engine picks if needed
+    // Step 2: Fill remaining slots from aligned picks if needed
     if (selectedLegs.length < TARGET_LEG_COUNT) {
-      const remainingPicks = sweetSpotPicks
+      const remainingPicks = alignedPicks
         .filter(p => 
           !usedPlayers.has(p.player_name.toLowerCase()) &&
           !usedTeams.has((p.team_name || '').toLowerCase())
