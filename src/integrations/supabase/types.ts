@@ -3347,6 +3347,51 @@ export type Database = {
         }
         Relationships: []
       }
+      lineup_alerts: {
+        Row: {
+          alert_type: string
+          created_at: string | null
+          details: string | null
+          event_id: string | null
+          game_date: string
+          id: string
+          impact_level: string | null
+          injury_note: string | null
+          normalized_name: string | null
+          player_name: string
+          team: string
+          updated_at: string | null
+        }
+        Insert: {
+          alert_type: string
+          created_at?: string | null
+          details?: string | null
+          event_id?: string | null
+          game_date: string
+          id?: string
+          impact_level?: string | null
+          injury_note?: string | null
+          normalized_name?: string | null
+          player_name: string
+          team: string
+          updated_at?: string | null
+        }
+        Update: {
+          alert_type?: string
+          created_at?: string | null
+          details?: string | null
+          event_id?: string | null
+          game_date?: string
+          id?: string
+          impact_level?: string | null
+          injury_note?: string | null
+          normalized_name?: string | null
+          player_name?: string
+          team?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       live_game_scores: {
         Row: {
           away_score: number | null
@@ -7472,6 +7517,57 @@ export type Database = {
           team_name?: string
           timezone?: string
           updated_at?: string
+        }
+        Relationships: []
+      }
+      starting_lineups: {
+        Row: {
+          away_bench: Json | null
+          away_starters: Json
+          away_team: string
+          confirmed: boolean | null
+          created_at: string | null
+          event_id: string | null
+          game_date: string
+          home_bench: Json | null
+          home_starters: Json
+          home_team: string
+          id: string
+          injuries: Json | null
+          scraped_at: string | null
+          source: string | null
+        }
+        Insert: {
+          away_bench?: Json | null
+          away_starters?: Json
+          away_team: string
+          confirmed?: boolean | null
+          created_at?: string | null
+          event_id?: string | null
+          game_date: string
+          home_bench?: Json | null
+          home_starters?: Json
+          home_team: string
+          id?: string
+          injuries?: Json | null
+          scraped_at?: string | null
+          source?: string | null
+        }
+        Update: {
+          away_bench?: Json | null
+          away_starters?: Json
+          away_team?: string
+          confirmed?: boolean | null
+          created_at?: string | null
+          event_id?: string | null
+          game_date?: string
+          home_bench?: Json | null
+          home_starters?: Json
+          home_team?: string
+          id?: string
+          injuries?: Json | null
+          scraped_at?: string | null
+          source?: string | null
         }
         Relationships: []
       }

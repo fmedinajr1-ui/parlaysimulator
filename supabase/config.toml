@@ -305,3 +305,9 @@ verify_jwt = false
 
 [functions.category-props-analyzer]
 verify_jwt = false
+
+[functions.firecrawl-lineup-scraper]
+verify_jwt = false
+
+[functions.lineup-cross-reference]
+verify_jwt = false
