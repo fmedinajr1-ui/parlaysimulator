@@ -283,19 +283,11 @@ export default function DraftView() {
           )}
         </Card>
 
-        {/* Suggest Leg Button */}
         {draft.status !== "finalized" && (
           <Button 
             className="w-full" 
             size="lg"
-            onClick={() => {
-              if (!userId) {
-                toast.error("Please sign in to suggest a leg");
-                navigate("/auth");
-                return;
-              }
-              setSuggestModalOpen(true);
-            }}
+            onClick={() => setSuggestModalOpen(true)}
           >
             <Plus className="w-5 h-5 mr-2" />
             Suggest a Leg

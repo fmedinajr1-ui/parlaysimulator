@@ -148,17 +148,15 @@ export function useDraft() {
     note?: string
   ): Promise<boolean> => {
     try {
+      // Get user ID if logged in, otherwise null for anonymous
       const { data: session } = await supabase.auth.getSession();
-      if (!session?.session?.user) {
-        toast.error("Please sign in to suggest a leg");
-        return false;
-      }
+      const userId = session?.session?.user?.id || null;
 
       const { error } = await supabase
         .from("draft_suggestions")
         .insert([{
           draft_id: draftId,
-          user_id: session.session.user.id,
+          user_id: userId,
           suggested_leg: JSON.parse(JSON.stringify(leg)),
           side,
           note: note || null,
