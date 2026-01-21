@@ -326,3 +326,9 @@ verify_jwt = false
 
 [functions.auto-classify-archetypes]
 verify_jwt = false
+
+[functions.sync-matchup-history]
+verify_jwt = false
+
+[functions.hedge-parlay-builder]
+verify_jwt = false
