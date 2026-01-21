@@ -545,7 +545,27 @@ async function buildSharpParlays(supabase: any): Promise<any> {
   // Fetch today's props from unified_props or nba_risk_engine_picks
   const today = getEasternDate();
   
-  const { data: props, error: propsError } = await supabase
+  // MATCHUP INTELLIGENCE INTEGRATION: Fetch blocked picks first
+  const { data: blockedPicks, error: blockedError } = await supabase
+    .from('matchup_intelligence')
+    .select('player_name, prop_type, side, line, block_reason')
+    .eq('game_date', today)
+    .eq('is_blocked', true);
+  
+  if (blockedError) {
+    console.warn('[Sharp Builder] Warning: Could not fetch blocked picks:', blockedError.message);
+  }
+  
+  // Create lookup set for blocked picks
+  const blockedSet = new Set(
+    (blockedPicks || []).map((p: any) => 
+      `${p.player_name?.toLowerCase()}_${p.prop_type?.toLowerCase()}_${p.side?.toLowerCase()}_${p.line}`
+    )
+  );
+  
+  console.log(`[Sharp Builder] Loaded ${blockedSet.size} blocked picks from matchup intelligence`);
+  
+  const { data: allProps, error: propsError } = await supabase
     .from('nba_risk_engine_picks')
     .select('*')
     .eq('game_date', today)
@@ -556,7 +576,21 @@ async function buildSharpParlays(supabase: any): Promise<any> {
     throw propsError;
   }
   
-  console.log(`[Sharp Parlay Builder] Found ${props?.length || 0} approved props for ${today}`);
+  // Filter out blocked picks from matchup intelligence
+  const props = (allProps || []).filter((p: any) => {
+    const key = `${p.player_name?.toLowerCase()}_${p.prop_type?.toLowerCase()}_${(p.side || 'over')?.toLowerCase()}_${p.line}`;
+    const isBlocked = blockedSet.has(key);
+    if (isBlocked) {
+      const blockReason = blockedPicks?.find((bp: any) => 
+        bp.player_name?.toLowerCase() === p.player_name?.toLowerCase() && 
+        bp.prop_type?.toLowerCase() === p.prop_type?.toLowerCase()
+      )?.block_reason || 'Blocked by matchup intelligence';
+      console.log(`[Sharp Builder] BLOCKED: ${p.player_name} ${p.prop_type} ${p.side} - ${blockReason}`);
+    }
+    return !isBlocked;
+  });
+  
+  console.log(`[Sharp Parlay Builder] Found ${allProps?.length || 0} total props, ${props.length} after matchup filter for ${today}`);
   
   if (!props || props.length === 0) {
     return { 

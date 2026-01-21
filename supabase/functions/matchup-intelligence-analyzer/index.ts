@@ -207,8 +207,54 @@ serve(async (req) => {
     const today = getEasternDate();
 
     // Action: analyze_batch - Analyze multiple props at once
-    if (action === 'analyze_batch' && Array.isArray(props)) {
-      console.log(`[Matchup] Analyzing ${props.length} props for matchup intelligence`);
+    if (action === 'analyze_batch') {
+      // Auto-fetch picks from nba_risk_engine_picks if props not provided
+      let propsToAnalyze = Array.isArray(props) && props.length > 0 ? props : null;
+      
+      if (!propsToAnalyze) {
+        console.log('[Matchup] No props provided, fetching from nba_risk_engine_picks...');
+        const { data: riskPicks, error: riskError } = await supabase
+          .from('nba_risk_engine_picks')
+          .select('*')
+          .eq('game_date', today)
+          .is('rejection_reason', null)
+          .gte('confidence_score', 7.0);  // Only picks with good confidence
+        
+        if (riskError) {
+          console.error('[Matchup] Error fetching risk picks:', riskError);
+          throw riskError;
+        }
+        
+        propsToAnalyze = (riskPicks || []).map((pick: any) => ({
+          playerName: pick.player_name,
+          playerTeam: pick.team_name || pick.team,
+          opponentTeam: pick.opponent,
+          propType: pick.prop_type,
+          side: pick.side,
+          line: pick.line,
+          median: pick.true_median,
+          l10HitRate: pick.l10_hit_rate,
+          archetype: pick.archetype || pick.player_role,
+          isStarter: pick.is_star || pick.is_ball_dominant,
+        }));
+        
+        console.log(`[Matchup] Fetched ${propsToAnalyze.length} approved picks from risk engine`);
+      }
+      
+      if (!propsToAnalyze || propsToAnalyze.length === 0) {
+        return new Response(JSON.stringify({
+          success: true,
+          analyzed: 0,
+          blocked: 0,
+          caution: 0,
+          results: [],
+          message: 'No props to analyze'
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      
+      console.log(`[Matchup] Analyzing ${propsToAnalyze.length} props for matchup intelligence`);
       
       // Fetch all defensive ratings
       const { data: defenseData } = await supabase
@@ -248,7 +294,7 @@ serve(async (req) => {
       
       const results: MatchupResult[] = [];
       
-      for (const prop of props) {
+      for (const prop of propsToAnalyze) {
         const oppTeam = normalizeTeamName(prop.opponentTeam || '');
         const playerTeam = normalizeTeamName(prop.playerTeam || '');
         
@@ -352,7 +398,7 @@ serve(async (req) => {
       // Save to matchup_intelligence table
       const toUpsert = results.map(r => ({
         player_name: r.playerName,
-        opponent_team: props.find(p => p.playerName === r.playerName)?.opponentTeam || '',
+        opponent_team: propsToAnalyze.find((p: any) => p.playerName === r.playerName)?.opponentTeam || '',
         prop_type: r.propType,
         side: r.side,
         line: r.line,
