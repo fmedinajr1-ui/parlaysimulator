@@ -59,6 +59,12 @@ const STATUS_CONFIG: Record<string, {
     variant: 'success',
     className: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
   },
+  HEALTHY: {
+    icon: CheckCircle2,
+    label: 'HEALTHY',
+    variant: 'success',
+    className: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
+  },
   UNKNOWN: {
     icon: HelpCircle,
     label: '?',

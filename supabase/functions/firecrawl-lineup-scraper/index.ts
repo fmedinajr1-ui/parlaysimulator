@@ -86,17 +86,50 @@ async function fetchESPNInjuries(): Promise<PlayerStatus[]> {
     const data = await response.json();
     const injuries: PlayerStatus[] = [];
     
-    // ESPN returns injuries grouped by team
-    for (const teamEntry of data.teams || []) {
-      const teamName = teamEntry.team?.displayName || 'Unknown';
+    // Log structure to debug
+    console.log('[ESPN] Response keys:', Object.keys(data));
+    
+    // ESPN can return injuries in different structures
+    const teamsArray = data.teams || data.items || [];
+    console.log('[ESPN] Teams array length:', teamsArray.length);
+    
+    for (const teamEntry of teamsArray) {
+      const teamName = teamEntry.team?.displayName || 
+                       teamEntry.team?.name || 
+                       teamEntry.displayName || 
+                       'Unknown';
       
-      for (const injury of teamEntry.injuries || []) {
-        const athlete = injury.athlete || {};
-        const playerName = athlete.displayName || '';
-        const position = athlete.position?.abbreviation || '';
-        const injuryType = injury.type?.text || '';
-        const status = injury.status || '';
-        const details = injury.details?.detail || '';
+      // Injuries might be under different keys
+      const teamInjuries = teamEntry.injuries || 
+                          teamEntry.athletes || 
+                          teamEntry.items || 
+                          [];
+      
+      console.log(`[ESPN] Team: ${teamName}, Injuries: ${teamInjuries.length}`);
+      
+      for (const injury of teamInjuries) {
+        // Handle different possible structures
+        const athlete = injury.athlete || injury;
+        const playerName = athlete.displayName || 
+                          athlete.fullName || 
+                          athlete.name || '';
+        
+        const position = athlete.position?.abbreviation || 
+                        athlete.position?.name || '';
+        
+        // Status might be a string or nested object
+        const status = typeof injury.status === 'string' 
+          ? injury.status 
+          : injury.status?.type || injury.type?.name || '';
+        
+        const injuryType = injury.type?.text || 
+                          injury.type?.description || 
+                          injury.description || '';
+        
+        const details = injury.details?.detail || 
+                       injury.details?.text || 
+                       injury.longComment || 
+                       injury.shortComment || '';
         
         if (playerName) {
           injuries.push({
