@@ -48,20 +48,59 @@ const STAT_SAFETY_RULES: Record<string, { prefer: string[], avoid: string[] }> =
   }
 };
 
-// ARCHETYPE-PROP ALIGNMENT (Dream Team validation)
-const ARCHETYPE_PROP_ALLOWED: Record<string, string[]> = {
-  'ELITE_REBOUNDER': ['rebounds', 'blocks'],
-  'GLASS_CLEANER': ['rebounds'],
-  'PURE_SHOOTER': ['points', 'threes'],
-  'PLAYMAKER': ['assists', 'points'],
-  'COMBO_GUARD': ['points', 'assists'],
-  'TWO_WAY_WING': ['points', 'rebounds', 'steals'],
-  'STRETCH_BIG': ['points', 'rebounds', 'threes'],
-  'RIM_PROTECTOR': ['blocks', 'rebounds'],
-  'SCORING_WING': ['points', 'threes'],
-  'SCORING_GUARD': ['points', 'assists'],
-  'ROLE_PLAYER': [] // BLOCKED
+// STRICT ARCHETYPE-PROP BLOCKING (v3.0 Dream Team Rule)
+// If archetype is in this map and prop is in blocked list → ALWAYS BLOCK
+const ARCHETYPE_PROP_BLOCKED: Record<string, string[]> = {
+  'ELITE_REBOUNDER': ['points', 'threes', 'assists'],  // Only rebounds/blocks allowed
+  'GLASS_CLEANER': ['points', 'threes', 'assists'],    // Only rebounds allowed
+  'PURE_SHOOTER': ['rebounds', 'assists', 'blocks'],   // Only points/threes allowed
+  'PLAYMAKER': ['rebounds', 'blocks', 'threes'],       // Only assists/points allowed
+  'RIM_PROTECTOR': ['points', 'threes', 'assists'],    // Only blocks/rebounds allowed
+  'ROLE_PLAYER': ['points', 'threes', 'rebounds', 'assists', 'blocks', 'steals'] // ALL blocked
 };
+
+// Check if archetype-prop combination is BLOCKED (strict enforcement)
+function isArchetypePropBlocked(playerName: string, propType: string): boolean {
+  const archetype = getPlayerArchetype(playerName);
+  if (!archetype || archetype === 'UNKNOWN') return false;
+  
+  const blocked = ARCHETYPE_PROP_BLOCKED[archetype];
+  if (!blocked) return false;
+  
+  const propLower = propType?.toLowerCase() || '';
+  const propCategory = propLower.includes('rebound') ? 'rebounds' :
+                       propLower.includes('assist') ? 'assists' :
+                       propLower.includes('block') ? 'blocks' :
+                       propLower.includes('three') || propLower.includes('3pt') ? 'threes' : 'points';
+  
+  return blocked.includes(propCategory);
+}
+
+// Category recommendations map (loaded from category_sweet_spots)
+let categoryRecommendations: Map<string, { side: string; hit_rate: number }> = new Map();
+
+async function loadCategoryRecommendations(supabase: any): Promise<void> {
+  const today = getEasternDate();
+  const { data } = await supabase
+    .from('category_sweet_spots')
+    .select('player_name, prop_type, recommended_side, l10_hit_rate')
+    .gte('l10_hit_rate', 0.7); // Only use high-confidence categories (70%+)
+  
+  categoryRecommendations.clear();
+  for (const c of (data || [])) {
+    const propLower = c.prop_type?.toLowerCase() || '';
+    const propCategory = propLower.includes('rebound') ? 'rebounds' :
+                         propLower.includes('assist') ? 'assists' :
+                         propLower.includes('block') ? 'blocks' :
+                         propLower.includes('three') || propLower.includes('3pt') ? 'threes' : 'points';
+    const key = `${c.player_name?.toLowerCase()}_${propCategory}`;
+    categoryRecommendations.set(key, { 
+      side: c.recommended_side?.toLowerCase() || 'over', 
+      hit_rate: c.l10_hit_rate 
+    });
+  }
+  console.log(`[Heat Engine] Loaded ${categoryRecommendations.size} category recommendations (70%+ L10)`);
+}
 
 // Runtime archetype data (populated from database)
 let archetypeMap: Record<string, string> = {};
@@ -106,11 +145,9 @@ function isStarPlayer(playerName: string): boolean {
   return ['ELITE_REBOUNDER', 'PLAYMAKER', 'PURE_SHOOTER', 'COMBO_GUARD', 'SCORING_WING'].includes(archetype);
 }
 
+// Check if archetype-prop is aligned (inverse of blocked)
 function isArchetypeAligned(playerName: string, propType: string): boolean {
-  const archetype = getPlayerArchetype(playerName);
-  const allowed = ARCHETYPE_PROP_ALLOWED[archetype] || [];
-  const propLower = propType?.toLowerCase() || '';
-  return allowed.some(p => propLower.includes(p));
+  return !isArchetypePropBlocked(playerName, propType);
 }
 
 // Stat priority for scoring (rebounds/assists >> points)
@@ -614,6 +651,7 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
   // Load runtime data at start
   await loadArchetypes(supabase);
   await loadPlayerTeams(supabase);
+  await loadCategoryRecommendations(supabase);
   
   // MATCHUP INTELLIGENCE INTEGRATION: Fetch blocked picks first
   const { data: blockedPicks, error: blockedError } = await supabase
@@ -634,6 +672,10 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
   );
   
   console.log(`[Heat Engine] Loaded ${blockedSet.size} blocked picks from matchup intelligence`);
+  
+  // Stats for v3.0 rule tracking
+  let archetypeBlockedCount = 0;
+  let categorySideBlockedCount = 0;
   
   console.log(`[Heat Prop Engine] Running action: ${action}, sport: ${sport || 'all'}, date: ${today}`);
   
@@ -717,6 +759,30 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
           bp.prop_type?.toLowerCase() === pick.prop_type?.toLowerCase()
         )?.block_reason || 'Blocked by matchup intelligence';
         console.log(`[Heat Engine] BLOCKED: ${pick.player_name} ${pick.prop_type} ${pick.side} - ${blockReason}`);
+        continue;
+      }
+      
+      // v3.0 RULE: STRICT ARCHETYPE-PROP BLOCKING (before any other rules)
+      if (isArchetypePropBlocked(pick.player_name, pick.prop_type)) {
+        const archetype = getPlayerArchetype(pick.player_name);
+        console.log(`[Heat Engine] ARCHETYPE BLOCKED: ${pick.player_name} (${archetype}) for ${pick.prop_type}`);
+        archetypeBlockedCount++;
+        continue;
+      }
+      
+      // v3.0 RULE: CATEGORY-SIDE ENFORCEMENT
+      const propLower = pick.prop_type?.toLowerCase() || '';
+      const propCategory = propLower.includes('rebound') ? 'rebounds' :
+                           propLower.includes('assist') ? 'assists' :
+                           propLower.includes('block') ? 'blocks' :
+                           propLower.includes('three') || propLower.includes('3pt') ? 'threes' : 'points';
+      const categoryKey = `${pick.player_name?.toLowerCase()}_${propCategory}`;
+      const categoryRec = categoryRecommendations.get(categoryKey);
+      const pickSide = (pick.side || 'over').toLowerCase();
+      
+      if (categoryRec && categoryRec.side !== pickSide) {
+        console.log(`[Heat Engine] CATEGORY CONFLICT: ${pick.player_name} ${pick.prop_type} - category says ${categoryRec.side.toUpperCase()} (${Math.round(categoryRec.hit_rate * 100)}% L10), pick says ${pickSide.toUpperCase()}`);
+        categorySideBlockedCount++;
         continue;
       }
       

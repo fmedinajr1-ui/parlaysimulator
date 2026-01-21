@@ -29,7 +29,10 @@ export function EngineDiagnosticsCard() {
         propV2Result,
         sharpParlaysResult,
         heatParlaysResult,
-        gameLogsResult
+        gameLogsResult,
+        matchupIntelResult,
+        archetypesResult,
+        categoryResult
       ] = await Promise.all([
         // Unified props - check for upcoming games
         supabase
@@ -40,7 +43,7 @@ export function EngineDiagnosticsCard() {
         // Risk engine picks for today
         supabase
           .from('nba_risk_engine_picks')
-          .select('id, prop_type, player_role, side, rejection_reason')
+          .select('id, prop_type, player_role, side, rejection_reason, archetype')
           .eq('game_date', today),
         
         // Prop Engine v2 picks
@@ -65,7 +68,24 @@ export function EngineDiagnosticsCard() {
         supabase
           .from('nba_player_game_logs')
           .select('id', { count: 'exact', head: true })
-          .gte('game_date', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0])
+          .gte('game_date', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]),
+        
+        // v3.0: Matchup intelligence blocking stats
+        supabase
+          .from('matchup_intelligence')
+          .select('id, is_blocked, block_reason')
+          .eq('game_date', today),
+        
+        // v3.0: Player archetypes for distribution
+        supabase
+          .from('player_archetypes')
+          .select('primary_archetype'),
+        
+        // v3.0: Category sweet spots for alignment check
+        supabase
+          .from('category_sweet_spots')
+          .select('id, recommended_side, l10_hit_rate')
+          .gte('l10_hit_rate', 0.7)
       ]);
 
       // Process unified props by type
@@ -107,6 +127,22 @@ export function EngineDiagnosticsCard() {
       // Parlays
       const sharpParlays = sharpParlaysResult.data || [];
       const heatParlays = heatParlaysResult.data || [];
+      
+      // v3.0 Stats
+      const matchupData = matchupIntelResult.data || [];
+      const blockedByMatchup = matchupData.filter((m: any) => m.is_blocked).length;
+      const matchupTotal = matchupData.length;
+      
+      // Archetype distribution
+      const archetypeData = archetypesResult.data || [];
+      const archetypeDistribution: Record<string, number> = {};
+      archetypeData.forEach((a: any) => {
+        const arch = a.primary_archetype || 'UNKNOWN';
+        archetypeDistribution[arch] = (archetypeDistribution[arch] || 0) + 1;
+      });
+      
+      // Category recommendations
+      const categoryData = categoryResult.data || [];
 
       return {
         dataFreshness: {
@@ -132,6 +168,12 @@ export function EngineDiagnosticsCard() {
           sharpTypes: sharpParlays.map((p: any) => p.parlay_type),
           heatTotal: heatParlays.length,
           heatTypes: heatParlays.map((p: any) => p.parlay_type)
+        },
+        v3Rules: {
+          matchupBlocked: blockedByMatchup,
+          matchupTotal: matchupTotal,
+          categoryRecsCount: categoryData.length,
+          archetypeDistribution
         }
       };
     },
@@ -284,6 +326,32 @@ export function EngineDiagnosticsCard() {
                 </span>
               )}
             </div>
+          </div>
+        </div>
+
+        {/* v3.0 Rules Stats */}
+        <div>
+          <h4 className="text-sm font-medium text-muted-foreground mb-2">v3.0 Rules Enforcement</h4>
+          <div className="grid grid-cols-2 gap-2 text-sm">
+            <div className="flex items-center gap-2">
+              {getStatusIcon(diagnostics?.v3Rules?.matchupBlocked === 0 ? 'healthy' : 'warning')}
+              <span>
+                🚫 {diagnostics?.v3Rules?.matchupBlocked || 0} matchup blocked
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <CheckCircle className="h-4 w-4 text-primary" />
+              <span>
+                📊 {diagnostics?.v3Rules?.categoryRecsCount || 0} category recs
+              </span>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-1 mt-2">
+            {Object.entries(diagnostics?.v3Rules?.archetypeDistribution || {}).slice(0, 5).map(([arch, count]) => (
+              <Badge key={arch} variant="outline" className="text-xs">
+                {arch}: {count as number}
+              </Badge>
+            ))}
           </div>
         </div>
       </CardContent>
