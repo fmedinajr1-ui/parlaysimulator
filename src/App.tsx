@@ -55,6 +55,7 @@ const PropMarket = React.lazy(() => import("./pages/PropMarket"));
 const PropResults = React.lazy(() => import("./pages/PropResults"));
 const EngineDashboard = React.lazy(() => import("./pages/EngineDashboard"));
 const Scout = React.lazy(() => import("./pages/Scout"));
+const ManualBuilder = React.lazy(() => import("./pages/ManualBuilder"));
 
 // QueryClient with optimized defaults
 const queryClient = new QueryClient({
@@ -129,6 +130,7 @@ function AnimatedRoutes() {
               <Route path="/prop-results" element={<PropResults />} />
               <Route path="/engine-dashboard" element={<EngineDashboard />} />
               <Route path="/scout" element={<Scout />} />
+              <Route path="/manual-builder" element={<ManualBuilder />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </React.Suspense>
