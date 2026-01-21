@@ -6,7 +6,8 @@ import {
   Calculator,
   Shield,
   Users,
-  ChevronRight
+  ChevronRight,
+  Hammer
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
@@ -14,6 +15,10 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { Separator } from "@/components/ui/separator";
 import { usePilotUser } from "@/hooks/usePilotUser";
 import { useViewport } from "@/hooks/useViewport";
+
+const toolItems = [
+  { icon: Hammer, label: "Manual Builder", path: "/manual-builder", description: "Build custom parlays manually" },
+];
 
 const adminItems = [
   { icon: Activity, label: "All-Sports Tracker", path: "/tracker", description: "Real-time picks from all engines" },
@@ -117,6 +122,43 @@ export function MenuDrawer() {
         </SheetHeader>
         
         <div className="flex flex-col py-2">
+          {/* Tools Section - Available to all users */}
+          <div className={cn("px-3", isMobileCompact ? "py-1" : "py-2")}>
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 mb-2">
+              Tools
+            </p>
+            {toolItems.map((item) => (
+              <Link
+                key={item.path}
+                to={item.path}
+                onClick={() => setOpen(false)}
+                className={cn(
+                  "flex items-center gap-3 px-3 rounded-lg transition-colors",
+                  "hover:bg-muted/50 active:bg-muted",
+                  isActive(item.path) && "bg-primary/10 text-primary",
+                  isMobileCompact ? "py-2" : "py-3"
+                )}
+              >
+                <item.icon className={cn(
+                  isMobileCompact ? "w-4 h-4" : "w-5 h-5",
+                  isActive(item.path) ? "text-primary" : "text-muted-foreground"
+                )} />
+                <div className="flex-1">
+                  <p className={cn(
+                    "text-sm font-medium",
+                    isActive(item.path) && "text-primary"
+                  )}>
+                    {item.label}
+                  </p>
+                  {!isMobileCompact && (
+                    <p className="text-xs text-muted-foreground">{item.description}</p>
+                  )}
+                </div>
+                <ChevronRight className="w-4 h-4 text-muted-foreground/50" />
+              </Link>
+            ))}
+          </div>
+
           {/* Admin Section */}
           {isAdmin && (
             <>
