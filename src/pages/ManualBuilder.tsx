@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { useManualBuilder, type ManualProp } from "@/hooks/useManualBuilder";
 import { PropSelectionCard } from "@/components/manual/PropSelectionCard";
 import { ManualParlayPanel, type SelectedLeg } from "@/components/manual/ManualParlayPanel";
@@ -6,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Search, Filter, Dumbbell } from "lucide-react";
+import { Search, Filter, Dumbbell, Home } from "lucide-react";
 
 const STAT_FILTERS = [
   { key: "all", label: "All" },
@@ -19,6 +20,7 @@ const STAT_FILTERS = [
 ];
 
 export default function ManualBuilder() {
+  const navigate = useNavigate();
   const [statFilter, setStatFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedLegs, setSelectedLegs] = useState<SelectedLeg[]>([]);
@@ -72,6 +74,14 @@ export default function ManualBuilder() {
       <div className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b">
         <div className="container py-4">
           <div className="flex items-center gap-3 mb-4">
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              onClick={() => navigate("/")}
+              className="shrink-0 -ml-2"
+            >
+              <Home className="w-5 h-5" />
+            </Button>
             <Dumbbell className="w-6 h-6 text-primary" />
             <h1 className="text-xl font-bold">Manual Parlay Builder</h1>
             {selectedLegs.length > 0 && (
