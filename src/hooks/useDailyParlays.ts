@@ -36,13 +36,19 @@ export interface DailyParlay {
   outcome: 'pending' | 'won' | 'lost';
 }
 
-// Type guard for JSONB leg data
+// Type guard for JSONB leg data - supports both naming conventions
 interface SharpLegJson {
+  // New format from sharp-parlay-builder
+  player?: string;
+  prop?: string;
+  team?: string;
+  // Legacy format
   player_name?: string;
   prop_type?: string;
+  team_name?: string;
+  // Common fields
   line?: number;
   side?: string;
-  team_name?: string;
   category?: string;
   confidence?: number;
   l10_hit_rate?: number;
@@ -89,21 +95,21 @@ function isLegArchetypeAligned(leg: UnifiedParlayLeg): boolean {
   return true;
 }
 
-// Parse sharp parlay legs from JSONB
+// Parse sharp parlay legs from JSONB - handles both field naming conventions
 function parseSharpLegs(legs: Json): UnifiedParlayLeg[] {
   if (!Array.isArray(legs)) return [];
   
   return (legs as SharpLegJson[]).map(leg => ({
-    playerName: leg.player_name || '',
-    propType: leg.prop_type || '',
+    playerName: leg.player || leg.player_name || '',
+    propType: leg.prop || leg.prop_type || '',
     line: leg.line || 0,
     side: (leg.side?.toLowerCase() === 'under' ? 'under' : 'over') as 'over' | 'under',
-    team: leg.team_name,
+    team: leg.team || leg.team_name,
     category: leg.category,
     confidence: leg.confidence,
     l10HitRate: leg.l10_hit_rate,
     archetype: leg.archetype,
-  })).filter(isLegArchetypeAligned); // v3.0: Filter misaligned
+  })).filter(leg => leg.playerName !== '').filter(isLegArchetypeAligned);
 }
 
 // Parse heat parlay legs from JSONB
