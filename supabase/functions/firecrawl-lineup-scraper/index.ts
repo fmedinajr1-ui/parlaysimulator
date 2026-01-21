@@ -56,19 +56,41 @@ function parseInjuryStatus(text: string): { status: PlayerStatus['status']; note
   return { status: 'STARTING', note: '' };
 }
 
+// NBA team names for validation
+const NBA_TEAMS = new Set([
+  'hawks', 'celtics', 'nets', 'hornets', 'bulls', 'cavaliers', 'mavericks', 'nuggets',
+  'pistons', 'warriors', 'rockets', 'pacers', 'clippers', 'lakers', 'grizzlies', 'heat',
+  'bucks', 'timberwolves', 'pelicans', 'knicks', 'thunder', 'magic', 'sixers', '76ers',
+  'suns', 'blazers', 'kings', 'spurs', 'raptors', 'jazz', 'wizards',
+  'atlanta', 'boston', 'brooklyn', 'charlotte', 'chicago', 'cleveland', 'dallas', 'denver',
+  'detroit', 'golden state', 'houston', 'indiana', 'la clippers', 'los angeles clippers',
+  'la lakers', 'los angeles lakers', 'memphis', 'miami', 'milwaukee', 'minnesota',
+  'new orleans', 'new york', 'oklahoma city', 'orlando', 'philadelphia', 'phoenix',
+  'portland', 'sacramento', 'san antonio', 'toronto', 'utah', 'washington'
+]);
+
+// Check if text looks like an NBA team name
+function isNbaTeam(text: string): boolean {
+  const lower = text.toLowerCase().trim();
+  for (const team of NBA_TEAMS) {
+    if (lower.includes(team)) return true;
+  }
+  return false;
+}
+
 // Parse team name from various formats
 function parseTeamName(text: string): string {
   const teamMappings: Record<string, string> = {
-    'lakers': 'Los Angeles Lakers', 'lal': 'Los Angeles Lakers',
+    'lakers': 'Los Angeles Lakers', 'lal': 'Los Angeles Lakers', 'la lakers': 'Los Angeles Lakers',
     'celtics': 'Boston Celtics', 'bos': 'Boston Celtics',
-    'warriors': 'Golden State Warriors', 'gsw': 'Golden State Warriors',
+    'warriors': 'Golden State Warriors', 'gsw': 'Golden State Warriors', 'golden state': 'Golden State Warriors',
     'nuggets': 'Denver Nuggets', 'den': 'Denver Nuggets',
     'bucks': 'Milwaukee Bucks', 'mil': 'Milwaukee Bucks',
     'suns': 'Phoenix Suns', 'phx': 'Phoenix Suns',
     'heat': 'Miami Heat', 'mia': 'Miami Heat',
     'nets': 'Brooklyn Nets', 'bkn': 'Brooklyn Nets',
     'sixers': 'Philadelphia 76ers', '76ers': 'Philadelphia 76ers', 'phi': 'Philadelphia 76ers',
-    'knicks': 'New York Knicks', 'nyk': 'New York Knicks',
+    'knicks': 'New York Knicks', 'nyk': 'New York Knicks', 'new york': 'New York Knicks',
     'bulls': 'Chicago Bulls', 'chi': 'Chicago Bulls',
     'cavaliers': 'Cleveland Cavaliers', 'cavs': 'Cleveland Cavaliers', 'cle': 'Cleveland Cavaliers',
     'hawks': 'Atlanta Hawks', 'atl': 'Atlanta Hawks',
@@ -78,14 +100,14 @@ function parseTeamName(text: string): string {
     'magic': 'Orlando Magic', 'orl': 'Orlando Magic',
     'pacers': 'Indiana Pacers', 'ind': 'Indiana Pacers',
     'pistons': 'Detroit Pistons', 'det': 'Detroit Pistons',
-    'clippers': 'Los Angeles Clippers', 'lac': 'Los Angeles Clippers',
+    'clippers': 'Los Angeles Clippers', 'lac': 'Los Angeles Clippers', 'la clippers': 'Los Angeles Clippers',
     'mavericks': 'Dallas Mavericks', 'mavs': 'Dallas Mavericks', 'dal': 'Dallas Mavericks',
     'rockets': 'Houston Rockets', 'hou': 'Houston Rockets',
     'grizzlies': 'Memphis Grizzlies', 'mem': 'Memphis Grizzlies',
-    'pelicans': 'New Orleans Pelicans', 'nop': 'New Orleans Pelicans',
-    'spurs': 'San Antonio Spurs', 'sas': 'San Antonio Spurs',
+    'pelicans': 'New Orleans Pelicans', 'nop': 'New Orleans Pelicans', 'new orleans': 'New Orleans Pelicans',
+    'spurs': 'San Antonio Spurs', 'sas': 'San Antonio Spurs', 'san antonio': 'San Antonio Spurs',
     'timberwolves': 'Minnesota Timberwolves', 'wolves': 'Minnesota Timberwolves', 'min': 'Minnesota Timberwolves',
-    'thunder': 'Oklahoma City Thunder', 'okc': 'Oklahoma City Thunder',
+    'thunder': 'Oklahoma City Thunder', 'okc': 'Oklahoma City Thunder', 'oklahoma city': 'Oklahoma City Thunder',
     'blazers': 'Portland Trail Blazers', 'trail blazers': 'Portland Trail Blazers', 'por': 'Portland Trail Blazers',
     'jazz': 'Utah Jazz', 'uta': 'Utah Jazz',
     'kings': 'Sacramento Kings', 'sac': 'Sacramento Kings',
@@ -117,38 +139,45 @@ function parseLineupMarkdown(markdown: string): GameLineup[] {
     if (!line) continue;
     
     // Look for game matchups (e.g., "Lakers @ Celtics" or "LAL vs BOS")
+    // Only match if BOTH sides look like NBA teams
     const matchupPattern = /([A-Za-z\s]+)\s*[@vs\.]+\s*([A-Za-z\s]+)/i;
     const matchupMatch = line.match(matchupPattern);
     
     if (matchupMatch) {
-      // Save previous game if exists
-      if (currentGame && currentGame.homeTeam && currentGame.awayTeam) {
-        games.push({
-          homeTeam: currentGame.homeTeam,
-          awayTeam: currentGame.awayTeam,
-          tipTime: currentGame.tipTime,
-          homeStarters: currentGame.homeStarters || [],
-          awayStarters: currentGame.awayStarters || [],
-          homeBench: currentGame.homeBench || [],
-          awayBench: currentGame.awayBench || [],
-          confirmed: currentGame.confirmed || false,
-          injuries: currentGame.injuries || [],
-        });
-      }
+      const awayCandidate = matchupMatch[1].trim();
+      const homeCandidate = matchupMatch[2].trim();
       
-      currentGame = {
-        awayTeam: parseTeamName(matchupMatch[1]),
-        homeTeam: parseTeamName(matchupMatch[2]),
-        homeStarters: [],
-        awayStarters: [],
-        homeBench: [],
-        awayBench: [],
-        injuries: [],
-        confirmed: false,
-      };
-      currentSection = 'away';
-      isStartersSection = true;
-      continue;
+      // Only proceed if both look like NBA teams
+      if (isNbaTeam(awayCandidate) && isNbaTeam(homeCandidate)) {
+        // Save previous game if exists
+        if (currentGame && currentGame.homeTeam && currentGame.awayTeam && isNbaTeam(currentGame.homeTeam) && isNbaTeam(currentGame.awayTeam)) {
+          games.push({
+            homeTeam: currentGame.homeTeam,
+            awayTeam: currentGame.awayTeam,
+            tipTime: currentGame.tipTime,
+            homeStarters: currentGame.homeStarters || [],
+            awayStarters: currentGame.awayStarters || [],
+            homeBench: currentGame.homeBench || [],
+            awayBench: currentGame.awayBench || [],
+            confirmed: currentGame.confirmed || false,
+            injuries: currentGame.injuries || [],
+          });
+        }
+        
+        currentGame = {
+          awayTeam: parseTeamName(awayCandidate),
+          homeTeam: parseTeamName(homeCandidate),
+          homeStarters: [],
+          awayStarters: [],
+          homeBench: [],
+          awayBench: [],
+          injuries: [],
+          confirmed: false,
+        };
+        currentSection = 'away';
+        isStartersSection = true;
+        continue;
+      }
     }
     
     // Look for section headers
@@ -303,8 +332,35 @@ Deno.serve(async (req) => {
     console.log('[LineupScraper] Received markdown length:', markdown.length);
 
     // Parse the lineup data
-    const games = parseLineupMarkdown(markdown);
-    console.log('[LineupScraper] Parsed games:', games.length);
+    const rawGames = parseLineupMarkdown(markdown);
+    console.log('[LineupScraper] Parsed raw games:', rawGames.length);
+
+    // Deduplicate games by home_team + away_team (keep the one with most starters)
+    const gameMap = new Map<string, GameLineup>();
+    for (const game of rawGames) {
+      const key = `${game.homeTeam}|${game.awayTeam}`;
+      const existing = gameMap.get(key);
+      if (!existing) {
+        gameMap.set(key, game);
+      } else {
+        // Keep the one with more starter data
+        const existingStarterCount = existing.homeStarters.length + existing.awayStarters.length;
+        const newStarterCount = game.homeStarters.length + game.awayStarters.length;
+        if (newStarterCount > existingStarterCount) {
+          gameMap.set(key, game);
+        }
+        // Merge injuries
+        const existingInjuryNames = new Set(existing.injuries.map(i => i.name.toLowerCase()));
+        for (const injury of game.injuries) {
+          if (!existingInjuryNames.has(injury.name.toLowerCase())) {
+            existing.injuries.push(injury);
+          }
+        }
+      }
+    }
+    
+    const games = Array.from(gameMap.values());
+    console.log('[LineupScraper] Deduplicated to', games.length, 'unique games');
 
     const today = new Date().toISOString().split('T')[0];
     
@@ -333,6 +389,8 @@ Deno.serve(async (req) => {
 
       if (lineupError) {
         console.error('[LineupScraper] Error storing lineups:', lineupError);
+      } else {
+        console.log('[LineupScraper] Successfully stored', lineupInserts.length, 'games');
       }
     }
 
