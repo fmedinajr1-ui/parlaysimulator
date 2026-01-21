@@ -8928,7 +8928,17 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      v_player_game_summary: {
+        Row: {
+          away_games: number | null
+          first_game_date: string | null
+          games_played: number | null
+          home_games: number | null
+          last_game_date: string | null
+          player_name: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       add_paid_scans: {

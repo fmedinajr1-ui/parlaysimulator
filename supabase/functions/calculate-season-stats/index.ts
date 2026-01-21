@@ -187,34 +187,18 @@ serve(async (req) => {
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    console.log('[SeasonStats] Starting with pagination + parallel processing...');
+    console.log('[SeasonStats] Starting with view-based player lookup...');
 
-    // Fetch ALL unique players using pagination
-    let allPlayerNames: string[] = [];
-    let offset = 0;
-    const pageSize = 1000;
-    let hasMore = true;
+    // Fetch all players with 3+ games using the database view
+    const { data: playerSummary, error: summaryError } = await supabase
+      .from('v_player_game_summary')
+      .select('player_name, games_played')
+      .gte('games_played', 3);
 
-    while (hasMore) {
-      const { data: batch, error } = await supabase
-        .from('nba_player_game_logs')
-        .select('player_name')
-        .order('player_name')
-        .range(offset, offset + pageSize - 1);
+    if (summaryError) throw summaryError;
 
-      if (error) throw error;
-
-      if (batch && batch.length > 0) {
-        allPlayerNames.push(...batch.map(p => p.player_name));
-        offset += pageSize;
-        hasMore = batch.length === pageSize;
-      } else {
-        hasMore = false;
-      }
-    }
-
-    const uniquePlayers = [...new Set(allPlayerNames)];
-    console.log(`[SeasonStats] Found ${uniquePlayers.length} unique players from ${allPlayerNames.length} game logs`);
+    const uniquePlayers = playerSummary?.map(p => p.player_name) || [];
+    console.log(`[SeasonStats] Found ${uniquePlayers.length} players with 3+ games via view`);
 
     let processed = 0;
     let updated = 0;
