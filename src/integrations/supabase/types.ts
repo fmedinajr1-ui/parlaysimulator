@@ -2143,6 +2143,69 @@ export type Database = {
         }
         Relationships: []
       }
+      game_environment: {
+        Row: {
+          away_implied_total: number | null
+          away_team: string
+          away_team_abbrev: string | null
+          blowout_probability: number | null
+          commence_time: string | null
+          created_at: string | null
+          game_date: string
+          game_id: string
+          home_implied_total: number | null
+          home_team: string
+          home_team_abbrev: string | null
+          id: string
+          moneyline_away: number | null
+          moneyline_home: number | null
+          pace_rating: string | null
+          updated_at: string | null
+          vegas_spread: number | null
+          vegas_total: number | null
+        }
+        Insert: {
+          away_implied_total?: number | null
+          away_team: string
+          away_team_abbrev?: string | null
+          blowout_probability?: number | null
+          commence_time?: string | null
+          created_at?: string | null
+          game_date: string
+          game_id: string
+          home_implied_total?: number | null
+          home_team: string
+          home_team_abbrev?: string | null
+          id?: string
+          moneyline_away?: number | null
+          moneyline_home?: number | null
+          pace_rating?: string | null
+          updated_at?: string | null
+          vegas_spread?: number | null
+          vegas_total?: number | null
+        }
+        Update: {
+          away_implied_total?: number | null
+          away_team?: string
+          away_team_abbrev?: string | null
+          blowout_probability?: number | null
+          commence_time?: string | null
+          created_at?: string | null
+          game_date?: string
+          game_id?: string
+          home_implied_total?: number | null
+          home_team?: string
+          home_team_abbrev?: string | null
+          id?: string
+          moneyline_away?: number | null
+          moneyline_home?: number | null
+          pace_rating?: string | null
+          updated_at?: string | null
+          vegas_spread?: number | null
+          vegas_total?: number | null
+        }
+        Relationships: []
+      }
       game_news_feed: {
         Row: {
           affected_props: Json | null
@@ -3617,6 +3680,75 @@ export type Database = {
           opponent?: string
           player_name?: string
           prop_type?: string
+        }
+        Relationships: []
+      }
+      matchup_intelligence: {
+        Row: {
+          block_reason: string | null
+          blowout_risk: number | null
+          confidence_adjustment: number | null
+          created_at: string | null
+          game_date: string
+          id: string
+          implied_team_total: number | null
+          is_blocked: boolean | null
+          line: number
+          matchup_score: number | null
+          opponent_defensive_rank: number | null
+          opponent_stat_allowed: number | null
+          opponent_team: string
+          player_name: string
+          prop_type: string
+          risk_flags: string[] | null
+          side: string
+          updated_at: string | null
+          vegas_spread: number | null
+          vegas_total: number | null
+        }
+        Insert: {
+          block_reason?: string | null
+          blowout_risk?: number | null
+          confidence_adjustment?: number | null
+          created_at?: string | null
+          game_date: string
+          id?: string
+          implied_team_total?: number | null
+          is_blocked?: boolean | null
+          line: number
+          matchup_score?: number | null
+          opponent_defensive_rank?: number | null
+          opponent_stat_allowed?: number | null
+          opponent_team: string
+          player_name: string
+          prop_type: string
+          risk_flags?: string[] | null
+          side: string
+          updated_at?: string | null
+          vegas_spread?: number | null
+          vegas_total?: number | null
+        }
+        Update: {
+          block_reason?: string | null
+          blowout_risk?: number | null
+          confidence_adjustment?: number | null
+          created_at?: string | null
+          game_date?: string
+          id?: string
+          implied_team_total?: number | null
+          is_blocked?: boolean | null
+          line?: number
+          matchup_score?: number | null
+          opponent_defensive_rank?: number | null
+          opponent_stat_allowed?: number | null
+          opponent_team?: string
+          player_name?: string
+          prop_type?: string
+          risk_flags?: string[] | null
+          side?: string
+          updated_at?: string | null
+          vegas_spread?: number | null
+          vegas_total?: number | null
         }
         Relationships: []
       }
@@ -7969,6 +8101,48 @@ export type Database = {
           sport?: string
           team_abbreviation?: string
           team_name?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      team_defensive_ratings: {
+        Row: {
+          created_at: string | null
+          defensive_rank: number | null
+          games_sample: number | null
+          id: string
+          position_group: string | null
+          season: string | null
+          stat_allowed_per_game: number | null
+          stat_type: string
+          team_abbrev: string | null
+          team_name: string
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          defensive_rank?: number | null
+          games_sample?: number | null
+          id?: string
+          position_group?: string | null
+          season?: string | null
+          stat_allowed_per_game?: number | null
+          stat_type: string
+          team_abbrev?: string | null
+          team_name: string
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          defensive_rank?: number | null
+          games_sample?: number | null
+          id?: string
+          position_group?: string | null
+          season?: string | null
+          stat_allowed_per_game?: number | null
+          stat_type?: string
+          team_abbrev?: string | null
+          team_name?: string
           updated_at?: string | null
         }
         Relationships: []
