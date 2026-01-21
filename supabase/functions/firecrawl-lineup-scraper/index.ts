@@ -7,9 +7,11 @@ const corsHeaders = {
 
 interface PlayerStatus {
   name: string;
+  team?: string;
   position: string;
   status: 'STARTING' | 'BENCH' | 'OUT' | 'GTD' | 'QUESTIONABLE' | 'DOUBTFUL' | 'PROBABLE';
   injuryNote?: string;
+  source?: string;
 }
 
 interface GameLineup {
@@ -24,6 +26,14 @@ interface GameLineup {
   injuries: PlayerStatus[];
 }
 
+interface GameInfo {
+  eventId: string;
+  homeTeam: string;
+  awayTeam: string;
+  status: string;
+  startTime: string;
+}
+
 // Normalize player name for matching
 function normalizeName(name: string): string {
   return name
@@ -32,6 +42,171 @@ function normalizeName(name: string): string {
     .replace(/\s+/g, ' ')
     .trim();
 }
+
+// Map ESPN status to our status format
+function mapESPNStatus(espnStatus: string): PlayerStatus['status'] {
+  const upper = espnStatus?.toUpperCase() || '';
+  if (upper.includes('OUT') || upper.includes('O)')) return 'OUT';
+  if (upper.includes('DOUBTFUL') || upper.includes('D)')) return 'DOUBTFUL';
+  if (upper.includes('QUESTIONABLE') || upper.includes('Q)')) return 'QUESTIONABLE';
+  if (upper.includes('DAY-TO-DAY') || upper.includes('DTD')) return 'GTD';
+  if (upper.includes('PROBABLE') || upper.includes('P)')) return 'PROBABLE';
+  return 'OUT'; // Default to OUT for safety
+}
+
+// Get impact level from status
+function getImpactLevel(status: PlayerStatus['status']): string {
+  switch (status) {
+    case 'OUT': return 'critical';
+    case 'DOUBTFUL': return 'high';
+    case 'GTD':
+    case 'QUESTIONABLE': return 'high';
+    case 'PROBABLE': return 'low';
+    default: return 'medium';
+  }
+}
+
+// ============= ESPN API FUNCTIONS =============
+
+// Fetch injury data from ESPN NBA Injuries endpoint
+async function fetchESPNInjuries(): Promise<PlayerStatus[]> {
+  console.log('[ESPN] Fetching injuries from ESPN API...');
+  
+  try {
+    const url = 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries';
+    const response = await fetch(url, {
+      headers: { 'Accept': 'application/json' }
+    });
+    
+    if (!response.ok) {
+      console.error('[ESPN] Injuries API error:', response.status);
+      return [];
+    }
+    
+    const data = await response.json();
+    const injuries: PlayerStatus[] = [];
+    
+    // ESPN returns injuries grouped by team
+    for (const teamEntry of data.teams || []) {
+      const teamName = teamEntry.team?.displayName || 'Unknown';
+      
+      for (const injury of teamEntry.injuries || []) {
+        const athlete = injury.athlete || {};
+        const playerName = athlete.displayName || '';
+        const position = athlete.position?.abbreviation || '';
+        const injuryType = injury.type?.text || '';
+        const status = injury.status || '';
+        const details = injury.details?.detail || '';
+        
+        if (playerName) {
+          injuries.push({
+            name: playerName,
+            team: teamName,
+            position,
+            status: mapESPNStatus(status),
+            injuryNote: `${injuryType}${details ? ' - ' + details : ''}`.trim() || status,
+            source: 'espn'
+          });
+        }
+      }
+    }
+    
+    console.log(`[ESPN] Found ${injuries.length} injuries from ESPN API`);
+    return injuries;
+    
+  } catch (error) {
+    console.error('[ESPN] Error fetching injuries:', error);
+    return [];
+  }
+}
+
+// Fetch today's games from ESPN scoreboard
+async function fetchTodaysGames(): Promise<GameInfo[]> {
+  console.log('[ESPN] Fetching today\'s games from scoreboard...');
+  
+  try {
+    const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
+    const url = `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates=${today}`;
+    
+    const response = await fetch(url, {
+      headers: { 'Accept': 'application/json' }
+    });
+    
+    if (!response.ok) {
+      console.error('[ESPN] Scoreboard API error:', response.status);
+      return [];
+    }
+    
+    const data = await response.json();
+    const games: GameInfo[] = [];
+    
+    for (const event of data.events || []) {
+      const competition = event.competitions?.[0];
+      if (!competition) continue;
+      
+      const homeTeam = competition.competitors?.find((c: any) => c.homeAway === 'home')?.team?.displayName || '';
+      const awayTeam = competition.competitors?.find((c: any) => c.homeAway === 'away')?.team?.displayName || '';
+      
+      games.push({
+        eventId: event.id,
+        homeTeam,
+        awayTeam,
+        status: event.status?.type?.name || '',
+        startTime: event.date || ''
+      });
+    }
+    
+    console.log(`[ESPN] Found ${games.length} games on today's slate`);
+    return games;
+    
+  } catch (error) {
+    console.error('[ESPN] Error fetching scoreboard:', error);
+    return [];
+  }
+}
+
+// Fetch game summary for inactive/DNP players (for games starting soon)
+async function fetchGameInactives(eventId: string): Promise<string[]> {
+  try {
+    const url = `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event=${eventId}`;
+    const response = await fetch(url, {
+      headers: { 'Accept': 'application/json' }
+    });
+    
+    if (!response.ok) return [];
+    
+    const data = await response.json();
+    const inactives: string[] = [];
+    
+    // Check boxscore for DNP/inactive players
+    for (const team of data.boxscore?.players || []) {
+      for (const category of team.statistics || []) {
+        for (const athlete of category.athletes || []) {
+          if (athlete.didNotPlay || athlete.reason) {
+            const name = athlete.athlete?.displayName;
+            if (name) inactives.push(name);
+          }
+        }
+      }
+    }
+    
+    // Also check gameInfo for injuries if available
+    for (const team of data.gameInfo?.venue?.injuries || []) {
+      for (const injury of team || []) {
+        const name = injury?.athlete?.displayName;
+        if (name) inactives.push(name);
+      }
+    }
+    
+    return [...new Set(inactives)]; // Dedupe
+    
+  } catch (error) {
+    console.error(`[ESPN] Error fetching game ${eventId} inactives:`, error);
+    return [];
+  }
+}
+
+// ============= ROTOWIRE FUNCTIONS =============
 
 // Parse injury status from text
 function parseInjuryStatus(text: string): { status: PlayerStatus['status']; note: string } {
@@ -56,193 +231,95 @@ function parseInjuryStatus(text: string): { status: PlayerStatus['status']; note
   return { status: 'STARTING', note: '' };
 }
 
-// NBA team names for validation
-const NBA_TEAMS = new Set([
-  'hawks', 'celtics', 'nets', 'hornets', 'bulls', 'cavaliers', 'mavericks', 'nuggets',
-  'pistons', 'warriors', 'rockets', 'pacers', 'clippers', 'lakers', 'grizzlies', 'heat',
-  'bucks', 'timberwolves', 'pelicans', 'knicks', 'thunder', 'magic', 'sixers', '76ers',
-  'suns', 'blazers', 'kings', 'spurs', 'raptors', 'jazz', 'wizards',
-  'atlanta', 'boston', 'brooklyn', 'charlotte', 'chicago', 'cleveland', 'dallas', 'denver',
-  'detroit', 'golden state', 'houston', 'indiana', 'la clippers', 'los angeles clippers',
-  'la lakers', 'los angeles lakers', 'memphis', 'miami', 'milwaukee', 'minnesota',
-  'new orleans', 'new york', 'oklahoma city', 'orlando', 'philadelphia', 'phoenix',
-  'portland', 'sacramento', 'san antonio', 'toronto', 'utah', 'washington'
-]);
-
-// Check if text looks like an NBA team name
-function isNbaTeam(text: string): boolean {
-  const lower = text.toLowerCase().trim();
-  for (const team of NBA_TEAMS) {
-    if (lower.includes(team)) return true;
-  }
-  return false;
+// Validate player name
+function isValidPlayerName(name: string): boolean {
+  const words = name.trim().split(/\s+/);
+  if (words.length < 2 || words.length > 4) return false;
+  if (/[<>\[\](){}|\\]|https?:/.test(name)) return false;
+  
+  const uiTerms = ['expected', 'lineup', 'announce', 'display', 'click', 'show', 'view', 'stats', 'build', 'bet', 'see', 'our', 'get', 'sign', 'log', 'add', 'vote', 'not'];
+  const lowerName = name.toLowerCase();
+  if (uiTerms.some(term => lowerName.includes(term))) return false;
+  
+  if (!words.every(w => /^[A-Z]/.test(w))) return false;
+  
+  return true;
 }
 
-// Parse team name from various formats
-function parseTeamName(text: string): string {
-  const teamMappings: Record<string, string> = {
-    'lakers': 'Los Angeles Lakers', 'lal': 'Los Angeles Lakers', 'la lakers': 'Los Angeles Lakers',
-    'celtics': 'Boston Celtics', 'bos': 'Boston Celtics',
-    'warriors': 'Golden State Warriors', 'gsw': 'Golden State Warriors', 'golden state': 'Golden State Warriors',
-    'nuggets': 'Denver Nuggets', 'den': 'Denver Nuggets',
-    'bucks': 'Milwaukee Bucks', 'mil': 'Milwaukee Bucks',
-    'suns': 'Phoenix Suns', 'phx': 'Phoenix Suns',
-    'heat': 'Miami Heat', 'mia': 'Miami Heat',
-    'nets': 'Brooklyn Nets', 'bkn': 'Brooklyn Nets',
-    'sixers': 'Philadelphia 76ers', '76ers': 'Philadelphia 76ers', 'phi': 'Philadelphia 76ers',
-    'knicks': 'New York Knicks', 'nyk': 'New York Knicks', 'new york': 'New York Knicks',
-    'bulls': 'Chicago Bulls', 'chi': 'Chicago Bulls',
-    'cavaliers': 'Cleveland Cavaliers', 'cavs': 'Cleveland Cavaliers', 'cle': 'Cleveland Cavaliers',
-    'hawks': 'Atlanta Hawks', 'atl': 'Atlanta Hawks',
-    'raptors': 'Toronto Raptors', 'tor': 'Toronto Raptors',
-    'hornets': 'Charlotte Hornets', 'cha': 'Charlotte Hornets',
-    'wizards': 'Washington Wizards', 'was': 'Washington Wizards',
-    'magic': 'Orlando Magic', 'orl': 'Orlando Magic',
-    'pacers': 'Indiana Pacers', 'ind': 'Indiana Pacers',
-    'pistons': 'Detroit Pistons', 'det': 'Detroit Pistons',
-    'clippers': 'Los Angeles Clippers', 'lac': 'Los Angeles Clippers', 'la clippers': 'Los Angeles Clippers',
-    'mavericks': 'Dallas Mavericks', 'mavs': 'Dallas Mavericks', 'dal': 'Dallas Mavericks',
-    'rockets': 'Houston Rockets', 'hou': 'Houston Rockets',
-    'grizzlies': 'Memphis Grizzlies', 'mem': 'Memphis Grizzlies',
-    'pelicans': 'New Orleans Pelicans', 'nop': 'New Orleans Pelicans', 'new orleans': 'New Orleans Pelicans',
-    'spurs': 'San Antonio Spurs', 'sas': 'San Antonio Spurs', 'san antonio': 'San Antonio Spurs',
-    'timberwolves': 'Minnesota Timberwolves', 'wolves': 'Minnesota Timberwolves', 'min': 'Minnesota Timberwolves',
-    'thunder': 'Oklahoma City Thunder', 'okc': 'Oklahoma City Thunder', 'oklahoma city': 'Oklahoma City Thunder',
-    'blazers': 'Portland Trail Blazers', 'trail blazers': 'Portland Trail Blazers', 'por': 'Portland Trail Blazers',
-    'jazz': 'Utah Jazz', 'uta': 'Utah Jazz',
-    'kings': 'Sacramento Kings', 'sac': 'Sacramento Kings',
-  };
+// NBA player surnames for validation
+const nbaPlayerSurnamePatterns = /\b(LeBron|Embiid|Leonard|Curry|Durant|Giannis|Jokic|Doncic|Tatum|Morant|Edwards|Davis|Butler|George|Harden|Lillard|Mitchell|Booker|Irving|Towns|Beal|Murray|Ball|Brown|Williams|Thomas|Johnson|Robinson|Jackson|White|Young|Green|Harris|Thompson|Allen|Walker|Fox|Ingram|Cunningham|Brunson|Haliburton|Sengun|Maxey|Garland|Mobley|Barnes|Banchero|Wembanyama|Holiday|Poole|Middleton|Lopez|Bridges|Suggs|Wagner|Smith|Alexander|Gilgeous|Randle|Quickley|Simons|Grant|Turner|Ayton|Portis|Vassell|McDaniels|Gobert|Reid|Clarkson|Keldon|Sochan|Sabonis|DeRozan|LaVine|Zion|Williamson|Antetokounmpo|Porzingis|Adebayo|Herro|Lowry|VanVleet|Siakam|Anunoby|Smart|Horford|Trae|Dejounte|Collins|Capela|Cade|Bey|Ivey|Duarte|Hield|Hachimura|Kuzma|Poeltl|Valanciunas|McCollum|Zubac|Powell|Norman|Dort|Shai|Giddey|Holmgren|Oladipo|Rozier|Hayward|LaMelo|Miles|PJ|Washington|Aldama|Bane|Brooks|Claxton|Cam|Draymond|Klay|Wiggins|Looney|Kuminga)\b/i;
 
-  const lower = text.toLowerCase().trim();
-  for (const [key, value] of Object.entries(teamMappings)) {
-    if (lower.includes(key)) {
-      return value;
-    }
-  }
-  return text.trim();
-}
-
-// Parse the markdown content from RotoWire - focus on extracting player status/injuries
-function parseLineupMarkdown(markdown: string): GameLineup[] {
-  const games: GameLineup[] = [];
+// Parse RotoWire markdown
+function parseRotoWireMarkdown(markdown: string): PlayerStatus[] {
+  console.log('[RotoWire] Parsing markdown, length:', markdown.length);
   
-  console.log('[LineupScraper] Markdown length:', markdown.length);
-  
-  // Track injuries/status found - we'll match them to players later
-  const playerStatuses: Array<{name: string; status: PlayerStatus['status']; note: string}> = [];
+  const playerStatuses: PlayerStatus[] = [];
   const seenPlayers = new Set<string>();
   
-  // List of known NBA player last names to help validate
-  const nbaPlayerSurnamePatterns = /\b(LeBron|Embiid|Leonard|Curry|Durant|Giannis|Jokic|Doncic|Tatum|Morant|Edwards|Davis|Butler|George|Harden|Lillard|Mitchell|Booker|Irving|Towns|Beal|Murray|Ball|Brown|Williams|Thomas|Johnson|Robinson|Jackson|White|Young|Green|Harris|Thompson|Allen|Walker|Fox|Ingram|Cunningham|Brunson|Haliburton|Sengun|Maxey|Garland|Mobley|Barnes|Banchero|Wembanyama|Holiday|Poole|Middleton|Lopez|Bridges|Suggs|Wagner|Smith|Alexander|Gilgeous|Randle|Quickley|Simons|Grant|Turner|Ayton|Portis|Vassell|McDaniels|Gobert|Reid|Clarkson|Keldon|Sochan)\b/i;
-  
-  // Parse markdown links like [Joel Embiid](url) or [K. Leonard](url) followed by status
-  const linkWithStatusPatterns = [
-    // [Full Name](url) Out/GTD/etc
+  // Parse markdown links with status
+  const linkPatterns = [
     /\[([A-Z][a-z]+(?:\s+[A-Z][a-z'-]+)+)\]\([^)]+\)\s*(?:[-–])?\s*(OUT|Out|GTD|Gtd|QUESTIONABLE|Questionable|DOUBTFUL|Doubtful|PROBABLE|Probable)/g,
-    // [K. Leonard](url "Full Name") Out - extract title
     /\[([A-Z]\.\s*[A-Z][a-z]+)\]\([^)]*"([^"]+)"[^)]*\)\s*(?:[-–])?\s*(OUT|Out|GTD|Gtd|QUESTIONABLE|Questionable|DOUBTFUL|Doubtful|PROBABLE|Probable)/g,
   ];
   
-  // Also look for plain text patterns
-  const plainTextPatterns = [
-    // "LeBron James - OUT (knee)"
+  // Plain text patterns
+  const plainPatterns = [
     /\b([A-Z][a-z]+\s+[A-Z][a-z'-]+)\s*[-–]\s*(OUT|GTD|QUESTIONABLE|DOUBTFUL)\s*(?:\([^)]+\))?/gi,
   ];
   
-  // Process markdown links first
-  for (const pattern of linkWithStatusPatterns) {
+  for (const pattern of linkPatterns) {
     let match;
     while ((match = pattern.exec(markdown)) !== null) {
-      // Use the title text if available (more complete name), otherwise use link text
       const playerName = match[2] && match[3] ? match[2] : match[1];
       const status = (match[2] && match[3] ? match[3] : match[2]).toUpperCase() as PlayerStatus['status'];
       
-      // Validate with NBA player names
-      if (nbaPlayerSurnamePatterns.test(playerName)) {
+      if (nbaPlayerSurnamePatterns.test(playerName) && isValidPlayerName(playerName)) {
         const normalizedName = playerName.toLowerCase().trim();
         if (!seenPlayers.has(normalizedName)) {
           seenPlayers.add(normalizedName);
           playerStatuses.push({
             name: playerName.trim(),
+            position: '',
             status,
-            note: match[0],
+            injuryNote: match[0],
+            source: 'rotowire'
           });
-          console.log('[LineupScraper] Found player from link:', playerName, status);
         }
       }
     }
   }
   
-  // Process plain text patterns
-  for (const pattern of plainTextPatterns) {
+  for (const pattern of plainPatterns) {
     let match;
     while ((match = pattern.exec(markdown)) !== null) {
       const playerName = match[1].trim();
       const status = match[2].toUpperCase() as PlayerStatus['status'];
       
-      // Validate with NBA player names and ensure it's not nav text
-      if (nbaPlayerSurnamePatterns.test(playerName) && 
-          !playerName.match(/^(Show|Hide|Display|View|Click|Add|Vote|Sign|Log|Get|See|Our|Not|If|you)/i)) {
+      if (nbaPlayerSurnamePatterns.test(playerName) && isValidPlayerName(playerName)) {
         const normalizedName = playerName.toLowerCase().trim();
         if (!seenPlayers.has(normalizedName)) {
           seenPlayers.add(normalizedName);
           playerStatuses.push({
             name: playerName,
+            position: '',
             status,
-            note: match[0],
+            injuryNote: match[0],
+            source: 'rotowire'
           });
-          console.log('[LineupScraper] Found player from text:', playerName, status);
         }
       }
     }
   }
   
-  // For now, we'll create a single "all games" entry with the injuries we found
-  if (playerStatuses.length > 0) {
-    games.push({
-      homeTeam: 'Multiple Games',
-      awayTeam: 'Today',
-      tipTime: undefined,
-      homeStarters: [],
-      awayStarters: [],
-      homeBench: [],
-      awayBench: [],
-      confirmed: false,
-      injuries: playerStatuses.map(ps => ({
-        name: ps.name,
-        position: '',
-        status: ps.status,
-        injuryNote: ps.note,
-      })),
-    });
-  }
-  
-  console.log('[LineupScraper] Found', playerStatuses.length, 'validated player statuses');
-  return games;
+  console.log('[RotoWire] Found', playerStatuses.length, 'validated player statuses');
+  return playerStatuses;
 }
 
-Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
-
+// Scrape RotoWire using Firecrawl
+async function scrapeRotoWire(apiKey: string): Promise<PlayerStatus[]> {
+  console.log('[RotoWire] Starting Firecrawl scrape...');
+  
   try {
-    const apiKey = Deno.env.get('FIRECRAWL_API_KEY');
-    if (!apiKey) {
-      console.error('FIRECRAWL_API_KEY not configured');
-      return new Response(
-        JSON.stringify({ success: false, error: 'Firecrawl connector not configured' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
-
-    console.log('[LineupScraper] Starting RotoWire scrape...');
-
-    // Scrape RotoWire NBA Lineups
     const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
       method: 'POST',
       headers: {
@@ -253,145 +330,208 @@ Deno.serve(async (req) => {
         url: 'https://www.rotowire.com/basketball/nba-lineups.php',
         formats: ['markdown'],
         onlyMainContent: true,
-        waitFor: 3000, // Wait for dynamic content
+        waitFor: 3000,
       }),
     });
 
     const data = await response.json();
 
     if (!response.ok || !data.success) {
-      console.error('[LineupScraper] Firecrawl error:', data);
-      return new Response(
-        JSON.stringify({ success: false, error: data.error || 'Failed to scrape lineups' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      console.error('[RotoWire] Firecrawl error:', data);
+      return [];
     }
 
     const markdown = data.data?.markdown || data.markdown || '';
-    console.log('[LineupScraper] Received markdown length:', markdown.length);
+    return parseRotoWireMarkdown(markdown);
+    
+  } catch (error) {
+    console.error('[RotoWire] Scrape error:', error);
+    return [];
+  }
+}
 
-    // Parse the lineup data
-    const rawGames = parseLineupMarkdown(markdown);
-    console.log('[LineupScraper] Parsed raw games:', rawGames.length);
+// ============= MERGE LOGIC =============
 
-    // Deduplicate games by home_team + away_team (keep the one with most starters)
-    const gameMap = new Map<string, GameLineup>();
-    for (const game of rawGames) {
-      const key = `${game.homeTeam}|${game.awayTeam}`;
-      const existing = gameMap.get(key);
-      if (!existing) {
-        gameMap.set(key, game);
-      } else {
-        // Keep the one with more starter data
-        const existingStarterCount = existing.homeStarters.length + existing.awayStarters.length;
-        const newStarterCount = game.homeStarters.length + game.awayStarters.length;
-        if (newStarterCount > existingStarterCount) {
-          gameMap.set(key, game);
-        }
-        // Merge injuries
-        const existingInjuryNames = new Set(existing.injuries.map(i => i.name.toLowerCase()));
-        for (const injury of game.injuries) {
-          if (!existingInjuryNames.has(injury.name.toLowerCase())) {
-            existing.injuries.push(injury);
-          }
+function mergeInjurySources(
+  espnInjuries: PlayerStatus[],
+  gameInactives: Map<string, { players: string[]; game: GameInfo }>,
+  rotoWireData: PlayerStatus[]
+): PlayerStatus[] {
+  const merged = new Map<string, PlayerStatus>();
+  
+  // Priority 1: Game-day inactives (most current, confirmed OUT)
+  for (const [eventId, { players, game }] of gameInactives) {
+    for (const playerName of players) {
+      const key = normalizeName(playerName);
+      merged.set(key, {
+        name: playerName,
+        team: `${game.awayTeam} @ ${game.homeTeam}`,
+        position: '',
+        status: 'OUT',
+        source: 'espn_gameday',
+        injuryNote: 'Inactive for tonight\'s game'
+      });
+    }
+  }
+  
+  // Priority 2: ESPN injuries (structured, reliable)
+  for (const injury of espnInjuries) {
+    const key = normalizeName(injury.name);
+    if (!merged.has(key)) {
+      merged.set(key, { ...injury, source: 'espn' });
+    }
+  }
+  
+  // Priority 3: RotoWire (confirms starters, catches last-minute changes)
+  for (const player of rotoWireData) {
+    const key = normalizeName(player.name);
+    const existing = merged.get(key);
+    
+    if (!existing) {
+      merged.set(key, { ...player, source: 'rotowire' });
+    } else if (player.status === 'OUT' && existing.status !== 'OUT') {
+      // RotoWire says OUT, upgrade severity
+      merged.set(key, { ...player, source: 'rotowire' });
+    }
+  }
+  
+  return Array.from(merged.values());
+}
+
+// ============= MAIN HANDLER =============
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  try {
+    const { includeRotoWire = true } = await req.json().catch(() => ({}));
+    
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabase = createClient(supabaseUrl, supabaseKey);
+    const firecrawlKey = Deno.env.get('FIRECRAWL_API_KEY');
+
+    const today = new Date().toISOString().split('T')[0];
+    const sourceCounts = { espn: 0, espn_gameday: 0, rotowire: 0 };
+
+    // STEP 1: Fetch ESPN injuries (always reliable, no API key needed)
+    console.log('[LineupScraper] Step 1: Fetching ESPN injuries...');
+    const espnInjuries = await fetchESPNInjuries();
+    sourceCounts.espn = espnInjuries.length;
+    
+    // STEP 2: Fetch today's games from ESPN scoreboard
+    console.log('[LineupScraper] Step 2: Fetching today\'s games...');
+    const todaysGames = await fetchTodaysGames();
+    
+    // STEP 3: Fetch game summaries for games starting soon (within 3 hours)
+    console.log('[LineupScraper] Step 3: Fetching game-day inactives...');
+    const gameInactives = new Map<string, { players: string[]; game: GameInfo }>();
+    
+    for (const game of todaysGames) {
+      const hoursUntilStart = (new Date(game.startTime).getTime() - Date.now()) / (1000 * 60 * 60);
+      // Check games starting within 3 hours or already started (up to 3 hours ago)
+      if (hoursUntilStart < 3 && hoursUntilStart > -3) {
+        const inactives = await fetchGameInactives(game.eventId);
+        if (inactives.length > 0) {
+          gameInactives.set(game.eventId, { players: inactives, game });
+          sourceCounts.espn_gameday += inactives.length;
         }
       }
     }
     
-    const games = Array.from(gameMap.values());
-    console.log('[LineupScraper] Deduplicated to', games.length, 'unique games');
-
-    const today = new Date().toISOString().split('T')[0];
+    // STEP 4: (Optional) Scrape RotoWire for additional data
+    let rotoWireData: PlayerStatus[] = [];
+    if (includeRotoWire && firecrawlKey) {
+      console.log('[LineupScraper] Step 4: Scraping RotoWire...');
+      rotoWireData = await scrapeRotoWire(firecrawlKey);
+      sourceCounts.rotowire = rotoWireData.length;
+    } else if (!firecrawlKey) {
+      console.log('[LineupScraper] Step 4: Skipping RotoWire (no Firecrawl key)');
+    }
     
-    // Store lineups in database
-    const lineupInserts = games.map(game => ({
+    // STEP 5: Merge all sources
+    console.log('[LineupScraper] Step 5: Merging data sources...');
+    const mergedAlerts = mergeInjurySources(espnInjuries, gameInactives, rotoWireData);
+    console.log(`[LineupScraper] Merged to ${mergedAlerts.length} unique player alerts`);
+    
+    // STEP 6: Store in database
+    // Delete old alerts for today first
+    await supabase
+      .from('lineup_alerts')
+      .delete()
+      .eq('game_date', today);
+    
+    const alertInserts = mergedAlerts.map(player => ({
+      player_name: player.name,
+      normalized_name: normalizeName(player.name),
+      team: player.team || 'Unknown',
+      alert_type: player.status,
+      details: `${player.name} is ${player.status}`,
+      injury_note: player.injuryNote || '',
+      impact_level: getImpactLevel(player.status),
+      game_date: today,
+      source: player.source || 'unknown'
+    }));
+    
+    if (alertInserts.length > 0) {
+      const { error: alertError } = await supabase
+        .from('lineup_alerts')
+        .insert(alertInserts);
+      
+      if (alertError) {
+        console.error('[LineupScraper] Error storing alerts:', alertError);
+      } else {
+        console.log('[LineupScraper] Successfully stored', alertInserts.length, 'alerts');
+      }
+    }
+    
+    // Also store game lineup data
+    const gameInserts = todaysGames.map(game => ({
       game_date: today,
       home_team: game.homeTeam,
       away_team: game.awayTeam,
-      home_starters: game.homeStarters,
-      away_starters: game.awayStarters,
-      home_bench: game.homeBench,
-      away_bench: game.awayBench,
-      injuries: game.injuries,
-      confirmed: game.confirmed,
-      source: 'rotowire',
+      home_starters: [],
+      away_starters: [],
+      home_bench: [],
+      away_bench: [],
+      injuries: mergedAlerts.filter(a => 
+        a.team?.includes(game.homeTeam) || a.team?.includes(game.awayTeam)
+      ),
+      confirmed: game.status === 'STATUS_IN_PROGRESS' || game.status === 'STATUS_FINAL',
+      source: 'espn',
       scraped_at: new Date().toISOString(),
     }));
-
-    if (lineupInserts.length > 0) {
+    
+    if (gameInserts.length > 0) {
       const { error: lineupError } = await supabase
         .from('starting_lineups')
-        .upsert(lineupInserts, { 
+        .upsert(gameInserts, { 
           onConflict: 'game_date,home_team,away_team',
           ignoreDuplicates: false 
         });
-
+      
       if (lineupError) {
         console.error('[LineupScraper] Error storing lineups:', lineupError);
-      } else {
-        console.log('[LineupScraper] Successfully stored', lineupInserts.length, 'games');
       }
     }
 
-    // Store injury alerts
-    const alerts: Array<{
-      player_name: string;
-      normalized_name: string;
-      team: string;
-      alert_type: string;
-      details: string;
-      injury_note: string;
-      impact_level: string;
-      game_date: string;
-    }> = [];
-
-    for (const game of games) {
-      for (const player of game.injuries) {
-        let impactLevel = 'medium';
-        if (player.status === 'OUT') impactLevel = 'critical';
-        else if (player.status === 'DOUBTFUL') impactLevel = 'high';
-        else if (player.status === 'GTD' || player.status === 'QUESTIONABLE') impactLevel = 'high';
-        else if (player.status === 'PROBABLE') impactLevel = 'low';
-
-        alerts.push({
-          player_name: player.name,
-          normalized_name: normalizeName(player.name),
-          team: game.homeTeam, // Will be corrected by matching
-          alert_type: player.status,
-          details: `${player.name} is ${player.status} for ${game.awayTeam} @ ${game.homeTeam}`,
-          injury_note: player.injuryNote || '',
-          impact_level: impactLevel,
-          game_date: today,
-        });
-      }
-    }
-
-    if (alerts.length > 0) {
-      // Delete old alerts for today first
-      await supabase
-        .from('lineup_alerts')
-        .delete()
-        .eq('game_date', today);
-
-      const { error: alertError } = await supabase
-        .from('lineup_alerts')
-        .insert(alerts);
-
-      if (alertError) {
-        console.error('[LineupScraper] Error storing alerts:', alertError);
-      }
-    }
-
-    console.log('[LineupScraper] Stored', lineupInserts.length, 'games and', alerts.length, 'alerts');
+    console.log('[LineupScraper] Complete!', {
+      games: todaysGames.length,
+      alerts: mergedAlerts.length,
+      sources: sourceCounts
+    });
 
     return new Response(
       JSON.stringify({
         success: true,
-        games: games.length,
-        alerts: alerts.length,
+        games: todaysGames.length,
+        alerts: mergedAlerts.length,
+        sources: sourceCounts,
         data: {
-          games,
-          alerts,
+          games: todaysGames,
+          alerts: mergedAlerts,
           scrapedAt: new Date().toISOString(),
         },
       }),

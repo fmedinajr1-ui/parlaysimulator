@@ -15,7 +15,9 @@ import {
   Clock, 
   XCircle,
   Activity,
-  User
+  User,
+  Database,
+  Globe
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { LineupAlert } from '@/hooks/useLineupCheck';
@@ -26,6 +28,7 @@ interface LineupCheckSheetProps {
   onOpenChange: (open: boolean) => void;
   alerts: LineupAlert[];
   lastChecked: Date | null;
+  sources?: { espn: number; espn_gameday: number; rotowire: number };
 }
 
 const RECOMMENDATION_CONFIG: Record<string, {
@@ -60,6 +63,26 @@ const RECOMMENDATION_CONFIG: Record<string, {
   },
 };
 
+// Source badge component
+function SourceBadge({ source }: { source?: string }) {
+  if (!source) return null;
+  
+  const config = {
+    espn: { icon: Globe, label: 'ESPN', className: 'bg-blue-500/20 text-blue-400' },
+    espn_gameday: { icon: Database, label: 'Game-Day', className: 'bg-green-500/20 text-green-400' },
+    rotowire: { icon: Activity, label: 'RotoWire', className: 'bg-purple-500/20 text-purple-400' },
+  }[source] || { icon: Database, label: source, className: 'bg-muted text-muted-foreground' };
+  
+  const Icon = config.icon;
+  
+  return (
+    <Badge variant="outline" className={cn('text-[10px] gap-1', config.className)}>
+      <Icon className="h-2.5 w-2.5" />
+      {config.label}
+    </Badge>
+  );
+}
+
 function PlayerAlertRow({ alert }: { alert: LineupAlert }) {
   const recConfig = RECOMMENDATION_CONFIG[alert.recommendation] || RECOMMENDATION_CONFIG.CAUTION;
   const RecIcon = recConfig.icon;
@@ -91,7 +114,7 @@ function PlayerAlertRow({ alert }: { alert: LineupAlert }) {
         </div>
       )}
 
-      <div className="flex items-center gap-2 text-xs">
+      <div className="flex items-center gap-2 text-xs flex-wrap">
         <Badge 
           variant="outline" 
           className={cn(
@@ -110,6 +133,7 @@ function PlayerAlertRow({ alert }: { alert: LineupAlert }) {
             STARTER
           </Badge>
         )}
+        <SourceBadge source={(alert as any).source} />
       </div>
     </div>
   );
@@ -119,11 +143,14 @@ export function LineupCheckSheet({
   open, 
   onOpenChange, 
   alerts,
-  lastChecked 
+  lastChecked,
+  sources
 }: LineupCheckSheetProps) {
   const criticalAlerts = alerts.filter(a => a.riskLevel === 'critical');
   const highAlerts = alerts.filter(a => a.riskLevel === 'high');
   const otherAlerts = alerts.filter(a => !['critical', 'high'].includes(a.riskLevel));
+
+  const totalSources = sources ? sources.espn + sources.espn_gameday + sources.rotowire : 0;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -139,6 +166,26 @@ export function LineupCheckSheet({
               : 'Check player availability before placing bets'
             }
           </SheetDescription>
+          {sources && totalSources > 0 && (
+            <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
+              <span>Sources:</span>
+              {sources.espn > 0 && (
+                <Badge variant="outline" className="text-[10px] bg-blue-500/10 text-blue-400">
+                  ESPN: {sources.espn}
+                </Badge>
+              )}
+              {sources.espn_gameday > 0 && (
+                <Badge variant="outline" className="text-[10px] bg-green-500/10 text-green-400">
+                  Game-Day: {sources.espn_gameday}
+                </Badge>
+              )}
+              {sources.rotowire > 0 && (
+                <Badge variant="outline" className="text-[10px] bg-purple-500/10 text-purple-400">
+                  RotoWire: {sources.rotowire}
+                </Badge>
+              )}
+            </div>
+          )}
         </SheetHeader>
 
         <ScrollArea className="h-[calc(100vh-140px)] mt-4 pr-4">

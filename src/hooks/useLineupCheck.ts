@@ -42,6 +42,7 @@ export function useLineupCheck() {
   const [alerts, setAlerts] = useState<LineupAlert[]>([]);
   const [summary, setSummary] = useState<LineupCheckSummary | null>(null);
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
+  const [sources, setSources] = useState<{ espn: number; espn_gameday: number; rotowire: number } | null>(null);
 
   // Scrape fresh lineup data
   const scrapeLineups = useCallback(async () => {
@@ -56,7 +57,18 @@ export function useLineupCheck() {
       }
 
       if (data?.success) {
-        toast.success(`Fetched ${data.games} games, ${data.alerts} alerts`);
+        // Track sources
+        if (data.sources) {
+          setSources(data.sources);
+        }
+        
+        const sourceInfo = data.sources 
+          ? `ESPN: ${data.sources.espn}, Game-Day: ${data.sources.espn_gameday}, RotoWire: ${data.sources.rotowire}`
+          : '';
+        
+        toast.success(`Fetched ${data.games} games, ${data.alerts} alerts`, {
+          description: sourceInfo || undefined
+        });
         return true;
       } else {
         toast.error(data?.error || 'Failed to scrape lineups');
@@ -145,6 +157,7 @@ export function useLineupCheck() {
     setAlerts([]);
     setSummary(null);
     setLastChecked(null);
+    setSources(null);
   }, []);
 
   // Get alert for specific player
@@ -165,6 +178,7 @@ export function useLineupCheck() {
     alerts,
     summary,
     lastChecked,
+    sources,
     hasRisks: summary?.hasRisks || false,
     allClear: summary?.allClear || false,
     
