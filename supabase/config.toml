@@ -311,3 +311,12 @@ verify_jwt = false
 
 [functions.lineup-cross-reference]
 verify_jwt = false
+
+[functions.matchup-intelligence-analyzer]
+verify_jwt = false
+
+[functions.fetch-team-defense-ratings]
+verify_jwt = false
+
+[functions.fetch-vegas-lines]
+verify_jwt = false
