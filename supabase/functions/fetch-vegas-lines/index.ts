@@ -79,6 +79,149 @@ function getTeamAbbrev(teamName: string): string {
   return TEAM_NAME_MAP[teamName] || teamName.substring(0, 3).toUpperCase();
 }
 
+// Game Script Types
+type GameScript = 'COMPETITIVE' | 'SOFT_BLOWOUT' | 'HARD_BLOWOUT' | 'SHOOTOUT' | 'GRIND_OUT';
+
+interface GameScriptPrediction {
+  script: GameScript;
+  confidence: number;
+  shootoutFactor: number;  // 0-1, higher = more points expected
+  grindFactor: number;     // 0-1, higher = slower pace expected
+  garbageTimeRisk: number; // 0-1, higher = more risk of starters benched
+  propImplications: {
+    pointsOverBoost: number;      // -5 to +5
+    pointsUnderBoost: number;
+    reboundsOverBoost: number;
+    reboundsUnderBoost: number;
+    assistsOverBoost: number;
+    assistsUnderBoost: number;
+  };
+}
+
+function calculateGameScript(spread: number | null, total: number | null): GameScriptPrediction {
+  const absSpread = Math.abs(spread || 0);
+  const vegasTotal = total || 225;
+  
+  // Default prediction
+  let script: GameScript = 'COMPETITIVE';
+  let confidence = 0.5;
+  let shootoutFactor = 0.5;
+  let grindFactor = 0.5;
+  let garbageTimeRisk = 0.15;
+  
+  // Determine game script based on spread and total
+  if (absSpread >= 12) {
+    // Hard blowout expected
+    script = 'HARD_BLOWOUT';
+    confidence = 0.7;
+    garbageTimeRisk = 0.75;
+    shootoutFactor = 0.3;
+    grindFactor = 0.4;
+  } else if (absSpread >= 8) {
+    // Soft blowout expected
+    script = 'SOFT_BLOWOUT';
+    confidence = 0.6;
+    garbageTimeRisk = 0.45;
+    shootoutFactor = 0.4;
+    grindFactor = 0.35;
+  } else if (vegasTotal >= 235 && absSpread < 6) {
+    // Shootout expected
+    script = 'SHOOTOUT';
+    confidence = 0.65;
+    garbageTimeRisk = 0.1;
+    shootoutFactor = 0.85;
+    grindFactor = 0.1;
+  } else if (vegasTotal < 215) {
+    // Grind-out expected
+    script = 'GRIND_OUT';
+    confidence = 0.6;
+    garbageTimeRisk = 0.1;
+    shootoutFactor = 0.15;
+    grindFactor = 0.85;
+  } else {
+    // Competitive game
+    script = 'COMPETITIVE';
+    confidence = 0.5;
+    garbageTimeRisk = 0.15;
+    shootoutFactor = (vegasTotal - 210) / 50; // 210-260 range mapped to 0-1
+    grindFactor = 1 - shootoutFactor;
+  }
+  
+  // Calculate prop implications based on game script
+  const propImplications = calculatePropImplications(script, shootoutFactor, grindFactor, garbageTimeRisk);
+  
+  return {
+    script,
+    confidence,
+    shootoutFactor,
+    grindFactor,
+    garbageTimeRisk,
+    propImplications,
+  };
+}
+
+function calculatePropImplications(
+  script: GameScript,
+  shootoutFactor: number,
+  grindFactor: number,
+  garbageTimeRisk: number
+): GameScriptPrediction['propImplications'] {
+  // Base implications for each script type
+  switch (script) {
+    case 'SHOOTOUT':
+      return {
+        pointsOverBoost: 3,
+        pointsUnderBoost: -3,
+        reboundsOverBoost: 1,       // More shots = more rebounds
+        reboundsUnderBoost: -1,
+        assistsOverBoost: 2,        // More possessions = more assists
+        assistsUnderBoost: -2,
+      };
+    
+    case 'GRIND_OUT':
+      return {
+        pointsOverBoost: -3,
+        pointsUnderBoost: 2,
+        reboundsOverBoost: 2,       // Slower pace = more rebounding opportunities
+        reboundsUnderBoost: -1,
+        assistsOverBoost: -2,       // Fewer possessions = fewer assists
+        assistsUnderBoost: 1,
+      };
+    
+    case 'HARD_BLOWOUT':
+      return {
+        pointsOverBoost: -4,        // Starters sit
+        pointsUnderBoost: 3,
+        reboundsOverBoost: -2,
+        reboundsUnderBoost: 2,
+        assistsOverBoost: -3,
+        assistsUnderBoost: 2,
+      };
+    
+    case 'SOFT_BLOWOUT':
+      return {
+        pointsOverBoost: -2,
+        pointsUnderBoost: 1,
+        reboundsOverBoost: -1,
+        reboundsUnderBoost: 1,
+        assistsOverBoost: -1,
+        assistsUnderBoost: 0,
+      };
+    
+    case 'COMPETITIVE':
+    default:
+      // Neutral - use shootout/grind factors
+      return {
+        pointsOverBoost: Math.round((shootoutFactor - 0.5) * 4),
+        pointsUnderBoost: Math.round((grindFactor - 0.5) * 2),
+        reboundsOverBoost: Math.round((grindFactor - 0.5) * 2),
+        reboundsUnderBoost: Math.round((shootoutFactor - 0.5) * 2),
+        assistsOverBoost: Math.round((shootoutFactor - 0.5) * 2),
+        assistsUnderBoost: Math.round((grindFactor - 0.5) * 2),
+      };
+  }
+}
+
 function calculateBlowoutProbability(spread: number): number {
   const absSpread = Math.abs(spread);
   if (absSpread >= 12) return 0.75;
@@ -110,7 +253,7 @@ serve(async (req) => {
     const today = getEasternDate();
     
     if (action === 'refresh' || action === 'fetch') {
-      console.log('[Vegas Lines] Fetching game lines...');
+      console.log('[Vegas Lines] Fetching game lines with game script prediction...');
       
       if (!oddsApiKey) {
         // Fallback: Try to get from unified_props table
@@ -146,6 +289,8 @@ serve(async (req) => {
         // Create placeholder game environments (without Vegas data)
         const records = [];
         for (const [gameId, game] of gamesMap) {
+          const gameScript = calculateGameScript(null, null);
+          
           records.push({
             game_id: gameId,
             game_date: today,
@@ -159,6 +304,11 @@ serve(async (req) => {
             away_implied_total: null,
             pace_rating: 'MEDIUM',
             blowout_probability: 0.15,
+            game_script: gameScript.script,
+            game_script_confidence: gameScript.confidence,
+            shootout_factor: gameScript.shootoutFactor,
+            grind_factor: gameScript.grindFactor,
+            garbage_time_risk: gameScript.garbageTimeRisk,
             commence_time: game.commence,
             updated_at: new Date().toISOString(),
           });
@@ -237,6 +387,9 @@ serve(async (req) => {
           awayImplied = (vegasTotal + vegasSpread) / 2;
         }
         
+        // Calculate game script prediction
+        const gameScript = calculateGameScript(vegasSpread, vegasTotal);
+        
         records.push({
           game_id: game.id,
           game_date: today,
@@ -250,6 +403,11 @@ serve(async (req) => {
           away_implied_total: awayImplied,
           pace_rating: vegasTotal ? calculatePaceRating(vegasTotal) : 'MEDIUM',
           blowout_probability: vegasSpread ? calculateBlowoutProbability(vegasSpread) : 0.15,
+          game_script: gameScript.script,
+          game_script_confidence: gameScript.confidence,
+          shootout_factor: gameScript.shootoutFactor,
+          grind_factor: gameScript.grindFactor,
+          garbage_time_risk: gameScript.garbageTimeRisk,
           moneyline_home: homeMoneyline,
           moneyline_away: awayMoneyline,
           commence_time: game.commence_time,
@@ -268,7 +426,7 @@ serve(async (req) => {
         }
       }
       
-      console.log(`[Vegas Lines] Saved ${records.length} game environments`);
+      console.log(`[Vegas Lines] Saved ${records.length} game environments with game scripts`);
       
       return new Response(JSON.stringify({
         success: true,
@@ -278,6 +436,11 @@ serve(async (req) => {
           matchup: `${r.away_team_abbrev} @ ${r.home_team_abbrev}`,
           total: r.vegas_total,
           spread: r.vegas_spread,
+          gameScript: r.game_script,
+          scriptConfidence: r.game_script_confidence,
+          shootoutFactor: r.shootout_factor,
+          grindFactor: r.grind_factor,
+          garbageTimeRisk: r.garbage_time_risk,
           blowoutRisk: r.blowout_probability,
           pace: r.pace_rating,
         })),
@@ -327,9 +490,22 @@ serve(async (req) => {
       });
     }
     
+    // Action: get_script_implications - Get prop implications for a game script
+    if (action === 'get_script_implications') {
+      const { spread, total } = await req.json();
+      const gameScript = calculateGameScript(spread, total);
+      
+      return new Response(JSON.stringify({
+        success: true,
+        gameScript,
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    
     return new Response(JSON.stringify({ 
       success: true,
-      message: 'Use action: refresh, get_today, or get_game' 
+      message: 'Use action: refresh, get_today, get_game, or get_script_implications' 
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
