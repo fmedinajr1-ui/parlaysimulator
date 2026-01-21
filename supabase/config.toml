@@ -323,3 +323,6 @@ verify_jwt = false
 
 [functions.sync-archetypes]
 verify_jwt = false
+
+[functions.auto-classify-archetypes]
+verify_jwt = false
