@@ -12,20 +12,53 @@ const corsHeaders = {
 
 const MINUTES_THRESHOLD = 24;
 
-// ARCHETYPE-PROP ALIGNMENT MATRIX (Dream Team Core Rule)
-const ARCHETYPE_PROP_ALLOWED: Record<string, { primary: string[], secondary: string[] }> = {
-  'ELITE_REBOUNDER': { primary: ['rebounds'], secondary: ['points', 'blocks'] },
-  'GLASS_CLEANER': { primary: ['rebounds'], secondary: ['blocks'] },
-  'PURE_SHOOTER': { primary: ['points', 'threes'], secondary: ['assists'] },
-  'PLAYMAKER': { primary: ['assists'], secondary: ['points', 'rebounds'] },
-  'COMBO_GUARD': { primary: ['points', 'assists'], secondary: ['rebounds'] },
-  'TWO_WAY_WING': { primary: ['points', 'rebounds'], secondary: ['assists', 'steals'] },
-  'STRETCH_BIG': { primary: ['points', 'rebounds', 'threes'], secondary: ['blocks'] },
-  'RIM_PROTECTOR': { primary: ['blocks', 'rebounds'], secondary: ['points'] },
-  'SCORING_WING': { primary: ['points'], secondary: ['rebounds', 'threes'] },
-  'SCORING_GUARD': { primary: ['points', 'assists'], secondary: ['threes'] },
-  'ROLE_PLAYER': { primary: [], secondary: [] } // BLOCKED from parlays
+// STRICT ARCHETYPE-PROP BLOCKING (v3.0 Dream Team Rule)
+// If archetype is in this map and prop is in blocked list → ALWAYS BLOCK
+const ARCHETYPE_PROP_BLOCKED: Record<string, string[]> = {
+  'ELITE_REBOUNDER': ['points', 'threes', 'assists'],  // Only rebounds/blocks allowed
+  'GLASS_CLEANER': ['points', 'threes', 'assists'],    // Only rebounds allowed
+  'PURE_SHOOTER': ['rebounds', 'assists', 'blocks'],   // Only points/threes allowed
+  'PLAYMAKER': ['rebounds', 'blocks', 'threes'],       // Only assists/points allowed
+  'RIM_PROTECTOR': ['points', 'threes', 'assists'],    // Only blocks/rebounds allowed
+  'ROLE_PLAYER': ['points', 'threes', 'rebounds', 'assists', 'blocks', 'steals'] // ALL blocked
 };
+
+// Check if archetype-prop combination is BLOCKED (strict enforcement)
+function isArchetypePropBlocked(playerName: string, propType: string): boolean {
+  const archetype = getPlayerArchetype(playerName);
+  if (!archetype || archetype === 'UNKNOWN') return false;
+  
+  const blocked = ARCHETYPE_PROP_BLOCKED[archetype];
+  if (!blocked) return false;
+  
+  const propLower = propType?.toLowerCase() || '';
+  const propCategory = propLower.includes('rebound') ? 'rebounds' :
+                       propLower.includes('assist') ? 'assists' :
+                       propLower.includes('block') ? 'blocks' :
+                       propLower.includes('three') || propLower.includes('3pt') ? 'threes' : 'points';
+  
+  return blocked.includes(propCategory);
+}
+
+// Category recommendations map (loaded from category_sweet_spots)
+let categoryRecommendations: Map<string, { side: string; hit_rate: number }> = new Map();
+
+async function loadCategoryRecommendations(supabase: any): Promise<void> {
+  const { data } = await supabase
+    .from('category_sweet_spots')
+    .select('player_name, prop_type, recommended_side, l10_hit_rate')
+    .gte('l10_hit_rate', 0.7); // Only use high-confidence categories (70%+)
+  
+  categoryRecommendations.clear();
+  for (const c of (data || [])) {
+    const key = `${c.player_name?.toLowerCase()}_${normalizePropType(c.prop_type)}`;
+    categoryRecommendations.set(key, { 
+      side: c.recommended_side?.toLowerCase() || 'over', 
+      hit_rate: c.l10_hit_rate 
+    });
+  }
+  console.log(`[Sharp Builder] Loaded ${categoryRecommendations.size} category recommendations (70%+ L10)`);
+}
 
 // Runtime archetype data (populated from database)
 let archetypeMap: Record<string, { archetype: string }> = {};
@@ -101,20 +134,11 @@ function isNeverFadePRA(playerName: string): boolean {
   return NEVER_FADE_PRA_ARCHETYPES.includes(archetype);
 }
 
-function isArchetypePropAligned(archetype: string, propType: string): { aligned: boolean; isPrimary: boolean } {
-  const rules = ARCHETYPE_PROP_ALLOWED[archetype];
-  if (!rules) return { aligned: false, isPrimary: false };
-  
-  const propLower = propType?.toLowerCase() || '';
-  const propCategory = propLower.includes('rebound') ? 'rebounds' :
-                       propLower.includes('assist') ? 'assists' :
-                       propLower.includes('block') ? 'blocks' :
-                       propLower.includes('steal') ? 'steals' :
-                       propLower.includes('three') || propLower.includes('3pt') ? 'threes' : 'points';
-  
-  if (rules.primary.includes(propCategory)) return { aligned: true, isPrimary: true };
-  if (rules.secondary.includes(propCategory)) return { aligned: true, isPrimary: false };
-  return { aligned: false, isPrimary: false };
+// Check if archetype-prop is aligned (inverse of blocked)
+function isArchetypePropAligned(playerName: string, propType: string): { aligned: boolean; isPrimary: boolean } {
+  const isBlocked = isArchetypePropBlocked(playerName, propType);
+  // If not blocked, it's aligned. Consider it primary if it's a core stat for that archetype.
+  return { aligned: !isBlocked, isPrimary: !isBlocked };
 }
 
 // Role locks by stat type - BIG allowed for rebounds, WING for all core stats
@@ -541,6 +565,7 @@ async function buildSharpParlays(supabase: any): Promise<any> {
   // Load runtime data
   await loadArchetypes(supabase);
   await loadPlayerTeams(supabase);
+  await loadCategoryRecommendations(supabase);
   
   // Fetch today's props from unified_props or nba_risk_engine_picks
   const today = getEasternDate();
@@ -564,6 +589,10 @@ async function buildSharpParlays(supabase: any): Promise<any> {
   );
   
   console.log(`[Sharp Builder] Loaded ${blockedSet.size} blocked picks from matchup intelligence`);
+  
+  // Stats for v3.0 rule tracking
+  let archetypeBlockedCount = 0;
+  let categorySideBlockedCount = 0;
   
   const { data: allProps, error: propsError } = await supabase
     .from('nba_risk_engine_picks')
@@ -642,6 +671,30 @@ async function buildSharpParlays(supabase: any): Promise<any> {
     const logs = playerGameLogs[normalizedName] || [];
     const usage = playerUsage[normalizedName] || {};
     
+    // v3.0 RULE: STRICT ARCHETYPE-PROP BLOCKING (before any other rules)
+    if (isArchetypePropBlocked(prop.player_name, prop.prop_type)) {
+      const archetype = getPlayerArchetype(prop.player_name);
+      console.log(`[Sharp Builder] ARCHETYPE BLOCKED: ${prop.player_name} (${archetype}) for ${prop.prop_type}`);
+      archetypeBlockedCount++;
+      continue;
+    }
+    
+    // v3.0 RULE: CATEGORY-SIDE ENFORCEMENT
+    const propLower = prop.prop_type?.toLowerCase() || '';
+    const propCategory = propLower.includes('rebound') ? 'rebounds' :
+                         propLower.includes('assist') ? 'assists' :
+                         propLower.includes('block') ? 'blocks' :
+                         propLower.includes('three') || propLower.includes('3pt') ? 'threes' : 'points';
+    const categoryKey = `${normalizedName}_${propCategory}`;
+    const categoryRec = categoryRecommendations.get(categoryKey);
+    const propSide = (prop.side || 'over').toLowerCase();
+    
+    if (categoryRec && categoryRec.side !== propSide) {
+      console.log(`[Sharp Builder] CATEGORY CONFLICT: ${prop.player_name} ${prop.prop_type} - category says ${categoryRec.side.toUpperCase()} (${Math.round(categoryRec.hit_rate * 100)}% L10), pick says ${propSide.toUpperCase()}`);
+      categorySideBlockedCount++;
+      continue;
+    }
+    
     // Get stat values from game logs based on prop type
     const statValues = extractStatValues(logs, prop.prop_type);
     
@@ -654,7 +707,7 @@ async function buildSharpParlays(supabase: any): Promise<any> {
     }
     
     // RULE 2: Median check - NOW SIDE-AWARE (CRITICAL FIX)
-    const propSide = prop.side || 'over';
+    // propSide already defined above for category check
     const medianResult = passesMedianRule(statValues, prop.line, 'SAFE', propSide);
     if (!medianResult.passes) {
       // Try again with UPSIDE threshold
@@ -706,7 +759,7 @@ async function buildSharpParlays(supabase: any): Promise<any> {
     }
     
     // RULE 5.6: ELITE REBOUNDER CHECK (NEVER FADE REBOUNDS UNDER)
-    const propLower = prop.prop_type?.toLowerCase() || '';
+    // propLower already defined above for category check
     const isRebounds = propLower.includes('rebound');
     if (isUnderBet && isRebounds) {
       const rebounderTier = isEliteRebounder(prop.player_name);
