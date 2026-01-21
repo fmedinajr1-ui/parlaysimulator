@@ -165,6 +165,9 @@ function findHedgePairs(picks: QualifiedPick[]): HedgePair[] {
       const p1 = picks[i];
       const p2 = picks[j];
       
+      // CRITICAL: Skip if same player
+      if (p1.player_name === p2.player_name) continue;
+      
       // Same game opposite side = natural hedge (best)
       if (p1.event_id === p2.event_id && p1.side.toLowerCase() !== p2.side.toLowerCase()) {
         pairs.push({
@@ -221,6 +224,13 @@ function calculateCombinedOdds(legs: HedgeParlayLeg[]): number {
   }
 }
 
+// Normalize prop types for H2H matching
+function normalizePropType(propType: string): string {
+  return propType.toLowerCase()
+    .replace('player_', '')
+    .replace('_', '');
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -240,7 +250,7 @@ serve(async (req) => {
       .select('*')
       .eq('game_date', today)
       .gte('confidence_score', 5.5)
-      .eq('outcome', 'pending')  // Only unsettled picks
+      .eq('outcome', 'pending')
       .order('confidence_score', { ascending: false });
 
     if (riskError) {
@@ -261,8 +271,48 @@ serve(async (req) => {
 
     console.log(`[HedgeParlayBuilder] Found ${riskPicks.length} risk picks to analyze`);
 
-    // 2. Fetch matchup history for all players
+    // 2. Fetch player team data from bdl_player_cache
     const playerNames = [...new Set(riskPicks.map(p => p.player_name))];
+    const { data: playerCache, error: cacheError } = await supabase
+      .from('bdl_player_cache')
+      .select('player_name, team_name')
+      .in('player_name', playerNames);
+
+    if (cacheError) {
+      console.warn('[HedgeParlayBuilder] Player cache error:', cacheError);
+    }
+
+    const playerTeamMap = new Map<string, string>();
+    for (const p of playerCache || []) {
+      if (p.team_name) playerTeamMap.set(p.player_name, p.team_name);
+    }
+    console.log(`[HedgeParlayBuilder] Mapped ${playerTeamMap.size} players to teams`);
+
+    // 3. Fetch game descriptions from unified_props to get teams
+    const eventIds = [...new Set(riskPicks.map(p => p.event_id).filter(Boolean))];
+    const { data: eventGames, error: gamesError } = await supabase
+      .from('unified_props')
+      .select('event_id, game_description')
+      .in('event_id', eventIds);
+
+    if (gamesError) {
+      console.warn('[HedgeParlayBuilder] Games fetch error:', gamesError);
+    }
+
+    // Parse game_description to get team matchups: "Away Team @ Home Team"
+    const eventTeamMap = new Map<string, { home: string; away: string }>();
+    for (const game of eventGames || []) {
+      if (!game.game_description) continue;
+      const match = game.game_description.match(/^(.+?)\s*@\s*(.+)$/);
+      if (match) {
+        const away = normalizeTeamName(match[1].trim());
+        const home = normalizeTeamName(match[2].trim());
+        eventTeamMap.set(game.event_id, { home, away });
+      }
+    }
+    console.log(`[HedgeParlayBuilder] Parsed ${eventTeamMap.size} event matchups`);
+
+    // 4. Fetch matchup history for all players
     const { data: matchupHistory, error: matchupError } = await supabase
       .from('matchup_history')
       .select('*')
@@ -272,7 +322,7 @@ serve(async (req) => {
       console.warn('[HedgeParlayBuilder] Matchup history error:', matchupError);
     }
 
-    // 3. Fetch defensive ratings
+    // 5. Fetch defensive ratings
     const { data: defenseRatings, error: defenseError } = await supabase
       .from('team_defensive_ratings')
       .select('*');
@@ -294,22 +344,43 @@ serve(async (req) => {
       defenseMap.set(normalizeTeamName(d.team_name), d);
     }
 
-    // 4. Qualify picks with H2H data and defensive matchups
+    // 6. Qualify picks with H2H data and defensive matchups
     const qualifiedPicks: QualifiedPick[] = [];
 
     for (const pick of riskPicks as RiskPick[]) {
-      const normalizedOpponent = normalizeTeamName(pick.opponent || '');
+      // Enrich team from player cache
+      const enrichedTeam = pick.team_name || playerTeamMap.get(pick.player_name) || '';
+      const normalizedTeam = normalizeTeamName(enrichedTeam);
+      
+      // Get opponent from event matchup
+      let enrichedOpponent = pick.opponent || '';
+      if (!enrichedOpponent && pick.event_id) {
+        const matchup = eventTeamMap.get(pick.event_id);
+        if (matchup && normalizedTeam) {
+          // If player's team is home, opponent is away (and vice versa)
+          enrichedOpponent = normalizedTeam === matchup.home ? matchup.away : matchup.home;
+        }
+      }
+      const normalizedOpponent = normalizeTeamName(enrichedOpponent);
+      
+      console.log(`[HedgeParlayBuilder] ${pick.player_name}: team=${normalizedTeam}, opponent=${normalizedOpponent}`);
+      
       const playerHistory = historyMap.get(pick.player_name) || [];
       
-      // Find H2H history for this opponent and prop type
-      const h2hMatch = playerHistory.find(h => 
-        normalizeTeamName(h.opponent) === normalizedOpponent &&
-        h.prop_type.toLowerCase().includes(pick.prop_type.toLowerCase().replace('player_', ''))
-      );
+      // Find H2H history with normalized prop type matching
+      const pickPropNorm = normalizePropType(pick.prop_type);
+      const h2hMatch = playerHistory.find(h => {
+        const historyPropNorm = normalizePropType(h.prop_type);
+        const opponentMatch = normalizeTeamName(h.opponent) === normalizedOpponent;
+        const propMatch = historyPropNorm === pickPropNorm || 
+                          historyPropNorm.includes(pickPropNorm) || 
+                          pickPropNorm.includes(historyPropNorm);
+        return opponentMatch && propMatch;
+      });
 
       // Get defensive rating for opponent
       const defenseRating = defenseMap.get(normalizedOpponent);
-      const defenseRank = defenseRating?.defensive_rank || 15; // Default to mid-tier
+      const defenseRank = defenseRating?.defensive_rank || 15;
 
       // Calculate H2H edge
       let h2hGames = 0;
@@ -325,6 +396,7 @@ serve(async (req) => {
         h2hHitRate = edgeCalc.h2hHitRate;
         lineGap = edgeCalc.lineGap;
         h2hEdge = edgeCalc.h2hEdge;
+        console.log(`[HedgeParlayBuilder] H2H match found: ${pick.player_name} vs ${normalizedOpponent} - ${h2hGames} games, avg ${h2hAvg}`);
       }
 
       // Grade defensive matchup
@@ -338,12 +410,13 @@ serve(async (req) => {
         ((pick.l10_hit_rate || 0.5) * 5)
       );
 
-      // Always qualify picks that pass confidence threshold
-      // H2H data is a bonus, not a requirement
+      // Always qualify picks - enrich with team/opponent data
       const odds = pick.side.toLowerCase() === 'over' ? pick.over_price : pick.under_price;
       
       qualifiedPicks.push({
         ...pick,
+        team_name: enrichedTeam || pick.team_name,
+        opponent: enrichedOpponent || pick.opponent,
         h2h_games: h2hGames,
         h2h_avg: h2hAvg,
         h2h_hit_rate: h2hHitRate,
@@ -353,7 +426,7 @@ serve(async (req) => {
         defense_grade: defenseGrade.grade,
         composite_score: compositeScore,
         hedge_role: 'VALUE',
-        odds // Add calculated odds
+        odds
       });
     }
 
