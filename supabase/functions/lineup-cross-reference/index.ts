@@ -176,7 +176,7 @@ Deno.serve(async (req) => {
           isStarting: startersSet.has(normalizedLegName),
         });
       } else {
-        // Check if player is a confirmed starter
+        // Player NOT on any injury list - this is GOOD news!
         const isStarter = startersSet.has(normalizedLegName);
         
         if (isStarter) {
@@ -188,14 +188,14 @@ Deno.serve(async (req) => {
             recommendation: 'PROCEED',
             isStarting: true,
           });
-        } else if (lineups.length > 0) {
-          // We have lineup data but player not found as starter
+        } else {
+          // Not on any injury list = likely healthy
           playerAlerts.push({
             playerName: leg.playerName,
-            status: 'UNKNOWN',
-            riskLevel: 'low',
-            message: `${leg.playerName} status not found in lineup data`,
-            recommendation: 'CAUTION',
+            status: 'HEALTHY',
+            riskLevel: 'none',
+            message: `${leg.playerName} - No injury reported, expected to play`,
+            recommendation: 'PROCEED',
             isStarting: false,
           });
         }
