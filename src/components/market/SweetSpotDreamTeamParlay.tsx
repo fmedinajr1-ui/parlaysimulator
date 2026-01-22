@@ -117,7 +117,20 @@ export function SweetSpotDreamTeamParlay() {
       <Card className="border-muted bg-muted/10">
         <CardContent className="flex flex-col items-center justify-center py-8 text-center">
           <Target className="h-8 w-8 text-muted-foreground mb-2" />
-          <p className="text-muted-foreground text-sm">No sweet spot picks available for Dream Team parlay</p>
+          <p className="text-muted-foreground text-sm">No optimal picks available</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Click "Build Now" to refresh the engine
+          </p>
+          <Button 
+            variant="outline" 
+            size="sm" 
+            className="mt-3"
+            onClick={handleRegenerate}
+            disabled={isRegenerating || isLoading}
+          >
+            <RefreshCw className={`h-4 w-4 mr-2 ${isRegenerating ? 'animate-spin' : ''}`} />
+            Build Now
+          </Button>
         </CardContent>
       </Card>
     );
