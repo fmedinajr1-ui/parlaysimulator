@@ -556,7 +556,8 @@ serve(async (req) => {
       gameEnvResult,
       paceResult,
       defenseResult,
-      seasonStatsResult
+      seasonStatsResult,
+      playerCacheResult  // NEW: bdl_player_cache for team lookups
     ] = await Promise.all([
       // Today's props that need validation (from risk engine + category sweet spots)
       supabase
@@ -571,10 +572,10 @@ serve(async (req) => {
         .select('*')
         .eq('game_date', targetDate),
       
-      // Team pace projections
+      // Team pace projections (pace_class doesn't exist - we calculate it)
       supabase
         .from('nba_team_pace_projections')
-        .select('team_name, team_abbrev, pace_rating, pace_class'),
+        .select('team_name, team_abbrev, pace_rating'),
       
       // Team defense ratings
       supabase
@@ -584,7 +585,13 @@ serve(async (req) => {
       // Player season stats for minutes/role
       supabase
         .from('player_season_stats')
-        .select('player_name, avg_minutes, team_name')
+        .select('player_name, avg_minutes, team_name'),
+      
+      // NEW: bdl_player_cache - Primary source for player→team mapping
+      supabase
+        .from('bdl_player_cache')
+        .select('player_name, team_name')
+        .eq('is_active', true)
     ]);
 
     // Also fetch category sweet spots
@@ -592,6 +599,15 @@ serve(async (req) => {
       .from('category_sweet_spots')
       .select('player_name, prop_type, recommended_side, actual_line, archetype')
       .eq('analysis_date', targetDate);
+
+    // NEW: Build player→team lookup from bdl_player_cache (primary source)
+    const playerTeamMap = new Map<string, string>();
+    (playerCacheResult.data || []).forEach((p: any) => {
+      if (p.player_name && p.team_name) {
+        playerTeamMap.set(p.player_name.toLowerCase(), p.team_name);
+      }
+    });
+    console.log(`[GameEnvValidator] Loaded ${playerTeamMap.size} player→team mappings from bdl_player_cache`);
 
     // Build lookup maps
     const gameEnvMap = new Map<string, GameEnvironment>();
@@ -610,14 +626,32 @@ serve(async (req) => {
       const reverseKey = `${g.away_team?.toLowerCase()}_${g.home_team?.toLowerCase()}`;
       gameEnvMap.set(reverseKey, gameEnvMap.get(key)!);
     });
+    console.log(`[GameEnvValidator] Loaded ${gameEnvMap.size / 2} game environments`);
 
+    // NEW: Build pace map with MULTIPLE keys per team (full name, abbrev, partial matches)
     const paceMap = new Map<string, { pace: number; paceClass: string }>();
     (paceResult.data || []).forEach((p: any) => {
-      const key = p.team_name?.toLowerCase() || p.team_abbrev?.toLowerCase();
-      if (key) {
-        paceMap.set(key, { pace: p.pace_rating || 100, paceClass: p.pace_class || 'NEUTRAL' });
+      const paceData = { 
+        pace: p.pace_rating || 100, 
+        paceClass: p.pace_class || getPaceClass(p.pace_rating || 100) 
+      };
+      
+      // Add full name: "atlanta hawks"
+      if (p.team_name) {
+        paceMap.set(p.team_name.toLowerCase(), paceData);
+        // Also add partial matches: "hawks", "atlanta"
+        const parts = p.team_name.toLowerCase().split(' ');
+        parts.forEach((part: string) => {
+          if (part.length >= 3) paceMap.set(part, paceData);
+        });
+      }
+      
+      // Add abbreviation: "atl"
+      if (p.team_abbrev) {
+        paceMap.set(p.team_abbrev.toLowerCase(), paceData);
       }
     });
+    console.log(`[GameEnvValidator] Loaded ${paceResult.data?.length || 0} teams into pace map with ${paceMap.size} lookup keys`);
 
     const defenseMap = new Map<string, { rank: number; allowed: number }>();
     (defenseResult.data || []).forEach((d: any) => {
@@ -673,29 +707,96 @@ serve(async (req) => {
       const playerKey = prop.player_name?.toLowerCase() || '';
       const playerStats = minutesMap.get(playerKey);
       const avgMinutes = playerStats?.minutes || 20;
-      const teamName = prop.team_name || playerStats?.team || '';
+      
+      // NEW: Try multiple sources for team name (bdl_player_cache is primary)
+      const teamName = prop.team_name || 
+                       playerTeamMap.get(playerKey) || 
+                       playerStats?.team || '';
       
       // Find opponent and game environment
       let gameEnv: GameEnvironment | null = null;
       let opponentTeam = '';
       
+      // Try to find game environment by team name
+      const teamLower = teamName.toLowerCase();
       for (const [key, env] of gameEnvMap) {
-        if (key.includes(teamName.toLowerCase())) {
+        if (key.includes(teamLower)) {
           gameEnv = env;
           // Extract opponent from key
           const parts = key.split('_');
-          opponentTeam = parts.find(p => !p.includes(teamName.toLowerCase())) || '';
+          opponentTeam = parts.find(p => !teamLower.includes(p) && !p.includes(teamLower)) || '';
           break;
         }
       }
       
-      // Get pace data
-      const teamPaceData = paceMap.get(teamName.toLowerCase()) || { pace: 100, paceClass: 'NEUTRAL' };
-      const oppPaceData = paceMap.get(opponentTeam) || { pace: 100, paceClass: 'NEUTRAL' };
+      // NEW: Try partial match if full team name didn't work
+      if (!gameEnv && teamName) {
+        const teamParts = teamLower.split(' ');
+        for (const [key, env] of gameEnvMap) {
+          if (teamParts.some(part => part.length >= 3 && key.includes(part))) {
+            gameEnv = env;
+            const parts = key.split('_');
+            opponentTeam = parts.find(p => !teamParts.some(tp => p.includes(tp))) || '';
+            break;
+          }
+        }
+      }
       
-      // Get defense data for opponent
+      // NEW: Get pace data with fallback matching (try full name, then partial)
+      let teamPaceData = paceMap.get(teamLower);
+      if (!teamPaceData && teamName) {
+        // Try each word in team name
+        const teamWords = teamLower.split(' ');
+        for (const word of teamWords) {
+          if (word.length >= 3) {
+            teamPaceData = paceMap.get(word);
+            if (teamPaceData) break;
+          }
+        }
+      }
+      teamPaceData = teamPaceData || { pace: 100, paceClass: 'NEUTRAL' };
+      
+      // Same for opponent pace
+      let oppPaceData = paceMap.get(opponentTeam.toLowerCase());
+      if (!oppPaceData && opponentTeam) {
+        const oppWords = opponentTeam.toLowerCase().split(' ');
+        for (const word of oppWords) {
+          if (word.length >= 3) {
+            oppPaceData = paceMap.get(word);
+            if (oppPaceData) break;
+          }
+        }
+      }
+      oppPaceData = oppPaceData || { pace: 100, paceClass: 'NEUTRAL' };
+      
+      // NEW: If no game environment found, estimate from pace data
+      if (!gameEnv && teamPaceData.pace !== 100 && oppPaceData.pace !== 100) {
+        const estimatedTotal = (teamPaceData.pace + oppPaceData.pace) * 2.2; // ~220 baseline adjusted by pace
+        gameEnv = {
+          home_team: teamName,
+          away_team: opponentTeam,
+          vegas_total: estimatedTotal,
+          vegas_spread: 0, // Assume pick'em when unknown
+          game_script: 'COMPETITIVE',
+          blowout_probability: 0.15,
+          garbage_time_risk: 0.15
+        };
+        console.log(`[GameEnvValidator] Estimated game environment for ${teamName}: total=${estimatedTotal.toFixed(1)}`);
+      }
+      
+      // Get defense data for opponent (try both full name and partial)
       const normalizedStat = normalizeStatType(prop.prop_type);
-      const defenseData = defenseMap.get(`${opponentTeam}_${normalizedStat}`) || { rank: 15, allowed: 0 };
+      let defenseData = defenseMap.get(`${opponentTeam.toLowerCase()}_${normalizedStat}`);
+      if (!defenseData && opponentTeam) {
+        const oppWords = opponentTeam.toLowerCase().split(' ');
+        for (const word of oppWords) {
+          if (word.length >= 3) {
+            defenseData = defenseMap.get(`${word}_${normalizedStat}`);
+            if (defenseData) break;
+          }
+        }
+      }
+      defenseData = defenseData || { rank: 15, allowed: 0 };
       
       // Run validation
       const result = validateProp(
