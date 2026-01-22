@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Target, Trophy, Zap, Users, Plus, Loader2, TrendingUp, RefreshCw, Calendar, AlertTriangle, History } from "lucide-react";
+import { Target, Trophy, Zap, Users, Plus, Loader2, TrendingUp, RefreshCw, Calendar, AlertTriangle, History, Shield, Activity } from "lucide-react";
 import { useSweetSpotParlayBuilder } from "@/hooks/useSweetSpotParlayBuilder";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -233,7 +233,41 @@ export function SweetSpotDreamTeamParlay() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-4 text-right">
+              <div className="flex items-center gap-3 text-right flex-wrap justify-end">
+                {/* Game Context Badge */}
+                {leg.gameContext && (
+                  <div className="flex items-center gap-1">
+                    <Activity className="h-3 w-3 text-slate-400" />
+                    <div>
+                      <div className="text-[10px] font-medium text-slate-300">
+                        {leg.gameContext.gameScript}
+                      </div>
+                      <div className="text-[9px] text-muted-foreground">
+                        {leg.gameContext.vegasTotal}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
+                {/* Defense Rank Badge */}
+                {leg.opponentDefenseRank && (
+                  <div className="flex items-center gap-1">
+                    <Shield className="h-3 w-3 text-amber-400" />
+                    <div>
+                      <div className={`text-sm font-bold ${
+                        leg.opponentDefenseRank <= 10 
+                          ? 'text-green-400' 
+                          : leg.opponentDefenseRank <= 15
+                          ? 'text-yellow-400'
+                          : 'text-muted-foreground'
+                      }`}>
+                        #{leg.opponentDefenseRank}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground">DEF</div>
+                    </div>
+                  </div>
+                )}
+                
                 {leg.pick.l10HitRate && (
                   <div>
                     <div className="text-sm font-bold text-emerald-400">
