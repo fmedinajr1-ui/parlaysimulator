@@ -62,11 +62,172 @@ export interface H2HData {
   minStat: number;
 }
 
+export interface GameContext {
+  vegasTotal: number;
+  paceRating: string;
+  gameScript: string;
+  grindFactor: number;
+  opponent: string;
+}
+
 export interface DreamTeamLeg {
   pick: SweetSpotPick;
   team: string;
   score: number;
   h2h?: H2HData;
+  gameContext?: GameContext;
+  opponentDefenseRank?: number;
+  patternScore?: number;
+}
+
+// ========== WINNING PATTERN RULES v3.1 ==========
+// Based on $714+ winning slips: game script + line thresholds + defensive matchups
+const WINNING_PATTERN_RULES: Record<string, {
+  minLine?: number;
+  maxLine?: number;
+  preferredPace?: string[];
+  maxVegasTotal?: number;
+  minVegasTotal?: number;
+  preferredGameScript?: string[];
+  excludedGameScript?: string[];
+  preferredOpponentDefenseRank?: number; // Lower = stronger defense
+  statType?: string;
+}> = {
+  'ELITE_REB_OVER': {
+    minLine: 10.5,
+    maxLine: 15.5,
+    preferredPace: ['LOW', 'MEDIUM'],
+    maxVegasTotal: 222, // Grind games = more rebounds
+    preferredGameScript: ['COMPETITIVE', 'GRIND_OUT'],
+    statType: 'rebounds',
+  },
+  'ROLE_PLAYER_REB': {
+    minLine: 3.5,
+    maxLine: 6.5,
+    preferredPace: ['LOW', 'MEDIUM'],
+    statType: 'rebounds',
+  },
+  'LOW_SCORER_UNDER': {
+    minLine: 4.5,
+    maxLine: 10.5,
+    preferredOpponentDefenseRank: 12, // vs TOP 12 points defense
+    preferredGameScript: ['GRIND_OUT', 'COMPETITIVE'],
+    statType: 'points',
+  },
+  'BIG_ASSIST_OVER': {
+    minLine: 2.5,
+    maxLine: 5.5,
+    excludedGameScript: ['GRIND_OUT'], // Bigs don't pass in slow games
+    statType: 'assists',
+  },
+  'STAR_FLOOR_OVER': {
+    minLine: 18.5,
+    preferredGameScript: ['SHOOTOUT', 'COMPETITIVE'],
+    minVegasTotal: 218, // High-scoring games
+    statType: 'points',
+  },
+  'MID_SCORER_UNDER': {
+    minLine: 10.5,
+    maxLine: 18.5,
+    preferredOpponentDefenseRank: 15, // vs decent defense
+    preferredGameScript: ['GRIND_OUT', 'COMPETITIVE'],
+    statType: 'points',
+  },
+  'ASSIST_ANCHOR': {
+    maxLine: 6.5,
+    preferredGameScript: ['GRIND_OUT'],
+    statType: 'assists',
+  },
+  'HIGH_REB_UNDER': {
+    minLine: 8.5,
+    preferredPace: ['HIGH'], // High pace = fewer rebounds
+    statType: 'rebounds',
+  },
+};
+
+interface PatternCheckResult {
+  passes: boolean;
+  score: number;
+  reason: string;
+}
+
+function matchesWinningPattern(
+  pick: SweetSpotPick,
+  gameContext: GameContext | undefined,
+  opponentDefenseRank: number | undefined
+): PatternCheckResult {
+  const rules = WINNING_PATTERN_RULES[pick.category || ''];
+  if (!rules) return { passes: true, score: 0, reason: 'No specific rules' };
+
+  let score = 0;
+  const reasons: string[] = [];
+  const failures: string[] = [];
+
+  // Line threshold check (CRITICAL)
+  if (rules.minLine && pick.line < rules.minLine) {
+    failures.push(`Line ${pick.line} < min ${rules.minLine}`);
+    return { passes: false, score: 0, reason: failures.join(', ') };
+  }
+  if (rules.maxLine && pick.line > rules.maxLine) {
+    failures.push(`Line ${pick.line} > max ${rules.maxLine}`);
+    return { passes: false, score: 0, reason: failures.join(', ') };
+  }
+  score += 2; // Passed line check
+  reasons.push(`Line ✓`);
+
+  // Game script check
+  if (gameContext) {
+    if (rules.preferredGameScript) {
+      if (rules.preferredGameScript.includes(gameContext.gameScript)) {
+        score += 3;
+        reasons.push(`${gameContext.gameScript} ✓`);
+      } else {
+        score -= 1; // Non-ideal but not blocked
+      }
+    }
+    if (rules.excludedGameScript) {
+      if (rules.excludedGameScript.includes(gameContext.gameScript)) {
+        failures.push(`Script ${gameContext.gameScript} excluded`);
+        return { passes: false, score: 0, reason: failures.join(', ') };
+      }
+    }
+
+    // Vegas total check
+    if (rules.maxVegasTotal && gameContext.vegasTotal > rules.maxVegasTotal) {
+      score -= 2; // Penalize high-scoring games for rebound overs
+    } else if (rules.maxVegasTotal && gameContext.vegasTotal <= rules.maxVegasTotal) {
+      score += 2;
+      reasons.push(`Total ${gameContext.vegasTotal} ✓`);
+    }
+    
+    if (rules.minVegasTotal && gameContext.vegasTotal >= rules.minVegasTotal) {
+      score += 2;
+      reasons.push(`High total ✓`);
+    } else if (rules.minVegasTotal && gameContext.vegasTotal < rules.minVegasTotal) {
+      score -= 1;
+    }
+
+    // Pace check
+    if (rules.preferredPace && rules.preferredPace.includes(gameContext.paceRating)) {
+      score += 2;
+      reasons.push(`${gameContext.paceRating} pace ✓`);
+    }
+  }
+
+  // Defensive matchup check (CRITICAL for UNDERS)
+  if (rules.preferredOpponentDefenseRank && opponentDefenseRank) {
+    if (opponentDefenseRank <= rules.preferredOpponentDefenseRank) {
+      score += 4; // Big bonus for favorable defense matchup
+      reasons.push(`vs #${opponentDefenseRank} DEF ✓`);
+    } else {
+      // For UNDER picks, weak defense is bad
+      if (pick.side?.toLowerCase() === 'under') {
+        score -= 2;
+      }
+    }
+  }
+
+  return { passes: true, score, reason: reasons.join(' | ') || 'Base criteria met' };
 }
 
 // OPTIMAL WINNERS FORMULA v3.0 - Based on user's winning bet slip patterns
@@ -107,9 +268,14 @@ type H2HMapType = Map<string, {
   minStat: number;
 }>;
 
+type GameContextMapType = Map<string, GameContext>;
+type DefenseMapType = Map<string, number>;
+
 interface QueryResult {
   picks: SweetSpotPick[];
   h2hMap: H2HMapType;
+  gameContextMap: GameContextMapType;
+  defenseMap: DefenseMapType;
   slateStatus: SlateStatus;
 }
 
@@ -195,6 +361,55 @@ export function useSweetSpotParlayBuilder() {
         .from('nba_injury_reports')
         .select('player_name, status, injury_type')
         .eq('game_date', targetDate);
+      
+      // ========== GAME ENVIRONMENT FETCH (Vegas lines, pace, script) ==========
+      const { data: gameEnvironments } = await supabase
+        .from('game_environment')
+        .select('home_team_abbrev, away_team_abbrev, vegas_total, pace_rating, game_script, grind_factor')
+        .eq('game_date', targetDate);
+      
+      // Create team -> game context map
+      const gameContextMap = new Map<string, GameContext>();
+      (gameEnvironments || []).forEach(g => {
+        const context: GameContext = {
+          vegasTotal: Number(g.vegas_total) || 220,
+          paceRating: g.pace_rating || 'MEDIUM',
+          gameScript: g.game_script || 'COMPETITIVE',
+          grindFactor: Number(g.grind_factor) || 0.5,
+          opponent: '',
+        };
+        // Map both teams to their context, with opponent info
+        if (g.home_team_abbrev) {
+          gameContextMap.set(g.home_team_abbrev.toLowerCase(), { ...context, opponent: g.away_team_abbrev || '' });
+        }
+        if (g.away_team_abbrev) {
+          gameContextMap.set(g.away_team_abbrev.toLowerCase(), { ...context, opponent: g.home_team_abbrev || '' });
+        }
+      });
+      
+      console.log(`🎮 Game environments loaded: ${gameContextMap.size} teams`);
+      if (gameEnvironments && gameEnvironments.length > 0) {
+        console.table(gameEnvironments.map(g => ({
+          matchup: `${g.away_team_abbrev} @ ${g.home_team_abbrev}`,
+          total: g.vegas_total,
+          pace: g.pace_rating,
+          script: g.game_script,
+        })));
+      }
+      
+      // ========== DEFENSIVE RATINGS FETCH ==========
+      const { data: defenseRatings } = await supabase
+        .from('team_defensive_ratings')
+        .select('team_name, stat_type, defensive_rank, stat_allowed_per_game');
+      
+      // Create opponent defense map: team_stat -> rank
+      const defenseMap = new Map<string, number>();
+      (defenseRatings || []).forEach(d => {
+        const key = `${d.team_name?.toLowerCase()}_${d.stat_type?.toLowerCase()}`;
+        defenseMap.set(key, d.defensive_rank || 15);
+      });
+      
+      console.log(`🛡️ Defense ratings loaded: ${defenseMap.size} entries`);
       
       // ========== H2H HISTORY FETCH ==========
       const { data: matchupHistoryData } = await supabase
@@ -531,6 +746,8 @@ export function useSweetSpotParlayBuilder() {
       return {
         picks: validatedPicks,
         h2hMap,
+        gameContextMap,
+        defenseMap,
         slateStatus: {
           currentDate: today,
           displayedDate: targetDate,
@@ -543,11 +760,13 @@ export function useSweetSpotParlayBuilder() {
 
   const sweetSpotPicks = queryResult?.picks;
   const h2hMap = queryResult?.h2hMap || new Map();
+  const gameContextMap = queryResult?.gameContextMap || new Map();
+  const defenseMap = queryResult?.defenseMap || new Map();
   const slateStatus = queryResult?.slateStatus || { currentDate: getEasternDate(), displayedDate: getEasternDate(), isNextSlate: false };
 
   // Build optimal 6-leg parlay prioritizing proven category formulas
   const buildOptimalParlay = (): DreamTeamLeg[] => {
-    console.group('🏆 [Optimal Parlay Builder v3.0]');
+    console.group('🏆 [Optimal Parlay Builder v3.1 - Pattern Enforced]');
     
     if (!sweetSpotPicks || sweetSpotPicks.length === 0) {
       console.log('❌ No sweet spot picks available');
@@ -556,6 +775,26 @@ export function useSweetSpotParlayBuilder() {
     }
 
     console.log(`📊 Total candidates: ${sweetSpotPicks.length}`);
+    
+    // Helper: Get team abbreviation from team name
+    const getTeamAbbrev = (teamName: string | undefined): string => {
+      if (!teamName) return '';
+      const abbrevMap: Record<string, string> = {
+        'hawks': 'ATL', 'celtics': 'BOS', 'nets': 'BKN', 'hornets': 'CHA',
+        'bulls': 'CHI', 'cavaliers': 'CLE', 'mavericks': 'DAL', 'nuggets': 'DEN',
+        'pistons': 'DET', 'warriors': 'GSW', 'rockets': 'HOU', 'pacers': 'IND',
+        'clippers': 'LAC', 'lakers': 'LAL', 'grizzlies': 'MEM', 'heat': 'MIA',
+        'bucks': 'MIL', 'timberwolves': 'MIN', 'pelicans': 'NOP', 'knicks': 'NYK',
+        'thunder': 'OKC', 'magic': 'ORL', '76ers': 'PHI', 'suns': 'PHX',
+        'trail blazers': 'POR', 'blazers': 'POR', 'kings': 'SAC', 'spurs': 'SAS',
+        'raptors': 'TOR', 'jazz': 'UTA', 'wizards': 'WAS',
+      };
+      const lower = teamName.toLowerCase();
+      for (const [name, abbrev] of Object.entries(abbrevMap)) {
+        if (lower.includes(name)) return abbrev;
+      }
+      return teamName.slice(0, 3).toUpperCase();
+    };
     
     // Track archetype blocks for diagnostics
     const archetypeBlocked: string[] = [];
@@ -579,11 +818,9 @@ export function useSweetSpotParlayBuilder() {
     // ========== H2H VALIDATION ==========
     // Helper to find H2H data for a pick
     const getH2HForPick = (pick: SweetSpotPick): H2HData | undefined => {
-      // Try multiple opponent name variations from event_id or team matchups
       const playerKey = pick.player_name?.toLowerCase() || '';
       const propKey = pick.prop_type?.toLowerCase() || '';
       
-      // Iterate through h2hMap looking for this player + prop combo
       for (const [key, data] of h2hMap.entries()) {
         if (key.startsWith(`${playerKey}_`) && key.endsWith(`_${propKey}`)) {
           const isOver = pick.side?.toLowerCase() === 'over';
@@ -600,29 +837,46 @@ export function useSweetSpotParlayBuilder() {
       return undefined;
     };
     
+    // Helper: Get game context for a pick
+    const getGameContextForPick = (pick: SweetSpotPick): GameContext | undefined => {
+      const teamAbbrev = getTeamAbbrev(pick.team_name);
+      return gameContextMap.get(teamAbbrev.toLowerCase());
+    };
+    
+    // Helper: Get opponent defense rank for a pick
+    const getOpponentDefenseRank = (pick: SweetSpotPick): number | undefined => {
+      const gameContext = getGameContextForPick(pick);
+      if (!gameContext || !gameContext.opponent) return undefined;
+      
+      // Determine stat type for defense lookup
+      const propLower = pick.prop_type?.toLowerCase() || '';
+      let statType = 'points';
+      if (propLower.includes('rebound')) statType = 'rebounds';
+      else if (propLower.includes('assist')) statType = 'assists';
+      
+      const defenseKey = `${gameContext.opponent.toLowerCase()}_${statType}`;
+      return defenseMap.get(defenseKey);
+    };
+    
     // H2H validation filter
     const h2hBlocked: string[] = [];
     const h2hValidatedPicks = alignedPicks.filter(pick => {
       const h2h = getH2HForPick(pick);
       
-      // No H2H data = allow (we can't validate without history)
       if (!h2h || h2h.gamesPlayed < 2) return true;
       
       const isOver = pick.side?.toLowerCase() === 'over';
       
-      // BLOCK: Hit rate < 40% in H2H matchups with 3+ games sample
       if (h2h.hitRate < 0.40 && h2h.gamesPlayed >= 3) {
         h2hBlocked.push(`${pick.player_name} - ${(h2h.hitRate * 100).toFixed(0)}% ${pick.side} vs ${h2h.opponent} (${h2h.gamesPlayed}g)`);
         return false;
       }
       
-      // BLOCK OVER: If H2H avg is significantly below the line (75%)
       if (isOver && h2h.avgStat < pick.line * 0.75 && h2h.gamesPlayed >= 3) {
         h2hBlocked.push(`${pick.player_name} OVER - H2H avg ${h2h.avgStat.toFixed(1)} vs line ${pick.line}`);
         return false;
       }
       
-      // BLOCK UNDER: If H2H avg is significantly above the line (125%)
       if (!isOver && h2h.avgStat > pick.line * 1.25 && h2h.gamesPlayed >= 3) {
         h2hBlocked.push(`${pick.player_name} UNDER - H2H avg ${h2h.avgStat.toFixed(1)} vs line ${pick.line}`);
         return false;
@@ -637,20 +891,55 @@ export function useSweetSpotParlayBuilder() {
     }
     console.log(`✅ H2H validated: ${h2hValidatedPicks.length}/${alignedPicks.length}`);
 
+    // ========== PATTERN VALIDATION ==========
+    console.log(`\n🎯 [Pattern Validation v3.1]`);
+    const patternBlocked: string[] = [];
+    const patternValidatedPicks = h2hValidatedPicks.filter(pick => {
+      const gameContext = getGameContextForPick(pick);
+      const opponentDefenseRank = getOpponentDefenseRank(pick);
+      
+      const patternCheck = matchesWinningPattern(pick, gameContext, opponentDefenseRank);
+      
+      if (!patternCheck.passes) {
+        patternBlocked.push(`${pick.player_name} ${pick.category}: ${patternCheck.reason}`);
+        return false;
+      }
+      
+      return true;
+    });
+    
+    if (patternBlocked.length > 0) {
+      console.log(`📋 [Pattern] Blocked (${patternBlocked.length}):`);
+      patternBlocked.forEach(b => console.log(`   ❌ ${b}`));
+    }
+    console.log(`✅ Pattern validated: ${patternValidatedPicks.length}/${h2hValidatedPicks.length}`);
+
     const selectedLegs: DreamTeamLeg[] = [];
     const usedTeams = new Set<string>();
     const usedPlayers = new Set<string>();
 
-    // Step 1: Fill from proven categories first (using H2H validated picks)
+    // Step 1: Fill from proven categories first (with pattern scoring)
     for (const formula of PROVEN_FORMULA) {
-      const categoryPicks = h2hValidatedPicks
+      const categoryPicks = patternValidatedPicks
         .filter(p => 
           p.category === formula.category && 
           p.side.toLowerCase() === formula.side &&
           !usedPlayers.has(p.player_name.toLowerCase()) &&
           !usedTeams.has((p.team_name || '').toLowerCase())
         )
-        .sort((a, b) => (b.l10HitRate || 0) - (a.l10HitRate || 0));
+        .map(p => {
+          // Calculate pattern score for sorting
+          const gameContext = getGameContextForPick(p);
+          const opponentDefenseRank = getOpponentDefenseRank(p);
+          const patternCheck = matchesWinningPattern(p, gameContext, opponentDefenseRank);
+          return { ...p, _patternScore: patternCheck.score, _gameContext: gameContext, _opponentDefenseRank: opponentDefenseRank };
+        })
+        // Sort by: pattern score + L10 hit rate (weighted)
+        .sort((a, b) => {
+          const scoreA = (a._patternScore || 0) + ((a.l10HitRate || 0) * 5);
+          const scoreB = (b._patternScore || 0) + ((b.l10HitRate || 0) * 5);
+          return scoreB - scoreA;
+        });
 
       let added = 0;
       for (const pick of categoryPicks) {
@@ -659,17 +948,29 @@ export function useSweetSpotParlayBuilder() {
 
         const team = (pick.team_name || 'Unknown').toLowerCase();
         const h2h = getH2HForPick(pick);
+        const gameContext = pick._gameContext;
+        const opponentDefenseRank = pick._opponentDefenseRank;
         
         const h2hInfo = h2h && h2h.gamesPlayed >= 2 
-          ? `| H2H: ${(h2h.hitRate * 100).toFixed(0)}% (${h2h.gamesPlayed}g vs ${h2h.opponent})`
+          ? `| H2H: ${(h2h.hitRate * 100).toFixed(0)}% (${h2h.gamesPlayed}g)`
           : '';
-        console.log(`[Optimal] ✅ SELECTED: ${pick.player_name} ${pick.prop_type} ${pick.side} | Cat: ${pick.category} | Arch: ${pick.archetype || 'N/A'} | L10: ${pick.l10HitRate ? Math.round(pick.l10HitRate * 100) + '%' : 'N/A'} ${h2hInfo}`);
+        const contextInfo = gameContext 
+          ? `| ${gameContext.gameScript} | Total: ${gameContext.vegasTotal}`
+          : '';
+        const defInfo = opponentDefenseRank 
+          ? `| vs #${opponentDefenseRank} DEF`
+          : '';
+        
+        console.log(`[Optimal] ✅ ${pick.player_name} ${pick.prop_type} ${pick.side.toUpperCase()} ${pick.line} | ${pick.category} | L10: ${pick.l10HitRate ? Math.round(pick.l10HitRate * 100) + '%' : 'N/A'} ${h2hInfo} ${contextInfo} ${defInfo}`);
         
         selectedLegs.push({
           pick,
           team: pick.team_name || 'Unknown',
-          score: (pick.confidence_score * 0.4) + ((pick.l10HitRate || 0.7) * 6),
-          h2h: h2h,
+          score: (pick.confidence_score * 0.4) + ((pick.l10HitRate || 0.7) * 6) + (pick._patternScore || 0),
+          h2h,
+          gameContext,
+          opponentDefenseRank,
+          patternScore: pick._patternScore,
         });
         usedTeams.add(team);
         usedPlayers.add(pick.player_name.toLowerCase());
@@ -681,28 +982,45 @@ export function useSweetSpotParlayBuilder() {
       }
     }
 
-    // Step 2: Fill remaining slots from aligned picks if needed
+    // Step 2: Fill remaining slots from pattern-validated picks if needed
     if (selectedLegs.length < TARGET_LEG_COUNT) {
       console.log(`[Optimal] Need ${TARGET_LEG_COUNT - selectedLegs.length} more legs, checking remaining picks...`);
       
-      const remainingPicks = h2hValidatedPicks
+      const remainingPicks = patternValidatedPicks
         .filter(p => 
           !usedPlayers.has(p.player_name.toLowerCase()) &&
           !usedTeams.has((p.team_name || '').toLowerCase())
         )
-        .sort((a, b) => b.confidence_score - a.confidence_score);
+        .map(p => {
+          const gameContext = getGameContextForPick(p);
+          const opponentDefenseRank = getOpponentDefenseRank(p);
+          const patternCheck = matchesWinningPattern(p, gameContext, opponentDefenseRank);
+          return { ...p, _patternScore: patternCheck.score, _gameContext: gameContext, _opponentDefenseRank: opponentDefenseRank };
+        })
+        .sort((a, b) => {
+          const scoreA = (a._patternScore || 0) + ((a.l10HitRate || 0) * 5) + a.confidence_score;
+          const scoreB = (b._patternScore || 0) + ((b.l10HitRate || 0) * 5) + b.confidence_score;
+          return scoreB - scoreA;
+        });
 
       for (const pick of remainingPicks) {
         if (selectedLegs.length >= TARGET_LEG_COUNT) break;
 
         const team = (pick.team_name || 'Unknown').toLowerCase();
         const h2h = getH2HForPick(pick);
+        const gameContext = pick._gameContext;
+        const opponentDefenseRank = pick._opponentDefenseRank;
+        
+        console.log(`[Optimal] ➕ FALLBACK: ${pick.player_name} ${pick.prop_type} ${pick.side.toUpperCase()} ${pick.line}`);
         
         selectedLegs.push({
           pick,
           team: pick.team_name || 'Unknown',
-          score: (pick.confidence_score * 0.6) + (Math.min(pick.edge, 10) * 0.4),
-          h2h: h2h,
+          score: (pick.confidence_score * 0.6) + (Math.min(pick.edge, 10) * 0.4) + (pick._patternScore || 0),
+          h2h,
+          gameContext,
+          opponentDefenseRank,
+          patternScore: pick._patternScore,
         });
         usedTeams.add(team);
         usedPlayers.add(pick.player_name.toLowerCase());
