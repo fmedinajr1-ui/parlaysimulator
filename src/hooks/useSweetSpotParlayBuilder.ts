@@ -53,10 +53,20 @@ function isPickArchetypeAligned(pick: SweetSpotPick): boolean {
   return true;
 }
 
+export interface H2HData {
+  opponent: string;
+  gamesPlayed: number;
+  avgStat: number;
+  hitRate: number;
+  maxStat: number;
+  minStat: number;
+}
+
 export interface DreamTeamLeg {
   pick: SweetSpotPick;
   team: string;
   score: number;
+  h2h?: H2HData;
 }
 
 // OPTIMAL WINNERS FORMULA v3.0 - Based on user's winning bet slip patterns
@@ -87,8 +97,19 @@ interface SlateStatus {
   isNextSlate: boolean;
 }
 
+type H2HMapType = Map<string, {
+  opponent: string;
+  gamesPlayed: number;
+  avgStat: number;
+  hitRateOver: number;
+  hitRateUnder: number;
+  maxStat: number;
+  minStat: number;
+}>;
+
 interface QueryResult {
   picks: SweetSpotPick[];
+  h2hMap: H2HMapType;
   slateStatus: SlateStatus;
 }
 
@@ -174,6 +195,37 @@ export function useSweetSpotParlayBuilder() {
         .from('nba_injury_reports')
         .select('player_name, status, injury_type')
         .eq('game_date', targetDate);
+      
+      // ========== H2H HISTORY FETCH ==========
+      const { data: matchupHistoryData } = await supabase
+        .from('matchup_history')
+        .select('player_name, opponent, prop_type, games_played, avg_stat, hit_rate_over, hit_rate_under, max_stat, min_stat');
+      
+      // Create H2H lookup map: player_opponent_prop -> H2H stats
+      const h2hMap = new Map<string, {
+        opponent: string;
+        gamesPlayed: number;
+        avgStat: number;
+        hitRateOver: number;
+        hitRateUnder: number;
+        maxStat: number;
+        minStat: number;
+      }>();
+      
+      (matchupHistoryData || []).forEach(h => {
+        const key = `${h.player_name?.toLowerCase()}_${h.opponent?.toLowerCase()}_${h.prop_type?.toLowerCase()}`;
+        h2hMap.set(key, {
+          opponent: h.opponent || '',
+          gamesPlayed: h.games_played || 0,
+          avgStat: Number(h.avg_stat) || 0,
+          hitRateOver: Number(h.hit_rate_over) || 0,
+          hitRateUnder: Number(h.hit_rate_under) || 0,
+          maxStat: Number(h.max_stat) || 0,
+          minStat: Number(h.min_stat) || 0,
+        });
+      });
+      
+      console.log(`📊 H2H records loaded: ${h2hMap.size}`);
 
       // Create sets for different injury statuses
       const outPlayers = new Set(
@@ -478,6 +530,7 @@ export function useSweetSpotParlayBuilder() {
 
       return {
         picks: validatedPicks,
+        h2hMap,
         slateStatus: {
           currentDate: today,
           displayedDate: targetDate,
@@ -489,6 +542,7 @@ export function useSweetSpotParlayBuilder() {
   });
 
   const sweetSpotPicks = queryResult?.picks;
+  const h2hMap = queryResult?.h2hMap || new Map();
   const slateStatus = queryResult?.slateStatus || { currentDate: getEasternDate(), displayedDate: getEasternDate(), isNextSlate: false };
 
   // Build optimal 6-leg parlay prioritizing proven category formulas
@@ -521,14 +575,75 @@ export function useSweetSpotParlayBuilder() {
     }
     
     console.log(`✅ Aligned picks: ${alignedPicks.length}/${sweetSpotPicks.length}`);
+    
+    // ========== H2H VALIDATION ==========
+    // Helper to find H2H data for a pick
+    const getH2HForPick = (pick: SweetSpotPick): H2HData | undefined => {
+      // Try multiple opponent name variations from event_id or team matchups
+      const playerKey = pick.player_name?.toLowerCase() || '';
+      const propKey = pick.prop_type?.toLowerCase() || '';
+      
+      // Iterate through h2hMap looking for this player + prop combo
+      for (const [key, data] of h2hMap.entries()) {
+        if (key.startsWith(`${playerKey}_`) && key.endsWith(`_${propKey}`)) {
+          const isOver = pick.side?.toLowerCase() === 'over';
+          return {
+            opponent: data.opponent,
+            gamesPlayed: data.gamesPlayed,
+            avgStat: data.avgStat,
+            hitRate: isOver ? data.hitRateOver : data.hitRateUnder,
+            maxStat: data.maxStat,
+            minStat: data.minStat,
+          };
+        }
+      }
+      return undefined;
+    };
+    
+    // H2H validation filter
+    const h2hBlocked: string[] = [];
+    const h2hValidatedPicks = alignedPicks.filter(pick => {
+      const h2h = getH2HForPick(pick);
+      
+      // No H2H data = allow (we can't validate without history)
+      if (!h2h || h2h.gamesPlayed < 2) return true;
+      
+      const isOver = pick.side?.toLowerCase() === 'over';
+      
+      // BLOCK: Hit rate < 40% in H2H matchups with 3+ games sample
+      if (h2h.hitRate < 0.40 && h2h.gamesPlayed >= 3) {
+        h2hBlocked.push(`${pick.player_name} - ${(h2h.hitRate * 100).toFixed(0)}% ${pick.side} vs ${h2h.opponent} (${h2h.gamesPlayed}g)`);
+        return false;
+      }
+      
+      // BLOCK OVER: If H2H avg is significantly below the line (75%)
+      if (isOver && h2h.avgStat < pick.line * 0.75 && h2h.gamesPlayed >= 3) {
+        h2hBlocked.push(`${pick.player_name} OVER - H2H avg ${h2h.avgStat.toFixed(1)} vs line ${pick.line}`);
+        return false;
+      }
+      
+      // BLOCK UNDER: If H2H avg is significantly above the line (125%)
+      if (!isOver && h2h.avgStat > pick.line * 1.25 && h2h.gamesPlayed >= 3) {
+        h2hBlocked.push(`${pick.player_name} UNDER - H2H avg ${h2h.avgStat.toFixed(1)} vs line ${pick.line}`);
+        return false;
+      }
+      
+      return true;
+    });
+    
+    if (h2hBlocked.length > 0) {
+      console.log(`📊 [H2H] Blocked (${h2hBlocked.length}):`);
+      h2hBlocked.forEach(b => console.log(`   ❌ ${b}`));
+    }
+    console.log(`✅ H2H validated: ${h2hValidatedPicks.length}/${alignedPicks.length}`);
 
     const selectedLegs: DreamTeamLeg[] = [];
     const usedTeams = new Set<string>();
     const usedPlayers = new Set<string>();
 
-    // Step 1: Fill from proven categories first
+    // Step 1: Fill from proven categories first (using H2H validated picks)
     for (const formula of PROVEN_FORMULA) {
-      const categoryPicks = alignedPicks
+      const categoryPicks = h2hValidatedPicks
         .filter(p => 
           p.category === formula.category && 
           p.side.toLowerCase() === formula.side &&
@@ -543,13 +658,18 @@ export function useSweetSpotParlayBuilder() {
         if (selectedLegs.length >= TARGET_LEG_COUNT) break;
 
         const team = (pick.team_name || 'Unknown').toLowerCase();
+        const h2h = getH2HForPick(pick);
         
-        console.log(`[Optimal] ✅ SELECTED: ${pick.player_name} ${pick.prop_type} ${pick.side} | Cat: ${pick.category} | Arch: ${pick.archetype || 'N/A'} | L10: ${pick.l10HitRate ? Math.round(pick.l10HitRate * 100) + '%' : 'N/A'}`);
+        const h2hInfo = h2h && h2h.gamesPlayed >= 2 
+          ? `| H2H: ${(h2h.hitRate * 100).toFixed(0)}% (${h2h.gamesPlayed}g vs ${h2h.opponent})`
+          : '';
+        console.log(`[Optimal] ✅ SELECTED: ${pick.player_name} ${pick.prop_type} ${pick.side} | Cat: ${pick.category} | Arch: ${pick.archetype || 'N/A'} | L10: ${pick.l10HitRate ? Math.round(pick.l10HitRate * 100) + '%' : 'N/A'} ${h2hInfo}`);
         
         selectedLegs.push({
           pick,
           team: pick.team_name || 'Unknown',
           score: (pick.confidence_score * 0.4) + ((pick.l10HitRate || 0.7) * 6),
+          h2h: h2h,
         });
         usedTeams.add(team);
         usedPlayers.add(pick.player_name.toLowerCase());
@@ -565,7 +685,7 @@ export function useSweetSpotParlayBuilder() {
     if (selectedLegs.length < TARGET_LEG_COUNT) {
       console.log(`[Optimal] Need ${TARGET_LEG_COUNT - selectedLegs.length} more legs, checking remaining picks...`);
       
-      const remainingPicks = alignedPicks
+      const remainingPicks = h2hValidatedPicks
         .filter(p => 
           !usedPlayers.has(p.player_name.toLowerCase()) &&
           !usedTeams.has((p.team_name || '').toLowerCase())
@@ -576,11 +696,13 @@ export function useSweetSpotParlayBuilder() {
         if (selectedLegs.length >= TARGET_LEG_COUNT) break;
 
         const team = (pick.team_name || 'Unknown').toLowerCase();
+        const h2h = getH2HForPick(pick);
         
         selectedLegs.push({
           pick,
           team: pick.team_name || 'Unknown',
           score: (pick.confidence_score * 0.6) + (Math.min(pick.edge, 10) * 0.4),
+          h2h: h2h,
         });
         usedTeams.add(team);
         usedPlayers.add(pick.player_name.toLowerCase());
