@@ -164,13 +164,14 @@ export function SweetSpotDreamTeamParlay() {
           </div>
           <div className="flex items-center gap-2">
             <Button 
-              variant="ghost"
+              variant="outline"
               size="sm"
               onClick={handleRegenerate}
               disabled={isRegenerating || isLoading}
-              className="h-8 w-8 p-0"
+              className="gap-2"
             >
               <RefreshCw className={`h-4 w-4 ${isRegenerating ? 'animate-spin' : ''}`} />
+              {isRegenerating ? 'Building...' : 'Build Now'}
             </Button>
             <Button 
               size="sm" 
