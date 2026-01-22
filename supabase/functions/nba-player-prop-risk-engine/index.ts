@@ -1644,15 +1644,19 @@ serve(async (req) => {
       // 3. Fetch player data from bdl_player_cache
       const { data: playerCache } = await supabase
         .from('bdl_player_cache')
-        .select('player_name, position, team_name');
+        .select('player_name, position, team_name')
+        .eq('is_active', true);
       
       const positionMap: Record<string, string> = {};
+      const playerTeamMap: Record<string, string> = {};  // NEW: Player→Team lookup
       for (const p of (playerCache || [])) {
-        if (p.player_name && p.position) {
-          positionMap[p.player_name.toLowerCase()] = p.position;
+        if (p.player_name) {
+          const key = p.player_name.toLowerCase();
+          if (p.position) positionMap[key] = p.position;
+          if (p.team_name) playerTeamMap[key] = p.team_name;  // NEW: Store team mapping
         }
       }
-      console.log(`[Risk Engine v3.1] Loaded ${Object.keys(positionMap).length} player positions`);
+      console.log(`[Risk Engine v3.1] Loaded ${Object.keys(positionMap).length} positions, ${Object.keys(playerTeamMap).length} player teams`);
 
       // 4. Fetch player season stats
       const { data: seasonStats } = await supabase
@@ -2484,10 +2488,13 @@ serve(async (req) => {
           const storedEdgeCalibration = (prop as any)._edgeCalibration as CalibratedEdgeResult | null;
           const storedBookIntelCheck = (prop as any)._bookIntelCheck as BookIntelCheck | null;
           
+          // NEW: Use bdl_player_cache for team lookup (primary source)
+          const playerTeamFromCache = playerTeamMap[playerNameLower];
+          
           const approvedPick = {
             player_name: prop.player_name,
-            team_name: prop.team_name,
-            opponent,
+            team_name: prop.team_name || playerTeamFromCache || null,  // NEW: Fall back to cache
+            opponent: opponent || (prop.away_team === playerTeamFromCache ? prop.home_team : prop.away_team) || null,
             prop_type: prop.prop_type,
             line,
             side,

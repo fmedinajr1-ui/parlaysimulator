@@ -255,6 +255,18 @@ serve(async (req) => {
     if (action === 'refresh' || action === 'fetch') {
       console.log('[Vegas Lines] Fetching game lines with game script prediction...');
       
+      // NEW: Fetch team pace data for better fallback estimation
+      const { data: paceData } = await supabase
+        .from('nba_team_pace_projections')
+        .select('team_name, team_abbrev, pace_rating');
+      
+      // Build pace lookup map
+      const paceMap = new Map<string, number>();
+      (paceData || []).forEach((p: any) => {
+        if (p.team_name) paceMap.set(p.team_name.toLowerCase(), p.pace_rating || 100);
+        if (p.team_abbrev) paceMap.set(p.team_abbrev.toLowerCase(), p.pace_rating || 100);
+      });
+      
       if (!oddsApiKey) {
         // Fallback: Try to get from unified_props table
         console.log('[Vegas Lines] No ODDS_API_KEY, extracting from unified_props...');
@@ -286,10 +298,22 @@ serve(async (req) => {
           }
         }
         
-        // Create placeholder game environments (without Vegas data)
+        // Create placeholder game environments with estimated Vegas data
         const records = [];
         for (const [gameId, game] of gamesMap) {
-          const gameScript = calculateGameScript(null, null);
+          // NEW: Estimate Vegas total from team pace data
+          const homePace = paceMap.get(game.home.toLowerCase()) || 
+                          paceMap.get(getTeamAbbrev(game.home).toLowerCase()) || 100;
+          const awayPace = paceMap.get(game.away.toLowerCase()) || 
+                          paceMap.get(getTeamAbbrev(game.away).toLowerCase()) || 100;
+          
+          // Estimate total: average pace * 2.2 (baseline multiplier for NBA)
+          const estimatedTotal = ((homePace + awayPace) / 2) * 2.2;
+          const vegasTotal = Math.round(estimatedTotal * 2) / 2; // Round to 0.5
+          
+          const gameScript = calculateGameScript(0, vegasTotal); // Spread 0 = competitive
+          
+          console.log(`[Vegas Lines] Estimated ${game.away} @ ${game.home}: total=${vegasTotal} (pace: ${homePace}/${awayPace})`);
           
           records.push({
             game_id: gameId,
@@ -298,11 +322,11 @@ serve(async (req) => {
             away_team: game.away,
             home_team_abbrev: getTeamAbbrev(game.home),
             away_team_abbrev: getTeamAbbrev(game.away),
-            vegas_total: null,
-            vegas_spread: null,
-            home_implied_total: null,
-            away_implied_total: null,
-            pace_rating: 'MEDIUM',
+            vegas_total: vegasTotal,  // NEW: Use estimated total instead of null
+            vegas_spread: 0,           // NEW: Default to pick'em
+            home_implied_total: vegasTotal / 2,
+            away_implied_total: vegasTotal / 2,
+            pace_rating: calculatePaceRating(vegasTotal),
             blowout_probability: 0.15,
             game_script: gameScript.script,
             game_script_confidence: gameScript.confidence,
@@ -323,8 +347,14 @@ serve(async (req) => {
         return new Response(JSON.stringify({
           success: true,
           games: records.length,
-          source: 'unified_props_fallback',
-          message: 'Created game entries without Vegas data (no API key)',
+          source: 'unified_props_with_pace_estimation',
+          message: `Created ${records.length} game entries with pace-estimated totals`,
+          data: records.map(r => ({
+            matchup: `${r.away_team_abbrev} @ ${r.home_team_abbrev}`,
+            estimatedTotal: r.vegas_total,
+            paceRating: r.pace_rating,
+            gameScript: r.game_script
+          }))
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
