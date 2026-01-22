@@ -62,14 +62,16 @@ const CASCADE_STEPS: CascadeStep[] = [
   // Step 12: SES scoring engine (confidence scoring)
   { name: 'prop-engine-v2', body: { action: 'full_slate' } },
   
-  // ========== PHASE 3: MATCHUP INTELLIGENCE (BLOCKING LAYER) ==========
+  // ========== PHASE 3: MATCHUP INTELLIGENCE & ENVIRONMENT VALIDATION (BLOCKING LAYER) ==========
   // Step 13: Matchup intelligence - analyze ALL picks & apply blocking rules
   { name: 'matchup-intelligence-analyzer', body: { action: 'analyze_batch' } },
+  // Step 14: Game Environment Validator - Vegas-math pre-filter (implied totals, pace, defense, role)
+  { name: 'game-environment-validator', body: {} },
   
   // ========== PHASE 4: PARLAY BUILDING (USES FILTERED PICKS) ==========
-  // Step 14: Dream Team parlay builder (respects blocked picks)
+  // Step 15: Dream Team parlay builder (respects blocked picks)
   { name: 'sharp-parlay-builder', body: { action: 'build' } },
-  // Step 15: Heat prop engine (respects blocked picks)
+  // Step 16: Heat prop engine (respects blocked picks)
   { name: 'heat-prop-engine', body: { action: 'build' } },
 ];
 
