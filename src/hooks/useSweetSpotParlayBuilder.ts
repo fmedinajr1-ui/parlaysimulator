@@ -8,6 +8,11 @@ function getEasternDate(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 }
 
+// Normalize player name for fuzzy matching (handles dots, case, extra spaces)
+function normalizePlayerName(name: string): string {
+  return name.toLowerCase().replace(/\./g, '').replace(/\s+/g, ' ').trim();
+}
+
 export interface SweetSpotPick {
   id: string;
   player_name: string;
@@ -626,7 +631,15 @@ export function useSweetSpotParlayBuilder() {
       const validCategoryPicks = (categoryPicks || []).filter(pick => {
         const playerKey = pick.player_name?.toLowerCase();
         if (!playerKey) return false;
-        if (!targetPlayers.has(playerKey)) return false;
+        
+        // FIX: Use fuzzy matching for player names (handles "P.J." vs "PJ", etc.)
+        const normalizedKey = normalizePlayerName(pick.player_name || '');
+        const hasExactMatch = targetPlayers.has(playerKey);
+        const hasFuzzyMatch = [...targetPlayers].some(p => normalizePlayerName(p) === normalizedKey);
+        
+        if (!hasExactMatch && !hasFuzzyMatch) {
+          return false;
+        }
         if (outPlayers.has(playerKey)) {
           console.log(`[SweetSpotParlay] Excluding OUT player from categories: ${pick.player_name}`);
           return false;
@@ -675,7 +688,15 @@ export function useSweetSpotParlayBuilder() {
       const validRiskPicks = (riskPicks || []).filter(pick => {
         const playerKey = pick.player_name?.toLowerCase();
         if (!playerKey) return false;
-        if (!targetPlayers.has(playerKey)) return false;
+        
+        // FIX: Use fuzzy matching for player names (handles "P.J." vs "PJ", etc.)
+        const normalizedKey = normalizePlayerName(pick.player_name || '');
+        const hasExactMatch = targetPlayers.has(playerKey);
+        const hasFuzzyMatch = [...targetPlayers].some(p => normalizePlayerName(p) === normalizedKey);
+        
+        if (!hasExactMatch && !hasFuzzyMatch) {
+          return false;
+        }
         if (outPlayers.has(playerKey)) {
           console.log(`[SweetSpotParlay] Excluding OUT player from risk engine: ${pick.player_name}`);
           return false;
@@ -1241,6 +1262,25 @@ export function useSweetSpotParlayBuilder() {
     const categoryCount = selectedLegs.filter(l => l.pick.category).length;
     const riskEngineCount = selectedLegs.length - categoryCount;
     console.log(`\n📈 Sources: ${categoryCount} Category picks, ${riskEngineCount} Risk Engine picks`);
+    
+    // ========== TOP-LEVEL BUILD SUMMARY ==========
+    console.log(`\n========== 🏆 OPTIMAL PARLAY BUILD SUMMARY ==========`);
+    console.log(`📅 Target Date: ${slateStatus.displayedDate}`);
+    console.log(`🎯 Final Parlay Legs: ${selectedLegs.length}/${TARGET_LEG_COUNT}`);
+    if (selectedLegs.length > 0) {
+      console.table(selectedLegs.map((leg, i) => ({
+        '#': i + 1,
+        Player: leg.pick.player_name,
+        Category: leg.pick.category || 'Fallback',
+        Prop: `${leg.pick.side.toUpperCase()} ${leg.pick.line} ${leg.pick.prop_type}`,
+        L10: leg.pick.l10HitRate ? `${(leg.pick.l10HitRate * 100).toFixed(0)}%` : 'N/A',
+        H2H: leg.h2h ? `${(leg.h2h.hitRate * 100).toFixed(0)}%` : '-',
+        DEF: leg.opponentDefenseRank ? `#${leg.opponentDefenseRank}` : '-',
+      })));
+    } else {
+      console.warn('⚠️ No picks passed validation. Check filters above.');
+    }
+    console.log(`=====================================================\n`);
     console.groupEnd();
 
     return selectedLegs;
