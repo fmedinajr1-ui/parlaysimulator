@@ -1,4 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
 export interface ManualProp {
@@ -49,6 +50,9 @@ function parseTeams(gameDescription: string | null): { home: string | null; away
 }
 
 export function useManualBuilder(statFilter: string = "all") {
+  const queryClient = useQueryClient();
+  const [isConnected, setIsConnected] = useState(false);
+
   // Fetch today's props
   const { data: props, isLoading: propsLoading } = useQuery({
     queryKey: ["manual-builder-props", statFilter],
@@ -114,9 +118,45 @@ export function useManualBuilder(statFilter: string = "all") {
     return defenseRatings[key] || null;
   };
 
+  // Realtime subscription for automatic updates
+  useEffect(() => {
+    const channel = supabase
+      .channel('manual-builder-props-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'unified_props',
+        },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ['manual-builder-props'] });
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'DELETE',
+          schema: 'public',
+          table: 'unified_props',
+        },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ['manual-builder-props'] });
+        }
+      )
+      .subscribe((status) => {
+        setIsConnected(status === 'SUBSCRIBED');
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [queryClient]);
+
   return {
     props: props || [],
     isLoading: propsLoading,
+    isConnected,
     getDefenseForMatchup,
     parseTeams,
   };
