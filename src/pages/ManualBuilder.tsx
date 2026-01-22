@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { useManualBuilder, type ManualProp } from "@/hooks/useManualBuilder";
 import { PropSelectionCard } from "@/components/manual/PropSelectionCard";
 import { ManualParlayPanel, type SelectedLeg } from "@/components/manual/ManualParlayPanel";
@@ -7,8 +8,9 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Search, Filter, Dumbbell, Home } from "lucide-react";
-
+import { Search, Filter, Dumbbell, Home, RefreshCw } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
 const STAT_FILTERS = [
   { key: "all", label: "All" },
   { key: "rebound", label: "Rebounds" },
@@ -21,11 +23,50 @@ const STAT_FILTERS = [
 
 export default function ManualBuilder() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [statFilter, setStatFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedLegs, setSelectedLegs] = useState<SelectedLeg[]>([]);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const { props, isLoading, isConnected, getDefenseForMatchup } = useManualBuilder(statFilter);
+
+  // Manual refresh handler - triggers both edge functions
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      // Run cleanup and refresh in parallel
+      const [cleanupRes, refreshRes] = await Promise.all([
+        supabase.functions.invoke('cleanup-stale-props', {
+          body: { immediate: true }
+        }),
+        supabase.functions.invoke('refresh-todays-props', {
+          body: { sport: 'basketball_nba', use_bdl_fallback: true }
+        })
+      ]);
+
+      if (cleanupRes.error) console.warn('Cleanup error:', cleanupRes.error);
+      if (refreshRes.error) console.warn('Refresh error:', refreshRes.error);
+
+      // Invalidate queries to refresh the UI
+      await queryClient.invalidateQueries({ queryKey: ['manual-builder-props'] });
+
+      toast({
+        title: "Props refreshed",
+        description: "Latest props have been loaded.",
+      });
+    } catch (error) {
+      console.error('Refresh error:', error);
+      toast({
+        title: "Refresh failed",
+        description: "Could not refresh props. Try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   // Filter props by search
   const filteredProps = useMemo(() => {
@@ -101,11 +142,23 @@ export default function ManualBuilder() {
                 Live
               </Badge>
             )}
-            {selectedLegs.length > 0 && (
-              <Badge variant="secondary" className="ml-auto">
-                {selectedLegs.length} selected
-              </Badge>
-            )}
+            <div className="ml-auto flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+                className="gap-1.5"
+              >
+                <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                {isRefreshing ? 'Refreshing...' : 'Refresh'}
+              </Button>
+              {selectedLegs.length > 0 && (
+                <Badge variant="secondary">
+                  {selectedLegs.length} selected
+                </Badge>
+              )}
+            </div>
           </div>
 
           {/* Search */}
