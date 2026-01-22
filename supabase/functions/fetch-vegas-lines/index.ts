@@ -271,11 +271,19 @@ serve(async (req) => {
         // Fallback: Try to get from unified_props table
         console.log('[Vegas Lines] No ODDS_API_KEY, extracting from unified_props...');
         
+        // Eastern day spans from 05:00 UTC to 04:59 UTC next day
+        // So we query a broader range and filter games that happen "today" in ET context
+        const startUTC = `${today}T05:00:00Z`; // 00:00 ET = 05:00 UTC (EST)
+        const nextDay = new Date(new Date(today).getTime() + 86400000).toISOString().split('T')[0];
+        const endUTC = `${nextDay}T04:59:59Z`; // 23:59 ET = 04:59 UTC next day
+        
+        console.log(`[Vegas Lines] Querying props from ${startUTC} to ${endUTC}`);
+        
         const { data: propsData } = await supabase
           .from('unified_props')
-          .select('event_id, home_team, away_team, commence_time')
-          .gte('commence_time', `${today}T00:00:00`)
-          .lte('commence_time', `${today}T23:59:59`);
+          .select('event_id, game_description, commence_time')
+          .gte('commence_time', startUTC)
+          .lte('commence_time', endUTC);
         
         if (!propsData || propsData.length === 0) {
           return new Response(JSON.stringify({
@@ -286,15 +294,26 @@ serve(async (req) => {
           });
         }
         
+        // Helper to parse "Away Team @ Home Team" format
+        const parseGameDescription = (desc: string): { away: string; home: string } | null => {
+          if (!desc || !desc.includes('@')) return null;
+          const parts = desc.split('@').map(s => s.trim());
+          if (parts.length !== 2) return null;
+          return { away: parts[0], home: parts[1] };
+        };
+        
         // Extract unique games
         const gamesMap = new Map<string, { home: string; away: string; commence: string }>();
         for (const prop of propsData) {
           if (prop.event_id && !gamesMap.has(prop.event_id)) {
-            gamesMap.set(prop.event_id, {
-              home: prop.home_team,
-              away: prop.away_team,
-              commence: prop.commence_time,
-            });
+            const teams = parseGameDescription(prop.game_description);
+            if (teams) {
+              gamesMap.set(prop.event_id, {
+                home: teams.home,
+                away: teams.away,
+                commence: prop.commence_time,
+              });
+            }
           }
         }
         
