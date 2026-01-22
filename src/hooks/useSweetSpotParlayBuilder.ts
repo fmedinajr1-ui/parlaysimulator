@@ -253,24 +253,35 @@ function matchesWinningPattern(
     }
   }
 
-  // FIX: If no opponent defense rank but rules require it, allow with penalty
+  // CRITICAL: For UNDER picks, defense rank is REQUIRED - block if missing
   if (rules.preferredOpponentDefenseRank && !opponentDefenseRank) {
-    console.log(`[Pattern] ⚠️ No defense rank for ${pick.player_name} opponent - allowing with penalty`);
+    if (pick.side?.toLowerCase() === 'under') {
+      console.log(`[Pattern] ❌ BLOCKING UNDER: ${pick.player_name} - no defense rank available (UNDER requires verified DEF matchup)`);
+      failures.push(`UNDER requires defense rank verification`);
+      return { passes: false, score: 0, reason: failures.join(', ') };
+    }
+    // OVER picks can proceed with penalty
+    console.log(`[Pattern] ⚠️ No defense rank for ${pick.player_name} opponent - allowing OVER with penalty`);
     score -= 1;
     reasons.push(`No DEF rank (penalized)`);
     return { passes: true, score, reason: reasons.join(' | ') };
   }
 
-  // Defensive matchup check (CRITICAL for UNDERS)
+  // Defensive matchup check (CRITICAL for UNDERS - HARD BLOCK if weak defense)
   if (rules.preferredOpponentDefenseRank && opponentDefenseRank) {
     if (opponentDefenseRank <= rules.preferredOpponentDefenseRank) {
       score += 4; // Big bonus for favorable defense matchup
       reasons.push(`vs #${opponentDefenseRank} DEF ✓`);
     } else {
-      // For UNDER picks, weak defense is bad
+      // CRITICAL: BLOCK UNDER picks against weak defense (not just penalize)
       if (pick.side?.toLowerCase() === 'under') {
-        score -= 2;
+        console.log(`[Pattern] ❌ BLOCKING UNDER: ${pick.player_name} vs weak DEF #${opponentDefenseRank} (need top ${rules.preferredOpponentDefenseRank})`);
+        failures.push(`UNDER vs weak DEF #${opponentDefenseRank} (need top ${rules.preferredOpponentDefenseRank})`);
+        return { passes: false, score: 0, reason: failures.join(', ') };
       }
+      // OVER picks get penalized but not blocked
+      score -= 2;
+      reasons.push(`vs #${opponentDefenseRank} DEF (weak)`);
     }
   }
 
@@ -1010,12 +1021,63 @@ export function useSweetSpotParlayBuilder() {
     }
     console.log(`✅ Pattern validated: ${patternValidatedPicks.length}/${h2hValidatedPicks.length}`);
 
+    // ========== DETAILED CATEGORY CANDIDATE LOGGING ==========
+    console.log('\n🔍 [CATEGORY CANDIDATES - Pre-Selection Analysis]');
+    const archetypeOverridesApplied: string[] = [];
+    
+    for (const formula of PROVEN_FORMULA) {
+      const candidates = patternValidatedPicks.filter(p => 
+        p.category === formula.category && 
+        p.side.toLowerCase() === formula.side
+      );
+      console.log(`\n📂 ${formula.category} (${formula.side.toUpperCase()}) - ${candidates.length} candidates:`);
+      candidates.slice(0, 8).forEach((c, i) => {
+        const gameCtx = getGameContextForPick(c);
+        const defRank = getOpponentDefenseRank(c);
+        const defInfo = defRank ? `#${defRank} DEF` : 'No DEF';
+        const scriptInfo = gameCtx ? gameCtx.gameScript : 'No Script';
+        console.log(`   ${i + 1}. ${c.player_name} | Line: ${c.line} | L10: ${c.l10HitRate ? Math.round(c.l10HitRate * 100) + '%' : 'N/A'} | Team: ${c.team_name || 'Unknown'} | ${scriptInfo} | vs ${defInfo}`);
+        
+        // Track archetype overrides for BIG_ASSIST_OVER
+        if (c.category === 'BIG_ASSIST_OVER' && c.prop_type?.toLowerCase().includes('assist')) {
+          archetypeOverridesApplied.push(`${c.player_name} (${c.archetype || 'UNKNOWN'})`);
+        }
+      });
+      if (candidates.length > 8) {
+        console.log(`   ... and ${candidates.length - 8} more`);
+      }
+      if (candidates.length === 0) {
+        console.log(`   ⚠️ No candidates available for this category`);
+      }
+    }
+    
+    // Log archetype overrides summary
+    if (archetypeOverridesApplied.length > 0) {
+      console.log(`\n✅ [Archetype Overrides for BIG_ASSIST_OVER]: ${[...new Set(archetypeOverridesApplied)].join(', ')}`);
+    }
+
+    // ========== DEFENSE VALIDATION SUMMARY ==========
+    console.log(`\n🛡️ [DEFENSE VALIDATION SUMMARY - UNDER Picks]`);
+    const underCategories = ['LOW_SCORER_UNDER', 'MID_SCORER_UNDER', 'HIGH_REB_UNDER'];
+    patternValidatedPicks
+      .filter(p => underCategories.includes(p.category || ''))
+      .forEach(p => {
+        const defRank = getOpponentDefenseRank(p);
+        const rules = WINNING_PATTERN_RULES[p.category || ''];
+        const requiredRank = rules?.preferredOpponentDefenseRank || 'N/A';
+        const status = defRank && typeof requiredRank === 'number' && defRank <= requiredRank ? '✅ PASS' : '❌ FAIL';
+        console.log(`   ${status} ${p.player_name} (${p.category}) vs #${defRank || 'N/A'} DEF (need top ${requiredRank})`);
+      });
+
     const selectedLegs: DreamTeamLeg[] = [];
     const usedTeams = new Set<string>();
     const usedPlayers = new Set<string>();
 
     // Step 1: Fill from proven categories first (with pattern scoring)
+    console.log('\n🏆 [CATEGORY SELECTION LOOP]');
     for (const formula of PROVEN_FORMULA) {
+      console.log(`\n--- Processing ${formula.category} (${formula.side.toUpperCase()}) ---`);
+      
       const categoryPicks = patternValidatedPicks
         .filter(p => 
           p.category === formula.category && 
@@ -1037,12 +1099,41 @@ export function useSweetSpotParlayBuilder() {
           return scoreB - scoreA;
         });
 
+      // Log scoring breakdown for top candidates
+      if (categoryPicks.length > 0) {
+        console.log(`   📊 Ranking ${categoryPicks.length} candidates (after team/player dedup):`);
+        categoryPicks.slice(0, 5).forEach((p, i) => {
+          const combinedScore = (p._patternScore || 0) + ((p.l10HitRate || 0) * 5);
+          console.log(`      ${i + 1}. ${p.player_name} | PatternScore: ${p._patternScore || 0} | L10: ${p.l10HitRate ? Math.round(p.l10HitRate * 100) + '%' : 'N/A'} | Combined: ${combinedScore.toFixed(2)}`);
+        });
+      } else {
+        console.log(`   ⚠️ No available candidates (all filtered by team/player dedup)`);
+      }
+
       let added = 0;
       for (const pick of categoryPicks) {
-        if (added >= formula.count) break;
-        if (selectedLegs.length >= TARGET_LEG_COUNT) break;
+        // Detailed skip reason logging
+        if (added >= formula.count) {
+          console.log(`   ⏭️ ${pick.player_name}: SKIPPED - Category slot filled (${added}/${formula.count})`);
+          continue;
+        }
+        if (selectedLegs.length >= TARGET_LEG_COUNT) {
+          console.log(`   ⏭️ ${pick.player_name}: SKIPPED - Parlay full (${selectedLegs.length} legs)`);
+          break;
+        }
 
         const team = (pick.team_name || 'Unknown').toLowerCase();
+        
+        // These checks are redundant after pre-filter, but log for clarity
+        if (usedTeams.has(team)) {
+          console.log(`   ⏭️ ${pick.player_name}: SKIPPED - Team "${team}" already used`);
+          continue;
+        }
+        if (usedPlayers.has(pick.player_name.toLowerCase())) {
+          console.log(`   ⏭️ ${pick.player_name}: SKIPPED - Player already selected`);
+          continue;
+        }
+
         const h2h = getH2HForPick(pick);
         const gameContext = pick._gameContext;
         const opponentDefenseRank = pick._opponentDefenseRank;
@@ -1057,7 +1148,7 @@ export function useSweetSpotParlayBuilder() {
           ? `| vs #${opponentDefenseRank} DEF`
           : '';
         
-        console.log(`[Optimal] ✅ ${pick.player_name} ${pick.prop_type} ${pick.side.toUpperCase()} ${pick.line} | ${pick.category} | L10: ${pick.l10HitRate ? Math.round(pick.l10HitRate * 100) + '%' : 'N/A'} ${h2hInfo} ${contextInfo} ${defInfo}`);
+        console.log(`   ✅ SELECTED: ${pick.player_name} ${pick.prop_type} ${pick.side.toUpperCase()} ${pick.line} | L10: ${pick.l10HitRate ? Math.round(pick.l10HitRate * 100) + '%' : 'N/A'} ${h2hInfo} ${contextInfo} ${defInfo}`);
         
         selectedLegs.push({
           pick,
@@ -1073,9 +1164,7 @@ export function useSweetSpotParlayBuilder() {
         added++;
       }
 
-      if (added > 0) {
-        console.log(`[Optimal] ${formula.category}: Added ${added}/${formula.count}`);
-      }
+      console.log(`   📌 ${formula.category}: Added ${added}/${formula.count}`);
     }
 
     // Step 2: Fill remaining slots from pattern-validated picks if needed
@@ -1135,6 +1224,19 @@ export function useSweetSpotParlayBuilder() {
       team: leg.team,
       score: leg.score.toFixed(2)
     })));
+    
+    // Enhanced selection trace with full context
+    console.log('\n📋 SELECTION TRACE (Full Context):');
+    selectedLegs.forEach((leg, i) => {
+      const whySelected = [
+        leg.pick.category ? `Category: ${leg.pick.category}` : 'Fallback',
+        `PatternScore: ${leg.patternScore || 0}`,
+        leg.h2h ? `H2H: ${(leg.h2h.hitRate * 100).toFixed(0)}%` : 'No H2H',
+        leg.gameContext ? `Script: ${leg.gameContext.gameScript}` : 'No Context',
+        leg.opponentDefenseRank ? `vs #${leg.opponentDefenseRank} DEF` : 'No DEF',
+      ].join(' | ');
+      console.log(`   ${i + 1}. ${leg.pick.player_name} → ${whySelected}`);
+    });
     
     const categoryCount = selectedLegs.filter(l => l.pick.category).length;
     const riskEngineCount = selectedLegs.length - categoryCount;
