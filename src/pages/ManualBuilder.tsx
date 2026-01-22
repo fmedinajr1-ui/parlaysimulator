@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import React, { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useManualBuilder, type ManualProp } from "@/hooks/useManualBuilder";
 import { PropSelectionCard } from "@/components/manual/PropSelectionCard";
@@ -25,7 +25,7 @@ export default function ManualBuilder() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedLegs, setSelectedLegs] = useState<SelectedLeg[]>([]);
 
-  const { props, isLoading, getDefenseForMatchup } = useManualBuilder(statFilter);
+  const { props, isLoading, isConnected, getDefenseForMatchup } = useManualBuilder(statFilter);
 
   // Filter props by search
   const filteredProps = useMemo(() => {
@@ -68,6 +68,17 @@ export default function ManualBuilder() {
     return leg?.side || null;
   };
 
+  // Auto-remove stale selections when props are deleted by cleanup cron
+  React.useEffect(() => {
+    if (!isLoading && props.length > 0 && selectedLegs.length > 0) {
+      const propIds = new Set(props.map(p => p.id));
+      const hasStale = selectedLegs.some(leg => !propIds.has(leg.prop.id));
+      if (hasStale) {
+        setSelectedLegs(prev => prev.filter(leg => propIds.has(leg.prop.id)));
+      }
+    }
+  }, [props, isLoading, selectedLegs]);
+
   return (
     <div className="min-h-screen bg-background pb-24">
       {/* Header */}
@@ -84,6 +95,12 @@ export default function ManualBuilder() {
             </Button>
             <Dumbbell className="w-6 h-6 text-primary" />
             <h1 className="text-xl font-bold">Manual Parlay Builder</h1>
+            {isConnected && (
+              <Badge variant="outline" className="text-xs gap-1 border-green-500/50">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                Live
+              </Badge>
+            )}
             {selectedLegs.length > 0 && (
               <Badge variant="secondary" className="ml-auto">
                 {selectedLegs.length} selected
