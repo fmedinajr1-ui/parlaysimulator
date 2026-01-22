@@ -151,6 +151,29 @@ interface PatternCheckResult {
   reason: string;
 }
 
+// Helper: Convert full team name to abbreviation for defensive lookups
+function teamNameToAbbrev(teamName: string): string {
+  if (!teamName) return '';
+  const abbrevMap: Record<string, string> = {
+    'atlanta hawks': 'atl', 'boston celtics': 'bos', 'brooklyn nets': 'bkn', 'charlotte hornets': 'cha',
+    'chicago bulls': 'chi', 'cleveland cavaliers': 'cle', 'dallas mavericks': 'dal', 'denver nuggets': 'den',
+    'detroit pistons': 'det', 'golden state warriors': 'gsw', 'houston rockets': 'hou', 'indiana pacers': 'ind',
+    'los angeles clippers': 'lac', 'la clippers': 'lac', 'los angeles lakers': 'lal', 'la lakers': 'lal',
+    'memphis grizzlies': 'mem', 'miami heat': 'mia', 'milwaukee bucks': 'mil', 'minnesota timberwolves': 'min',
+    'new orleans pelicans': 'nop', 'new york knicks': 'nyk', 'oklahoma city thunder': 'okc', 'orlando magic': 'orl',
+    'philadelphia 76ers': 'phi', 'phoenix suns': 'phx', 'portland trail blazers': 'por', 'sacramento kings': 'sac',
+    'san antonio spurs': 'sas', 'toronto raptors': 'tor', 'utah jazz': 'uta', 'washington wizards': 'was',
+  };
+  const lower = teamName.toLowerCase();
+  // Direct match first
+  if (abbrevMap[lower]) return abbrevMap[lower];
+  // Partial match
+  for (const [name, abbrev] of Object.entries(abbrevMap)) {
+    if (lower.includes(name) || name.includes(lower)) return abbrev;
+  }
+  return teamName.slice(0, 3).toLowerCase();
+}
+
 function matchesWinningPattern(
   pick: SweetSpotPick,
   gameContext: GameContext | undefined,
@@ -174,6 +197,14 @@ function matchesWinningPattern(
   }
   score += 2; // Passed line check
   reasons.push(`Line ✓`);
+
+  // FIX: If no game context available but rules require it, allow with penalty (don't block)
+  if (!gameContext && (rules.preferredGameScript || rules.preferredPace || rules.maxVegasTotal || rules.minVegasTotal)) {
+    console.log(`[Pattern] ⚠️ No game context for ${pick.player_name} (${pick.category}) - allowing with penalty`);
+    score -= 2; // Penalty for missing context
+    reasons.push(`No context (penalized)`);
+    return { passes: true, score, reason: reasons.join(' | ') };
+  }
 
   // Game script check
   if (gameContext) {
@@ -212,6 +243,14 @@ function matchesWinningPattern(
       score += 2;
       reasons.push(`${gameContext.paceRating} pace ✓`);
     }
+  }
+
+  // FIX: If no opponent defense rank but rules require it, allow with penalty
+  if (rules.preferredOpponentDefenseRank && !opponentDefenseRank) {
+    console.log(`[Pattern] ⚠️ No defense rank for ${pick.player_name} opponent - allowing with penalty`);
+    score -= 1;
+    reasons.push(`No DEF rank (penalized)`);
+    return { passes: true, score, reason: reasons.join(' | ') };
   }
 
   // Defensive matchup check (CRITICAL for UNDERS)
@@ -402,14 +441,20 @@ export function useSweetSpotParlayBuilder() {
         .from('team_defensive_ratings')
         .select('team_name, stat_type, defensive_rank, stat_allowed_per_game');
       
-      // Create opponent defense map: team_stat -> rank
+      // FIX: Create opponent defense map using ABBREVIATIONS as keys (not full team names)
+      // This fixes the mismatch where lookups used "min_points" but map had "minnesota timberwolves_points"
       const defenseMap = new Map<string, number>();
       (defenseRatings || []).forEach(d => {
-        const key = `${d.team_name?.toLowerCase()}_${d.stat_type?.toLowerCase()}`;
-        defenseMap.set(key, d.defensive_rank || 15);
+        // Store by abbreviation (e.g., "min_points" instead of "minnesota timberwolves_points")
+        const abbrevKey = `${teamNameToAbbrev(d.team_name || '')}_${d.stat_type?.toLowerCase()}`;
+        defenseMap.set(abbrevKey, d.defensive_rank || 15);
+        
+        // Also store by full name for compatibility
+        const fullKey = `${d.team_name?.toLowerCase()}_${d.stat_type?.toLowerCase()}`;
+        defenseMap.set(fullKey, d.defensive_rank || 15);
       });
       
-      console.log(`🛡️ Defense ratings loaded: ${defenseMap.size} entries`);
+      console.log(`🛡️ Defense ratings loaded: ${defenseMap.size} entries (keyed by abbrev + full name)`);
       
       // ========== H2H HISTORY FETCH ==========
       const { data: matchupHistoryData } = await supabase
@@ -837,16 +882,29 @@ export function useSweetSpotParlayBuilder() {
       return undefined;
     };
     
-    // Helper: Get game context for a pick
+    // Helper: Get game context for a pick (with diagnostic logging)
     const getGameContextForPick = (pick: SweetSpotPick): GameContext | undefined => {
       const teamAbbrev = getTeamAbbrev(pick.team_name);
-      return gameContextMap.get(teamAbbrev.toLowerCase());
+      const context = gameContextMap.get(teamAbbrev.toLowerCase());
+      
+      // Debug logging for chain verification
+      if (!context && pick.category) {
+        console.log(`[Debug Chain] ${pick.player_name}: Team "${pick.team_name}" → Abbrev "${teamAbbrev}" → Context: MISSING`);
+        console.log(`[Debug Chain] Available teams in gameContextMap: ${Array.from(gameContextMap.keys()).join(', ')}`);
+      }
+      
+      return context;
     };
     
-    // Helper: Get opponent defense rank for a pick
+    // Helper: Get opponent defense rank for a pick (with diagnostic logging)
     const getOpponentDefenseRank = (pick: SweetSpotPick): number | undefined => {
       const gameContext = getGameContextForPick(pick);
-      if (!gameContext || !gameContext.opponent) return undefined;
+      if (!gameContext || !gameContext.opponent) {
+        if (pick.category) {
+          console.log(`[Debug DEF] ${pick.player_name}: No game context or opponent`);
+        }
+        return undefined;
+      }
       
       // Determine stat type for defense lookup
       const propLower = pick.prop_type?.toLowerCase() || '';
@@ -854,8 +912,19 @@ export function useSweetSpotParlayBuilder() {
       if (propLower.includes('rebound')) statType = 'rebounds';
       else if (propLower.includes('assist')) statType = 'assists';
       
+      // FIX: opponent is already an abbreviation from gameContextMap (e.g., "chi", "min")
       const defenseKey = `${gameContext.opponent.toLowerCase()}_${statType}`;
-      return defenseMap.get(defenseKey);
+      const rank = defenseMap.get(defenseKey);
+      
+      // Debug logging for defense lookup
+      if (!rank && pick.category) {
+        console.log(`[Debug DEF] ${pick.player_name}: Opponent "${gameContext.opponent}" → Key "${defenseKey}" → Rank: MISSING`);
+        console.log(`[Debug DEF] Sample defense keys: ${Array.from(defenseMap.keys()).slice(0, 10).join(', ')}`);
+      } else if (pick.category) {
+        console.log(`[Debug DEF] ${pick.player_name}: vs ${gameContext.opponent} → #${rank} ${statType} DEF`);
+      }
+      
+      return rank;
     };
     
     // H2H validation filter
