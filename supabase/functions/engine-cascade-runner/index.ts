@@ -41,33 +41,35 @@ const CASCADE_STEPS: CascadeStep[] = [
   { name: 'auto-classify-archetypes', body: {} },
   // Step 3: Fetch team defensive ratings (opponent defense data)
   { name: 'fetch-team-defense-ratings', body: { action: 'refresh' } },
-  // Step 4: Fetch Vegas lines (spreads, totals, blowout detection)
+  // Step 4: Fetch real-time team pace data from ESPN
+  { name: 'nba-team-pace-fetcher', body: { mode: 'refresh' } },
+  // Step 5: Fetch Vegas lines (spreads, totals, blowout detection)
   { name: 'fetch-vegas-lines', body: { action: 'refresh' } },
-  // Step 5: Calculate daily fatigue scores (back-to-back, travel miles)
+  // Step 6: Calculate daily fatigue scores (back-to-back, travel miles)
   { name: 'daily-fatigue-calculator', body: {} },
-  // Step 6: Scrape injury/lineup data from ESPN/RotoWire
+  // Step 7: Scrape injury/lineup data from ESPN/RotoWire
   { name: 'firecrawl-lineup-scraper', body: { sport: 'nba' } },
   
   // ========== PHASE 2: PROP REFRESH & ANALYSIS ==========
-  // Step 7: Category L10 analyzer (sweet spots, hit rates)
+  // Step 8: Category L10 analyzer (sweet spots, hit rates)
   { name: 'category-props-analyzer', body: { forceRefresh: true } },
-  // Step 8: Sync archetypes from player_archetypes to category_sweet_spots
+  // Step 9: Sync archetypes from player_archetypes to category_sweet_spots
   { name: 'sync-archetypes', body: {} },
-  // Step 9: Refresh today's props from odds API
+  // Step 10: Refresh today's props from odds API
   { name: 'refresh-todays-props', body: { sport: 'basketball_nba', force_clear: true } },
-  // Step 10: Main risk engine analysis (generates picks)
+  // Step 11: Main risk engine analysis (generates picks)
   { name: 'nba-player-prop-risk-engine', body: { action: 'analyze_slate', use_live_odds: true } },
-  // Step 11: SES scoring engine (confidence scoring)
+  // Step 12: SES scoring engine (confidence scoring)
   { name: 'prop-engine-v2', body: { action: 'full_slate' } },
   
   // ========== PHASE 3: MATCHUP INTELLIGENCE (BLOCKING LAYER) ==========
-  // Step 12: Matchup intelligence - analyze ALL picks & apply blocking rules
+  // Step 13: Matchup intelligence - analyze ALL picks & apply blocking rules
   { name: 'matchup-intelligence-analyzer', body: { action: 'analyze_batch' } },
   
   // ========== PHASE 4: PARLAY BUILDING (USES FILTERED PICKS) ==========
-  // Step 13: Dream Team parlay builder (respects blocked picks)
+  // Step 14: Dream Team parlay builder (respects blocked picks)
   { name: 'sharp-parlay-builder', body: { action: 'build' } },
-  // Step 14: Heat prop engine (respects blocked picks)
+  // Step 15: Heat prop engine (respects blocked picks)
   { name: 'heat-prop-engine', body: { action: 'build' } },
 ];
 
