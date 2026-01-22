@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Target, Trophy, Zap, Users, Plus, Loader2, TrendingUp, RefreshCw, Calendar, AlertTriangle } from "lucide-react";
+import { Target, Trophy, Zap, Users, Plus, Loader2, TrendingUp, RefreshCw, Calendar, AlertTriangle, History } from "lucide-react";
 import { useSweetSpotParlayBuilder } from "@/hooks/useSweetSpotParlayBuilder";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -240,6 +240,17 @@ export function SweetSpotDreamTeamParlay() {
                       {(leg.pick.l10HitRate * 100).toFixed(0)}%
                     </div>
                     <div className="text-[10px] text-muted-foreground">L10</div>
+                  </div>
+                )}
+                {leg.h2h && leg.h2h.gamesPlayed >= 2 && (
+                  <div className="flex items-center gap-1">
+                    <History className="h-3 w-3 text-indigo-400" />
+                    <div>
+                      <div className={`text-sm font-bold ${leg.h2h.hitRate >= 0.6 ? 'text-indigo-400' : leg.h2h.hitRate >= 0.5 ? 'text-yellow-400' : 'text-muted-foreground'}`}>
+                        {(leg.h2h.hitRate * 100).toFixed(0)}%
+                      </div>
+                      <div className="text-[10px] text-muted-foreground">H2H</div>
+                    </div>
                   </div>
                 )}
                 <div>
