@@ -2262,6 +2262,117 @@ export type Database = {
         }
         Relationships: []
       }
+      game_environment_validation: {
+        Row: {
+          avg_minutes: number | null
+          confidence_adjustment: number | null
+          created_at: string
+          defense_check: boolean | null
+          expected_game_pace: number | null
+          game_date: string
+          game_script_check: boolean | null
+          id: string
+          implied_total_check: boolean | null
+          is_starter: boolean | null
+          line: number
+          opp_defense_rank: number | null
+          opp_position_defense_rank: number | null
+          opp_stat_allowed: number | null
+          opponent_implied_total: number | null
+          opponent_pace: number | null
+          opponent_team: string | null
+          pace_check: boolean | null
+          pace_class: string | null
+          player_archetype: string | null
+          player_name: string
+          player_role: string | null
+          prop_type: string
+          prop_type_check: boolean | null
+          rejection_reason: string | null
+          role_check: boolean | null
+          side: string
+          team_implied_total: number | null
+          team_name: string | null
+          team_pace: number | null
+          updated_at: string
+          validation_status: string
+          vegas_spread: number | null
+          vegas_total: number | null
+        }
+        Insert: {
+          avg_minutes?: number | null
+          confidence_adjustment?: number | null
+          created_at?: string
+          defense_check?: boolean | null
+          expected_game_pace?: number | null
+          game_date?: string
+          game_script_check?: boolean | null
+          id?: string
+          implied_total_check?: boolean | null
+          is_starter?: boolean | null
+          line: number
+          opp_defense_rank?: number | null
+          opp_position_defense_rank?: number | null
+          opp_stat_allowed?: number | null
+          opponent_implied_total?: number | null
+          opponent_pace?: number | null
+          opponent_team?: string | null
+          pace_check?: boolean | null
+          pace_class?: string | null
+          player_archetype?: string | null
+          player_name: string
+          player_role?: string | null
+          prop_type: string
+          prop_type_check?: boolean | null
+          rejection_reason?: string | null
+          role_check?: boolean | null
+          side: string
+          team_implied_total?: number | null
+          team_name?: string | null
+          team_pace?: number | null
+          updated_at?: string
+          validation_status?: string
+          vegas_spread?: number | null
+          vegas_total?: number | null
+        }
+        Update: {
+          avg_minutes?: number | null
+          confidence_adjustment?: number | null
+          created_at?: string
+          defense_check?: boolean | null
+          expected_game_pace?: number | null
+          game_date?: string
+          game_script_check?: boolean | null
+          id?: string
+          implied_total_check?: boolean | null
+          is_starter?: boolean | null
+          line?: number
+          opp_defense_rank?: number | null
+          opp_position_defense_rank?: number | null
+          opp_stat_allowed?: number | null
+          opponent_implied_total?: number | null
+          opponent_pace?: number | null
+          opponent_team?: string | null
+          pace_check?: boolean | null
+          pace_class?: string | null
+          player_archetype?: string | null
+          player_name?: string
+          player_role?: string | null
+          prop_type?: string
+          prop_type_check?: boolean | null
+          rejection_reason?: string | null
+          role_check?: boolean | null
+          side?: string
+          team_implied_total?: number | null
+          team_name?: string | null
+          team_pace?: number | null
+          updated_at?: string
+          validation_status?: string
+          vegas_spread?: number | null
+          vegas_total?: number | null
+        }
+        Relationships: []
+      }
       game_news_feed: {
         Row: {
           affected_props: Json | null

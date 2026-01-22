@@ -335,3 +335,6 @@ verify_jwt = false
 
 [functions.nba-team-pace-fetcher]
 verify_jwt = false
+
+[functions.game-environment-validator]
+verify_jwt = false

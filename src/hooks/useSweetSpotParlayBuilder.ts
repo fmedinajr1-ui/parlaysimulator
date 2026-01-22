@@ -215,6 +215,32 @@ export function useSweetSpotParlayBuilder() {
         })));
       }
 
+      // NEW v3.1: Fetch Game Environment Validation results (Vegas-math pre-filter)
+      const { data: envValidations } = await supabase
+        .from('game_environment_validation')
+        .select('player_name, prop_type, side, line, validation_status, rejection_reason, confidence_adjustment')
+        .eq('game_date', targetDate);
+
+      const validationMap = new Map<string, { status: string; reason: string; adjustment: number }>(
+        (envValidations || []).map(v => [
+          `${v.player_name?.toLowerCase()}_${v.prop_type?.toLowerCase()}_${v.side?.toLowerCase()}`,
+          { 
+            status: v.validation_status || 'PENDING', 
+            reason: v.rejection_reason || '',
+            adjustment: v.confidence_adjustment || 0
+          }
+        ])
+      );
+      
+      // Log validation summary
+      const validationCounts = { approved: 0, conditional: 0, rejected: 0 };
+      envValidations?.forEach(v => {
+        if (v.validation_status === 'APPROVED') validationCounts.approved++;
+        else if (v.validation_status === 'CONDITIONAL') validationCounts.conditional++;
+        else if (v.validation_status === 'REJECTED') validationCounts.rejected++;
+      });
+      console.log(`🎯 Game Environment Validation: ${validationCounts.approved} 🟢 | ${validationCounts.conditional} 🟡 | ${validationCounts.rejected} 🔴`);
+
       // Get player team data from cache
       const { data: playerCache } = await supabase
         .from('bdl_player_cache')
@@ -413,8 +439,45 @@ export function useSweetSpotParlayBuilder() {
         }
       });
 
+      // v3.1: Apply Game Environment Validation filter
+      const validatedPicks = allPicks.filter(pick => {
+        const key = `${pick.player_name?.toLowerCase()}_${pick.prop_type?.toLowerCase()}_${pick.side?.toLowerCase()}`;
+        const validation = validationMap.get(key);
+        
+        if (!validation) return true; // No validation = allow (new/pending picks)
+        
+        // Block REJECTED picks
+        if (validation.status === 'REJECTED') {
+          console.log(`[GameEnvValidator] ❌ REJECTED: ${pick.player_name} ${pick.prop_type} ${pick.side} - ${validation.reason}`);
+          diagnostics.filters.archetypeBlocked.count++; // Reusing counter for env blocking
+          return false;
+        }
+        
+        // Allow CONDITIONAL only if L10 hit rate >= 70% (strong override signal)
+        if (validation.status === 'CONDITIONAL') {
+          if ((pick.l10HitRate || 0) >= 0.7) {
+            console.log(`[GameEnvValidator] 🟡 CONDITIONAL (allowed): ${pick.player_name} - high L10 hit rate (${((pick.l10HitRate || 0) * 100).toFixed(0)}%) overrides`);
+            // Apply confidence adjustment from validation
+            pick.confidence_score = Math.max(0, Math.min(1, pick.confidence_score + (validation.adjustment / 100)));
+            return true;
+          }
+          console.log(`[GameEnvValidator] 🟡 CONDITIONAL (blocked): ${pick.player_name} - ${validation.reason}`);
+          return false;
+        }
+        
+        // APPROVED - apply any positive confidence adjustment
+        if (validation.adjustment > 0) {
+          pick.confidence_score = Math.min(1, pick.confidence_score + (validation.adjustment / 100));
+        }
+        
+        return true; // APPROVED
+      });
+
+      console.log(`[SweetSpotParlay] After Game Environment Validation: ${validatedPicks.length}/${allPicks.length} picks passed`);
+      console.groupEnd();
+
       return {
-        picks: allPicks,
+        picks: validatedPicks,
         slateStatus: {
           currentDate: today,
           displayedDate: targetDate,

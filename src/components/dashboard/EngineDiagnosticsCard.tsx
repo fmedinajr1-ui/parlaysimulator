@@ -32,7 +32,8 @@ export function EngineDiagnosticsCard() {
         gameLogsResult,
         matchupIntelResult,
         archetypesResult,
-        categoryResult
+        categoryResult,
+        envValidationResult
       ] = await Promise.all([
         // Unified props - check for upcoming games
         supabase
@@ -85,7 +86,13 @@ export function EngineDiagnosticsCard() {
         supabase
           .from('category_sweet_spots')
           .select('id, recommended_side, l10_hit_rate')
-          .gte('l10_hit_rate', 0.7)
+          .gte('l10_hit_rate', 0.7),
+          
+        // v3.1: Game Environment Validation results
+        supabase
+          .from('game_environment_validation')
+          .select('validation_status')
+          .eq('game_date', today)
       ]);
 
       // Process unified props by type
@@ -143,6 +150,12 @@ export function EngineDiagnosticsCard() {
       
       // Category recommendations
       const categoryData = categoryResult.data || [];
+      
+      // v3.1: Game Environment Validation stats
+      const envData = envValidationResult.data || [];
+      const envApproved = envData.filter((v: any) => v.validation_status === 'APPROVED').length;
+      const envConditional = envData.filter((v: any) => v.validation_status === 'CONDITIONAL').length;
+      const envRejected = envData.filter((v: any) => v.validation_status === 'REJECTED').length;
 
       return {
         dataFreshness: {
@@ -173,7 +186,10 @@ export function EngineDiagnosticsCard() {
           matchupBlocked: blockedByMatchup,
           matchupTotal: matchupTotal,
           categoryRecsCount: categoryData.length,
-          archetypeDistribution
+          archetypeDistribution,
+          envApproved,
+          envConditional,
+          envRejected
         }
       };
     },
@@ -331,7 +347,7 @@ export function EngineDiagnosticsCard() {
 
         {/* v3.0 Rules Stats */}
         <div>
-          <h4 className="text-sm font-medium text-muted-foreground mb-2">v3.0 Rules Enforcement</h4>
+          <h4 className="text-sm font-medium text-muted-foreground mb-2">v3.1 Rules Enforcement</h4>
           <div className="grid grid-cols-2 gap-2 text-sm">
             <div className="flex items-center gap-2">
               {getStatusIcon(diagnostics?.v3Rules?.matchupBlocked === 0 ? 'healthy' : 'warning')}
@@ -345,6 +361,13 @@ export function EngineDiagnosticsCard() {
                 📊 {diagnostics?.v3Rules?.categoryRecsCount || 0} category recs
               </span>
             </div>
+          </div>
+          {/* Game Environment Validation */}
+          <div className="flex items-center gap-3 mt-2 text-sm">
+            <span className="text-green-500">🟢 {diagnostics?.v3Rules?.envApproved || 0}</span>
+            <span className="text-yellow-500">🟡 {diagnostics?.v3Rules?.envConditional || 0}</span>
+            <span className="text-red-400">🔴 {diagnostics?.v3Rules?.envRejected || 0}</span>
+            <span className="text-muted-foreground text-xs">(Vegas Validator)</span>
           </div>
           <div className="flex flex-wrap gap-1 mt-2">
             {Object.entries(diagnostics?.v3Rules?.archetypeDistribution || {}).slice(0, 5).map(([arch, count]) => (
