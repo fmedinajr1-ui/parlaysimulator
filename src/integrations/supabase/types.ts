@@ -5059,33 +5059,63 @@ export type Database = {
       nba_team_pace_projections: {
         Row: {
           created_at: string
+          defensive_rating: number | null
+          games_played: number | null
           id: string
+          last_game_date: string | null
+          losses: number | null
+          net_rating: number | null
+          offensive_rating: number | null
           pace_rank: number
           pace_rating: number
           possessions_per_game: number | null
+          season: string | null
+          source: string | null
+          team_abbrev: string | null
           team_name: string
           tempo_factor: number | null
           updated_at: string
+          wins: number | null
         }
         Insert: {
           created_at?: string
+          defensive_rating?: number | null
+          games_played?: number | null
           id?: string
+          last_game_date?: string | null
+          losses?: number | null
+          net_rating?: number | null
+          offensive_rating?: number | null
           pace_rank?: number
           pace_rating?: number
           possessions_per_game?: number | null
+          season?: string | null
+          source?: string | null
+          team_abbrev?: string | null
           team_name: string
           tempo_factor?: number | null
           updated_at?: string
+          wins?: number | null
         }
         Update: {
           created_at?: string
+          defensive_rating?: number | null
+          games_played?: number | null
           id?: string
+          last_game_date?: string | null
+          losses?: number | null
+          net_rating?: number | null
+          offensive_rating?: number | null
           pace_rank?: number
           pace_rating?: number
           possessions_per_game?: number | null
+          season?: string | null
+          source?: string | null
+          team_abbrev?: string | null
           team_name?: string
           tempo_factor?: number | null
           updated_at?: string
+          wins?: number | null
         }
         Relationships: []
       }

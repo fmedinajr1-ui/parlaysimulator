@@ -332,3 +332,6 @@ verify_jwt = false
 
 [functions.hedge-parlay-builder]
 verify_jwt = false
+
+[functions.nba-team-pace-fetcher]
+verify_jwt = false
