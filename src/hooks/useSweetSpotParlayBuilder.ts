@@ -39,6 +39,14 @@ const ARCHETYPE_PROP_BLOCKED: Record<string, string[]> = {
 function isPickArchetypeAligned(pick: SweetSpotPick): boolean {
   if (!pick.archetype || pick.archetype === 'UNKNOWN') return true;
   
+  // ========== CATEGORY OVERRIDE: BIG_ASSIST_OVER ==========
+  // Passing bigs (Vucevic, Sabonis, Jokic) are specifically targeted for BIG_ASSIST_OVER
+  // Even if their archetype normally blocks assists, allow it for this category
+  if (pick.category === 'BIG_ASSIST_OVER' && pick.prop_type?.toLowerCase().includes('assist')) {
+    console.log(`[SweetSpot] ✅ BIG_ASSIST_OVER override: ${pick.player_name} (${pick.archetype}) allowed for assists`);
+    return true;
+  }
+  
   const blockedProps = ARCHETYPE_PROP_BLOCKED[pick.archetype];
   if (!blockedProps) return true;
   
@@ -824,18 +832,37 @@ export function useSweetSpotParlayBuilder() {
     // Helper: Get team abbreviation from team name
     const getTeamAbbrev = (teamName: string | undefined): string => {
       if (!teamName) return '';
+      // FIX: Use full team names to avoid substring conflicts (e.g., "nets" matching "hornets")
       const abbrevMap: Record<string, string> = {
-        'hawks': 'ATL', 'celtics': 'BOS', 'nets': 'BKN', 'hornets': 'CHA',
-        'bulls': 'CHI', 'cavaliers': 'CLE', 'mavericks': 'DAL', 'nuggets': 'DEN',
-        'pistons': 'DET', 'warriors': 'GSW', 'rockets': 'HOU', 'pacers': 'IND',
-        'clippers': 'LAC', 'lakers': 'LAL', 'grizzlies': 'MEM', 'heat': 'MIA',
-        'bucks': 'MIL', 'timberwolves': 'MIN', 'pelicans': 'NOP', 'knicks': 'NYK',
-        'thunder': 'OKC', 'magic': 'ORL', '76ers': 'PHI', 'suns': 'PHX',
-        'trail blazers': 'POR', 'blazers': 'POR', 'kings': 'SAC', 'spurs': 'SAS',
-        'raptors': 'TOR', 'jazz': 'UTA', 'wizards': 'WAS',
+        // Full names first (most specific matches)
+        'charlotte hornets': 'CHA', 'brooklyn nets': 'BKN',
+        'atlanta hawks': 'ATL', 'boston celtics': 'BOS', 'chicago bulls': 'CHI',
+        'cleveland cavaliers': 'CLE', 'dallas mavericks': 'DAL', 'denver nuggets': 'DEN',
+        'detroit pistons': 'DET', 'golden state warriors': 'GSW', 'houston rockets': 'HOU',
+        'indiana pacers': 'IND', 'los angeles clippers': 'LAC', 'la clippers': 'LAC',
+        'los angeles lakers': 'LAL', 'la lakers': 'LAL', 'memphis grizzlies': 'MEM',
+        'miami heat': 'MIA', 'milwaukee bucks': 'MIL', 'minnesota timberwolves': 'MIN',
+        'new orleans pelicans': 'NOP', 'new york knicks': 'NYK', 'oklahoma city thunder': 'OKC',
+        'orlando magic': 'ORL', 'philadelphia 76ers': 'PHI', 'phoenix suns': 'PHX',
+        'portland trail blazers': 'POR', 'sacramento kings': 'SAC', 'san antonio spurs': 'SAS',
+        'toronto raptors': 'TOR', 'utah jazz': 'UTA', 'washington wizards': 'WAS',
+        // Short names (less specific - checked after full names)
+        'hornets': 'CHA', 'nets': 'BKN', 'hawks': 'ATL', 'celtics': 'BOS', 'bulls': 'CHI',
+        'cavaliers': 'CLE', 'mavericks': 'DAL', 'nuggets': 'DEN', 'pistons': 'DET',
+        'warriors': 'GSW', 'rockets': 'HOU', 'pacers': 'IND', 'clippers': 'LAC',
+        'lakers': 'LAL', 'grizzlies': 'MEM', 'heat': 'MIA', 'bucks': 'MIL',
+        'timberwolves': 'MIN', 'pelicans': 'NOP', 'knicks': 'NYK', 'thunder': 'OKC',
+        'magic': 'ORL', '76ers': 'PHI', 'suns': 'PHX', 'trail blazers': 'POR', 'blazers': 'POR',
+        'kings': 'SAC', 'spurs': 'SAS', 'raptors': 'TOR', 'jazz': 'UTA', 'wizards': 'WAS',
       };
       const lower = teamName.toLowerCase();
-      for (const [name, abbrev] of Object.entries(abbrevMap)) {
+      
+      // First, try exact match on full names (most reliable)
+      if (abbrevMap[lower]) return abbrevMap[lower];
+      
+      // Then try substring matching, prioritizing longer matches first
+      const sortedEntries = Object.entries(abbrevMap).sort((a, b) => b[0].length - a[0].length);
+      for (const [name, abbrev] of sortedEntries) {
         if (lower.includes(name)) return abbrev;
       }
       return teamName.slice(0, 3).toUpperCase();
