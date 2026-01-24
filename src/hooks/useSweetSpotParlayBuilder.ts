@@ -109,7 +109,7 @@ const WINNING_PATTERN_RULES: Record<string, {
   'ELITE_REB_OVER': {
     minLine: 10.5,
     maxLine: 15.5,
-    preferredPace: ['LOW', 'MEDIUM'],
+    preferredPace: ['SLOW', 'MEDIUM'], // Normalized: was LOW/MEDIUM
     maxVegasTotal: 222, // Grind games = more rebounds
     preferredGameScript: ['COMPETITIVE', 'GRIND_OUT'],
     statType: 'rebounds',
@@ -117,7 +117,7 @@ const WINNING_PATTERN_RULES: Record<string, {
   'ROLE_PLAYER_REB': {
     minLine: 3.5,
     maxLine: 6.5,
-    preferredPace: ['LOW', 'MEDIUM'],
+    preferredPace: ['SLOW', 'MEDIUM'], // Normalized: was LOW/MEDIUM
     statType: 'rebounds',
   },
   'LOW_SCORER_UNDER': {
@@ -153,7 +153,7 @@ const WINNING_PATTERN_RULES: Record<string, {
   },
   'HIGH_REB_UNDER': {
     minLine: 8.5,
-    preferredPace: ['HIGH'], // High pace = fewer rebounds
+    preferredPace: ['FAST'], // Normalized: was HIGH
     statType: 'rebounds',
   },
 };
@@ -163,6 +163,29 @@ interface PatternCheckResult {
   score: number;
   reason: string;
 }
+
+// ========== PACE/SCRIPT NORMALIZATION v3.1 ==========
+// Handles vocabulary mismatch: Rules use LOW/HIGH, DB uses SLOW/FAST
+type Pace = 'FAST' | 'MEDIUM' | 'SLOW';
+type Script = 'SHOOTOUT' | 'GRIND_OUT' | 'COMPETITIVE' | 'BLOWOUT' | 'HARD_BLOWOUT';
+
+const normalizePace = (v?: string): Pace => {
+  const p = (v || 'MEDIUM').toUpperCase();
+  // Handle old rule vocab + any weird inputs
+  if (p === 'LOW') return 'SLOW';
+  if (p === 'HIGH') return 'FAST';
+  if (p === 'SLOW' || p === 'MEDIUM' || p === 'FAST') return p as Pace;
+  return 'MEDIUM';
+};
+
+const normalizeScript = (v?: string): Script => {
+  const s = (v || 'COMPETITIVE').toUpperCase();
+  if (s === 'HARD_BLOWOUT') return 'HARD_BLOWOUT';
+  if (s === 'BLOWOUT') return 'BLOWOUT';
+  if (s === 'GRIND_OUT') return 'GRIND_OUT';
+  if (s === 'SHOOTOUT') return 'SHOOTOUT';
+  return 'COMPETITIVE';
+};
 
 // Helper: Convert full team name to abbreviation for defensive lookups
 function teamNameToAbbrev(teamName: string): string {
@@ -187,6 +210,8 @@ function teamNameToAbbrev(teamName: string): string {
   return teamName.slice(0, 3).toLowerCase();
 }
 
+// ========== PRODUCTION-GRADE PATTERN MATCHER v3.1 ==========
+// Handles: pace normalization, excluded script blocks, grindFactor bonuses, clean reason strings
 function matchesWinningPattern(
   pick: SweetSpotPick,
   gameContext: GameContext | undefined,
@@ -199,92 +224,136 @@ function matchesWinningPattern(
   const reasons: string[] = [];
   const failures: string[] = [];
 
-  // Line threshold check (CRITICAL)
-  if (rules.minLine && pick.line < rules.minLine) {
-    failures.push(`Line ${pick.line} < min ${rules.minLine}`);
-    return { passes: false, score: 0, reason: failures.join(', ') };
-  }
-  if (rules.maxLine && pick.line > rules.maxLine) {
-    failures.push(`Line ${pick.line} > max ${rules.maxLine}`);
-    return { passes: false, score: 0, reason: failures.join(', ') };
-  }
-  score += 2; // Passed line check
-  reasons.push(`Line ✓`);
+  const side = (pick.side || '').toLowerCase();
+  const isUnder = side === 'under';
 
-  // FIX: If no game context available but rules require it, allow with penalty (don't block)
-  if (!gameContext && (rules.preferredGameScript || rules.preferredPace || rules.maxVegasTotal || rules.minVegasTotal)) {
-    console.log(`[Pattern] ⚠️ No game context for ${pick.player_name} (${pick.category}) - allowing with penalty`);
-    score -= 2; // Penalty for missing context
-    reasons.push(`No context (penalized)`);
+  // --------------------------
+  // 1) LINE THRESHOLDS (HARD BLOCK)
+  // --------------------------
+  if (rules.minLine != null && pick.line < rules.minLine) {
+    return { passes: false, score: 0, reason: `Line ${pick.line} < min ${rules.minLine}` };
+  }
+  if (rules.maxLine != null && pick.line > rules.maxLine) {
+    return { passes: false, score: 0, reason: `Line ${pick.line} > max ${rules.maxLine}` };
+  }
+  score += 2;
+  reasons.push('Line ✓');
+
+  // ------------------------------------------
+  // 2) CONTEXT: allow missing with penalty
+  // ------------------------------------------
+  const needsContext =
+    !!(rules.preferredGameScript?.length ||
+       rules.excludedGameScript?.length ||
+       rules.preferredPace?.length ||
+       rules.maxVegasTotal != null ||
+       rules.minVegasTotal != null);
+
+  if (!gameContext && needsContext) {
+    score -= 2;
+    reasons.push('No context (-2)');
     return { passes: true, score, reason: reasons.join(' | ') };
   }
 
-  // Game script check
+  // --------------------------
+  // 3) GAME CONTEXT SCORING
+  // --------------------------
   if (gameContext) {
-    if (rules.preferredGameScript) {
-      if (rules.preferredGameScript.includes(gameContext.gameScript)) {
-        score += 3;
-        reasons.push(`${gameContext.gameScript} ✓`);
-      } else {
-        score -= 1; // Non-ideal but not blocked
-      }
-    }
-    if (rules.excludedGameScript) {
-      if (rules.excludedGameScript.includes(gameContext.gameScript)) {
-        failures.push(`Script ${gameContext.gameScript} excluded`);
+    const script = normalizeScript(gameContext.gameScript);
+    const pace = normalizePace(gameContext.paceRating);
+    const total = Number(gameContext.vegasTotal);
+
+    // (A) Excluded scripts = HARD BLOCK
+    if (rules.excludedGameScript?.length) {
+      const excluded = rules.excludedGameScript.map(s => normalizeScript(s));
+      if (excluded.includes(script)) {
+        failures.push(`Script ${script} excluded`);
         return { passes: false, score: 0, reason: failures.join(', ') };
       }
     }
 
-    // Vegas total check
-    if (rules.maxVegasTotal && gameContext.vegasTotal > rules.maxVegasTotal) {
-      score -= 2; // Penalize high-scoring games for rebound overs
-    } else if (rules.maxVegasTotal && gameContext.vegasTotal <= rules.maxVegasTotal) {
-      score += 2;
-      reasons.push(`Total ${gameContext.vegasTotal} ✓`);
+    // (B) Preferred script = strong bonus, else light penalty
+    if (rules.preferredGameScript?.length) {
+      const preferred = rules.preferredGameScript.map(s => normalizeScript(s));
+      if (preferred.includes(script)) {
+        score += 3;
+        reasons.push(`${script} ✓`);
+      } else {
+        score -= 1;
+        reasons.push(`${script} ✗`);
+      }
     }
-    
-    if (rules.minVegasTotal && gameContext.vegasTotal >= rules.minVegasTotal) {
-      score += 2;
-      reasons.push(`High total ✓`);
-    } else if (rules.minVegasTotal && gameContext.vegasTotal < rules.minVegasTotal) {
+
+    // (C) Pace (normalized SLOW/MEDIUM/FAST)
+    if (rules.preferredPace?.length) {
+      const preferred = rules.preferredPace.map(p => normalizePace(p));
+      if (preferred.includes(pace)) {
+        score += 2;
+        reasons.push(`Pace ${pace} ✓`);
+      } else {
+        score -= 1;
+        reasons.push(`Pace ${pace} ✗`);
+      }
+    }
+
+    // (D) Vegas total checks
+    if (rules.maxVegasTotal != null) {
+      if (total <= rules.maxVegasTotal) {
+        score += 2;
+        reasons.push(`Total ${total} ≤ ${rules.maxVegasTotal} ✓`);
+      } else {
+        score -= 2;
+        reasons.push(`Total ${total} > ${rules.maxVegasTotal} ✗`);
+      }
+    }
+
+    if (rules.minVegasTotal != null) {
+      if (total >= rules.minVegasTotal) {
+        score += 2;
+        reasons.push(`Total ${total} ≥ ${rules.minVegasTotal} ✓`);
+      } else {
+        score -= 1;
+        reasons.push(`Total ${total} < ${rules.minVegasTotal} ✗`);
+      }
+    }
+
+    // (E) GrindFactor tie-in (small, safe)
+    if (typeof gameContext.grindFactor === 'number') {
+      if (isUnder && gameContext.grindFactor >= 0.65) {
+        score += 1;
+        reasons.push('Grind ↑ (UNDER) ✓');
+      }
+      if (!isUnder && gameContext.grindFactor >= 0.75 && rules.statType === 'points') {
+        score -= 1;
+        reasons.push('Grind ↑ (PTS OVER) ✗');
+      }
+    }
+  }
+
+  // ----------------------------------------------------
+  // 4) DEFENSE: required + hard blocks for UNDERS
+  // ----------------------------------------------------
+  if (rules.preferredOpponentDefenseRank != null) {
+    if (!opponentDefenseRank) {
+      if (isUnder) {
+        return { passes: false, score: 0, reason: 'UNDER requires defense rank verification' };
+      }
       score -= 1;
+      reasons.push('No DEF rank (-1)');
+      return { passes: true, score, reason: reasons.join(' | ') };
     }
 
-    // Pace check
-    if (rules.preferredPace && rules.preferredPace.includes(gameContext.paceRating)) {
-      score += 2;
-      reasons.push(`${gameContext.paceRating} pace ✓`);
-    }
-  }
-
-  // CRITICAL: For UNDER picks, defense rank is REQUIRED - block if missing
-  if (rules.preferredOpponentDefenseRank && !opponentDefenseRank) {
-    if (pick.side?.toLowerCase() === 'under') {
-      console.log(`[Pattern] ❌ BLOCKING UNDER: ${pick.player_name} - no defense rank available (UNDER requires verified DEF matchup)`);
-      failures.push(`UNDER requires defense rank verification`);
-      return { passes: false, score: 0, reason: failures.join(', ') };
-    }
-    // OVER picks can proceed with penalty
-    console.log(`[Pattern] ⚠️ No defense rank for ${pick.player_name} opponent - allowing OVER with penalty`);
-    score -= 1;
-    reasons.push(`No DEF rank (penalized)`);
-    return { passes: true, score, reason: reasons.join(' | ') };
-  }
-
-  // Defensive matchup check (CRITICAL for UNDERS - HARD BLOCK if weak defense)
-  if (rules.preferredOpponentDefenseRank && opponentDefenseRank) {
     if (opponentDefenseRank <= rules.preferredOpponentDefenseRank) {
-      score += 4; // Big bonus for favorable defense matchup
+      score += 4;
       reasons.push(`vs #${opponentDefenseRank} DEF ✓`);
     } else {
-      // CRITICAL: BLOCK UNDER picks against weak defense (not just penalize)
-      if (pick.side?.toLowerCase() === 'under') {
-        console.log(`[Pattern] ❌ BLOCKING UNDER: ${pick.player_name} vs weak DEF #${opponentDefenseRank} (need top ${rules.preferredOpponentDefenseRank})`);
-        failures.push(`UNDER vs weak DEF #${opponentDefenseRank} (need top ${rules.preferredOpponentDefenseRank})`);
-        return { passes: false, score: 0, reason: failures.join(', ') };
+      if (isUnder) {
+        return {
+          passes: false,
+          score: 0,
+          reason: `UNDER vs weak DEF #${opponentDefenseRank} (need top ${rules.preferredOpponentDefenseRank})`
+        };
       }
-      // OVER picks get penalized but not blocked
       score -= 2;
       reasons.push(`vs #${opponentDefenseRank} DEF (weak)`);
     }
