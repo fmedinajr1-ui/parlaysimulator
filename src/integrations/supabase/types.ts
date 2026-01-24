@@ -690,6 +690,7 @@ export type Database = {
         Row: {
           actual_hit_rate: number | null
           actual_line: number | null
+          actual_value: number | null
           analysis_date: string | null
           archetype: string | null
           bookmaker: string | null
@@ -698,6 +699,7 @@ export type Database = {
           confidence_score: number | null
           created_at: string | null
           eligibility_type: string | null
+          engine_version: string | null
           games_played: number | null
           id: string
           is_active: boolean | null
@@ -708,6 +710,7 @@ export type Database = {
           l10_min: number | null
           l10_std_dev: number | null
           line_difference: number | null
+          outcome: string | null
           player_name: string
           prop_type: string
           recommendation: string | null
@@ -715,11 +718,14 @@ export type Database = {
           recommended_side: string | null
           risk_level: string | null
           season_avg: number | null
+          settled_at: string | null
           updated_at: string | null
+          verified_source: string | null
         }
         Insert: {
           actual_hit_rate?: number | null
           actual_line?: number | null
+          actual_value?: number | null
           analysis_date?: string | null
           archetype?: string | null
           bookmaker?: string | null
@@ -728,6 +734,7 @@ export type Database = {
           confidence_score?: number | null
           created_at?: string | null
           eligibility_type?: string | null
+          engine_version?: string | null
           games_played?: number | null
           id?: string
           is_active?: boolean | null
@@ -738,6 +745,7 @@ export type Database = {
           l10_min?: number | null
           l10_std_dev?: number | null
           line_difference?: number | null
+          outcome?: string | null
           player_name: string
           prop_type: string
           recommendation?: string | null
@@ -745,11 +753,14 @@ export type Database = {
           recommended_side?: string | null
           risk_level?: string | null
           season_avg?: number | null
+          settled_at?: string | null
           updated_at?: string | null
+          verified_source?: string | null
         }
         Update: {
           actual_hit_rate?: number | null
           actual_line?: number | null
+          actual_value?: number | null
           analysis_date?: string | null
           archetype?: string | null
           bookmaker?: string | null
@@ -758,6 +769,7 @@ export type Database = {
           confidence_score?: number | null
           created_at?: string | null
           eligibility_type?: string | null
+          engine_version?: string | null
           games_played?: number | null
           id?: string
           is_active?: boolean | null
@@ -768,6 +780,7 @@ export type Database = {
           l10_min?: number | null
           l10_std_dev?: number | null
           line_difference?: number | null
+          outcome?: string | null
           player_name?: string
           prop_type?: string
           recommendation?: string | null
@@ -775,7 +788,9 @@ export type Database = {
           recommended_side?: string | null
           risk_level?: string | null
           season_avg?: number | null
+          settled_at?: string | null
           updated_at?: string | null
+          verified_source?: string | null
         }
         Relationships: []
       }
@@ -9562,6 +9577,38 @@ export type Database = {
           total_suggestions_followed: number
           total_won: number
           win_rate: number
+        }[]
+      }
+      get_sweet_spot_accuracy: {
+        Args: { days_back?: number }
+        Returns: {
+          category: string
+          hit_rate: number
+          hits: number
+          misses: number
+          no_push_hit_rate: number
+          pushes: number
+          total_picks: number
+        }[]
+      }
+      get_sweet_spot_accuracy_by_confidence: {
+        Args: { days_back?: number }
+        Returns: {
+          avg_confidence: number
+          confidence_bucket: string
+          hit_rate: number
+          hits: number
+          total_picks: number
+        }[]
+      }
+      get_sweet_spot_accuracy_by_l10: {
+        Args: { days_back?: number }
+        Returns: {
+          avg_l10: number
+          hit_rate: number
+          hits: number
+          l10_bucket: string
+          total_picks: number
         }[]
       }
       get_time_decayed_accuracy: {

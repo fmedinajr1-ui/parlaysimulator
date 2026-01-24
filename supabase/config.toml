@@ -338,3 +338,6 @@ verify_jwt = false
 
 [functions.game-environment-validator]
 verify_jwt = false
+
+[functions.verify-sweet-spot-outcomes]
+verify_jwt = false
