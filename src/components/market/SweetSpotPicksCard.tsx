@@ -85,39 +85,24 @@ export function SweetSpotPicksCard() {
     queryKey: ["category-sweet-spots-display"],
     queryFn: async () => {
       const today = getEasternDate();
-      const now = new Date().toISOString();
       
-      // First get active players (games haven't started)
-      const { data: activeProps } = await supabase
-        .from("unified_props")
-        .select("player_name")
-        .gte("commence_time", now);
-      
-      const activePlayers = new Set(
-        (activeProps || []).map(p => p.player_name?.toLowerCase()).filter(Boolean)
-      );
-      
-      // Fetch high-confidence sweet spots from category analyzer
+      // Fetch high-confidence sweet spots - trust the analyzer's is_active flag
       const { data, error } = await supabase
         .from("category_sweet_spots")
         .select("id, player_name, prop_type, actual_line, recommended_line, recommended_side, confidence_score, l10_hit_rate, l10_avg, category, archetype, analysis_date, is_active")
         .eq("analysis_date", today)
-        .gte("l10_hit_rate", 0.70) // At least 70% L10 hit rate
-        .gte("confidence_score", 0.75) // High confidence
-        .in("category", Object.keys(CATEGORY_CONFIG)) // Only parlay-eligible categories
+        .eq("is_active", true) // Trust analyzer's active flag
+        .gte("l10_hit_rate", 0.70)
+        .gte("confidence_score", 0.75)
+        .in("category", Object.keys(CATEGORY_CONFIG))
         .order("l10_hit_rate", { ascending: false })
         .limit(30);
 
       if (error) throw error;
       
-      // Filter to only include picks with active props (games not started)
-      const validPicks = (data || []).filter(
-        pick => activePlayers.has(pick.player_name?.toLowerCase())
-      );
-      
       // Dedupe by player + prop type (keep highest hit rate)
       const seen = new Set<string>();
-      const dedupedPicks = validPicks.filter(pick => {
+      const dedupedPicks = (data || []).filter(pick => {
         const key = `${pick.player_name}-${pick.prop_type}`.toLowerCase();
         if (seen.has(key)) return false;
         seen.add(key);
