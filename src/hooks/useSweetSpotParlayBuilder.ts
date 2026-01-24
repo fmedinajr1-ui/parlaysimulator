@@ -41,13 +41,20 @@ const ARCHETYPE_PROP_BLOCKED: Record<string, string[]> = {
   'SCORING_GUARD': ['rebounds', 'blocks'],
 };
 
+// Safe prop normalization helper - handles null/undefined and strips non-alpha chars
+const normalizeProp = (p?: string | null): string =>
+  (p || '').toLowerCase().replace(/[^a-z]/g, ''); // "Points + Rebounds" -> "pointsrebounds"
+
 function isPickArchetypeAligned(pick: SweetSpotPick): boolean {
   if (!pick.archetype || pick.archetype === 'UNKNOWN') return true;
+  
+  // Safe prop normalization (prevents crash on null prop_type)
+  const propNorm = normalizeProp(pick.prop_type);
   
   // ========== CATEGORY OVERRIDE: BIG_ASSIST_OVER ==========
   // Passing bigs (Vucevic, Sabonis, Jokic) are specifically targeted for BIG_ASSIST_OVER
   // Even if their archetype normally blocks assists, allow it for this category
-  if (pick.category === 'BIG_ASSIST_OVER' && pick.prop_type?.toLowerCase().includes('assist')) {
+  if (pick.category === 'BIG_ASSIST_OVER' && propNorm.includes('assist')) {
     console.log(`[SweetSpot] ✅ BIG_ASSIST_OVER override: ${pick.player_name} (${pick.archetype}) allowed for assists`);
     return true;
   }
@@ -55,9 +62,8 @@ function isPickArchetypeAligned(pick: SweetSpotPick): boolean {
   const blockedProps = ARCHETYPE_PROP_BLOCKED[pick.archetype];
   if (!blockedProps) return true;
   
-  const propLower = pick.prop_type.toLowerCase();
   for (const blocked of blockedProps) {
-    if (propLower.includes(blocked)) {
+    if (propNorm.includes(blocked.replace(/[^a-z]/g, ''))) {
       console.warn(`[SweetSpot] Filtering misaligned: ${pick.player_name} (${pick.archetype}) for ${pick.prop_type}`);
       return false;
     }
@@ -75,10 +81,11 @@ export interface H2HData {
   minStat: number;
 }
 
-export interface GameContext {
+// Renamed from GameContext to prevent collision with Scout.tsx's GameContext
+export interface ParlayEnvContext {
   vegasTotal: number;
-  paceRating: string;
-  gameScript: string;
+  paceRating: string;  // 'FAST' | 'MEDIUM' | 'SLOW'
+  gameScript: string;  // 'SHOOTOUT' | 'GRIND_OUT' | 'COMPETITIVE' | 'BLOWOUT' | 'HARD_BLOWOUT'
   grindFactor: number;
   opponent: string;
 }
@@ -88,7 +95,7 @@ export interface DreamTeamLeg {
   team: string;
   score: number;
   h2h?: H2HData;
-  gameContext?: GameContext;
+  gameContext?: ParlayEnvContext;
   opponentDefenseRank?: number;
   patternScore?: number;
 }
@@ -214,7 +221,7 @@ function teamNameToAbbrev(teamName: string): string {
 // Handles: pace normalization, excluded script blocks, grindFactor bonuses, clean reason strings
 function matchesWinningPattern(
   pick: SweetSpotPick,
-  gameContext: GameContext | undefined,
+  gameContext: ParlayEnvContext | undefined,
   opponentDefenseRank: number | undefined
 ): PatternCheckResult {
   const rules = WINNING_PATTERN_RULES[pick.category || ''];
@@ -380,6 +387,23 @@ const PROVEN_FORMULA = [
   { category: 'STAR_FLOOR_OVER', side: 'over', count: 1 },     // Ja Morant type
 ];
 
+/**
+ * Unified pick scoring function (v3.1)
+ * Ensures deterministic, stable selection across sorting and final leg assignment
+ * Weights: Pattern score (1x) + L10 hit rate (6x) + Confidence (0.04x scaled)
+ */
+const scorePick = (p: {
+  _patternScore?: number;
+  l10HitRate?: number | null;
+  confidence_score?: number;
+}): number => {
+  const pat = p._patternScore ?? 0;
+  const l10 = p.l10HitRate ?? 0.7; // Default to 70% if missing
+  const conf = p.confidence_score ?? 0.7;
+  // Pattern is main driver, L10 is strong signal, confidence is tiebreaker
+  return (pat * 1.0) + (l10 * 6.0) + (conf * 0.04);
+};
+
 // Dream Team constraints
 const MAX_PLAYERS_PER_TEAM = 1;
 const TARGET_LEG_COUNT = 6;
@@ -400,7 +424,7 @@ type H2HMapType = Map<string, {
   minStat: number;
 }>;
 
-type GameContextMapType = Map<string, GameContext>;
+type GameContextMapType = Map<string, ParlayEnvContext>;
 type DefenseMapType = Map<string, number>;
 
 interface QueryResult {
@@ -500,10 +524,10 @@ export function useSweetSpotParlayBuilder() {
         .select('home_team_abbrev, away_team_abbrev, vegas_total, pace_rating, game_script, grind_factor')
         .eq('game_date', targetDate);
       
-      // Create team -> game context map
-      const gameContextMap = new Map<string, GameContext>();
+      // Create team -> game context map (uses ParlayEnvContext)
+      const gameContextMap = new Map<string, ParlayEnvContext>();
       (gameEnvironments || []).forEach(g => {
-        const context: GameContext = {
+        const context: ParlayEnvContext = {
           vegasTotal: Number(g.vegas_total) || 220,
           paceRating: g.pace_rating || 'MEDIUM',
           gameScript: g.game_script || 'COMPETITIVE',
@@ -1011,7 +1035,7 @@ export function useSweetSpotParlayBuilder() {
     };
     
     // Helper: Get game context for a pick (with diagnostic logging)
-    const getGameContextForPick = (pick: SweetSpotPick): GameContext | undefined => {
+    const getGameContextForPick = (pick: SweetSpotPick): ParlayEnvContext | undefined => {
       const teamAbbrev = getTeamAbbrev(pick.team_name);
       const context = gameContextMap.get(teamAbbrev.toLowerCase());
       
@@ -1025,6 +1049,7 @@ export function useSweetSpotParlayBuilder() {
     };
     
     // Helper: Get opponent defense rank for a pick (with diagnostic logging)
+    // FIX: Use rules.statType as source of truth, fallback to prop parsing
     const getOpponentDefenseRank = (pick: SweetSpotPick): number | undefined => {
       const gameContext = getGameContextForPick(pick);
       if (!gameContext || !gameContext.opponent) {
@@ -1034,22 +1059,27 @@ export function useSweetSpotParlayBuilder() {
         return undefined;
       }
       
-      // Determine stat type for defense lookup
-      const propLower = pick.prop_type?.toLowerCase() || '';
-      let statType = 'points';
-      if (propLower.includes('rebound')) statType = 'rebounds';
-      else if (propLower.includes('assist')) statType = 'assists';
+      // FIX v3.1: Use rules.statType as source of truth, fallback to prop parsing
+      const rules = WINNING_PATTERN_RULES[pick.category || ''];
+      let statType = rules?.statType;
       
-      // FIX: opponent is already an abbreviation from gameContextMap (e.g., "chi", "min")
+      if (!statType) {
+        // Fallback: derive from prop string using safe normalization
+        const propNorm = normalizeProp(pick.prop_type);
+        statType = propNorm.includes('rebound') ? 'rebounds'
+          : propNorm.includes('assist') ? 'assists'
+          : 'points';
+      }
+      
+      // opponent is already an abbreviation from gameContextMap (e.g., "chi", "min")
       const defenseKey = `${gameContext.opponent.toLowerCase()}_${statType}`;
       const rank = defenseMap.get(defenseKey);
       
-      // Debug logging for defense lookup
+      // Debug logging for defense lookup (now shows source)
       if (!rank && pick.category) {
-        console.log(`[Debug DEF] ${pick.player_name}: Opponent "${gameContext.opponent}" → Key "${defenseKey}" → Rank: MISSING`);
-        console.log(`[Debug DEF] Sample defense keys: ${Array.from(defenseMap.keys()).slice(0, 10).join(', ')}`);
+        console.log(`[Debug DEF] ${pick.player_name}: Key "${defenseKey}" → Rank: MISSING (source: ${rules?.statType ? 'rules' : 'prop'})`);
       } else if (pick.category) {
-        console.log(`[Debug DEF] ${pick.player_name}: vs ${gameContext.opponent} → #${rank} ${statType} DEF`);
+        console.log(`[Debug DEF] ${pick.player_name}: vs ${gameContext.opponent} → #${rank} ${statType} DEF (source: ${rules?.statType ? 'rules' : 'prop'})`);
       }
       
       return rank;
@@ -1182,11 +1212,9 @@ export function useSweetSpotParlayBuilder() {
           const patternCheck = matchesWinningPattern(p, gameContext, opponentDefenseRank);
           return { ...p, _patternScore: patternCheck.score, _gameContext: gameContext, _opponentDefenseRank: opponentDefenseRank };
         })
-        // Sort by: pattern score + L10 hit rate (weighted)
+        // Sort by unified scorePick function for deterministic selection
         .sort((a, b) => {
-          const scoreA = (a._patternScore || 0) + ((a.l10HitRate || 0) * 5);
-          const scoreB = (b._patternScore || 0) + ((b.l10HitRate || 0) * 5);
-          return scoreB - scoreA;
+          return scorePick(b) - scorePick(a);
         });
 
       // Log scoring breakdown for top candidates
@@ -1243,7 +1271,7 @@ export function useSweetSpotParlayBuilder() {
         selectedLegs.push({
           pick,
           team: pick.team_name || 'Unknown',
-          score: (pick.confidence_score * 0.4) + ((pick.l10HitRate || 0.7) * 6) + (pick._patternScore || 0),
+          score: scorePick({ _patternScore: pick._patternScore, l10HitRate: pick.l10HitRate, confidence_score: pick.confidence_score }),
           h2h,
           gameContext,
           opponentDefenseRank,
@@ -1273,9 +1301,7 @@ export function useSweetSpotParlayBuilder() {
           return { ...p, _patternScore: patternCheck.score, _gameContext: gameContext, _opponentDefenseRank: opponentDefenseRank };
         })
         .sort((a, b) => {
-          const scoreA = (a._patternScore || 0) + ((a.l10HitRate || 0) * 5) + a.confidence_score;
-          const scoreB = (b._patternScore || 0) + ((b.l10HitRate || 0) * 5) + b.confidence_score;
-          return scoreB - scoreA;
+          return scorePick(b) - scorePick(a);
         });
 
       for (const pick of remainingPicks) {
@@ -1291,7 +1317,7 @@ export function useSweetSpotParlayBuilder() {
         selectedLegs.push({
           pick,
           team: pick.team_name || 'Unknown',
-          score: (pick.confidence_score * 0.6) + (Math.min(pick.edge, 10) * 0.4) + (pick._patternScore || 0),
+          score: scorePick({ _patternScore: pick._patternScore, l10HitRate: pick.l10HitRate, confidence_score: pick.confidence_score }),
           h2h,
           gameContext,
           opponentDefenseRank,
