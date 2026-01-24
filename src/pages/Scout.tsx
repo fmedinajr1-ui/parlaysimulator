@@ -34,7 +34,7 @@ export interface RosterPlayer {
   injuryDetail?: string;
 }
 
-export interface GameContext {
+export interface ScoutGameContext {
   eventId: string;
   espnEventId?: string; // ESPN's 9-digit event ID for PBP data
   homeTeam: string;
@@ -49,6 +49,9 @@ export interface GameContext {
   homeTeamFatigue?: TeamFatigueData;
   awayTeamFatigue?: TeamFatigueData;
 }
+
+// Re-export for backwards compatibility with components still using old name
+export type GameContext = ScoutGameContext;
 
 export interface AnalysisResult {
   observations: PlayerObservation[];
