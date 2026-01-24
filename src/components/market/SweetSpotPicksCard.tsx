@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Target, TrendingUp, Loader2, CheckCircle2, XCircle, Clock, RefreshCw } from "lucide-react";
+import { Target, TrendingUp, Loader2, CheckCircle2, XCircle, Clock, RefreshCw, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { AltLineComparisonCard } from "./AltLineComparisonCard";
@@ -15,73 +15,51 @@ function getEasternDate(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 }
 
-interface SweetSpotPick {
+interface CategorySweetSpot {
   id: string;
   player_name: string;
   prop_type: string;
-  line: number;
-  side: string;
-  confidence_score: number;
-  edge: number | null;
+  actual_line: number | null;
+  recommended_line: number | null;
+  recommended_side: string | null;
+  confidence_score: number | null;
+  l10_hit_rate: number | null;
+  l10_avg: number | null;
+  category: string;
   archetype: string | null;
-  outcome: string | null;
-  game_date: string;
-  created_at: string;
-  alt_line_recommendation?: number | null;
-  alt_line_reason?: string | null;
-  is_juiced?: boolean;
-  juice_magnitude?: number;
-  line_warning?: string | null;
-  player_hit_rate?: number | null;
-  player_reliability_tier?: string | null;
-  reliability_modifier_applied?: number | null;
+  analysis_date: string;
+  is_active: boolean | null;
 }
 
-interface RiskEngineSweetSpot {
-  id: string;
-  player_name: string;
-  prop_type: string;
-  line: number;
-  side: string;
-  confidence_score: number;
-  edge?: number | null;
-  archetype?: string | null;
-  outcome: string | null;
-  game_date: string;
-  is_sweet_spot?: boolean;
-  sweet_spot_reason?: string | null;
-  alt_line_recommendation?: number | null;
-  alt_line_reason?: string | null;
-  is_juiced?: boolean;
-  juice_magnitude?: number;
-  line_warning?: string | null;
-  player_hit_rate?: number | null;
-  player_reliability_tier?: string | null;
-  reliability_modifier_applied?: number | null;
-}
-
-const SWEET_SPOT_RANGES = {
-  points: { min: 8.5, max: 9.5, label: "Points 8.5-9.5", color: "bg-blue-500/20 text-blue-400 border-blue-500/30" },
-  rebounds: { min: 9.0, max: 9.8, label: "Rebounds 9.0-9.8", color: "bg-purple-500/20 text-purple-400 border-purple-500/30" },
-  assists: { min: 7.5, max: 9.0, label: "Assists 7.5-9.0", color: "bg-green-500/20 text-green-400 border-green-500/30" },
+// Category display config
+const CATEGORY_CONFIG: Record<string, { label: string; color: string }> = {
+  ELITE_REB_OVER: { label: "Elite Rebounder", color: "bg-purple-500/20 text-purple-400 border-purple-500/30" },
+  ROLE_PLAYER_REB: { label: "Role Player Reb", color: "bg-indigo-500/20 text-indigo-400 border-indigo-500/30" },
+  BIG_ASSIST_OVER: { label: "Big Assist", color: "bg-green-500/20 text-green-400 border-green-500/30" },
+  LOW_SCORER_UNDER: { label: "Low Scorer Under", color: "bg-amber-500/20 text-amber-400 border-amber-500/30" },
+  STAR_FLOOR_OVER: { label: "Star Floor", color: "bg-blue-500/20 text-blue-400 border-blue-500/30" },
+  ASSIST_ANCHOR: { label: "Assist Anchor", color: "bg-teal-500/20 text-teal-400 border-teal-500/30" },
+  HIGH_REB_UNDER: { label: "High Reb Under", color: "bg-rose-500/20 text-rose-400 border-rose-500/30" },
+  MID_SCORER_UNDER: { label: "Mid Scorer Under", color: "bg-orange-500/20 text-orange-400 border-orange-500/30" },
 };
 
 function getPropTypeColor(propType: string): string {
   const normalized = propType.toLowerCase();
-  if (normalized.includes("point")) return SWEET_SPOT_RANGES.points.color;
-  if (normalized.includes("rebound")) return SWEET_SPOT_RANGES.rebounds.color;
-  if (normalized.includes("assist")) return SWEET_SPOT_RANGES.assists.color;
+  if (normalized.includes("point")) return "bg-blue-500/20 text-blue-400 border-blue-500/30";
+  if (normalized.includes("rebound")) return "bg-purple-500/20 text-purple-400 border-purple-500/30";
+  if (normalized.includes("assist")) return "bg-green-500/20 text-green-400 border-green-500/30";
+  if (normalized.includes("three")) return "bg-orange-500/20 text-orange-400 border-orange-500/30";
   return "bg-muted text-muted-foreground";
 }
 
-function getOutcomeIcon(outcome: string | null) {
-  if (!outcome || outcome === "pending") {
-    return <Clock className="w-4 h-4 text-muted-foreground" />;
-  }
-  if (outcome === "hit") {
-    return <CheckCircle2 className="w-4 h-4 text-green-500" />;
-  }
-  return <XCircle className="w-4 h-4 text-red-500" />;
+function getCategoryBadge(category: string) {
+  const config = CATEGORY_CONFIG[category];
+  if (!config) return null;
+  return (
+    <Badge variant="outline" className={cn("text-[10px]", config.color)}>
+      {config.label}
+    </Badge>
+  );
 }
 
 function formatPropType(propType: string): string {
@@ -90,12 +68,21 @@ function formatPropType(propType: string): string {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+function getHitRateColor(hitRate: number | null): string {
+  if (!hitRate) return "text-muted-foreground";
+  if (hitRate >= 0.9) return "text-green-400";
+  if (hitRate >= 0.75) return "text-emerald-400";
+  if (hitRate >= 0.6) return "text-yellow-400";
+  return "text-red-400";
+}
+
 export function SweetSpotPicksCard() {
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const queryClient = useQueryClient();
 
-  // Fetch from sweet_spot_tracking table - cross-reference with active props
-  const { data: trackedPicks, isLoading: trackingLoading, refetch: refetchTracking } = useQuery({
-    queryKey: ["sweet-spot-tracking"],
+  // Fetch from category_sweet_spots table - the source of truth for today's picks
+  const { data: categoryPicks, isLoading, refetch } = useQuery({
+    queryKey: ["category-sweet-spots-display"],
     queryFn: async () => {
       const today = getEasternDate();
       const now = new Date().toISOString();
@@ -110,72 +97,47 @@ export function SweetSpotPicksCard() {
         (activeProps || []).map(p => p.player_name?.toLowerCase()).filter(Boolean)
       );
       
+      // Fetch high-confidence sweet spots from category analyzer
       const { data, error } = await supabase
-        .from("sweet_spot_tracking")
-        .select("*")
-        .gte("game_date", today)
-        .order("created_at", { ascending: false })
-        .limit(20);
+        .from("category_sweet_spots")
+        .select("id, player_name, prop_type, actual_line, recommended_line, recommended_side, confidence_score, l10_hit_rate, l10_avg, category, archetype, analysis_date, is_active")
+        .eq("analysis_date", today)
+        .gte("l10_hit_rate", 0.70) // At least 70% L10 hit rate
+        .gte("confidence_score", 0.75) // High confidence
+        .in("category", Object.keys(CATEGORY_CONFIG)) // Only parlay-eligible categories
+        .order("l10_hit_rate", { ascending: false })
+        .limit(30);
 
       if (error) throw error;
       
-      // Filter to only include picks with active props
+      // Filter to only include picks with active props (games not started)
       const validPicks = (data || []).filter(
         pick => activePlayers.has(pick.player_name?.toLowerCase())
       );
       
-      return validPicks as SweetSpotPick[];
+      // Dedupe by player + prop type (keep highest hit rate)
+      const seen = new Set<string>();
+      const dedupedPicks = validPicks.filter(pick => {
+        const key = `${pick.player_name}-${pick.prop_type}`.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      
+      return dedupedPicks.slice(0, 15) as CategorySweetSpot[];
     },
     refetchInterval: 60000,
   });
-
-  // Also fetch sweet spot picks from risk engine - cross-reference with active props
-  const { data: riskEngineSweetSpots, isLoading: riskLoading, refetch: refetchRiskEngine } = useQuery({
-    queryKey: ["sweet-spot-risk-engine"],
-    queryFn: async () => {
-      const today = getEasternDate();
-      const now = new Date().toISOString();
-      
-      // First get active players (games haven't started)
-      const { data: activeProps } = await supabase
-        .from("unified_props")
-        .select("player_name")
-        .gte("commence_time", now);
-      
-      const activePlayers = new Set(
-        (activeProps || []).map(p => p.player_name?.toLowerCase()).filter(Boolean)
-      );
-      
-      const { data, error } = await supabase
-        .from("nba_risk_engine_picks")
-        .select("id, player_name, prop_type, line, side, confidence_score, edge, archetype, outcome, game_date, is_sweet_spot, sweet_spot_reason, alt_line_recommendation, alt_line_reason, is_juiced, juice_magnitude, line_warning, player_hit_rate, player_reliability_tier, reliability_modifier_applied")
-        .eq("is_sweet_spot", true)
-        .eq("game_date", today)
-        .order("confidence_score", { ascending: false })
-        .limit(10);
-
-      if (error) throw error;
-      
-      // Filter to only include picks with active props
-      const validPicks = (data || []).filter(
-        pick => activePlayers.has(pick.player_name?.toLowerCase())
-      );
-      
-      return validPicks as RiskEngineSweetSpot[];
-    },
-    refetchInterval: 60000,
-  });
-
-  const isLoading = trackingLoading || riskLoading;
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
-      await supabase.functions.invoke('nba-player-prop-risk-engine', {
-        body: { action: 'analyze_slate', mode: 'full_slate' }
+      await supabase.functions.invoke('category-props-analyzer', {
+        body: { forceRefresh: true }
       });
-      await Promise.all([refetchTracking(), refetchRiskEngine()]);
-      toast.success('Sweet spot picks refreshed!');
+      await refetch();
+      queryClient.invalidateQueries({ queryKey: ['sweet-spot-parlay-builder'] });
+      toast.success('Sweet spot picks refreshed from category analyzer!');
     } catch (err) {
       console.error('Refresh error:', err);
       toast.error('Failed to refresh picks');
@@ -184,18 +146,11 @@ export function SweetSpotPicksCard() {
     }
   };
 
-  // Combine and dedupe picks (prefer tracked picks)
-  const allPicks = [
-    ...(trackedPicks || []),
-    ...(riskEngineSweetSpots || []).filter(
-      (rp) => !trackedPicks?.some((tp) => tp.player_name === rp.player_name && tp.prop_type === rp.prop_type && tp.line === rp.line)
-    ),
-  ];
-
-  // Calculate stats
-  const hitCount = allPicks.filter((p) => p.outcome === "hit").length;
-  const missCount = allPicks.filter((p) => p.outcome === "miss").length;
-  const pendingCount = allPicks.filter((p) => !p.outcome || p.outcome === "pending").length;
+  const allPicks = categoryPicks || [];
+  
+  // Group stats by hit rate tier
+  const eliteCount = allPicks.filter(p => (p.l10_hit_rate || 0) >= 0.9).length;
+  const strongCount = allPicks.filter(p => (p.l10_hit_rate || 0) >= 0.75 && (p.l10_hit_rate || 0) < 0.9).length;
 
   return (
     <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
@@ -216,25 +171,25 @@ export function SweetSpotPicksCard() {
           </div>
           {allPicks.length > 0 && (
             <div className="flex items-center gap-2 text-sm">
-              <span className="text-green-500">{hitCount} hit</span>
+              <span className="text-green-400">{eliteCount} elite</span>
               <span className="text-muted-foreground">•</span>
-              <span className="text-red-400">{missCount} miss</span>
+              <span className="text-emerald-400">{strongCount} strong</span>
               <span className="text-muted-foreground">•</span>
-              <span className="text-muted-foreground">{pendingCount} pending</span>
+              <span className="text-muted-foreground">{allPicks.length} total</span>
             </div>
           )}
         </div>
         <CardDescription className="text-xs">
-          Optimal confidence ranges with historically higher hit rates
+          High-confidence picks from category analysis with 70%+ L10 hit rates
         </CardDescription>
       </CardHeader>
 
       <CardContent className="space-y-3">
-        {/* Sweet Spot Legend */}
-        <div className="flex flex-wrap gap-2 mb-2">
-          {Object.entries(SWEET_SPOT_RANGES).map(([key, range]) => (
-            <Badge key={key} variant="outline" className={cn("text-xs", range.color)}>
-              {range.label}
+        {/* Category Legend */}
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {Object.entries(CATEGORY_CONFIG).slice(0, 4).map(([key, config]) => (
+            <Badge key={key} variant="outline" className={cn("text-[10px]", config.color)}>
+              {config.label}
             </Badge>
           ))}
         </div>
@@ -247,43 +202,51 @@ export function SweetSpotPicksCard() {
           <div className="text-center py-8 text-muted-foreground">
             <Target className="w-8 h-8 mx-auto mb-2 opacity-50" />
             <p className="text-sm">No sweet spot picks yet today</p>
-            <p className="text-xs mt-1">Run the Risk Engine to find optimal plays</p>
+            <p className="text-xs mt-1">Run the Category Analyzer to find optimal plays</p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              className="mt-3"
+            >
+              <RefreshCw className={cn("w-4 h-4 mr-2", isRefreshing && "animate-spin")} />
+              Analyze Categories
+            </Button>
           </div>
         ) : (
-          <div className="space-y-3">
-            {allPicks.map((pick) => (
-              <div key={pick.id}>
+          <div className="space-y-2">
+            {allPicks.map((pick) => {
+              const line = pick.actual_line ?? pick.recommended_line ?? 0;
+              const hitRate = pick.l10_hit_rate ?? 0;
+              
+              return (
                 <div
+                  key={pick.id}
                   className={cn(
                     "flex items-center justify-between p-3 rounded-lg border",
                     "bg-background/50 hover:bg-background/80 transition-colors",
-                    pick.outcome === "hit" && "border-green-500/30 bg-green-500/5",
-                    pick.outcome === "miss" && "border-red-500/30 bg-red-500/5",
-                    pick.is_juiced && !pick.outcome && "border-amber-500/30"
+                    hitRate >= 0.9 && "border-green-500/30 bg-green-500/5",
+                    hitRate >= 0.75 && hitRate < 0.9 && "border-emerald-500/20"
                   )}
                 >
                   <div className="flex items-center gap-3">
-                    {getOutcomeIcon(pick.outcome)}
+                    {hitRate >= 0.9 ? (
+                      <Sparkles className="w-4 h-4 text-green-400" />
+                    ) : (
+                      <TrendingUp className="w-4 h-4 text-emerald-400" />
+                    )}
                     <div>
                       <div className="flex items-center gap-2">
                         <p className="font-medium text-sm">{pick.player_name}</p>
-                        <PlayerReliabilityBadge 
-                          tier={pick.player_reliability_tier}
-                          hitRate={pick.player_hit_rate}
-                          modifier={pick.reliability_modifier_applied}
-                        />
-                        {pick.is_juiced && (
-                          <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-500/30">
-                            JUICED
-                          </Badge>
-                        )}
+                        {getCategoryBadge(pick.category)}
                       </div>
                       <div className="flex items-center gap-2 mt-0.5">
                         <Badge variant="outline" className={cn("text-xs", getPropTypeColor(pick.prop_type))}>
                           {formatPropType(pick.prop_type)}
                         </Badge>
                         <span className="text-xs text-muted-foreground">
-                          {pick.side?.toUpperCase()} {pick.line}
+                          {pick.recommended_side?.toUpperCase()} {line}
                         </span>
                       </div>
                     </div>
@@ -292,39 +255,27 @@ export function SweetSpotPicksCard() {
                   <div className="flex items-center gap-3 text-right">
                     <div>
                       <div className="flex items-center gap-1 justify-end">
-                        <TrendingUp className="w-3 h-3 text-primary" />
-                        <span className="text-sm font-semibold text-primary">
-                          {pick.confidence_score?.toFixed(1)}
+                        <span className={cn("text-sm font-semibold", getHitRateColor(hitRate))}>
+                          {(hitRate * 100).toFixed(0)}%
                         </span>
+                        <span className="text-xs text-muted-foreground">L10</span>
                       </div>
-                      {pick.edge && (
-                        <p className="text-xs text-green-400">+{pick.edge.toFixed(1)} edge</p>
+                      {pick.confidence_score && (
+                        <p className="text-xs text-primary">
+                          {(pick.confidence_score * 10).toFixed(1)} conf
+                        </p>
                       )}
                     </div>
-                    {pick.archetype && (
-                      <Badge variant="secondary" className="text-xs hidden sm:inline-flex">
-                        {pick.archetype.replace(/_/g, " ")}
-                      </Badge>
+                    {pick.l10_avg !== null && (
+                      <div className="text-right hidden sm:block">
+                        <p className="text-xs text-muted-foreground">Avg</p>
+                        <p className="text-sm font-medium">{pick.l10_avg?.toFixed(1)}</p>
+                      </div>
                     )}
                   </div>
                 </div>
-                
-                {/* Alt Line Comparison Card */}
-                {pick.alt_line_recommendation && (
-                  <AltLineComparisonCard
-                    playerName={pick.player_name}
-                    propType={pick.prop_type}
-                    currentLine={pick.line}
-                    side={pick.side}
-                    altLineRecommendation={pick.alt_line_recommendation}
-                    altLineReason={pick.alt_line_reason || null}
-                    isJuiced={pick.is_juiced || false}
-                    juiceMagnitude={pick.juice_magnitude}
-                    lineWarning={pick.line_warning}
-                  />
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </CardContent>
