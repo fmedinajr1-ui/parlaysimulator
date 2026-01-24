@@ -186,19 +186,18 @@ describe('SweetSpot Parlay Builder - Golden Snapshot', () => {
     expect(SCORE_WEIGHTS.l10).toBe(7.0);
   });
 
-  it('different presets produce different orderings', () => {
+  it('different presets produce different score calculations', () => {
+    // Test that preset weights actually differ in calculation
+    const testPick = { _patternScore: 2, l10HitRate: 0.75, confidence_score: 0.85 };
+    
     setScorePreset('balanced');
-    const balanced = buildSweetSpotParlayCore(frozenSlate as unknown as BuilderInput);
-
+    const balancedScore = scorePick(testPick);
+    
     setScorePreset('sharp');
-    const sharp = buildSweetSpotParlayCore(frozenSlate as unknown as BuilderInput);
-
-    // Scores should differ when preset changes
-    if (balanced.selectedLegs.length > 0 && sharp.selectedLegs.length > 0) {
-      const balancedFirstScore = balanced.selectedLegs[0].score;
-      const sharpFirstScore = sharp.selectedLegs[0].score;
-      expect(balancedFirstScore).not.toBe(sharpFirstScore);
-    }
+    const sharpScore = scorePick(testPick);
+    
+    // Sharp preset has higher confidence weight, so score should differ
+    expect(balancedScore).not.toBe(sharpScore);
   });
 
   it('collects decision traces for all selected picks', () => {
