@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Target, Trophy, Zap, Users, Plus, Loader2, TrendingUp, RefreshCw, Calendar, AlertTriangle, History, Shield, Activity } from "lucide-react";
+import { Target, Trophy, Zap, Users, Plus, Loader2, TrendingUp, RefreshCw, Calendar, AlertTriangle, History, Shield, Activity, Download } from "lucide-react";
 import { useSweetSpotParlayBuilder } from "@/hooks/useSweetSpotParlayBuilder";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -74,7 +74,9 @@ export function SweetSpotDreamTeamParlay() {
     isLoading, 
     addOptimalParlayToBuilder,
     refetch,
-    slateStatus
+    slateStatus,
+    exportFrozenSlate,
+    activePreset,
   } = useSweetSpotParlayBuilder();
 
   const handleRegenerate = async () => {
@@ -163,6 +165,16 @@ export function SweetSpotDreamTeamParlay() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Button 
+              variant="ghost"
+              size="sm"
+              onClick={exportFrozenSlate}
+              disabled={isLoading}
+              className="gap-2 text-muted-foreground hover:text-foreground"
+              title={`Export slate for testing (${slateStatus?.displayedDate || 'today'} · ${activePreset})`}
+            >
+              <Download className="h-4 w-4" />
+            </Button>
             <Button 
               variant="outline"
               size="sm"

@@ -511,12 +511,14 @@ const scorePick = (p: {
 // Export for unit testing
 export { scorePick };
 
-// ========== PURE CORE FUNCTION TYPES v3.3 ==========
+// ========== PURE CORE FUNCTION TYPES v3.4 ==========
 /**
  * Input for pure core builder function
  * Contains all data needed for deterministic selection
  */
 export interface BuilderInput {
+  displayedDate: string;  // slateStatus.displayedDate for reproducibility
+  presetKey?: ScorePresetKey;  // scoring preset for deterministic tests
   picks: SweetSpotPick[];
   h2hMap: Record<string, {
     opponent: string;
@@ -544,15 +546,22 @@ export interface BuilderOutput {
     patternBlocked: string[];
     selectedCount: number;
   };
+  activePreset: string;
+  displayedDate: string;
 }
 
-// ========== PURE CORE BUILDER FUNCTION v3.3 ==========
+// ========== PURE CORE BUILDER FUNCTION v3.4 ==========
 /**
  * Pure, testable core function for building optimal parlays
  * Takes all dependencies as input, returns deterministic output
  * No React hooks, no side effects (except console logging for diagnostics)
  */
 export function buildSweetSpotParlayCore(input: BuilderInput): BuilderOutput {
+  // Set preset if provided (for deterministic testing)
+  if (input.presetKey) {
+    setScorePreset(input.presetKey);
+  }
+
   const traces: DecisionTraceRow[] = [];
   const diagnostics = {
     totalCandidates: input.picks.length,
@@ -563,9 +572,9 @@ export function buildSweetSpotParlayCore(input: BuilderInput): BuilderOutput {
   };
 
   // Convert input maps to Map objects for consistent lookup
-  const h2hMap = new Map(Object.entries(input.h2hMap));
-  const gameContextMap = new Map(Object.entries(input.gameContextMap));
-  const defenseMap = new Map(Object.entries(input.defenseMap));
+  const h2hMap = new Map(Object.entries(input.h2hMap || {}));
+  const gameContextMap = new Map(Object.entries(input.gameContextMap || {}));
+  const defenseMap = new Map(Object.entries(input.defenseMap || {}));
 
   // Helper: Get team abbreviation
   const getTeamAbbrev = (teamName: string | undefined): string => {
@@ -842,7 +851,13 @@ export function buildSweetSpotParlayCore(input: BuilderInput): BuilderOutput {
 
   diagnostics.selectedCount = selectedLegs.length;
 
-  return { selectedLegs, traces, diagnostics };
+  return { 
+    selectedLegs, 
+    traces, 
+    diagnostics,
+    activePreset: SCORE_WEIGHTS.presetKey,
+    displayedDate: input.displayedDate,
+  };
 }
 
 /**
@@ -1419,9 +1434,9 @@ export function useSweetSpotParlayBuilder() {
   const defenseMap = queryResult?.defenseMap || new Map();
   const slateStatus = queryResult?.slateStatus || { currentDate: getEasternDate(), displayedDate: getEasternDate(), isNextSlate: false };
 
-  // Build optimal 6-leg parlay prioritizing proven category formulas
+  // Build optimal 6-leg parlay using pure core function
   const buildOptimalParlay = (): DreamTeamLeg[] => {
-    console.group('🏆 [Optimal Parlay Builder v3.3 - Configurable Weights]');
+    console.group('🏆 [Optimal Parlay Builder v3.4 - Pure Core Integration]');
     console.log(`🎛️ [Preset: ${SCORE_WEIGHTS.presetKey.toUpperCase()}] Pat×${SCORE_WEIGHTS.pattern} | L10×${SCORE_WEIGHTS.l10} | Conf×${SCORE_WEIGHTS.confidence} | Penalty: ${SCORE_WEIGHTS.missingL10Penalty}`);
     
     if (!sweetSpotPicks || sweetSpotPicks.length === 0) {
@@ -1430,462 +1445,77 @@ export function useSweetSpotParlayBuilder() {
       return [];
     }
 
-    console.log(`📊 Total candidates: ${sweetSpotPicks.length}`);
-    
-    // Helper: Get team abbreviation from team name
-    const getTeamAbbrev = (teamName: string | undefined): string => {
-      if (!teamName) return '';
-      // FIX: Use full team names to avoid substring conflicts (e.g., "nets" matching "hornets")
-      const abbrevMap: Record<string, string> = {
-        // Full names first (most specific matches)
-        'charlotte hornets': 'CHA', 'brooklyn nets': 'BKN',
-        'atlanta hawks': 'ATL', 'boston celtics': 'BOS', 'chicago bulls': 'CHI',
-        'cleveland cavaliers': 'CLE', 'dallas mavericks': 'DAL', 'denver nuggets': 'DEN',
-        'detroit pistons': 'DET', 'golden state warriors': 'GSW', 'houston rockets': 'HOU',
-        'indiana pacers': 'IND', 'los angeles clippers': 'LAC', 'la clippers': 'LAC',
-        'los angeles lakers': 'LAL', 'la lakers': 'LAL', 'memphis grizzlies': 'MEM',
-        'miami heat': 'MIA', 'milwaukee bucks': 'MIL', 'minnesota timberwolves': 'MIN',
-        'new orleans pelicans': 'NOP', 'new york knicks': 'NYK', 'oklahoma city thunder': 'OKC',
-        'orlando magic': 'ORL', 'philadelphia 76ers': 'PHI', 'phoenix suns': 'PHX',
-        'portland trail blazers': 'POR', 'sacramento kings': 'SAC', 'san antonio spurs': 'SAS',
-        'toronto raptors': 'TOR', 'utah jazz': 'UTA', 'washington wizards': 'WAS',
-        // Short names (less specific - checked after full names)
-        'hornets': 'CHA', 'nets': 'BKN', 'hawks': 'ATL', 'celtics': 'BOS', 'bulls': 'CHI',
-        'cavaliers': 'CLE', 'mavericks': 'DAL', 'nuggets': 'DEN', 'pistons': 'DET',
-        'warriors': 'GSW', 'rockets': 'HOU', 'pacers': 'IND', 'clippers': 'LAC',
-        'lakers': 'LAL', 'grizzlies': 'MEM', 'heat': 'MIA', 'bucks': 'MIL',
-        'timberwolves': 'MIN', 'pelicans': 'NOP', 'knicks': 'NYK', 'thunder': 'OKC',
-        'magic': 'ORL', '76ers': 'PHI', 'suns': 'PHX', 'trail blazers': 'POR', 'blazers': 'POR',
-        'kings': 'SAC', 'spurs': 'SAS', 'raptors': 'TOR', 'jazz': 'UTA', 'wizards': 'WAS',
-      };
-      const lower = teamName.toLowerCase();
-      
-      // First, try exact match on full names (most reliable)
-      if (abbrevMap[lower]) return abbrevMap[lower];
-      
-      // Then try substring matching, prioritizing longer matches first
-      const sortedEntries = Object.entries(abbrevMap).sort((a, b) => b[0].length - a[0].length);
-      for (const [name, abbrev] of sortedEntries) {
-        if (lower.includes(name)) return abbrev;
-      }
-      return teamName.slice(0, 3).toUpperCase();
+    // Serialize Maps to plain objects for pure core function
+    const input: BuilderInput = {
+      displayedDate: slateStatus.displayedDate,
+      presetKey: SCORE_WEIGHTS.presetKey,
+      picks: sweetSpotPicks,
+      h2hMap: Object.fromEntries(h2hMap.entries()),
+      gameContextMap: Object.fromEntries(gameContextMap.entries()),
+      defenseMap: Object.fromEntries(defenseMap.entries()),
     };
-    
-    // Track archetype blocks for diagnostics
-    const archetypeBlocked: string[] = [];
 
-    // v3.0: Final archetype alignment filter (defense in depth)
-    const alignedPicks = sweetSpotPicks.filter(pick => {
-      const aligned = isPickArchetypeAligned(pick);
-      if (!aligned) {
-        archetypeBlocked.push(`${pick.player_name} (${pick.archetype}) → ${pick.prop_type}`);
-      }
-      return aligned;
-    });
+    const result = buildSweetSpotParlayCore(input);
     
-    if (archetypeBlocked.length > 0) {
-      console.log(`🚫 Archetype Blocked (${archetypeBlocked.length}):`);
-      archetypeBlocked.forEach(b => console.log(`   ❌ ${b}`));
+    // Console logging (side effect, kept in hook)
+    console.log(`📊 Total candidates: ${result.diagnostics.totalCandidates}`);
+    console.log(`🚫 Archetype blocked: ${result.diagnostics.archetypeFiltered}`);
+    if (result.diagnostics.h2hBlocked.length > 0) {
+      console.log(`🚫 H2H blocked (${result.diagnostics.h2hBlocked.length}):`);
+      result.diagnostics.h2hBlocked.forEach(b => console.log(`   ❌ ${b}`));
     }
-    
-    console.log(`✅ Aligned picks: ${alignedPicks.length}/${sweetSpotPicks.length}`);
-    
-    // ========== H2H VALIDATION ==========
-    // Helper to find H2H data for a pick
-    const getH2HForPick = (pick: SweetSpotPick): H2HData | undefined => {
-      const playerKey = pick.player_name?.toLowerCase() || '';
-      const propKey = pick.prop_type?.toLowerCase() || '';
-      
-      for (const [key, data] of h2hMap.entries()) {
-        if (key.startsWith(`${playerKey}_`) && key.endsWith(`_${propKey}`)) {
-          const isOver = pick.side?.toLowerCase() === 'over';
-          return {
-            opponent: data.opponent,
-            gamesPlayed: data.gamesPlayed,
-            avgStat: data.avgStat,
-            hitRate: isOver ? data.hitRateOver : data.hitRateUnder,
-            maxStat: data.maxStat,
-            minStat: data.minStat,
-          };
-        }
-      }
-      return undefined;
-    };
-    
-    // Helper: Get game context for a pick (with diagnostic logging)
-    const getGameContextForPick = (pick: SweetSpotPick): ParlayEnvContext | undefined => {
-      const teamAbbrev = getTeamAbbrev(pick.team_name);
-      const context = gameContextMap.get(teamAbbrev.toLowerCase());
-      
-      // Debug logging for chain verification
-      if (!context && pick.category) {
-        console.log(`[Debug Chain] ${pick.player_name}: Team "${pick.team_name}" → Abbrev "${teamAbbrev}" → Context: MISSING`);
-        console.log(`[Debug Chain] Available teams in gameContextMap: ${Array.from(gameContextMap.keys()).join(', ')}`);
-      }
-      
-      return context;
-    };
-    
-    // Helper: Get opponent defense rank for a pick (with diagnostic logging)
-    // FIX v3.2: Bulletproof multi-key lookup with teamNameToAbbrev fallback
-    const getOpponentDefenseRank = (pick: SweetSpotPick): number | undefined => {
-      const ctx = getGameContextForPick(pick);
-      if (!ctx?.opponent) {
-        if (pick.category) {
-          console.log(`[Debug DEF] ${pick.player_name}: No game context or opponent`);
-        }
-        return undefined;
-      }
-
-      // FIX v3.2: Use rules.statType as source of truth with whitelist validation
-      const rules = WINNING_PATTERN_RULES[pick.category || ''];
-      const allowedStatTypes = new Set(['points', 'rebounds', 'assists']);
-      let statType = (rules?.statType || '').toLowerCase();
-
-      // FIX v3.2: Whitelist statType to prevent bad keys like "min_pts"
-      if (!allowedStatTypes.has(statType)) {
-        const propNorm = normalizeProp(pick.prop_type);
-        statType = propNorm.includes('rebound') ? 'rebounds'
-          : propNorm.includes('assist') ? 'assists'
-          : 'points';
-      }
-
-      const oppRaw = (ctx.opponent || '').trim();
-      const oppLower = oppRaw.toLowerCase();
-
-      // 1) Try as-is abbrev (expected fast path - opponent is usually abbrev)
-      const key1 = `${oppLower}_${statType}`;
-      const r1 = defenseMap.get(key1);
-      if (r1 != null) {
-        if (pick.category) {
-          console.log(`[Debug DEF] ${pick.player_name}: vs ${oppRaw} → #${r1} ${statType} DEF (key: ${key1})`);
-        }
-        return r1;
-      }
-
-      // 2) Try normalize via teamNameToAbbrev (handles full names, "MIN", etc.)
-      const oppAbbrev = teamNameToAbbrev(oppRaw).toLowerCase();
-      if (oppAbbrev && oppAbbrev !== oppLower) {
-        const key2 = `${oppAbbrev}_${statType}`;
-        const r2 = defenseMap.get(key2);
-        if (r2 != null) {
-          if (pick.category) {
-            console.log(`[Debug DEF] ${pick.player_name}: vs ${oppRaw} → #${r2} ${statType} DEF (key: ${key2}, normalized)`);
-          }
-          return r2;
-        }
-      }
-
-      // 3) Debug log for miss (only when categorized)
-      if (pick.category) {
-        const triedKeys = oppAbbrev && oppAbbrev !== oppLower 
-          ? `[${key1}], [${oppAbbrev}_${statType}]`
-          : `[${key1}]`;
-        console.log(`[Debug DEF] MISS ${pick.player_name}: opp="${oppRaw}" stat=${statType} tried ${triedKeys}`);
-      }
-
-      return undefined;
-    };
-    
-    // H2H validation filter
-    const h2hBlocked: string[] = [];
-    const h2hValidatedPicks = alignedPicks.filter(pick => {
-      const h2h = getH2HForPick(pick);
-      
-      if (!h2h || h2h.gamesPlayed < 2) return true;
-      
-      const isOver = pick.side?.toLowerCase() === 'over';
-      
-      if (h2h.hitRate < 0.40 && h2h.gamesPlayed >= 3) {
-        h2hBlocked.push(`${pick.player_name} - ${(h2h.hitRate * 100).toFixed(0)}% ${pick.side} vs ${h2h.opponent} (${h2h.gamesPlayed}g)`);
-        return false;
-      }
-      
-      if (isOver && h2h.avgStat < pick.line * 0.75 && h2h.gamesPlayed >= 3) {
-        h2hBlocked.push(`${pick.player_name} OVER - H2H avg ${h2h.avgStat.toFixed(1)} vs line ${pick.line}`);
-        return false;
-      }
-      
-      if (!isOver && h2h.avgStat > pick.line * 1.25 && h2h.gamesPlayed >= 3) {
-        h2hBlocked.push(`${pick.player_name} UNDER - H2H avg ${h2h.avgStat.toFixed(1)} vs line ${pick.line}`);
-        return false;
-      }
-      
-      return true;
-    });
-    
-    if (h2hBlocked.length > 0) {
-      console.log(`📊 [H2H] Blocked (${h2hBlocked.length}):`);
-      h2hBlocked.forEach(b => console.log(`   ❌ ${b}`));
+    if (result.diagnostics.patternBlocked.length > 0) {
+      console.log(`🚫 Pattern blocked (${result.diagnostics.patternBlocked.length}):`);
+      result.diagnostics.patternBlocked.forEach(b => console.log(`   ❌ ${b}`));
     }
-    console.log(`✅ H2H validated: ${h2hValidatedPicks.length}/${alignedPicks.length}`);
-
-    // ========== PATTERN VALIDATION ==========
-    console.log(`\n🎯 [Pattern Validation v3.1]`);
-    const patternBlocked: string[] = [];
-    const patternValidatedPicks = h2hValidatedPicks.filter(pick => {
-      const gameContext = getGameContextForPick(pick);
-      const opponentDefenseRank = getOpponentDefenseRank(pick);
-      
-      const patternCheck = matchesWinningPattern(pick, gameContext, opponentDefenseRank);
-      
-      if (!patternCheck.passes) {
-        patternBlocked.push(`${pick.player_name} ${pick.category}: ${patternCheck.reason}`);
-        return false;
-      }
-      
-      return true;
-    });
+    console.log(`✅ Selected: ${result.diagnostics.selectedCount} legs`);
     
-    if (patternBlocked.length > 0) {
-      console.log(`📋 [Pattern] Blocked (${patternBlocked.length}):`);
-      patternBlocked.forEach(b => console.log(`   ❌ ${b}`));
-    }
-    console.log(`✅ Pattern validated: ${patternValidatedPicks.length}/${h2hValidatedPicks.length}`);
-
-    // ========== DETAILED CATEGORY CANDIDATE LOGGING ==========
-    console.log('\n🔍 [CATEGORY CANDIDATES - Pre-Selection Analysis]');
-    const archetypeOverridesApplied: string[] = [];
-    
-    for (const formula of PROVEN_FORMULA) {
-      const candidates = patternValidatedPicks.filter(p => 
-        p.category === formula.category && 
-        p.side.toLowerCase() === formula.side
-      );
-      console.log(`\n📂 ${formula.category} (${formula.side.toUpperCase()}) - ${candidates.length} candidates:`);
-      candidates.slice(0, 8).forEach((c, i) => {
-        const gameCtx = getGameContextForPick(c);
-        const defRank = getOpponentDefenseRank(c);
-        const defInfo = defRank ? `#${defRank} DEF` : 'No DEF';
-        const scriptInfo = gameCtx ? gameCtx.gameScript : 'No Script';
-        console.log(`   ${i + 1}. ${c.player_name} | Line: ${c.line} | L10: ${c.l10HitRate ? Math.round(c.l10HitRate * 100) + '%' : 'N/A'} | Team: ${c.team_name || 'Unknown'} | ${scriptInfo} | vs ${defInfo}`);
-        
-        // Track archetype overrides for BIG_ASSIST_OVER
-        if (c.category === 'BIG_ASSIST_OVER' && c.prop_type?.toLowerCase().includes('assist')) {
-          archetypeOverridesApplied.push(`${c.player_name} (${c.archetype || 'UNKNOWN'})`);
-        }
-      });
-      if (candidates.length > 8) {
-        console.log(`   ... and ${candidates.length - 8} more`);
-      }
-      if (candidates.length === 0) {
-        console.log(`   ⚠️ No candidates available for this category`);
-      }
-    }
-    
-    // Log archetype overrides summary
-    if (archetypeOverridesApplied.length > 0) {
-      console.log(`\n✅ [Archetype Overrides for BIG_ASSIST_OVER]: ${[...new Set(archetypeOverridesApplied)].join(', ')}`);
-    }
-
-    // ========== DEFENSE VALIDATION SUMMARY ==========
-    console.log(`\n🛡️ [DEFENSE VALIDATION SUMMARY - UNDER Picks]`);
-    const underCategories = ['LOW_SCORER_UNDER', 'MID_SCORER_UNDER', 'HIGH_REB_UNDER'];
-    patternValidatedPicks
-      .filter(p => underCategories.includes(p.category || ''))
-      .forEach(p => {
-        const defRank = getOpponentDefenseRank(p);
-        const rules = WINNING_PATTERN_RULES[p.category || ''];
-        const requiredRank = rules?.preferredOpponentDefenseRank || 'N/A';
-        const status = defRank && typeof requiredRank === 'number' && defRank <= requiredRank ? '✅ PASS' : '❌ FAIL';
-        console.log(`   ${status} ${p.player_name} (${p.category}) vs #${defRank || 'N/A'} DEF (need top ${requiredRank})`);
-      });
-
-    const selectedLegs: DreamTeamLeg[] = [];
-    const usedTeams = new Set<string>();
-    const usedPlayers = new Set<string>();
-
-    // Step 1: Fill from proven categories first (with pattern scoring)
-    console.log('\n🏆 [CATEGORY SELECTION LOOP]');
-    for (const formula of PROVEN_FORMULA) {
-      console.log(`\n--- Processing ${formula.category} (${formula.side.toUpperCase()}) ---`);
-      
-      const categoryPicks = patternValidatedPicks
-        .filter(p => 
-          p.category === formula.category && 
-          p.side.toLowerCase() === formula.side &&
-          !usedPlayers.has(p.player_name.toLowerCase()) &&
-          !usedTeams.has((p.team_name || '').toLowerCase())
-        )
-        .map(p => {
-          // Calculate pattern score for sorting
-          const gameContext = getGameContextForPick(p);
-          const opponentDefenseRank = getOpponentDefenseRank(p);
-          const patternCheck = matchesWinningPattern(p, gameContext, opponentDefenseRank);
-          return { ...p, _patternScore: patternCheck.score, _gameContext: gameContext, _opponentDefenseRank: opponentDefenseRank };
-        })
-        // Sort by unified scorePick function for deterministic selection
-        .sort((a, b) => {
-          return scorePick(b) - scorePick(a);
-        });
-
-      // Log scoring breakdown for top candidates (v3.2 FINAL: confidence × 0.25)
-      if (categoryPicks.length > 0) {
-        console.log(`   📊 Ranking ${categoryPicks.length} candidates (after team/player dedup):`);
-        categoryPicks.slice(0, 5).forEach((p, i) => {
-          const pat = p._patternScore ?? 0;
-          const hasL10 = p.l10HitRate != null;
-          const l10 = hasL10 ? p.l10HitRate! : 0.6;
-          const conf = p.confidence_score ?? 0.7;
-          const penalty = hasL10 ? 0 : -0.5;
-          const total = scorePick({ _patternScore: p._patternScore, l10HitRate: p.l10HitRate, confidence_score: p.confidence_score });
-          console.log(`      ${i + 1}. ${p.player_name} | Pat: ${pat} | L10: ${hasL10 ? Math.round(l10 * 100) + '%' : 'MISS'} (${(l10 * 6).toFixed(2)}) | Conf: ${(conf * 100).toFixed(0)}% (${(conf * 0.25).toFixed(2)}) | Penalty: ${penalty} | Total: ${total.toFixed(2)}`);
-        });
-      } else {
-        console.log(`   ⚠️ No available candidates (all filtered by team/player dedup)`);
-      }
-
-      let added = 0;
-      for (const pick of categoryPicks) {
-        // Detailed skip reason logging
-        if (added >= formula.count) {
-          console.log(`   ⏭️ ${pick.player_name}: SKIPPED - Category slot filled (${added}/${formula.count})`);
-          continue;
-        }
-        if (selectedLegs.length >= TARGET_LEG_COUNT) {
-          console.log(`   ⏭️ ${pick.player_name}: SKIPPED - Parlay full (${selectedLegs.length} legs)`);
-          break;
-        }
-
-        const team = (pick.team_name || 'Unknown').toLowerCase();
-        
-        // These checks are redundant after pre-filter, but log for clarity
-        if (usedTeams.has(team)) {
-          console.log(`   ⏭️ ${pick.player_name}: SKIPPED - Team "${team}" already used`);
-          continue;
-        }
-        if (usedPlayers.has(pick.player_name.toLowerCase())) {
-          console.log(`   ⏭️ ${pick.player_name}: SKIPPED - Player already selected`);
-          continue;
-        }
-
-        const h2h = getH2HForPick(pick);
-        const gameContext = pick._gameContext;
-        const opponentDefenseRank = pick._opponentDefenseRank;
-        
-        const h2hInfo = h2h && h2h.gamesPlayed >= 2 
-          ? `| H2H: ${(h2h.hitRate * 100).toFixed(0)}% (${h2h.gamesPlayed}g)`
-          : '';
-        const contextInfo = gameContext 
-          ? `| ${gameContext.gameScript} | Total: ${gameContext.vegasTotal}`
-          : '';
-        const defInfo = opponentDefenseRank 
-          ? `| vs #${opponentDefenseRank} DEF`
-          : '';
-        
-        console.log(`   ✅ SELECTED: ${pick.player_name} ${pick.prop_type} ${pick.side.toUpperCase()} ${pick.line} | L10: ${pick.l10HitRate ? Math.round(pick.l10HitRate * 100) + '%' : 'N/A'} ${h2hInfo} ${contextInfo} ${defInfo}`);
-        
-        selectedLegs.push({
-          pick,
-          team: pick.team_name || 'Unknown',
-          score: scorePick({ _patternScore: pick._patternScore, l10HitRate: pick.l10HitRate, confidence_score: pick.confidence_score }),
-          h2h,
-          gameContext,
-          opponentDefenseRank,
-          patternScore: pick._patternScore,
-        });
-        usedTeams.add(team);
-        usedPlayers.add(pick.player_name.toLowerCase());
-        added++;
-      }
-
-      console.log(`   📌 ${formula.category}: Added ${added}/${formula.count}`);
-    }
-
-    // Step 2: Fill remaining slots from pattern-validated picks if needed
-    if (selectedLegs.length < TARGET_LEG_COUNT) {
-      console.log(`[Optimal] Need ${TARGET_LEG_COUNT - selectedLegs.length} more legs, checking remaining picks...`);
-      
-      const remainingPicks = patternValidatedPicks
-        .filter(p => 
-          !usedPlayers.has(p.player_name.toLowerCase()) &&
-          !usedTeams.has((p.team_name || '').toLowerCase())
-        )
-        .map(p => {
-          const gameContext = getGameContextForPick(p);
-          const opponentDefenseRank = getOpponentDefenseRank(p);
-          const patternCheck = matchesWinningPattern(p, gameContext, opponentDefenseRank);
-          return { ...p, _patternScore: patternCheck.score, _gameContext: gameContext, _opponentDefenseRank: opponentDefenseRank };
-        })
-        .sort((a, b) => {
-          return scorePick(b) - scorePick(a);
-        });
-
-      for (const pick of remainingPicks) {
-        if (selectedLegs.length >= TARGET_LEG_COUNT) break;
-
-        const team = (pick.team_name || 'Unknown').toLowerCase();
-        const h2h = getH2HForPick(pick);
-        const gameContext = pick._gameContext;
-        const opponentDefenseRank = pick._opponentDefenseRank;
-        
-        console.log(`[Optimal] ➕ FALLBACK: ${pick.player_name} ${pick.prop_type} ${pick.side.toUpperCase()} ${pick.line}`);
-        
-        selectedLegs.push({
-          pick,
-          team: pick.team_name || 'Unknown',
-          score: scorePick({ _patternScore: pick._patternScore, l10HitRate: pick.l10HitRate, confidence_score: pick.confidence_score }),
-          h2h,
-          gameContext,
-          opponentDefenseRank,
-          patternScore: pick._patternScore,
-        });
-        usedTeams.add(team);
-        usedPlayers.add(pick.player_name.toLowerCase());
-      }
-    }
-
-    // ========== FINAL DIAGNOSTIC SUMMARY ==========
-    console.log(`\n📋 FINAL SELECTION (${selectedLegs.length}/${TARGET_LEG_COUNT} legs):`);
-    console.table(selectedLegs.map((leg, i) => ({
-      '#': i + 1,
-      player: leg.pick.player_name,
-      prop: `${leg.pick.prop_type} ${leg.pick.side.toUpperCase()} ${leg.pick.line}`,
-      category: leg.pick.category || 'Risk Engine',
-      archetype: leg.pick.archetype || 'UNKNOWN',
-      L10: leg.pick.l10HitRate ? `${Math.round(leg.pick.l10HitRate * 100)}%` : 'N/A',
-      team: leg.team,
-      score: leg.score.toFixed(2)
-    })));
-    
-    // Enhanced selection trace with full context
-    console.log('\n📋 SELECTION TRACE (Full Context):');
-    selectedLegs.forEach((leg, i) => {
-      const whySelected = [
-        leg.pick.category ? `Category: ${leg.pick.category}` : 'Fallback',
-        `PatternScore: ${leg.patternScore || 0}`,
-        leg.h2h ? `H2H: ${(leg.h2h.hitRate * 100).toFixed(0)}%` : 'No H2H',
-        leg.gameContext ? `Script: ${leg.gameContext.gameScript}` : 'No Context',
-        leg.opponentDefenseRank ? `vs #${leg.opponentDefenseRank} DEF` : 'No DEF',
-      ].join(' | ');
-      console.log(`   ${i + 1}. ${leg.pick.player_name} → ${whySelected}`);
-    });
-    
-    const categoryCount = selectedLegs.filter(l => l.pick.category).length;
-    const riskEngineCount = selectedLegs.length - categoryCount;
-    console.log(`\n📈 Sources: ${categoryCount} Category picks, ${riskEngineCount} Risk Engine picks`);
-    
-    // ========== TOP-LEVEL BUILD SUMMARY ==========
-    console.log(`\n========== 🏆 OPTIMAL PARLAY BUILD SUMMARY ==========`);
-    console.log(`📅 Target Date: ${slateStatus.displayedDate}`);
-    console.log(`🎯 Final Parlay Legs: ${selectedLegs.length}/${TARGET_LEG_COUNT}`);
-    if (selectedLegs.length > 0) {
-      console.table(selectedLegs.map((leg, i) => ({
+    if (result.selectedLegs.length > 0) {
+      console.log(`\n📋 FINAL SELECTION (${result.selectedLegs.length}/6 legs):`);
+      console.table(result.selectedLegs.map((leg, i) => ({
         '#': i + 1,
         Player: leg.pick.player_name,
         Category: leg.pick.category || 'Fallback',
         Prop: `${leg.pick.side.toUpperCase()} ${leg.pick.line} ${leg.pick.prop_type}`,
         L10: leg.pick.l10HitRate ? `${(leg.pick.l10HitRate * 100).toFixed(0)}%` : 'N/A',
-        H2H: leg.h2h ? `${(leg.h2h.hitRate * 100).toFixed(0)}%` : '-',
+        Score: leg.score.toFixed(2),
         DEF: leg.opponentDefenseRank ? `#${leg.opponentDefenseRank}` : '-',
       })));
-    } else {
-      console.warn('⚠️ No picks passed validation. Check filters above.');
     }
-    console.log(`=====================================================\n`);
+    
     console.groupEnd();
+    return result.selectedLegs;
+  };
 
-    return selectedLegs;
+  // Export frozen slate for golden snapshot testing
+  const exportFrozenSlate = () => {
+    if (!sweetSpotPicks?.length) {
+      console.warn('[FrozenSlate] No picks loaded yet');
+      toast.error('No picks loaded - cannot export slate');
+      return;
+    }
+
+    const payload: BuilderInput = {
+      displayedDate: slateStatus.displayedDate,
+      presetKey: SCORE_WEIGHTS.presetKey,
+      picks: sweetSpotPicks,
+      h2hMap: Object.fromEntries(h2hMap.entries()),
+      gameContextMap: Object.fromEntries(gameContextMap.entries()),
+      defenseMap: Object.fromEntries(defenseMap.entries()),
+    };
+
+    const json = JSON.stringify(payload, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `frozen_slate_${slateStatus.displayedDate}_${SCORE_WEIGHTS.presetKey}.json`;
+    a.click();
+
+    URL.revokeObjectURL(url);
+    toast.success(`Exported frozen slate: ${sweetSpotPicks.length} picks`);
+    console.log('[FrozenSlate] Exported', slateStatus.displayedDate, sweetSpotPicks.length, 'picks');
   };
 
   // Add optimal parlay to builder
@@ -1944,8 +1574,9 @@ export function useSweetSpotParlayBuilder() {
     refetch,
     addOptimalParlayToBuilder,
     buildOptimalParlay,
+    exportFrozenSlate,  // v3.4: Export frozen slate for testing
     slateStatus,
-    // v3.3: Expose active preset for dashboard
+    // v3.4: Expose active preset for dashboard
     activePreset: SCORE_WEIGHTS.presetKey,
   };
 }

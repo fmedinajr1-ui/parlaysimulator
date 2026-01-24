@@ -1,6 +1,7 @@
 {
-  "description": "Frozen slate fixture for golden snapshot testing (v3.3)",
-  "created": "2026-01-24",
+  "description": "Frozen slate fixture for golden snapshot testing (v3.4)",
+  "displayedDate": "2026-01-24",
+  "presetKey": "balanced",
   "picks": [
     {
       "id": "fixture-1",
