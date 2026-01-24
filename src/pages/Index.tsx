@@ -4,6 +4,7 @@ import { HowItWorks } from "@/components/HowItWorks";
 import { SampleParlayButton } from "@/components/SampleParlayButton";
 import { SlateRefreshControls } from "@/components/market/SlateRefreshControls";
 import { DailyParlayHub } from "@/components/parlays/DailyParlayHub";
+import { SweetSpotPicksCard } from "@/components/market/SweetSpotPicksCard";
 import { WeeklyParlayHistory } from "@/components/dashboard/WeeklyParlayHistory";
 import { PullToRefreshContainer, PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
@@ -157,6 +158,13 @@ const Index = () => {
         {(isPilotUser || isSubscribed || isAdmin) && (
           <div className="mb-4">
             <DailyParlayHub />
+          </div>
+        )}
+
+        {/* Sweet Spot Individual Picks */}
+        {(isPilotUser || isSubscribed || isAdmin) && (
+          <div className="mb-4">
+            <SweetSpotPicksCard />
           </div>
         )}
 
