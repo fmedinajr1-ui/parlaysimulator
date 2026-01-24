@@ -1,0 +1,122 @@
+{
+  "description": "Frozen slate fixture for golden snapshot testing (v3.3)",
+  "created": "2026-01-24",
+  "picks": [
+    {
+      "id": "fixture-1",
+      "player_name": "Rudy Gobert",
+      "prop_type": "rebounds",
+      "line": 12.5,
+      "side": "over",
+      "confidence_score": 0.92,
+      "edge": 3.2,
+      "archetype": "ELITE_REBOUNDER",
+      "category": "ELITE_REB_OVER",
+      "team_name": "MIN",
+      "l10HitRate": 0.78
+    },
+    {
+      "id": "fixture-2",
+      "player_name": "Dorian Finney-Smith",
+      "prop_type": "rebounds",
+      "line": 4.5,
+      "side": "over",
+      "confidence_score": 0.85,
+      "edge": 2.8,
+      "archetype": "ROLE_PLAYER",
+      "category": "ROLE_PLAYER_REB",
+      "team_name": "BKN",
+      "l10HitRate": 0.72
+    },
+    {
+      "id": "fixture-3",
+      "player_name": "Nikola Vucevic",
+      "prop_type": "assists",
+      "line": 3.5,
+      "side": "over",
+      "confidence_score": 0.88,
+      "edge": 2.5,
+      "archetype": "STRETCH_BIG",
+      "category": "BIG_ASSIST_OVER",
+      "team_name": "CHI",
+      "l10HitRate": 0.75
+    },
+    {
+      "id": "fixture-4",
+      "player_name": "Luguentz Dort",
+      "prop_type": "points",
+      "line": 8.5,
+      "side": "under",
+      "confidence_score": 0.90,
+      "edge": 3.5,
+      "archetype": "THREE_AND_D",
+      "category": "LOW_SCORER_UNDER",
+      "team_name": "OKC",
+      "l10HitRate": 0.80
+    },
+    {
+      "id": "fixture-5",
+      "player_name": "Aaron Nesmith",
+      "prop_type": "points",
+      "line": 14.5,
+      "side": "under",
+      "confidence_score": 0.82,
+      "edge": 2.1,
+      "archetype": "ROLE_PLAYER",
+      "category": "MID_SCORER_UNDER",
+      "team_name": "IND",
+      "l10HitRate": 0.68
+    },
+    {
+      "id": "fixture-6",
+      "player_name": "Ja Morant",
+      "prop_type": "points",
+      "line": 22.5,
+      "side": "over",
+      "confidence_score": 0.87,
+      "edge": 2.9,
+      "archetype": "SCORING_GUARD",
+      "category": "STAR_FLOOR_OVER",
+      "team_name": "MEM",
+      "l10HitRate": 0.70
+    },
+    {
+      "id": "fixture-7",
+      "player_name": "Nikola Jokic",
+      "prop_type": "rebounds",
+      "line": 13.5,
+      "side": "over",
+      "confidence_score": 0.75,
+      "edge": 2.2,
+      "archetype": "ELITE_REBOUNDER",
+      "category": "ELITE_REB_OVER",
+      "team_name": "DEN",
+      "l10HitRate": 0.78
+    },
+    {
+      "id": "fixture-8",
+      "player_name": "Unknown Rookie",
+      "prop_type": "points",
+      "line": 10.5,
+      "side": "under",
+      "confidence_score": 0.85,
+      "edge": 2.0,
+      "archetype": "UNKNOWN",
+      "category": "LOW_SCORER_UNDER",
+      "team_name": "SAC",
+      "l10HitRate": null
+    }
+  ],
+  "h2hMap": {},
+  "gameContextMap": {},
+  "defenseMap": {
+    "MIN": 5,
+    "BKN": 18,
+    "CHI": 12,
+    "OKC": 3,
+    "IND": 20,
+    "MEM": 15,
+    "DEN": 10,
+    "SAC": 8
+  }
+}

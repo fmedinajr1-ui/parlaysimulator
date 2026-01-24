@@ -425,14 +425,65 @@ const PROVEN_FORMULA = [
   { category: 'STAR_FLOOR_OVER', side: 'over', count: 1 },     // Ja Morant type
 ];
 
+/**
+ * Scoring weight presets for A/B testing and tuning (v3.3)
+ * Switch between modes to optimize for different strategies
+ */
+export const SCORE_PRESETS = {
+  balanced: {
+    name: 'Balanced',
+    description: 'Stable outputs, confidence matters, no weird flips',
+    pattern: 1.0,
+    l10: 6.0,
+    confidence: 0.25,
+    l10Default: 0.6,
+    confDefault: 0.7,
+    missingL10Penalty: -0.5,
+  },
+  reliabilityMax: {
+    name: 'Reliability Max',
+    description: 'L10 heavier, punishes missing data harder',
+    pattern: 1.1,
+    l10: 7.0,
+    confidence: 0.22,
+    l10Default: 0.58,
+    confDefault: 0.7,
+    missingL10Penalty: -0.75,
+  },
+  sharp: {
+    name: 'Sharp',
+    description: 'Confidence has more say, aggressive swings',
+    pattern: 1.0,
+    l10: 5.5,
+    confidence: 0.35,
+    l10Default: 0.6,
+    confDefault: 0.7,
+    missingL10Penalty: -0.6,
+  },
+} as const;
+
+export type ScorePresetKey = keyof typeof SCORE_PRESETS;
+
+// Active weights (mutable, starts with balanced)
+export const SCORE_WEIGHTS = { 
+  ...SCORE_PRESETS.balanced, 
+  presetKey: 'balanced' as ScorePresetKey 
+};
+
+// Runtime preset switcher
+export const setScorePreset = (key: ScorePresetKey) => {
+  Object.assign(SCORE_WEIGHTS, SCORE_PRESETS[key], { presetKey: key });
+  console.log(`[ScorePreset] Switched to: ${SCORE_PRESETS[key].name}`);
+};
+
 /** 
- * Unified pick scoring function (v3.2 FINAL)
+ * Unified pick scoring function (v3.3)
+ * Uses configurable SCORE_WEIGHTS for A/B testing
+ * 
  * Pattern = gatekeeper (structural logic)
  * L10 = primary signal (performance reliability)  
  * Confidence = meaningful tie-breaker (model conviction)
  * Missing L10 = penalty (unknowns shouldn't beat knowns)
- * 
- * Weights: Pattern (1x) + L10 (6x) + Confidence (0.25x) + Missing penalty (-0.5)
  */
 const scorePick = (p: {
   _patternScore?: number;
@@ -443,19 +494,55 @@ const scorePick = (p: {
 
   // L10 handling (0–1 scale)
   const hasL10 = p.l10HitRate != null;
-  const l10 = hasL10 ? p.l10HitRate! : 0.6; // conservative fallback
-  const missingL10Penalty = hasL10 ? 0 : -0.5;
+  const l10 = hasL10 ? p.l10HitRate! : SCORE_WEIGHTS.l10Default;
+  const missingL10Penalty = hasL10 ? 0 : SCORE_WEIGHTS.missingL10Penalty;
 
   // Confidence is already 0–1 scale
-  const conf = p.confidence_score ?? 0.7;
+  const conf = p.confidence_score ?? SCORE_WEIGHTS.confDefault;
 
   return (
-    (pat * 1.0) +
-    (l10 * 6.0) +
-    (conf * 0.25) +
+    (pat * SCORE_WEIGHTS.pattern) +
+    (l10 * SCORE_WEIGHTS.l10) +
+    (conf * SCORE_WEIGHTS.confidence) +
     missingL10Penalty
   );
 };
+
+/**
+ * Decision trace row for debugging pick selection (v3.3)
+ * Captures full score breakdown for each candidate
+ */
+export interface DecisionTraceRow {
+  player: string;
+  team?: string;
+  category?: string;
+  prop?: string;
+  side?: string;
+
+  // Archetype validation
+  archetypeAligned: boolean;
+  archetypeReason?: string;
+
+  // Pattern scoring
+  patternScore: number;
+  patternReason: string;
+
+  // Context
+  defenseRank?: number;
+  l10?: number | null;
+  conf?: number;
+
+  // Score breakdown
+  scoreTotal: number;
+  scorePattern: number;
+  scoreL10: number;
+  scoreConf: number;
+  scorePenalty: number;
+
+  // Outcome
+  selected: boolean;
+  blockedReason?: string;
+}
 
 // Dream Team constraints
 const MAX_PLAYERS_PER_TEAM = 1;
@@ -997,7 +1084,8 @@ export function useSweetSpotParlayBuilder() {
 
   // Build optimal 6-leg parlay prioritizing proven category formulas
   const buildOptimalParlay = (): DreamTeamLeg[] => {
-    console.group('🏆 [Optimal Parlay Builder v3.1 - Pattern Enforced]');
+    console.group('🏆 [Optimal Parlay Builder v3.3 - Configurable Weights]');
+    console.log(`🎛️ [Preset: ${SCORE_WEIGHTS.presetKey.toUpperCase()}] Pat×${SCORE_WEIGHTS.pattern} | L10×${SCORE_WEIGHTS.l10} | Conf×${SCORE_WEIGHTS.confidence} | Penalty: ${SCORE_WEIGHTS.missingL10Penalty}`);
     
     if (!sweetSpotPicks || sweetSpotPicks.length === 0) {
       console.log('❌ No sweet spot picks available');
@@ -1520,5 +1608,7 @@ export function useSweetSpotParlayBuilder() {
     addOptimalParlayToBuilder,
     buildOptimalParlay,
     slateStatus,
+    // v3.3: Expose active preset for dashboard
+    activePreset: SCORE_WEIGHTS.presetKey,
   };
 }
