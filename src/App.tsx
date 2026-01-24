@@ -155,6 +155,13 @@ function SafeRoutePersistence() {
 
 function AppContent() {
   const [isMobile, setIsMobile] = React.useState(false);
+  const [isReady, setIsReady] = React.useState(false);
+  
+  React.useEffect(() => {
+    // Small delay to ensure React is fully hydrated (prevents stale chunk issues)
+    const timer = setTimeout(() => setIsReady(true), 50);
+    return () => clearTimeout(timer);
+  }, []);
   
   React.useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 768);
@@ -162,6 +169,11 @@ function AppContent() {
     window.addEventListener("resize", checkMobile);
     return () => window.removeEventListener("resize", checkMobile);
   }, []);
+  
+  // Show loading overlay until React is fully ready
+  if (!isReady) {
+    return <WolfLoadingOverlay />;
+  }
   
   return (
     <EmailVerificationGuard>
