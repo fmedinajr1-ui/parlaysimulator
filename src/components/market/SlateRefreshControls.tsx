@@ -33,6 +33,8 @@ export function SlateRefreshControls() {
     queryClient.invalidateQueries({ queryKey: ['sweet-spot-parlay-picks'] });
     queryClient.invalidateQueries({ queryKey: ['sharp-parlays-daily'] });
     queryClient.invalidateQueries({ queryKey: ['heat-parlays-daily'] });
+    // Sweet spot picks card
+    queryClient.invalidateQueries({ queryKey: ['category-sweet-spots-display'] });
     // Legacy queries
     queryClient.invalidateQueries({ queryKey: ['riskEnginePicks'] });
     queryClient.invalidateQueries({ queryKey: ['sweetSpotTracking'] });
