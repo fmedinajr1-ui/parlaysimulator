@@ -1,9 +1,13 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import frozenSlate from '../__fixtures__/frozen_slate.json';
 import { 
+  buildSweetSpotParlayCore,
   SCORE_PRESETS, 
   SCORE_WEIGHTS, 
   setScorePreset, 
-  ScorePresetKey 
+  scorePick,
+  type ScorePresetKey,
+  type BuilderInput,
 } from './useSweetSpotParlayBuilder';
 
 // Helper to compute score using same logic as scorePick
@@ -145,5 +149,100 @@ describe('SweetSpot Parlay Builder - Scoring System', () => {
       // Sharp preset should make confidence difference more pronounced
       expect(sharpDiff).toBeGreaterThan(balancedDiff);
     });
+  });
+});
+
+describe('SweetSpot Parlay Builder - Golden Snapshot', () => {
+  beforeEach(() => {
+    setScorePreset('balanced');
+  });
+
+  it('produces stable Optimal legs for frozen slate', () => {
+    const result = buildSweetSpotParlayCore(frozenSlate as unknown as BuilderInput);
+
+    // Lock player selection order by category
+    expect(
+      result.selectedLegs.map(l => `${l.pick.player_name}|${l.pick.category}`)
+    ).toMatchSnapshot();
+  });
+
+  it('locks score values for frozen slate', () => {
+    const result = buildSweetSpotParlayCore(frozenSlate as unknown as BuilderInput);
+
+    // Lock score values (to 3 decimal places)
+    expect(
+      result.selectedLegs.map(l => ({
+        player: l.pick.player_name,
+        score: l.score.toFixed(3),
+      }))
+    ).toMatchSnapshot();
+  });
+
+  it('preset switch changes weights (sanity)', () => {
+    setScorePreset('sharp');
+    expect(SCORE_WEIGHTS.confidence).toBe(0.35);
+
+    setScorePreset('reliabilityMax');
+    expect(SCORE_WEIGHTS.l10).toBe(7.0);
+  });
+
+  it('different presets produce different orderings', () => {
+    setScorePreset('balanced');
+    const balanced = buildSweetSpotParlayCore(frozenSlate as unknown as BuilderInput);
+
+    setScorePreset('sharp');
+    const sharp = buildSweetSpotParlayCore(frozenSlate as unknown as BuilderInput);
+
+    // Scores should differ when preset changes
+    if (balanced.selectedLegs.length > 0 && sharp.selectedLegs.length > 0) {
+      const balancedFirstScore = balanced.selectedLegs[0].score;
+      const sharpFirstScore = sharp.selectedLegs[0].score;
+      expect(balancedFirstScore).not.toBe(sharpFirstScore);
+    }
+  });
+
+  it('collects decision traces for all selected picks', () => {
+    const result = buildSweetSpotParlayCore(frozenSlate as unknown as BuilderInput);
+    
+    // Should have traces for selected picks
+    const selectedTraces = result.traces.filter(t => t.selected);
+    expect(selectedTraces.length).toBe(result.selectedLegs.length);
+  });
+
+  it('diagnostics tracks filtering correctly', () => {
+    const result = buildSweetSpotParlayCore(frozenSlate as unknown as BuilderInput);
+    
+    expect(result.diagnostics.totalCandidates).toBe(frozenSlate.picks.length);
+    expect(result.diagnostics.selectedCount).toBe(result.selectedLegs.length);
+  });
+});
+
+describe('SweetSpot Parlay Builder - scorePick function', () => {
+  beforeEach(() => {
+    setScorePreset('balanced');
+  });
+
+  it('exported scorePick matches computeScore helper', () => {
+    const pick = { _patternScore: 2, l10HitRate: 0.75, confidence_score: 0.85 };
+    
+    expect(scorePick(pick)).toBeCloseTo(computeScore(pick), 5);
+  });
+
+  it('handles missing l10HitRate correctly', () => {
+    const pickWithL10 = { _patternScore: 2, l10HitRate: 0.70, confidence_score: 0.80 };
+    const pickWithoutL10 = { _patternScore: 2, l10HitRate: null, confidence_score: 0.80 };
+    
+    // Pick without L10 should have penalty applied
+    expect(scorePick(pickWithL10)).toBeGreaterThan(scorePick(pickWithoutL10));
+  });
+
+  it('uses confDefault when confidence_score is missing', () => {
+    const pickWithConf = { _patternScore: 2, l10HitRate: 0.70, confidence_score: 0.80 };
+    const pickWithoutConf = { _patternScore: 2, l10HitRate: 0.70 };
+    
+    // Both should produce valid scores
+    expect(typeof scorePick(pickWithConf)).toBe('number');
+    expect(typeof scorePick(pickWithoutConf)).toBe('number');
+    expect(scorePick(pickWithoutConf)).toBeGreaterThan(0);
   });
 });

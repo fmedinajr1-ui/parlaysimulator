@@ -108,15 +108,24 @@
     }
   ],
   "h2hMap": {},
-  "gameContextMap": {},
+  "gameContextMap": {
+    "min": { "vegasTotal": 218, "paceRating": "SLOW", "gameScript": "COMPETITIVE", "grindFactor": 0.6, "opponent": "lac" },
+    "bkn": { "vegasTotal": 222, "paceRating": "MEDIUM", "gameScript": "COMPETITIVE", "grindFactor": 0.5, "opponent": "nyk" },
+    "chi": { "vegasTotal": 225, "paceRating": "FAST", "gameScript": "SHOOTOUT", "grindFactor": 0.4, "opponent": "atl" },
+    "okc": { "vegasTotal": 210, "paceRating": "SLOW", "gameScript": "GRIND_OUT", "grindFactor": 0.75, "opponent": "mia" },
+    "ind": { "vegasTotal": 230, "paceRating": "FAST", "gameScript": "SHOOTOUT", "grindFactor": 0.35, "opponent": "bos" },
+    "mem": { "vegasTotal": 220, "paceRating": "MEDIUM", "gameScript": "COMPETITIVE", "grindFactor": 0.5, "opponent": "dal" },
+    "den": { "vegasTotal": 215, "paceRating": "SLOW", "gameScript": "GRIND_OUT", "grindFactor": 0.65, "opponent": "por" },
+    "sac": { "vegasTotal": 228, "paceRating": "FAST", "gameScript": "SHOOTOUT", "grindFactor": 0.4, "opponent": "gsw" }
+  },
   "defenseMap": {
-    "MIN": 5,
-    "BKN": 18,
-    "CHI": 12,
-    "OKC": 3,
-    "IND": 20,
-    "MEM": 15,
-    "DEN": 10,
-    "SAC": 8
+    "lac_rebounds": 5,
+    "nyk_rebounds": 18,
+    "atl_assists": 12,
+    "mia_points": 3,
+    "bos_points": 2,
+    "dal_points": 15,
+    "por_rebounds": 10,
+    "gsw_points": 8
   }
 }

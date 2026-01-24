@@ -508,6 +508,343 @@ const scorePick = (p: {
   );
 };
 
+// Export for unit testing
+export { scorePick };
+
+// ========== PURE CORE FUNCTION TYPES v3.3 ==========
+/**
+ * Input for pure core builder function
+ * Contains all data needed for deterministic selection
+ */
+export interface BuilderInput {
+  picks: SweetSpotPick[];
+  h2hMap: Record<string, {
+    opponent: string;
+    gamesPlayed: number;
+    avgStat: number;
+    hitRateOver: number;
+    hitRateUnder: number;
+    maxStat: number;
+    minStat: number;
+  }>;
+  gameContextMap: Record<string, ParlayEnvContext>;
+  defenseMap: Record<string, number>;
+}
+
+/**
+ * Output from pure core builder function
+ */
+export interface BuilderOutput {
+  selectedLegs: DreamTeamLeg[];
+  traces: DecisionTraceRow[];
+  diagnostics: {
+    totalCandidates: number;
+    archetypeFiltered: number;
+    h2hBlocked: string[];
+    patternBlocked: string[];
+    selectedCount: number;
+  };
+}
+
+// ========== PURE CORE BUILDER FUNCTION v3.3 ==========
+/**
+ * Pure, testable core function for building optimal parlays
+ * Takes all dependencies as input, returns deterministic output
+ * No React hooks, no side effects (except console logging for diagnostics)
+ */
+export function buildSweetSpotParlayCore(input: BuilderInput): BuilderOutput {
+  const traces: DecisionTraceRow[] = [];
+  const diagnostics = {
+    totalCandidates: input.picks.length,
+    archetypeFiltered: 0,
+    h2hBlocked: [] as string[],
+    patternBlocked: [] as string[],
+    selectedCount: 0,
+  };
+
+  // Convert input maps to Map objects for consistent lookup
+  const h2hMap = new Map(Object.entries(input.h2hMap));
+  const gameContextMap = new Map(Object.entries(input.gameContextMap));
+  const defenseMap = new Map(Object.entries(input.defenseMap));
+
+  // Helper: Get team abbreviation
+  const getTeamAbbrev = (teamName: string | undefined): string => {
+    if (!teamName) return '';
+    const abbrevMap: Record<string, string> = {
+      'charlotte hornets': 'CHA', 'brooklyn nets': 'BKN', 'atlanta hawks': 'ATL', 
+      'boston celtics': 'BOS', 'chicago bulls': 'CHI', 'cleveland cavaliers': 'CLE', 
+      'dallas mavericks': 'DAL', 'denver nuggets': 'DEN', 'detroit pistons': 'DET',
+      'golden state warriors': 'GSW', 'houston rockets': 'HOU', 'indiana pacers': 'IND', 
+      'los angeles clippers': 'LAC', 'la clippers': 'LAC', 'los angeles lakers': 'LAL', 
+      'la lakers': 'LAL', 'memphis grizzlies': 'MEM', 'miami heat': 'MIA', 
+      'milwaukee bucks': 'MIL', 'minnesota timberwolves': 'MIN', 'new orleans pelicans': 'NOP', 
+      'new york knicks': 'NYK', 'oklahoma city thunder': 'OKC', 'orlando magic': 'ORL', 
+      'philadelphia 76ers': 'PHI', 'phoenix suns': 'PHX', 'portland trail blazers': 'POR', 
+      'sacramento kings': 'SAC', 'san antonio spurs': 'SAS', 'toronto raptors': 'TOR', 
+      'utah jazz': 'UTA', 'washington wizards': 'WAS',
+      'hornets': 'CHA', 'nets': 'BKN', 'hawks': 'ATL', 'celtics': 'BOS', 'bulls': 'CHI',
+      'cavaliers': 'CLE', 'mavericks': 'DAL', 'nuggets': 'DEN', 'pistons': 'DET',
+      'warriors': 'GSW', 'rockets': 'HOU', 'pacers': 'IND', 'clippers': 'LAC',
+      'lakers': 'LAL', 'grizzlies': 'MEM', 'heat': 'MIA', 'bucks': 'MIL',
+      'timberwolves': 'MIN', 'pelicans': 'NOP', 'knicks': 'NYK', 'thunder': 'OKC',
+      'magic': 'ORL', '76ers': 'PHI', 'suns': 'PHX', 'trail blazers': 'POR', 'blazers': 'POR',
+      'kings': 'SAC', 'spurs': 'SAS', 'raptors': 'TOR', 'jazz': 'UTA', 'wizards': 'WAS',
+    };
+    const lower = teamName.toLowerCase();
+    if (abbrevMap[lower]) return abbrevMap[lower];
+    const sortedEntries = Object.entries(abbrevMap).sort((a, b) => b[0].length - a[0].length);
+    for (const [name, abbrev] of sortedEntries) {
+      if (lower.includes(name)) return abbrev;
+    }
+    return teamName.slice(0, 3).toUpperCase();
+  };
+
+  // Helper: Get H2H data for a pick
+  const getH2HForPick = (pick: SweetSpotPick): H2HData | undefined => {
+    const playerKey = pick.player_name?.toLowerCase() || '';
+    const propKey = pick.prop_type?.toLowerCase() || '';
+    for (const [key, data] of h2hMap.entries()) {
+      if (key.startsWith(`${playerKey}_`) && key.endsWith(`_${propKey}`)) {
+        const isOver = pick.side?.toLowerCase() === 'over';
+        return {
+          opponent: data.opponent,
+          gamesPlayed: data.gamesPlayed,
+          avgStat: data.avgStat,
+          hitRate: isOver ? data.hitRateOver : data.hitRateUnder,
+          maxStat: data.maxStat,
+          minStat: data.minStat,
+        };
+      }
+    }
+    return undefined;
+  };
+
+  // Helper: Get game context for a pick
+  const getGameContextForPick = (pick: SweetSpotPick): ParlayEnvContext | undefined => {
+    const teamAbbrev = getTeamAbbrev(pick.team_name);
+    return gameContextMap.get(teamAbbrev.toLowerCase());
+  };
+
+  // Helper: Get opponent defense rank
+  const getOpponentDefenseRank = (pick: SweetSpotPick): number | undefined => {
+    const ctx = getGameContextForPick(pick);
+    if (!ctx?.opponent) return undefined;
+
+    const rules = WINNING_PATTERN_RULES[pick.category || ''];
+    const allowedStatTypes = new Set(['points', 'rebounds', 'assists']);
+    let statType = (rules?.statType || '').toLowerCase();
+
+    if (!allowedStatTypes.has(statType)) {
+      const propNorm = normalizeProp(pick.prop_type);
+      statType = propNorm.includes('rebound') ? 'rebounds'
+        : propNorm.includes('assist') ? 'assists'
+        : 'points';
+    }
+
+    const oppRaw = (ctx.opponent || '').trim();
+    const oppLower = oppRaw.toLowerCase();
+
+    // Try as-is abbrev
+    const key1 = `${oppLower}_${statType}`;
+    const r1 = defenseMap.get(key1);
+    if (r1 != null) return r1;
+
+    // Try normalized abbrev
+    const oppAbbrev = teamNameToAbbrev(oppRaw).toLowerCase();
+    if (oppAbbrev && oppAbbrev !== oppLower) {
+      const key2 = `${oppAbbrev}_${statType}`;
+      const r2 = defenseMap.get(key2);
+      if (r2 != null) return r2;
+    }
+
+    return undefined;
+  };
+
+  // Step 1: Archetype alignment filter
+  const alignedPicks = input.picks.filter(pick => {
+    const aligned = isPickArchetypeAligned(pick);
+    if (!aligned) diagnostics.archetypeFiltered++;
+    return aligned;
+  });
+
+  // Step 2: H2H validation
+  const h2hValidatedPicks = alignedPicks.filter(pick => {
+    const h2h = getH2HForPick(pick);
+    if (!h2h || h2h.gamesPlayed < 2) return true;
+    
+    const isOver = pick.side?.toLowerCase() === 'over';
+    
+    if (h2h.hitRate < 0.40 && h2h.gamesPlayed >= 3) {
+      diagnostics.h2hBlocked.push(`${pick.player_name} - ${(h2h.hitRate * 100).toFixed(0)}% ${pick.side} vs ${h2h.opponent}`);
+      return false;
+    }
+    
+    if (isOver && h2h.avgStat < pick.line * 0.75 && h2h.gamesPlayed >= 3) {
+      diagnostics.h2hBlocked.push(`${pick.player_name} OVER - H2H avg ${h2h.avgStat.toFixed(1)} vs line ${pick.line}`);
+      return false;
+    }
+    
+    if (!isOver && h2h.avgStat > pick.line * 1.25 && h2h.gamesPlayed >= 3) {
+      diagnostics.h2hBlocked.push(`${pick.player_name} UNDER - H2H avg ${h2h.avgStat.toFixed(1)} vs line ${pick.line}`);
+      return false;
+    }
+    
+    return true;
+  });
+
+  // Step 3: Pattern validation
+  const patternValidatedPicks = h2hValidatedPicks.filter(pick => {
+    const gameContext = getGameContextForPick(pick);
+    const opponentDefenseRank = getOpponentDefenseRank(pick);
+    const patternCheck = matchesWinningPattern(pick, gameContext, opponentDefenseRank);
+    
+    if (!patternCheck.passes) {
+      diagnostics.patternBlocked.push(`${pick.player_name} ${pick.category}: ${patternCheck.reason}`);
+      return false;
+    }
+    
+    return true;
+  });
+
+  // Step 4: Category selection loop
+  const selectedLegs: DreamTeamLeg[] = [];
+  const usedTeams = new Set<string>();
+  const usedPlayers = new Set<string>();
+
+  for (const formula of PROVEN_FORMULA) {
+    const categoryPicks = patternValidatedPicks
+      .filter(p => 
+        p.category === formula.category && 
+        p.side.toLowerCase() === formula.side &&
+        !usedPlayers.has(p.player_name.toLowerCase()) &&
+        !usedTeams.has((p.team_name || '').toLowerCase())
+      )
+      .map(p => {
+        const gameContext = getGameContextForPick(p);
+        const opponentDefenseRank = getOpponentDefenseRank(p);
+        const patternCheck = matchesWinningPattern(p, gameContext, opponentDefenseRank);
+        return { ...p, _patternScore: patternCheck.score, _gameContext: gameContext, _opponentDefenseRank: opponentDefenseRank };
+      })
+      .sort((a, b) => scorePick(b) - scorePick(a));
+
+    let added = 0;
+    for (const pick of categoryPicks) {
+      if (added >= formula.count) continue;
+      if (selectedLegs.length >= TARGET_LEG_COUNT) break;
+
+      const team = (pick.team_name || 'Unknown').toLowerCase();
+      const h2h = getH2HForPick(pick);
+      const gameContext = pick._gameContext;
+      const opponentDefenseRank = pick._opponentDefenseRank;
+      const finalScore = scorePick({ _patternScore: pick._patternScore, l10HitRate: pick.l10HitRate, confidence_score: pick.confidence_score });
+
+      // Create trace row
+      const hasL10 = pick.l10HitRate != null;
+      const l10Val = hasL10 ? pick.l10HitRate! : SCORE_WEIGHTS.l10Default;
+      const confVal = pick.confidence_score ?? SCORE_WEIGHTS.confDefault;
+      
+      traces.push({
+        player: pick.player_name,
+        team: pick.team_name,
+        category: pick.category,
+        prop: pick.prop_type,
+        side: pick.side,
+        archetypeAligned: true,
+        patternScore: pick._patternScore ?? 0,
+        patternReason: 'Passed validation',
+        defenseRank: opponentDefenseRank,
+        l10: pick.l10HitRate,
+        conf: pick.confidence_score,
+        scoreTotal: finalScore,
+        scorePattern: (pick._patternScore ?? 0) * SCORE_WEIGHTS.pattern,
+        scoreL10: l10Val * SCORE_WEIGHTS.l10,
+        scoreConf: confVal * SCORE_WEIGHTS.confidence,
+        scorePenalty: hasL10 ? 0 : SCORE_WEIGHTS.missingL10Penalty,
+        selected: true,
+      });
+
+      selectedLegs.push({
+        pick,
+        team: pick.team_name || 'Unknown',
+        score: finalScore,
+        h2h,
+        gameContext,
+        opponentDefenseRank,
+        patternScore: pick._patternScore,
+      });
+      usedTeams.add(team);
+      usedPlayers.add(pick.player_name.toLowerCase());
+      added++;
+    }
+  }
+
+  // Step 5: Fill remaining slots from pattern-validated picks if needed
+  if (selectedLegs.length < TARGET_LEG_COUNT) {
+    const remainingPicks = patternValidatedPicks
+      .filter(p => 
+        !usedPlayers.has(p.player_name.toLowerCase()) &&
+        !usedTeams.has((p.team_name || '').toLowerCase())
+      )
+      .map(p => {
+        const gameContext = getGameContextForPick(p);
+        const opponentDefenseRank = getOpponentDefenseRank(p);
+        const patternCheck = matchesWinningPattern(p, gameContext, opponentDefenseRank);
+        return { ...p, _patternScore: patternCheck.score, _gameContext: gameContext, _opponentDefenseRank: opponentDefenseRank };
+      })
+      .sort((a, b) => scorePick(b) - scorePick(a));
+
+    for (const pick of remainingPicks) {
+      if (selectedLegs.length >= TARGET_LEG_COUNT) break;
+
+      const team = (pick.team_name || 'Unknown').toLowerCase();
+      const h2h = getH2HForPick(pick);
+      const gameContext = pick._gameContext;
+      const opponentDefenseRank = pick._opponentDefenseRank;
+      const finalScore = scorePick({ _patternScore: pick._patternScore, l10HitRate: pick.l10HitRate, confidence_score: pick.confidence_score });
+
+      const hasL10 = pick.l10HitRate != null;
+      const l10Val = hasL10 ? pick.l10HitRate! : SCORE_WEIGHTS.l10Default;
+      const confVal = pick.confidence_score ?? SCORE_WEIGHTS.confDefault;
+      
+      traces.push({
+        player: pick.player_name,
+        team: pick.team_name,
+        category: pick.category,
+        prop: pick.prop_type,
+        side: pick.side,
+        archetypeAligned: true,
+        patternScore: pick._patternScore ?? 0,
+        patternReason: 'Fallback selection',
+        defenseRank: opponentDefenseRank,
+        l10: pick.l10HitRate,
+        conf: pick.confidence_score,
+        scoreTotal: finalScore,
+        scorePattern: (pick._patternScore ?? 0) * SCORE_WEIGHTS.pattern,
+        scoreL10: l10Val * SCORE_WEIGHTS.l10,
+        scoreConf: confVal * SCORE_WEIGHTS.confidence,
+        scorePenalty: hasL10 ? 0 : SCORE_WEIGHTS.missingL10Penalty,
+        selected: true,
+      });
+
+      selectedLegs.push({
+        pick,
+        team: pick.team_name || 'Unknown',
+        score: finalScore,
+        h2h,
+        gameContext,
+        opponentDefenseRank,
+        patternScore: pick._patternScore,
+      });
+      usedTeams.add(team);
+      usedPlayers.add(pick.player_name.toLowerCase());
+    }
+  }
+
+  diagnostics.selectedCount = selectedLegs.length;
+
+  return { selectedLegs, traces, diagnostics };
+}
+
 /**
  * Decision trace row for debugging pick selection (v3.3)
  * Captures full score breakdown for each candidate
