@@ -425,21 +425,14 @@ const PROVEN_FORMULA = [
   { category: 'STAR_FLOOR_OVER', side: 'over', count: 1 },     // Ja Morant type
 ];
 
-/**
- * Normalize confidence score to 0-100 scale (v3.2)
- * Handles both 0-1 and 0-100 input formats from different data sources
- */
-const normalizeConf = (c?: number): number => {
-  if (c == null) return 70;         // default 70/100
-  if (c <= 1) return c * 100;       // treat as 0–1 → scale to 0–100
-  return c;                         // already 0–100
-};
-
-/**
- * Unified pick scoring function (v3.2)
- * Ensures deterministic, stable selection across sorting and final leg assignment
- * Weights: Pattern score (1x) + L10 hit rate (6x) + Confidence (0.04x scaled to 0-100)
- * FIX v3.2: Normalize confidence + penalize missing L10 data
+/** 
+ * Unified pick scoring function (v3.2 FINAL)
+ * Pattern = gatekeeper (structural logic)
+ * L10 = primary signal (performance reliability)  
+ * Confidence = meaningful tie-breaker (model conviction)
+ * Missing L10 = penalty (unknowns shouldn't beat knowns)
+ * 
+ * Weights: Pattern (1x) + L10 (6x) + Confidence (0.25x) + Missing penalty (-0.5)
  */
 const scorePick = (p: {
   _patternScore?: number;
@@ -447,14 +440,21 @@ const scorePick = (p: {
   confidence_score?: number;
 }): number => {
   const pat = p._patternScore ?? 0;
-  const l10 = p.l10HitRate ?? 0.6;  // More conservative default (was 0.7)
-  const conf = normalizeConf(p.confidence_score);
-  
-  // Penalize picks with missing L10 data (unknowns shouldn't beat real data)
-  const missingL10Penalty = (p.l10HitRate == null) ? -0.5 : 0;
-  
-  // Pattern is main driver, L10 is strong signal, confidence is tiebreaker
-  return (pat * 1.0) + (l10 * 6.0) + (conf * 0.04) + missingL10Penalty;
+
+  // L10 handling (0–1 scale)
+  const hasL10 = p.l10HitRate != null;
+  const l10 = hasL10 ? p.l10HitRate! : 0.6; // conservative fallback
+  const missingL10Penalty = hasL10 ? 0 : -0.5;
+
+  // Confidence is already 0–1 scale
+  const conf = p.confidence_score ?? 0.7;
+
+  return (
+    (pat * 1.0) +
+    (l10 * 6.0) +
+    (conf * 0.25) +
+    missingL10Penalty
+  );
 };
 
 // Dream Team constraints
@@ -1294,16 +1294,17 @@ export function useSweetSpotParlayBuilder() {
           return scorePick(b) - scorePick(a);
         });
 
-      // Log scoring breakdown for top candidates (v3.2: shows full score decomposition)
+      // Log scoring breakdown for top candidates (v3.2 FINAL: confidence × 0.25)
       if (categoryPicks.length > 0) {
         console.log(`   📊 Ranking ${categoryPicks.length} candidates (after team/player dedup):`);
         categoryPicks.slice(0, 5).forEach((p, i) => {
           const pat = p._patternScore ?? 0;
-          const l10 = p.l10HitRate ?? 0.6;
-          const conf = normalizeConf(p.confidence_score);
-          const penalty = p.l10HitRate == null ? -0.5 : 0;
+          const hasL10 = p.l10HitRate != null;
+          const l10 = hasL10 ? p.l10HitRate! : 0.6;
+          const conf = p.confidence_score ?? 0.7;
+          const penalty = hasL10 ? 0 : -0.5;
           const total = scorePick({ _patternScore: p._patternScore, l10HitRate: p.l10HitRate, confidence_score: p.confidence_score });
-          console.log(`      ${i + 1}. ${p.player_name} | Pat: ${pat} | L10: ${p.l10HitRate ? Math.round(p.l10HitRate * 100) + '%' : 'MISS'} (${(l10 * 6).toFixed(1)}) | Conf: ${conf.toFixed(0)} (${(conf * 0.04).toFixed(2)}) | Penalty: ${penalty} | Total: ${total.toFixed(2)}`);
+          console.log(`      ${i + 1}. ${p.player_name} | Pat: ${pat} | L10: ${hasL10 ? Math.round(l10 * 100) + '%' : 'MISS'} (${(l10 * 6).toFixed(2)}) | Conf: ${(conf * 100).toFixed(0)}% (${(conf * 0.25).toFixed(2)}) | Penalty: ${penalty} | Total: ${total.toFixed(2)}`);
         });
       } else {
         console.log(`   ⚠️ No available candidates (all filtered by team/player dedup)`);
