@@ -564,11 +564,11 @@ export function useSweetSpotParlayBuilder() {
       (defenseRatings || []).forEach(d => {
         // Store by abbreviation (e.g., "min_points" instead of "minnesota timberwolves_points")
         const abbrevKey = `${teamNameToAbbrev(d.team_name || '')}_${d.stat_type?.toLowerCase()}`;
-        defenseMap.set(abbrevKey, d.defensive_rank || 15);
+        defenseMap.set(abbrevKey, d.defensive_rank ?? 15);
         
         // Also store by full name for compatibility
         const fullKey = `${d.team_name?.toLowerCase()}_${d.stat_type?.toLowerCase()}`;
-        defenseMap.set(fullKey, d.defensive_rank || 15);
+        defenseMap.set(fullKey, d.defensive_rank ?? 15);
       });
       
       console.log(`🛡️ Defense ratings loaded: ${defenseMap.size} entries (keyed by abbrev + full name)`);
@@ -1049,40 +1049,62 @@ export function useSweetSpotParlayBuilder() {
     };
     
     // Helper: Get opponent defense rank for a pick (with diagnostic logging)
-    // FIX: Use rules.statType as source of truth, fallback to prop parsing
+    // FIX v3.2: Bulletproof multi-key lookup with teamNameToAbbrev fallback
     const getOpponentDefenseRank = (pick: SweetSpotPick): number | undefined => {
-      const gameContext = getGameContextForPick(pick);
-      if (!gameContext || !gameContext.opponent) {
+      const ctx = getGameContextForPick(pick);
+      if (!ctx?.opponent) {
         if (pick.category) {
           console.log(`[Debug DEF] ${pick.player_name}: No game context or opponent`);
         }
         return undefined;
       }
-      
+
       // FIX v3.1: Use rules.statType as source of truth, fallback to prop parsing
       const rules = WINNING_PATTERN_RULES[pick.category || ''];
-      let statType = rules?.statType;
-      
+      let statType = (rules?.statType || '').toLowerCase();
+
       if (!statType) {
-        // Fallback: derive from prop string using safe normalization
         const propNorm = normalizeProp(pick.prop_type);
         statType = propNorm.includes('rebound') ? 'rebounds'
           : propNorm.includes('assist') ? 'assists'
           : 'points';
       }
-      
-      // opponent is already an abbreviation from gameContextMap (e.g., "chi", "min")
-      const defenseKey = `${gameContext.opponent.toLowerCase()}_${statType}`;
-      const rank = defenseMap.get(defenseKey);
-      
-      // Debug logging for defense lookup (now shows source)
-      if (!rank && pick.category) {
-        console.log(`[Debug DEF] ${pick.player_name}: Key "${defenseKey}" → Rank: MISSING (source: ${rules?.statType ? 'rules' : 'prop'})`);
-      } else if (pick.category) {
-        console.log(`[Debug DEF] ${pick.player_name}: vs ${gameContext.opponent} → #${rank} ${statType} DEF (source: ${rules?.statType ? 'rules' : 'prop'})`);
+
+      const oppRaw = (ctx.opponent || '').trim();
+      const oppLower = oppRaw.toLowerCase();
+
+      // 1) Try as-is abbrev (expected fast path - opponent is usually abbrev)
+      const key1 = `${oppLower}_${statType}`;
+      const r1 = defenseMap.get(key1);
+      if (r1 != null) {
+        if (pick.category) {
+          console.log(`[Debug DEF] ${pick.player_name}: vs ${oppRaw} → #${r1} ${statType} DEF (key: ${key1})`);
+        }
+        return r1;
       }
-      
-      return rank;
+
+      // 2) Try normalize via teamNameToAbbrev (handles full names, "MIN", etc.)
+      const oppAbbrev = teamNameToAbbrev(oppRaw).toLowerCase();
+      if (oppAbbrev && oppAbbrev !== oppLower) {
+        const key2 = `${oppAbbrev}_${statType}`;
+        const r2 = defenseMap.get(key2);
+        if (r2 != null) {
+          if (pick.category) {
+            console.log(`[Debug DEF] ${pick.player_name}: vs ${oppRaw} → #${r2} ${statType} DEF (key: ${key2}, normalized)`);
+          }
+          return r2;
+        }
+      }
+
+      // 3) Debug log for miss (only when categorized)
+      if (pick.category) {
+        const triedKeys = oppAbbrev && oppAbbrev !== oppLower 
+          ? `[${key1}], [${oppAbbrev}_${statType}]`
+          : `[${key1}]`;
+        console.log(`[Debug DEF] MISS ${pick.player_name}: opp="${oppRaw}" stat=${statType} tried ${triedKeys}`);
+      }
+
+      return undefined;
     };
     
     // H2H validation filter
