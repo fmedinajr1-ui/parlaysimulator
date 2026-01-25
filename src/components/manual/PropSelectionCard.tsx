@@ -67,12 +67,21 @@ export function PropSelectionCard({
 
   const edgeColor = edge === null ? "text-muted-foreground" :
                     edge >= 2 ? "text-green-500" :
-                    edge >= 0 ? "text-yellow-500" :
-                    "text-red-500";
+                    edge >= 0.5 ? "text-yellow-500" :
+                    edge <= -2 ? "text-red-500" :
+                    edge <= -0.5 ? "text-orange-500" :
+                    "text-muted-foreground";
 
-  // Determine recommended side
-  const isRecommendedOver = projection?.recommended_side?.toLowerCase() === 'over';
-  const isRecommendedUnder = projection?.recommended_side?.toLowerCase() === 'under';
+  // Calculate recommended side from edge (projection vs line)
+  // If projection > line (positive edge), recommend OVER
+  // If projection < line (negative edge), recommend UNDER
+  // Only show recommendation if edge is significant (>= 0.5 threshold)
+  const calculatedSide = edge !== null && Math.abs(edge) >= 0.5
+    ? (edge > 0 ? 'over' : 'under')
+    : null;
+
+  const isRecommendedOver = calculatedSide === 'over';
+  const isRecommendedUnder = calculatedSide === 'under';
 
   return (
     <Card
