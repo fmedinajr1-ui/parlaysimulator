@@ -57,6 +57,9 @@ export function PropSelectionCard({
     }
   };
 
+  // Detect if this is a fallback projection (no recommended_side means L10 fallback)
+  const isFallbackProjection = projection && !projection.recommended_side;
+
   // Calculate edge from projection
   const edge = projection?.projected_value 
     ? projection.projected_value - prop.current_line 
@@ -105,9 +108,13 @@ export function PropSelectionCard({
           <p className="text-lg font-bold">{prop.current_line}</p>
           {/* Projection display */}
           {projection?.projected_value && (
-            <div className="flex items-center gap-2 mt-0.5">
+            <div className={cn(
+              "flex items-center gap-2 mt-0.5",
+              isFallbackProjection && "opacity-70"
+            )}>
               <span className="text-xs text-muted-foreground">
-                Proj: <span className="text-foreground font-medium">{projection.projected_value.toFixed(1)}</span>
+                {isFallbackProjection ? "L10:" : "Proj:"}{" "}
+                <span className="text-foreground font-medium">{projection.projected_value.toFixed(1)}</span>
               </span>
               {edge !== null && (
                 <Badge variant="outline" className={cn("text-[10px] px-1.5 py-0", edgeColor)}>
