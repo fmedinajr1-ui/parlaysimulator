@@ -28,6 +28,11 @@ export interface SweetSpotPick {
   game_date?: string;
   injuryStatus?: string | null;
   l10HitRate?: number | null;
+  // v4.0: Projection fields
+  projectedValue?: number | null;
+  actualLine?: number | null;
+  matchupAdjustment?: number | null;
+  paceAdjustment?: number | null;
 }
 
 // v3.0: ARCHETYPE-PROP ALIGNMENT VALIDATION
@@ -1347,6 +1352,11 @@ export function useSweetSpotParlayBuilder() {
             game_date: pick.analysis_date,
             injuryStatus,
             l10HitRate: pick.l10_hit_rate,
+            // v4.0: Projection fields from category analyzer
+            projectedValue: pick.projected_value,
+            actualLine: pick.actual_line,
+            matchupAdjustment: pick.matchup_adjustment,
+            paceAdjustment: pick.pace_adjustment,
           });
         }
       });

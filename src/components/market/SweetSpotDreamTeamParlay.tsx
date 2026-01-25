@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Target, Trophy, Zap, Users, Plus, Loader2, TrendingUp, RefreshCw, Calendar, AlertTriangle, History, Shield, Activity, Download } from "lucide-react";
+import { Target, Trophy, Zap, Users, Plus, Loader2, TrendingUp, RefreshCw, Calendar, AlertTriangle, History, Shield, Activity, Download, TrendingDown } from "lucide-react";
 import { useSweetSpotParlayBuilder } from "@/hooks/useSweetSpotParlayBuilder";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -21,6 +21,26 @@ const getConfidenceColor = (confidence: number): string => {
   if (confidence >= 9.0) return 'text-emerald-400';
   if (confidence >= 8.5) return 'text-yellow-400';
   return 'text-muted-foreground';
+};
+
+// Edge display helper
+const getEdgeDisplay = (projectedValue: number | null | undefined, actualLine: number | null | undefined, side: string) => {
+  if (projectedValue == null || actualLine == null) return null;
+  
+  const isOver = side.toLowerCase() === 'over';
+  const edge = isOver ? projectedValue - actualLine : actualLine - projectedValue;
+  
+  const color = edge >= 2 ? 'text-emerald-400' 
+              : edge >= 0 ? 'text-amber-400'
+              : 'text-red-400';
+  
+  const bgColor = edge >= 2 ? 'bg-emerald-500/10' 
+                : edge >= 0 ? 'bg-amber-500/10'
+                : 'bg-red-500/10';
+  
+  const sign = edge >= 0 ? '+' : '';
+  
+  return { edge, color, bgColor, label: `${sign}${edge.toFixed(1)}` };
 };
 
 const getCategoryLabel = (category: string | null | undefined): string => {
@@ -250,6 +270,17 @@ export function SweetSpotDreamTeamParlay() {
                     <span className="text-xs text-muted-foreground">
                       {leg.pick.side.toUpperCase()} {leg.pick.line}
                     </span>
+                    {/* Projection & Edge Display */}
+                    {leg.pick.projectedValue != null && (
+                      (() => {
+                        const edgeInfo = getEdgeDisplay(leg.pick.projectedValue, leg.pick.actualLine || leg.pick.line, leg.pick.side);
+                        return edgeInfo ? (
+                          <Badge className={`text-[10px] px-1.5 py-0 ${edgeInfo.bgColor} ${edgeInfo.color} border-0`}>
+                            Proj: {leg.pick.projectedValue?.toFixed(1)} ({edgeInfo.label})
+                          </Badge>
+                        ) : null;
+                      })()
+                    )}
                     {leg.pick.category && (
                       <Badge className={`text-[10px] px-1.5 py-0 ${getCategoryColor(leg.pick.category)}`}>
                         {getCategoryLabel(leg.pick.category)}

@@ -19,6 +19,10 @@ export interface UnifiedParlayLeg {
   confidence?: number;
   l10HitRate?: number;
   archetype?: string;
+  // v4.0: Projection fields
+  projectedValue?: number;
+  actualLine?: number;
+  edge?: number;
 }
 
 // Unified parlay structure
@@ -203,16 +207,33 @@ export function useDailyParlays() {
   
   // Add Sweet Spot Dream Team (OPTIMAL)
   if (optimalParlay && optimalParlay.length > 0) {
-    const legs: UnifiedParlayLeg[] = optimalParlay.map(leg => ({
-      playerName: leg.pick.player_name,
-      propType: leg.pick.prop_type,
-      line: leg.pick.line,
-      side: leg.pick.side.toLowerCase() as 'over' | 'under',
-      team: leg.pick.team_name,
-      category: leg.pick.category || undefined,
-      confidence: leg.pick.confidence_score,
-      l10HitRate: leg.pick.l10HitRate || undefined,
-    }));
+    const legs: UnifiedParlayLeg[] = optimalParlay.map(leg => {
+      const projectedValue = leg.pick.projectedValue;
+      const actualLine = leg.pick.actualLine || leg.pick.line;
+      const side = leg.pick.side.toLowerCase() as 'over' | 'under';
+      
+      // Calculate edge: for OVER, edge = projected - line; for UNDER, edge = line - projected
+      let edge: number | undefined;
+      if (projectedValue != null && actualLine != null) {
+        edge = side === 'over' 
+          ? projectedValue - actualLine 
+          : actualLine - projectedValue;
+      }
+      
+      return {
+        playerName: leg.pick.player_name,
+        propType: leg.pick.prop_type,
+        line: leg.pick.line,
+        side,
+        team: leg.pick.team_name,
+        category: leg.pick.category || undefined,
+        confidence: leg.pick.confidence_score,
+        l10HitRate: leg.pick.l10HitRate || undefined,
+        projectedValue: projectedValue ?? undefined,
+        actualLine: actualLine ?? undefined,
+        edge,
+      };
+    });
     
     dailyParlays.push({
       id: 'sweet-spot-optimal',
