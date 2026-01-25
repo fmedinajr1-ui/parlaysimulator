@@ -2,9 +2,10 @@ import React, { useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { PropEdge, HalftimeLockedProp } from '@/types/scout-agent';
+import { PropEdge, HalftimeLockedProp, TeamLiveState, GameBetEdge } from '@/types/scout-agent';
 import { EdgeFilters, PropKind } from './EdgeFilters';
 import { EdgeRowCompact } from './EdgeRowCompact';
+import { GameBetEdgeCard } from './GameBetEdgeCard';
 import { Lock, Target, Zap, Copy } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
@@ -15,6 +16,10 @@ interface HalftimeBettingPanelProps {
   lockedRecommendations: HalftimeLockedProp[];
   gameTime: string;
   lockTime?: string;
+  // Game-level bets
+  homeTeamState?: TeamLiveState | null;
+  awayTeamState?: TeamLiveState | null;
+  gameBetEdges?: GameBetEdge[];
 }
 
 // Composite ranking algorithm for "bet usefulness"
@@ -34,6 +39,9 @@ export function HalftimeBettingPanel({
   lockedRecommendations,
   gameTime,
   lockTime,
+  homeTeamState,
+  awayTeamState,
+  gameBetEdges = [],
 }: HalftimeBettingPanelProps) {
   const { toast } = useToast();
   
@@ -158,6 +166,15 @@ export function HalftimeBettingPanel({
       </CardHeader>
 
       <CardContent className="space-y-4">
+        {/* Game-Level Bets Section */}
+        {(homeTeamState || awayTeamState) && (
+          <GameBetEdgeCard
+            homeTeam={homeTeamState || null}
+            awayTeam={awayTeamState || null}
+            gameBetEdges={gameBetEdges}
+            gameTime={gameTime}
+          />
+        )}
         {/* Locked Recommendations Section */}
         {mode === 'HALFTIME_LOCK' && lockedEdges.length > 0 && (
           <div className="space-y-3">
