@@ -9,7 +9,9 @@ import {
   AgentLoopResponse,
   HalftimeLockState,
   HalftimeLockedProp,
-  VisionSignal
+  VisionSignal,
+  TeamLiveState,
+  GameBetEdge
 } from '@/types/scout-agent';
 import { GameContext } from '@/pages/Scout';
 import { useToast } from '@/hooks/use-toast';
@@ -68,6 +70,11 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
   const [lastProjectionMilestone, setLastProjectionMilestone] = useState(0);
   const [projectionSnapshots, setProjectionSnapshots] = useState<ProjectionSnapshot[]>([]);
   const [currentGameMinute, setCurrentGameMinute] = useState(0);
+  
+  // Team-level state for game bets
+  const [homeTeamState, setHomeTeamState] = useState<TeamLiveState | null>(null);
+  const [awayTeamState, setAwayTeamState] = useState<TeamLiveState | null>(null);
+  const [gameBetEdges, setGameBetEdges] = useState<GameBetEdge[]>([]);
   
   // Session persistence
   const [sessionRestored, setSessionRestored] = useState(false);
@@ -849,5 +856,12 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
     // V4: Session Persistence
     sessionRestored,
     clearSession,
+    // V5: Game Bets (Team-level)
+    homeTeamState,
+    awayTeamState,
+    gameBetEdges,
+    setHomeTeamState,
+    setAwayTeamState,
+    setGameBetEdges,
   };
 }

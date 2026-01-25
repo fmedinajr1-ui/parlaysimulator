@@ -605,3 +605,66 @@ export interface PlayerStateDelta {
   confidence: ConfidenceLevel;
   timestamp: string;
 }
+
+// ===== TEAM-LEVEL BETTING TYPES =====
+
+export type TeamBetType = 'MONEYLINE' | 'TOTAL' | 'SPREAD';
+
+/**
+ * Team Live State - Aggregated from individual player states
+ */
+export interface TeamLiveState {
+  teamAbbrev: string;
+  teamName: string;
+  isHome: boolean;
+  currentScore: number;
+  
+  // Aggregated from rostered players (on-court weighted)
+  avgTeamFatigue: number;        // 0-100 (average of on-court players)
+  avgTeamEffort: number;         // 0-100
+  teamSpeedIndex: number;        // Aggregate transition speed
+  
+  // Live efficiency metrics
+  livePace: number;              // Current possessions per 48
+  offensiveRating: number;       // Points per 100 possessions
+  fgPct: number;                 // Current FG%
+  threePtPct: number;            // Current 3P%
+  
+  // Game script signals
+  momentumScore: number;         // -100 to +100 (negative = opponent momentum)
+  runDetected: boolean;          // 8+ point run in last 3 minutes
+  closeGameFlag: boolean;        // Margin <= 5 in Q4
+}
+
+/**
+ * Game Bet Edge - Predictions for game-level bets (Total, Moneyline, Spread)
+ */
+export interface GameBetEdge {
+  betType: TeamBetType;
+  lean: 'HOME' | 'AWAY' | 'OVER' | 'UNDER';
+  confidence: number;            // 0-100
+  
+  // For Moneyline
+  projectedWinner?: 'HOME' | 'AWAY';
+  winProbability?: number;       // 0-1
+  
+  // For Totals
+  projectedTotal?: number;       // Expected combined final score
+  vegasLine?: number;            // Bookmaker's total line
+  edgeAmount?: number;           // Projected - Vegas
+  
+  // For Spread
+  projectedMargin?: number;      // Expected point differential
+  spreadLine?: number;           // Bookmaker spread
+  
+  // Drivers (why we predict this)
+  drivers: string[];
+  riskFlags: string[];
+  gameTime: string;
+  
+  // Bookmaker data
+  homeOdds?: number;
+  awayOdds?: number;
+  overOdds?: number;
+  underOdds?: number;
+}

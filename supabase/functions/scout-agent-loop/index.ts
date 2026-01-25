@@ -81,6 +81,19 @@ interface RotationState {
   rotationRole: RotationRole;
 }
 
+interface BoxScoreData {
+  points?: number;
+  rebounds?: number;
+  assists?: number;
+  fouls?: number;
+  fga?: number;
+  fta?: number;
+  turnovers?: number;
+  threes?: number;
+  steals?: number;
+  blocks?: number;
+}
+
 interface PlayerLiveState {
   playerName: string;
   jersey: string;
@@ -100,6 +113,8 @@ interface PlayerLiveState {
   slowRecoveryCount: number;
   // V3: Rotation Truth Layer
   rotation?: RotationState;
+  // V4: Box score data for team aggregation
+  boxScore?: BoxScoreData;
 }
 
 interface PropEdge {
@@ -808,6 +823,368 @@ function fatiguePenaltyPct(fatigueScore: number): number {
   if (fatigueScore < 60) return 0.03;  // 3% penalty
   if (fatigueScore < 75) return 0.07;  // 7% penalty
   return 0.12;                          // 12% max penalty
+}
+
+// ===== TEAM-LEVEL AGGREGATION & GAME BET PROJECTION ENGINE =====
+
+interface TeamLiveState {
+  teamAbbrev: string;
+  teamName: string;
+  isHome: boolean;
+  currentScore: number;
+  avgTeamFatigue: number;
+  avgTeamEffort: number;
+  teamSpeedIndex: number;
+  livePace: number;
+  offensiveRating: number;
+  fgPct: number;
+  threePtPct: number;
+  momentumScore: number;
+  runDetected: boolean;
+  closeGameFlag: boolean;
+}
+
+interface GameBetEdge {
+  betType: 'MONEYLINE' | 'TOTAL' | 'SPREAD';
+  lean: 'HOME' | 'AWAY' | 'OVER' | 'UNDER';
+  confidence: number;
+  projectedWinner?: 'HOME' | 'AWAY';
+  winProbability?: number;
+  projectedTotal?: number;
+  vegasLine?: number;
+  edgeAmount?: number;
+  projectedMargin?: number;
+  spreadLine?: number;
+  drivers: string[];
+  riskFlags: string[];
+  gameTime: string;
+  homeOdds?: number;
+  awayOdds?: number;
+  overOdds?: number;
+  underOdds?: number;
+}
+
+// Parse clock string to seconds remaining in period
+function parseClockSeconds(clock: string): number {
+  if (!clock) return 720; // Default 12 minutes
+  const parts = clock.split(':');
+  if (parts.length === 2) {
+    return parseInt(parts[0]) * 60 + parseInt(parts[1]);
+  }
+  return parseInt(clock) * 60 || 720;
+}
+
+// Calculate momentum from recent plays
+function calculateMomentum(recentPlays: any[] | undefined, teamAbbrev: string): number {
+  if (!recentPlays || recentPlays.length === 0) return 0;
+  
+  let momentum = 0;
+  const last10 = recentPlays.slice(-10);
+  
+  last10.forEach((play, idx) => {
+    const weight = (idx + 1) / 10; // More recent = higher weight
+    const isTeamPlay = play.team?.toLowerCase() === teamAbbrev.toLowerCase();
+    
+    if (play.playType === 'score') {
+      momentum += isTeamPlay ? 8 * weight : -8 * weight;
+    } else if (play.playType === 'turnover') {
+      momentum += isTeamPlay ? -5 * weight : 5 * weight;
+    } else if (play.playType === 'rebound') {
+      momentum += isTeamPlay ? 2 * weight : -2 * weight;
+    }
+  });
+  
+  return Math.max(-100, Math.min(100, Math.round(momentum)));
+}
+
+// Detect scoring run (8+ points in short span)
+function detectRun(recentPlays: any[] | undefined, teamAbbrev: string): boolean {
+  if (!recentPlays || recentPlays.length < 3) return false;
+  
+  const last5 = recentPlays.slice(-5);
+  const teamScores = last5.filter(p => 
+    p.playType === 'score' && 
+    p.team?.toLowerCase() === teamAbbrev.toLowerCase()
+  ).length;
+  
+  return teamScores >= 4;
+}
+
+// Aggregate player states into team state
+function calculateTeamLiveState(
+  playerStates: Record<string, PlayerLiveState>,
+  pbpData: any,
+  isHome: boolean
+): TeamLiveState {
+  const teamAbbrev = isHome ? pbpData.homeTeam : pbpData.awayTeam;
+  const currentScore = isHome ? pbpData.homeScore : pbpData.awayScore;
+  const opponentScore = isHome ? pbpData.awayScore : pbpData.homeScore;
+  
+  // Filter players on this team (prefer on-court players for fatigue)
+  const teamPlayers = Object.values(playerStates)
+    .filter(p => p.team === teamAbbrev);
+  
+  const onCourtPlayers = teamPlayers.filter(p => p.onCourt);
+  const relevantPlayers = onCourtPlayers.length >= 3 ? onCourtPlayers : teamPlayers.slice(0, 8);
+  
+  // Aggregate fatigue/effort from on-court players
+  const avgFatigue = relevantPlayers.length > 0
+    ? relevantPlayers.reduce((sum, p) => sum + (p.fatigueScore || 40), 0) / relevantPlayers.length
+    : 40;
+  
+  const avgEffort = relevantPlayers.length > 0
+    ? relevantPlayers.reduce((sum, p) => sum + (p.effortScore || 50), 0) / relevantPlayers.length
+    : 50;
+  
+  const avgSpeed = relevantPlayers.length > 0
+    ? relevantPlayers.reduce((sum, p) => sum + (p.speedIndex || 50), 0) / relevantPlayers.length
+    : 50;
+  
+  // Calculate FG% from team boxscore if available
+  let fgPct = 0.45;
+  let threePtPct = 0.35;
+  
+  if (teamPlayers.length > 0) {
+    const totalFGA = teamPlayers.reduce((sum, p) => sum + (p.boxScore?.fga || 0), 0);
+    const totalPts = teamPlayers.reduce((sum, p) => sum + (p.boxScore?.points || 0), 0);
+    const totalThrees = teamPlayers.reduce((sum, p) => sum + (p.boxScore?.threes || 0), 0);
+    
+    if (totalFGA > 0) {
+      // Rough estimate: PTS = 2*FGM + 3*3PM + FTM, assume 2.2 pts per make
+      fgPct = Math.min(0.65, Math.max(0.30, (totalPts / 2.2) / totalFGA));
+    }
+    if (totalFGA > 0) {
+      threePtPct = Math.min(0.55, Math.max(0.20, totalThrees / (totalFGA * 0.4))); // Assume 40% are 3s
+    }
+  }
+  
+  const period = pbpData?.period || 1;
+  const scoreDiff = Math.abs(currentScore - opponentScore);
+  
+  return {
+    teamAbbrev,
+    teamName: teamAbbrev,
+    isHome,
+    currentScore,
+    avgTeamFatigue: Math.round(avgFatigue),
+    avgTeamEffort: Math.round(avgEffort),
+    teamSpeedIndex: Math.round(avgSpeed),
+    livePace: pbpData?.pace || 100,
+    offensiveRating: 0, // Would need possessions to calculate
+    fgPct: Math.round(fgPct * 100) / 100,
+    threePtPct: Math.round(threePtPct * 100) / 100,
+    momentumScore: calculateMomentum(pbpData?.recentPlays, teamAbbrev),
+    runDetected: detectRun(pbpData?.recentPlays, teamAbbrev),
+    closeGameFlag: scoreDiff <= 5 && period >= 4,
+  };
+}
+
+// Project Game Total (OVER/UNDER combined final score)
+function projectGameTotal(
+  homeTeamState: TeamLiveState,
+  awayTeamState: TeamLiveState,
+  pbpData: any,
+  vegasTotal: number
+): GameBetEdge {
+  const period = pbpData?.period || 1;
+  const clock = pbpData?.clock || '12:00';
+  const clockSeconds = parseClockSeconds(clock);
+  const minutesPlayed = (period - 1) * 12 + (12 - clockSeconds / 60);
+  const remainingMinutes = Math.max(0, 48 - minutesPlayed);
+  
+  const currentTotal = homeTeamState.currentScore + awayTeamState.currentScore;
+  
+  // Current pace projection
+  const currentPace = minutesPlayed > 2 
+    ? (currentTotal / minutesPlayed) * 48 
+    : vegasTotal;
+  
+  // Fatigue adjustment (tired teams score less)
+  const avgFatigue = (homeTeamState.avgTeamFatigue + awayTeamState.avgTeamFatigue) / 2;
+  const fatiguePenalty = 1 - fatiguePenaltyPct(avgFatigue);
+  
+  // Blowout adjustment (garbage time tends to increase scoring)
+  const scoreDiff = Math.abs(homeTeamState.currentScore - awayTeamState.currentScore);
+  const blowoutFactor = scoreDiff > 20 ? 1.05 : scoreDiff > 15 ? 1.02 : 1.0;
+  
+  // Pace factor from live data
+  const paceFactor = (pbpData?.pace || 100) / 100;
+  
+  // Blend current pace with pre-game expectation
+  const weight = Math.min(0.85, minutesPlayed / 24); // Trust live data more over time
+  const projectedRemainingPace = (currentPace * weight + vegasTotal * (1 - weight)) * fatiguePenalty * blowoutFactor * paceFactor;
+  
+  const projectedRemaining = (projectedRemainingPace / 48) * remainingMinutes;
+  const projectedTotal = currentTotal + projectedRemaining;
+  
+  const edgeAmount = projectedTotal - vegasTotal;
+  const lean: 'OVER' | 'UNDER' = edgeAmount >= 0 ? 'OVER' : 'UNDER';
+  
+  // Drivers
+  const drivers: string[] = [];
+  if (avgFatigue > 55) drivers.push(`High team fatigue (${Math.round(avgFatigue)})`);
+  if (pbpData?.pace > 105) drivers.push(`Fast pace (${pbpData.pace})`);
+  if (pbpData?.pace < 95) drivers.push(`Slow pace (${pbpData.pace})`);
+  if (scoreDiff > 20) drivers.push('Blowout garbage time');
+  if (minutesPlayed > 0) drivers.push(`Current pace: ${(currentTotal / minutesPlayed * 48).toFixed(0)}/48`);
+  
+  // Risk flags
+  const riskFlags: string[] = [];
+  if (minutesPlayed < 12) riskFlags.push('EARLY_GAME_VOLATILITY');
+  if (scoreDiff > 25) riskFlags.push('BLOWOUT_RISK');
+  
+  // Confidence grows with game time
+  const confidence = Math.min(90, Math.round(45 + weight * 45 + Math.abs(edgeAmount) * 2));
+  
+  return {
+    betType: 'TOTAL',
+    lean,
+    confidence,
+    projectedTotal: Math.round(projectedTotal * 10) / 10,
+    vegasLine: vegasTotal,
+    edgeAmount: Math.round(edgeAmount * 10) / 10,
+    drivers,
+    riskFlags,
+    gameTime: pbpData?.gameTime || 'Unknown',
+  };
+}
+
+// Project Moneyline (which team wins)
+function projectMoneyline(
+  homeTeamState: TeamLiveState,
+  awayTeamState: TeamLiveState,
+  pbpData: any,
+  preGameHomeWinProb: number = 0.5
+): GameBetEdge {
+  const period = pbpData?.period || 1;
+  const clock = pbpData?.clock || '12:00';
+  const clockSeconds = parseClockSeconds(clock);
+  const minutesPlayed = (period - 1) * 12 + (12 - clockSeconds / 60);
+  const remainingPct = Math.max(0, (48 - minutesPlayed) / 48);
+  
+  const scoreDiff = homeTeamState.currentScore - awayTeamState.currentScore; // Positive = home leading
+  
+  // Fatigue differential (positive = home more tired)
+  const fatigueDiff = homeTeamState.avgTeamFatigue - awayTeamState.avgTeamFatigue;
+  
+  // Momentum differential
+  const momentumDiff = homeTeamState.momentumScore - awayTeamState.momentumScore;
+  
+  // Blend pre-game probability with live game state
+  let liveWinProbHome = 0.5 + (scoreDiff / 40); // +10 pts ≈ 75% win prob
+  liveWinProbHome += momentumDiff / 200; // Momentum boost
+  liveWinProbHome -= fatigueDiff / 400;  // Fatigue penalty (home being tired is bad)
+  
+  // Clamp to reasonable range
+  liveWinProbHome = Math.max(0.02, Math.min(0.98, liveWinProbHome));
+  
+  // Blend with pre-game expectation (less weight as game progresses)
+  const blendedProb = preGameHomeWinProb * remainingPct + liveWinProbHome * (1 - remainingPct);
+  
+  const projectedWinner: 'HOME' | 'AWAY' = blendedProb >= 0.5 ? 'HOME' : 'AWAY';
+  const winProbability = blendedProb >= 0.5 ? blendedProb : 1 - blendedProb;
+  
+  // Drivers
+  const drivers: string[] = [];
+  if (scoreDiff > 10) drivers.push(`Home leading by ${scoreDiff}`);
+  if (scoreDiff < -10) drivers.push(`Away leading by ${Math.abs(scoreDiff)}`);
+  if (Math.abs(momentumDiff) > 20) drivers.push(momentumDiff > 0 ? 'Home momentum' : 'Away momentum');
+  if (Math.abs(fatigueDiff) > 15) drivers.push(fatigueDiff > 0 ? 'Home fatigue edge' : 'Away fresher');
+  
+  // Risk flags
+  const riskFlags: string[] = [];
+  if (Math.abs(scoreDiff) <= 5 && period >= 3) riskFlags.push('CLOSE_GAME');
+  if (homeTeamState.runDetected || awayTeamState.runDetected) riskFlags.push('RUN_IN_PROGRESS');
+  
+  // Confidence grows with game time and score margin
+  const marginBonus = Math.min(20, Math.abs(scoreDiff) * 1.5);
+  const confidence = Math.min(95, Math.round(40 + (1 - remainingPct) * 35 + marginBonus));
+  
+  return {
+    betType: 'MONEYLINE',
+    lean: projectedWinner,
+    confidence,
+    projectedWinner,
+    winProbability: Math.round(winProbability * 100) / 100,
+    drivers,
+    riskFlags,
+    gameTime: pbpData?.gameTime || 'Unknown',
+  };
+}
+
+// Project Spread
+function projectSpread(
+  homeTeamState: TeamLiveState,
+  awayTeamState: TeamLiveState,
+  pbpData: any,
+  vegasSpread: number = 0 // Negative = home favorite
+): GameBetEdge {
+  const period = pbpData?.period || 1;
+  const clock = pbpData?.clock || '12:00';
+  const clockSeconds = parseClockSeconds(clock);
+  const minutesPlayed = (period - 1) * 12 + (12 - clockSeconds / 60);
+  const remainingMinutes = Math.max(0, 48 - minutesPlayed);
+  
+  const currentMargin = homeTeamState.currentScore - awayTeamState.currentScore; // Positive = home winning
+  
+  // Project remaining margin based on pace/momentum
+  const momentumFactor = (homeTeamState.momentumScore - awayTeamState.momentumScore) / 100;
+  const fatigueFactor = (awayTeamState.avgTeamFatigue - homeTeamState.avgTeamFatigue) / 200;
+  
+  // Estimate remaining scoring margin
+  const ratePerMinute = 0.1 * (1 + momentumFactor + fatigueFactor); // Approx 0.1 points/min differential
+  const projectedAdditionalMargin = ratePerMinute * remainingMinutes;
+  
+  const projectedFinalMargin = currentMargin + projectedAdditionalMargin;
+  const spreadCover = projectedFinalMargin - vegasSpread;
+  
+  const lean: 'HOME' | 'AWAY' = spreadCover >= 0 ? 'HOME' : 'AWAY';
+  
+  const drivers: string[] = [];
+  if (currentMargin > 5) drivers.push(`Home +${currentMargin} now`);
+  if (currentMargin < -5) drivers.push(`Away +${Math.abs(currentMargin)} now`);
+  if (Math.abs(momentumFactor) > 0.2) drivers.push(momentumFactor > 0 ? 'Home momentum' : 'Away momentum');
+  
+  const riskFlags: string[] = [];
+  if (remainingMinutes > 24) riskFlags.push('EARLY_PROJECTION');
+  
+  const weight = Math.min(0.85, minutesPlayed / 24);
+  const confidence = Math.min(85, Math.round(40 + weight * 35 + Math.abs(spreadCover) * 3));
+  
+  return {
+    betType: 'SPREAD',
+    lean,
+    confidence,
+    projectedMargin: Math.round(projectedFinalMargin * 10) / 10,
+    spreadLine: vegasSpread,
+    edgeAmount: Math.round(spreadCover * 10) / 10,
+    drivers,
+    riskFlags,
+    gameTime: pbpData?.gameTime || 'Unknown',
+  };
+}
+
+// Main function to calculate all game bet edges
+function calculateGameBetEdges(
+  playerStates: Record<string, PlayerLiveState>,
+  pbpData: any,
+  vegasTotal: number = 220,
+  vegasSpread: number = 0,
+  preGameHomeWinProb: number = 0.5
+): { homeTeam: TeamLiveState; awayTeam: TeamLiveState; gameBetEdges: GameBetEdge[] } {
+  
+  const homeTeam = calculateTeamLiveState(playerStates, pbpData, true);
+  const awayTeam = calculateTeamLiveState(playerStates, pbpData, false);
+  
+  const gameBetEdges: GameBetEdge[] = [
+    projectGameTotal(homeTeam, awayTeam, pbpData, vegasTotal),
+    projectMoneyline(homeTeam, awayTeam, pbpData, preGameHomeWinProb),
+    projectSpread(homeTeam, awayTeam, pbpData, vegasSpread),
+  ];
+  
+  console.log(`[Scout Agent] Game bet edges: Total ${gameBetEdges[0].lean} (${gameBetEdges[0].confidence}%), ML ${gameBetEdges[1].lean} (${gameBetEdges[1].confidence}%)`);
+  
+  return { homeTeam, awayTeam, gameBetEdges };
 }
 
 function calculateRateModifier(state: PlayerLiveState, prop: PropTypeKey): number {
@@ -1604,6 +1981,24 @@ CRITICAL RULE: You MUST identify players by their jersey numbers and look them u
       console.log(`[Scout Agent] Halftime detected - generated ${halftimeRecommendations.length} locked recommendations`);
     }
 
+    // STEP 5: Calculate game-level bet edges (Total, Moneyline, Spread)
+    let gameBetData = null;
+    if (pbpData) {
+      // Use default vegas values for now - in production these would come from game_environment table
+      const vegasTotal = 220; // Default NBA total
+      const vegasSpread = 0; // Pick'em default
+      const preGameHomeWinProb = 0.5; // Default even odds
+      
+      gameBetData = calculateGameBetEdges(
+        playerStates,
+        pbpData,
+        vegasTotal,
+        vegasSpread,
+        preGameHomeWinProb
+      );
+      console.log(`[Scout Agent] Game bet edges calculated: ${gameBetData.gameBetEdges.length} bets`);
+    }
+
     return new Response(
       JSON.stringify({
         sceneClassification,
@@ -1617,6 +2012,10 @@ CRITICAL RULE: You MUST identify players by their jersey numbers and look them u
         overallAssessment: visionResult.overallAssessment,
         isHalftime: sceneClassification.isHalftime,
         halftimeRecommendations: sceneClassification.isHalftime ? halftimeRecommendations : undefined,
+        // Game-level bet edges
+        homeTeamState: gameBetData?.homeTeam || null,
+        awayTeamState: gameBetData?.awayTeam || null,
+        gameBetEdges: gameBetData?.gameBetEdges || [],
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
