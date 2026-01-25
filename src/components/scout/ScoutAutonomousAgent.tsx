@@ -6,13 +6,13 @@ import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { SelectGroup, SelectLabel } from '@/components/ui/select';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { useScoutAgentState } from '@/hooks/useScoutAgentState';
 import { PlayerStateCard } from './PlayerStateCard';
-import { PropEdgeList } from './PropEdgeAlert';
+import { HalftimeBettingPanel } from './HalftimeBettingPanel';
 import { PaceMeter } from './PaceMeter';
 import { GameContext } from '@/pages/Scout';
 import { supabase } from '@/integrations/supabase/client';
@@ -34,14 +34,13 @@ import {
   Settings,
   Activity,
   Users,
-  Target,
   Zap,
   Monitor,
   Camera,
   AlertTriangle,
-  Lock,
   RefreshCw,
   Save,
+  ChevronDown,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -57,7 +56,6 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
   
   const [mediaStream, setMediaStream] = useState<MediaStream | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [activeTab, setActiveTab] = useState('players');
   
   // Capture mode state
   const [captureMode, setCaptureMode] = useState<'screen' | 'camera'>('screen');
@@ -639,13 +637,13 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
               <div className="absolute top-3 left-3 flex items-center gap-2">
                 <div className={cn(
                   "flex items-center gap-2 px-3 py-1.5 rounded-full",
-                  state.isPaused ? "bg-chart-4/80" : "bg-black/60"
+                  state.isPaused ? "bg-chart-4/80" : "bg-background/60"
                 )}>
                   <div className={cn(
                     "w-3 h-3 rounded-full",
-                    state.isPaused ? "bg-chart-4" : "bg-red-500 animate-pulse"
+                    state.isPaused ? "bg-chart-4" : "bg-destructive animate-pulse"
                   )} />
-                  <span className="text-white text-sm font-medium">
+                  <span className="text-foreground text-sm font-medium">
                     {state.isPaused ? 'PAUSED' : 'LIVE'}
                   </span>
                 </div>
@@ -729,145 +727,69 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
         </Card>
       </div>
 
-      {/* Main Tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="players" className="gap-2">
-            <Users className="w-4 h-4" />
-            Players ({onCourtPlayers.length})
-          </TabsTrigger>
-          <TabsTrigger value="edges" className="gap-2">
-            <Target className="w-4 h-4" />
-            Edges ({topEdges.length})
-          </TabsTrigger>
-          <TabsTrigger value="bets" className="gap-2">
-            <Lock className="w-4 h-4" />
-            Bets
-            {state.halftimeLock.isLocked && (
-              <Badge variant="secondary" className="ml-1 text-xs">
-                {state.halftimeLock.lockedRecommendations.length}
-              </Badge>
-            )}
-          </TabsTrigger>
-          <TabsTrigger value="log" className="gap-2">
-            <Activity className="w-4 h-4" />
-            Log
-          </TabsTrigger>
-        </TabsList>
+      {/* Main Betting Console */}
+      <HalftimeBettingPanel
+        edges={state.activePropEdges}
+        mode={state.halftimeLock.isLocked ? 'HALFTIME_LOCK' : 'LIVE'}
+        lockedRecommendations={state.halftimeLock.lockedRecommendations}
+        gameTime={state.currentGameTime || ''}
+        lockTime={state.halftimeLock.lockTime}
+      />
 
-        <TabsContent value="players" className="mt-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {onCourtPlayers
-              .sort((a, b) => b.fatigueScore - a.fatigueScore)
-              .map(player => (
-                <PlayerStateCard key={player.playerName} player={player} />
-              ))}
-          </div>
-          
-          {onCourtPlayers.length === 0 && allPlayers.length === 0 && (
-            <div className="text-center py-8 text-muted-foreground">
-              <Users className="w-12 h-12 mx-auto mb-4 opacity-50" />
-              <p>No player data yet</p>
-              <p className="text-sm">Start autopilot to begin tracking</p>
-            </div>
-          )}
-          
-          {onCourtPlayers.length === 0 && allPlayers.length > 0 && (
-            <div className="text-center py-8 text-muted-foreground">
-              <Activity className="w-12 h-12 mx-auto mb-4 opacity-50 animate-pulse" />
-              <p className="font-medium">Warming up...</p>
-              <p className="text-sm">{allPlayers.length} players loaded, analyzing frames</p>
-              <p className="text-xs mt-2">Frames: {state.framesProcessed} | Analyses: {state.analysisCount}</p>
-            </div>
-          )}
-        </TabsContent>
-
-        <TabsContent value="edges" className="mt-4">
-          <PropEdgeList edges={state.activePropEdges} maxDisplay={10} />
-        </TabsContent>
-
-        <TabsContent value="bets" className="mt-4">
-          {state.halftimeLock.isLocked ? (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 p-3 bg-chart-2/10 rounded-lg border border-chart-2/30">
-                <Lock className="w-5 h-5 text-chart-2" />
-                <div>
-                  <p className="font-semibold">Halftime Locked</p>
-                  <p className="text-xs text-muted-foreground">
-                    Recommendations finalized at {state.halftimeLock.lockTime}
-                  </p>
-                </div>
-              </div>
-              
-              <div className="space-y-3">
-                {state.halftimeLock.lockedRecommendations.map((rec, idx) => (
-                  <Card key={idx} className="border-primary/30">
-                    <CardContent className="p-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="font-bold text-lg">{rec.player}</span>
-                        <Badge className={rec.lean === 'OVER' ? 'bg-chart-2' : 'bg-chart-4'}>
-                          {rec.lean} {rec.prop} {rec.line}
-                        </Badge>
-                      </div>
-                      <div className="text-sm text-muted-foreground">
-                        Confidence: {rec.confidence}%
-                      </div>
-                      <div className="mt-2 space-y-1">
-                        {rec.drivers.map((d, i) => (
-                          <p key={i} className="text-xs text-muted-foreground">• {d}</p>
-                        ))}
-                      </div>
-                      {rec.firstHalfStats && (
-                        <div className="mt-2 pt-2 border-t text-xs">
-                          1H Stats: {rec.firstHalfStats.points}pts, {rec.firstHalfStats.rebounds}reb, {rec.firstHalfStats.assists}ast
-                        </div>
-                      )}
-                      {/* Bookmaker line prices */}
-                      {(rec.overPrice || rec.underPrice) && (
-                        <div className="flex items-center justify-between text-xs pt-2 border-t mt-2">
-                          <span className={cn(
-                            "font-mono",
-                            rec.lean === 'OVER' && "text-chart-2 font-semibold"
-                          )}>
-                            O {rec.overPrice && rec.overPrice > 0 ? '+' : ''}{rec.overPrice || '-'}
-                          </span>
-                          {rec.bookmaker && (
-                            <Badge variant="outline" className="text-[10px]">
-                              {rec.bookmaker}
-                            </Badge>
-                          )}
-                          <span className={cn(
-                            "font-mono",
-                            rec.lean === 'UNDER' && "text-chart-4 font-semibold"
-                          )}>
-                            U {rec.underPrice && rec.underPrice > 0 ? '+' : ''}{rec.underPrice || '-'}
-                          </span>
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="text-center py-8 text-muted-foreground">
-              <Target className="w-12 h-12 mx-auto mb-4 opacity-50" />
-              <p className="font-medium">No Locked Bets Yet</p>
-              <p className="text-sm">
-                Betting recommendations will be locked at halftime based on fatigue 
-                tracking and projection data.
-              </p>
-              <p className="text-xs mt-2">
-                Current game time: {state.currentGameTime || 'Pre-game'}
-              </p>
-            </div>
-          )}
-        </TabsContent>
-
-        <TabsContent value="log" className="mt-4">
+      {/* Advanced Section (Collapsible) */}
+      <Collapsible>
+        <CollapsibleTrigger asChild>
+          <Button variant="ghost" className="w-full justify-between gap-2 text-muted-foreground">
+            <span className="flex items-center gap-2">
+              <Users className="w-4 h-4" />
+              Advanced (Players: {onCourtPlayers.length} | Log: {state.sceneHistory.length})
+            </span>
+            <ChevronDown className="w-4 h-4" />
+          </Button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="space-y-4 pt-2">
+          {/* Players Grid */}
           <Card className="border-border/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Users className="w-4 h-4" />
+                Player States
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {onCourtPlayers.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {onCourtPlayers
+                    .sort((a, b) => b.fatigueScore - a.fatigueScore)
+                    .map(player => (
+                      <PlayerStateCard key={player.playerName} player={player} />
+                    ))}
+                </div>
+              ) : allPlayers.length > 0 ? (
+                <div className="text-center py-6 text-muted-foreground">
+                  <Activity className="w-10 h-10 mx-auto mb-3 opacity-50 animate-pulse" />
+                  <p className="font-medium">Warming up...</p>
+                  <p className="text-sm">{allPlayers.length} players loaded</p>
+                </div>
+              ) : (
+                <div className="text-center py-6 text-muted-foreground">
+                  <Users className="w-10 h-10 mx-auto mb-3 opacity-50" />
+                  <p>No player data yet</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Scene Log */}
+          <Card className="border-border/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Activity className="w-4 h-4" />
+                Activity Log
+              </CardTitle>
+            </CardHeader>
             <CardContent className="p-0">
-              <ScrollArea className="h-64">
+              <ScrollArea className="h-48">
                 <div className="p-3 space-y-2">
                   {state.sceneHistory.slice(0, 20).map((scene, idx) => (
                     <div 
@@ -901,8 +823,8 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
               </ScrollArea>
             </CardContent>
           </Card>
-        </TabsContent>
-      </Tabs>
+        </CollapsibleContent>
+      </Collapsible>
     </div>
   );
 }
