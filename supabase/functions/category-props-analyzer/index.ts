@@ -42,9 +42,52 @@ interface GameEnvironment {
   away_team: string;
   vegas_total: number;
   vegas_spread: number;
-  pace_rating?: number;
+  pace_rating?: string;  // v4.1: Fixed - stored as TEXT ("LOW", "MEDIUM", "FAST")
   pace_class?: string;
   game_script?: string;
+}
+
+// v4.1: Team abbreviation to full name mapping for matchup_history lookups
+const TEAM_ABBREV_TO_NAME: Record<string, string> = {
+  'ATL': 'Atlanta Hawks', 'BOS': 'Boston Celtics', 'BKN': 'Brooklyn Nets', 'CHA': 'Charlotte Hornets',
+  'CHI': 'Chicago Bulls', 'CLE': 'Cleveland Cavaliers', 'DAL': 'Dallas Mavericks', 'DEN': 'Denver Nuggets',
+  'DET': 'Detroit Pistons', 'GSW': 'Golden State Warriors', 'HOU': 'Houston Rockets', 'IND': 'Indiana Pacers',
+  'LAC': 'LA Clippers', 'LAL': 'Los Angeles Lakers', 'MEM': 'Memphis Grizzlies', 'MIA': 'Miami Heat',
+  'MIL': 'Milwaukee Bucks', 'MIN': 'Minnesota Timberwolves', 'NOP': 'New Orleans Pelicans', 'NYK': 'New York Knicks',
+  'OKC': 'Oklahoma City Thunder', 'ORL': 'Orlando Magic', 'PHI': 'Philadelphia 76ers', 'PHX': 'Phoenix Suns',
+  'POR': 'Portland Trail Blazers', 'SAC': 'Sacramento Kings', 'SAS': 'San Antonio Spurs', 'TOR': 'Toronto Raptors',
+  'UTA': 'Utah Jazz', 'WAS': 'Washington Wizards'
+};
+
+// v4.1: Convert text pace_rating to numeric multiplier
+function getPaceMultiplier(paceRating: string | undefined): number {
+  if (!paceRating) return 0.0;
+  switch (paceRating.toUpperCase()) {
+    case 'FAST': return 0.05;     // +5% stats boost
+    case 'HIGH': return 0.03;     // +3% boost  
+    case 'MEDIUM': return 0.0;    // baseline
+    case 'LOW': return -0.03;     // -3% penalty
+    case 'SLOW': return -0.05;    // -5% penalty
+    default: return 0.0;
+  }
+}
+
+// v4.1: Normalize opponent name for matchup_history lookup
+function normalizeOpponentName(opponent: string): string {
+  // First try exact abbreviation match
+  const upper = opponent.toUpperCase().trim();
+  if (TEAM_ABBREV_TO_NAME[upper]) {
+    return TEAM_ABBREV_TO_NAME[upper];
+  }
+  // Try partial match (e.g., "Chicago" or "Bulls" -> "Chicago Bulls")
+  const lowerOpp = opponent.toLowerCase().trim();
+  for (const [abbrev, fullName] of Object.entries(TEAM_ABBREV_TO_NAME)) {
+    if (fullName.toLowerCase().includes(lowerOpp) || lowerOpp.includes(fullName.toLowerCase())) {
+      return fullName;
+    }
+  }
+  // Return original if no match found
+  return opponent;
 }
 
 interface CategoryConfig {
@@ -328,7 +371,8 @@ function getStatValue(log: GameLog, propType: string): number {
   }
 }
 
-// ============ TRUE PROJECTION CALCULATION (v4.0) ============
+// ============ TRUE PROJECTION CALCULATION (v4.1) ============
+// v4.1: Fixed pace_rating text->numeric conversion and matchup key format
 function calculateTrueProjection(
   playerName: string,
   propType: string,
@@ -343,35 +387,44 @@ function calculateTrueProjection(
   let projectionSource = 'L10_MEDIAN';
   
   if (opponent) {
-    const matchupKey = `${playerName.toLowerCase().trim()}_${propType}_${opponent.toLowerCase().trim()}`;
+    // v4.1: Normalize opponent name (e.g., "GSW" -> "Golden State Warriors")
+    const normalizedOpponent = normalizeOpponentName(opponent);
+    // v4.1: Match prop_type format in matchup_history (e.g., "player_points")
+    const matchupPropType = propType.startsWith('player_') ? propType : `player_${propType}`;
+    const matchupKey = `${playerName.toLowerCase().trim()}_${matchupPropType}_${normalizedOpponent.toLowerCase().trim()}`;
     const matchup = matchupHistoryCache.get(matchupKey);
+    
+    console.log(`[Projection] Matchup lookup: key="${matchupKey}", found=${!!matchup}, opponent="${opponent}" -> "${normalizedOpponent}"`);
     
     if (matchup && matchup.games_played >= 2) {
       const h2hAvg = matchup.avg_stat;
       // Calculate adjustment: difference from L10 median weighted at 30%
       matchupAdj = (h2hAvg - l10Median) * PROJECTION_WEIGHTS.MATCHUP_H2H;
       projectionSource = matchup.games_played >= 5 ? 'L10+H2H_STRONG' : 'L10+H2H';
+      console.log(`[Projection] H2H found: ${matchup.games_played} games, avg=${h2hAvg.toFixed(1)}, adj=${matchupAdj.toFixed(2)}`);
     }
   }
   
   // 3. PACE ADJUSTMENT: Check game environment
   let paceAdj = 0;
   if (opponent) {
+    const normalizedOpponent = normalizeOpponentName(opponent);
     // Look up game environment for this matchup
     for (const [_, env] of gameEnvironmentCache) {
-      const homeMatch = env.home_team?.toLowerCase().includes(opponent.toLowerCase()) ||
-                       env.away_team?.toLowerCase().includes(opponent.toLowerCase());
+      const homeMatch = env.home_team?.toLowerCase().includes(normalizedOpponent.toLowerCase()) ||
+                       env.away_team?.toLowerCase().includes(normalizedOpponent.toLowerCase());
       if (homeMatch && env.pace_rating) {
-        // Pace multiplier: normalize around 100 (average pace = 100)
-        const paceMultiplier = (env.pace_rating / 100) - 1.0;
+        // v4.1: FIXED - pace_rating is TEXT ("LOW", "MEDIUM", "FAST"), not a number
+        const paceMultiplier = getPaceMultiplier(env.pace_rating);
         paceAdj = paceMultiplier * l10Median * PROJECTION_WEIGHTS.PACE_FACTOR;
         
-        // For UNDER picks in slow games, invert the adjustment
-        if (env.pace_class === 'SLOW' && paceAdj < 0) {
+        // Tag projection source with pace info
+        if (paceMultiplier < 0) {
           projectionSource += '+SLOW';
-        } else if (env.pace_class === 'FAST' && paceAdj > 0) {
+        } else if (paceMultiplier > 0) {
           projectionSource += '+FAST';
         }
+        console.log(`[Projection] Pace found: ${env.pace_rating}, multiplier=${paceMultiplier.toFixed(3)}, adj=${paceAdj.toFixed(2)}`);
         break;
       }
     }
@@ -389,25 +442,42 @@ function calculateTrueProjection(
   };
 }
 
-// Load matchup history into cache
+// Load matchup history into cache (with pagination to get all records)
 async function loadMatchupHistory(supabase: any): Promise<void> {
-  const { data, error } = await supabase
-    .from('matchup_history')
-    .select('player_name, opponent, prop_type, games_played, avg_stat, max_stat, min_stat');
-  
-  if (error) {
-    console.warn('[Category Analyzer] Matchup history load error:', error.message);
-    return;
-  }
-  
   matchupHistoryCache.clear();
-  for (const m of (data || [])) {
-    // Key: playername_proptype_opponent
-    const propType = m.prop_type?.replace('player_', '') || '';
-    const key = `${m.player_name?.toLowerCase().trim()}_${propType}_${m.opponent?.toLowerCase().trim()}`;
-    matchupHistoryCache.set(key, m);
+  let page = 0;
+  const pageSize = 1000;
+  let totalLoaded = 0;
+  
+  while (true) {
+    const { data, error } = await supabase
+      .from('matchup_history')
+      .select('player_name, opponent, prop_type, games_played, avg_stat, max_stat, min_stat')
+      .range(page * pageSize, (page + 1) * pageSize - 1);
+    
+    if (error) {
+      console.warn('[Category Analyzer] Matchup history load error:', error.message);
+      break;
+    }
+    
+    if (!data || data.length === 0) break;
+    
+    for (const m of data) {
+      // v4.1: Key format: playername_proptype_opponent (keep prop_type as-is with player_ prefix)
+      const propType = m.prop_type || '';
+      const key = `${m.player_name?.toLowerCase().trim()}_${propType}_${m.opponent?.toLowerCase().trim()}`;
+      matchupHistoryCache.set(key, m);
+    }
+    
+    totalLoaded += data.length;
+    if (data.length < pageSize) break;
+    page++;
   }
-  console.log(`[Category Analyzer] Loaded ${matchupHistoryCache.size} matchup history records`);
+  
+  console.log(`[Category Analyzer] Loaded ${matchupHistoryCache.size} matchup history records (${totalLoaded} total fetched)`);
+  // v4.1: Log sample keys for debugging
+  const sampleKeys = Array.from(matchupHistoryCache.keys()).slice(0, 3);
+  console.log(`[Category Analyzer] Sample matchup keys: ${sampleKeys.join(', ')}`);
 }
 
 // Load game environment into cache
@@ -415,7 +485,7 @@ async function loadGameEnvironment(supabase: any): Promise<void> {
   const today = new Date().toISOString().split('T')[0];
   const { data, error } = await supabase
     .from('game_environment')
-    .select('game_id, home_team, away_team, vegas_total, vegas_spread, pace_rating, pace_class, game_script')
+    .select('game_id, home_team, away_team, vegas_total, vegas_spread, pace_rating, game_script')
     .gte('game_date', today);
   
   if (error) {
@@ -428,6 +498,11 @@ async function loadGameEnvironment(supabase: any): Promise<void> {
     gameEnvironmentCache.set(g.game_id, g);
   }
   console.log(`[Category Analyzer] Loaded ${gameEnvironmentCache.size} game environment records`);
+  // v4.1: Log sample for debugging
+  if (data && data.length > 0) {
+    const sample = data[0];
+    console.log(`[Category Analyzer] Sample game: ${sample.away_team} @ ${sample.home_team}, pace_rating=${sample.pace_rating}`);
+  }
 }
 
 serve(async (req) => {
