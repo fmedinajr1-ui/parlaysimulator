@@ -45,7 +45,9 @@ import {
   ChevronDown,
   Target,
   TrendingUp,
+  Clock,
 } from 'lucide-react';
+import { formatDistanceToNow } from 'date-fns';
 import { cn } from '@/lib/utils';
 
 interface ScoutAutonomousAgentProps {
@@ -98,10 +100,17 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
     homeTeamState,
     awayTeamState,
     gameBetEdges,
+    // V6: PBP Freshness
+    lastPbpUpdate,
+    lastPbpGameTime,
+    refreshPBPData,
   } = useScoutAgentState({ gameContext });
   
   // Tab state for main content
   const [activeScoutTab, setActiveScoutTab] = useState<'bets' | 'props' | 'advanced'>('bets');
+  
+  // Manual refresh state
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const isSupported = isScreenCaptureSupported() || isCameraSupported();
 
@@ -422,6 +431,28 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
     if (pbpIntervalRef.current) clearInterval(pbpIntervalRef.current);
     stopAgent();
   };
+  
+  // Manual refresh handler
+  const handleRefreshStats = async () => {
+    setIsRefreshing(true);
+    try {
+      const result = await refreshPBPData();
+      if (result.success) {
+        toast({
+          title: "Stats Refreshed",
+          description: `Updated ${result.playerCount} players`,
+        });
+      } else {
+        toast({
+          title: "Refresh Failed",
+          description: result.reason,
+          variant: "destructive",
+        });
+      }
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   const topEdges = getTopEdges(5);
   const fatiguedPlayers = getFatiguedPlayers(30); // Lowered threshold
@@ -462,7 +493,7 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
                     </Badge>
                   )}
                 </CardTitle>
-                <CardDescription className="flex items-center gap-2">
+                <CardDescription className="flex items-center gap-2 flex-wrap">
                   {state.isRunning 
                     ? (
                       <>
@@ -471,6 +502,13 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
                           <span className="flex items-center gap-1 text-chart-2">
                             <Save className="w-3 h-3" />
                             Auto-saving
+                          </span>
+                        )}
+                        {lastPbpUpdate && (
+                          <span className="flex items-center gap-1 text-muted-foreground text-xs border-l border-border pl-2">
+                            <Clock className="w-3 h-3" />
+                            Stats: {formatDistanceToNow(lastPbpUpdate, { addSuffix: true })}
+                            {lastPbpGameTime && ` (${lastPbpGameTime})`}
                           </span>
                         )}
                       </>
@@ -483,6 +521,17 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
             <div className="flex items-center gap-2">
               {state.isRunning ? (
                 <>
+                  {/* Refresh Stats Button */}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleRefreshStats}
+                    disabled={isRefreshing}
+                    title="Refresh box score stats"
+                  >
+                    <RefreshCw className={cn("w-4 h-4", isRefreshing && "animate-spin")} />
+                  </Button>
+                  
                   <Button 
                     variant="outline" 
                     size="sm"

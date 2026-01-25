@@ -76,6 +76,10 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
   const [awayTeamState, setAwayTeamState] = useState<TeamLiveState | null>(null);
   const [gameBetEdges, setGameBetEdges] = useState<GameBetEdge[]>([]);
   
+  // PBP freshness tracking
+  const [lastPbpUpdate, setLastPbpUpdate] = useState<Date | null>(null);
+  const [lastPbpGameTime, setLastPbpGameTime] = useState<string | null>(null);
+  
   // Session persistence
   const [sessionRestored, setSessionRestored] = useState(false);
   const saveIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -780,6 +784,14 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
     if (response.gameBetEdges && response.gameBetEdges.length > 0) {
       setGameBetEdges(response.gameBetEdges);
     }
+    
+    // Track PBP freshness
+    if (response.pbpTimestamp) {
+      setLastPbpUpdate(new Date(response.pbpTimestamp));
+    }
+    if (response.pbpGameTime) {
+      setLastPbpGameTime(response.pbpGameTime);
+    }
 
     // Handle notifications
     if (response.shouldNotify && response.notification) {
@@ -843,6 +855,30 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
     }));
   }, []);
 
+  // Manual PBP refresh function
+  const refreshPBPData = useCallback(async () => {
+    if (!state.gameContext?.eventId) return { success: false, reason: 'No game context' };
+    
+    const eventIdToUse = (state.gameContext as any).espnEventId || state.gameContext.eventId;
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('fetch-live-pbp', {
+        body: { eventId: eventIdToUse },
+      });
+      
+      if (!error && data && !data.notAvailable) {
+        updatePBPData(data);
+        setLastPbpUpdate(new Date());
+        setLastPbpGameTime(data.gameTime || null);
+        return { success: true, playerCount: data.players?.length || 0 };
+      }
+      return { success: false, reason: data?.reason || error?.message || 'Unknown error' };
+    } catch (e) {
+      console.error('[Scout] Manual PBP refresh failed:', e);
+      return { success: false, reason: 'Network error' };
+    }
+  }, [state.gameContext, updatePBPData]);
+
   return {
     state,
     startAgent,
@@ -874,5 +910,9 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
     setHomeTeamState,
     setAwayTeamState,
     setGameBetEdges,
+    // V6: PBP Freshness
+    lastPbpUpdate,
+    lastPbpGameTime,
+    refreshPBPData,
   };
 }

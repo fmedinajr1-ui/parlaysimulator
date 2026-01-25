@@ -656,16 +656,27 @@ function getLiveBox(pbpData: any, playerName: string): LiveBox | null {
     normalizePlayerName(p.playerName || p.name || '') === normalizedSearch
   );
   
-  // Fallback: partial match on last name
+  // Fallback: partial match on last name + 3-char first name (prevents Seth/Stephen Curry mismatch)
   if (!row) {
-    const searchLastName = normalizedSearch.split(' ').pop() || '';
+    const searchParts = normalizedSearch.split(' ');
+    const searchFirstName = searchParts[0] || '';
+    const searchLastName = searchParts[searchParts.length - 1] || '';
+    
     row = pbpData.players.find((p: any) => {
       const pName = normalizePlayerName(p.playerName || p.name || '');
-      const pLastName = pName.split(' ').pop() || '';
-      // Match if last names match and first initial matches
-      const searchFirstInitial = normalizedSearch.charAt(0);
-      const pFirstInitial = pName.charAt(0);
-      return pLastName === searchLastName && pFirstInitial === searchFirstInitial;
+      const pParts = pName.split(' ');
+      const pFirstName = pParts[0] || '';
+      const pLastName = pParts[pParts.length - 1] || '';
+      
+      // Require EXACT last name match
+      const lastNameMatch = pLastName === searchLastName;
+      
+      // Require at least 3-char first name match (prevents Seth ↔ Stephen)
+      const firstNameMatch = searchFirstName.length >= 3 && pFirstName.length >= 3 &&
+        (pFirstName.startsWith(searchFirstName.slice(0, 3)) || 
+         searchFirstName.startsWith(pFirstName.slice(0, 3)));
+      
+      return lastNameMatch && firstNameMatch;
     });
     
     if (row) {
@@ -1902,12 +1913,48 @@ serve(async (req) => {
       frame, 
       gameContext, 
       playerStates, 
-      pbpData,
+      pbpData: providedPbpData,
       existingEdges,
       currentGameTime,
       forceAnalysis,
       propLines
     } = requestBody;
+
+    // Fetch fresh PBP data directly instead of relying on potentially stale frontend state
+    let pbpData = providedPbpData;
+    let pbpTimestamp: string | null = null;
+    let pbpGameTime: string | null = null;
+    const eventIdForPBP = (gameContext as any)?.espnEventId || gameContext?.eventId;
+    
+    if (eventIdForPBP) {
+      try {
+        const pbpResponse = await fetch(
+          `${Deno.env.get('SUPABASE_URL')}/functions/v1/fetch-live-pbp`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${Deno.env.get('SUPABASE_ANON_KEY')}`,
+            },
+            body: JSON.stringify({ eventId: eventIdForPBP }),
+          }
+        );
+        
+        if (pbpResponse.ok) {
+          const freshData = await pbpResponse.json();
+          if (!freshData.notAvailable && freshData.players?.length) {
+            pbpData = freshData;
+            pbpTimestamp = new Date().toISOString();
+            pbpGameTime = freshData.gameTime || null;
+            console.log(`[Scout Agent] Fresh PBP: ${freshData.players.length} players, time: ${freshData.gameTime}`);
+          }
+        } else {
+          await pbpResponse.text(); // Consume body to prevent resource leak
+        }
+      } catch (e) {
+        console.log(`[Scout Agent] Fresh PBP fetch failed, using provided data:`, (e as Error).message);
+      }
+    }
 
     if (!frame || frame.length < 100) {
       return new Response(
@@ -2277,6 +2324,9 @@ CRITICAL RULE: You MUST identify players by their jersey numbers and look them u
         awayTeamState: gameBetData?.awayTeam || null,
         gameBetEdges: gameBetData?.gameBetEdges || [],
         vegasData,
+        // PBP freshness tracking
+        pbpTimestamp,
+        pbpGameTime,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

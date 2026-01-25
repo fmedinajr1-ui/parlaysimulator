@@ -507,6 +507,9 @@ export interface AgentLoopResponse {
     paceRating: string;
     gameScript: string;
   };
+  // V4: PBP freshness tracking
+  pbpTimestamp?: string;
+  pbpGameTime?: string;
 }
 
 // ===== NOTIFICATIONS =====
