@@ -220,8 +220,27 @@ export function UnifiedParlayCard({ parlay }: UnifiedParlayCardProps) {
   );
 }
 
+// Edge display helper
+function getEdgeBadge(projectedValue: number | undefined, actualLine: number | undefined, side: 'over' | 'under') {
+  if (projectedValue == null || actualLine == null) return null;
+  
+  const edge = side === 'over' 
+    ? projectedValue - actualLine 
+    : actualLine - projectedValue;
+  
+  const color = edge >= 2 ? 'bg-emerald-500/20 text-emerald-400' 
+              : edge >= 0 ? 'bg-amber-500/20 text-amber-400'
+              : 'bg-red-500/20 text-red-400';
+  
+  const sign = edge >= 0 ? '+' : '';
+  
+  return { edge, color, label: `${sign}${edge.toFixed(1)}` };
+}
+
 // Individual leg row
 function LegRow({ leg, index }: { leg: UnifiedParlayLeg; index: number }) {
+  const edgeBadge = getEdgeBadge(leg.projectedValue, leg.actualLine ?? leg.line, leg.side);
+  
   return (
     <div className="flex items-center justify-between p-2 bg-muted/50 rounded text-xs">
       <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -243,6 +262,15 @@ function LegRow({ leg, index }: { leg: UnifiedParlayLeg; index: number }) {
         >
           {leg.side.toUpperCase()} {leg.line}
         </Badge>
+        {/* Projection badge */}
+        {leg.projectedValue != null && edgeBadge && (
+          <Badge 
+            variant="outline" 
+            className={cn("text-[10px] px-1.5", edgeBadge.color)}
+          >
+            Proj: {leg.projectedValue.toFixed(1)} ({edgeBadge.label})
+          </Badge>
+        )}
         {leg.l10HitRate && (
           <span className="text-emerald-500 font-medium">
             {(leg.l10HitRate * 100).toFixed(0)}%
