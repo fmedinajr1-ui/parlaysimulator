@@ -173,6 +173,26 @@ export interface PlayerLiveStateV2 {
 // Injury status types
 export type InjuryStatus = 'OUT' | 'DOUBTFUL' | 'QUESTIONABLE' | 'GTD' | 'DTD' | null;
 
+// ===== ROTATION TRUTH LAYER =====
+
+export type RotationRole = 'STARTER' | 'CLOSER' | 'BENCH_CORE' | 'BENCH_FRINGE';
+export type FoulRiskLevel = 'LOW' | 'MED' | 'HIGH';
+
+/**
+ * Rotation State - Tracks substitution patterns and playing time reliability
+ */
+export interface RotationState {
+  stintStartGameTime?: string;      // When current stint started (e.g., "Q2 5:42")
+  stintSeconds: number;             // Seconds in current stint
+  lastSubOutGameTime?: string;      // Last time they left floor
+  lastSubInGameTime?: string;       // Last time they entered
+  benchSecondsLast8: number;        // Rolling bench time window (last 8 minutes)
+  onCourtStability: number;         // 0-1: stable rotation vs chaotic
+  projectedStintsRemaining: number; // Expected number of stints left
+  foulRiskLevel: FoulRiskLevel;
+  rotationRole: RotationRole;
+}
+
 /**
  * Legacy PlayerLiveState (for backwards compatibility during migration)
  * @deprecated Use PlayerLiveStateV2 instead
@@ -205,6 +225,8 @@ export interface PlayerLiveState {
   // Injury status from ESPN
   injuryStatus?: InjuryStatus;
   injuryDetail?: string;
+  // V3: Rotation Truth Layer
+  rotation?: RotationState;
 }
 
 // ===== PROP EDGE =====
@@ -233,6 +255,14 @@ export interface PropEdge {
   overPrice?: number;
   underPrice?: number;
   bookmaker?: string;
+  // V3: Uncertainty bands
+  uncertainty?: number;           // ± stat units
+  minutesUncertainty?: number;    // ± minutes
+  rateUncertainty?: number;       // ± rate per min
+  rotationVolatilityFlag?: boolean;
+  rotationRole?: RotationRole;
+  // Calibrated probability (once bucket map is populated)
+  calibratedProb?: number;        // 0-1
 }
 
 // ===== SCENE CLASSIFICATION =====

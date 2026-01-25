@@ -102,10 +102,19 @@ export function PlayerStateCard({ player, compact = false }: PlayerStateCardProp
               <p className="text-xs text-muted-foreground">{player.team}</p>
             </div>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 flex-wrap">
             <Badge variant="outline" className="text-xs">
               {player.role}
             </Badge>
+            {player.rotation?.rotationRole && player.rotation.rotationRole !== 'STARTER' && (
+              <Badge variant="outline" className={cn(
+                "text-[10px]",
+                player.rotation.rotationRole === 'CLOSER' && "bg-chart-2/20 text-chart-2 border-chart-2/50",
+                player.rotation.rotationRole === 'BENCH_FRINGE' && "bg-chart-4/20 text-chart-4 border-chart-4/50"
+              )}>
+                {player.rotation.rotationRole.replace('_', ' ')}
+              </Badge>
+            )}
             {player.injuryStatus && (
               <Badge 
                 variant="outline" 

@@ -5,6 +5,23 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// ===== ROTATION TRUTH LAYER TYPES =====
+
+type RotationRole = 'STARTER' | 'CLOSER' | 'BENCH_CORE' | 'BENCH_FRINGE';
+type FoulRiskLevel = 'LOW' | 'MED' | 'HIGH';
+
+interface RotationState {
+  stintStartGameTime?: string;
+  stintSeconds: number;
+  lastSubOutGameTime?: string;
+  lastSubInGameTime?: string;
+  benchSecondsLast8: number;
+  onCourtStability: number;         // 0-1
+  projectedStintsRemaining: number;
+  foulRiskLevel: FoulRiskLevel;
+  rotationRole: RotationRole;
+}
+
 interface PlayerLiveState {
   playerName: string;
   jersey: string;
@@ -22,6 +39,8 @@ interface PlayerLiveState {
   sprintCount: number;
   handsOnKneesCount: number;
   slowRecoveryCount: number;
+  // V3: Rotation Truth Layer
+  rotation?: RotationState;
 }
 
 interface PropEdge {
@@ -45,6 +64,12 @@ interface PropEdge {
   overPrice?: number;
   underPrice?: number;
   bookmaker?: string;
+  // V3: Uncertainty
+  uncertainty?: number;
+  minutesUncertainty?: number;
+  rotationVolatilityFlag?: boolean;
+  rotationRole?: RotationRole;
+  calibratedProb?: number;
 }
 
 // ===== PROJECTION CORE TYPES =====
@@ -100,11 +125,145 @@ interface AgentLoopRequest {
     homeScore: number;
     awayScore: number;
     players: any[];
+    recentPlays?: any[]; // Substitution events
   };
   existingEdges: PropEdge[];
   currentGameTime?: string;
   forceAnalysis?: boolean;
   propLines?: PropLineData[]; // Real betting lines from unified_props
+}
+
+// ===== SUBSTITUTION EVENT PARSING =====
+
+interface SubstitutionEvent {
+  time: string;         // "Q2 5:42"
+  player: string;
+  action: 'in' | 'out';
+  team: string;
+}
+
+function parseSubstitutionEvents(recentPlays: any[] | undefined): SubstitutionEvent[] {
+  if (!recentPlays) return [];
+  
+  return recentPlays
+    .filter(p => p.playType === 'substitution')
+    .map(p => {
+      const text = (p.text || '').toLowerCase();
+      const isEnter = text.includes('enters') || text.includes('checks in');
+      return {
+        time: p.time || '',
+        player: p.playerName || extractPlayerFromSubText(p.text),
+        action: isEnter ? 'in' as const : 'out' as const,
+        team: p.team || '',
+      };
+    })
+    .filter(e => e.player);
+}
+
+function extractPlayerFromSubText(text: string): string {
+  if (!text) return '';
+  // Try to extract player name from text like "Player Name enters the game"
+  const match = text.match(/^([A-Z][a-z]+ [A-Z][a-z]+)/);
+  return match ? match[1] : '';
+}
+
+// ===== ROTATION STATE MANAGEMENT =====
+
+function createDefaultRotationState(role: PlayerLiveState['role']): RotationState {
+  const isStarter = role === 'PRIMARY' || role === 'BIG';
+  return {
+    stintSeconds: 0,
+    benchSecondsLast8: 0,
+    onCourtStability: isStarter ? 0.85 : 0.65,
+    projectedStintsRemaining: 2,
+    foulRiskLevel: 'LOW',
+    rotationRole: isStarter ? 'STARTER' : 'BENCH_CORE',
+  };
+}
+
+function determineRotationRole(
+  state: PlayerLiveState,
+  period: number,
+  scoreDiff: number,
+  minutesPlayed: number
+): RotationRole {
+  const role = state.role;
+  const isCloseGame = Math.abs(scoreDiff) <= 8;
+  
+  // Primary players in close Q4 games are closers
+  if (period >= 4 && isCloseGame && (role === 'PRIMARY' || role === 'SECONDARY')) {
+    return 'CLOSER';
+  }
+  
+  // Starters based on role and minutes
+  if (role === 'PRIMARY' || (role === 'BIG' && minutesPlayed > 15)) {
+    return 'STARTER';
+  }
+  
+  // Bench core vs fringe based on minutes
+  if (minutesPlayed >= 10) return 'BENCH_CORE';
+  if (minutesPlayed >= 5) return 'BENCH_CORE';
+  
+  return 'BENCH_FRINGE';
+}
+
+function updateRotationState(
+  state: PlayerLiveState,
+  subEvents: SubstitutionEvent[],
+  period: number,
+  scoreDiff: number,
+  minutesPlayed: number
+): RotationState {
+  const existing = state.rotation || createDefaultRotationState(state.role);
+  
+  // Find sub events for this player
+  const playerSubs = subEvents.filter(e => 
+    e.player?.toLowerCase() === state.playerName?.toLowerCase()
+  );
+  
+  // Update stint tracking
+  let subInCount = 0;
+  let subOutCount = 0;
+  
+  playerSubs.forEach(sub => {
+    if (sub.action === 'in') {
+      existing.lastSubInGameTime = sub.time;
+      existing.stintStartGameTime = sub.time;
+      existing.stintSeconds = 0;
+      subInCount++;
+    } else if (sub.action === 'out') {
+      existing.lastSubOutGameTime = sub.time;
+      subOutCount++;
+    }
+  });
+  
+  // Calculate on-court stability (0-1)
+  // More subs = less stable
+  const totalSubs = subInCount + subOutCount;
+  if (totalSubs <= 2) {
+    existing.onCourtStability = 0.90;
+  } else if (totalSubs <= 4) {
+    existing.onCourtStability = 0.75;
+  } else {
+    existing.onCourtStability = 0.55;
+  }
+  
+  // Update foul risk level
+  const fouls = state.foulCount;
+  if (fouls >= 5) existing.foulRiskLevel = 'HIGH';
+  else if (fouls >= 4) existing.foulRiskLevel = 'MED';
+  else if (fouls >= 3 && period <= 2) existing.foulRiskLevel = 'MED';
+  else existing.foulRiskLevel = 'LOW';
+  
+  // Determine rotation role
+  existing.rotationRole = determineRotationRole(state, period, scoreDiff, minutesPlayed);
+  
+  // Estimate remaining stints based on period
+  if (period >= 4) existing.projectedStintsRemaining = 1;
+  else if (period === 3) existing.projectedStintsRemaining = 2;
+  else existing.projectedStintsRemaining = 3;
+  
+  return existing;
 }
 
 function getSceneClassificationPrompt(): string {
@@ -421,16 +580,25 @@ function getLiveBox(pbpData: any, playerName: string): LiveBox | null {
   };
 }
 
-// ===== PROJECTION ENGINE 2: MINUTES ENGINE =====
+// ===== PROJECTION ENGINE 2: ROTATION-AWARE MINUTES ENGINE =====
 
-function calculateRemainingMinutes(
+interface MinutesProjectionResult {
+  remaining: number;
+  uncertainty: number;
+  riskFlags: string[];
+  blowoutPenalty: number;
+  foulPenalty: number;
+}
+
+function estimateRemainingMinutesRotationAware(
   state: PlayerLiveState,
   live: LiveBox | null,
   scoreDiff: number,
   period: number
-): { remaining: number; riskFlags: string[]; blowoutPenalty: number; foulPenalty: number } {
+): MinutesProjectionResult {
   const played = live?.min ?? 0;
   const riskFlags: string[] = [];
+  const rotation = state.rotation;
   
   // Role-based expected totals
   const roleBasedExpected = 
@@ -439,42 +607,63 @@ function calculateRemainingMinutes(
     state.role === 'BIG' ? 30 : 22;
   
   // Expected total minutes - use minutesEstimate (pre-game baseline) or role-based fallback
-  // BUG FIX: If minutesEstimate equals played and played > 10, the client overwrote it incorrectly
   let expectedTotal = state.minutesEstimate;
   if (expectedTotal <= 0 || (expectedTotal <= played && played > 10)) {
-    // Either not set or bug scenario detected - use role-based estimate
     expectedTotal = roleBasedExpected;
     console.log(`[Minutes Engine] Using role-based estimate for ${state.playerName}: ${expectedTotal} min (role: ${state.role})`);
   }
   
-  let remaining = Math.max(0, expectedTotal - played);
-  console.log(`[Minutes Engine] ${state.playerName}: ${played.toFixed(1)} played, ${remaining.toFixed(1)} remaining (expected: ${expectedTotal})`);
+  // Rotation role multipliers
+  let roleMult = 1.0;
+  const absLead = Math.abs(scoreDiff);
   
-  // Foul penalties
-  let foulPenalty = 1.0;
-  const fouls = live?.fouls ?? state.foulCount;
-  if (fouls >= 5) {
-    foulPenalty = 0.55;
-    riskFlags.push('FOUL_TROUBLE');
-  } else if (fouls === 4) {
-    foulPenalty = 0.75;
-    riskFlags.push('FOUL_TROUBLE');
-  } else if (fouls === 3 && period <= 2) {
-    foulPenalty = 0.85;
-    riskFlags.push('FOUL_TROUBLE');
+  if (rotation?.rotationRole === 'CLOSER' && period >= 3 && absLead <= 8) {
+    roleMult = 1.08;
+    riskFlags.push('CLOSE_GAME_BOOST');
   }
-  remaining *= foulPenalty;
-  
-  // Off-court penalty
-  if (!state.onCourt) {
-    remaining *= 0.85;
+  if (rotation?.rotationRole === 'BENCH_FRINGE') {
+    roleMult = 0.85;
     riskFlags.push('MINUTES_VOLATILITY');
   }
   
+  let remaining = Math.max(0, (expectedTotal * roleMult) - played);
+  console.log(`[Minutes Engine] ${state.playerName}: ${played.toFixed(1)} played, ${remaining.toFixed(1)} remaining (expected: ${expectedTotal}, roleMult: ${roleMult})`);
+  
+  // Off-court penalty scaled by rotation stability
+  if (!state.onCourt) {
+    const stability = rotation?.onCourtStability ?? 0.7;
+    remaining *= (0.75 + 0.25 * stability);
+    if (!riskFlags.includes('MINUTES_VOLATILITY')) {
+      riskFlags.push('MINUTES_VOLATILITY');
+    }
+  }
+  
+  // Foul risk overlay from rotation state
+  let foulPenalty = 1.0;
+  if (rotation?.foulRiskLevel === 'HIGH') {
+    foulPenalty = 0.55;
+    riskFlags.push('FOUL_TROUBLE');
+  } else if (rotation?.foulRiskLevel === 'MED') {
+    foulPenalty = 0.75;
+    riskFlags.push('FOUL_TROUBLE');
+  } else {
+    // Legacy fallback
+    const fouls = live?.fouls ?? state.foulCount;
+    if (fouls >= 5) {
+      foulPenalty = 0.55;
+      riskFlags.push('FOUL_TROUBLE');
+    } else if (fouls === 4) {
+      foulPenalty = 0.75;
+      riskFlags.push('FOUL_TROUBLE');
+    } else if (fouls === 3 && period <= 2) {
+      foulPenalty = 0.85;
+      riskFlags.push('FOUL_TROUBLE');
+    }
+  }
+  remaining *= foulPenalty;
+  
   // Blowout adjustments
   let blowoutPenalty = 1.0;
-  const absLead = Math.abs(scoreDiff);
-  
   if (period >= 4) {
     if (absLead >= 20) {
       blowoutPenalty = 0.40;
@@ -482,8 +671,7 @@ function calculateRemainingMinutes(
     } else if (absLead >= 15) {
       blowoutPenalty = 0.60;
       riskFlags.push('BLOWOUT_RISK');
-    } else if (absLead <= 6) {
-      // Close game boost
+    } else if (absLead <= 6 && !riskFlags.includes('CLOSE_GAME_BOOST')) {
       blowoutPenalty = 1.15;
       riskFlags.push('CLOSE_GAME_BOOST');
     }
@@ -502,7 +690,21 @@ function calculateRemainingMinutes(
   // Cap remaining minutes
   remaining = Math.min(remaining, 24);
   
-  return { remaining, riskFlags, blowoutPenalty, foulPenalty };
+  // ===== CALCULATE MINUTES UNCERTAINTY =====
+  let uncertainty = 0.8; // Base ± minutes
+  if (rotation?.rotationRole === 'BENCH_FRINGE') uncertainty += 1.4;
+  if (!state.onCourt) uncertainty += 0.7;
+  if (state.foulCount >= 4 || rotation?.foulRiskLevel === 'MED' || rotation?.foulRiskLevel === 'HIGH') {
+    uncertainty += 1.0;
+  }
+  if (riskFlags.includes('BLOWOUT_RISK')) uncertainty += 1.2;
+  
+  // Lower uncertainty for stable rotations
+  if ((rotation?.onCourtStability ?? 0.7) >= 0.85) {
+    uncertainty *= 0.7;
+  }
+  
+  return { remaining, uncertainty, riskFlags, blowoutPenalty, foulPenalty };
 }
 
 // ===== PROJECTION ENGINE 3: RATE ENGINE =====
@@ -539,52 +741,70 @@ function blendedRate(state: PlayerLiveState, live: LiveBox | null): RatePerMinut
   };
 }
 
-// ===== PROJECTION ENGINE 4: VISUAL MODIFIER ENGINE =====
+// ===== PROJECTION ENGINE 4: VISUAL MODIFIER ENGINE (v2 - Piecewise Fatigue) =====
+
+// Piecewise fatigue penalty (more realistic cliff behavior)
+function fatiguePenaltyPct(fatigueScore: number): number {
+  if (fatigueScore < 45) return 0.00;  // No penalty
+  if (fatigueScore < 60) return 0.03;  // 3% penalty
+  if (fatigueScore < 75) return 0.07;  // 7% penalty
+  return 0.12;                          // 12% max penalty
+}
 
 function calculateRateModifier(state: PlayerLiveState, prop: PropTypeKey): number {
-  const fatigue = state.fatigueScore ?? 0;
+  let mod = 1.0;
+  
+  const fatigue = state.fatigueScore ?? 40;
   const effort = state.effortScore ?? 50;
   const speed = state.speedIndex ?? 50;
   const handsOnKnees = state.handsOnKneesCount ?? 0;
   const slowRecovery = state.slowRecoveryCount ?? 0;
-  const sprintCount = state.sprintCount ?? 0;
-
-  // Base modifier
-  let mod = 1.0;
-
-  // Fatigue penalty (above 40 hurts)
-  const fatiguePenalty = (fatigue - 40) / 60;
-  mod *= (1 - 0.10 * Math.max(0, fatiguePenalty));
-
-  // Accumulative fatigue indicators
-  if (handsOnKnees >= 2) mod *= 0.95; // Extra 5% penalty
-  if (slowRecovery >= 2) mod *= 0.96; // Extra 4% penalty
-
-  // Effort/speed boost for scoring props
-  if (prop === 'Points' || prop === 'Assists' || prop === 'PRA') {
-    const effortBoost = (effort - 50) / 50;
+  const sprints = state.sprintCount ?? 0;
+  
+  // 1) Fatigue affects all props (piecewise cliff - more realistic)
+  mod *= (1 - fatiguePenaltyPct(fatigue));
+  
+  // 2) Accumulative indicators (only penalize if repeated)
+  if (handsOnKnees >= 2) mod *= 0.95;  // Extra 5% penalty
+  if (slowRecovery >= 2) mod *= 0.96;  // Extra 4% penalty
+  
+  // 3) Effort + speed boosts only for scoring/playmaking props
+  const isScoringProp = prop === 'Points' || prop === 'Assists' || prop === 'PRA';
+  if (isScoringProp) {
+    const effortBoost = (effort - 50) / 50; // -1 to +1
     const speedBoost = (speed - 50) / 50;
+    
     mod *= (1 + 0.06 * effortBoost);
     mod *= (1 + 0.06 * speedBoost);
     
-    // "Hot motor" boost
-    if (sprintCount >= 3 && effort >= 65) {
-      mod *= 1.05;
-    }
+    // "Hot motor" bonus (sprinting with high effort)
+    if (sprints >= 3 && effort >= 65) mod *= 1.05;
   }
-
-  // Rebound positioning for REB and PRA
+  
+  // 4) Rebound positioning (only for REB and PRA)
   if (prop === 'Rebounds' || prop === 'PRA') {
     const pos = state.reboundPositionScore ?? 50;
     const posBoost = (pos - 50) / 50;
     mod *= (1 + 0.08 * posBoost);
   }
-
-  // Clamp modifier
+  
+  // 5) Off-court stability overlay
+  if (!state.onCourt) mod *= 0.98;
+  
+  // Clamp to safe range
   return Math.max(0.80, Math.min(1.20, mod));
 }
 
 // ===== PROJECTION ENGINE 5: PROJECTION CORE =====
+
+interface ProjectionResult {
+  expected: number;
+  remaining: number;
+  uncertainty: number;
+  riskFlags: string[];
+  rate: number;
+  rotationRole?: RotationRole;
+}
 
 function projectFinal(
   state: PlayerLiveState,
@@ -592,8 +812,8 @@ function projectFinal(
   prop: PropTypeKey,
   scoreDiff: number,
   period: number
-): { expected: number; remaining: number; riskFlags: string[]; rate: number } {
-  const { remaining, riskFlags } = calculateRemainingMinutes(state, live, scoreDiff, period);
+): ProjectionResult {
+  const { remaining, uncertainty, riskFlags } = estimateRemainingMinutesRotationAware(state, live, scoreDiff, period);
   const rate = blendedRate(state, live);
   const mod = calculateRateModifier(state, prop);
 
@@ -630,7 +850,14 @@ function projectFinal(
       rateUsed = 0;
   }
 
-  return { expected, remaining, riskFlags, rate: rateUsed };
+  return { 
+    expected, 
+    remaining, 
+    uncertainty,
+    riskFlags, 
+    rate: rateUsed,
+    rotationRole: state.rotation?.rotationRole,
+  };
 }
 
 // ===== CONFIDENCE FORMULA =====
@@ -880,7 +1107,7 @@ function calculatePropEdges(
       // This prevents showing confusing default-based projections
       if (!isRealLine && prop !== 'PRA') return;
       
-      const { expected, remaining, riskFlags, rate } = projectFinal(
+      const { expected, remaining, uncertainty, riskFlags, rate, rotationRole } = projectFinal(
         player, live, prop, scoreDiff, period
       );
       
@@ -901,6 +1128,9 @@ function calculatePropEdges(
                            prop === 'Assists' ? live?.ast :
                            live?.pra ?? 0;
         
+        // Calculate stat uncertainty from minutes uncertainty and rate
+        const statUncertainty = uncertainty * rate;
+        
         edges.push({
           player: player.playerName,
           prop,
@@ -920,6 +1150,11 @@ function calculatePropEdges(
           overPrice,
           underPrice,
           bookmaker,
+          // V3: Uncertainty fields
+          uncertainty: Math.round(statUncertainty * 10) / 10,
+          minutesUncertainty: Math.round(uncertainty * 10) / 10,
+          rotationVolatilityFlag: rotationRole === 'BENCH_FRINGE',
+          rotationRole,
         });
       }
     });
