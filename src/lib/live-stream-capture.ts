@@ -128,6 +128,7 @@ export function isCameraSupported(): boolean {
  * Known capture card device name patterns
  */
 const CAPTURE_CARD_PATTERNS = [
+  // Major brands
   'elgato',
   'avermedia',
   'magewell',
@@ -135,6 +136,10 @@ const CAPTURE_CARD_PATTERNS = [
   'razer ripsaw',
   'corsair',
   'decklink',
+  'genki',
+  'pengo',
+  'startech',
+  // Generic HDMI/USB patterns
   'hdmi',
   'game capture',
   'usb video',
@@ -145,9 +150,24 @@ const CAPTURE_CARD_PATTERNS = [
   '4k60',
   '4k capture',
   'capture device',
-  'genki',
-  'pengo',
-  'startech',
+  // Additional budget/generic brands
+  'ezcap',
+  'digitnow',
+  'basicap',
+  'kingwon',
+  'okiolabs',
+  'pyle',
+  'agptek',
+  'mypin',
+  'usb3',
+  'uvc',
+  'composite',
+  'hdmi capture',
+  'video input',
+  'game card',
+  'stream',
+  'ndi',
+  'obs virtual',
 ];
 
 export interface ClassifiedVideoDevice {
@@ -162,6 +182,17 @@ export interface ClassifiedVideoDevice {
  */
 function classifyVideoDevice(device: MediaDeviceInfo): ClassifiedVideoDevice {
   const label = device.label.toLowerCase();
+  
+  // Handle empty label (permission not granted or device issue)
+  if (!label || label.trim() === '') {
+    console.log('[Capture] Device has empty label, deviceId:', device.deviceId.slice(0, 12));
+    return {
+      device,
+      type: 'unknown',
+      priority: 2,
+      displayName: `Video Device (${device.deviceId.slice(0, 8)}...)`,
+    };
+  }
   
   // Check for capture card patterns
   const isCaptureCard = CAPTURE_CARD_PATTERNS.some(pattern => 
@@ -179,6 +210,8 @@ function classifyVideoDevice(device: MediaDeviceInfo): ClassifiedVideoDevice {
                    label.includes('ipad');
   
   const type = isCaptureCard ? 'capture_card' : isWebcam ? 'webcam' : 'unknown';
+  
+  console.log('[Capture] Classified device:', { label: device.label, type, isCaptureCard });
   
   return {
     device,
@@ -225,17 +258,36 @@ export async function getVideoDevices(): Promise<ClassifiedVideoDevice[]> {
     // Request permission first to get device labels
     await navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
       stream.getTracks().forEach(track => track.stop());
-    }).catch(() => {});
+      console.log('[Capture] Camera permission granted, got device labels');
+    }).catch((err) => {
+      console.warn('[Capture] Camera permission issue:', err.name, err.message);
+    });
     
     const devices = await navigator.mediaDevices.enumerateDevices();
     const videoDevices = devices.filter(device => device.kind === 'videoinput');
     
+    // DEBUG: Log all raw device labels
+    console.log('[Capture] Raw video devices found:', videoDevices.length);
+    videoDevices.forEach((d, i) => {
+      console.log(`[Capture] Device ${i + 1}:`, {
+        label: d.label || '(empty)',
+        deviceId: d.deviceId.slice(0, 12) + '...',
+      });
+    });
+    
     // Classify and sort devices (capture cards first)
-    return videoDevices
+    const classified = videoDevices
       .map(device => classifyVideoDevice(device))
       .sort((a, b) => a.priority - b.priority);
+    
+    console.log('[Capture] Classified results:', classified.map(d => ({
+      name: d.displayName,
+      type: d.type,
+    })));
+    
+    return classified;
   } catch (error) {
-    console.error('Failed to enumerate video devices:', error);
+    console.error('[Capture] Failed to enumerate video devices:', error);
     return [];
   }
 }
