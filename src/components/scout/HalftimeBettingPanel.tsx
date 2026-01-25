@@ -38,7 +38,7 @@ export function HalftimeBettingPanel({
   const { toast } = useToast();
   
   // Filter state
-  const [propFilter, setPropFilter] = useState<PropKind | 'ALL'>('ALL');
+  const [propFilter, setPropFilter] = useState<PropKind | 'ALL'>('PRA');
   const [hideVolatile, setHideVolatile] = useState(true);
   const [startersOnly, setStartersOnly] = useState(false);
   const [minConfidence, setMinConfidence] = useState(65);

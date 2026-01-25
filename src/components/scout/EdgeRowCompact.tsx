@@ -34,6 +34,11 @@ export function EdgeRowCompact({ edge, rank }: EdgeRowCompactProps) {
     : edge.confidence;
   const lowRange = edge.uncertainty != null ? edge.expectedFinal - edge.uncertainty : null;
   const highRange = edge.uncertainty != null ? edge.expectedFinal + edge.uncertainty : null;
+  
+  // Calculate progress toward line
+  const progress = edge.line > 0 
+    ? Math.min(100, ((edge.currentStat ?? 0) / edge.line) * 100)
+    : 0;
 
   const handleCopy = () => {
     const betText = `${edge.player} ${edge.prop} ${edge.lean} ${edge.line}`;
@@ -80,8 +85,14 @@ export function EdgeRowCompact({ edge, rank }: EdgeRowCompactProps) {
                 )}
               </div>
 
-              {/* Proj | Edge | Conf */}
-              <div className="flex items-center gap-3 mt-1 text-sm">
+              {/* Current | Proj | Edge | Conf */}
+              <div className="flex items-center gap-3 mt-1 text-sm flex-wrap">
+                {/* Current stat - prominently displayed */}
+                {edge.currentStat !== undefined && (
+                  <span className="text-muted-foreground">
+                    Now <span className="font-bold text-lg text-foreground">{edge.currentStat}</span>
+                  </span>
+                )}
                 <span className="text-muted-foreground">
                   Proj <span className={cn("font-medium", confColor)}>{edge.expectedFinal.toFixed(1)}</span>
                 </span>
@@ -98,6 +109,26 @@ export function EdgeRowCompact({ edge, rank }: EdgeRowCompactProps) {
                   Conf <span className={cn("font-medium", confColor)}>{confPct}%</span>
                 </span>
               </div>
+
+              {/* Visual Progress Bar */}
+              {edge.currentStat !== undefined && edge.line > 0 && (
+                <div className="mt-2">
+                  <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+                    <div 
+                      className={cn(
+                        "h-full rounded-full transition-all duration-300",
+                        progress >= 100 ? "bg-chart-2" : 
+                        progress >= 75 ? "bg-chart-3" : "bg-primary"
+                      )}
+                      style={{ width: `${Math.min(progress, 100)}%` }}
+                    />
+                  </div>
+                  <div className="flex justify-between text-[10px] text-muted-foreground mt-0.5">
+                    <span>{Math.round(progress)}% to line</span>
+                    <span>Line: {edge.line}</span>
+                  </div>
+                </div>
+              )}
 
               {/* Range Band */}
               {lowRange != null && highRange != null && (
@@ -163,11 +194,6 @@ export function EdgeRowCompact({ edge, rank }: EdgeRowCompactProps) {
                     {edge.minutesUncertainty && (
                       <span className="text-muted-foreground/70">±{edge.minutesUncertainty.toFixed(1)}</span>
                     )}
-                  </div>
-                )}
-                {edge.currentStat !== undefined && (
-                  <div className="flex items-center gap-1">
-                    <span>Current: <span className="font-medium text-foreground">{edge.currentStat}</span></span>
                   </div>
                 )}
               </div>

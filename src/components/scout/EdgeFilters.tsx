@@ -19,7 +19,7 @@ interface EdgeFiltersProps {
   onMinConfidenceChange: (min: number) => void;
 }
 
-const PROP_OPTIONS: Array<PropKind | 'ALL'> = ['ALL', 'Points', 'Rebounds', 'Assists', 'PRA'];
+const PROP_OPTIONS: Array<PropKind | 'ALL'> = ['ALL', 'PRA'];
 const PROP_LABELS: Record<PropKind | 'ALL', string> = {
   'ALL': 'ALL',
   'Points': 'PTS',
