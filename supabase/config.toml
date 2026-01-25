@@ -341,3 +341,6 @@ verify_jwt = false
 
 [functions.verify-sweet-spot-outcomes]
 verify_jwt = false
+
+[functions.verify-scout-outcomes]
+verify_jwt = false
