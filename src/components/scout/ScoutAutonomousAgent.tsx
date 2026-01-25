@@ -504,34 +504,35 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
                             Auto-saving
                           </span>
                         )}
-                        {lastPbpUpdate && (
-                          <span className="flex items-center gap-1 text-muted-foreground text-xs border-l border-border pl-2">
-                            <Clock className="w-3 h-3" />
-                            Stats: {formatDistanceToNow(lastPbpUpdate, { addSuffix: true })}
-                            {lastPbpGameTime && ` (${lastPbpGameTime})`}
-                          </span>
-                        )}
                       </>
                     )
                     : 'Autonomous game monitoring'}
+                  {/* Always show timestamp if available */}
+                  {lastPbpUpdate && (
+                    <span className="flex items-center gap-1 text-muted-foreground text-xs border-l border-border pl-2">
+                      <Clock className="w-3 h-3" />
+                      Stats: {formatDistanceToNow(lastPbpUpdate, { addSuffix: true })}
+                      {lastPbpGameTime && ` (${lastPbpGameTime})`}
+                    </span>
+                  )}
                 </CardDescription>
               </div>
             </div>
             
             <div className="flex items-center gap-2">
+              {/* Always visible Refresh Stats button */}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleRefreshStats}
+                disabled={isRefreshing || !gameContext.eventId}
+                title="Refresh box score stats"
+              >
+                <RefreshCw className={cn("w-4 h-4", isRefreshing && "animate-spin")} />
+              </Button>
+              
               {state.isRunning ? (
                 <>
-                  {/* Refresh Stats Button */}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleRefreshStats}
-                    disabled={isRefreshing}
-                    title="Refresh box score stats"
-                  >
-                    <RefreshCw className={cn("w-4 h-4", isRefreshing && "animate-spin")} />
-                  </Button>
-                  
                   <Button 
                     variant="outline" 
                     size="sm"
