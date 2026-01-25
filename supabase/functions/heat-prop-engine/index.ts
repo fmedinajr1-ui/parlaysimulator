@@ -453,6 +453,34 @@ interface ParlayLeg {
   reason: string;
   event_id: string;
   sport: string;
+  // v4.0: Projection fields
+  projected_value?: number;
+  actual_line?: number;
+  edge?: number;
+}
+
+// Projection lookup map (populated at build time)
+let projectionMap: Map<string, { projectedValue: number; actualLine: number }> = new Map();
+
+async function loadProjections(supabase: any): Promise<void> {
+  const today = getEasternDate();
+  const { data } = await supabase
+    .from('category_sweet_spots')
+    .select('player_name, prop_type, projected_value, actual_line')
+    .eq('analysis_date', today)
+    .not('projected_value', 'is', null);
+  
+  projectionMap.clear();
+  for (const p of (data || [])) {
+    // Normalize prop_type: 'player_rebounds' -> 'rebounds'
+    const propLower = p.prop_type?.toLowerCase().replace('player_', '') || '';
+    const key = `${p.player_name?.toLowerCase()}_${propLower}`;
+    projectionMap.set(key, {
+      projectedValue: p.projected_value,
+      actualLine: p.actual_line || p.recommended_line
+    });
+  }
+  console.log(`[Heat Engine] Loaded ${projectionMap.size} projections from category_sweet_spots`);
 }
 
 // Helper to categorize prop types for diversity
@@ -567,19 +595,39 @@ function buildParlays(
   
   if (!leg2) return null;
   
-  const formatLeg = (p: any): ParlayLeg => ({
-    player_name: p.player_name,
-    team: getPlayerTeam(p.player_name),  // Get team from bdl_player_cache
-    market_type: p.market_type,
-    line: p.latest_line,
-    side: p.side,
-    book_name: p.book_name,
-    final_score: p.final_score,
-    signal_label: p.signal_label,
-    reason: generateLegReason(p),
-    event_id: p.event_id,
-    sport: p.sport
-  });
+  const formatLeg = (p: any): ParlayLeg => {
+    // Lookup projection data
+    const marketLower = p.market_type?.toLowerCase().replace('player_', '') || '';
+    const projKey = `${p.player_name?.toLowerCase()}_${marketLower}`;
+    const projection = projectionMap.get(projKey);
+    const side = p.side?.toLowerCase() || 'over';
+    
+    // Calculate edge: OVER = projected - line, UNDER = line - projected
+    let edge: number | undefined;
+    if (projection?.projectedValue != null && projection?.actualLine != null) {
+      edge = side === 'over' 
+        ? projection.projectedValue - projection.actualLine
+        : projection.actualLine - projection.projectedValue;
+    }
+    
+    return {
+      player_name: p.player_name,
+      team: getPlayerTeam(p.player_name),
+      market_type: p.market_type,
+      line: p.latest_line,
+      side: p.side,
+      book_name: p.book_name,
+      final_score: p.final_score,
+      signal_label: p.signal_label,
+      reason: generateLegReason(p),
+      event_id: p.event_id,
+      sport: p.sport,
+      // v4.0: Include projection data
+      projected_value: projection?.projectedValue,
+      actual_line: projection?.actualLine,
+      edge
+    };
+  };
   
   // Calculate team diversity
   const leg2Team = getPlayerTeam(leg2.player_name);
@@ -652,6 +700,7 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
   await loadArchetypes(supabase);
   await loadPlayerTeams(supabase);
   await loadCategoryRecommendations(supabase);
+  await loadProjections(supabase);  // v4.0: Load projections for parlay legs
   
   // MATCHUP INTELLIGENCE INTEGRATION: Fetch blocked picks first
   const { data: blockedPicks, error: blockedError } = await supabase
