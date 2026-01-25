@@ -388,6 +388,15 @@ serve(async (req) => {
       isQ4Starting,
     };
 
+    // Validation logging: check box score totals match scoreboard
+    const homePlayerPts = players.filter(p => p.team === homeTeam).reduce((sum, p) => sum + p.points, 0);
+    const awayPlayerPts = players.filter(p => p.team === awayTeam).reduce((sum, p) => sum + p.points, 0);
+    console.log(`[PBP Fetch] Box score totals: ${homeTeam}=${homePlayerPts} (score: ${homeScore}), ${awayTeam}=${awayPlayerPts} (score: ${awayScore})`);
+    
+    // Log top scorers for debugging
+    const topScorers = players.filter(p => p.points > 0).sort((a, b) => b.points - a.points).slice(0, 3);
+    console.log(`[PBP Fetch] Top scorers: ${topScorers.map(p => `${p.playerName}: ${p.points}pts`).join(', ')}`);
+    
     console.log(`[PBP Fetch] Found ${players.length} players, ${recentPlays.length} recent plays`);
 
     return new Response(

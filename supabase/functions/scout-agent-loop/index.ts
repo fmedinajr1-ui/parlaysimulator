@@ -629,18 +629,64 @@ function parseMinutesDecimal(minStr: any): number {
   return Number(m[1]) + Number(m[2]) / 60;
 }
 
+// Normalize player names for matching (handles Jr, III, periods, etc.)
+function normalizePlayerName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/\./g, '')           // Remove periods (S.J. → SJ)
+    .replace(/jr\s*$/i, '')       // Remove Jr suffix
+    .replace(/sr\s*$/i, '')       // Remove Sr suffix
+    .replace(/iv\s*$/i, '')       // Remove IV
+    .replace(/iii\s*$/i, '')      // Remove III
+    .replace(/ii\s*$/i, '')       // Remove II
+    .replace(/\s+/g, ' ')         // Normalize multiple spaces
+    .trim();
+}
+
 function getLiveBox(pbpData: any, playerName: string): LiveBox | null {
-  if (!pbpData?.players?.length) return null;
+  if (!pbpData?.players?.length) {
+    console.log(`[LiveBox] No players array for ${playerName}`);
+    return null;
+  }
   
-  const row = pbpData.players.find((p: any) =>
-    (p.playerName || p.name)?.toLowerCase() === playerName.toLowerCase()
+  const normalizedSearch = normalizePlayerName(playerName);
+  
+  // Try exact normalized match first
+  let row = pbpData.players.find((p: any) =>
+    normalizePlayerName(p.playerName || p.name || '') === normalizedSearch
   );
-  if (!row) return null;
+  
+  // Fallback: partial match on last name
+  if (!row) {
+    const searchLastName = normalizedSearch.split(' ').pop() || '';
+    row = pbpData.players.find((p: any) => {
+      const pName = normalizePlayerName(p.playerName || p.name || '');
+      const pLastName = pName.split(' ').pop() || '';
+      // Match if last names match and first initial matches
+      const searchFirstInitial = normalizedSearch.charAt(0);
+      const pFirstInitial = pName.charAt(0);
+      return pLastName === searchLastName && pFirstInitial === searchFirstInitial;
+    });
+    
+    if (row) {
+      console.log(`[LiveBox] Fuzzy matched ${playerName} to ${row.playerName || row.name}`);
+    }
+  }
+  
+  if (!row) {
+    // Log available players for debugging
+    const available = pbpData.players.slice(0, 5).map((p: any) => p.playerName || p.name).join(', ');
+    console.log(`[LiveBox] No match for "${playerName}". Sample players: ${available}...`);
+    return null;
+  }
 
   const min = parseMinutesDecimal(row.minutes);
   const pts = Number(row.points ?? 0);
   const reb = Number(row.rebounds ?? 0);
   const ast = Number(row.assists ?? 0);
+  
+  // Debug log for scoring accuracy verification
+  console.log(`[LiveBox] ${playerName} → pts=${pts}, reb=${reb}, ast=${ast}, min=${min.toFixed(1)}`);
 
   return {
     pts,
