@@ -35,6 +35,8 @@ const CASCADE_STEPS: CascadeStep[] = [
   // ========== PHASE 1: DATA COLLECTION ==========
   // Step 0: Backfill player stats (get latest game logs for fresh medians)
   { name: 'backfill-player-stats', body: { mode: 'yesterday' } },
+  // Step 0.5: Sync matchup history (H2H data from game logs for projections)
+  { name: 'sync-matchup-history', body: {} },
   // Step 1: Calculate season stats for all players (for auto-classification)
   { name: 'calculate-season-stats', body: {} },
   // Step 2: Auto-classify player archetypes based on stats
