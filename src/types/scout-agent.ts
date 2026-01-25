@@ -352,7 +352,9 @@ export interface RecentPlay {
   playerId?: string;
   playerName?: string;
   team?: string;
-  playType?: 'score' | 'rebound' | 'assist' | 'turnover' | 'foul' | 'substitution' | 'timeout' | 'other';
+  playType?: 'dunk' | 'alley_oop' | 'and_one' | 'three_pointer' | 'score' | 'block' | 'steal' | 'def_rebound' | 'off_rebound' | 'rebound' | 'assist' | 'turnover' | 'missed_ft' | 'foul' | 'substitution' | 'timeout' | 'other';
+  pointValue?: number;           // 0, 1, 2, or 3 points scored
+  isHighMomentum?: boolean;      // Dunks, blocks, steals, and-1s
 }
 
 // ===== VISION SIGNALS =====
@@ -634,6 +636,14 @@ export interface TeamLiveState {
   momentumScore: number;         // -100 to +100 (negative = opponent momentum)
   runDetected: boolean;          // 8+ point run in last 3 minutes
   closeGameFlag: boolean;        // Margin <= 5 in Q4
+  
+  // Enhanced momentum tracking
+  runInProgress?: boolean;       // Currently on a scoring run
+  runPoints?: number;            // Points in current unanswered run
+  runPossessions?: number;       // Consecutive possessions with scoring
+  hotPlayers?: string[];         // Players with 3+ recent scores
+  coldPlayers?: string[];        // Players with recent turnovers/misses
+  swingDetected?: boolean;       // 8+ point swing in last 2 minutes
 }
 
 /**

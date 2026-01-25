@@ -80,6 +80,40 @@ export function GameBetEdgeCard({
           </div>
         </div>
 
+        {/* Run-In-Progress Indicators */}
+        {(homeTeam.runInProgress || awayTeam.runInProgress) && (
+          <div className="flex gap-2">
+            {awayTeam.runInProgress && awayTeam.runPoints > 0 && (
+              <Badge variant="outline" className="border-purple-500/70 text-purple-400 bg-purple-500/10 animate-pulse gap-1">
+                <TrendingUp className="w-3 h-3" />
+                {awayTeam.teamAbbrev} on {awayTeam.runPoints}-0 run
+              </Badge>
+            )}
+            {homeTeam.runInProgress && homeTeam.runPoints > 0 && (
+              <Badge variant="outline" className="border-blue-500/70 text-blue-400 bg-blue-500/10 animate-pulse gap-1">
+                <TrendingUp className="w-3 h-3" />
+                {homeTeam.teamAbbrev} on {homeTeam.runPoints}-0 run
+              </Badge>
+            )}
+          </div>
+        )}
+
+        {/* Hot Player Badges */}
+        {((homeTeam.hotPlayers?.length || 0) > 0 || (awayTeam.hotPlayers?.length || 0) > 0) && (
+          <div className="flex flex-wrap gap-1.5">
+            {(awayTeam.hotPlayers || []).slice(0, 2).map((player, idx) => (
+              <Badge key={`away-hot-${idx}`} variant="secondary" className="text-[10px] bg-orange-500/20 text-orange-300 gap-1">
+                🔥 {player}
+              </Badge>
+            ))}
+            {(homeTeam.hotPlayers || []).slice(0, 2).map((player, idx) => (
+              <Badge key={`home-hot-${idx}`} variant="secondary" className="text-[10px] bg-orange-500/20 text-orange-300 gap-1">
+                🔥 {player}
+              </Badge>
+            ))}
+          </div>
+        )}
+
         {/* Game Bet Edges */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           

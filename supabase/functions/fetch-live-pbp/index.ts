@@ -38,7 +38,9 @@ interface RecentPlay {
   playerId?: string;
   playerName?: string;
   team?: string;
-  playType: 'score' | 'rebound' | 'assist' | 'turnover' | 'foul' | 'substitution' | 'timeout' | 'other';
+  playType: 'dunk' | 'alley_oop' | 'and_one' | 'three_pointer' | 'score' | 'block' | 'steal' | 'def_rebound' | 'off_rebound' | 'rebound' | 'assist' | 'turnover' | 'missed_ft' | 'foul' | 'substitution' | 'timeout' | 'other';
+  pointValue?: number;           // 0, 1, 2, or 3 points scored
+  isHighMomentum?: boolean;      // Dunks, blocks, steals, and-1s
 }
 
 function parseMinutes(minStr: string): number {
@@ -50,18 +52,69 @@ function parseMinutes(minStr: string): number {
   return parseInt(minStr) || 0;
 }
 
-function parsePlayType(text: string): RecentPlay['playType'] {
+function parsePlayType(text: string): { playType: RecentPlay['playType']; pointValue: number; isHighMomentum: boolean } {
   const lower = text.toLowerCase();
-  if (lower.includes('makes') || lower.includes('scores') || lower.includes('layup') || lower.includes('dunk') || lower.includes('three pointer')) {
-    return 'score';
+  
+  // High momentum scoring plays (most impactful)
+  if (lower.includes('and one') || lower.includes('and-1') || lower.includes('and 1')) {
+    return { playType: 'and_one', pointValue: lower.includes('three') ? 4 : 3, isHighMomentum: true };
   }
-  if (lower.includes('rebound')) return 'rebound';
-  if (lower.includes('assist')) return 'assist';
-  if (lower.includes('turnover') || lower.includes('steal')) return 'turnover';
-  if (lower.includes('foul')) return 'foul';
-  if (lower.includes('substitution') || lower.includes('enters') || lower.includes('leaves')) return 'substitution';
-  if (lower.includes('timeout')) return 'timeout';
-  return 'other';
+  if (lower.includes('alley oop') || lower.includes('alley-oop')) {
+    return { playType: 'alley_oop', pointValue: 2, isHighMomentum: true };
+  }
+  if (lower.includes('dunk') || lower.includes('slam')) {
+    return { playType: 'dunk', pointValue: 2, isHighMomentum: true };
+  }
+  
+  // Three pointers
+  if (lower.includes('three pointer') || lower.includes('3pt') || lower.includes('three point')) {
+    if (lower.includes('makes') || lower.includes('made')) {
+      return { playType: 'three_pointer', pointValue: 3, isHighMomentum: false };
+    }
+  }
+  
+  // Regular scoring
+  if (lower.includes('makes') || lower.includes('scores') || lower.includes('layup') || lower.includes('jumper') || lower.includes('hook')) {
+    const pts = lower.includes('free throw') ? 1 : 2;
+    return { playType: 'score', pointValue: pts, isHighMomentum: false };
+  }
+  
+  // Defensive momentum plays
+  if (lower.includes('blocked') || lower.includes('block')) {
+    return { playType: 'block', pointValue: 0, isHighMomentum: true };
+  }
+  if (lower.includes('steal')) {
+    return { playType: 'steal', pointValue: 0, isHighMomentum: true };
+  }
+  
+  // Rebounds
+  if (lower.includes('offensive rebound')) {
+    return { playType: 'off_rebound', pointValue: 0, isHighMomentum: false };
+  }
+  if (lower.includes('defensive rebound')) {
+    return { playType: 'def_rebound', pointValue: 0, isHighMomentum: false };
+  }
+  if (lower.includes('rebound')) {
+    return { playType: 'rebound', pointValue: 0, isHighMomentum: false };
+  }
+  
+  // Negative plays
+  if (lower.includes('turnover')) {
+    return { playType: 'turnover', pointValue: 0, isHighMomentum: false };
+  }
+  if (lower.includes('missed') && lower.includes('free throw')) {
+    return { playType: 'missed_ft', pointValue: 0, isHighMomentum: false };
+  }
+  
+  // Other plays
+  if (lower.includes('assist')) return { playType: 'assist', pointValue: 0, isHighMomentum: false };
+  if (lower.includes('foul')) return { playType: 'foul', pointValue: 0, isHighMomentum: false };
+  if (lower.includes('substitution') || lower.includes('enters') || lower.includes('leaves')) {
+    return { playType: 'substitution', pointValue: 0, isHighMomentum: false };
+  }
+  if (lower.includes('timeout')) return { playType: 'timeout', pointValue: 0, isHighMomentum: false };
+  
+  return { playType: 'other', pointValue: 0, isHighMomentum: false };
 }
 
 function formatGameTime(period: number, clock: string): string {
@@ -302,6 +355,7 @@ serve(async (req) => {
       const playText = play.text || play.shortText || '';
       const playPeriod = play.period?.number || period;
       const playClock = play.clock?.displayValue || '';
+      const { playType, pointValue, isHighMomentum } = parsePlayType(playText);
       
       recentPlays.push({
         time: formatGameTime(playPeriod, playClock),
@@ -309,7 +363,9 @@ serve(async (req) => {
         playerId: play.participants?.[0]?.athlete?.id,
         playerName: play.participants?.[0]?.athlete?.displayName,
         team: play.team?.abbreviation,
-        playType: parsePlayType(playText),
+        playType,
+        pointValue,
+        isHighMomentum,
       });
     }
 

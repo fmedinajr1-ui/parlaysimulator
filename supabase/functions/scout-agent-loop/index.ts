@@ -842,6 +842,13 @@ interface TeamLiveState {
   momentumScore: number;
   runDetected: boolean;
   closeGameFlag: boolean;
+  // Enhanced momentum tracking
+  runInProgress: boolean;
+  runPoints: number;
+  runPossessions: number;
+  hotPlayers: string[];
+  coldPlayers: string[];
+  swingDetected: boolean;
 }
 
 interface GameBetEdge {
@@ -874,40 +881,147 @@ function parseClockSeconds(clock: string): number {
   return parseInt(clock) * 60 || 720;
 }
 
-// Calculate momentum from recent plays
-function calculateMomentum(recentPlays: any[] | undefined, teamAbbrev: string): number {
-  if (!recentPlays || recentPlays.length === 0) return 0;
+// Enhanced momentum result with run tracking
+interface MomentumResult {
+  score: number;                  // -100 to +100
+  runInProgress: boolean;         // Currently on a scoring run
+  runPoints: number;              // Points in current unanswered run
+  runPossessions: number;         // Consecutive possessions with scoring
+  hotPlayers: string[];           // Players with 3+ recent scores
+  coldPlayers: string[];          // Players with recent turnovers/misses
+  swingDetected: boolean;         // 8+ point swing in last 2 minutes
+}
+
+// Weighted play type values for momentum calculation
+const PLAY_MOMENTUM_WEIGHTS: Record<string, number> = {
+  'dunk': 12,
+  'alley_oop': 12,
+  'and_one': 11,
+  'three_pointer': 10,
+  'score': 8,
+  'steal': 7,
+  'block': 6,
+  'off_rebound': 4,
+  'def_rebound': 2,
+  'rebound': 2,
+  'turnover': -8,
+  'missed_ft': -3,
+  'foul': -2,
+  'other': 0,
+};
+
+// Calculate advanced momentum with run tracking and hot player detection
+function calculateAdvancedMomentum(recentPlays: any[] | undefined, teamAbbrev: string): MomentumResult {
+  if (!recentPlays || recentPlays.length === 0) {
+    return { score: 0, runInProgress: false, runPoints: 0, runPossessions: 0, hotPlayers: [], coldPlayers: [], swingDetected: false };
+  }
   
+  const lowerTeam = teamAbbrev.toLowerCase();
+  const last15 = recentPlays.slice(-15);
+  
+  // 1. Calculate weighted momentum score
   let momentum = 0;
-  const last10 = recentPlays.slice(-10);
-  
-  last10.forEach((play, idx) => {
-    const weight = (idx + 1) / 10; // More recent = higher weight
-    const isTeamPlay = play.team?.toLowerCase() === teamAbbrev.toLowerCase();
+  last15.forEach((play, idx) => {
+    const weight = (idx + 1) / 15; // More recent = higher weight
+    const isTeamPlay = play.team?.toLowerCase() === lowerTeam;
+    const playType = play.playType || 'other';
+    const baseWeight = PLAY_MOMENTUM_WEIGHTS[playType] || 0;
+    const highMomentumBonus = play.isHighMomentum ? 3 : 0;
     
-    if (play.playType === 'score') {
-      momentum += isTeamPlay ? 8 * weight : -8 * weight;
-    } else if (play.playType === 'turnover') {
-      momentum += isTeamPlay ? -5 * weight : 5 * weight;
-    } else if (play.playType === 'rebound') {
-      momentum += isTeamPlay ? 2 * weight : -2 * weight;
+    const playMomentum = (baseWeight + highMomentumBonus) * weight;
+    momentum += isTeamPlay ? playMomentum : -playMomentum;
+  });
+  
+  // 2. Track unanswered runs (reverse order to find current run)
+  let runPoints = 0;
+  let runPossessions = 0;
+  let runTeam: string | null = null;
+  
+  for (let i = last15.length - 1; i >= 0; i--) {
+    const play = last15[i];
+    const pts = play.pointValue || 0;
+    
+    if (pts > 0) {
+      if (runTeam === null) {
+        runTeam = play.team?.toLowerCase();
+        runPoints = pts;
+        runPossessions = 1;
+      } else if (play.team?.toLowerCase() === runTeam) {
+        runPoints += pts;
+        runPossessions++;
+      } else {
+        break; // Run ended - other team scored
+      }
+    }
+  }
+  
+  const runInProgress = runPossessions >= 3 && runPoints >= 6 && runTeam === lowerTeam;
+  
+  // 3. Identify hot players (3+ recent makes in last 20 plays)
+  const last20 = recentPlays.slice(-20);
+  const playerScores = new Map<string, number>();
+  const playerTurnovers = new Map<string, number>();
+  
+  last20.forEach(play => {
+    const playerName = play.playerName;
+    if (!playerName) return;
+    
+    const playType = play.playType || 'other';
+    if (['score', 'dunk', 'alley_oop', 'and_one', 'three_pointer'].includes(playType)) {
+      playerScores.set(playerName, (playerScores.get(playerName) || 0) + 1);
+    }
+    if (playType === 'turnover') {
+      playerTurnovers.set(playerName, (playerTurnovers.get(playerName) || 0) + 1);
     }
   });
   
-  return Math.max(-100, Math.min(100, Math.round(momentum)));
+  const hotPlayers = [...playerScores.entries()]
+    .filter(([_, count]) => count >= 3)
+    .map(([name]) => name);
+  
+  const coldPlayers = [...playerTurnovers.entries()]
+    .filter(([_, count]) => count >= 2)
+    .map(([name]) => name);
+  
+  // 4. Detect swing (8+ point change in last 2 minutes worth of plays)
+  // Rough estimate: ~6-8 plays = 2 minutes
+  const last8 = recentPlays.slice(-8);
+  let swingScore = 0;
+  let lastScoringTeam: string | null = null;
+  let teamSwitches = 0;
+  
+  last8.forEach(play => {
+    const pts = play.pointValue || 0;
+    if (pts > 0) {
+      if (lastScoringTeam && play.team?.toLowerCase() !== lastScoringTeam) {
+        teamSwitches++;
+      }
+      lastScoringTeam = play.team?.toLowerCase();
+      swingScore += pts;
+    }
+  });
+  
+  const swingDetected = teamSwitches >= 2 && swingScore >= 12;
+  
+  return {
+    score: Math.max(-100, Math.min(100, Math.round(momentum))),
+    runInProgress,
+    runPoints: runTeam === lowerTeam ? runPoints : 0,
+    runPossessions: runTeam === lowerTeam ? runPossessions : 0,
+    hotPlayers,
+    coldPlayers,
+    swingDetected,
+  };
+}
+
+// Legacy momentum function for backward compatibility
+function calculateMomentum(recentPlays: any[] | undefined, teamAbbrev: string): number {
+  return calculateAdvancedMomentum(recentPlays, teamAbbrev).score;
 }
 
 // Detect scoring run (8+ points in short span)
 function detectRun(recentPlays: any[] | undefined, teamAbbrev: string): boolean {
-  if (!recentPlays || recentPlays.length < 3) return false;
-  
-  const last5 = recentPlays.slice(-5);
-  const teamScores = last5.filter(p => 
-    p.playType === 'score' && 
-    p.team?.toLowerCase() === teamAbbrev.toLowerCase()
-  ).length;
-  
-  return teamScores >= 4;
+  return calculateAdvancedMomentum(recentPlays, teamAbbrev).runInProgress;
 }
 
 // Aggregate player states into team state
@@ -961,6 +1075,9 @@ function calculateTeamLiveState(
   const period = pbpData?.period || 1;
   const scoreDiff = Math.abs(currentScore - opponentScore);
   
+  // Get advanced momentum data
+  const momentumResult = calculateAdvancedMomentum(pbpData?.recentPlays, teamAbbrev);
+  
   return {
     teamAbbrev,
     teamName: teamAbbrev,
@@ -973,9 +1090,16 @@ function calculateTeamLiveState(
     offensiveRating: 0, // Would need possessions to calculate
     fgPct: Math.round(fgPct * 100) / 100,
     threePtPct: Math.round(threePtPct * 100) / 100,
-    momentumScore: calculateMomentum(pbpData?.recentPlays, teamAbbrev),
-    runDetected: detectRun(pbpData?.recentPlays, teamAbbrev),
+    momentumScore: momentumResult.score,
+    runDetected: momentumResult.runInProgress,
     closeGameFlag: scoreDiff <= 5 && period >= 4,
+    // Enhanced momentum tracking
+    runInProgress: momentumResult.runInProgress,
+    runPoints: momentumResult.runPoints,
+    runPossessions: momentumResult.runPossessions,
+    hotPlayers: momentumResult.hotPlayers,
+    coldPlayers: momentumResult.coldPlayers,
+    swingDetected: momentumResult.swingDetected,
   };
 }
 
@@ -1067,13 +1191,28 @@ function projectMoneyline(
   // Fatigue differential (positive = home more tired)
   const fatigueDiff = homeTeamState.avgTeamFatigue - awayTeamState.avgTeamFatigue;
   
-  // Momentum differential
+  // Momentum differential (using enhanced momentum score)
   const momentumDiff = homeTeamState.momentumScore - awayTeamState.momentumScore;
+  
+  // Run bonus - stronger impact when a team has an active run
+  let runBonus = 0;
+  if (homeTeamState.runInProgress) {
+    runBonus = homeTeamState.runPoints >= 10 ? 0.08 : 0.04;
+  } else if (awayTeamState.runInProgress) {
+    runBonus = awayTeamState.runPoints >= 10 ? -0.08 : -0.04;
+  }
+  
+  // Hot player bonus
+  const homeHotCount = homeTeamState.hotPlayers?.length || 0;
+  const awayHotCount = awayTeamState.hotPlayers?.length || 0;
+  const hotPlayerBonus = (homeHotCount - awayHotCount) * 0.02;
   
   // Blend pre-game probability with live game state
   let liveWinProbHome = 0.5 + (scoreDiff / 40); // +10 pts ≈ 75% win prob
-  liveWinProbHome += momentumDiff / 200; // Momentum boost
+  liveWinProbHome += momentumDiff / 150; // Enhanced momentum impact
   liveWinProbHome -= fatigueDiff / 400;  // Fatigue penalty (home being tired is bad)
+  liveWinProbHome += runBonus;           // Run bonus
+  liveWinProbHome += hotPlayerBonus;     // Hot player bonus
   
   // Clamp to reasonable range
   liveWinProbHome = Math.max(0.02, Math.min(0.98, liveWinProbHome));
@@ -1084,21 +1223,40 @@ function projectMoneyline(
   const projectedWinner: 'HOME' | 'AWAY' = blendedProb >= 0.5 ? 'HOME' : 'AWAY';
   const winProbability = blendedProb >= 0.5 ? blendedProb : 1 - blendedProb;
   
-  // Drivers
+  // Drivers - now include run and hot player info
   const drivers: string[] = [];
   if (scoreDiff > 10) drivers.push(`Home leading by ${scoreDiff}`);
   if (scoreDiff < -10) drivers.push(`Away leading by ${Math.abs(scoreDiff)}`);
-  if (Math.abs(momentumDiff) > 20) drivers.push(momentumDiff > 0 ? 'Home momentum' : 'Away momentum');
+  
+  // Run-in-progress drivers
+  if (homeTeamState.runInProgress && homeTeamState.runPoints > 0) {
+    drivers.push(`${homeTeamState.teamAbbrev} on ${homeTeamState.runPoints}-0 run`);
+  }
+  if (awayTeamState.runInProgress && awayTeamState.runPoints > 0) {
+    drivers.push(`${awayTeamState.teamAbbrev} on ${awayTeamState.runPoints}-0 run`);
+  }
+  
+  // Hot player drivers
+  if (homeHotCount > 0) {
+    drivers.push(`Hot: ${homeTeamState.hotPlayers?.slice(0, 2).join(', ')}`);
+  }
+  if (awayHotCount > 0) {
+    drivers.push(`Hot: ${awayTeamState.hotPlayers?.slice(0, 2).join(', ')}`);
+  }
+  
+  if (Math.abs(momentumDiff) > 25) drivers.push(momentumDiff > 0 ? 'Home momentum surge' : 'Away momentum surge');
   if (Math.abs(fatigueDiff) > 15) drivers.push(fatigueDiff > 0 ? 'Home fatigue edge' : 'Away fresher');
   
   // Risk flags
   const riskFlags: string[] = [];
   if (Math.abs(scoreDiff) <= 5 && period >= 3) riskFlags.push('CLOSE_GAME');
-  if (homeTeamState.runDetected || awayTeamState.runDetected) riskFlags.push('RUN_IN_PROGRESS');
+  if (homeTeamState.runInProgress || awayTeamState.runInProgress) riskFlags.push('RUN_IN_PROGRESS');
+  if (homeTeamState.swingDetected || awayTeamState.swingDetected) riskFlags.push('SWING_GAME');
   
-  // Confidence grows with game time and score margin
+  // Confidence grows with game time, score margin, and run status
   const marginBonus = Math.min(20, Math.abs(scoreDiff) * 1.5);
-  const confidence = Math.min(95, Math.round(40 + (1 - remainingPct) * 35 + marginBonus));
+  const runConfidenceBonus = (homeTeamState.runInProgress || awayTeamState.runInProgress) ? 5 : 0;
+  const confidence = Math.min(95, Math.round(40 + (1 - remainingPct) * 35 + marginBonus + runConfidenceBonus));
   
   return {
     betType: 'MONEYLINE',
