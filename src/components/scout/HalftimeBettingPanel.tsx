@@ -45,23 +45,33 @@ export function HalftimeBettingPanel({
 
   // Convert locked recommendations to PropEdge format for display
   const lockedEdges: PropEdge[] = useMemo(() => {
-    return lockedRecommendations.map(rec => ({
-      player: rec.player,
-      prop: rec.prop as PropEdge['prop'],
-      line: rec.line,
-      lean: rec.lean,
-      confidence: rec.confidence,
-      expectedFinal: rec.expectedFinal ?? rec.line + (rec.lean === 'OVER' ? 2 : -2),
-      drivers: rec.drivers,
-      riskFlags: [],
-      trend: 'stable' as const,
-      gameTime: lockTime || '',
-      overPrice: rec.overPrice,
-      underPrice: rec.underPrice,
-      bookmaker: rec.bookmaker,
-      currentStat: rec.firstHalfStats?.points,
-      rotationRole: undefined,
-    }));
+    return lockedRecommendations.map(rec => {
+      // Calculate currentStat based on the prop type
+      const stats = rec.firstHalfStats;
+      const currentStat = rec.prop === 'Points' ? stats?.points :
+                          rec.prop === 'Rebounds' ? stats?.rebounds :
+                          rec.prop === 'Assists' ? stats?.assists :
+                          rec.prop === 'PRA' ? ((stats?.points || 0) + (stats?.rebounds || 0) + (stats?.assists || 0)) :
+                          stats?.points;
+      
+      return {
+        player: rec.player,
+        prop: rec.prop as PropEdge['prop'],
+        line: rec.line,
+        lean: rec.lean,
+        confidence: rec.confidence,
+        expectedFinal: rec.expectedFinal ?? rec.line + (rec.lean === 'OVER' ? 2 : -2),
+        drivers: rec.drivers,
+        riskFlags: [],
+        trend: 'stable' as const,
+        gameTime: lockTime || '',
+        overPrice: rec.overPrice,
+        underPrice: rec.underPrice,
+        bookmaker: rec.bookmaker,
+        currentStat,
+        rotationRole: undefined,
+      };
+    });
   }, [lockedRecommendations, lockTime]);
 
   // Filter and rank active edges
