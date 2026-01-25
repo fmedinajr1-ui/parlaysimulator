@@ -87,12 +87,15 @@ export function EdgeRowCompact({ edge, rank }: EdgeRowCompactProps) {
 
               {/* Current | Proj | Edge | Conf */}
               <div className="flex items-center gap-3 mt-1 text-sm flex-wrap">
-                {/* Current stat - prominently displayed with context */}
+              {/* Current stat - prominently displayed with context */}
                 {edge.currentStat !== undefined && (
                   <span className="text-muted-foreground">
                     Now <span className="font-bold text-lg text-foreground">{edge.currentStat}</span>
                     {edge.minutesPlayed === 0 && (
                       <span className="text-xs text-muted-foreground/70 ml-1">(not played)</span>
+                    )}
+                    {edge.minutesPlayed !== undefined && edge.minutesPlayed > 0 && edge.currentStat === 0 && (
+                      <span className="text-xs text-chart-3 ml-1">(verifying...)</span>
                     )}
                   </span>
                 )}
