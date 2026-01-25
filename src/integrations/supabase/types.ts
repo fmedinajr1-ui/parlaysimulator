@@ -7403,6 +7403,7 @@ export type Database = {
           outcome: string | null
           player_name: string
           predicted_final: number
+          projection_error: number | null
           prop: string
           rate_modifier: number | null
           risk_flags: Json | null
@@ -7426,6 +7427,7 @@ export type Database = {
           outcome?: string | null
           player_name: string
           predicted_final: number
+          projection_error?: number | null
           prop: string
           rate_modifier?: number | null
           risk_flags?: Json | null
@@ -7449,6 +7451,7 @@ export type Database = {
           outcome?: string | null
           player_name?: string
           predicted_final?: number
+          projection_error?: number | null
           prop?: string
           rate_modifier?: number | null
           risk_flags?: Json | null
@@ -9646,6 +9649,17 @@ export type Database = {
           sport: string
           total_predictions: number
           window_days: number
+        }[]
+      }
+      get_scout_projection_accuracy: {
+        Args: { days_back?: number }
+        Returns: {
+          avg_mae: number
+          hit_rate: number
+          prop: string
+          total_predictions: number
+          within_2_pct: number
+          within_5_pct: number
         }[]
       }
       get_sharp_signal_accuracy_summary: {

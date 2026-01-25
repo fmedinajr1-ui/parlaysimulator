@@ -1,9 +1,68 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
+
+// Initialize Supabase client for logging outcomes
+const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
+const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+
+// Record prop outcomes for calibration
+async function recordPropOutcomes(
+  edges: PropEdge[],
+  eventId: string,
+  espnEventId: string,
+  analysisDate: string
+): Promise<void> {
+  if (!supabaseUrl || !supabaseKey) {
+    console.log('[Scout Agent] Supabase not configured, skipping outcome recording');
+    return;
+  }
+  
+  const supabase = createClient(supabaseUrl, supabaseKey);
+  
+  // Only record edges with confidence >= 60 to avoid noise
+  const recordableEdges = edges.filter(e => e.confidence >= 60);
+  
+  if (recordableEdges.length === 0) return;
+  
+  const records = recordableEdges.map(edge => ({
+    event_id: eventId,
+    espn_event_id: espnEventId,
+    analysis_date: analysisDate,
+    player_name: edge.player,
+    team: null,
+    prop: edge.prop,
+    side: edge.lean,
+    line: edge.line,
+    predicted_final: edge.expectedFinal,
+    confidence_raw: Math.round(edge.confidence),
+    minutes_remaining_est: edge.remainingMinutes,
+    rate_modifier: edge.ratePerMinute,
+    minutes_uncertainty: edge.minutesUncertainty,
+    risk_flags: edge.riskFlags,
+    rotation_role: edge.rotationRole,
+    on_court_stability: null,
+    outcome: 'pending',
+  }));
+  
+  // Upsert to avoid duplicates (player + prop + event + date)
+  const { error } = await supabase
+    .from('scout_prop_outcomes')
+    .upsert(records, {
+      onConflict: 'event_id,player_name,prop,analysis_date',
+      ignoreDuplicates: true,
+    });
+  
+  if (error) {
+    console.error('[Scout Agent] Failed to record prop outcomes:', error.message);
+  } else {
+    console.log(`[Scout Agent] Recorded ${records.length} prop outcomes for calibration`);
+  }
+}
 
 // ===== ROTATION TRUTH LAYER TYPES =====
 
@@ -1523,6 +1582,15 @@ CRITICAL RULE: You MUST identify players by their jersey numbers and look them u
     }
 
     console.log(`[Scout Agent] Analysis complete: ${visionResult.visionSignals?.length || 0} signals, ${propEdges.length} edges`);
+
+    // Record prop outcomes for calibration tracking
+    const analysisDate = new Date().toISOString().split('T')[0];
+    await recordPropOutcomes(
+      propEdges,
+      gameContext.eventId,
+      '', // espnEventId not available in request type
+      analysisDate
+    );
 
     // Generate halftime recommendations if halftime detected
     let halftimeRecommendations: any[] = [];
