@@ -122,11 +122,54 @@ serve(async (req) => {
 
     console.log(`[PBP Fetch] Fetching data for ESPN event: ${espnEventId}`);
 
-    // Fetch from ESPN Summary API
-    const response = await fetch(`${ESPN_NBA_SUMMARY}?event=${espnEventId}`);
+    // Fetch from ESPN Summary API with retry logic for transient errors
+    const maxRetries = 3;
+    let lastError: Error | null = null;
+    let response: Response | null = null;
     
-    if (!response.ok) {
-      console.error(`[PBP Fetch] ESPN API error: ${response.status}`);
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        response = await fetch(`${ESPN_NBA_SUMMARY}?event=${espnEventId}`);
+        if (response.ok) break;
+        
+        // Non-retryable HTTP errors
+        if (response.status >= 400 && response.status < 500) {
+          console.error(`[PBP Fetch] ESPN API error: ${response.status}`);
+          return new Response(
+            JSON.stringify({
+              gameTime: 'Unknown',
+              period: 1,
+              clock: '12:00',
+              homeScore: 0,
+              awayScore: 0,
+              homeTeam: 'HOME',
+              awayTeam: 'AWAY',
+              pace: 100,
+              players: [],
+              recentPlays: [],
+              isHalftime: false,
+              isGameOver: false,
+              notAvailable: true,
+              reason: `ESPN API returned ${response.status}`,
+            }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+        
+        // Server errors - retry
+        lastError = new Error(`HTTP ${response.status}`);
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        console.log(`[PBP Fetch] Attempt ${attempt}/${maxRetries} failed: ${lastError.message}`);
+      }
+      
+      if (attempt < maxRetries) {
+        await new Promise(r => setTimeout(r, 500 * attempt)); // Exponential backoff
+      }
+    }
+    
+    if (!response || !response.ok) {
+      console.error(`[PBP Fetch] All retries failed: ${lastError?.message}`);
       return new Response(
         JSON.stringify({
           gameTime: 'Unknown',
@@ -142,7 +185,7 @@ serve(async (req) => {
           isHalftime: false,
           isGameOver: false,
           notAvailable: true,
-          reason: `ESPN API returned ${response.status}`,
+          reason: `ESPN API unavailable after ${maxRetries} attempts`,
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
