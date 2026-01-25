@@ -60,6 +60,14 @@ function parseTeams(gameDescription: string | null): { home: string | null; away
   return { home: null, away: null };
 }
 
+interface PlayerL10Stats {
+  player_name: string;
+  last_10_avg_points: number | null;
+  last_10_avg_rebounds: number | null;
+  last_10_avg_assists: number | null;
+  last_10_avg_threes: number | null;
+}
+
 export function useManualBuilder(statFilter: string = "all") {
   const queryClient = useQueryClient();
   const [isConnected, setIsConnected] = useState(false);
@@ -127,17 +135,62 @@ export function useManualBuilder(statFilter: string = "all") {
     },
   });
 
-  // Helper to get projection for a specific prop
+  // Fetch L10 stats as fallback for props without sweet spot analysis
+  const { data: playerStats } = useQuery({
+    queryKey: ["manual-builder-player-stats"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("player_season_stats")
+        .select("player_name, last_10_avg_points, last_10_avg_rebounds, last_10_avg_assists, last_10_avg_threes");
+      
+      if (error) throw error;
+      return data as PlayerL10Stats[];
+    },
+  });
+
+  // Helper to get projection for a specific prop (with L10 fallback)
   const getProjectionForProp = (playerName: string, propType: string): PropProjection | null => {
-    if (!projections) return null;
-    
-    // Normalize prop type (unified_props uses 'player_points', category uses 'points')
+    // Normalize prop type
     const normalizedProp = propType.toLowerCase().replace('player_', '').replace(/_/g, '');
     
-    return projections.find(p => 
-      p.player_name.toLowerCase() === playerName.toLowerCase() &&
-      p.prop_type.toLowerCase().replace(/_/g, '') === normalizedProp
-    ) || null;
+    // First try category_sweet_spots (high-confidence)
+    if (projections) {
+      const sweetSpot = projections.find(p => 
+        p.player_name.toLowerCase() === playerName.toLowerCase() &&
+        p.prop_type.toLowerCase().replace(/_/g, '') === normalizedProp
+      );
+      if (sweetSpot) return sweetSpot;
+    }
+    
+    // Fallback to L10 stats
+    if (playerStats) {
+      const stats = playerStats.find(p => 
+        p.player_name.toLowerCase() === playerName.toLowerCase()
+      );
+      
+      if (stats) {
+        const projectedValue = normalizedProp === 'points' ? stats.last_10_avg_points :
+                               normalizedProp === 'rebounds' ? stats.last_10_avg_rebounds :
+                               normalizedProp === 'assists' ? stats.last_10_avg_assists :
+                               normalizedProp === 'threes' ? stats.last_10_avg_threes :
+                               null;
+        
+        if (projectedValue !== null) {
+          return {
+            player_name: playerName,
+            prop_type: propType,
+            projected_value: projectedValue,
+            l10_median: null,
+            l10_avg: projectedValue,
+            recommended_side: null,
+            confidence_score: null,
+            actual_line: null,
+          };
+        }
+      }
+    }
+    
+    return null;
   };
 
   const getDefenseForMatchup = (gameDescription: string | null, propType: string): DefenseGrade | null => {
