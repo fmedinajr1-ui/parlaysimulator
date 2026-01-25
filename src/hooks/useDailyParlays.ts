@@ -57,6 +57,10 @@ interface SharpLegJson {
   confidence?: number;
   l10_hit_rate?: number;
   archetype?: string;
+  // v4.0: Projection fields
+  projected_value?: number;
+  actual_line?: number;
+  edge?: number;
 }
 
 interface HeatLegJson {
@@ -67,6 +71,10 @@ interface HeatLegJson {
   team?: string;
   signal_label?: string;
   final_score?: number;
+  // v4.0: Projection fields
+  projected_value?: number;
+  actual_line?: number;
+  edge?: number;
 }
 
 // v3.0: ARCHETYPE-PROP ALIGNMENT VALIDATION
@@ -113,6 +121,10 @@ function parseSharpLegs(legs: Json): UnifiedParlayLeg[] {
     confidence: leg.confidence,
     l10HitRate: leg.l10_hit_rate,
     archetype: leg.archetype,
+    // v4.0: Extract projection fields
+    projectedValue: leg.projected_value,
+    actualLine: leg.actual_line,
+    edge: leg.edge,
   })).filter(leg => leg.playerName !== '').filter(isLegArchetypeAligned);
 }
 
@@ -129,6 +141,10 @@ function parseHeatLeg(leg: Json): UnifiedParlayLeg | null {
     team: heatLeg.team,
     category: heatLeg.signal_label,
     confidence: heatLeg.final_score ? heatLeg.final_score / 100 : undefined,
+    // v4.0: Extract projection fields
+    projectedValue: heatLeg.projected_value,
+    actualLine: heatLeg.actual_line,
+    edge: heatLeg.edge,
   };
   
   return isLegArchetypeAligned(parsed) ? parsed : null; // v3.0: Filter misaligned

@@ -43,6 +43,9 @@ function isArchetypePropBlocked(playerName: string, propType: string): boolean {
 // Category recommendations map (loaded from category_sweet_spots)
 let categoryRecommendations: Map<string, { side: string; hit_rate: number }> = new Map();
 
+// v4.0: Projection lookup map (populated at build time)
+let projectionMap: Map<string, { projectedValue: number; actualLine: number }> = new Map();
+
 async function loadCategoryRecommendations(supabase: any): Promise<void> {
   const { data } = await supabase
     .from('category_sweet_spots')
@@ -58,6 +61,26 @@ async function loadCategoryRecommendations(supabase: any): Promise<void> {
     });
   }
   console.log(`[Sharp Builder] Loaded ${categoryRecommendations.size} category recommendations (70%+ L10)`);
+}
+
+// v4.0: Load projections for enriching parlay legs
+async function loadProjections(supabase: any): Promise<void> {
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const { data } = await supabase
+    .from('category_sweet_spots')
+    .select('player_name, prop_type, projected_value, actual_line')
+    .eq('analysis_date', today)
+    .not('projected_value', 'is', null);
+  
+  projectionMap.clear();
+  for (const p of (data || [])) {
+    const key = `${p.player_name?.toLowerCase()}_${normalizePropType(p.prop_type)}`;
+    projectionMap.set(key, {
+      projectedValue: p.projected_value,
+      actualLine: p.actual_line || p.recommended_line
+    });
+  }
+  console.log(`[Sharp Builder] Loaded ${projectionMap.size} projections from category_sweet_spots`);
 }
 
 // Runtime archetype data (populated from database)
@@ -566,6 +589,7 @@ async function buildSharpParlays(supabase: any): Promise<any> {
   await loadArchetypes(supabase);
   await loadPlayerTeams(supabase);
   await loadCategoryRecommendations(supabase);
+  await loadProjections(supabase);  // v4.0: Load projections for parlay legs
   
   // Fetch today's props from unified_props or nba_risk_engine_picks
   const today = getEasternDate();
@@ -878,18 +902,37 @@ async function buildSharpParlays(supabase: any): Promise<any> {
         .insert({
           parlay_date: today,
           parlay_type: parlayType,
-          legs: legs.map(l => ({
-            player: l.player_name,
-            team: l.team,  // Include team in saved leg data
-            prop: l.prop_type,
-            line: l.line,
-            side: l.side,
-            odds: l.odds,
-            confidence_tier: getConfidenceTier(l.confidence_score),
-            rationale: l.rationale,
-            is_fade_specialist: l.is_fade_specialist || false,
-            fade_edge_tag: l.fade_edge_tag || null
-          })),
+          legs: legs.map(l => {
+            // v4.0: Lookup projection data
+            const projKey = `${l.player_name?.toLowerCase()}_${normalizePropType(l.prop_type)}`;
+            const projection = projectionMap.get(projKey);
+            const side = l.side?.toLowerCase() || 'over';
+            
+            // Calculate edge: OVER = projected - line, UNDER = line - projected
+            let edge: number | undefined;
+            if (projection?.projectedValue != null && projection?.actualLine != null) {
+              edge = side === 'over' 
+                ? projection.projectedValue - projection.actualLine
+                : projection.actualLine - projection.projectedValue;
+            }
+            
+            return {
+              player: l.player_name,
+              team: l.team,
+              prop: l.prop_type,
+              line: l.line,
+              side: l.side,
+              odds: l.odds,
+              confidence_tier: getConfidenceTier(l.confidence_score),
+              rationale: l.rationale,
+              is_fade_specialist: l.is_fade_specialist || false,
+              fade_edge_tag: l.fade_edge_tag || null,
+              // v4.0: Projection fields
+              projected_value: projection?.projectedValue,
+              actual_line: projection?.actualLine,
+              edge
+            };
+          }),
           total_odds: totalOdds,
           combined_probability: combinedProb,
           rule_compliance: { all_rules_passed: true, team_diversity: uniqueTeams, is_dream_team: isDreamTeam },
