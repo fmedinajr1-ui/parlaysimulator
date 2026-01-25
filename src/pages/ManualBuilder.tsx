@@ -30,7 +30,7 @@ export default function ManualBuilder() {
   const [selectedLegs, setSelectedLegs] = useState<SelectedLeg[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const { props, isLoading, isConnected, getDefenseForMatchup } = useManualBuilder(statFilter);
+  const { props, isLoading, isConnected, getDefenseForMatchup, getProjectionForProp } = useManualBuilder(statFilter);
 
   // Manual refresh handler - triggers both edge functions
   const handleRefresh = async () => {
@@ -215,6 +215,7 @@ export default function ManualBuilder() {
                     key={prop.id}
                     prop={prop}
                     defense={getDefenseForMatchup(prop.game_description, prop.prop_type)}
+                    projection={getProjectionForProp(prop.player_name, prop.prop_type)}
                     isSelected={selectedLegs.some((l) => l.prop.id === prop.id)}
                     selectedSide={getSelectedSide(prop.id)}
                     onSelect={handleSelectProp}
