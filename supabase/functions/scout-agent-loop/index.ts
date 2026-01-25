@@ -1312,21 +1312,39 @@ serve(async (req) => {
     if (!classifyResponse.ok) {
       const errorStatus = classifyResponse.status;
       
-      // Handle rate limits (429) and gateway errors (502, 503, 504) gracefully
-      if (errorStatus === 429 || errorStatus === 502 || errorStatus === 503 || errorStatus === 504) {
+      // Handle rate limits (429), payment issues (402), and gateway errors (502, 503, 504) gracefully
+      if (errorStatus === 429 || errorStatus === 402 || errorStatus === 502 || errorStatus === 503 || errorStatus === 504) {
         const isRateLimit = errorStatus === 429;
+        const isPaymentIssue = errorStatus === 402;
+        
+        let errorMessage = 'AI gateway temporarily unavailable';
+        let reason = `Gateway error ${errorStatus} - will retry`;
+        let retryDelay = 5000;
+        
+        if (isRateLimit) {
+          errorMessage = 'Rate limit';
+          reason = 'Rate limited - will retry';
+          retryDelay = 2000;
+        } else if (isPaymentIssue) {
+          errorMessage = 'AI quota exceeded';
+          reason = 'AI credits exhausted - contact support or wait for reset';
+          retryDelay = 30000; // Longer delay for payment issues
+        }
+        
+        console.log(`[Scout Agent] AI gateway issue: ${errorStatus} - ${errorMessage}`);
+        
         return new Response(
           JSON.stringify({ 
-            error: isRateLimit ? 'Rate limit' : 'AI gateway temporarily unavailable',
+            error: errorMessage,
             sceneClassification: { 
               sceneType: 'unknown',
               isAnalysisWorthy: false, 
-              reason: isRateLimit ? 'Rate limited - will retry' : `Gateway error ${errorStatus} - will retry`,
+              reason,
               timestamp: new Date().toISOString(),
             },
-            retryAfter: isRateLimit ? 2000 : 5000, // Suggest retry delay in ms
+            retryAfter: retryDelay,
           }),
-          { status: isRateLimit ? 429 : 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          { status: isPaymentIssue ? 402 : (isRateLimit ? 429 : 503), headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
       throw new Error(`Classification failed: ${errorStatus}`);
