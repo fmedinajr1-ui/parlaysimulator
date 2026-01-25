@@ -1007,12 +1007,17 @@ function buildDrivers(
 ): string[] {
   const drivers: string[] = [];
   
-  // Current stat + projection
+  // Current stat with pace info (not redundant with UI "Now X")
   const current = prop === 'Points' ? live?.pts :
                   prop === 'Rebounds' ? live?.reb :
                   prop === 'Assists' ? live?.ast :
                   live?.pra ?? 0;
-  drivers.push(`Current: ${current ?? 0} in ${(live?.min ?? 0).toFixed(1)} min`);
+  
+  const minutes = live?.min ?? 0;
+  if (minutes > 0) {
+    const pacePerMin = (current ?? 0) / minutes;
+    drivers.push(`Pace: ${pacePerMin.toFixed(2)}/min over ${minutes.toFixed(0)} min`);
+  }
   drivers.push(`Est. ${remaining.toFixed(1)} min remaining`);
   
   // Key indicators
