@@ -29,6 +29,11 @@ interface CategorySweetSpot {
   archetype: string | null;
   analysis_date: string;
   is_active: boolean | null;
+  // v4.0: True projections
+  projected_value: number | null;
+  matchup_adjustment: number | null;
+  pace_adjustment: number | null;
+  projection_source: string | null;
 }
 
 // Category display config
@@ -86,12 +91,12 @@ export function SweetSpotPicksCard() {
     queryFn: async () => {
       const today = getEasternDate();
       
-      // Fetch high-confidence sweet spots - trust the analyzer's is_active flag
+      // Fetch high-confidence sweet spots with projection data
       const { data, error } = await supabase
         .from("category_sweet_spots")
-        .select("id, player_name, prop_type, actual_line, recommended_line, recommended_side, confidence_score, l10_hit_rate, l10_avg, category, archetype, analysis_date, is_active")
+        .select("id, player_name, prop_type, actual_line, recommended_line, recommended_side, confidence_score, l10_hit_rate, l10_avg, category, archetype, analysis_date, is_active, projected_value, matchup_adjustment, pace_adjustment, projection_source")
         .eq("analysis_date", today)
-        .eq("is_active", true) // Trust analyzer's active flag
+        .eq("is_active", true)
         .gte("l10_hit_rate", 0.70)
         .gte("confidence_score", 0.75)
         .in("category", Object.keys(CATEGORY_CONFIG))
@@ -226,13 +231,30 @@ export function SweetSpotPicksCard() {
                         <p className="font-medium text-sm">{pick.player_name}</p>
                         {getCategoryBadge(pick.category)}
                       </div>
-                      <div className="flex items-center gap-2 mt-0.5">
+                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                         <Badge variant="outline" className={cn("text-xs", getPropTypeColor(pick.prop_type))}>
                           {formatPropType(pick.prop_type)}
                         </Badge>
                         <span className="text-xs text-muted-foreground">
                           {pick.recommended_side?.toUpperCase()} {line}
                         </span>
+                        {/* v4.0: Show projection and edge */}
+                        {pick.projected_value && (
+                          <span className="text-xs font-mono">
+                            <span className="text-primary">Proj: {pick.projected_value}</span>
+                            {pick.actual_line && (
+                              <span className={cn(
+                                "ml-1",
+                                (pick.projected_value - pick.actual_line) > 0 && pick.recommended_side === 'over' && "text-green-400",
+                                (pick.projected_value - pick.actual_line) < 0 && pick.recommended_side === 'under' && "text-green-400",
+                                (pick.projected_value - pick.actual_line) > 0 && pick.recommended_side === 'under' && "text-red-400",
+                                (pick.projected_value - pick.actual_line) < 0 && pick.recommended_side === 'over' && "text-red-400"
+                              )}>
+                                ({(pick.projected_value - pick.actual_line) > 0 ? '+' : ''}{(pick.projected_value - pick.actual_line).toFixed(1)})
+                              </span>
+                            )}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>

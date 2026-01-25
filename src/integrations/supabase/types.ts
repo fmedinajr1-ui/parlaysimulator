@@ -710,8 +710,12 @@ export type Database = {
           l10_min: number | null
           l10_std_dev: number | null
           line_difference: number | null
+          matchup_adjustment: number | null
           outcome: string | null
+          pace_adjustment: number | null
           player_name: string
+          projected_value: number | null
+          projection_source: string | null
           prop_type: string
           recommendation: string | null
           recommended_line: number | null
@@ -745,8 +749,12 @@ export type Database = {
           l10_min?: number | null
           l10_std_dev?: number | null
           line_difference?: number | null
+          matchup_adjustment?: number | null
           outcome?: string | null
+          pace_adjustment?: number | null
           player_name: string
+          projected_value?: number | null
+          projection_source?: string | null
           prop_type: string
           recommendation?: string | null
           recommended_line?: number | null
@@ -780,8 +788,12 @@ export type Database = {
           l10_min?: number | null
           l10_std_dev?: number | null
           line_difference?: number | null
+          matchup_adjustment?: number | null
           outcome?: string | null
+          pace_adjustment?: number | null
           player_name?: string
+          projected_value?: number | null
+          projection_source?: string | null
           prop_type?: string
           recommendation?: string | null
           recommended_line?: number | null
@@ -9444,6 +9456,17 @@ export type Database = {
           username: string
         }[]
       }
+      get_line_mismatch_accuracy: {
+        Args: { days_back?: number }
+        Returns: {
+          avg_line_diff: number
+          hit_rate: number
+          hits: number
+          misses: number
+          severity_tier: string
+          total_picks: number
+        }[]
+      }
       get_median_lock_accuracy_stats: {
         Args: never
         Returns: {
@@ -9468,6 +9491,17 @@ export type Database = {
           trap_count: number
           trap_rate: number
           win_count: number
+        }[]
+      }
+      get_projection_accuracy: {
+        Args: { days_back?: number }
+        Returns: {
+          avg_edge: number
+          avg_projection_error: number
+          prop_type: string
+          total_picks: number
+          within_3_pct: number
+          within_5_pct: number
         }[]
       }
       get_recent_line_movements: {
