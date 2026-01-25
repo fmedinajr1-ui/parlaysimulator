@@ -769,6 +769,17 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
         halftimeLock,
       };
     });
+    
+    // Update team-level state for game bets (outside setState to avoid nested updates)
+    if (response.homeTeamState) {
+      setHomeTeamState(response.homeTeamState);
+    }
+    if (response.awayTeamState) {
+      setAwayTeamState(response.awayTeamState);
+    }
+    if (response.gameBetEdges && response.gameBetEdges.length > 0) {
+      setGameBetEdges(response.gameBetEdges);
+    }
 
     // Handle notifications
     if (response.shouldNotify && response.notification) {

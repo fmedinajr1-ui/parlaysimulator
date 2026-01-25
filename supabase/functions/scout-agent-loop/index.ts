@@ -2140,18 +2140,74 @@ CRITICAL RULE: You MUST identify players by their jersey numbers and look them u
     }
 
     // STEP 5: Calculate game-level bet edges (Total, Moneyline, Spread)
+    // First, fetch Vegas lines from game_environment table
+    let vegasData: { vegasTotal: number; vegasSpread: number; moneylineHome: number | null; moneylineAway: number | null; paceRating: string; gameScript: string } | null = null;
     let gameBetData = null;
-    if (pbpData) {
-      // Use default vegas values for now - in production these would come from game_environment table
-      const vegasTotal = 220; // Default NBA total
-      const vegasSpread = 0; // Pick'em default
-      const preGameHomeWinProb = 0.5; // Default even odds
+    
+    if (pbpData && supabaseUrl && supabaseKey) {
+      try {
+        const supabase = createClient(supabaseUrl, supabaseKey);
+        const today = new Date().toISOString().split('T')[0];
+        
+        // Try to fetch Vegas lines from game_environment
+        const { data: gameEnv, error: envError } = await supabase
+          .from('game_environment')
+          .select('vegas_total, vegas_spread, moneyline_home, moneyline_away, home_implied_total, away_implied_total, pace_rating, game_script')
+          .or(`home_team_abbrev.eq.${gameContext.homeTeam},away_team_abbrev.eq.${gameContext.awayTeam}`)
+          .gte('game_date', today)
+          .limit(1)
+          .maybeSingle();
+        
+        if (gameEnv && !envError) {
+          vegasData = {
+            vegasTotal: gameEnv.vegas_total || 220,
+            vegasSpread: gameEnv.vegas_spread || 0,
+            moneylineHome: gameEnv.moneyline_home,
+            moneylineAway: gameEnv.moneyline_away,
+            paceRating: gameEnv.pace_rating || 'MEDIUM',
+            gameScript: gameEnv.game_script || 'COMPETITIVE',
+          };
+          console.log(`[Scout Agent] Vegas data loaded: Total=${vegasData.vegasTotal}, Spread=${vegasData.vegasSpread}, Script=${vegasData.gameScript}`);
+        } else {
+          console.log('[Scout Agent] No Vegas data found, using defaults');
+          vegasData = {
+            vegasTotal: 220,
+            vegasSpread: 0,
+            moneylineHome: null,
+            moneylineAway: null,
+            paceRating: 'MEDIUM',
+            gameScript: 'COMPETITIVE',
+          };
+        }
+      } catch (err) {
+        console.error('[Scout Agent] Failed to fetch Vegas data:', err);
+        vegasData = {
+          vegasTotal: 220,
+          vegasSpread: 0,
+          moneylineHome: null,
+          moneylineAway: null,
+          paceRating: 'MEDIUM',
+          gameScript: 'COMPETITIVE',
+        };
+      }
+      
+      // Convert moneyline to implied probability
+      const oddsToProb = (americanOdds: number | null): number => {
+        if (!americanOdds) return 0.5;
+        if (americanOdds > 0) {
+          return 100 / (americanOdds + 100);
+        } else {
+          return Math.abs(americanOdds) / (Math.abs(americanOdds) + 100);
+        }
+      };
+      
+      const preGameHomeWinProb = vegasData.moneylineHome ? oddsToProb(vegasData.moneylineHome) : 0.5;
       
       gameBetData = calculateGameBetEdges(
         playerStates,
         pbpData,
-        vegasTotal,
-        vegasSpread,
+        vegasData.vegasTotal,
+        vegasData.vegasSpread,
         preGameHomeWinProb
       );
       console.log(`[Scout Agent] Game bet edges calculated: ${gameBetData.gameBetEdges.length} bets`);
@@ -2174,6 +2230,7 @@ CRITICAL RULE: You MUST identify players by their jersey numbers and look them u
         homeTeamState: gameBetData?.homeTeam || null,
         awayTeamState: gameBetData?.awayTeam || null,
         gameBetEdges: gameBetData?.gameBetEdges || [],
+        vegasData,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

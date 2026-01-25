@@ -495,6 +495,18 @@ export interface AgentLoopResponse {
   // V2: Halftime Lock
   isHalftime?: boolean;
   halftimeRecommendations?: HalftimeLockedProp[];
+  // V3: Team-level game bet data
+  homeTeamState?: TeamLiveState | null;
+  awayTeamState?: TeamLiveState | null;
+  gameBetEdges?: GameBetEdge[];
+  vegasData?: {
+    vegasTotal: number;
+    vegasSpread: number;
+    moneylineHome: number | null;
+    moneylineAway: number | null;
+    paceRating: string;
+    gameScript: string;
+  };
 }
 
 // ===== NOTIFICATIONS =====

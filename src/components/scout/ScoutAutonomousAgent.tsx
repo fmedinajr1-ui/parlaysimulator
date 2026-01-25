@@ -9,10 +9,12 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { SelectGroup, SelectLabel } from '@/components/ui/select';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { useScoutAgentState } from '@/hooks/useScoutAgentState';
 import { PlayerStateCard } from './PlayerStateCard';
 import { HalftimeBettingPanel } from './HalftimeBettingPanel';
+import { GameBetsTab } from './GameBetsTab';
 import { PaceMeter } from './PaceMeter';
 import { GameContext } from '@/pages/Scout';
 import { supabase } from '@/integrations/supabase/client';
@@ -41,6 +43,8 @@ import {
   RefreshCw,
   Save,
   ChevronDown,
+  Target,
+  TrendingUp,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -90,7 +94,14 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
     getStateForAPI,
     sessionRestored,
     clearSession,
+    // V5: Game Bets
+    homeTeamState,
+    awayTeamState,
+    gameBetEdges,
   } = useScoutAgentState({ gameContext });
+  
+  // Tab state for main content
+  const [activeScoutTab, setActiveScoutTab] = useState<'bets' | 'props' | 'advanced'>('bets');
 
   const isSupported = isScreenCaptureSupported() || isCameraSupported();
 
@@ -777,33 +788,68 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
         </Card>
       </div>
 
-      {/* Main Betting Console */}
-      <HalftimeBettingPanel
-        edges={state.activePropEdges}
-        mode={state.halftimeLock.isLocked ? 'HALFTIME_LOCK' : 'LIVE'}
-        lockedRecommendations={state.halftimeLock.lockedRecommendations}
-        gameTime={state.currentGameTime || ''}
-        lockTime={state.halftimeLock.lockTime}
-      />
-
-      {/* Advanced Section (Collapsible) */}
-      <Collapsible>
-        <CollapsibleTrigger asChild>
-          <Button variant="ghost" className="w-full justify-between gap-2 text-muted-foreground">
-            <span className="flex items-center gap-2">
-              <Users className="w-4 h-4" />
-              Advanced (Players: {onCourtPlayers.length} | Log: {state.sceneHistory.length})
-            </span>
-            <ChevronDown className="w-4 h-4" />
-          </Button>
-        </CollapsibleTrigger>
-        <CollapsibleContent className="space-y-4 pt-2">
+      {/* Main Content Tabs */}
+      <Tabs value={activeScoutTab} onValueChange={(v) => setActiveScoutTab(v as 'bets' | 'props' | 'advanced')}>
+        <TabsList className="grid w-full grid-cols-3">
+          <TabsTrigger value="bets" className="gap-2">
+            <TrendingUp className="w-4 h-4" />
+            <span className="hidden sm:inline">Game Bets</span>
+            <span className="sm:hidden">Bets</span>
+            {gameBetEdges.filter(e => e.confidence >= 65).length > 0 && (
+              <Badge variant="secondary" className="ml-1 text-xs h-5 min-w-5 px-1">
+                {gameBetEdges.filter(e => e.confidence >= 65).length}
+              </Badge>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="props" className="gap-2">
+            <Target className="w-4 h-4" />
+            <span className="hidden sm:inline">Player Props</span>
+            <span className="sm:hidden">Props</span>
+            {state.activePropEdges.filter(e => e.confidence >= 65).length > 0 && (
+              <Badge variant="secondary" className="ml-1 text-xs h-5 min-w-5 px-1">
+                {state.activePropEdges.filter(e => e.confidence >= 65).length}
+              </Badge>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="advanced" className="gap-2">
+            <Activity className="w-4 h-4" />
+            <span className="hidden sm:inline">Advanced</span>
+            <span className="sm:hidden">Adv</span>
+          </TabsTrigger>
+        </TabsList>
+        
+        {/* Game Bets Tab */}
+        <TabsContent value="bets" className="mt-4">
+          <GameBetsTab
+            homeTeamState={homeTeamState}
+            awayTeamState={awayTeamState}
+            gameBetEdges={gameBetEdges}
+            gameTime={state.currentGameTime || ''}
+          />
+        </TabsContent>
+        
+        {/* Player Props Tab */}
+        <TabsContent value="props" className="mt-4">
+          <HalftimeBettingPanel
+            edges={state.activePropEdges}
+            mode={state.halftimeLock.isLocked ? 'HALFTIME_LOCK' : 'LIVE'}
+            lockedRecommendations={state.halftimeLock.lockedRecommendations}
+            gameTime={state.currentGameTime || ''}
+            lockTime={state.halftimeLock.lockTime}
+            homeTeamState={homeTeamState}
+            awayTeamState={awayTeamState}
+            gameBetEdges={gameBetEdges}
+          />
+        </TabsContent>
+        
+        {/* Advanced Tab */}
+        <TabsContent value="advanced" className="mt-4 space-y-4">
           {/* Players Grid */}
           <Card className="border-border/50">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2">
                 <Users className="w-4 h-4" />
-                Player States
+                Player States ({onCourtPlayers.length})
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -835,7 +881,7 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2">
                 <Activity className="w-4 h-4" />
-                Activity Log
+                Activity Log ({state.sceneHistory.length})
               </CardTitle>
             </CardHeader>
             <CardContent className="p-0">
@@ -873,8 +919,23 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
               </ScrollArea>
             </CardContent>
           </Card>
-        </CollapsibleContent>
-      </Collapsible>
+
+          {/* Pace Meter in Advanced Tab */}
+          {state.pbpData && (
+            <Card className="border-border/50">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Game Pace</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <PaceMeter pace={state.pbpData.pace || 100} />
+                <p className="text-xs text-muted-foreground text-center mt-2">
+                  {state.pbpData.isHalftime ? '⏸️ Halftime' : state.pbpData.isGameOver ? '✅ Final' : '🏀 In Progress'}
+                </p>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
