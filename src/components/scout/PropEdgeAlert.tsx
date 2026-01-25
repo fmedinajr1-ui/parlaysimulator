@@ -66,39 +66,73 @@ export function PropEdgeAlert({ edge, showDetails = true }: PropEdgeAlertProps) 
           </div>
         </div>
 
-        {/* Projection vs Line - NEW PROMINENT DISPLAY */}
+        {/* Projection vs Line - WITH UNCERTAINTY BANDS */}
         {hasProjection && (
-          <div className="flex items-center justify-between p-2 rounded bg-accent/50">
-            <div className="flex items-center gap-3">
-              <div className="text-center">
-                <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Current</div>
-                <div className="font-mono font-bold text-lg">{edge.currentStat ?? '—'}</div>
+          <div className="flex flex-col gap-2 p-2 rounded bg-accent/50">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="text-center">
+                  <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Current</div>
+                  <div className="font-mono font-bold text-lg">{edge.currentStat ?? '—'}</div>
+                </div>
+                <Target className="w-4 h-4 text-muted-foreground" />
+                <div className="text-center">
+                  <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Projected</div>
+                  <div className={cn(
+                    "font-mono font-bold text-lg",
+                    edge.lean === 'OVER' ? 'text-chart-2' : 'text-chart-4'
+                  )}>
+                    {edge.expectedFinal.toFixed(1)}
+                    {edge.uncertainty && (
+                      <span className="text-xs text-muted-foreground ml-1">±{edge.uncertainty}</span>
+                    )}
+                  </div>
+                </div>
               </div>
-              <Target className="w-4 h-4 text-muted-foreground" />
-              <div className="text-center">
-                <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Projected</div>
-                <div className={cn(
-                  "font-mono font-bold text-lg",
-                  edge.lean === 'OVER' ? 'text-chart-2' : 'text-chart-4'
-                )}>
-                  {edge.expectedFinal.toFixed(1)}
+              <div className="text-right">
+                <div className="text-[10px] text-muted-foreground uppercase tracking-wider">vs Line</div>
+                <div className="font-mono font-medium">
+                  {edge.line}
+                  {edgeMargin !== null && (
+                    <span className={cn(
+                      "ml-1 text-xs",
+                      edge.lean === 'OVER' ? 'text-chart-2' : 'text-chart-4'
+                    )}>
+                      ({edge.lean === 'OVER' ? '+' : '-'}{edgeMargin.toFixed(1)})
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
-            <div className="text-right">
-              <div className="text-[10px] text-muted-foreground uppercase tracking-wider">vs Line</div>
-              <div className="font-mono font-medium">
-                {edge.line}
-                {edgeMargin !== null && (
-                  <span className={cn(
-                    "ml-1 text-xs",
-                    edge.lean === 'OVER' ? 'text-chart-2' : 'text-chart-4'
-                  )}>
-                    ({edge.lean === 'OVER' ? '+' : '-'}{edgeMargin.toFixed(1)})
-                  </span>
-                )}
+            
+            {/* Uncertainty Range Bar */}
+            {edge.uncertainty && edge.uncertainty > 0 && (
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                  <span>{(edge.expectedFinal - edge.uncertainty).toFixed(1)}</span>
+                  <span className="uppercase tracking-wider">Range</span>
+                  <span>{(edge.expectedFinal + edge.uncertainty).toFixed(1)}</span>
+                </div>
+                <div className="relative h-2 bg-muted rounded overflow-hidden">
+                  {/* Uncertainty range fill */}
+                  <div 
+                    className={cn(
+                      "absolute h-full rounded",
+                      edge.lean === 'OVER' ? "bg-chart-2/40" : "bg-chart-4/40"
+                    )}
+                    style={{
+                      left: `${Math.max(0, ((edge.expectedFinal - edge.uncertainty - (edge.line - 5)) / 10) * 100)}%`,
+                      width: `${Math.min(100, (edge.uncertainty * 2 / 10) * 100)}%`
+                    }}
+                  />
+                  {/* Line marker */}
+                  <div 
+                    className="absolute w-0.5 h-full bg-foreground/70"
+                    style={{ left: `${Math.max(0, Math.min(100, ((edge.line - (edge.line - 5)) / 10) * 100))}%` }}
+                  />
+                </div>
               </div>
-            </div>
+            )}
           </div>
         )}
 

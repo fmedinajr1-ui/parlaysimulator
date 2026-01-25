@@ -7363,6 +7363,102 @@ export type Database = {
         }
         Relationships: []
       }
+      scout_confidence_bucket_map: {
+        Row: {
+          bucket: number
+          calibrated_prob: number
+          last_hit_rate: number | null
+          sample_size: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          bucket: number
+          calibrated_prob: number
+          last_hit_rate?: number | null
+          sample_size?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          bucket?: number
+          calibrated_prob?: number
+          last_hit_rate?: number | null
+          sample_size?: number | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      scout_prop_outcomes: {
+        Row: {
+          actual_final: number | null
+          analysis_date: string
+          confidence_raw: number
+          created_at: string | null
+          espn_event_id: string | null
+          event_id: string
+          id: number
+          line: number
+          minutes_remaining_est: number | null
+          minutes_uncertainty: number | null
+          on_court_stability: number | null
+          outcome: string | null
+          player_name: string
+          predicted_final: number
+          prop: string
+          rate_modifier: number | null
+          risk_flags: Json | null
+          rotation_role: string | null
+          settled_at: string | null
+          side: string
+          team: string | null
+        }
+        Insert: {
+          actual_final?: number | null
+          analysis_date?: string
+          confidence_raw: number
+          created_at?: string | null
+          espn_event_id?: string | null
+          event_id: string
+          id?: number
+          line: number
+          minutes_remaining_est?: number | null
+          minutes_uncertainty?: number | null
+          on_court_stability?: number | null
+          outcome?: string | null
+          player_name: string
+          predicted_final: number
+          prop: string
+          rate_modifier?: number | null
+          risk_flags?: Json | null
+          rotation_role?: string | null
+          settled_at?: string | null
+          side: string
+          team?: string | null
+        }
+        Update: {
+          actual_final?: number | null
+          analysis_date?: string
+          confidence_raw?: number
+          created_at?: string | null
+          espn_event_id?: string | null
+          event_id?: string
+          id?: number
+          line?: number
+          minutes_remaining_est?: number | null
+          minutes_uncertainty?: number | null
+          on_court_stability?: number | null
+          outcome?: string | null
+          player_name?: string
+          predicted_final?: number
+          prop?: string
+          rate_modifier?: number | null
+          risk_flags?: Json | null
+          rotation_role?: string | null
+          settled_at?: string | null
+          side?: string
+          team?: string | null
+        }
+        Relationships: []
+      }
       scout_sessions: {
         Row: {
           analysis_count: number | null
@@ -9269,6 +9365,16 @@ export type Database = {
       }
     }
     Views: {
+      scout_confidence_calibration: {
+        Row: {
+          avg_confidence_raw: number | null
+          bucket: number | null
+          hit_rate: number | null
+          mae: number | null
+          settled: number | null
+        }
+        Relationships: []
+      }
       v_player_game_summary: {
         Row: {
           away_games: number | null
