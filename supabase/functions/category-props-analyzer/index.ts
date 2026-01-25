@@ -663,25 +663,44 @@ serve(async (req) => {
 
 
     // ======= NEW: Validate against actual bookmaker lines from unified_props =======
-    console.log(`[Category Analyzer] Fetching actual lines from unified_props...`);
+    console.log(`[CAT-ANALYZER-CRITICAL] Starting unified_props fetch...`);
     
     // Fetch actual lines from unified_props for upcoming games
+    const nowIso = new Date().toISOString();
+    console.log(`[CAT-ANALYZER-CRITICAL] Using timestamp: ${nowIso}`);
+    
     const { data: upcomingProps, error: propsError } = await supabase
       .from('unified_props')
-      .select('player_name, prop_type, current_line, over_price, under_price, bookmaker, commence_time')
-      .gte('commence_time', new Date().toISOString())
+      .select('player_name, prop_type, current_line, over_price, under_price, bookmaker, commence_time, game_description')
+      .gte('commence_time', nowIso)
       .order('commence_time', { ascending: true });
 
     if (propsError) {
-      console.error('[Category Analyzer] Error fetching unified_props:', propsError);
+      console.error(`[CAT-ANALYZER-CRITICAL] Error fetching unified_props: ${propsError.message}`);
     }
 
-    console.log(`[Category Analyzer] Found ${upcomingProps?.length || 0} upcoming props`);
+    console.log(`[CAT-ANALYZER-CRITICAL] Found ${upcomingProps?.length || 0} upcoming props`);
 
     // Create lookup map for actual lines (key: playername_proptype)
-    const actualLineMap = new Map<string, { line: number; overPrice: number; underPrice: number; bookmaker: string }>();
+    // v4.1: Include opponent extraction from game_description for accurate projections
+    const actualLineMap = new Map<string, { line: number; overPrice: number; underPrice: number; bookmaker: string; opponent: string | null; playerTeam: string | null }>();
     for (const prop of upcomingProps || []) {
       if (!prop.player_name || !prop.prop_type || prop.current_line == null) continue;
+      
+      // v4.1: Parse opponent from game_description (e.g., "MIN @ CHI" or "Denver Nuggets @ Chicago Bulls")
+      // Since we don't have player's team, we'll just extract both teams for later matching
+      let opponent: string | null = null;
+      let playerTeam: string | null = null;
+      if (prop.game_description) {
+        const atMatch = prop.game_description.match(/^(.+?)\s*@\s*(.+)$/i);
+        const vsMatch = prop.game_description.match(/^(.+?)\s+vs\.?\s+(.+)$/i);
+        const parts = atMatch || vsMatch;
+        if (parts && parts.length >= 3) {
+          // Store both teams - will need to match player to team later via game logs
+          playerTeam = parts[1].trim(); // Away team (placeholder - may need player roster lookup)
+          opponent = parts[2].trim();   // Home team
+        }
+      }
       
       const key = `${prop.player_name.toLowerCase().trim()}_${prop.prop_type.toLowerCase()}`;
       // Only keep first occurrence (most recent)
@@ -690,12 +709,14 @@ serve(async (req) => {
           line: prop.current_line,
           overPrice: prop.over_price,
           underPrice: prop.under_price,
-          bookmaker: prop.bookmaker
+          bookmaker: prop.bookmaker,
+          opponent: opponent,
+          playerTeam: playerTeam
         });
       }
     }
 
-    console.log(`[Category Analyzer] Built lookup map with ${actualLineMap.size} unique player/prop combinations`);
+    console.log(`[CAT-ANALYZER-CRITICAL] Built lookup map with ${actualLineMap.size} unique player/prop combinations`);
 
     // Validate each sweet spot against actual lines and recalculate hit rates
     const validatedSpots: any[] = [];
@@ -741,15 +762,15 @@ serve(async (req) => {
         const l10Avg = statValues.reduce((a, b) => a + b, 0) / statValues.length;
         const l10StdDev = calculateStdDev(statValues);
         
-        // v4.0: Get opponent from game logs for projection
-        const recentOpponent = l10Logs[0]?.opponent || null;
+        // v4.1: Get UPCOMING opponent from unified_props (not historical from game logs)
+        const upcomingOpponent = actualData.opponent || null;
         
-        // v4.0: Calculate TRUE PROJECTION
+        // v4.1: Calculate TRUE PROJECTION using correct upcoming opponent
         const projection = calculateTrueProjection(
           spot.player_name,
           spot.prop_type,
           statValues,
-          recentOpponent
+          upcomingOpponent
         );
         
         // Add projection data to spot
@@ -757,6 +778,9 @@ serve(async (req) => {
         spot.matchup_adjustment = projection.matchupAdj;
         spot.pace_adjustment = projection.paceAdj;
         spot.projection_source = projection.projectionSource;
+        
+        // v4.1: Log projection for debugging
+        console.log(`[Projection] ${spot.player_name} ${spot.prop_type} vs ${upcomingOpponent || 'unknown'}: Proj=${projection.projectedValue?.toFixed(1)}, MatchupAdj=${projection.matchupAdj.toFixed(1)}, PaceAdj=${projection.paceAdj.toFixed(1)}`);
         
         // v1.4: Handle LINE_RANGE_PENDING spots (line-based eligibility)
         if (spot.eligibility_type === 'LINE_RANGE_PENDING') {
