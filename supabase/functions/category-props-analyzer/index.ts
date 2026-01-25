@@ -1,13 +1,9 @@
-// Category Props Analyzer v3.0 - ARCHETYPE-ENFORCED WINNING FORMULAS
-// Analyzes props by player category with strict archetype validation
-// v3.0: Added archetype enforcement to prevent misaligned picks
-// v2.0 Categories (based on 391 settled picks analysis):
-//   - ASSIST_ANCHOR: Assists UNDER 3.5-5.5 (65% historical win rate)
-//   - HIGH_REB_UNDER: Rebounds UNDER 10.5-12.5 (62% historical win rate)  
-//   - MID_SCORER_UNDER: Points UNDER 14.5-20.5 (64% historical win rate)
-// Legacy Categories: BIG_REBOUNDER, LOW_LINE_REBOUNDER, NON_SCORING_SHOOTER, VOLUME_SCORER, HIGH_ASSIST, THREE_POINT_SHOOTER
+// Category Props Analyzer v4.0 - TRUE PROJECTIONS + ARCHETYPE ENFORCEMENT
+// Analyzes props by player category with TRUE projected values (not floor thresholds)
+// v4.0: Added projected_value = L10 Median + Matchup Adjustment + Pace Adjustment
+// v3.0: Archetype enforcement to prevent misaligned picks
+// v2.0 Categories (based on 391 settled picks analysis)
 // v1.5: BIG categories ALWAYS recommend OVER with risk_level indicators
-// v3.0: Strict archetype validation - BIG_ASSIST = only bigs, ROLE_PLAYER = no stars
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -27,24 +23,51 @@ interface GameLog {
   blocks: number;
   threes_made: number;
   minutes_played: number;
+  opponent?: string;
+}
+
+interface MatchupHistory {
+  player_name: string;
+  opponent: string;
+  prop_type: string;
+  games_played: number;
+  avg_stat: number;
+  max_stat: number;
+  min_stat: number;
+}
+
+interface GameEnvironment {
+  game_id: string;
+  home_team: string;
+  away_team: string;
+  vegas_total: number;
+  vegas_spread: number;
+  pace_rating?: number;
+  pace_class?: string;
+  game_script?: string;
 }
 
 interface CategoryConfig {
   name: string;
   propType: string;
   avgRange: { min: number; max: number };
-  lineRange?: { min: number; max: number }; // NEW: Line-based eligibility
+  lineRange?: { min: number; max: number };
   lines: number[];
   side: 'over' | 'under';
   minHitRate: number;
-  supportsBounceBack?: boolean; // NEW: Enable bounce back detection
-  // v3.0: Archetype enforcement
-  requiredArchetypes?: string[]; // Only these archetypes allowed
-  blockedArchetypes?: string[];  // These archetypes are blocked
+  supportsBounceBack?: boolean;
+  requiredArchetypes?: string[];
+  blockedArchetypes?: string[];
 }
 
+// ============ PROJECTION WEIGHTS (v4.0) ============
+const PROJECTION_WEIGHTS = {
+  L10_MEDIAN: 0.55,      // Base weight for L10 median
+  MATCHUP_H2H: 0.30,     // Weight for H2H history vs opponent
+  PACE_FACTOR: 0.15,     // Weight for pace/game environment
+};
+
 // ============ ARCHETYPE DEFINITIONS (v3.0) ============
-// Centralized archetype lists for validation
 const ARCHETYPE_GROUPS = {
   BIGS: ['ELITE_REBOUNDER', 'GLASS_CLEANER', 'STRETCH_BIG', 'RIM_PROTECTOR'],
   GUARDS: ['PLAYMAKER', 'COMBO_GUARD', 'SCORING_GUARD', 'PURE_SHOOTER'],
@@ -53,7 +76,6 @@ const ARCHETYPE_GROUPS = {
   ROLE_PLAYERS: ['TWO_WAY_WING', 'STRETCH_BIG', 'RIM_PROTECTOR', 'ROLE_PLAYER', 'UNKNOWN']
 };
 
-// Archetype-to-allowed-props mapping
 const ARCHETYPE_PROP_ALIGNMENT: Record<string, { primary: string[], blocked: string[] }> = {
   'ELITE_REBOUNDER': { primary: ['rebounds', 'blocks'], blocked: ['threes'] },
   'GLASS_CLEANER': { primary: ['rebounds'], blocked: ['points', 'threes', 'assists'] },
@@ -65,18 +87,21 @@ const ARCHETYPE_PROP_ALIGNMENT: Record<string, { primary: string[], blocked: str
   'RIM_PROTECTOR': { primary: ['blocks', 'rebounds'], blocked: ['points', 'threes'] },
   'SCORING_WING': { primary: ['points'], blocked: ['assists', 'blocks'] },
   'SCORING_GUARD': { primary: ['points', 'assists'], blocked: ['rebounds', 'blocks'] },
-  'ROLE_PLAYER': { primary: [], blocked: ['points'] }, // Role players avoid points
+  'ROLE_PLAYER': { primary: [], blocked: ['points'] },
   'UNKNOWN': { primary: [], blocked: [] }
 };
 
-// Bounce Back Configuration
 const BOUNCE_BACK_CONFIG = {
-  minSeasonVsL10Gap: 1.5,    // Season avg must be 1.5+ higher than L10
-  minStdDevGap: 0.5,         // Gap must be at least 0.5 std deviations
-  maxLineVsSeasonGap: 2.0,   // Line should be within 2.0 of season avg
-  minL10HitRateForOVER: 0.20, // L10 OVER hit rate between 20-50% = due for bounce
+  minSeasonVsL10Gap: 1.5,
+  minStdDevGap: 0.5,
+  maxLineVsSeasonGap: 2.0,
+  minL10HitRateForOVER: 0.20,
   maxL10HitRateForOVER: 0.50,
 };
+
+// Global caches for projection data
+let matchupHistoryCache: Map<string, MatchupHistory> = new Map();
+let gameEnvironmentCache: Map<string, GameEnvironment> = new Map();
 
 const CATEGORIES: Record<string, CategoryConfig> = {
   // ============ NEW PROVEN WINNERS (v2.0) ============
@@ -303,6 +328,108 @@ function getStatValue(log: GameLog, propType: string): number {
   }
 }
 
+// ============ TRUE PROJECTION CALCULATION (v4.0) ============
+function calculateTrueProjection(
+  playerName: string,
+  propType: string,
+  statValues: number[],
+  opponent: string | null
+): { projectedValue: number; matchupAdj: number; paceAdj: number; projectionSource: string } {
+  // 1. BASE: L10 Median (more stable than average for betting)
+  const l10Median = calculateMedian(statValues);
+  
+  // 2. MATCHUP ADJUSTMENT: Check H2H history vs opponent
+  let matchupAdj = 0;
+  let projectionSource = 'L10_MEDIAN';
+  
+  if (opponent) {
+    const matchupKey = `${playerName.toLowerCase().trim()}_${propType}_${opponent.toLowerCase().trim()}`;
+    const matchup = matchupHistoryCache.get(matchupKey);
+    
+    if (matchup && matchup.games_played >= 2) {
+      const h2hAvg = matchup.avg_stat;
+      // Calculate adjustment: difference from L10 median weighted at 30%
+      matchupAdj = (h2hAvg - l10Median) * PROJECTION_WEIGHTS.MATCHUP_H2H;
+      projectionSource = matchup.games_played >= 5 ? 'L10+H2H_STRONG' : 'L10+H2H';
+    }
+  }
+  
+  // 3. PACE ADJUSTMENT: Check game environment
+  let paceAdj = 0;
+  if (opponent) {
+    // Look up game environment for this matchup
+    for (const [_, env] of gameEnvironmentCache) {
+      const homeMatch = env.home_team?.toLowerCase().includes(opponent.toLowerCase()) ||
+                       env.away_team?.toLowerCase().includes(opponent.toLowerCase());
+      if (homeMatch && env.pace_rating) {
+        // Pace multiplier: normalize around 100 (average pace = 100)
+        const paceMultiplier = (env.pace_rating / 100) - 1.0;
+        paceAdj = paceMultiplier * l10Median * PROJECTION_WEIGHTS.PACE_FACTOR;
+        
+        // For UNDER picks in slow games, invert the adjustment
+        if (env.pace_class === 'SLOW' && paceAdj < 0) {
+          projectionSource += '+SLOW';
+        } else if (env.pace_class === 'FAST' && paceAdj > 0) {
+          projectionSource += '+FAST';
+        }
+        break;
+      }
+    }
+  }
+  
+  // 4. FINAL PROJECTION (rounded to 0.5)
+  const rawProjection = l10Median + matchupAdj + paceAdj;
+  const projectedValue = Math.round(rawProjection * 2) / 2;
+  
+  return {
+    projectedValue,
+    matchupAdj: Math.round(matchupAdj * 10) / 10,
+    paceAdj: Math.round(paceAdj * 10) / 10,
+    projectionSource
+  };
+}
+
+// Load matchup history into cache
+async function loadMatchupHistory(supabase: any): Promise<void> {
+  const { data, error } = await supabase
+    .from('matchup_history')
+    .select('player_name, opponent, prop_type, games_played, avg_stat, max_stat, min_stat');
+  
+  if (error) {
+    console.warn('[Category Analyzer] Matchup history load error:', error.message);
+    return;
+  }
+  
+  matchupHistoryCache.clear();
+  for (const m of (data || [])) {
+    // Key: playername_proptype_opponent
+    const propType = m.prop_type?.replace('player_', '') || '';
+    const key = `${m.player_name?.toLowerCase().trim()}_${propType}_${m.opponent?.toLowerCase().trim()}`;
+    matchupHistoryCache.set(key, m);
+  }
+  console.log(`[Category Analyzer] Loaded ${matchupHistoryCache.size} matchup history records`);
+}
+
+// Load game environment into cache
+async function loadGameEnvironment(supabase: any): Promise<void> {
+  const today = new Date().toISOString().split('T')[0];
+  const { data, error } = await supabase
+    .from('game_environment')
+    .select('game_id, home_team, away_team, vegas_total, vegas_spread, pace_rating, pace_class, game_script')
+    .gte('game_date', today);
+  
+  if (error) {
+    console.warn('[Category Analyzer] Game environment load error:', error.message);
+    return;
+  }
+  
+  gameEnvironmentCache.clear();
+  for (const g of (data || [])) {
+    gameEnvironmentCache.set(g.game_id, g);
+  }
+  console.log(`[Category Analyzer] Loaded ${gameEnvironmentCache.size} game environment records`);
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -315,10 +442,14 @@ serve(async (req) => {
 
     const { category, minHitRate = 0.7, forceRefresh = false } = await req.json().catch(() => ({}));
 
-    console.log(`[Category Analyzer v3.0] Starting analysis for category: ${category || 'ALL'} (archetype-enforced)`);
+    console.log(`[Category Analyzer v4.0] Starting analysis with TRUE PROJECTIONS for category: ${category || 'ALL'}`);
 
-    // v3.0: Load player archetypes for validation
-    await loadArchetypes(supabase);
+    // v4.0: Load all projection data sources
+    await Promise.all([
+      loadArchetypes(supabase),
+      loadMatchupHistory(supabase),
+      loadGameEnvironment(supabase)
+    ]);
 
     // Get today's date for analysis
     const today = new Date().toISOString().split('T')[0];
@@ -609,6 +740,23 @@ serve(async (req) => {
         const statValues = l10Logs.map(log => getStatValue(log, spot.prop_type));
         const l10Avg = statValues.reduce((a, b) => a + b, 0) / statValues.length;
         const l10StdDev = calculateStdDev(statValues);
+        
+        // v4.0: Get opponent from game logs for projection
+        const recentOpponent = l10Logs[0]?.opponent || null;
+        
+        // v4.0: Calculate TRUE PROJECTION
+        const projection = calculateTrueProjection(
+          spot.player_name,
+          spot.prop_type,
+          statValues,
+          recentOpponent
+        );
+        
+        // Add projection data to spot
+        spot.projected_value = projection.projectedValue;
+        spot.matchup_adjustment = projection.matchupAdj;
+        spot.pace_adjustment = projection.paceAdj;
+        spot.projection_source = projection.projectionSource;
         
         // v1.4: Handle LINE_RANGE_PENDING spots (line-based eligibility)
         if (spot.eligibility_type === 'LINE_RANGE_PENDING') {
