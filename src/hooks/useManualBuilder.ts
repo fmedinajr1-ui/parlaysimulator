@@ -31,6 +31,17 @@ export interface H2HRecord {
   games_played: number;
 }
 
+export interface PropProjection {
+  player_name: string;
+  prop_type: string;
+  projected_value: number | null;
+  l10_median: number | null;
+  l10_avg: number | null;
+  recommended_side: string | null;
+  confidence_score: number | null;
+  actual_line: number | null;
+}
+
 function getDefenseGrade(rank: number): string {
   if (rank <= 5) return "A";
   if (rank <= 10) return "B";
@@ -100,6 +111,35 @@ export function useManualBuilder(statFilter: string = "all") {
     },
   });
 
+  // Fetch projections from category_sweet_spots
+  const { data: projections } = useQuery({
+    queryKey: ["manual-builder-projections"],
+    queryFn: async () => {
+      const today = new Date().toISOString().split("T")[0];
+      const { data, error } = await supabase
+        .from("category_sweet_spots")
+        .select("player_name, prop_type, projected_value, l10_median, l10_avg, recommended_side, confidence_score, actual_line")
+        .eq("analysis_date", today)
+        .eq("is_active", true);
+      
+      if (error) throw error;
+      return data as PropProjection[];
+    },
+  });
+
+  // Helper to get projection for a specific prop
+  const getProjectionForProp = (playerName: string, propType: string): PropProjection | null => {
+    if (!projections) return null;
+    
+    // Normalize prop type (unified_props uses 'player_points', category uses 'points')
+    const normalizedProp = propType.toLowerCase().replace('player_', '').replace(/_/g, '');
+    
+    return projections.find(p => 
+      p.player_name.toLowerCase() === playerName.toLowerCase() &&
+      p.prop_type.toLowerCase().replace(/_/g, '') === normalizedProp
+    ) || null;
+  };
+
   const getDefenseForMatchup = (gameDescription: string | null, propType: string): DefenseGrade | null => {
     if (!gameDescription || !defenseRatings) return null;
     
@@ -158,6 +198,7 @@ export function useManualBuilder(statFilter: string = "all") {
     isLoading: propsLoading,
     isConnected,
     getDefenseForMatchup,
+    getProjectionForProp,
     parseTeams,
   };
 }
