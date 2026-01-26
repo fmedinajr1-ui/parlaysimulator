@@ -351,19 +351,24 @@ function determineRotationRole(
     return 'CLOSER';
   }
   
-  // Starters based on role and minutes
-  if (role === 'PRIMARY' || (role === 'BIG' && minutesPlayed > 15)) {
+  // RELAXED: Any player with 10+ minutes is treated as STARTER
+  // This ensures Lock Mode Gate 1 can pass for high-minute players
+  if (minutesPlayed >= 10) {
     return 'STARTER';
   }
   
-  // Secondary with good minutes are starters too
-  if (role === 'SECONDARY' && minutesPlayed >= 12) {
+  // Starters based on role and minutes
+  if (role === 'PRIMARY' || role === 'BIG') {
+    return 'STARTER';
+  }
+  
+  // Secondary with decent minutes are starters too
+  if (role === 'SECONDARY' && minutesPlayed >= 8) {
     return 'STARTER';
   }
   
   // Bench core vs fringe based on minutes
-  if (minutesPlayed >= 8) return 'BENCH_CORE';
-  if (minutesPlayed >= 4) return 'BENCH_CORE';
+  if (minutesPlayed >= 5) return 'BENCH_CORE';
   
   return 'BENCH_FRINGE';
 }
@@ -384,8 +389,8 @@ function calculateDataOnlyEdges(
   Object.values(playerStates).forEach(player => {
     const live = getLiveBox(player.playerName, pbpData);
     
-    // Skip players with no minutes
-    if (!live || live.min < 3) return;
+    // Skip players with very low minutes
+    if (!live || live.min < 2) return;
     
     const minutesPlayed = live.min;
     
@@ -395,9 +400,11 @@ function calculateDataOnlyEdges(
       player.role = inferPlayerRole(undefined, boxScore, minutesPlayed);
     }
     
-    // Determine rotation role based on role and minutes
+    // Determine rotation role based on role and minutes - MORE PERMISSIVE
     const rotationRole = determineRotationRole(player.role, minutesPlayed, period, scoreDiff);
     const rotationVolatilityFlag = rotationRole === 'BENCH_FRINGE';
+    
+    console.log(`[Data Projection] ${player.playerName}: role=${player.role}, rotationRole=${rotationRole}, min=${minutesPlayed}`);
     
     const props = ['Points', 'Rebounds', 'Assists'];
     
