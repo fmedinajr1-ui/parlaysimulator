@@ -1,81 +1,179 @@
-# Lock Mode Data Pipeline Fix - COMPLETED
 
-## Summary
 
-Fixed the Lock Mode data pipeline to properly populate `rotationRole`, `player.role`, and minutes data from PBP box scores + AI vision integration.
+## Enhanced Lock Mode Debug Logging
 
-## Changes Made
+### Overview
+Add comprehensive debug logging to all Lock Mode gates and provide a consolidated summary per edge, making it easy to diagnose exactly why edges fail each gate.
 
-### 1. `supabase/functions/scout-agent-loop/index.ts`
-- Added `inferPlayerRole()` function to derive role from position and box score
-- Modified `calculatePropEdges()` to:
-  - Parse substitution events from PBP data
-  - Call `updateRotationState()` for all players before edge calculation
-  - Infer player role from roster position if defaulted to SPACER
-  - Pass `gameContext` to enable roster lookup
+---
 
-### 2. `supabase/functions/scout-data-projection/index.ts`
-- Added `inferPlayerRole()` function (same logic as agent-loop)
-- Added `determineRotationRole()` function
-- Modified `calculateDataOnlyEdges()` to:
-  - Infer player role from box score stats
-  - Calculate `rotationRole` based on role and minutes
-  - Add `rotationRole` and `rotationVolatilityFlag` to edge output
+### Current Logging Status
 
-### 3. `src/lib/lockModeEngine.ts`
-- Added configurable `LOCK_MODE_THRESHOLDS` object at top of file
-- Relaxed thresholds for testing:
-  - Minutes: 14+ → 10+
-  - Fatigue UNDER: 65+ → 45+
-  - Confidence: 72% → 65%
-  - Fouls: 3 → 4
-- Added debug logging to Gate 1, Gate 4, and slot matching
-- Expanded slot matching to include SECONDARY players with 4+ rebounds for BIG_REB_OVER
-- Added FLEX slot for high-edge rebound overs
+| Gate/Function | Has Logging | Status |
+|---------------|-------------|--------|
+| Gate 1 (Minutes & Rotation) | Yes | Lines 62-70 |
+| Gate 2 (Stat Type) | **No** | Missing |
+| Gate 3 (Edge vs Uncertainty) | **No** | Missing |
+| Gate 4 (Under Rules) | Yes | Lines 142-149 |
+| Confidence Filter | Yes | Lines 171-175 |
+| Slot Matching | Yes | Lines 194-200 |
+| Per-Edge Summary | **No** | Missing |
+| Final Slip Summary | **No** | Missing |
 
-### 4. `supabase/functions/record-quarter-snapshot/index.ts`
-- Added `inferPlayerRole()` function
-- Added `determineRotationRole()` function
-- Added support for `homeRoster` and `awayRoster` in request
-- Now properly infers and records `player_role` and `rotation_role` in snapshots
+---
 
-## Data Flow After Fix
+### Implementation Changes
 
-```
-PBP Data (minutes, fouls, subs)
-        │
-        ▼
-┌─────────────────────────────────────┐
-│  scout-agent-loop / data-projection │
-│                                     │
-│  1. Parse substitution events       │
-│  2. Calculate minutes per player    │
-│  3. Call updateRotationState()      │
-│  4. Infer player role from position │
-│  5. Generate PropEdge with:         │
-│     - rotationRole: STARTER/CLOSER  │
-│     - minutesPlayed: from PBP       │
-│     - player.role: BIG/PRIMARY      │
-└─────────────────────────────────────┘
-        │
-        ▼
-┌─────────────────────────────────────┐
-│       Lock Mode Engine              │
-│                                     │
-│  Gate 1: rotationRole=STARTER ✓     │
-│          minutesPlayed >= 10 ✓      │
-│  Gate 4: fatigueScore >= 45 ✓       │
-│  Slot:   role=BIG → BIG_REB_OVER    │
-│                                     │
-│  → Generates valid 3-leg slip       │
-└─────────────────────────────────────┘
+#### 1. Add Gate 2 (Stat Type) Logging
+
+```typescript
+function passesStatTypeGate(prop: PropType): LockModeGate {
+  const tier = getStatTier(prop);
+  
+  // NEW: Debug logging
+  console.log(`[Lock Mode] Gate 2 Stat Type: ${prop} → ${tier || 'BLOCKED'}`);
+  
+  return {
+    passed: tier !== null,
+    reason: tier === null ? `${prop} not allowed in Lock Mode` : undefined,
+  };
+}
 ```
 
-## Testing
+#### 2. Add Gate 3 (Edge vs Uncertainty) Logging
 
-Debug logging has been added to track:
-- Gate 1 pass/fail with specific reasons
-- Gate 4 UNDER pass/fail with fatigue values
-- Slot matching decisions
+```typescript
+function passesEdgeUncertaintyGate(edge: PropEdge): LockModeGate {
+  const projectedEdge = Math.abs((edge.expectedFinal || 0) - edge.line);
+  const uncertainty = edge.uncertainty || 1;
+  const threshold = uncertainty * LOCK_MODE_THRESHOLDS.EDGE_UNCERTAINTY_MULTIPLIER;
+  const passed = projectedEdge >= threshold && projectedEdge > LOCK_MODE_THRESHOLDS.MIN_ABSOLUTE_EDGE;
 
-Check console logs for `[Lock Mode] Gate 1`, `[Lock Mode] Gate 4`, and `[Lock Mode] Slot matching` entries.
+  // NEW: Debug logging
+  console.log(`[Lock Mode] Gate 3 Edge ${edge.player} ${edge.prop}:`, {
+    expectedFinal: edge.expectedFinal,
+    line: edge.line,
+    projectedEdge: projectedEdge.toFixed(2),
+    uncertainty: uncertainty.toFixed(2),
+    threshold: threshold.toFixed(2),
+    minAbsoluteEdge: LOCK_MODE_THRESHOLDS.MIN_ABSOLUTE_EDGE,
+    passed,
+  });
+
+  return {
+    passed,
+    reason: !passed
+      ? `Edge ${projectedEdge.toFixed(1)} < ${threshold.toFixed(1)} (unc × ${LOCK_MODE_THRESHOLDS.EDGE_UNCERTAINTY_MULTIPLIER})`
+      : undefined,
+  };
+}
+```
+
+#### 3. Add Per-Edge Consolidated Summary
+
+In `buildLockModeSlip`, add a summary log after running all gates:
+
+```typescript
+// After running all gates
+const allGatesPass = minutesGate.passed && statTypeGate.passed && 
+                     edgeUncertaintyGate.passed && underGate.passed && 
+                     passesConfidenceGate(edge);
+
+// NEW: Consolidated per-edge summary
+console.log(`[Lock Mode] === ${edge.player} ${edge.prop} ${edge.lean} ===`, {
+  gates: {
+    minutes: minutesGate.passed ? '✓' : `✗ ${minutesGate.reason}`,
+    statType: statTypeGate.passed ? '✓' : `✗ ${statTypeGate.reason}`,
+    edgeUncertainty: edgeUncertaintyGate.passed ? '✓' : `✗ ${edgeUncertaintyGate.reason}`,
+    underRules: edge.lean === 'UNDER' ? (underGate.passed ? '✓' : `✗ ${underGate.reason}`) : 'N/A',
+    confidence: passesConfidenceGate(edge) ? '✓' : '✗ Low confidence',
+  },
+  allGatesPass,
+  slot: allGatesPass ? getSlotType(edge, playerState) || 'NO_SLOT' : 'BLOCKED',
+});
+```
+
+#### 4. Add Slot Matching Failure Logging
+
+When slot matching returns null, log why:
+
+```typescript
+const slot = getSlotType(edge, playerState);
+if (!slot) {
+  // NEW: Log why slot matching failed
+  console.log(`[Lock Mode] Slot FAILED ${edge.player} ${edge.prop} ${edge.lean}:`, {
+    role: playerState?.role,
+    currentStat: edge.currentStat,
+    minutesPlayed: edge.minutesPlayed,
+    edgeMargin: edge.edgeMargin,
+    fatigue: playerState?.fatigueScore,
+    reason: 'No matching slot criteria met',
+  });
+  continue;
+}
+```
+
+#### 5. Add Final Slip Summary
+
+At the end of `buildLockModeSlip`, log the final result:
+
+```typescript
+// After filling slots
+console.log(`[Lock Mode] ========== SLIP SUMMARY ==========`);
+console.log(`[Lock Mode] Total edges evaluated: ${edges.length}`);
+console.log(`[Lock Mode] Candidates that passed all gates: ${candidates.length}`);
+console.log(`[Lock Mode] Slots filled:`, {
+  BIG_REB_OVER: slots.BIG_REB_OVER?.player || 'EMPTY',
+  ASSIST_OVER: slots.ASSIST_OVER?.player || 'EMPTY',
+  FLEX: slots.FLEX?.player || 'EMPTY',
+});
+console.log(`[Lock Mode] Valid slip: ${filledLegs.length === 3 ? 'YES' : 'NO'}`);
+if (missingSlots.length > 0) {
+  console.log(`[Lock Mode] Missing slots: ${missingSlots.join(', ')}`);
+}
+console.log(`[Lock Mode] ====================================`);
+```
+
+---
+
+### Files to Modify
+
+| File | Changes |
+|------|---------|
+| `src/lib/lockModeEngine.ts` | Add logging to Gate 2, Gate 3, per-edge summary, slot failure, and final summary |
+
+---
+
+### Expected Console Output
+
+After these changes, the console will show:
+
+```
+[Lock Mode] Gate 1 Pascal Siakam Points: {role: "STARTER", isStarterOrCloser: true, ...}
+[Lock Mode] Gate 2 Stat Type: Points → TIER_3
+[Lock Mode] Gate 3 Edge Pascal Siakam Points: {expectedFinal: 22.5, line: 18.5, projectedEdge: "4.00", ...}
+[Lock Mode] Confidence check Pascal Siakam Points: {confidence: 72, minRequired: 55, passed: true}
+[Lock Mode] === Pascal Siakam Points OVER === {
+  gates: {minutes: "✓", statType: "✓", edgeUncertainty: "✓", underRules: "N/A", confidence: "✓"},
+  allGatesPass: true,
+  slot: "FLEX"
+}
+...
+[Lock Mode] ========== SLIP SUMMARY ==========
+[Lock Mode] Total edges evaluated: 42
+[Lock Mode] Candidates that passed all gates: 8
+[Lock Mode] Slots filled: {BIG_REB_OVER: "Onyeka Okongwu", ASSIST_OVER: "Dyson Daniels", FLEX: "Pascal Siakam"}
+[Lock Mode] Valid slip: YES
+[Lock Mode] ====================================
+```
+
+---
+
+### Benefits
+
+1. **Complete Visibility**: Every gate decision is logged with reasoning
+2. **Easy Diagnosis**: Consolidated summary shows all gates at once per edge
+3. **Slot Tracking**: Clear indication of which slots are filled/empty
+4. **Threshold Awareness**: Logs include the threshold values being compared against
+5. **Quick Filtering**: Use browser console filter `[Lock Mode]` to see only relevant logs
+
