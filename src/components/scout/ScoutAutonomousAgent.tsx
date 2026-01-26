@@ -927,6 +927,7 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
             playerStates={state.playerStates}
             gameTime={state.currentGameTime || ''}
             isHalftime={state.halftimeLock.isLocked}
+            eventId={gameContext.eventId}
           />
         </TabsContent>
         
