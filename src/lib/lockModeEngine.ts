@@ -17,23 +17,23 @@ import type {
 } from '@/types/scout-agent';
 
 // ===== CONFIGURABLE THRESHOLDS =====
-// Relaxed for initial testing - can be tightened once data pipeline is validated
+// Relaxed for testing - tighten once data pipeline is validated
 
 const LOCK_MODE_THRESHOLDS = {
   // Gate 1: Minutes & Rotation
-  MIN_FIRST_HALF_MINUTES: 10,      // Was 14, relaxed for testing
+  MIN_FIRST_HALF_MINUTES: 8,       // Lowered to 8 - starters usually have 10-15 at halftime
   MAX_FOULS_ALLOWED: 4,            // Was 3, relaxed for testing
   
   // Gate 3: Edge vs Uncertainty
-  EDGE_UNCERTAINTY_MULTIPLIER: 1.25,
-  MIN_ABSOLUTE_EDGE: 0.5,
+  EDGE_UNCERTAINTY_MULTIPLIER: 1.0, // Lowered from 1.25 - more permissive
+  MIN_ABSOLUTE_EDGE: 0.3,          // Lowered from 0.5
   
   // Gate 4: Stricter Under Rules
-  MIN_FATIGUE_FOR_UNDER: 45,       // Was 65, relaxed for testing
-  MAX_VARIANCE_RATIO: 0.35,        // Was 0.30, relaxed for testing
+  MIN_FATIGUE_FOR_UNDER: 40,       // Lowered to 40 - vision rarely hits 65+
+  MAX_VARIANCE_RATIO: 0.40,        // Was 0.30, relaxed for testing
   
   // Confidence Filter
-  MIN_CONFIDENCE: 65,              // Was 72, relaxed for testing
+  MIN_CONFIDENCE: 55,              // Lowered to 55 for testing
 };
 
 // ===== GATE 1: MINUTES & ROTATION =====
@@ -42,13 +42,18 @@ function passesMinutesGate(
   edge: PropEdge,
   playerState: PlayerLiveState | undefined
 ): LockModeGate {
+  // Accept rotation roles from edge OR infer from minutes played
   const role = edge.rotationRole?.toUpperCase();
-  const isStarterOrCloser = role === 'STARTER' || role === 'CLOSER';
+  const minutesPlayed = edge.minutesPlayed || playerState?.minutesEstimate || 0;
+  
+  // RELAXED: If no rotation role, infer from minutes played
+  // Players with 10+ minutes at halftime are treated as starters
+  const isStarterOrCloser = role === 'STARTER' || role === 'CLOSER' || 
+                            role === 'BENCH_CORE' || 
+                            minutesPlayed >= 10; // High-minute fallback
+  
   const hasStableMinutes = !edge.rotationVolatilityFlag;
   const noFoulTrouble = (playerState?.foulCount || 0) <= LOCK_MODE_THRESHOLDS.MAX_FOULS_ALLOWED;
-  
-  // Check first-half minutes played (from minutesPlayed in edge or boxScore)
-  const minutesPlayed = edge.minutesPlayed || playerState?.minutesEstimate || 0;
   const minFirstHalfMinutes = minutesPlayed >= LOCK_MODE_THRESHOLDS.MIN_FIRST_HALF_MINUTES;
 
   const passed = isStarterOrCloser && hasStableMinutes && noFoulTrouble && minFirstHalfMinutes;
@@ -68,7 +73,7 @@ function passesMinutesGate(
     passed,
     reason: !passed
       ? !isStarterOrCloser
-        ? `Not STARTER/CLOSER (role: ${role || 'undefined'})`
+        ? `Not STARTER/CLOSER/HIGH-MIN (role: ${role || 'undefined'}, min: ${minutesPlayed.toFixed(0)})`
         : !hasStableMinutes
         ? 'Minutes volatile'
         : !noFoulTrouble
@@ -161,11 +166,18 @@ function passesUnderGate(
 
 function passesConfidenceGate(edge: PropEdge): boolean {
   const confidence = edge.calibratedProb ? edge.calibratedProb * 100 : edge.confidence;
+  
+  // Debug logging
+  console.log(`[Lock Mode] Confidence check ${edge.player} ${edge.prop}:`, {
+    confidence,
+    minRequired: LOCK_MODE_THRESHOLDS.MIN_CONFIDENCE,
+    passed: confidence >= LOCK_MODE_THRESHOLDS.MIN_CONFIDENCE,
+  });
+  
   if (confidence < LOCK_MODE_THRESHOLDS.MIN_CONFIDENCE) return false;
   
-  // Block if variance flags present
+  // Block if variance flags present (but relaxed - don't block EARLY_PROJECTION)
   if (edge.riskFlags?.includes('HIGH_VARIANCE')) return false;
-  if (edge.riskFlags?.includes('EARLY_PROJECTION')) return false;
   
   return true;
 }
@@ -176,43 +188,61 @@ function getSlotType(edge: PropEdge, playerState: PlayerLiveState | undefined): 
   const role = playerState?.role || 'SECONDARY';
   const prop = edge.prop;
   const lean = edge.lean;
+  const minutesPlayed = edge.minutesPlayed || 0;
 
   // Debug logging for slot matching
   console.log(`[Lock Mode] Slot matching ${edge.player} ${prop} ${lean}:`, {
     role,
     fatigue: playerState?.fatigueScore,
+    minutes: minutesPlayed,
+    currentStat: edge.currentStat,
+    edgeMargin: edge.edgeMargin,
   });
 
-  // Slot 1: BIG/WING Rebound OVER - expanded to include SECONDARY players with high rebounds
+  // Slot 1: BIG/WING Rebound OVER - expanded for any player with good rebounding
   if (prop === 'Rebounds' && lean === 'OVER') {
     if (role === 'BIG' || role === 'PRIMARY') {
       return 'BIG_REB_OVER';
     }
-    // Also allow SECONDARY players who are rebounding well
-    if (role === 'SECONDARY' && (edge.currentStat || 0) >= 4) {
+    // Allow any player with 3+ rebounds at halftime
+    if ((edge.currentStat || 0) >= 3) {
+      return 'BIG_REB_OVER';
+    }
+    // High-minute players with good edge
+    if (minutesPlayed >= 10 && (edge.edgeMargin || 0) >= 1.5) {
       return 'BIG_REB_OVER';
     }
   }
 
-  // Slot 2: Assist OVER
+  // Slot 2: Assist OVER - expanded for any high-minute playmaker
   if (prop === 'Assists' && lean === 'OVER') {
     if (role === 'PRIMARY' || role === 'SECONDARY') {
       return 'ASSIST_OVER';
     }
+    // Any player with 2+ assists at halftime
+    if ((edge.currentStat || 0) >= 2) {
+      return 'ASSIST_OVER';
+    }
   }
 
-  // Slot 3: FLEX (Points OVER for stars, PRA for bigs, fatigue UNDER, high-confidence any)
-  if (prop === 'Points' && lean === 'OVER' && (role === 'PRIMARY' || role === 'SECONDARY')) {
+  // Slot 3: FLEX - very flexible for testing
+  // Points OVER for any high-minute player
+  if (prop === 'Points' && lean === 'OVER' && minutesPlayed >= 8) {
     return 'FLEX';
   }
-  if (prop === 'PRA' && lean === 'OVER' && (role === 'BIG' || role === 'PRIMARY')) {
+  if (prop === 'PRA' && lean === 'OVER') {
     return 'FLEX';
   }
+  // Any UNDER with fatigue
   if (lean === 'UNDER' && (playerState?.fatigueScore || 0) >= LOCK_MODE_THRESHOLDS.MIN_FATIGUE_FOR_UNDER) {
     return 'FLEX';
   }
   // High-edge rebounds can also be FLEX
-  if (prop === 'Rebounds' && lean === 'OVER' && (edge.edgeMargin || 0) >= 3) {
+  if (prop === 'Rebounds' && lean === 'OVER' && (edge.edgeMargin || 0) >= 2) {
+    return 'FLEX';
+  }
+  // High-edge assists can also be FLEX
+  if (prop === 'Assists' && lean === 'OVER' && (edge.edgeMargin || 0) >= 1.5) {
     return 'FLEX';
   }
 
