@@ -765,3 +765,28 @@ export interface LockModeSlip {
   blockReason?: string;
   missingSlots?: LockModeLegSlot[];
 }
+
+// ===== LIVE LINE SCANNER TYPES =====
+
+export type LineTimingStatus = 'BET_NOW' | 'WAIT' | 'AVOID' | 'LOADING';
+
+export interface LineStatus {
+  player: string;
+  prop: PropType;
+  originalLine: number;      // From projection/slip
+  liveBookLine: number;      // Current live book line
+  lineMovement: number;      // liveLine - originalLine
+  lineFitScore: number;      // 0-100
+  status: LineTimingStatus;
+  statusReason: string;      // Human-readable explanation
+  lastUpdated: Date;
+  isTrap: boolean;
+  overPrice?: number;
+  underPrice?: number;
+  bookmaker?: string;
+}
+
+export interface LineFitResult {
+  score: number;
+  status: LineTimingStatus;
+}
