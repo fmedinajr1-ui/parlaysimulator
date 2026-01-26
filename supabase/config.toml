@@ -350,3 +350,6 @@ verify_jwt = false
 
 [functions.run-lock-mode-backtest]
 verify_jwt = false
+
+[functions.record-quarter-snapshot]
+verify_jwt = false

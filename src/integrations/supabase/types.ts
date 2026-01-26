@@ -7484,6 +7484,99 @@ export type Database = {
         }
         Relationships: []
       }
+      quarter_player_snapshots: {
+        Row: {
+          assists: number | null
+          captured_at: string
+          created_at: string
+          effort_score: number | null
+          espn_event_id: string | null
+          event_id: string
+          fatigue_score: number | null
+          foul_risk_level: string | null
+          fouls: number | null
+          hands_on_knees_count: number | null
+          id: number
+          minutes_played: number | null
+          on_court_stability: number | null
+          player_name: string
+          player_role: string | null
+          points: number | null
+          quarter: number
+          rebound_position_score: number | null
+          rebounds: number | null
+          risk_flags: string[] | null
+          rotation_role: string | null
+          slow_recovery_count: number | null
+          speed_index: number | null
+          sprint_count: number | null
+          team: string | null
+          threes: number | null
+          turnovers: number | null
+          visual_flags: Json | null
+        }
+        Insert: {
+          assists?: number | null
+          captured_at?: string
+          created_at?: string
+          effort_score?: number | null
+          espn_event_id?: string | null
+          event_id: string
+          fatigue_score?: number | null
+          foul_risk_level?: string | null
+          fouls?: number | null
+          hands_on_knees_count?: number | null
+          id?: number
+          minutes_played?: number | null
+          on_court_stability?: number | null
+          player_name: string
+          player_role?: string | null
+          points?: number | null
+          quarter: number
+          rebound_position_score?: number | null
+          rebounds?: number | null
+          risk_flags?: string[] | null
+          rotation_role?: string | null
+          slow_recovery_count?: number | null
+          speed_index?: number | null
+          sprint_count?: number | null
+          team?: string | null
+          threes?: number | null
+          turnovers?: number | null
+          visual_flags?: Json | null
+        }
+        Update: {
+          assists?: number | null
+          captured_at?: string
+          created_at?: string
+          effort_score?: number | null
+          espn_event_id?: string | null
+          event_id?: string
+          fatigue_score?: number | null
+          foul_risk_level?: string | null
+          fouls?: number | null
+          hands_on_knees_count?: number | null
+          id?: number
+          minutes_played?: number | null
+          on_court_stability?: number | null
+          player_name?: string
+          player_role?: string | null
+          points?: number | null
+          quarter?: number
+          rebound_position_score?: number | null
+          rebounds?: number | null
+          risk_flags?: string[] | null
+          rotation_role?: string | null
+          slow_recovery_count?: number | null
+          speed_index?: number | null
+          sprint_count?: number | null
+          team?: string | null
+          threes?: number | null
+          turnovers?: number | null
+          visual_flags?: Json | null
+        }
+        Relationships: []
+      }
       scan_usage: {
         Row: {
           created_at: string | null

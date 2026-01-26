@@ -259,13 +259,14 @@ serve(async (req) => {
     const clockSeconds = parseInt(clockParts[1]) || 0;
     const totalClockSeconds = clockMinutes * 60 + clockSeconds;
     
-    // Detect Q2 ending (period=2, clock near 0)
+    // Detect quarter endings (clock <= 30 seconds remaining)
+    const isQ1Ending = period === 1 && totalClockSeconds <= 30;
     const isQ2Ending = period === 2 && totalClockSeconds <= 30;
+    const isQ3Ending = period === 3 && totalClockSeconds <= 30;
+    const isQ4Ending = period === 4 && totalClockSeconds <= 30;
     
-    // Detect Q3 just started (first 30 seconds of Q3)
+    // Detect quarter starts (first 30 seconds of quarter = clock >= 11:30)
     const isQ3Starting = period === 3 && totalClockSeconds >= 690; // 11:30 or more remaining
-    
-    // Detect Q4 just started (first 30 seconds of Q4)
     const isQ4Starting = period === 4 && totalClockSeconds >= 690;
     const isGameOver = status?.type?.completed === true;
     
@@ -382,8 +383,12 @@ serve(async (req) => {
       recentPlays,
       isHalftime,
       isGameOver,
-      // Period transition flags for auto-suggest
+      // Period transition flags for quarter snapshots
+      isQ1Ending,
       isQ2Ending,
+      isQ3Ending,
+      isQ4Ending,
+      // Period start flags for auto-suggest
       isQ3Starting,
       isQ4Starting,
     };

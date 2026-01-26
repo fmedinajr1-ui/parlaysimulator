@@ -11,7 +11,8 @@ import {
   HalftimeLockedProp,
   VisionSignal,
   TeamLiveState,
-  GameBetEdge
+  GameBetEdge,
+  QuarterSnapshotStatus
 } from '@/types/scout-agent';
 import { GameContext } from '@/pages/Scout';
 import { useToast } from '@/hooks/use-toast';
@@ -79,6 +80,15 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
   // PBP freshness tracking
   const [lastPbpUpdate, setLastPbpUpdate] = useState<Date | null>(null);
   const [lastPbpGameTime, setLastPbpGameTime] = useState<string | null>(null);
+  
+  // Quarter snapshot tracking
+  const [quarterSnapshots, setQuarterSnapshots] = useState<QuarterSnapshotStatus[]>([
+    { quarter: 1, recorded: false, playersRecorded: 0 },
+    { quarter: 2, recorded: false, playersRecorded: 0 },
+    { quarter: 3, recorded: false, playersRecorded: 0 },
+    { quarter: 4, recorded: false, playersRecorded: 0 },
+  ]);
+  const quarterSnapshotTriggered = useRef<Set<number>>(new Set());
   
   // Session persistence
   const [sessionRestored, setSessionRestored] = useState(false);
@@ -403,7 +413,75 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
   // Track last period for auto-suggest triggers
   const lastPeriodRef = useRef(1);
 
+  // Record quarter snapshot to database
+  const recordQuarterSnapshot = useCallback(async (
+    quarter: number,
+    playerStates: Map<string, PlayerLiveState>,
+    pbpData: LivePBPData
+  ) => {
+    if (!state.gameContext?.eventId) return;
+    
+    // Prevent duplicate triggers for same quarter
+    if (quarterSnapshotTriggered.current.has(quarter)) {
+      console.log(`[Quarter Snapshot] Q${quarter} already triggered, skipping`);
+      return;
+    }
+    quarterSnapshotTriggered.current.add(quarter);
+    
+    console.log(`[Quarter Snapshot] Recording Q${quarter} snapshot...`);
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('record-quarter-snapshot', {
+        body: {
+          eventId: state.gameContext.eventId,
+          espnEventId: (state.gameContext as any).espnEventId,
+          quarter,
+          gameTime: pbpData.gameTime,
+          playerStates: Object.fromEntries(playerStates),
+          pbpPlayers: pbpData.players,
+        },
+      });
+      
+      if (error) {
+        console.error(`[Quarter Snapshot] Q${quarter} recording failed:`, error);
+        quarterSnapshotTriggered.current.delete(quarter); // Allow retry
+        return;
+      }
+      
+      // Update snapshot status
+      setQuarterSnapshots(prev => prev.map(s => 
+        s.quarter === quarter 
+          ? { ...s, recorded: true, playersRecorded: data.playersRecorded, capturedAt: data.capturedAt }
+          : s
+      ));
+      
+      toast({
+        title: `📊 Q${quarter} Snapshot Recorded`,
+        description: `${data.playersRecorded} players captured at ${pbpData.gameTime}`,
+      });
+      
+      console.log(`[Quarter Snapshot] Q${quarter} recorded: ${data.playersRecorded} players`);
+    } catch (err) {
+      console.error(`[Quarter Snapshot] Q${quarter} exception:`, err);
+      quarterSnapshotTriggered.current.delete(quarter); // Allow retry
+    }
+  }, [state.gameContext, toast]);
+
   const updatePBPData = useCallback((data: LivePBPData) => {
+    // Check for quarter endings and trigger snapshots BEFORE state update
+    if (data.isQ1Ending) {
+      recordQuarterSnapshot(1, state.playerStates, data);
+    }
+    if (data.isQ2Ending || data.isHalftime) {
+      recordQuarterSnapshot(2, state.playerStates, data);
+    }
+    if (data.isQ3Ending) {
+      recordQuarterSnapshot(3, state.playerStates, data);
+    }
+    if (data.isQ4Ending || data.isGameOver) {
+      recordQuarterSnapshot(4, state.playerStates, data);
+    }
+    
     setState(prev => {
       // Update player states with PBP stats
       const updatedStates = new Map(prev.playerStates);
@@ -462,7 +540,7 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
         halftimeLock,
       };
     });
-  }, []);
+  }, [state.playerStates, recordQuarterSnapshot]);
   
   // Inline halftime lock generator (to avoid forward reference issues)
   const generateInlineHalftimeLock = (
@@ -914,5 +992,7 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
     lastPbpUpdate,
     lastPbpGameTime,
     refreshPBPData,
+    // V7: Quarter Snapshots
+    quarterSnapshots,
   };
 }
