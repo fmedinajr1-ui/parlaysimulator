@@ -184,7 +184,7 @@ function generateMatchupForTeam(sport: Sport, playerTeam: string): string {
 }
 
 function generateMockPick(existingIds: Set<string>): WhalePick {
-  const sport = randomChoice<Sport>(['NBA', 'WNBA', 'MLB', 'NHL', 'TENNIS']);
+  const sport = randomChoice<Sport>(['NBA', 'WNBA', 'NHL', 'TENNIS']);
   
   // Pick a player with their team
   const playerData = randomChoice(PLAYERS_WITH_TEAMS[sport]);
