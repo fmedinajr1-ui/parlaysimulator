@@ -33,6 +33,10 @@ export interface SweetSpotPick {
   actualLine?: number | null;
   matchupAdjustment?: number | null;
   paceAdjustment?: number | null;
+  // v7.0: Reliability tier fields
+  reliabilityTier?: string | null;
+  reliabilityHitRate?: number | null;
+  reliabilityModifier?: number | null;
 }
 
 // v3.0: ARCHETYPE-PROP ALIGNMENT VALIDATION
@@ -1440,6 +1444,24 @@ export function useSweetSpotParlayBuilder() {
         }
       });
 
+      // v7.0: Fetch player reliability scores for tier badges
+      const { data: reliabilityScores } = await supabase
+        .from('player_reliability_scores')
+        .select('player_name, prop_type, reliability_tier, hit_rate, confidence_modifier, should_block');
+
+      const reliabilityMap = new Map<string, { tier: string; hitRate: number; modifier: number; shouldBlock: boolean }>();
+      (reliabilityScores || []).forEach(r => {
+        const key = `${r.player_name?.toLowerCase()}_${r.prop_type?.toLowerCase()}`;
+        reliabilityMap.set(key, {
+          tier: r.reliability_tier || 'unknown',
+          hitRate: r.hit_rate || 0,
+          modifier: r.confidence_modifier || 0,
+          shouldBlock: r.should_block || false
+        });
+      });
+      console.log(`🎖️ Reliability scores loaded: ${reliabilityMap.size} players`);
+
+
       // Calculate date range (today or yesterday in case of late analysis)
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
@@ -1599,6 +1621,10 @@ export function useSweetSpotParlayBuilder() {
           seenPlayers.add(playerKey);
           const injuryStatus = questionablePlayers.get(playerKey) || null;
           
+          // v7.0: Get reliability data for this player/prop
+          const reliabilityKey = `${playerKey}_${pick.prop_type?.toLowerCase()}`;
+          const reliability = reliabilityMap.get(reliabilityKey);
+          
           allPicks.push({
             id: pick.id,
             player_name: pick.player_name || '',
@@ -1618,6 +1644,10 @@ export function useSweetSpotParlayBuilder() {
             actualLine: pick.actual_line,
             matchupAdjustment: pick.matchup_adjustment,
             paceAdjustment: pick.pace_adjustment,
+            // v7.0: Reliability tier fields
+            reliabilityTier: reliability?.tier || null,
+            reliabilityHitRate: reliability?.hitRate || null,
+            reliabilityModifier: reliability?.modifier || null,
           });
         }
       });
@@ -1628,6 +1658,10 @@ export function useSweetSpotParlayBuilder() {
         if (playerKey && !seenPlayers.has(playerKey)) {
           seenPlayers.add(playerKey);
           const injuryStatus = questionablePlayers.get(playerKey) || null;
+          
+          // v7.0: Get reliability data for this player/prop
+          const reliabilityKey = `${playerKey}_${pick.prop_type?.toLowerCase()}`;
+          const reliability = reliabilityMap.get(reliabilityKey);
           
           allPicks.push({
             id: pick.id,
@@ -1643,6 +1677,10 @@ export function useSweetSpotParlayBuilder() {
             event_id: pick.event_id,
             game_date: pick.game_date,
             injuryStatus,
+            // v7.0: Reliability tier fields
+            reliabilityTier: reliability?.tier || null,
+            reliabilityHitRate: reliability?.hitRate || null,
+            reliabilityModifier: reliability?.modifier || null,
           });
         }
       });

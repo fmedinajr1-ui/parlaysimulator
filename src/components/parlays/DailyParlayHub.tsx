@@ -9,6 +9,7 @@ import { useLineupCheck } from "@/hooks/useLineupCheck";
 import { UnifiedParlayCard } from "./UnifiedParlayCard";
 import { LineupCheckSheet } from "@/components/lineup/LineupCheckSheet";
 import { LineupRiskSummary } from "@/components/lineup/LineupStatusBadge";
+import { EliteThreesParlayCard } from "@/components/market/EliteThreesParlayCard";
 
 export function DailyParlayHub() {
   const { parlays, isLoading, parlayCount, today } = useDailyParlays();
@@ -98,6 +99,11 @@ export function DailyParlayHub() {
         </CardHeader>
       
         <CardContent className="p-3">
+          {/* Elite 3PT Parlay Card - Featured */}
+          <div className="mb-4">
+            <EliteThreesParlayCard />
+          </div>
+
           {/* Responsive grid: 1 col mobile, 2 col tablet, 3 col desktop */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {parlays.map(parlay => (

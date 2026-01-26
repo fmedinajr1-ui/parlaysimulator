@@ -7,6 +7,7 @@ import { useSweetSpotParlayBuilder } from "@/hooks/useSweetSpotParlayBuilder";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
+import { PlayerReliabilityBadge } from "@/components/props/PlayerReliabilityBadge";
 
 const getPropTypeColor = (propType: string): string => {
   const type = propType.toLowerCase();
@@ -256,6 +257,19 @@ export function SweetSpotDreamTeamParlay() {
                     <Badge variant="outline" className="text-[10px] px-1.5 py-0">
                       {leg.team}
                     </Badge>
+                    {/* v7.0: Reliability Tier Badge */}
+                    {leg.pick.reliabilityTier ? (
+                      <PlayerReliabilityBadge 
+                        tier={leg.pick.reliabilityTier}
+                        hitRate={leg.pick.reliabilityHitRate}
+                        modifier={leg.pick.reliabilityModifier}
+                        size="sm"
+                      />
+                    ) : (
+                      <Badge className="text-[10px] px-1.5 py-0 bg-blue-500/10 text-blue-400 border-blue-500/30">
+                        NEW
+                      </Badge>
+                    )}
                     {leg.pick.injuryStatus && (
                       <Badge className="text-[10px] px-1.5 py-0 bg-amber-500/20 text-amber-400 border-amber-500/30 gap-0.5">
                         <AlertTriangle className="h-2.5 w-2.5" />
