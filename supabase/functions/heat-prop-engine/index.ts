@@ -144,6 +144,16 @@ function isStarPlayer(playerName: string): boolean {
   // Stars are ELITE_REBOUNDER, PLAYMAKER, PURE_SHOOTER, or COMBO_GUARD with high stats
   return ['ELITE_REBOUNDER', 'PLAYMAKER', 'PURE_SHOOTER', 'COMBO_GUARD', 'SCORING_WING'].includes(archetype);
 }
+// Infer player role from category_sweet_spots category (for fallback)
+function inferRoleFromCategory(category: string): string {
+  const cat = category?.toUpperCase() || '';
+  if (cat.includes('STAR') || cat.includes('FLOOR')) return 'STAR';
+  if (cat.includes('ELITE')) return 'ELITE_REBOUNDER';
+  if (cat.includes('ROLE_PLAYER') || cat.includes('ROLE')) return 'ROLE_PLAYER';
+  if (cat.includes('ASSIST') || cat.includes('PLAYMAKER')) return 'PLAYMAKER';
+  if (cat.includes('BIG') || cat.includes('REB')) return 'BIG';
+  return 'SECONDARY_GUARD';
+}
 
 // Check if archetype-prop is aligned (inverse of blocked)
 function isArchetypeAligned(playerName: string, propType: string): boolean {
@@ -786,20 +796,64 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
     
     console.log(`[Heat Engine] Found ${picks?.length || 0} approved picks from Risk Engine`);
     
+    // FALLBACK: If Risk Engine has no data, use category_sweet_spots
+    let fallbackUsed = false;
+    let processablePicks = picks || [];
+    
     if (!picks || picks.length === 0) {
-      return { 
-        success: false, 
-        error: 'NO_RISK_ENGINE_DATA',
-        message: 'No approved picks from Risk Engine for today. Run nba-player-prop-risk-engine first.',
-        processed: 0
-      };
+      console.log('[Heat Engine] No Risk Engine picks, using category_sweet_spots as fallback');
+      
+      const { data: sweetSpotPicks, error: sweetSpotError } = await supabase
+        .from('category_sweet_spots')
+        .select('*')
+        .eq('analysis_date', today)
+        .gte('confidence_score', 0.70)
+        .not('actual_line', 'is', null)
+        .eq('is_active', true);
+      
+      if (sweetSpotError) {
+        console.error('[Heat Engine] Error fetching category_sweet_spots:', sweetSpotError);
+        return { success: false, error: sweetSpotError.message };
+      }
+      
+      if (!sweetSpotPicks || sweetSpotPicks.length === 0) {
+        return { 
+          success: false, 
+          error: 'NO_SOURCE_DATA',
+          message: 'No approved picks from Risk Engine and no category_sweet_spots available for today.',
+          processed: 0
+        };
+      }
+      
+      // Convert category_sweet_spots to Risk Engine-compatible format
+      processablePicks = sweetSpotPicks.map((p: any) => ({
+        player_name: p.player_name,
+        prop_type: p.prop_type,
+        line: p.actual_line,
+        current_line: p.actual_line,
+        side: p.recommended_side || 'over',
+        confidence_score: (p.confidence_score || 0.7) * 10,  // Scale 0.8 -> 8.0
+        game_date: today,
+        player_role: inferRoleFromCategory(p.category),
+        avg_minutes: null,
+        true_median: p.l10_avg,
+        rolling_median: p.l10_avg,
+        l10_hit_rate: p.l10_hit_rate,
+        category: p.category,
+        // These won't exist in category data, but needed for compatibility
+        mode: 'category_fallback',
+        rejection_reason: null
+      }));
+      
+      fallbackUsed = true;
+      console.log(`[Heat Engine] FALLBACK: Using ${processablePicks.length} picks from category_sweet_spots`);
     }
     
     // Process each pick and upsert to heat_prop_tracker
     const trackerUpserts: any[] = [];
     let skippedStale = 0;
     
-    for (const pick of picks) {
+    for (const pick of processablePicks) {
       // MATCHUP INTELLIGENCE: Skip blocked picks
       const blockKey = `${pick.player_name?.toLowerCase()}_${pick.prop_type?.toLowerCase()}_${(pick.side || 'over')?.toLowerCase()}_${pick.line}`;
       if (blockedSet.has(blockKey)) {
