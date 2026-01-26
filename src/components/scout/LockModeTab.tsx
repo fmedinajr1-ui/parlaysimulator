@@ -2,12 +2,14 @@ import React, { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Lock, Copy, AlertTriangle, ShieldCheck, CheckCircle2, Circle } from 'lucide-react';
+import { Lock, Copy, AlertTriangle, ShieldCheck, CheckCircle2, Circle, RefreshCw } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import type { PropEdge, PlayerLiveState, LockModeLegSlot, QuarterSnapshotStatus } from '@/types/scout-agent';
 import { buildLockModeSlip, getSlotDisplayName } from '@/lib/lockModeEngine';
 import { LockModeLegCard } from './LockModeLegCard';
+import { useLockModeLineScanner } from '@/hooks/useLockModeLineScanner';
+import { formatDistanceToNow } from 'date-fns';
 
 interface LockModeTabProps {
   edges: PropEdge[];
@@ -15,15 +17,36 @@ interface LockModeTabProps {
   gameTime: string;
   isHalftime: boolean;
   quarterSnapshots?: QuarterSnapshotStatus[];
+  eventId?: string;
 }
 
-export function LockModeTab({ edges, playerStates, gameTime, isHalftime, quarterSnapshots }: LockModeTabProps) {
+export function LockModeTab({ edges, playerStates, gameTime, isHalftime, quarterSnapshots, eventId }: LockModeTabProps) {
   const { toast } = useToast();
   
   const slip = useMemo(() => 
     buildLockModeSlip(edges, playerStates, gameTime),
     [edges, playerStates, gameTime]
   );
+
+  // Live Line Scanner - scans book lines every 30s when slip is valid
+  const {
+    lineStatuses,
+    isScanning,
+    lastScanTime,
+    allLegsOptimal,
+    someLegsWaiting,
+    scanNow,
+  } = useLockModeLineScanner(
+    slip.isValid ? slip.legs : [],
+    eventId || null,
+    'basketball_nba',
+    { enabled: slip.isValid && !!eventId }
+  );
+
+  // Helper to get line status for a leg
+  const getLineStatusForLeg = (leg: typeof slip.legs[0]) => {
+    return lineStatuses.get(`${leg.player}-${leg.prop}`);
+  };
 
   // Check if first-half data is verified (Q1 and Q2 snapshots recorded)
   const q1Recorded = quarterSnapshots?.find(s => s.quarter === 1)?.recorded || false;
@@ -36,7 +59,9 @@ export function LockModeTab({ edges, playerStates, gameTime, isHalftime, quarter
     const text = slip.legs.map((leg, i) => {
       const propAbbrev = leg.prop === 'Rebounds' ? 'REB' : leg.prop === 'Assists' ? 'AST' : leg.prop === 'Points' ? 'PTS' : leg.prop;
       const leanSymbol = leg.lean === 'OVER' ? 'O' : 'U';
-      return `${i + 1}. ${leg.player} ${propAbbrev} ${leanSymbol}${leg.line} (Proj: ${leg.projected.toFixed(1)} | Edge: +${leg.edge.toFixed(1)})`;
+      const lineStatus = getLineStatusForLeg(leg);
+      const liveLineStr = lineStatus ? ` [Live: ${lineStatus.liveBookLine}]` : '';
+      return `${i + 1}. ${leg.player} ${propAbbrev} ${leanSymbol}${leg.line}${liveLineStr} (Proj: ${leg.projected.toFixed(1)} | Edge: +${leg.edge.toFixed(1)})`;
     }).join('\n');
     
     navigator.clipboard.writeText(`🔒 LOCK MODE 3-LEG SLIP\n${gameTime}\n\n${text}`);
@@ -66,21 +91,66 @@ export function LockModeTab({ edges, playerStates, gameTime, isHalftime, quarter
               LOCK MODE — 3 LEG SLIP
             </CardTitle>
             {slip.isValid && (
-              <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/50">
-                <ShieldCheck className="w-3 h-3 mr-1" />
-                VALID
-              </Badge>
+              <div className="flex items-center gap-2">
+                {/* Live Line Status Badge */}
+                {lineStatuses.size > 0 && (
+                  <Badge 
+                    className={cn(
+                      "text-xs",
+                      allLegsOptimal && "bg-emerald-500/20 text-emerald-300 border-emerald-500/50",
+                      someLegsWaiting && !allLegsOptimal && "bg-amber-500/20 text-amber-300 border-amber-500/50",
+                      !allLegsOptimal && !someLegsWaiting && "bg-red-500/20 text-red-300 border-red-500/50"
+                    )}
+                  >
+                    {allLegsOptimal ? (
+                      <><CheckCircle2 className="w-3 h-3 mr-1" />ALL OPTIMAL</>
+                    ) : someLegsWaiting ? (
+                      <><RefreshCw className="w-3 h-3 mr-1" />WAITING</>
+                    ) : (
+                      'CHECK LINES'
+                    )}
+                  </Badge>
+                )}
+                <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/50">
+                  <ShieldCheck className="w-3 h-3 mr-1" />
+                  VALID
+                </Badge>
+              </div>
             )}
           </div>
           <p className="text-sm text-muted-foreground">
             Only highest-certainty halftime plays
           </p>
+          {/* Line Scanner Status */}
+          {slip.isValid && eventId && (
+            <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
+              <RefreshCw className={cn("w-3 h-3", isScanning && "animate-spin")} />
+              <span>Lines refresh every 30s</span>
+              {lastScanTime && (
+                <span>· {formatDistanceToNow(lastScanTime, { addSuffix: true })}</span>
+              )}
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="h-6 px-2 text-xs"
+                onClick={() => scanNow()}
+                disabled={isScanning}
+              >
+                Refresh Now
+              </Button>
+            </div>
+          )}
         </CardHeader>
         
         {slip.isValid ? (
           <CardContent className="space-y-3">
             {slip.legs.map((leg, index) => (
-              <LockModeLegCard key={`${leg.player}-${leg.prop}`} leg={leg} index={index} />
+              <LockModeLegCard 
+                key={`${leg.player}-${leg.prop}`} 
+                leg={leg} 
+                index={index} 
+                lineStatus={getLineStatusForLeg(leg)}
+              />
             ))}
             
             <Button 

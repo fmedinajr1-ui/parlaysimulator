@@ -462,3 +462,92 @@ export function getSlotDisplayName(slot: LockModeLegSlot): string {
       return 'Flex Pick';
   }
 }
+
+// ===== LIVE LINE SCANNER: Line Fit Scoring =====
+
+import type { LineFitResult, LineTimingStatus } from '@/types/scout-agent';
+
+/**
+ * Calculate how favorable the current book line is vs. our projection
+ * Returns a score (0-100) and timing status (BET_NOW / WAIT / AVOID)
+ */
+export function calculateLineFitScore(
+  projection: number,
+  liveBookLine: number,
+  lean: 'OVER' | 'UNDER',
+  originalLine: number
+): LineFitResult {
+  // Calculate edge vs. live line
+  const liveEdge = lean === 'OVER' 
+    ? projection - liveBookLine 
+    : liveBookLine - projection;
+  
+  // Calculate original edge
+  const originalEdge = lean === 'OVER'
+    ? projection - originalLine
+    : originalLine - projection;
+  
+  // Line moved in our favor? (positive = good)
+  const lineFavorability = liveEdge - originalEdge;
+  
+  // Scoring rules based on edge strength and line movement
+  if (liveEdge >= 2.5) {
+    // Strong edge with live line
+    if (lineFavorability >= 0.5) {
+      return { score: 95, status: 'BET_NOW' };  // Line moved in favor
+    }
+    return { score: 85, status: 'BET_NOW' };  // Good edge maintained
+  }
+  
+  if (liveEdge >= 1.5) {
+    // Moderate edge
+    if (lineFavorability < -1.0) {
+      return { score: 50, status: 'WAIT' };  // Line moved against us significantly
+    }
+    return { score: 75, status: 'BET_NOW' };
+  }
+  
+  if (liveEdge >= 0.5) {
+    // Thin edge - wait for better line
+    if (lineFavorability >= 0) {
+      return { score: 65, status: 'WAIT' };
+    }
+    return { score: 55, status: 'WAIT' };
+  }
+  
+  // Edge disappeared or reversed
+  return { score: 30, status: 'AVOID' };
+}
+
+/**
+ * Detect when a line looks too good (potential trap)
+ * Returns true if the line appears suspicious
+ */
+export function detectTrapLine(
+  projection: number,
+  liveBookLine: number,
+  lean: 'OVER' | 'UNDER',
+  lineMovementHistory: number[]
+): boolean {
+  const edge = lean === 'OVER' 
+    ? projection - liveBookLine 
+    : liveBookLine - projection;
+  
+  // If edge is HUGE (>5), the book likely knows something
+  if (edge > 5) {
+    console.log('[Lock Mode] TRAP WARNING: Edge too large:', edge.toFixed(2));
+    return true;
+  }
+  
+  // If line moved rapidly in one direction, be cautious
+  const recentMovement = lineMovementHistory.slice(-3);
+  if (recentMovement.length >= 3) {
+    const totalMovement = recentMovement.reduce((a, b) => a + b, 0);
+    if (Math.abs(totalMovement) > 3) {
+      console.log('[Lock Mode] TRAP WARNING: Rapid line movement:', totalMovement.toFixed(2));
+      return true;
+    }
+  }
+  
+  return false;
+}
