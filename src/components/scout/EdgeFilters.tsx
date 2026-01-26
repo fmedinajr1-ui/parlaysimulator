@@ -4,6 +4,7 @@ import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { Flame } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export type PropKind = 'Points' | 'Rebounds' | 'Assists' | 'PRA';
@@ -17,6 +18,8 @@ interface EdgeFiltersProps {
   onStartersOnlyChange: (startersOnly: boolean) => void;
   minConfidence: number;
   onMinConfidenceChange: (min: number) => void;
+  fatigueUndersOnly: boolean;
+  onFatigueUndersOnlyChange: (value: boolean) => void;
 }
 
 const PROP_OPTIONS: Array<PropKind | 'ALL'> = ['ALL', 'Points', 'Rebounds', 'Assists', 'PRA'];
@@ -37,6 +40,8 @@ export function EdgeFilters({
   onStartersOnlyChange,
   minConfidence,
   onMinConfidenceChange,
+  fatigueUndersOnly,
+  onFatigueUndersOnlyChange,
 }: EdgeFiltersProps) {
   return (
     <div className="space-y-3">
@@ -81,6 +86,19 @@ export function EdgeFilters({
           />
           <Label htmlFor="starters-only" className="text-sm cursor-pointer">
             Starters/Closers
+          </Label>
+        </div>
+
+        {/* Fatigue Unders Toggle */}
+        <div className="flex items-center gap-2">
+          <Switch
+            id="fatigue-unders"
+            checked={fatigueUndersOnly}
+            onCheckedChange={onFatigueUndersOnlyChange}
+          />
+          <Label htmlFor="fatigue-unders" className="text-sm cursor-pointer flex items-center gap-1">
+            <Flame className="w-3.5 h-3.5 text-destructive" />
+            Fatigue Unders
           </Label>
         </div>
 

@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { PropEdge, HalftimeLockedProp, TeamLiveState, GameBetEdge } from '@/types/scout-agent';
+import { PropEdge, HalftimeLockedProp, TeamLiveState, GameBetEdge, PlayerLiveState } from '@/types/scout-agent';
 import { EdgeFilters, PropKind } from './EdgeFilters';
 import { EdgeRowCompact } from './EdgeRowCompact';
 import { GameBetEdgeCard } from './GameBetEdgeCard';
@@ -26,6 +26,8 @@ interface HalftimeBettingPanelProps {
   isRefreshing?: boolean;
   lastPbpUpdate?: Date | null;
   lastPbpGameTime?: string | null;
+  // Player states for fatigue lookup
+  playerStates?: Map<string, PlayerLiveState>;
 }
 
 // Composite ranking algorithm for "bet usefulness"
@@ -52,6 +54,7 @@ export function HalftimeBettingPanel({
   isRefreshing = false,
   lastPbpUpdate,
   lastPbpGameTime,
+  playerStates,
 }: HalftimeBettingPanelProps) {
   const { toast } = useToast();
   
@@ -60,6 +63,26 @@ export function HalftimeBettingPanel({
   const [hideVolatile, setHideVolatile] = useState(true);
   const [startersOnly, setStartersOnly] = useState(false);
   const [minConfidence, setMinConfidence] = useState(65);
+  const [fatigueUndersOnly, setFatigueUndersOnly] = useState(false);
+
+  // Helper to get player fatigue from playerStates
+  const getPlayerFatigue = (playerName: string): number => {
+    if (!playerStates) return 0;
+    
+    // Try exact match first
+    const exactMatch = playerStates.get(playerName);
+    if (exactMatch) return exactMatch.fatigueScore;
+    
+    // Try last name match
+    const lastName = playerName.split(' ').pop()?.toLowerCase() || '';
+    for (const [key, player] of playerStates.entries()) {
+      if (key.toLowerCase().includes(lastName) || 
+          player.playerName.toLowerCase().includes(lastName)) {
+        return player.fatigueScore;
+      }
+    }
+    return 0;
+  };
 
   // Convert locked recommendations to PropEdge format for display
   const lockedEdges: PropEdge[] = useMemo(() => {
@@ -106,9 +129,15 @@ export function HalftimeBettingPanel({
         const role = e.rotationRole?.toUpperCase();
         return role === 'STARTER' || role === 'CLOSER';
       })
+      // Fatigue filter - show only edges where player fatigue >= 60
+      .filter(e => {
+        if (!fatigueUndersOnly) return true;
+        const fatigue = getPlayerFatigue(e.player);
+        return fatigue >= 60;
+      })
       .sort((a, b) => rankEdge(b) - rankEdge(a))
       .slice(0, 8);
-  }, [edges, propFilter, hideVolatile, startersOnly, minConfidence]);
+  }, [edges, propFilter, hideVolatile, startersOnly, minConfidence, fatigueUndersOnly, playerStates]);
 
   const handleCopyAll = () => {
     const bets = (mode === 'HALFTIME_LOCK' ? lockedEdges : rankedEdges)
@@ -253,6 +282,8 @@ export function HalftimeBettingPanel({
             onStartersOnlyChange={setStartersOnly}
             minConfidence={minConfidence}
             onMinConfidenceChange={setMinConfidence}
+            fatigueUndersOnly={fatigueUndersOnly}
+            onFatigueUndersOnlyChange={setFatigueUndersOnly}
           />
         )}
 
