@@ -259,15 +259,35 @@ serve(async (req) => {
     const clockSeconds = parseInt(clockParts[1]) || 0;
     const totalClockSeconds = clockMinutes * 60 + clockSeconds;
     
+    // PHASE 5 ENHANCEMENT: More robust quarter-end detection with logging
     // Detect quarter endings (clock <= 30 seconds remaining)
     const isQ1Ending = period === 1 && totalClockSeconds <= 30;
     const isQ2Ending = period === 2 && totalClockSeconds <= 30;
     const isQ3Ending = period === 3 && totalClockSeconds <= 30;
     const isQ4Ending = period === 4 && totalClockSeconds <= 30;
     
+    // Log when quarter boundaries are detected for debugging
+    if (isQ1Ending || isQ2Ending || isQ3Ending || isQ4Ending) {
+      console.log(`[PBP Fetch] ⏰ Quarter boundary detected: Q${period} ending at ${clock} (${totalClockSeconds}s remaining)`);
+    }
+    
+    // Also detect period = 0 which sometimes indicates game hasn't started
+    // or period changes that could indicate quarter transitions
+    if (isHalftime) {
+      console.log(`[PBP Fetch] 🏀 Halftime detected - Q2 snapshot should trigger`);
+    }
+    
     // Detect quarter starts (first 30 seconds of quarter = clock >= 11:30)
     const isQ3Starting = period === 3 && totalClockSeconds >= 690; // 11:30 or more remaining
     const isQ4Starting = period === 4 && totalClockSeconds >= 690;
+    
+    // Log period starts
+    if (isQ3Starting) {
+      console.log(`[PBP Fetch] 🏀 Q3 starting detected at ${clock}`);
+    }
+    if (isQ4Starting) {
+      console.log(`[PBP Fetch] 🏀 Q4 starting detected at ${clock}`);
+    }
     const isGameOver = status?.type?.completed === true;
     
     // Parse scores

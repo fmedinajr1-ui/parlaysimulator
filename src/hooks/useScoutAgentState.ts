@@ -744,15 +744,17 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
         });
       }
 
-      // Apply vision signals to player states
+      // PHASE 4 ENHANCEMENT: Apply vision signals to player states with improved counter population
       if (response.visionSignals && response.visionSignals.length > 0) {
-        console.log('[Scout Agent State] Applying vision signals:', response.visionSignals);
+        console.log('[Scout Agent State] Applying vision signals:', response.visionSignals.length, 'signals');
         response.visionSignals.forEach(signal => {
           const existing = updatedPlayerStates.get(signal.player);
           if (existing) {
             const updates: Partial<PlayerLiveState> = {
               lastUpdated: response.gameTime || prev.currentGameTime || 'Unknown',
             };
+            
+            const observation = signal.observation?.toLowerCase() || '';
 
             switch (signal.signalType) {
               case 'fatigue':
@@ -760,30 +762,74 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
                 updates.fatigueScore = newFatigue;
                 updates.fatigueSlope = calculateFatigueSlope(signal.player, newFatigue);
                 updates.visualFlags = [...existing.visualFlags.slice(-4), signal.observation];
-                if (signal.observation.toLowerCase().includes('hands on knees')) {
-                  updates.handsOnKneesCount = existing.handsOnKneesCount + 1;
+                
+                // PHASE 4: Populate handsOnKneesCount from observation
+                if (observation.includes('hands on knees') || observation.includes('bent over')) {
+                  updates.handsOnKneesCount = (existing.handsOnKneesCount || 0) + 1;
+                  console.log(`[Scout Agent State] 🦵 ${signal.player}: handsOnKneesCount++ (now ${updates.handsOnKneesCount})`);
+                }
+                
+                // PHASE 4: Populate slowRecoveryCount from high fatigue or slow indicators
+                if (observation.includes('slow') || observation.includes('labored') || signal.value >= 8) {
+                  updates.slowRecoveryCount = (existing.slowRecoveryCount || 0) + 1;
+                  console.log(`[Scout Agent State] 🐌 ${signal.player}: slowRecoveryCount++ (now ${updates.slowRecoveryCount})`);
                 }
                 break;
+                
               case 'speed':
                 updates.speedIndex = Math.max(0, Math.min(100, existing.speedIndex + signal.value));
+                
+                // PHASE 4: Sprint detection from speed signals
+                if (observation.includes('sprint') || observation.includes('fast') || observation.includes('burst')) {
+                  updates.sprintCount = (existing.sprintCount || 0) + 1;
+                  console.log(`[Scout Agent State] 🏃 ${signal.player}: sprintCount++ from speed signal (now ${updates.sprintCount})`);
+                }
                 break;
+                
               case 'effort':
                 updates.effortScore = Math.max(0, Math.min(100, existing.effortScore + signal.value));
-                if (signal.observation.toLowerCase().includes('sprint')) {
-                  updates.sprintCount = existing.sprintCount + 1;
+                
+                // PHASE 4: Enhanced sprint detection from effort signals
+                if (observation.includes('sprint') || observation.includes('racing') || observation.includes('explosive')) {
+                  updates.sprintCount = (existing.sprintCount || 0) + 1;
                   const newFatigue = Math.min(100, existing.fatigueScore + 4);
                   updates.fatigueScore = newFatigue;
                   updates.fatigueSlope = calculateFatigueSlope(signal.player, newFatigue);
+                  console.log(`[Scout Agent State] 🏃 ${signal.player}: sprintCount++ from effort (now ${updates.sprintCount})`);
+                }
+                
+                // PHASE 4: Active hustle should reduce fatigue perception
+                if (observation.includes('active') || observation.includes('hustl')) {
+                  updates.fatigueScore = Math.max(0, existing.fatigueScore - 2);
                 }
                 break;
+                
               case 'positioning':
                 updates.reboundPositionScore = Math.max(0, Math.min(100, existing.reboundPositionScore + signal.value));
+                
+                // PHASE 4: Box-out/crash detection
+                if (observation.includes('crash') || observation.includes('box')) {
+                  updates.sprintCount = (existing.sprintCount || 0) + 1;
+                  console.log(`[Scout Agent State] 🏀 ${signal.player}: sprintCount++ from positioning effort`);
+                }
                 break;
             }
 
             updatedPlayerStates.set(signal.player, { ...existing, ...updates });
+          } else {
+            // Log unmatched signals for debugging
+            console.log(`[Scout Agent State] ⚠️ Signal for unknown player: ${signal.player}`);
           }
         });
+        
+        // Log counter summary after processing
+        const counters = Array.from(updatedPlayerStates.values())
+          .filter(p => p.sprintCount > 0 || p.handsOnKneesCount > 0 || p.slowRecoveryCount > 0)
+          .map(p => `${p.playerName}: sprint=${p.sprintCount} knee=${p.handsOnKneesCount} slow=${p.slowRecoveryCount}`)
+          .slice(0, 5);
+        if (counters.length > 0) {
+          console.log(`[Scout Agent State] Counter summary: ${counters.join(', ')}`);
+        }
       }
 
       // Merge prop edges with confidence smoothing
