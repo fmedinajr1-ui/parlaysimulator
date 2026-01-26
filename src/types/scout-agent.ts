@@ -445,6 +445,7 @@ export interface ScoutAgentState {
   isRunning: boolean;
   isPaused: boolean;
   captureRate: number; // FPS (1-5)
+  lastBreakRefreshTime: number | null; // V8: Debounce break refreshes
   gameContext: {
     eventId: string;
     homeTeam: string;

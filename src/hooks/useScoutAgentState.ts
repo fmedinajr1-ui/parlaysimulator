@@ -40,6 +40,7 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
     isRunning: false,
     isPaused: false,
     captureRate: 2, // 2 FPS default
+    lastBreakRefreshTime: null, // V8: Commercial/timeout refresh debounce
     gameContext: gameContext ? {
       eventId: gameContext.eventId,
       homeTeam: gameContext.homeTeam,
@@ -881,6 +882,15 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
         }
       }
 
+      // V8: Detect break scenes and flag for refresh
+      const isBreakScene = ['commercial', 'timeout', 'dead_time'].includes(
+        response.sceneClassification?.sceneType || ''
+      );
+      const shouldTriggerBreakRefresh = isBreakScene && (
+        !prev.lastBreakRefreshTime || 
+        (Date.now() - prev.lastBreakRefreshTime > 10000) // 10s debounce
+      );
+
       return {
         ...prev,
         sceneHistory: newSceneHistory,
@@ -895,6 +905,8 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
         currentScore: response.score || prev.currentScore,
         lastAnalysisTime: new Date(),
         halftimeLock,
+        // V8: Mark for break refresh (handled externally via shouldRefresh response)
+        lastBreakRefreshTime: shouldTriggerBreakRefresh ? Date.now() : prev.lastBreakRefreshTime,
       };
     });
     
@@ -1003,6 +1015,26 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
     }
   }, [state.gameContext, updatePBPData]);
 
+  // V8: Commercial/timeout break refresh trigger
+  const triggerBreakRefresh = useCallback(async () => {
+    console.log('[Scout Agent] Break detected - triggering refresh cascade');
+    
+    // 1. Refresh PBP data immediately
+    const pbpResult = await refreshPBPData();
+    console.log('[Scout Agent] Break refresh: PBP', pbpResult.success ? '✓' : '✗');
+    
+    // 2. Force save session state
+    await saveSession();
+    console.log('[Scout Agent] Break refresh: Session saved');
+    
+    // 3. Update last break refresh time to debounce
+    setState(prev => ({
+      ...prev,
+      lastBreakRefreshTime: Date.now(),
+    }));
+    
+  }, [refreshPBPData, saveSession]);
+
   return {
     state,
     startAgent,
@@ -1040,5 +1072,7 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
     refreshPBPData,
     // V7: Quarter Snapshots
     quarterSnapshots,
+    // V8: Break Refresh
+    triggerBreakRefresh,
   };
 }

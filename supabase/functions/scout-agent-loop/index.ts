@@ -2214,11 +2214,18 @@ serve(async (req) => {
     // If scene is not analysis-worthy, return early (unless forceAnalysis is set)
     if (!sceneClassification.isAnalysisWorthy && !forceAnalysis) {
       console.log(`[Scout Agent] Skipping analysis: ${sceneClassification.reason}`);
+      
+      // V8: Signal frontend to trigger refresh during breaks
+      const isBreakScene = ['commercial', 'timeout', 'dead_time'].includes(sceneClassification.sceneType);
+      
       return new Response(
         JSON.stringify({
           sceneClassification,
           gameTime: sceneClassification.gameTime || currentGameTime,
           score: sceneClassification.score,
+          // V8: Break refresh signals
+          shouldRefresh: isBreakScene,
+          refreshReason: isBreakScene ? sceneClassification.sceneType : undefined,
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
