@@ -16,6 +16,26 @@ import type {
   LockModeSlip,
 } from '@/types/scout-agent';
 
+// ===== CONFIGURABLE THRESHOLDS =====
+// Relaxed for initial testing - can be tightened once data pipeline is validated
+
+const LOCK_MODE_THRESHOLDS = {
+  // Gate 1: Minutes & Rotation
+  MIN_FIRST_HALF_MINUTES: 10,      // Was 14, relaxed for testing
+  MAX_FOULS_ALLOWED: 4,            // Was 3, relaxed for testing
+  
+  // Gate 3: Edge vs Uncertainty
+  EDGE_UNCERTAINTY_MULTIPLIER: 1.25,
+  MIN_ABSOLUTE_EDGE: 0.5,
+  
+  // Gate 4: Stricter Under Rules
+  MIN_FATIGUE_FOR_UNDER: 45,       // Was 65, relaxed for testing
+  MAX_VARIANCE_RATIO: 0.35,        // Was 0.30, relaxed for testing
+  
+  // Confidence Filter
+  MIN_CONFIDENCE: 65,              // Was 72, relaxed for testing
+};
+
 // ===== GATE 1: MINUTES & ROTATION =====
 
 function passesMinutesGate(
@@ -25,24 +45,35 @@ function passesMinutesGate(
   const role = edge.rotationRole?.toUpperCase();
   const isStarterOrCloser = role === 'STARTER' || role === 'CLOSER';
   const hasStableMinutes = !edge.rotationVolatilityFlag;
-  const noFoulTrouble = (playerState?.foulCount || 0) <= 3;
+  const noFoulTrouble = (playerState?.foulCount || 0) <= LOCK_MODE_THRESHOLDS.MAX_FOULS_ALLOWED;
   
   // Check first-half minutes played (from minutesPlayed in edge or boxScore)
   const minutesPlayed = edge.minutesPlayed || playerState?.minutesEstimate || 0;
-  const minFirstHalfMinutes = minutesPlayed >= 14;
+  const minFirstHalfMinutes = minutesPlayed >= LOCK_MODE_THRESHOLDS.MIN_FIRST_HALF_MINUTES;
 
   const passed = isStarterOrCloser && hasStableMinutes && noFoulTrouble && minFirstHalfMinutes;
+
+  // Debug logging
+  console.log(`[Lock Mode] Gate 1 ${edge.player} ${edge.prop}:`, {
+    role,
+    isStarterOrCloser,
+    hasStableMinutes,
+    noFoulTrouble,
+    minutesPlayed,
+    minFirstHalfMinutes,
+    passed,
+  });
 
   return {
     passed,
     reason: !passed
       ? !isStarterOrCloser
-        ? 'Not STARTER/CLOSER'
+        ? `Not STARTER/CLOSER (role: ${role || 'undefined'})`
         : !hasStableMinutes
         ? 'Minutes volatile'
         : !noFoulTrouble
         ? `Foul trouble (${playerState?.foulCount || 0} fouls)`
-        : `1H minutes ${minutesPlayed.toFixed(0)} < 14`
+        : `1H minutes ${minutesPlayed.toFixed(0)} < ${LOCK_MODE_THRESHOLDS.MIN_FIRST_HALF_MINUTES}`
       : undefined,
   };
 }
@@ -70,14 +101,14 @@ function passesEdgeUncertaintyGate(edge: PropEdge): LockModeGate {
   const projectedEdge = Math.abs((edge.expectedFinal || 0) - edge.line);
   const uncertainty = edge.uncertainty || 1;
 
-  // Edge must be >= 1.25x uncertainty
-  const threshold = uncertainty * 1.25;
-  const passed = projectedEdge >= threshold && projectedEdge > 0.5;
+  // Edge must be >= multiplier x uncertainty
+  const threshold = uncertainty * LOCK_MODE_THRESHOLDS.EDGE_UNCERTAINTY_MULTIPLIER;
+  const passed = projectedEdge >= threshold && projectedEdge > LOCK_MODE_THRESHOLDS.MIN_ABSOLUTE_EDGE;
 
   return {
     passed,
     reason: !passed
-      ? `Edge ${projectedEdge.toFixed(1)} < ${threshold.toFixed(1)} (unc × 1.25)`
+      ? `Edge ${projectedEdge.toFixed(1)} < ${threshold.toFixed(1)} (unc × ${LOCK_MODE_THRESHOLDS.EDGE_UNCERTAINTY_MULTIPLIER})`
       : undefined,
   };
 }
@@ -91,22 +122,32 @@ function passesUnderGate(
   if (edge.lean === 'OVER') return { passed: true };
 
   const fatigue = playerState?.fatigueScore || 0;
-  const fatigueOk = fatigue >= 65;
+  const fatigueOk = fatigue >= LOCK_MODE_THRESHOLDS.MIN_FATIGUE_FOR_UNDER;
 
   const l10Avg = edge.line; // Approximate baseline
   const stdDev = edge.uncertainty || 0;
-  const varianceLow = l10Avg > 0 ? stdDev / l10Avg <= 0.3 : false;
+  const varianceLow = l10Avg > 0 ? stdDev / l10Avg <= LOCK_MODE_THRESHOLDS.MAX_VARIANCE_RATIO : false;
 
   const noBreakout = !edge.riskFlags?.includes('BREAKOUT_RISK');
   const noGarbageTime = !edge.riskFlags?.includes('BLOWOUT_RISK');
 
   const passed = fatigueOk && varianceLow && noBreakout && noGarbageTime;
 
+  // Debug logging
+  console.log(`[Lock Mode] Gate 4 UNDER ${edge.player} ${edge.prop}:`, {
+    fatigue,
+    fatigueOk,
+    varianceLow,
+    noBreakout,
+    noGarbageTime,
+    passed,
+  });
+
   return {
     passed,
     reason: !passed
       ? !fatigueOk
-        ? `Fatigue ${fatigue} < 65`
+        ? `Fatigue ${fatigue} < ${LOCK_MODE_THRESHOLDS.MIN_FATIGUE_FOR_UNDER}`
         : !varianceLow
         ? 'Variance too high'
         : !noBreakout
@@ -120,7 +161,7 @@ function passesUnderGate(
 
 function passesConfidenceGate(edge: PropEdge): boolean {
   const confidence = edge.calibratedProb ? edge.calibratedProb * 100 : edge.confidence;
-  if (confidence < 72) return false;
+  if (confidence < LOCK_MODE_THRESHOLDS.MIN_CONFIDENCE) return false;
   
   // Block if variance flags present
   if (edge.riskFlags?.includes('HIGH_VARIANCE')) return false;
@@ -136,9 +177,19 @@ function getSlotType(edge: PropEdge, playerState: PlayerLiveState | undefined): 
   const prop = edge.prop;
   const lean = edge.lean;
 
-  // Slot 1: BIG/WING Rebound OVER
+  // Debug logging for slot matching
+  console.log(`[Lock Mode] Slot matching ${edge.player} ${prop} ${lean}:`, {
+    role,
+    fatigue: playerState?.fatigueScore,
+  });
+
+  // Slot 1: BIG/WING Rebound OVER - expanded to include SECONDARY players with high rebounds
   if (prop === 'Rebounds' && lean === 'OVER') {
     if (role === 'BIG' || role === 'PRIMARY') {
+      return 'BIG_REB_OVER';
+    }
+    // Also allow SECONDARY players who are rebounding well
+    if (role === 'SECONDARY' && (edge.currentStat || 0) >= 4) {
       return 'BIG_REB_OVER';
     }
   }
@@ -150,14 +201,18 @@ function getSlotType(edge: PropEdge, playerState: PlayerLiveState | undefined): 
     }
   }
 
-  // Slot 3: FLEX (Points OVER for stars, PRA for bigs, fatigue UNDER)
-  if (prop === 'Points' && lean === 'OVER' && role === 'PRIMARY') {
+  // Slot 3: FLEX (Points OVER for stars, PRA for bigs, fatigue UNDER, high-confidence any)
+  if (prop === 'Points' && lean === 'OVER' && (role === 'PRIMARY' || role === 'SECONDARY')) {
     return 'FLEX';
   }
-  if (prop === 'PRA' && lean === 'OVER' && role === 'BIG') {
+  if (prop === 'PRA' && lean === 'OVER' && (role === 'BIG' || role === 'PRIMARY')) {
     return 'FLEX';
   }
-  if (lean === 'UNDER' && (playerState?.fatigueScore || 0) >= 65) {
+  if (lean === 'UNDER' && (playerState?.fatigueScore || 0) >= LOCK_MODE_THRESHOLDS.MIN_FATIGUE_FOR_UNDER) {
+    return 'FLEX';
+  }
+  // High-edge rebounds can also be FLEX
+  if (prop === 'Rebounds' && lean === 'OVER' && (edge.edgeMargin || 0) >= 3) {
     return 'FLEX';
   }
 
