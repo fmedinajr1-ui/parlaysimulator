@@ -347,3 +347,6 @@ verify_jwt = false
 
 [functions.run-parlay-backtest]
 verify_jwt = false
+
+[functions.run-lock-mode-backtest]
+verify_jwt = false
