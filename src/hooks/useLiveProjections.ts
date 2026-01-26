@@ -180,7 +180,7 @@ const getBaselineRate = (role: string, propType: string): number => {
   return baselines.points / 36; // Default to points rate
 };
 
-// Calculate projection with rate blending
+// v5.0: TIGHTENED PROJECTION with variance shrinkage and recalibrated confidence
 const calculateProjection = (
   currentValue: number,
   minutesPlayed: number,
@@ -190,12 +190,12 @@ const calculateProjection = (
   riskFlags: string[]
 ): { projectedFinal: number; confidence: number } => {
   if (minutesPlayed <= 0) {
-    // No minutes yet, use baseline
+    // No minutes yet, use baseline with lower confidence
     const baselineRate = getBaselineRate(playerRole, propType);
     const totalMinutes = remainingMinutes + minutesPlayed;
     return {
       projectedFinal: Math.round(baselineRate * totalMinutes * 10) / 10,
-      confidence: 20,
+      confidence: 15, // v5.0: Lower pre-game confidence
     };
   }
   
@@ -203,45 +203,60 @@ const calculateProjection = (
   const liveRate = currentValue / minutesPlayed;
   const baselineRate = getBaselineRate(playerRole, propType);
   
-  // Blend: 60% live rate + 40% baseline (adjusts as game progresses)
+  // v5.0: Tightened blending - trust live data faster but with variance consideration
   const gameProgressPct = minutesPlayed / (minutesPlayed + remainingMinutes);
-  const liveWeight = Math.min(0.8, 0.4 + gameProgressPct * 0.4); // 40-80% based on progress
+  const liveWeight = Math.min(0.85, 0.35 + gameProgressPct * 0.5); // 35-85% based on progress
   const baselineWeight = 1 - liveWeight;
   
   const blendedRate = liveRate * liveWeight + baselineRate * baselineWeight;
   
-  // Apply risk modifiers
+  // v5.0: Calculate rate deviation for variance penalty
+  const rateDeviation = Math.abs(liveRate - baselineRate) / (baselineRate || 1);
+  
+  // v5.0: Apply variance shrinkage - high deviation = regress toward baseline
+  const shrinkageFactor = Math.max(0.88, Math.min(1.0, 1 - rateDeviation * 0.15));
+  const adjustedRate = blendedRate * shrinkageFactor + baselineRate * (1 - shrinkageFactor);
+  
+  // Apply risk modifiers with tighter limits
   let remainingMinsAdjusted = remainingMinutes;
   
   if (riskFlags.includes('blowout')) {
-    // Reduce expected minutes by 30% in blowout
-    remainingMinsAdjusted *= 0.7;
+    // v5.0: Tighter - reduce expected minutes by 35% in blowout
+    remainingMinsAdjusted *= 0.65;
   }
   
   if (riskFlags.includes('foul_trouble')) {
-    // Reduce expected minutes by 20% in foul trouble
-    remainingMinsAdjusted *= 0.8;
+    // v5.0: Tighter - reduce expected minutes by 25% in foul trouble
+    remainingMinsAdjusted *= 0.75;
   }
   
-  const projectedFinal = currentValue + blendedRate * remainingMinsAdjusted;
-  
-  // Calculate confidence (1-99)
-  let confidence = 50;
-  
-  // More minutes = more confidence
-  confidence += Math.min(25, minutesPlayed * 1.5);
-  
-  // Lower confidence if risk flags
-  if (riskFlags.length > 0) {
-    confidence -= riskFlags.length * 10;
+  if (riskFlags.includes('losing_blowout')) {
+    // v5.0: New - extra penalty for losing side of blowout
+    remainingMinsAdjusted *= 0.85;
   }
   
-  // Higher confidence if rate is consistent with baseline
-  const rateDeviation = Math.abs(liveRate - baselineRate) / baselineRate;
-  if (rateDeviation < 0.2) confidence += 10;
-  else if (rateDeviation > 0.5) confidence -= 10;
+  const projectedFinal = currentValue + adjustedRate * remainingMinsAdjusted;
   
-  confidence = Math.max(1, Math.min(99, Math.round(confidence)));
+  // v5.0: RECALIBRATED CONFIDENCE - variance-aware
+  let confidence = 45; // Lower base
+  
+  // More minutes = more confidence (capped at +20)
+  confidence += Math.min(20, minutesPlayed * 1.2);
+  
+  // v5.0: Variance penalty - high deviation = lower confidence
+  if (rateDeviation > 0.35) confidence -= 12;
+  else if (rateDeviation > 0.20) confidence -= 6;
+  else if (rateDeviation < 0.15) confidence += 6;
+  
+  // v5.0: Early projection penalty (< 10 minutes)
+  if (minutesPlayed < 10) confidence -= 10;
+  
+  // Risk flag penalties
+  if (riskFlags.includes('blowout')) confidence -= 12;
+  if (riskFlags.includes('foul_trouble')) confidence -= 10;
+  if (riskFlags.includes('losing_blowout')) confidence -= 8;
+  
+  confidence = Math.max(1, Math.min(92, Math.round(confidence))); // v5.0: Cap at 92
   
   return {
     projectedFinal: Math.round(projectedFinal * 10) / 10,
