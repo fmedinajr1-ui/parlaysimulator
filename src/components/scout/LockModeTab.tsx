@@ -2,10 +2,10 @@ import React, { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Lock, Copy, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { Lock, Copy, AlertTriangle, ShieldCheck, CheckCircle2, Circle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
-import type { PropEdge, PlayerLiveState, LockModeLegSlot } from '@/types/scout-agent';
+import type { PropEdge, PlayerLiveState, LockModeLegSlot, QuarterSnapshotStatus } from '@/types/scout-agent';
 import { buildLockModeSlip, getSlotDisplayName } from '@/lib/lockModeEngine';
 import { LockModeLegCard } from './LockModeLegCard';
 
@@ -14,15 +14,21 @@ interface LockModeTabProps {
   playerStates: Map<string, PlayerLiveState>;
   gameTime: string;
   isHalftime: boolean;
+  quarterSnapshots?: QuarterSnapshotStatus[];
 }
 
-export function LockModeTab({ edges, playerStates, gameTime, isHalftime }: LockModeTabProps) {
+export function LockModeTab({ edges, playerStates, gameTime, isHalftime, quarterSnapshots }: LockModeTabProps) {
   const { toast } = useToast();
   
   const slip = useMemo(() => 
     buildLockModeSlip(edges, playerStates, gameTime),
     [edges, playerStates, gameTime]
   );
+
+  // Check if first-half data is verified (Q1 and Q2 snapshots recorded)
+  const q1Recorded = quarterSnapshots?.find(s => s.quarter === 1)?.recorded || false;
+  const q2Recorded = quarterSnapshots?.find(s => s.quarter === 2)?.recorded || false;
+  const firstHalfVerified = q1Recorded && q2Recorded;
 
   const handleCopySlip = () => {
     if (!slip.isValid) return;
@@ -148,6 +154,54 @@ export function LockModeTab({ edges, playerStates, gameTime, isHalftime }: LockM
           </div>
         </CardContent>
       </Card>
+
+      {/* Quarter Snapshot Verification */}
+      {quarterSnapshots && (
+        <Card className="border-border/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Data Verification Status
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="py-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-4">
+                {quarterSnapshots.map(snap => (
+                  <div key={snap.quarter} className="flex items-center gap-1.5">
+                    {snap.recorded ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    ) : (
+                      <Circle className="w-4 h-4 text-muted-foreground/50" />
+                    )}
+                    <span className={cn(
+                      "text-xs font-medium",
+                      snap.recorded ? "text-foreground" : "text-muted-foreground"
+                    )}>
+                      Q{snap.quarter}
+                    </span>
+                    {snap.recorded && snap.playersRecorded > 0 && (
+                      <span className="text-xs text-muted-foreground">
+                        ({snap.playersRecorded})
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <Badge 
+                variant="outline" 
+                className={cn(
+                  "text-xs",
+                  firstHalfVerified 
+                    ? "border-emerald-500/50 text-emerald-400" 
+                    : "border-amber-500/50 text-amber-400"
+                )}
+              >
+                {firstHalfVerified ? '1H Verified' : 'Awaiting Data'}
+              </Badge>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

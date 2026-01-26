@@ -319,10 +319,23 @@ export interface LivePBPData {
   recentPlays: RecentPlay[];
   isHalftime: boolean;
   isGameOver: boolean;
-  // Period transition flags for auto-suggest
+  // Period transition flags for quarter snapshots
+  isQ1Ending?: boolean;
   isQ2Ending?: boolean;
+  isQ3Ending?: boolean;
+  isQ4Ending?: boolean;
+  // Period start flags for auto-suggest
   isQ3Starting?: boolean;
   isQ4Starting?: boolean;
+}
+
+// ===== QUARTER SNAPSHOT TRACKING =====
+
+export interface QuarterSnapshotStatus {
+  quarter: number;
+  recorded: boolean;
+  playersRecorded: number;
+  capturedAt?: string;
 }
 
 export interface PBPPlayerStats {
