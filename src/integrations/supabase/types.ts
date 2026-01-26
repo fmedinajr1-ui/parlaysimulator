@@ -786,6 +786,30 @@ export type Database = {
         }
         Relationships: []
       }
+      book_snapshot: {
+        Row: {
+          captured_at: string
+          consensus_line: number
+          id: string
+          market_key: string
+          sample_size: number | null
+        }
+        Insert: {
+          captured_at?: string
+          consensus_line: number
+          id?: string
+          market_key: string
+          sample_size?: number | null
+        }
+        Update: {
+          captured_at?: string
+          consensus_line?: number
+          id?: string
+          market_key?: string
+          sample_size?: number | null
+        }
+        Relationships: []
+      }
       calibration_buckets: {
         Row: {
           actual_avg: number
@@ -7112,6 +7136,54 @@ export type Database = {
           },
         ]
       }
+      pp_snapshot: {
+        Row: {
+          captured_at: string
+          event_id: string | null
+          id: string
+          is_active: boolean | null
+          league: string | null
+          market_key: string
+          matchup: string | null
+          period: string | null
+          player_name: string
+          pp_line: number
+          sport: string
+          start_time: string | null
+          stat_type: string
+        }
+        Insert: {
+          captured_at?: string
+          event_id?: string | null
+          id?: string
+          is_active?: boolean | null
+          league?: string | null
+          market_key: string
+          matchup?: string | null
+          period?: string | null
+          player_name: string
+          pp_line: number
+          sport: string
+          start_time?: string | null
+          stat_type: string
+        }
+        Update: {
+          captured_at?: string
+          event_id?: string | null
+          id?: string
+          is_active?: boolean | null
+          league?: string | null
+          market_key?: string
+          matchup?: string | null
+          period?: string | null
+          player_name?: string
+          pp_line?: number
+          sport?: string
+          start_time?: string | null
+          stat_type?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -9603,6 +9675,105 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      whale_picks: {
+        Row: {
+          confidence: string
+          created_at: string
+          expires_at: string | null
+          id: string
+          is_expired: boolean | null
+          market_key: string
+          matchup: string | null
+          period: string | null
+          pick_side: string
+          player_name: string
+          pp_line: number
+          sharp_score: number
+          signal_type: string
+          sport: string
+          start_time: string | null
+          stat_type: string
+          why_short: string[] | null
+        }
+        Insert: {
+          confidence: string
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          is_expired?: boolean | null
+          market_key: string
+          matchup?: string | null
+          period?: string | null
+          pick_side: string
+          player_name: string
+          pp_line: number
+          sharp_score: number
+          signal_type: string
+          sport: string
+          start_time?: string | null
+          stat_type: string
+          why_short?: string[] | null
+        }
+        Update: {
+          confidence?: string
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          is_expired?: boolean | null
+          market_key?: string
+          matchup?: string | null
+          period?: string | null
+          pick_side?: string
+          player_name?: string
+          pp_line?: number
+          sharp_score?: number
+          signal_type?: string
+          sport?: string
+          start_time?: string | null
+          stat_type?: string
+          why_short?: string[] | null
+        }
+        Relationships: []
+      }
+      whale_signals: {
+        Row: {
+          board_behavior_score: number | null
+          confirmation_score: number | null
+          created_at: string
+          divergence_score: number | null
+          id: string
+          market_key: string
+          move_speed_score: number | null
+          reasons_json: Json | null
+          sharp_score: number
+          signal_type: string
+        }
+        Insert: {
+          board_behavior_score?: number | null
+          confirmation_score?: number | null
+          created_at?: string
+          divergence_score?: number | null
+          id?: string
+          market_key: string
+          move_speed_score?: number | null
+          reasons_json?: Json | null
+          sharp_score?: number
+          signal_type: string
+        }
+        Update: {
+          board_behavior_score?: number | null
+          confirmation_score?: number | null
+          created_at?: string
+          divergence_score?: number | null
+          id?: string
+          market_key?: string
+          move_speed_score?: number | null
+          reasons_json?: Json | null
+          sharp_score?: number
+          signal_type?: string
+        }
+        Relationships: []
       }
     }
     Views: {
