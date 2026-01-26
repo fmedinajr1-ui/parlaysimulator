@@ -560,6 +560,7 @@ function validateVisionSignals(signals: any[], gameContext: any): any[] {
 }
 
 // Helper: Extract basic signals from text when JSON parsing fails
+// ENHANCED: More aggressive extraction with team-level and movement signals
 function extractBasicSignals(content: string, gameContext: any): any[] {
   const signals: any[] = [];
   const lowerContent = content.toLowerCase();
@@ -573,37 +574,99 @@ function extractBasicSignals(content: string, gameContext: any): any[] {
     rosterNames.push({ name: p.name.toLowerCase(), team: gameContext.awayTeam, jersey: p.jersey || '?' });
   });
   
-  // Look for fatigue indicators
-  const fatigueKeywords = ['tired', 'fatigue', 'hands on knees', 'bent over', 'breathing heavy', 'slow', 'labored'];
-  const effortKeywords = ['sprint', 'fast', 'quick', 'explosive', 'active', 'hustl'];
+  // Enhanced keyword sets for better signal detection
+  const fatigueKeywords = [
+    'tired', 'fatigue', 'hands on knees', 'bent over', 'breathing heavy', 
+    'slow', 'labored', 'exhausted', 'gassed', 'winded', 'struggling',
+    'sluggish', 'heavy legs', 'dragging', 'worn', 'fatigued'
+  ];
+  const effortKeywords = [
+    'sprint', 'fast', 'quick', 'explosive', 'active', 'hustl', 
+    'running', 'racing', 'burst', 'accelerat', 'attacking', 'aggressive'
+  ];
+  const speedKeywords = [
+    'sprint', 'fast break', 'transition', 'racing', 'speed', 
+    'quick', 'burst', 'explosive first step', 'motor'
+  ];
+  const positioningKeywords = [
+    'box out', 'boxing out', 'crash', 'crashing', 'rebound position',
+    'rim', 'paint', 'posting', 'seal'
+  ];
   
+  // PHASE 1 ENHANCEMENT: Also check for team-level observations
+  const teamFatiguePatterns = [
+    { pattern: /home team.*(?:tired|fatigue|slow|gassed)/i, team: gameContext.homeTeam, teamType: 'home' },
+    { pattern: /away team.*(?:tired|fatigue|slow|gassed)/i, team: gameContext.awayTeam, teamType: 'away' },
+    { pattern: /(?:tired|fatigue|slow|gassed).*home/i, team: gameContext.homeTeam, teamType: 'home' },
+    { pattern: /(?:tired|fatigue|slow|gassed).*away/i, team: gameContext.awayTeam, teamType: 'away' },
+    { pattern: new RegExp(`${gameContext.homeTeam}.*(?:tired|fatigue|slow)`, 'i'), team: gameContext.homeTeam, teamType: 'home' },
+    { pattern: new RegExp(`${gameContext.awayTeam}.*(?:tired|fatigue|slow)`, 'i'), team: gameContext.awayTeam, teamType: 'away' },
+  ];
+  
+  // Check for team-level fatigue mentions
+  teamFatiguePatterns.forEach(({ pattern, team, teamType }) => {
+    if (pattern.test(content)) {
+      // Add a team-level signal that can apply to starters
+      const teamRoster = rosterNames.filter(p => p.team === team).slice(0, 3); // Top 3 players
+      teamRoster.forEach(({ name, jersey }) => {
+        signals.push({
+          signalType: 'fatigue',
+          player: name.split(' ').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
+          jersey: `#${jersey}`,
+          value: 5, // Moderate team-level fatigue signal
+          observation: `Team-level fatigue detected for ${teamType} team`,
+          confidence: 'low',
+          verified: jersey !== '?',
+          isTeamSignal: true,
+        });
+      });
+    }
+  });
+  
+  // PHASE 2 ENHANCEMENT: Movement-related signal extraction
+  const movementPatterns = [
+    { pattern: /sprint|running hard|racing/i, type: 'sprint_detected', value: 6 },
+    { pattern: /stationary|standing|not moving|minimal movement/i, type: 'stationary_warning', value: -5 },
+    { pattern: /fast break|transition/i, type: 'fast_transition', value: 7 },
+    { pattern: /crash.*board|box.?out|rebound/i, type: 'box_out_crash', value: 4 },
+  ];
+  
+  // Player-specific extraction
   rosterNames.forEach(({ name, jersey }) => {
     const nameParts = name.split(' ');
     const lastName = nameParts[nameParts.length - 1];
+    const firstName = nameParts[0] || '';
     
-    // Check if player is mentioned
-    if (lowerContent.includes(lastName)) {
+    // Check if player is mentioned (case insensitive)
+    const playerMentioned = lowerContent.includes(lastName) || 
+      (firstName.length > 3 && lowerContent.includes(firstName));
+    
+    if (playerMentioned) {
+      const properName = name.split(' ').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+      
       // Check for fatigue indicators near player mention
       fatigueKeywords.forEach(keyword => {
         if (lowerContent.includes(keyword)) {
+          // Determine severity based on keyword
+          const highSeverity = ['hands on knees', 'exhausted', 'gassed', 'struggling'].includes(keyword);
           signals.push({
             signalType: 'fatigue',
-            player: name.split(' ').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
+            player: properName,
             jersey: `#${jersey}`,
-            value: 8,
+            value: highSeverity ? 10 : 6,
             observation: `Detected fatigue indicator: ${keyword}`,
-            confidence: 'medium',
+            confidence: highSeverity ? 'high' : 'medium',
             verified: jersey !== '?',
           });
         }
       });
       
-      // Check for effort indicators
+      // Check for effort/speed indicators
       effortKeywords.forEach(keyword => {
         if (lowerContent.includes(keyword)) {
           signals.push({
             signalType: 'effort',
-            player: name.split(' ').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
+            player: properName,
             jersey: `#${jersey}`,
             value: 5,
             observation: `Detected effort indicator: ${keyword}`,
@@ -612,11 +675,55 @@ function extractBasicSignals(content: string, gameContext: any): any[] {
           });
         }
       });
+      
+      // Check for speed indicators
+      speedKeywords.forEach(keyword => {
+        if (lowerContent.includes(keyword)) {
+          signals.push({
+            signalType: 'speed',
+            player: properName,
+            jersey: `#${jersey}`,
+            value: 4,
+            observation: `Detected speed indicator: ${keyword}`,
+            confidence: 'medium',
+            verified: jersey !== '?',
+          });
+        }
+      });
+      
+      // Check for positioning indicators
+      positioningKeywords.forEach(keyword => {
+        if (lowerContent.includes(keyword)) {
+          signals.push({
+            signalType: 'positioning',
+            player: properName,
+            jersey: `#${jersey}`,
+            value: 5,
+            observation: `Detected positioning indicator: ${keyword}`,
+            confidence: 'medium',
+            verified: jersey !== '?',
+          });
+        }
+      });
     }
   });
   
-  console.log(`[Scout Agent] Extracted ${signals.length} basic signals from text`);
-  return signals;
+  // Deduplicate signals (same player + signalType)
+  const uniqueSignals = signals.reduce((acc: any[], signal) => {
+    const key = `${signal.player}-${signal.signalType}`;
+    const existing = acc.find(s => `${s.player}-${s.signalType}` === key);
+    if (!existing) {
+      acc.push(signal);
+    } else if (signal.value > existing.value) {
+      // Keep higher value signal
+      const idx = acc.indexOf(existing);
+      acc[idx] = signal;
+    }
+    return acc;
+  }, []);
+  
+  console.log(`[Scout Agent] Extracted ${uniqueSignals.length} basic signals from text (${signals.length} before dedup)`);
+  return uniqueSignals;
 }
 
 // ===== PROJECTION ENGINE 1: LIVE BOX SCORE PARSER =====
@@ -2211,6 +2318,35 @@ CRITICAL RULE: You MUST identify players by their jersey numbers and look them u
       visionResult.overallAssessment = visionContent.slice(0, 200);
     }
 
+    // PHASE 1 ENHANCEMENT: Fallback signal extraction when AI returns empty signals
+    // If scene is analysis-worthy but no signals were returned, try extracting from overallAssessment
+    if ((!visionResult.visionSignals || visionResult.visionSignals.length === 0) && 
+        sceneClassification.isAnalysisWorthy && 
+        visionResult.overallAssessment) {
+      console.log('[Scout Agent] No vision signals returned, attempting fallback extraction from assessment');
+      const fallbackSignals = extractBasicSignals(visionResult.overallAssessment, gameContext);
+      if (fallbackSignals.length > 0) {
+        visionResult.visionSignals = fallbackSignals;
+        console.log(`[Scout Agent] Fallback extraction yielded ${fallbackSignals.length} signals`);
+      }
+    }
+    
+    // PHASE 1 ENHANCEMENT: Also extract from suggestedProps if signals are still empty
+    if ((!visionResult.visionSignals || visionResult.visionSignals.length === 0) && 
+        visionResult.suggestedProps?.length > 0) {
+      console.log('[Scout Agent] Extracting signals from suggestedProps');
+      visionResult.visionSignals = visionResult.suggestedProps.map((prop: any) => ({
+        signalType: prop.lean === 'UNDER' ? 'fatigue' : 'effort',
+        player: prop.player,
+        jersey: '?',
+        value: prop.lean === 'UNDER' ? 6 : 5,
+        observation: prop.reason || `Suggested ${prop.prop} ${prop.lean}`,
+        confidence: 'medium',
+        verified: false,
+      }));
+      console.log(`[Scout Agent] Extracted ${visionResult.visionSignals.length} signals from suggestedProps`);
+    }
+
     // STEP 2.5: Validate vision signals against roster (jersey → player name)
     if (visionResult.visionSignals?.length > 0) {
       console.log(`[Scout Agent] Validating ${visionResult.visionSignals.length} vision signals against roster`);
@@ -2218,6 +2354,9 @@ CRITICAL RULE: You MUST identify players by their jersey numbers and look them u
       
       const verifiedCount = visionResult.visionSignals.filter((s: any) => s.verified).length;
       console.log(`[Scout Agent] Jersey validation complete: ${verifiedCount}/${visionResult.visionSignals.length} verified`);
+      
+      // PHASE 1 ENHANCEMENT: Accept low confidence signals (previously filtered)
+      // Don't filter out low confidence signals - they're still valuable
     }
 
     // STEP 3: Calculate prop edges

@@ -26,34 +26,58 @@ function getMomentSpecificPrompt(momentType: string): string {
 - Fatigue indicators: bent posture, hands on knees, heavy breathing
 - Players seeking bench vs staying active
 - Body language: frustration, focus, exhaustion
-- Who needs substitution vs who's still energetic`,
+- Who needs substitution vs who's still energetic
+- SPRINT/MOVEMENT: Track which players moved quickly vs slowly before timeout`,
     
     injury: `INJURY CHECK ANALYSIS - Focus on:
 - Identify which player appears injured
 - Assess severity cues: limping, holding body part, facial expressions
 - Substitution likelihood indicators
-- Impact on team rotation`,
+- Impact on team rotation
+- OTHER PLAYERS: Note fatigue or positioning of non-injured players`,
     
     fastbreak: `FAST BREAK ANALYSIS - Focus on:
-- Player explosiveness and sprint speed
+- Player explosiveness and sprint speed (rate each visible player 1-10)
 - Court coverage efficiency
 - Transition energy levels
-- Who leads vs trails on the break`,
+- Who leads vs trails on the break
+- MOVEMENT TRACKING: Identify sprinting players by jersey number`,
     
     freethrow: `FREE THROW ANALYSIS - Focus on:
 - Shot mechanics consistency
 - Pre-shot routine execution
 - Focus indicators: eye contact with rim, body stillness
-- Signs of fatigue affecting form`,
+- Signs of fatigue affecting form
+- OTHER PLAYERS: Positioning for rebounds, fatigue signs while waiting`,
     
     other: `GENERAL KEY MOMENT ANALYSIS - Focus on:
-- Player energy and movement quality
+- Player energy and movement quality (rate each visible player 1-10)
 - Team dynamics and body language
 - Fatigue indicators across both teams
-- Notable performance signals`,
+- Notable performance signals
+- MOVEMENT TRACKING: Note players sprinting, standing still, or showing slow recovery`,
   };
   
   return prompts[momentType] || prompts.other;
+}
+
+// PHASE 3 ENHANCEMENT: Team color and jersey detection context
+function getTeamColorDetectionContext(homeTeam: string, awayTeam: string): string {
+  return `
+JERSEY IDENTIFICATION GUIDE:
+1. First, identify the two jersey colors on court
+2. Home team (${homeTeam}) typically wears WHITE/LIGHT jerseys at home
+3. Away team (${awayTeam}) typically wears DARK/COLORED jerseys
+4. Read the NUMBER on front or back of jersey
+5. Cross-reference with roster table provided
+6. If number is unclear, report as "Unknown #{team} player"
+
+MOVEMENT TRACKING:
+For each player you can identify:
+- Note if they are SPRINTING (explosive movement)
+- Note if they are STATIONARY (minimal movement - fatigue indicator)
+- Note if they are in SLOW RECOVERY (walking after exertion)
+- Track position changes between frames if multiple frames provided`;
 }
 
 function getAutoDetectPrompt(): string {

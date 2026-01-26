@@ -372,13 +372,31 @@ export interface RecentPlay {
 
 // ===== VISION SIGNALS =====
 
+// PHASE 2 ENHANCEMENT: Extended signal types for movement tracking
+export type VisionSignalType = 
+  | 'fatigue' 
+  | 'speed' 
+  | 'posture' 
+  | 'effort' 
+  | 'positioning' 
+  | 'mechanics'
+  // New movement-tracking signal types
+  | 'sprint_detected'
+  | 'stationary_warning'
+  | 'fast_transition'
+  | 'box_out_crash';
+
 export interface VisionSignal {
-  signalType: 'fatigue' | 'speed' | 'posture' | 'effort' | 'positioning' | 'mechanics';
+  signalType: VisionSignalType;
   player: string;
   jersey: string;
   value: number; // Delta to apply
   observation: string;
   confidence: ConfidenceLevel;
+  // Optional fields for enhanced signals
+  verified?: boolean;
+  isTeamSignal?: boolean;
+  movementDelta?: number; // For multi-frame tracking
 }
 
 // ===== MULTI-GAME MANAGER =====
