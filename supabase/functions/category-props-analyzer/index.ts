@@ -111,15 +111,16 @@ const PROJECTION_WEIGHTS = {
   REGRESSION: 0.25,      // NEW: Regress toward season average for stability
 };
 
-// ============ MINIMUM EDGE THRESHOLDS (v5.0) ============
+// ============ MINIMUM EDGE THRESHOLDS (v6.0 - TRIPLED) ============
 // Only recommend picks where edge (|projection - line|) exceeds threshold
+// v6.0: Tripled thresholds to prevent low-edge picks from being recommended
 const MIN_EDGE_THRESHOLDS: Record<string, number> = {
-  points: 1.5,     // Need 1.5+ edge for points
-  rebounds: 1.0,   // 1.0+ for rebounds
-  assists: 0.8,    // 0.8+ for assists
-  threes: 0.5,     // 0.5+ for threes
-  blocks: 0.5,     // 0.5+ for blocks
-  steals: 0.3,     // 0.3+ for steals
+  points: 4.5,     // TRIPLED from 1.5 - need 4.5+ edge for points
+  rebounds: 2.5,   // INCREASED from 1.0 - need 2.5+ edge for rebounds
+  assists: 2.0,    // INCREASED from 0.8 - need 2.0+ edge for assists
+  threes: 1.0,     // DOUBLED from 0.5 - need 1.0+ edge for threes
+  blocks: 1.0,     // DOUBLED from 0.5 - need 1.0+ edge for blocks
+  steals: 0.8,     // INCREASED from 0.3 - need 0.8+ edge for steals
 };
 
 // ============ ARCHETYPE DEFINITIONS (v3.0) ============
@@ -950,14 +951,24 @@ serve(async (req) => {
           upcomingOpponent
         );
         
-        // Add projection data to spot
-        spot.projected_value = projection.projectedValue;
+        // v6.0: NEVER store NULL projected_value - use fallback chain
+        // Fallback: projectedValue → l10Median → l10Avg → actualLine → 0
+        const l10Median = calculateMedian(statValues);
+        const finalProjectedValue = projection.projectedValue ?? l10Median ?? l10Avg ?? actualData.line ?? 0;
+        
+        // v6.0: Log warning if using fallback
+        if (!projection.projectedValue) {
+          console.log(`[Projection] ⚠️ ${spot.player_name} ${spot.prop_type}: Using fallback projection (L10 median: ${l10Median?.toFixed(1) || 'null'})`);
+        }
+        
+        // Add projection data to spot - GUARANTEED non-null
+        spot.projected_value = Math.round(finalProjectedValue * 10) / 10;
         spot.matchup_adjustment = projection.matchupAdj;
         spot.pace_adjustment = projection.paceAdj;
-        spot.projection_source = projection.projectionSource;
+        spot.projection_source = projection.projectedValue ? projection.projectionSource : 'fallback_l10_median';
         
         // v4.1: Log projection for debugging
-        console.log(`[Projection] ${spot.player_name} ${spot.prop_type} vs ${upcomingOpponent || 'unknown'}: Proj=${projection.projectedValue?.toFixed(1)}, MatchupAdj=${projection.matchupAdj.toFixed(1)}, PaceAdj=${projection.paceAdj.toFixed(1)}`);
+        console.log(`[Projection] ${spot.player_name} ${spot.prop_type} vs ${upcomingOpponent || 'unknown'}: Proj=${spot.projected_value?.toFixed(1)}, MatchupAdj=${projection.matchupAdj.toFixed(1)}, PaceAdj=${projection.paceAdj.toFixed(1)}, Source=${spot.projection_source}`);
         
         // v1.4: Handle LINE_RANGE_PENDING spots (line-based eligibility)
         if (spot.eligibility_type === 'LINE_RANGE_PENDING') {
