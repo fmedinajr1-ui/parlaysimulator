@@ -1,223 +1,251 @@
 
 
-## Lock Mode Backtest Feature
+## Quarter Diagnostics Recording System for Halftime Locks
 
 ### Overview
-Build a backtest system that simulates the 4-gate Lock Mode filtering against historical data to validate the expected 42%+ parlay win rate. This uses the existing `scout_prop_outcomes` table (which has prediction data including `rotation_role`, `minutes_uncertainty`, `risk_flags`) combined with `player_archetypes` for archetype/role information.
+Create a quarter-end snapshot system that automatically records comprehensive player diagnostics at Q1, Q2 (halftime), Q3, and Q4 boundaries. This ensures Lock Mode has verified first-half data to generate reliable 3-leg slips.
 
 ---
 
 ### Architecture
 
 ```text
-+-------------------------------------------------------------------------+
-|                     Lock Mode Backtester                                |
-+-------------------------------------------------------------------------+
-|                                                                         |
-|  Data Sources:                                                          |
-|  +---------------------------+  +-----------------------------+        |
-|  | scout_prop_outcomes       |  | player_archetypes           |        |
-|  | - predicted_final         |  | - primary_archetype         |        |
-|  | - actual_final            |  | - avg_minutes               |        |
-|  | - outcome (hit/miss/push) |  | - player_name               |        |
-|  | - rotation_role           |  +-----------------------------+        |
-|  | - minutes_uncertainty     |                                         |
-|  | - risk_flags              |         +-------------------------+     |
-|  | - line, side, prop        |         | category_sweet_spots    |     |
-|  +---------------------------+         | - l10_std_dev           |     |
-|                                        | - confidence_score      |     |
-|            |                           | - l10_hit_rate          |     |
-|            v                           +-------------------------+     |
-|  +-----------------------------------------------+                     |
-|  |        Lock Mode Gate Simulation              |                     |
-|  |  Gate 1: Minutes & Rotation Check             |                     |
-|  |  Gate 2: Stat Type Priority (REB > AST > PTS) |                     |
-|  |  Gate 3: Edge >= Uncertainty x 1.25           |                     |
-|  |  Gate 4: Strict UNDER Rules                   |                     |
-|  |  Confidence Filter: >= 72%                    |                     |
-|  +-----------------------------------------------+                     |
-|            |                                                           |
-|            v                                                           |
-|  +-----------------------------------------------+                     |
-|  |        3-Leg Slot Builder                     |                     |
-|  |  Slot 1: BIG_REB_OVER                         |                     |
-|  |  Slot 2: ASSIST_OVER                          |                     |
-|  |  Slot 3: FLEX (PTS/PRA/UNDER)                 |                     |
-|  +-----------------------------------------------+                     |
-|            |                                                           |
-|            v                                                           |
-|  +-----------------------------------------------+                     |
-|  |        Outcome Grading                        |                     |
-|  |  - All 3 legs hit = PARLAY WIN                |                     |
-|  |  - Track leg hit rate, parlay win rate        |                     |
-|  |  - Record blocking effectiveness              |                     |
-|  +-----------------------------------------------+                     |
-|                                                                         |
-+-------------------------------------------------------------------------+
++--------------------------------------------------------------------+
+|                   Quarter Snapshot Pipeline                         |
++--------------------------------------------------------------------+
+|                                                                    |
+|  TRIGGER: Period Transition Detection                               |
+|  +----------------------------------------------------------+     |
+|  | fetch-live-pbp detects:                                   |     |
+|  | - isQ1Ending (period=1, clock<=30s)                       |     |
+|  | - isQ2Ending (period=2, clock<=30s) -> HALFTIME          |     |
+|  | - isQ3Ending (period=3, clock<=30s)                       |     |
+|  | - isQ4Ending (period=4, clock<=30s) -> FINAL              |     |
+|  +----------------------------------------------------------+     |
+|                              |                                      |
+|                              v                                      |
+|  CAPTURE: Quarter Snapshot Edge Function                            |
+|  +----------------------------------------------------------+     |
+|  | record-quarter-snapshot:                                  |     |
+|  | - Captures all PlayerLiveState for each rostered player   |     |
+|  | - Records boxScore stats (pts, reb, ast, min, fouls)      |     |
+|  | - Records vision diagnostics (fatigue, effort, speed)     |     |
+|  | - Records rotation data (role, stability, stint info)     |     |
+|  | - Stores to quarter_player_snapshots table                |     |
+|  +----------------------------------------------------------+     |
+|                              |                                      |
+|                              v                                      |
+|  STORAGE: Database Tables                                           |
+|  +----------------------------------------------------------+     |
+|  | quarter_player_snapshots:                                 |     |
+|  | - event_id, quarter (1-4), player_name, team             |     |
+|  | - minutes_played, points, rebounds, assists, fouls        |     |
+|  | - fatigue_score, effort_score, speed_index                |     |
+|  | - rotation_role, on_court_stability, foul_risk_level      |     |
+|  | - risk_flags, visual_flags, hands_on_knees_count          |     |
+|  | - captured_at                                              |     |
+|  +----------------------------------------------------------+     |
+|                              |                                      |
+|                              v                                      |
+|  CONSUMPTION: Lock Mode Engine                                      |
+|  +----------------------------------------------------------+     |
+|  | At halftime (Q2 end), Lock Mode queries:                  |     |
+|  | - Q1 + Q2 snapshots for each player                       |     |
+|  | - Validates Gate 1: 14+ combined minutes, role stable     |     |
+|  | - Validates Gate 4: Fatigue progression across quarters   |     |
+|  | - Generates high-confidence 3-leg slip                    |     |
+|  +----------------------------------------------------------+     |
+|                                                                    |
++--------------------------------------------------------------------+
 ```
 
 ---
 
 ### Database Changes
 
-**New Table: `lock_mode_backtest_runs`**
+**New Table: `quarter_player_snapshots`**
 
 | Column | Type | Description |
 |--------|------|-------------|
-| id | UUID | Primary key |
-| run_name | TEXT | Descriptive name |
-| date_range_start | DATE | Start of backtest period |
-| date_range_end | DATE | End of backtest period |
-| config | JSONB | Gate thresholds used |
-| total_slates | INT | Number of game days processed |
-| slips_generated | INT | Number of valid 3-leg slips |
-| slips_passed | INT | Days with 0 valid slips (intentional pass) |
-| total_legs | INT | Total legs in valid slips |
-| legs_hit | INT | Legs that hit |
-| legs_missed | INT | Legs that missed |
-| legs_pushed | INT | Legs that pushed |
-| leg_hit_rate | NUMERIC | legs_hit / (legs_hit + legs_missed) |
-| parlay_win_rate | NUMERIC | 3-leg slips where all hit |
-| gate_block_stats | JSONB | Breakdown by gate (minutes, stat_type, edge, under) |
-| avg_edge_value | NUMERIC | Average edge of selected legs |
-| created_at | TIMESTAMPTZ | Timestamp |
-| completed_at | TIMESTAMPTZ | Completion time |
+| id | BIGSERIAL | Primary key |
+| event_id | TEXT | Game event ID |
+| espn_event_id | TEXT | ESPN event ID for cross-reference |
+| quarter | INT | 1, 2, 3, or 4 |
+| player_name | TEXT | Player name |
+| team | TEXT | Team abbreviation |
+| minutes_played | NUMERIC | Cumulative minutes at quarter end |
+| points | INT | Cumulative points |
+| rebounds | INT | Cumulative rebounds |
+| assists | INT | Cumulative assists |
+| fouls | INT | Cumulative fouls |
+| turnovers | INT | Cumulative turnovers |
+| threes | INT | Cumulative 3-pointers made |
+| fatigue_score | INT | Vision-derived fatigue (0-100) |
+| effort_score | INT | Vision-derived effort (0-100) |
+| speed_index | INT | Vision-derived speed (0-100) |
+| rebound_position_score | INT | Vision-derived box-out quality |
+| rotation_role | TEXT | STARTER, CLOSER, BENCH_CORE, BENCH_FRINGE |
+| on_court_stability | NUMERIC | 0-1 stability score |
+| foul_risk_level | TEXT | LOW, MED, HIGH |
+| player_role | TEXT | PRIMARY, SECONDARY, SPACER, BIG |
+| visual_flags | JSONB | Active visual indicators |
+| hands_on_knees_count | INT | Fatigue gesture count |
+| slow_recovery_count | INT | Recovery slowness count |
+| sprint_count | INT | Sprint explosiveness count |
+| captured_at | TIMESTAMPTZ | Snapshot timestamp |
+| created_at | TIMESTAMPTZ | Record creation time |
 
-**New Table: `lock_mode_backtest_slips`**
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | UUID | Primary key |
-| run_id | UUID | FK to lock_mode_backtest_runs |
-| slate_date | DATE | Game date |
-| slip_valid | BOOLEAN | True if all 3 slots filled |
-| legs | JSONB | Array of leg details with outcomes |
-| leg_count | INT | Should be 3 or 0 |
-| legs_hit | INT | 0-3 |
-| legs_missed | INT | 0-3 |
-| all_legs_hit | BOOLEAN | Parlay win indicator |
-| missing_slots | TEXT[] | Which slots couldn't be filled |
-| blocked_candidates | JSONB | Candidates that failed gates |
+**Indexes:**
+- `idx_quarter_snapshots_event_quarter` on (event_id, quarter)
+- `idx_quarter_snapshots_player` on (player_name, event_id)
 
 ---
 
-### Edge Function: `run-lock-mode-backtest`
+### Edge Function: `record-quarter-snapshot`
 
-**Purpose:** Execute the Lock Mode 4-gate simulation against historical data.
+**Purpose:** Capture comprehensive player diagnostics at quarter boundaries.
+
+**Trigger Points:**
+- Q1 end: When period=1 and clock <= 30s
+- Q2 end (Halftime): When period=2 and clock <= 30s OR isHalftime flag
+- Q3 end: When period=3 and clock <= 30s
+- Q4 end: When period=4 and clock <= 30s OR isGameOver flag
 
 **Input:**
 ```json
 {
-  "dateStart": "2026-01-01",
-  "dateEnd": "2026-01-26"
+  "eventId": "401234567",
+  "espnEventId": "401234567",
+  "quarter": 2,
+  "gameTime": "Q2 0:00",
+  "playerStates": {
+    "LeBron James": { 
+      "fatigueScore": 45, 
+      "rotation": { "rotationRole": "STARTER" }, 
+      "boxScore": { "points": 12, "rebounds": 4 },
+      ...
+    }
+  },
+  "pbpPlayers": [
+    { "playerName": "LeBron James", "minutes": 18.5, "points": 12, "fouls": 2, ... }
+  ]
 }
 ```
-
-**Logic Flow:**
-
-1. **Fetch Historical Data**
-   - Query `scout_prop_outcomes` for settled predictions in date range
-   - Join with `player_archetypes` for archetype/role info
-   - Optionally enrich with `category_sweet_spots` for L10 variance data
-
-2. **Group by Game Date**
-   - Each date represents a potential "halftime slate"
-
-3. **Simulate Lock Mode Gates for Each Date**
-   - For each pick on that date:
-     - **Gate 1 (Minutes):** Check `rotation_role` in (STARTER, CLOSER), simulate stable minutes from `avg_minutes`
-     - **Gate 2 (Stat Type):** Only Rebounds, Assists, PRA, Points allowed
-     - **Gate 3 (Edge vs Uncertainty):** `|predicted_final - line| >= minutes_uncertainty * 1.25`
-     - **Gate 4 (UNDER Rules):** If side=UNDER, require low variance and no BREAKOUT_RISK/BLOWOUT_RISK flags
-     - **Confidence Filter:** `confidence_raw >= 72`
-
-4. **Fill 3 Slots**
-   - Slot 1: BIG_REB_OVER (Rebounds OVER with BIG/PRIMARY archetype)
-   - Slot 2: ASSIST_OVER (Assists OVER with PRIMARY/SECONDARY role)
-   - Slot 3: FLEX (Points OVER for stars, PRA for bigs, or fatigue UNDER)
-
-5. **Grade Outcomes**
-   - Check actual `outcome` field for each selected leg
-   - Track individual leg hit rate and parlay (all 3 hit) win rate
-
-6. **Store Results**
-   - Insert run summary to `lock_mode_backtest_runs`
-   - Insert per-date slips to `lock_mode_backtest_slips`
 
 **Output:**
 ```json
 {
   "success": true,
-  "runId": "uuid",
-  "summary": {
-    "dateRange": { "start": "2026-01-01", "end": "2026-01-26" },
-    "totalSlates": 26,
-    "slipsGenerated": 18,
-    "slipsPassed": 8,
-    "totalLegs": 54,
-    "legsHit": 42,
-    "legsMissed": 12,
-    "legHitRate": 77.78,
-    "parlayWinRate": 44.44,
-    "gateBlockStats": {
-      "minutes": 34,
-      "statType": 89,
-      "edge": 156,
-      "under": 23,
-      "confidence": 67
-    }
+  "quarter": 2,
+  "playersRecorded": 24,
+  "snapshotId": "uuid"
+}
+```
+
+---
+
+### Frontend Integration
+
+**Modify `useScoutAgentState.ts`:**
+
+1. Add quarter-end detection in `updatePBPData`:
+```typescript
+// Detect Q1 ending
+const isQ1Ending = data.period === 1 && totalClockSeconds <= 30;
+
+// On any quarter end, trigger snapshot
+if (isQ1Ending || data.isQ2Ending || data.isQ3Ending || data.isQ4Ending) {
+  recordQuarterSnapshot(data.period, updatedStates, data);
+}
+```
+
+2. Add `recordQuarterSnapshot` function:
+```typescript
+const recordQuarterSnapshot = async (
+  quarter: number,
+  playerStates: Map<string, PlayerLiveState>,
+  pbpData: LivePBPData
+) => {
+  await supabase.functions.invoke('record-quarter-snapshot', {
+    body: {
+      eventId: state.gameContext?.eventId,
+      espnEventId: state.gameContext?.espnEventId,
+      quarter,
+      gameTime: pbpData.gameTime,
+      playerStates: Object.fromEntries(playerStates),
+      pbpPlayers: pbpData.players,
+    },
+  });
+};
+```
+
+**Modify `fetch-live-pbp`:**
+- Add `isQ1Ending` detection (period=1, clock<=30s)
+- Add `isQ3Ending` detection (period=3, clock<=30s) 
+- Add `isQ4Ending` detection (period=4, clock<=30s OR isGameOver)
+
+---
+
+### Lock Mode Integration
+
+**Modify `buildLockModeSlip` in `lockModeEngine.ts`:**
+
+At halftime, query the stored Q1 + Q2 snapshots to validate:
+
+```typescript
+// Gate 1: Minutes validation with quarter data
+const halfSnapshot = await getQuarterSnapshot(eventId, 2, playerName);
+if (halfSnapshot) {
+  const firstHalfMinutes = halfSnapshot.minutes_played;
+  const isStarterOrCloser = halfSnapshot.rotation_role === 'STARTER' || 
+                            halfSnapshot.rotation_role === 'CLOSER';
+  const noFoulTrouble = halfSnapshot.fouls <= 3;
+  
+  // Require 14+ 1H minutes for Lock Mode
+  if (firstHalfMinutes < 14 || !isStarterOrCloser || !noFoulTrouble) {
+    return { passed: false, reason: 'First-half criteria not met' };
+  }
+}
+
+// Gate 4: Fatigue trend across quarters
+const q1Snapshot = await getQuarterSnapshot(eventId, 1, playerName);
+const q2Snapshot = await getQuarterSnapshot(eventId, 2, playerName);
+
+if (q1Snapshot && q2Snapshot) {
+  const fatigueTrend = q2Snapshot.fatigue_score - q1Snapshot.fatigue_score;
+  // If fatigue spiked 15+ points Q1->Q2, boost UNDER confidence
+  if (fatigueTrend >= 15 && edge.lean === 'UNDER') {
+    confidence += 5; // Bonus for verified fatigue progression
   }
 }
 ```
 
 ---
 
-### UI Component: `LockModeBacktestDashboard`
+### UI Enhancements
 
-**Location:** `src/components/scout/LockModeBacktestDashboard.tsx`
+**Add Quarter Snapshot Indicator to Scout UI:**
 
-**Features:**
-- Date range picker (start/end)
-- "Run Backtest" button
-- Results display:
-  - **Headline Stats Card:** Leg Hit Rate, Parlay Win Rate, Slips Generated vs Passed
-  - **Gate Effectiveness Chart:** Bar chart showing how many picks blocked per gate
-  - **Daily Results Table:** Date, Slip Valid?, Legs, Outcome (Win/Loss/Pass)
-  - **Win Rate Trend Line:** Chart showing cumulative parlay win rate over time
+Show checkmarks when each quarter's diagnostics are successfully recorded:
 
-**Example UI Layout:**
-```text
-+----------------------------------------------------------+
-| LOCK MODE BACKTESTER                                      |
-| "Simulate 4-Gate Filtering on Historical Data"           |
-+----------------------------------------------------------+
-| Date Range: [2026-01-01] to [2026-01-26]  [Run Backtest] |
-+----------------------------------------------------------+
-|                                                          |
-| +----------------+  +----------------+  +----------------+|
-| | LEG HIT RATE   |  | PARLAY WIN RATE|  | SLIPS GENERATED||
-| |    77.8%       |  |    44.4%       |  |   18 / 26     ||
-| |  (Target: 75%) |  |  (Target: 42%) |  |  (8 passed)   ||
-| +----------------+  +----------------+  +----------------+|
-|                                                          |
-| GATE BLOCKING EFFECTIVENESS                              |
-| +------------------------------------------------------+|
-| | [====] Minutes Gate:    34 blocked                   ||
-| | [========] Stat Type:   89 blocked                   ||
-| | [================] Edge vs Unc: 156 blocked          ||
-| | [===] UNDER Rules:      23 blocked                   ||
-| | [=======] Confidence:   67 blocked                   ||
-| +------------------------------------------------------+|
-|                                                          |
-| DAILY RESULTS                                            |
-| +------------------------------------------------------+|
-| | Date       | Valid | Legs          | Outcome         ||
-| |------------|-------|---------------|-----------------|  |
-| | 2026-01-26 | Yes   | 3/3 hit       | WIN             ||
-| | 2026-01-25 | Yes   | 2/3 hit       | LOSS            ||
-| | 2026-01-24 | No    | — (no slip)   | PASS            ||
-| +------------------------------------------------------+|
-+----------------------------------------------------------+
+```
+Quarter Diagnostics: [✓ Q1] [✓ Q2] [○ Q3] [○ Q4]
+                      12:45    Now
+```
+
+**Lock Mode Tab Enhancement:**
+
+Display data source verification:
+
+```
+Lock Mode - Data Verification
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✓ Q1 Snapshot: 24 players recorded
+✓ Q2 Snapshot: 24 players recorded  
+✓ First-half minutes verified
+✓ Rotation roles confirmed
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Ready to generate 3-leg slip
 ```
 
 ---
@@ -226,60 +254,31 @@ Build a backtest system that simulates the 4-gate Lock Mode filtering against hi
 
 | File | Action | Description |
 |------|--------|-------------|
-| `supabase/migrations/xxx_lock_mode_backtest_tables.sql` | Create | New tables for backtest results |
-| `supabase/functions/run-lock-mode-backtest/index.ts` | Create | Edge function with 4-gate simulation |
+| `supabase/migrations/xxx_quarter_player_snapshots.sql` | Create | New table for quarter diagnostics |
+| `supabase/functions/record-quarter-snapshot/index.ts` | Create | Edge function to capture snapshots |
+| `supabase/functions/fetch-live-pbp/index.ts` | Modify | Add Q1/Q3/Q4 ending detection |
 | `supabase/config.toml` | Modify | Add new function config |
-| `src/components/scout/LockModeBacktestDashboard.tsx` | Create | UI for running/viewing backtests |
-| `src/hooks/useLockModeBacktest.ts` | Create | Hook for invoking backtest and fetching results |
+| `src/hooks/useScoutAgentState.ts` | Modify | Add quarter snapshot trigger logic |
+| `src/types/scout-agent.ts` | Modify | Add quarter snapshot types |
+| `src/lib/lockModeEngine.ts` | Modify | Query quarter snapshots for validation |
+| `src/components/scout/LockModeTab.tsx` | Modify | Add data verification display |
 
 ---
 
-### Key Implementation Details
+### Data Flow Summary
 
-**Mapping Historical Data to Lock Mode Gates:**
-
-| Gate | Historical Data Source | Simulation Logic |
-|------|------------------------|------------------|
-| Gate 1: Minutes | `scout_prop_outcomes.rotation_role` + `player_archetypes.avg_minutes` | role in (STARTER, CLOSER), avg_minutes >= 28 |
-| Gate 2: Stat Type | `scout_prop_outcomes.prop` | prop in (Rebounds, Assists, PRA, Points) |
-| Gate 3: Edge | `scout_prop_outcomes.predicted_final`, `line`, `minutes_uncertainty` | abs(predicted - line) >= uncertainty * 1.25 |
-| Gate 4: UNDER | `scout_prop_outcomes.risk_flags`, `side` | If UNDER: no BREAKOUT_RISK, no BLOWOUT_RISK |
-| Confidence | `scout_prop_outcomes.confidence_raw` | confidence >= 72 |
-
-**Archetype to Role Mapping:**
-```javascript
-const archetypeToRole = {
-  'ELITE_REBOUNDER': 'BIG',
-  'GLASS_CLEANER': 'BIG',
-  'RIM_PROTECTOR': 'BIG',
-  'STRETCH_BIG': 'BIG',
-  'PLAYMAKER': 'PRIMARY',
-  'COMBO_GUARD': 'PRIMARY',
-  'SCORING_GUARD': 'PRIMARY',
-  'THREE_AND_D': 'SECONDARY',
-  'ROLE_PLAYER': 'SECONDARY'
-};
-```
+1. **Q1 End (12 min mark):** Record first snapshot with early rotation signals
+2. **Q2 End (Halftime):** Record critical halftime snapshot with full first-half data
+3. **Lock Mode Activation:** Query Q1+Q2 snapshots to validate all 4 gates
+4. **Q3/Q4 Ends:** Continue recording for post-game analysis and backtest enrichment
 
 ---
 
-### Expected Results
+### Benefits
 
-Based on the Lock Mode design with 75% individual leg confidence:
-- **Target Leg Hit Rate:** 75%+
-- **Target 3-Leg Parlay Win Rate:** 42%+ (0.75^3 = 0.42)
-- **Pass Days:** 20-40% of slates (when gates can't fill all 3 slots)
-
-The backtest validates whether the 4-gate filtering actually achieves these theoretical targets against real historical data.
-
----
-
-### Summary
-
-This feature provides empirical validation of the Lock Mode system by:
-1. Replaying historical predictions through the 4-gate filter
-2. Measuring actual leg hit rate and parlay win rate
-3. Quantifying how many bad picks each gate blocked
-4. Identifying which slot types are hardest to fill
-5. Proving the "pass is a win" philosophy with slip generation rates
+- **Verified First-Half Data:** Lock Mode gates use actual recorded stats, not estimates
+- **Fatigue Trend Analysis:** Compare Q1 vs Q2 diagnostics for progression signals
+- **Rotation Certainty:** Confirm STARTER/CLOSER roles from actual quarter data
+- **Backtest Enrichment:** Quarter snapshots feed into `run-lock-mode-backtest` for more accurate historical simulation
+- **Audit Trail:** Complete diagnostic history for each game enables model improvement
 
