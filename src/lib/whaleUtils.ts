@@ -75,13 +75,60 @@ export function getConfidenceGrade(sharpScore: number): Confidence | null {
   return null;
 }
 
-// Mock data for simulation
-const MOCK_PLAYERS: Record<Sport, string[]> = {
-  NBA: ['LeBron James', 'Jayson Tatum', 'Luka Doncic', 'Nikola Jokic', 'Stephen Curry', 'Kevin Durant', 'Giannis Antetokounmpo', 'Anthony Edwards'],
-  WNBA: ['A\'ja Wilson', 'Breanna Stewart', 'Caitlin Clark', 'Sabrina Ionescu', 'Napheesa Collier'],
-  MLB: ['Shohei Ohtani', 'Aaron Judge', 'Mookie Betts', 'Ronald Acuna Jr.', 'Gerrit Cole', 'Max Scherzer'],
-  NHL: ['Connor McDavid', 'Nathan MacKinnon', 'Auston Matthews', 'Leon Draisaitl', 'Cale Makar'],
-  TENNIS: ['Novak Djokovic', 'Carlos Alcaraz', 'Iga Swiatek', 'Jannik Sinner', 'Aryna Sabalenka']
+// Mock data for simulation - Players with their actual teams
+interface PlayerTeamMapping {
+  name: string;
+  team: string;
+}
+
+const PLAYERS_WITH_TEAMS: Record<Sport, PlayerTeamMapping[]> = {
+  NBA: [
+    { name: 'LeBron James', team: 'LAL' },
+    { name: 'Jayson Tatum', team: 'BOS' },
+    { name: 'Luka Doncic', team: 'DAL' },
+    { name: 'Nikola Jokic', team: 'DEN' },
+    { name: 'Stephen Curry', team: 'GSW' },
+    { name: 'Kevin Durant', team: 'PHX' },
+    { name: 'Giannis Antetokounmpo', team: 'MIL' },
+    { name: 'Anthony Edwards', team: 'MIN' },
+  ],
+  WNBA: [
+    { name: "A'ja Wilson", team: 'LVA' },
+    { name: 'Breanna Stewart', team: 'NYL' },
+    { name: 'Caitlin Clark', team: 'IND' },
+    { name: 'Sabrina Ionescu', team: 'NYL' },
+    { name: 'Napheesa Collier', team: 'MIN' },
+  ],
+  MLB: [
+    { name: 'Shohei Ohtani', team: 'LAD' },
+    { name: 'Aaron Judge', team: 'NYY' },
+    { name: 'Mookie Betts', team: 'LAD' },
+    { name: 'Ronald Acuna Jr.', team: 'ATL' },
+    { name: 'Gerrit Cole', team: 'NYY' },
+    { name: 'Max Scherzer', team: 'TEX' },
+  ],
+  NHL: [
+    { name: 'Connor McDavid', team: 'EDM' },
+    { name: 'Nathan MacKinnon', team: 'COL' },
+    { name: 'Auston Matthews', team: 'TOR' },
+    { name: 'Leon Draisaitl', team: 'EDM' },
+    { name: 'Cale Makar', team: 'COL' },
+  ],
+  TENNIS: [
+    { name: 'Novak Djokovic', team: 'DJOKOVIC' },
+    { name: 'Carlos Alcaraz', team: 'ALCARAZ' },
+    { name: 'Iga Swiatek', team: 'SWIATEK' },
+    { name: 'Jannik Sinner', team: 'SINNER' },
+    { name: 'Aryna Sabalenka', team: 'SABALENKA' },
+  ]
+};
+
+const TEAMS_BY_SPORT: Record<Sport, string[]> = {
+  NBA: ['LAL', 'BOS', 'GSW', 'MIA', 'PHX', 'MIL', 'DEN', 'CLE', 'DAL', 'NYK', 'MIN'],
+  WNBA: ['LVA', 'NYL', 'SEA', 'CHI', 'MIN', 'PHO', 'CON', 'IND'],
+  MLB: ['LAD', 'NYY', 'HOU', 'ATL', 'PHI', 'SD', 'TEX', 'ARI'],
+  NHL: ['EDM', 'TOR', 'COL', 'BOS', 'VGK', 'NYR', 'DAL', 'FLA'],
+  TENNIS: ['DJOKOVIC', 'ALCARAZ', 'MEDVEDEV', 'SINNER', 'SWIATEK', 'SABALENKA']
 };
 
 const STAT_TYPES: Record<Sport, string[]> = {
@@ -90,14 +137,6 @@ const STAT_TYPES: Record<Sport, string[]> = {
   MLB: ['strikeouts', 'hits_allowed', 'total_bases', 'walks'],
   NHL: ['shots_on_goal', 'points', 'saves', 'goals'],
   TENNIS: ['aces', 'games_won', 'sets_won', 'double_faults']
-};
-
-const MATCHUPS: Record<Sport, string[]> = {
-  NBA: ['LAL vs BOS', 'GSW vs MIA', 'PHX vs MIL', 'DEN vs CLE', 'DAL vs NYK'],
-  WNBA: ['LVA vs NYL', 'SEA vs CHI', 'MIN vs PHO', 'CON vs IND'],
-  MLB: ['LAD vs NYY', 'HOU vs ATL', 'PHI vs SD', 'TEX vs ARI'],
-  NHL: ['EDM vs TOR', 'COL vs BOS', 'VGK vs NYR', 'DAL vs FLA'],
-  TENNIS: ['Djokovic vs Alcaraz', 'Sinner vs Medvedev', 'Swiatek vs Sabalenka']
 };
 
 const WHY_REASONS: Record<SignalType, string[]> = {
@@ -128,12 +167,43 @@ function randomChoice<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+function generateMatchupForTeam(sport: Sport, playerTeam: string): string {
+  if (sport === 'TENNIS') {
+    // Tennis doesn't use this function - handled separately
+    return '';
+  }
+  
+  const allTeams = TEAMS_BY_SPORT[sport];
+  const opponents = allTeams.filter(t => t !== playerTeam);
+  const opponent = randomChoice(opponents);
+  
+  // Randomly determine home/away
+  return Math.random() > 0.5 
+    ? `${playerTeam} @ ${opponent}` 
+    : `${opponent} @ ${playerTeam}`;
+}
+
 function generateMockPick(existingIds: Set<string>): WhalePick {
   const sport = randomChoice<Sport>(['NBA', 'WNBA', 'MLB', 'NHL', 'TENNIS']);
-  const player = randomChoice(MOCK_PLAYERS[sport]);
+  
+  // Pick a player with their team
+  const playerData = randomChoice(PLAYERS_WITH_TEAMS[sport]);
+  const player = playerData.name;
+  const playerTeam = playerData.team;
+  
   const statType = randomChoice(STAT_TYPES[sport]);
-  const matchup = randomChoice(MATCHUPS[sport]);
   const signalType = randomChoice<SignalType>(['STEAM', 'DIVERGENCE', 'FREEZE']);
+  
+  // Generate matchup with player's actual team
+  let matchup: string;
+  if (sport === 'TENNIS') {
+    // For tennis, matchup is player vs player
+    const otherPlayers = PLAYERS_WITH_TEAMS.TENNIS.filter(p => p.name !== player);
+    const opponent = randomChoice(otherPlayers);
+    matchup = `${player.split(' ')[1]} vs ${opponent.name.split(' ')[1]}`;
+  } else {
+    matchup = generateMatchupForTeam(sport, playerTeam);
+  }
   
   // Generate sharp score between 55-95
   const sharpScore = 55 + Math.floor(Math.random() * 40);
