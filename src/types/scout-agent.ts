@@ -693,3 +693,43 @@ export interface GameBetEdge {
   overOdds?: number;
   underOdds?: number;
 }
+
+// ===== LOCK MODE TYPES =====
+
+export type LockModeStatTier = 'TIER_1' | 'TIER_2' | 'TIER_3';
+export type LockModeLegSlot = 'BIG_REB_OVER' | 'ASSIST_OVER' | 'FLEX';
+
+export interface LockModeGate {
+  passed: boolean;
+  reason?: string;
+}
+
+export interface LockModeLeg {
+  player: string;
+  prop: PropType;
+  line: number;
+  lean: 'OVER' | 'UNDER';
+  projected: number;
+  uncertainty: number;
+  edge: number;
+  minutesRemaining: number;
+  minutesUncertainty: number;
+  calibratedConfidence: number;
+  drivers: string[]; // Max 2 reasons
+  slot: LockModeLegSlot;
+  gates: {
+    minutes: LockModeGate;
+    statType: LockModeGate;
+    edgeVsUncertainty: LockModeGate;
+    underRules?: LockModeGate;
+  };
+}
+
+export interface LockModeSlip {
+  legs: LockModeLeg[]; // Exactly 0 or 3
+  generatedAt: string;
+  gameTime: string;
+  isValid: boolean;
+  blockReason?: string;
+  missingSlots?: LockModeLegSlot[];
+}
