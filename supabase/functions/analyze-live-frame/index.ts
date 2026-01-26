@@ -96,9 +96,9 @@ serve(async (req) => {
       );
     }
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY is not configured');
+    const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
+    if (!OPENAI_API_KEY) {
+      throw new Error('OPENAI_API_KEY is not configured');
     }
 
     // AUTO-DETECT MODE: Quick classification scan
@@ -119,14 +119,14 @@ serve(async (req) => {
         },
       ];
 
-      const autoResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      const autoResponse = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+          'Authorization': `Bearer ${OPENAI_API_KEY}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: 'google/gemini-2.5-flash-lite', // Fastest model for classification
+          model: 'gpt-4o-mini',
           messages: [
             { role: 'system', content: `You are a basketball game scene classifier. Game: ${gameContext.awayTeam} @ ${gameContext.homeTeam}` },
             { role: 'user', content: autoContent },
@@ -244,14 +244,14 @@ Focus on NEW observations. Be concise but specific.`;
 
     console.log(`Analyzing ${framesToAnalyze.length} frames for ${momentType} moment`);
 
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
+        model: 'gpt-4o',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content },
