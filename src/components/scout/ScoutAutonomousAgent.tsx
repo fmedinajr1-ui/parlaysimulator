@@ -889,6 +889,10 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
             homeTeamState={homeTeamState}
             awayTeamState={awayTeamState}
             gameBetEdges={gameBetEdges}
+            onRefreshStats={refreshPBPData}
+            isRefreshing={isRefreshing}
+            lastPbpUpdate={lastPbpUpdate}
+            lastPbpGameTime={lastPbpGameTime}
           />
         </TabsContent>
         
