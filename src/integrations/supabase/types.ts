@@ -536,6 +536,151 @@ export type Database = {
         }
         Relationships: []
       }
+      backtest_parlay_results: {
+        Row: {
+          all_legs_hit: boolean | null
+          avg_edge_value: number | null
+          conflicts_detected: number | null
+          created_at: string | null
+          edge_blocked_count: number | null
+          id: string
+          leg_count: number | null
+          legs: Json
+          legs_hit: number | null
+          legs_missed: number | null
+          legs_pushed: number | null
+          parlay_type: string
+          run_id: string | null
+          slate_date: string
+          total_synergy_score: number | null
+        }
+        Insert: {
+          all_legs_hit?: boolean | null
+          avg_edge_value?: number | null
+          conflicts_detected?: number | null
+          created_at?: string | null
+          edge_blocked_count?: number | null
+          id?: string
+          leg_count?: number | null
+          legs?: Json
+          legs_hit?: number | null
+          legs_missed?: number | null
+          legs_pushed?: number | null
+          parlay_type: string
+          run_id?: string | null
+          slate_date: string
+          total_synergy_score?: number | null
+        }
+        Update: {
+          all_legs_hit?: boolean | null
+          avg_edge_value?: number | null
+          conflicts_detected?: number | null
+          created_at?: string | null
+          edge_blocked_count?: number | null
+          id?: string
+          leg_count?: number | null
+          legs?: Json
+          legs_hit?: number | null
+          legs_missed?: number | null
+          legs_pushed?: number | null
+          parlay_type?: string
+          run_id?: string | null
+          slate_date?: string
+          total_synergy_score?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "backtest_parlay_results_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "backtest_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      backtest_runs: {
+        Row: {
+          avg_edge_value: number | null
+          avg_synergy_score: number | null
+          baseline_run_id: string | null
+          builder_version: string
+          completed_at: string | null
+          config: Json
+          created_at: string | null
+          date_range_end: string
+          date_range_start: string
+          id: string
+          improvement_vs_baseline: number | null
+          leg_hit_rate: number | null
+          legs_hit: number | null
+          legs_missed: number | null
+          legs_pushed: number | null
+          parlay_win_rate: number | null
+          picks_blocked_by_edge: number | null
+          picks_blocked_by_synergy: number | null
+          run_name: string | null
+          total_legs: number | null
+          total_parlays_built: number | null
+          total_slates: number | null
+        }
+        Insert: {
+          avg_edge_value?: number | null
+          avg_synergy_score?: number | null
+          baseline_run_id?: string | null
+          builder_version: string
+          completed_at?: string | null
+          config?: Json
+          created_at?: string | null
+          date_range_end: string
+          date_range_start: string
+          id?: string
+          improvement_vs_baseline?: number | null
+          leg_hit_rate?: number | null
+          legs_hit?: number | null
+          legs_missed?: number | null
+          legs_pushed?: number | null
+          parlay_win_rate?: number | null
+          picks_blocked_by_edge?: number | null
+          picks_blocked_by_synergy?: number | null
+          run_name?: string | null
+          total_legs?: number | null
+          total_parlays_built?: number | null
+          total_slates?: number | null
+        }
+        Update: {
+          avg_edge_value?: number | null
+          avg_synergy_score?: number | null
+          baseline_run_id?: string | null
+          builder_version?: string
+          completed_at?: string | null
+          config?: Json
+          created_at?: string | null
+          date_range_end?: string
+          date_range_start?: string
+          id?: string
+          improvement_vs_baseline?: number | null
+          leg_hit_rate?: number | null
+          legs_hit?: number | null
+          legs_missed?: number | null
+          legs_pushed?: number | null
+          parlay_win_rate?: number | null
+          picks_blocked_by_edge?: number | null
+          picks_blocked_by_synergy?: number | null
+          run_name?: string | null
+          total_legs?: number | null
+          total_parlays_built?: number | null
+          total_slates?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "backtest_runs_baseline_run_id_fkey"
+            columns: ["baseline_run_id"]
+            isOneToOne: false
+            referencedRelation: "backtest_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bdl_player_cache: {
         Row: {
           bdl_player_id: number | null
