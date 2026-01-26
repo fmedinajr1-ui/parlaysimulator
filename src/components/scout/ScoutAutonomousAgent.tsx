@@ -893,6 +893,7 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
             isRefreshing={isRefreshing}
             lastPbpUpdate={lastPbpUpdate}
             lastPbpGameTime={lastPbpGameTime}
+            playerStates={state.playerStates}
           />
         </TabsContent>
         
