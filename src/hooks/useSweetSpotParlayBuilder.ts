@@ -46,6 +46,41 @@ const ARCHETYPE_PROP_BLOCKED: Record<string, string[]> = {
   'SCORING_GUARD': ['rebounds', 'blocks'],
 };
 
+// v5.0: MINIMUM EDGE THRESHOLDS - Block low-edge picks
+const MIN_EDGE_THRESHOLDS: Record<string, number> = {
+  points: 1.5,     // Need 1.5+ edge for points
+  rebounds: 1.0,   // 1.0+ for rebounds
+  assists: 0.8,    // 0.8+ for assists
+  threes: 0.5,     // 0.5+ for threes
+  pra: 3.0,        // 3.0+ for PRA (combo stat)
+  blocks: 0.5,     // 0.5+ for blocks
+  steals: 0.3,     // 0.3+ for steals
+};
+
+// v5.0: Check if pick passes minimum edge threshold
+function passesMinEdgeThreshold(pick: SweetSpotPick): boolean {
+  // Skip check if no projection data
+  if (!pick.projectedValue || !pick.actualLine) return true;
+  
+  const edge = Math.abs(pick.projectedValue - pick.actualLine);
+  const propNorm = normalizeProp(pick.prop_type);
+  
+  // Find matching threshold
+  let threshold = 1.0; // Default
+  for (const [propKey, minEdge] of Object.entries(MIN_EDGE_THRESHOLDS)) {
+    if (propNorm.includes(propKey)) {
+      threshold = minEdge;
+      break;
+    }
+  }
+  
+  if (edge < threshold) {
+    console.log(`[EdgeFilter] ${pick.player_name} ${pick.prop_type}: Edge ${edge.toFixed(2)} < threshold ${threshold}, blocking`);
+    return false;
+  }
+  return true;
+}
+
 // Safe prop normalization helper - handles null/undefined and strips non-alpha chars
 const normalizeProp = (p?: string | null): string =>
   (p || '').toLowerCase().replace(/[^a-z]/g, ''); // "Points + Rebounds" -> "pointsrebounds"
@@ -742,13 +777,18 @@ export function buildSweetSpotParlayCore(input: BuilderInput): BuilderOutput {
     return true;
   });
 
+  // Step 3.5 (v5.0): Minimum edge threshold filter
+  const edgeValidatedPicks = patternValidatedPicks.filter(pick => {
+    return passesMinEdgeThreshold(pick);
+  });
+
   // Step 4: Category selection loop
   const selectedLegs: DreamTeamLeg[] = [];
   const usedTeams = new Set<string>();
   const usedPlayers = new Set<string>();
 
   for (const formula of PROVEN_FORMULA) {
-    const categoryPicks = patternValidatedPicks
+    const categoryPicks = edgeValidatedPicks
       .filter(p => 
         p.category === formula.category && 
         p.side.toLowerCase() === formula.side &&
