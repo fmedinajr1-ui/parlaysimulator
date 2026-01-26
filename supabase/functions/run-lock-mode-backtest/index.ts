@@ -290,10 +290,10 @@ Deno.serve(async (req) => {
     const { data: outcomes, error: outcomesError } = await supabase
       .from('scout_prop_outcomes')
       .select('*')
-      .gte('game_date', dateStart)
-      .lte('game_date', dateEnd)
+      .gte('analysis_date', dateStart)
+      .lte('analysis_date', dateEnd)
       .not('outcome', 'is', null)
-      .order('game_date', { ascending: true });
+      .order('analysis_date', { ascending: true });
 
     if (outcomesError) {
       throw new Error(`Failed to fetch outcomes: ${outcomesError.message}`);
@@ -314,7 +314,7 @@ Deno.serve(async (req) => {
     // Group outcomes by date
     const byDate = new Map<string, any[]>();
     for (const outcome of outcomes || []) {
-      const date = outcome.game_date;
+      const date = outcome.analysis_date;
       if (!byDate.has(date)) {
         byDate.set(date, []);
       }
