@@ -46,27 +46,169 @@ const ARCHETYPE_PROP_BLOCKED: Record<string, string[]> = {
   'SCORING_GUARD': ['rebounds', 'blocks'],
 };
 
-// v5.0: MINIMUM EDGE THRESHOLDS - Block low-edge picks
+// v6.0: TRIPLED MINIMUM EDGE THRESHOLDS - Block low-edge and NULL projection picks
 const MIN_EDGE_THRESHOLDS: Record<string, number> = {
-  points: 1.5,     // Need 1.5+ edge for points
-  rebounds: 1.0,   // 1.0+ for rebounds
-  assists: 0.8,    // 0.8+ for assists
-  threes: 0.5,     // 0.5+ for threes
-  pra: 3.0,        // 3.0+ for PRA (combo stat)
-  blocks: 0.5,     // 0.5+ for blocks
-  steals: 0.3,     // 0.3+ for steals
+  points: 4.5,     // TRIPLED from 1.5 - need 4.5+ edge for points
+  rebounds: 2.5,   // INCREASED from 1.0 - need 2.5+ edge for rebounds
+  assists: 2.0,    // INCREASED from 0.8 - need 2.0+ edge for assists
+  threes: 1.0,     // DOUBLED from 0.5 - need 1.0+ edge for threes
+  pra: 6.0,        // DOUBLED from 3.0 - need 6.0+ edge for PRA
+  blocks: 1.0,     // DOUBLED from 0.5 - need 1.0+ edge for blocks
+  steals: 0.8,     // INCREASED from 0.3 - need 0.8+ edge for steals
 };
 
-// v5.0: Check if pick passes minimum edge threshold
-function passesMinEdgeThreshold(pick: SweetSpotPick): boolean {
-  // Skip check if no projection data
-  if (!pick.projectedValue || !pick.actualLine) return true;
+// v6.0: SYNERGY RULES - How legs can support each other (goes GREEN together)
+export const SYNERGY_RULES = {
+  // SLOW games (low total < 215): rebounds up, scoring down
+  SLOW_GAME: {
+    benefited: ['rebounds_over', 'points_under', 'assists_under'],
+    harmed: ['points_over', 'threes_over'],
+    totalThreshold: 215,
+  },
+  // FAST games (high total > 228): scoring up
+  FAST_GAME: {
+    benefited: ['points_over', 'assists_over', 'threes_over'],
+    harmed: ['rebounds_over', 'points_under'],
+    totalThreshold: 228,
+  },
+  // Opponent weak defense: all OVERs vs them correlate
+  WEAK_DEFENSE_THRESHOLD: 20, // Rank 20+ = weak defense = OVER synergy
+};
+
+// v6.0: HARD CONFLICT RULES - Never combine these legs
+const HARD_CONFLICTS = [
+  // Same player, any opposing picks on same prop
+  { 
+    rule: 'same_player_opposite', 
+    check: (a: SweetSpotPick, b: SweetSpotPick) => 
+      a.player_name?.toLowerCase() === b.player_name?.toLowerCase() && 
+      normalizeProp(a.prop_type) === normalizeProp(b.prop_type) && 
+      a.side?.toLowerCase() !== b.side?.toLowerCase()
+  },
+  // Two high-usage players same team, both OVER points (usage competition)
+  { 
+    rule: 'team_usage_conflict', 
+    check: (a: SweetSpotPick, b: SweetSpotPick) =>
+      a.team_name && b.team_name && 
+      a.team_name.toLowerCase() === b.team_name.toLowerCase() && 
+      normalizeProp(a.prop_type).includes('point') && 
+      normalizeProp(b.prop_type).includes('point') &&
+      a.side?.toLowerCase() === 'over' && b.side?.toLowerCase() === 'over' &&
+      (a.line || 0) >= 15 && (b.line || 0) >= 15
+  },
+];
+
+/**
+ * v6.0: Check if any pair of legs has a hard conflict
+ */
+function hasHardConflict(legs: SweetSpotPick[]): boolean {
+  for (let i = 0; i < legs.length; i++) {
+    for (let j = i + 1; j < legs.length; j++) {
+      for (const conflict of HARD_CONFLICTS) {
+        if (conflict.check(legs[i], legs[j])) {
+          console.log(`[Synergy] HARD CONFLICT: ${conflict.rule} between ${legs[i].player_name} and ${legs[j].player_name}`);
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * v6.0: Calculate synergy score between two parlay legs
+ * Returns: -2 (hard conflict), -1 (soft conflict), 0 (neutral), +1 (synergy), +2 (strong synergy)
+ */
+export function calculateLegSynergy(
+  leg1: SweetSpotPick,
+  leg2: SweetSpotPick,
+  gameContextMap: Map<string, ParlayEnvContext>
+): number {
+  let synergy = 0;
   
-  const edge = Math.abs(pick.projectedValue - pick.actualLine);
+  // Get game context for leg1
+  const teamKey = (leg1.team_name || '').toLowerCase();
+  const ctx = gameContextMap.get(teamKey);
+  const vegasTotal = ctx?.vegasTotal || 220;
+  
+  // SAME GAME synergies/conflicts
+  const sameGame = leg1.event_id && leg1.event_id === leg2.event_id;
+  const sameTeam = leg1.team_name && leg2.team_name && 
+                   leg1.team_name.toLowerCase() === leg2.team_name.toLowerCase();
+  
+  if (sameGame || sameTeam) {
+    // HARD CONFLICT: Same player, opposite sides
+    if (leg1.player_name?.toLowerCase() === leg2.player_name?.toLowerCase() && 
+        leg1.side?.toLowerCase() !== leg2.side?.toLowerCase()) {
+      console.log(`[Synergy] HARD CONFLICT: Same player ${leg1.player_name} opposite sides`);
+      return -2;
+    }
+    
+    // SOFT CONFLICT: Same team, both OVER on points (usage competition)
+    if (sameTeam && 
+        leg1.side?.toLowerCase() === 'over' && leg2.side?.toLowerCase() === 'over' &&
+        normalizeProp(leg1.prop_type).includes('point') && 
+        normalizeProp(leg2.prop_type).includes('point')) {
+      console.log(`[Synergy] Soft conflict: ${leg1.player_name} + ${leg2.player_name} both points OVER same team`);
+      return -1;
+    }
+    
+    // SYNERGY: SLOW game + multiple rebounds OVER (more misses = more boards)
+    if (vegasTotal < SYNERGY_RULES.SLOW_GAME.totalThreshold) {
+      if (normalizeProp(leg1.prop_type).includes('rebound') && leg1.side?.toLowerCase() === 'over' &&
+          normalizeProp(leg2.prop_type).includes('rebound') && leg2.side?.toLowerCase() === 'over') {
+        synergy += 1;
+        console.log(`[Synergy] SLOW game REB+REB OVER synergy: ${leg1.player_name} + ${leg2.player_name}`);
+      }
+      // SYNERGY: SLOW game + multiple UNDERS (grind it out)
+      if (leg1.side?.toLowerCase() === 'under' && leg2.side?.toLowerCase() === 'under') {
+        synergy += 1;
+        console.log(`[Synergy] SLOW game UNDER+UNDER synergy: ${leg1.player_name} + ${leg2.player_name}`);
+      }
+    }
+    
+    // SYNERGY: FAST game + multiple points/assists OVER (shootout)
+    if (vegasTotal > SYNERGY_RULES.FAST_GAME.totalThreshold) {
+      const leg1PtsAst = normalizeProp(leg1.prop_type).includes('point') || normalizeProp(leg1.prop_type).includes('assist');
+      const leg2PtsAst = normalizeProp(leg2.prop_type).includes('point') || normalizeProp(leg2.prop_type).includes('assist');
+      
+      if (leg1PtsAst && leg2PtsAst && 
+          leg1.side?.toLowerCase() === 'over' && leg2.side?.toLowerCase() === 'over' && 
+          !sameTeam) {
+        synergy += 1;
+        console.log(`[Synergy] FAST game PTS/AST OVER synergy: ${leg1.player_name} + ${leg2.player_name}`);
+      }
+    }
+  }
+  
+  // CROSS-GAME synergy: Both UNDERS in grinding games
+  if (!sameGame && leg1.side?.toLowerCase() === 'under' && leg2.side?.toLowerCase() === 'under') {
+    synergy += 0.5;
+  }
+  
+  return synergy;
+}
+
+// v6.0: HARD BLOCK picks with NULL or zero projections - never let unknown edges through
+function passesMinEdgeThreshold(pick: SweetSpotPick): boolean {
+  // v6.0: HARD BLOCK if no projection data
+  if (!pick.projectedValue || pick.projectedValue === 0) {
+    console.log(`[EdgeFilter] ${pick.player_name} ${pick.prop_type}: NO PROJECTION - BLOCKED`);
+    return false;
+  }
+  if (!pick.actualLine || pick.actualLine === 0) {
+    console.log(`[EdgeFilter] ${pick.player_name} ${pick.prop_type}: NO LINE DATA - BLOCKED`);
+    return false;
+  }
+  
+  // v6.0: Calculate DIRECTIONAL edge (positive = good edge for recommended side)
+  const isOver = pick.side?.toLowerCase() === 'over';
+  const rawEdge = pick.projectedValue - pick.actualLine;
+  const edge = isOver ? rawEdge : -rawEdge; // For UNDER, negative raw edge is good
   const propNorm = normalizeProp(pick.prop_type);
   
   // Find matching threshold
-  let threshold = 1.0; // Default
+  let threshold = 2.0; // Default higher for v6.0
   for (const [propKey, minEdge] of Object.entries(MIN_EDGE_THRESHOLDS)) {
     if (propNorm.includes(propKey)) {
       threshold = minEdge;
@@ -75,9 +217,11 @@ function passesMinEdgeThreshold(pick: SweetSpotPick): boolean {
   }
   
   if (edge < threshold) {
-    console.log(`[EdgeFilter] ${pick.player_name} ${pick.prop_type}: Edge ${edge.toFixed(2)} < threshold ${threshold}, blocking`);
+    console.log(`[EdgeFilter] ${pick.player_name} ${pick.prop_type} ${pick.side}: Edge ${edge.toFixed(2)} < threshold ${threshold} - BLOCKED`);
     return false;
   }
+  
+  console.log(`[EdgeFilter] ${pick.player_name} ${pick.prop_type} ${pick.side}: Edge ${edge.toFixed(2)} >= ${threshold} ✓ PASS`);
   return true;
 }
 
@@ -782,7 +926,7 @@ export function buildSweetSpotParlayCore(input: BuilderInput): BuilderOutput {
     return passesMinEdgeThreshold(pick);
   });
 
-  // Step 4: Category selection loop
+  // Step 4: Category selection loop with v6.0 SYNERGY SCORING
   const selectedLegs: DreamTeamLeg[] = [];
   const usedTeams = new Set<string>();
   const usedPlayers = new Set<string>();
@@ -800,11 +944,38 @@ export function buildSweetSpotParlayCore(input: BuilderInput): BuilderOutput {
         const opponentDefenseRank = getOpponentDefenseRank(p);
         const patternCheck = matchesWinningPattern(p, gameContext, opponentDefenseRank);
         return { ...p, _patternScore: patternCheck.score, _gameContext: gameContext, _opponentDefenseRank: opponentDefenseRank };
-      })
-      .sort((a, b) => scorePick(b) - scorePick(a));
+      });
+
+    // v6.0: Score each candidate with synergy bonus
+    const scoredCandidates = categoryPicks.map(pick => {
+      // Calculate synergy with already-selected legs
+      let totalSynergy = 0;
+      for (const selected of selectedLegs) {
+        const synergyScore = calculateLegSynergy(pick, selected.pick, gameContextMap);
+        totalSynergy += synergyScore;
+        
+        // Skip if hard conflict detected
+        if (synergyScore <= -2) {
+          console.log(`[Synergy] Hard conflict with ${selected.pick.player_name}, skipping ${pick.player_name}`);
+          return { pick, combinedScore: -Infinity, synergy: synergyScore };
+        }
+      }
+      
+      // Combined score: individual pick score + synergy bonus (weighted 2x)
+      const individualScore = scorePick({ 
+        _patternScore: pick._patternScore, 
+        l10HitRate: pick.l10HitRate, 
+        confidence_score: pick.confidence_score 
+      });
+      const combinedScore = individualScore + (totalSynergy * 2.0);
+      
+      return { pick, combinedScore, synergy: totalSynergy };
+    })
+    .filter(x => x.combinedScore > -Infinity)
+    .sort((a, b) => b.combinedScore - a.combinedScore);
 
     let added = 0;
-    for (const pick of categoryPicks) {
+    for (const { pick, combinedScore, synergy } of scoredCandidates) {
       if (added >= formula.count) continue;
       if (selectedLegs.length >= TARGET_LEG_COUNT) break;
 
@@ -812,7 +983,7 @@ export function buildSweetSpotParlayCore(input: BuilderInput): BuilderOutput {
       const h2h = getH2HForPick(pick);
       const gameContext = pick._gameContext;
       const opponentDefenseRank = pick._opponentDefenseRank;
-      const finalScore = scorePick({ _patternScore: pick._patternScore, l10HitRate: pick.l10HitRate, confidence_score: pick.confidence_score });
+      const finalScore = combinedScore;
 
       // Create trace row
       const hasL10 = pick.l10HitRate != null;
@@ -827,7 +998,7 @@ export function buildSweetSpotParlayCore(input: BuilderInput): BuilderOutput {
         side: pick.side,
         archetypeAligned: true,
         patternScore: pick._patternScore ?? 0,
-        patternReason: 'Passed validation',
+        patternReason: `Passed validation (synergy: ${synergy >= 0 ? '+' : ''}${synergy.toFixed(1)})`,
         defenseRank: opponentDefenseRank,
         l10: pick.l10HitRate,
         conf: pick.confidence_score,
@@ -838,6 +1009,8 @@ export function buildSweetSpotParlayCore(input: BuilderInput): BuilderOutput {
         scorePenalty: hasL10 ? 0 : SCORE_WEIGHTS.missingL10Penalty,
         selected: true,
       });
+
+      console.log(`[Synergy] Selected ${pick.player_name} ${pick.prop_type} ${pick.side} (score: ${finalScore.toFixed(2)}, synergy: ${synergy.toFixed(1)})`);
 
       selectedLegs.push({
         pick,
@@ -854,7 +1027,7 @@ export function buildSweetSpotParlayCore(input: BuilderInput): BuilderOutput {
     }
   }
 
-  // Step 5: Fill remaining slots from pattern-validated picks if needed
+  // Step 5: Fill remaining slots from pattern-validated picks if needed (with synergy)
   if (selectedLegs.length < TARGET_LEG_COUNT) {
     const remainingPicks = patternValidatedPicks
       .filter(p => 
@@ -866,17 +1039,36 @@ export function buildSweetSpotParlayCore(input: BuilderInput): BuilderOutput {
         const opponentDefenseRank = getOpponentDefenseRank(p);
         const patternCheck = matchesWinningPattern(p, gameContext, opponentDefenseRank);
         return { ...p, _patternScore: patternCheck.score, _gameContext: gameContext, _opponentDefenseRank: opponentDefenseRank };
-      })
-      .sort((a, b) => scorePick(b) - scorePick(a));
+      });
 
-    for (const pick of remainingPicks) {
+    // v6.0: Score with synergy for fallback picks too
+    const scoredFallbacks = remainingPicks.map(pick => {
+      let totalSynergy = 0;
+      for (const selected of selectedLegs) {
+        const synergyScore = calculateLegSynergy(pick, selected.pick, gameContextMap);
+        totalSynergy += synergyScore;
+        if (synergyScore <= -2) {
+          return { pick, combinedScore: -Infinity, synergy: synergyScore };
+        }
+      }
+      const individualScore = scorePick({ 
+        _patternScore: pick._patternScore, 
+        l10HitRate: pick.l10HitRate, 
+        confidence_score: pick.confidence_score 
+      });
+      return { pick, combinedScore: individualScore + (totalSynergy * 2.0), synergy: totalSynergy };
+    })
+    .filter(x => x.combinedScore > -Infinity)
+    .sort((a, b) => b.combinedScore - a.combinedScore);
+
+    for (const { pick, combinedScore, synergy } of scoredFallbacks) {
       if (selectedLegs.length >= TARGET_LEG_COUNT) break;
 
       const team = (pick.team_name || 'Unknown').toLowerCase();
       const h2h = getH2HForPick(pick);
       const gameContext = pick._gameContext;
       const opponentDefenseRank = pick._opponentDefenseRank;
-      const finalScore = scorePick({ _patternScore: pick._patternScore, l10HitRate: pick.l10HitRate, confidence_score: pick.confidence_score });
+      const finalScore = combinedScore;
 
       const hasL10 = pick.l10HitRate != null;
       const l10Val = hasL10 ? pick.l10HitRate! : SCORE_WEIGHTS.l10Default;
@@ -890,7 +1082,7 @@ export function buildSweetSpotParlayCore(input: BuilderInput): BuilderOutput {
         side: pick.side,
         archetypeAligned: true,
         patternScore: pick._patternScore ?? 0,
-        patternReason: 'Fallback selection',
+        patternReason: `Fallback selection (synergy: ${synergy >= 0 ? '+' : ''}${synergy.toFixed(1)})`,
         defenseRank: opponentDefenseRank,
         l10: pick.l10HitRate,
         conf: pick.confidence_score,
@@ -901,6 +1093,8 @@ export function buildSweetSpotParlayCore(input: BuilderInput): BuilderOutput {
         scorePenalty: hasL10 ? 0 : SCORE_WEIGHTS.missingL10Penalty,
         selected: true,
       });
+
+      console.log(`[Synergy] Fallback selected ${pick.player_name} ${pick.prop_type} ${pick.side} (score: ${finalScore.toFixed(2)}, synergy: ${synergy.toFixed(1)})`);
 
       selectedLegs.push({
         pick,
@@ -914,6 +1108,11 @@ export function buildSweetSpotParlayCore(input: BuilderInput): BuilderOutput {
       usedTeams.add(team);
       usedPlayers.add(pick.player_name.toLowerCase());
     }
+  }
+
+  // v6.0: Final hard conflict check on entire parlay
+  if (selectedLegs.length > 0 && hasHardConflict(selectedLegs.map(l => l.pick))) {
+    console.warn('[Synergy] WARNING: Final parlay has unresolved hard conflicts');
   }
 
   diagnostics.selectedCount = selectedLegs.length;
