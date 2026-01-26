@@ -9499,6 +9499,17 @@ export type Database = {
           sample_size: number
         }[]
       }
+      get_category_hit_rates: {
+        Args: never
+        Returns: {
+          category: string
+          hit_rate: number
+          hits: number
+          misses: number
+          pushes: number
+          total_settled: number
+        }[]
+      }
       get_complete_accuracy_summary: {
         Args: never
         Returns: {
