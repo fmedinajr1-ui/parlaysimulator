@@ -1839,6 +1839,32 @@ function getLine(
   return { line: getDefaultLine(prop, role), isRealLine: false };
 }
 
+// ===== INFER PLAYER ROLE FROM POSITION AND BOX SCORE =====
+
+function inferPlayerRole(
+  position: string | undefined,
+  boxScore: { points: number; rebounds: number; assists: number } | null,
+  minutesPlayed: number
+): 'PRIMARY' | 'SECONDARY' | 'BIG' | 'SPACER' {
+  const pos = (position || '').toUpperCase();
+  
+  // Position-based inference for bigs
+  if (pos.includes('C') || pos === 'F-C' || pos === 'C-F') return 'BIG';
+  if (pos === 'PF' && boxScore && boxScore.rebounds > 5) return 'BIG';
+  
+  // Stats-based inference for high-minute players
+  if (minutesPlayed >= 15 && boxScore) {
+    if (boxScore.points >= 12 || boxScore.assists >= 5) return 'PRIMARY';
+    if (boxScore.points >= 8) return 'SECONDARY';
+  }
+  
+  // Guard positions default to SECONDARY
+  if (pos === 'PG' || pos === 'SG') return 'SECONDARY';
+  if (pos === 'SF' || pos === 'PF') return 'SECONDARY';
+  
+  return 'SPACER';
+}
+
 // ===== NEW PROJECTION-BASED calculatePropEdges =====
 
 function calculatePropEdges(
@@ -1847,7 +1873,8 @@ function calculatePropEdges(
   pbpData: any,
   existingEdges: PropEdge[],
   gameTime: string,
-  propLines?: PropLineData[]
+  propLines?: PropLineData[],
+  gameContext?: any
 ): PropEdge[] {
   const edges: PropEdge[] = [];
   
@@ -1859,7 +1886,33 @@ function calculatePropEdges(
   
   const propTypes: PropTypeKey[] = ['Points', 'Rebounds', 'Assists', 'PRA'];
   
-  console.log(`[Scout Agent] calculatePropEdges: ${Object.keys(playerStates).length} players, period ${period}, scoreDiff ${scoreDiff}, realLines: ${propLineLookup.size}`);
+  // PART 1: Parse substitution events and populate rotation state for all players
+  const subEvents = parseSubstitutionEvents(pbpData?.recentPlays);
+  console.log(`[Scout Agent] calculatePropEdges: ${Object.keys(playerStates).length} players, period ${period}, scoreDiff ${scoreDiff}, realLines: ${propLineLookup.size}, subEvents: ${subEvents.length}`);
+  
+  // Build roster lookup for position inference
+  const rosterLookup = new Map<string, string>();
+  [...(gameContext?.homeRoster || []), ...(gameContext?.awayRoster || [])].forEach((p: any) => {
+    if (p.name && p.position) {
+      rosterLookup.set(p.name.toLowerCase(), p.position);
+    }
+  });
+  
+  // Pre-process: Update rotation state and infer roles for all players
+  Object.values(playerStates).forEach(player => {
+    const live = getLiveBox(pbpData, player.playerName);
+    const minutesPlayed = live?.min ?? 0;
+    
+    // Update rotation state using PBP substitution data
+    player.rotation = updateRotationState(player, subEvents, period, scoreDiff, minutesPlayed);
+    
+    // Infer player role from roster position if not already set or defaulted
+    if (player.role === 'SPACER' || !player.role) {
+      const position = rosterLookup.get(player.playerName.toLowerCase());
+      const boxScore = live ? { points: live.pts, rebounds: live.reb, assists: live.ast } : null;
+      player.role = inferPlayerRole(position, boxScore, minutesPlayed);
+    }
+  });
   
   Object.values(playerStates).forEach(player => {
     // Skip players with minimal playing time
@@ -2374,7 +2427,8 @@ CRITICAL RULE: You MUST identify players by their jersey numbers and look them u
       pbpData,
       existingEdges,
       gameTime,
-      propLines
+      propLines,
+      gameContext
     );
 
     // STEP 4: Determine if notification is warranted

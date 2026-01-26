@@ -44,6 +44,7 @@ interface PBPPlayer {
   assists: number;
   fouls: number;
   threePm?: number;
+  position?: string;
 }
 
 interface SnapshotRequest {
@@ -53,6 +54,66 @@ interface SnapshotRequest {
   gameTime: string;
   playerStates: Record<string, PlayerLiveState>;
   pbpPlayers: PBPPlayer[];
+  homeRoster?: { name: string; position: string }[];
+  awayRoster?: { name: string; position: string }[];
+}
+
+// ===== INFER PLAYER ROLE FROM POSITION AND BOX SCORE =====
+
+function inferPlayerRole(
+  position: string | undefined,
+  boxScore: { points: number; rebounds: number; assists: number } | null,
+  minutesPlayed: number
+): 'PRIMARY' | 'SECONDARY' | 'BIG' | 'SPACER' {
+  const pos = (position || '').toUpperCase();
+  
+  // Position-based inference for bigs
+  if (pos.includes('C') || pos === 'F-C' || pos === 'C-F') return 'BIG';
+  if (pos === 'PF' && boxScore && boxScore.rebounds > 5) return 'BIG';
+  
+  // Stats-based inference for high-minute players
+  if (minutesPlayed >= 15 && boxScore) {
+    if (boxScore.points >= 12 || boxScore.assists >= 5) return 'PRIMARY';
+    if (boxScore.points >= 8) return 'SECONDARY';
+  }
+  
+  // Guard positions default to SECONDARY
+  if (pos === 'PG' || pos === 'SG') return 'SECONDARY';
+  if (pos === 'SF' || pos === 'PF') return 'SECONDARY';
+  
+  return 'SPACER';
+}
+
+// ===== DETERMINE ROTATION ROLE =====
+
+function determineRotationRole(
+  role: string,
+  minutesPlayed: number,
+  period: number,
+  scoreDiff: number
+): string {
+  const isCloseGame = Math.abs(scoreDiff) <= 8;
+  
+  // Primary players in close Q4 games are closers
+  if (period >= 4 && isCloseGame && (role === 'PRIMARY' || role === 'SECONDARY')) {
+    return 'CLOSER';
+  }
+  
+  // Starters based on role and minutes
+  if (role === 'PRIMARY' || (role === 'BIG' && minutesPlayed > 15)) {
+    return 'STARTER';
+  }
+  
+  // Secondary with good minutes are starters too
+  if (role === 'SECONDARY' && minutesPlayed >= 12) {
+    return 'STARTER';
+  }
+  
+  // Bench core vs fringe based on minutes
+  if (minutesPlayed >= 8) return 'BENCH_CORE';
+  if (minutesPlayed >= 4) return 'BENCH_CORE';
+  
+  return 'BENCH_FRINGE';
 }
 
 serve(async (req) => {
@@ -66,7 +127,7 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     const body = await req.json() as SnapshotRequest;
-    const { eventId, espnEventId, quarter, gameTime, playerStates, pbpPlayers } = body;
+    const { eventId, espnEventId, quarter, gameTime, playerStates, pbpPlayers, homeRoster, awayRoster } = body;
 
     if (!eventId || !quarter || quarter < 1 || quarter > 4) {
       return new Response(
@@ -77,6 +138,14 @@ serve(async (req) => {
 
     console.log(`[Quarter Snapshot] Recording Q${quarter} snapshot for event ${eventId}`);
     console.log(`[Quarter Snapshot] Player states: ${Object.keys(playerStates).length}, PBP players: ${pbpPlayers.length}`);
+
+    // Build roster lookup for position
+    const rosterLookup = new Map<string, string>();
+    [...(homeRoster || []), ...(awayRoster || [])].forEach((p: any) => {
+      if (p.name && p.position) {
+        rosterLookup.set(p.name.toLowerCase(), p.position);
+      }
+    });
 
     // Build snapshot records from merged data
     const snapshots: any[] = [];
@@ -96,16 +165,29 @@ serve(async (req) => {
                         p.playerName.toLowerCase().includes(playerName.toLowerCase().split(' ').pop() || '')
                       );
 
+      const minutesPlayed = pbpData?.minutes || 0;
+      const points = pbpData?.points || state.boxScore?.points || 0;
+      const rebounds = pbpData?.rebounds || state.boxScore?.rebounds || 0;
+      const assists = pbpData?.assists || state.boxScore?.assists || 0;
+      
+      // Infer player role from position and box score
+      const position = rosterLookup.get(playerName.toLowerCase()) || pbpData?.position;
+      const boxScore = { points, rebounds, assists };
+      const inferredRole = inferPlayerRole(position, boxScore, minutesPlayed);
+      
+      // Determine rotation role
+      const rotationRole = determineRotationRole(inferredRole, minutesPlayed, quarter, 0);
+
       const snapshot = {
         event_id: eventId,
         espn_event_id: espnEventId || null,
         quarter,
         player_name: playerName,
         team: state.team || pbpData?.team || null,
-        minutes_played: pbpData?.minutes || 0,
-        points: pbpData?.points || state.boxScore?.points || 0,
-        rebounds: pbpData?.rebounds || state.boxScore?.rebounds || 0,
-        assists: pbpData?.assists || state.boxScore?.assists || 0,
+        minutes_played: minutesPlayed,
+        points,
+        rebounds,
+        assists,
         fouls: pbpData?.fouls || state.boxScore?.fouls || state.foulCount || 0,
         turnovers: state.boxScore?.turnovers || 0,
         threes: pbpData?.threePm || state.boxScore?.threes || 0,
@@ -113,10 +195,10 @@ serve(async (req) => {
         effort_score: state.effortScore || null,
         speed_index: state.speedIndex || null,
         rebound_position_score: state.reboundPositionScore || null,
-        rotation_role: state.rotation?.rotationRole || null,
+        rotation_role: rotationRole,
         on_court_stability: state.rotation?.onCourtStability || null,
         foul_risk_level: state.rotation?.foulRiskLevel || null,
-        player_role: state.role || null,
+        player_role: inferredRole,
         visual_flags: state.visualFlags || [],
         hands_on_knees_count: state.handsOnKneesCount || 0,
         slow_recovery_count: state.slowRecoveryCount || 0,

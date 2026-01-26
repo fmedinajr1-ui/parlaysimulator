@@ -308,6 +308,66 @@ function computeConfidence(
   return Math.min(99, Math.max(1, Math.round(confidence)));
 }
 
+// ===== INFER PLAYER ROLE FROM POSITION AND BOX SCORE =====
+
+function inferPlayerRole(
+  position: string | undefined,
+  boxScore: { points: number; rebounds: number; assists: number } | null,
+  minutesPlayed: number
+): 'PRIMARY' | 'SECONDARY' | 'BIG' | 'SPACER' {
+  const pos = (position || '').toUpperCase();
+  
+  // Position-based inference for bigs
+  if (pos.includes('C') || pos === 'F-C' || pos === 'C-F') return 'BIG';
+  if (pos === 'PF' && boxScore && boxScore.rebounds > 5) return 'BIG';
+  
+  // Stats-based inference for high-minute players
+  if (minutesPlayed >= 15 && boxScore) {
+    if (boxScore.points >= 12 || boxScore.assists >= 5) return 'PRIMARY';
+    if (boxScore.points >= 8) return 'SECONDARY';
+  }
+  
+  // Guard positions default to SECONDARY
+  if (pos === 'PG' || pos === 'SG') return 'SECONDARY';
+  if (pos === 'SF' || pos === 'PF') return 'SECONDARY';
+  
+  return 'SPACER';
+}
+
+// ===== DETERMINE ROTATION ROLE =====
+
+type RotationRole = 'STARTER' | 'CLOSER' | 'BENCH_CORE' | 'BENCH_FRINGE';
+
+function determineRotationRole(
+  role: PlayerLiveState['role'],
+  minutesPlayed: number,
+  period: number,
+  scoreDiff: number
+): RotationRole {
+  const isCloseGame = Math.abs(scoreDiff) <= 8;
+  
+  // Primary players in close Q4 games are closers
+  if (period >= 4 && isCloseGame && (role === 'PRIMARY' || role === 'SECONDARY')) {
+    return 'CLOSER';
+  }
+  
+  // Starters based on role and minutes
+  if (role === 'PRIMARY' || (role === 'BIG' && minutesPlayed > 15)) {
+    return 'STARTER';
+  }
+  
+  // Secondary with good minutes are starters too
+  if (role === 'SECONDARY' && minutesPlayed >= 12) {
+    return 'STARTER';
+  }
+  
+  // Bench core vs fringe based on minutes
+  if (minutesPlayed >= 8) return 'BENCH_CORE';
+  if (minutesPlayed >= 4) return 'BENCH_CORE';
+  
+  return 'BENCH_FRINGE';
+}
+
 // Calculate prop edges from data only (no vision)
 function calculateDataOnlyEdges(
   playerStates: Record<string, PlayerLiveState>,
@@ -326,6 +386,18 @@ function calculateDataOnlyEdges(
     
     // Skip players with no minutes
     if (!live || live.min < 3) return;
+    
+    const minutesPlayed = live.min;
+    
+    // Infer role from box score if defaulted to SPACER
+    if (player.role === 'SPACER' || !player.role) {
+      const boxScore = { points: live.pts, rebounds: live.reb, assists: live.ast };
+      player.role = inferPlayerRole(undefined, boxScore, minutesPlayed);
+    }
+    
+    // Determine rotation role based on role and minutes
+    const rotationRole = determineRotationRole(player.role, minutesPlayed, period, scoreDiff);
+    const rotationVolatilityFlag = rotationRole === 'BENCH_FRINGE';
     
     const props = ['Points', 'Rebounds', 'Assists'];
     
@@ -379,6 +451,9 @@ function calculateDataOnlyEdges(
         overPrice,
         underPrice,
         bookmaker,
+        // V3: Rotation fields for Lock Mode
+        rotationRole,
+        rotationVolatilityFlag,
       });
     });
   });
