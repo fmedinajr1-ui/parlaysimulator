@@ -2,13 +2,104 @@ import React from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { PlayerLiveState, InjuryStatus } from '@/types/scout-agent';
+import { PlayerLiveState, InjuryStatus, PropEdge } from '@/types/scout-agent';
 import { AlertTriangle, Zap, Activity, Target, HeartPulse } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface PlayerStateCardProps {
   player: PlayerLiveState;
   compact?: boolean;
+  playerPropEdges?: PropEdge[];
+}
+
+// Get specific UNDER recommendations based on player role and fatigue signals
+function getFatigueUnderRecommendations(
+  player: PlayerLiveState, 
+  edges: PropEdge[]
+): { prop: string; reason: string; line?: number }[] {
+  const recommendations: { prop: string; reason: string; line?: number }[] = [];
+  
+  // Normalize player name for matching
+  const playerLastName = player.playerName.split(' ').pop()?.toLowerCase() || '';
+  const availableProps = edges.filter(e => 
+    e.player.toLowerCase().includes(playerLastName)
+  );
+  
+  if (availableProps.length === 0) return recommendations;
+  
+  // Role-based logic
+  if (player.role === 'PRIMARY' || player.role === 'SECONDARY') {
+    const pointsEdge = availableProps.find(e => e.prop === 'Points');
+    const praEdge = availableProps.find(e => e.prop === 'PRA');
+    
+    if (pointsEdge) {
+      let reason = 'Fatigue reducing efficiency';
+      if (player.speedIndex < 50) reason = 'Low speed affecting drives';
+      else if (player.fatigueScore >= 80) reason = 'Severe fatigue limiting output';
+      
+      recommendations.push({ prop: 'Points', line: pointsEdge.line, reason });
+    }
+    if (praEdge) {
+      recommendations.push({ 
+        prop: 'PRA', 
+        line: praEdge.line, 
+        reason: 'Overall production declining' 
+      });
+    }
+  }
+  
+  if (player.role === 'BIG') {
+    const reboundsEdge = availableProps.find(e => e.prop === 'Rebounds');
+    const praEdge = availableProps.find(e => e.prop === 'PRA');
+    
+    if (reboundsEdge) {
+      recommendations.push({
+        prop: 'Rebounds',
+        line: reboundsEdge.line,
+        reason: 'Fatigue reducing effort on glass'
+      });
+    }
+    if (praEdge) {
+      recommendations.push({
+        prop: 'PRA',
+        line: praEdge.line,
+        reason: 'Overall activity declining'
+      });
+    }
+  }
+  
+  if (player.role === 'SPACER') {
+    const threesEdge = availableProps.find(e => e.prop === 'Threes');
+    if (threesEdge) {
+      recommendations.push({
+        prop: 'Threes',
+        line: threesEdge.line,
+        reason: 'Tired legs affecting shooting form'
+      });
+    }
+  }
+  
+  // Add assists for playmakers
+  const assistsEdge = availableProps.find(e => e.prop === 'Assists');
+  if (assistsEdge && (player.role === 'PRIMARY' || player.role === 'SECONDARY')) {
+    recommendations.push({
+      prop: 'Assists',
+      line: assistsEdge.line,
+      reason: player.speedIndex < 50 ? 'Slower pace limiting playmaking' : 'Reduced court vision'
+    });
+  }
+  
+  // Add visual signal context
+  const hasVisibleSigns = player.visualFlags.some(f => 
+    f.includes('fatigue') || f.includes('tired') || f.includes('slow')
+  );
+  if (hasVisibleSigns) {
+    recommendations.forEach(r => {
+      r.reason += ' • Visible fatigue signs';
+    });
+  }
+  
+  return recommendations.slice(0, 3); // Max 3 recommendations
 }
 
 // Get injury badge styling based on status
@@ -28,7 +119,7 @@ const getInjuryBadgeStyle = (status: InjuryStatus) => {
   }
 };
 
-export function PlayerStateCard({ player, compact = false }: PlayerStateCardProps) {
+export function PlayerStateCard({ player, compact = false, playerPropEdges = [] }: PlayerStateCardProps) {
   const fatigueColor = player.fatigueScore >= 80 
     ? 'text-destructive' 
     : player.fatigueScore >= 60 
@@ -185,11 +276,34 @@ export function PlayerStateCard({ player, compact = false }: PlayerStateCardProp
           </div>
         )}
 
-        {/* Fatigue Warning */}
+        {/* Enhanced Fatigue Warning with Specific Props */}
         {player.fatigueScore >= 70 && (
-          <div className="flex items-center gap-2 p-2 bg-destructive/10 rounded text-xs text-destructive">
-            <AlertTriangle className="w-3 h-3" />
-            <span>Fatigue spike detected - consider UNDERS</span>
+          <div className="p-2 bg-destructive/10 rounded space-y-1.5">
+            <div className="flex items-center gap-2 text-xs text-destructive font-medium">
+              <AlertTriangle className="w-3 h-3" />
+              <span>Fatigue spike: {player.fatigueScore}%</span>
+            </div>
+            
+            {playerPropEdges.length > 0 ? (
+              <div className="space-y-1">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">
+                  Consider UNDER on:
+                </p>
+                {getFatigueUnderRecommendations(player, playerPropEdges).map((rec, idx) => (
+                  <div key={idx} className="flex items-center gap-2 text-xs">
+                    <Badge variant="outline" className="bg-destructive/20 text-destructive border-destructive/30 text-[10px] px-1.5 py-0">
+                      {rec.prop} {rec.line && `U${rec.line}`}
+                    </Badge>
+                    <span className="text-muted-foreground text-[10px]">{rec.reason}</span>
+                  </div>
+                ))}
+                {getFatigueUnderRecommendations(player, playerPropEdges).length === 0 && (
+                  <p className="text-[10px] text-muted-foreground">No matching props for role</p>
+                )}
+              </div>
+            ) : (
+              <p className="text-[10px] text-muted-foreground">No active prop lines available</p>
+            )}
           </div>
         )}
       </CardContent>
