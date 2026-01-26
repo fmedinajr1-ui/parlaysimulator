@@ -1,167 +1,147 @@
 
 
-## Enhance Player Detection and Movement Tracking
+## Commercial/Timeout Auto-Refresh System
 
 ### Overview
-Upgrade the Scout vision analysis system to reliably detect player jerseys, track movement across frames, and populate the movement-related state fields that feed into Lock Mode's 4-gate validation.
+Implement an intelligent refresh system that triggers comprehensive data updates whenever a commercial break or timeout is detected. These natural breaks in gameplay are the perfect opportunity to ensure all data is fresh and synchronized before action resumes.
 
 ---
 
-### Current Issues Identified
+### Current Flow Analysis
 
-1. **Zero Vision Signals on Live Play**: Console logs show `visionSignals: 0` even when scene is classified as `live_play` with 28 prop edges generated
-2. **Jersey Detection Unreliable**: The AI prompt asks for jersey identification but signals often come back empty
-3. **Single-Frame Analysis**: No temporal tracking of player movement between consecutive frames
-4. **Movement Counters Not Populated**: `sprintCount`, `handsOnKneesCount`, `slowRecoveryCount` rarely increment from vision
-5. **Quarter Snapshots Not Recording**: `quarter_player_snapshots` table is empty, so Lock Mode lacks verified first-half data
+When the scene classification detects a commercial or timeout:
+1. `scout-agent-loop` returns `isAnalysisWorthy: false` with `sceneType: 'commercial'` or `'timeout'`
+2. Frontend increments `commercialSkipCount` but takes no other action
+3. PBP continues polling every 10 seconds independently
+4. **No coordinated refresh happens**
 
 ---
 
-### Enhancement Plan
+### Proposed Enhancement
 
-#### Phase 1: Fix Vision Signal Extraction
+Trigger automatic refresh of all data sources during commercial/timeout scenes:
 
-**Problem**: Vision analysis runs but returns empty `visionSignals` array
+```text
++----------------------------------------------------------+
+|              Commercial/Timeout Detected                  |
++----------------------------------------------------------+
+                          |
+                          v
++----------------------------------------------------------+
+|              COORDINATED REFRESH ACTIONS                  |
++----------------------------------------------------------+
+| 1. Immediate PBP refresh (get latest box scores)          |
+| 2. Re-run data projection (update expectedFinal values)  |
+| 3. Reset frame buffer (clear stale vision data)          |
+| 4. Quarter snapshot check (record if boundary detected)  |
+| 5. Session auto-save (persist current state)             |
++----------------------------------------------------------+
+                          |
+                          v
++----------------------------------------------------------+
+|              READY FOR NEXT LIVE ACTION                   |
++----------------------------------------------------------+
+```
 
-**Changes to `scout-agent-loop/index.ts`:**
+---
 
-1. **Add Fallback Signal Extraction**: When AI returns empty signals, use the existing `extractBasicSignals()` function more aggressively
-2. **Lower Confidence Threshold**: Accept "low" confidence signals instead of filtering them out
-3. **Add Jersey-Free Observations**: Allow team-level fatigue/energy observations even without specific player IDs
-4. **Parse AI Response More Robustly**: Handle cases where AI returns signals in different formats
+### Implementation Changes
+
+#### 1. Frontend Response Handler (`useScoutAgentState.ts`)
+
+**Add break-triggered refresh logic in `processAgentResponse`:**
+
+When `sceneType` is `'commercial'` or `'timeout'`:
+- Trigger immediate PBP refresh (`refreshPBPData()`)
+- Trigger data projection re-run
+- Force session save
+- Log the refresh event
 
 ```typescript
-// After vision analysis, if no signals detected but scene is worthy:
-if (visionSignals.length === 0 && sceneClassification.isAnalysisWorthy) {
-  // Try extracting from overall assessment text
-  const fallbackSignals = extractBasicSignals(
-    result.overallAssessment || '', 
-    gameContext
-  );
-  visionSignals = fallbackSignals;
+// New: Detect commercial/timeout breaks for auto-refresh
+const isBreakScene = ['commercial', 'timeout', 'dead_time'].includes(
+  response.sceneClassification.sceneType
+);
+
+if (isBreakScene && !prev.lastBreakRefreshTime || 
+    (Date.now() - prev.lastBreakRefreshTime > 10000)) {
+  // Trigger refresh cascade (debounced to prevent spam)
+  setTimeout(() => triggerBreakRefresh(), 100);
 }
 ```
 
----
+#### 2. New Break Refresh Function (`useScoutAgentState.ts`)
 
-#### Phase 2: Multi-Frame Movement Tracking
-
-**Problem**: Single frame analysis can't detect motion patterns
-
-**New Capability**: Track position changes across consecutive frames
-
-**Implementation:**
-
-1. **Create Frame Buffer**: Store last 3-5 frames with timestamps
-2. **Add Motion Vector Prompt**: Ask AI to compare player positions between frames
-3. **Calculate Movement Deltas**: Estimate speed based on court position changes
-
-**New Prompt Section:**
-```
-MOVEMENT ANALYSIS (compare to previous frame):
-- Identify players who moved significantly (sprinted, cut, crashed boards)
-- Identify players who are stationary or slow-moving (fatigue indicator)
-- Track defensive rotations and transitions
-```
-
-**New Signal Types:**
-- `sprint_detected`: Player covered significant court distance rapidly
-- `stationary_warning`: Player showing minimal movement (fatigue)
-- `fast_transition`: Player leading/trailing on break
-- `box_out_crash`: Player aggressively positioning for rebound
-
----
-
-#### Phase 3: Enhanced Jersey Detection Pipeline
-
-**Problem**: AI frequently misses or misreads jersey numbers
-
-**Solution**: Two-pass detection system
-
-**Pass 1 - Team Color Detection:**
-```typescript
-// First identify which team jersey colors are visible
-{
-  "teamsVisible": ["home", "away", "both"],
-  "homeJerseyColor": "white",
-  "awayJerseyColor": "purple"
-}
-```
-
-**Pass 2 - Number OCR with Context:**
-```
-JERSEY NUMBER EXTRACTION:
-For each player clearly visible:
-1. Identify jersey color (determines team)
-2. Read number on front/back
-3. Cross-reference with roster table provided
-4. Only report if number is clearly readable (confidence high)
-
-If number unclear but team is visible:
-- Report as "Unknown #{team} player" with position estimate
-```
-
----
-
-#### Phase 4: Accumulative Counter Population
-
-**Problem**: `sprintCount`, `handsOnKneesCount`, `slowRecoveryCount` stay at 0
-
-**Solution**: Wire vision signals to counters with decay
-
-**Changes to `updatePlayerStatesFromVision()`:**
+**Add `triggerBreakRefresh` callback:**
 
 ```typescript
-// Increment counters from vision signals
-signals.forEach(signal => {
-  const player = playerStates.get(signal.player);
-  if (!player) return;
+const triggerBreakRefresh = useCallback(async () => {
+  console.log('[Scout Agent] Break detected - triggering refresh cascade');
   
-  switch (signal.signalType) {
-    case 'fatigue':
-      if (signal.observation?.includes('hands on knees')) {
-        player.handsOnKneesCount++;
-      }
-      if (signal.observation?.includes('slow') || signal.value > 5) {
-        player.slowRecoveryCount++;
-      }
-      break;
-    
-    case 'speed':
-    case 'effort':
-      if (signal.value > 3 && signal.observation?.includes('sprint')) {
-        player.sprintCount++;
-      }
-      break;
-  }
-});
+  // 1. Refresh PBP data immediately
+  const pbpResult = await refreshPBPData();
+  console.log('[Scout Agent] Break refresh: PBP', pbpResult.success ? '✓' : '✗');
+  
+  // 2. Force save session state
+  await saveSession();
+  console.log('[Scout Agent] Break refresh: Session saved');
+  
+  // 3. Update last break refresh time to debounce
+  setState(prev => ({
+    ...prev,
+    lastBreakRefreshTime: Date.now(),
+  }));
+  
+}, [refreshPBPData, saveSession]);
 ```
 
----
+#### 3. Component Integration (`ScoutAutonomousAgent.tsx`)
 
-#### Phase 5: Quarter Snapshot Recording Fix
+**Expose break refresh trigger and add data projection re-run:**
 
-**Problem**: `record-quarter-snapshot` has no logs, table is empty
-
-**Root Cause**: Quarter-ending flags (`isQ1Ending`, etc.) may not be triggering correctly
-
-**Diagnostic Steps:**
-
-1. Add explicit logging when quarter end conditions are checked
-2. Verify `fetch-live-pbp` is returning the period and clock correctly
-3. Check if `quarterSnapshotTriggered` ref is preventing valid triggers
-
-**Fix in `fetch-live-pbp/index.ts`:**
 ```typescript
-// More robust quarter-end detection
-const clockSeconds = parseClockToSeconds(gameTime);
-const isQ1Ending = period === 1 && clockSeconds !== null && clockSeconds <= 30;
-const isQ2Ending = period === 2 && clockSeconds !== null && clockSeconds <= 30;
-
-// Log when quarter boundaries are detected
-if (isQ1Ending || isQ2Ending || isQ3Ending || isQ4Ending) {
-  console.log(`[PBP Fetch] Quarter boundary detected: Q${period} ending at ${gameTime}`);
+// In ScoutAutonomousAgent, after detecting a break
+if (data?.sceneClassification?.sceneType === 'commercial' || 
+    data?.sceneClassification?.sceneType === 'timeout') {
+  console.log('[Autopilot] Break detected - running refresh cascade');
+  
+  // Run data projection immediately to update all edges
+  await runDataOnlyProjection();
+  
+  // Force PBP fetch
+  await fetchPBPData();
 }
+```
+
+#### 4. State Schema Update (`scout-agent.ts`)
+
+**Add tracking field:**
+
+```typescript
+interface ScoutAgentState {
+  // ... existing fields ...
+  lastBreakRefreshTime: number | null;  // NEW: Debounce break refreshes
+}
+```
+
+#### 5. Edge Function Response Enhancement (`scout-agent-loop`)
+
+**Return refresh hint for break scenes:**
+
+```typescript
+// When returning early for non-analysis-worthy scenes
+return new Response(
+  JSON.stringify({
+    sceneClassification,
+    gameTime: sceneClassification.gameTime || currentGameTime,
+    score: sceneClassification.score,
+    // NEW: Signal frontend to trigger refresh
+    shouldRefresh: sceneClassification.sceneType === 'commercial' || 
+                   sceneClassification.sceneType === 'timeout',
+    refreshReason: sceneClassification.sceneType,
+  }),
+  { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+);
 ```
 
 ---
@@ -170,38 +150,58 @@ if (isQ1Ending || isQ2Ending || isQ3Ending || isQ4Ending) {
 
 | File | Changes |
 |------|---------|
-| `supabase/functions/scout-agent-loop/index.ts` | Add fallback signal extraction, multi-frame tracking, counter population |
-| `supabase/functions/analyze-live-frame/index.ts` | Add team color detection, improve jersey number OCR prompt |
-| `supabase/functions/fetch-live-pbp/index.ts` | Add quarter-end boundary logging and verification |
-| `src/hooks/useScoutAgentState.ts` | Wire vision signals to accumulative counters, add debug logging for quarter detection |
-| `src/types/scout-agent.ts` | Add new movement signal types |
+| `src/hooks/useScoutAgentState.ts` | Add `lastBreakRefreshTime` state, `triggerBreakRefresh` callback, modify `processAgentResponse` to detect breaks |
+| `src/types/scout-agent.ts` | Add `lastBreakRefreshTime` to `ScoutAgentState` interface |
+| `src/components/scout/ScoutAutonomousAgent.tsx` | Add break detection in `runAgentLoop`, trigger refresh cascade |
+| `supabase/functions/scout-agent-loop/index.ts` | Add `shouldRefresh` and `refreshReason` to break response |
 
 ---
 
-### Expected Outcomes
+### Refresh Actions During Breaks
 
-| Metric | Before | After |
-|--------|--------|-------|
-| Vision signals per live play | 0 | 3-8 signals |
-| Jersey identification rate | ~20% | ~60% |
-| Movement counter updates | Rare | Every analysis |
-| Quarter snapshots recorded | 0 | 4 per game |
-| Lock Mode data readiness | ❌ | ✓ |
+| Action | Purpose | Timing |
+|--------|---------|--------|
+| **PBP Refresh** | Get latest box scores, substitutions, fouls | Immediate |
+| **Data Projection** | Recalculate all expectedFinal values | After PBP |
+| **Session Save** | Persist current state for recovery | After projection |
+| **Quarter Check** | Verify if quarter boundary crossed | During PBP update |
 
 ---
 
-### Technical Summary
+### Debouncing Logic
 
-This enhancement focuses on three critical gaps:
+To prevent refresh spam during extended commercial breaks:
+- Track `lastBreakRefreshTime` timestamp
+- Only trigger refresh if 10+ seconds since last break refresh
+- This ensures we refresh at most once per 10 seconds during breaks
+- Resets when live play resumes
 
-1. **Signal Extraction**: Even when the AI describes fatigue/energy in its `overallAssessment`, we're not parsing it into structured signals
+---
 
-2. **Counter Population**: The state fields exist but the pipeline from vision signal to counter increment is broken
+### Expected Behavior
 
-3. **Quarter Boundaries**: The snapshot trigger conditions aren't being met, likely because clock parsing or period detection has edge cases
+**During a timeout:**
+1. Scene classified as `timeout`
+2. Console logs: `[Scout Agent] Break detected - triggering refresh cascade`
+3. PBP data refreshed immediately
+4. Data projections recalculated
+5. All prop edges updated with fresh stats
+6. Session auto-saved
+7. Ready for action when timeout ends
 
-After these fixes, Lock Mode will have:
-- Real vision-derived fatigue scores (not just defaults)
-- Actual sprint/fatigue gesture counts for Gate 4 validation
-- Q1+Q2 snapshots with verified first-half minutes and stats
+**During commercials:**
+1. Scene classified as `commercial`
+2. Same refresh cascade triggers
+3. Multiple commercial frames use 10s debounce to prevent spam
+4. Each 10s window gets one refresh
+
+---
+
+### Benefits
+
+1. **Fresh Data**: Box scores are always current when action resumes
+2. **Accurate Projections**: expectedFinal values use latest stats
+3. **No Stale State**: Quarter boundaries don't get missed
+4. **Session Safety**: State is saved during every break
+5. **Smart Debouncing**: Avoids API spam during long commercial breaks
 
