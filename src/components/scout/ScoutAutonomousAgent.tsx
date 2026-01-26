@@ -911,9 +911,19 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                   {onCourtPlayers
                     .sort((a, b) => b.fatigueScore - a.fatigueScore)
-                    .map(player => (
-                      <PlayerStateCard key={player.playerName} player={player} />
-                    ))}
+                    .map(player => {
+                      const playerLastName = player.playerName.split(' ').pop()?.toLowerCase() || '';
+                      const playerEdges = state.activePropEdges.filter(e => 
+                        e.player.toLowerCase().includes(playerLastName)
+                      );
+                      return (
+                        <PlayerStateCard 
+                          key={player.playerName} 
+                          player={player} 
+                          playerPropEdges={playerEdges}
+                        />
+                      );
+                    })}
                 </div>
               ) : allPlayers.length > 0 ? (
                 <div className="text-center py-6 text-muted-foreground">
