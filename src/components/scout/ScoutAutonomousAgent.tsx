@@ -106,6 +106,8 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
     lastPbpUpdate,
     lastPbpGameTime,
     refreshPBPData,
+    // V8: Break Refresh
+    triggerBreakRefresh,
   } = useScoutAgentState({ gameContext });
   
   // Tab state for main content
@@ -365,6 +367,20 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
       if (!error && data) {
         // Process response even if it has warnings
         processAgentResponse(data);
+        
+        // V8: Detect commercial/timeout breaks and trigger refresh cascade
+        if (data.shouldRefresh && data.refreshReason) {
+          console.log(`[Autopilot] Break detected (${data.refreshReason}) - running refresh cascade`);
+          
+          // Run data projection immediately to update all edges
+          await runDataOnlyProjection();
+          
+          // Force PBP fetch
+          await fetchPBPData();
+          
+          // Trigger the break refresh from state hook (saves session, updates timestamp)
+          triggerBreakRefresh();
+        }
         
         // Show notification if warranted
         if (data.shouldNotify && data.notification) {
