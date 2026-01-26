@@ -1442,8 +1442,8 @@ function calculateRateModifier(state: PlayerLiveState, prop: PropTypeKey): numbe
   // 5) Off-court stability overlay
   if (!state.onCourt) mod *= 0.98;
   
-  // Clamp to safe range
-  return Math.max(0.80, Math.min(1.20, mod));
+  // v5.0: Tighten clamp range from ±20% to ±12% for more stable projections
+  return Math.max(0.88, Math.min(1.12, mod));
 }
 
 // ===== PROJECTION ENGINE 5: PROJECTION CORE =====
@@ -1464,13 +1464,38 @@ function projectFinal(
   scoreDiff: number,
   period: number
 ): ProjectionResult {
-  const { remaining, uncertainty, riskFlags } = estimateRemainingMinutesRotationAware(state, live, scoreDiff, period);
+  const { remaining, uncertainty, riskFlags: baseRiskFlags } = estimateRemainingMinutesRotationAware(state, live, scoreDiff, period);
   const rate = blendedRate(state, live);
   const mod = calculateRateModifier(state, prop);
-
+  
+  // v5.0: Additional risk flag detection
+  const riskFlags = [...baseRiskFlags];
+  const minPlayed = live?.min ?? 0;
+  
+  // Early projection flag - less than 10 minutes of data
+  if (minPlayed < 10) {
+    riskFlags.push('EARLY_PROJECTION');
+  }
+  
+  // Trending detection based on current rate vs expected
   const curPTS = live?.pts ?? 0;
   const curREB = live?.reb ?? 0;
   const curAST = live?.ast ?? 0;
+  
+  if (minPlayed >= 8) {
+    const ptsRate = curPTS / minPlayed;
+    const rebRate = curREB / minPlayed;
+    const astRate = curAST / minPlayed;
+    
+    // Cold detection: current rate < 70% of expected rate
+    if (prop === 'Points' && ptsRate < rate.pts * 0.70) {
+      riskFlags.push('TRENDING_COLD');
+    }
+    // Hot detection: current rate > 130% of expected rate
+    if (prop === 'Points' && ptsRate > rate.pts * 1.30) {
+      riskFlags.push('TRENDING_HOT');
+    }
+  }
 
   const addPTS = rate.pts * remaining * mod;
   const addREB = rate.reb * remaining * mod;
@@ -1528,8 +1553,11 @@ function computeConfidence(
   if (state.onCourt) c += 8;
   else c -= 6;
 
-  // Minutes reliability
-  if ((live?.min ?? 0) >= 15) c += 5; // More data = more reliable
+  // Minutes reliability - more granular
+  const minPlayed = live?.min ?? 0;
+  if (minPlayed >= 20) c += 8;
+  else if (minPlayed >= 15) c += 5;
+  else if (minPlayed >= 10) c += 2;
 
   // Risk penalties
   if (riskFlags.includes('FOUL_TROUBLE')) {
@@ -1539,6 +1567,12 @@ function computeConfidence(
   if (riskFlags.includes('BLOWOUT_RISK')) c -= 12;
   if (riskFlags.includes('HIGH_FATIGUE')) c -= 10;
   if (riskFlags.includes('MINUTES_VOLATILITY')) c -= 8;
+  
+  // v5.0: NEW risk flag penalties for tighter projections
+  if (riskFlags.includes('HIGH_VARIANCE')) c -= 12;       // High variance player
+  if (riskFlags.includes('EARLY_PROJECTION')) c -= 15;    // Minutes < 10, low confidence
+  if (riskFlags.includes('TRENDING_COLD')) c -= 8;        // Cold shooting
+  if (riskFlags.includes('TRENDING_HOT')) c += 5;         // Hot streak bonus
   
   // Close game boost
   if (riskFlags.includes('CLOSE_GAME_BOOST')) c += 5;

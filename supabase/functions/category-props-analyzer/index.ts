@@ -103,11 +103,23 @@ interface CategoryConfig {
   blockedArchetypes?: string[];
 }
 
-// ============ PROJECTION WEIGHTS (v4.0) ============
+// ============ PROJECTION WEIGHTS (v5.0 - TIGHTENED) ============
 const PROJECTION_WEIGHTS = {
-  L10_MEDIAN: 0.55,      // Base weight for L10 median
-  MATCHUP_H2H: 0.30,     // Weight for H2H history vs opponent
-  PACE_FACTOR: 0.15,     // Weight for pace/game environment
+  L10_MEDIAN: 0.45,      // Reduced from 0.55 - L10 has high variance
+  MATCHUP_H2H: 0.22,     // Reduced from 0.30 - small sample sizes
+  PACE_FACTOR: 0.08,     // Reduced from 0.15 - pace impact overstated
+  REGRESSION: 0.25,      // NEW: Regress toward season average for stability
+};
+
+// ============ MINIMUM EDGE THRESHOLDS (v5.0) ============
+// Only recommend picks where edge (|projection - line|) exceeds threshold
+const MIN_EDGE_THRESHOLDS: Record<string, number> = {
+  points: 1.5,     // Need 1.5+ edge for points
+  rebounds: 1.0,   // 1.0+ for rebounds
+  assists: 0.8,    // 0.8+ for assists
+  threes: 0.5,     // 0.5+ for threes
+  blocks: 0.5,     // 0.5+ for blocks
+  steals: 0.3,     // 0.3+ for steals
 };
 
 // ============ ARCHETYPE DEFINITIONS (v3.0) ============
@@ -371,25 +383,30 @@ function getStatValue(log: GameLog, propType: string): number {
   }
 }
 
-// ============ TRUE PROJECTION CALCULATION (v4.1) ============
-// v4.1: Fixed pace_rating text->numeric conversion and matchup key format
+// ============ TRUE PROJECTION CALCULATION (v5.0 - TIGHTENED) ============
+// v5.0: Added variance shrinkage, regression to mean, stricter UNDER criteria
 function calculateTrueProjection(
   playerName: string,
   propType: string,
   statValues: number[],
-  opponent: string | null
-): { projectedValue: number; matchupAdj: number; paceAdj: number; projectionSource: string } {
+  opponent: string | null,
+  seasonAvg?: number,
+  l10StdDev?: number
+): { projectedValue: number; matchupAdj: number; paceAdj: number; projectionSource: string; varianceRatio: number; shrinkageFactor: number } {
   // 1. BASE: L10 Median (more stable than average for betting)
   const l10Median = calculateMedian(statValues);
+  const l10Avg = statValues.length > 0 ? statValues.reduce((a, b) => a + b, 0) / statValues.length : l10Median;
+  
+  // v5.0: Calculate variance ratio for shrinkage
+  const stdDev = l10StdDev ?? calculateStdDev(statValues);
+  const varianceRatio = l10Avg > 0 ? stdDev / l10Avg : 0.5;
   
   // 2. MATCHUP ADJUSTMENT: Check H2H history vs opponent
   let matchupAdj = 0;
   let projectionSource = 'L10_MEDIAN';
   
   if (opponent) {
-    // v4.1: Normalize opponent name (e.g., "GSW" -> "Golden State Warriors")
     const normalizedOpponent = normalizeOpponentName(opponent);
-    // v4.1: Match prop_type format in matchup_history (e.g., "player_points")
     const matchupPropType = propType.startsWith('player_') ? propType : `player_${propType}`;
     const matchupKey = `${playerName.toLowerCase().trim()}_${matchupPropType}_${normalizedOpponent.toLowerCase().trim()}`;
     const matchup = matchupHistoryCache.get(matchupKey);
@@ -398,7 +415,6 @@ function calculateTrueProjection(
     
     if (matchup && matchup.games_played >= 2) {
       const h2hAvg = matchup.avg_stat;
-      // Calculate adjustment: difference from L10 median weighted at 30%
       matchupAdj = (h2hAvg - l10Median) * PROJECTION_WEIGHTS.MATCHUP_H2H;
       projectionSource = matchup.games_played >= 5 ? 'L10+H2H_STRONG' : 'L10+H2H';
       console.log(`[Projection] H2H found: ${matchup.games_played} games, avg=${h2hAvg.toFixed(1)}, adj=${matchupAdj.toFixed(2)}`);
@@ -409,16 +425,13 @@ function calculateTrueProjection(
   let paceAdj = 0;
   if (opponent) {
     const normalizedOpponent = normalizeOpponentName(opponent);
-    // Look up game environment for this matchup
     for (const [_, env] of gameEnvironmentCache) {
       const homeMatch = env.home_team?.toLowerCase().includes(normalizedOpponent.toLowerCase()) ||
                        env.away_team?.toLowerCase().includes(normalizedOpponent.toLowerCase());
       if (homeMatch && env.pace_rating) {
-        // v4.1: FIXED - pace_rating is TEXT ("LOW", "MEDIUM", "FAST"), not a number
         const paceMultiplier = getPaceMultiplier(env.pace_rating);
         paceAdj = paceMultiplier * l10Median * PROJECTION_WEIGHTS.PACE_FACTOR;
         
-        // Tag projection source with pace info
         if (paceMultiplier < 0) {
           projectionSource += '+SLOW';
         } else if (paceMultiplier > 0) {
@@ -430,15 +443,29 @@ function calculateTrueProjection(
     }
   }
   
-  // 4. FINAL PROJECTION (rounded to 0.5)
-  const rawProjection = l10Median + matchupAdj + paceAdj;
+  // 4. v5.0: VARIANCE SHRINKAGE - High variance = regress more to season mean
+  // shrinkageFactor: 0.70 (high variance) to 0.95 (low variance)
+  const shrinkageFactor = Math.max(0.70, Math.min(0.95, 1 - varianceRatio * 0.4));
+  
+  // 5. v5.0: REGRESSION TO MEAN - Blend with season average
+  let rawProjection = l10Median + matchupAdj + paceAdj;
+  
+  if (seasonAvg && seasonAvg > 0) {
+    // Apply shrinkage: high variance players regress toward season avg
+    rawProjection = (rawProjection * shrinkageFactor) + (seasonAvg * (1 - shrinkageFactor));
+    projectionSource += '+REGRESSED';
+    console.log(`[Projection] v5.0 Shrinkage: factor=${shrinkageFactor.toFixed(2)}, seasonAvg=${seasonAvg.toFixed(1)}, before=${(l10Median + matchupAdj + paceAdj).toFixed(1)}, after=${rawProjection.toFixed(1)}`);
+  }
+  
   const projectedValue = Math.round(rawProjection * 2) / 2;
   
   return {
     projectedValue,
     matchupAdj: Math.round(matchupAdj * 10) / 10,
     paceAdj: Math.round(paceAdj * 10) / 10,
-    projectionSource
+    projectionSource,
+    varianceRatio: Math.round(varianceRatio * 100) / 100,
+    shrinkageFactor: Math.round(shrinkageFactor * 100) / 100,
   };
 }
 
@@ -722,11 +749,44 @@ serve(async (req) => {
 
         // Calculate confidence score based on consistency and hit rate
         const consistency = l10Avg > 0 ? 1 - (l10StdDev / l10Avg) : 0;
+        
+        // v5.0: TIGHTENED UNDER CRITERIA - UNDERs hit at 63.6% vs 78% for OVERs
+        if (config.side === 'under') {
+          const underMinHitRate = 0.65; // Higher threshold for unders
+          const maxVarianceRatio = 0.30; // Variance must be < 30% of avg
+          const varianceRatio = l10Avg > 0 ? l10StdDev / l10Avg : 1;
+          
+          // Block high-variance UNDERs
+          if (varianceRatio > maxVarianceRatio) {
+            console.log(`[Category Analyzer] ✗ UNDER ${playerName}: Variance too high (${(varianceRatio * 100).toFixed(0)}% > ${maxVarianceRatio * 100}%)`);
+            continue;
+          }
+          
+          // Check for trending up (L5 > L10)
+          const l5Values = statValues.slice(0, 5);
+          const l5Avg = l5Values.length > 0 ? l5Values.reduce((a, b) => a + b, 0) / l5Values.length : l10Avg;
+          if (l5Avg > l10Avg * 1.08) {
+            console.log(`[Category Analyzer] ✗ UNDER ${playerName}: Trending up (L5 ${l5Avg.toFixed(1)} > L10*1.08 ${(l10Avg * 1.08).toFixed(1)})`);
+            continue;
+          }
+          
+          // Apply stricter hit rate for UNDERs
+          if (bestHitRate < underMinHitRate) {
+            console.log(`[Category Analyzer] ✗ UNDER ${playerName}: Hit rate ${(bestHitRate * 100).toFixed(0)}% < required ${underMinHitRate * 100}%`);
+            continue;
+          }
+        }
 
         if (bestLine !== null && bestHitRate >= (minHitRate || config.minHitRate)) {
           qualifiedPlayers++;
           
-          const confidenceScore = (bestHitRate * 0.6) + (Math.max(0, consistency) * 0.4);
+          // v5.0: RECALIBRATED CONFIDENCE FORMULA
+          // Add variance penalty, side-specific bonus, sample size bonus
+          const baseConfidence = (bestHitRate * 0.50) + (Math.max(0, consistency) * 0.30);
+          const variancePenalty = l10Avg > 0 ? (l10StdDev / l10Avg) * 0.12 : 0;
+          const sideBonus = config.side === 'over' ? 0.06 : 0; // OVERs historically hit higher
+          const sampleBonus = l10Logs.length >= 10 ? 0.04 : 0;
+          const confidenceScore = Math.min(0.92, Math.max(0.35, baseConfidence - variancePenalty + sideBonus + sampleBonus));
 
           sweetSpots.push({
             category: catKey,
