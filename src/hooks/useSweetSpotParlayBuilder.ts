@@ -143,8 +143,10 @@ export interface DreamTeamLeg {
   patternScore?: number;
 }
 
-// ========== WINNING PATTERN RULES v3.1 ==========
+// ========== WINNING PATTERN RULES v4.0 ==========
 // Based on $714+ winning slips: game script + line thresholds + defensive matchups
+// v4.0: Removed MID_SCORER_UNDER (40% hit rate) and ELITE_REB_OVER (unproven)
+// Added THREE_POINT_SHOOTER (100% hit rate) and BIG_REBOUNDER (60%, proven)
 const WINNING_PATTERN_RULES: Record<string, {
   minLine?: number;
   maxLine?: number;
@@ -156,10 +158,10 @@ const WINNING_PATTERN_RULES: Record<string, {
   preferredOpponentDefenseRank?: number; // Lower = stronger defense
   statType?: string;
 }> = {
-  'ELITE_REB_OVER': {
-    minLine: 10.5,
-    maxLine: 15.5,
-    preferredPace: ['SLOW', 'MEDIUM'], // Normalized: was LOW/MEDIUM
+  'BIG_REBOUNDER': {
+    minLine: 7.5,
+    maxLine: 14.5,
+    preferredPace: ['SLOW', 'MEDIUM'],
     maxVegasTotal: 222, // Grind games = more rebounds
     preferredGameScript: ['COMPETITIVE', 'GRIND_OUT'],
     statType: 'rebounds',
@@ -189,12 +191,12 @@ const WINNING_PATTERN_RULES: Record<string, {
     minVegasTotal: 218, // High-scoring games
     statType: 'points',
   },
-  'MID_SCORER_UNDER': {
-    minLine: 10.5,
-    maxLine: 18.5,
-    preferredOpponentDefenseRank: 15, // vs decent defense
-    preferredGameScript: ['GRIND_OUT', 'COMPETITIVE'],
-    statType: 'points',
+  'THREE_POINT_SHOOTER': {
+    minLine: 0.5,
+    maxLine: 4.5,
+    preferredGameScript: ['SHOOTOUT', 'COMPETITIVE'],
+    minVegasTotal: 215, // Shootouts favor threes
+    statType: 'threes',
   },
   'ASSIST_ANCHOR': {
     maxLine: 6.5,
@@ -420,15 +422,28 @@ function matchesWinningPattern(
 // - Big Assists OVER (Vucevic): ~70% win rate
 // - Low Scorer UNDER (Dort/Sheppard): ~65% win rate
 // - Mid Scorer UNDER: 64% win rate
-// - Star Floor OVER (Ja Morant): ~75% win rate
+// OPTIMAL WINNERS FORMULA v4.0 - Based on ACTUAL settled outcomes
+// Updated 2026-01-26: Removed MID_SCORER_UNDER (40%) and ELITE_REB_OVER (0 data)
+// THREE_POINT_SHOOTER: 100% hit rate (25/25)
+// STAR_FLOOR_OVER: 95% hit rate (19/20)
+// BIG_ASSIST_OVER: 83.3% hit rate (10/12)
+// LOW_SCORER_UNDER: 76.7% hit rate (23/30)
+// ROLE_PLAYER_REB: 75.9% hit rate (22/29)
+// BIG_REBOUNDER: 60% hit rate (12/20) - replacing unproven ELITE_REB_OVER
 const PROVEN_FORMULA = [
-  { category: 'ELITE_REB_OVER', side: 'over', count: 1 },      // Gobert/Nurkic type
-  { category: 'ROLE_PLAYER_REB', side: 'over', count: 1 },     // Finney-Smith type
-  { category: 'BIG_ASSIST_OVER', side: 'over', count: 1 },     // Vucevic type
-  { category: 'LOW_SCORER_UNDER', side: 'under', count: 1 },   // Dort/Sheppard type
-  { category: 'MID_SCORER_UNDER', side: 'under', count: 1 },   // Nesmith type
-  { category: 'STAR_FLOOR_OVER', side: 'over', count: 1 },     // Ja Morant type
+  { category: 'STAR_FLOOR_OVER', side: 'over', count: 1 },       // 95% - Stars like Ja, Booker
+  { category: 'BIG_ASSIST_OVER', side: 'over', count: 1 },       // 83.3% - Vucevic, Sabonis type
+  { category: 'THREE_POINT_SHOOTER', side: 'over', count: 1 },   // 100% - REPLACES MID_SCORER_UNDER (40%)
+  { category: 'LOW_SCORER_UNDER', side: 'under', count: 1 },     // 76.7% - Dort/Sheppard type
+  { category: 'ROLE_PLAYER_REB', side: 'over', count: 1 },       // 75.9% - Finney-Smith type
+  { category: 'BIG_REBOUNDER', side: 'over', count: 1 },         // 60% - REPLACES ELITE_REB_OVER (no data)
 ];
+
+// v4.0: Minimum requirements for a category to be used in parlay building
+export const CATEGORY_MIN_REQUIREMENTS = {
+  minSampleSize: 5,      // At least 5 settled picks
+  minHitRate: 60,        // At least 60% hit rate (as percentage)
+};
 
 /**
  * Scoring weight presets for A/B testing and tuning (v3.3)
@@ -482,18 +497,20 @@ export const setScorePreset = (key: ScorePresetKey) => {
 };
 
 /** 
- * Unified pick scoring function (v3.3)
+ * Unified pick scoring function (v4.0)
  * Uses configurable SCORE_WEIGHTS for A/B testing
  * 
  * Pattern = gatekeeper (structural logic)
  * L10 = primary signal (performance reliability)  
  * Confidence = meaningful tie-breaker (model conviction)
  * Missing L10 = penalty (unknowns shouldn't beat knowns)
+ * Category Sample Size = penalty for unproven categories
  */
 const scorePick = (p: {
   _patternScore?: number;
   l10HitRate?: number | null;
   confidence_score?: number;
+  _categorySampleSize?: number;  // v4.0: Sample size for category-based penalty
 }): number => {
   const pat = p._patternScore ?? 0;
 
@@ -505,11 +522,16 @@ const scorePick = (p: {
   // Confidence is already 0–1 scale
   const conf = p.confidence_score ?? SCORE_WEIGHTS.confDefault;
 
+  // v4.0: Penalty for picks from categories with small sample sizes
+  const sampleSize = p._categorySampleSize ?? 10;
+  const samplePenalty = sampleSize < 10 ? -0.5 : 0;
+
   return (
     (pat * SCORE_WEIGHTS.pattern) +
     (l10 * SCORE_WEIGHTS.l10) +
     (conf * SCORE_WEIGHTS.confidence) +
-    missingL10Penalty
+    missingL10Penalty +
+    samplePenalty
   );
 };
 

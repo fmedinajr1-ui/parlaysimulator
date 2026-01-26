@@ -651,6 +651,48 @@ serve(async (req) => {
           continue; // Skip this player for this category
         }
         
+        // v4.0: BREAKOUT PLAYER DETECTION - Block rising stars from UNDER categories
+        // Prevents picks like "Evan Mobley UNDER 18.5" when he's on an upward trend
+        if (config.side === 'under') {
+          const l5Logs = l10Logs.slice(0, 5);
+          const l5Values = l5Logs.map(log => getStatValue(log, config.propType));
+          const l5Avg = l5Values.reduce((a, b) => a + b, 0) / l5Values.length;
+          
+          // Check for breakout signals
+          const breakoutSignals = {
+            // 1. Recent explosion: Any 25+ point game in L5 (for points)
+            recentExplosion: config.propType === 'points' && l5Values.some(v => v >= 25),
+            // 2. Usage trending: L5 avg > L10 avg by 15%+ 
+            usageTrending: l10Logs.length >= 10 && l5Avg > l10Avg * 1.15,
+            // 3. Minutes expanding: L5 minutes > L10 minutes by 10%+
+            minutesExpanding: (() => {
+              const l5Min = l5Logs.reduce((s, g) => s + (g.minutes_played || 0), 0) / l5Logs.length;
+              const l10Min = l10Logs.reduce((s, g) => s + (g.minutes_played || 0), 0) / l10Logs.length;
+              return l10Logs.length >= 10 && l5Min > l10Min * 1.10;
+            })(),
+            // 4. Consistency breakout: Recent games all above line
+            consistentHigh: config.propType === 'points' && l5Values.every(v => v >= l10Avg * 1.1),
+          };
+          
+          // Block if explosion detected (immediate disqualifier)
+          if (breakoutSignals.recentExplosion) {
+            console.log(`[Category Analyzer] 🚫 BREAKOUT: ${playerName} blocked from ${catKey} - 25+ pt game in L5`);
+            continue;
+          }
+          
+          // Block if multiple trending signals detected
+          const trendingCount = [
+            breakoutSignals.usageTrending,
+            breakoutSignals.minutesExpanding,
+            breakoutSignals.consistentHigh,
+          ].filter(Boolean).length;
+          
+          if (trendingCount >= 2) {
+            console.log(`[Category Analyzer] 🚫 BREAKOUT: ${playerName} blocked from ${catKey} - ${trendingCount} trending signals`);
+            continue;
+          }
+        }
+        
         // If neither eligibility path is possible, skip
         if (!avgEligible && !potentialLineEligible) continue;
         
