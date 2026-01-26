@@ -6,9 +6,10 @@ import { PropEdge, HalftimeLockedProp, TeamLiveState, GameBetEdge } from '@/type
 import { EdgeFilters, PropKind } from './EdgeFilters';
 import { EdgeRowCompact } from './EdgeRowCompact';
 import { GameBetEdgeCard } from './GameBetEdgeCard';
-import { Lock, Target, Zap, Copy } from 'lucide-react';
+import { Lock, Target, Zap, Copy, RefreshCw, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
+import { formatDistanceToNow } from 'date-fns';
 
 interface HalftimeBettingPanelProps {
   edges: PropEdge[];
@@ -20,6 +21,11 @@ interface HalftimeBettingPanelProps {
   homeTeamState?: TeamLiveState | null;
   awayTeamState?: TeamLiveState | null;
   gameBetEdges?: GameBetEdge[];
+  // Refresh stats
+  onRefreshStats?: () => Promise<{ success: boolean; playerCount?: number; reason?: string }>;
+  isRefreshing?: boolean;
+  lastPbpUpdate?: Date | null;
+  lastPbpGameTime?: string | null;
 }
 
 // Composite ranking algorithm for "bet usefulness"
@@ -42,6 +48,10 @@ export function HalftimeBettingPanel({
   homeTeamState,
   awayTeamState,
   gameBetEdges = [],
+  onRefreshStats,
+  isRefreshing = false,
+  lastPbpUpdate,
+  lastPbpGameTime,
 }: HalftimeBettingPanelProps) {
   const { toast } = useToast();
   
@@ -121,6 +131,36 @@ export function HalftimeBettingPanel({
           </div>
           
           <div className="flex items-center gap-2">
+            {/* Refresh Stats Button */}
+            {onRefreshStats && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={async () => {
+                  const result = await onRefreshStats();
+                  if (result.success) {
+                    toast({
+                      title: "Stats Refreshed",
+                      description: `Updated ${result.playerCount || 0} players`,
+                    });
+                  }
+                }}
+                disabled={isRefreshing}
+                title="Refresh box score stats"
+              >
+                <RefreshCw className={cn("w-4 h-4", isRefreshing && "animate-spin")} />
+              </Button>
+            )}
+            
+            {/* PBP Timestamp */}
+            {lastPbpUpdate && (
+              <span className="flex items-center gap-1 text-muted-foreground text-xs">
+                <Clock className="w-3 h-3" />
+                {formatDistanceToNow(lastPbpUpdate, { addSuffix: true })}
+                {lastPbpGameTime && ` (${lastPbpGameTime})`}
+              </span>
+            )}
+
             {/* Status Badge */}
             <Badge 
               variant="outline" 
