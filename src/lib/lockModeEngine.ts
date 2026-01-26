@@ -1,0 +1,325 @@
+/**
+ * Lock Mode Engine - 3-Leg Risk Elimination System
+ * 
+ * Outputs exactly 3 legs with highest structural certainty.
+ * If any slot cannot be filled, returns zero results.
+ */
+
+import type {
+  PropEdge,
+  PlayerLiveState,
+  PropType,
+  LockModeStatTier,
+  LockModeLegSlot,
+  LockModeGate,
+  LockModeLeg,
+  LockModeSlip,
+} from '@/types/scout-agent';
+
+// ===== GATE 1: MINUTES & ROTATION =====
+
+function passesMinutesGate(
+  edge: PropEdge,
+  playerState: PlayerLiveState | undefined
+): LockModeGate {
+  const role = edge.rotationRole?.toUpperCase();
+  const isStarterOrCloser = role === 'STARTER' || role === 'CLOSER';
+  const hasStableMinutes = !edge.rotationVolatilityFlag;
+  const noFoulTrouble = (playerState?.foulCount || 0) <= 3;
+  
+  // Check first-half minutes played (from minutesPlayed in edge or boxScore)
+  const minutesPlayed = edge.minutesPlayed || playerState?.minutesEstimate || 0;
+  const minFirstHalfMinutes = minutesPlayed >= 14;
+
+  const passed = isStarterOrCloser && hasStableMinutes && noFoulTrouble && minFirstHalfMinutes;
+
+  return {
+    passed,
+    reason: !passed
+      ? !isStarterOrCloser
+        ? 'Not STARTER/CLOSER'
+        : !hasStableMinutes
+        ? 'Minutes volatile'
+        : !noFoulTrouble
+        ? `Foul trouble (${playerState?.foulCount || 0} fouls)`
+        : `1H minutes ${minutesPlayed.toFixed(0)} < 14`
+      : undefined,
+  };
+}
+
+// ===== GATE 2: STAT TYPE PRIORITY =====
+
+function getStatTier(prop: PropType): LockModeStatTier | null {
+  if (prop === 'Rebounds' || prop === 'Assists') return 'TIER_1';
+  if (prop === 'PRA') return 'TIER_2';
+  if (prop === 'Points') return 'TIER_3';
+  return null; // Blocks Threes, Steals, Blocks
+}
+
+function passesStatTypeGate(prop: PropType): LockModeGate {
+  const tier = getStatTier(prop);
+  return {
+    passed: tier !== null,
+    reason: tier === null ? `${prop} not allowed in Lock Mode` : undefined,
+  };
+}
+
+// ===== GATE 3: EDGE VS UNCERTAINTY =====
+
+function passesEdgeUncertaintyGate(edge: PropEdge): LockModeGate {
+  const projectedEdge = Math.abs((edge.expectedFinal || 0) - edge.line);
+  const uncertainty = edge.uncertainty || 1;
+
+  // Edge must be >= 1.25x uncertainty
+  const threshold = uncertainty * 1.25;
+  const passed = projectedEdge >= threshold && projectedEdge > 0.5;
+
+  return {
+    passed,
+    reason: !passed
+      ? `Edge ${projectedEdge.toFixed(1)} < ${threshold.toFixed(1)} (unc × 1.25)`
+      : undefined,
+  };
+}
+
+// ===== GATE 4: STRICTER UNDER RULES =====
+
+function passesUnderGate(
+  edge: PropEdge,
+  playerState: PlayerLiveState | undefined
+): LockModeGate {
+  if (edge.lean === 'OVER') return { passed: true };
+
+  const fatigue = playerState?.fatigueScore || 0;
+  const fatigueOk = fatigue >= 65;
+
+  const l10Avg = edge.line; // Approximate baseline
+  const stdDev = edge.uncertainty || 0;
+  const varianceLow = l10Avg > 0 ? stdDev / l10Avg <= 0.3 : false;
+
+  const noBreakout = !edge.riskFlags?.includes('BREAKOUT_RISK');
+  const noGarbageTime = !edge.riskFlags?.includes('BLOWOUT_RISK');
+
+  const passed = fatigueOk && varianceLow && noBreakout && noGarbageTime;
+
+  return {
+    passed,
+    reason: !passed
+      ? !fatigueOk
+        ? `Fatigue ${fatigue} < 65`
+        : !varianceLow
+        ? 'Variance too high'
+        : !noBreakout
+        ? 'Breakout signal detected'
+        : 'Garbage time risk'
+      : undefined,
+  };
+}
+
+// ===== CONFIDENCE FILTER =====
+
+function passesConfidenceGate(edge: PropEdge): boolean {
+  const confidence = edge.calibratedProb ? edge.calibratedProb * 100 : edge.confidence;
+  if (confidence < 72) return false;
+  
+  // Block if variance flags present
+  if (edge.riskFlags?.includes('HIGH_VARIANCE')) return false;
+  if (edge.riskFlags?.includes('EARLY_PROJECTION')) return false;
+  
+  return true;
+}
+
+// ===== SLOT MATCHING =====
+
+function getSlotType(edge: PropEdge, playerState: PlayerLiveState | undefined): LockModeLegSlot | null {
+  const role = playerState?.role || 'SECONDARY';
+  const prop = edge.prop;
+  const lean = edge.lean;
+
+  // Slot 1: BIG/WING Rebound OVER
+  if (prop === 'Rebounds' && lean === 'OVER') {
+    if (role === 'BIG' || role === 'PRIMARY') {
+      return 'BIG_REB_OVER';
+    }
+  }
+
+  // Slot 2: Assist OVER
+  if (prop === 'Assists' && lean === 'OVER') {
+    if (role === 'PRIMARY' || role === 'SECONDARY') {
+      return 'ASSIST_OVER';
+    }
+  }
+
+  // Slot 3: FLEX (Points OVER for stars, PRA for bigs, fatigue UNDER)
+  if (prop === 'Points' && lean === 'OVER' && role === 'PRIMARY') {
+    return 'FLEX';
+  }
+  if (prop === 'PRA' && lean === 'OVER' && role === 'BIG') {
+    return 'FLEX';
+  }
+  if (lean === 'UNDER' && (playerState?.fatigueScore || 0) >= 65) {
+    return 'FLEX';
+  }
+
+  return null;
+}
+
+// ===== MAIN BUILDER =====
+
+function buildDrivers(edge: PropEdge, playerState: PlayerLiveState | undefined): string[] {
+  const drivers: string[] = [];
+  
+  // Add role-based driver
+  const role = playerState?.role || edge.rotationRole;
+  if (role) {
+    if (role === 'STARTER' || role === 'CLOSER') {
+      drivers.push('Stable closer minutes');
+    } else if (role === 'PRIMARY') {
+      drivers.push('Primary option');
+    } else if (role === 'BIG') {
+      drivers.push('Strong box-outs');
+    }
+  }
+
+  // Add stat-specific drivers
+  if (edge.prop === 'Rebounds') {
+    drivers.push('Elite positioning');
+  } else if (edge.prop === 'Assists') {
+    drivers.push('Primary playmaker');
+  } else if (edge.prop === 'Points') {
+    drivers.push('Star floor active');
+  }
+
+  // Add fatigue driver for unders
+  if (edge.lean === 'UNDER' && (playerState?.fatigueScore || 0) >= 65) {
+    drivers.push(`Fatigue spike: ${playerState?.fatigueScore}%`);
+  }
+
+  // Limit to 2 drivers
+  return drivers.slice(0, 2);
+}
+
+export function buildLockModeSlip(
+  edges: PropEdge[],
+  playerStates: Map<string, PlayerLiveState>,
+  gameTime: string
+): LockModeSlip {
+  const candidates: LockModeLeg[] = [];
+
+  for (const edge of edges) {
+    // Find player state
+    const playerKey = Array.from(playerStates.keys()).find((key) =>
+      key.toLowerCase().includes(edge.player.toLowerCase().split(' ').pop() || '')
+    );
+    const playerState = playerKey ? playerStates.get(playerKey) : undefined;
+
+    // Run all gates
+    const minutesGate = passesMinutesGate(edge, playerState);
+    const statTypeGate = passesStatTypeGate(edge.prop);
+    const edgeUncertaintyGate = passesEdgeUncertaintyGate(edge);
+    const underGate = passesUnderGate(edge, playerState);
+
+    // Check if all gates pass
+    const allGatesPass =
+      minutesGate.passed &&
+      statTypeGate.passed &&
+      edgeUncertaintyGate.passed &&
+      underGate.passed &&
+      passesConfidenceGate(edge);
+
+    if (!allGatesPass) continue;
+
+    // Determine slot
+    const slot = getSlotType(edge, playerState);
+    if (!slot) continue;
+
+    // Build candidate leg
+    const leg: LockModeLeg = {
+      player: edge.player,
+      prop: edge.prop,
+      line: edge.line,
+      lean: edge.lean,
+      projected: edge.expectedFinal || 0,
+      uncertainty: edge.uncertainty || 0,
+      edge: Math.abs((edge.expectedFinal || 0) - edge.line),
+      minutesRemaining: edge.remainingMinutes || 0,
+      minutesUncertainty: edge.minutesUncertainty || 0,
+      calibratedConfidence: edge.calibratedProb ? edge.calibratedProb * 100 : edge.confidence,
+      drivers: buildDrivers(edge, playerState),
+      slot,
+      gates: {
+        minutes: minutesGate,
+        statType: statTypeGate,
+        edgeVsUncertainty: edgeUncertaintyGate,
+        underRules: edge.lean === 'UNDER' ? underGate : undefined,
+      },
+    };
+
+    candidates.push(leg);
+  }
+
+  // Sort by confidence and edge
+  candidates.sort((a, b) => {
+    // First by slot priority (BIG_REB_OVER > ASSIST_OVER > FLEX)
+    const slotOrder: Record<LockModeLegSlot, number> = {
+      BIG_REB_OVER: 1,
+      ASSIST_OVER: 2,
+      FLEX: 3,
+    };
+    const slotDiff = slotOrder[a.slot] - slotOrder[b.slot];
+    if (slotDiff !== 0) return slotDiff;
+
+    // Then by confidence
+    return b.calibratedConfidence - a.calibratedConfidence;
+  });
+
+  // Fill slots
+  const slots: Record<LockModeLegSlot, LockModeLeg | null> = {
+    BIG_REB_OVER: null,
+    ASSIST_OVER: null,
+    FLEX: null,
+  };
+
+  for (const leg of candidates) {
+    if (!slots[leg.slot]) {
+      slots[leg.slot] = leg;
+    }
+  }
+
+  // Check if all 3 slots filled
+  const filledLegs = Object.values(slots).filter((l): l is LockModeLeg => l !== null);
+  const missingSlots = (Object.entries(slots) as [LockModeLegSlot, LockModeLeg | null][])
+    .filter(([, leg]) => leg === null)
+    .map(([slot]) => slot);
+
+  if (filledLegs.length < 3) {
+    return {
+      legs: [],
+      generatedAt: new Date().toISOString(),
+      gameTime,
+      isValid: false,
+      blockReason: `Missing ${3 - filledLegs.length} slot(s)`,
+      missingSlots,
+    };
+  }
+
+  return {
+    legs: filledLegs,
+    generatedAt: new Date().toISOString(),
+    gameTime,
+    isValid: true,
+  };
+}
+
+// ===== UTILITY: Get Slot Display Name =====
+
+export function getSlotDisplayName(slot: LockModeLegSlot): string {
+  switch (slot) {
+    case 'BIG_REB_OVER':
+      return 'Rebound Over';
+    case 'ASSIST_OVER':
+      return 'Assist Over';
+    case 'FLEX':
+      return 'Flex Pick';
+  }
+}

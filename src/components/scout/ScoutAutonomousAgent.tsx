@@ -46,7 +46,9 @@ import {
   Target,
   TrendingUp,
   Clock,
+  Lock,
 } from 'lucide-react';
+import { LockModeTab } from './LockModeTab';
 import { formatDistanceToNow } from 'date-fns';
 import { cn } from '@/lib/utils';
 
@@ -107,7 +109,7 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
   } = useScoutAgentState({ gameContext });
   
   // Tab state for main content
-  const [activeScoutTab, setActiveScoutTab] = useState<'bets' | 'props' | 'advanced'>('bets');
+  const [activeScoutTab, setActiveScoutTab] = useState<'bets' | 'props' | 'lock' | 'advanced'>('bets');
   
   // Manual refresh state
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -839,8 +841,8 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
       </div>
 
       {/* Main Content Tabs */}
-      <Tabs value={activeScoutTab} onValueChange={(v) => setActiveScoutTab(v as 'bets' | 'props' | 'advanced')}>
-        <TabsList className="grid w-full grid-cols-3">
+      <Tabs value={activeScoutTab} onValueChange={(v) => setActiveScoutTab(v as 'bets' | 'props' | 'lock' | 'advanced')}>
+        <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="bets" className="gap-2">
             <TrendingUp className="w-4 h-4" />
             <span className="hidden sm:inline">Game Bets</span>
@@ -860,6 +862,11 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
                 {state.activePropEdges.filter(e => e.confidence >= 65).length}
               </Badge>
             )}
+          </TabsTrigger>
+          <TabsTrigger value="lock" className="gap-1.5">
+            <Lock className="w-4 h-4" />
+            <span className="hidden sm:inline">Lock Mode</span>
+            <span className="sm:hidden">Lock</span>
           </TabsTrigger>
           <TabsTrigger value="advanced" className="gap-2">
             <Activity className="w-4 h-4" />
@@ -894,6 +901,16 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
             lastPbpUpdate={lastPbpUpdate}
             lastPbpGameTime={lastPbpGameTime}
             playerStates={state.playerStates}
+          />
+        </TabsContent>
+        
+        {/* Lock Mode Tab */}
+        <TabsContent value="lock" className="mt-4">
+          <LockModeTab
+            edges={state.activePropEdges}
+            playerStates={state.playerStates}
+            gameTime={state.currentGameTime || ''}
+            isHalftime={state.halftimeLock.isLocked}
           />
         </TabsContent>
         
