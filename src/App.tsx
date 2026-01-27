@@ -58,6 +58,7 @@ const Scout = React.lazy(() => import("./pages/Scout"));
 const ManualBuilder = React.lazy(() => import("./pages/ManualBuilder"));
 const DraftView = React.lazy(() => import("./pages/DraftView"));
 const WhaleProxy = React.lazy(() => import("./pages/WhaleProxy"));
+const Tomorrow3PT = React.lazy(() => import("./pages/Tomorrow3PT"));
 
 // QueryClient with optimized defaults
 const queryClient = new QueryClient({
@@ -135,6 +136,7 @@ function AnimatedRoutes() {
               <Route path="/manual-builder" element={<ManualBuilder />} />
               <Route path="/draft/:shareCode" element={<DraftView />} />
               <Route path="/whale-proxy" element={<WhaleProxy />} />
+              <Route path="/tomorrow-3pt" element={<Tomorrow3PT />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </React.Suspense>

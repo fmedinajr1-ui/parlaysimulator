@@ -7,7 +7,8 @@ import {
   Shield,
   Users,
   ChevronRight,
-  Hammer
+  Hammer,
+  Target
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
@@ -18,6 +19,7 @@ import { useViewport } from "@/hooks/useViewport";
 
 const toolItems = [
   { icon: Hammer, label: "Manual Builder", path: "/manual-builder", description: "Build custom parlays manually" },
+  { icon: Target, label: "Tomorrow's 3PT", path: "/tomorrow-3pt", description: "3PT shooter picks for tomorrow" },
 ];
 
 const adminItems = [
