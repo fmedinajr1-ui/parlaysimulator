@@ -129,6 +129,7 @@ export function useWhaleProxy() {
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isScraping, setIsScraping] = useState(false);
 
   // Fetch real picks from database
   const fetchRealPicks = useCallback(async () => {
@@ -376,6 +377,51 @@ export function useWhaleProxy() {
     }
   }, [isSimulating, isRefreshing, fetchRealPicks]);
 
+  // Trigger full scrape: PP props + whale detector
+  const triggerFullScrape = useCallback(async () => {
+    if (isSimulating || isScraping) return;
+    
+    try {
+      setIsScraping(true);
+      
+      // Step 1: Scrape PrizePicks props
+      const { data: scrapeData, error: scrapeError } = await supabase.functions.invoke('pp-props-scraper', {
+        body: { sports: ['NBA', 'NHL', 'WNBA', 'ATP', 'WTA'] }
+      });
+      
+      if (scrapeError) {
+        console.error('Error scraping PP props:', scrapeError);
+        toast.error('Failed to scrape PP props');
+        return;
+      }
+      
+      console.log('PP scraper result:', scrapeData);
+      
+      // Step 2: Run whale detector
+      const { data: detectData, error: detectError } = await supabase.functions.invoke('whale-signal-detector', {
+        body: { sports: ['basketball_nba', 'hockey_nhl', 'basketball_wnba', 'tennis_atp', 'tennis_wta'] }
+      });
+      
+      if (detectError) {
+        console.error('Error running whale detector:', detectError);
+        toast.error('Scraped props but signal detection failed');
+        return;
+      }
+      
+      console.log('Whale detector result:', detectData);
+      
+      // Step 3: Refresh picks
+      await fetchRealPicks();
+      
+      toast.success(`Scraped ${scrapeData?.propsScraped || 0} props → ${detectData?.signalsGenerated || 0} signals`);
+    } catch (err) {
+      console.error('Error in triggerFullScrape:', err);
+      toast.error('Scrape failed');
+    } finally {
+      setIsScraping(false);
+    }
+  }, [isSimulating, isScraping, fetchRealPicks]);
+
   return {
     livePicks: livePicks(),
     watchlistPicks: watchlistPicks(),
@@ -394,5 +440,7 @@ export function useWhaleProxy() {
     refresh,
     isRefreshing,
     triggerRefresh,
+    isScraping,
+    triggerFullScrape,
   };
 }
