@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Anchor, TrendingUp, Eye, RefreshCw } from "lucide-react";
+import { Anchor, TrendingUp, Eye, RefreshCw, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useWhaleProxy } from "@/hooks/useWhaleProxy";
 import { WhaleFilters } from "./WhaleFilters";
@@ -24,7 +24,9 @@ export function WhaleProxyDashboard() {
     feedHealth,
     lastUpdate,
     isRefreshing,
-    triggerRefresh
+    triggerRefresh,
+    isScraping,
+    triggerFullScrape
   } = useWhaleProxy();
 
   return (
@@ -47,10 +49,20 @@ export function WhaleProxyDashboard() {
               Last update: {formatTimeAgo(lastUpdate)}
             </div>
             <Button
+              variant="outline"
+              size="sm"
+              onClick={triggerFullScrape}
+              disabled={isScraping || isRefreshing || isSimulating}
+              className="gap-1.5 text-xs h-8"
+            >
+              <Download className={cn("w-3.5 h-3.5", isScraping && "animate-pulse")} />
+              {isScraping ? "Scraping..." : "Scrape PP"}
+            </Button>
+            <Button
               variant="ghost"
               size="icon"
               onClick={triggerRefresh}
-              disabled={isRefreshing || isSimulating}
+              disabled={isRefreshing || isScraping || isSimulating}
               className="h-8 w-8"
             >
               <RefreshCw className={cn("w-4 h-4", isRefreshing && "animate-spin")} />
