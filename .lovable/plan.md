@@ -1,198 +1,111 @@
 
-# Fix Whale Signal Detector + Add Fallback Signal Generation
 
-## Root Cause Analysis
+# Add Disclaimer Section to Whale Proxy Dashboard
 
-The Whale Proxy dashboard shows empty because of a multi-step failure:
+## Overview
 
-1. **PP Scraper returns placeholder data** - Firecrawl is extracting "John Doe" and "Jane Smith" instead of real players, likely because:
-   - PrizePicks board was empty when scraped (late night, no games)
-   - The LLM couldn't find real projections on the page
-   
-2. **whale-signal-detector uses wrong field names** - The code references `market` and `point` but the `unified_props` table uses `prop_type` and `current_line`
+Add an informational disclaimer section that clearly communicates to users that the signals shown represent **market movement patterns** inferred from line analysis, not confirmed "whale" bets or insider information.
 
-3. **No matching players** - Since PP has "John Doe" and unified_props has real players like "Moe Wagner", there are zero matches
+## Implementation Approach
 
----
+### Option Selected: Collapsible Info Card
 
-## Fix 1: Update whale-signal-detector Field Names
+I'll add a collapsible info card at the top of the dashboard (below the header, above filters) that:
+- Shows a brief disclaimer by default
+- Expands to show more detailed explanation of how signals work
+- Can be dismissed but reappears on page refresh
 
-**File:** `supabase/functions/whale-signal-detector/index.ts`
-
-Update the `UnifiedProp` interface and query logic to use correct schema fields:
-
-```typescript
-// Change interface (lines 23-34)
-interface UnifiedProp {
-  id: string;
-  player_name: string;
-  prop_type: string;        // Was: market
-  current_line: number;     // Was: point
-  sport: string;
-  event_id: string;
-  bookmaker: string;
-  game_description: string; // Was: home_team/away_team
-  commence_time: string;
-}
-```
-
-Update the consensus map logic (lines 146-166):
-```typescript
-for (const prop of books) {
-  // Normalize prop_type to stat type (was: market)
-  const statType = prop.prop_type.replace('player_', '');
-  const key = `${prop.player_name.toLowerCase()}_${statType}`;
-  
-  if (!consensusMap.has(key)) {
-    consensusMap.set(key, {
-      avgLine: prop.current_line,              // Was: point
-      lines: [prop.current_line],              // Was: point
-      matchup: prop.game_description || 'TBD', // Was: away_team @ home_team
-      startTime: prop.commence_time,
-    });
-  } else {
-    const existing = consensusMap.get(key)!;
-    existing.lines.push(prop.current_line);    // Was: point
-    existing.avgLine = existing.lines.reduce((a, b) => a + b, 0) / existing.lines.length;
-  }
-}
-```
+This approach is better than a simple tooltip because:
+1. More visible - users will see it immediately
+2. More space for educational content about signal types
+3. Matches the existing card-based UI pattern
 
 ---
 
-## Fix 2: Add Book-to-Book Divergence Fallback
+## Files to Create/Modify
 
-When no PP data is available, generate signals by comparing divergence between bookmakers (FanDuel vs DraftKings).
+### 1. Create New Component: `src/components/whale/WhaleDisclaimer.tsx`
 
-Add to whale-signal-detector after line 127 (when no PP snapshots):
+A collapsible card component with:
+- Info icon + brief disclaimer text
+- "Learn more" expand/collapse toggle
+- Detailed explanation of each signal type when expanded
+- Visual styling consistent with existing cards (using `Card`, `Badge` components)
 
-```typescript
-// Fallback: Generate signals from book-to-book divergence
-if (snapshots.length === 0) {
-  console.log('[Whale Detector] No PP data, checking book divergence...');
-  
-  const { data: bookDivergence } = await supabase
-    .from('unified_props')
-    .select('*')
-    .in('sport', sports)
-    .gt('commence_time', now.toISOString())
-    .order('commence_time', { ascending: true })
-    .limit(200);
-  
-  if (bookDivergence && bookDivergence.length > 0) {
-    // Group by player + prop_type, find divergent lines
-    const playerMap = new Map();
-    for (const prop of bookDivergence) {
-      const key = `${prop.player_name}_${prop.prop_type}`;
-      if (!playerMap.has(key)) {
-        playerMap.set(key, []);
-      }
-      playerMap.get(key).push(prop);
-    }
-    
-    // Find props where bookmakers disagree by > 1 point
-    for (const [key, props] of playerMap) {
-      if (props.length < 2) continue;
-      
-      const lines = props.map(p => p.current_line);
-      const spread = Math.max(...lines) - Math.min(...lines);
-      
-      if (spread >= 1) {
-        // Generate divergence signal
-        const avgLine = lines.reduce((a, b) => a + b, 0) / lines.length;
-        // ... create signal with signal_type: 'book_divergence'
-      }
-    }
-  }
-}
+**Content to display:**
+
+**Collapsed (default):**
+> These signals show market movement patterns, not confirmed bets. Tap to learn more.
+
+**Expanded:**
+> **What are these signals?**
+> 
+> This dashboard detects where professional bettors ("sharps") may be moving lines by analyzing:
+>
+> - **DIVERGENCE** - PrizePicks line differs significantly from book consensus
+> - **STEAM** - Rapid line movement detected across multiple sportsbooks  
+> - **BOOK_DIVERGENCE** - Major books (FanDuel, DraftKings) disagree on the line
+>
+> **Important:** These are statistical patterns, not confirmed whale bets. Sharp money is inferred from line movements, not tracked directly. Use signals as one data point in your research, not as guaranteed picks.
+
+### 2. Update: `src/components/whale/WhaleProxyDashboard.tsx`
+
+- Import the new `WhaleDisclaimer` component
+- Add it between the header and filters sections (around line 44)
+
+---
+
+## Component Structure
+
+```
+WhaleDisclaimer
+├── Card (bg-blue-500/10, border-blue-500/20)
+│   ├── Header Row
+│   │   ├── Info Icon
+│   │   ├── Disclaimer text (brief)
+│   │   └── ChevronDown/Up toggle button
+│   │
+│   └── Collapsible Content (expanded state)
+│       ├── "What are these signals?" heading
+│       ├── Signal type explanations with badges
+│       └── "Important" disclaimer paragraph
 ```
 
 ---
 
-## Fix 3: Update pp-props-scraper for Better Extraction
+## Technical Details
 
-The Firecrawl extraction is returning test data. Add validation and better logging:
+### Dependencies Used (all already installed):
+- `lucide-react` for icons (`Info`, `ChevronDown`, `ChevronUp`)
+- `@/components/ui/card` for Card, CardContent
+- `@/components/ui/badge` for signal type badges
+- `@/components/ui/collapsible` for expand/collapse functionality
+- `framer-motion` (optional) for smooth animations
 
-**File:** `supabase/functions/pp-props-scraper/index.ts`
-
-Add validation after extraction (around line 175):
-
-```typescript
-// Validate extracted projections have real player names
-const validProjections = extractedData.projections.filter(p => {
-  const name = p.player_name?.toLowerCase() || '';
-  // Filter out obvious test/placeholder names
-  if (name.includes('john doe') || name.includes('jane') || name.includes('test')) {
-    console.log('[PP Scraper] Filtering placeholder name:', p.player_name);
-    return false;
-  }
-  // Player names should have at least 2 parts (first + last)
-  if (p.player_name?.split(' ').length < 2) {
-    return false;
-  }
-  return true;
-});
-
-if (validProjections.length === 0) {
-  console.log('[PP Scraper] All extracted projections were invalid/placeholder');
-  // Fall through to fallback logic
-}
-```
+### State Management:
+- Local `useState` for expanded/collapsed state
+- No persistence needed (disclaimer shows on each visit)
 
 ---
 
-## Expected Data Flow After Fix
+## Visual Design
 
-```
-                    +------------------+
-                    |  PrizePicks.com  |
-                    +--------+---------+
-                             |
-                   Firecrawl JSON Extract
-                             |
-                    +--------v---------+
-                    |   pp_snapshot    |
-                    |  (real players)  |
-                    +--------+---------+
-                             |
-              +--------------+--------------+
-              |                             |
-    +--------v---------+          +--------v---------+
-    |  unified_props   |          |  whale-signal-   |
-    |  (FD/DK lines)   |          |    detector      |
-    +--------+---------+          +--------+---------+
-              |                             |
-              +----------+------------------+
-                         |
-                +--------v---------+
-                |   whale_picks    |
-                |  (with signals)  |
-                +--------+---------+
-                         |
-                +--------v---------+
-                |  WhaleProxyDash  |
-                |    (Frontend)    |
-                +------------------+
-```
+The disclaimer will use a blue/info color scheme to differentiate it from the green (live picks) and amber (watchlist) sections:
+
+- Background: `bg-blue-500/10`
+- Border: `border-blue-500/20`
+- Icon: `text-blue-400`
+- Signal badges: Match existing colors (orange for DIVERGENCE, blue for STEAM)
 
 ---
 
-## Files to Modify
+## Expected Result
 
-| File | Changes |
-|------|---------|
-| `supabase/functions/whale-signal-detector/index.ts` | Fix field names (`prop_type`, `current_line`), add book divergence fallback |
-| `supabase/functions/pp-props-scraper/index.ts` | Add validation to filter placeholder/test names |
+Users will see a clear, non-intrusive info card explaining:
+1. What the signals mean
+2. How they're generated (market pattern detection)
+3. That these are NOT confirmed whale bets
+4. Recommendation to use as research data, not guaranteed picks
 
----
+This sets proper expectations and adds transparency to the feature.
 
-## Technical Notes
-
-1. **Field name mismatch was caused by schema drift** - the unified_props table was updated but the whale-signal-detector wasn't synced
-2. **Placeholder data in PP scraper** happens when PrizePicks board is empty or the LLM can't identify real projections
-3. **Book divergence fallback** ensures the whale proxy always has signals even without PP data
-4. **Validation filter** prevents garbage data from entering the system
-
-After implementing these fixes, the Whale Proxy will display real signals from either:
-- PP vs Book divergence (primary)
-- Book vs Book divergence (fallback)
