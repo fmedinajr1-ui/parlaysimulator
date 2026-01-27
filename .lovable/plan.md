@@ -1,111 +1,126 @@
 
-
-# Add Disclaimer Section to Whale Proxy Dashboard
+# Add Manual Refresh Button to Whale Proxy Dashboard
 
 ## Overview
 
-Add an informational disclaimer section that clearly communicates to users that the signals shown represent **market movement patterns** inferred from line analysis, not confirmed "whale" bets or insider information.
-
-## Implementation Approach
-
-### Option Selected: Collapsible Info Card
-
-I'll add a collapsible info card at the top of the dashboard (below the header, above filters) that:
-- Shows a brief disclaimer by default
-- Expands to show more detailed explanation of how signals work
-- Can be dismissed but reappears on page refresh
-
-This approach is better than a simple tooltip because:
-1. More visible - users will see it immediately
-2. More space for educational content about signal types
-3. Matches the existing card-based UI pattern
+Add a refresh button that triggers the `whale-signal-detector` edge function to generate fresh signals, then updates the UI with the new picks in real-time.
 
 ---
 
-## Files to Create/Modify
+## Implementation
 
-### 1. Create New Component: `src/components/whale/WhaleDisclaimer.tsx`
+### 1. Update `useWhaleProxy` Hook
 
-A collapsible card component with:
-- Info icon + brief disclaimer text
-- "Learn more" expand/collapse toggle
-- Detailed explanation of each signal type when expanded
-- Visual styling consistent with existing cards (using `Card`, `Badge` components)
+**File:** `src/hooks/useWhaleProxy.ts`
 
-**Content to display:**
+Add a new state and function to handle triggering the edge function:
 
-**Collapsed (default):**
-> These signals show market movement patterns, not confirmed bets. Tap to learn more.
+```typescript
+const [isRefreshing, setIsRefreshing] = useState(false);
 
-**Expanded:**
-> **What are these signals?**
-> 
-> This dashboard detects where professional bettors ("sharps") may be moving lines by analyzing:
->
-> - **DIVERGENCE** - PrizePicks line differs significantly from book consensus
-> - **STEAM** - Rapid line movement detected across multiple sportsbooks  
-> - **BOOK_DIVERGENCE** - Major books (FanDuel, DraftKings) disagree on the line
->
-> **Important:** These are statistical patterns, not confirmed whale bets. Sharp money is inferred from line movements, not tracked directly. Use signals as one data point in your research, not as guaranteed picks.
-
-### 2. Update: `src/components/whale/WhaleProxyDashboard.tsx`
-
-- Import the new `WhaleDisclaimer` component
-- Add it between the header and filters sections (around line 44)
-
----
-
-## Component Structure
-
-```
-WhaleDisclaimer
-├── Card (bg-blue-500/10, border-blue-500/20)
-│   ├── Header Row
-│   │   ├── Info Icon
-│   │   ├── Disclaimer text (brief)
-│   │   └── ChevronDown/Up toggle button
-│   │
-│   └── Collapsible Content (expanded state)
-│       ├── "What are these signals?" heading
-│       ├── Signal type explanations with badges
-│       └── "Important" disclaimer paragraph
+// Trigger whale-signal-detector and refresh picks
+const triggerRefresh = useCallback(async () => {
+  if (isSimulating || isRefreshing) return;
+  
+  try {
+    setIsRefreshing(true);
+    
+    // Call the whale-signal-detector edge function
+    const { data, error } = await supabase.functions.invoke('whale-signal-detector', {
+      method: 'POST',
+    });
+    
+    if (error) {
+      console.error('Error triggering whale detector:', error);
+      toast.error('Failed to refresh signals');
+      return;
+    }
+    
+    console.log('Whale detector result:', data);
+    
+    // Fetch the updated picks
+    await fetchRealPicks();
+    
+    toast.success(`Refreshed: ${data?.signalsGenerated || 0} signals found`);
+  } catch (err) {
+    console.error('Error in triggerRefresh:', err);
+    toast.error('Failed to refresh signals');
+  } finally {
+    setIsRefreshing(false);
+  }
+}, [isSimulating, isRefreshing, fetchRealPicks]);
 ```
 
+Export `isRefreshing` and `triggerRefresh` from the hook.
+
 ---
 
-## Technical Details
+### 2. Update Dashboard Header
 
-### Dependencies Used (all already installed):
-- `lucide-react` for icons (`Info`, `ChevronDown`, `ChevronUp`)
-- `@/components/ui/card` for Card, CardContent
-- `@/components/ui/badge` for signal type badges
-- `@/components/ui/collapsible` for expand/collapse functionality
-- `framer-motion` (optional) for smooth animations
+**File:** `src/components/whale/WhaleProxyDashboard.tsx`
 
-### State Management:
-- Local `useState` for expanded/collapsed state
-- No persistence needed (disclaimer shows on each visit)
+Add a refresh button next to the "Last update" timestamp in the header:
+
+```tsx
+import { RefreshCw } from "lucide-react";
+import { Button } from "@/components/ui/button";
+
+// In the component, destructure new values:
+const { ..., isRefreshing, triggerRefresh } = useWhaleProxy();
+
+// In the header section:
+<div className="flex items-center gap-2">
+  <div className="text-right text-xs text-muted-foreground">
+    Last update: {formatTimeAgo(lastUpdate)}
+  </div>
+  <Button
+    variant="ghost"
+    size="icon"
+    onClick={triggerRefresh}
+    disabled={isRefreshing || isSimulating}
+    className="h-8 w-8"
+  >
+    <RefreshCw className={cn("w-4 h-4", isRefreshing && "animate-spin")} />
+  </Button>
+</div>
+```
 
 ---
 
 ## Visual Design
 
-The disclaimer will use a blue/info color scheme to differentiate it from the green (live picks) and amber (watchlist) sections:
-
-- Background: `bg-blue-500/10`
-- Border: `border-blue-500/20`
-- Icon: `text-blue-400`
-- Signal badges: Match existing colors (orange for DIVERGENCE, blue for STEAM)
+The refresh button will be:
+- A ghost button with the `RefreshCw` icon
+- Positioned next to the "Last update" timestamp
+- Disabled during refresh (with spinning animation)
+- Disabled when simulation mode is active
+- Shows success/error toast after completion
 
 ---
 
-## Expected Result
+## Files to Modify
 
-Users will see a clear, non-intrusive info card explaining:
-1. What the signals mean
-2. How they're generated (market pattern detection)
-3. That these are NOT confirmed whale bets
-4. Recommendation to use as research data, not guaranteed picks
+| File | Changes |
+|------|---------|
+| `src/hooks/useWhaleProxy.ts` | Add `isRefreshing` state, `triggerRefresh` function, import toast |
+| `src/components/whale/WhaleProxyDashboard.tsx` | Add refresh button with icon, import Button and RefreshCw |
 
-This sets proper expectations and adds transparency to the feature.
+---
 
+## User Flow
+
+1. User clicks refresh button
+2. Button spins to show loading
+3. Edge function runs (generates signals from PP/book divergence)
+4. New picks are fetched from database
+5. Toast shows success message with signal count
+6. UI updates with fresh picks
+
+---
+
+## Technical Notes
+
+- Uses `supabase.functions.invoke()` to call the edge function
+- Leverages existing `fetchRealPicks()` after trigger to sync UI
+- Toast notifications via `sonner` (already installed)
+- Button disabled during simulation mode (mock data doesn't need refresh)
