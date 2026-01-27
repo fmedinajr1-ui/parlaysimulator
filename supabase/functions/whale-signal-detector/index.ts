@@ -35,8 +35,9 @@ interface UnifiedProp {
 // Calculate SharpScore components
 function calculateDivergence(ppLine: number, bookConsensus: number): number {
   const lineDiff = Math.abs(ppLine - bookConsensus);
-  // 0.5 point diff = 4 pts, 1 point diff = 8 pts, up to 5 pts diff = 40 pts
-  return Math.min(40, lineDiff * 8);
+  // 0.5 point diff = 8 pts, 1 point diff = 16 pts, 2 pts diff = 32 pts, up to 60 pts max
+  // This ensures a 2pt divergence (common threshold) = 32 pts + base 25 = 57 (above threshold)
+  return Math.min(60, lineDiff * 16);
 }
 
 function calculateMoveSpeed(currentLine: number, previousLine: number | null, minutesSinceChange: number): number {
@@ -380,12 +381,13 @@ serve(async (req) => {
         const confirmationPts = calculateConfirmation(ppProp.pp_line, consensus.lines);
         
         // Board behavior: Check if this prop existed before (relisted = higher score)
-        const boardBehaviorPts = ppProp.previous_line ? 5 : 0;
+        const boardBehaviorPts = ppProp.previous_line ? 10 : 0;
 
-        const sharpScore = divergencePts + moveSpeedPts + confirmationPts + boardBehaviorPts;
+        // Base score of 25 + component scores (rounded to integer for DB)
+        const sharpScore = Math.round(25 + divergencePts + moveSpeedPts + confirmationPts + boardBehaviorPts);
         
-        // Only generate signals for scores >= 55
-        if (sharpScore < 55) continue;
+        // Only generate signals for scores >= 50 (allows 1.5+ pt divergences)
+        if (sharpScore < 50) continue;
 
         const confidenceGrade = getConfidenceGrade(sharpScore);
         
