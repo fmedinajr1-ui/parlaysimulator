@@ -42,6 +42,44 @@ interface ExtractedProjection {
   game_time?: string;
 }
 
+// Parse game time strings like "7:00 PM" or "7:30 PM ET" into ISO timestamps
+function parseGameTime(timeStr: string | undefined): string {
+  if (!timeStr) {
+    return new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  }
+  
+  try {
+    // Try parsing as ISO timestamp first
+    const isoDate = new Date(timeStr);
+    if (!isNaN(isoDate.getTime())) {
+      return isoDate.toISOString();
+    }
+    
+    // Parse time like "7:00 PM" or "7:30 PM ET"
+    const timeMatch = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+    if (timeMatch) {
+      const [, hours, minutes, period] = timeMatch;
+      let hour = parseInt(hours, 10);
+      if (period.toUpperCase() === 'PM' && hour !== 12) hour += 12;
+      if (period.toUpperCase() === 'AM' && hour === 12) hour = 0;
+      
+      const today = new Date();
+      today.setHours(hour, parseInt(minutes, 10), 0, 0);
+      
+      // If the time has passed, assume it's tomorrow
+      if (today < new Date()) {
+        today.setDate(today.getDate() + 1);
+      }
+      
+      return today.toISOString();
+    }
+  } catch (e) {
+    console.log('[PP Scraper] Could not parse game_time:', timeStr);
+  }
+  
+  return new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+}
+
 // Map PP league names to our sport keys
 const LEAGUE_TO_SPORT: Record<string, string> = {
   'NBA': 'basketball_nba',
@@ -115,7 +153,7 @@ function processExtractedProjections(
       pp_line: proj.line,
       stat_type: normalizedStat,
       sport: sport,
-      start_time: proj.game_time || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      start_time: parseGameTime(proj.game_time),
       pp_projection_id: `extracted_${Date.now()}_${props.length}`,
       team: proj.team || null,
       position: null,
