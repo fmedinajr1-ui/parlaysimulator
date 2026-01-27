@@ -1,126 +1,85 @@
 
-# Add Manual Refresh Button to Whale Proxy Dashboard
+# Fix Player Props Not Displaying in Halftime Betting Console
 
-## Overview
+## Problem Analysis
 
-Add a refresh button that triggers the `whale-signal-detector` edge function to generate fresh signals, then updates the UI with the new picks in real-time.
+After investigating the code and logs, I found that **data IS being generated** - the scout-agent-loop returns 44 prop edges. However, users see no props because the default filter settings are too restrictive.
 
----
+### Root Cause
 
-## Implementation
-
-### 1. Update `useWhaleProxy` Hook
-
-**File:** `src/hooks/useWhaleProxy.ts`
-
-Add a new state and function to handle triggering the edge function:
+In `HalftimeBettingPanel.tsx`, the `rankedEdges` computation (lines 123-140) applies multiple filters:
 
 ```typescript
-const [isRefreshing, setIsRefreshing] = useState(false);
-
-// Trigger whale-signal-detector and refresh picks
-const triggerRefresh = useCallback(async () => {
-  if (isSimulating || isRefreshing) return;
-  
-  try {
-    setIsRefreshing(true);
-    
-    // Call the whale-signal-detector edge function
-    const { data, error } = await supabase.functions.invoke('whale-signal-detector', {
-      method: 'POST',
-    });
-    
-    if (error) {
-      console.error('Error triggering whale detector:', error);
-      toast.error('Failed to refresh signals');
-      return;
-    }
-    
-    console.log('Whale detector result:', data);
-    
-    // Fetch the updated picks
-    await fetchRealPicks();
-    
-    toast.success(`Refreshed: ${data?.signalsGenerated || 0} signals found`);
-  } catch (err) {
-    console.error('Error in triggerRefresh:', err);
-    toast.error('Failed to refresh signals');
-  } finally {
-    setIsRefreshing(false);
-  }
-}, [isSimulating, isRefreshing, fetchRealPicks]);
+return [...(edges || [])]
+  .filter(e => propFilter === 'ALL' || e.prop === propFilter)
+  .filter(e => getConfidence(e) >= minConfidence)  // Default 65%
+  .filter(e => !hideVolatile || !e.rotationVolatilityFlag)  // Default true
+  .filter(e => { /* startersOnly check */ })
+  .filter(e => { /* fatigueUndersOnly check */ })
+  .sort((a, b) => rankEdge(b) - rankEdge(a))
+  .slice(0, 8);
 ```
 
-Export `isRefreshing` and `triggerRefresh` from the hook.
+With these defaults:
+- `minConfidence = 65` - Filters out edges with 50-64% confidence
+- `hideVolatile = true` - Filters out bench/fringe players
+
+Combined, this can filter ALL 44 edges, leaving nothing to display.
 
 ---
 
-### 2. Update Dashboard Header
+## Solution
 
-**File:** `src/components/whale/WhaleProxyDashboard.tsx`
+### 1. Lower Default Confidence Threshold
 
-Add a refresh button next to the "Last update" timestamp in the header:
+Change the default `minConfidence` from 65 to 50:
 
-```tsx
-import { RefreshCw } from "lucide-react";
-import { Button } from "@/components/ui/button";
-
-// In the component, destructure new values:
-const { ..., isRefreshing, triggerRefresh } = useWhaleProxy();
-
-// In the header section:
-<div className="flex items-center gap-2">
-  <div className="text-right text-xs text-muted-foreground">
-    Last update: {formatTimeAgo(lastUpdate)}
-  </div>
-  <Button
-    variant="ghost"
-    size="icon"
-    onClick={triggerRefresh}
-    disabled={isRefreshing || isSimulating}
-    className="h-8 w-8"
-  >
-    <RefreshCw className={cn("w-4 h-4", isRefreshing && "animate-spin")} />
-  </Button>
-</div>
+**File:** `src/components/scout/HalftimeBettingPanel.tsx`
+```diff
+- const [minConfidence, setMinConfidence] = useState(65);
++ const [minConfidence, setMinConfidence] = useState(50);
 ```
 
----
+### 2. Add Visibility Into Filtering
 
-## Visual Design
+Show users how many edges exist vs how many match their filters:
 
-The refresh button will be:
-- A ghost button with the `RefreshCw` icon
-- Positioned next to the "Last update" timestamp
-- Disabled during refresh (with spinning animation)
-- Disabled when simulation mode is active
-- Shows success/error toast after completion
+**File:** `src/components/scout/HalftimeBettingPanel.tsx`
+
+Add a small info badge showing `{rankedEdges.length}/{edges.length}` near the filters section so users understand their filters are affecting visibility.
+
+### 3. Improve Empty State Messaging
+
+When edges exist but are all filtered out, show a more helpful message that tells users specifically what filters are hiding their data:
+
+```text
+"44 edges available, but none match your current filters.
+Try lowering Min Conf to 50% or turning off Hide Volatile."
+```
 
 ---
 
 ## Files to Modify
 
-| File | Changes |
-|------|---------|
-| `src/hooks/useWhaleProxy.ts` | Add `isRefreshing` state, `triggerRefresh` function, import toast |
-| `src/components/whale/WhaleProxyDashboard.tsx` | Add refresh button with icon, import Button and RefreshCw |
+| File | Change |
+|------|--------|
+| `src/components/scout/HalftimeBettingPanel.tsx` | Lower default `minConfidence` from 65 to 50, add edge count badge, improve empty state messaging |
 
 ---
 
-## User Flow
+## Expected Result
 
-1. User clicks refresh button
-2. Button spins to show loading
-3. Edge function runs (generates signals from PP/book divergence)
-4. New picks are fetched from database
-5. Toast shows success message with signal count
-6. UI updates with fresh picks
+After this fix:
+1. Users will see player prop edges immediately (with 50%+ confidence)
+2. A visible count shows total vs filtered edges
+3. Empty state clearly explains why no edges are visible and how to fix it
 
 ---
 
-## Technical Notes
+## Technical Details
 
-- Uses `supabase.functions.invoke()` to call the edge function
-- Leverages existing `fetchRealPicks()` after trigger to sync UI
-- Toast notifications via `sonner` (already installed)
-- Button disabled during simulation mode (mock data doesn't need refresh)
+The edge confidence scores from `scout-data-projection` start at 50 (base) and add bonuses for:
+- Edge margin (+6 to +25 points)
+- Minutes played (+4 to +10 points)
+
+A freshly started game (Q1) may have many edges in the 55-65% range because players haven't accumulated enough minutes for confidence bonuses. By lowering the default to 50%, these early-game edges become visible.
