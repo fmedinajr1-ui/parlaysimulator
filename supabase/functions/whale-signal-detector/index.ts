@@ -93,7 +93,7 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, supabaseKey);
 
   try {
-    const { sports = ['basketball_nba', 'hockey_nhl', 'basketball_wnba'] } = await req.json().catch(() => ({}));
+    const { sports = ['basketball_nba', 'hockey_nhl', 'basketball_wnba', 'tennis_atp', 'tennis_wta'] } = await req.json().catch(() => ({}));
     
     console.log('[Whale Detector] Starting signal detection for sports:', sports);
     

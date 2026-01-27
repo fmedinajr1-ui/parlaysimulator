@@ -183,7 +183,7 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, supabaseKey);
 
   try {
-    const { sports = ['NBA', 'NHL', 'WNBA'] } = await req.json().catch(() => ({}));
+    const { sports = ['NBA', 'NHL', 'WNBA', 'ATP', 'WTA'] } = await req.json().catch(() => ({}));
     
     console.log('[PP Scraper] Starting PrizePicks scrape for sports:', sports);
     
