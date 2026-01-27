@@ -105,11 +105,20 @@ export function WhaleProxyDashboard() {
             </Badge>
           </div>
           
-          {livePicks.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground border border-dashed border-border/50 rounded-xl">
-              <TrendingUp className="w-8 h-8 mx-auto mb-2 opacity-50" />
-              <p>No live picks matching filters</p>
-              <p className="text-xs mt-1">Toggle simulation to generate picks</p>
+        {livePicks.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground border border-dashed border-border/50 rounded-xl space-y-3">
+              <TrendingUp className="w-8 h-8 mx-auto opacity-50" />
+              <div>
+                <p className="font-medium text-foreground">No Sharp Signals Detected</p>
+                <p className="text-xs mt-2 max-w-xs mx-auto">
+                  The detector is monitoring for PrizePicks vs book line divergences, 
+                  rapid line movements, and book-to-book disagreements.
+                </p>
+              </div>
+              <div className="text-[10px] text-muted-foreground/70 pt-2 border-t border-border/30 mx-8">
+                Signals appear when games are 1-4 hours from tip-off with detectable market movement.
+                {!feedHealth.isLive && " • Pipeline awaiting fresh data"}
+              </div>
             </div>
           ) : (
             <div className="space-y-3">

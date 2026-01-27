@@ -5,7 +5,8 @@ import {
   Clock, 
   AlertCircle, 
   Radio,
-  Database
+  Database,
+  Zap
 } from "lucide-react";
 import { FeedHealth } from "@/hooks/useWhaleProxy";
 import { formatTimeAgo } from "@/lib/whaleUtils";
@@ -106,6 +107,14 @@ export function WhaleFeedHealth({ feedHealth, lastUpdate }: WhaleFeedHealthProps
           <div className="mt-3 p-2 bg-amber-500/10 border border-amber-500/20 rounded-lg text-xs text-amber-400 flex items-center gap-2">
             <AlertCircle className="w-4 h-4 shrink-0" />
             <span>Feed lag detected ({ppLagSeconds}s). Picks may be stale.</span>
+          </div>
+        )}
+
+        {/* No Data Warning */}
+        {!feedHealth.isLive && feedHealth.propsTracked === 0 && (
+          <div className="mt-3 p-2 bg-muted/50 border border-border/30 rounded-lg text-xs text-muted-foreground flex items-center gap-2">
+            <Zap className="w-4 h-4 shrink-0" />
+            <span>Pipeline is waiting for upcoming games. Signals will appear when markets are active.</span>
           </div>
         )}
       </CardContent>
