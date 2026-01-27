@@ -74,7 +74,7 @@ serve(async (req) => {
       await runFunction('track-odds-movement', { sports: ['basketball_nba', 'hockey_nhl'] });
       
       // Step 1e: Scrape PrizePicks projections via Firecrawl
-      await runFunction('pp-props-scraper', { sports: ['NBA', 'NHL', 'WNBA'] });
+      await runFunction('pp-props-scraper', { sports: ['NBA', 'NHL', 'WNBA', 'ATP', 'WTA'] });
     }
 
     // ============ PHASE 2: ANALYSIS & CATEGORIZATION ============
