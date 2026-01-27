@@ -23,13 +23,12 @@ interface PPSnapshot {
 interface UnifiedProp {
   id: string;
   player_name: string;
-  market: string;
-  point: number;
+  prop_type: string;
+  current_line: number;
   sport: string;
   event_id: string;
   bookmaker: string;
-  home_team: string;
-  away_team: string;
+  game_description: string;
   commence_time: string;
 }
 
@@ -119,9 +118,142 @@ serve(async (req) => {
     const snapshots = (ppSnapshots || []) as PPSnapshot[];
     console.log('[Whale Detector] Found', snapshots.length, 'fresh PP snapshots');
 
+    // FALLBACK: If no PP data, generate signals from book-to-book divergence
     if (snapshots.length === 0) {
+      console.log('[Whale Detector] No PP data, checking book divergence...');
+      
+      const { data: bookDivergence } = await supabase
+        .from('unified_props')
+        .select('*')
+        .in('sport', sports)
+        .gt('commence_time', now.toISOString())
+        .order('commence_time', { ascending: true })
+        .limit(200);
+      
+      if (bookDivergence && bookDivergence.length > 0) {
+        console.log('[Whale Detector] Found', bookDivergence.length, 'book props for divergence analysis');
+        
+        // Group by player + prop_type
+        const playerMap = new Map<string, any[]>();
+        for (const prop of bookDivergence as any[]) {
+          const key = `${prop.player_name}_${prop.prop_type}`;
+          if (!playerMap.has(key)) {
+            playerMap.set(key, []);
+          }
+          playerMap.get(key)!.push(prop);
+        }
+        
+        const divergenceSignals: Array<{
+          market_key: string;
+          player_name: string;
+          stat_type: string;
+          sport: string;
+          pp_line: number;
+          book_consensus: number;
+          sharp_score: number;
+          confidence_grade: string;
+          confidence: string;
+          divergence_pts: number;
+          move_speed_pts: number;
+          confirmation_pts: number;
+          board_behavior_pts: number;
+          recommended_side: string;
+          pick_side: string;
+          matchup: string;
+          start_time: string;
+          expires_at: string;
+          created_at: string;
+          signal_type: string;
+          why_short: string[];
+        }> = [];
+        
+        // Find props where bookmakers disagree by >= 1 point
+        for (const [key, props] of playerMap) {
+          if (props.length < 2) continue;
+          
+          const lines = props.map(p => p.current_line).filter(l => l != null && !isNaN(l));
+          if (lines.length < 2) continue;
+          
+          const spread = Math.max(...lines) - Math.min(...lines);
+          
+          if (spread >= 1) {
+            const avgLine = lines.reduce((a, b) => a + b, 0) / lines.length;
+            const minLine = Math.min(...lines);
+            const maxLine = Math.max(...lines);
+            
+            // Score based on divergence magnitude
+            const divergencePts = Math.min(40, spread * 10);
+            const sharpScore = 55 + divergencePts; // Base 55 + divergence bonus
+            
+            const confidenceGrade = sharpScore >= 80 ? 'A' : sharpScore >= 65 ? 'B' : 'C';
+            const firstProp = props[0];
+            const startTime = new Date(firstProp.commence_time);
+            const expiresAt = new Date(startTime.getTime() - 5 * 60 * 1000);
+            
+            divergenceSignals.push({
+              market_key: `divergence_${firstProp.sport}_${firstProp.player_name}_${firstProp.prop_type}`,
+              player_name: firstProp.player_name,
+              stat_type: firstProp.prop_type,
+              sport: firstProp.sport,
+              pp_line: avgLine, // Use avg as "PP line" proxy
+              book_consensus: avgLine,
+              sharp_score: Math.round(sharpScore),
+              confidence_grade: confidenceGrade,
+              confidence: confidenceGrade,
+              divergence_pts: Math.round(divergencePts),
+              move_speed_pts: 0,
+              confirmation_pts: 0,
+              board_behavior_pts: 0,
+              recommended_side: minLine < avgLine ? 'OVER' : 'UNDER',
+              pick_side: minLine < avgLine ? 'OVER' : 'UNDER',
+              matchup: firstProp.game_description || 'TBD',
+              start_time: firstProp.commence_time,
+              expires_at: expiresAt.toISOString(),
+              created_at: now.toISOString(),
+              signal_type: 'book_divergence',
+              why_short: [`${spread.toFixed(1)} pt book divergence`, `${props.length} books disagree`],
+            });
+          }
+        }
+        
+        console.log('[Whale Detector] Generated', divergenceSignals.length, 'book divergence signals');
+        
+        if (divergenceSignals.length > 0) {
+          // First, delete old divergence signals to prevent duplicates
+          await supabase
+            .from('whale_picks')
+            .delete()
+            .eq('signal_type', 'book_divergence');
+          
+          const { error: insertError } = await supabase
+            .from('whale_picks')
+            .insert(divergenceSignals);
+
+          if (insertError) {
+            console.error('[Whale Detector] Divergence insert error:', insertError);
+          } else {
+            console.log('[Whale Detector] Inserted', divergenceSignals.length, 'divergence signals');
+          }
+          
+          return new Response(
+            JSON.stringify({
+              success: true,
+              signalsGenerated: divergenceSignals.length,
+              source: 'book_divergence',
+              sampleSignals: divergenceSignals.slice(0, 3).map(s => ({
+                player: s.player_name,
+                stat: s.stat_type,
+                divergence: s.divergence_pts,
+                grade: s.confidence_grade,
+              })),
+            }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+      }
+      
       return new Response(
-        JSON.stringify({ success: true, signalsGenerated: 0, message: 'No fresh PP data' }),
+        JSON.stringify({ success: true, signalsGenerated: 0, message: 'No fresh PP data or book divergence found' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -147,20 +279,20 @@ serve(async (req) => {
     const consensusMap = new Map<string, { avgLine: number; lines: number[]; matchup: string; startTime: string }>();
     
     for (const prop of books) {
-      // Normalize market to stat type
-      const statType = prop.market.replace('player_', '');
+      // Normalize prop_type to stat type
+      const statType = prop.prop_type.replace('player_', '');
       const key = `${prop.player_name.toLowerCase()}_${statType}`;
       
       if (!consensusMap.has(key)) {
         consensusMap.set(key, {
-          avgLine: prop.point,
-          lines: [prop.point],
-          matchup: `${prop.away_team} @ ${prop.home_team}`,
+          avgLine: prop.current_line,
+          lines: [prop.current_line],
+          matchup: prop.game_description || 'TBD',
           startTime: prop.commence_time,
         });
       } else {
         const existing = consensusMap.get(key)!;
-        existing.lines.push(prop.point);
+        existing.lines.push(prop.current_line);
         existing.avgLine = existing.lines.reduce((a, b) => a + b, 0) / existing.lines.length;
       }
     }

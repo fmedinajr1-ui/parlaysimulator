@@ -260,8 +260,36 @@ serve(async (req) => {
     
     if (extractedData && extractedData.projections && extractedData.projections.length > 0) {
       console.log('[PP Scraper] Extracted', extractedData.projections.length, 'projections via JSON');
-      propsToInsert = processExtractedProjections(extractedData.projections, sports);
-      console.log('[PP Scraper] Processed', propsToInsert.length, 'props after filtering');
+      
+      // Validate extracted projections - filter out placeholder/test names
+      const validProjections = extractedData.projections.filter((p: ExtractedProjection) => {
+        const name = p.player_name?.toLowerCase() || '';
+        // Filter out obvious test/placeholder names
+        if (name.includes('john doe') || name.includes('jane') || name.includes('test') || name.includes('example')) {
+          console.log('[PP Scraper] Filtering placeholder name:', p.player_name);
+          return false;
+        }
+        // Player names should have at least 2 parts (first + last)
+        if (!p.player_name || p.player_name.trim().split(' ').length < 2) {
+          console.log('[PP Scraper] Filtering invalid name format:', p.player_name);
+          return false;
+        }
+        // Line should be a valid number
+        if (typeof p.line !== 'number' || isNaN(p.line)) {
+          console.log('[PP Scraper] Filtering invalid line:', p.player_name, p.line);
+          return false;
+        }
+        return true;
+      });
+      
+      console.log('[PP Scraper] Valid projections after filtering:', validProjections.length);
+      
+      if (validProjections.length > 0) {
+        propsToInsert = processExtractedProjections(validProjections, sports);
+        console.log('[PP Scraper] Processed', propsToInsert.length, 'props after sport filtering');
+      } else {
+        console.log('[PP Scraper] All extracted projections were invalid/placeholder');
+      }
     } else {
       console.log('[PP Scraper] No projections extracted from JSON, checking fallback...');
     }
