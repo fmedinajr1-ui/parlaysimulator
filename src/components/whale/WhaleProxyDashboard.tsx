@@ -4,6 +4,7 @@ import { useWhaleProxy } from "@/hooks/useWhaleProxy";
 import { WhaleFilters } from "./WhaleFilters";
 import { WhalePickCard } from "./WhalePickCard";
 import { WhaleFeedHealth } from "./WhaleFeedHealth";
+import { WhaleDisclaimer } from "./WhaleDisclaimer";
 import { formatTimeAgo } from "@/lib/whaleUtils";
 
 export function WhaleProxyDashboard() {
@@ -40,6 +41,11 @@ export function WhaleProxyDashboard() {
           <div className="text-right text-xs text-muted-foreground">
             Last update: {formatTimeAgo(lastUpdate)}
           </div>
+        </div>
+
+        {/* Disclaimer */}
+        <div className="mb-4">
+          <WhaleDisclaimer />
         </div>
 
         {/* Filters */}
