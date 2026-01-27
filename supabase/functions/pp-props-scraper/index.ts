@@ -6,51 +6,40 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-interface PPProjection {
-  id: string;
-  attributes: {
-    line_score: number;
-    stat_type: string;
-    start_time: string;
-    status: string;
-    is_promo: boolean;
-    flash_sale_line_score?: number;
-  };
-  relationships: {
-    new_player: { data: { id: string } };
-    league: { data: { id: string } };
-  };
-}
-
-interface PPPlayer {
-  id: string;
-  type: string;
-  attributes: {
-    display_name: string;
-    team: string;
-    position: string;
-    image_url?: string;
-  };
-}
-
-interface PPLeague {
-  id: string;
-  type: string;
-  attributes: {
-    name: string;
-  };
-}
-
-interface PPResponse {
-  data: PPProjection[];
-  included: (PPPlayer | PPLeague)[];
-}
-
 interface PPSnapshotRow {
   player_name: string;
   stat_type: string;
   pp_line: number;
   captured_at: string;
+}
+
+interface PPSnapshotInsert {
+  player_name: string;
+  pp_line: number;
+  stat_type: string;
+  sport: string;
+  start_time: string;
+  pp_projection_id: string;
+  team: string | null;
+  position: string | null;
+  captured_at: string;
+  previous_line: number | null;
+  market_key: string;
+  matchup: string | null;
+  league: string;
+  event_id: string;
+  period: string;
+  is_active: boolean;
+}
+
+interface ExtractedProjection {
+  player_name: string;
+  team?: string;
+  opponent?: string;
+  stat_type: string;
+  line: number;
+  league?: string;
+  game_time?: string;
 }
 
 // Map PP league names to our sport keys
@@ -80,6 +69,7 @@ const STAT_TYPE_MAP: Record<string, string> = {
   'Blocks': 'player_blocks',
   'Turnovers': 'player_turnovers',
   '3-Pointers Made': 'player_threes',
+  '3-PT Made': 'player_threes',
   'Fantasy Score': 'player_fantasy_score',
   'Goals': 'player_goals',
   'Shots On Goal': 'player_shots_on_goal',
@@ -94,6 +84,54 @@ const STAT_TYPE_MAP: Record<string, string> = {
   'Passing TDs': 'player_pass_tds',
   'Receptions': 'player_receptions',
 };
+
+// Process extracted projections from Firecrawl JSON extraction
+function processExtractedProjections(
+  projections: ExtractedProjection[],
+  targetSports: string[]
+): PPSnapshotInsert[] {
+  const now = new Date().toISOString();
+  const props: PPSnapshotInsert[] = [];
+  
+  for (const proj of projections) {
+    // Determine sport from league
+    const league = proj.league?.toUpperCase() || 'NBA';
+    const sport = LEAGUE_TO_SPORT[league] || 'basketball_nba';
+    
+    // Filter by target sports
+    if (!targetSports.some(s => league.includes(s))) continue;
+    
+    // Normalize stat type
+    const normalizedStat = STAT_TYPE_MAP[proj.stat_type] || 
+      `player_${proj.stat_type.toLowerCase().replace(/\s+/g, '_')}`;
+    
+    // Build matchup string
+    const matchup = proj.team && proj.opponent 
+      ? `${proj.team} vs ${proj.opponent}` 
+      : null;
+    
+    props.push({
+      player_name: proj.player_name,
+      pp_line: proj.line,
+      stat_type: normalizedStat,
+      sport: sport,
+      start_time: proj.game_time || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      pp_projection_id: `extracted_${Date.now()}_${props.length}`,
+      team: proj.team || null,
+      position: null,
+      captured_at: now,
+      previous_line: null,
+      market_key: `${sport}_${proj.player_name}_${normalizedStat}`,
+      matchup: matchup,
+      league: league,
+      event_id: `pp_${league}_${proj.player_name}_${Date.now()}`,
+      period: 'Game',
+      is_active: true,
+    });
+  }
+  
+  return props;
+}
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -119,12 +157,12 @@ serve(async (req) => {
       );
     }
 
-    // PrizePicks board URL - we'll scrape the main projections page
+    // PrizePicks board URL
     const ppBoardUrl = 'https://app.prizepicks.com';
     
-    console.log('[PP Scraper] Fetching PrizePicks board via Firecrawl...');
+    console.log('[PP Scraper] Fetching PrizePicks board via Firecrawl JSON extraction...');
     
-    // Use Firecrawl to scrape the PrizePicks board
+    // Use Firecrawl's LLM-powered JSON extraction
     const firecrawlResponse = await fetch('https://api.firecrawl.dev/v1/scrape', {
       method: 'POST',
       headers: {
@@ -133,8 +171,33 @@ serve(async (req) => {
       },
       body: JSON.stringify({
         url: ppBoardUrl,
-        formats: ['markdown', 'html'],
-        waitFor: 5000, // Wait for dynamic content to load
+        formats: ['json'],
+        jsonOptions: {
+          schema: {
+            type: 'object',
+            properties: {
+              projections: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    player_name: { type: 'string', description: 'Full name of the player' },
+                    team: { type: 'string', description: 'Team abbreviation (e.g., LAL, BOS)' },
+                    opponent: { type: 'string', description: 'Opponent team abbreviation' },
+                    stat_type: { type: 'string', description: 'Type of stat (Points, Rebounds, Assists, etc.)' },
+                    line: { type: 'number', description: 'The projection line value' },
+                    league: { type: 'string', description: 'League name (NBA, NHL, WNBA, etc.)' },
+                    game_time: { type: 'string', description: 'Game start time if visible' }
+                  },
+                  required: ['player_name', 'stat_type', 'line']
+                }
+              }
+            },
+            required: ['projections']
+          },
+          prompt: 'Extract all player prop projections visible on this PrizePicks board. For each projection, get the player name, their team, the stat type (Points, Rebounds, Assists, etc.), and the line value (the number like 25.5). Also extract the league (NBA, NHL, etc.) and opponent team if visible.'
+        },
+        waitFor: 8000, // Increased wait for SPA to fully load
         onlyMainContent: false,
       }),
     });
@@ -148,25 +211,25 @@ serve(async (req) => {
     const firecrawlData = await firecrawlResponse.json();
     console.log('[PP Scraper] Firecrawl response received');
     
-    // Log what we got for debugging
+    // Log response structure for debugging
     const responseKeys = Object.keys(firecrawlData);
     console.log('[PP Scraper] Response keys:', responseKeys);
     
-    // Try to extract projection data from the scraped content
-    const markdown = firecrawlData.data?.markdown || firecrawlData.markdown || '';
-    const html = firecrawlData.data?.html || firecrawlData.html || '';
+    // Extract the JSON result from Firecrawl's response
+    const extractedData = firecrawlData.data?.json || firecrawlData.json || null;
     
-    console.log('[PP Scraper] Markdown length:', markdown.length);
-    console.log('[PP Scraper] HTML length:', html.length);
+    let propsToInsert: PPSnapshotInsert[] = [];
     
-    // Parse projections from the scraped content
-    const propsToInsert = parseProjectionsFromContent(markdown, html, sports);
-    
-    console.log('[PP Scraper] Parsed', propsToInsert.length, 'props from scraped content');
+    if (extractedData && extractedData.projections && extractedData.projections.length > 0) {
+      console.log('[PP Scraper] Extracted', extractedData.projections.length, 'projections via JSON');
+      propsToInsert = processExtractedProjections(extractedData.projections, sports);
+      console.log('[PP Scraper] Processed', propsToInsert.length, 'props after filtering');
+    } else {
+      console.log('[PP Scraper] No projections extracted from JSON, checking fallback...');
+    }
 
     if (propsToInsert.length === 0) {
-      // If scraping didn't work, try to use existing unified_props as a fallback
-      // This provides a data source until PP scraping is properly configured
+      // Fallback: use existing unified_props as a proxy data source
       console.log('[PP Scraper] No props scraped, checking for existing book data...');
       
       const { data: bookProps } = await supabase
@@ -281,7 +344,7 @@ serve(async (req) => {
       result: {
         propsScraped: propsToInsert.length,
         sports: sports,
-        source: 'firecrawl_scrape',
+        source: 'firecrawl_json_extraction',
       }
     });
 
@@ -290,6 +353,7 @@ serve(async (req) => {
         success: true,
         propsScraped: propsToInsert.length,
         sports: sports,
+        source: 'firecrawl_json_extraction',
         sampleProps: propsToInsert.slice(0, 3),
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -305,80 +369,3 @@ serve(async (req) => {
     );
   }
 });
-
-// Parse projections from scraped content
-function parseProjectionsFromContent(markdown: string, html: string, targetSports: string[]): Array<{
-  player_name: string;
-  pp_line: number;
-  stat_type: string;
-  sport: string;
-  start_time: string;
-  pp_projection_id: string;
-  team: string | null;
-  position: string | null;
-  captured_at: string;
-  previous_line: number | null;
-  market_key: string;
-  matchup: string | null;
-}> {
-  const props: Array<{
-    player_name: string;
-    pp_line: number;
-    stat_type: string;
-    sport: string;
-    start_time: string;
-    pp_projection_id: string;
-    team: string | null;
-    position: string | null;
-    captured_at: string;
-    previous_line: number | null;
-    market_key: string;
-    matchup: string | null;
-  }> = [];
-
-  const now = new Date().toISOString();
-  const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-
-  // Try to parse player names and lines from the markdown
-  // PrizePicks format typically shows: "Player Name\nStat Type\nLine"
-  
-  // Look for patterns like "25.5" or "24.5" which are typical lines
-  const linePattern = /(\d+\.?\d?)\s*(Points?|Rebounds?|Assists?|Pts\+|Fantasy|Goals?|Saves?)/gi;
-  const playerPattern = /([A-Z][a-z]+ [A-Z][a-z]+)/g;
-  
-  // This is a basic parser - in production you'd want more sophisticated extraction
-  const lines = markdown.split('\n').filter(line => line.trim());
-  
-  for (let i = 0; i < lines.length - 1; i++) {
-    const playerMatch = lines[i].match(playerPattern);
-    const lineMatch = lines[i + 1].match(linePattern);
-    
-    if (playerMatch && lineMatch) {
-      const playerName = playerMatch[0];
-      const ppLine = parseFloat(lineMatch[1]);
-      const statType = lineMatch[2]?.toLowerCase() || 'points';
-      
-      if (playerName && !isNaN(ppLine)) {
-        const normalizedStat = STAT_TYPE_MAP[statType] || `player_${statType}`;
-        const sport = 'basketball_nba'; // Default, would need to detect from context
-        
-        props.push({
-          player_name: playerName,
-          pp_line: ppLine,
-          stat_type: normalizedStat,
-          sport: sport,
-          start_time: tomorrow,
-          pp_projection_id: `parsed_${Date.now()}_${i}`,
-          team: null,
-          position: null,
-          captured_at: now,
-          previous_line: null,
-          market_key: `${sport}_${playerName}_${normalizedStat}`,
-          matchup: null,
-        });
-      }
-    }
-  }
-
-  return props;
-}
