@@ -1,7 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
+import { supabase } from '@/integrations/supabase/client';
 import { 
   WhalePick, 
-  Sport, 
+  Sport,
+  SignalType,
+  Confidence,
   generateInitialMockPicks, 
   generateNewMockPick,
   getLivePicks,
@@ -21,6 +24,94 @@ export interface FeedHealth {
   isLive: boolean;
 }
 
+interface DbWhalePick {
+  id: string;
+  market_key: string;
+  player_name: string;
+  stat_type: string;
+  sport: string;
+  pp_line: number;
+  book_consensus: number | null;
+  sharp_score: number;
+  confidence: string;
+  confidence_grade: string | null;
+  pick_side: string;
+  matchup: string | null;
+  start_time: string;
+  expires_at: string;
+  created_at: string;
+  why_short: string[] | null;
+  signal_type: string | null;
+  period: string | null;
+  divergence_pts: number | null;
+  move_speed_pts: number | null;
+  confirmation_pts: number | null;
+  board_behavior_pts: number | null;
+}
+
+// Map database sport keys to display sport names
+const SPORT_MAP: Record<string, Sport> = {
+  'basketball_nba': 'NBA',
+  'basketball_wnba': 'WNBA',
+  'hockey_nhl': 'NHL',
+  'tennis_atp': 'TENNIS',
+  'tennis_wta': 'TENNIS',
+};
+
+// Map signal type from database
+const SIGNAL_TYPE_MAP: Record<string, SignalType> = {
+  'pp_divergence': 'DIVERGENCE',
+  'steam': 'STEAM',
+  'freeze': 'FREEZE',
+  'DIVERGENCE': 'DIVERGENCE',
+  'STEAM': 'STEAM',
+  'FREEZE': 'FREEZE',
+};
+
+// Convert database pick to WhalePick format
+function dbToWhalePick(dbPick: DbWhalePick): WhalePick {
+  const sport = SPORT_MAP[dbPick.sport] || 'NBA';
+  const statType = dbPick.stat_type.replace('player_', '').replace(/_/g, ' ');
+  
+  // Map confidence grade to our format
+  let confidence: Confidence = 'C';
+  const grade = dbPick.confidence_grade || dbPick.confidence;
+  if (grade === 'A' || grade === 'A+') confidence = 'A';
+  else if (grade === 'B') confidence = 'B';
+  
+  // Build why array from why_short or generate from signal breakdown
+  let whyShort = dbPick.why_short || [];
+  if (whyShort.length === 0) {
+    if (dbPick.divergence_pts && dbPick.divergence_pts >= 20) whyShort.push(`Line divergence detected`);
+    if (dbPick.move_speed_pts && dbPick.move_speed_pts >= 10) whyShort.push('Fast line movement');
+    if (dbPick.confirmation_pts && dbPick.confirmation_pts >= 10) whyShort.push('Books confirming PP');
+    if (dbPick.board_behavior_pts && dbPick.board_behavior_pts > 0) whyShort.push('Board activity');
+  }
+  
+  // Map signal type
+  const signalType: SignalType = SIGNAL_TYPE_MAP[dbPick.signal_type || 'DIVERGENCE'] || 'DIVERGENCE';
+  
+  return {
+    id: dbPick.id,
+    marketKey: dbPick.market_key,
+    playerName: dbPick.player_name,
+    matchup: dbPick.matchup || 'TBD vs TBD',
+    sport,
+    statType: statType.charAt(0).toUpperCase() + statType.slice(1),
+    period: dbPick.period || 'Game',
+    pickSide: (dbPick.pick_side as 'OVER' | 'UNDER') || 'OVER',
+    ppLine: dbPick.pp_line,
+    confidence,
+    sharpScore: dbPick.sharp_score,
+    signalType,
+    whyShort,
+    startTime: new Date(dbPick.start_time),
+    expiresAt: new Date(dbPick.expires_at),
+    createdAt: new Date(dbPick.created_at),
+    isExpired: new Date(dbPick.expires_at) <= new Date(),
+  };
+}
+
 export function useWhaleProxy() {
   const [allPicks, setAllPicks] = useState<WhalePick[]>([]);
   const [isSimulating, setIsSimulating] = useState(false);
@@ -35,18 +126,100 @@ export function useWhaleProxy() {
     isLive: false
   });
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
+  const [isLoading, setIsLoading] = useState(false);
 
-  // Initialize with mock data
-  useEffect(() => {
-    const initialPicks = generateInitialMockPicks(10);
-    setAllPicks(initialPicks);
-    setFeedHealth(prev => ({
-      ...prev,
-      lastPpSnapshot: new Date(),
-      lastBookSnapshot: new Date(),
-      propsTracked: initialPicks.length
-    }));
+  // Fetch real picks from database
+  const fetchRealPicks = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      
+      const { data: picks, error } = await supabase
+        .from('whale_picks')
+        .select('*')
+        .gt('expires_at', new Date().toISOString())
+        .order('sharp_score', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching whale picks:', error);
+        setFeedHealth(prev => ({ ...prev, errorCount: prev.errorCount + 1 }));
+        return;
+      }
+
+      if (picks && picks.length > 0) {
+        const whalePicks = picks.map((p) => dbToWhalePick(p as unknown as DbWhalePick));
+        setAllPicks(whalePicks);
+        
+        // Update feed health
+        const latestPick = picks[0];
+        setFeedHealth({
+          lastPpSnapshot: latestPick ? new Date(latestPick.created_at) : null,
+          lastBookSnapshot: new Date(),
+          propsTracked: picks.length,
+          errorCount: 0,
+          isLive: true,
+        });
+      } else {
+        setAllPicks([]);
+        setFeedHealth(prev => ({
+          ...prev,
+          propsTracked: 0,
+          isLive: true,
+        }));
+      }
+      
+      setLastUpdate(new Date());
+    } catch (err) {
+      console.error('Error in fetchRealPicks:', err);
+      setFeedHealth(prev => ({ ...prev, errorCount: prev.errorCount + 1 }));
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
+
+  // Initialize - fetch real data or mock data
+  useEffect(() => {
+    if (isSimulating) {
+      // Use mock data
+      const initialPicks = generateInitialMockPicks(10);
+      setAllPicks(initialPicks);
+      setFeedHealth(prev => ({
+        ...prev,
+        lastPpSnapshot: new Date(),
+        lastBookSnapshot: new Date(),
+        propsTracked: initialPicks.length,
+        isLive: true,
+      }));
+    } else {
+      // Fetch real data from database
+      fetchRealPicks();
+    }
+  }, [isSimulating, fetchRealPicks]);
+
+  // Set up real-time subscription for whale_picks
+  useEffect(() => {
+    if (isSimulating) return;
+
+    const channel = supabase
+      .channel('whale_picks_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'whale_picks',
+        },
+        (payload) => {
+          console.log('Whale picks update:', payload);
+          // Refetch all picks on any change
+          fetchRealPicks();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [isSimulating, fetchRealPicks]);
 
   // Simulation effect - generates new picks every 10 seconds
   useEffect(() => {
@@ -80,7 +253,7 @@ export function useWhaleProxy() {
       setFeedHealth(prev => ({
         ...prev,
         lastPpSnapshot: new Date(),
-        lastBookSnapshot: new Date(Date.now() - Math.random() * 5000), // Slight lag
+        lastBookSnapshot: new Date(Date.now() - Math.random() * 5000),
         propsTracked: Math.floor(50 + Math.random() * 30),
         isLive: true
       }));
@@ -91,11 +264,22 @@ export function useWhaleProxy() {
     return () => clearInterval(interval);
   }, [isSimulating]);
 
+  // Auto-refresh real data every 30 seconds
+  useEffect(() => {
+    if (isSimulating) return;
+
+    const interval = setInterval(() => {
+      fetchRealPicks();
+    }, 30000);
+
+    return () => clearInterval(interval);
+  }, [isSimulating, fetchRealPicks]);
+
   // Update feed health live status
   useEffect(() => {
     setFeedHealth(prev => ({
       ...prev,
-      isLive: isSimulating
+      isLive: isSimulating || prev.propsTracked > 0
     }));
   }, [isSimulating]);
 
@@ -142,6 +326,13 @@ export function useWhaleProxy() {
     return getWatchlistPicks(filtered);
   }, [getFilteredPicks]);
 
+  // Manual refresh function
+  const refresh = useCallback(async () => {
+    if (!isSimulating) {
+      await fetchRealPicks();
+    }
+  }, [isSimulating, fetchRealPicks]);
+
   return {
     livePicks: livePicks(),
     watchlistPicks: watchlistPicks(),
@@ -155,6 +346,8 @@ export function useWhaleProxy() {
     timeWindow,
     setTimeWindow,
     feedHealth,
-    lastUpdate
+    lastUpdate,
+    isLoading,
+    refresh,
   };
 }

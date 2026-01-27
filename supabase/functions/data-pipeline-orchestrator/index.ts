@@ -72,6 +72,9 @@ serve(async (req) => {
       
       // Step 1d: Track odds movements for sharp money detection
       await runFunction('track-odds-movement', { sports: ['basketball_nba', 'hockey_nhl'] });
+      
+      // Step 1e: Scrape PrizePicks projections via Firecrawl
+      await runFunction('pp-props-scraper', { sports: ['NBA', 'NHL', 'WNBA'] });
     }
 
     // ============ PHASE 2: ANALYSIS & CATEGORIZATION ============
@@ -87,6 +90,9 @@ serve(async (req) => {
       
       // Step 2d: Analyze coaching tendencies for today's NBA games
       await runFunction('coach-tendencies-engine', { teams: [] });
+      
+      // Step 2e: Detect whale signals by comparing PP vs book consensus
+      await runFunction('whale-signal-detector', { sports: ['basketball_nba', 'hockey_nhl', 'basketball_wnba'] });
     }
 
     // ============ PHASE 3: PARLAY & SUGGESTION GENERATION ============
