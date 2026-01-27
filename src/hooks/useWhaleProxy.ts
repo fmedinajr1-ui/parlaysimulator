@@ -161,11 +161,22 @@ export function useWhaleProxy() {
           isLive: true,
         });
       } else {
+        // Check for data pipeline health when no picks
+        const { data: ppData } = await supabase
+          .from('pp_snapshot')
+          .select('captured_at')
+          .order('captured_at', { ascending: false })
+          .limit(1);
+        
+        const lastPpTime = ppData?.[0]?.captured_at ? new Date(ppData[0].captured_at) : null;
+        const hasFreshPpData = lastPpTime && (Date.now() - lastPpTime.getTime()) < 30 * 60 * 1000;
+        
         setAllPicks([]);
         setFeedHealth(prev => ({
           ...prev,
+          lastPpSnapshot: lastPpTime,
           propsTracked: 0,
-          isLive: true,
+          isLive: hasFreshPpData || false,
         }));
       }
       
