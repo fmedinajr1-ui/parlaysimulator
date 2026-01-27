@@ -195,12 +195,27 @@ serve(async (req) => {
       );
     }
 
-    // PrizePicks board URL
+// PrizePicks board URL
     const ppBoardUrl = 'https://app.prizepicks.com';
     
-    console.log('[PP Scraper] Fetching PrizePicks board via Firecrawl JSON extraction...');
+    console.log('[PP Scraper] Fetching PrizePicks board via Firecrawl with scroll actions...');
     
-    // Use Firecrawl's LLM-powered JSON extraction
+    // Scroll actions to load more content in the SPA
+    const SCROLL_ACTIONS = [
+      { type: 'wait', milliseconds: 4000 },  // Wait for SPA hydration
+      { type: 'scroll', direction: 'down' },
+      { type: 'wait', milliseconds: 2000 },
+      { type: 'scroll', direction: 'down' },
+      { type: 'wait', milliseconds: 2000 },
+      { type: 'scroll', direction: 'down' },
+      { type: 'wait', milliseconds: 2000 },
+      { type: 'scroll', direction: 'down' },
+      { type: 'wait', milliseconds: 2000 },
+      { type: 'scroll', direction: 'down' },
+      { type: 'wait', milliseconds: 3000 },  // Final wait for all content
+    ];
+    
+    // Use Firecrawl's LLM-powered JSON extraction with scroll actions
     const firecrawlResponse = await fetch('https://api.firecrawl.dev/v1/scrape', {
       method: 'POST',
       headers: {
@@ -209,6 +224,7 @@ serve(async (req) => {
       },
       body: JSON.stringify({
         url: ppBoardUrl,
+        actions: SCROLL_ACTIONS,
         formats: ['json'],
         jsonOptions: {
           schema: {
@@ -233,9 +249,9 @@ serve(async (req) => {
             },
             required: ['projections']
           },
-          prompt: 'Extract all player prop projections visible on this PrizePicks board. For each projection, get the player name, their team, the stat type (Points, Rebounds, Assists, etc.), and the line value (the number like 25.5). Also extract the league (NBA, NHL, etc.) and opponent team if visible.'
+          prompt: 'Extract ALL player prop projections visible on this PrizePicks board. For each projection, get the player name, their team, the stat type (Points, Rebounds, Assists, etc.), and the line value (the number like 25.5). Also extract the league (NBA, NHL, etc.) and opponent team if visible. Make sure to capture every single projection card visible on the page.'
         },
-        waitFor: 8000, // Increased wait for SPA to fully load
+        timeout: 90000,  // Increased timeout for scroll actions
         onlyMainContent: false,
       }),
     });
