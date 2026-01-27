@@ -19,6 +19,7 @@ const PILOT_ALLOWED_ROUTES = [
   '/pools',
   '/pools/join',
   '/draft',
+  '/tomorrow-3pt',
 ];
 
 interface PilotRouteGuardProps {
