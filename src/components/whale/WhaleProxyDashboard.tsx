@@ -1,5 +1,7 @@
 import { Badge } from "@/components/ui/badge";
-import { Anchor, TrendingUp, Eye } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Anchor, TrendingUp, Eye, RefreshCw } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { useWhaleProxy } from "@/hooks/useWhaleProxy";
 import { WhaleFilters } from "./WhaleFilters";
 import { WhalePickCard } from "./WhalePickCard";
@@ -20,7 +22,9 @@ export function WhaleProxyDashboard() {
     timeWindow,
     setTimeWindow,
     feedHealth,
-    lastUpdate
+    lastUpdate,
+    isRefreshing,
+    triggerRefresh
   } = useWhaleProxy();
 
   return (
@@ -38,8 +42,19 @@ export function WhaleProxyDashboard() {
             </div>
           </div>
           
-          <div className="text-right text-xs text-muted-foreground">
-            Last update: {formatTimeAgo(lastUpdate)}
+          <div className="flex items-center gap-2">
+            <div className="text-right text-xs text-muted-foreground">
+              Last update: {formatTimeAgo(lastUpdate)}
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={triggerRefresh}
+              disabled={isRefreshing || isSimulating}
+              className="h-8 w-8"
+            >
+              <RefreshCw className={cn("w-4 h-4", isRefreshing && "animate-spin")} />
+            </Button>
           </div>
         </div>
 

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
 import { 
   WhalePick, 
   Sport,
@@ -127,6 +128,7 @@ export function useWhaleProxy() {
   });
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
   const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Fetch real picks from database
   const fetchRealPicks = useCallback(async () => {
@@ -333,6 +335,36 @@ export function useWhaleProxy() {
     }
   }, [isSimulating, fetchRealPicks]);
 
+  // Trigger whale-signal-detector and refresh picks
+  const triggerRefresh = useCallback(async () => {
+    if (isSimulating || isRefreshing) return;
+    
+    try {
+      setIsRefreshing(true);
+      
+      const { data, error } = await supabase.functions.invoke('whale-signal-detector', {
+        method: 'POST',
+      });
+      
+      if (error) {
+        console.error('Error triggering whale detector:', error);
+        toast.error('Failed to refresh signals');
+        return;
+      }
+      
+      console.log('Whale detector result:', data);
+      
+      await fetchRealPicks();
+      
+      toast.success(`Refreshed: ${data?.signalsGenerated || 0} signals found`);
+    } catch (err) {
+      console.error('Error in triggerRefresh:', err);
+      toast.error('Failed to refresh signals');
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [isSimulating, isRefreshing, fetchRealPicks]);
+
   return {
     livePicks: livePicks(),
     watchlistPicks: watchlistPicks(),
@@ -349,5 +381,7 @@ export function useWhaleProxy() {
     lastUpdate,
     isLoading,
     refresh,
+    isRefreshing,
+    triggerRefresh,
   };
 }
