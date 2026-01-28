@@ -9693,6 +9693,7 @@ export type Database = {
       }
       whale_picks: {
         Row: {
+          actual_value: number | null
           board_behavior_pts: number | null
           book_consensus: number | null
           confidence: string
@@ -9706,20 +9707,24 @@ export type Database = {
           market_key: string
           matchup: string | null
           move_speed_pts: number | null
+          outcome: string | null
           period: string | null
           pick_side: string
           player_name: string
           pp_line: number
           recommended_side: string | null
+          settled_at: string | null
           sharp_score: number
           signal_type: string
           sport: string
           start_time: string | null
           stat_type: string
           updated_at: string | null
+          verified_source: string | null
           why_short: string[] | null
         }
         Insert: {
+          actual_value?: number | null
           board_behavior_pts?: number | null
           book_consensus?: number | null
           confidence: string
@@ -9733,20 +9738,24 @@ export type Database = {
           market_key: string
           matchup?: string | null
           move_speed_pts?: number | null
+          outcome?: string | null
           period?: string | null
           pick_side: string
           player_name: string
           pp_line: number
           recommended_side?: string | null
+          settled_at?: string | null
           sharp_score: number
           signal_type: string
           sport: string
           start_time?: string | null
           stat_type: string
           updated_at?: string | null
+          verified_source?: string | null
           why_short?: string[] | null
         }
         Update: {
+          actual_value?: number | null
           board_behavior_pts?: number | null
           book_consensus?: number | null
           confidence?: string
@@ -9760,17 +9769,20 @@ export type Database = {
           market_key?: string
           matchup?: string | null
           move_speed_pts?: number | null
+          outcome?: string | null
           period?: string | null
           pick_side?: string
           player_name?: string
           pp_line?: number
           recommended_side?: string | null
+          settled_at?: string | null
           sharp_score?: number
           signal_type?: string
           sport?: string
           start_time?: string | null
           stat_type?: string
           updated_at?: string | null
+          verified_source?: string | null
           why_short?: string[] | null
         }
         Relationships: []
