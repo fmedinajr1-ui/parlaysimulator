@@ -294,6 +294,13 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
         b => b.playerName.toLowerCase() === player.name.toLowerCase()
       );
       
+      // Derive pre-game rotation role from baseline minutes estimate
+      const minutesEstimate = baseline?.minutesEstimate ?? 25;
+      const preGameRotationRole = baseline?.rotationRole ?? (
+        minutesEstimate >= 28 ? 'STARTER' :
+        minutesEstimate >= 12 ? 'BENCH_CORE' : 'BENCH_FRINGE'
+      );
+      
       newStates.set(player.name, {
         playerName: player.name,
         jersey: player.jersey,
@@ -305,7 +312,7 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
         effortScore: baseline?.effortScore ?? 55,
         speedIndex: baseline?.speedIndex ?? 65,
         reboundPositionScore: 50,
-        minutesEstimate: baseline?.minutesEstimate ?? 25,
+        minutesEstimate,
         foulCount: 0,
         visualFlags: [],
         lastUpdated: 'Pre-game',
@@ -331,6 +338,15 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
         // Injury status from ESPN
         injuryStatus: player.injuryStatus,
         injuryDetail: player.injuryDetail,
+        // Initialize rotation state with pre-game role (critical for Lock Mode)
+        rotation: {
+          stintSeconds: 0,
+          benchSecondsLast8: 0,
+          onCourtStability: preGameRotationRole === 'STARTER' ? 0.90 : 0.65,
+          projectedStintsRemaining: 3,
+          foulRiskLevel: 'LOW' as const,
+          rotationRole: preGameRotationRole as 'STARTER' | 'CLOSER' | 'BENCH_CORE' | 'BENCH_FRINGE',
+        },
       });
       
       // Initialize fatigue history with baseline
@@ -343,7 +359,7 @@ export function useScoutAgentState({ gameContext }: UseScoutAgentStateProps) {
     context.homeRoster.forEach(p => initPlayer(p, context.homeTeam));
     context.awayRoster.forEach(p => initPlayer(p, context.awayTeam));
     
-    console.log(`[Scout Agent State] Initialized ${newStates.size} players from rosters with pre-game baselines`);
+    console.log(`[Scout Agent State] Initialized ${newStates.size} players from rosters with pre-game baselines and rotation roles`);
     setState(prev => ({ ...prev, playerStates: newStates }));
   }, []);
 

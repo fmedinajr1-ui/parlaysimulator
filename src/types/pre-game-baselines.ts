@@ -1,5 +1,8 @@
 // Pre-game baseline types for Scout agent
 
+// Rotation role type (matches scout-agent-loop)
+export type RotationRole = 'STARTER' | 'CLOSER' | 'BENCH_CORE' | 'BENCH_FRINGE';
+
 export interface PreGameBaseline {
   playerName: string;
   fatigueScore: number;     // From team fatigue (0-100)
@@ -8,6 +11,7 @@ export interface PreGameBaseline {
   minutesEstimate: number;  // From avg_minutes
   trend: 'hot' | 'cold' | 'stable';
   consistency: number;      // Player consistency score (0-100)
+  rotationRole: RotationRole; // Derived from avg_minutes
 }
 
 export interface TeamFatigueData {
@@ -32,6 +36,15 @@ export interface PlayerSeasonStats {
   last10AvgPoints: number | null;
   b2bAvgPoints: number | null;
   restAvgPoints: number | null;
+}
+
+// Derive rotation role from season average minutes
+// Used pre-game when no live minutes data is available
+export function derivePreGameRotationRole(avgMinutes: number): RotationRole {
+  if (avgMinutes >= 28) return 'STARTER';
+  if (avgMinutes >= 20) return 'BENCH_CORE';
+  if (avgMinutes >= 12) return 'BENCH_CORE';
+  return 'BENCH_FRINGE';
 }
 
 // Calculate pre-game baseline for a player
@@ -76,6 +89,9 @@ export function calculatePreGameBaseline(
   // Minutes estimate from season average
   const minutesEstimate = playerStats?.avgMinutes ?? 25;
   
+  // Derive rotation role from average minutes
+  const rotationRole = derivePreGameRotationRole(minutesEstimate);
+  
   return {
     playerName,
     fatigueScore: Math.round(fatigueScore),
@@ -84,5 +100,6 @@ export function calculatePreGameBaseline(
     minutesEstimate: Math.round(minutesEstimate * 10) / 10,
     trend: trend as 'hot' | 'cold' | 'stable',
     consistency: Math.round(consistency),
+    rotationRole,
   };
 }

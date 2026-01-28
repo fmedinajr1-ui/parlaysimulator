@@ -269,14 +269,28 @@ function determineRotationRole(
     return 'CLOSER';
   }
   
-  // Starters based on role and minutes
-  if (role === 'PRIMARY' || (role === 'BIG' && minutesPlayed > 15)) {
-    return 'STARTER';
+  // If we have meaningful live minutes data (>= 5 min), use game context
+  if (minutesPlayed >= 5) {
+    // Starters based on role and minutes
+    if (role === 'PRIMARY' || (role === 'BIG' && minutesPlayed > 15)) {
+      return 'STARTER';
+    }
+    
+    // Bench core vs fringe based on live minutes
+    if (minutesPlayed >= 10) return 'BENCH_CORE';
+    return 'BENCH_CORE';
   }
   
-  // Bench core vs fringe based on minutes
-  if (minutesPlayed >= 10) return 'BENCH_CORE';
-  if (minutesPlayed >= 5) return 'BENCH_CORE';
+  // Pre-game or early game: preserve pre-game assignment if available
+  if (state.rotation?.rotationRole) {
+    return state.rotation.rotationRole;
+  }
+  
+  // Fallback: infer from expected minutes (pre-game baseline)
+  const expectedMinutes = state.minutesEstimate || 0;
+  if (expectedMinutes >= 28) return 'STARTER';
+  if (expectedMinutes >= 20) return 'BENCH_CORE';
+  if (expectedMinutes >= 12) return 'BENCH_CORE';
   
   return 'BENCH_FRINGE';
 }
