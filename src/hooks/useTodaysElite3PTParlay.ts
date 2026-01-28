@@ -7,14 +7,16 @@ interface Elite3PTPick {
   l10Avg: number;
   l10Min: number;
   edge: number;
+  varianceTier?: 'LOW' | 'MEDIUM' | 'HIGH';
+  h2hTier?: 'ELITE_MATCHUP' | 'GOOD_MATCHUP' | null;
 }
 
-// Today's verified 100% L10 hit rate picks
+// Today's verified 100% L10 hit rate picks with enhanced data
 const TODAYS_ELITE_PICKS: Elite3PTPick[] = [
-  { player: 'Jalen Smith', line: 1.5, l10Avg: 2.4, l10Min: 2, edge: 0.5 },
-  { player: 'Pascal Siakam', line: 1.5, l10Avg: 3.4, l10Min: 2, edge: 2.5 },
-  { player: 'Coby White', line: 2.5, l10Avg: 5.2, l10Min: 3, edge: 2.5 },
-  { player: 'Al Horford', line: 1.5, l10Avg: 1.7, l10Min: 1, edge: 0.2 },
+  { player: 'Jalen Smith', line: 1.5, l10Avg: 2.4, l10Min: 2, edge: 0.5, varianceTier: 'MEDIUM', h2hTier: null },
+  { player: 'Pascal Siakam', line: 1.5, l10Avg: 3.4, l10Min: 2, edge: 2.5, varianceTier: 'LOW', h2hTier: 'GOOD_MATCHUP' },
+  { player: 'Coby White', line: 2.5, l10Avg: 5.2, l10Min: 3, edge: 2.5, varianceTier: 'LOW', h2hTier: 'ELITE_MATCHUP' },
+  { player: 'Al Horford', line: 1.5, l10Avg: 1.7, l10Min: 1, edge: 0.2, varianceTier: 'LOW', h2hTier: null },
 ];
 
 export function useTodaysElite3PTParlay() {

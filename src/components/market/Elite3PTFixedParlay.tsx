@@ -50,11 +50,18 @@ export function Elite3PTFixedParlay() {
               </div>
               <div className="flex flex-col items-end">
                 <span className="text-xs text-chart-2">
-                  L10: {pick.l10Avg}
+                  L10: {pick.l10Avg} (min {pick.l10Min})
                 </span>
-                <span className="text-xs text-muted-foreground">
-                  +{pick.edge} edge
-                </span>
+                <div className="flex gap-1 mt-0.5">
+                  {pick.varianceTier === 'LOW' && (
+                    <span className="text-[10px] px-1 rounded bg-chart-2/20 text-chart-2">σ Low</span>
+                  )}
+                  {pick.h2hTier && (
+                    <span className="text-[10px] px-1 rounded bg-primary/20 text-primary">
+                      {pick.h2hTier === 'ELITE_MATCHUP' ? '🔥H2H' : '✓H2H'}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
           ))}
