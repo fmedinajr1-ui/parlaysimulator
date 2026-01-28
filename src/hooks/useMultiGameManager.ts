@@ -317,23 +317,45 @@ function initializePlayerStates(context: GameContext): Map<string, PlayerLiveSta
       pos.includes('c') || pos.includes('pf') ? 'BIG' :
       pos.includes('pg') || pos.includes('sg') ? 'SECONDARY' : 'SPACER';
     
+    // Find pre-game baseline for this player if available
+    const baseline = context.preGameBaselines?.find(
+      b => b.playerName.toLowerCase() === player.name.toLowerCase()
+    );
+    
+    // Derive pre-game rotation role from baseline minutes estimate
+    const minutesEstimate = baseline?.minutesEstimate ?? 25;
+    const preGameRotationRole: 'STARTER' | 'CLOSER' | 'BENCH_CORE' | 'BENCH_FRINGE' = 
+      baseline?.rotationRole ?? (
+        minutesEstimate >= 28 ? 'STARTER' :
+        minutesEstimate >= 12 ? 'BENCH_CORE' : 'BENCH_FRINGE'
+      );
+    
     states.set(player.name, {
       playerName: player.name,
       jersey: player.jersey,
       team,
       onCourt: true,
       role,
-      fatigueScore: 15,
-      effortScore: 55,
-      speedIndex: 65,
+      fatigueScore: baseline?.fatigueScore ?? 15,
+      effortScore: baseline?.effortScore ?? 55,
+      speedIndex: baseline?.speedIndex ?? 65,
       reboundPositionScore: 50,
-      minutesEstimate: 5,
+      minutesEstimate,
       foulCount: 0,
       visualFlags: [],
       lastUpdated: 'Pre-game',
       sprintCount: 0,
       handsOnKneesCount: 0,
       slowRecoveryCount: 0,
+      // Initialize rotation state with pre-game role (critical for Lock Mode)
+      rotation: {
+        stintSeconds: 0,
+        benchSecondsLast8: 0,
+        onCourtStability: preGameRotationRole === 'STARTER' ? 0.90 : 0.65,
+        projectedStintsRemaining: 3,
+        foulRiskLevel: 'LOW',
+        rotationRole: preGameRotationRole,
+      },
     });
   };
   
