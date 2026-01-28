@@ -1,226 +1,205 @@
 
-# Plan: Enhanced 3PT Parlay Research & Outcome Learning System
 
-## Overview
+# Investigation Report: Over/Under Prediction Accuracy Issues
 
-Build a comprehensive 3PT parlay research system that:
-1. Records your winning parlay outcomes for learning
-2. Adds H2H matchup analysis for 3PT picks
-3. Discovers consistent high-volume 3PT shooters with low variance
-4. Dynamically updates elite picks based on proven outcomes
+## Executive Summary
+
+The system cannot reliably predict whether players will go over or under because of **3 critical bugs**:
+
+1. **H2H Hit Rates = 0% for ALL Records** - The matchup history table has no actual over/under hit rate calculations
+2. **Reliability `should_block` Never Enforced** - Players flagged as unreliable are still included in parlays
+3. **Negative Edge Picks Allowed** - The edge filter has a bypass path where picks without projections still slip through
 
 ---
 
-## Part 1: Record Winning Parlay Outcomes (Learning System)
+## Issue 1: H2H Hit Rates Are All Zeros
 
-### Database: New Table `user_parlay_outcomes`
+### Evidence
 
-Store your winning slips for pattern analysis:
+Every single record in `matchup_history` has `hit_rate_over = 0.00`:
 
-```sql
-CREATE TABLE user_parlay_outcomes (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  parlay_date DATE NOT NULL,
-  total_legs INTEGER NOT NULL,
-  wager_amount NUMERIC,
-  payout_amount NUMERIC,
-  total_odds TEXT,
-  legs JSONB NOT NULL,  -- [{player, line, prop_type, actual_value, outcome}]
-  outcome TEXT DEFAULT 'pending',  -- won/lost/push
-  source TEXT,  -- 'prizepicks', 'draftkings', etc.
-  notes TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
+| Player | Opponent | Avg 3PM | Games | hit_rate_over |
+|--------|----------|---------|-------|---------------|
+| Stephen Curry | Dallas | 6.7 | 3 | **0.00** |
+| Sam Hauser | Indiana | 4.8 | 4 | **0.00** |
+| Pascal Siakam | Sacramento | 4.3 | 3 | **0.00** |
+
+### Root Cause
+
+The `sync_matchup_history_from_logs` RPC function calculates:
+- `avg_stat` ✓ (average stat value)
+- `min_stat` ✓ (worst game)
+- `max_stat` ✓ (best game)
+- `hit_rate_over` ✗ **NEVER CALCULATED**
+- `hit_rate_under` ✗ **NEVER CALCULATED**
+
+The function groups by player/opponent but **does not compare stats to betting lines**, making it impossible to know if a player historically beats a specific line against a specific team.
+
+### Impact
+
+Without H2H hit rates, the system cannot answer: "How often does Coby White go OVER 2.5 threes vs the Celtics?"
+
+---
+
+## Issue 2: Reliability Blocking is Loaded But Never Used
+
+### Evidence from Code
+
+```typescript
+// Line 1448-1461: Reliability data is LOADED
+const reliabilityMap = new Map();
+reliabilityMap.set(key, {
+  tier: r.reliability_tier || 'unknown',
+  hitRate: r.hit_rate || 0,
+  modifier: r.confidence_modifier || 0,
+  shouldBlock: r.should_block || false  // ✓ Flag exists
+});
+
+// Lines 1504-1544: validCategoryPicks filter
+// MISSING: No check for reliability.shouldBlock
+
+// Lines 1561-1609: validRiskPicks filter
+// MISSING: No check for reliability.shouldBlock
 ```
 
-### Implementation: Manual Entry Hook
+### Database Evidence
 
-Create `useRecordParlayOutcome` hook to:
-- Add past winning parlays for analysis
-- Extract patterns (player types, line ranges, matchups)
-- Feed into recommendation engine
+Players with `should_block = true` are still appearing in parlays:
+
+| Player | Prop | Hit Rate | should_block |
+|--------|------|----------|--------------|
+| Darius Garland | points | 0% | **TRUE** |
+| Devin Booker | points | 0% | **TRUE** |
+| Grayson Allen | threes | 0% | **TRUE** |
+| Quentin Grimes | rebounds | 0% | **TRUE** |
+
+### Impact
+
+Players with 0% historical accuracy on specific props are being recommended because the blocking flag is never checked.
 
 ---
 
-## Part 2: Enhanced H2H Matchup Research
+## Issue 3: Negative Edge Picks Bypass Edge Filter
 
-### Update `matchup_history` Population
+### Evidence from Database
 
-The current `matchup_history` table has data but needs better hit rate tracking. Enhance the analyzer to:
+UNDER picks have **negative edges** but are still marked as active:
 
-1. Calculate H2H 3PT performance against specific teams
-2. Track "best matchup" opponents for each shooter
-3. Flag favorable matchups in parlay recommendations
+| Player | Prop | Side | L10 Avg | Line | Edge |
+|--------|------|------|---------|------|------|
+| Moussa Diabate | points | under | 8.9 | 14.5 | **-5.60** |
+| Donte DiVincenzo | points | under | 12.3 | 19.5 | **-8.50** |
+| Bobby Portis | points | under | 12.9 | 19.5 | **-5.50** |
 
-### New View: `v_3pt_matchup_favorites`
+### Root Cause
+
+The `passesMinEdgeThreshold` function at line 197-230:
+1. Blocks picks with NULL projections ✓
+2. Calculates directional edge ✓
+3. **But many category picks have `projected_value = NULL`**, so they bypass the edge filter earlier in the pipeline (lines 1504-1544) before reaching `passesMinEdgeThreshold` (line 928-931)
+
+The filter path is:
+1. `validCategoryPicks` → No edge check here
+2. `validRiskPicks` → No edge check here
+3. `buildSweetSpotParlayCore` → Edge check at step 3.5
+
+But category picks with NULL projections never get their edge validated!
+
+---
+
+## Fix Plan
+
+### Fix 1: Calculate Real H2H Hit Rates (Database)
+
+Update the `sync_matchup_history_from_logs` RPC to cross-reference with historical betting lines:
 
 ```sql
-CREATE VIEW v_3pt_matchup_favorites AS
+-- For each game, determine if player beat the typical line
+WITH game_performance AS (
+  SELECT 
+    player_name,
+    opponent,
+    threes_made,
+    CASE WHEN threes_made > 1.5 THEN 1 ELSE 0 END as beat_1_5,
+    CASE WHEN threes_made > 2.5 THEN 1 ELSE 0 END as beat_2_5
+  FROM nba_player_game_logs
+)
 SELECT 
   player_name,
   opponent,
-  games_played,
-  avg_stat AS avg_3pt_vs_team,
-  min_stat AS worst_3pt_vs_team,
-  CASE WHEN min_stat >= 2 THEN 'ELITE_MATCHUP'
-       WHEN min_stat >= 1 THEN 'GOOD_MATCHUP'
-       ELSE 'VOLATILE_MATCHUP'
-  END AS matchup_tier
-FROM matchup_history
-WHERE prop_type = 'player_threes'
-AND games_played >= 2
-ORDER BY min_stat DESC, avg_stat DESC;
+  COUNT(*) as games_played,
+  ROUND(AVG(beat_1_5), 2) as hit_rate_over_1_5,
+  ROUND(AVG(beat_2_5), 2) as hit_rate_over_2_5
+FROM game_performance
+GROUP BY player_name, opponent
 ```
 
----
+### Fix 2: Add Reliability Block Check (Frontend)
 
-## Part 3: Consistent Shooter Discovery
-
-### New Query: Low-Variance 3PT Shooters
-
-Identify shooters with:
-- High 3PM average (≥2.0 per game)
-- Low standard deviation (≤1.5)
-- High consistency score (≥40)
-- Adequate minutes (≥20)
-
-### Implementation
-
-Update `useEliteThreesBuilder` to:
-1. Cross-reference `player_season_stats.threes_std_dev`
-2. Prioritize shooters with `threes_std_dev < 1.0` (ultra-consistent)
-3. Add "Consistency Badge" to UI
-
----
-
-## Part 4: Dynamic 3PT Parlay Builder
-
-### Enhanced Selection Criteria (v2.0)
-
-```text
-SELECTION PRIORITY:
-1. L10 Hit Rate = 100% (required)
-2. L10 Min ≥ 2 (floor protection)
-3. Low Variance (std_dev ≤ 1.5)
-4. Favorable H2H Matchup (avg > line × 1.5)
-5. High Minutes (≥25 avg)
-6. Team Diversity (max 1 per team)
-```
-
-### UI Enhancements
-
-Add to `Elite3PTFixedParlay.tsx`:
-- **H2H Badge**: Show historical performance vs today's opponent
-- **Consistency Score**: Display variance tier (Low/Medium/High)
-- **Floor Indicator**: Show L10 minimum (crucial for O1.5 lines)
-
----
-
-## Files to Create/Modify
-
-| File | Action | Purpose |
-|------|--------|---------|
-| `supabase/migrations/xxx_user_parlay_outcomes.sql` | Create | Learning system table |
-| `src/hooks/useRecordParlayOutcome.ts` | Create | Record winning slips |
-| `src/hooks/use3PTMatchupAnalysis.ts` | Create | H2H research for 3PT |
-| `src/hooks/useEliteThreesBuilder.ts` | Modify | Add consistency + H2H scoring |
-| `src/components/market/Elite3PTResearchCard.tsx` | Create | Research dashboard UI |
-| `supabase/functions/analyze-3pt-patterns/index.ts` | Create | Backend pattern analysis |
-
----
-
-## Implementation Flow
-
-```text
-┌─────────────────────────────────────────────────────────────┐
-│                 3PT PARLAY RESEARCH SYSTEM                   │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  1. RECORD OUTCOMES                                         │
-│     └─> Store winning slips → Extract player patterns       │
-│                                                             │
-│  2. MATCHUP ANALYSIS                                        │
-│     └─> Cross-reference H2H data → Flag favorable games     │
-│                                                             │
-│  3. CONSISTENCY SCORING                                     │
-│     └─> Check std_dev → Prioritize low-variance shooters    │
-│                                                             │
-│  4. DYNAMIC BUILDER                                         │
-│     └─> Combine all signals → Generate elite parlay         │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Key Insights from Your Wins
-
-### Pattern: **O1.5 Line Sweet Spot**
-
-5 of 7 winning legs were O1.5 lines - these have the highest floor protection:
-- Toumani Camara O1.5 → 4 made
-- Saddiq Bey O1.5 → 3 made
-- Egor Demin O1.5 → 3 made
-- John Collins O1.5 → 2 made
-- Ayo Dosunmu O1.5 → 2 made
-
-### Pattern: **L10 Minimum ≥ 1 is Critical**
-
-All winning picks had L10_min ≥ 1, meaning they've never busted on the line in recent games.
-
-### Pattern: **Volume Shooters + Role Players Mix**
-
-Your wins combined:
-- High-volume shooters (Coby White 5.2 avg, Sam Hauser 5.0 avg)
-- Consistent role players (Dosunmu, Camara, Collins with 2.0-2.5 avg)
-
----
-
-## Technical Details
-
-### Consistency Score Calculation
+Add this check to both filter functions in `useSweetSpotParlayBuilder.ts`:
 
 ```typescript
-// Weight shooters by variance
-const consistencyWeight = 
-  (p.threes_std_dev <= 0.8 ? 1.3 :   // Ultra-consistent: +30%
-   p.threes_std_dev <= 1.2 ? 1.1 :   // Consistent: +10%
-   p.threes_std_dev <= 1.8 ? 1.0 :   // Normal: no bonus
-   0.85);                             // Volatile: -15% penalty
+// In validCategoryPicks filter (around line 1515)
+const reliabilityKey = `${playerKey}_${pick.prop_type?.toLowerCase()}`;
+const reliability = reliabilityMap.get(reliabilityKey);
+if (reliability?.shouldBlock) {
+  console.log(`[SweetSpotParlay] Blocking chronic underperformer: ${pick.player_name} ${pick.prop_type}`);
+  return false;
+}
+
+// In validRiskPicks filter (around line 1575)
+const reliabilityKey = `${playerKey}_${pick.prop_type?.toLowerCase()}`;
+const reliability = reliabilityMap.get(reliabilityKey);
+if (reliability?.shouldBlock) {
+  console.log(`[SweetSpotParlay] Blocking chronic underperformer: ${pick.player_name} ${pick.prop_type}`);
+  return false;
+}
 ```
 
-### H2H Matchup Boost
+### Fix 3: Enforce Edge Check Earlier (Frontend)
+
+Add edge validation in the category picks filter before they enter the pool:
 
 ```typescript
-// Boost picks with favorable H2H
-const h2hBoost = 
-  (h2h.avg_stat >= line * 2.0 ? 1.25 :  // Dominant matchup
-   h2h.avg_stat >= line * 1.5 ? 1.15 :  // Good matchup
-   h2h.min_stat >= line ? 1.10 :        // Safe matchup
-   1.0);
+// In validCategoryPicks filter
+// Calculate edge using l10_avg when projected_value is missing
+const projection = pick.projected_value ?? pick.l10_avg;
+const line = pick.actual_line ?? pick.recommended_line;
+if (!projection || !line) return false;
+
+const isOver = pick.recommended_side?.toLowerCase() === 'over';
+const edge = isOver ? (projection - line) : (line - projection);
+if (edge < 0) {
+  console.log(`[SweetSpotParlay] Blocking negative edge: ${pick.player_name} ${pick.prop_type} ${pick.recommended_side}`);
+  return false;
+}
 ```
 
 ---
 
-## Expected Outcomes
+## Files to Modify
 
-After implementation:
-- **Record your wins** → System learns which players/lines work
-- **H2H research** → Surface players who feast vs specific teams
-- **Consistency filter** → Avoid high-variance boom/bust shooters
-- **Dynamic updates** → Builder adapts based on proven outcomes
+| File | Change |
+|------|--------|
+| `src/hooks/useSweetSpotParlayBuilder.ts` | Add reliability blocking + edge validation to filter functions |
+| Database RPC `sync_matchup_history_from_logs` | Calculate actual H2H hit rates against common lines |
+| `supabase/functions/sync-matchup-history/index.ts` | Enhanced H2H sync logic |
 
 ---
 
-## Today's Recommended 3PT Parlay (Based on Research)
+## Expected Outcome
 
-Using the enhanced criteria:
+After these fixes:
+- **H2H research will show real hit rates** (e.g., "Coby White hits O2.5 threes 85% of the time vs Celtics")
+- **0% hit rate players will be blocked** from all parlay recommendations
+- **Negative edge picks will be filtered** before entering the selection pool
+- **Over/Under predictions will be data-driven** instead of guesses
 
-| Player | Line | L10 Avg | L10 Min | Variance | Matchup |
-|--------|------|---------|---------|----------|---------|
-| Coby White | O2.5 | 5.2 | 3 | Low | ✅ |
-| Sam Hauser | O2.5 | 5.2 | 2 | Medium | Elite vs ATL |
-| Donte DiVincenzo | O1.5 | 3.6 | 2 | Low | Good |
-| Toumani Camara | O1.5 | 2.4 | 1 | Medium | ✅ |
+---
 
-All have 100% L10 hit rate + favorable floors.
+## Implementation Priority
+
+1. **Fix 2 (Reliability Blocking)** - Immediate, prevents worst picks
+2. **Fix 3 (Edge Validation)** - Same day, blocks negative value bets
+3. **Fix 1 (H2H Hit Rates)** - Enables real matchup intelligence
+
