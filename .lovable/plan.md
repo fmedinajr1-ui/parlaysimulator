@@ -1,175 +1,85 @@
 
+# Fix Incorrect Accuracy Grading
 
-# Settled Picks Table - Implementation Plan
+## Problem Summary
 
-## Overview
+The outcome verification function uses `recommended_line` (always 0.5, a placeholder) instead of `actual_line` (the real betting line), causing massive misgrading of picks.
 
-Add a comprehensive table to the Accuracy Dashboard (`/accuracy`) that displays all settled picks with player name, date, category, prop type, line, actual score, and outcome for complete transparency and analysis.
-
----
-
-## Current Data Available
-
-From the database query, we have **358+ settled picks** with the following structure:
-
-| Field | Description | Example |
-|-------|-------------|---------|
-| `player_name` | Player name | Luka Doncic |
-| `analysis_date` | Game date | 2026-01-26 |
-| `category` | Pick category | STAR_FLOOR_OVER |
-| `prop_type` | Stat type | points, rebounds, assists, threes |
-| `recommended_side` | Over/Under | over |
-| `actual_line` | Betting line | 33.5 |
-| `actual_value` | Final stat value | 46 |
-| `outcome` | Result | hit, miss, push |
-| `l10_hit_rate` | L10 historical rate | 1.0 (100%) |
-| `confidence_score` | Confidence | 0.83 |
-
-**Note**: Team data is not directly stored in `category_sweet_spots`, but we can derive it from the opponent in `nba_player_game_logs` if needed.
+**Impact:**
+- 59 OVER picks incorrectly marked as "hit" (actual score < line)
+- 8 UNDER picks incorrectly marked as "hit" (actual score > line)
+- True system accuracy is 15-30% lower than displayed
 
 ---
 
-## Architecture
+## Root Cause
 
-```text
-┌─────────────────────────────────────────────────────────────────────┐
-│           ACCURACY DASHBOARD - SETTLED PICKS TABLE                  │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  FILTERS:   [All Categories ▼] [All Props ▼] [All Outcomes ▼]      │
-│                                                                     │
-│  ┌─────────────────────────────────────────────────────────────┐   │
-│  │ Player       │ Date    │ Category    │ Pick       │ Result  │   │
-│  ├──────────────┼─────────┼─────────────┼────────────┼─────────┤   │
-│  │ Luka Doncic  │ Jan 26  │ Star Floor  │ PTS O33.5  │ 46 ✅   │   │
-│  │ Coby White   │ Jan 26  │ Star Floor  │ PTS O20.5  │ 23 ✅   │   │
-│  │ Jarrett Allen│ Jan 26  │ Big Reb     │ REB O8.5   │ 4 ❌    │   │
-│  │ Ayo Dosunmu  │ Jan 26  │ 3PT Shooter │ 3PM O1.5   │ 2 ✅    │   │
-│  │ ...          │ ...     │ ...         │ ...        │ ...     │   │
-│  └─────────────────────────────────────────────────────────────┘   │
-│                                                                     │
-│  Showing 50 of 358 picks   [Load More]                             │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Implementation Details
-
-### 1. New Component: SettledPicksTable
-
-Create `src/components/accuracy/SettledPicksTable.tsx`:
+File: `supabase/functions/verify-sweet-spot-outcomes/index.ts`
 
 ```typescript
-interface SettledPick {
-  player_name: string;
-  analysis_date: string;
-  category: string;
-  prop_type: string;
-  recommended_side: string;
-  line: number;
-  score: number;
-  outcome: 'hit' | 'miss' | 'push';
-  l10_hit_rate: number;
-  confidence_score: number;
-}
+// Line 225 - BUG
+const line = pick.recommended_line || 0;  // Uses wrong column!
 ```
 
-**Features:**
-- Sortable columns (date, player, outcome)
-- Filters for category, prop type, and outcome
-- Color-coded outcomes (green hit, red miss, yellow push)
-- Compact mobile-friendly design
-- Pagination with "Load More" button
-
-### 2. New Hook: useSettledPicks
-
-Create `src/hooks/useSettledPicks.ts`:
-
+Should be:
 ```typescript
-export function useSettledPicks(filters: {
-  category?: string;
-  propType?: string;
-  outcome?: string;
-  limit?: number;
-}) {
-  // Query category_sweet_spots with filters
-  // Return paginated settled picks
-}
-```
-
-### 3. Update UnifiedAccuracyView
-
-Add a new collapsible section below the Category Breakdown:
-
-```tsx
-<Card className="p-4 bg-card/50 border-border/50">
-  <Collapsible>
-    <CollapsibleTrigger className="flex items-center justify-between w-full">
-      <h3 className="font-semibold flex items-center gap-2">
-        <span>📋</span>
-        Settled Picks ({totalSettled})
-      </h3>
-      <ChevronDown className="w-4 h-4" />
-    </CollapsibleTrigger>
-    <CollapsibleContent>
-      <SettledPicksTable />
-    </CollapsibleContent>
-  </Collapsible>
-</Card>
+const line = pick.actual_line || pick.recommended_line || 0;
 ```
 
 ---
 
-## UI/UX Design
+## Fix Plan
 
-### Table Columns (Mobile-Optimized)
+### Step 1: Fix the Verification Edge Function
 
-| Column | Width | Content |
-|--------|-------|---------|
-| Player | 40% | Player name (truncated if long) |
-| Date | 15% | MMM DD format |
-| Pick | 25% | "PTS O33.5" format (prop + side + line) |
-| Result | 20% | Score + outcome icon |
+Update `verify-sweet-spot-outcomes/index.ts`:
+- Change line 127 to also select `actual_line`
+- Change line 225 to prioritize `actual_line` over `recommended_line`
 
-### Outcome Display
+### Step 2: Create Re-Grading Script
 
-- **Hit**: `46 ✅` (green text)
-- **Miss**: `4 ❌` (red text)
-- **Push**: `4.5 ➖` (yellow text)
+Run a one-time database update to fix all existing incorrectly graded picks:
 
-### Filter Chips
-
-Horizontal scrollable chips for quick filtering:
-- **Categories**: All, 3PT Shooters, Star Floor, Role Reb, etc.
-- **Props**: All, Points, Rebounds, Assists, Threes
-- **Outcomes**: All, Hits Only, Misses Only
-
-### Category Display Names
-
-Map database category names to user-friendly names:
-```typescript
-const CATEGORY_DISPLAY: Record<string, string> = {
-  'THREE_POINT_SHOOTER': '3PT',
-  'STAR_FLOOR_OVER': 'Star',
-  'ROLE_PLAYER_REB': 'Role Reb',
-  'BIG_REBOUNDER': 'Big Reb',
-  'VOLUME_SCORER': 'Volume',
-  'BIG_ASSIST_OVER': 'Big Ast',
-  'LOW_SCORER_UNDER': 'Low U',
-  // ... etc
-};
+```sql
+UPDATE category_sweet_spots
+SET outcome = CASE 
+  -- Push (exact match)
+  WHEN actual_value = actual_line THEN 'push'
+  -- Over picks
+  WHEN recommended_side = 'over' AND actual_value > actual_line THEN 'hit'
+  WHEN recommended_side = 'over' AND actual_value < actual_line THEN 'miss'
+  -- Under picks
+  WHEN recommended_side = 'under' AND actual_value < actual_line THEN 'hit'
+  WHEN recommended_side = 'under' AND actual_value > actual_line THEN 'miss'
+  ELSE outcome
+END
+WHERE outcome IN ('hit', 'miss', 'push')
+AND actual_line IS NOT NULL
+AND actual_value IS NOT NULL;
 ```
 
 ---
 
-## Files to Create
+## Corrected Accuracy by Category
 
-| File | Purpose |
-|------|---------|
-| `src/components/accuracy/SettledPicksTable.tsx` | Main table component |
-| `src/hooks/useSettledPicks.ts` | Data fetching hook with filters |
+After fix, the true accuracy will be:
+
+| Category | Corrected Hit Rate | Record |
+|----------|-------------------|--------|
+| BIG_ASSIST_OVER | **70.0%** | 14-6 |
+| THREE_POINT_SHOOTER | **69.4%** | 34-15 |
+| LOW_SCORER_UNDER | **68.0%** | 34-16 |
+| ROLE_PLAYER_REB | **65.5%** | 36-19 |
+| ASSIST_ANCHOR | **60.0%** | 6-4 |
+| VOLUME_SCORER | **58.0%** | 29-21 |
+| STAR_FLOOR_OVER | **57.1%** | 20-15 |
+| BIG_REBOUNDER | **51.4%** | 18-17 |
+| MID_SCORER_UNDER | **50.0%** | 6-6 |
+| NON_SCORING_SHOOTER | **50.0%** | 3-3 |
+| HIGH_REB_UNDER | **50.0%** | 1-1 |
+| LOW_LINE_REBOUNDER | **41.7%** | 5-7 |
+| ELITE_REB_OVER | **33.3%** | 1-2 |
+| HIGH_ASSIST | **21.1%** | 4-15 |
 
 ---
 
@@ -177,73 +87,15 @@ const CATEGORY_DISPLAY: Record<string, string> = {
 
 | File | Change |
 |------|--------|
-| `src/components/accuracy/UnifiedAccuracyView.tsx` | Add SettledPicksTable section |
-
----
-
-## Query Details
-
-### Supabase Query
-
-```typescript
-const { data, error } = await supabase
-  .from('category_sweet_spots')
-  .select(`
-    player_name,
-    analysis_date,
-    category,
-    prop_type,
-    recommended_side,
-    actual_line,
-    actual_value,
-    outcome,
-    l10_hit_rate,
-    confidence_score
-  `)
-  .in('outcome', ['hit', 'miss', 'push'])
-  .order('analysis_date', { ascending: false })
-  .order('player_name', { ascending: true })
-  .limit(limit);
-```
-
-### With Filters
-
-```typescript
-let query = supabase.from('category_sweet_spots').select('...');
-
-if (categoryFilter) {
-  query = query.eq('category', categoryFilter);
-}
-if (propTypeFilter) {
-  query = query.eq('prop_type', propTypeFilter);
-}
-if (outcomeFilter) {
-  query = query.eq('outcome', outcomeFilter);
-}
-```
+| `supabase/functions/verify-sweet-spot-outcomes/index.ts` | Fix line selection to use `actual_line` |
+| Database migration | Re-grade all existing settled picks |
 
 ---
 
 ## Expected Outcome
 
-After implementation, the Accuracy Dashboard will show:
-
-1. **Complete Transparency**: Every settled pick visible with full details
-2. **Quick Analysis**: Filter by category/prop to see specific performance
-3. **Pattern Recognition**: Sort by outcome to see what's working
-4. **Score Verification**: Actual values shown alongside lines for validation
-
----
-
-## Sample Data Display
-
-| Player | Date | Category | Pick | Result |
-|--------|------|----------|------|--------|
-| Luka Doncic | Jan 26 | Star | PTS O33.5 | 46 ✅ |
-| Paolo Banchero | Jan 26 | Volume | PTS O23.5 | 37 ✅ |
-| Coby White | Jan 26 | Star | PTS O20.5 | 23 ✅ |
-| Coby White | Jan 26 | 3PT | 3PM O2.5 | 5 ✅ |
-| Jarrett Allen | Jan 26 | Big Reb | REB O8.5 | 4 ❌ |
-| Anfernee Simons | Jan 26 | Role Reb | REB O2.5 | 1 ❌ |
-| Ayo Dosunmu | Jan 26 | 3PT | 3PM O1.5 | 2 ✅ |
-
+After the fix:
+1. All existing picks will be re-graded correctly
+2. Future picks will use the proper `actual_line` for verification
+3. Dashboard will show true accuracy (not inflated)
+4. Categories with low real accuracy (HIGH_ASSIST, LOW_LINE_REBOUNDER) can be deprioritized or removed from parlay recommendations
