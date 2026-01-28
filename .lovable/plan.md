@@ -1,294 +1,171 @@
 
-# Plan: Enhanced PP Props Scraper with SPA Interaction & Reliable Odds Integration
+# Plan: Fix Lock Mode Rotation Role Assignment
 
-## Overview
+## Problem Summary
 
-The current `pp-props-scraper` only captures ~3 projections per cycle because PrizePicks is a Single Page Application (SPA) that loads content dynamically. The scraper only "sees" the initial viewport without scrolling. This plan addresses both the scraping limitation and integrates reliable odds data from existing infrastructure.
+Lock Mode currently fails to generate "guaranteed locks" pre-game because:
+- The `determineRotationRole` function relies on **live game minutes** to classify players
+- Pre-game, `minutesPlayed = 0`, causing most players to be classified as `BENCH_FRINGE`
+- Lock Mode Gate 1 rejects `BENCH_FRINGE` players, blocking valid candidates
 
-## Current State Analysis
-
-**Data Already Available:**
-- `unified_props`: Contains 622 active NBA props from The Odds API/BallDontLie
-- `pp_snapshot`: Has 709 NBA entries (mostly test/synthetic data)
-- Existing `THE_ODDS_API_KEY` and `BALLDONTLIE_API_KEY` secrets are configured
-- `FIRECRAWL_API_KEY` is connected via connector
-
-**Current Scraper Limitations:**
-1. Uses basic Firecrawl JSON extraction with only `waitFor: 8000`
-2. No scrolling or page interaction to reveal additional props
-3. PrizePicks loads ~8-12 props per viewport, with 100+ available via scroll
-4. Fallback to synthetic data when extraction fails masks the real problem
-
----
-
-## Phase 1: Enhanced PP Scraper with Firecrawl Actions
-
-### Technical Changes to `pp-props-scraper/index.ts`
-
-**1. Add Scroll Actions Sequence**
-
-Replace the basic scrape call with an actions-based approach that scrolls multiple times:
+## Root Cause Analysis
 
 ```text
-┌─────────────────────────────────────────────────────┐
-│  Firecrawl Actions Sequence                         │
-├─────────────────────────────────────────────────────┤
-│  1. wait 3000ms (initial SPA load)                  │
-│  2. scroll down (load more props)                   │
-│  3. wait 1500ms (content render)                    │
-│  4. scroll down (repeat)                            │
-│  5. wait 1500ms                                     │
-│  6. scroll down (repeat)                            │
-│  7. wait 1500ms                                     │
-│  8. scroll down (final scroll)                      │
-│  9. wait 2000ms (final render)                      │
-│  10. Extract JSON from full page                    │
-└─────────────────────────────────────────────────────┘
+Pre-Game Flow (Current - Broken):
+┌─────────────────────────────────────────────────────────────┐
+│ player_season_stats.avg_minutes = 34.3 (e.g., Damian Lillard)│
+│                          ↓                                   │
+│ calculatePreGameBaseline → minutesEstimate = 34.3           │
+│                          ↓                                   │
+│ initializePlayerStates → role = 'SECONDARY' (from position) │
+│                          ↓                                   │
+│ NO rotation.rotationRole initialized!                        │
+│                          ↓                                   │
+│ scout-agent-loop → determineRotationRole(minutesPlayed=0)   │
+│                          ↓                                   │
+│ Result: BENCH_FRINGE (because minutesPlayed < 5)            │
+│                          ↓                                   │
+│ Lock Mode Gate 1: REJECTED                                   │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-**2. Updated Firecrawl Request Body**
+## Solution Design
 
-```javascript
-const firecrawlResponse = await fetch('https://api.firecrawl.dev/v1/scrape', {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${firecrawlKey}`,
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify({
-    url: 'https://app.prizepicks.com',
-    actions: [
-      { type: 'wait', milliseconds: 3000 },  // Wait for SPA hydration
-      { type: 'scroll', direction: 'down' },
-      { type: 'wait', milliseconds: 1500 },
-      { type: 'scroll', direction: 'down' },
-      { type: 'wait', milliseconds: 1500 },
-      { type: 'scroll', direction: 'down' },
-      { type: 'wait', milliseconds: 1500 },
-      { type: 'scroll', direction: 'down' },
-      { type: 'wait', milliseconds: 2000 },
-    ],
-    formats: ['json'],
-    jsonOptions: {
-      schema: { /* existing schema */ },
-      prompt: 'Extract ALL player prop projections visible...'
-    },
-    timeout: 60000,  // Increased timeout for actions
-    onlyMainContent: false,
-  }),
-});
-```
-
-**3. Add Sport-Specific Tab Navigation (Optional Enhancement)**
-
-PrizePicks has sport tabs (NBA, NHL, etc.). We can click specific tabs:
-
-```javascript
-// Before scrolling, click the NBA tab
-{ type: 'click', selector: '[data-testid="league-NBA"]' },
-{ type: 'wait', milliseconds: 2000 },
-// Then scroll sequence...
-```
-
----
-
-## Phase 2: Direct Odds API Integration (Parallel Data Source)
-
-Instead of relying solely on web scraping, we'll use the existing `refresh-todays-props` function as the primary data source and enhance the signal detection to work with this data.
-
-### Strategy: Use Existing Infrastructure
-
-The `unified_props` table already contains reliable sportsbook data from:
-- **The Odds API**: FanDuel, DraftKings lines
-- **BallDontLie API**: Additional player props with game context
-
-**Current Flow (Working):**
 ```text
-refresh-todays-props → unified_props (622 active props)
-                                ↓
-                    whale-signal-detector
-                                ↓
-                         whale_picks
+Pre-Game Flow (Fixed):
+┌─────────────────────────────────────────────────────────────┐
+│ player_season_stats.avg_minutes = 34.3                       │
+│                          ↓                                   │
+│ calculatePreGameBaseline → minutesEstimate = 34.3           │
+│                          ↓                                   │
+│ NEW: derivePreGameRotationRole(avgMinutes=34.3)             │
+│      → STARTER (because avg_minutes >= 28)                  │
+│                          ↓                                   │
+│ initializePlayerStates → rotation.rotationRole = STARTER    │
+│                          ↓                                   │
+│ scout-agent-loop → uses rotation.rotationRole from state    │
+│                    (only overrides if live data available)  │
+│                          ↓                                   │
+│ Lock Mode Gate 1: PASSED                                     │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-**Enhanced Flow:**
-```text
-┌────────────────────┐     ┌────────────────────┐
-│  pp-props-scraper  │     │refresh-todays-props│
-│  (Firecrawl+Scroll)│     │  (The Odds API)    │
-└─────────┬──────────┘     └─────────┬──────────┘
-          ↓                          ↓
-    pp_snapshot                unified_props
-          └──────────┬───────────────┘
-                     ↓
-           whale-signal-detector
-                     ↓
-               whale_picks
-```
+## Implementation Steps
 
----
+### Phase 1: Add Pre-Game Rotation Role Derivation
 
-## Phase 3: Create Unified Props Fetcher for Multi-Sport Coverage
+**File: `src/types/pre-game-baselines.ts`**
 
-Create a new edge function `whale-odds-scraper` that fetches player props specifically for the Whale Proxy sports pool (NBA, NHL, WNBA, Tennis).
+Add a new function to derive rotation role from season average minutes:
 
-### New Function: `supabase/functions/whale-odds-scraper/index.ts`
-
-**Purpose:** Fetch all player props for active sports into `unified_props`
-
-**Key Features:**
-1. Fetches events from The Odds API for each sport
-2. Fetches player props for common markets (points, rebounds, assists, threes)
-3. Deduplicates and upserts into `unified_props`
-4. Runs every 5 minutes via cron
-
-**Markets to Fetch:**
-- `player_points`
-- `player_rebounds`
-- `player_assists`
-- `player_threes`
-- `player_blocks`
-- `player_steals`
-
-**Sports Coverage:**
-- `basketball_nba`
-- `basketball_wnba`
-- `hockey_nhl`
-- `tennis_atp`
-- `tennis_wta`
-
----
-
-## Phase 4: Enhanced Signal Detection Logic
-
-Update `whale-signal-detector` to work better with the available data:
-
-### Book-to-Book Divergence Enhancement
-
-When PP data is unavailable, the detector already falls back to book-to-book divergence. We'll enhance this:
-
-```javascript
-// Current: Requires 1+ point spread between books
-if (spread >= 1) { /* generate signal */ }
-
-// Enhanced: Lower threshold + volume weighting
-if (spread >= 0.5 && props.length >= 3) {
-  // More books disagreeing = higher confidence
-  const volumeBonus = Math.min(10, (props.length - 2) * 5);
-  sharpScore = 50 + divergencePts + volumeBonus;
+```typescript
+export function derivePreGameRotationRole(avgMinutes: number): RotationRole {
+  if (avgMinutes >= 28) return 'STARTER';
+  if (avgMinutes >= 20) return 'BENCH_CORE';
+  if (avgMinutes >= 12) return 'BENCH_CORE';
+  return 'BENCH_FRINGE';
 }
 ```
 
----
+Also extend `PreGameBaseline` interface to include `rotationRole`.
 
-## Implementation Summary
+### Phase 2: Initialize Rotation State from Baselines
 
-### Files to Create/Modify
+**File: `src/hooks/useScoutAgentState.ts`**
 
-| File | Action | Description |
-|------|--------|-------------|
-| `supabase/functions/pp-props-scraper/index.ts` | Modify | Add Firecrawl actions for scrolling |
-| `supabase/functions/whale-odds-scraper/index.ts` | Create | Dedicated odds fetcher for Whale Proxy sports |
-| `supabase/functions/whale-signal-detector/index.ts` | Modify | Enhance book divergence fallback logic |
+Modify `initializePlayerStates` to:
+1. Extract `rotationRole` from pre-game baseline
+2. Create initial `rotation` object with this role
 
-### Cron Jobs to Configure
+```typescript
+// Inside initPlayer function
+const preGameRotationRole = derivePreGameRotationRole(baseline?.minutesEstimate ?? 0);
 
-| Job | Schedule | Function |
-|-----|----------|----------|
-| `whale-pp-scraper-5min` | `*/5 * * * *` | `pp-props-scraper` |
-| `whale-odds-scraper-5min` | `*/5 * * * *` | `whale-odds-scraper` |
-| `whale-signal-detector-5min` | `*/5 * * * *` | `whale-signal-detector` |
-
----
-
-## Technical Details
-
-### PP Scraper Firecrawl Actions Implementation
-
-```javascript
-const SCROLL_ACTIONS = [
-  { type: 'wait', milliseconds: 3000 },  // SPA initial load
-  { type: 'scroll', direction: 'down' },
-  { type: 'wait', milliseconds: 1500 },
-  { type: 'scroll', direction: 'down' },
-  { type: 'wait', milliseconds: 1500 },
-  { type: 'scroll', direction: 'down' },
-  { type: 'wait', milliseconds: 1500 },
-  { type: 'scroll', direction: 'down' },
-  { type: 'wait', milliseconds: 2000 },
-];
-
-const firecrawlResponse = await fetch('https://api.firecrawl.dev/v1/scrape', {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${firecrawlKey}`,
-    'Content-Type': 'application/json',
+newStates.set(player.name, {
+  // ... existing fields ...
+  rotation: {
+    stintSeconds: 0,
+    benchSecondsLast8: 0,
+    onCourtStability: preGameRotationRole === 'STARTER' ? 0.90 : 0.65,
+    projectedStintsRemaining: 3,
+    foulRiskLevel: 'LOW',
+    rotationRole: preGameRotationRole,
   },
-  body: JSON.stringify({
-    url: 'https://app.prizepicks.com',
-    actions: SCROLL_ACTIONS,
-    formats: ['json'],
-    jsonOptions: {
-      schema: existingSchema,
-      prompt: 'Extract ALL player prop projections from the entire page...'
-    },
-    timeout: 90000,
-    onlyMainContent: false,
-  }),
 });
 ```
 
-### Whale Odds Scraper Core Logic
+### Phase 3: Fix Multi-Game Manager Initialization
 
-```javascript
-const WHALE_SPORTS = [
-  'basketball_nba',
-  'basketball_wnba', 
-  'hockey_nhl',
-];
+**File: `src/hooks/useMultiGameManager.ts`**
 
-const MARKETS = [
-  'player_points',
-  'player_rebounds',
-  'player_assists',
-  'player_threes',
-];
+Apply the same fix to `initializePlayerStates` helper function.
 
-for (const sport of WHALE_SPORTS) {
-  // 1. Fetch today's events
-  const events = await fetchEventsFromOddsAPI(sport);
-  
-  // 2. For each event, fetch player props
-  for (const event of events) {
-    for (const market of MARKETS) {
-      const props = await fetchPlayerProps(event.id, sport, market);
-      allProps.push(...props);
-    }
+### Phase 4: Preserve Pre-Game Role in Edge Function
+
+**File: `supabase/functions/scout-agent-loop/index.ts`**
+
+Modify `determineRotationRole` to respect pre-game assignment when no live data:
+
+```typescript
+function determineRotationRole(
+  state: PlayerLiveState,
+  period: number,
+  scoreDiff: number,
+  minutesPlayed: number
+): RotationRole {
+  // If we have live minutes data, use game context
+  if (minutesPlayed >= 5) {
+    // ... existing logic for live game ...
   }
+  
+  // Pre-game or early game: preserve pre-game assignment
+  if (state.rotation?.rotationRole) {
+    return state.rotation.rotationRole;
+  }
+  
+  // Fallback: infer from expected minutes (pre-game baseline)
+  const expectedMinutes = state.minutesEstimate || 0;
+  if (expectedMinutes >= 28) return 'STARTER';
+  if (expectedMinutes >= 20) return 'BENCH_CORE';
+  if (expectedMinutes >= 12) return 'BENCH_CORE';
+  
+  return 'BENCH_FRINGE';
 }
-
-// 3. Deduplicate and upsert
-await supabase.from('unified_props').upsert(allProps, {
-  onConflict: 'event_id,player_name,prop_type,bookmaker'
-});
 ```
 
----
+## Files to Modify
 
-## Expected Outcomes
+| File | Change |
+|------|--------|
+| `src/types/pre-game-baselines.ts` | Add `derivePreGameRotationRole` function, extend `PreGameBaseline` |
+| `src/hooks/useScoutAgentState.ts` | Initialize `rotation.rotationRole` in `initializePlayerStates` |
+| `src/hooks/useMultiGameManager.ts` | Apply same initialization fix |
+| `supabase/functions/scout-agent-loop/index.ts` | Preserve pre-game role, only override with live data |
 
-| Metric | Current | Expected |
-|--------|---------|----------|
-| PP props scraped per cycle | 3 | 30-50+ |
-| Book props available | 622 (NBA only) | 800+ (multi-sport) |
-| Signal generation | Book divergence only | PP + Book divergence |
-| Data freshness | Sporadic | Every 5 minutes |
+## Expected Results
 
----
+### Before (Current State)
+- Pre-game: Jayson Tatum (35.2 avg_min) → `BENCH_FRINGE` → Lock Mode rejects
+- Lock Mode: "Missing 3 slots" / No slip generated
 
-## Risk Mitigation
+### After (Fixed)
+- Pre-game: Jayson Tatum (35.2 avg_min) → `STARTER` → Lock Mode accepts
+- Lock Mode: Valid 3-leg slip with high-minute starters
 
-1. **Firecrawl Rate Limits**: Actions increase scrape time; implemented timeout buffer (90s)
-2. **PrizePicks Blocking**: Firecrawl handles bot detection; fallback to book divergence if scraping fails
-3. **API Credits**: The Odds API has quota; limited to essential markets only
-4. **Data Validation**: Keep existing placeholder name filtering to reject test data
+## Rotation Role Thresholds
+
+Based on `player_season_stats` data analysis:
+
+| Avg Minutes | Role | Example Players |
+|-------------|------|-----------------|
+| 28+ | `STARTER` | Jayson Tatum (35.2), Kyrie Irving (35.0), Damian Lillard (34.3) |
+| 20-28 | `BENCH_CORE` | Gary Trent Jr (27.4), Cole Anthony (26.8) |
+| 12-20 | `BENCH_CORE` | Role players with regular rotation spots |
+| < 12 | `BENCH_FRINGE` | End-of-bench, garbage time players |
+
+## Technical Notes
+
+1. The fix preserves backward compatibility - live game data still overrides pre-game when available
+2. Lock Mode Gate 1 already accepts `STARTER`, `CLOSER`, and `BENCH_CORE` roles
+3. The `minutesEstimate` field was already being populated from pre-game baselines, just not being used for role classification
+4. No database changes required - uses existing `player_season_stats.avg_minutes`
