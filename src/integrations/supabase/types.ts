@@ -10329,6 +10329,22 @@ export type Database = {
           verified_predictions: number
         }[]
       }
+      get_unified_system_accuracy: {
+        Args: { days_back?: number }
+        Returns: {
+          display_name: string
+          hit_rate: number
+          hits: number
+          icon: string
+          last_updated: string
+          misses: number
+          pushes: number
+          sample_confidence: string
+          system_name: string
+          total_picks: number
+          verified_picks: number
+        }[]
+      }
       get_upset_accuracy_summary: {
         Args: never
         Returns: {
