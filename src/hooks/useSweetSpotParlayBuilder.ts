@@ -1518,6 +1518,26 @@ export function useSweetSpotParlayBuilder() {
           return false;
         }
         
+        // v8.0 FIX #1: Check reliability shouldBlock flag BEFORE any other checks
+        const reliabilityKey = `${playerKey}_${pick.prop_type?.toLowerCase()}`;
+        const reliability = reliabilityMap.get(reliabilityKey);
+        if (reliability?.shouldBlock) {
+          console.log(`[SweetSpotParlay] 🚫 Blocking chronic underperformer: ${pick.player_name} ${pick.prop_type} (${reliability.tier} tier, ${reliability.hitRate}% hit rate)`);
+          return false;
+        }
+        
+        // v8.0 FIX #2: Block negative edge picks early using l10_avg as fallback projection
+        const projection = pick.projected_value ?? pick.l10_avg;
+        const line = pick.actual_line ?? pick.recommended_line;
+        if (projection && line) {
+          const isOver = pick.recommended_side?.toLowerCase() === 'over';
+          const edge = isOver ? (projection - line) : (line - projection);
+          if (edge < 0) {
+            console.log(`[SweetSpotParlay] 🚫 Blocking negative edge: ${pick.player_name} ${pick.prop_type} ${pick.recommended_side} (proj: ${projection.toFixed(1)}, line: ${line}, edge: ${edge.toFixed(2)})`);
+            return false;
+          }
+        }
+        
         // v3.0: Apply archetype alignment check
         if (!isPickArchetypeAligned({
           id: pick.id,
@@ -1573,6 +1593,26 @@ export function useSweetSpotParlayBuilder() {
         if (outPlayers.has(playerKey)) {
           console.log(`[SweetSpotParlay] Excluding OUT player from risk engine: ${pick.player_name}`);
           return false;
+        }
+        
+        // v8.0 FIX #1: Check reliability shouldBlock flag BEFORE any other checks
+        const reliabilityKey = `${playerKey}_${pick.prop_type?.toLowerCase()}`;
+        const reliability = reliabilityMap.get(reliabilityKey);
+        if (reliability?.shouldBlock) {
+          console.log(`[SweetSpotParlay] 🚫 Blocking chronic underperformer: ${pick.player_name} ${pick.prop_type} (${reliability.tier} tier, ${reliability.hitRate}% hit rate)`);
+          return false;
+        }
+        
+        // v8.0 FIX #2: Block negative edge picks early using median or l10 as projection
+        const projection = pick.true_median ?? pick.l10_avg;
+        const line = pick.line;
+        if (projection && line) {
+          const isOver = pick.side?.toLowerCase() === 'over';
+          const edge = isOver ? (projection - line) : (line - projection);
+          if (edge < 0) {
+            console.log(`[SweetSpotParlay] 🚫 Blocking negative edge: ${pick.player_name} ${pick.prop_type} ${pick.side} (proj: ${projection.toFixed(1)}, line: ${line}, edge: ${edge.toFixed(2)})`);
+            return false;
+          }
         }
         
         // v3.0: Apply archetype alignment check
