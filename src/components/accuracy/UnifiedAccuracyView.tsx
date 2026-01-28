@@ -3,11 +3,14 @@ import { useUnifiedAccuracy } from "@/hooks/useUnifiedAccuracy";
 import { CompositeGradeCard } from "./CompositeGradeCard";
 import { SystemAccuracyCard } from "./SystemAccuracyCard";
 import { SystemCategoryBreakdown } from "./SystemCategoryBreakdown";
+import { SettledPicksTable } from "./SettledPicksTable";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { RefreshCw, AlertTriangle, CheckCircle, AlertCircle, Info } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { RefreshCw, AlertTriangle, CheckCircle, AlertCircle, Info, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useSettledPicksCount } from "@/hooks/useSettledPicks";
 
 type TimePeriod = 7 | 30 | 90 | 365;
 
@@ -27,6 +30,7 @@ interface Recommendation {
 
 export function UnifiedAccuracyView() {
   const [timePeriod, setTimePeriod] = useState<TimePeriod>(30);
+  const [settledOpen, setSettledOpen] = useState(false);
   const { 
     systems, 
     compositeGrade, 
@@ -36,6 +40,7 @@ export function UnifiedAccuracyView() {
     isLoading, 
     refetch 
   } = useUnifiedAccuracy(timePeriod);
+  const { data: settledCount } = useSettledPicksCount();
 
   // Generate recommendations based on system performance
   const recommendations: Recommendation[] = systems.flatMap(sys => {
@@ -146,6 +151,25 @@ export function UnifiedAccuracyView() {
           Category Breakdown
         </h3>
         <SystemCategoryBreakdown />
+      </Card>
+
+      {/* Settled Picks Table */}
+      <Card className="p-4 bg-card/50 border-border/50">
+        <Collapsible open={settledOpen} onOpenChange={setSettledOpen}>
+          <CollapsibleTrigger className="flex items-center justify-between w-full">
+            <h3 className="font-semibold flex items-center gap-2">
+              <span>📋</span>
+              Settled Picks {settledCount !== undefined && `(${settledCount})`}
+            </h3>
+            <ChevronDown className={cn(
+              "w-4 h-4 transition-transform",
+              settledOpen && "rotate-180"
+            )} />
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <SettledPicksTable />
+          </CollapsibleContent>
+        </Collapsible>
       </Card>
 
       {/* Recommendations */}
