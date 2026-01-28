@@ -1,156 +1,165 @@
 
-# Unified Accuracy Dashboard - Implementation Plan
+
+# Settled Picks Table - Implementation Plan
 
 ## Overview
 
-Create a single dashboard view that consolidates real-time hit rates from all prediction systems: **3PT Shooters**, **Whale Proxy**, **Sweet Spots (Category Props)**, and **Lock Mode** - providing a unified accuracy report card with drill-down capabilities.
+Add a comprehensive table to the Accuracy Dashboard (`/accuracy`) that displays all settled picks with player name, date, category, prop type, line, actual score, and outcome for complete transparency and analysis.
 
 ---
 
-## Data Sources Analysis
+## Current Data Available
 
-### Current Accuracy Data Available
+From the database query, we have **358+ settled picks** with the following structure:
 
-| System | Table | Outcome Column | Settled Count |
-|--------|-------|----------------|---------------|
-| Sweet Spots | `category_sweet_spots` | `outcome` (hit/miss/push) | 271 settled |
-| 3PT Shooters | `category_sweet_spots` (category = THREE_POINT_SHOOTER) | `outcome` | 49 settled (93.9% hit rate) |
-| Whale Proxy | `whale_picks` | `outcome` (hit/miss/push/pending/no_data) | 0 settled (38 pending) |
-| Lock Mode | `scout_prop_outcomes` | `outcome` | 0 settled (357 pending) |
-| Lock Mode Backtest | `lock_mode_backtest_runs` / `lock_mode_backtest_slips` | `legs_hit/missed` | Historical data |
+| Field | Description | Example |
+|-------|-------------|---------|
+| `player_name` | Player name | Luka Doncic |
+| `analysis_date` | Game date | 2026-01-26 |
+| `category` | Pick category | STAR_FLOOR_OVER |
+| `prop_type` | Stat type | points, rebounds, assists, threes |
+| `recommended_side` | Over/Under | over |
+| `actual_line` | Betting line | 33.5 |
+| `actual_value` | Final stat value | 46 |
+| `outcome` | Result | hit, miss, push |
+| `l10_hit_rate` | L10 historical rate | 1.0 (100%) |
+| `confidence_score` | Confidence | 0.83 |
 
-### Existing RPC Functions
-- `get_sweet_spot_accuracy()` - Category-level accuracy
-- `get_category_hit_rates()` - Per-category hit rates
-- `get_complete_accuracy_summary()` - Multi-system rollup
+**Note**: Team data is not directly stored in `category_sweet_spots`, but we can derive it from the opponent in `nba_player_game_logs` if needed.
 
 ---
 
 ## Architecture
 
 ```text
-┌──────────────────────────────────────────────────────────────────┐
-│              UNIFIED ACCURACY DASHBOARD                          │
-├──────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  ┌────────────────────────────────────────────────────────────┐  │
-│  │  OVERALL ACCURACY SCORE  - Weighted composite grade        │  │
-│  │  [A/B/C Grade] [XX.X%] [Trend Arrow] [vs Breakeven]        │  │
-│  └────────────────────────────────────────────────────────────┘  │
-│                                                                  │
-│  ┌───────────┐ ┌───────────┐ ┌───────────┐ ┌───────────┐        │
-│  │ 3PT       │ │ Whale     │ │ Sweet     │ │ Lock      │        │
-│  │ Shooters  │ │ Proxy     │ │ Spots     │ │ Mode      │        │
-│  │  93.9%    │ │  --%      │ │  75.2%    │ │  --%      │        │
-│  │  49 picks │ │  0 settld │ │  271 pick │ │  0 settld │        │
-│  └───────────┘ └───────────┘ └───────────┘ └───────────┘        │
-│                                                                  │
-│  ┌────────────────────────────────────────────────────────────┐  │
-│  │  CATEGORY BREAKDOWN  (Accordion with drill-down)           │  │
-│  │  - THREE_POINT_SHOOTER: 93.9% (46/49)                      │  │
-│  │  - STAR_FLOOR_OVER: 88.6% (31/35)                          │  │
-│  │  - ROLE_PLAYER_REB: 83.6% (46/55)                          │  │
-│  │  - LOW_SCORER_UNDER: 80.0% (40/50)                         │  │
-│  │  ... more categories                                        │  │
-│  └────────────────────────────────────────────────────────────┘  │
-│                                                                  │
-│  ┌────────────────────────────────────────────────────────────┐  │
-│  │  RECOMMENDATIONS  (Auto-generated trust/caution/avoid)     │  │
-│  └────────────────────────────────────────────────────────────┘  │
-│                                                                  │
-└──────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│           ACCURACY DASHBOARD - SETTLED PICKS TABLE                  │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  FILTERS:   [All Categories ▼] [All Props ▼] [All Outcomes ▼]      │
+│                                                                     │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │ Player       │ Date    │ Category    │ Pick       │ Result  │   │
+│  ├──────────────┼─────────┼─────────────┼────────────┼─────────┤   │
+│  │ Luka Doncic  │ Jan 26  │ Star Floor  │ PTS O33.5  │ 46 ✅   │   │
+│  │ Coby White   │ Jan 26  │ Star Floor  │ PTS O20.5  │ 23 ✅   │   │
+│  │ Jarrett Allen│ Jan 26  │ Big Reb     │ REB O8.5   │ 4 ❌    │   │
+│  │ Ayo Dosunmu  │ Jan 26  │ 3PT Shooter │ 3PM O1.5   │ 2 ✅    │   │
+│  │ ...          │ ...     │ ...         │ ...        │ ...     │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                                                                     │
+│  Showing 50 of 358 picks   [Load More]                             │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## Implementation Details
 
-### 1. New Database RPC Function
+### 1. New Component: SettledPicksTable
 
-Create `get_unified_system_accuracy()` to aggregate all systems:
-
-```sql
-CREATE OR REPLACE FUNCTION get_unified_system_accuracy()
-RETURNS TABLE(
-  system_name TEXT,
-  display_name TEXT,
-  icon TEXT,
-  total_picks BIGINT,
-  verified_picks BIGINT,
-  hits BIGINT,
-  misses BIGINT,
-  pushes BIGINT,
-  hit_rate NUMERIC,
-  sample_confidence TEXT,
-  last_updated TIMESTAMPTZ
-)
-```
-
-**Data aggregation per system:**
-
-- **3PT Shooters**: Query `category_sweet_spots` WHERE `category = 'THREE_POINT_SHOOTER'`
-- **Sweet Spots (All)**: Query `category_sweet_spots` (all categories)
-- **Whale Proxy**: Query `whale_picks` WHERE `outcome IS NOT NULL`
-- **Lock Mode**: Query `scout_prop_outcomes` WHERE `outcome IS NOT NULL`
-
-### 2. New Hook: `useUnifiedAccuracy`
+Create `src/components/accuracy/SettledPicksTable.tsx`:
 
 ```typescript
-// src/hooks/useUnifiedAccuracy.ts
-interface SystemAccuracy {
-  systemName: string;
-  displayName: string;
-  icon: string;
-  totalPicks: number;
-  verifiedPicks: number;
-  hits: number;
-  misses: number;
-  pushes: number;
-  hitRate: number;
-  sampleConfidence: 'high' | 'medium' | 'low' | 'insufficient';
-  lastUpdated: Date | null;
-}
-
-export function useUnifiedAccuracy() {
-  // Fetch from new RPC
-  // Calculate composite score
-  // Return categorized data
+interface SettledPick {
+  player_name: string;
+  analysis_date: string;
+  category: string;
+  prop_type: string;
+  recommended_side: string;
+  line: number;
+  score: number;
+  outcome: 'hit' | 'miss' | 'push';
+  l10_hit_rate: number;
+  confidence_score: number;
 }
 ```
 
-### 3. New Page: Unified Accuracy Dashboard
+**Features:**
+- Sortable columns (date, player, outcome)
+- Filters for category, prop type, and outcome
+- Color-coded outcomes (green hit, red miss, yellow push)
+- Compact mobile-friendly design
+- Pagination with "Load More" button
 
-Create `src/pages/AccuracyDashboard.tsx`:
-- Lazy-loaded in App.tsx at route `/accuracy`
-- Uses `AppShell` for consistent layout
-- Pull-to-refresh support
+### 2. New Hook: useSettledPicks
 
-### 4. Dashboard Components
+Create `src/hooks/useSettledPicks.ts`:
 
-**A. Main Component: `UnifiedAccuracyView.tsx`**
 ```typescript
-// src/components/accuracy/UnifiedAccuracyView.tsx
-// - Overall composite grade card (reuse AccuracyGradeCard)
-// - System summary cards (4 cards in grid)
-// - Category breakdown accordion
-// - Recommendations section
+export function useSettledPicks(filters: {
+  category?: string;
+  propType?: string;
+  outcome?: string;
+  limit?: number;
+}) {
+  // Query category_sweet_spots with filters
+  // Return paginated settled picks
+}
 ```
 
-**B. System Card: `SystemAccuracyCard.tsx`**
-```typescript
-// src/components/accuracy/SystemAccuracyCard.tsx
-// - Icon + name
-// - Hit rate (large, color-coded)
-// - W-L-P record
-// - Progress bar
-// - Sample confidence badge
-// - "Verify" button per system
+### 3. Update UnifiedAccuracyView
+
+Add a new collapsible section below the Category Breakdown:
+
+```tsx
+<Card className="p-4 bg-card/50 border-border/50">
+  <Collapsible>
+    <CollapsibleTrigger className="flex items-center justify-between w-full">
+      <h3 className="font-semibold flex items-center gap-2">
+        <span>📋</span>
+        Settled Picks ({totalSettled})
+      </h3>
+      <ChevronDown className="w-4 h-4" />
+    </CollapsibleTrigger>
+    <CollapsibleContent>
+      <SettledPicksTable />
+    </CollapsibleContent>
+  </Collapsible>
+</Card>
 ```
 
-**C. Time Period Selector**
+---
+
+## UI/UX Design
+
+### Table Columns (Mobile-Optimized)
+
+| Column | Width | Content |
+|--------|-------|---------|
+| Player | 40% | Player name (truncated if long) |
+| Date | 15% | MMM DD format |
+| Pick | 25% | "PTS O33.5" format (prop + side + line) |
+| Result | 20% | Score + outcome icon |
+
+### Outcome Display
+
+- **Hit**: `46 ✅` (green text)
+- **Miss**: `4 ❌` (red text)
+- **Push**: `4.5 ➖` (yellow text)
+
+### Filter Chips
+
+Horizontal scrollable chips for quick filtering:
+- **Categories**: All, 3PT Shooters, Star Floor, Role Reb, etc.
+- **Props**: All, Points, Rebounds, Assists, Threes
+- **Outcomes**: All, Hits Only, Misses Only
+
+### Category Display Names
+
+Map database category names to user-friendly names:
 ```typescript
-// Filter: 7d | 30d | 90d | All Time
-// Updates all queries with date range
+const CATEGORY_DISPLAY: Record<string, string> = {
+  'THREE_POINT_SHOOTER': '3PT',
+  'STAR_FLOOR_OVER': 'Star',
+  'ROLE_PLAYER_REB': 'Role Reb',
+  'BIG_REBOUNDER': 'Big Reb',
+  'VOLUME_SCORER': 'Volume',
+  'BIG_ASSIST_OVER': 'Big Ast',
+  'LOW_SCORER_UNDER': 'Low U',
+  // ... etc
+};
 ```
 
 ---
@@ -159,12 +168,8 @@ Create `src/pages/AccuracyDashboard.tsx`:
 
 | File | Purpose |
 |------|---------|
-| `src/pages/AccuracyDashboard.tsx` | Page wrapper with AppShell |
-| `src/components/accuracy/UnifiedAccuracyView.tsx` | Main dashboard layout |
-| `src/components/accuracy/SystemAccuracyCard.tsx` | Per-system summary card |
-| `src/components/accuracy/SystemCategoryBreakdown.tsx` | Drill-down by category |
-| `src/hooks/useUnifiedAccuracy.ts` | Data fetching & aggregation |
-| Database migration | New RPC function |
+| `src/components/accuracy/SettledPicksTable.tsx` | Main table component |
+| `src/hooks/useSettledPicks.ts` | Data fetching hook with filters |
 
 ---
 
@@ -172,75 +177,73 @@ Create `src/pages/AccuracyDashboard.tsx`:
 
 | File | Change |
 |------|--------|
-| `src/App.tsx` | Add lazy import + route for `/accuracy` |
-| `src/components/BottomNav.tsx` | Optional: Add accuracy icon to nav |
-| `src/lib/accuracy-calculator.ts` | Add system display names for new systems |
+| `src/components/accuracy/UnifiedAccuracyView.tsx` | Add SettledPicksTable section |
 
 ---
 
-## UI/UX Features
+## Query Details
 
-### Visual Design
-- **Grade Card**: Large letter grade (A+ through F) with color coding
-- **System Cards**: Compact cards with emoji icons matching engine emojis
-- **Color Coding**: Green (≥55%), Yellow (50-55%), Red (<50%)
-- **Breakeven Line**: Visual marker at 52.4% on progress bars
-
-### Interactive Features
-- **Accordion Drill-down**: Click system to see category breakdown
-- **Quick Verify**: Button to trigger outcome verification per system
-- **Copy Stats**: Share accuracy stats as formatted text
-- **Trend Indicators**: Up/down arrows for 30-day trends
-
----
-
-## Technical Specifications
-
-### System Icons & Colors
-
-| System | Icon | Color |
-|--------|------|-------|
-| 3PT Shooters | 🏀 | `text-orange-400` |
-| Whale Proxy | 🐋 | `text-blue-400` |
-| Sweet Spots | ✨ | `text-purple-400` |
-| Lock Mode | 🔒 | `text-emerald-400` |
-
-### Sample Confidence Thresholds
-- **High**: ≥100 verified picks
-- **Medium**: 50-99 verified picks
-- **Low**: 20-49 verified picks
-- **Insufficient**: <20 verified picks
-
-### Grade Calculation (Per System)
-- A+: ≥60% with ≥100 samples
-- A: ≥55% with ≥50 samples
-- B+: ≥52% with ≥50 samples
-- B: ≥50% with ≥25 samples
-- C+: ≥47% with ≥25 samples
-- C: ≥45%
-- D: ≥40%
-- F: <40%
-
----
-
-## Route Integration
+### Supabase Query
 
 ```typescript
-// In App.tsx
-const AccuracyDashboard = React.lazy(() => import("./pages/AccuracyDashboard"));
+const { data, error } = await supabase
+  .from('category_sweet_spots')
+  .select(`
+    player_name,
+    analysis_date,
+    category,
+    prop_type,
+    recommended_side,
+    actual_line,
+    actual_value,
+    outcome,
+    l10_hit_rate,
+    confidence_score
+  `)
+  .in('outcome', ['hit', 'miss', 'push'])
+  .order('analysis_date', { ascending: false })
+  .order('player_name', { ascending: true })
+  .limit(limit);
+```
 
-// In Routes
-<Route path="/accuracy" element={<AccuracyDashboard />} />
+### With Filters
+
+```typescript
+let query = supabase.from('category_sweet_spots').select('...');
+
+if (categoryFilter) {
+  query = query.eq('category', categoryFilter);
+}
+if (propTypeFilter) {
+  query = query.eq('prop_type', propTypeFilter);
+}
+if (outcomeFilter) {
+  query = query.eq('outcome', outcomeFilter);
+}
 ```
 
 ---
 
 ## Expected Outcome
 
-After implementation:
-1. **Single View**: All system accuracies visible at a glance
-2. **Real-Time**: Data refreshes on page load + manual refresh
-3. **Actionable**: Recommendations for which systems to trust/avoid
-4. **Drill-Down**: Expand any system to see category-level performance
-5. **Trend Awareness**: 30-day trend indicators show improvement/decline
+After implementation, the Accuracy Dashboard will show:
+
+1. **Complete Transparency**: Every settled pick visible with full details
+2. **Quick Analysis**: Filter by category/prop to see specific performance
+3. **Pattern Recognition**: Sort by outcome to see what's working
+4. **Score Verification**: Actual values shown alongside lines for validation
+
+---
+
+## Sample Data Display
+
+| Player | Date | Category | Pick | Result |
+|--------|------|----------|------|--------|
+| Luka Doncic | Jan 26 | Star | PTS O33.5 | 46 ✅ |
+| Paolo Banchero | Jan 26 | Volume | PTS O23.5 | 37 ✅ |
+| Coby White | Jan 26 | Star | PTS O20.5 | 23 ✅ |
+| Coby White | Jan 26 | 3PT | 3PM O2.5 | 5 ✅ |
+| Jarrett Allen | Jan 26 | Big Reb | REB O8.5 | 4 ❌ |
+| Anfernee Simons | Jan 26 | Role Reb | REB O2.5 | 1 ❌ |
+| Ayo Dosunmu | Jan 26 | 3PT | 3PM O1.5 | 2 ✅ |
 
