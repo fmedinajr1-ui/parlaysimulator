@@ -9626,6 +9626,48 @@ export type Database = {
         }
         Relationships: []
       }
+      user_parlay_outcomes: {
+        Row: {
+          created_at: string | null
+          id: string
+          legs: Json
+          notes: string | null
+          outcome: string | null
+          parlay_date: string
+          payout_amount: number | null
+          source: string | null
+          total_legs: number
+          total_odds: string | null
+          wager_amount: number | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          legs: Json
+          notes?: string | null
+          outcome?: string | null
+          parlay_date: string
+          payout_amount?: number | null
+          source?: string | null
+          total_legs: number
+          total_odds?: string | null
+          wager_amount?: number | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          legs?: Json
+          notes?: string | null
+          outcome?: string | null
+          parlay_date?: string
+          payout_amount?: number | null
+          source?: string | null
+          total_legs?: number
+          total_odds?: string | null
+          wager_amount?: number | null
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           created_at: string | null
@@ -9835,6 +9877,36 @@ export type Database = {
           hit_rate: number | null
           mae: number | null
           settled: number | null
+        }
+        Relationships: []
+      }
+      v_3pt_matchup_favorites: {
+        Row: {
+          avg_3pt_vs_team: number | null
+          best_3pt_vs_team: number | null
+          games_played: number | null
+          matchup_tier: string | null
+          opponent: string | null
+          player_name: string | null
+          worst_3pt_vs_team: number | null
+        }
+        Insert: {
+          avg_3pt_vs_team?: number | null
+          best_3pt_vs_team?: number | null
+          games_played?: number | null
+          matchup_tier?: never
+          opponent?: string | null
+          player_name?: string | null
+          worst_3pt_vs_team?: number | null
+        }
+        Update: {
+          avg_3pt_vs_team?: number | null
+          best_3pt_vs_team?: number | null
+          games_played?: number | null
+          matchup_tier?: never
+          opponent?: string | null
+          player_name?: string | null
+          worst_3pt_vs_team?: number | null
         }
         Relationships: []
       }

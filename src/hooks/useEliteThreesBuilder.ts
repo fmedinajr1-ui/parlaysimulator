@@ -15,12 +15,20 @@ export interface EliteThreesPick {
   line: number;
   side: string;
   l10HitRate: number;
+  l10Min?: number;
+  l10Avg?: number;
   confidenceScore: number;
   team: string;
   projectedValue?: number | null;
   edge?: number;
   reliabilityTier?: string | null;
   reliabilityHitRate?: number | null;
+  varianceTier?: 'LOW' | 'MEDIUM' | 'HIGH';
+  h2hMatchup?: {
+    opponent: string;
+    avgVsTeam: number;
+    tier: string;
+  } | null;
 }
 
 interface EliteThreesResult {
@@ -98,6 +106,33 @@ export function useEliteThreesBuilder() {
         });
       });
 
+      // Fetch H2H matchup data for 3PT
+      const { data: matchupData } = await supabase
+        .from('v_3pt_matchup_favorites')
+        .select('*');
+
+      const matchupMap = new Map<string, { opponent: string; avgVsTeam: number; tier: string }>();
+      (matchupData || []).forEach(m => {
+        const key = `${m.player_name?.toLowerCase()}_${m.opponent?.toLowerCase()}`;
+        matchupMap.set(key, {
+          opponent: m.opponent,
+          avgVsTeam: m.avg_3pt_vs_team,
+          tier: m.matchup_tier
+        });
+      });
+
+      // Fetch season stats for variance data
+      const { data: seasonStats } = await supabase
+        .from('player_season_stats')
+        .select('player_name, threes_std_dev');
+
+      const varianceMap = new Map<string, number>();
+      (seasonStats || []).forEach(s => {
+        if (s.player_name && s.threes_std_dev != null) {
+          varianceMap.set(s.player_name.toLowerCase(), s.threes_std_dev);
+        }
+      });
+
       // Get player team data
       const { data: playerCache } = await supabase
         .from('bdl_player_cache')
@@ -145,6 +180,22 @@ export function useEliteThreesBuilder() {
           ? pick.projected_value - pick.actual_line
           : 0;
 
+        // Get variance tier
+        const stdDev = varianceMap.get(playerKey) || 2.0;
+        const varianceTier: 'LOW' | 'MEDIUM' | 'HIGH' = 
+          stdDev <= 1.0 ? 'LOW' : 
+          stdDev <= 1.5 ? 'MEDIUM' : 'HIGH';
+
+        // Find H2H matchup (would need opponent from unified_props)
+        // For now, check if player has any elite matchups
+        let h2hMatchup: { opponent: string; avgVsTeam: number; tier: string } | null = null;
+        for (const [key, value] of matchupMap) {
+          if (key.startsWith(playerKey + '_') && value.tier === 'ELITE_MATCHUP') {
+            h2hMatchup = value;
+            break;
+          }
+        }
+
         filteredPicks.push({
           id: pick.id,
           player_name: pick.player_name || '',
@@ -152,12 +203,16 @@ export function useEliteThreesBuilder() {
           line: pick.actual_line || pick.recommended_line || 0,
           side: 'over',
           l10HitRate: pick.l10_hit_rate || 0,
+          l10Min: pick.l10_min || 0,
+          l10Avg: pick.l10_avg || 0,
           confidenceScore: pick.confidence_score || 0.8,
           team,
           projectedValue: pick.projected_value,
           edge,
           reliabilityTier: reliability?.tier || null,
           reliabilityHitRate: reliability?.hitRate || null,
+          varianceTier,
+          h2hMatchup,
         });
 
         if (filteredPicks.length >= MAX_LEGS) break;
@@ -169,7 +224,10 @@ export function useEliteThreesBuilder() {
           Player: p.player_name,
           Line: p.line,
           'L10%': `${(p.l10HitRate * 100).toFixed(0)}%`,
+          'L10 Min': p.l10Min,
           Team: p.team,
+          Variance: p.varianceTier,
+          H2H: p.h2hMatchup?.tier || '-',
           Edge: p.edge?.toFixed(1) || '-',
         })));
       }
