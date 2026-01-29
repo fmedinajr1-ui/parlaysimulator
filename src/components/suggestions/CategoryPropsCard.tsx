@@ -35,7 +35,7 @@ interface CategorySweetSpot {
   recommendation: string | null;
 }
 
-type CategoryType = 'BIG_REBOUNDER' | 'LOW_LINE_REBOUNDER' | 'NON_SCORING_SHOOTER';
+type CategoryType = 'BIG_REBOUNDER' | 'LOW_LINE_REBOUNDER_UNDER' | 'HIGH_ASSIST_UNDER' | 'NON_SCORING_SHOOTER';
 
 const CATEGORY_CONFIG: Record<CategoryType, { label: string; icon: React.ElementType; color: string; description: string }> = {
   'BIG_REBOUNDER': { 
@@ -44,14 +44,20 @@ const CATEGORY_CONFIG: Record<CategoryType, { label: string; icon: React.Element
     color: 'text-purple-500',
     description: 'High-volume rebounders with 70%+ L10 hit rates'
   },
-  'LOW_LINE_REBOUNDER': { 
-    label: 'Low Line Rebounders', 
-    icon: Target, 
+  'LOW_LINE_REBOUNDER_UNDER': { 
+    label: 'Low Line Reb U', 
+    icon: TrendingDown, 
     color: 'text-blue-500',
-    description: 'Under-the-radar rebound opportunities'
+    description: 'Low-line rebounders who stay UNDER (58%+ expected)'
+  },
+  'HIGH_ASSIST_UNDER': { 
+    label: 'Assist Unders', 
+    icon: TrendingDown, 
+    color: 'text-red-500',
+    description: 'Assist unders with 79%+ expected hit rate'
   },
   'NON_SCORING_SHOOTER': { 
-    label: 'Non-Scoring Shooters', 
+    label: 'Non-Scoring', 
     icon: TrendingDown, 
     color: 'text-amber-500',
     description: 'Players who consistently stay under points lines'
@@ -301,7 +307,8 @@ export const CategoryPropsCard = () => {
   
   const categoryCounts: Record<CategoryType, number> = {
     'BIG_REBOUNDER': allCategoryData?.filter(p => p.category === 'BIG_REBOUNDER').length || 0,
-    'LOW_LINE_REBOUNDER': allCategoryData?.filter(p => p.category === 'LOW_LINE_REBOUNDER').length || 0,
+    'LOW_LINE_REBOUNDER_UNDER': allCategoryData?.filter(p => p.category === 'LOW_LINE_REBOUNDER_UNDER').length || 0,
+    'HIGH_ASSIST_UNDER': allCategoryData?.filter(p => p.category === 'HIGH_ASSIST_UNDER').length || 0,
     'NON_SCORING_SHOOTER': allCategoryData?.filter(p => p.category === 'NON_SCORING_SHOOTER').length || 0,
   };
 
@@ -430,7 +437,7 @@ export const CategoryPropsCard = () => {
       {isExpanded && (
         <CardContent className="pt-0">
           <Tabs value={selectedCategory} onValueChange={(v) => setSelectedCategory(v as CategoryType)}>
-            <TabsList className="grid grid-cols-3 mb-4">
+            <TabsList className="grid grid-cols-4 mb-4">
               {(Object.keys(CATEGORY_CONFIG) as CategoryType[]).map((cat) => {
                 const cfg = CATEGORY_CONFIG[cat];
                 const Icon = cfg.icon;
