@@ -1,70 +1,97 @@
 
 
-# Tomorrow's Assist Plays Page
+# Fix: Filter Tomorrow Pages to Players With Actual Games
 
-A new dedicated page at `/tomorrow-assists` to display the **BIG_ASSIST_OVER** and **HIGH_ASSIST_UNDER** categories for tomorrow's games.
+## Problem Identified
 
-## Overview
+The **Tomorrow's Assist Plays** page shows 19 picks, but only **1 player** (Alperen Sengun) actually has a game tomorrow. The same issue affects the **Tomorrow's 3PT Picks** page.
 
-This page will mirror the successful `Tomorrow3PT` page pattern but focus on assist-based props. It will showcase:
-- **BIG_ASSIST_OVER**: Big men and playmakers expected to exceed low assist lines (17 picks for Jan 29)
-- **HIGH_ASSIST_UNDER**: High-volume assist players likely to miss inflated lines (2 picks for Jan 29)
+**Root Cause**: Both hooks fetch from `category_sweet_spots` without cross-referencing `unified_props` to verify players have upcoming games.
 
-## Current Data (Jan 29th)
+## How CategoryPropsCard Does It Right
 
-| Category | Count | 100% L10 | Top Picks |
-|----------|-------|----------|-----------|
-| BIG_ASSIST_OVER | 17 | 10 | Jaylon Tyson, Draymond Green, Pascal Siakam, Nikola Vucevic |
-| HIGH_ASSIST_UNDER | 2 | 2 | Keyonte George, Paul George |
+```text
+1. Fetch active players → SELECT player_name FROM unified_props WHERE commence_time >= NOW()
+2. Create activePlayers Set
+3. Fetch category_sweet_spots
+4. Filter to only players in activePlayers set
+```
 
-## Implementation Plan
+## Fix Plan
 
-### 1. Create Data Hook: `useTomorrowAssistProps.ts`
-A new React Query hook that:
-- Fetches from `category_sweet_spots` for categories: `BIG_ASSIST_OVER` and `HIGH_ASSIST_UNDER`
-- Uses tomorrow's Eastern Time date
-- Joins with `player_reliability_scores` and `bdl_player_cache` for enrichment
-- Returns picks grouped by category with summary stats
+### 1. Update `useTomorrowAssistProps.ts`
 
-### 2. Create Page Component: `TomorrowAssists.tsx`
-A new page featuring:
-- **Header**: Back button, title "Tomorrow's Assist Plays", date display, refresh button
-- **Summary Stats Card**: Total picks, 100% L10 count, category breakdown, average hit rate
-- **Category Tabs**: Toggle between BIG_ASSIST_OVER and HIGH_ASSIST_UNDER views
-- **Filter Controls**: Hit rate filters (All, 100%, 90%, 80%)
-- **Pick Cards Grid**: Individual player cards with:
-  - Player name and team badge
-  - L10 hit rate badge (color-coded by tier)
-  - Line display (OVER/UNDER based on category)
-  - L10 average and confidence score
-  - "Add to Builder" button
+Add the same filtering logic used in CategoryPropsCard:
 
-### 3. Add Route in `App.tsx`
-- Register `/tomorrow-assists` route with lazy loading
+- Before fetching from `category_sweet_spots`, first query `unified_props` for the target date
+- Build a Set of player names with actual games
+- After fetching sweet spots, filter to only include players in that Set
+- Log the before/after count for debugging
 
-### 4. Add Navigation Link
-- Add to sidebar/quick actions for easy access
+### 2. Update `useTomorrow3PTProps.ts`
+
+Apply the same fix for consistency across all "Tomorrow" pages.
+
+### 3. Changes Summary
+
+```text
+┌────────────────────────────────────────────────────────────────────┐
+│                    BEFORE (Current - Broken)                        │
+├────────────────────────────────────────────────────────────────────┤
+│  category_sweet_spots  ────────────────────────►  Display          │
+│  (19 picks)                                       (All 19 shown)   │
+└────────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────────┐
+│                    AFTER (Fixed)                                    │
+├────────────────────────────────────────────────────────────────────┤
+│  unified_props (tomorrow) ───► activePlayers Set                   │
+│                                      ↓                              │
+│  category_sweet_spots  ───► Filter by Set ───►  Display            │
+│  (19 picks)                  (only 1 player)    (1 pick)           │
+└────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
 ## Technical Details
 
-### New Files
-1. `src/hooks/useTomorrowAssistProps.ts` - Data fetching hook
-2. `src/pages/TomorrowAssists.tsx` - Page component
+### Code Change for `useTomorrowAssistProps.ts`
 
-### Modified Files
-1. `src/App.tsx` - Add route and lazy import
+Add before the main query:
 
-### UI Components (Reused)
-- Card, CardContent from shadcn/ui
-- Badge for hit rate tiers and category labels
-- Button for filters and actions
-- Skeleton for loading states
-- Tabs for category switching
+```typescript
+// Step 1: Get players with games on the target date
+const { data: upcomingProps } = await supabase
+  .from('unified_props')
+  .select('player_name')
+  .gte('commence_time', `${analysisDate}T00:00:00`)
+  .lt('commence_time', `${analysisDate}T23:59:59`);
 
-### Color Scheme
-- **BIG_ASSIST_OVER**: Primary blue/teal accent (playmaking theme)
-- **HIGH_ASSIST_UNDER**: Amber/orange accent (fade/under theme)
-- Hit rate badges: Emerald (100%), Green (97%+), Yellow (90%+), Muted (below)
+const activePlayers = new Set(
+  (upcomingProps || []).map(p => p.player_name?.toLowerCase())
+);
+
+console.log(`Found ${activePlayers.size} players with games on ${analysisDate}`);
+```
+
+Then after fetching sweet spots:
+
+```typescript
+// Filter to only players with actual games
+const filteredPicks = picks.filter(pick => 
+  activePlayers.has(pick.player_name?.toLowerCase())
+);
+
+console.log(`Filtered from ${picks.length} to ${filteredPicks.length} picks`);
+```
+
+### Files to Modify
+
+| File | Change |
+|------|--------|
+| `src/hooks/useTomorrowAssistProps.ts` | Add unified_props cross-reference filter |
+| `src/hooks/useTomorrow3PTProps.ts` | Add unified_props cross-reference filter |
+
+This will ensure both pages only show players with confirmed games on the target date.
 
