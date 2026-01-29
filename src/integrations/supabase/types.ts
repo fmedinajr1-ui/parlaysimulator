@@ -886,6 +886,7 @@ export type Database = {
           projected_value: number | null
           projection_source: string | null
           prop_type: string
+          quality_tier: string | null
           recommendation: string | null
           recommended_line: number | null
           recommended_side: string | null
@@ -925,6 +926,7 @@ export type Database = {
           projected_value?: number | null
           projection_source?: string | null
           prop_type: string
+          quality_tier?: string | null
           recommendation?: string | null
           recommended_line?: number | null
           recommended_side?: string | null
@@ -964,6 +966,7 @@ export type Database = {
           projected_value?: number | null
           projection_source?: string | null
           prop_type?: string
+          quality_tier?: string | null
           recommendation?: string | null
           recommended_line?: number | null
           recommended_side?: string | null
@@ -6799,6 +6802,10 @@ export type Database = {
           last_10_avg_points: number
           last_10_avg_rebounds: number
           last_10_avg_threes: number
+          last_5_avg_assists: number | null
+          last_5_avg_points: number | null
+          last_5_avg_rebounds: number | null
+          last_5_avg_threes: number | null
           player_name: string
           points_std_dev: number
           rebounds_std_dev: number
@@ -6840,6 +6847,10 @@ export type Database = {
           last_10_avg_points?: number
           last_10_avg_rebounds?: number
           last_10_avg_threes?: number
+          last_5_avg_assists?: number | null
+          last_5_avg_points?: number | null
+          last_5_avg_rebounds?: number | null
+          last_5_avg_threes?: number | null
           player_name: string
           points_std_dev?: number
           rebounds_std_dev?: number
@@ -6881,6 +6892,10 @@ export type Database = {
           last_10_avg_points?: number
           last_10_avg_rebounds?: number
           last_10_avg_threes?: number
+          last_5_avg_assists?: number | null
+          last_5_avg_points?: number | null
+          last_5_avg_rebounds?: number | null
+          last_5_avg_threes?: number | null
           player_name?: string
           points_std_dev?: number
           rebounds_std_dev?: number

@@ -114,6 +114,13 @@ async function processPlayer(
     const last10AvgAssists = last10.reduce((s, g) => s + (g.assists || 0), 0) / last10.length;
     const last10AvgThrees = last10.reduce((s, g) => s + (g.threes_made || 0), 0) / last10.length;
 
+    // Calculate last 5 game averages for hot/cold detection
+    const last5 = games.slice(0, Math.min(5, games.length));
+    const last5AvgPoints = last5.length > 0 ? last5.reduce((s, g) => s + (g.points || 0), 0) / last5.length : last10AvgPoints;
+    const last5AvgRebounds = last5.length > 0 ? last5.reduce((s, g) => s + (g.rebounds || 0), 0) / last5.length : last10AvgRebounds;
+    const last5AvgAssists = last5.length > 0 ? last5.reduce((s, g) => s + (g.assists || 0), 0) / last5.length : last10AvgAssists;
+    const last5AvgThrees = last5.length > 0 ? last5.reduce((s, g) => s + (g.threes_made || 0), 0) / last5.length : last10AvgThrees;
+
     // Calculate consistency score and trend
     const consistencyScore = calculateConsistencyScore({
       points: pointsStdDev,
@@ -153,6 +160,11 @@ async function processPlayer(
       last_10_avg_rebounds: Math.round(last10AvgRebounds * 10) / 10,
       last_10_avg_assists: Math.round(last10AvgAssists * 10) / 10,
       last_10_avg_threes: Math.round(last10AvgThrees * 10) / 10,
+      // Hot/Cold detection columns (v6.0)
+      last_5_avg_points: Math.round(last5AvgPoints * 10) / 10,
+      last_5_avg_rebounds: Math.round(last5AvgRebounds * 10) / 10,
+      last_5_avg_assists: Math.round(last5AvgAssists * 10) / 10,
+      last_5_avg_threes: Math.round(last5AvgThrees * 10) / 10,
       consistency_score: consistencyScore,
       trend_direction: trendDirection,
       updated_at: new Date().toISOString()
