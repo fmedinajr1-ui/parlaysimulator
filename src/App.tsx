@@ -59,6 +59,7 @@ const ManualBuilder = React.lazy(() => import("./pages/ManualBuilder"));
 const DraftView = React.lazy(() => import("./pages/DraftView"));
 const WhaleProxy = React.lazy(() => import("./pages/WhaleProxy"));
 const Tomorrow3PT = React.lazy(() => import("./pages/Tomorrow3PT"));
+const TomorrowAssists = React.lazy(() => import("./pages/TomorrowAssists"));
 const AccuracyDashboard = React.lazy(() => import("./pages/AccuracyDashboard"));
 
 // QueryClient with optimized defaults
@@ -138,6 +139,7 @@ function AnimatedRoutes() {
               <Route path="/draft/:shareCode" element={<DraftView />} />
               <Route path="/whale-proxy" element={<WhaleProxy />} />
               <Route path="/tomorrow-3pt" element={<Tomorrow3PT />} />
+              <Route path="/tomorrow-assists" element={<TomorrowAssists />} />
               <Route path="/accuracy" element={<AccuracyDashboard />} />
               <Route path="*" element={<NotFound />} />
             </Routes>

@@ -27,6 +27,7 @@ const mainNavItems = [
   { icon: Users, label: "Pools", path: "/pools" },
   { icon: GitCompare, label: "Compare", path: "/compare" },
   { icon: User, label: "Profile", path: "/profile" },
+  { icon: Activity, label: "Assists", path: "/tomorrow-assists" },
 ];
 
 const adminItems = [

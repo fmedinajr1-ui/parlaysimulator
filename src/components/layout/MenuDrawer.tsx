@@ -20,6 +20,7 @@ import { useViewport } from "@/hooks/useViewport";
 const toolItems = [
   { icon: Hammer, label: "Manual Builder", path: "/manual-builder", description: "Build custom parlays manually" },
   { icon: Target, label: "Tomorrow's 3PT", path: "/tomorrow-3pt", description: "3PT shooter picks for tomorrow" },
+  { icon: Users, label: "Tomorrow's Assists", path: "/tomorrow-assists", description: "Assist plays for tomorrow" },
 ];
 
 const adminItems = [
