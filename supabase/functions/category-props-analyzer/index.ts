@@ -123,6 +123,97 @@ const MIN_EDGE_THRESHOLDS: Record<string, number> = {
   steals: 0.8,     // INCREASED from 0.3 - need 0.8+ edge for steals
 };
 
+// ============ 3PT SHOOTER FILTERS (v6.0) ============
+// Based on empirical analysis of 49+ settled picks showing 0% hit rate danger zones
+const THREES_FILTER_CONFIG = {
+  // Minimum edge requirements by variance tier
+  MIN_EDGE_BY_VARIANCE: {
+    LOW: 0.3,      // Low variance = reliable, lower edge needed
+    MEDIUM: 0.8,   // Medium variance = need decent edge
+    HIGH: 1.2,     // High variance = need strong edge buffer
+  } as Record<string, number>,
+  
+  // Maximum variance allowed by edge quality
+  MAX_VARIANCE_BY_EDGE: {
+    FAVORABLE: 3.0,  // >= 1.0 edge = allow high variance
+    NEUTRAL: 1.5,    // 0.5-0.99 edge = cap at medium variance
+    TIGHT: 1.0,      // < 0.5 edge = only ultra-consistent allowed
+  } as Record<string, number>,
+  
+  // Floor protection requirements
+  MIN_FLOOR_FOR_TIGHT_LINES: 2,  // L10 min must be 2+ for tight edges
+  
+  // Hot/Cold detection thresholds
+  HOT_STREAK_MULTIPLIER: 1.15,   // L5 > L10 * 1.15 = HOT
+  COLD_STREAK_MULTIPLIER: 0.85,  // L5 < L10 * 0.85 = COLD
+};
+
+// Validate 3PT candidate against variance-edge matrix and hot/cold detection
+function validate3PTCandidate(
+  playerName: string,
+  actualLine: number,
+  l10Avg: number,
+  l10Min: number,
+  stdDev: number,
+  l5Avg: number
+): { passes: boolean; reason: string; tier: string } {
+  
+  // 1. Calculate variance tier
+  const varianceTier = stdDev <= 1.0 ? 'LOW' : stdDev <= 1.5 ? 'MEDIUM' : 'HIGH';
+  
+  // 2. Calculate edge quality
+  const edge = l10Avg - actualLine;
+  const edgeQuality = edge >= 1.0 ? 'FAVORABLE' : edge >= 0.5 ? 'NEUTRAL' : 'TIGHT';
+  
+  // 3. DANGER ZONE BLOCKING
+  // Block: HIGH variance + NEUTRAL edge = 0% historical hit rate
+  if (varianceTier === 'HIGH' && edgeQuality === 'NEUTRAL') {
+    return { passes: false, reason: `HIGH variance (${stdDev.toFixed(2)}) + NEUTRAL edge (${edge.toFixed(1)}) = 0% historical`, tier: 'BLOCKED' };
+  }
+  
+  // Block: MEDIUM variance + TIGHT edge = 0% historical hit rate
+  if (varianceTier === 'MEDIUM' && edgeQuality === 'TIGHT') {
+    return { passes: false, reason: `MEDIUM variance + TIGHT edge = 0% historical`, tier: 'BLOCKED' };
+  }
+  
+  // 4. FLOOR PROTECTION for tight lines
+  if (edgeQuality === 'TIGHT' && l10Min < THREES_FILTER_CONFIG.MIN_FLOOR_FOR_TIGHT_LINES) {
+    return { passes: false, reason: `TIGHT edge requires L10 Min >= ${THREES_FILTER_CONFIG.MIN_FLOOR_FOR_TIGHT_LINES}, got ${l10Min}`, tier: 'BLOCKED' };
+  }
+  
+  // 5. COLD PLAYER DETECTION
+  if (l5Avg < l10Avg * THREES_FILTER_CONFIG.COLD_STREAK_MULTIPLIER) {
+    return { passes: false, reason: `COLD streak: L5 (${l5Avg.toFixed(1)}) < L10*0.85 (${(l10Avg * 0.85).toFixed(1)})`, tier: 'COLD' };
+  }
+  
+  // 6. Check minimum edge for variance tier
+  const minEdge = THREES_FILTER_CONFIG.MIN_EDGE_BY_VARIANCE[varianceTier];
+  if (edge < minEdge) {
+    return { passes: false, reason: `Edge ${edge.toFixed(1)} below minimum ${minEdge} for ${varianceTier} variance`, tier: 'LOW_EDGE' };
+  }
+  
+  // 7. Check maximum variance for edge quality
+  const maxVariance = THREES_FILTER_CONFIG.MAX_VARIANCE_BY_EDGE[edgeQuality];
+  if (stdDev > maxVariance) {
+    return { passes: false, reason: `Variance ${stdDev.toFixed(2)} exceeds max ${maxVariance} for ${edgeQuality} edge`, tier: 'HIGH_VARIANCE' };
+  }
+  
+  // 8. HOT PLAYER BONUS (informational, still passes)
+  if (l5Avg > l10Avg * THREES_FILTER_CONFIG.HOT_STREAK_MULTIPLIER) {
+    return { passes: true, reason: `HOT streak: L5 (${l5Avg.toFixed(1)}) > L10*1.15`, tier: 'HOT' };
+  }
+  
+  // 9. PASSED - classify tier
+  if (varianceTier === 'LOW') {
+    return { passes: true, reason: `LOW variance (100% historical)`, tier: 'ELITE' };
+  }
+  if (edgeQuality === 'FAVORABLE' && l10Min >= 2) {
+    return { passes: true, reason: `Strong floor + favorable edge (87.5% historical)`, tier: 'PREMIUM' };
+  }
+  
+  return { passes: true, reason: `Standard pick`, tier: 'STANDARD' };
+}
+
 // ============ ARCHETYPE DEFINITIONS (v3.0) ============
 const ARCHETYPE_GROUPS = {
   BIGS: ['ELITE_REBOUNDER', 'GLASS_CLEANER', 'STRETCH_BIG', 'RIM_PROTECTOR'],
@@ -955,9 +1046,39 @@ serve(async (req) => {
         const statValues = l10Logs.map(log => getStatValue(log, spot.prop_type));
         const l10Avg = statValues.reduce((a, b) => a + b, 0) / statValues.length;
         const l10StdDev = calculateStdDev(statValues);
+        const l10Min = Math.min(...statValues);
+        
+        // v6.0: Calculate L5 avg for hot/cold detection
+        const l5Logs = l10Logs.slice(0, 5);
+        const l5Values = l5Logs.map(log => getStatValue(log, spot.prop_type));
+        const l5Avg = l5Values.length > 0 ? l5Values.reduce((a, b) => a + b, 0) / l5Values.length : l10Avg;
         
         // v4.1: Get UPCOMING opponent from unified_props (not historical from game logs)
         const upcomingOpponent = actualData.opponent || null;
+        
+        // v6.0: Apply 3PT VALIDATION FILTER for THREE_POINT_SHOOTER category
+        if (spot.category === 'THREE_POINT_SHOOTER' && actualData.line !== null) {
+          const validation = validate3PTCandidate(
+            spot.player_name,
+            actualData.line,
+            l10Avg,
+            l10Min,
+            l10StdDev,
+            l5Avg
+          );
+          
+          if (!validation.passes) {
+            console.log(`[3PT Filter] ✗ ${spot.player_name}: ${validation.reason}`);
+            spot.is_active = false;
+            spot.quality_tier = validation.tier;
+            validatedSpots.push(spot);
+            droppedCount++;
+            continue;
+          }
+          
+          console.log(`[3PT Filter] ✓ ${spot.player_name}: ${validation.tier} - ${validation.reason}`);
+          spot.quality_tier = validation.tier;
+        }
         
         // v4.1: Calculate TRUE PROJECTION using correct upcoming opponent
         const projection = calculateTrueProjection(
