@@ -52,7 +52,26 @@ export function useTomorrow3PTProps(options: UseTomorrow3PTPropsOptions = {}) {
       console.group('🎯 [Tomorrow 3PT Props]');
       console.log(`📅 Target date: ${analysisDate}`);
 
-      // Fetch THREE_POINT_SHOOTER picks for the target date
+      // Step 1: Get players with games on the target date
+      const { data: upcomingProps } = await supabase
+        .from('unified_props')
+        .select('player_name')
+        .gte('commence_time', `${analysisDate}T00:00:00`)
+        .lt('commence_time', `${analysisDate}T23:59:59`);
+
+      const activePlayers = new Set(
+        (upcomingProps || []).map(p => p.player_name?.toLowerCase()).filter(Boolean)
+      );
+
+      console.log(`🎮 Found ${activePlayers.size} players with games on ${analysisDate}`);
+
+      if (activePlayers.size === 0) {
+        console.log('⚠️ No players with games on this date');
+        console.groupEnd();
+        return [];
+      }
+
+      // Step 2: Fetch THREE_POINT_SHOOTER picks for the target date
       const { data: sweetSpots, error: ssError } = await supabase
         .from('category_sweet_spots')
         .select('*')
@@ -69,8 +88,15 @@ export function useTomorrow3PTProps(options: UseTomorrow3PTPropsOptions = {}) {
 
       console.log(`🏀 Raw 3PT picks found: ${sweetSpots?.length || 0}`);
 
-      if (!sweetSpots || sweetSpots.length === 0) {
-        console.log('⚠️ No 3PT picks available for this date');
+      // Step 3: Filter to only players with actual games
+      const filteredSpots = (sweetSpots || []).filter(spot => 
+        activePlayers.has(spot.player_name?.toLowerCase())
+      );
+
+      console.log(`✅ Filtered to ${filteredSpots.length} picks with active games`);
+
+      if (filteredSpots.length === 0) {
+        console.log('⚠️ No 3PT picks for players with games');
         console.groupEnd();
         return [];
       }
@@ -101,8 +127,8 @@ export function useTomorrow3PTProps(options: UseTomorrow3PTPropsOptions = {}) {
         }
       });
 
-      // Transform picks
-      const picks: Tomorrow3PTPick[] = sweetSpots.map(pick => {
+      // Transform picks (using filtered spots)
+      const picks: Tomorrow3PTPick[] = filteredSpots.map(pick => {
         const playerKey = pick.player_name?.toLowerCase() || '';
         const reliabilityKey = `${playerKey}_player_threes`;
         const reliability = reliabilityMap.get(reliabilityKey);
