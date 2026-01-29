@@ -1,95 +1,113 @@
 
 
-# HIGH_ASSIST UNDER Implementation
+# Strategy Optimization: Flip Underperforming OVER Categories to UNDER
 
-## Current Status
+## Analysis Summary
 
-From the 44 HIGH_ASSIST pending picks, I've identified:
+Based on the January 2026 performance data, I've identified categories that should be flipped from OVER to UNDER recommendations:
 
-### Players PLAYING Tonight (27) - Flip to UNDER
+### Category Performance (Jan 2026)
 
-| Player | Line | L10 Rate | New Pick |
-|--------|------|----------|----------|
-| Amen Thompson | U5.5 | 100% | UNDER |
-| Andrew Nembhard | U8.5 | 100% | UNDER |
-| Anthony Black | U4.5 | 80% | UNDER |
-| Brandin Podziemski | U4.5 | 80% | UNDER |
-| Brandon Ingram | U3.5 | 70% | UNDER |
-| Cam Spencer | U8.5 | 90% | UNDER |
-| Coby White | U4.5 | 80% | UNDER |
-| Davion Mitchell | U6.5 | 80% | UNDER |
-| De'Aaron Fox | U5.5 | 100% | UNDER |
-| Derrick White | U5.5 | 100% | UNDER |
-| Donovan Mitchell | U6.5 | 90% | UNDER |
-| Dyson Daniels | U5.5 | 80% | UNDER |
-| Immanuel Quickley | U5.5 | 70% | UNDER |
-| Jaden McDaniels | U2.5 | 70% | UNDER |
-| Jalen Brunson | U5.5 | 90% | UNDER |
-| Jalen Johnson | U7.5 | 100% | UNDER |
-| Jalen Suggs | U4.5 | 80% | UNDER |
-| Jamal Shead | U4.5 | 80% | UNDER |
-| Jaylen Brown | U4.5 | 70% | UNDER |
-| Josh Giddey | U7.5 | 86% | UNDER |
-| Jusuf Nurkic | U5.5 | 90% | UNDER |
-| Keyonte George | U6.5 | 70% | UNDER |
-| LaMelo Ball | U6.5 | 90% | UNDER |
-| Luka Doncic | U9.5 | 100% | UNDER |
-| Matas Buzelis | U2.5 | 80% | UNDER |
-| Scottie Barnes | U4.5 | 80% | UNDER |
-| Stephon Castle | U6.5 | 100% | UNDER |
+| Category | Current Side | Hit Rate | Record | Action |
+|----------|--------------|----------|--------|--------|
+| HIGH_ASSIST | OVER | 21.1% | 4-15 | Already flipped to UNDER |
+| LOW_LINE_REBOUNDER | OVER | 41.7% | 5-7 | **FLIP TO UNDER** |
+| BIG_REBOUNDER | OVER | 51.4% | 18-17 | Keep as-is (breakeven) |
+| BIG_ASSIST_OVER | OVER | 70.0% | 14-6 | Keep (performing well) |
+| THREE_POINT_SHOOTER | OVER | 69.4% | 34-15 | Keep (performing well) |
 
-### Players NOT PLAYING Tonight (17) - Mark Inactive
+### Tonight's Active LOW_LINE_REBOUNDER Picks (3 players)
 
-Cade Cunningham, Cam Thomas, Darius Garland, Deni Avdija, Devin Booker, Isaiah Collier, Ja Morant, Jalen Pickett, Jamal Murray, James Harden, Jimmy Butler III, Jrue Holiday, Kevin Porter Jr., Nicolas Claxton, Shai Gilgeous-Alexander, Tre Jones, Tyrese Maxey
+| Player | Current Pick | L10 Avg | L10 Hit Rate | Proposed Pick |
+|--------|--------------|---------|--------------|---------------|
+| Sam Hauser | O 3.5 REB | 5.3 | 90% | **U 3.5 REB** |
+| Matas Buzelis | O 3.5 REB | 5.2 | 80% | **U 3.5 REB** |
+| Jaden McDaniels | O 3.5 REB | 4.8 | 70% | **U 3.5 REB** |
 
 ---
 
 ## Implementation Plan
 
-### Step 1: Update Edge Function
+### Step 1: Database - Flip Tonight's LOW_LINE_REBOUNDER Picks
 
-Modify `category-props-analyzer/index.ts` to add `HIGH_ASSIST_UNDER` category that:
-- Uses same player detection (high L10 hit rates on assists)
-- Recommends UNDER instead of OVER
-- Keeps confidence scoring
+Update the 3 active picks from OVER to UNDER:
 
-### Step 2: Database Updates
-
-**SQL 1 - Flip playing players to UNDER:**
 ```sql
 UPDATE category_sweet_spots
 SET 
   recommended_side = 'under',
-  category = 'HIGH_ASSIST_UNDER'
-WHERE category = 'HIGH_ASSIST'
+  category = 'LOW_LINE_REBOUNDER_UNDER'
+WHERE category = 'LOW_LINE_REBOUNDER'
 AND analysis_date = '2026-01-28'
 AND outcome = 'pending'
-AND player_name IN (
-  'Amen Thompson', 'Andrew Nembhard', 'Anthony Black', 'Brandin Podziemski',
-  'Brandon Ingram', 'Cam Spencer', 'Coby White', 'Davion Mitchell', 
-  'De''Aaron Fox', 'Derrick White', 'Donovan Mitchell', 'Dyson Daniels',
-  'Immanuel Quickley', 'Jaden McDaniels', 'Jalen Brunson', 'Jalen Johnson',
-  'Jalen Suggs', 'Jamal Shead', 'Jaylen Brown', 'Josh Giddey', 'Jusuf Nurkic',
-  'Keyonte George', 'LaMelo Ball', 'Luka Doncic', 'Matas Buzelis', 
-  'Scottie Barnes', 'Stephon Castle'
-);
+AND is_active = true;
 ```
 
-**SQL 2 - Deactivate non-playing players:**
-```sql
-UPDATE category_sweet_spots
-SET is_active = false
-WHERE category = 'HIGH_ASSIST'
-AND analysis_date = '2026-01-28'
-AND outcome = 'pending'
-AND player_name IN (
-  'Cade Cunningham', 'Cam Thomas', 'Darius Garland', 'Deni Avdija',
-  'Devin Booker', 'Isaiah Collier', 'Ja Morant', 'Jalen Pickett',
-  'Jamal Murray', 'James Harden', 'Jimmy Butler III', 'Jrue Holiday',
-  'Kevin Porter Jr.', 'Nicolas Claxton', 'Shai Gilgeous-Alexander',
-  'Tre Jones', 'Tyrese Maxey'
-);
+### Step 2: Edge Function - Add New UNDER Categories
+
+Modify `supabase/functions/category-props-analyzer/index.ts` to add two new permanent UNDER categories:
+
+```text
++---------------------------+      +---------------------------+
+|   HIGH_ASSIST_UNDER       |      |  LOW_LINE_REBOUNDER_UNDER |
++---------------------------+      +---------------------------+
+| propType: assists         |      | propType: rebounds        |
+| avgRange: 4-15            |      | avgRange: 4-6             |
+| lines: 3.5-9.5            |      | lines: 3.5-5.5            |
+| side: UNDER               |      | side: UNDER               |
+| minHitRate: 0.70          |      | minHitRate: 0.70          |
++---------------------------+      +---------------------------+
 ```
+
+### Step 3: UI Updates (Optional)
+
+Add new category tabs to `CategoryPropsCard.tsx` to display UNDER categories:
+- Add `HIGH_ASSIST_UNDER` and `LOW_LINE_REBOUNDER_UNDER` to `CATEGORY_CONFIG`
+
+---
+
+## Technical Details
+
+### Edge Function Changes
+
+**File**: `supabase/functions/category-props-analyzer/index.ts`
+
+Add to `CATEGORIES` constant (around line 293):
+
+```typescript
+HIGH_ASSIST_UNDER: {
+  name: 'Assist Under',
+  propType: 'assists',
+  avgRange: { min: 4, max: 15 },
+  lines: [3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5],
+  side: 'under',
+  minHitRate: 0.7
+},
+LOW_LINE_REBOUNDER_UNDER: {
+  name: 'Low Line Reb Under',
+  propType: 'rebounds',
+  avgRange: { min: 4, max: 6 },
+  lines: [3.5, 4.5, 5.5],
+  side: 'under',
+  minHitRate: 0.7
+},
+```
+
+### Database Updates
+
+1. **Flip LOW_LINE_REBOUNDER picks** for tonight (3 players)
+2. **Deploy updated edge function** so future refreshes generate UNDER picks
+
+---
+
+## Expected Outcomes
+
+| Category | Before (OVER) | After (UNDER) | Projected Improvement |
+|----------|---------------|---------------|----------------------|
+| HIGH_ASSIST | 21.1% | ~78.9% | +57.8 pts |
+| LOW_LINE_REBOUNDER | 41.7% | ~58.3% | +16.6 pts |
+
+**Total Impact**: Converting 2 underperforming OVER categories to UNDER should significantly improve overall system accuracy.
 
 ---
 
@@ -97,12 +115,6 @@ AND player_name IN (
 
 | File | Change |
 |------|--------|
-| `supabase/functions/category-props-analyzer/index.ts` | Add HIGH_ASSIST_UNDER category |
-| Database | Flip 27 picks to UNDER, deactivate 17 non-playing |
-
----
-
-## Expected Outcome
-
-Based on historical 74% miss rate on OVERs, flipping to UNDER should yield approximately 70%+ hit rate on these 27 picks tonight.
+| `supabase/functions/category-props-analyzer/index.ts` | Add HIGH_ASSIST_UNDER and LOW_LINE_REBOUNDER_UNDER categories |
+| Database | Flip 3 LOW_LINE_REBOUNDER picks to UNDER |
 
