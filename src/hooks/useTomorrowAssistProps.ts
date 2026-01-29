@@ -56,7 +56,26 @@ export function useTomorrowAssistProps(options: UseTomorrowAssistPropsOptions = 
       console.group('🏀 [Tomorrow Assist Props]');
       console.log(`📅 Target date: ${analysisDate}`);
 
-      // Build query
+      // Step 1: Get players with games on the target date
+      const { data: upcomingProps } = await supabase
+        .from('unified_props')
+        .select('player_name')
+        .gte('commence_time', `${analysisDate}T00:00:00`)
+        .lt('commence_time', `${analysisDate}T23:59:59`);
+
+      const activePlayers = new Set(
+        (upcomingProps || []).map(p => p.player_name?.toLowerCase()).filter(Boolean)
+      );
+
+      console.log(`🎮 Found ${activePlayers.size} players with games on ${analysisDate}`);
+
+      if (activePlayers.size === 0) {
+        console.log('⚠️ No players with games on this date');
+        console.groupEnd();
+        return [];
+      }
+
+      // Step 2: Build query for category sweet spots
       let query = supabase
         .from('category_sweet_spots')
         .select('*')
@@ -81,8 +100,15 @@ export function useTomorrowAssistProps(options: UseTomorrowAssistPropsOptions = 
 
       console.log(`🏀 Raw assist picks found: ${sweetSpots?.length || 0}`);
 
-      if (!sweetSpots || sweetSpots.length === 0) {
-        console.log('⚠️ No assist picks available for this date');
+      // Step 3: Filter to only players with actual games
+      const filteredSpots = (sweetSpots || []).filter(spot => 
+        activePlayers.has(spot.player_name?.toLowerCase())
+      );
+
+      console.log(`✅ Filtered to ${filteredSpots.length} picks with active games`);
+
+      if (filteredSpots.length === 0) {
+        console.log('⚠️ No assist picks for players with games');
         console.groupEnd();
         return [];
       }
@@ -113,8 +139,8 @@ export function useTomorrowAssistProps(options: UseTomorrowAssistPropsOptions = 
         }
       });
 
-      // Transform picks
-      const picks: TomorrowAssistPick[] = sweetSpots.map(pick => {
+      // Transform picks (using filtered spots)
+      const picks: TomorrowAssistPick[] = filteredSpots.map(pick => {
         const playerKey = pick.player_name?.toLowerCase() || '';
         const reliabilityKey = `${playerKey}_player_assists`;
         const reliability = reliabilityMap.get(reliabilityKey);
