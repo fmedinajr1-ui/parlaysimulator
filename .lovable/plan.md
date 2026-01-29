@@ -1,97 +1,176 @@
 
+# Implementation Plan: Today's Assist Plays with Accurate Lines & L5 Averages
 
-# Fix: Filter Tomorrow Pages to Players With Actual Games
+## Problem Summary
 
-## Problem Identified
+The current "Tomorrow's Assist Plays" page has three critical data issues:
+1. **Missing categories** - Only shows `BIG_ASSIST_OVER` and `HIGH_ASSIST_UNDER` (8 picks), but most assist picks are in `HIGH_ASSIST` (39 picks) and `ASSIST_ANCHOR` (4 picks)
+2. **Placeholder lines** - Displays `recommended_line` (2.5-3.5) instead of actual sportsbook lines (7.5, 9.5, 5.5)
+3. **No L5 data** - Missing last 5 games average for comparison
 
-The **Tomorrow's Assist Plays** page shows 19 picks, but only **1 player** (Alperen Sengun) actually has a game tomorrow. The same issue affects the **Tomorrow's 3PT Picks** page.
+## Data Verification (Jan 29th Slate)
 
-**Root Cause**: Both hooks fetch from `category_sweet_spots` without cross-referencing `unified_props` to verify players have upcoming games.
+| Player | Actual Line | L10 Avg | L5 Avg (calculated) | L10 Hit Rate |
+|--------|-------------|---------|---------------------|--------------|
+| Tyrese Maxey | 7.5 | 8.2 | TBD | 100% |
+| Cade Cunningham | 9.5 | 9.2 | 9.8 (11,11,11,8,8) | 100% |
+| Coby White | 5.5 | 5.4 | TBD | 100% |
+| LaMelo Ball | 6.5 | 6.3 | TBD | 90% |
 
-## How CategoryPropsCard Does It Right
+---
 
+## Implementation Steps
+
+### Step 1: Create `useTodayAssistProps.ts` Hook
+
+A new dedicated hook for today's slate with proper data enrichment:
+
+**Key Changes:**
+- Use `getEasternDate()` from `@/lib/dateUtils` for today's date
+- Expand categories: `['BIG_ASSIST_OVER', 'HIGH_ASSIST_UNDER', 'HIGH_ASSIST', 'ASSIST_ANCHOR']`
+- Fetch live lines from `unified_props` where `prop_type = 'player_assists'`
+- Query `nba_player_game_logs` to calculate L5 average assists
+- Add `l5_avg` and enhanced `actual_line` to the pick interface
+
+**Data Flow:**
 ```text
-1. Fetch active players → SELECT player_name FROM unified_props WHERE commence_time >= NOW()
-2. Create activePlayers Set
-3. Fetch category_sweet_spots
-4. Filter to only players in activePlayers set
+unified_props (today)     ──► activePlayers Set
+                                    │
+category_sweet_spots      ──► Filter by Set ──► Raw Picks
+                                    │
+unified_props (lines)     ──► linesMap ───────► Merge Live Lines
+                                    │
+nba_player_game_logs (L5) ──► l5Map ──────────► Add L5 Avg
+                                    │
+                                    ▼
+                              Final Picks with accurate data
 ```
 
-## Fix Plan
+### Step 2: Update `TomorrowAssistPick` Interface
 
-### 1. Update `useTomorrowAssistProps.ts`
+Add new field:
+```typescript
+l5_avg: number | null;  // Last 5 games average
+```
 
-Add the same filtering logic used in CategoryPropsCard:
+### Step 3: Update `TomorrowAssists.tsx` UI
 
-- Before fetching from `category_sweet_spots`, first query `unified_props` for the target date
-- Build a Set of player names with actual games
-- After fetching sweet spots, filter to only include players in that Set
-- Log the before/after count for debugging
+- Display both L5 and L10 averages side-by-side
+- Fix the page title/header dynamically based on analysis date
 
-### 2. Update `useTomorrow3PTProps.ts`
-
-Apply the same fix for consistency across all "Tomorrow" pages.
-
-### 3. Changes Summary
-
+**Updated Stats Display:**
 ```text
-┌────────────────────────────────────────────────────────────────────┐
-│                    BEFORE (Current - Broken)                        │
-├────────────────────────────────────────────────────────────────────┤
-│  category_sweet_spots  ────────────────────────►  Display          │
-│  (19 picks)                                       (All 19 shown)   │
-└────────────────────────────────────────────────────────────────────┘
-
-┌────────────────────────────────────────────────────────────────────┐
-│                    AFTER (Fixed)                                    │
-├────────────────────────────────────────────────────────────────────┤
-│  unified_props (tomorrow) ───► activePlayers Set                   │
-│                                      ↓                              │
-│  category_sweet_spots  ───► Filter by Set ───►  Display            │
-│  (19 picks)                  (only 1 player)    (1 pick)           │
-└────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────┐
+│ Cade Cunningham                    100% │
+│ DET  •  Over                     L10 HR │
+├─────────────────────────────────────────┤
+│ Line: O 9.5          L5: 9.8   L10: 9.2 │
+│                      Conf: 75%          │
+└─────────────────────────────────────────┘
 ```
 
 ---
 
-## Technical Details
+## Technical Implementation Details
 
-### Code Change for `useTomorrowAssistProps.ts`
-
-Add before the main query:
+### Hook Logic (useTomorrowAssistProps.ts)
 
 ```typescript
-// Step 1: Get players with games on the target date
-const { data: upcomingProps } = await supabase
+// 1. Expand categories
+query = query.in('category', [
+  'BIG_ASSIST_OVER', 
+  'HIGH_ASSIST_UNDER', 
+  'HIGH_ASSIST', 
+  'ASSIST_ANCHOR'
+]);
+
+// 2. Fetch live lines from unified_props
+const { data: liveLines } = await supabase
   .from('unified_props')
-  .select('player_name')
-  .gte('commence_time', `${analysisDate}T00:00:00`)
-  .lt('commence_time', `${analysisDate}T23:59:59`);
+  .select('player_name, current_line')
+  .eq('prop_type', 'player_assists')
+  .gte('commence_time', `${startOfToday}`)
+  .lt('commence_time', `${endOfToday}`);
 
-const activePlayers = new Set(
-  (upcomingProps || []).map(p => p.player_name?.toLowerCase())
-);
+const linesMap = new Map();
+liveLines?.forEach(p => {
+  linesMap.set(p.player_name.toLowerCase(), p.current_line);
+});
 
-console.log(`Found ${activePlayers.size} players with games on ${analysisDate}`);
+// 3. Calculate L5 averages from game logs
+const playerNames = filteredSpots.map(p => p.player_name);
+
+const { data: gameLogs } = await supabase
+  .from('nba_player_game_logs')
+  .select('player_name, assists, game_date')
+  .in('player_name', playerNames)
+  .order('game_date', { ascending: false })
+  .limit(playerNames.length * 5);
+
+// Group by player and calculate L5 avg
+const l5Map = new Map();
+const grouped = {};
+gameLogs?.forEach(log => {
+  const key = log.player_name.toLowerCase();
+  if (!grouped[key]) grouped[key] = [];
+  if (grouped[key].length < 5) grouped[key].push(log.assists);
+});
+Object.entries(grouped).forEach(([name, assists]) => {
+  const avg = assists.reduce((s, a) => s + a, 0) / assists.length;
+  l5Map.set(name, avg);
+});
+
+// 4. Merge into pick transformation
+return {
+  ...pick,
+  actual_line: linesMap.get(playerKey) ?? pick.actual_line ?? pick.recommended_line,
+  l5_avg: l5Map.get(playerKey) ?? null,
+};
 ```
 
-Then after fetching sweet spots:
+### UI Changes (TomorrowAssists.tsx)
 
-```typescript
-// Filter to only players with actual games
-const filteredPicks = picks.filter(pick => 
-  activePlayers.has(pick.player_name?.toLowerCase())
-);
-
-console.log(`Filtered from ${picks.length} to ${filteredPicks.length} picks`);
+```tsx
+<div className="flex items-center gap-3 text-sm">
+  {pick.l5_avg !== null && (
+    <div className="text-center">
+      <p className="text-xs text-muted-foreground">L5</p>
+      <p className="font-semibold">{pick.l5_avg.toFixed(1)}</p>
+    </div>
+  )}
+  {pick.l10_avg !== null && (
+    <div className="text-center">
+      <p className="text-xs text-muted-foreground">L10</p>
+      <p className="font-semibold">{pick.l10_avg.toFixed(1)}</p>
+    </div>
+  )}
+  <div className="text-center">
+    <p className="text-xs text-muted-foreground">Conf</p>
+    <p className="font-semibold">{(pick.confidence_score * 100).toFixed(0)}%</p>
+  </div>
+</div>
 ```
 
-### Files to Modify
+---
 
-| File | Change |
-|------|--------|
-| `src/hooks/useTomorrowAssistProps.ts` | Add unified_props cross-reference filter |
-| `src/hooks/useTomorrow3PTProps.ts` | Add unified_props cross-reference filter |
+## Files to Modify
 
-This will ensure both pages only show players with confirmed games on the target date.
+| File | Changes |
+|------|---------|
+| `src/hooks/useTomorrowAssistProps.ts` | Expand categories, fetch live lines, calculate L5 avg |
+| `src/pages/TomorrowAssists.tsx` | Display L5 avg, update UI layout |
 
+## Expected Results After Implementation
+
+For January 29th slate, the page will show:
+
+**Elite Tier (100% L10):**
+- Tyrese Maxey - O 7.5 - L5: X.X - L10: 8.2
+- Cade Cunningham - O 9.5 - L5: 9.8 - L10: 9.2
+- Coby White - O 5.5 - L5: X.X - L10: 5.4
+- James Harden - O X.X - L5: X.X - L10: 8.7
+- LeBron James, Derrick White, Pascal Siakam, etc.
+
+**High Tier (90% L10):**
+- LaMelo Ball - O 6.5 - L5: X.X - L10: 6.3
+- Aaron Gordon, Giannis Antetokounmpo
