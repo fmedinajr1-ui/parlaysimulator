@@ -292,11 +292,20 @@ export default function Tomorrow3PT() {
                         <span className="font-mono font-semibold text-primary">
                           O {line}
                         </span>
-                        {!pick.actual_line && (
-                          <span className="text-xs text-muted-foreground">(rec)</span>
-                        )}
                       </div>
                       <div className="flex items-center gap-3 text-sm">
+                        {pick.l5_avg !== null && (
+                          <div className="text-center">
+                            <p className="text-xs text-muted-foreground">L5</p>
+                            <p className="font-semibold">{pick.l5_avg.toFixed(1)}</p>
+                          </div>
+                        )}
+                        {pick.l10_avg !== null && (
+                          <div className="text-center">
+                            <p className="text-xs text-muted-foreground">L10</p>
+                            <p className="font-semibold">{pick.l10_avg.toFixed(1)}</p>
+                          </div>
+                        )}
                         <div className="text-center">
                           <p className="text-xs text-muted-foreground">Conf</p>
                           <p className="font-semibold">{(pick.confidence_score * 100).toFixed(0)}%</p>

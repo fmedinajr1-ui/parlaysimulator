@@ -25,6 +25,8 @@ export interface Tomorrow3PTPick {
   recommended_line: number;
   actual_line: number | null;
   l10_hit_rate: number;
+  l10_avg: number | null;
+  l5_avg: number | null;
   confidence_score: number;
   projected_value: number | null;
   team: string;
@@ -127,6 +129,48 @@ export function useTomorrow3PTProps(options: UseTomorrow3PTPropsOptions = {}) {
         }
       });
 
+      // Fetch live lines from unified_props
+      const { data: liveLines } = await supabase
+        .from('unified_props')
+        .select('player_name, current_line')
+        .eq('prop_type', 'player_threes')
+        .gte('commence_time', `${analysisDate}T00:00:00`)
+        .lt('commence_time', `${analysisDate}T23:59:59`);
+
+      const linesMap = new Map<string, number>();
+      liveLines?.forEach(p => {
+        if (p.player_name && p.current_line) {
+          linesMap.set(p.player_name.toLowerCase(), p.current_line);
+        }
+      });
+
+      // Fetch L5 averages from game logs
+      const playerNames = filteredSpots.map(p => p.player_name).filter(Boolean);
+      
+      const { data: gameLogs } = await supabase
+        .from('nba_player_game_logs')
+        .select('player_name, threes_made, game_date')
+        .in('player_name', playerNames)
+        .order('game_date', { ascending: false });
+
+      // Group by player and calculate L5 avg
+      const l5Map = new Map<string, number>();
+      const grouped: Record<string, number[]> = {};
+      gameLogs?.forEach(log => {
+        const key = log.player_name?.toLowerCase();
+        if (!key) return;
+        if (!grouped[key]) grouped[key] = [];
+        if (grouped[key].length < 5 && log.threes_made !== null) {
+          grouped[key].push(log.threes_made);
+        }
+      });
+      Object.entries(grouped).forEach(([name, threes]) => {
+        if (threes.length > 0) {
+          const avg = threes.reduce((s, a) => s + a, 0) / threes.length;
+          l5Map.set(name, avg);
+        }
+      });
+
       // Transform picks (using filtered spots)
       const picks: Tomorrow3PTPick[] = filteredSpots.map(pick => {
         const playerKey = pick.player_name?.toLowerCase() || '';
@@ -134,17 +178,24 @@ export function useTomorrow3PTProps(options: UseTomorrow3PTPropsOptions = {}) {
         const reliability = reliabilityMap.get(reliabilityKey);
         const team = teamMap.get(playerKey) || 'Unknown';
         
-        const edge = pick.projected_value && pick.actual_line
-          ? pick.projected_value - pick.actual_line
+        // Use live line from unified_props, fallback to actual_line, then recommended
+        const actualLine = linesMap.get(playerKey) ?? pick.actual_line ?? pick.recommended_line;
+        
+        const edge = pick.projected_value && actualLine
+          ? pick.projected_value - actualLine
           : null;
+
+        const l5Avg = l5Map.get(playerKey) ?? null;
 
         return {
           id: pick.id,
           player_name: pick.player_name || '',
           prop_type: pick.prop_type || 'player_threes',
           recommended_line: pick.recommended_line || 0.5,
-          actual_line: pick.actual_line,
+          actual_line: actualLine,
           l10_hit_rate: pick.l10_hit_rate || 0,
+          l10_avg: pick.l10_avg ?? null,
+          l5_avg: l5Avg,
           confidence_score: pick.confidence_score || 0,
           projected_value: pick.projected_value,
           team,
