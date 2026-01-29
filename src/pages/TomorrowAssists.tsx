@@ -335,14 +335,17 @@ export default function TomorrowAssists() {
                         )}>
                           {isUnder ? 'U' : 'O'} {line}
                         </span>
-                        {!pick.actual_line && (
-                          <span className="text-xs text-muted-foreground">(rec)</span>
-                        )}
                       </div>
-                      <div className="flex items-center gap-3 text-sm">
+                      <div className="flex items-center gap-4 text-sm">
+                        {pick.l5_avg !== null && (
+                          <div className="text-center">
+                            <p className="text-xs text-muted-foreground">L5</p>
+                            <p className="font-semibold">{pick.l5_avg.toFixed(1)}</p>
+                          </div>
+                        )}
                         {pick.l10_avg !== null && (
                           <div className="text-center">
-                            <p className="text-xs text-muted-foreground">L10 Avg</p>
+                            <p className="text-xs text-muted-foreground">L10</p>
                             <p className="font-semibold">{pick.l10_avg.toFixed(1)}</p>
                           </div>
                         )}

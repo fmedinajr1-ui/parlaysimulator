@@ -27,6 +27,7 @@ export interface TomorrowAssistPick {
   actual_line: number | null;
   l10_hit_rate: number;
   l10_avg: number | null;
+  l5_avg: number | null;
   confidence_score: number;
   projected_value: number | null;
   team: string;
@@ -83,9 +84,9 @@ export function useTomorrowAssistProps(options: UseTomorrowAssistPropsOptions = 
         .gte('l10_hit_rate', minHitRate)
         .order('l10_hit_rate', { ascending: false });
 
-      // Filter by category
+      // Filter by category - expanded to include all assist categories
       if (category === 'all') {
-        query = query.in('category', ['BIG_ASSIST_OVER', 'HIGH_ASSIST_UNDER']);
+        query = query.in('category', ['BIG_ASSIST_OVER', 'HIGH_ASSIST_UNDER', 'HIGH_ASSIST', 'ASSIST_ANCHOR']);
       } else {
         query = query.eq('category', category);
       }
@@ -112,6 +113,57 @@ export function useTomorrowAssistProps(options: UseTomorrowAssistPropsOptions = 
         console.groupEnd();
         return [];
       }
+
+      // Fetch live lines from unified_props
+      const nextDay = new Date(analysisDate);
+      nextDay.setDate(nextDay.getDate() + 1);
+      const nextDayStr = nextDay.toISOString().split('T')[0];
+
+      const { data: liveLines } = await supabase
+        .from('unified_props')
+        .select('player_name, current_line')
+        .eq('prop_type', 'player_assists')
+        .gte('commence_time', `${analysisDate}T00:00:00`)
+        .lt('commence_time', `${nextDayStr}T12:00:00`);
+
+      const linesMap = new Map<string, number>();
+      (liveLines || []).forEach(p => {
+        if (p.player_name && p.current_line) {
+          linesMap.set(p.player_name.toLowerCase(), p.current_line);
+        }
+      });
+
+      console.log(`📊 Live lines found for ${linesMap.size} players`);
+
+      // Fetch L5 averages from game logs
+      const playerNames = filteredSpots.map(p => p.player_name).filter(Boolean);
+      
+      const { data: gameLogs } = await supabase
+        .from('nba_player_game_logs')
+        .select('player_name, assists, game_date')
+        .in('player_name', playerNames)
+        .order('game_date', { ascending: false })
+        .limit(playerNames.length * 10);
+
+      // Group by player and calculate L5 avg
+      const l5Map = new Map<string, number>();
+      const grouped: Record<string, number[]> = {};
+      (gameLogs || []).forEach(log => {
+        const key = log.player_name?.toLowerCase();
+        if (!key) return;
+        if (!grouped[key]) grouped[key] = [];
+        if (grouped[key].length < 5 && log.assists !== null) {
+          grouped[key].push(log.assists);
+        }
+      });
+      Object.entries(grouped).forEach(([name, assists]) => {
+        if (assists.length > 0) {
+          const avg = assists.reduce((s, a) => s + a, 0) / assists.length;
+          l5Map.set(name, avg);
+        }
+      });
+
+      console.log(`📈 L5 averages calculated for ${l5Map.size} players`);
 
       // Fetch reliability scores
       const { data: reliabilityScores } = await supabase
@@ -146,9 +198,16 @@ export function useTomorrowAssistProps(options: UseTomorrowAssistPropsOptions = 
         const reliability = reliabilityMap.get(reliabilityKey);
         const team = teamMap.get(playerKey) || 'Unknown';
         
-        const edge = pick.projected_value && pick.actual_line
-          ? pick.projected_value - pick.actual_line
+        // Use live line from unified_props, fallback to actual_line, then recommended
+        const liveLine = linesMap.get(playerKey);
+        const actualLine = liveLine ?? pick.actual_line ?? pick.recommended_line;
+        
+        const edge = pick.projected_value && actualLine
+          ? pick.projected_value - actualLine
           : null;
+
+        // Get L5 average
+        const l5Avg = l5Map.get(playerKey) ?? null;
 
         return {
           id: pick.id,
@@ -156,9 +215,10 @@ export function useTomorrowAssistProps(options: UseTomorrowAssistPropsOptions = 
           prop_type: pick.prop_type || 'player_assists',
           category: pick.category || '',
           recommended_line: pick.recommended_line || 0.5,
-          actual_line: pick.actual_line,
+          actual_line: actualLine,
           l10_hit_rate: pick.l10_hit_rate || 0,
           l10_avg: pick.l10_avg,
+          l5_avg: l5Avg,
           confidence_score: pick.confidence_score || 0,
           projected_value: pick.projected_value,
           team,
