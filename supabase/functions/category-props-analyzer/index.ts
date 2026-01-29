@@ -305,6 +305,22 @@ const CATEGORIES: Record<string, CategoryConfig> = {
     lines: [0.5, 1.5, 2.5, 3.5, 4.5],
     side: 'over',
     minHitRate: 0.7
+  },
+  HIGH_ASSIST_UNDER: {
+    name: 'Assist Under',
+    propType: 'assists',
+    avgRange: { min: 4, max: 15 },
+    lines: [3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5],
+    side: 'under',
+    minHitRate: 0.7
+  },
+  LOW_LINE_REBOUNDER_UNDER: {
+    name: 'Low Line Reb Under',
+    propType: 'rebounds',
+    avgRange: { min: 4, max: 6 },
+    lines: [3.5, 4.5, 5.5],
+    side: 'under',
+    minHitRate: 0.7
   }
 };
 
