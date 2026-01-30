@@ -257,8 +257,13 @@ async function fetchESPNGameLogs(daysBack: number = 7): Promise<any[]> {
         
         const boxData = await boxRes.json();
         
-        // Get game date from header or use our tracked date
-        const gameDate = boxData.header?.competitions?.[0]?.date?.split('T')[0] || game.dateStr;
+        // Get game date from header - MUST convert UTC to Eastern Time
+        // ESPN returns UTC timestamps (e.g., "2026-01-30T00:10:00Z" for a 7:10 PM ET game on Jan 29th)
+        // Without conversion, evening games get stored as the next day
+        const rawDate = boxData.header?.competitions?.[0]?.date;
+        const gameDate = rawDate 
+          ? new Date(rawDate).toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+          : game.dateStr;
         
         if (!gameDate) {
           console.error(`[ESPN NBA] No date for game ${game.id}`);
