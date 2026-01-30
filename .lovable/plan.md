@@ -1,176 +1,134 @@
 
-# Unified Props Hook with Proper UTC Timezone Handling
 
-## Problem Summary
+# Fix ESPN Game Log Date Parsing Issue
 
-Both the 3PT and Assists hooks have identical bugs preventing accurate data display:
+## Problem Identified
 
-| Issue | Current (Wrong) | Correct |
-|-------|-----------------|---------|
-| Prop type (3PT) | `'player_threes'` | `'threes'` |
-| Prop type (Assists) | `'player_assists'` | `'assists'` |
-| Time boundary | `${analysisDate}T00:00:00` | `${nextDayUTC}T00:00:00` |
+The `nba-stats-fetcher` edge function has a **date assignment bug** causing outcome verification to fail:
 
-Games on Jan 29th Eastern Time are stored in the database as `2026-01-30 00:10:00+00` (UTC), so queries for "today's games" must use the next calendar day's UTC timestamps.
+| ESPN Shows | Actual Game Date (ET) | Our Database |
+|------------|----------------------|--------------|
+| Thu 1/29 vs OKC | Jan 29th ET evening | **Missing** (not yet fetched) |
+| Wed 1/28 vs DAL | Jan 28th ET evening | Stored as Jan 29 ❌ |
+
+**Root Cause:** ESPN's API returns dates based on UTC midnight, not Eastern Time. Games that play at 7pm-10pm ET on January 29th are recorded by ESPN as January 30th (since they cross UTC midnight). Our fetcher then uses ESPN's reported date directly, causing a 1-day offset.
 
 ---
 
-## Solution: Create Unified Hook
+## Current Data Source
 
-Create a single `useTodayProps` hook that:
-1. Centralizes UTC timezone conversion logic
-2. Supports both 3PT and Assists prop types
-3. Properly fetches live lines with correct `prop_type` values
-4. Calculates L5 averages from game logs
+The system uses **ESPN's NBA API** as the primary source (`nba-stats-fetcher/index.ts`):
+
+```text
+ESPN_NBA_API = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba"
+```
+
+With `balldontlie.io` as a secondary/backup source.
+
+---
+
+## Verification Impact
+
+When `verify-sweet-spot-outcomes` runs for `analysis_date = '2026-01-29'`:
+1. It looks for game logs where `game_date = '2026-01-29'`
+2. Finds Edwards with 3 3PM (but this was actually Jan 28th's game)
+3. Grades picks incorrectly because it's using the wrong game data
+
+---
+
+## Solution
+
+### Option A: Fix at Fetch Time (Recommended)
+
+Modify the ESPN parser in `nba-stats-fetcher` to convert ESPN's UTC dates to Eastern Time:
+
+```typescript
+// When parsing ESPN boxscore dates
+const espnDate = boxData.header?.competitions?.[0]?.date; // "2026-01-30T00:10:00Z"
+const easternDate = new Date(espnDate).toLocaleDateString('en-US', { 
+  timeZone: 'America/New_York' 
+});
+// Result: "1/29/2026" - correctly stored as 2026-01-29
+```
+
+### Files to Modify
+
+| File | Change |
+|------|--------|
+| `supabase/functions/nba-stats-fetcher/index.ts` | Add UTC→ET date conversion when parsing ESPN game dates |
+| `supabase/functions/verify-sweet-spot-outcomes/index.ts` | No changes needed if fetch is fixed |
 
 ---
 
 ## Implementation Steps
 
-### Step 1: Create `src/hooks/useTodayProps.ts`
+### Step 1: Update ESPN Date Parsing
 
-A unified hook with these features:
-
-**Configuration by Prop Type:**
-```text
-PROP_CONFIG = {
-  threes: {
-    propType: 'threes',              // For unified_props query
-    sweetSpotCategory: 'THREE_POINT_SHOOTER',
-    gameLogField: 'threes_made',
-    reliabilityKey: 'player_threes'
-  },
-  assists: {
-    propType: 'assists',             // For unified_props query  
-    sweetSpotCategories: ['BIG_ASSIST_OVER', 'HIGH_ASSIST_UNDER', 'HIGH_ASSIST', 'ASSIST_ANCHOR'],
-    gameLogField: 'assists',
-    reliabilityKey: 'player_assists'
-  }
-}
-```
-
-**UTC Time Boundary Calculation:**
-```typescript
-function getUTCBoundariesForEasternDate(easternDate: string) {
-  // Eastern games on Jan 29th start at 7pm ET = Jan 30th 00:00 UTC
-  const nextDay = new Date(easternDate);
-  nextDay.setDate(nextDay.getDate() + 1);
-  const startUTC = `${nextDay.toISOString().split('T')[0]}T00:00:00`;
-  const endUTC = `${nextDay.toISOString().split('T')[0]}T12:00:00`;
-  return { startUTC, endUTC };
-}
-```
-
-**Data Flow:**
-```text
-getEasternDate() ──► '2026-01-29' (analysis_date for sweet spots)
-                          │
-getUTCBoundaries() ──► startUTC: '2026-01-30T00:00:00'
-                   ──► endUTC: '2026-01-30T12:00:00'
-                          │
-unified_props query ──► activePlayers Set + linesMap
-                          │
-category_sweet_spots ──► Filter by activePlayers ──► Raw Picks
-                          │
-nba_player_game_logs ──► l5Map (Last 5 game averages)
-                          │
-                          ▼
-                    Final Picks with accurate data
-```
-
-### Step 2: Interface Definition
+In the `fetchESPNGameLogs` function, convert the game date from UTC to Eastern Time:
 
 ```typescript
-export interface TodayPropPick {
-  id: string;
-  player_name: string;
-  prop_type: string;
-  category: string;
-  recommended_line: number;
-  actual_line: number | null;  // Live sportsbook line
-  l10_hit_rate: number;
-  l10_avg: number | null;
-  l5_avg: number | null;       // Calculated from game logs
-  confidence_score: number;
-  projected_value: number | null;
-  team: string;
-  reliabilityTier: string | null;
-  reliabilityHitRate: number | null;
-  analysis_date: string;
-  edge: number | null;         // projected_value - actual_line
-  recommended_side: 'OVER' | 'UNDER';
-}
+// Before (wrong):
+const gameDate = boxData.header?.competitions?.[0]?.date?.split('T')[0] || game.dateStr;
 
-interface UseTodayPropsOptions {
-  propType: 'threes' | 'assists';
-  targetDate?: Date;  // Defaults to today ET
-  minHitRate?: number;
-}
+// After (correct):
+const rawDate = boxData.header?.competitions?.[0]?.date;
+const gameDate = rawDate 
+  ? new Date(rawDate).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) 
+  : game.dateStr;
+// 'en-CA' locale gives YYYY-MM-DD format
 ```
 
-### Step 3: Update Existing Hooks
+### Step 2: Re-sync Game Logs
 
-Keep the existing hooks for backward compatibility but have them use the unified hook internally:
+After deploying the fix, trigger a full re-sync to correct historical data:
 
-**`useTomorrow3PTProps.ts`:**
-```typescript
-// Wrapper that uses the unified hook with threes config
-export function useTomorrow3PTProps(options = {}) {
-  return useTodayProps({ 
-    propType: 'threes',
-    ...options 
-  });
-}
+```bash
+# Call the edge function with extended lookback
+POST /nba-stats-fetcher
+{ "daysBack": 14, "useESPN": true }
 ```
 
-**`useTomorrowAssistProps.ts`:**
-```typescript
-// Wrapper that uses the unified hook with assists config
-export function useTomorrowAssistProps(options = {}) {
-  const result = useTodayProps({ 
-    propType: 'assists',
-    ...options 
-  });
-  
-  // Add category-specific grouping
-  return {
-    ...result,
-    overPicks: result.picks.filter(p => !p.category.includes('UNDER')),
-    underPicks: result.picks.filter(p => p.category.includes('UNDER')),
-  };
-}
+### Step 3: Re-run Verification
+
+Once game logs are corrected, re-run outcome verification for affected dates:
+
+```bash
+POST /verify-sweet-spot-outcomes
+{ "date": "2026-01-29" }
 ```
 
 ---
 
-## Files to Create/Modify
+## Expected Results After Fix
 
-| File | Action | Description |
-|------|--------|-------------|
-| `src/hooks/useTodayProps.ts` | **Create** | Unified hook with proper UTC handling |
-| `src/hooks/useTomorrow3PTProps.ts` | Modify | Use unified hook internally |
-| `src/hooks/useTomorrowAssistProps.ts` | Modify | Use unified hook internally |
+For January 29th ET:
+- **Anthony Edwards:** 4 3PM vs OKC → O 3.5 **HIT**
+- **Kevin Durant:** 3 3PM vs ATL → O 2.5 **HIT**
+
+This will restore accurate outcome tracking and system performance metrics.
 
 ---
 
 ## Technical Details
 
-### Key Bug Fixes:
+### ESPN API Date Behavior
 
-1. **Correct prop_type values:**
-   - Use `'threes'` instead of `'player_threes'`
-   - Use `'assists'` instead of `'player_assists'`
+ESPN's scoreboard API (`/scoreboard?dates=YYYYMMDD`) uses local display dates, but the boxscore `competition.date` field uses full UTC timestamps:
 
-2. **Correct UTC time boundaries:**
-   - For Eastern date `2026-01-29`, query UTC `2026-01-30T00:00:00` to `2026-01-30T12:00:00`
+```json
+{
+  "date": "2026-01-30T00:10:00Z",  // 7:10 PM ET on Jan 29th
+  "venue": { "fullName": "Target Center" }
+}
+```
 
-3. **L5 Average calculation:**
-   - Query `nba_player_game_logs` with correct field (`threes_made` or `assists`)
-   - Sort by `game_date DESC` and take first 5 per player
+Our current parser strips the time component (`split('T')[0]`), leaving `2026-01-30` when it should be `2026-01-29` in Eastern Time.
 
-### Expected Results After Fix:
+### Why This Matters
 
-For January 29th Eastern Time:
-- **3PT Picks:** Anthony Edwards (O 3.5), Kevin Durant (O 2.5), Jaden Ivey (O 1.5), etc.
-- **Assist Picks:** Cade Cunningham (O 9.5), Tyrese Maxey (O 7.5), etc.
-- All with accurate live lines and calculated L5 averages
+All NBA games are scheduled around Eastern Time:
+- 7:00 PM ET = 00:00 UTC next day
+- 10:30 PM ET = 03:30 UTC next day
+
+So virtually ALL evening games will have incorrect dates without the timezone conversion.
+
