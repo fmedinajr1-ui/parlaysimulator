@@ -1,176 +1,176 @@
 
-# Implementation Plan: Today's Assist Plays with Accurate Lines & L5 Averages
+# Unified Props Hook with Proper UTC Timezone Handling
 
 ## Problem Summary
 
-The current "Tomorrow's Assist Plays" page has three critical data issues:
-1. **Missing categories** - Only shows `BIG_ASSIST_OVER` and `HIGH_ASSIST_UNDER` (8 picks), but most assist picks are in `HIGH_ASSIST` (39 picks) and `ASSIST_ANCHOR` (4 picks)
-2. **Placeholder lines** - Displays `recommended_line` (2.5-3.5) instead of actual sportsbook lines (7.5, 9.5, 5.5)
-3. **No L5 data** - Missing last 5 games average for comparison
+Both the 3PT and Assists hooks have identical bugs preventing accurate data display:
 
-## Data Verification (Jan 29th Slate)
+| Issue | Current (Wrong) | Correct |
+|-------|-----------------|---------|
+| Prop type (3PT) | `'player_threes'` | `'threes'` |
+| Prop type (Assists) | `'player_assists'` | `'assists'` |
+| Time boundary | `${analysisDate}T00:00:00` | `${nextDayUTC}T00:00:00` |
 
-| Player | Actual Line | L10 Avg | L5 Avg (calculated) | L10 Hit Rate |
-|--------|-------------|---------|---------------------|--------------|
-| Tyrese Maxey | 7.5 | 8.2 | TBD | 100% |
-| Cade Cunningham | 9.5 | 9.2 | 9.8 (11,11,11,8,8) | 100% |
-| Coby White | 5.5 | 5.4 | TBD | 100% |
-| LaMelo Ball | 6.5 | 6.3 | TBD | 90% |
+Games on Jan 29th Eastern Time are stored in the database as `2026-01-30 00:10:00+00` (UTC), so queries for "today's games" must use the next calendar day's UTC timestamps.
+
+---
+
+## Solution: Create Unified Hook
+
+Create a single `useTodayProps` hook that:
+1. Centralizes UTC timezone conversion logic
+2. Supports both 3PT and Assists prop types
+3. Properly fetches live lines with correct `prop_type` values
+4. Calculates L5 averages from game logs
 
 ---
 
 ## Implementation Steps
 
-### Step 1: Create `useTodayAssistProps.ts` Hook
+### Step 1: Create `src/hooks/useTodayProps.ts`
 
-A new dedicated hook for today's slate with proper data enrichment:
+A unified hook with these features:
 
-**Key Changes:**
-- Use `getEasternDate()` from `@/lib/dateUtils` for today's date
-- Expand categories: `['BIG_ASSIST_OVER', 'HIGH_ASSIST_UNDER', 'HIGH_ASSIST', 'ASSIST_ANCHOR']`
-- Fetch live lines from `unified_props` where `prop_type = 'player_assists'`
-- Query `nba_player_game_logs` to calculate L5 average assists
-- Add `l5_avg` and enhanced `actual_line` to the pick interface
+**Configuration by Prop Type:**
+```text
+PROP_CONFIG = {
+  threes: {
+    propType: 'threes',              // For unified_props query
+    sweetSpotCategory: 'THREE_POINT_SHOOTER',
+    gameLogField: 'threes_made',
+    reliabilityKey: 'player_threes'
+  },
+  assists: {
+    propType: 'assists',             // For unified_props query  
+    sweetSpotCategories: ['BIG_ASSIST_OVER', 'HIGH_ASSIST_UNDER', 'HIGH_ASSIST', 'ASSIST_ANCHOR'],
+    gameLogField: 'assists',
+    reliabilityKey: 'player_assists'
+  }
+}
+```
+
+**UTC Time Boundary Calculation:**
+```typescript
+function getUTCBoundariesForEasternDate(easternDate: string) {
+  // Eastern games on Jan 29th start at 7pm ET = Jan 30th 00:00 UTC
+  const nextDay = new Date(easternDate);
+  nextDay.setDate(nextDay.getDate() + 1);
+  const startUTC = `${nextDay.toISOString().split('T')[0]}T00:00:00`;
+  const endUTC = `${nextDay.toISOString().split('T')[0]}T12:00:00`;
+  return { startUTC, endUTC };
+}
+```
 
 **Data Flow:**
 ```text
-unified_props (today)     ──► activePlayers Set
-                                    │
-category_sweet_spots      ──► Filter by Set ──► Raw Picks
-                                    │
-unified_props (lines)     ──► linesMap ───────► Merge Live Lines
-                                    │
-nba_player_game_logs (L5) ──► l5Map ──────────► Add L5 Avg
-                                    │
-                                    ▼
-                              Final Picks with accurate data
+getEasternDate() ──► '2026-01-29' (analysis_date for sweet spots)
+                          │
+getUTCBoundaries() ──► startUTC: '2026-01-30T00:00:00'
+                   ──► endUTC: '2026-01-30T12:00:00'
+                          │
+unified_props query ──► activePlayers Set + linesMap
+                          │
+category_sweet_spots ──► Filter by activePlayers ──► Raw Picks
+                          │
+nba_player_game_logs ──► l5Map (Last 5 game averages)
+                          │
+                          ▼
+                    Final Picks with accurate data
 ```
 
-### Step 2: Update `TomorrowAssistPick` Interface
+### Step 2: Interface Definition
 
-Add new field:
 ```typescript
-l5_avg: number | null;  // Last 5 games average
+export interface TodayPropPick {
+  id: string;
+  player_name: string;
+  prop_type: string;
+  category: string;
+  recommended_line: number;
+  actual_line: number | null;  // Live sportsbook line
+  l10_hit_rate: number;
+  l10_avg: number | null;
+  l5_avg: number | null;       // Calculated from game logs
+  confidence_score: number;
+  projected_value: number | null;
+  team: string;
+  reliabilityTier: string | null;
+  reliabilityHitRate: number | null;
+  analysis_date: string;
+  edge: number | null;         // projected_value - actual_line
+  recommended_side: 'OVER' | 'UNDER';
+}
+
+interface UseTodayPropsOptions {
+  propType: 'threes' | 'assists';
+  targetDate?: Date;  // Defaults to today ET
+  minHitRate?: number;
+}
 ```
 
-### Step 3: Update `TomorrowAssists.tsx` UI
+### Step 3: Update Existing Hooks
 
-- Display both L5 and L10 averages side-by-side
-- Fix the page title/header dynamically based on analysis date
+Keep the existing hooks for backward compatibility but have them use the unified hook internally:
 
-**Updated Stats Display:**
-```text
-┌─────────────────────────────────────────┐
-│ Cade Cunningham                    100% │
-│ DET  •  Over                     L10 HR │
-├─────────────────────────────────────────┤
-│ Line: O 9.5          L5: 9.8   L10: 9.2 │
-│                      Conf: 75%          │
-└─────────────────────────────────────────┘
+**`useTomorrow3PTProps.ts`:**
+```typescript
+// Wrapper that uses the unified hook with threes config
+export function useTomorrow3PTProps(options = {}) {
+  return useTodayProps({ 
+    propType: 'threes',
+    ...options 
+  });
+}
+```
+
+**`useTomorrowAssistProps.ts`:**
+```typescript
+// Wrapper that uses the unified hook with assists config
+export function useTomorrowAssistProps(options = {}) {
+  const result = useTodayProps({ 
+    propType: 'assists',
+    ...options 
+  });
+  
+  // Add category-specific grouping
+  return {
+    ...result,
+    overPicks: result.picks.filter(p => !p.category.includes('UNDER')),
+    underPicks: result.picks.filter(p => p.category.includes('UNDER')),
+  };
+}
 ```
 
 ---
 
-## Technical Implementation Details
+## Files to Create/Modify
 
-### Hook Logic (useTomorrowAssistProps.ts)
-
-```typescript
-// 1. Expand categories
-query = query.in('category', [
-  'BIG_ASSIST_OVER', 
-  'HIGH_ASSIST_UNDER', 
-  'HIGH_ASSIST', 
-  'ASSIST_ANCHOR'
-]);
-
-// 2. Fetch live lines from unified_props
-const { data: liveLines } = await supabase
-  .from('unified_props')
-  .select('player_name, current_line')
-  .eq('prop_type', 'player_assists')
-  .gte('commence_time', `${startOfToday}`)
-  .lt('commence_time', `${endOfToday}`);
-
-const linesMap = new Map();
-liveLines?.forEach(p => {
-  linesMap.set(p.player_name.toLowerCase(), p.current_line);
-});
-
-// 3. Calculate L5 averages from game logs
-const playerNames = filteredSpots.map(p => p.player_name);
-
-const { data: gameLogs } = await supabase
-  .from('nba_player_game_logs')
-  .select('player_name, assists, game_date')
-  .in('player_name', playerNames)
-  .order('game_date', { ascending: false })
-  .limit(playerNames.length * 5);
-
-// Group by player and calculate L5 avg
-const l5Map = new Map();
-const grouped = {};
-gameLogs?.forEach(log => {
-  const key = log.player_name.toLowerCase();
-  if (!grouped[key]) grouped[key] = [];
-  if (grouped[key].length < 5) grouped[key].push(log.assists);
-});
-Object.entries(grouped).forEach(([name, assists]) => {
-  const avg = assists.reduce((s, a) => s + a, 0) / assists.length;
-  l5Map.set(name, avg);
-});
-
-// 4. Merge into pick transformation
-return {
-  ...pick,
-  actual_line: linesMap.get(playerKey) ?? pick.actual_line ?? pick.recommended_line,
-  l5_avg: l5Map.get(playerKey) ?? null,
-};
-```
-
-### UI Changes (TomorrowAssists.tsx)
-
-```tsx
-<div className="flex items-center gap-3 text-sm">
-  {pick.l5_avg !== null && (
-    <div className="text-center">
-      <p className="text-xs text-muted-foreground">L5</p>
-      <p className="font-semibold">{pick.l5_avg.toFixed(1)}</p>
-    </div>
-  )}
-  {pick.l10_avg !== null && (
-    <div className="text-center">
-      <p className="text-xs text-muted-foreground">L10</p>
-      <p className="font-semibold">{pick.l10_avg.toFixed(1)}</p>
-    </div>
-  )}
-  <div className="text-center">
-    <p className="text-xs text-muted-foreground">Conf</p>
-    <p className="font-semibold">{(pick.confidence_score * 100).toFixed(0)}%</p>
-  </div>
-</div>
-```
+| File | Action | Description |
+|------|--------|-------------|
+| `src/hooks/useTodayProps.ts` | **Create** | Unified hook with proper UTC handling |
+| `src/hooks/useTomorrow3PTProps.ts` | Modify | Use unified hook internally |
+| `src/hooks/useTomorrowAssistProps.ts` | Modify | Use unified hook internally |
 
 ---
 
-## Files to Modify
+## Technical Details
 
-| File | Changes |
-|------|---------|
-| `src/hooks/useTomorrowAssistProps.ts` | Expand categories, fetch live lines, calculate L5 avg |
-| `src/pages/TomorrowAssists.tsx` | Display L5 avg, update UI layout |
+### Key Bug Fixes:
 
-## Expected Results After Implementation
+1. **Correct prop_type values:**
+   - Use `'threes'` instead of `'player_threes'`
+   - Use `'assists'` instead of `'player_assists'`
 
-For January 29th slate, the page will show:
+2. **Correct UTC time boundaries:**
+   - For Eastern date `2026-01-29`, query UTC `2026-01-30T00:00:00` to `2026-01-30T12:00:00`
 
-**Elite Tier (100% L10):**
-- Tyrese Maxey - O 7.5 - L5: X.X - L10: 8.2
-- Cade Cunningham - O 9.5 - L5: 9.8 - L10: 9.2
-- Coby White - O 5.5 - L5: X.X - L10: 5.4
-- James Harden - O X.X - L5: X.X - L10: 8.7
-- LeBron James, Derrick White, Pascal Siakam, etc.
+3. **L5 Average calculation:**
+   - Query `nba_player_game_logs` with correct field (`threes_made` or `assists`)
+   - Sort by `game_date DESC` and take first 5 per player
 
-**High Tier (90% L10):**
-- LaMelo Ball - O 6.5 - L5: X.X - L10: 6.3
-- Aaron Gordon, Giannis Antetokounmpo
+### Expected Results After Fix:
+
+For January 29th Eastern Time:
+- **3PT Picks:** Anthony Edwards (O 3.5), Kevin Durant (O 2.5), Jaden Ivey (O 1.5), etc.
+- **Assist Picks:** Cade Cunningham (O 9.5), Tyrese Maxey (O 7.5), etc.
+- All with accurate live lines and calculated L5 averages
