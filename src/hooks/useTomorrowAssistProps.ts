@@ -1,42 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { useTodayProps, getTodayEasternDate, formatEasternDate, TodayPropPick } from './useTodayProps';
 
-/**
- * Get tomorrow's date in Eastern Time (America/New_York)
- */
-function getTomorrowEasternDate(): string {
-  const now = new Date();
-  const tomorrow = new Date(now);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  return tomorrow.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
-}
-
-/**
- * Get a specific date in Eastern Time format
- */
-function formatEasternDate(date: Date): string {
-  return date.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
-}
-
-export interface TomorrowAssistPick {
-  id: string;
-  player_name: string;
-  prop_type: string;
-  category: string;
-  recommended_line: number;
-  actual_line: number | null;
-  l10_hit_rate: number;
-  l10_avg: number | null;
-  l5_avg: number | null;
-  confidence_score: number;
-  projected_value: number | null;
-  team: string;
-  reliabilityTier: string | null;
-  reliabilityHitRate: number | null;
-  analysis_date: string;
-  edge: number | null;
-  recommended_side: string;
-}
+// Re-export for backward compatibility
+export type TomorrowAssistPick = TodayPropPick;
 
 interface UseTomorrowAssistPropsOptions {
   targetDate?: Date;
@@ -45,241 +10,50 @@ interface UseTomorrowAssistPropsOptions {
 }
 
 export function useTomorrowAssistProps(options: UseTomorrowAssistPropsOptions = {}) {
-  const { targetDate, minHitRate = 0, category = 'all' } = options;
+  const { category = 'all', ...restOptions } = options;
   
-  const analysisDate = targetDate 
-    ? formatEasternDate(targetDate) 
-    : getTomorrowEasternDate();
-
-  const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ['tomorrow-assist-props', analysisDate, minHitRate, category],
-    queryFn: async (): Promise<TomorrowAssistPick[]> => {
-      console.group('🏀 [Tomorrow Assist Props]');
-      console.log(`📅 Target date: ${analysisDate}`);
-
-      // Step 1: Get players with games on the target date
-      const { data: upcomingProps } = await supabase
-        .from('unified_props')
-        .select('player_name')
-        .gte('commence_time', `${analysisDate}T00:00:00`)
-        .lt('commence_time', `${analysisDate}T23:59:59`);
-
-      const activePlayers = new Set(
-        (upcomingProps || []).map(p => p.player_name?.toLowerCase()).filter(Boolean)
-      );
-
-      console.log(`🎮 Found ${activePlayers.size} players with games on ${analysisDate}`);
-
-      if (activePlayers.size === 0) {
-        console.log('⚠️ No players with games on this date');
-        console.groupEnd();
-        return [];
-      }
-
-      // Step 2: Build query for category sweet spots
-      let query = supabase
-        .from('category_sweet_spots')
-        .select('*')
-        .eq('analysis_date', analysisDate)
-        .gte('l10_hit_rate', minHitRate)
-        .order('l10_hit_rate', { ascending: false });
-
-      // Filter by category - expanded to include all assist categories
-      if (category === 'all') {
-        query = query.in('category', ['BIG_ASSIST_OVER', 'HIGH_ASSIST_UNDER', 'HIGH_ASSIST', 'ASSIST_ANCHOR']);
-      } else {
-        query = query.eq('category', category);
-      }
-
-      const { data: sweetSpots, error: ssError } = await query;
-
-      if (ssError) {
-        console.error('Error fetching assist props:', ssError);
-        console.groupEnd();
-        throw ssError;
-      }
-
-      console.log(`🏀 Raw assist picks found: ${sweetSpots?.length || 0}`);
-
-      // Step 3: Filter to only players with actual games
-      const filteredSpots = (sweetSpots || []).filter(spot => 
-        activePlayers.has(spot.player_name?.toLowerCase())
-      );
-
-      console.log(`✅ Filtered to ${filteredSpots.length} picks with active games`);
-
-      if (filteredSpots.length === 0) {
-        console.log('⚠️ No assist picks for players with games');
-        console.groupEnd();
-        return [];
-      }
-
-      // Fetch live lines from unified_props
-      const nextDay = new Date(analysisDate);
-      nextDay.setDate(nextDay.getDate() + 1);
-      const nextDayStr = nextDay.toISOString().split('T')[0];
-
-      const { data: liveLines } = await supabase
-        .from('unified_props')
-        .select('player_name, current_line')
-        .eq('prop_type', 'player_assists')
-        .gte('commence_time', `${analysisDate}T00:00:00`)
-        .lt('commence_time', `${nextDayStr}T12:00:00`);
-
-      const linesMap = new Map<string, number>();
-      (liveLines || []).forEach(p => {
-        if (p.player_name && p.current_line) {
-          linesMap.set(p.player_name.toLowerCase(), p.current_line);
-        }
-      });
-
-      console.log(`📊 Live lines found for ${linesMap.size} players`);
-
-      // Fetch L5 averages from game logs
-      const playerNames = filteredSpots.map(p => p.player_name).filter(Boolean);
-      
-      const { data: gameLogs } = await supabase
-        .from('nba_player_game_logs')
-        .select('player_name, assists, game_date')
-        .in('player_name', playerNames)
-        .order('game_date', { ascending: false })
-        .limit(playerNames.length * 10);
-
-      // Group by player and calculate L5 avg
-      const l5Map = new Map<string, number>();
-      const grouped: Record<string, number[]> = {};
-      (gameLogs || []).forEach(log => {
-        const key = log.player_name?.toLowerCase();
-        if (!key) return;
-        if (!grouped[key]) grouped[key] = [];
-        if (grouped[key].length < 5 && log.assists !== null) {
-          grouped[key].push(log.assists);
-        }
-      });
-      Object.entries(grouped).forEach(([name, assists]) => {
-        if (assists.length > 0) {
-          const avg = assists.reduce((s, a) => s + a, 0) / assists.length;
-          l5Map.set(name, avg);
-        }
-      });
-
-      console.log(`📈 L5 averages calculated for ${l5Map.size} players`);
-
-      // Fetch reliability scores
-      const { data: reliabilityScores } = await supabase
-        .from('player_reliability_scores')
-        .select('player_name, prop_type, reliability_tier, hit_rate');
-
-      const reliabilityMap = new Map<string, { tier: string; hitRate: number }>();
-      (reliabilityScores || []).forEach(r => {
-        const key = `${r.player_name?.toLowerCase()}_${r.prop_type?.toLowerCase()}`;
-        reliabilityMap.set(key, {
-          tier: r.reliability_tier || 'unknown',
-          hitRate: r.hit_rate || 0,
-        });
-      });
-
-      // Fetch player team data
-      const { data: playerCache } = await supabase
-        .from('bdl_player_cache')
-        .select('player_name, team_name');
-
-      const teamMap = new Map<string, string>();
-      playerCache?.forEach(p => {
-        if (p.player_name && p.team_name) {
-          teamMap.set(p.player_name.toLowerCase(), p.team_name);
-        }
-      });
-
-      // Transform picks (using filtered spots)
-      const picks: TomorrowAssistPick[] = filteredSpots.map(pick => {
-        const playerKey = pick.player_name?.toLowerCase() || '';
-        const reliabilityKey = `${playerKey}_player_assists`;
-        const reliability = reliabilityMap.get(reliabilityKey);
-        const team = teamMap.get(playerKey) || 'Unknown';
-        
-        // Use live line from unified_props, fallback to actual_line, then recommended
-        const liveLine = linesMap.get(playerKey);
-        const actualLine = liveLine ?? pick.actual_line ?? pick.recommended_line;
-        
-        const edge = pick.projected_value && actualLine
-          ? pick.projected_value - actualLine
-          : null;
-
-        // Get L5 average
-        const l5Avg = l5Map.get(playerKey) ?? null;
-
-        return {
-          id: pick.id,
-          player_name: pick.player_name || '',
-          prop_type: pick.prop_type || 'player_assists',
-          category: pick.category || '',
-          recommended_line: pick.recommended_line || 0.5,
-          actual_line: actualLine,
-          l10_hit_rate: pick.l10_hit_rate || 0,
-          l10_avg: pick.l10_avg,
-          l5_avg: l5Avg,
-          confidence_score: pick.confidence_score || 0,
-          projected_value: pick.projected_value,
-          team,
-          reliabilityTier: reliability?.tier || null,
-          reliabilityHitRate: reliability?.hitRate || null,
-          analysis_date: pick.analysis_date || analysisDate,
-          edge,
-          recommended_side: pick.recommended_side || (pick.category?.includes('UNDER') ? 'UNDER' : 'OVER'),
-        };
-      });
-
-      // Group by category for logging
-      const overCount = picks.filter(p => p.category === 'BIG_ASSIST_OVER').length;
-      const underCount = picks.filter(p => p.category === 'HIGH_ASSIST_UNDER').length;
-      
-      console.log(`✅ Processed ${picks.length} assist picks`);
-      console.log(`📊 BIG_ASSIST_OVER: ${overCount} | HIGH_ASSIST_UNDER: ${underCount}`);
-      if (picks.length > 0) {
-        const eliteCount = picks.filter(p => p.l10_hit_rate >= 1).length;
-        const uniqueTeams = new Set(picks.map(p => p.team)).size;
-        console.log(`🔥 Elite (100% L10): ${eliteCount} | Unique teams: ${uniqueTeams}`);
-      }
-      console.groupEnd();
-
-      return picks;
-    },
-    staleTime: 60000,
+  const result = useTodayProps({ 
+    propType: 'assists',
+    ...restOptions 
   });
-
-  const picks = data || [];
   
-  // Calculate summary stats
-  const overPicks = picks.filter(p => p.category === 'BIG_ASSIST_OVER');
-  const underPicks = picks.filter(p => p.category === 'HIGH_ASSIST_UNDER');
+  // Filter by category if specified
+  let filteredPicks = result.picks;
+  if (category !== 'all') {
+    filteredPicks = result.picks.filter(p => p.category === category);
+  }
   
+  // Add category-specific grouping for backward compatibility
+  const overPicks = filteredPicks.filter(p => !p.category.includes('UNDER'));
+  const underPicks = filteredPicks.filter(p => p.category.includes('UNDER'));
+  
+  // Recalculate stats for filtered picks
   const stats = {
-    totalPicks: picks.length,
+    totalPicks: filteredPicks.length,
     overCount: overPicks.length,
     underCount: underPicks.length,
-    eliteCount: picks.filter(p => p.l10_hit_rate >= 1).length,
-    nearPerfectCount: picks.filter(p => p.l10_hit_rate >= 0.97 && p.l10_hit_rate < 1).length,
-    strongCount: picks.filter(p => p.l10_hit_rate >= 0.90 && p.l10_hit_rate < 0.97).length,
-    uniqueTeams: new Set(picks.map(p => p.team)).size,
-    avgHitRate: picks.length > 0 
-      ? picks.reduce((sum, p) => sum + p.l10_hit_rate, 0) / picks.length 
+    eliteCount: filteredPicks.filter(p => p.l10_hit_rate >= 1).length,
+    nearPerfectCount: filteredPicks.filter(p => p.l10_hit_rate >= 0.97 && p.l10_hit_rate < 1).length,
+    strongCount: filteredPicks.filter(p => p.l10_hit_rate >= 0.90 && p.l10_hit_rate < 0.97).length,
+    uniqueTeams: new Set(filteredPicks.map(p => p.team)).size,
+    avgHitRate: filteredPicks.length > 0 
+      ? filteredPicks.reduce((sum, p) => sum + p.l10_hit_rate, 0) / filteredPicks.length 
       : 0,
-    avgConfidence: picks.length > 0
-      ? picks.reduce((sum, p) => sum + p.confidence_score, 0) / picks.length
+    avgConfidence: filteredPicks.length > 0
+      ? filteredPicks.reduce((sum, p) => sum + p.confidence_score, 0) / filteredPicks.length
       : 0,
   };
 
   return {
-    picks,
+    picks: filteredPicks,
     overPicks,
     underPicks,
-    isLoading,
-    error,
-    refetch,
-    analysisDate,
+    isLoading: result.isLoading,
+    error: result.error,
+    refetch: result.refetch,
+    analysisDate: result.analysisDate,
     stats,
   };
 }
 
-export { getTomorrowEasternDate, formatEasternDate };
+export { getTodayEasternDate as getTomorrowEasternDate, formatEasternDate };
