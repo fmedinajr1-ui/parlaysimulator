@@ -25,11 +25,17 @@ export interface EliteThreesPick {
   reliabilityHitRate?: number | null;
   varianceTier?: 'LOW' | 'MEDIUM' | 'HIGH';
   qualityTier?: 'ELITE' | 'PREMIUM' | 'STANDARD' | 'HOT' | 'BLOCKED';
+  shootingEfficiencyTier?: 'HOT_SHOOTING' | 'NORMAL' | 'COLD_SHOOTING' | null;
+  l5ThreePct?: number | null;
   h2hMatchup?: {
     opponent: string;
     avgVsTeam: number;
     tier: string;
+    hitRateVsTeam?: number;
+    worstVsTeam?: number;
+    bestVsTeam?: number;
   } | null;
+  h2hBoost?: number;
 }
 
 interface EliteThreesResult {
@@ -39,14 +45,69 @@ interface EliteThreesResult {
   theoreticalOdds: string;
 }
 
-// ============ 3PT SHOOTER FILTERS (v6.0) ============
+// ============ 3PT SHOOTER FILTERS (v7.0 - Enhanced Mother Logic) ============
 const THREES_FILTER_CONFIG = {
   MIN_EDGE_BY_VARIANCE: { LOW: 0.3, MEDIUM: 0.8, HIGH: 1.2 } as Record<string, number>,
   MAX_VARIANCE_BY_EDGE: { FAVORABLE: 3.0, NEUTRAL: 1.5, TIGHT: 1.0 } as Record<string, number>,
   MIN_FLOOR_FOR_TIGHT_LINES: 2,
   HOT_STREAK_MULTIPLIER: 1.15,
   COLD_STREAK_MULTIPLIER: 0.85,
+  // NEW: H2H Boost Factors
+  H2H_BOOST: {
+    ELITE_WITH_FLOOR: 0.15,   // ELITE_MATCHUP + floor >= line
+    ELITE_MATCHUP: 0.10,      // ELITE_MATCHUP tier
+    GOOD_MATCHUP: 0.05,       // GOOD_MATCHUP tier
+    VOLATILE_PENALTY: -0.05,  // VOLATILE_MATCHUP penalty
+  },
+  // NEW: Shooting Efficiency Thresholds
+  SHOOTING_EFFICIENCY: {
+    HOT_THRESHOLD: 0.40,      // L5 3PT% >= 40%
+    COLD_THRESHOLD: 0.30,     // L5 3PT% < 30%
+    MIN_ATTEMPTS_PER_GAME: 3, // Minimum attempts to qualify
+  },
 };
+
+// Calculate H2H boost factor based on matchup tier and floor
+function calculateH2HBoost(
+  matchupTier: string | null,
+  worstVsTeam: number | null,
+  line: number
+): number {
+  if (!matchupTier) return 0;
+  
+  const config = THREES_FILTER_CONFIG.H2H_BOOST;
+  
+  if (matchupTier === 'ELITE_MATCHUP') {
+    // Extra boost if floor vs this team is >= line
+    if (worstVsTeam !== null && worstVsTeam >= line) {
+      return config.ELITE_WITH_FLOOR;
+    }
+    return config.ELITE_MATCHUP;
+  }
+  
+  if (matchupTier === 'GOOD_MATCHUP') {
+    return config.GOOD_MATCHUP;
+  }
+  
+  if (matchupTier === 'VOLATILE_MATCHUP' || matchupTier === 'VOLATILE') {
+    return config.VOLATILE_PENALTY;
+  }
+  
+  return 0;
+}
+
+// Determine shooting efficiency tier based on L5 3PT%
+function getShootingEfficiencyTier(
+  l5ThreePct: number | null
+): 'HOT_SHOOTING' | 'NORMAL' | 'COLD_SHOOTING' | null {
+  if (l5ThreePct === null) return null;
+  
+  const config = THREES_FILTER_CONFIG.SHOOTING_EFFICIENCY;
+  
+  if (l5ThreePct >= config.HOT_THRESHOLD) return 'HOT_SHOOTING';
+  if (l5ThreePct < config.COLD_THRESHOLD) return 'COLD_SHOOTING';
+  return 'NORMAL';
+}
 
 // Validate 3PT candidate against variance-edge matrix
 function validate3PTCandidate(
@@ -55,7 +116,9 @@ function validate3PTCandidate(
   l10Avg: number,
   l10Min: number,
   stdDev: number,
-  l5Avg: number
+  l5Avg: number,
+  shootingEfficiencyTier: 'HOT_SHOOTING' | 'NORMAL' | 'COLD_SHOOTING' | null,
+  h2hBoost: number
 ): { passes: boolean; reason: string; tier: 'ELITE' | 'PREMIUM' | 'STANDARD' | 'HOT' | 'BLOCKED' } {
   const varianceTier = stdDev <= 1.0 ? 'LOW' : stdDev <= 1.5 ? 'MEDIUM' : 'HIGH';
   const edge = l10Avg - actualLine;
@@ -74,9 +137,14 @@ function validate3PTCandidate(
     return { passes: false, reason: `TIGHT edge requires L10 Min >= 2`, tier: 'BLOCKED' };
   }
 
-  // COLD PLAYER DETECTION
+  // COLD PLAYER DETECTION (L5 trend)
   if (l5Avg < l10Avg * THREES_FILTER_CONFIG.COLD_STREAK_MULTIPLIER) {
     return { passes: false, reason: `COLD streak: L5 < L10*0.85`, tier: 'BLOCKED' };
+  }
+
+  // NEW: COLD SHOOTING EFFICIENCY BLOCK (unless strong H2H)
+  if (shootingEfficiencyTier === 'COLD_SHOOTING' && h2hBoost <= 0) {
+    return { passes: false, reason: `COLD shooting (L5 3PT% < 30%) without H2H advantage`, tier: 'BLOCKED' };
   }
 
   // Minimum edge check
@@ -91,9 +159,14 @@ function validate3PTCandidate(
     return { passes: false, reason: `Variance exceeds ${maxVariance} for ${edgeQuality} edge`, tier: 'BLOCKED' };
   }
 
-  // HOT PLAYER
+  // HOT PLAYER (L5 momentum)
   if (l5Avg > l10Avg * THREES_FILTER_CONFIG.HOT_STREAK_MULTIPLIER) {
     return { passes: true, reason: `HOT streak: L5 > L10*1.15`, tier: 'HOT' };
+  }
+
+  // NEW: HOT SHOOTING promotes to PREMIUM
+  if (shootingEfficiencyTier === 'HOT_SHOOTING' && h2hBoost > 0) {
+    return { passes: true, reason: `HOT shooting (L5 3PT% >= 40%) + positive H2H`, tier: 'PREMIUM' };
   }
 
   // Classify tier
@@ -175,18 +248,26 @@ export function useEliteThreesBuilder() {
         });
       });
 
-      // Fetch H2H matchup data for 3PT
+      // Fetch H2H matchup data for 3PT (enhanced with worst/best stats)
       const { data: matchupData } = await supabase
         .from('v_3pt_matchup_favorites')
         .select('*');
 
-      const matchupMap = new Map<string, { opponent: string; avgVsTeam: number; tier: string }>();
+      const matchupMap = new Map<string, { 
+        opponent: string; 
+        avgVsTeam: number; 
+        tier: string;
+        worstVsTeam?: number;
+        bestVsTeam?: number;
+      }>();
       (matchupData || []).forEach(m => {
         const key = `${m.player_name?.toLowerCase()}_${m.opponent?.toLowerCase()}`;
         matchupMap.set(key, {
           opponent: m.opponent,
           avgVsTeam: m.avg_3pt_vs_team,
-          tier: m.matchup_tier
+          tier: m.matchup_tier,
+          worstVsTeam: m.worst_3pt_vs_team,
+          bestVsTeam: m.best_3pt_vs_team,
         });
       });
 
@@ -219,7 +300,7 @@ export function useEliteThreesBuilder() {
         }
       });
 
-      // Filter and transform picks with v6.0 validation
+      // Filter and transform picks with v7.0 enhanced validation
       const filteredPicks: EliteThreesPick[] = [];
       const usedTeams = new Set<string>();
 
@@ -255,14 +336,45 @@ export function useEliteThreesBuilder() {
         const actualLine = pick.actual_line || pick.recommended_line || 0;
         const l10Min = pick.l10_min || 0;
 
-        // v6.0: Apply variance-edge matrix validation
+        // NEW: Get L5 3PT% from category_sweet_spots if available
+        const l5ThreePct = pick.l5_three_pct || null;
+        const shootingEfficiencyTier = getShootingEfficiencyTier(l5ThreePct);
+
+        // NEW: Find H2H matchup and calculate boost
+        let h2hMatchup: { 
+          opponent: string; 
+          avgVsTeam: number; 
+          tier: string;
+          worstVsTeam?: number;
+          bestVsTeam?: number;
+        } | null = null;
+        
+        // Look for any matchup for this player (prioritize ELITE)
+        for (const [key, value] of matchupMap) {
+          if (key.startsWith(playerKey + '_')) {
+            if (value.tier === 'ELITE_MATCHUP' || !h2hMatchup) {
+              h2hMatchup = value;
+              if (value.tier === 'ELITE_MATCHUP') break; // Found best, stop looking
+            }
+          }
+        }
+
+        const h2hBoost = calculateH2HBoost(
+          h2hMatchup?.tier || null,
+          h2hMatchup?.worstVsTeam || null,
+          actualLine
+        );
+
+        // v7.0: Apply enhanced variance-edge matrix validation with H2H and efficiency
         const validation = validate3PTCandidate(
           pick.player_name || '',
           actualLine,
           l10Avg,
           l10Min,
           stdDev,
-          l5Avg
+          l5Avg,
+          shootingEfficiencyTier,
+          h2hBoost
         );
 
         if (!validation.passes) {
@@ -270,7 +382,7 @@ export function useEliteThreesBuilder() {
           continue;
         }
 
-        console.log(`✓ [3PT Filter] ${pick.player_name}: ${validation.tier} - ${validation.reason}`);
+        console.log(`✓ [3PT Filter] ${pick.player_name}: ${validation.tier} - ${validation.reason} | H2H: ${h2hBoost > 0 ? '+' : ''}${(h2hBoost * 100).toFixed(0)}% | Shooting: ${shootingEfficiencyTier || 'N/A'}`);
 
         usedTeams.add(team.toLowerCase());
 
@@ -283,14 +395,9 @@ export function useEliteThreesBuilder() {
           stdDev <= 1.0 ? 'LOW' : 
           stdDev <= 1.5 ? 'MEDIUM' : 'HIGH';
 
-        // Find H2H matchup
-        let h2hMatchup: { opponent: string; avgVsTeam: number; tier: string } | null = null;
-        for (const [key, value] of matchupMap) {
-          if (key.startsWith(playerKey + '_') && value.tier === 'ELITE_MATCHUP') {
-            h2hMatchup = value;
-            break;
-          }
-        }
+        // Calculate enhanced confidence score with H2H boost
+        const baseConfidence = pick.confidence_score || 0.8;
+        const adjustedConfidence = Math.min(1.0, baseConfidence + h2hBoost);
 
         filteredPicks.push({
           id: pick.id,
@@ -301,7 +408,7 @@ export function useEliteThreesBuilder() {
           l10HitRate: pick.l10_hit_rate || 0,
           l10Min: l10Min,
           l10Avg: l10Avg,
-          confidenceScore: pick.confidence_score || 0.8,
+          confidenceScore: adjustedConfidence,
           team,
           projectedValue: pick.projected_value,
           edge,
@@ -309,7 +416,13 @@ export function useEliteThreesBuilder() {
           reliabilityHitRate: reliability?.hitRate || null,
           varianceTier,
           qualityTier: validation.tier,
-          h2hMatchup,
+          shootingEfficiencyTier,
+          l5ThreePct,
+          h2hMatchup: h2hMatchup ? {
+            ...h2hMatchup,
+            hitRateVsTeam: undefined, // Will be calculated when matchup_history has this data
+          } : null,
+          h2hBoost,
         });
 
         if (filteredPicks.length >= MAX_LEGS) break;
@@ -325,7 +438,10 @@ export function useEliteThreesBuilder() {
           Team: p.team,
           Variance: p.varianceTier,
           Quality: p.qualityTier,
+          Shooting: p.shootingEfficiencyTier || '-',
+          'L5 3PT%': p.l5ThreePct ? `${(p.l5ThreePct * 100).toFixed(0)}%` : '-',
           H2H: p.h2hMatchup?.tier || '-',
+          'H2H Boost': p.h2hBoost ? `${(p.h2hBoost * 100).toFixed(0)}%` : '-',
           Edge: p.edge?.toFixed(1) || '-',
         })));
       }

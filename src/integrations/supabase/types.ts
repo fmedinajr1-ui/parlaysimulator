@@ -870,6 +870,8 @@ export type Database = {
           eligibility_type: string | null
           engine_version: string | null
           games_played: number | null
+          h2h_avg_vs_opponent: number | null
+          h2h_matchup_boost: number | null
           id: string
           is_active: boolean | null
           l10_avg: number | null
@@ -878,6 +880,7 @@ export type Database = {
           l10_median: number | null
           l10_min: number | null
           l10_std_dev: number | null
+          l5_three_pct: number | null
           line_difference: number | null
           matchup_adjustment: number | null
           outcome: string | null
@@ -893,6 +896,7 @@ export type Database = {
           risk_level: string | null
           season_avg: number | null
           settled_at: string | null
+          shooting_efficiency_tier: string | null
           updated_at: string | null
           verified_source: string | null
         }
@@ -910,6 +914,8 @@ export type Database = {
           eligibility_type?: string | null
           engine_version?: string | null
           games_played?: number | null
+          h2h_avg_vs_opponent?: number | null
+          h2h_matchup_boost?: number | null
           id?: string
           is_active?: boolean | null
           l10_avg?: number | null
@@ -918,6 +924,7 @@ export type Database = {
           l10_median?: number | null
           l10_min?: number | null
           l10_std_dev?: number | null
+          l5_three_pct?: number | null
           line_difference?: number | null
           matchup_adjustment?: number | null
           outcome?: string | null
@@ -933,6 +940,7 @@ export type Database = {
           risk_level?: string | null
           season_avg?: number | null
           settled_at?: string | null
+          shooting_efficiency_tier?: string | null
           updated_at?: string | null
           verified_source?: string | null
         }
@@ -950,6 +958,8 @@ export type Database = {
           eligibility_type?: string | null
           engine_version?: string | null
           games_played?: number | null
+          h2h_avg_vs_opponent?: number | null
+          h2h_matchup_boost?: number | null
           id?: string
           is_active?: boolean | null
           l10_avg?: number | null
@@ -958,6 +968,7 @@ export type Database = {
           l10_median?: number | null
           l10_min?: number | null
           l10_std_dev?: number | null
+          l5_three_pct?: number | null
           line_difference?: number | null
           matchup_adjustment?: number | null
           outcome?: string | null
@@ -973,6 +984,7 @@ export type Database = {
           risk_level?: string | null
           season_avg?: number | null
           settled_at?: string | null
+          shooting_efficiency_tier?: string | null
           updated_at?: string | null
           verified_source?: string | null
         }
@@ -5021,6 +5033,7 @@ export type Database = {
           rebounds: number | null
           steals: number | null
           teammates_out: Json | null
+          threes_attempted: number | null
           threes_made: number | null
           turnovers: number | null
           usage_rate: number | null
@@ -5041,6 +5054,7 @@ export type Database = {
           rebounds?: number | null
           steals?: number | null
           teammates_out?: Json | null
+          threes_attempted?: number | null
           threes_made?: number | null
           turnovers?: number | null
           usage_rate?: number | null
@@ -5061,6 +5075,7 @@ export type Database = {
           rebounds?: number | null
           steals?: number | null
           teammates_out?: Json | null
+          threes_attempted?: number | null
           threes_made?: number | null
           turnovers?: number | null
           usage_rate?: number | null

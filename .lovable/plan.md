@@ -1,13 +1,10 @@
 
 # Enhanced 3PT Shooter Selection Logic + Remove Feature Locks
 
+## Status: ✅ IMPLEMENTED
+
 ## Overview
-This plan adds advanced "mother logic" for 3PT shooter selection by incorporating **recent 3PT shooting percentage** and **enhanced H2H matchup analysis**. It also removes all route/feature restrictions by simplifying the `PilotRouteGuard` to allow all users full access.
-
-## Current State Analysis
-
-### Existing 3PT Selection Logic (v6.0)
-The `useEliteThreesBuilder` and `category-props-analyzer` currently use:
+This plan added advanced "mother logic" for 3PT shooter selection by incorporating **H2H matchup analysis with boost scoring** and **shooting efficiency tiers**. All route/feature restrictions have been removed.
 - L10 hit rate (97%+ threshold)
 - L5/L10 variance-edge matrix validation
 - H2H matchup data from `v_3pt_matchup_favorites` (ELITE/GOOD/VOLATILE tiers)
