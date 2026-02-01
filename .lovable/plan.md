@@ -1,188 +1,166 @@
 
-# Enhanced 3PT Shooter Selection Logic + Remove Feature Locks
-
-## Status: ✅ IMPLEMENTED
+# v8.0 Deep Sweet Spots Dashboard Implementation
 
 ## Overview
-This plan added advanced "mother logic" for 3PT shooter selection by incorporating **H2H matchup analysis with boost scoring** and **shooting efficiency tiers**. All route/feature restrictions have been removed.
-- L10 hit rate (97%+ threshold)
-- L5/L10 variance-edge matrix validation
-- H2H matchup data from `v_3pt_matchup_favorites` (ELITE/GOOD/VOLATILE tiers)
-- Floor protection (L10 Min >= 2)
-- Hot/Cold streak detection (L5 vs L10 ratio)
 
-### Missing Data Elements
-1. **3PT Shooting Percentage**: The `nba_player_game_logs` table has `threes_made` but no `threes_attempted` column - we cannot calculate shooting efficiency (3P%)
-2. **H2H Integration**: Matchup history exists but is not fully integrated into the selection scoring formula
-
-### Feature Lock System
-- `PilotRouteGuard.tsx` restricts pilot users to 23 specific routes
-- Redirects blocked routes to `/profile?restricted=true`
-- `PilotUserContext.tsx` tracks user access levels
+I will create a comprehensive **Deep Sweet Spots Dashboard** at `/sweet-spots` that cross-references book lines from `unified_props` against L10 player performance from `nba_player_game_logs` to identify TRUE value picks where the player's historical floor exceeds the betting line.
 
 ---
 
-## Implementation Plan
+## Files to Create
 
-### Part 1: Remove All Feature Locks
+### 1. Type Definitions
+**`src/types/sweetSpot.ts`**
+- `DeepSweetSpot` interface with floor protection, edge, production rate, H2H data
+- `QualityTier`: ELITE | PREMIUM | STRONG | STANDARD | AVOID
+- `MinutesVerdict`: CAN_MEET | RISKY | UNLIKELY  
+- `MomentumTier`: HOT | NORMAL | COLD
+- `PropType`: points | assists | threes | blocks
+- `SweetSpotStats` summary interface
 
-**File: `src/components/PilotRouteGuard.tsx`**
+### 2. Core Data Hook
+**`src/hooks/useDeepSweetSpots.ts`**
 
-Simplify the guard to always allow access:
+Data pipeline:
+1. Fetch live lines from `unified_props` using Eastern date UTC boundaries
+2. Fetch L10 game logs from `nba_player_game_logs` for each player
+3. Calculate metrics:
+   - Floor Protection: `L10_min / line` (1.0+ = ELITE)
+   - Edge: `L10_avg - line` for OVERS
+   - Hit Rate: Games hitting line / 10
+   - Production Rate: `stat / minutes_played`
+   - Minutes Verdict: `line / production_rate` vs `avg_minutes`
+4. Query `matchup_history` for H2H opponent data
+5. Apply v8.0 scoring formula and classify quality tier
 
-```text
-Current behavior:
-- Checks isPilotUser flag
-- Compares route against PILOT_ALLOWED_ROUTES
-- Redirects unauthorized routes
-
-New behavior:
-- Always render children (full access for all users)
-- Keep component for future feature gating if needed
+**Scoring Formula:**
+```
+sweet_spot_score = 
+  (floor_protection * 0.25) +
+  (edge_normalized * 0.20) +
+  (hit_rate_l10 * 0.25) +
+  (usage_boost * 0.10) +
+  (juice_value * 0.10) +
+  (h2h_boost * 0.10)
 ```
 
-This will:
-- Allow all users access to all routes
-- Remove the "Feature Locked" toast messages
-- Simplify navigation across the app
+### 3. UI Components
+**`src/components/sweetspots/`** directory:
 
-### Part 2: Add 3PT Shooting Percentage Column
+| Component | Purpose |
+|-----------|---------|
+| `QualityTierBadge.tsx` | ELITE (purple), PREMIUM (teal), STRONG (green), STANDARD (gray), AVOID (red) with icons |
+| `FloorProtectionBar.tsx` | Visual progress bar showing L10 min vs line coverage with color coding |
+| `JuiceIndicator.tsx` | Green (+money value), Gray (light juice), Orange (medium), Red (heavy trap) |
+| `MinutesVerdictBadge.tsx` | CAN_MEET (green checkmark), RISKY (yellow warning), UNLIKELY (red X) |
+| `MomentumIndicator.tsx` | HOT (flame icon), NORMAL (steady), COLD (snowflake) based on L5/L10 ratio |
+| `ProductionRateDisplay.tsx` | Shows stat/minute rate and minutes needed to hit line |
+| `SweetSpotCard.tsx` | Main card combining all metrics with Add to Builder button |
 
-**Database Migration:**
-Add `threes_attempted` column to `nba_player_game_logs` to enable 3PT% calculations:
+### 4. Dashboard Page
+**`src/pages/SweetSpots.tsx`**
 
-```sql
-ALTER TABLE nba_player_game_logs
-ADD COLUMN IF NOT EXISTS threes_attempted integer DEFAULT 0;
-```
-
-Update the NBA stats fetcher edge function to populate this field when syncing game data.
-
-### Part 3: Enhanced H2H Matchup Integration
-
-**File: `src/hooks/useEliteThreesBuilder.ts`**
-
-Add H2H hit rate intelligence to the pick scoring:
-
-```text
-Current H2H data available:
-- avg_3pt_vs_team (average threes vs specific opponent)
-- worst_3pt_vs_team (floor performance)
-- best_3pt_vs_team (ceiling performance)
-- matchup_tier (ELITE/GOOD/VOLATILE)
-
-New scoring formula additions:
-1. H2H Boost Factor:
-   - ELITE_MATCHUP + floor >= line: +15% score boost
-   - ELITE_MATCHUP: +10% score boost
-   - GOOD_MATCHUP: +5% score boost
-   - VOLATILE_MATCHUP: -5% penalty (or block)
-
-2. Today's Matchup Integration:
-   - Parse opponent from unified_props/game_description
-   - Cross-reference with matchup_history
-   - Apply specific H2H hit rate from historical data
-```
-
-### Part 4: Add Recent Shooting Efficiency Logic
-
-**File: `src/hooks/useEliteThreesBuilder.ts`**
-
-Once `threes_attempted` is available, add shooting efficiency filtering:
-
-```text
-New validation criteria:
-1. L5 3PT% calculation:
-   - 3PT% = SUM(threes_made) / SUM(threes_attempted) over L5 games
-   
-2. Efficiency tiers:
-   - HOT SHOOTING: L5 3PT% >= 40% (elite efficiency)
-   - NORMAL: L5 3PT% 30-40%
-   - COLD SHOOTING: L5 3PT% < 30% (flag as risk)
-
-3. Volume requirement:
-   - Minimum 3 attempts per game average to qualify
-   - Prevents low-volume shooters from skewing %
-```
-
-### Part 5: Update Category Props Analyzer
-
-**File: `supabase/functions/category-props-analyzer/index.ts`**
-
-Enhance the THREE_POINT_SHOOTER category analysis:
-
-```text
-New fields to calculate and store:
-- l5_three_pct (shooting efficiency)
-- h2h_hit_rate_vs_opponent (specific opponent H2H)
-- h2h_avg_vs_opponent (average threes vs opponent)
-- combined_confidence_score (weighted blend)
-
-Updated scoring formula:
-confidence = (
-  L10_hit_rate * 0.30 +
-  L5_momentum * 0.20 +
-  H2H_matchup_factor * 0.20 +
-  L5_shooting_efficiency * 0.15 +
-  Floor_protection * 0.15
-)
-```
-
----
-
-## Technical Details
-
-### Database Schema Changes
-
-```sql
--- Add 3PT attempts tracking
-ALTER TABLE nba_player_game_logs
-ADD COLUMN IF NOT EXISTS threes_attempted integer DEFAULT 0;
-
--- Add index for efficient L5 queries
-CREATE INDEX IF NOT EXISTS idx_game_logs_player_date 
-ON nba_player_game_logs(player_name, game_date DESC);
-
--- Update category_sweet_spots with new fields
-ALTER TABLE category_sweet_spots
-ADD COLUMN IF NOT EXISTS l5_three_pct numeric,
-ADD COLUMN IF NOT EXISTS h2h_matchup_boost numeric;
-```
-
-### Hook Changes Summary
-
-| File | Changes |
-|------|---------|
-| `PilotRouteGuard.tsx` | Simplify to allow all access |
-| `useEliteThreesBuilder.ts` | Add H2H scoring, 3PT% validation |
-| `use3PTMatchupAnalysis.ts` | Add hit rate calculation from matchup_history |
-| `useTodayProps.ts` | Include H2H data in pick enrichment |
-
-### Edge Function Updates
-
-| Function | Changes |
-|----------|---------|
-| `nba-stats-fetcher` | Fetch and store `threes_attempted` |
-| `category-props-analyzer` | Calculate 3PT%, H2H boost, enhanced scoring |
-| `verify-sweet-spot-outcomes` | No changes needed |
+Layout structure:
+- **Header**: Back button, title "Deep Sweet Spots", date display, refresh button
+- **Summary Stats Row**: Total picks, ELITE count, PREMIUM count, unique teams
+- **Prop Type Tabs**: All | Points | Assists | Threes | Blocks
+- **Quality Filters**: ELITE Only | PREMIUM+ | STRONG+ | All
+- **Sort Controls**: Score | Floor | Edge | Juice
+- **Pick Grid**: Responsive 1-2 column grid of SweetSpotCard components
+- **Integration**: Add to parlay builder functionality
 
 ---
 
 ## Files to Modify
 
-1. `src/components/PilotRouteGuard.tsx` - Remove route restrictions
-2. `src/hooks/useEliteThreesBuilder.ts` - Add H2H/efficiency scoring
-3. `src/hooks/use3PTMatchupAnalysis.ts` - Add hit rate calculations
-4. `supabase/functions/category-props-analyzer/index.ts` - Enhanced 3PT logic
-5. `supabase/functions/nba-stats-fetcher/index.ts` - Add threes_attempted
-6. Database migration for new columns
+### `src/App.tsx`
+- Add lazy import for SweetSpots page
+- Add route: `<Route path="/sweet-spots" element={<SweetSpots />} />`
 
-## Expected Outcome
+---
 
-After implementation:
-- All users have full access to all app features
-- 3PT shooter selection incorporates:
-  - Recent shooting efficiency (L5 3PT%)
-  - Specific H2H matchup history and hit rates
-  - Volume validation (minimum attempts)
-- Higher accuracy predictions through multi-factor scoring
+## Technical Details
+
+### Quality Tier Classification
+| Tier | Criteria |
+|------|----------|
+| **ELITE** | L10 min >= line AND 100% hit rate |
+| **PREMIUM** | L10 min >= line OR 90%+ hit rate with positive edge |
+| **STRONG** | 80-89% hit rate with positive edge |
+| **STANDARD** | 70-79% hit rate |
+| **AVOID** | Negative edge OR <70% hit rate |
+
+### Prop Type Configuration
+| Prop Type | Game Log Field | Matchup Key |
+|-----------|----------------|-------------|
+| points | `points` | `player_points` |
+| assists | `assists` | `player_assists` |
+| threes | `threes_made` | `player_threes` |
+| blocks | `blocks` | `player_blocks` |
+
+### UNDER Pick Handling
+For UNDER picks, calculations are inverted:
+- Floor Protection: `1.0` if `L10_max <= line`
+- Edge: `line - L10_avg` (positive = good for under)
+
+### Juice Analysis
+- Plus money (+100+): Maximum value boost (+0.15)
+- Light juice (-110 to -120): Neutral
+- Medium juice (-121 to -140): Slight penalty (-0.05)
+- Heavy juice (-141+): Trap indicator (-0.10)
+
+### Minutes Verdict Logic
+```
+mins_needed = line / production_rate
+CAN_MEET: mins_needed <= avg_minutes * 0.9
+RISKY: mins_needed <= avg_minutes * 1.1
+UNLIKELY: mins_needed > avg_minutes * 1.1
+```
+
+---
+
+## Data Flow
+
+```
+useDeepSweetSpots
+    │
+    ├──→ unified_props (today's lines via UTC boundaries)
+    │       └──→ player_name, prop_type, current_line, over_price, under_price, game_description
+    │
+    ├──→ nba_player_game_logs (L10 for each player)
+    │       ├──→ points, assists, threes_made, blocks
+    │       ├──→ minutes_played (for production rate)
+    │       └──→ usage_rate (for volume boost)
+    │
+    ├──→ matchup_history (H2H vs opponent)
+    │       └──→ avg_stat, min_stat, max_stat, games_played
+    │
+    └──→ Combine, score, and classify
+            │
+            └──→ DeepSweetSpot[] sorted by quality tier
+```
+
+---
+
+## Expected Results
+
+Based on the earlier data analysis, the dashboard will surface picks like:
+
+**ELITE Tier (100% Floor Protection):**
+- Bam Adebayo O 20.5 PTS (L10 min: 20, avg: 24.1)
+- Myles Turner O 14.5 PTS (L10 min: 17, avg: 17.9)
+- Luka Doncic O 3.5 3PT (L10 min: 3, avg: 4.3)
+
+**PREMIUM Tier (85%+ with positive edge):**
+- James Harden O 7.5 AST (L10 min: 6, avg: 8.6)
+- Coby White O 2.5 3PT (L10 avg: 3.7)
+
+---
+
+## Implementation Order
+
+1. Create type definitions (`src/types/sweetSpot.ts`)
+2. Create core hook (`src/hooks/useDeepSweetSpots.ts`)
+3. Create UI components in `src/components/sweetspots/`
+4. Create dashboard page (`src/pages/SweetSpots.tsx`)
+5. Update App.tsx with route
