@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { ArrowLeft, RefreshCw, Crown, Star, TrendingUp, Filter, Radio, Flame, Snowflake } from "lucide-react";
+import { ArrowLeft, RefreshCw, Crown, Star, TrendingUp, Filter, Radio, Flame, Snowflake, Target, Users } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -7,7 +7,9 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDeepSweetSpots } from "@/hooks/useDeepSweetSpots";
 import { useSweetSpotLiveData } from "@/hooks/useSweetSpotLiveData";
+import { useTodayProps } from "@/hooks/useTodayProps";
 import { SweetSpotCard } from "@/components/sweetspots/SweetSpotCard";
+import { TodayPropsSection } from "@/components/sweetspots/TodayPropsSection";
 import { useParlayBuilder } from "@/contexts/ParlayBuilderContext";
 import { getEasternDate } from "@/lib/dateUtils";
 import { cn } from "@/lib/utils";
@@ -24,6 +26,10 @@ export default function SweetSpots() {
   const { data, isLoading, error, refetch, isFetching } = useDeepSweetSpots();
   const { addLeg } = useParlayBuilder();
   const todayET = getEasternDate();
+  
+  // Fetch today's 3PT and Assist props
+  const { picks: threesPicks, isLoading: threesLoading, stats: threesStats } = useTodayProps({ propType: 'threes' });
+  const { picks: assistsPicks, isLoading: assistsLoading, stats: assistsStats } = useTodayProps({ propType: 'assists' });
   
   const [propFilter, setPropFilter] = useState<PropFilter>('all');
   const [qualityFilter, setQualityFilter] = useState<QualityFilter>('all');
@@ -147,6 +153,27 @@ export default function SweetSpots() {
       </div>
       
       <div className="max-w-4xl mx-auto px-4 py-4 space-y-4">
+        {/* Today's Props Section */}
+        <TodayPropsSection
+          threesPicks={threesPicks}
+          assistsPicks={assistsPicks}
+          threesStats={threesStats}
+          assistsStats={assistsStats}
+          isLoading={threesLoading || assistsLoading}
+          onAddToBuilder={(pick, propType) => {
+            const shortLabel = propType === 'threes' ? '3PM' : 'AST';
+            addLeg({
+              description: `${pick.player_name} ${pick.recommended_side} ${pick.actual_line ?? pick.recommended_line} ${shortLabel}`,
+              odds: -110,
+              source: 'sweet-spots',
+              playerName: pick.player_name,
+              propType: propType === 'threes' ? 'Player Threes' : 'Player Assists',
+              line: pick.actual_line ?? pick.recommended_line,
+              side: pick.recommended_side.toLowerCase() as 'over' | 'under',
+            });
+          }}
+        />
+
         {/* Summary Stats */}
         {data?.stats && (
           <div className="grid grid-cols-4 gap-2">
