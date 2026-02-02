@@ -50,6 +50,22 @@ export interface JuiceAnalysis {
   isTrap: boolean; // Heavy juice indicating book confidence
 }
 
+// Live prop data from unified-player-feed
+export interface LivePropData {
+  isLive: boolean;
+  currentValue: number;
+  projectedFinal: number;
+  gameProgress: number; // 0-100
+  period: string;
+  clock: string;
+  confidence: number;
+  riskFlags: string[];
+  trend: 'up' | 'down' | 'stable';
+  minutesPlayed: number;
+  ratePerMinute: number;
+  paceRating: number; // Game pace relative to league average
+}
+
 export interface DeepSweetSpot {
   id: string;
   playerName: string;
@@ -96,6 +112,9 @@ export interface DeepSweetSpot {
   
   // Metadata
   analysisTimestamp: string;
+  
+  // Live data (optional - populated when game is in progress)
+  liveData?: LivePropData;
 }
 
 export interface SweetSpotStats {
