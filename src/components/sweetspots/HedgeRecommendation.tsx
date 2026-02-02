@@ -6,31 +6,70 @@ interface HedgeRecommendationProps {
   spot: DeepSweetSpot;
 }
 
-function calculateHedgeMessage(spot: DeepSweetSpot): string {
-  const { liveData, line, side, propType } = spot;
-  if (!liveData) return '';
+interface HedgeAction {
+  message: string;
+  action: string;
+  urgency: 'high' | 'medium' | 'low';
+}
+
+function calculateHedgeAction(spot: DeepSweetSpot): HedgeAction {
+  const { liveData, line, side } = spot;
+  if (!liveData) return { message: '', action: '', urgency: 'low' };
   
-  const gap = side === 'over' 
-    ? line - liveData.projectedFinal 
-    : liveData.projectedFinal - line;
+  const oppositeSide = side === 'over' ? 'UNDER' : 'OVER';
+  const currentVal = liveData.currentValue;
+  const projected = liveData.projectedFinal;
+  const gap = side === 'over' ? line - projected : projected - line;
+  
+  // Already hit the line
+  if ((side === 'over' && currentVal >= line) || (side === 'under' && currentVal < line)) {
+    return {
+      message: `You've already ${side === 'over' ? 'hit' : 'are under'} the line at ${currentVal}!`,
+      action: `✅ BET ${oppositeSide} ${line} NOW to guarantee profit (middle opportunity)`,
+      urgency: 'high'
+    };
+  }
   
   if (liveData.riskFlags.includes('blowout')) {
-    return `Blowout detected - player may see reduced 4th quarter minutes. Consider hedging ${side === 'over' ? 'UNDER' : 'OVER'} at current line.`;
+    return {
+      message: `Blowout detected - player likely loses 4th quarter minutes.`,
+      action: `🚨 BET ${oppositeSide} ${line} immediately to cut losses`,
+      urgency: 'high'
+    };
   }
   
   if (liveData.riskFlags.includes('foul_trouble')) {
-    return `Player in foul trouble - minutes at risk. Monitor closely.`;
+    return {
+      message: `Player in foul trouble (${liveData.currentValue} so far) - minutes at risk.`,
+      action: `⚠️ Prepare to bet ${oppositeSide} if another foul occurs`,
+      urgency: 'medium'
+    };
   }
   
   if (liveData.paceRating < 95 && side === 'over') {
-    return `Slow game pace (${liveData.paceRating.toFixed(0)}) limiting stat opportunities. Prop trending ${gap.toFixed(1)} below projection.`;
+    const needed = Math.max(0, line - currentVal + 0.5);
+    return {
+      message: `Slow pace (${liveData.paceRating.toFixed(0)}) = fewer possessions. Projected ${projected.toFixed(1)}, need ${line}.`,
+      action: `🐢 BET ${oppositeSide} ${line} - pace unlikely to increase`,
+      urgency: gap > 2 ? 'high' : 'medium'
+    };
   }
   
   if (liveData.riskFlags.includes('garbage_time')) {
-    return `Garbage time rotation likely. Starters may sit. Consider locking in current value.`;
+    return {
+      message: `Garbage time likely - starters will sit.`,
+      action: `🚨 BET ${oppositeSide} ${line} before rotation change`,
+      urgency: 'high'
+    };
   }
   
-  return `Prop trending ${Math.abs(gap).toFixed(1)} ${side === 'over' ? 'below' : 'above'} line. Consider live hedge.`;
+  // Generic trailing scenario
+  const neededMore = side === 'over' ? line - currentVal : currentVal - line;
+  return {
+    message: `Trending ${gap.toFixed(1)} ${side === 'over' ? 'below' : 'above'} target. Need ${neededMore.toFixed(1)} more.`,
+    action: `📊 BET ${oppositeSide} ${line} to reduce exposure`,
+    urgency: gap > 3 ? 'high' : 'medium'
+  };
 }
 
 export function HedgeRecommendation({ spot }: HedgeRecommendationProps) {
@@ -47,45 +86,53 @@ export function HedgeRecommendation({ spot }: HedgeRecommendationProps) {
   // Don't show if on pace and no risk factors
   if (!atRisk && !severeRisk) return null;
   
-  const hedgeMessage = calculateHedgeMessage(spot);
+  const hedgeAction = calculateHedgeAction(spot);
   
   // Determine severity
-  const isSevere = severeRisk || gameProgress > 50;
+  const isSevere = hedgeAction.urgency === 'high' || gameProgress > 50;
   
   return (
     <div className={cn(
       "mt-2 p-2 rounded-lg border",
       isSevere 
-        ? "bg-red-500/10 border-red-500/30" 
-        : "bg-yellow-500/10 border-yellow-500/30"
+        ? "bg-destructive/10 border-destructive/30" 
+        : "bg-warning/10 border-warning/30"
     )}>
       <div className="flex items-center gap-2">
         <AlertTriangle className={cn(
           "w-4 h-4",
-          isSevere ? "text-red-500" : "text-yellow-500"
+          isSevere ? "text-destructive" : "text-warning"
         )} />
         <span className={cn(
           "text-xs font-medium",
-          isSevere ? "text-red-400" : "text-yellow-400"
+          isSevere ? "text-destructive" : "text-warning"
         )}>
           {isSevere ? 'HEDGE NOW' : 'HEDGE ALERT'}
         </span>
       </div>
-      <p className="text-xs text-muted-foreground mt-1">{hedgeMessage}</p>
+      <p className="text-xs text-muted-foreground mt-1">{hedgeAction.message}</p>
+      
+      {/* Clear action to take */}
+      <div className={cn(
+        "mt-2 p-1.5 rounded text-xs font-semibold",
+        isSevere ? "bg-destructive/20 text-destructive" : "bg-warning/20 text-warning"
+      )}>
+        {hedgeAction.action}
+      </div>
       
       {/* Pace indicator */}
       <div className="mt-2 flex items-center gap-2 text-xs">
         <span className="text-muted-foreground">Game Pace:</span>
         <div className="flex items-center gap-1">
           {paceRating >= 102 ? (
-            <Flame className="w-3 h-3 text-green-400" />
+            <Flame className="w-3 h-3 text-primary" />
           ) : paceRating < 98 ? (
-            <Snowflake className="w-3 h-3 text-blue-400" />
+            <Snowflake className="w-3 h-3 text-accent" />
           ) : null}
           <span className={cn(
             "font-medium",
-            paceRating >= 102 ? "text-green-400" : 
-            paceRating >= 98 ? "text-yellow-400" : "text-blue-400"
+            paceRating >= 102 ? "text-primary" : 
+            paceRating >= 98 ? "text-warning" : "text-accent"
           )}>
             {paceRating >= 102 ? 'FAST' : paceRating >= 98 ? 'NORMAL' : 'SLOW'}
             ({paceRating.toFixed(0)})
@@ -103,7 +150,7 @@ export function HedgeRecommendation({ spot }: HedgeRecommendationProps) {
         <span className="text-muted-foreground">Projected:</span>
         <span className={cn(
           "font-mono font-bold",
-          onPace ? "text-green-400" : "text-red-400"
+          onPace ? "text-primary" : "text-destructive"
         )}>
           {projectedFinal.toFixed(1)}
         </span>
