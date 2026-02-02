@@ -1,22 +1,23 @@
 import { useState, useMemo } from "react";
-import { ArrowLeft, RefreshCw, Crown, Star, TrendingUp, Filter } from "lucide-react";
+import { ArrowLeft, RefreshCw, Crown, Star, TrendingUp, Filter, Radio, Flame, Snowflake } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDeepSweetSpots } from "@/hooks/useDeepSweetSpots";
+import { useSweetSpotLiveData } from "@/hooks/useSweetSpotLiveData";
 import { SweetSpotCard } from "@/components/sweetspots/SweetSpotCard";
-import { QualityTierBadge } from "@/components/sweetspots/QualityTierBadge";
 import { useParlayBuilder } from "@/contexts/ParlayBuilderContext";
 import { getEasternDate } from "@/lib/dateUtils";
 import { cn } from "@/lib/utils";
-import type { PropType, QualityTier, DeepSweetSpot, SweetSpotFilters } from "@/types/sweetSpot";
+import type { PropType, DeepSweetSpot } from "@/types/sweetSpot";
 import { PROP_TYPE_CONFIG } from "@/types/sweetSpot";
 
 type PropFilter = PropType | 'all';
 type QualityFilter = 'all' | 'ELITE' | 'PREMIUM+' | 'STRONG+';
 type SortOption = 'score' | 'floor' | 'edge' | 'juice';
+type PaceFilter = 'all' | 'live-only' | 'fast' | 'slow';
 
 export default function SweetSpots() {
   const navigate = useNavigate();
@@ -27,11 +28,13 @@ export default function SweetSpots() {
   const [propFilter, setPropFilter] = useState<PropFilter>('all');
   const [qualityFilter, setQualityFilter] = useState<QualityFilter>('all');
   const [sortBy, setSortBy] = useState<SortOption>('score');
+  const [paceFilter, setPaceFilter] = useState<PaceFilter>('all');
+  
+  // Enrich spots with live data
+  const { spots: enrichedSpots, liveGameCount } = useSweetSpotLiveData(data?.spots || []);
   
   const filteredSpots = useMemo(() => {
-    if (!data?.spots) return [];
-    
-    let filtered = [...data.spots];
+    let filtered = [...enrichedSpots];
     
     // Apply prop type filter
     if (propFilter !== 'all') {
@@ -51,6 +54,19 @@ export default function SweetSpots() {
       );
     }
     
+    // Apply pace filter
+    if (paceFilter === 'live-only') {
+      filtered = filtered.filter(s => s.liveData?.isLive);
+    } else if (paceFilter === 'fast') {
+      filtered = filtered.filter(s => 
+        !s.liveData?.isLive || (s.liveData.paceRating >= 102)
+      );
+    } else if (paceFilter === 'slow') {
+      filtered = filtered.filter(s => 
+        s.liveData?.isLive && s.liveData.paceRating < 98
+      );
+    }
+    
     // Apply sort
     filtered.sort((a, b) => {
       switch (sortBy) {
@@ -67,7 +83,7 @@ export default function SweetSpots() {
     });
     
     return filtered;
-  }, [data?.spots, propFilter, qualityFilter, sortBy]);
+  }, [enrichedSpots, propFilter, qualityFilter, paceFilter, sortBy]);
   
   const handleAddToBuilder = (spot: DeepSweetSpot) => {
     const propConfig = PROP_TYPE_CONFIG[spot.propType];
@@ -82,6 +98,12 @@ export default function SweetSpots() {
       side: spot.side,
     });
   };
+  
+  // Count live spots
+  const liveSpotCount = useMemo(() => 
+    enrichedSpots.filter(s => s.liveData?.isLive).length, 
+    [enrichedSpots]
+  );
   
   return (
     <div className="min-h-screen bg-background pb-24">
@@ -98,7 +120,15 @@ export default function SweetSpots() {
                 <ArrowLeft size={20} />
               </Button>
               <div>
-                <h1 className="text-lg font-bold text-foreground">Deep Sweet Spots</h1>
+                <div className="flex items-center gap-2">
+                  <h1 className="text-lg font-bold text-foreground">Deep Sweet Spots</h1>
+                  {liveGameCount > 0 && (
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-green-500/20 text-green-400 text-xs font-medium">
+                      <Radio size={10} className="animate-pulse" />
+                      {liveGameCount} Live
+                    </span>
+                  )}
+                </div>
                 <p className="text-xs text-muted-foreground">{todayET}</p>
               </div>
             </div>
@@ -212,6 +242,51 @@ export default function SweetSpots() {
           </select>
         </div>
         
+        {/* Pace Filter Row (for live games) */}
+        {liveGameCount > 0 && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+              <Radio size={14} className="text-green-400" />
+              <span>Pace:</span>
+            </div>
+            <div className="flex gap-1.5">
+              {(['all', 'live-only', 'fast', 'slow'] as PaceFilter[]).map((filter) => (
+                <Button
+                  key={filter}
+                  size="sm"
+                  variant={paceFilter === filter ? 'default' : 'outline'}
+                  onClick={() => setPaceFilter(filter)}
+                  className={cn(
+                    "text-xs h-7 px-2 gap-1",
+                    paceFilter === filter && filter === 'live-only' && "bg-green-600 hover:bg-green-700",
+                    paceFilter === filter && filter === 'fast' && "bg-orange-600 hover:bg-orange-700",
+                    paceFilter === filter && filter === 'slow' && "bg-blue-600 hover:bg-blue-700"
+                  )}
+                >
+                  {filter === 'all' ? 'All' : 
+                   filter === 'live-only' ? (
+                     <>
+                       <Radio size={10} className="animate-pulse" />
+                       Live ({liveSpotCount})
+                     </>
+                   ) :
+                   filter === 'fast' ? (
+                     <>
+                       <Flame size={10} />
+                       Fast
+                     </>
+                   ) : (
+                     <>
+                       <Snowflake size={10} />
+                       Slow
+                     </>
+                   )}
+                </Button>
+              ))}
+            </div>
+          </div>
+        )}
+        
         {/* Loading State */}
         {isLoading && (
           <div className="space-y-3">
@@ -274,6 +349,7 @@ export default function SweetSpots() {
         {!isLoading && filteredSpots.length > 0 && (
           <p className="text-center text-xs text-muted-foreground pt-4">
             Showing {filteredSpots.length} of {data?.stats.totalPicks} sweet spots
+            {liveSpotCount > 0 && ` (${liveSpotCount} live)`}
           </p>
         )}
       </div>

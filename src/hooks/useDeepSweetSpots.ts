@@ -517,6 +517,19 @@ export function useDeepSweetSpots() {
         });
       }
       
+      // DEDUPLICATION: Keep only best line per player+propType
+      const uniqueSpots = new Map<string, DeepSweetSpot>();
+      for (const spot of spots) {
+        const key = `${spot.playerName.toLowerCase()}|${spot.propType}`;
+        const existing = uniqueSpots.get(key);
+        if (!existing || 
+            spot.floorProtection > existing.floorProtection ||
+            (spot.floorProtection === existing.floorProtection && spot.sweetSpotScore > existing.sweetSpotScore)) {
+          uniqueSpots.set(key, spot);
+        }
+      }
+      const dedupedSpots = Array.from(uniqueSpots.values());
+      
       // Sort by quality tier priority then score
       const tierOrder: Record<QualityTier, number> = {
         ELITE: 0,
@@ -526,30 +539,30 @@ export function useDeepSweetSpots() {
         AVOID: 4,
       };
       
-      spots.sort((a, b) => {
+      dedupedSpots.sort((a, b) => {
         const tierDiff = tierOrder[a.qualityTier] - tierOrder[b.qualityTier];
         if (tierDiff !== 0) return tierDiff;
         return b.sweetSpotScore - a.sweetSpotScore;
       });
       
-      // Calculate stats
+      // Calculate stats from deduplicated spots
       const stats: SweetSpotStats = {
-        totalPicks: spots.length,
-        eliteCount: spots.filter(s => s.qualityTier === 'ELITE').length,
-        premiumCount: spots.filter(s => s.qualityTier === 'PREMIUM').length,
-        strongCount: spots.filter(s => s.qualityTier === 'STRONG').length,
-        standardCount: spots.filter(s => s.qualityTier === 'STANDARD').length,
-        avoidCount: spots.filter(s => s.qualityTier === 'AVOID').length,
-        uniqueTeams: new Set(spots.map(s => s.teamName)).size,
+        totalPicks: dedupedSpots.length,
+        eliteCount: dedupedSpots.filter(s => s.qualityTier === 'ELITE').length,
+        premiumCount: dedupedSpots.filter(s => s.qualityTier === 'PREMIUM').length,
+        strongCount: dedupedSpots.filter(s => s.qualityTier === 'STRONG').length,
+        standardCount: dedupedSpots.filter(s => s.qualityTier === 'STANDARD').length,
+        avoidCount: dedupedSpots.filter(s => s.qualityTier === 'AVOID').length,
+        uniqueTeams: new Set(dedupedSpots.map(s => s.teamName)).size,
         byPropType: {
-          points: spots.filter(s => s.propType === 'points').length,
-          assists: spots.filter(s => s.propType === 'assists').length,
-          threes: spots.filter(s => s.propType === 'threes').length,
-          blocks: spots.filter(s => s.propType === 'blocks').length,
+          points: dedupedSpots.filter(s => s.propType === 'points').length,
+          assists: dedupedSpots.filter(s => s.propType === 'assists').length,
+          threes: dedupedSpots.filter(s => s.propType === 'threes').length,
+          blocks: dedupedSpots.filter(s => s.propType === 'blocks').length,
         },
       };
       
-      return { spots, stats };
+      return { spots: dedupedSpots, stats };
     },
     staleTime: 1000 * 60 * 5, // 5 minutes
     gcTime: 1000 * 60 * 30, // 30 minutes

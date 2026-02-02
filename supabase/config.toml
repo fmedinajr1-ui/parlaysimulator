@@ -353,3 +353,6 @@ verify_jwt = false
 
 [functions.record-quarter-snapshot]
 verify_jwt = false
+
+[functions.refresh-sweet-spots-post-game]
+verify_jwt = false
