@@ -1,4 +1,4 @@
-import { AlertTriangle, TrendingDown, TrendingUp, Minus, Snowflake, Flame, Target, Clock, CheckCircle, AlertCircle, Zap } from "lucide-react";
+import { AlertTriangle, TrendingDown, TrendingUp, Minus, Snowflake, Flame, Target, Clock, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { DeepSweetSpot, ShotChartAnalysis, HedgeStatus, TrendDirection, EnhancedHedgeAction } from "@/types/sweetSpot";
 import { ShotChartMatchup } from "./ShotChartMatchup";
@@ -19,16 +19,8 @@ function formatZoneName(zone: string): string {
   return names[zone] || zone;
 }
 
-// Get defense label from shot chart
-function getDefenseLabel(shotChart: ShotChartAnalysis): string {
-  const primaryZone = shotChart.zones.find(z => z.zone === shotChart.primaryZone);
-  if (!primaryZone) return 'unknown';
-  return `${primaryZone.defenseRating} (#${primaryZone.defenseRank})`;
-}
-
 // Calculate remaining time in readable format
 function formatTimeRemaining(period: string, clock: string, gameProgress: number): string {
-  // Estimate minutes remaining based on game progress (48 min game)
   const totalGameMinutes = 48;
   const minutesRemaining = Math.max(0, totalGameMinutes * (1 - gameProgress / 100));
   
@@ -40,16 +32,19 @@ function formatTimeRemaining(period: string, clock: string, gameProgress: number
   return `~${minutesRemaining.toFixed(0)} min remaining`;
 }
 
-// Calculate hit probability based on rate vs needed
+// Calculate hit probability with zone matchup factor
 function calculateHitProbability(
   current: number, 
   line: number, 
   ratePerMin: number, 
   gameProgress: number,
-  side: 'over' | 'under'
+  side: 'over' | 'under',
+  zoneScore?: number
 ): number {
   const totalGameMinutes = 48;
   const minutesRemaining = Math.max(0, totalGameMinutes * (1 - gameProgress / 100));
+  
+  let baseProbability: number;
   
   if (side === 'over') {
     const needed = line - current;
@@ -57,22 +52,36 @@ function calculateHitProbability(
     const projected = current + (ratePerMin * minutesRemaining);
     const buffer = projected - line;
     // Scale probability based on buffer
-    if (buffer >= 3) return 85;
-    if (buffer >= 1) return 70;
-    if (buffer >= 0) return 55;
-    if (buffer >= -1) return 40;
-    if (buffer >= -2) return 25;
-    return 15;
+    if (buffer >= 3) baseProbability = 85;
+    else if (buffer >= 1) baseProbability = 70;
+    else if (buffer >= 0) baseProbability = 55;
+    else if (buffer >= -1) baseProbability = 40;
+    else if (buffer >= -2) baseProbability = 25;
+    else baseProbability = 15;
   } else {
     // UNDER: probability of staying under
     const projected = current + (ratePerMin * minutesRemaining);
     const buffer = line - projected;
-    if (buffer >= 3) return 85;
-    if (buffer >= 1) return 70;
-    if (buffer >= 0) return 55;
-    if (buffer >= -1) return 40;
-    return 25;
+    if (buffer >= 3) baseProbability = 85;
+    else if (buffer >= 1) baseProbability = 70;
+    else if (buffer >= 0) baseProbability = 55;
+    else if (buffer >= -1) baseProbability = 40;
+    else baseProbability = 25;
   }
+  
+  // Apply zone matchup modifier (±15% max)
+  if (zoneScore !== undefined) {
+    const zoneModifier = Math.max(-15, Math.min(15, zoneScore * 3));
+    // For OVER: positive zone score = higher probability
+    // For UNDER: positive zone score = LOWER probability (player more likely to score)
+    if (side === 'over') {
+      baseProbability += zoneModifier;
+    } else {
+      baseProbability -= zoneModifier;
+    }
+  }
+  
+  return Math.max(5, Math.min(95, baseProbability));
 }
 
 // Determine hedge sizing recommendation
@@ -88,6 +97,26 @@ function getTrendDescription(trend: TrendDirection, isPositive: boolean): string
   if (trend === 'improving') return isPositive ? "Trending up ↑" : "Trending up (bad for under)";
   if (trend === 'worsening') return isPositive ? "Trending down ↓" : "Trending down (good for under)";
   return "Holding steady";
+}
+
+// Get zone insight text for messaging
+function getZoneInsight(shotChart: ShotChartAnalysis | undefined, side: 'over' | 'under'): string | null {
+  if (!shotChart || !shotChart.zones.length) return null;
+  
+  const primaryZone = shotChart.zones.find(z => z.zone === shotChart.primaryZone);
+  if (!primaryZone) return null;
+  
+  const zoneName = formatZoneName(shotChart.primaryZone);
+  const defenseRank = primaryZone.defenseRank;
+  const shotPct = Math.round(shotChart.primaryZonePct * 100);
+  
+  if (shotChart.overallMatchupScore > 3) {
+    return `Zone advantage in ${zoneName} (${shotPct}% of shots vs #${defenseRank} defense)`;
+  } else if (shotChart.overallMatchupScore < -3) {
+    return `Zone disadvantage in ${zoneName} (${shotPct}% of shots vs #${defenseRank} defense)`;
+  }
+  
+  return null;
 }
 
 // Calculate enhanced hedge action with all details
@@ -111,7 +140,7 @@ function calculateEnhancedHedgeAction(spot: DeepSweetSpot): EnhancedHedgeAction 
     };
   }
   
-  const { currentValue, projectedFinal, paceRating, riskFlags, gameProgress, trend, ratePerMinute, minutesPlayed, shotChartMatchup } = liveData;
+  const { currentValue, projectedFinal, paceRating, riskFlags, gameProgress, trend, ratePerMinute, shotChartMatchup } = liveData;
   
   const oppositeSide = side === 'over' ? 'UNDER' : 'OVER';
   const totalGameMinutes = 48;
@@ -127,8 +156,11 @@ function calculateEnhancedHedgeAction(spot: DeepSweetSpot): EnhancedHedgeAction 
   const rateNeeded = minutesRemaining > 0 ? needed / minutesRemaining : 0;
   const currentRate = ratePerMinute || 0;
   
-  // Calculate hit probability
-  const hitProbability = calculateHitProbability(currentValue, line, currentRate, gameProgress, side);
+  // Get zone score for probability calculation
+  const zoneScore = shotChartMatchup?.overallMatchupScore;
+  
+  // Calculate hit probability WITH zone factor
+  const hitProbability = calculateHitProbability(currentValue, line, currentRate, gameProgress, side, zoneScore);
   
   // Map live trend to our trend direction
   const trendDirection: TrendDirection = 
@@ -161,12 +193,45 @@ function calculateEnhancedHedgeAction(spot: DeepSweetSpot): EnhancedHedgeAction 
   const hasFoulTrouble = riskFlags.includes('foul_trouble');
   const hasGarbageTime = riskFlags.includes('garbage_time');
   const hasSlowPace = paceRating < 95 && side === 'over';
+  
+  // Zone-based risk modifiers
   const hasZoneDisadvantage = shotChartMatchup && shotChartMatchup.overallMatchupScore < -3;
+  const hasZoneAdvantage = shotChartMatchup && shotChartMatchup.overallMatchupScore > 3;
   
   const severeRiskCount = [hasBlowoutRisk, hasFoulTrouble, hasGarbageTime].filter(Boolean).length;
   
+  // Adjust thresholds based on zone advantage/disadvantage
+  let urgentThreshold = 25;
+  let alertThreshold = 45;
+  let monitorThreshold = 65;
+  
+  if (hasZoneAdvantage && side === 'over') {
+    // Zone advantage for OVER: be more patient, less urgent
+    urgentThreshold -= 10;
+    alertThreshold -= 10;
+    monitorThreshold -= 5;
+  } else if (hasZoneDisadvantage && side === 'over') {
+    // Zone disadvantage for OVER: be more aggressive with hedging
+    urgentThreshold += 10;
+    alertThreshold += 10;
+    monitorThreshold += 5;
+  } else if (hasZoneAdvantage && side === 'under') {
+    // Zone advantage for UNDER target = player likely to produce = bad for under
+    urgentThreshold += 10;
+    alertThreshold += 10;
+    monitorThreshold += 5;
+  } else if (hasZoneDisadvantage && side === 'under') {
+    // Zone disadvantage for UNDER target = player suppressed = good for under
+    urgentThreshold -= 10;
+    alertThreshold -= 10;
+    monitorThreshold -= 5;
+  }
+  
+  // Get zone insight for messaging
+  const zoneInsight = getZoneInsight(shotChartMatchup, side);
+  
   // URGENT: Multiple risk factors or very low probability
-  if (severeRiskCount >= 2 || hitProbability < 25 || (hasBlowoutRisk && gameProgress > 60)) {
+  if (severeRiskCount >= 2 || hitProbability < urgentThreshold || (hasBlowoutRisk && gameProgress > 60)) {
     status = 'urgent';
     headline = '🚨 HEDGE NOW';
     
@@ -178,11 +243,15 @@ function calculateEnhancedHedgeAction(spot: DeepSweetSpot): EnhancedHedgeAction 
       message = `Only ${hitProbability}% chance to hit ${line}. Producing ${currentRate.toFixed(2)}/min but need ${rateNeeded.toFixed(2)}/min with ${minutesRemaining.toFixed(0)} min left.`;
     }
     
+    if (zoneInsight && hasZoneDisadvantage) {
+      message += ` ${zoneInsight} amplifies risk.`;
+    }
+    
     action = `🚨 BET ${oppositeSide} ${line} NOW - ${calculateHedgeSizing(Math.abs(gapToLine), hitProbability)}`;
     urgency = 'high';
   }
   // ALERT: Single risk factor or moderate concern
-  else if (severeRiskCount >= 1 || hitProbability < 45 || hasSlowPace || hasZoneDisadvantage) {
+  else if (severeRiskCount >= 1 || hitProbability < alertThreshold || hasSlowPace || hasZoneDisadvantage) {
     status = 'alert';
     headline = '⚠️ HEDGE ALERT';
     
@@ -194,14 +263,23 @@ function calculateEnhancedHedgeAction(spot: DeepSweetSpot): EnhancedHedgeAction 
       message = `Trailing by ${Math.abs(gapToLine).toFixed(1)} with ${minutesRemaining.toFixed(0)} min left. Current rate ${currentRate.toFixed(2)}/min vs needed ${rateNeeded.toFixed(2)}/min.`;
     }
     
+    if (zoneInsight) {
+      message += ` ${zoneInsight}.`;
+    }
+    
     action = `⚠️ Consider ${oppositeSide} ${line} - ${calculateHedgeSizing(Math.abs(gapToLine), hitProbability)}`;
     urgency = 'medium';
   }
   // MONITOR: Slightly off pace but recoverable
-  else if (hitProbability < 65 || (gapToLine < 0 && gapToLine > -2)) {
+  else if (hitProbability < monitorThreshold || (gapToLine < 0 && gapToLine > -2)) {
     status = 'monitor';
     headline = '⚡ MONITOR CLOSELY';
     message = `Slightly off pace. Projected ${projectedFinal.toFixed(1)} vs line ${line} (${hitProbability}% probability). ${getTrendDescription(trendDirection, side === 'over')}`;
+    
+    if (zoneInsight) {
+      message += ` ${zoneInsight}.`;
+    }
+    
     action = `Watch for next ${(minutesRemaining / 4).toFixed(0)} minutes. Prepare ${oppositeSide} hedge if trend worsens.`;
     urgency = 'low';
   }
@@ -210,6 +288,11 @@ function calculateEnhancedHedgeAction(spot: DeepSweetSpot): EnhancedHedgeAction 
     status = 'on_track';
     headline = '✓ ON TRACK';
     message = `Projected ${projectedFinal.toFixed(1)} exceeds line ${line} by ${gapToLine.toFixed(1)}. ${hitProbability}% probability. Rate: ${currentRate.toFixed(2)}/min.`;
+    
+    if (zoneInsight && hasZoneAdvantage) {
+      message += ` ${zoneInsight} provides additional support.`;
+    }
+    
     action = `Hold position. No hedge needed currently.`;
     urgency = 'none';
   }
@@ -233,6 +316,22 @@ function getStatusColors(status: HedgeStatus): { bg: string; border: string; tex
     default:
       return { bg: 'bg-muted/10', border: 'border-muted/30', text: 'text-muted-foreground', badge: 'bg-muted text-muted-foreground' };
   }
+}
+
+// Get matchup score color
+function getMatchupColor(score: number): string {
+  if (score > 3) return 'text-primary';
+  if (score > 0) return 'text-emerald-500';
+  if (score > -3) return 'text-warning';
+  return 'text-destructive';
+}
+
+// Get matchup label
+function getMatchupLabel(score: number): string {
+  if (score > 3) return 'Strong Advantage';
+  if (score > 0) return 'Slight Advantage';
+  if (score > -3) return 'Slight Disadvantage';
+  return 'Strong Disadvantage';
 }
 
 // Get trend icon component
@@ -299,6 +398,44 @@ export function HedgeRecommendation({ spot }: HedgeRecommendationProps) {
         <span>|</span>
         <span>Confidence: <span className="font-semibold text-foreground">{confidence}%</span></span>
       </div>
+      
+      {/* Shot Chart Section - NOW POSITIONED HIGHER for scoring props */}
+      {shotChartMatchup && isScoring && (
+        <div className="mb-3 p-2 rounded bg-background/50 border border-border/30">
+          <div className="flex items-center gap-2 mb-2">
+            <Target className="w-4 h-4 text-muted-foreground" />
+            <span className="text-xs font-medium">Shot Chart Factor</span>
+            <span className={cn(
+              "ml-auto text-xs font-bold px-1.5 py-0.5 rounded",
+              shotChartMatchup.overallMatchupScore > 3 ? "bg-primary/20 text-primary" :
+              shotChartMatchup.overallMatchupScore > 0 ? "bg-emerald-500/20 text-emerald-500" :
+              shotChartMatchup.overallMatchupScore > -3 ? "bg-warning/20 text-warning" :
+              "bg-destructive/20 text-destructive"
+            )}>
+              {shotChartMatchup.overallMatchupScore >= 0 ? '+' : ''}{shotChartMatchup.overallMatchupScore.toFixed(1)} ({getMatchupLabel(shotChartMatchup.overallMatchupScore)})
+            </span>
+          </div>
+          <div className="flex gap-3 items-start">
+            <ShotChartMatchup analysis={shotChartMatchup} />
+            <div className="flex-1 text-xs space-y-1">
+              <p className="text-muted-foreground">
+                Primary: <span className="text-foreground font-medium">
+                  {formatZoneName(shotChartMatchup.primaryZone)}
+                </span>
+                <span className="text-muted-foreground ml-1">
+                  ({Math.round(shotChartMatchup.primaryZonePct * 100)}% of shots)
+                </span>
+              </p>
+              <p className={cn(
+                "font-medium",
+                getMatchupColor(shotChartMatchup.overallMatchupScore)
+              )}>
+                {shotChartMatchup.recommendation}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
       
       {/* Time and Pace Context */}
       <div className="flex items-center gap-3 text-xs mb-2">
@@ -375,35 +512,6 @@ export function HedgeRecommendation({ spot }: HedgeRecommendationProps) {
       )}>
         {hedgeAction.action}
       </div>
-      
-      {/* Shot Chart Section (only for points/threes props with matchup data) */}
-      {shotChartMatchup && isScoring && (
-        <div className="mt-3 pt-3 border-t border-border/30">
-          <div className="flex items-center gap-2 mb-2">
-            <Target className="w-4 h-4 text-muted-foreground" />
-            <span className="text-xs font-medium">Shot Chart vs Defense</span>
-          </div>
-          <div className="flex gap-3 items-start">
-            <ShotChartMatchup analysis={shotChartMatchup} />
-            <div className="flex-1 text-xs space-y-1">
-              <p className="text-muted-foreground">
-                Primary Zone: <span className="text-foreground font-medium">
-                  {formatZoneName(shotChartMatchup.primaryZone)}
-                </span>
-                <span className="text-muted-foreground ml-1">
-                  ({Math.round(shotChartMatchup.primaryZonePct * 100)}% of shots)
-                </span>
-              </p>
-              <p className={cn(
-                "font-medium",
-                shotChartMatchup.overallMatchupScore > 0 ? "text-primary" : "text-destructive"
-              )}>
-                {shotChartMatchup.recommendation}
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

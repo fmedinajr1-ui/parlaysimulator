@@ -63,7 +63,8 @@ function mapPropType(propType: string): PropType | null {
 function extractOpponent(gameDescription: string | null, playerName: string): string {
   if (!gameDescription) return 'Unknown';
   // Format: "Team A @ Team B" or "Team A vs Team B"
-  const parts = gameDescription.split(/[@vs]+/i).map(s => s.trim());
+  // Fixed regex: match " @ " or " vs " as whole words, not individual chars
+  const parts = gameDescription.split(/\s+(?:@|vs)\s+/i).map(s => s.trim());
   if (parts.length >= 2) {
     // Return the opponent (not the player's team)
     return parts[1] || parts[0];
@@ -74,7 +75,8 @@ function extractOpponent(gameDescription: string | null, playerName: string): st
 // Extract team name from game description
 function extractTeamName(gameDescription: string | null): string {
   if (!gameDescription) return 'Unknown';
-  const parts = gameDescription.split(/[@vs]+/i).map(s => s.trim());
+  // Fixed regex: match " @ " or " vs " as whole words, not individual chars
+  const parts = gameDescription.split(/\s+(?:@|vs)\s+/i).map(s => s.trim());
   return parts[0] || 'Unknown';
 }
 
