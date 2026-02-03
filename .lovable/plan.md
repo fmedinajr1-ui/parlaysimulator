@@ -1,179 +1,89 @@
 
-# Batch Shot Chart Analysis Implementation
+# Add Shot Chart Preview Section to SweetSpotCard
+
+## Overview
+
+Create a standalone `ShotChartPreview` component that displays shot chart matchup analysis for Points and 3PM props before games start. This allows users to see pre-game insights about how a player's shooting zones match up against the opponent's defensive strengths.
+
+---
 
 ## Problem
-The current `useShotChartAnalysis` hook fetches data for a single player, but React's rules of hooks prevent calling it in a loop inside `useSweetSpotLiveData`. This means the `shotChartMatchup` field in `LivePropData` is never populated, and the HedgeRecommendation component never shows the shot chart visualization.
+
+Currently, the shot chart visualization is only visible inside `HedgeRecommendation`, which only renders when `spot.liveData?.isLive === true`. This means users cannot see the valuable zone matchup analysis until a game is in progress.
+
+The data is already being populated correctly by `useBatchShotChartAnalysis` and attached to spots via `useSweetSpotLiveData` (even for non-live games with `isLive: false`), but there's no UI component to display it outside of live games.
+
+---
 
 ## Solution
-Create a batch-loading hook that fetches ALL player zone stats and ALL team zone defense data in just 2 queries, then provides a memoized lookup function to generate matchup analysis for any player-opponent pair.
+
+Create a new `ShotChartPreview` component that:
+1. Shows for Points and 3PM props only
+2. Displays when game is NOT live (or as a pregame insight)
+3. Uses the existing `ShotChartMatchup` visualization component
+4. Includes the matchup recommendation and primary zone info
+5. Uses a collapsible/expandable design to save space
 
 ---
 
-## Phase 1: Create Batch Shot Chart Hook
+## Phase 1: Create ShotChartPreview Component
 
-**New File: `src/hooks/useBatchShotChartAnalysis.ts`**
+**New File: `src/components/sweetspots/ShotChartPreview.tsx`**
 
-This hook will:
-1. Fetch all `player_zone_stats` records in a single query (cached for 1 hour)
-2. Fetch all `team_zone_defense` records in a single query (cached for 1 hour)
-3. Expose a `getMatchup(playerName, opponentAbbrev, propType)` function that:
-   - Filters the cached data for the specific player/opponent
-   - Calculates matchup grades per zone
-   - Returns a complete `ShotChartAnalysis` object or `null`
+```text
+Structure:
+- Accepts: spot (DeepSweetSpot)
+- Guards: Only render for points/threes props with shotChartMatchup data
+- Guards: Don't render if game is already live (HedgeRecommendation handles that)
+- Layout:
+  - Collapsible header with "Shot Chart Matchup" label
+  - Matchup score badge (colored by advantage/disadvantage)
+  - When expanded: ShotChartMatchup visualization + recommendation text
+```
 
-```typescript
-// Structure
-export function useBatchShotChartAnalysis(enabled: boolean = true) {
-  // Query 1: All player zone stats
-  const { data: allPlayerZones } = useQuery({
-    queryKey: ['all-player-zone-stats'],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('player_zone_stats')
-        .select('*')
-        .eq('season', '2024-25');
-      return data;
-    },
-    staleTime: 1000 * 60 * 60, // 1 hour cache
-    enabled,
-  });
+Key features:
+- Collapsed by default to save vertical space
+- Shows overall matchup score in the header even when collapsed
+- Click to expand reveals the half-court visualization
+- Color-coded border based on matchup advantage
 
-  // Query 2: All team zone defense
-  const { data: allDefenseZones } = useQuery({
-    queryKey: ['all-team-zone-defense'],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('team_zone_defense')
-        .select('*')
-        .eq('season', '2024-25');
-      return data;
-    },
-    staleTime: 1000 * 60 * 60,
-    enabled,
-  });
+---
 
-  // Memoized lookup function
-  const getMatchup = useCallback((
-    playerName: string,
-    opponentAbbrev: string,
-    propType: PropType
-  ): ShotChartAnalysis | null => {
-    // Only for scoring props
-    if (!['points', 'threes'].includes(propType)) return null;
-    
-    // Filter player zones
-    const playerZones = allPlayerZones?.filter(
-      z => z.player_name === playerName
-    );
-    
-    // Filter defense zones
-    const defenseZones = allDefenseZones?.filter(
-      z => z.team_abbrev === opponentAbbrev
-    );
-    
-    if (!playerZones?.length || !defenseZones?.length) return null;
-    
-    // Calculate matchup (reuse existing logic)
-    return calculateAnalysis(playerZones, defenseZones, playerName, opponentAbbrev, propType);
-  }, [allPlayerZones, allDefenseZones]);
+## Phase 2: Integrate into SweetSpotCard
 
-  return {
-    getMatchup,
-    isLoading: !allPlayerZones || !allDefenseZones,
-  };
-}
+**Modify: `src/components/sweetspots/SweetSpotCard.tsx`**
+
+Add the ShotChartPreview component after the Prop Type Badge section, showing for non-live games:
+
+```text
+{/* Shot Chart Preview (for non-live points/threes props) */}
+{(spot.propType === 'points' || spot.propType === 'threes') && 
+ !spot.liveData?.isLive && 
+ spot.liveData?.shotChartMatchup && (
+  <ShotChartPreview spot={spot} />
+)}
 ```
 
 ---
 
-## Phase 2: Integrate into Sweet Spot Live Data Hook
+## Component Design
 
-**Modify: `src/hooks/useSweetSpotLiveData.ts`**
+```text
+┌─────────────────────────────────────────────────┐
+│ 🎯 Shot Chart Matchup               [+3.2] ▼    │  <- Collapsed (default)
+└─────────────────────────────────────────────────┘
 
-Add the batch hook and enrich spots with shot chart matchup data:
-
-```typescript
-import { useBatchShotChartAnalysis } from './useBatchShotChartAnalysis';
-
-export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
-  const { games, findPlayer, getPlayerProjection, isLoading, error } = useUnifiedLiveFeed({...});
-  
-  // NEW: Batch shot chart data
-  const { getMatchup, isLoading: shotChartLoading } = useBatchShotChartAnalysis(spots.length > 0);
-  
-  const enrichedSpots = useMemo(() => {
-    if (!games.length) return spots;
-    
-    return spots.map(spot => {
-      const result = findPlayer(spot.playerName);
-      if (!result) {
-        // NEW: Still add shot chart even if game not live
-        if ((spot.propType === 'points' || spot.propType === 'threes') && spot.opponentName) {
-          const shotChartMatchup = getMatchup(spot.playerName, spot.opponentName, spot.propType);
-          if (shotChartMatchup) {
-            return { ...spot, liveData: { ...createDefaultLiveData(), shotChartMatchup } };
-          }
-        }
-        return spot;
-      }
-      
-      const { player, game } = result;
-      const projection = getPlayerProjection(spot.playerName, spot.propType);
-      
-      if (game.status !== 'in_progress') return spot;
-      
-      // NEW: Get shot chart matchup for scoring props
-      let shotChartMatchup: ShotChartAnalysis | undefined = undefined;
-      if ((spot.propType === 'points' || spot.propType === 'threes') && spot.opponentName) {
-        shotChartMatchup = getMatchup(spot.playerName, spot.opponentName, spot.propType) ?? undefined;
-      }
-      
-      const liveData: LivePropData = {
-        // ... existing fields ...
-        shotChartMatchup,  // NEW
-      };
-      
-      return { ...spot, liveData };
-    });
-  }, [spots, games, findPlayer, getPlayerProjection, getMatchup]);
-  
-  // ... rest unchanged
-}
-```
-
----
-
-## Phase 3: Handle Opponent Name Format
-
-The `DeepSweetSpot.opponentName` field may contain full team names (e.g., "Boston Celtics") while `team_zone_defense` uses abbreviations (e.g., "BOS").
-
-**Solution**: Create a mapping utility or use the existing `team_aliases` table to resolve names:
-
-```typescript
-// In the batch hook or as a separate utility
-const TEAM_ABBREV_MAP: Record<string, string> = {
-  'Boston Celtics': 'BOS',
-  'Los Angeles Lakers': 'LAL',
-  'Golden State Warriors': 'GSW',
-  // ... all 30 teams
-};
-
-function normalizeOpponent(opponentName: string): string {
-  // Try direct match
-  if (TEAM_ABBREV_MAP[opponentName]) return TEAM_ABBREV_MAP[opponentName];
-  
-  // Try abbreviation (already correct)
-  if (opponentName.length <= 4) return opponentName.toUpperCase();
-  
-  // Fallback: extract from partial match
-  const lower = opponentName.toLowerCase();
-  for (const [name, abbrev] of Object.entries(TEAM_ABBREV_MAP)) {
-    if (lower.includes(name.toLowerCase().split(' ').pop() || '')) {
-      return abbrev;
-    }
-  }
-  return opponentName;
-}
+┌─────────────────────────────────────────────────┐
+│ 🎯 Shot Chart Matchup               [+3.2] ▲    │  <- Expanded
+├─────────────────────────────────────────────────┤
+│  ┌────────────┐  Primary Zone: Paint (42%)      │
+│  │            │  vs BOS Defense                 │
+│  │  Half-     │                                 │
+│  │  Court     │  "Favorable PTS matchup in      │
+│  │  SVG       │   Paint"                        │
+│  │            │                                 │
+│  └────────────┘  [Adv] [Neu] [Dis] Legend       │
+└─────────────────────────────────────────────────┘
 ```
 
 ---
@@ -182,46 +92,68 @@ function normalizeOpponent(opponentName: string): string {
 
 | File | Purpose |
 |------|---------|
-| `src/hooks/useBatchShotChartAnalysis.ts` | Batch load all shot chart data + lookup function |
+| `src/components/sweetspots/ShotChartPreview.tsx` | Collapsible pregame shot chart visualization |
 
 ## Files to Modify
 
 | File | Change |
 |------|--------|
-| `src/hooks/useSweetSpotLiveData.ts` | Import batch hook, add `shotChartMatchup` to `LivePropData` |
+| `src/components/sweetspots/SweetSpotCard.tsx` | Import and render ShotChartPreview for non-live points/threes props |
 
 ---
 
-## Data Flow After Implementation
+## Implementation Details
 
-```text
-Page Load (/sweet-spots)
-    │
-    ├──→ useBatchShotChartAnalysis
-    │         │
-    │         ├──→ Query: player_zone_stats (all ~750 rows)
-    │         ├──→ Query: team_zone_defense (all ~150 rows)
-    │         └──→ Returns getMatchup() function
-    │
-    └──→ useSweetSpotLiveData
-              │
-              ├──→ For each spot:
-              │         ├──→ Existing: Live stats from unified feed
-              │         └──→ NEW: getMatchup(player, opponent, propType)
-              │                     └──→ Returns ShotChartAnalysis
-              │
-              └──→ HedgeRecommendation
-                        │
-                        └──→ Displays shot chart visualization
-                             Adjusts hedge urgency based on zones
+### ShotChartPreview Component
+
+```typescript
+// Key props and structure
+interface ShotChartPreviewProps {
+  spot: DeepSweetSpot;
+}
+
+export function ShotChartPreview({ spot }: ShotChartPreviewProps) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const matchup = spot.liveData?.shotChartMatchup;
+  
+  // Guard: Only for points/threes with matchup data, non-live games
+  if (!matchup) return null;
+  if (spot.propType !== 'points' && spot.propType !== 'threes') return null;
+  if (spot.liveData?.isLive) return null; // HedgeRecommendation handles live
+  
+  const score = matchup.overallMatchupScore;
+  const isPositive = score > 0;
+  const isStrong = Math.abs(score) > 3;
+  
+  return (
+    <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
+      <CollapsibleTrigger className="...">
+        {/* Header with icon, label, score badge, chevron */}
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        {/* ShotChartMatchup visualization + info */}
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
 ```
+
+### Color Coding
+
+| Score Range | Color | Label |
+|-------------|-------|-------|
+| > +3 | Green | Strong Advantage |
+| 0 to +3 | Teal | Slight Advantage |
+| -3 to 0 | Yellow | Neutral |
+| < -3 | Red | Disadvantage |
 
 ---
 
 ## Expected Result
 
-After this change:
-- Points and 3PM props will show the half-court shot chart visualization
-- Shot chart appears even before game starts (pregame matchup data)
-- Hedge urgency adjusts based on zone advantages/disadvantages
-- Only 2 additional queries total (cached for 1 hour)
+After implementation:
+- All Points and 3PM sweet spots will show a "Shot Chart Matchup" section
+- Collapsed by default with matchup score visible
+- Users can expand to see the full half-court visualization
+- Works as a pregame insight tool (no live data required)
+- During live games, this section hides and `HedgeRecommendation` takes over with actionable hedge alerts
