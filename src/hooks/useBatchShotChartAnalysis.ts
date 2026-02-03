@@ -67,8 +67,9 @@ const TEAM_ABBREV_MAP: Record<string, string> = {
   'Washington Wizards': 'WAS',
 };
 
-// Nickname to abbreviation mapping for partial matches
+// Nickname to abbreviation mapping for partial matches (includes singular forms)
 const NICKNAME_ABBREV_MAP: Record<string, string> = {
+  // Plural forms
   'hawks': 'ATL',
   'celtics': 'BOS',
   'nets': 'BKN',
@@ -104,6 +105,37 @@ const NICKNAME_ABBREV_MAP: Record<string, string> = {
   'raptors': 'TOR',
   'jazz': 'UTA',
   'wizards': 'WAS',
+  // Singular forms for API variations
+  'hawk': 'ATL',
+  'celtic': 'BOS',
+  'net': 'BKN',
+  'hornet': 'CHA',
+  'bull': 'CHI',
+  'cavalier': 'CLE',
+  'cav': 'CLE',
+  'maverick': 'DAL',
+  'mav': 'DAL',
+  'nugget': 'DEN',
+  'piston': 'DET',
+  'warrior': 'GSW',
+  'rocket': 'HOU',
+  'pacer': 'IND',
+  'clipper': 'LAC',
+  'laker': 'LAL',
+  'grizzly': 'MEM',
+  'buck': 'MIL',
+  'timberwolf': 'MIN',
+  'wolf': 'MIN',
+  'pelican': 'NOP',
+  'knick': 'NYK',
+  'sun': 'PHX',
+  'blazer': 'POR',
+  'king': 'SAC',
+  'spur': 'SAS',
+  'raptor': 'TOR',
+  'wizard': 'WAS',
+  '76er': 'PHI',
+  'sixer': 'PHI',
 };
 
 /**
