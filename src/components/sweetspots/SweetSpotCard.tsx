@@ -97,11 +97,13 @@ export function SweetSpotCard({ spot, onAddToBuilder }: SweetSpotCardProps) {
           </div>
         </div>
         
-        {/* Floor Protection Bar */}
+        {/* Floor/Ceiling Protection Bar */}
         <FloorProtectionBar 
           floorProtection={spot.floorProtection}
           l10Min={spot.l10Stats.min}
+          l10Max={spot.l10Stats.max}
           line={spot.line}
+          side={spot.side}
         />
         
         {/* Stats Row */}
@@ -130,6 +132,7 @@ export function SweetSpotCard({ spot, onAddToBuilder }: SweetSpotCardProps) {
           <ProductionRateDisplay 
             production={spot.production} 
             propType={spot.propType}
+            side={spot.side}
             compact 
           />
         </div>

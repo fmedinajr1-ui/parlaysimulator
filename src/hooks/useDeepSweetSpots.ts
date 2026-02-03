@@ -152,10 +152,14 @@ function calculateProduction(
     };
   }
   
-  const statPerMinute = validLogs.reduce((sum, log) => {
-    const stat = log[field as keyof GameLog] as number;
-    return sum + (stat / (log.minutes_played || 1));
-  }, 0) / validLogs.length;
+  // Use total stats / total minutes for accurate weighted production rate
+  const totalStats = validLogs.reduce((sum, log) => {
+    return sum + (log[field as keyof GameLog] as number);
+  }, 0);
+  const totalMinutes = validLogs.reduce((sum, log) => {
+    return sum + (log.minutes_played || 0);
+  }, 0);
+  const statPerMinute = totalMinutes > 0 ? totalStats / totalMinutes : 0;
   
   const avgMinutes = validLogs.reduce((sum, log) => sum + (log.minutes_played || 0), 0) / validLogs.length;
   const minutesNeeded = statPerMinute > 0 ? line / statPerMinute : Infinity;
