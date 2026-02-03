@@ -7018,6 +7018,42 @@ export type Database = {
         }
         Relationships: []
       }
+      player_zone_stats: {
+        Row: {
+          fg_pct: number | null
+          fga: number | null
+          fgm: number | null
+          frequency: number | null
+          id: string
+          player_name: string
+          season: string
+          updated_at: string | null
+          zone: string
+        }
+        Insert: {
+          fg_pct?: number | null
+          fga?: number | null
+          fgm?: number | null
+          frequency?: number | null
+          id?: string
+          player_name: string
+          season?: string
+          updated_at?: string | null
+          zone: string
+        }
+        Update: {
+          fg_pct?: number | null
+          fga?: number | null
+          fgm?: number | null
+          frequency?: number | null
+          id?: string
+          player_name?: string
+          season?: string
+          updated_at?: string | null
+          zone?: string
+        }
+        Relationships: []
+      }
       pool_leaderboard_stats: {
         Row: {
           current_streak: number | null
@@ -9011,6 +9047,45 @@ export type Database = {
           updated_at?: string | null
           win_pct?: number | null
           wins?: number | null
+        }
+        Relationships: []
+      }
+      team_zone_defense: {
+        Row: {
+          defense_rating: string | null
+          id: string
+          league_avg_pct: number | null
+          opp_fg_pct: number | null
+          opp_fga: number | null
+          rank: number | null
+          season: string
+          team_abbrev: string
+          updated_at: string | null
+          zone: string
+        }
+        Insert: {
+          defense_rating?: string | null
+          id?: string
+          league_avg_pct?: number | null
+          opp_fg_pct?: number | null
+          opp_fga?: number | null
+          rank?: number | null
+          season?: string
+          team_abbrev: string
+          updated_at?: string | null
+          zone: string
+        }
+        Update: {
+          defense_rating?: string | null
+          id?: string
+          league_avg_pct?: number | null
+          opp_fg_pct?: number | null
+          opp_fga?: number | null
+          rank?: number | null
+          season?: string
+          team_abbrev?: string
+          updated_at?: string | null
+          zone?: string
         }
         Relationships: []
       }
