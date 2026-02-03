@@ -48,19 +48,28 @@ serve(async (req) => {
 
     console.log('Starting shot chart data sync...');
 
-    // Get list of active players from bdl_player_cache
-    const { data: activePlayers, error: playersError } = await supabase
+    // Parse optional pagination parameters from request body
+    const body = await req.json().catch(() => ({}));
+    const offset = body.offset ?? 0;
+    const limit = body.limit ?? 500; // Default to 500, process all players
+
+    // Get list of active players from bdl_player_cache (with optional pagination)
+    const query = supabase
       .from('bdl_player_cache')
       .select('player_name, team_name')
-      .eq('is_active', true)
-      .limit(150);
+      .eq('is_active', true);
+
+    // Apply range if offset is specified, otherwise get all
+    const { data: activePlayers, error: playersError } = offset > 0 || limit < 500
+      ? await query.range(offset, offset + limit - 1)
+      : await query;
 
     if (playersError) {
       console.error('Error fetching active players:', playersError);
       throw playersError;
     }
 
-    console.log(`Found ${activePlayers?.length || 0} active players`);
+    console.log(`Processing ${activePlayers?.length || 0} active players (offset: ${offset}, limit: ${limit})`);
 
     // For now, we'll seed with estimated data based on player archetypes
     // In production, this would call NBA Stats API
