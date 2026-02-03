@@ -32,6 +32,16 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
       let shotChartMatchup: ShotChartAnalysis | undefined = undefined;
       if ((spot.propType === 'points' || spot.propType === 'threes') && spot.opponentName) {
         shotChartMatchup = getMatchup(spot.playerName, spot.opponentName, spot.propType) ?? undefined;
+        
+        // DEBUG: Log matchup attachment
+        console.log('[SweetSpotLiveData] Matchup lookup:', {
+          player: spot.playerName,
+          opponent: spot.opponentName,
+          propType: spot.propType,
+          hasMatchup: !!shotChartMatchup,
+          matchupScore: shotChartMatchup?.overallMatchupScore ?? null,
+          zoneCount: shotChartMatchup?.zones?.length ?? 0,
+        });
       }
       
       // If player not in live feed, still return with shot chart data if available
@@ -106,6 +116,18 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
       
       return { ...spot, liveData };
     });
+    
+    // DEBUG: Summary log
+    const spotsWithMatchups = enrichedSpots.filter(s => s.liveData?.shotChartMatchup);
+    console.log('[SweetSpotLiveData] Summary:', {
+      totalSpots: spots.length,
+      enrichedCount: enrichedSpots.length,
+      spotsWithMatchups: spotsWithMatchups.length,
+      pointsSpots: spots.filter(s => s.propType === 'points').length,
+      threesSpots: spots.filter(s => s.propType === 'threes').length,
+    });
+    
+    return enrichedSpots;
   }, [spots, games, findPlayer, getPlayerProjection, getMatchup]);
   
   // Calculate live game count
