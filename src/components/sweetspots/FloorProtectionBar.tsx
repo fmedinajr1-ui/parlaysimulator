@@ -1,24 +1,30 @@
 import { cn } from "@/lib/utils";
 import { Progress } from "@/components/ui/progress";
+import type { PickSide } from "@/types/sweetSpot";
 
 interface FloorProtectionBarProps {
-  floorProtection: number; // L10 min / line ratio
+  floorProtection: number; // L10 min / line ratio (OVER) or line / L10 max ratio (UNDER)
   l10Min: number;
+  l10Max?: number;
   line: number;
+  side: PickSide;
   compact?: boolean;
 }
 
 export function FloorProtectionBar({ 
   floorProtection, 
   l10Min, 
+  l10Max,
   line,
+  side,
   compact = false 
 }: FloorProtectionBarProps) {
+  const isUnder = side === 'under';
   // Cap at 150% for visual display
   const displayPercentage = Math.min(floorProtection * 100, 150);
   const percentage = Math.round(floorProtection * 100);
   
-  // Color based on floor protection level
+  // Color based on protection level - same logic for both sides (higher = better)
   const getColorClass = () => {
     if (floorProtection >= 1.0) return 'bg-green-500';
     if (floorProtection >= 0.9) return 'bg-yellow-500';
@@ -32,6 +38,10 @@ export function FloorProtectionBar({
     if (floorProtection >= 0.8) return 'text-orange-400';
     return 'text-red-400';
   };
+  
+  const label = isUnder ? 'Ceiling Protection' : 'Floor Protection';
+  const statLabel = isUnder ? 'L10 Max' : 'L10 Min';
+  const statValue = isUnder ? (l10Max ?? 0) : l10Min;
   
   if (compact) {
     return (
@@ -52,10 +62,10 @@ export function FloorProtectionBar({
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between text-xs">
-        <span className="text-muted-foreground">Floor Protection</span>
+        <span className="text-muted-foreground">{label}</span>
         <div className="flex items-center gap-2">
           <span className="text-muted-foreground">
-            L10 Min: <span className="text-foreground font-medium">{l10Min}</span>
+            {statLabel}: <span className="text-foreground font-medium">{statValue}</span>
           </span>
           <span className="text-muted-foreground">|</span>
           <span className="text-muted-foreground">
@@ -83,7 +93,7 @@ export function FloorProtectionBar({
         </span>
         {floorProtection >= 1.0 && (
           <span className="text-xs text-green-400 font-medium">
-            ✓ L10 Min Covers Line
+            {isUnder ? '✓ L10 Max Under Line' : '✓ L10 Min Covers Line'}
           </span>
         )}
       </div>
