@@ -12,6 +12,7 @@ import { MomentumIndicator } from "./MomentumIndicator";
 import { ProductionRateDisplay } from "./ProductionRateDisplay";
 import { LiveDataOverlay } from "./LiveDataOverlay";
 import { HedgeRecommendation } from "./HedgeRecommendation";
+import { ShotChartPreview } from "./ShotChartPreview";
 
 interface SweetSpotCardProps {
   spot: DeepSweetSpot;
@@ -69,6 +70,9 @@ export function SweetSpotCard({ spot, onAddToBuilder }: SweetSpotCardProps) {
         
         {/* Hedge Recommendation (if at risk) */}
         <HedgeRecommendation spot={spot} />
+        
+        {/* Shot Chart Preview (for non-live points/threes props) */}
+        <ShotChartPreview spot={spot} />
         
         {/* Prop Type Badge */}
         <div className="flex items-center gap-2">
