@@ -1,9 +1,36 @@
 /**
- * v8.0 Deep Sweet Spots Type Definitions
+ * v8.1 Deep Sweet Spots Type Definitions
  * Cross-references book lines with L10 player performance floors
+ * Now includes Shot Chart vs Defense analysis
  */
 
 export type PropType = 'points' | 'assists' | 'threes' | 'blocks';
+
+export type ZoneType = 'restricted_area' | 'paint' | 'mid_range' | 'corner_3' | 'above_break_3';
+
+export type DefenseRating = 'elite' | 'good' | 'average' | 'poor' | 'weak';
+
+export type MatchupGrade = 'advantage' | 'neutral' | 'disadvantage';
+
+export interface ZoneMatchup {
+  zone: ZoneType;
+  playerFrequency: number; // % of shots from this zone
+  playerFgPct: number; // Player's FG% in zone
+  defenseRating: DefenseRating;
+  defenseRank: number; // 1-30
+  matchupGrade: MatchupGrade;
+  impact: number; // -10 to +10 score modifier
+}
+
+export interface ShotChartAnalysis {
+  playerName: string;
+  opponentName: string;
+  primaryZone: ZoneType; // Where player shoots most
+  primaryZonePct: number;
+  zones: ZoneMatchup[];
+  overallMatchupScore: number; // Weighted sum of zone impacts
+  recommendation: string; // "Paint-heavy scorer vs weak interior = BOOST" etc.
+}
 
 export type QualityTier = 'ELITE' | 'PREMIUM' | 'STRONG' | 'STANDARD' | 'AVOID';
 
@@ -64,6 +91,7 @@ export interface LivePropData {
   minutesPlayed: number;
   ratePerMinute: number;
   paceRating: number; // Game pace relative to league average
+  shotChartMatchup?: ShotChartAnalysis; // Zone-based matchup analysis
 }
 
 export interface DeepSweetSpot {

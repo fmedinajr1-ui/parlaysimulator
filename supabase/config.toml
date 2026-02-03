@@ -356,3 +356,6 @@ verify_jwt = false
 
 [functions.refresh-sweet-spots-post-game]
 verify_jwt = false
+
+[functions.fetch-shot-chart-data]
+verify_jwt = false
