@@ -38,6 +38,24 @@ export type MinutesVerdict = 'CAN_MEET' | 'RISKY' | 'UNLIKELY';
 
 export type MomentumTier = 'HOT' | 'NORMAL' | 'COLD';
 
+export type HedgeStatus = 'on_track' | 'monitor' | 'alert' | 'urgent' | 'profit_lock';
+
+export type TrendDirection = 'improving' | 'worsening' | 'stable';
+
+export interface EnhancedHedgeAction {
+  status: HedgeStatus;
+  headline: string;
+  message: string;
+  action: string;
+  urgency: 'high' | 'medium' | 'low' | 'none';
+  trendDirection: TrendDirection;
+  hitProbability: number;
+  rateNeeded: number;
+  currentRate: number;
+  timeRemaining: string;
+  gapToLine: number;
+}
+
 export type PickSide = 'over' | 'under';
 
 export interface L10Stats {
