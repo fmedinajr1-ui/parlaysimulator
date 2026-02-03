@@ -1,371 +1,347 @@
 
-
-# Sweet Spots Dashboard Enhancement: Duplicate Removal, Cron Refresh, Live Data & Pace-Based Hedging
+# Shot Chart Analysis Integration for Live Hedge Recommendations
 
 ## Overview
 
-This plan enhances the Deep Sweet Spots Dashboard (`/sweet-spots`) with four major improvements:
-1. **Remove duplicate props** - Deduplicate sweet spots by player+propType to prevent showing the same pick multiple times
-2. **Cron job for post-game refresh** - Automatically verify and refresh sweet spot data after games finish
-3. **Live data integration** - Add real-time player stats to each card using the unified-player-feed API
-4. **Pace-based hedge recommendations** - Real-time hedging suggestions based on game pace and player performance
+This plan adds **Shot Chart vs. Team Defense** intelligence to the hedge recommendation system. The feature compares a player's shooting tendencies by zone against the opponent's defensive weaknesses in those zones to provide more accurate hedging guidance.
+
+Based on the image reference you shared, we'll create a visual representation showing:
+- **Player Shot Chart**: Where the player typically shoots from (paint, mid-range, 3PT zones)
+- **Team Defense**: Opponent's defensive efficiency by zone
+- **Matchup Grade**: Visual indication of advantage/disadvantage by zone
 
 ---
 
-## Phase 1: Remove Duplicates
+## Phase 1: Database Schema for Shot Chart Data
 
-### Problem
-Currently, the `useDeepSweetSpots` hook may return multiple entries for the same player+propType combination if multiple bookmakers have lines for that prop.
+### New Table: `player_zone_stats`
 
-### Solution
-Add deduplication logic to keep only the best line (highest floor protection or best juice) per player+propType.
+Stores zone-based shooting percentages and frequency per player.
 
-**Modify: `src/hooks/useDeepSweetSpots.ts`**
+**Zones:**
+- **Restricted Area** (within 4 feet of rim)
+- **Paint (Non-RA)** (4-14 feet)  
+- **Mid-Range** (14 feet to 3PT line)
+- **Corner 3** (left/right corners)
+- **Above Break 3** (top of arc)
+
+| Column | Type | Description |
+|--------|------|-------------|
+| player_name | text | Player identifier |
+| season | text | "2024-25" |
+| zone | text | 'restricted_area', 'paint', 'mid_range', 'corner_3', 'above_break_3' |
+| fga | integer | Field goals attempted |
+| fgm | integer | Field goals made |
+| fg_pct | numeric | Shooting percentage |
+| frequency | numeric | % of total shots from this zone |
+| updated_at | timestamp | Last sync time |
+
+### New Table: `team_zone_defense`
+
+Stores team defensive efficiency by zone (how well they defend each area).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| team_abbrev | text | "BOS", "LAL" etc. |
+| season | text | "2024-25" |
+| zone | text | Same zones as above |
+| opp_fga | integer | Opponent FGA allowed in zone |
+| opp_fg_pct | numeric | Opponent FG% allowed |
+| league_avg_pct | numeric | League average in zone |
+| defense_rating | text | 'elite', 'good', 'average', 'poor', 'weak' |
+| rank | integer | 1-30 ranking (1 = best defense) |
+| updated_at | timestamp | |
+
+---
+
+## Phase 2: New Edge Function - `fetch-shot-chart-data`
+
+This function will fetch and store zone-based shooting data.
+
+**Data Source Options:**
+1. **NBA Stats API** (stats.nba.com) - Has `ShotChartDetail` endpoint with zone breakdowns
+2. **ESPN API** - Limited zone data but reliable
+3. **Stathead/Basketball Reference** - Requires paid access
+
+**Recommended: NBA Stats API** with fallback to manually curated data for top 100 players.
 
 ```text
-After building spots array, add deduplication:
+fetch-shot-chart-data/index.ts
 
-1. Group spots by unique key: `${playerName}|${propType}`
-2. For each group, keep the spot with:
-   - Highest floorProtection (primary)
-   - Highest sweetSpotScore (tiebreaker)
-3. Return deduplicated array
+1. Fetch player zone shooting stats from NBA API
+2. Parse into zones: restricted_area, paint, mid_range, corner_3, above_break_3
+3. Calculate frequency (% of shots from each zone)
+4. Store in player_zone_stats table
+
+5. Fetch team defensive zone data
+6. Compare to league averages to assign ratings
+7. Store in team_zone_defense table
 ```
 
-### Implementation Detail
-```typescript
-// After spots.push() loop, before sorting:
-const uniqueSpots = new Map<string, DeepSweetSpot>();
-for (const spot of spots) {
-  const key = `${spot.playerName.toLowerCase()}|${spot.propType}`;
-  const existing = uniqueSpots.get(key);
-  if (!existing || 
-      spot.floorProtection > existing.floorProtection ||
-      (spot.floorProtection === existing.floorProtection && spot.sweetSpotScore > existing.sweetSpotScore)) {
-    uniqueSpots.set(key, spot);
-  }
-}
-const dedupedSpots = Array.from(uniqueSpots.values());
-```
+**Cron Schedule:** Daily at 6 AM ET (after games complete)
 
 ---
 
-## Phase 2: Cron Job for Post-Game Data Refresh
-
-### Goal
-Automatically:
-1. Verify sweet spot outcomes after games end
-2. Refresh game logs with final stats
-3. Update accuracy metrics
-
-### New Cron Job: `refresh-sweet-spots-post-game`
-
-**Create: `supabase/functions/refresh-sweet-spots-post-game/index.ts`**
-
-This edge function will:
-1. Check for games that finished in the last 2 hours
-2. Trigger `backfill-player-stats` for those game dates
-3. Run `verify-sweet-spot-outcomes` for settled games
-4. Log results to `cron_job_history`
-
-**Cron Schedule SQL (to run via database):**
-```sql
--- Run every 30 minutes from 9 PM to 2 AM ET (when games typically finish)
-select cron.schedule(
-  'refresh-sweet-spots-post-game',
-  '*/30 1-7 * * *',  -- UTC: 1-7 AM = 8 PM - 2 AM ET
-  $$
-  select net.http_post(
-    url:='https://pajakaqphlxoqjtrxzmi.supabase.co/functions/v1/refresh-sweet-spots-post-game',
-    headers:='{"Content-Type": "application/json", "Authorization": "Bearer <anon_key>"}'::jsonb,
-    body:='{}'::jsonb
-  ) as request_id;
-  $$
-);
-```
-
-### Edge Function Logic
-```text
-1. Query live_game_scores for games with game_status = 'final' 
-   updated in last 2 hours
-2. For each finished game:
-   - Get player names from game
-   - Trigger backfill-player-stats for today's date
-3. After backfill complete:
-   - Call verify-sweet-spot-outcomes for today
-4. Log to cron_job_history with:
-   - games_processed
-   - players_updated
-   - outcomes_verified
-```
-
-**Update: `supabase/config.toml`**
-```toml
-[functions.refresh-sweet-spots-post-game]
-verify_jwt = false
-```
-
----
-
-## Phase 3: Live Data Integration on Cards
-
-### Goal
-Show real-time player stats directly on each SweetSpotCard during live games:
-- Current stat value
-- Projected final
-- Game progress
-- Pace indicator
-- Risk flags (blowout, foul trouble)
-
-### New Types
+## Phase 3: Enhanced Types for Shot Chart Analysis
 
 **Modify: `src/types/sweetSpot.ts`**
 
-Add live data interface:
+Add new interface for shot chart matchup data:
+
 ```typescript
+export interface ZoneMatchup {
+  zone: 'restricted_area' | 'paint' | 'mid_range' | 'corner_3' | 'above_break_3';
+  playerFrequency: number; // % of shots from this zone
+  playerFgPct: number; // Player's FG% in zone
+  defenseRating: 'elite' | 'good' | 'average' | 'poor' | 'weak';
+  defenseRank: number; // 1-30
+  matchupGrade: 'advantage' | 'neutral' | 'disadvantage';
+  impact: number; // -10 to +10 score modifier
+}
+
+export interface ShotChartAnalysis {
+  playerName: string;
+  opponentName: string;
+  primaryZone: string; // Where player shoots most
+  primaryZonePct: number;
+  zones: ZoneMatchup[];
+  overallMatchupScore: number; // Weighted sum of zone impacts
+  recommendation: string; // "Paint-heavy scorer vs weak interior = BOOST" etc.
+}
+
+// Update LivePropData to include shot chart
 export interface LivePropData {
-  isLive: boolean;
-  currentValue: number;
-  projectedFinal: number;
-  gameProgress: number; // 0-100
-  period: string;
-  clock: string;
-  confidence: number;
-  riskFlags: string[];
-  trend: 'up' | 'down' | 'stable';
-  minutesPlayed: number;
-  ratePerMinute: number;
-  paceRating: number; // Game pace relative to league average
-}
-
-// Update DeepSweetSpot to include optional live data
-export interface DeepSweetSpot {
   // ... existing fields ...
-  liveData?: LivePropData;
+  shotChartMatchup?: ShotChartAnalysis;
 }
 ```
 
-### New Hook: `useSweetSpotLiveData`
+---
 
-**Create: `src/hooks/useSweetSpotLiveData.ts`**
+## Phase 4: Shot Chart Analysis Hook
 
-This hook:
-1. Takes an array of DeepSweetSpot
-2. Uses `useUnifiedLiveFeed` to get real-time projections
-3. Returns enriched spots with live data attached
+**Create: `src/hooks/useShotChartAnalysis.ts`**
+
+This hook fetches zone matchup data for a player vs opponent:
 
 ```typescript
-export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
-  const { games, findPlayer, getPlayerProjection } = useUnifiedLiveFeed({
-    enabled: spots.length > 0,
-    refreshInterval: 15000, // 15s refresh
-  });
+export function useShotChartAnalysis(
+  playerName: string,
+  opponentAbbrev: string,
+  propType: PropType
+) {
+  // 1. Fetch player zone stats from player_zone_stats
+  // 2. Fetch opponent zone defense from team_zone_defense
+  // 3. Calculate matchup grades per zone
+  // 4. Weight by player's shooting frequency
+  // 5. Return overall matchup score and recommendation
+
+  // Only relevant for scoring props (points, threes)
+  const isRelevant = ['points', 'threes'].includes(propType);
   
-  return useMemo(() => {
-    if (!games.length) return spots;
+  // Calculate primary zone and matchup
+  const analysis = useMemo(() => {
+    if (!playerZones || !defenseZones) return null;
     
-    return spots.map(spot => {
-      const result = findPlayer(spot.playerName);
-      if (!result) return spot;
+    // Sort zones by player frequency
+    const sorted = playerZones.sort((a, b) => b.frequency - a.frequency);
+    const primaryZone = sorted[0];
+    
+    // Calculate weighted matchup score
+    let score = 0;
+    const zones: ZoneMatchup[] = [];
+    
+    for (const pz of playerZones) {
+      const dz = defenseZones.find(d => d.zone === pz.zone);
+      if (!dz) continue;
       
-      const { player, game } = result;
-      const projection = getPlayerProjection(spot.playerName, spot.propType);
+      // Compare player FG% to opponent's allowed FG%
+      // If player shoots better than defense allows = advantage
+      const grade = calculateGrade(pz.fg_pct, dz.opp_fg_pct, dz.rank);
+      const impact = calculateImpact(grade, pz.frequency);
       
-      return {
-        ...spot,
-        liveData: {
-          isLive: game.status === 'in_progress',
-          currentValue: projection?.current ?? 0,
-          projectedFinal: projection?.projected ?? 0,
-          gameProgress: game.gameProgress,
-          period: String(game.period),
-          clock: game.clock || '',
-          confidence: projection?.confidence ?? 50,
-          riskFlags: player.riskFlags,
-          trend: projection?.trend ?? 'stable',
-          minutesPlayed: player.minutesPlayed,
-          ratePerMinute: projection?.ratePerMinute ?? 0,
-          paceRating: game.pace,
-        }
-      };
-    });
-  }, [spots, games, findPlayer, getPlayerProjection]);
+      zones.push({ zone: pz.zone, ...grade, impact });
+      score += impact * pz.frequency;
+    }
+    
+    return {
+      primaryZone: primaryZone.zone,
+      primaryZonePct: primaryZone.frequency,
+      zones,
+      overallMatchupScore: score,
+      recommendation: generateRecommendation(score, primaryZone, propType)
+    };
+  }, [playerZones, defenseZones]);
+  
+  return { analysis, isLoading, error };
 }
 ```
 
-### Update SweetSpotCard Component
+---
 
-**Modify: `src/components/sweetspots/SweetSpotCard.tsx`**
+## Phase 5: Shot Chart Visualization Component
 
-Add live data section when game is in progress:
+**Create: `src/components/sweetspots/ShotChartMatchup.tsx`**
+
+Visual half-court representation showing:
+- Color-coded zones (green = advantage, red = disadvantage)
+- Player shot frequency per zone
+- Defense rating overlay
 
 ```tsx
-{spot.liveData?.isLive && (
-  <div className="p-2 bg-green-500/10 rounded-lg border border-green-500/30">
-    <div className="flex items-center justify-between">
-      <div className="flex items-center gap-2">
-        <span className="animate-pulse w-2 h-2 bg-green-500 rounded-full" />
-        <span className="text-xs text-green-400 font-medium">LIVE</span>
-        <span className="text-xs text-muted-foreground">
-          Q{spot.liveData.period} {spot.liveData.clock}
-        </span>
-      </div>
-      <span className="text-sm font-bold">
-        {spot.liveData.currentValue} → {spot.liveData.projectedFinal}
-      </span>
-    </div>
-    
-    {/* Progress bar */}
-    <div className="mt-2 h-1.5 bg-muted rounded-full overflow-hidden">
-      <div 
-        className="h-full bg-green-500 transition-all"
-        style={{ width: `${spot.liveData.gameProgress}%` }}
-      />
-    </div>
-    
-    {/* Risk flags */}
-    {spot.liveData.riskFlags.length > 0 && (
-      <div className="mt-2 flex gap-1">
-        {spot.liveData.riskFlags.map(flag => (
-          <span key={flag} className="text-xs px-1.5 py-0.5 bg-red-500/20 text-red-400 rounded">
-            {flag === 'foul_trouble' ? '⚠️ Foul Trouble' : 
-             flag === 'blowout' ? '📉 Blowout' : flag}
-          </span>
+export function ShotChartMatchup({ analysis }: { analysis: ShotChartAnalysis }) {
+  // Half-court SVG with zones
+  // Each zone colored by matchup grade
+  // Frequency % shown in each zone
+  // Defense rank shown on hover
+  
+  return (
+    <div className="relative w-full aspect-[1.2] max-w-[200px]">
+      {/* Court SVG background */}
+      <svg viewBox="0 0 470 500" className="w-full h-full">
+        {/* Paint zone */}
+        <rect 
+          className={cn(
+            "transition-colors",
+            getZoneColor(analysis.zones.find(z => z.zone === 'paint')?.matchupGrade)
+          )}
+          x="170" y="0" width="130" height="190"
+        />
+        
+        {/* Restricted area (arc) */}
+        <circle 
+          className={cn(
+            getZoneColor(analysis.zones.find(z => z.zone === 'restricted_area')?.matchupGrade)
+          )}
+          cx="235" cy="52" r="40"
+        />
+        
+        {/* Corner 3 zones */}
+        <rect 
+          className={cn(
+            getZoneColor(analysis.zones.find(z => z.zone === 'corner_3')?.matchupGrade)
+          )}
+          x="0" y="0" width="30" height="140"
+        />
+        {/* ... right corner, mid-range, above break 3 ... */}
+        
+        {/* Zone labels with frequency */}
+        {analysis.zones.map(zone => (
+          <text key={zone.zone} ...>
+            {Math.round(zone.playerFrequency * 100)}%
+          </text>
         ))}
+      </svg>
+      
+      {/* Legend */}
+      <div className="flex gap-2 text-xs mt-2">
+        <span className="text-green-400">● Advantage</span>
+        <span className="text-yellow-400">● Neutral</span>
+        <span className="text-red-400">● Disadvantage</span>
       </div>
-    )}
+    </div>
+  );
+}
+```
+
+---
+
+## Phase 6: Integrate with Hedge Recommendations
+
+**Modify: `src/components/sweetspots/HedgeRecommendation.tsx`**
+
+Add shot chart analysis to the hedge calculation:
+
+```typescript
+function calculateHedgeAction(spot: DeepSweetSpot): HedgeAction {
+  // ... existing logic ...
+  
+  // NEW: Shot chart matchup modifier
+  const shotChart = spot.liveData?.shotChartMatchup;
+  if (shotChart && (spot.propType === 'points' || spot.propType === 'threes')) {
+    
+    // Strong disadvantage = more urgent hedge
+    if (shotChart.overallMatchupScore < -5) {
+      return {
+        message: `Shot chart mismatch: ${shotChart.recommendation}`,
+        action: `📊 ${oppositeSide} ${line} - Player's primary zone (${shotChart.primaryZone}) faces ${getDefenseLabel(shotChart)} defense`,
+        urgency: 'high'
+      };
+    }
+    
+    // Advantage = less urgent to hedge
+    if (shotChart.overallMatchupScore > 5 && !atRisk) {
+      // Reduce urgency - good matchup means projection more likely
+      urgency = 'low';
+    }
+  }
+  
+  // ... rest of existing logic ...
+}
+```
+
+**Add visual component to HedgeRecommendation:**
+
+```tsx
+{/* Shot Chart Section (only for points/threes props) */}
+{shotChartMatchup && (
+  <div className="mt-3 pt-3 border-t border-border/30">
+    <div className="flex items-center gap-2 mb-2">
+      <Target className="w-4 h-4 text-muted-foreground" />
+      <span className="text-xs font-medium">Shot Chart vs Defense</span>
+    </div>
+    <div className="flex gap-4 items-start">
+      <ShotChartMatchup analysis={shotChartMatchup} />
+      <div className="flex-1 text-xs space-y-1">
+        <p className="text-muted-foreground">
+          Primary Zone: <span className="text-foreground font-medium">
+            {formatZoneName(shotChartMatchup.primaryZone)}
+          </span>
+          ({Math.round(shotChartMatchup.primaryZonePct * 100)}% of shots)
+        </p>
+        <p className={cn(
+          shotChartMatchup.overallMatchupScore > 0 ? "text-green-400" : "text-red-400"
+        )}>
+          {shotChartMatchup.recommendation}
+        </p>
+      </div>
+    </div>
   </div>
 )}
 ```
 
 ---
 
-## Phase 4: Pace-Based Hedge Recommendations
+## Phase 7: Data Flow Summary
 
-### Goal
-Provide real-time hedge suggestions when a prop is at risk based on:
-- Current pace vs expected pace
-- Game flow (blowout = reduced minutes)
-- Player trending below line
+```text
+Daily Sync (6 AM ET)
+    │
+    ├──→ fetch-shot-chart-data edge function
+    │         │
+    │         ├──→ NBA Stats API → player_zone_stats
+    │         └──→ Team zone defense → team_zone_defense
+    │
+    └──→ Data ready for queries
 
-### New Component: `HedgeRecommendation`
-
-**Create: `src/components/sweetspots/HedgeRecommendation.tsx`**
-
-This component analyzes live data and recommends hedging when:
-1. Player is below pace (projected < line for OVER)
-2. Risk flags present (blowout, foul trouble)
-3. Game pace is significantly slow (affects volume props)
-
-```tsx
-interface HedgeRecommendationProps {
-  spot: DeepSweetSpot;
-}
-
-export function HedgeRecommendation({ spot }: HedgeRecommendationProps) {
-  if (!spot.liveData?.isLive) return null;
-  
-  const { currentValue, projectedFinal, paceRating, riskFlags, gameProgress } = spot.liveData;
-  const isOver = spot.side === 'over';
-  
-  // Calculate hedge scenarios
-  const onPace = isOver ? projectedFinal >= spot.line : projectedFinal <= spot.line;
-  const atRisk = !onPace && gameProgress > 25;
-  const severeRisk = riskFlags.length > 0 || (isOver && paceRating < 95);
-  
-  if (!atRisk && !severeRisk) return null;
-  
-  const hedgeMessage = calculateHedgeMessage(spot);
-  
-  return (
-    <div className="mt-2 p-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
-      <div className="flex items-center gap-2">
-        <AlertTriangle className="w-4 h-4 text-yellow-500" />
-        <span className="text-xs font-medium text-yellow-400">HEDGE ALERT</span>
-      </div>
-      <p className="text-xs text-muted-foreground mt-1">{hedgeMessage}</p>
-      
-      {/* Pace indicator */}
-      <div className="mt-2 flex items-center gap-2 text-xs">
-        <span className="text-muted-foreground">Game Pace:</span>
-        <span className={cn(
-          "font-medium",
-          paceRating >= 102 ? "text-green-400" : 
-          paceRating >= 98 ? "text-yellow-400" : "text-red-400"
-        )}>
-          {paceRating >= 102 ? 'FAST' : paceRating >= 98 ? 'NORMAL' : 'SLOW'}
-          ({paceRating})
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function calculateHedgeMessage(spot: DeepSweetSpot): string {
-  const { liveData, line, side, propType } = spot;
-  if (!liveData) return '';
-  
-  const gap = side === 'over' 
-    ? line - liveData.projectedFinal 
-    : liveData.projectedFinal - line;
-  
-  if (liveData.riskFlags.includes('blowout')) {
-    return `Blowout detected - player may see reduced 4th quarter minutes. Consider hedging ${side === 'over' ? 'UNDER' : 'OVER'} at current line.`;
-  }
-  
-  if (liveData.riskFlags.includes('foul_trouble')) {
-    return `Player in foul trouble - minutes at risk. Monitor closely.`;
-  }
-  
-  if (liveData.paceRating < 95 && side === 'over') {
-    return `Slow game pace (${liveData.paceRating}) limiting stat opportunities. Prop trending ${gap.toFixed(1)} below projection.`;
-  }
-  
-  return `Prop trending ${gap.toFixed(1)} ${side === 'over' ? 'below' : 'above'} line. Consider live hedge.`;
-}
-```
-
-### Add Pace Filter to Dashboard
-
-**Modify: `src/pages/SweetSpots.tsx`**
-
-Add pace-based filter for live games:
-
-```tsx
-const [paceFilter, setPaceFilter] = useState<'all' | 'fast' | 'slow' | 'live-only'>('all');
-
-// Apply pace filter
-if (paceFilter === 'live-only') {
-  filtered = filtered.filter(s => s.liveData?.isLive);
-} else if (paceFilter === 'fast') {
-  filtered = filtered.filter(s => 
-    !s.liveData?.isLive || s.liveData.paceRating >= 102
-  );
-} else if (paceFilter === 'slow') {
-  filtered = filtered.filter(s => 
-    s.liveData?.isLive && s.liveData.paceRating < 98
-  );
-}
-```
-
-UI for pace filter:
-```tsx
-<div className="flex items-center gap-1.5">
-  <span className="text-sm text-muted-foreground">Pace:</span>
-  {(['all', 'live-only', 'fast', 'slow'] as const).map(filter => (
-    <Button
-      key={filter}
-      size="sm"
-      variant={paceFilter === filter ? 'default' : 'outline'}
-      onClick={() => setPaceFilter(filter)}
-      className="text-xs h-7 px-2"
-    >
-      {filter === 'all' ? 'All' : 
-       filter === 'live-only' ? '🔴 Live' :
-       filter === 'fast' ? '🚀 Fast' : '🐢 Slow'}
-    </Button>
-  ))}
-</div>
+Live Game
+    │
+    ├──→ useSweetSpotLiveData (existing)
+    │         │
+    │         └──→ Enriches spots with live stats
+    │
+    ├──→ useShotChartAnalysis (NEW)
+    │         │
+    │         ├──→ Query player_zone_stats
+    │         ├──→ Query team_zone_defense
+    │         └──→ Calculate matchup grades
+    │
+    └──→ HedgeRecommendation
+              │
+              ├──→ Existing factors (pace, risk flags, projection)
+              └──→ NEW: Shot chart matchup modifier
+                        │
+                        └──→ Adjust urgency based on zone advantages
 ```
 
 ---
@@ -374,59 +350,79 @@ UI for pace filter:
 
 | File | Purpose |
 |------|---------|
-| `supabase/functions/refresh-sweet-spots-post-game/index.ts` | Cron job for post-game data refresh |
-| `src/hooks/useSweetSpotLiveData.ts` | Hook to enrich spots with live player projections |
-| `src/components/sweetspots/HedgeRecommendation.tsx` | Real-time hedge alert component |
-| `src/components/sweetspots/LiveDataOverlay.tsx` | Live stats display on card |
+| `supabase/functions/fetch-shot-chart-data/index.ts` | Daily sync of zone shooting data |
+| `src/hooks/useShotChartAnalysis.ts` | Calculate player vs defense zone matchups |
+| `src/components/sweetspots/ShotChartMatchup.tsx` | Visual half-court zone display |
 
 ## Files to Modify
 
 | File | Change |
 |------|--------|
-| `src/hooks/useDeepSweetSpots.ts` | Add deduplication logic |
-| `src/types/sweetSpot.ts` | Add LivePropData interface |
-| `src/components/sweetspots/SweetSpotCard.tsx` | Integrate live data display and hedge recommendations |
-| `src/pages/SweetSpots.tsx` | Add pace filter and use live data hook |
+| `src/types/sweetSpot.ts` | Add `ZoneMatchup`, `ShotChartAnalysis` interfaces |
+| `src/components/sweetspots/HedgeRecommendation.tsx` | Integrate shot chart analysis into hedge logic |
+| `src/hooks/useSweetSpotLiveData.ts` | Enrich with shot chart data |
 | `supabase/config.toml` | Add new edge function config |
 
----
+## Database Migrations
 
-## Data Flow
+```sql
+-- player_zone_stats table
+CREATE TABLE player_zone_stats (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  player_name text NOT NULL,
+  season text NOT NULL DEFAULT '2024-25',
+  zone text NOT NULL,
+  fga integer DEFAULT 0,
+  fgm integer DEFAULT 0,
+  fg_pct numeric(5,3),
+  frequency numeric(5,3),
+  updated_at timestamptz DEFAULT now(),
+  UNIQUE(player_name, season, zone)
+);
 
-```text
-SweetSpots Page
-    │
-    ├──→ useDeepSweetSpots() → Fetch & deduplicate static analysis
-    │
-    ├──→ useSweetSpotLiveData(spots) → Enrich with live projections
-    │         │
-    │         └──→ useUnifiedLiveFeed (15s refresh)
-    │                   │
-    │                   └──→ unified-player-feed edge function
-    │                             │
-    │                             └──→ ESPN Summary API (live boxscores)
-    │
-    └──→ Render SweetSpotCards with:
-              ├──→ Static analysis (floor, edge, juice)
-              ├──→ Live data overlay (current/projected)
-              └──→ HedgeRecommendation (pace + risk flags)
+-- team_zone_defense table
+CREATE TABLE team_zone_defense (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  team_abbrev text NOT NULL,
+  season text NOT NULL DEFAULT '2024-25',
+  zone text NOT NULL,
+  opp_fga integer DEFAULT 0,
+  opp_fg_pct numeric(5,3),
+  league_avg_pct numeric(5,3),
+  defense_rating text,
+  rank integer,
+  updated_at timestamptz DEFAULT now(),
+  UNIQUE(team_abbrev, season, zone)
+);
 ```
 
 ---
 
-## Cron Schedule Summary
+## Expected Impact
 
-| Job Name | Schedule | Purpose |
-|----------|----------|---------|
-| `refresh-sweet-spots-post-game` | Every 30 min, 9 PM - 2 AM ET | Verify outcomes, refresh game logs |
-| `verify-sweet-spot-outcomes` | Daily 6 AM ET (existing) | Settle previous day's picks |
+1. **Smarter Hedging** - Points/threes props get zone-aware recommendations
+2. **Visual Insight** - Users see exactly where matchup advantages/disadvantages exist
+3. **Accuracy Boost** - Shot chart context should improve hedge timing by identifying structural mismatches (e.g., "paint scorer vs elite rim protection = lower projection confidence")
 
 ---
 
-## Expected Results
+## Example Output
 
-1. **No duplicates** - Each player+propType appears once with best line
-2. **Auto-refresh** - Sweet spot accuracy data updates within 30 min of game end
-3. **Live tracking** - Real-time stats visible on cards during games
-4. **Smart hedging** - Alerts when pace/risk factors threaten the bet
+For a player like **Trae Young O 25.5 PTS** vs Boston:
 
+```
+Shot Chart vs Defense
+┌────────────────────────────────────┐
+│  [2%]     [28%]🟢    [1%]          │  ← Above Break 3
+│           ┌─────┐                   │
+│  [20%]    │🔴   │    [3%]          │  ← Mid-Range / Paint
+│           │     │                   │
+│  [24%]🟢  └─────┘    [24%]🟢       │  ← Corner 3 / Restricted
+└────────────────────────────────────┘
+
+Primary Zone: Above Break 3 (28%)
+🟢 ADVANTAGE: Boston allows 36% from above-break 3 (Rank #22)
+
+Hedge Urgency: REDUCED
+Recommendation: Hold position - favorable zone matchup
+```
