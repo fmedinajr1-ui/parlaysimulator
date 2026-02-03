@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useUnifiedLiveFeed } from './useUnifiedLiveFeed';
-import type { DeepSweetSpot, LivePropData, PropType } from '@/types/sweetSpot';
+import { useBatchShotChartAnalysis } from './useBatchShotChartAnalysis';
+import type { DeepSweetSpot, LivePropData, PropType, ShotChartAnalysis } from '@/types/sweetSpot';
 
 // Map propType to the unified feed stat key
 const PROP_TO_STAT_KEY: Record<PropType, string> = {
@@ -20,18 +21,71 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
     refreshInterval: 15000, // 15s refresh
   });
   
+  // Batch shot chart data for all players
+  const { getMatchup, isLoading: shotChartLoading } = useBatchShotChartAnalysis(spots.length > 0);
+  
   const enrichedSpots = useMemo(() => {
-    if (!games.length) return spots;
-    
     return spots.map(spot => {
       const result = findPlayer(spot.playerName);
-      if (!result) return spot;
+      
+      // Get shot chart matchup for scoring props (works even without live game)
+      let shotChartMatchup: ShotChartAnalysis | undefined = undefined;
+      if ((spot.propType === 'points' || spot.propType === 'threes') && spot.opponentName) {
+        shotChartMatchup = getMatchup(spot.playerName, spot.opponentName, spot.propType) ?? undefined;
+      }
+      
+      // If player not in live feed, still return with shot chart data if available
+      if (!result) {
+        if (shotChartMatchup) {
+          return {
+            ...spot,
+            liveData: {
+              isLive: false,
+              currentValue: 0,
+              projectedFinal: 0,
+              gameProgress: 0,
+              period: '',
+              clock: '',
+              confidence: 50,
+              riskFlags: [],
+              trend: 'stable' as const,
+              minutesPlayed: 0,
+              ratePerMinute: 0,
+              paceRating: 100,
+              shotChartMatchup,
+            },
+          };
+        }
+        return spot;
+      }
       
       const { player, game } = result;
       const projection = getPlayerProjection(spot.playerName, spot.propType);
       
-      // Only add live data if game is in progress
-      if (game.status !== 'in_progress') return spot;
+      // Only add full live data if game is in progress
+      if (game.status !== 'in_progress') {
+        if (shotChartMatchup) {
+          return {
+            ...spot,
+            liveData: {
+              isLive: false,
+              currentValue: 0,
+              projectedFinal: 0,
+              gameProgress: 0,
+              period: '',
+              clock: '',
+              confidence: 50,
+              riskFlags: [],
+              trend: 'stable' as const,
+              minutesPlayed: 0,
+              ratePerMinute: 0,
+              paceRating: 100,
+              shotChartMatchup,
+            },
+          };
+        }
+        return spot;
+      }
       
       const liveData: LivePropData = {
         isLive: true,
@@ -47,11 +101,12 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
         minutesPlayed: player.minutesPlayed ?? 0,
         ratePerMinute: projection?.ratePerMinute ?? 0,
         paceRating: game.pace ?? 100,
+        shotChartMatchup,
       };
       
       return { ...spot, liveData };
     });
-  }, [spots, games, findPlayer, getPlayerProjection]);
+  }, [spots, games, findPlayer, getPlayerProjection, getMatchup]);
   
   // Calculate live game count
   const liveGameCount = useMemo(() => {
@@ -67,7 +122,7 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
     spots: enrichedSpots,
     liveSpots,
     liveGameCount,
-    isLoading,
+    isLoading: isLoading || shotChartLoading,
     error,
   };
 }
