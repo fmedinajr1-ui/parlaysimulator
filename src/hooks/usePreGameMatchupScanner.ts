@@ -157,7 +157,7 @@ export function usePreGameMatchupScanner(filters?: MatchupScannerFilters) {
         .lt('commence_time', endUTC.toISOString())
         .eq('sport', 'basketball_nba')
         .eq('is_active', true)
-        .is('outcome', null); // Pre-game only (not settled)
+        .or('outcome.is.null,outcome.eq.pending'); // Pre-game only (not settled)
       
       if (error) throw error;
       
