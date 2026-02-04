@@ -1,13 +1,11 @@
 import { useState } from 'react';
-import { RefreshCw, Target, TrendingUp, Users, Zap } from 'lucide-react';
+import { Zap, TrendingUp, TrendingDown, Users, Minus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { cn } from '@/lib/utils';
 import { getEasternDate } from '@/lib/dateUtils';
 import { usePreGameMatchupScanner } from '@/hooks/usePreGameMatchupScanner';
-import { GradeFilterBar } from './GradeFilterBar';
-import { GameGroupHeader } from './GameGroupHeader';
+import { SideFilterBar } from './SideFilterBar';
 import { MatchupGradeCard } from './MatchupGradeCard';
 import type { MatchupScannerFilters, PlayerMatchupAnalysis } from '@/types/matchupScanner';
 
@@ -22,9 +20,11 @@ export function MatchupScannerDashboard({ onAddToBuilder }: MatchupScannerDashbo
     gradeFilter: 'all',
     boostFilter: 'all',
     teamFilter: 'all',
+    sideFilter: 'all',
+    strengthFilter: 'all',
   });
   
-  const { analyses, gameGroups, stats, isLoading } = usePreGameMatchupScanner(filters);
+  const { analyses, stats, isLoading } = usePreGameMatchupScanner(filters);
   
   return (
     <div className="space-y-4">
@@ -36,38 +36,44 @@ export function MatchupScannerDashboard({ onAddToBuilder }: MatchupScannerDashbo
             Pre-Game Matchup Scanner
           </h2>
           <p className="text-xs text-muted-foreground">
-            {todayET} • Zone Analysis vs Opponent Defense
+            {todayET} • {stats.totalGames} Games • {stats.totalPlayers} Players
           </p>
         </div>
       </div>
       
-      {/* Stats Summary */}
+      {/* Stats Summary - Stock Ticker Style */}
       {!isLoading && stats.totalPlayers > 0 && (
         <div className="grid grid-cols-4 gap-2">
-          <Card className="bg-amber-500/10 border-amber-500/30">
-            <CardContent className="p-2 text-center">
-              <div className="text-xs text-amber-300">A+ Grade</div>
-              <div className="text-xl font-bold text-amber-400">
-                {stats.gradeDistribution['A+'] || 0}
-              </div>
-            </CardContent>
-          </Card>
           <Card className="bg-green-500/10 border-green-500/30">
             <CardContent className="p-2 text-center">
-              <div className="text-xs text-green-300">A Grade</div>
+              <div className="text-xs text-green-300 flex items-center justify-center gap-1">
+                <TrendingUp size={10} />
+                OVER
+              </div>
               <div className="text-xl font-bold text-green-400">
-                {stats.gradeDistribution['A'] || 0}
+                {stats.overCount}
               </div>
             </CardContent>
           </Card>
-          <Card className="bg-orange-500/10 border-orange-500/30">
+          <Card className="bg-red-500/10 border-red-500/30">
             <CardContent className="p-2 text-center">
-              <div className="text-xs text-orange-300 flex items-center justify-center gap-1">
-                <Target size={10} />
-                PTS Boost
+              <div className="text-xs text-red-300 flex items-center justify-center gap-1">
+                <TrendingDown size={10} />
+                UNDER
               </div>
-              <div className="text-xl font-bold text-orange-400">
-                {stats.scoringBoostCount}
+              <div className="text-xl font-bold text-red-400">
+                {stats.underCount}
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="bg-muted border-border">
+            <CardContent className="p-2 text-center">
+              <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">
+                <Minus size={10} />
+                PASS
+              </div>
+              <div className="text-xl font-bold text-foreground">
+                {stats.passCount}
               </div>
             </CardContent>
           </Card>
@@ -75,7 +81,7 @@ export function MatchupScannerDashboard({ onAddToBuilder }: MatchupScannerDashbo
             <CardContent className="p-2 text-center">
               <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">
                 <Users size={10} />
-                Players
+                Total
               </div>
               <div className="text-xl font-bold text-foreground">
                 {stats.totalPlayers}
@@ -87,7 +93,7 @@ export function MatchupScannerDashboard({ onAddToBuilder }: MatchupScannerDashbo
       
       {/* Filters */}
       {!isLoading && stats.totalPlayers > 0 && (
-        <GradeFilterBar 
+        <SideFilterBar 
           filters={filters} 
           stats={stats} 
           onFiltersChange={setFilters} 
@@ -135,7 +141,13 @@ export function MatchupScannerDashboard({ onAddToBuilder }: MatchupScannerDashbo
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setFilters({ gradeFilter: 'all', boostFilter: 'all', teamFilter: 'all' })}
+              onClick={() => setFilters({ 
+                gradeFilter: 'all', 
+                boostFilter: 'all', 
+                teamFilter: 'all',
+                sideFilter: 'all',
+                strengthFilter: 'all',
+              })}
             >
               Clear Filters
             </Button>
@@ -143,22 +155,15 @@ export function MatchupScannerDashboard({ onAddToBuilder }: MatchupScannerDashbo
         </Card>
       )}
       
-      {/* Game Groups */}
-      {!isLoading && gameGroups.length > 0 && (
-        <div className="space-y-4">
-          {gameGroups.map((group) => (
-            <div key={group.eventId} className="space-y-2">
-              <GameGroupHeader group={group} />
-              <div className="grid gap-2 md:grid-cols-2">
-                {group.players.map((analysis) => (
-                  <MatchupGradeCard
-                    key={analysis.id}
-                    analysis={analysis}
-                    onAddToBuilder={onAddToBuilder}
-                  />
-                ))}
-              </div>
-            </div>
+      {/* Ranked Player List - Stock Ticker Style */}
+      {!isLoading && analyses.length > 0 && (
+        <div className="space-y-2">
+          {analyses.map((analysis) => (
+            <MatchupGradeCard
+              key={analysis.id}
+              analysis={analysis}
+              onAddToBuilder={onAddToBuilder}
+            />
           ))}
         </div>
       )}
@@ -166,7 +171,7 @@ export function MatchupScannerDashboard({ onAddToBuilder }: MatchupScannerDashbo
       {/* Results Count */}
       {!isLoading && analyses.length > 0 && (
         <p className="text-center text-xs text-muted-foreground pt-2">
-          Showing {analyses.length} of {stats.totalPlayers} players • {stats.totalGames} games
+          Showing {analyses.length} of {stats.totalPlayers} players • Ranked by edge strength
         </p>
       )}
     </div>

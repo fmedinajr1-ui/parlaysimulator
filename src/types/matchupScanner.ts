@@ -1,6 +1,6 @@
 /**
  * Pre-Game Matchup Scanner Type Definitions
- * Analyzes player production zones against opponent defensive rankings
+ * Stock-market style display with OVER/UNDER recommendations
  */
 
 import type { ZoneType, DefenseRating } from './sweetSpot';
@@ -8,6 +8,12 @@ import type { ZoneType, DefenseRating } from './sweetSpot';
 export type MatchupGradeLetter = 'A+' | 'A' | 'B+' | 'B' | 'C' | 'D';
 
 export type BoostLevel = 'strong' | 'moderate' | 'neutral' | 'negative';
+
+export type RecommendedSide = 'over' | 'under' | 'pass';
+
+export type SideStrength = 'strong' | 'moderate' | 'lean';
+
+export type PropEdgeType = 'points' | 'threes' | 'both' | 'none';
 
 export interface ZoneAnalysis {
   zone: ZoneType;
@@ -44,7 +50,15 @@ export interface PlayerMatchupAnalysis {
   exploitableZones: ZoneType[]; // Zones with advantage > 5%
   avoidZones: ZoneType[]; // Zones with disadvantage < -5%
   
-  // Prop recommendation
+  // NEW: Stock-market style fields
+  recommendedSide: RecommendedSide;
+  sideStrength: SideStrength;
+  simpleReason: string; // User-friendly explanation
+  edgeScore: number; // Absolute value for sorting (higher = better opportunity)
+  rank: number; // 1-based position in today's picks
+  propEdgeType: PropEdgeType; // What prop type has the edge
+  
+  // Legacy fields (kept for compatibility)
   scoringBoost: BoostLevel;
   threesBoost: BoostLevel;
   recommendation: string;
@@ -68,12 +82,19 @@ export interface MatchupScannerStats {
   gradeDistribution: Record<MatchupGradeLetter, number>;
   scoringBoostCount: number;
   threesBoostCount: number;
+  // NEW: Side-based counts
+  overCount: number;
+  underCount: number;
+  passCount: number;
 }
 
 export interface MatchupScannerFilters {
   gradeFilter: MatchupGradeLetter | 'all' | 'A+A' | 'B+B';
   boostFilter: 'all' | 'scoring' | 'threes';
   teamFilter: string | 'all';
+  // NEW: Side-based filter
+  sideFilter?: RecommendedSide | 'all';
+  strengthFilter?: SideStrength | 'all';
 }
 
 // Grade thresholds for scoring

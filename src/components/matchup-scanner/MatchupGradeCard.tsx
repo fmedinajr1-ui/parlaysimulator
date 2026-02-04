@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronUp, Target, Flame, Crosshair, Plus } from 'lucide-react';
+import { ChevronDown, ChevronUp, Plus, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -7,60 +7,108 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { cn } from '@/lib/utils';
 import { ZoneAdvantageBar } from './ZoneAdvantageBar';
 import type { PlayerMatchupAnalysis } from '@/types/matchupScanner';
-import { GRADE_THRESHOLDS, ZONE_DISPLAY_NAMES, ZONE_SHORT_LABELS } from '@/types/matchupScanner';
+import { ZONE_DISPLAY_NAMES, ZONE_SHORT_LABELS } from '@/types/matchupScanner';
 
 interface MatchupGradeCardProps {
   analysis: PlayerMatchupAnalysis;
   onAddToBuilder?: (analysis: PlayerMatchupAnalysis) => void;
 }
 
-// Grade badge colors
-const gradeColors: Record<string, string> = {
-  'A+': 'bg-amber-500/20 text-amber-400 border-amber-500/30',
-  'A': 'bg-green-500/20 text-green-400 border-green-500/30',
-  'B+': 'bg-teal-500/20 text-teal-400 border-teal-500/30',
-  'B': 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
-  'C': 'bg-gray-500/20 text-gray-400 border-gray-500/30',
-  'D': 'bg-red-500/20 text-red-400 border-red-500/30',
+// Side-based styling
+const sideStyles = {
+  over: {
+    border: 'border-l-4 border-l-green-500',
+    bg: 'bg-green-500/5',
+    badge: 'bg-green-500/20 text-green-400 border-green-500/30',
+    icon: TrendingUp,
+    label: 'OVER',
+    emoji: '🟢',
+  },
+  under: {
+    border: 'border-l-4 border-l-red-500',
+    bg: 'bg-red-500/5',
+    badge: 'bg-red-500/20 text-red-400 border-red-500/30',
+    icon: TrendingDown,
+    label: 'UNDER',
+    emoji: '🔴',
+  },
+  pass: {
+    border: 'border-l-4 border-l-muted',
+    bg: 'bg-muted/20',
+    badge: 'bg-muted text-muted-foreground border-muted',
+    icon: Minus,
+    label: 'PASS',
+    emoji: '⚪',
+  },
 };
 
-// Boost badge colors
-const boostColors = {
-  strong: 'bg-green-500/20 text-green-400',
-  moderate: 'bg-teal-500/20 text-teal-400',
-  neutral: 'bg-gray-500/20 text-gray-400',
-  negative: 'bg-red-500/20 text-red-400',
+// Strength labels
+const strengthLabels = {
+  strong: 'Strong edge',
+  moderate: 'Good edge',
+  lean: 'Slight edge',
+};
+
+// Prop type labels
+const propTypeLabels = {
+  points: 'POINTS',
+  threes: '3PT',
+  both: 'PTS & 3PT',
+  none: '',
 };
 
 export function MatchupGradeCard({ analysis, onAddToBuilder }: MatchupGradeCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   
-  const gradeInfo = GRADE_THRESHOLDS[analysis.overallGrade];
+  const style = sideStyles[analysis.recommendedSide];
+  const SideIcon = style.icon;
+  const propLabel = propTypeLabels[analysis.propEdgeType];
+  const strengthLabel = strengthLabels[analysis.sideStrength];
+  
+  // Format game time
+  const gameTime = new Date(analysis.gameTime).toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone: 'America/New_York',
+  });
   
   return (
-    <Card className="overflow-hidden">
+    <Card className={cn("overflow-hidden", style.border, style.bg)}>
       <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
         <CardContent className="p-3">
-          {/* Header Row */}
+          {/* Header Row - Rank + Score + Name */}
           <div className="flex items-start justify-between gap-2 mb-2">
-            <div className="flex items-center gap-2">
-              <div className={cn(
-                "w-10 h-10 rounded-lg flex items-center justify-center font-bold text-lg border",
-                gradeColors[analysis.overallGrade]
-              )}>
-                {analysis.overallGrade}
+            <div className="flex items-center gap-3">
+              {/* Rank */}
+              <div className="text-xs text-muted-foreground font-medium w-6">
+                #{analysis.rank}
               </div>
+              
+              {/* Score Badge */}
+              <div className={cn(
+                "px-2 py-1 rounded text-sm font-bold tabular-nums",
+                analysis.recommendedSide === 'over' && "bg-green-500/20 text-green-400",
+                analysis.recommendedSide === 'under' && "bg-red-500/20 text-red-400",
+                analysis.recommendedSide === 'pass' && "bg-muted text-muted-foreground"
+              )}>
+                {analysis.overallScore > 0 ? '+' : ''}{analysis.overallScore.toFixed(1)}
+              </div>
+              
+              {/* Player Name */}
               <div>
                 <div className="font-semibold text-foreground">
                   {analysis.playerName}
                 </div>
-                <div className="text-xs text-muted-foreground">
-                  {analysis.teamAbbrev} vs {analysis.opponentAbbrev}
-                </div>
               </div>
             </div>
             
+            {/* Side Indicator */}
             <div className="flex items-center gap-1">
+              <Badge className={cn("text-xs gap-1", style.badge)}>
+                <SideIcon size={12} />
+                {style.label}
+              </Badge>
+              
               {onAddToBuilder && (
                 <Button
                   size="icon"
@@ -71,6 +119,7 @@ export function MatchupGradeCard({ analysis, onAddToBuilder }: MatchupGradeCardP
                   <Plus size={14} />
                 </Button>
               )}
+              
               <CollapsibleTrigger asChild>
                 <Button size="icon" variant="ghost" className="h-7 w-7">
                   {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -79,30 +128,32 @@ export function MatchupGradeCard({ analysis, onAddToBuilder }: MatchupGradeCardP
             </div>
           </div>
           
-          {/* Zone Advantage Chips */}
-          <div className="flex flex-wrap gap-1 mb-2">
-            {analysis.zones.slice(0, 4).map((zone) => (
-              <ZoneAdvantageBar key={zone.zone} zone={zone} compact />
-            ))}
+          {/* Recommendation Row */}
+          <div className="mb-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              {propLabel && (
+                <span className={cn(
+                  "text-sm font-medium",
+                  analysis.recommendedSide === 'over' && "text-green-400",
+                  analysis.recommendedSide === 'under' && "text-red-400",
+                  analysis.recommendedSide === 'pass' && "text-muted-foreground"
+                )}>
+                  {propLabel} {style.label}
+                </span>
+              )}
+              <span className="text-xs text-muted-foreground">•</span>
+              <span className="text-xs text-muted-foreground">{strengthLabel}</span>
+            </div>
           </div>
           
-          {/* Recommendation */}
-          <div className="flex items-center gap-2 flex-wrap">
-            {analysis.scoringBoost !== 'neutral' && (
-              <Badge className={cn("text-xs gap-1", boostColors[analysis.scoringBoost])}>
-                <Target size={10} />
-                PTS {analysis.scoringBoost === 'strong' ? '🔥' : analysis.scoringBoost === 'negative' ? '❄️' : ''}
-              </Badge>
-            )}
-            {analysis.threesBoost !== 'neutral' && (
-              <Badge className={cn("text-xs gap-1", boostColors[analysis.threesBoost])}>
-                <Crosshair size={10} />
-                3PT {analysis.threesBoost === 'strong' ? '🔥' : analysis.threesBoost === 'negative' ? '❄️' : ''}
-              </Badge>
-            )}
-            <span className="text-xs text-muted-foreground flex-1">
-              Primary: {ZONE_DISPLAY_NAMES[analysis.primaryZone]} ({(analysis.primaryZoneFrequency * 100).toFixed(0)}%)
-            </span>
+          {/* Simple Reason */}
+          <p className="text-sm text-muted-foreground mb-2 italic">
+            "{analysis.simpleReason}"
+          </p>
+          
+          {/* Game Info */}
+          <div className="text-xs text-muted-foreground">
+            {analysis.teamAbbrev} vs {analysis.opponentAbbrev} • {gameTime} ET
           </div>
           
           {/* Expanded Content */}
@@ -122,8 +173,8 @@ export function MatchupGradeCard({ analysis, onAddToBuilder }: MatchupGradeCardP
               {analysis.exploitableZones.length > 0 && (
                 <div>
                   <h4 className="text-xs font-medium text-green-400 mb-1 flex items-center gap-1">
-                    <Flame size={12} />
-                    Attack Zones
+                    <TrendingUp size={12} />
+                    OVER Zones
                   </h4>
                   <div className="flex flex-wrap gap-1">
                     {analysis.exploitableZones.map((zone) => (
@@ -138,8 +189,9 @@ export function MatchupGradeCard({ analysis, onAddToBuilder }: MatchupGradeCardP
               {/* Avoid Zones */}
               {analysis.avoidZones.length > 0 && (
                 <div>
-                  <h4 className="text-xs font-medium text-red-400 mb-1">
-                    ⚠️ Avoid Zones
+                  <h4 className="text-xs font-medium text-red-400 mb-1 flex items-center gap-1">
+                    <TrendingDown size={12} />
+                    UNDER Zones
                   </h4>
                   <div className="flex flex-wrap gap-1">
                     {analysis.avoidZones.map((zone) => (
@@ -151,11 +203,14 @@ export function MatchupGradeCard({ analysis, onAddToBuilder }: MatchupGradeCardP
                 </div>
               )}
               
-              {/* Recommendation */}
+              {/* Primary Zone Info */}
               <div className="p-2 bg-muted/50 rounded-md">
-                <p className="text-sm font-medium">{analysis.recommendation}</p>
+                <p className="text-xs text-muted-foreground">
+                  Primary zone: <span className="font-medium text-foreground">{ZONE_DISPLAY_NAMES[analysis.primaryZone]}</span>
+                  {' '}({(analysis.primaryZoneFrequency * 100).toFixed(0)}% of shots)
+                </p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Score: {analysis.overallScore.toFixed(1)} • {gradeInfo.label}
+                  Grade: <span className="font-medium text-foreground">{analysis.overallGrade}</span>
                 </p>
               </div>
             </div>
