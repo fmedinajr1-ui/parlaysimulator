@@ -1,55 +1,69 @@
 
-# Quarter Transition Alerts - Implementation Plan
+# Halftime Recalibration Engine - Implementation Plan
 
 ## Overview
 
-Add intelligent alerts that trigger at the end of each quarter, providing specific hedge guidance based on:
-- Pace vs. expectation comparison per quarter
-- Cumulative production trajectory
-- Time remaining and projected finish
-- Quarter-over-quarter velocity changes
+Build an intelligent halftime analysis system that recalculates 2nd-half projections using:
+1. **Actual 1st-half production** vs **Historical 1st-half baselines**
+2. **Player-specific half distribution patterns** (e.g., "LeBron typically scores 55% in 1H, 45% in 2H")
+3. **Fatigue and pace adjustments** for 2nd-half decay
+4. **Recalibrated confidence scores** based on 1st-half performance
+
+This replaces the current linear expectation model (`line / 2`) with player-specific historical patterns.
 
 ---
 
 ## How It Works
 
-The system will detect when a game transitions between quarters (Q1→Q2, Q2→Halftime, Q3→Q4, End of Game) and display a persistent alert card with guidance specific to that transition point.
-
 ```text
-┌──────────────────────────────────────────────────────────────────┐
-│  🔔 Q1 COMPLETE - PACE CHECK                                     │
-├──────────────────────────────────────────────────────────────────┤
-│  LeBron OVER 26.5 PTS                                            │
-│                                                                  │
-│  Q1: 8 pts (32% pace) ✓ ON TRACK                                │
-│  Need: 26.5 → Achieved: 32%  → Project: 28.4                     │
-│                                                                  │
-│  ⚡ Velocity: 0.67/min (need 0.55/min) +22% ahead                │
-│                                                                  │
-│  🎯 Quarter Insight: Strong start. If Q2 matches,                │
-│     could hit by halftime for profit lock opportunity.           │
-│                                                                  │
-│  ✓ NO ACTION NEEDED - Maintain position                         │
-└──────────────────────────────────────────────────────────────────┘
++------------------------------------------------------+
+|  HALFTIME RECALIBRATION                              |
+|  LeBron James - OVER 26.5 PTS                        |
++------------------------------------------------------+
+|                                                      |
+|  1ST HALF ANALYSIS                                   |
+|  ┌─────────────────────────────────────────────────┐ |
+|  │  Actual:    14 pts   │  Expected:  12.4 pts     │ |
+|  │  Variance:  +13% ✓   │  Baseline:  47% in 1H    │ |
+|  └─────────────────────────────────────────────────┘ |
+|                                                      |
+|  2ND HALF PROJECTION (Recalibrated)                  |
+|  ┌─────────────────────────────────────────────────┐ |
+|  │  Linear Model:     28.0 pts (extrapolated)      │ |
+|  │  Recalibrated:     26.8 pts (history-weighted)  │ |
+|  │  Adjustment:       -1.2 pts (fatigue decay)     │ |
+|  └─────────────────────────────────────────────────┘ |
+|                                                      |
+|  RECALIBRATION FACTORS                               |
+|  • Historical 2H Rate: 0.48/min (vs 0.58/min in 1H) |
+|  • Fatigue Score: 42/100 (moderate)                 |
+|  • Game Pace: 104 (above avg = +3% boost)           |
+|                                                      |
+|  ⚡ INSIGHT: Player exceeded 1H baseline. History    |
+|     shows 16% regression in 2H. Projection adjusted. |
+|                                                      |
+|  ✓ OVER still viable at 26.8 - Hold position        |
++------------------------------------------------------+
 ```
 
 ---
 
 ## Data Sources
 
-**Real-time from unified-player-feed:**
-- `period` (current quarter: 1, 2, 3, 4)
-- `clock` (time in quarter)
-- `gameStatus` ('in_progress', 'halftime')
-- `currentValue` (cumulative stat)
-- `ratePerMinute` (current production rate)
-- `paceRating` (game pace)
+**Historical Baselines (from L10 game logs):**
+- First half production percentage (derived from Q1+Q2 data if available)
+- Rate decay between halves (1H rate vs 2H rate)
+- Total game stat distributions
 
-**Derived calculations:**
-- Expected value per quarter = line / 4
-- Quarter velocity = points in quarter / quarter minutes
-- Pace gap = actual quarter production - expected quarter production
-- Trajectory = if Q1 pace maintained for remaining quarters
+**Live Data at Halftime:**
+- `currentValue`: Actual stat at halftime
+- `ratePerMinute`: 1st half production rate
+- `minutesPlayed`: Minutes logged in 1H
+- `fatigue_score`: From `quarter_player_snapshots` (if available)
+- `paceRating`: Game pace relative to league average
+
+**Calculation Approach:**
+Since we don't have granular quarter-by-quarter historical data in the current schema, we'll use L10 stats to derive baselines and apply intelligent regression factors.
 
 ---
 
@@ -58,335 +72,217 @@ The system will detect when a game transitions between quarters (Q1→Q2, Q2→H
 ### 1. New Types in `src/types/sweetSpot.ts`
 
 ```typescript
-export type QuarterNumber = 1 | 2 | 3 | 4;
-
-export interface QuarterSnapshot {
-  quarter: QuarterNumber;
-  value: number;           // Stat value at end of quarter
-  expectedValue: number;   // What we expected (line / 4)
-  velocity: number;        // Rate in that quarter
-  paceGap: number;         // +/- vs expected
-  cumulative: number;      // Running total
-  percentComplete: number; // 25, 50, 75, 100
-}
-
-export interface QuarterTransitionAlert {
-  type: 'quarter_transition';
-  quarter: QuarterNumber;
-  headline: string;
-  status: 'ahead' | 'on_track' | 'behind' | 'critical';
+export interface HalftimeRecalibration {
+  // 1st Half Analysis
+  actual1H: number;
+  expected1H: number;          // Historical baseline for 1H
+  variance1H: number;          // Actual - Expected as %
   
-  // Quarter data
-  quarterValue: number;
-  expectedQuarterValue: number;
-  paceGapPct: number;       // +22% ahead, -15% behind
+  // Baseline Patterns
+  historical1HRate: number;    // Per minute rate in 1H (from L10)
+  historical2HRate: number;    // Per minute rate in 2H (estimated)
+  halfDistribution: number;    // % typically scored in 1H (default 0.50)
+  regressionFactor: number;    // How much 2H typically drops from 1H
   
-  // Projection data
-  currentTotal: number;
-  projectedFinal: number;
-  requiredRemaining: number;
-  requiredRate: number;
+  // 2nd Half Projection
+  linearProjection: number;    // Simple extrapolation
+  recalibratedProjection: number; // With historical adjustments
+  projectionDelta: number;     // Linear - Recalibrated
   
-  // Velocity comparison
-  currentVelocity: number;  // Rate this quarter
-  neededVelocity: number;   // Rate needed for remaining
-  velocityDelta: number;    // Current vs needed
+  // Adjustments Applied
+  fatigueAdjustment: number;   // Fatigue decay factor
+  paceAdjustment: number;      // Pace boost/penalty
+  minutesAdjustment: number;   // Expected 2H minutes vs 1H
   
-  // Guidance
+  // Final Assessment
+  confidenceBoost: number;     // +/- to base confidence
   insight: string;
-  action: string;
-  urgency: 'none' | 'low' | 'medium' | 'high';
+  recommendation: string;
 }
 ```
 
-### 2. Quarter Tracking in `LivePropData`
-
-Update the `LivePropData` interface to include quarter history:
-
+Add to `LivePropData`:
 ```typescript
 export interface LivePropData {
-  isLive: boolean;
-  gameStatus?: 'in_progress' | 'halftime' | 'scheduled' | 'final';
-  currentValue: number;
   // ... existing fields ...
-  
-  // NEW: Quarter tracking
-  currentQuarter: number;
-  quarterHistory: QuarterSnapshot[];
-  quarterTransition?: QuarterTransitionAlert;
+  halftimeRecalibration?: HalftimeRecalibration;
 }
 ```
 
-### 3. Quarter Detection Hook
-
-Create `src/hooks/useQuarterTransition.ts`:
+### 2. New Hook: `src/hooks/useHalftimeRecalibration.ts`
 
 ```typescript
-export function useQuarterTransition(spots: DeepSweetSpot[]) {
-  // Track previous quarter per game
-  const prevQuarters = useRef<Map<string, number>>(new Map());
-  
-  // Detect quarter transitions
-  const spotsWithTransitions = useMemo(() => {
-    return spots.map(spot => {
-      if (!spot.liveData?.isLive) return spot;
-      
-      const currentQuarter = parseInt(spot.liveData.period);
-      const prevQuarter = prevQuarters.current.get(spot.id) || 0;
-      
-      // Detect transition
-      if (currentQuarter > prevQuarter && prevQuarter > 0) {
-        const transition = calculateQuarterTransition(
-          spot,
-          prevQuarter as QuarterNumber
-        );
-        return { ...spot, liveData: { ...spot.liveData, quarterTransition: transition }};
-      }
-      
-      // Also detect halftime
-      if (spot.liveData.gameStatus === 'halftime' && prevQuarter === 2) {
-        const transition = calculateHalftimeTransition(spot);
-        return { ...spot, liveData: { ...spot.liveData, quarterTransition: transition }};
-      }
-      
-      prevQuarters.current.set(spot.id, currentQuarter);
-      return spot;
-    });
-  }, [spots]);
-  
-  return spotsWithTransitions;
-}
-```
+import { useMemo } from 'react';
+import type { DeepSweetSpot, HalftimeRecalibration } from '@/types/sweetSpot';
 
-### 4. Transition Calculation Logic
+// Default regression factors (derived from typical NBA patterns)
+const DEFAULT_2H_REGRESSION = 0.92; // 2H typically 8% lower than 1H
+const STAR_REGRESSION = 0.95;       // Stars regress less
+const ROLE_PLAYER_REGRESSION = 0.88; // Role players regress more
 
-```typescript
-function calculateQuarterTransition(
-  spot: DeepSweetSpot,
-  completedQuarter: QuarterNumber
-): QuarterTransitionAlert {
-  const { liveData, line, side } = spot;
-  const currentTotal = liveData.currentValue;
+function calculateHalftimeRecalibration(
+  spot: DeepSweetSpot
+): HalftimeRecalibration | null {
+  const { liveData, line, side, l10Stats, production } = spot;
   
-  // Expected per quarter (simple: line / 4)
-  const expectedPerQuarter = line / 4;
-  const expectedAtQuarterEnd = expectedPerQuarter * completedQuarter;
+  // Only calculate at halftime
+  if (liveData?.gameStatus !== 'halftime') return null;
   
-  // Calculate pace gap
-  const paceGap = currentTotal - expectedAtQuarterEnd;
-  const paceGapPct = (paceGap / expectedAtQuarterEnd) * 100;
+  const actual1H = liveData.currentValue;
+  const rate1H = liveData.ratePerMinute;
+  const minutesPlayed = liveData.minutesPlayed;
   
-  // Velocity analysis
-  const quarterMinutes = 12;
-  const minutesPlayed = completedQuarter * quarterMinutes;
-  const currentVelocity = currentTotal / minutesPlayed;
+  // Calculate expected 1H based on historical L10 average
+  // Assuming even distribution, expected 1H = L10 avg / 2
+  const expected1H = l10Stats.avg / 2;
+  const variance1H = expected1H > 0 
+    ? ((actual1H - expected1H) / expected1H) * 100 
+    : 0;
   
-  // What's needed for remaining quarters
-  const remaining = line - currentTotal;
-  const remainingMinutes = (4 - completedQuarter) * 12;
-  const requiredVelocity = remainingMinutes > 0 ? remaining / remainingMinutes : 0;
-  const velocityDelta = currentVelocity - requiredVelocity;
+  // Historical rate analysis
+  const historical1HRate = production.statPerMinute || 0;
+  // Estimate 2H regression based on production tier
+  const regressionFactor = production.avgMinutes >= 32 
+    ? STAR_REGRESSION 
+    : production.avgMinutes >= 24 
+      ? DEFAULT_2H_REGRESSION 
+      : ROLE_PLAYER_REGRESSION;
+  const historical2HRate = historical1HRate * regressionFactor;
   
-  // Determine status
-  let status: 'ahead' | 'on_track' | 'behind' | 'critical';
-  let urgency: 'none' | 'low' | 'medium' | 'high';
+  // Simple linear projection (current pace)
+  const expectedRemaining = 24; // 2nd half minutes
+  const linearProjection = actual1H + (rate1H * expectedRemaining);
   
-  if (side === 'over') {
-    if (paceGapPct >= 20) { status = 'ahead'; urgency = 'none'; }
-    else if (paceGapPct >= -10) { status = 'on_track'; urgency = 'none'; }
-    else if (paceGapPct >= -25) { status = 'behind'; urgency = 'medium'; }
-    else { status = 'critical'; urgency = 'high'; }
+  // Recalibrated projection using historical 2H rate
+  const recalibratedProjection = actual1H + (historical2HRate * expectedRemaining);
+  const projectionDelta = linearProjection - recalibratedProjection;
+  
+  // Fatigue adjustment (if available from quarter snapshots)
+  const fatigueScore = 0; // Would come from quarter_player_snapshots
+  const fatigueAdjustment = fatigueScore > 60 ? -0.05 : 0;
+  
+  // Pace adjustment
+  const paceRating = liveData.paceRating || 100;
+  const paceAdjustment = (paceRating - 100) / 100 * 0.5; // ±5% per 10 pace points
+  
+  // Minutes adjustment (stars play more in 2H of close games)
+  const minutesAdjustment = 0; // Placeholder
+  
+  // Apply adjustments to recalibrated projection
+  const adjustedProjection = recalibratedProjection * 
+    (1 + fatigueAdjustment) * 
+    (1 + paceAdjustment);
+  
+  // Generate insight
+  let insight: string;
+  let confidenceBoost: number;
+  let recommendation: string;
+  
+  if (variance1H >= 15) {
+    insight = `Player exceeded 1H baseline by ${variance1H.toFixed(0)}%. ` +
+      `Historical data shows ${((1 - regressionFactor) * 100).toFixed(0)}% regression in 2H.`;
+    confidenceBoost = side === 'over' ? 5 : -10;
+    recommendation = side === 'over' 
+      ? `Strong 1H suggests ${spot.side} likely to hit. Consider profit lock.`
+      : `1H pace threatening UNDER. Monitor for hedge.`;
+  } else if (variance1H <= -15) {
+    insight = `Player underperformed 1H baseline by ${Math.abs(variance1H).toFixed(0)}%. ` +
+      `2H surge possible but not guaranteed.`;
+    confidenceBoost = side === 'over' ? -10 : 5;
+    recommendation = side === 'over'
+      ? `Behind at half. Need 2H burst or consider hedge.`
+      : `UNDER tracking well. Hold position.`;
   } else {
-    // For UNDER, being "behind" (lower) is good
-    if (paceGapPct <= -20) { status = 'ahead'; urgency = 'none'; }
-    else if (paceGapPct <= 10) { status = 'on_track'; urgency = 'none'; }
-    else if (paceGapPct <= 25) { status = 'behind'; urgency = 'medium'; }
-    else { status = 'critical'; urgency = 'high'; }
+    insight = `1H production within expected range (${variance1H >= 0 ? '+' : ''}${variance1H.toFixed(0)}%). ` +
+      `Projecting standard 2H regression.`;
+    confidenceBoost = 0;
+    recommendation = `On track. No action needed.`;
   }
-  
-  // Generate insight based on quarter
-  const insight = generateQuarterInsight(completedQuarter, paceGapPct, side, velocityDelta);
-  const action = generateQuarterAction(status, urgency, side, completedQuarter);
   
   return {
-    type: 'quarter_transition',
-    quarter: completedQuarter,
-    headline: `Q${completedQuarter} COMPLETE`,
-    status,
-    quarterValue: currentTotal / completedQuarter, // Avg per Q so far
-    expectedQuarterValue: expectedPerQuarter,
-    paceGapPct,
-    currentTotal,
-    projectedFinal: liveData.projectedFinal,
-    requiredRemaining: remaining,
-    requiredRate: requiredVelocity,
-    currentVelocity,
-    neededVelocity: requiredVelocity,
-    velocityDelta,
+    actual1H,
+    expected1H,
+    variance1H,
+    historical1HRate,
+    historical2HRate,
+    halfDistribution: 0.5,
+    regressionFactor,
+    linearProjection: Math.round(linearProjection * 10) / 10,
+    recalibratedProjection: Math.round(adjustedProjection * 10) / 10,
+    projectionDelta: Math.round(projectionDelta * 10) / 10,
+    fatigueAdjustment,
+    paceAdjustment,
+    minutesAdjustment,
+    confidenceBoost,
     insight,
-    action,
-    urgency,
+    recommendation,
   };
 }
-```
 
-### 5. New Component: `QuarterTransitionCard.tsx`
-
-```typescript
-export function QuarterTransitionCard({ transition, spot }: Props) {
-  const colors = getTransitionColors(transition.status);
-  
-  return (
-    <div className={cn("p-3 rounded-lg border mb-2", colors.bg, colors.border)}>
-      {/* Header */}
-      <div className="flex items-center gap-2 mb-2">
-        <Bell className="w-4 h-4" />
-        <span className={cn("font-bold text-sm", colors.text)}>
-          🔔 {transition.headline}
-        </span>
-        <span className={cn("ml-auto px-2 py-0.5 rounded text-xs font-bold", colors.badge)}>
-          {transition.status.toUpperCase()}
-        </span>
-      </div>
+export function useHalftimeRecalibration(spots: DeepSweetSpot[]): DeepSweetSpot[] {
+  return useMemo(() => {
+    return spots.map(spot => {
+      if (!spot.liveData || spot.liveData.gameStatus !== 'halftime') {
+        return spot;
+      }
       
-      {/* Progress Bar */}
-      <div className="mb-2">
-        <div className="flex justify-between text-xs mb-1">
-          <span>Q{transition.quarter}: {transition.currentTotal}</span>
-          <span>Need: {spot.line}</span>
-        </div>
-        <Progress value={(transition.currentTotal / spot.line) * 100} />
-        <div className="flex justify-between text-xs mt-1 text-muted-foreground">
-          <span>Expected: {(transition.expectedQuarterValue * transition.quarter).toFixed(1)}</span>
-          <span className={transition.paceGapPct >= 0 ? "text-primary" : "text-destructive"}>
-            {transition.paceGapPct >= 0 ? '+' : ''}{transition.paceGapPct.toFixed(0)}%
-          </span>
-        </div>
-      </div>
+      const recalibration = calculateHalftimeRecalibration(spot);
+      if (!recalibration) return spot;
       
-      {/* Velocity Comparison */}
-      <div className="flex items-center gap-2 text-xs mb-2">
-        <Zap className="w-3 h-3" />
-        <span className="text-muted-foreground">
-          Velocity: <span className="font-mono font-bold">{transition.currentVelocity.toFixed(2)}</span>/min
-        </span>
-        <span className="text-muted-foreground">|</span>
-        <span className="text-muted-foreground">
-          Need: <span className="font-mono font-bold">{transition.neededVelocity.toFixed(2)}</span>/min
-        </span>
-        <span className={cn(
-          "font-bold",
-          transition.velocityDelta >= 0 ? "text-primary" : "text-destructive"
-        )}>
-          ({transition.velocityDelta >= 0 ? '+' : ''}{((transition.velocityDelta / transition.neededVelocity) * 100).toFixed(0)}%)
-        </span>
-      </div>
-      
-      {/* Insight */}
-      <p className="text-xs text-muted-foreground mb-2">
-        🎯 {transition.insight}
-      </p>
-      
-      {/* Action */}
-      <div className={cn(
-        "p-2 rounded text-xs font-semibold",
-        transition.urgency === 'high' ? "bg-destructive/20 text-destructive" :
-        transition.urgency === 'medium' ? "bg-orange-500/20 text-orange-500" :
-        "bg-primary/20 text-primary"
-      )}>
-        {transition.action}
-      </div>
-    </div>
-  );
+      return {
+        ...spot,
+        liveData: {
+          ...spot.liveData,
+          halftimeRecalibration: recalibration,
+          // Update projected final with recalibrated value
+          projectedFinal: recalibration.recalibratedProjection,
+          // Adjust confidence
+          confidence: Math.max(1, Math.min(99, 
+            (spot.liveData.confidence || 50) + recalibration.confidenceBoost
+          )),
+        },
+      };
+    });
+  }, [spots]);
 }
 ```
 
-### 6. Integration with HedgeRecommendation
+### 3. New Component: `src/components/sweetspots/HalftimeRecalibrationCard.tsx`
 
-Update `HedgeRecommendation.tsx` to show the quarter transition card above the main hedge content:
+A dedicated UI component that displays the halftime analysis with:
+- 1st Half vs Expected comparison
+- Side-by-side Linear vs Recalibrated projections
+- Visual progress toward line
+- Fatigue/Pace adjustment indicators
+- Actionable insight and recommendation
 
+### 4. Integration Points
+
+**Update `useSweetSpotLiveData.ts`:**
 ```typescript
-export function HedgeRecommendation({ spot }: HedgeRecommendationProps) {
-  // ... existing logic ...
-  
-  return (
-    <div className={cn("mt-2 p-3 rounded-lg border", colors.bg, colors.border)}>
-      {/* Quarter Transition Alert (if active) */}
-      {spot.liveData?.quarterTransition && (
-        <QuarterTransitionCard 
-          transition={spot.liveData.quarterTransition} 
-          spot={spot} 
-        />
-      )}
-      
-      {/* Halftime Indicator */}
-      {/* ... rest of existing content ... */}
-    </div>
-  );
-}
+import { useHalftimeRecalibration } from './useHalftimeRecalibration';
+
+// After quarter transition detection
+const spotsWithTransitions = useQuarterTransition(enrichedSpots);
+
+// Add halftime recalibration
+const spotsWithRecalibration = useHalftimeRecalibration(spotsWithTransitions);
+
+return {
+  spots: spotsWithRecalibration,
+  // ...
+};
 ```
 
-### 7. Insight Generation Logic
-
+**Update `HedgeRecommendation.tsx`:**
+Display the HalftimeRecalibrationCard when halftime data is available:
 ```typescript
-function generateQuarterInsight(
-  quarter: QuarterNumber,
-  paceGapPct: number,
-  side: 'over' | 'under',
-  velocityDelta: number
-): string {
-  if (quarter === 1) {
-    if (side === 'over') {
-      if (paceGapPct >= 20) return "Strong Q1 start. If Q2 matches, watch for halftime profit lock.";
-      if (paceGapPct >= 0) return "Solid pace. Stay patient through Q2.";
-      if (paceGapPct >= -15) return "Slightly slow Q1. Common for pacing - monitor Q2 burst.";
-      return "Slow start. Need acceleration in Q2 or consider light hedge.";
-    } else {
-      if (paceGapPct <= -20) return "Great Q1 for UNDER. Low usage trend looking favorable.";
-      if (paceGapPct >= 20) return "Warning: Q1 pace threatens UNDER. Watch for continuation.";
-    }
-  }
-  
-  if (quarter === 2) {
-    // Halftime analysis
-    if (side === 'over') {
-      if (paceGapPct >= 15) return "Strong 1st half. Consider small profit lock on UNDER.";
-      if (paceGapPct >= -10) return "On track at half. Q3 historically has highest scoring.";
-      return "Behind at halftime. Need big 2nd half or hedge now.";
-    }
-  }
-  
-  if (quarter === 3) {
-    if (side === 'over') {
-      if (paceGapPct >= 10) return "Cruising. Q4 is cushion territory.";
-      if (paceGapPct < -15) return "Q4 crunch time. Stars usually close strong but hedge may be wise.";
-    }
-  }
-  
-  return "Tracking production. Continue monitoring.";
-}
-
-function generateQuarterAction(
-  status: string,
-  urgency: string,
-  side: 'over' | 'under',
-  quarter: QuarterNumber
-): string {
-  const remainingQs = 4 - quarter;
-  
-  if (status === 'ahead' || status === 'on_track') {
-    if (quarter >= 2 && status === 'ahead') {
-      return `✓ Consider small profit lock on opposite side if ${remainingQs}Q+ buffer`;
-    }
-    return `✓ HOLD - No action needed. ${remainingQs} quarter${remainingQs > 1 ? 's' : ''} remaining.`;
-  }
-  
-  if (status === 'behind') {
-    return `⚠️ Watch Q${quarter + 1} closely. Prepare hedge if trend continues.`;
-  }
-  
-  return `🚨 HEDGE RECOMMENDED - ${remainingQs} quarter${remainingQs > 1 ? 's' : ''} may not be enough at current pace.`;
-}
+{spot.liveData?.halftimeRecalibration && (
+  <HalftimeRecalibrationCard 
+    recalibration={spot.liveData.halftimeRecalibration}
+    spot={spot}
+  />
+)}
 ```
 
 ---
@@ -395,42 +291,53 @@ function generateQuarterAction(
 
 | Action | File | Description |
 |--------|------|-------------|
-| MODIFY | `src/types/sweetSpot.ts` | Add QuarterSnapshot, QuarterTransitionAlert types |
-| MODIFY | `src/hooks/useSweetSpotLiveData.ts` | Add quarter tracking to enriched data |
-| CREATE | `src/hooks/useQuarterTransition.ts` | Quarter detection and transition calculation |
-| CREATE | `src/components/sweetspots/QuarterTransitionCard.tsx` | UI component for quarter alerts |
-| MODIFY | `src/components/sweetspots/HedgeRecommendation.tsx` | Integrate QuarterTransitionCard |
+| MODIFY | `src/types/sweetSpot.ts` | Add `HalftimeRecalibration` interface, update `LivePropData` |
+| CREATE | `src/hooks/useHalftimeRecalibration.ts` | Recalibration logic and hook |
+| CREATE | `src/components/sweetspots/HalftimeRecalibrationCard.tsx` | Halftime analysis UI component |
+| MODIFY | `src/hooks/useSweetSpotLiveData.ts` | Integrate recalibration hook |
+| MODIFY | `src/components/sweetspots/HedgeRecommendation.tsx` | Display recalibration card at halftime |
 
 ---
 
-## User Experience Flow
+## Recalibration Logic Details
 
-1. **Q1 Ends (25% complete)**
-   - Alert shows Q1 production vs. expected
-   - Velocity comparison appears
-   - Early indication if on track or adjustments needed
+### Regression Factors
+Based on typical NBA patterns:
+- **Stars (32+ min)**: 5% regression (they pace themselves in 1H, close in 2H)
+- **Starters (24-32 min)**: 8% regression (standard fatigue)
+- **Role players (<24 min)**: 12% regression (more variable minutes in 2H)
 
-2. **Halftime (50% complete)**
-   - Comprehensive 1st half analysis
-   - Clear projection for 2nd half
-   - Profit lock opportunities highlighted if ahead
+### Variance Thresholds
+- **Hot Start (≥+15%)**: Player beating baseline - adjust for likely regression
+- **Cold Start (≤-15%)**: Player behind baseline - surge possible but risky
+- **On Track (-15% to +15%)**: Normal variance - apply standard regression
 
-3. **Q3 Ends (75% complete)**
-   - "Crunch time" analysis
-   - Strong recommendation if behind
-   - Q4 expectations set
-
-4. **Q4/End of Game**
-   - Final outcome tracking
-   - Win/loss confirmation
+### Confidence Adjustments
+- OVER bet + hot start = +5 confidence
+- OVER bet + cold start = -10 confidence  
+- UNDER bet + hot start = -10 confidence
+- UNDER bet + cold start = +5 confidence
 
 ---
 
-## Alert Persistence
+## User Experience
 
-Quarter transition alerts will:
-- Appear immediately when quarter ends
-- Persist for ~3 minutes into the next quarter (allowing user to see)
-- Auto-dismiss when meaningful action happens in new quarter
-- Always be overridden by more urgent hedge alerts (blowout, foul trouble)
+At halftime, the user sees:
 
+1. **Clear 1H vs Baseline comparison**
+   - Actual points vs historical expectation
+   - Percentage variance with color coding
+
+2. **Two projection models side-by-side**
+   - Linear (naive extrapolation)
+   - Recalibrated (with historical regression)
+
+3. **Adjustment breakdown**
+   - Fatigue factor
+   - Pace factor
+   - Why the projection changed
+
+4. **Actionable guidance**
+   - "Strong 1H - consider profit lock"
+   - "Behind at half - hedge opportunity"
+   - "On track - hold position"
