@@ -351,8 +351,8 @@ function TrendIcon({ trend, side }: { trend: TrendDirection; side: 'over' | 'und
 }
 
 export function HedgeRecommendation({ spot }: HedgeRecommendationProps) {
-  // Always show for live games - no early return!
-  if (!spot.liveData?.isLive) return null;
+  // Show for live games and during halftime
+  if (!spot.liveData?.isLive && spot.liveData?.gameStatus !== 'halftime') return null;
   
   const hedgeAction = calculateEnhancedHedgeAction(spot);
   const colors = getStatusColors(hedgeAction.status);
@@ -361,13 +361,21 @@ export function HedgeRecommendation({ spot }: HedgeRecommendationProps) {
   
   return (
     <div className={cn("mt-2 p-3 rounded-lg border", colors.bg, colors.border)}>
+      {/* Halftime Indicator */}
+      {spot.liveData?.gameStatus === 'halftime' && (
+        <div className="mb-2 flex items-center gap-2 text-xs text-warning">
+          <Clock className="w-3 h-3" />
+          <span className="font-medium">HALFTIME - Data from 1st half</span>
+        </div>
+      )}
+      
       {/* Status Badge Header */}
       <div className="flex items-center justify-between mb-2">
         <span className={cn("px-2 py-0.5 rounded text-xs font-bold", colors.badge)}>
           {hedgeAction.headline}
         </span>
         <span className="text-xs text-muted-foreground">
-          {hedgeAction.hitProbability}% hit probability
+          {Math.round(hedgeAction.hitProbability)}% hit probability
         </span>
       </div>
       

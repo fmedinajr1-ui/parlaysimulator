@@ -98,6 +98,7 @@ export interface JuiceAnalysis {
 // Live prop data from unified-player-feed
 export interface LivePropData {
   isLive: boolean;
+  gameStatus?: 'in_progress' | 'halftime' | 'scheduled' | 'final';
   currentValue: number;
   projectedFinal: number;
   gameProgress: number; // 0-100

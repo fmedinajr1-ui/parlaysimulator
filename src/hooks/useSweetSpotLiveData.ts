@@ -72,8 +72,8 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
       const { player, game } = result;
       const projection = getPlayerProjection(spot.playerName, spot.propType);
       
-      // Only add full live data if game is in progress
-      if (game.status !== 'in_progress') {
+      // Only add full live data if game is in progress or halftime
+      if (game.status !== 'in_progress' && game.status !== 'halftime') {
         if (shotChartMatchup) {
           return {
             ...spot,
@@ -99,6 +99,7 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
       
       const liveData: LivePropData = {
         isLive: true,
+        gameStatus: game.status as 'in_progress' | 'halftime',
         currentValue: projection?.current ?? 
           (player.currentStats[PROP_TO_STAT_KEY[spot.propType]] ?? 0),
         projectedFinal: projection?.projected ?? 0,
