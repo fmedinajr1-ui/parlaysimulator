@@ -362,3 +362,6 @@ verify_jwt = false
 
 [functions.calculate-quarter-baselines]
 verify_jwt = false
+
+[functions.generate-matchup-scanner-picks]
+verify_jwt = false
