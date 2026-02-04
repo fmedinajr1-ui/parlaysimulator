@@ -2,6 +2,7 @@ import { AlertTriangle, TrendingDown, TrendingUp, Minus, Snowflake, Flame, Targe
 import { cn } from "@/lib/utils";
 import type { DeepSweetSpot, ShotChartAnalysis, HedgeStatus, TrendDirection, EnhancedHedgeAction } from "@/types/sweetSpot";
 import { ShotChartMatchup } from "./ShotChartMatchup";
+import { QuarterTransitionCard } from "./QuarterTransitionCard";
 
 interface HedgeRecommendationProps {
   spot: DeepSweetSpot;
@@ -361,8 +362,16 @@ export function HedgeRecommendation({ spot }: HedgeRecommendationProps) {
   
   return (
     <div className={cn("mt-2 p-3 rounded-lg border", colors.bg, colors.border)}>
-      {/* Halftime Indicator */}
-      {spot.liveData?.gameStatus === 'halftime' && (
+      {/* Quarter Transition Alert (if active) */}
+      {spot.liveData?.quarterTransition && (
+        <QuarterTransitionCard 
+          transition={spot.liveData.quarterTransition} 
+          spot={spot} 
+        />
+      )}
+      
+      {/* Halftime Indicator (only if no transition alert showing) */}
+      {spot.liveData?.gameStatus === 'halftime' && !spot.liveData?.quarterTransition && (
         <div className="mb-2 flex items-center gap-2 text-xs text-warning">
           <Clock className="w-3 h-3" />
           <span className="font-medium">HALFTIME - Data from 1st half</span>
