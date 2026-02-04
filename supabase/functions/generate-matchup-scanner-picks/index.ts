@@ -141,7 +141,7 @@ Deno.serve(async (req) => {
 
     const { data: todayProps, error: propsError } = await supabase
       .from('unified_props')
-      .select('player_name, game_description, commence_time, event_id, prop_type, line')
+      .select('player_name, game_description, commence_time, event_id, prop_type, current_line')
       .gte('commence_time', startUTC.toISOString())
       .lt('commence_time', endUTC.toISOString())
       .eq('sport', 'basketball_nba')
@@ -168,16 +168,16 @@ Deno.serve(async (req) => {
           gameDescription: prop.game_description,
           commenceTime: prop.commence_time,
           eventId: prop.event_id,
-          pointsLine: propType === 'points' || propType === 'player_points' ? prop.line : null,
-          threesLine: propType === 'threes' || propType === 'player_threes' || propType === 'three_pointers' ? prop.line : null,
+          pointsLine: propType === 'points' || propType === 'player_points' ? prop.current_line : null,
+          threesLine: propType === 'threes' || propType === 'player_threes' || propType === 'three_pointers' ? prop.current_line : null,
         });
       } else {
         // Update lines if found
         if ((propType === 'points' || propType === 'player_points') && !existing.pointsLine) {
-          existing.pointsLine = prop.line;
+          existing.pointsLine = prop.current_line;
         }
         if ((propType === 'threes' || propType === 'player_threes' || propType === 'three_pointers') && !existing.threesLine) {
-          existing.threesLine = prop.line;
+          existing.threesLine = prop.current_line;
         }
       }
     }
