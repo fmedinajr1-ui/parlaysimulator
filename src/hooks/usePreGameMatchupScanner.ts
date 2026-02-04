@@ -140,18 +140,21 @@ export function usePreGameMatchupScanner(filters?: MatchupScannerFilters) {
   const { data: todayProps, isLoading: propsLoading } = useQuery({
     queryKey: ['today-props-pregame', todayET],
     queryFn: async () => {
-      // Calculate the date range for today in UTC
-      const today = new Date();
-      const startOfDay = new Date(today);
-      startOfDay.setHours(0, 0, 0, 0);
-      const endOfDay = new Date(today);
-      endOfDay.setHours(23, 59, 59, 999);
+      // Calculate the UTC range for today's Eastern Time games
+      // Games stored in UTC need offset: ET date maps to UTC noon-to-noon
+      const todayETDate = getEasternDate(); // e.g., "2026-02-04"
+      const [year, month, day] = todayETDate.split('-').map(Number);
+
+      // Start: Today at 12:00 UTC (covers morning ET games)
+      const startUTC = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+      // End: Tomorrow at 12:00 UTC (covers late-night ET games)
+      const endUTC = new Date(Date.UTC(year, month - 1, day + 1, 12, 0, 0));
       
       const { data, error } = await supabase
         .from('unified_props')
         .select('player_name, game_description, commence_time, event_id')
-        .gte('commence_time', startOfDay.toISOString())
-        .lte('commence_time', endOfDay.toISOString())
+        .gte('commence_time', startUTC.toISOString())
+        .lt('commence_time', endUTC.toISOString())
         .eq('sport', 'basketball_nba')
         .eq('is_active', true)
         .is('outcome', null); // Pre-game only (not settled)
