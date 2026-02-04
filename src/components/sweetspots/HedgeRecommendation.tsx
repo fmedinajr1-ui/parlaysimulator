@@ -4,6 +4,7 @@ import type { DeepSweetSpot, ShotChartAnalysis, HedgeStatus, TrendDirection, Enh
 import { ShotChartMatchup } from "./ShotChartMatchup";
 import { QuarterTransitionCard } from "./QuarterTransitionCard";
 import { HalftimeRecalibrationCard } from "./HalftimeRecalibrationCard";
+import { QuarterProgressSparkline } from "./QuarterProgressSparkline";
 
 interface HedgeRecommendationProps {
   spot: DeepSweetSpot;
@@ -409,6 +410,11 @@ export function HedgeRecommendation({ spot }: HedgeRecommendationProps) {
         )}>
           {projectedFinal.toFixed(1)}
         </span>
+      </div>
+      
+      {/* Quarter Progress Sparkline - visual trajectory */}
+      <div className="mb-3 p-2 rounded bg-background/50 border border-border/30">
+        <QuarterProgressSparkline spot={spot} />
       </div>
       
       {/* Line and Gap Info */}
