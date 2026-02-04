@@ -12,8 +12,11 @@ import type {
   MatchupGradeLetter,
   BoostLevel,
   MatchupScannerFilters,
+  RecommendedSide,
+  SideStrength,
+  PropEdgeType,
 } from '@/types/matchupScanner';
-import { GRADE_THRESHOLDS, LEAGUE_AVG_BY_ZONE } from '@/types/matchupScanner';
+import { LEAGUE_AVG_BY_ZONE, ZONE_DISPLAY_NAMES } from '@/types/matchupScanner';
 
 interface PlayerZoneStats {
   player_name: string;
@@ -76,6 +79,68 @@ function calculateZoneGrade(advantage: number): 'advantage' | 'neutral' | 'disad
   return 'neutral';
 }
 
+// NEW: Determine recommended side based on matchup score
+function determineSide(score: number): { side: RecommendedSide; strength: SideStrength } {
+  if (score >= 5) return { side: 'over', strength: 'strong' };
+  if (score >= 2) return { side: 'over', strength: 'moderate' };
+  if (score > 0) return { side: 'over', strength: 'lean' };
+  if (score <= -5) return { side: 'under', strength: 'strong' };
+  if (score <= -2) return { side: 'under', strength: 'moderate' };
+  if (score < 0) return { side: 'under', strength: 'lean' };
+  return { side: 'pass', strength: 'lean' };
+}
+
+// NEW: Get rank label (e.g., "5th worst", "3rd best")
+function getRankLabel(rank: number): string {
+  const suffix = rank === 1 ? 'st' : rank === 2 ? 'nd' : rank === 3 ? 'rd' : 'th';
+  if (rank <= 5) return `${rank}${suffix} best`;
+  if (rank >= 26) return `${31 - rank}${suffix} worst`;
+  return `#${rank}`;
+}
+
+// NEW: Generate simple user-friendly reason
+function generateSimpleReason(
+  zones: ZoneAnalysis[],
+  side: RecommendedSide,
+  primaryZone: ZoneType,
+  propEdgeType: PropEdgeType
+): string {
+  const pz = zones.find(z => z.zone === primaryZone);
+  if (!pz) return "Matchup analysis incomplete";
+  
+  const rankLabel = getRankLabel(pz.defenseRank);
+  const zoneLabel = ZONE_DISPLAY_NAMES[primaryZone].toLowerCase();
+  const freqPct = Math.round(pz.playerFrequency * 100);
+  const allowedPct = Math.round(pz.defenseAllowedPct * 100);
+  
+  if (side === 'over') {
+    if (propEdgeType === 'threes') {
+      const threeZone = zones.find(z => z.zone === 'corner_3' || z.zone === 'above_break_3');
+      if (threeZone) {
+        return `Defense ranks ${getRankLabel(threeZone.defenseRank)} in 3PT coverage`;
+      }
+    }
+    return `Defense allows ${allowedPct}% at ${zoneLabel} (${rankLabel})`;
+  }
+  
+  if (side === 'under') {
+    return `Defense ranks ${rankLabel} at ${zoneLabel} where player takes ${freqPct}% of shots`;
+  }
+  
+  return "No clear matchup edge either way";
+}
+
+// Determine which prop type has the edge
+function determinePropEdgeType(zones: ZoneAnalysis[], scoringBoost: BoostLevel, threesBoost: BoostLevel): PropEdgeType {
+  const hasScoring = scoringBoost === 'strong' || scoringBoost === 'moderate';
+  const hasThrees = threesBoost === 'strong' || threesBoost === 'moderate';
+  
+  if (hasScoring && hasThrees) return 'both';
+  if (hasScoring) return 'points';
+  if (hasThrees) return 'threes';
+  return 'none';
+}
+
 // Calculate boost level
 function calculateBoostLevel(grade: MatchupGradeLetter, primaryZone: ZoneType): BoostLevel {
   const scoringZones: ZoneType[] = ['restricted_area', 'paint', 'mid_range'];
@@ -97,7 +162,7 @@ function calculateThreesBoostLevel(grade: MatchupGradeLetter, zones: ZoneAnalysi
   return 'neutral';
 }
 
-// Generate recommendation text
+// Generate recommendation text (legacy)
 function generateRecommendation(
   grade: MatchupGradeLetter,
   primaryZone: ZoneType,
@@ -143,14 +208,10 @@ export function usePreGameMatchupScanner(filters?: MatchupScannerFilters) {
   const { data: todayProps, isLoading: propsLoading } = useQuery({
     queryKey: ['today-props-pregame', todayET],
     queryFn: async () => {
-      // Calculate the UTC range for today's Eastern Time games
-      // Games stored in UTC need offset: ET date maps to UTC noon-to-noon
-      const todayETDate = getEasternDate(); // e.g., "2026-02-04"
+      const todayETDate = getEasternDate();
       const [year, month, day] = todayETDate.split('-').map(Number);
 
-      // Start: Today at 12:00 UTC (covers morning ET games)
       const startUTC = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
-      // End: Tomorrow at 12:00 UTC (covers late-night ET games)
       const endUTC = new Date(Date.UTC(year, month - 1, day + 1, 12, 0, 0));
       
       const { data, error } = await supabase
@@ -160,11 +221,10 @@ export function usePreGameMatchupScanner(filters?: MatchupScannerFilters) {
         .lt('commence_time', endUTC.toISOString())
         .eq('sport', 'basketball_nba')
         .eq('is_active', true)
-        .or('outcome.is.null,outcome.eq.pending'); // Pre-game only (not settled)
+        .or('outcome.is.null,outcome.eq.pending');
       
       if (error) throw error;
       
-      // Deduplicate by player and parse team info
       const seen = new Set<string>();
       const unique: TodayProp[] = [];
       for (const p of data || []) {
@@ -184,10 +244,9 @@ export function usePreGameMatchupScanner(filters?: MatchupScannerFilters) {
       
       return unique;
     },
-    staleTime: 1000 * 60 * 5, // 5 minutes
+    staleTime: 1000 * 60 * 5,
   });
   
-  // Extract player names and all team abbreviations (both teams since we're not sure which is which)
   const playerNames = useMemo(() => 
     todayProps?.map(p => p.player_name) || [], 
     [todayProps]
@@ -202,7 +261,6 @@ export function usePreGameMatchupScanner(filters?: MatchupScannerFilters) {
     return [...abbrevs];
   }, [todayProps]);
   
-  // Fetch player zone stats for all players
   const { data: playerZones, isLoading: zonesLoading } = useQuery({
     queryKey: ['player-zone-stats-batch', playerNames],
     queryFn: async () => {
@@ -218,10 +276,9 @@ export function usePreGameMatchupScanner(filters?: MatchupScannerFilters) {
       return data as PlayerZoneStats[];
     },
     enabled: playerNames.length > 0,
-    staleTime: 1000 * 60 * 60, // 1 hour
+    staleTime: 1000 * 60 * 60,
   });
   
-  // Fetch team zone defense for all teams
   const { data: defenseZones, isLoading: defenseLoading } = useQuery({
     queryKey: ['team-zone-defense-batch', allTeamAbbrevs],
     queryFn: async () => {
@@ -237,7 +294,7 @@ export function usePreGameMatchupScanner(filters?: MatchupScannerFilters) {
       return data as TeamZoneDefense[];
     },
     enabled: allTeamAbbrevs.length > 0,
-    staleTime: 1000 * 60 * 60, // 1 hour
+    staleTime: 1000 * 60 * 60,
   });
   
   // Calculate matchup analysis for all players
@@ -249,22 +306,18 @@ export function usePreGameMatchupScanner(filters?: MatchupScannerFilters) {
     const results: PlayerMatchupAnalysis[] = [];
     
     for (const prop of todayProps) {
-      // Get player's zone stats
       const pZones = playerZones.filter(z => z.player_name === prop.player_name);
       if (pZones.length === 0) continue;
       
-      // Get opponent's defense stats - try both teams since we don't know player's team
       let dZones = defenseZones.filter(z => z.team_abbrev === prop.opponentAbbrev);
       let actualOpponent = prop.opponentAbbrev;
       
-      // If no match, try the other team
       if (dZones.length === 0) {
         dZones = defenseZones.filter(z => z.team_abbrev === prop.teamAbbrev);
         actualOpponent = prop.teamAbbrev;
       }
       if (dZones.length === 0) continue;
       
-      // Calculate zone analysis
       const zones: ZoneAnalysis[] = [];
       let totalScore = 0;
       
@@ -289,7 +342,6 @@ export function usePreGameMatchupScanner(filters?: MatchupScannerFilters) {
         });
       }
       
-      // Sort zones by frequency (primary zone first)
       zones.sort((a, b) => b.playerFrequency - a.playerFrequency);
       
       const primaryZone = zones[0]?.zone || 'mid_range';
@@ -299,6 +351,11 @@ export function usePreGameMatchupScanner(filters?: MatchupScannerFilters) {
       const overallGrade = calculateGrade(totalScore);
       const scoringBoost = calculateBoostLevel(overallGrade, primaryZone);
       const threesBoost = calculateThreesBoostLevel(overallGrade, zones);
+      
+      // NEW: Calculate stock-market style fields
+      const { side, strength } = determineSide(totalScore);
+      const propEdgeType = determinePropEdgeType(zones, scoringBoost, threesBoost);
+      const simpleReason = generateSimpleReason(zones, side, primaryZone, propEdgeType);
       
       results.push({
         id: `${prop.player_name}-${prop.event_id}`,
@@ -319,18 +376,22 @@ export function usePreGameMatchupScanner(filters?: MatchupScannerFilters) {
         scoringBoost,
         threesBoost,
         recommendation: generateRecommendation(overallGrade, primaryZone, scoringBoost, threesBoost),
+        // NEW fields
+        recommendedSide: side,
+        sideStrength: strength,
+        simpleReason,
+        edgeScore: Math.abs(totalScore),
+        rank: 0, // Will be set after sorting
+        propEdgeType,
         analysisTimestamp: new Date().toISOString(),
       });
     }
     
-    // Sort by grade (A+ first)
-    const gradeOrder: MatchupGradeLetter[] = ['A+', 'A', 'B+', 'B', 'C', 'D'];
-    results.sort((a, b) => {
-      const aIndex = gradeOrder.indexOf(a.overallGrade);
-      const bIndex = gradeOrder.indexOf(b.overallGrade);
-      if (aIndex !== bIndex) return aIndex - bIndex;
-      return b.overallScore - a.overallScore;
-    });
+    // NEW: Sort by absolute edge score (best opportunities first - stock ticker style)
+    results.sort((a, b) => b.edgeScore - a.edgeScore);
+    
+    // Assign ranks
+    results.forEach((r, i) => r.rank = i + 1);
     
     return results;
   }, [todayProps, playerZones, defenseZones]);
@@ -341,7 +402,17 @@ export function usePreGameMatchupScanner(filters?: MatchupScannerFilters) {
     
     let filtered = [...analyses];
     
-    // Grade filter
+    // NEW: Side filter
+    if (filters.sideFilter && filters.sideFilter !== 'all') {
+      filtered = filtered.filter(a => a.recommendedSide === filters.sideFilter);
+    }
+    
+    // NEW: Strength filter
+    if (filters.strengthFilter && filters.strengthFilter !== 'all') {
+      filtered = filtered.filter(a => a.sideStrength === filters.strengthFilter);
+    }
+    
+    // Legacy grade filter
     if (filters.gradeFilter !== 'all') {
       if (filters.gradeFilter === 'A+A') {
         filtered = filtered.filter(a => a.overallGrade === 'A+' || a.overallGrade === 'A');
@@ -369,13 +440,12 @@ export function usePreGameMatchupScanner(filters?: MatchupScannerFilters) {
     return filtered;
   }, [analyses, filters]);
   
-  // Group by game
+  // Group by game (kept for optional view)
   const gameGroups = useMemo((): GameMatchupGroup[] => {
     const groups = new Map<string, GameMatchupGroup>();
     
     for (const analysis of filteredAnalyses) {
       if (!groups.has(analysis.eventId)) {
-        // Parse home/away from game description (e.g., "MIN @ CHI")
         const parts = analysis.gameDescription.split(' @ ');
         const awayTeam = parts[0] || '';
         const homeTeam = parts[1] || '';
@@ -393,13 +463,12 @@ export function usePreGameMatchupScanner(filters?: MatchupScannerFilters) {
       groups.get(analysis.eventId)!.players.push(analysis);
     }
     
-    // Sort groups by game time
     return Array.from(groups.values()).sort((a, b) => 
       new Date(a.gameTime).getTime() - new Date(b.gameTime).getTime()
     );
   }, [filteredAnalyses]);
   
-  // Calculate stats
+  // Calculate stats with new side-based counts
   const stats = useMemo((): MatchupScannerStats => {
     const gradeDistribution: Record<MatchupGradeLetter, number> = {
       'A+': 0, 'A': 0, 'B+': 0, 'B': 0, 'C': 0, 'D': 0
@@ -407,11 +476,19 @@ export function usePreGameMatchupScanner(filters?: MatchupScannerFilters) {
     
     let scoringBoostCount = 0;
     let threesBoostCount = 0;
+    let overCount = 0;
+    let underCount = 0;
+    let passCount = 0;
     
     for (const a of analyses) {
       gradeDistribution[a.overallGrade]++;
       if (a.scoringBoost === 'strong' || a.scoringBoost === 'moderate') scoringBoostCount++;
       if (a.threesBoost === 'strong' || a.threesBoost === 'moderate') threesBoostCount++;
+      
+      // NEW: Count by side
+      if (a.recommendedSide === 'over') overCount++;
+      else if (a.recommendedSide === 'under') underCount++;
+      else passCount++;
     }
     
     return {
@@ -420,6 +497,9 @@ export function usePreGameMatchupScanner(filters?: MatchupScannerFilters) {
       gradeDistribution,
       scoringBoostCount,
       threesBoostCount,
+      overCount,
+      underCount,
+      passCount,
     };
   }, [analyses]);
   
@@ -428,8 +508,6 @@ export function usePreGameMatchupScanner(filters?: MatchupScannerFilters) {
     gameGroups,
     stats,
     isLoading: propsLoading || zonesLoading || defenseLoading,
-    refetch: () => {
-      // Trigger refetch of all queries
-    },
+    refetch: () => {},
   };
 }
