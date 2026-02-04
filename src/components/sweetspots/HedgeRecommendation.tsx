@@ -5,6 +5,7 @@ import { ShotChartMatchup } from "./ShotChartMatchup";
 import { QuarterTransitionCard } from "./QuarterTransitionCard";
 import { HalftimeRecalibrationCard } from "./HalftimeRecalibrationCard";
 import { QuarterProgressSparkline } from "./QuarterProgressSparkline";
+import { PaceMomentumTracker } from "./PaceMomentumTracker";
 
 interface HedgeRecommendationProps {
   spot: DeepSweetSpot;
@@ -416,6 +417,9 @@ export function HedgeRecommendation({ spot }: HedgeRecommendationProps) {
       <div className="mb-3 p-2 rounded bg-background/50 border border-border/30">
         <QuarterProgressSparkline spot={spot} />
       </div>
+      
+      {/* Pace Momentum Tracker - game pace evolution */}
+      <PaceMomentumTracker spot={spot} className="mb-3" />
       
       {/* Line and Gap Info */}
       <div className="flex items-center gap-3 text-xs text-muted-foreground mb-2">
