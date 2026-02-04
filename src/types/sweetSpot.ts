@@ -111,6 +111,49 @@ export interface LivePropData {
   ratePerMinute: number;
   paceRating: number; // Game pace relative to league average
   shotChartMatchup?: ShotChartAnalysis; // Zone-based matchup analysis
+  currentQuarter: number;
+  quarterHistory: QuarterSnapshot[];
+  quarterTransition?: QuarterTransitionAlert;
+}
+
+export type QuarterNumber = 1 | 2 | 3 | 4;
+
+export interface QuarterSnapshot {
+  quarter: QuarterNumber;
+  value: number;           // Stat value at end of quarter
+  expectedValue: number;   // What we expected (line / 4)
+  velocity: number;        // Rate in that quarter
+  paceGap: number;         // +/- vs expected
+  cumulative: number;      // Running total
+  percentComplete: number; // 25, 50, 75, 100
+}
+
+export interface QuarterTransitionAlert {
+  type: 'quarter_transition';
+  quarter: QuarterNumber;
+  headline: string;
+  status: 'ahead' | 'on_track' | 'behind' | 'critical';
+  
+  // Quarter data
+  quarterValue: number;
+  expectedQuarterValue: number;
+  paceGapPct: number;       // +22% ahead, -15% behind
+  
+  // Projection data
+  currentTotal: number;
+  projectedFinal: number;
+  requiredRemaining: number;
+  requiredRate: number;
+  
+  // Velocity comparison
+  currentVelocity: number;  // Rate this quarter
+  neededVelocity: number;   // Rate needed for remaining
+  velocityDelta: number;    // Current vs needed
+  
+  // Guidance
+  insight: string;
+  action: string;
+  urgency: 'none' | 'low' | 'medium' | 'high';
 }
 
 export interface DeepSweetSpot {
