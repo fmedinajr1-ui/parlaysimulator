@@ -1,220 +1,81 @@
 
-# Pre-Game Matchup Scanner Implementation Plan
+# Fix: Pre-Game Matchup Scanner UTC Date Alignment
 
-## Overview
-Build a comprehensive Pre-Game Matchup Scanner that analyzes player production zones against opponent defensive rankings to generate matchup grades before tip-off. This scanner will serve as a "stock market analyst" view, providing structured intelligence on which players have favorable/unfavorable matchups based on their shooting tendencies vs. opponent defensive weaknesses.
+## Problem Identified
 
-## Architecture
-
-### Data Flow
-```text
-+-------------------------+     +------------------------+     +---------------------+
-| player_zone_stats       | --> |                        | --> | Matchup Grade       |
-| (468 players × 5 zones) |     | Pre-Game Scanner Hook  |     | A+, A, B+, B, C, D  |
-+-------------------------+     |                        |     +---------------------+
-                                |                        |
-+-------------------------+     |  Calculates:           |     +---------------------+
-| team_zone_defense       | --> |  - Zone advantage %    | --> | Zone Breakdown      |
-| (30 teams × 5 zones)    |     |  - Weighted matchup    |     | (RA, Paint, Mid, 3) |
-+-------------------------+     |  - Defense exploits    |     +---------------------+
-                                |                        |
-+-------------------------+     |                        |     +---------------------+
-| unified_props           | --> |                        | --> | Recommendation      |
-| (today's lines)         |     +------------------------+     | (OVER/UNDER boost)  |
-+-------------------------+                                    +---------------------+
-```
-
-### Key Components
-
-1. **usePreGameMatchupScanner Hook** - Core logic for batch analyzing all players in today's games
-2. **MatchupScannerPage** - Dedicated page for pre-game analysis
-3. **MatchupGradeCard** - Individual player matchup visualization
-4. **ZoneBreakdownChart** - Visual breakdown of zone advantages
-5. **DefenseExploitIndicator** - Shows which zones to attack
-
-## Technical Implementation
-
-### 1. New Hook: `src/hooks/usePreGameMatchupScanner.ts`
-
-This hook will:
-- Fetch all today's games from `unified_props` (pre-game only)
-- Load zone stats for all players in today's games
-- Load opponent zone defense data
-- Calculate composite matchup grades
-
-**Matchup Scoring Algorithm:**
-```text
-For each zone (RA, Paint, Mid, Corner3, Above3):
-  playerFgPct = player's FG% in zone
-  defenseOppFgPct = what defense allows in zone
-  leagueAvgPct = league average for zone
-  
-  zoneAdvantage = playerFgPct - defenseOppFgPct
-  volumeWeight = player's frequency in zone (0-1)
-  
-  zoneScore = zoneAdvantage × volumeWeight × 100
-  
-weightedTotal = Σ(zoneScore)
-letterGrade = mapToGrade(weightedTotal)
-  // A+ (>8), A (5-8), B+ (2-5), B (0-2), C (-3-0), D (<-3)
-```
-
-**Data Structure:**
+The `usePreGameMatchupScanner` hook filters games using local browser time boundaries:
 ```typescript
-interface PlayerMatchupAnalysis {
-  playerName: string;
-  teamAbbrev: string;
-  opponentAbbrev: string;
-  gameTime: string;
-  gameDescription: string;
-  
-  // Matchup metrics
-  overallGrade: 'A+' | 'A' | 'B+' | 'B' | 'C' | 'D';
-  overallScore: number; // -15 to +15
-  
-  // Zone breakdown
-  zones: ZoneAnalysis[];
-  
-  // Key insights
-  primaryZone: ZoneType;
-  primaryZoneAdvantage: number;
-  exploitableZones: ZoneType[]; // Zones with advantage > 5%
-  avoidZones: ZoneType[]; // Zones with disadvantage < -5%
-  
-  // Prop recommendation
-  scoringBoost: 'strong' | 'moderate' | 'neutral' | 'negative';
-  threesBoost: 'strong' | 'moderate' | 'neutral' | 'negative';
-  recommendation: string;
-}
-
-interface ZoneAnalysis {
-  zone: ZoneType;
-  playerFrequency: number; // % of shots
-  playerFgPct: number;
-  defenseAllowedPct: number;
-  leagueAvgPct: number;
-  advantage: number; // player - defense
-  defenseRank: number; // 1-30
-  defenseRating: DefenseRating;
-  grade: 'advantage' | 'neutral' | 'disadvantage';
-}
+const startOfDay = new Date(today);
+startOfDay.setHours(0, 0, 0, 0);  // Local midnight
+const endOfDay = new Date(today);
+endOfDay.setHours(23, 59, 59, 999);  // Local 11:59 PM
 ```
 
-### 2. New Component: `src/components/matchup-scanner/MatchupScannerDashboard.tsx`
+But games are stored in UTC. Tonight's 7:10 PM ET game is stored as `2026-02-05 00:10:00+00`, which falls **outside** the local day range.
 
-**Features:**
-- Game-by-game grouping with tip-off countdown
-- Filter by matchup grade (A+ only, A and above, etc.)
-- Sort by: Grade, Game Time, Player Name
-- Prop type filter (Points favored, 3PT favored)
+## Data Verification
 
-**Layout:**
+| Game | UTC Time | ET Time |
+|------|----------|---------|
+| Denver @ New York | 2026-02-05 00:10 | Feb 4, 7:10 PM |
+| Minnesota @ Toronto | 2026-02-05 00:40 | Feb 4, 7:40 PM |
+| Boston @ Houston | 2026-02-05 01:10 | Feb 4, 8:10 PM |
+| New Orleans @ Milwaukee | 2026-02-05 01:10 | Feb 4, 8:10 PM |
+| OKC @ San Antonio | 2026-02-05 02:40 | Feb 4, 9:40 PM |
+| Memphis @ Sacramento | 2026-02-05 03:10 | Feb 4, 10:10 PM |
+| Cleveland @ LA Clippers | 2026-02-05 03:40 | Feb 4, 10:40 PM |
+
+**Total: 7 games, 555 props loaded**
+
+## Solution
+
+Apply the same UTC offset pattern from `useTodayProps`:
+
 ```text
-┌─────────────────────────────────────────────────────────────┐
-│ Pre-Game Matchup Scanner                      [Refresh] 🔄  │
-│ Today's Tip-Off Analysis • 7 Games • 42 Players            │
-├─────────────────────────────────────────────────────────────┤
-│ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐            │
-│ │ A+ (3)  │ │ A  (8)  │ │ B+ (12) │ │ B  (10) │ [All] [⚡] │
-│ └─────────┘ └─────────┘ └─────────┘ └─────────┘            │
-├─────────────────────────────────────────────────────────────┤
-│ DEN @ NYK • 7:10 PM ET                                      │
-│ ┌─────────────────────────────────────────────────────────┐ │
-│ │ 🏀 Nikola Jokic        A+   Paint Dominance             │ │
-│ │ DEN vs NYK (Rank 18 Paint D)                            │ │
-│ │ [RA: +8%] [Paint: +6%] [Mid: +3%] [3PT: -2%]           │ │
-│ │ ✅ OVER PTS Boost • Primary: Restricted Area (42%)      │ │
-│ └─────────────────────────────────────────────────────────┘ │
-│ ┌─────────────────────────────────────────────────────────┐ │
-│ │ 🏀 Jalen Brunson       A    Mid-Range Master            │ │
-│ │ NYK vs DEN (Rank 22 Mid-Range D)                        │ │
-│ │ [RA: +2%] [Paint: +1%] [Mid: +9%] [3PT: 0%]            │ │
-│ │ ✅ OVER PTS Boost • Primary: Mid-Range (38%)            │ │
-│ └─────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────┘
+Eastern Date: 2026-02-04
+UTC Start: 2026-02-04 12:00:00 UTC (covers early afternoon ET games)
+UTC End:   2026-02-05 12:00:00 UTC (covers late night ET games into 7 AM next day)
 ```
 
-### 3. New Component: `src/components/matchup-scanner/MatchupGradeCard.tsx`
+This 24-hour window from noon-to-noon UTC correctly captures all games on an Eastern Time "day."
 
-**Features:**
-- Color-coded grade badge (A+ = Gold, A = Green, B+ = Teal, B = Yellow, C = Gray, D = Red)
-- Zone advantage chips with +/- indicators
-- Visual half-court mini-chart (compact version of existing ShotChartMatchup)
-- Expand to see full zone breakdown
-- Quick-add to parlay builder
+## Technical Changes
 
-### 4. New Component: `src/components/matchup-scanner/ZoneAdvantageBar.tsx`
+### File: `src/hooks/usePreGameMatchupScanner.ts`
 
-Horizontal bar visualization showing:
-- Player's zone frequency (width of bar)
-- Advantage vs. defense (color: green = advantage, red = disadvantage)
-- Defense rank indicator (1-30 with elite/poor labels)
+**Lines 143-154** - Replace local time calculation with ET-aware UTC range:
 
-### 5. Integration Points
+```typescript
+// Calculate the UTC range for today's Eastern Time games
+// Games stored in UTC need offset: ET date maps to UTC noon-to-noon
+const todayETDate = getEasternDate(); // e.g., "2026-02-04"
+const [year, month, day] = todayETDate.split('-').map(Number);
 
-**SweetSpots Page Integration:**
-- Add "Pre-Game Scanner" tab or section above the existing cards
-- Link scanner grades to existing SweetSpotCard components
+// Start: Today at 12:00 UTC (covers morning ET games)
+const startUTC = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+// End: Tomorrow at 12:00 UTC (covers late-night ET games)
+const endUTC = new Date(Date.UTC(year, month - 1, day + 1, 12, 0, 0));
 
-**Navigation:**
-- Add to main navigation as "Matchup Scanner" or accessible from Sweet Spots page
+const { data, error } = await supabase
+  .from('unified_props')
+  .select('player_name, game_description, commence_time, event_id')
+  .gte('commence_time', startUTC.toISOString())
+  .lt('commence_time', endUTC.toISOString())
+  .eq('sport', 'basketball_nba')
+  .eq('is_active', true)
+  .is('outcome', null);
+```
 
-## Files to Create
+## Expected Result
 
-| File | Purpose |
-|------|---------|
-| `src/hooks/usePreGameMatchupScanner.ts` | Core hook for batch matchup analysis |
-| `src/components/matchup-scanner/MatchupScannerDashboard.tsx` | Main dashboard component |
-| `src/components/matchup-scanner/MatchupGradeCard.tsx` | Individual player matchup card |
-| `src/components/matchup-scanner/ZoneAdvantageBar.tsx` | Zone advantage visualization |
-| `src/components/matchup-scanner/GameGroupHeader.tsx` | Game section header with countdown |
-| `src/components/matchup-scanner/GradeFilterBar.tsx` | Filter by grade/prop type |
+After fix:
+- **7 games** displayed in the Matchup Scanner
+- **~50-80 players** with matchup analysis (depends on zone data coverage)
+- Grade distribution calculated across all tonight's players
+- Props will correctly show 7:10 PM, 7:40 PM, etc. tip-off times
 
 ## Files to Modify
 
 | File | Change |
 |------|--------|
-| `src/pages/SweetSpots.tsx` | Add scanner section or tab |
-| `src/types/sweetSpot.ts` | Add new types for matchup analysis |
-
-## Matchup Grade Thresholds
-
-| Grade | Score Range | Label | Color |
-|-------|-------------|-------|-------|
-| A+ | > +8.0 | Elite Matchup | Gold/Amber |
-| A | +5.0 to +8.0 | Strong Advantage | Green |
-| B+ | +2.0 to +5.0 | Moderate Advantage | Teal |
-| B | 0 to +2.0 | Slight Edge | Yellow |
-| C | -3.0 to 0 | Neutral/Slight Disadvantage | Gray |
-| D | < -3.0 | Disadvantage | Red |
-
-## Recommendation Logic
-
-**For Points OVER:**
-- A+ or A grade with RA/Paint primary zone → "Strong OVER boost"
-- B+ grade or Mid-Range primary → "Moderate OVER boost"
-- C or D grade → "Caution on OVER"
-
-**For 3PT OVER:**
-- A+ or A grade with Corner3/Above3 primary zone → "Strong 3PT OVER boost"
-- Defense rank > 20 on 3PT zones → "3PT advantage"
-- Defense rank < 10 → "Avoid 3PT OVER"
-
-## Test Coverage
-
-| Test File | Coverage |
-|-----------|----------|
-| `src/hooks/usePreGameMatchupScanner.test.ts` | Grade calculation, zone scoring, filtering |
-| `src/components/matchup-scanner/__tests__/MatchupGradeCard.test.tsx` | UI rendering, grade colors |
-| `src/components/matchup-scanner/__tests__/ZoneAdvantageBar.test.tsx` | Bar sizing, color logic |
-
-## Implementation Order
-
-1. Add new types to `sweetSpot.ts`
-2. Create `usePreGameMatchupScanner.ts` hook
-3. Create `ZoneAdvantageBar.tsx` (reusable visualization)
-4. Create `MatchupGradeCard.tsx` (individual player card)
-5. Create `GradeFilterBar.tsx` and `GameGroupHeader.tsx`
-6. Create `MatchupScannerDashboard.tsx` (main dashboard)
-7. Integrate into `SweetSpots.tsx` page
-8. Add unit tests for hook and components
+| `src/hooks/usePreGameMatchupScanner.ts` | Replace lines 143-154 with ET-aware UTC range calculation |
