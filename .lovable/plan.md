@@ -1,129 +1,436 @@
 
+# Quarter Transition Alerts - Implementation Plan
 
-# Fix Live Hedge Recommendations - Data Display & Halftime Persistence
+## Overview
 
-## Issues Identified
+Add intelligent alerts that trigger at the end of each quarter, providing specific hedge guidance based on:
+- Pace vs. expectation comparison per quarter
+- Cumulative production trajectory
+- Time remaining and projected finish
+- Quarter-over-quarter velocity changes
 
-### Issue 1: Floating Point Precision Bug
-**Screenshot shows**: `10.600000000000001% hit probability`
+---
 
-**Root cause**: Line 369 in `HedgeRecommendation.tsx`:
-```typescript
-{hedgeAction.hitProbability}% hit probability
-```
-The `hitProbability` value is displayed without rounding, causing JavaScript floating-point artifacts to appear.
+## How It Works
 
-**Fix**: Format the number to remove decimal artifacts:
-```typescript
-{Math.round(hedgeAction.hitProbability)}% hit probability
+The system will detect when a game transitions between quarters (Q1→Q2, Q2→Halftime, Q3→Q4, End of Game) and display a persistent alert card with guidance specific to that transition point.
+
+```text
+┌──────────────────────────────────────────────────────────────────┐
+│  🔔 Q1 COMPLETE - PACE CHECK                                     │
+├──────────────────────────────────────────────────────────────────┤
+│  LeBron OVER 26.5 PTS                                            │
+│                                                                  │
+│  Q1: 8 pts (32% pace) ✓ ON TRACK                                │
+│  Need: 26.5 → Achieved: 32%  → Project: 28.4                     │
+│                                                                  │
+│  ⚡ Velocity: 0.67/min (need 0.55/min) +22% ahead                │
+│                                                                  │
+│  🎯 Quarter Insight: Strong start. If Q2 matches,                │
+│     could hit by halftime for profit lock opportunity.           │
+│                                                                  │
+│  ✓ NO ACTION NEEDED - Maintain position                         │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-### Issue 2: Hedge Recommendations Disappear at Halftime
+## Data Sources
 
-**Root cause**: Two locations work together to cause this:
+**Real-time from unified-player-feed:**
+- `period` (current quarter: 1, 2, 3, 4)
+- `clock` (time in quarter)
+- `gameStatus` ('in_progress', 'halftime')
+- `currentValue` (cumulative stat)
+- `ratePerMinute` (current production rate)
+- `paceRating` (game pace)
 
-1. **useSweetSpotLiveData.ts** (Lines 75-98): When `game.status !== 'in_progress'` (including `'halftime'`), it sets `isLive: false`
-2. **HedgeRecommendation.tsx** (Line 355): Component returns `null` when `!spot.liveData?.isLive`
-
-The game status `'halftime'` is correctly detected by the feed, but the component treats it as "not live" and hides itself.
-
-**Fix Strategy**: 
-- Keep live data during halftime and other intermission statuses
-- Add a `gameStatus` field to track the actual state
-- Component should stay visible during halftime, showing the last known data with a "Halftime" indicator
+**Derived calculations:**
+- Expected value per quarter = line / 4
+- Quarter velocity = points in quarter / quarter minutes
+- Pace gap = actual quarter production - expected quarter production
+- Trajectory = if Q1 pace maintained for remaining quarters
 
 ---
 
 ## Technical Implementation
 
-### File 1: `src/hooks/useSweetSpotLiveData.ts`
+### 1. New Types in `src/types/sweetSpot.ts`
 
-**Change**: Treat `halftime` as a "live" state (game is still in progress, just paused)
-
-| Line | Current | New |
-|------|---------|-----|
-| 75-76 | `if (game.status !== 'in_progress')` | `if (game.status !== 'in_progress' && game.status !== 'halftime')` |
-
-Also update the live data to include the actual game status:
 ```typescript
-const liveData: LivePropData = {
-  isLive: true,
-  gameStatus: game.status, // NEW: 'in_progress' | 'halftime'
-  // ... rest of data
-};
-```
+export type QuarterNumber = 1 | 2 | 3 | 4;
 
-### File 2: `src/types/sweetSpot.ts`
+export interface QuarterSnapshot {
+  quarter: QuarterNumber;
+  value: number;           // Stat value at end of quarter
+  expectedValue: number;   // What we expected (line / 4)
+  velocity: number;        // Rate in that quarter
+  paceGap: number;         // +/- vs expected
+  cumulative: number;      // Running total
+  percentComplete: number; // 25, 50, 75, 100
+}
 
-**Add `gameStatus` field to LivePropData**:
-```typescript
-export interface LivePropData {
-  isLive: boolean;
-  gameStatus?: 'in_progress' | 'halftime' | 'scheduled' | 'final'; // NEW
-  currentValue: number;
-  // ... rest
+export interface QuarterTransitionAlert {
+  type: 'quarter_transition';
+  quarter: QuarterNumber;
+  headline: string;
+  status: 'ahead' | 'on_track' | 'behind' | 'critical';
+  
+  // Quarter data
+  quarterValue: number;
+  expectedQuarterValue: number;
+  paceGapPct: number;       // +22% ahead, -15% behind
+  
+  // Projection data
+  currentTotal: number;
+  projectedFinal: number;
+  requiredRemaining: number;
+  requiredRate: number;
+  
+  // Velocity comparison
+  currentVelocity: number;  // Rate this quarter
+  neededVelocity: number;   // Rate needed for remaining
+  velocityDelta: number;    // Current vs needed
+  
+  // Guidance
+  insight: string;
+  action: string;
+  urgency: 'none' | 'low' | 'medium' | 'high';
 }
 ```
 
-### File 3: `src/components/sweetspots/HedgeRecommendation.tsx`
+### 2. Quarter Tracking in `LivePropData`
 
-**Multiple fixes**:
+Update the `LivePropData` interface to include quarter history:
 
-1. **Fix floating point display** (Line 369):
 ```typescript
-// Before
-{hedgeAction.hitProbability}% hit probability
-
-// After  
-{Math.round(hedgeAction.hitProbability)}% hit probability
+export interface LivePropData {
+  isLive: boolean;
+  gameStatus?: 'in_progress' | 'halftime' | 'scheduled' | 'final';
+  currentValue: number;
+  // ... existing fields ...
+  
+  // NEW: Quarter tracking
+  currentQuarter: number;
+  quarterHistory: QuarterSnapshot[];
+  quarterTransition?: QuarterTransitionAlert;
+}
 ```
 
-2. **Keep visible during halftime** (Line 355):
-```typescript
-// Before
-if (!spot.liveData?.isLive) return null;
+### 3. Quarter Detection Hook
 
-// After - also show during halftime with last known data
-if (!spot.liveData?.isLive && spot.liveData?.gameStatus !== 'halftime') return null;
+Create `src/hooks/useQuarterTransition.ts`:
+
+```typescript
+export function useQuarterTransition(spots: DeepSweetSpot[]) {
+  // Track previous quarter per game
+  const prevQuarters = useRef<Map<string, number>>(new Map());
+  
+  // Detect quarter transitions
+  const spotsWithTransitions = useMemo(() => {
+    return spots.map(spot => {
+      if (!spot.liveData?.isLive) return spot;
+      
+      const currentQuarter = parseInt(spot.liveData.period);
+      const prevQuarter = prevQuarters.current.get(spot.id) || 0;
+      
+      // Detect transition
+      if (currentQuarter > prevQuarter && prevQuarter > 0) {
+        const transition = calculateQuarterTransition(
+          spot,
+          prevQuarter as QuarterNumber
+        );
+        return { ...spot, liveData: { ...spot.liveData, quarterTransition: transition }};
+      }
+      
+      // Also detect halftime
+      if (spot.liveData.gameStatus === 'halftime' && prevQuarter === 2) {
+        const transition = calculateHalftimeTransition(spot);
+        return { ...spot, liveData: { ...spot.liveData, quarterTransition: transition }};
+      }
+      
+      prevQuarters.current.set(spot.id, currentQuarter);
+      return spot;
+    });
+  }, [spots]);
+  
+  return spotsWithTransitions;
+}
 ```
 
-3. **Add halftime indicator** (after line 365):
+### 4. Transition Calculation Logic
+
 ```typescript
-{spot.liveData?.gameStatus === 'halftime' && (
-  <div className="mb-2 flex items-center gap-2 text-xs text-warning">
-    <Clock className="w-3 h-3" />
-    <span className="font-medium">HALFTIME - Data from 1st half</span>
-  </div>
-)}
+function calculateQuarterTransition(
+  spot: DeepSweetSpot,
+  completedQuarter: QuarterNumber
+): QuarterTransitionAlert {
+  const { liveData, line, side } = spot;
+  const currentTotal = liveData.currentValue;
+  
+  // Expected per quarter (simple: line / 4)
+  const expectedPerQuarter = line / 4;
+  const expectedAtQuarterEnd = expectedPerQuarter * completedQuarter;
+  
+  // Calculate pace gap
+  const paceGap = currentTotal - expectedAtQuarterEnd;
+  const paceGapPct = (paceGap / expectedAtQuarterEnd) * 100;
+  
+  // Velocity analysis
+  const quarterMinutes = 12;
+  const minutesPlayed = completedQuarter * quarterMinutes;
+  const currentVelocity = currentTotal / minutesPlayed;
+  
+  // What's needed for remaining quarters
+  const remaining = line - currentTotal;
+  const remainingMinutes = (4 - completedQuarter) * 12;
+  const requiredVelocity = remainingMinutes > 0 ? remaining / remainingMinutes : 0;
+  const velocityDelta = currentVelocity - requiredVelocity;
+  
+  // Determine status
+  let status: 'ahead' | 'on_track' | 'behind' | 'critical';
+  let urgency: 'none' | 'low' | 'medium' | 'high';
+  
+  if (side === 'over') {
+    if (paceGapPct >= 20) { status = 'ahead'; urgency = 'none'; }
+    else if (paceGapPct >= -10) { status = 'on_track'; urgency = 'none'; }
+    else if (paceGapPct >= -25) { status = 'behind'; urgency = 'medium'; }
+    else { status = 'critical'; urgency = 'high'; }
+  } else {
+    // For UNDER, being "behind" (lower) is good
+    if (paceGapPct <= -20) { status = 'ahead'; urgency = 'none'; }
+    else if (paceGapPct <= 10) { status = 'on_track'; urgency = 'none'; }
+    else if (paceGapPct <= 25) { status = 'behind'; urgency = 'medium'; }
+    else { status = 'critical'; urgency = 'high'; }
+  }
+  
+  // Generate insight based on quarter
+  const insight = generateQuarterInsight(completedQuarter, paceGapPct, side, velocityDelta);
+  const action = generateQuarterAction(status, urgency, side, completedQuarter);
+  
+  return {
+    type: 'quarter_transition',
+    quarter: completedQuarter,
+    headline: `Q${completedQuarter} COMPLETE`,
+    status,
+    quarterValue: currentTotal / completedQuarter, // Avg per Q so far
+    expectedQuarterValue: expectedPerQuarter,
+    paceGapPct,
+    currentTotal,
+    projectedFinal: liveData.projectedFinal,
+    requiredRemaining: remaining,
+    requiredRate: requiredVelocity,
+    currentVelocity,
+    neededVelocity: requiredVelocity,
+    velocityDelta,
+    insight,
+    action,
+    urgency,
+  };
+}
 ```
 
-4. **Also fix other probability displays** in the component:
-- Line 459: `paceRating.toFixed(0)` - already correct
-- Line 426: `Math.round(shotChartMatchup.primaryZonePct * 100)` - already correct
+### 5. New Component: `QuarterTransitionCard.tsx`
+
+```typescript
+export function QuarterTransitionCard({ transition, spot }: Props) {
+  const colors = getTransitionColors(transition.status);
+  
+  return (
+    <div className={cn("p-3 rounded-lg border mb-2", colors.bg, colors.border)}>
+      {/* Header */}
+      <div className="flex items-center gap-2 mb-2">
+        <Bell className="w-4 h-4" />
+        <span className={cn("font-bold text-sm", colors.text)}>
+          🔔 {transition.headline}
+        </span>
+        <span className={cn("ml-auto px-2 py-0.5 rounded text-xs font-bold", colors.badge)}>
+          {transition.status.toUpperCase()}
+        </span>
+      </div>
+      
+      {/* Progress Bar */}
+      <div className="mb-2">
+        <div className="flex justify-between text-xs mb-1">
+          <span>Q{transition.quarter}: {transition.currentTotal}</span>
+          <span>Need: {spot.line}</span>
+        </div>
+        <Progress value={(transition.currentTotal / spot.line) * 100} />
+        <div className="flex justify-between text-xs mt-1 text-muted-foreground">
+          <span>Expected: {(transition.expectedQuarterValue * transition.quarter).toFixed(1)}</span>
+          <span className={transition.paceGapPct >= 0 ? "text-primary" : "text-destructive"}>
+            {transition.paceGapPct >= 0 ? '+' : ''}{transition.paceGapPct.toFixed(0)}%
+          </span>
+        </div>
+      </div>
+      
+      {/* Velocity Comparison */}
+      <div className="flex items-center gap-2 text-xs mb-2">
+        <Zap className="w-3 h-3" />
+        <span className="text-muted-foreground">
+          Velocity: <span className="font-mono font-bold">{transition.currentVelocity.toFixed(2)}</span>/min
+        </span>
+        <span className="text-muted-foreground">|</span>
+        <span className="text-muted-foreground">
+          Need: <span className="font-mono font-bold">{transition.neededVelocity.toFixed(2)}</span>/min
+        </span>
+        <span className={cn(
+          "font-bold",
+          transition.velocityDelta >= 0 ? "text-primary" : "text-destructive"
+        )}>
+          ({transition.velocityDelta >= 0 ? '+' : ''}{((transition.velocityDelta / transition.neededVelocity) * 100).toFixed(0)}%)
+        </span>
+      </div>
+      
+      {/* Insight */}
+      <p className="text-xs text-muted-foreground mb-2">
+        🎯 {transition.insight}
+      </p>
+      
+      {/* Action */}
+      <div className={cn(
+        "p-2 rounded text-xs font-semibold",
+        transition.urgency === 'high' ? "bg-destructive/20 text-destructive" :
+        transition.urgency === 'medium' ? "bg-orange-500/20 text-orange-500" :
+        "bg-primary/20 text-primary"
+      )}>
+        {transition.action}
+      </div>
+    </div>
+  );
+}
+```
+
+### 6. Integration with HedgeRecommendation
+
+Update `HedgeRecommendation.tsx` to show the quarter transition card above the main hedge content:
+
+```typescript
+export function HedgeRecommendation({ spot }: HedgeRecommendationProps) {
+  // ... existing logic ...
+  
+  return (
+    <div className={cn("mt-2 p-3 rounded-lg border", colors.bg, colors.border)}>
+      {/* Quarter Transition Alert (if active) */}
+      {spot.liveData?.quarterTransition && (
+        <QuarterTransitionCard 
+          transition={spot.liveData.quarterTransition} 
+          spot={spot} 
+        />
+      )}
+      
+      {/* Halftime Indicator */}
+      {/* ... rest of existing content ... */}
+    </div>
+  );
+}
+```
+
+### 7. Insight Generation Logic
+
+```typescript
+function generateQuarterInsight(
+  quarter: QuarterNumber,
+  paceGapPct: number,
+  side: 'over' | 'under',
+  velocityDelta: number
+): string {
+  if (quarter === 1) {
+    if (side === 'over') {
+      if (paceGapPct >= 20) return "Strong Q1 start. If Q2 matches, watch for halftime profit lock.";
+      if (paceGapPct >= 0) return "Solid pace. Stay patient through Q2.";
+      if (paceGapPct >= -15) return "Slightly slow Q1. Common for pacing - monitor Q2 burst.";
+      return "Slow start. Need acceleration in Q2 or consider light hedge.";
+    } else {
+      if (paceGapPct <= -20) return "Great Q1 for UNDER. Low usage trend looking favorable.";
+      if (paceGapPct >= 20) return "Warning: Q1 pace threatens UNDER. Watch for continuation.";
+    }
+  }
+  
+  if (quarter === 2) {
+    // Halftime analysis
+    if (side === 'over') {
+      if (paceGapPct >= 15) return "Strong 1st half. Consider small profit lock on UNDER.";
+      if (paceGapPct >= -10) return "On track at half. Q3 historically has highest scoring.";
+      return "Behind at halftime. Need big 2nd half or hedge now.";
+    }
+  }
+  
+  if (quarter === 3) {
+    if (side === 'over') {
+      if (paceGapPct >= 10) return "Cruising. Q4 is cushion territory.";
+      if (paceGapPct < -15) return "Q4 crunch time. Stars usually close strong but hedge may be wise.";
+    }
+  }
+  
+  return "Tracking production. Continue monitoring.";
+}
+
+function generateQuarterAction(
+  status: string,
+  urgency: string,
+  side: 'over' | 'under',
+  quarter: QuarterNumber
+): string {
+  const remainingQs = 4 - quarter;
+  
+  if (status === 'ahead' || status === 'on_track') {
+    if (quarter >= 2 && status === 'ahead') {
+      return `✓ Consider small profit lock on opposite side if ${remainingQs}Q+ buffer`;
+    }
+    return `✓ HOLD - No action needed. ${remainingQs} quarter${remainingQs > 1 ? 's' : ''} remaining.`;
+  }
+  
+  if (status === 'behind') {
+    return `⚠️ Watch Q${quarter + 1} closely. Prepare hedge if trend continues.`;
+  }
+  
+  return `🚨 HEDGE RECOMMENDED - ${remainingQs} quarter${remainingQs > 1 ? 's' : ''} may not be enough at current pace.`;
+}
+```
 
 ---
 
-## Files to Modify
+## Files to Create/Modify
 
-| File | Changes |
-|------|---------|
-| `src/types/sweetSpot.ts` | Add `gameStatus` optional field to `LivePropData` interface |
-| `src/hooks/useSweetSpotLiveData.ts` | Treat `'halftime'` as live status, pass gameStatus through |
-| `src/components/sweetspots/HedgeRecommendation.tsx` | 1. Round hitProbability display<br>2. Keep visible during halftime<br>3. Add halftime indicator |
+| Action | File | Description |
+|--------|------|-------------|
+| MODIFY | `src/types/sweetSpot.ts` | Add QuarterSnapshot, QuarterTransitionAlert types |
+| MODIFY | `src/hooks/useSweetSpotLiveData.ts` | Add quarter tracking to enriched data |
+| CREATE | `src/hooks/useQuarterTransition.ts` | Quarter detection and transition calculation |
+| CREATE | `src/components/sweetspots/QuarterTransitionCard.tsx` | UI component for quarter alerts |
+| MODIFY | `src/components/sweetspots/HedgeRecommendation.tsx` | Integrate QuarterTransitionCard |
 
 ---
 
-## Expected Results
+## User Experience Flow
 
-1. **Hit probability displays correctly**: `11%` instead of `10.600000000000001%`
+1. **Q1 Ends (25% complete)**
+   - Alert shows Q1 production vs. expected
+   - Velocity comparison appears
+   - Early indication if on track or adjustments needed
 
-2. **Recommendations persist during halftime**:
-   - Component stays visible
-   - Shows "HALFTIME - Data from 1st half" indicator
-   - Retains all 1st half stats and projections
-   - Users can still see hedge recommendations during the break
+2. **Halftime (50% complete)**
+   - Comprehensive 1st half analysis
+   - Clear projection for 2nd half
+   - Profit lock opportunities highlighted if ahead
 
-3. **No data loss**: All live data (current value, rate, projections) preserved during halftime
+3. **Q3 Ends (75% complete)**
+   - "Crunch time" analysis
+   - Strong recommendation if behind
+   - Q4 expectations set
+
+4. **Q4/End of Game**
+   - Final outcome tracking
+   - Win/loss confirmation
+
+---
+
+## Alert Persistence
+
+Quarter transition alerts will:
+- Appear immediately when quarter ends
+- Persist for ~3 minutes into the next quarter (allowing user to see)
+- Auto-dismiss when meaningful action happens in new quarter
+- Always be overridden by more urgent hedge alerts (blowout, foul trouble)
 
