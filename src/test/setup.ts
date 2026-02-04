@@ -1,4 +1,4 @@
-// Mock localStorage for Supabase client
+import '@testing-library/jest-dom';
 
 // Mock localStorage for Supabase client
 Object.defineProperty(window, 'localStorage', {
