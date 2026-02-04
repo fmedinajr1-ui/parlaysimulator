@@ -1,31 +1,37 @@
 import { useState, useMemo } from "react";
-import { ArrowLeft, RefreshCw, Crown, Star, TrendingUp, Filter, Radio, Flame, Snowflake, Target, Users } from "lucide-react";
+import { ArrowLeft, RefreshCw, Crown, Star, TrendingUp, Filter, Radio, Flame, Snowflake, Target, Users, Zap } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDeepSweetSpots } from "@/hooks/useDeepSweetSpots";
 import { useSweetSpotLiveData } from "@/hooks/useSweetSpotLiveData";
 import { useTodayProps } from "@/hooks/useTodayProps";
 import { SweetSpotCard } from "@/components/sweetspots/SweetSpotCard";
 import { TodayPropsSection } from "@/components/sweetspots/TodayPropsSection";
+import { MatchupScannerDashboard } from "@/components/matchup-scanner";
 import { useParlayBuilder } from "@/contexts/ParlayBuilderContext";
 import { getEasternDate } from "@/lib/dateUtils";
 import { cn } from "@/lib/utils";
 import type { PropType, DeepSweetSpot } from "@/types/sweetSpot";
 import { PROP_TYPE_CONFIG } from "@/types/sweetSpot";
+import type { PlayerMatchupAnalysis } from "@/types/matchupScanner";
 
 type PropFilter = PropType | 'all';
 type QualityFilter = 'all' | 'ELITE' | 'PREMIUM+' | 'STRONG+';
 type SortOption = 'score' | 'floor' | 'edge' | 'juice';
 type PaceFilter = 'all' | 'live-only' | 'fast' | 'slow';
+type MainTab = 'sweet-spots' | 'matchup-scanner';
 
 export default function SweetSpots() {
   const navigate = useNavigate();
   const { data, isLoading, error, refetch, isFetching } = useDeepSweetSpots();
   const { addLeg } = useParlayBuilder();
   const todayET = getEasternDate();
+  
+  // Main tab state
+  const [mainTab, setMainTab] = useState<MainTab>('matchup-scanner');
   
   // Fetch today's 3PT and Assist props
   const { picks: threesPicks, isLoading: threesLoading, stats: threesStats } = useTodayProps({ propType: 'threes' });
@@ -105,6 +111,20 @@ export default function SweetSpots() {
     });
   };
   
+  // Handler for adding matchup analysis to builder
+  const handleAddMatchupToBuilder = (analysis: PlayerMatchupAnalysis) => {
+    const description = `${analysis.playerName} (${analysis.overallGrade}) vs ${analysis.opponentAbbrev}`;
+    addLeg({
+      description,
+      odds: -110,
+      source: 'sweet-spots',
+      playerName: analysis.playerName,
+      propType: 'Points',
+      line: 0,
+      side: 'over',
+    });
+  };
+  
   // Count live spots
   const liveSpotCount = useMemo(() => 
     enrichedSpots.filter(s => s.liveData?.isLive).length, 
@@ -127,7 +147,7 @@ export default function SweetSpots() {
               </Button>
               <div>
                 <div className="flex items-center gap-2">
-                  <h1 className="text-lg font-bold text-foreground">Deep Sweet Spots</h1>
+                  <h1 className="text-lg font-bold text-foreground">Player Analysis</h1>
                   {liveGameCount > 0 && (
                     <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-green-500/20 text-green-400 text-xs font-medium">
                       <Radio size={10} className="animate-pulse" />
@@ -149,30 +169,54 @@ export default function SweetSpots() {
               Refresh
             </Button>
           </div>
+          
+          {/* Main Tab Navigation */}
+          <div className="mt-3">
+            <Tabs value={mainTab} onValueChange={(v) => setMainTab(v as MainTab)}>
+              <TabsList className="w-full grid grid-cols-2">
+                <TabsTrigger value="matchup-scanner" className="gap-1.5">
+                  <Zap size={14} />
+                  Matchup Scanner
+                </TabsTrigger>
+                <TabsTrigger value="sweet-spots" className="gap-1.5">
+                  <Target size={14} />
+                  Sweet Spots
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </div>
         </div>
       </div>
       
       <div className="max-w-4xl mx-auto px-4 py-4 space-y-4">
-        {/* Today's Props Section */}
-        <TodayPropsSection
-          threesPicks={threesPicks}
-          assistsPicks={assistsPicks}
-          threesStats={threesStats}
-          assistsStats={assistsStats}
-          isLoading={threesLoading || assistsLoading}
-          onAddToBuilder={(pick, propType) => {
-            const shortLabel = propType === 'threes' ? '3PM' : 'AST';
-            addLeg({
-              description: `${pick.player_name} ${pick.recommended_side} ${pick.actual_line ?? pick.recommended_line} ${shortLabel}`,
-              odds: -110,
-              source: 'sweet-spots',
-              playerName: pick.player_name,
-              propType: propType === 'threes' ? 'Player Threes' : 'Player Assists',
-              line: pick.actual_line ?? pick.recommended_line,
-              side: pick.recommended_side.toLowerCase() as 'over' | 'under',
-            });
-          }}
-        />
+        {/* Matchup Scanner Tab */}
+        {mainTab === 'matchup-scanner' && (
+          <MatchupScannerDashboard onAddToBuilder={handleAddMatchupToBuilder} />
+        )}
+        
+        {/* Sweet Spots Tab */}
+        {mainTab === 'sweet-spots' && (
+          <>
+            {/* Today's Props Section */}
+            <TodayPropsSection
+              threesPicks={threesPicks}
+              assistsPicks={assistsPicks}
+              threesStats={threesStats}
+              assistsStats={assistsStats}
+              isLoading={threesLoading || assistsLoading}
+              onAddToBuilder={(pick, propType) => {
+                const shortLabel = propType === 'threes' ? '3PM' : 'AST';
+                addLeg({
+                  description: `${pick.player_name} ${pick.recommended_side} ${pick.actual_line ?? pick.recommended_line} ${shortLabel}`,
+                  odds: -110,
+                  source: 'sweet-spots',
+                  playerName: pick.player_name,
+                  propType: propType === 'threes' ? 'Player Threes' : 'Player Assists',
+                  line: pick.actual_line ?? pick.recommended_line,
+                  side: pick.recommended_side.toLowerCase() as 'over' | 'under',
+                });
+              }}
+            />
 
         {/* Summary Stats */}
         {data?.stats && (
@@ -378,6 +422,8 @@ export default function SweetSpots() {
             Showing {filteredSpots.length} of {data?.stats.totalPicks} sweet spots
             {liveSpotCount > 0 && ` (${liveSpotCount} live)`}
           </p>
+        )}
+          </>
         )}
       </div>
     </div>
