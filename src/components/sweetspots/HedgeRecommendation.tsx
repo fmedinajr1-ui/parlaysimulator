@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 import type { DeepSweetSpot, ShotChartAnalysis, HedgeStatus, TrendDirection, EnhancedHedgeAction } from "@/types/sweetSpot";
 import { ShotChartMatchup } from "./ShotChartMatchup";
 import { QuarterTransitionCard } from "./QuarterTransitionCard";
+import { HalftimeRecalibrationCard } from "./HalftimeRecalibrationCard";
 
 interface HedgeRecommendationProps {
   spot: DeepSweetSpot;
@@ -370,8 +371,16 @@ export function HedgeRecommendation({ spot }: HedgeRecommendationProps) {
         />
       )}
       
-      {/* Halftime Indicator (only if no transition alert showing) */}
-      {spot.liveData?.gameStatus === 'halftime' && !spot.liveData?.quarterTransition && (
+      {/* Halftime Recalibration Card (replaces simple halftime indicator) */}
+      {spot.liveData?.halftimeRecalibration && (
+        <HalftimeRecalibrationCard
+          recalibration={spot.liveData.halftimeRecalibration}
+          spot={spot}
+        />
+      )}
+      
+      {/* Fallback Halftime Indicator (only if no recalibration data and no transition alert) */}
+      {spot.liveData?.gameStatus === 'halftime' && !spot.liveData?.quarterTransition && !spot.liveData?.halftimeRecalibration && (
         <div className="mb-2 flex items-center gap-2 text-xs text-warning">
           <Clock className="w-3 h-3" />
           <span className="font-medium">HALFTIME - Data from 1st half</span>

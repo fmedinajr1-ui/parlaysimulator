@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useUnifiedLiveFeed } from './useUnifiedLiveFeed';
 import { useBatchShotChartAnalysis } from './useBatchShotChartAnalysis';
 import { useQuarterTransition } from './useQuarterTransition';
+import { useHalftimeRecalibration } from './useHalftimeRecalibration';
 import type { DeepSweetSpot, LivePropData, PropType, ShotChartAnalysis } from '@/types/sweetSpot';
 
 // Map propType to the unified feed stat key
@@ -139,6 +140,9 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
   // Apply quarter transition detection
   const spotsWithTransitions = useQuarterTransition(enrichedSpots);
   
+  // Apply halftime recalibration (after transitions, updates projectedFinal and confidence)
+  const spotsWithRecalibration = useHalftimeRecalibration(spotsWithTransitions);
+  
   // Calculate live game count
   const liveGameCount = useMemo(() => {
     return games.filter(g => g.status === 'in_progress').length;
@@ -146,11 +150,11 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
   
   // Get spots with active live data
   const liveSpots = useMemo(() => {
-    return spotsWithTransitions.filter(s => s.liveData?.isLive);
-  }, [spotsWithTransitions]);
+    return spotsWithRecalibration.filter(s => s.liveData?.isLive);
+  }, [spotsWithRecalibration]);
   
   return {
-    spots: spotsWithTransitions,
+    spots: spotsWithRecalibration,
     liveSpots,
     liveGameCount,
     isLoading: isLoading || shotChartLoading,
