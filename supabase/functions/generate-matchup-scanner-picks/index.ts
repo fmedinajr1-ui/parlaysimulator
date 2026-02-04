@@ -49,6 +49,47 @@ const LEAGUE_AVG_BY_ZONE: Record<ZoneType, number> = {
   above_break_3: 0.36,
 };
 
+// NBA team name to abbreviation mapping
+const NBA_TEAM_ABBREV: Record<string, string> = {
+  'Atlanta Hawks': 'ATL',
+  'Boston Celtics': 'BOS',
+  'Brooklyn Nets': 'BKN',
+  'Charlotte Hornets': 'CHA',
+  'Chicago Bulls': 'CHI',
+  'Cleveland Cavaliers': 'CLE',
+  'Dallas Mavericks': 'DAL',
+  'Denver Nuggets': 'DEN',
+  'Detroit Pistons': 'DET',
+  'Golden State Warriors': 'GSW',
+  'Houston Rockets': 'HOU',
+  'Indiana Pacers': 'IND',
+  'Los Angeles Clippers': 'LAC',
+  'LA Clippers': 'LAC',
+  'Los Angeles Lakers': 'LAL',
+  'LA Lakers': 'LAL',
+  'Memphis Grizzlies': 'MEM',
+  'Miami Heat': 'MIA',
+  'Milwaukee Bucks': 'MIL',
+  'Minnesota Timberwolves': 'MIN',
+  'New Orleans Pelicans': 'NOP',
+  'New York Knicks': 'NYK',
+  'Oklahoma City Thunder': 'OKC',
+  'Orlando Magic': 'ORL',
+  'Philadelphia 76ers': 'PHI',
+  'Phoenix Suns': 'PHX',
+  'Portland Trail Blazers': 'POR',
+  'Sacramento Kings': 'SAC',
+  'San Antonio Spurs': 'SAS',
+  'Toronto Raptors': 'TOR',
+  'Utah Jazz': 'UTA',
+  'Washington Wizards': 'WAS',
+};
+
+// Helper to get abbreviation from full name
+const getTeamAbbrev = (fullName: string): string => {
+  return NBA_TEAM_ABBREV[fullName] || fullName.substring(0, 3).toUpperCase();
+};
+
 // Get Eastern date string
 const getEasternDate = (): string => {
   const now = new Date();
@@ -62,7 +103,11 @@ const parseTeamsFromDescription = (description: string): { awayTeam: string; hom
   if (parts.length !== 2) {
     return { awayTeam: '', homeTeam: '' };
   }
-  return { awayTeam: parts[0].trim(), homeTeam: parts[1].trim() };
+  // Convert full names to abbreviations for database lookup
+  return { 
+    awayTeam: getTeamAbbrev(parts[0].trim()), 
+    homeTeam: getTeamAbbrev(parts[1].trim()) 
+  };
 };
 
 // Calculate matchup grade
