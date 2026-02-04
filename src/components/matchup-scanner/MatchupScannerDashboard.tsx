@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Zap, TrendingUp, TrendingDown, Users, Minus } from 'lucide-react';
+import { Zap, TrendingUp, TrendingDown, Users, Minus, Target, Crosshair } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -22,6 +22,7 @@ export function MatchupScannerDashboard({ onAddToBuilder }: MatchupScannerDashbo
     teamFilter: 'all',
     sideFilter: 'all',
     strengthFilter: 'all',
+    propTypeFilter: 'all',
   });
   
   const { analyses, stats, isLoading } = usePreGameMatchupScanner(filters);
@@ -43,51 +44,72 @@ export function MatchupScannerDashboard({ onAddToBuilder }: MatchupScannerDashbo
       
       {/* Stats Summary - Stock Ticker Style */}
       {!isLoading && stats.totalPlayers > 0 && (
-        <div className="grid grid-cols-4 gap-2">
-          <Card className="bg-green-500/10 border-green-500/30">
-            <CardContent className="p-2 text-center">
-              <div className="text-xs text-green-300 flex items-center justify-center gap-1">
-                <TrendingUp size={10} />
-                OVER
-              </div>
-              <div className="text-xl font-bold text-green-400">
-                {stats.overCount}
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="bg-red-500/10 border-red-500/30">
-            <CardContent className="p-2 text-center">
-              <div className="text-xs text-red-300 flex items-center justify-center gap-1">
-                <TrendingDown size={10} />
-                UNDER
-              </div>
-              <div className="text-xl font-bold text-red-400">
-                {stats.underCount}
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="bg-muted border-border">
-            <CardContent className="p-2 text-center">
-              <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">
-                <Minus size={10} />
-                PASS
-              </div>
-              <div className="text-xl font-bold text-foreground">
-                {stats.passCount}
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="bg-muted border-border">
-            <CardContent className="p-2 text-center">
-              <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">
-                <Users size={10} />
-                Total
-              </div>
-              <div className="text-xl font-bold text-foreground">
-                {stats.totalPlayers}
-              </div>
-            </CardContent>
-          </Card>
+        <div className="space-y-2">
+          {/* Side counts row */}
+          <div className="grid grid-cols-4 gap-2">
+            <Card className="bg-green-500/10 border-green-500/30">
+              <CardContent className="p-2 text-center">
+                <div className="text-xs text-green-300 flex items-center justify-center gap-1">
+                  <TrendingUp size={10} />
+                  OVER
+                </div>
+                <div className="text-xl font-bold text-green-400">
+                  {stats.overCount}
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="bg-red-500/10 border-red-500/30">
+              <CardContent className="p-2 text-center">
+                <div className="text-xs text-red-300 flex items-center justify-center gap-1">
+                  <TrendingDown size={10} />
+                  UNDER
+                </div>
+                <div className="text-xl font-bold text-red-400">
+                  {stats.underCount}
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="bg-muted border-border">
+              <CardContent className="p-2 text-center">
+                <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">
+                  <Minus size={10} />
+                  PASS
+                </div>
+                <div className="text-xl font-bold text-foreground">
+                  {stats.passCount}
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="bg-muted border-border">
+              <CardContent className="p-2 text-center">
+                <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">
+                  <Users size={10} />
+                  Total
+                </div>
+                <div className="text-xl font-bold text-foreground">
+                  {stats.totalPlayers}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+          
+          {/* Prop type breakdown row */}
+          <div className="grid grid-cols-2 gap-2">
+            <Card className="bg-amber-500/10 border-amber-500/30">
+              <CardContent className="p-2 flex items-center justify-center gap-2">
+                <Target size={14} className="text-amber-400" />
+                <span className="text-xs text-amber-300">Points:</span>
+                <span className="text-sm font-bold text-amber-400">{stats.pointsEdgeCount}</span>
+              </CardContent>
+            </Card>
+            <Card className="bg-cyan-500/10 border-cyan-500/30">
+              <CardContent className="p-2 flex items-center justify-center gap-2">
+                <Crosshair size={14} className="text-cyan-400" />
+                <span className="text-xs text-cyan-300">3PT:</span>
+                <span className="text-sm font-bold text-cyan-400">{stats.threesEdgeCount}</span>
+              </CardContent>
+            </Card>
+          </div>
         </div>
       )}
       
@@ -147,6 +169,7 @@ export function MatchupScannerDashboard({ onAddToBuilder }: MatchupScannerDashbo
                 teamFilter: 'all',
                 sideFilter: 'all',
                 strengthFilter: 'all',
+                propTypeFilter: 'all',
               })}
             >
               Clear Filters

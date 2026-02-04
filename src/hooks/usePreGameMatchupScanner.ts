@@ -430,6 +430,15 @@ export function usePreGameMatchupScanner(filters?: MatchupScannerFilters) {
       filtered = filtered.filter(a => a.threesBoost === 'strong' || a.threesBoost === 'moderate');
     }
     
+    // Prop type filter
+    if (filters.propTypeFilter && filters.propTypeFilter !== 'all') {
+      filtered = filtered.filter(a => {
+        if (filters.propTypeFilter === 'points') return a.propEdgeType === 'points' || a.propEdgeType === 'both';
+        if (filters.propTypeFilter === 'threes') return a.propEdgeType === 'threes' || a.propEdgeType === 'both';
+        return a.propEdgeType === filters.propTypeFilter;
+      });
+    }
+    
     // Team filter
     if (filters.teamFilter !== 'all') {
       filtered = filtered.filter(a => 
@@ -479,16 +488,22 @@ export function usePreGameMatchupScanner(filters?: MatchupScannerFilters) {
     let overCount = 0;
     let underCount = 0;
     let passCount = 0;
+    let pointsEdgeCount = 0;
+    let threesEdgeCount = 0;
     
     for (const a of analyses) {
       gradeDistribution[a.overallGrade]++;
       if (a.scoringBoost === 'strong' || a.scoringBoost === 'moderate') scoringBoostCount++;
       if (a.threesBoost === 'strong' || a.threesBoost === 'moderate') threesBoostCount++;
       
-      // NEW: Count by side
+      // Count by side
       if (a.recommendedSide === 'over') overCount++;
       else if (a.recommendedSide === 'under') underCount++;
       else passCount++;
+      
+      // Count by prop edge type
+      if (a.propEdgeType === 'points' || a.propEdgeType === 'both') pointsEdgeCount++;
+      if (a.propEdgeType === 'threes' || a.propEdgeType === 'both') threesEdgeCount++;
     }
     
     return {
@@ -500,6 +515,8 @@ export function usePreGameMatchupScanner(filters?: MatchupScannerFilters) {
       overCount,
       underCount,
       passCount,
+      pointsEdgeCount,
+      threesEdgeCount,
     };
   }, [analyses]);
   
