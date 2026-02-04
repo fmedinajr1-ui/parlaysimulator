@@ -82,19 +82,24 @@ export interface MatchupScannerStats {
   gradeDistribution: Record<MatchupGradeLetter, number>;
   scoringBoostCount: number;
   threesBoostCount: number;
-  // NEW: Side-based counts
+  // Side-based counts
   overCount: number;
   underCount: number;
   passCount: number;
+  // Prop type counts
+  pointsEdgeCount: number;
+  threesEdgeCount: number;
 }
 
 export interface MatchupScannerFilters {
   gradeFilter: MatchupGradeLetter | 'all' | 'A+A' | 'B+B';
   boostFilter: 'all' | 'scoring' | 'threes';
   teamFilter: string | 'all';
-  // NEW: Side-based filter
+  // Side-based filter
   sideFilter?: RecommendedSide | 'all';
   strengthFilter?: SideStrength | 'all';
+  // Prop type filter
+  propTypeFilter?: PropEdgeType | 'all';
 }
 
 // Grade thresholds for scoring

@@ -1,12 +1,12 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronUp, Plus, TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { ChevronDown, ChevronUp, Plus, TrendingUp, TrendingDown, Minus, Target, Crosshair, Flame } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import { ZoneAdvantageBar } from './ZoneAdvantageBar';
-import type { PlayerMatchupAnalysis } from '@/types/matchupScanner';
+import type { PlayerMatchupAnalysis, PropEdgeType } from '@/types/matchupScanner';
 import { ZONE_DISPLAY_NAMES, ZONE_SHORT_LABELS } from '@/types/matchupScanner';
 
 interface MatchupGradeCardProps {
@@ -19,42 +19,39 @@ const sideStyles = {
   over: {
     border: 'border-l-4 border-l-green-500',
     bg: 'bg-green-500/5',
-    badge: 'bg-green-500/20 text-green-400 border-green-500/30',
     icon: TrendingUp,
     label: 'OVER',
-    emoji: '🟢',
+    color: 'text-green-400',
   },
   under: {
     border: 'border-l-4 border-l-red-500',
     bg: 'bg-red-500/5',
-    badge: 'bg-red-500/20 text-red-400 border-red-500/30',
     icon: TrendingDown,
     label: 'UNDER',
-    emoji: '🔴',
+    color: 'text-red-400',
   },
   pass: {
     border: 'border-l-4 border-l-muted',
     bg: 'bg-muted/20',
-    badge: 'bg-muted text-muted-foreground border-muted',
     icon: Minus,
     label: 'PASS',
-    emoji: '⚪',
+    color: 'text-muted-foreground',
   },
+};
+
+// Prop type configuration with icons
+const propTypeConfig: Record<PropEdgeType, { label: string; icon: typeof Target | null; color: string }> = {
+  points: { label: 'POINTS', icon: Target, color: 'text-amber-400' },
+  threes: { label: '3PT', icon: Crosshair, color: 'text-cyan-400' },
+  both: { label: 'PTS & 3PT', icon: Flame, color: 'text-purple-400' },
+  none: { label: '', icon: null, color: 'text-muted-foreground' },
 };
 
 // Strength labels
 const strengthLabels = {
-  strong: 'Strong edge',
-  moderate: 'Good edge',
-  lean: 'Slight edge',
-};
-
-// Prop type labels
-const propTypeLabels = {
-  points: 'POINTS',
-  threes: '3PT',
-  both: 'PTS & 3PT',
-  none: '',
+  strong: 'Strong Edge',
+  moderate: 'Good Edge',
+  lean: 'Slight Edge',
 };
 
 export function MatchupGradeCard({ analysis, onAddToBuilder }: MatchupGradeCardProps) {
@@ -62,7 +59,8 @@ export function MatchupGradeCard({ analysis, onAddToBuilder }: MatchupGradeCardP
   
   const style = sideStyles[analysis.recommendedSide];
   const SideIcon = style.icon;
-  const propLabel = propTypeLabels[analysis.propEdgeType];
+  const propConfig = propTypeConfig[analysis.propEdgeType];
+  const PropIcon = propConfig.icon;
   const strengthLabel = strengthLabels[analysis.sideStrength];
   
   // Format game time
@@ -102,13 +100,8 @@ export function MatchupGradeCard({ analysis, onAddToBuilder }: MatchupGradeCardP
               </div>
             </div>
             
-            {/* Side Indicator */}
+            {/* Action Buttons */}
             <div className="flex items-center gap-1">
-              <Badge className={cn("text-xs gap-1", style.badge)}>
-                <SideIcon size={12} />
-                {style.label}
-              </Badge>
-              
               {onAddToBuilder && (
                 <Button
                   size="icon"
@@ -128,22 +121,27 @@ export function MatchupGradeCard({ analysis, onAddToBuilder }: MatchupGradeCardP
             </div>
           </div>
           
-          {/* Recommendation Row */}
-          <div className="mb-2">
-            <div className="flex items-center gap-2 flex-wrap">
-              {propLabel && (
-                <span className={cn(
-                  "text-sm font-medium",
-                  analysis.recommendedSide === 'over' && "text-green-400",
-                  analysis.recommendedSide === 'under' && "text-red-400",
-                  analysis.recommendedSide === 'pass' && "text-muted-foreground"
-                )}>
-                  {propLabel} {style.label}
-                </span>
+          {/* PROMINENT PROP TYPE + SIDE ROW */}
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              {PropIcon && (
+                <PropIcon size={18} className={propConfig.color} />
               )}
-              <span className="text-xs text-muted-foreground">•</span>
-              <span className="text-xs text-muted-foreground">{strengthLabel}</span>
+              <span className={cn("text-base font-bold", style.color)}>
+                {propConfig.label} {style.label}
+              </span>
             </div>
+            <Badge 
+              variant="outline" 
+              className={cn(
+                "text-xs",
+                analysis.sideStrength === 'strong' && "bg-amber-500/20 text-amber-400 border-amber-500/40",
+                analysis.sideStrength === 'moderate' && "bg-muted text-foreground",
+                analysis.sideStrength === 'lean' && "text-muted-foreground"
+              )}
+            >
+              {strengthLabel}
+            </Badge>
           </div>
           
           {/* Simple Reason */}
