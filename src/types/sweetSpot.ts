@@ -114,6 +114,35 @@ export interface LivePropData {
   currentQuarter: number;
   quarterHistory: QuarterSnapshot[];
   quarterTransition?: QuarterTransitionAlert;
+  halftimeRecalibration?: HalftimeRecalibration;
+}
+
+export interface HalftimeRecalibration {
+  // 1st Half Analysis
+  actual1H: number;
+  expected1H: number;          // Historical baseline for 1H
+  variance1H: number;          // Actual - Expected as %
+  
+  // Baseline Patterns
+  historical1HRate: number;    // Per minute rate in 1H (from L10)
+  historical2HRate: number;    // Per minute rate in 2H (estimated)
+  halfDistribution: number;    // % typically scored in 1H (default 0.50)
+  regressionFactor: number;    // How much 2H typically drops from 1H
+  
+  // 2nd Half Projection
+  linearProjection: number;    // Simple extrapolation
+  recalibratedProjection: number; // With historical adjustments
+  projectionDelta: number;     // Linear - Recalibrated
+  
+  // Adjustments Applied
+  fatigueAdjustment: number;   // Fatigue decay factor
+  paceAdjustment: number;      // Pace boost/penalty
+  minutesAdjustment: number;   // Expected 2H minutes vs 1H
+  
+  // Final Assessment
+  confidenceBoost: number;     // +/- to base confidence
+  insight: string;
+  recommendation: string;
 }
 
 export type QuarterNumber = 1 | 2 | 3 | 4;
