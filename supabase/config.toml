@@ -359,3 +359,6 @@ verify_jwt = false
 
 [functions.fetch-shot-chart-data]
 verify_jwt = false
+
+[functions.calculate-quarter-baselines]
+verify_jwt = false

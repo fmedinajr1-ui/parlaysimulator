@@ -6718,6 +6718,84 @@ export type Database = {
         }
         Relationships: []
       }
+      player_quarter_baselines: {
+        Row: {
+          created_at: string
+          game_avg: number
+          h1_pct: number
+          h2_pct: number
+          id: string
+          minutes_avg: number
+          player_name: string
+          player_tier: string | null
+          prop_type: string
+          q1_avg: number
+          q1_pct: number
+          q1_rate: number | null
+          q2_avg: number
+          q2_pct: number
+          q2_rate: number | null
+          q3_avg: number
+          q3_pct: number
+          q3_rate: number | null
+          q4_avg: number
+          q4_pct: number
+          q4_rate: number | null
+          sample_size: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          game_avg?: number
+          h1_pct?: number
+          h2_pct?: number
+          id?: string
+          minutes_avg?: number
+          player_name: string
+          player_tier?: string | null
+          prop_type: string
+          q1_avg?: number
+          q1_pct?: number
+          q1_rate?: number | null
+          q2_avg?: number
+          q2_pct?: number
+          q2_rate?: number | null
+          q3_avg?: number
+          q3_pct?: number
+          q3_rate?: number | null
+          q4_avg?: number
+          q4_pct?: number
+          q4_rate?: number | null
+          sample_size?: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          game_avg?: number
+          h1_pct?: number
+          h2_pct?: number
+          id?: string
+          minutes_avg?: number
+          player_name?: string
+          player_tier?: string | null
+          prop_type?: string
+          q1_avg?: number
+          q1_pct?: number
+          q1_rate?: number | null
+          q2_avg?: number
+          q2_pct?: number
+          q2_rate?: number | null
+          q3_avg?: number
+          q3_pct?: number
+          q3_rate?: number | null
+          q4_avg?: number
+          q4_pct?: number
+          q4_rate?: number | null
+          sample_size?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       player_reliability_scores: {
         Row: {
           block_reason: string | null
