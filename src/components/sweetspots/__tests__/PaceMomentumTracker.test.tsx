@@ -196,7 +196,7 @@ describe('PaceMomentumTracker', () => {
 
       render(<PaceMomentumTracker spot={spot} />);
 
-      expect(screen.getByText('97')).toBeInTheDocument();
+      expect(screen.getAllByText('97').length).toBeGreaterThan(0);
       expect(screen.getByText('(AVG-)')).toBeInTheDocument();
     });
 
@@ -223,7 +223,7 @@ describe('PaceMomentumTracker', () => {
 
       render(<PaceMomentumTracker spot={spot} />);
 
-      expect(screen.getByText('90')).toBeInTheDocument();
+      expect(screen.getAllByText('90').length).toBeGreaterThan(0);
       expect(screen.getByText('(SLOW)')).toBeInTheDocument();
     });
   });
