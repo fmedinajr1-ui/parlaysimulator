@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { getEasternDate } from '@/lib/dateUtils';
+import { getTeamAbbreviation } from '@/lib/team-abbreviations';
 import type { ZoneType, DefenseRating } from '@/types/sweetSpot';
 import type {
   PlayerMatchupAnalysis,
@@ -48,12 +49,14 @@ function parseTeamsFromDescription(description: string, playerName: string): { t
   if (parts.length !== 2) {
     return { teamAbbrev: '', opponentAbbrev: '' };
   }
-  const awayTeam = parts[0].trim();
-  const homeTeam = parts[1].trim();
+  const awayTeamFull = parts[0].trim();
+  const homeTeamFull = parts[1].trim();
   
-  // We don't know which team the player is on from this query alone
-  // Return away as team and home as opponent (will be refined with zone data)
-  return { teamAbbrev: awayTeam, opponentAbbrev: homeTeam };
+  // Convert full team names to abbreviations for database lookup
+  return { 
+    teamAbbrev: getTeamAbbreviation(awayTeamFull, 'NBA'), 
+    opponentAbbrev: getTeamAbbreviation(homeTeamFull, 'NBA') 
+  };
 }
 
 // Calculate matchup grade based on overall score
