@@ -1,5 +1,6 @@
 import { useRef, useMemo, useEffect } from 'react';
 import type { DeepSweetSpot, QuarterNumber, QuarterTransitionAlert, QuarterSnapshot } from '@/types/sweetSpot';
+import { inferPlayerTier, calculateRotationMinutes } from '@/lib/rotation-patterns';
 
 // How long to keep the alert visible after a quarter ends (in ms)
 const ALERT_PERSISTENCE_MS = 3 * 60 * 1000; // 3 minutes
@@ -9,13 +10,16 @@ function generateQuarterInsight(
   quarter: QuarterNumber,
   paceGapPct: number,
   side: 'over' | 'under',
-  velocityDelta: number
+  velocityDelta: number,
+  playerTier?: 'star' | 'starter' | 'role_player'
 ): string {
+  const tierLabel = playerTier === 'star' ? 'Stars' : playerTier === 'starter' ? 'Starters' : 'Bench players';
+  
   if (quarter === 1) {
     if (side === 'over') {
       if (paceGapPct >= 20) return "Strong Q1 start. If Q2 matches, watch for halftime profit lock.";
       if (paceGapPct >= 0) return "Solid pace. Stay patient through Q2.";
-      if (paceGapPct >= -15) return "Slightly slow Q1. Common for pacing - monitor Q2 burst.";
+      if (paceGapPct >= -15) return `Slightly slow Q1. ${tierLabel} often ramp up after 1st rotation.`;
       return "Slow start. Need acceleration in Q2 or consider light hedge.";
     } else {
       if (paceGapPct <= -20) return "Great Q1 for UNDER. Low usage trend looking favorable.";
@@ -28,9 +32,9 @@ function generateQuarterInsight(
   if (quarter === 2) {
     // Halftime analysis
     if (side === 'over') {
-      if (paceGapPct >= 15) return "Strong 1st half. Consider small profit lock on UNDER.";
-      if (paceGapPct >= -10) return "On track at half. Q3 historically has highest scoring.";
-      if (paceGapPct >= -20) return "Slightly behind at half. Q3 surge common for stars.";
+      if (paceGapPct >= 15) return `Strong 1st half. ${tierLabel} typically maintain pace in 2H.`;
+      if (paceGapPct >= -10) return `On track at half. ${tierLabel === 'Stars' ? 'Stars' : 'Key players'} play full 2nd half stints.`;
+      if (paceGapPct >= -20) return `Slightly behind at half. ${tierLabel} often surge in 3rd quarter.`;
       return "Behind at halftime. Need big 2nd half or hedge now.";
     } else {
       if (paceGapPct <= -15) return "UNDER looking strong. 1st half production well below line.";
@@ -42,9 +46,9 @@ function generateQuarterInsight(
   if (quarter === 3) {
     if (side === 'over') {
       if (paceGapPct >= 10) return "Cruising. Q4 is cushion territory.";
-      if (paceGapPct >= -5) return "Close heading to Q4. Need strong finish.";
-      if (paceGapPct < -15) return "Q4 crunch time. Stars usually close strong but hedge may be wise.";
-      return "Behind heading to Q4. Consider hedge before garbage time risk.";
+      if (paceGapPct >= -5) return `Close heading to Q4. ${tierLabel} get closing minutes in tight games.`;
+      if (paceGapPct < -15) return `Q4 crunch time. ${tierLabel === 'Stars' ? 'Stars play through' : 'Limited closing time'} - hedge may be wise.`;
+      return `Behind heading to Q4. ${tierLabel === 'Bench players' ? 'Bench may get garbage time' : 'Watch for closer minutes'}.`;
     } else {
       if (paceGapPct <= -10) return "UNDER looking safe. One quarter to go.";
       if (paceGapPct <= 5) return "UNDER manageable. Watch for late game situations.";
@@ -90,6 +94,20 @@ export function calculateQuarterTransition(
   const { liveData, line, side } = spot;
   const currentTotal = liveData?.currentValue ?? 0;
   const projectedFinal = liveData?.projectedFinal ?? 0;
+  const minutesPlayed = liveData?.minutesPlayed ?? 0;
+  const gameProgress = liveData?.gameProgress ?? 0;
+  
+  // Infer player tier for rotation context
+  const playerTier = inferPlayerTier(minutesPlayed, gameProgress);
+  
+  // Get rotation-aware remaining minutes estimate
+  const rotationEstimate = calculateRotationMinutes(
+    playerTier,
+    completedQuarter + 1, // Next quarter
+    12, // Start of quarter
+    0, // scoreDiff
+    minutesPlayed
+  );
   
   // Expected per quarter (simple: line / 4)
   const expectedPerQuarter = line / 4;
@@ -100,14 +118,14 @@ export function calculateQuarterTransition(
   const paceGapPct = expectedAtQuarterEnd > 0 ? (paceGap / expectedAtQuarterEnd) * 100 : 0;
   
   // Velocity analysis
-  const quarterMinutes = 12;
-  const minutesPlayed = completedQuarter * quarterMinutes;
-  const currentVelocity = minutesPlayed > 0 ? currentTotal / minutesPlayed : 0;
+  const gameMinutes = completedQuarter * 12;
+  const actualMinutesPlayed = minutesPlayed || gameMinutes * 0.75;
+  const currentVelocity = actualMinutesPlayed > 0 ? currentTotal / actualMinutesPlayed : 0;
   
-  // What's needed for remaining quarters
+  // What's needed for remaining quarters (using rotation-aware minutes)
   const remaining = line - currentTotal;
-  const remainingMinutes = (4 - completedQuarter) * 12;
-  const requiredVelocity = remainingMinutes > 0 ? remaining / remainingMinutes : 0;
+  const remainingPlayMinutes = rotationEstimate.expectedRemaining;
+  const requiredVelocity = remainingPlayMinutes > 0 ? remaining / remainingPlayMinutes : 0;
   const velocityDelta = currentVelocity - requiredVelocity;
   
   // Determine status based on pace gap and bet side
@@ -128,7 +146,7 @@ export function calculateQuarterTransition(
   }
   
   // Generate insight and action
-  const insight = generateQuarterInsight(completedQuarter, paceGapPct, side, velocityDelta);
+  const insight = generateQuarterInsight(completedQuarter, paceGapPct, side, velocityDelta, playerTier);
   const action = generateQuarterAction(status, urgency, side, completedQuarter);
   
   return {
@@ -144,7 +162,7 @@ export function calculateQuarterTransition(
     requiredRemaining: Math.max(0, remaining),
     requiredRate: requiredVelocity,
     currentVelocity,
-    neededVelocity: requiredVelocity,
+    neededVelocity: requiredVelocity, 
     velocityDelta,
     insight,
     action,

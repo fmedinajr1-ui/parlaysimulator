@@ -1,4 +1,4 @@
-import { AlertTriangle, TrendingDown, TrendingUp, Minus, Snowflake, Flame, Target, Clock, Zap } from "lucide-react";
+import { AlertTriangle, TrendingDown, TrendingUp, Minus, Snowflake, Flame, Target, Clock, Zap, Coffee, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { DeepSweetSpot, ShotChartAnalysis, HedgeStatus, TrendDirection, EnhancedHedgeAction } from "@/types/sweetSpot";
 import { ShotChartMatchup } from "./ShotChartMatchup";
@@ -6,6 +6,14 @@ import { QuarterTransitionCard } from "./QuarterTransitionCard";
 import { HalftimeRecalibrationCard } from "./HalftimeRecalibrationCard";
 import { QuarterProgressSparkline } from "./QuarterProgressSparkline";
 import { PaceMomentumTracker } from "./PaceMomentumTracker";
+import { RotationStatusBadge } from "./RotationStatusBadge";
+import { 
+  calculateRotationMinutes, 
+  inferPlayerTier, 
+  isApproachingRestWindow,
+  type RotationEstimate,
+  type PlayerTier
+} from "@/lib/rotation-patterns";
 
 interface HedgeRecommendationProps {
   spot: DeepSweetSpot;
@@ -36,6 +44,13 @@ function formatTimeRemaining(period: string, clock: string, gameProgress: number
   return `~${minutesRemaining.toFixed(0)} min remaining`;
 }
 
+// Parse clock string to minutes
+function parseClockMinutes(clock: string): number {
+  if (!clock) return 12;
+  const parts = clock.split(':');
+  return parseInt(parts[0]) || 12;
+}
+
 // Calculate hit probability with zone matchup factor
 function calculateHitProbability(
   current: number, 
@@ -43,10 +58,13 @@ function calculateHitProbability(
   ratePerMin: number, 
   gameProgress: number,
   side: 'over' | 'under',
-  zoneScore?: number
+  zoneScore?: number,
+  rotationMinutes?: number
 ): number {
-  const totalGameMinutes = 48;
-  const minutesRemaining = Math.max(0, totalGameMinutes * (1 - gameProgress / 100));
+  // Use rotation-aware minutes if provided, otherwise fallback to linear
+  const minutesRemaining = rotationMinutes !== undefined 
+    ? rotationMinutes 
+    : Math.max(0, 48 * (1 - gameProgress / 100));
   
   let baseProbability: number;
   
@@ -88,6 +106,13 @@ function calculateHitProbability(
   return Math.max(5, Math.min(95, baseProbability));
 }
 
+// Extended hedge action with rotation context
+interface ExtendedHedgeAction extends EnhancedHedgeAction {
+  rotationEstimate?: RotationEstimate;
+  playerTier?: PlayerTier;
+  rotationMinutes?: number;
+}
+
 // Determine hedge sizing recommendation
 function calculateHedgeSizing(gap: number, hitProbability: number): string {
   if (hitProbability >= 70) return "No hedge needed";
@@ -124,7 +149,7 @@ function getZoneInsight(shotChart: ShotChartAnalysis | undefined, side: 'over' |
 }
 
 // Calculate enhanced hedge action with all details
-function calculateEnhancedHedgeAction(spot: DeepSweetSpot): EnhancedHedgeAction {
+function calculateEnhancedHedgeAction(spot: DeepSweetSpot): ExtendedHedgeAction {
   const { liveData, line, side, propType } = spot;
   
   // Default values when no live data
@@ -144,11 +169,30 @@ function calculateEnhancedHedgeAction(spot: DeepSweetSpot): EnhancedHedgeAction 
     };
   }
   
-  const { currentValue, projectedFinal, paceRating, riskFlags, gameProgress, trend, ratePerMinute, shotChartMatchup } = liveData;
+  const { currentValue, projectedFinal, paceRating, riskFlags, gameProgress, trend, ratePerMinute, shotChartMatchup, period, clock, minutesPlayed } = liveData;
   
   const oppositeSide = side === 'over' ? 'UNDER' : 'OVER';
-  const totalGameMinutes = 48;
-  const minutesRemaining = Math.max(0, totalGameMinutes * (1 - gameProgress / 100));
+  
+  // --- ROTATION-AWARE MINUTES CALCULATION ---
+  const currentQuarter = parseInt(period) || 1;
+  const clockMinutes = parseClockMinutes(clock);
+  const playerTier = inferPlayerTier(minutesPlayed || 0, gameProgress);
+  
+  // Get rotation estimate
+  const rotationEstimate = calculateRotationMinutes(
+    playerTier,
+    currentQuarter,
+    clockMinutes,
+    0, // scoreDiff - TODO: add to liveData
+    minutesPlayed || 0
+  );
+  
+  // Use rotation-aware minutes instead of linear
+  const minutesRemaining = rotationEstimate.expectedRemaining;
+  const linearMinutes = Math.max(0, 48 * (1 - gameProgress / 100));
+  const isInRestWindow = rotationEstimate.currentPhase === 'rest';
+  const isApproachingRest = isApproachingRestWindow(playerTier, currentQuarter, clockMinutes);
+  // --- END ROTATION LOGIC ---
   
   // Calculate gap to line (positive = good for your bet)
   const gapToLine = side === 'over' 
@@ -164,7 +208,7 @@ function calculateEnhancedHedgeAction(spot: DeepSweetSpot): EnhancedHedgeAction 
   const zoneScore = shotChartMatchup?.overallMatchupScore;
   
   // Calculate hit probability WITH zone factor
-  const hitProbability = calculateHitProbability(currentValue, line, currentRate, gameProgress, side, zoneScore);
+  const hitProbability = calculateHitProbability(currentValue, line, currentRate, gameProgress, side, zoneScore, minutesRemaining);
   
   // Map live trend to our trend direction
   const trendDirection: TrendDirection = 
@@ -204,10 +248,26 @@ function calculateEnhancedHedgeAction(spot: DeepSweetSpot): EnhancedHedgeAction 
   
   const severeRiskCount = [hasBlowoutRisk, hasFoulTrouble, hasGarbageTime].filter(Boolean).length;
   
+  // ROTATION-BASED RISK MODIFIERS
+  const hasRotationRisk = isInRestWindow || (isApproachingRest && side === 'over');
+  
   // Adjust thresholds based on zone advantage/disadvantage
   let urgentThreshold = 25;
   let alertThreshold = 45;
   let monitorThreshold = 65;
+  
+  // Rotation context adjustments
+  if (isInRestWindow && side === 'over') {
+    // Player benched - harder to hit OVER
+    urgentThreshold += 15;
+    alertThreshold += 15;
+    monitorThreshold += 10;
+  } else if (isApproachingRest && side === 'over') {
+    // About to sit - moderate concern for OVER
+    urgentThreshold += 8;
+    alertThreshold += 8;
+    monitorThreshold += 5;
+  }
   
   if (hasZoneAdvantage && side === 'over') {
     // Zone advantage for OVER: be more patient, less urgent
@@ -234,8 +294,18 @@ function calculateEnhancedHedgeAction(spot: DeepSweetSpot): EnhancedHedgeAction 
   // Get zone insight for messaging
   const zoneInsight = getZoneInsight(shotChartMatchup, side);
   
+  // --- ROTATION-AWARE STATUS LOGIC ---
+  
+  // URGENT: Currently benched and behind pace for OVER
+  if (isInRestWindow && side === 'over' && hitProbability < 60) {
+    status = 'urgent';
+    headline = '🪑 PLAYER BENCHED';
+    message = `Currently on bench (${rotationEstimate.rotationPhase} rotation rest). ${rotationEstimate.nextTransition}. Producing ${currentRate.toFixed(2)}/min - need ${rateNeeded.toFixed(2)}/min with ~${minutesRemaining.toFixed(0)} play minutes remaining.`;
+    action = `🚨 BET ${oppositeSide} ${line} NOW - Limited remaining court time`;
+    urgency = 'high';
+  }
   // URGENT: Multiple risk factors or very low probability
-  if (severeRiskCount >= 2 || hitProbability < urgentThreshold || (hasBlowoutRisk && gameProgress > 60)) {
+  else if (severeRiskCount >= 2 || hitProbability < urgentThreshold || (hasBlowoutRisk && gameProgress > 60)) {
     status = 'urgent';
     headline = '🚨 HEDGE NOW';
     
@@ -253,6 +323,19 @@ function calculateEnhancedHedgeAction(spot: DeepSweetSpot): EnhancedHedgeAction 
     
     action = `🚨 BET ${oppositeSide} ${line} NOW - ${calculateHedgeSizing(Math.abs(gapToLine), hitProbability)}`;
     urgency = 'high';
+  }
+  // ALERT: Approaching rest window while behind
+  else if (isApproachingRest && side === 'over' && hitProbability < 55) {
+    status = 'alert';
+    headline = '⏰ REST APPROACHING';
+    message = `Approaching bench rotation. Current: ${currentValue}, need ${line}. Only ~${minutesRemaining.toFixed(0)} play minutes projected (vs ${linearMinutes.toFixed(0)} linear).`;
+    
+    if (zoneInsight) {
+      message += ` ${zoneInsight}.`;
+    }
+    
+    action = `⚠️ Prepare ${oppositeSide} ${line} hedge before rest window`;
+    urgency = 'medium';
   }
   // ALERT: Single risk factor or moderate concern
   else if (severeRiskCount >= 1 || hitProbability < alertThreshold || hasSlowPace || hasZoneDisadvantage) {
@@ -301,7 +384,12 @@ function calculateEnhancedHedgeAction(spot: DeepSweetSpot): EnhancedHedgeAction 
     urgency = 'none';
   }
   
-  return { status, headline, message, action, urgency, trendDirection, hitProbability, rateNeeded, currentRate, timeRemaining, gapToLine };
+  return { 
+    status, headline, message, action, urgency, trendDirection, hitProbability, rateNeeded, currentRate, timeRemaining, gapToLine,
+    rotationEstimate,
+    playerTier,
+    rotationMinutes: minutesRemaining
+  };
 }
 
 // Get status colors
@@ -387,6 +475,15 @@ export function HedgeRecommendation({ spot }: HedgeRecommendationProps) {
           <Clock className="w-3 h-3" />
           <span className="font-medium">HALFTIME - Data from 1st half</span>
         </div>
+      )}
+      
+      {/* Rotation Status Badge - Shows rotation phase and timing */}
+      {hedgeAction.rotationEstimate && hedgeAction.playerTier && (
+        <RotationStatusBadge 
+          rotationEstimate={hedgeAction.rotationEstimate}
+          playerTier={hedgeAction.playerTier}
+          className="mb-2"
+        />
       )}
       
       {/* Status Badge Header */}
@@ -476,10 +573,37 @@ export function HedgeRecommendation({ spot }: HedgeRecommendationProps) {
       {/* Time and Pace Context */}
       <div className="flex items-center gap-3 text-xs mb-2">
         <div className="flex items-center gap-1">
-          <Clock className="w-3 h-3 text-muted-foreground" />
-          <span className="text-muted-foreground">{hedgeAction.timeRemaining}</span>
+          {hedgeAction.rotationEstimate?.currentPhase === 'rest' ? (
+            <>
+              <Coffee className="w-3 h-3 text-muted-foreground" />
+              <span className="text-muted-foreground">
+                Bench (~{Math.ceil(hedgeAction.rotationEstimate.restWindowRemaining)}m)
+              </span>
+            </>
+          ) : hedgeAction.rotationEstimate?.currentPhase === 'returning' ? (
+            <>
+              <RefreshCw className="w-3 h-3 text-warning" />
+              <span className="text-warning">Returning soon</span>
+            </>
+          ) : (
+            <>
+              <Clock className="w-3 h-3 text-muted-foreground" />
+              <span className="text-muted-foreground">{hedgeAction.timeRemaining}</span>
+            </>
+          )}
         </div>
         <span className="text-muted-foreground">|</span>
+        {hedgeAction.rotationMinutes !== undefined && (
+          <>
+            <div className="flex items-center gap-1">
+              <span className="text-muted-foreground">Play:</span>
+              <span className="font-mono font-medium text-foreground">
+                ~{Math.round(hedgeAction.rotationMinutes)}m
+              </span>
+            </div>
+            <span className="text-muted-foreground">|</span>
+          </>
+        )}
         <div className="flex items-center gap-1">
           <span className="text-muted-foreground">Pace:</span>
           {paceRating >= 102 ? (
