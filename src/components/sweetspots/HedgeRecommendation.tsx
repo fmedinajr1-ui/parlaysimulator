@@ -225,15 +225,45 @@ function calculateEnhancedHedgeAction(spot: DeepSweetSpot): ExtendedHedgeAction 
   let action: string;
   let urgency: 'high' | 'medium' | 'low' | 'none';
   
-  // Check for profit lock opportunity (already hit the line)
-  const alreadyHit = side === 'over' ? currentValue >= line : currentValue < line && projectedFinal < line;
-  if (alreadyHit && side === 'over') {
-    status = 'profit_lock';
-    headline = '💰 PROFIT LOCK AVAILABLE';
-    message = `Current ${currentValue} already exceeds line ${line}. Bet ${oppositeSide} now to guarantee profit regardless of outcome.`;
-    action = `BET ${oppositeSide} ${line} NOW - Lock in guaranteed profit`;
-    urgency = 'high';
-    return { status, headline, message, action, urgency, trendDirection, hitProbability: 100, rateNeeded, currentRate, timeRemaining, gapToLine };
+  // Check if bet has already won (OVER) or already lost (UNDER)
+  if (side === 'over' && currentValue >= line) {
+    // OVER already hit - this is a WIN, not a hedge opportunity
+    return {
+      status: 'on_track',
+      headline: '✅ ALREADY HIT',
+      message: `Line cleared! Current ${currentValue} exceeds line ${line}. Your OVER ${line} bet has won.`,
+      action: 'Bet is already successful. Watch for final confirmation.',
+      urgency: 'none',
+      trendDirection: 'stable',
+      hitProbability: 100,
+      rateNeeded: 0,
+      currentRate,
+      timeRemaining,
+      gapToLine: currentValue - line,
+      rotationEstimate,
+      playerTier,
+      rotationMinutes: minutesRemaining
+    };
+  }
+  
+  if (side === 'under' && currentValue >= line) {
+    // UNDER already lost - player exceeded the line
+    return {
+      status: 'urgent',
+      headline: '❌ LINE EXCEEDED',
+      message: `Player at ${currentValue} has exceeded line ${line}. Your UNDER ${line} bet has lost.`,
+      action: 'Bet has already failed. No hedge possible.',
+      urgency: 'high',
+      trendDirection: 'worsening',
+      hitProbability: 0,
+      rateNeeded: 0,
+      currentRate,
+      timeRemaining,
+      gapToLine: line - currentValue,
+      rotationEstimate,
+      playerTier,
+      rotationMinutes: minutesRemaining
+    };
   }
   
   // Check for severe risk factors
