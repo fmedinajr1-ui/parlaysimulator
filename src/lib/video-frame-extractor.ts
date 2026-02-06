@@ -25,8 +25,9 @@ export interface ExtractionResult {
 }
 
 const MAX_FRAME_DIMENSION = 1280;
-const FRAME_INTERVAL_SECONDS = 1;
-const MAX_FRAMES = 30;
+const DEFAULT_FRAME_INTERVAL = 2; // 1 frame every 2 seconds
+const MAX_FRAMES = 60; // Up to 60 frames for full video coverage
+const MIN_FRAMES_PER_MINUTE = 20; // At least 20 frames per minute of video
 const JPEG_QUALITY = 0.85;
 const FRAME_TIMEOUT_MS = 8000; // 8 second timeout per frame
 const SIMILARITY_THRESHOLD = 0.92; // Skip frames that are 92%+ similar
@@ -104,7 +105,13 @@ export async function extractFramesFromVideo(
         return;
       }
 
-      const frameInterval = Math.max(FRAME_INTERVAL_SECONDS, duration / MAX_FRAMES);
+      // Calculate target frame count based on video duration
+      // Goal: Extract frames evenly across entire video
+      const targetFrameCount = Math.min(
+        MAX_FRAMES,
+        Math.max(20, Math.ceil(duration * MIN_FRAMES_PER_MINUTE / 60))
+      );
+      const frameInterval = duration / targetFrameCount;
       const totalFrames = Math.min(Math.floor(duration / frameInterval), MAX_FRAMES);
 
       if (totalFrames < 1) {
@@ -373,4 +380,149 @@ export function validateVideoFile(file: File): { valid: boolean; error?: string 
 export function isVideoFile(file: File): boolean {
   const videoTypes = ['video/mp4', 'video/quicktime', 'video/webm', 'video/x-m4v'];
   return videoTypes.includes(file.type) || file.name.match(/\.(mp4|mov|webm|m4v)$/i) !== null;
+}
+
+/**
+ * Extract frames from a remote video URL (e.g., stream URL from Cobalt)
+ * Works for YouTube, Twitter/X, TikTok streams
+ */
+export async function extractFramesFromUrl(
+  videoUrl: string,
+  onProgress?: (progress: ExtractionProgress) => void
+): Promise<ExtractionResult> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+
+    if (!ctx) {
+      reject(new Error('Could not get canvas context'));
+      return;
+    }
+
+    // CORS-enabled video attributes
+    video.crossOrigin = 'anonymous';
+    video.muted = true;
+    video.playsInline = true;
+    video.setAttribute('playsinline', 'true');
+    video.setAttribute('webkit-playsinline', 'true');
+    video.autoplay = false;
+    video.preload = 'auto';
+
+    const cleanup = () => {
+      try {
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+        video.remove();
+        canvas.remove();
+      } catch (e) {
+        console.warn('Cleanup error:', e);
+      }
+    };
+
+    // Overall timeout for video loading
+    const loadTimeout = setTimeout(() => {
+      cleanup();
+      reject(new Error('Video stream loading timed out. Try a different video.'));
+    }, 60000); // 60 second timeout for remote streams
+
+    video.onerror = (e) => {
+      clearTimeout(loadTimeout);
+      cleanup();
+      console.error('Stream video load error:', e);
+      reject(new Error('Failed to load video stream. CORS restriction or invalid URL.'));
+    };
+
+    video.onloadedmetadata = async () => {
+      clearTimeout(loadTimeout);
+      const duration = video.duration;
+      
+      if (!duration || duration <= 0 || !isFinite(duration)) {
+        cleanup();
+        reject(new Error('Invalid video stream duration.'));
+        return;
+      }
+
+      // Calculate target frame count - distribute evenly across entire video
+      const targetFrameCount = Math.min(
+        MAX_FRAMES,
+        Math.max(20, Math.ceil(duration * MIN_FRAMES_PER_MINUTE / 60))
+      );
+      const frameInterval = duration / targetFrameCount;
+      const totalFrames = Math.min(Math.floor(duration / frameInterval), MAX_FRAMES);
+
+      if (totalFrames < 1) {
+        cleanup();
+        reject(new Error('Video stream too short.'));
+        return;
+      }
+
+      onProgress?.({
+        stage: 'loading',
+        currentFrame: 0,
+        totalFrames,
+        message: `Preparing to extract ${totalFrames} frames from stream...`
+      });
+
+      // Set canvas dimensions
+      let { videoWidth, videoHeight } = video;
+      if (videoWidth > MAX_FRAME_DIMENSION || videoHeight > MAX_FRAME_DIMENSION) {
+        if (videoWidth > videoHeight) {
+          videoHeight = Math.round((videoHeight * MAX_FRAME_DIMENSION) / videoWidth);
+          videoWidth = MAX_FRAME_DIMENSION;
+        } else {
+          videoWidth = Math.round((videoWidth * MAX_FRAME_DIMENSION) / videoHeight);
+          videoHeight = MAX_FRAME_DIMENSION;
+        }
+      }
+
+      canvas.width = videoWidth;
+      canvas.height = videoHeight;
+
+      const frames: ExtractedFrame[] = [];
+      
+      // Extract frames at each interval
+      for (let i = 0; i < totalFrames; i++) {
+        const timestamp = i * frameInterval;
+        
+        onProgress?.({
+          stage: 'extracting',
+          currentFrame: i + 1,
+          totalFrames,
+          message: `Extracting frame ${i + 1}/${totalFrames} from stream...`
+        });
+
+        try {
+          const frame = await extractFrameAtTime(video, canvas, ctx, timestamp, videoWidth, videoHeight);
+          frames.push({
+            index: i,
+            base64: frame,
+            timestamp
+          });
+        } catch (err) {
+          console.warn(`Failed to extract stream frame at ${timestamp}s:`, err);
+          // Continue with remaining frames
+        }
+      }
+
+      cleanup();
+
+      onProgress?.({
+        stage: 'complete',
+        currentFrame: frames.length,
+        totalFrames: frames.length,
+        message: `Extracted ${frames.length} frames from stream`
+      });
+
+      resolve({
+        frames,
+        duration,
+        frameCount: frames.length
+      });
+    };
+
+    video.src = videoUrl;
+    video.load();
+  });
 }

@@ -18,6 +18,7 @@ export interface VideoInfo {
   title: string;
   duration?: number;
   platform: string;
+  streamUrl?: string; // Stream URL for client-side frame extraction
 }
 
 interface YouTubeLinkInputProps {
@@ -127,12 +128,14 @@ export function YouTubeLinkInput({
       setStatusMessage('Processing frames...');
 
       const frames = data.frames || [];
-      const videoInfo: VideoInfo = data.videoInfo || {
-        title: 'Video',
+      const videoInfo: VideoInfo = {
+        title: data.videoInfo?.title || 'Video',
         platform: detected?.platform || 'unknown',
+        streamUrl: data.streamUrl, // Include stream URL for client-side extraction
       };
 
-      if (frames.length === 0) {
+      // Even if no thumbnail frames, we might have a stream URL
+      if (frames.length === 0 && !data.streamUrl) {
         throw new Error('No frames could be extracted. Try a different video.');
       }
 
@@ -140,7 +143,10 @@ export function YouTubeLinkInput({
       setPreviewFrames(frames.slice(0, 4));
       
       setProgress(100);
-      setStatusMessage(`Extracted ${frames.length} frames`);
+      setStatusMessage(data.streamUrl 
+        ? `Ready for full extraction (stream available)`
+        : `Extracted ${frames.length} frames`
+      );
       setExtractionComplete(true);
 
       onFramesExtracted(frames, videoInfo);
