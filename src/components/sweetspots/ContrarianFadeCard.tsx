@@ -1,14 +1,82 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { AlertTriangle, TrendingDown, TrendingUp, ArrowRight, Plus, Check, Zap } from 'lucide-react';
+import { AlertTriangle, TrendingDown, TrendingUp, ArrowRight, Plus, Check, Zap, ChevronDown, ChevronUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useParlayBuilder } from '@/contexts/ParlayBuilderContext';
 import type { ContrarianPick, FadeCategory } from '@/hooks/useContrarianParlayBuilder';
 
 interface ContrarianFadeCardProps {
   pick: ContrarianPick;
+}
+
+// Separate component for risky fades with expand/collapse
+function RiskyFadesSection({ picks }: { picks: ContrarianPick[] }) {
+  const [showAll, setShowAll] = useState(false);
+  
+  if (picks.length === 0) return null;
+  
+  // Group by category for better visibility
+  const grouped = picks.reduce((acc, pick) => {
+    const cat = pick.originalCategory;
+    if (!acc[cat]) acc[cat] = [];
+    acc[cat].push(pick);
+    return acc;
+  }, {} as Record<string, ContrarianPick[]>);
+  
+  const displayPicks = showAll ? picks : picks.slice(0, 8);
+  const hasMore = picks.length > 8;
+  
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-medium text-chart-4 flex items-center gap-2">
+          <AlertTriangle size={14} />
+          Risky Fades ({picks.length})
+        </h3>
+        {hasMore && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowAll(!showAll)}
+            className="h-7 text-xs text-muted-foreground hover:text-foreground"
+          >
+            {showAll ? (
+              <>Show Less <ChevronUp size={12} className="ml-1" /></>
+            ) : (
+              <>View All ({picks.length}) <ChevronDown size={12} className="ml-1" /></>
+            )}
+          </Button>
+        )}
+      </div>
+      
+      {/* Category badges showing distribution */}
+      <div className="flex flex-wrap gap-1.5 mb-2">
+        {Object.entries(grouped).map(([cat, catPicks]) => (
+          <Badge 
+            key={cat} 
+            variant="outline" 
+            className="text-xs bg-muted/50"
+          >
+            {cat}: {catPicks.length}
+          </Badge>
+        ))}
+      </div>
+      
+      <div className="grid gap-3 md:grid-cols-2">
+        {displayPicks.map(pick => (
+          <ContrarianFadeCard key={pick.id} pick={pick} />
+        ))}
+      </div>
+      
+      {!showAll && hasMore && (
+        <p className="text-xs text-muted-foreground text-center">
+          +{picks.length - 8} more risky fades hidden
+        </p>
+      )}
+    </div>
+  );
 }
 
 export function ContrarianFadeCard({ pick }: ContrarianFadeCardProps) {
@@ -279,24 +347,7 @@ export function ContrarianSection({ picks, categoryStats, isLoading, onBuildParl
       )}
       
       {/* Risky fades (no positive edge) */}
-      {riskyPicks.length > 0 && (
-        <div className="space-y-2">
-          <h3 className="text-sm font-medium text-chart-4 flex items-center gap-2">
-            <AlertTriangle size={14} />
-            Risky Fades ({riskyPicks.length})
-          </h3>
-          <div className="grid gap-3 md:grid-cols-2">
-            {riskyPicks.slice(0, 4).map(pick => (
-              <ContrarianFadeCard key={pick.id} pick={pick} />
-            ))}
-          </div>
-          {riskyPicks.length > 4 && (
-            <p className="text-xs text-muted-foreground text-center">
-              +{riskyPicks.length - 4} more risky fades hidden
-            </p>
-          )}
-        </div>
-      )}
+      <RiskyFadesSection picks={riskyPicks} />
     </div>
   );
 }
