@@ -368,3 +368,6 @@ verify_jwt = false
 
 [functions.record-hedge-snapshot]
 verify_jwt = false
+
+[functions.build-player-profile]
+verify_jwt = false
