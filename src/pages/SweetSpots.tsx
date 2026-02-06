@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { ArrowLeft, RefreshCw, Crown, Star, TrendingUp, Filter, Radio, Flame, Snowflake, Target, Users, Zap, DollarSign, BarChart3 } from "lucide-react";
+import { ArrowLeft, RefreshCw, Crown, Star, TrendingUp, Filter, Radio, Flame, Snowflake, Target, Users, Zap, DollarSign, BarChart3, RotateCcw } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -8,9 +8,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useDeepSweetSpots } from "@/hooks/useDeepSweetSpots";
 import { useSweetSpotLiveData } from "@/hooks/useSweetSpotLiveData";
 import { useTodayProps } from "@/hooks/useTodayProps";
+import { useContrarianParlayBuilder } from "@/hooks/useContrarianParlayBuilder";
 import { SweetSpotCard } from "@/components/sweetspots/SweetSpotCard";
 import { TodayPropsSection } from "@/components/sweetspots/TodayPropsSection";
 import { HedgeStatusAccuracyCard } from "@/components/sweetspots/HedgeStatusAccuracyCard";
+import { ContrarianSection } from "@/components/sweetspots/ContrarianFadeCard";
 import { MatchupScannerDashboard } from "@/components/matchup-scanner";
 import { useParlayBuilder } from "@/contexts/ParlayBuilderContext";
 import { getEasternDate } from "@/lib/dateUtils";
@@ -23,7 +25,7 @@ type PropFilter = PropType | 'all';
 type QualityFilter = 'all' | 'ELITE' | 'PREMIUM+' | 'STRONG+' | 'MIDDLE';
 type SortOption = 'score' | 'floor' | 'edge' | 'juice';
 type PaceFilter = 'all' | 'live-only' | 'fast' | 'slow';
-type MainTab = 'sweet-spots' | 'matchup-scanner';
+type MainTab = 'sweet-spots' | 'matchup-scanner' | 'contrarian';
 
 export default function SweetSpots() {
   const navigate = useNavigate();
@@ -37,6 +39,14 @@ export default function SweetSpots() {
   // Fetch today's 3PT and Assist props
   const { picks: threesPicks, isLoading: threesLoading, stats: threesStats } = useTodayProps({ propType: 'threes' });
   const { picks: assistsPicks, isLoading: assistsLoading, stats: assistsStats } = useTodayProps({ propType: 'assists' });
+  
+  // Contrarian fade picks
+  const { 
+    allFades, 
+    topFades, 
+    categoryStats, 
+    isLoading: contrarianLoading 
+  } = useContrarianParlayBuilder();
   
   const [propFilter, setPropFilter] = useState<PropFilter>('all');
   const [qualityFilter, setQualityFilter] = useState<QualityFilter>('all');
@@ -181,14 +191,18 @@ export default function SweetSpots() {
           {/* Main Tab Navigation */}
           <div className="mt-3">
             <Tabs value={mainTab} onValueChange={(v) => setMainTab(v as MainTab)}>
-              <TabsList className="w-full grid grid-cols-2">
+              <TabsList className="w-full grid grid-cols-3">
                 <TabsTrigger value="matchup-scanner" className="gap-1.5">
                   <Zap size={14} />
-                  Matchup Scanner
+                  Scanner
                 </TabsTrigger>
                 <TabsTrigger value="sweet-spots" className="gap-1.5">
                   <Target size={14} />
                   Sweet Spots
+                </TabsTrigger>
+                <TabsTrigger value="contrarian" className="gap-1.5">
+                  <RotateCcw size={14} />
+                  Fades
                 </TabsTrigger>
               </TabsList>
             </Tabs>
@@ -200,6 +214,37 @@ export default function SweetSpots() {
         {/* Matchup Scanner Tab */}
         {mainTab === 'matchup-scanner' && (
           <MatchupScannerDashboard onAddToBuilder={handleAddMatchupToBuilder} />
+        )}
+        
+        {/* Contrarian Fade Tab */}
+        {mainTab === 'contrarian' && (
+          <ContrarianSection
+            picks={allFades}
+            categoryStats={categoryStats}
+            isLoading={contrarianLoading}
+            onBuildParlay={() => {
+              // Add top 3 fades to parlay
+              topFades.forEach(pick => {
+                const description = `${pick.playerName} ${pick.fadeSide.toUpperCase()} ${pick.line} ${pick.propType}`;
+                addLeg({
+                  description,
+                  odds: -110,
+                  source: 'contrarian',
+                  playerName: pick.playerName,
+                  propType: pick.propType,
+                  line: pick.line,
+                  side: pick.fadeSide,
+                  confidenceScore: pick.confidence,
+                  sourceData: {
+                    type: 'contrarian-fade',
+                    originalCategory: pick.originalCategory,
+                    fadeHitRate: pick.fadeHitRate,
+                    fadeEdge: pick.fadeEdge
+                  }
+                });
+              });
+            }}
+          />
         )}
         
         {/* Sweet Spots Tab */}

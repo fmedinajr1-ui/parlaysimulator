@@ -1,4 +1,4 @@
-export type ParlaySource = 'pvs' | 'sharp' | 'hitrate' | 'juiced' | 'suggestions' | 'manual' | 'godmode' | 'sweet-spots';
+export type ParlaySource = 'pvs' | 'sharp' | 'hitrate' | 'juiced' | 'suggestions' | 'manual' | 'godmode' | 'sweet-spots' | 'contrarian';
 
 export interface UniversalLeg {
   id: string;
@@ -22,12 +22,13 @@ export interface ParlayBuilderState {
 }
 
 export const SOURCE_LABELS: Record<ParlaySource, { label: string; emoji: string; color: string }> = {
-  pvs: { label: 'PVS', emoji: '🏆', color: 'text-yellow-500' },
-  sharp: { label: 'Sharp', emoji: '⚡', color: 'text-blue-500' },
-  hitrate: { label: 'Hit Rate', emoji: '🎯', color: 'text-green-500' },
-  juiced: { label: 'Juiced', emoji: '🍊', color: 'text-orange-500' },
-  suggestions: { label: 'AI Pick', emoji: '🤖', color: 'text-purple-500' },
+  pvs: { label: 'PVS', emoji: '🏆', color: 'text-chart-4' },
+  sharp: { label: 'Sharp', emoji: '⚡', color: 'text-primary' },
+  hitrate: { label: 'Hit Rate', emoji: '🎯', color: 'text-chart-2' },
+  juiced: { label: 'Juiced', emoji: '🍊', color: 'text-chart-5' },
+  suggestions: { label: 'AI Pick', emoji: '🤖', color: 'text-accent-foreground' },
   manual: { label: 'Manual', emoji: '✏️', color: 'text-muted-foreground' },
-  godmode: { label: 'God Mode', emoji: '🔮', color: 'text-purple-500' },
-  'sweet-spots': { label: 'Sweet Spot', emoji: '🎯', color: 'text-green-500' },
+  godmode: { label: 'God Mode', emoji: '🔮', color: 'text-accent-foreground' },
+  'sweet-spots': { label: 'Sweet Spot', emoji: '🎯', color: 'text-chart-2' },
+  contrarian: { label: 'Contrarian', emoji: '🔄', color: 'text-chart-5' },
 };
