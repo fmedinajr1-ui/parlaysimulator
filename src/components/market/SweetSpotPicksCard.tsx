@@ -37,6 +37,7 @@ interface CategorySweetSpot {
 }
 
 // Category display config
+// v7.0: Removed MID_SCORER_UNDER (disabled due to 45% hit rate - includes starters who explode)
 const CATEGORY_CONFIG: Record<string, { label: string; color: string }> = {
   ELITE_REB_OVER: { label: "Elite Rebounder", color: "bg-purple-500/20 text-purple-400 border-purple-500/30" },
   ROLE_PLAYER_REB: { label: "Role Player Reb", color: "bg-indigo-500/20 text-indigo-400 border-indigo-500/30" },
@@ -45,7 +46,7 @@ const CATEGORY_CONFIG: Record<string, { label: string; color: string }> = {
   STAR_FLOOR_OVER: { label: "Star Floor", color: "bg-blue-500/20 text-blue-400 border-blue-500/30" },
   ASSIST_ANCHOR: { label: "Assist Anchor", color: "bg-teal-500/20 text-teal-400 border-teal-500/30" },
   HIGH_REB_UNDER: { label: "High Reb Under", color: "bg-rose-500/20 text-rose-400 border-rose-500/30" },
-  MID_SCORER_UNDER: { label: "Mid Scorer Under", color: "bg-orange-500/20 text-orange-400 border-orange-500/30" },
+  // MID_SCORER_UNDER removed - 45% hit rate, includes starters
 };
 
 function getPropTypeColor(propType: string): string {
