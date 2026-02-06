@@ -10400,6 +10400,19 @@ export type Database = {
           total_occurrences: number
         }[]
       }
+      get_side_performance_tracking: {
+        Args: { days_back?: number }
+        Returns: {
+          avg_ceiling_protection: number
+          avg_l10_hit_rate: number
+          hit_rate: number
+          hits: number
+          misses: number
+          side: string
+          total_picks: number
+          week_start: string
+        }[]
+      }
       get_similar_historical_patterns: {
         Args: {
           p_bet_type: string
