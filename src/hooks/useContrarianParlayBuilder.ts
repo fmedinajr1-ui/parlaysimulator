@@ -117,6 +117,9 @@ async function fetchContrarianPicks(): Promise<ContrarianPick[]> {
     const propKey = `${spot.player_name.toLowerCase()}-${spot.prop_type?.toLowerCase()}`;
     const liveData = lineMap.get(propKey);
     
+    // Skip players who don't have games today
+    if (!liveData) continue;
+    
     // Calculate confidence based on fade hit rate and edge magnitude
     const edgeBonus = Math.min(Math.abs(fadeEdge) * 5, 15);
     const confidence = hasPositiveEdge 
