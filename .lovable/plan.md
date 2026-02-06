@@ -1,178 +1,132 @@
 
 
-# Full Video Frame Extraction Enhancement
+# Fix Video Frame Extraction: Analyze Actual Gameplay, Not Thumbnails
 
-## Problem Summary
+## Problem Identified
 
-The current system **does not analyze the whole video**:
+Your screenshot shows the core issue:
+- **8 identical thumbnail frames** - all showing the same "FULL GAME HIGHLIGHTS" title card
+- **No tracking data** - because the AI is analyzing title cards, not actual gameplay footage
+- All player tracking returns empty because players aren't visible in thumbnails
 
-| Source | Current Behavior | Problem |
-|--------|------------------|---------|
-| **Local Upload** | Max 30 frames, 1 sec interval | 2-minute video = only 30 frames (covers 30 seconds) |
-| **YouTube Link** | Only fetches 8 static thumbnails | Not actual video content - just preview images |
-| **Twitter/TikTok** | Returns stream URL but doesn't extract | No frames extracted at all |
+### Why This Happens
 
-For accurate player tracking (jersey ID, rotations, shot chart, defensive matchups), we need **dense frame coverage across the entire video duration**.
+| What Should Happen | What Actually Happens |
+|-------------------|----------------------|
+| Extract 60 frames from throughout video | Get 8 YouTube thumbnail variations (all same image) |
+| Stream URL used for client-side extraction | CORS blocks Cobalt stream URLs, fallback to thumbnails |
+| AI sees players, jerseys, court positions | AI sees only "FULL GAME HIGHLIGHTS" text overlay |
 
 ---
 
-## Solution: Client-Side Full Video Extraction
+## Solution: Multi-Tier Frame Extraction
 
-Since edge functions can't run FFmpeg, we must extract frames **client-side** using the browser's video element and canvas. This works for:
-- Direct file uploads (already partially working)
-- YouTube/Twitter/TikTok via the stream URL returned by `extract-youtube-frames`
+### Tier 1: YouTube Storyboard Sprites (Primary for YouTube)
 
-### New Flow
+YouTube generates **storyboard sprite sheets** containing many frames from throughout videos. These bypass the thumbnail limitation:
 
 ```text
-CURRENT:
-  YouTube → Edge Function → 8 static thumbnails → AI
-
-NEW:
-  YouTube → Edge Function → Get stream URL
-                              ↓
-          Client downloads video stream
-                              ↓
-          Client extracts frames every 2-3 seconds
-                              ↓
-          60+ frames for full coverage → AI
+OLD: img.youtube.com/vi/{id}/maxresdefault.jpg → Same title card image
+NEW: i.ytimg.com/sb/{id}/storyboard3_L1/M$M.jpg → Actual frames from video
 ```
+
+### Tier 2: Edge Function Proxied Extraction
+
+For Twitter/TikTok (or when storyboards fail), proxy the stream through the edge function:
+1. Edge function downloads video stream
+2. Use `ffprobe`-like logic to extract frame timestamps
+3. Fetch frame snapshots at intervals server-side
+4. Return actual base64 frames (not thumbnail URLs)
+
+### Tier 3: Enhanced Error Messaging
+
+When extraction returns identical frames, warn the user clearly:
+- "Detected title card only - try a different video link"
+- "For best results, use game highlight clips that show actual gameplay"
 
 ---
 
 ## Technical Implementation
 
-### 1. Increase Frame Extraction Limits
+### 1. Add YouTube Storyboard Extraction (Edge Function)
 
-**File: `src/lib/video-frame-extractor.ts`**
+Update `extract-youtube-frames/index.ts` to fetch YouTube storyboard sprites:
 
 ```typescript
-// OLD
-const FRAME_INTERVAL_SECONDS = 1;
-const MAX_FRAMES = 30;
-
-// NEW - Extract frames throughout entire video
-const DEFAULT_FRAME_INTERVAL = 2; // 1 frame every 2 seconds
-const MAX_FRAMES = 60; // Up to 60 frames per video
-const MIN_FRAMES_PER_MINUTE = 20; // At least 20 frames per minute of video
+// YouTube Storyboard API - contains actual frames from throughout video
+async function getYouTubeStoryboardFrames(videoId: string): Promise<string[]> {
+  const frames: string[] = [];
+  
+  // Try to get storyboard manifest from YouTube
+  // Storyboards are sprite sheets with frames at regular intervals
+  const storyboardUrls = [
+    // L2 storyboards have more frames
+    `https://i.ytimg.com/sb/${videoId}/storyboard3_L2/M0.jpg`,
+    `https://i.ytimg.com/sb/${videoId}/storyboard3_L2/M1.jpg`,
+    `https://i.ytimg.com/sb/${videoId}/storyboard3_L2/M2.jpg`,
+    // L1 storyboards as fallback
+    `https://i.ytimg.com/sb/${videoId}/storyboard3_L1/M0.jpg`,
+    `https://i.ytimg.com/sb/${videoId}/storyboard3_L1/M1.jpg`,
+  ];
+  
+  for (const url of storyboardUrls) {
+    try {
+      const response = await fetch(url);
+      if (response.ok) {
+        // Storyboard is a sprite sheet - extract individual frames
+        const spriteFrames = await extractFramesFromSpriteSheet(response);
+        frames.push(...spriteFrames);
+      }
+    } catch (e) {
+      console.log(`Storyboard fetch failed: ${url}`);
+    }
+  }
+  
+  return frames;
+}
 ```
 
-Update `extractFramesFromVideo` to dynamically calculate interval:
+### 2. Extract Individual Frames from Sprite Sheets
+
+YouTube storyboards are grids (typically 5x5 or 10x10 frames). Parse them:
+
 ```typescript
-// Calculate frame interval based on video duration
-// Goal: Extract frames evenly across entire video
-const targetFrameCount = Math.min(
-  MAX_FRAMES,
-  Math.max(20, Math.ceil(duration * MIN_FRAMES_PER_MINUTE / 60))
-);
-const frameInterval = duration / targetFrameCount;
+async function extractFramesFromSpriteSheet(
+  response: Response,
+  gridCols: number = 5,
+  gridRows: number = 5
+): Promise<string[]> {
+  // Get sprite sheet as image data
+  const arrayBuffer = await response.arrayBuffer();
+  
+  // In Deno, we'd use image processing to split the grid
+  // Each cell is one frame from the video
+  // Return array of base64 individual frames
+}
 ```
 
-### 2. Add Stream URL Video Extraction
+### 3. Client-Side: Detect Duplicate Frames
 
-**File: `src/lib/video-frame-extractor.ts`**
-
-New function to extract frames from a remote video URL (the stream URL returned by edge function):
+Update `FilmProfileUpload.tsx` to warn when all frames look identical:
 
 ```typescript
-export async function extractFramesFromUrl(
-  videoUrl: string,
-  onProgress?: (progress: ExtractionProgress) => void
-): Promise<ExtractionResult> {
-  return new Promise((resolve, reject) => {
-    const video = document.createElement('video');
-    video.crossOrigin = 'anonymous';
-    video.muted = true;
-    video.playsInline = true;
-    
-    // ... same canvas/extraction logic as file upload
-    // but using URL directly instead of createObjectURL
-    
-    video.src = videoUrl;
-    video.load();
+// After frame extraction, check for duplicates
+const uniqueCheck = deduplicateFrames(result.frames);
+if (uniqueCheck.length <= 2 && result.frames.length >= 6) {
+  toast({
+    title: "Warning: Thumbnail Only",
+    description: "Could only get video thumbnails, not actual frames. Try a different video.",
+    variant: "destructive",
   });
 }
 ```
 
-### 3. Update FilmProfileUpload to Use Stream URL
+### 4. Better UX: Show What's Being Analyzed
 
-**File: `src/components/scout/FilmProfileUpload.tsx`**
-
-When YouTube/social link is provided:
-1. Call `extract-youtube-frames` to get stream URL
-2. Use new `extractFramesFromUrl()` to extract actual frames from the video
-3. Fall back to thumbnails only if stream extraction fails
-
-```typescript
-const handleYouTubeFrames = useCallback(async (
-  thumbnails: string[], 
-  videoInfo: VideoInfo,
-  streamUrl?: string
-) => {
-  // If we have a stream URL, extract real frames from the video
-  if (streamUrl) {
-    try {
-      setIsProcessingYouTube(true);
-      setExtractionProgress({
-        stage: 'extracting',
-        message: 'Extracting frames from video...',
-      });
-      
-      const result = await extractFramesFromUrl(streamUrl, setExtractionProgress);
-      const uniqueFrames = deduplicateFrames(result.frames);
-      
-      setExtractedFrames(uniqueFrames.map(f => f.base64));
-      setPreviewFrames(uniqueFrames.slice(0, 4).map(f => f.base64));
-      
-      toast({
-        title: "Full Video Analyzed",
-        description: `Extracted ${uniqueFrames.length} frames from ${videoInfo.platform}`,
-      });
-      return;
-    } catch (err) {
-      console.warn('Stream extraction failed, using thumbnails');
-    } finally {
-      setIsProcessingYouTube(false);
-    }
-  }
-  
-  // Fallback to thumbnails
-  setExtractedFrames(thumbnails);
-  setPreviewFrames(thumbnails.slice(0, 4));
-}, [toast]);
-```
-
-### 4. Update YouTubeLinkInput Component
-
-Pass `streamUrl` to the callback so `FilmProfileUpload` can use it:
-
-```typescript
-// In YouTubeLinkInput.tsx
-onFramesExtracted?.(
-  data.frames || [],
-  { title: data.videoInfo?.title, platform: data.platform },
-  data.streamUrl // NEW: Pass stream URL for client-side extraction
-);
-```
-
----
-
-## Frame Distribution Strategy
-
-For accurate player tracking, frames should be distributed evenly across the entire video:
-
-| Video Duration | Target Frames | Interval | Coverage |
-|----------------|---------------|----------|----------|
-| 30 seconds | 15 frames | 2s | Full |
-| 1 minute | 30 frames | 2s | Full |
-| 2 minutes | 60 frames | 2s | Full |
-| 5 minutes | 60 frames | 5s | Full (capped) |
-
-This ensures:
-- **Rotations are captured** - Player stints, bench time visible
-- **Shot attempts tracked** - Multiple frames around shot clock
-- **Defensive matchups** - See who guards who across possessions
-- **Fatigue signals** - Track movement quality over time
+Update the UI to clearly show:
+- Source type: "Thumbnails" vs "Full Video Frames"
+- Frame uniqueness: "8 frames (all unique)" vs "8 frames (duplicates detected)"
+- Clear guidance when analysis won't work
 
 ---
 
@@ -180,31 +134,50 @@ This ensures:
 
 | File | Changes |
 |------|---------|
-| `src/lib/video-frame-extractor.ts` | Increase MAX_FRAMES, add dynamic interval calculation, add `extractFramesFromUrl()` function |
-| `src/components/scout/FilmProfileUpload.tsx` | Use stream URL for full extraction, update `handleYouTubeFrames` |
-| `src/components/scout/YouTubeLinkInput.tsx` | Pass stream URL to callback |
+| `supabase/functions/extract-youtube-frames/index.ts` | Add YouTube storyboard API extraction, sprite sheet parsing, remove duplicate thumbnail fetching |
+| `src/components/scout/FilmProfileUpload.tsx` | Duplicate frame detection warning, better progress messaging |
+| `src/lib/video-frame-extractor.ts` | Add duplicate detection utility that's more strict |
+
+---
+
+## New YouTube Storyboard Flow
+
+```text
+User pastes YouTube link
+         ↓
+Edge function extracts video ID
+         ↓
+Fetch YouTube storyboard sprites (L2 first, then L1)
+         ↓
+Parse sprite sheets into individual frames (25-100 frames)
+         ↓
+Return actual gameplay frames to client
+         ↓
+AI analyzes real game footage with player visibility
+         ↓
+Jersey tracking, court zones, shots all detected
+```
 
 ---
 
 ## Expected Outcome
 
 After implementation:
-- 2-minute video = **60 frames** extracted (vs current 8 thumbnails)
-- Frames are evenly distributed across entire video duration
-- Player tracking has enough data to detect:
-  - Jersey movements across the court over time
-  - Rotation patterns (on/off court)
-  - Multiple shot attempts
-  - Defensive assignment changes
-- AI receives comprehensive visual data for accurate profiling
+- YouTube highlights → **25-60 actual gameplay frames** (not 8 identical thumbnails)
+- Each frame shows different moment from video
+- AI can track jersey numbers across frames
+- Court zones and shot attempts visible in footage
+- Player tracking data populated correctly
 
 ---
 
-## Limitations & Notes
+## Alternative: Local Upload Works Better
 
-- **CORS**: Stream URLs from Cobalt may have CORS restrictions - we'll need to test
-- **Video size**: Large videos (5+ min) will be capped at 60 frames to avoid memory issues
-- **Mobile**: Frame extraction is memory-intensive; we'll maintain 60-frame limit
-- **Fallback**: If stream extraction fails, system falls back to thumbnails
+As a workaround, **local video upload** already extracts real frames:
+- User downloads YouTube video (via browser extension or online tool)
+- Uploads the .mp4 file directly
+- System extracts 60 frames across entire video
+- AI gets actual gameplay footage to analyze
 
+The plan above makes YouTube/social links work as expected without requiring downloads.
 
