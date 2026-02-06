@@ -4,6 +4,7 @@ import { CompositeGradeCard } from "./CompositeGradeCard";
 import { SystemAccuracyCard } from "./SystemAccuracyCard";
 import { SystemCategoryBreakdown } from "./SystemCategoryBreakdown";
 import { SettledPicksTable } from "./SettledPicksTable";
+import { SidePerformanceCard } from "./SidePerformanceCard";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -31,6 +32,7 @@ interface Recommendation {
 export function UnifiedAccuracyView() {
   const [timePeriod, setTimePeriod] = useState<TimePeriod>(30);
   const [settledOpen, setSettledOpen] = useState(false);
+  const [sideOpen, setSideOpen] = useState(false);
   const { 
     systems, 
     compositeGrade, 
@@ -151,6 +153,25 @@ export function UnifiedAccuracyView() {
           Category Breakdown
         </h3>
         <SystemCategoryBreakdown />
+      </Card>
+
+      {/* Side Performance Tracking */}
+      <Card className="p-4 bg-card/50 border-border/50">
+        <Collapsible open={sideOpen} onOpenChange={setSideOpen}>
+          <CollapsibleTrigger className="flex items-center justify-between w-full">
+            <h3 className="font-semibold flex items-center gap-2">
+              <span>⬆️⬇️</span>
+              Over vs Under Performance
+            </h3>
+            <ChevronDown className={cn(
+              "w-4 h-4 transition-transform",
+              sideOpen && "rotate-180"
+            )} />
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <SidePerformanceCard />
+          </CollapsibleContent>
+        </Collapsible>
       </Card>
 
       {/* Settled Picks Table */}
