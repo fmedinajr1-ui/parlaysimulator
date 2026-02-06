@@ -1,6 +1,7 @@
-import { Plus, TrendingUp, TrendingDown } from "lucide-react";
+import { Plus, TrendingUp, TrendingDown, Film, AlertTriangle, Target, Sparkles } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { DeepSweetSpot } from "@/types/sweetSpot";
 import { PROP_TYPE_CONFIG } from "@/types/sweetSpot";
@@ -13,6 +14,13 @@ import { ProductionRateDisplay } from "./ProductionRateDisplay";
 import { LiveDataOverlay } from "./LiveDataOverlay";
 import { HedgeRecommendation } from "./HedgeRecommendation";
 import { ShotChartPreview } from "./ShotChartPreview";
+
+// Helper to get peak quarter from profile data
+function getPeakQuarter(peakQuarters: { q1: number; q2: number; q3: number; q4: number }): string {
+  const entries = Object.entries(peakQuarters) as [string, number][];
+  const peak = entries.reduce((max, [q, pct]) => pct > max.pct ? { q, pct } : max, { q: 'q1', pct: 0 });
+  return peak.q.replace('q', '');
+}
 
 interface SweetSpotCardProps {
   spot: DeepSweetSpot;
@@ -73,6 +81,52 @@ export function SweetSpotCard({ spot, onAddToBuilder }: SweetSpotCardProps) {
         
         {/* Shot Chart Preview (for non-live points/threes props) */}
         <ShotChartPreview spot={spot} />
+        
+        {/* v8.0: Profile Insights Row */}
+        {spot.profileData && (spot.profileData.filmSamples > 0 || spot.profileData.peakQuarters || spot.profileData.hasFatigueTendency || spot.profileData.matchupAdvantage) && (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {spot.profileData.filmSamples > 0 && (
+              <Badge variant="outline" className="text-purple-400 border-purple-500/30 bg-purple-500/10 text-xs gap-1">
+                <Film className="w-3 h-3" />
+                {spot.profileData.filmSamples} film
+              </Badge>
+            )}
+            
+            {spot.propType === 'threes' && spot.profileData.peakQuarters && (
+              <Badge variant="outline" className="text-blue-400 border-blue-500/30 bg-blue-500/10 text-xs gap-1">
+                <Sparkles className="w-3 h-3" />
+                Peak Q{getPeakQuarter(spot.profileData.peakQuarters)}
+              </Badge>
+            )}
+            
+            {spot.profileData.matchupAdvantage === 'favorable' && (
+              <Badge variant="outline" className="text-green-400 border-green-500/30 bg-green-500/10 text-xs gap-1">
+                <Target className="w-3 h-3" />
+                Matchup+
+              </Badge>
+            )}
+            
+            {spot.profileData.matchupAdvantage === 'unfavorable' && (
+              <Badge variant="outline" className="text-orange-400 border-orange-500/30 bg-orange-500/10 text-xs gap-1">
+                <Target className="w-3 h-3" />
+                Matchup-
+              </Badge>
+            )}
+            
+            {spot.profileData.hasFatigueTendency && (
+              <Badge variant="outline" className="text-yellow-400 border-yellow-500/30 bg-yellow-500/10 text-xs gap-1">
+                <AlertTriangle className="w-3 h-3" />
+                Fatigue
+              </Badge>
+            )}
+            
+            {spot.profileData.profileConfidence >= 70 && (
+              <Badge variant="outline" className="text-emerald-400 border-emerald-500/30 bg-emerald-500/10 text-xs">
+                Verified
+              </Badge>
+            )}
+          </div>
+        )}
         
         {/* Prop Type Badge */}
         <div className="flex items-center gap-2">

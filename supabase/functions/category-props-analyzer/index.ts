@@ -284,6 +284,19 @@ const BOUNCE_BACK_CONFIG = {
 let matchupHistoryCache: Map<string, MatchupHistory> = new Map();
 let gameEnvironmentCache: Map<string, GameEnvironment> = new Map();
 
+// v8.0: Player behavior profiles cache
+interface PlayerBehaviorProfile {
+  player_name: string;
+  three_pt_peak_quarters: { q1: number; q2: number; q3: number; q4: number } | null;
+  best_matchups: { opponent: string; stat: string; avg_vs: number; games: number }[] | null;
+  worst_matchups: { opponent: string; stat: string; avg_vs: number; games: number }[] | null;
+  fatigue_tendency: string | null;
+  blowout_minutes_reduction: number | null;
+  film_sample_count: number | null;
+  profile_confidence: number | null;
+}
+let playerProfileCache: Map<string, PlayerBehaviorProfile> = new Map();
+
 const CATEGORIES: Record<string, CategoryConfig> = {
   // ============ NEW PROVEN WINNERS (v2.0) ============
   // Based on analysis of 391 settled picks
@@ -529,7 +542,8 @@ function getStatValue(log: GameLog, propType: string): number {
   }
 }
 
-// ============ TRUE PROJECTION CALCULATION (v5.0 - TIGHTENED) ============
+// ============ TRUE PROJECTION CALCULATION (v8.0 - PROFILE INTEGRATION) ============
+// v8.0: Added player behavior profile adjustments
 // v5.0: Added variance shrinkage, regression to mean, stricter UNDER criteria
 function calculateTrueProjection(
   playerName: string,
@@ -538,7 +552,7 @@ function calculateTrueProjection(
   opponent: string | null,
   seasonAvg?: number,
   l10StdDev?: number
-): { projectedValue: number; matchupAdj: number; paceAdj: number; projectionSource: string; varianceRatio: number; shrinkageFactor: number } {
+): { projectedValue: number; matchupAdj: number; paceAdj: number; profileAdj: number; projectionSource: string; varianceRatio: number; shrinkageFactor: number; profileFlags: string[] } {
   // 1. BASE: L10 Median (more stable than average for betting)
   const l10Median = calculateMedian(statValues);
   const l10Avg = statValues.length > 0 ? statValues.reduce((a, b) => a + b, 0) / statValues.length : l10Median;
@@ -589,18 +603,84 @@ function calculateTrueProjection(
     }
   }
   
-  // 4. v5.0: VARIANCE SHRINKAGE - High variance = regress more to season mean
-  // shrinkageFactor: 0.70 (high variance) to 0.95 (low variance)
+  // 4. v8.0: PROFILE ADJUSTMENT - Apply player behavior profile insights
+  let profileAdj = 0;
+  const profileFlags: string[] = [];
+  const profile = playerProfileCache.get(playerName.toLowerCase().trim());
+  
+  if (profile) {
+    console.log(`[Projection] v8.0 Profile found: ${playerName}, film_samples=${profile.film_sample_count || 0}, confidence=${profile.profile_confidence || 0}`);
+    
+    // A. 3PT Peak Quarter boost (for threes props)
+    if (propType === 'threes' && profile.three_pt_peak_quarters) {
+      const peakQ = Object.entries(profile.three_pt_peak_quarters)
+        .reduce((max, [q, pct]) => (pct as number) > max.pct ? { q, pct: pct as number } : max, { q: 'q1', pct: 0 });
+      if (peakQ.pct > 30) {
+        profileAdj += 0.4;
+        profileFlags.push(`PEAK_Q${peakQ.q.replace('q', '')}`);
+        console.log(`[Projection] 3PT Peak quarter boost: Q${peakQ.q.replace('q', '')} at ${peakQ.pct}%, +0.4`);
+      }
+    }
+    
+    // B. Best/Worst matchup from profile (supplements H2H table data)
+    if (opponent && profile.best_matchups) {
+      const normalizedOpp = normalizeOpponentName(opponent).toLowerCase();
+      const bestMatch = profile.best_matchups.find(m => 
+        m.opponent?.toLowerCase().includes(normalizedOpp) || normalizedOpp.includes(m.opponent?.toLowerCase() || '')
+      );
+      if (bestMatch) {
+        profileAdj += 0.5;
+        profileFlags.push('BEST_MATCHUP');
+        console.log(`[Projection] Profile best matchup: ${bestMatch.opponent}, +0.5`);
+      }
+    }
+    
+    if (opponent && profile.worst_matchups) {
+      const normalizedOpp = normalizeOpponentName(opponent).toLowerCase();
+      const worstMatch = profile.worst_matchups.find(m => 
+        m.opponent?.toLowerCase().includes(normalizedOpp) || normalizedOpp.includes(m.opponent?.toLowerCase() || '')
+      );
+      if (worstMatch) {
+        profileAdj -= 0.5;
+        profileFlags.push('WORST_MATCHUP');
+        console.log(`[Projection] Profile worst matchup: ${worstMatch.opponent}, -0.5`);
+      }
+    }
+    
+    // C. Fatigue tendency (from film analysis)
+    if (profile.fatigue_tendency?.toLowerCase().includes('fatigue')) {
+      profileAdj -= 0.3;
+      profileFlags.push('FATIGUE_RISK');
+      console.log(`[Projection] Fatigue tendency detected, -0.3`);
+    }
+    
+    // D. Blowout minutes reduction warning (informational flag)
+    if (profile.blowout_minutes_reduction && profile.blowout_minutes_reduction > 5) {
+      profileFlags.push('BLOWOUT_RISK');
+      console.log(`[Projection] Blowout risk: ${profile.blowout_minutes_reduction} min reduction typical`);
+    }
+    
+    // E. Film-verified player boost (high confidence from film samples)
+    if ((profile.film_sample_count || 0) >= 3) {
+      profileFlags.push('FILM_VERIFIED');
+      projectionSource += '+FILM';
+    }
+    
+    if (profileAdj !== 0) {
+      projectionSource += '+PROFILE';
+    }
+  }
+  
+  // 5. v5.0: VARIANCE SHRINKAGE - High variance = regress more to season mean
   const shrinkageFactor = Math.max(0.70, Math.min(0.95, 1 - varianceRatio * 0.4));
   
-  // 5. v5.0: REGRESSION TO MEAN - Blend with season average
-  let rawProjection = l10Median + matchupAdj + paceAdj;
+  // 6. v5.0: REGRESSION TO MEAN - Blend with season average
+  let rawProjection = l10Median + matchupAdj + paceAdj + profileAdj;
   
   if (seasonAvg && seasonAvg > 0) {
-    // Apply shrinkage: high variance players regress toward season avg
     rawProjection = (rawProjection * shrinkageFactor) + (seasonAvg * (1 - shrinkageFactor));
     projectionSource += '+REGRESSED';
-    console.log(`[Projection] v5.0 Shrinkage: factor=${shrinkageFactor.toFixed(2)}, seasonAvg=${seasonAvg.toFixed(1)}, before=${(l10Median + matchupAdj + paceAdj).toFixed(1)}, after=${rawProjection.toFixed(1)}`);
+    console.log(`[Projection] v5.0 Shrinkage: factor=${shrinkageFactor.toFixed(2)}, seasonAvg=${seasonAvg.toFixed(1)}, before=${(l10Median + matchupAdj + paceAdj + profileAdj).toFixed(1)}, after=${rawProjection.toFixed(1)}`);
   }
   
   const projectedValue = Math.round(rawProjection * 2) / 2;
@@ -609,9 +689,11 @@ function calculateTrueProjection(
     projectedValue,
     matchupAdj: Math.round(matchupAdj * 10) / 10,
     paceAdj: Math.round(paceAdj * 10) / 10,
+    profileAdj: Math.round(profileAdj * 10) / 10,
     projectionSource,
     varianceRatio: Math.round(varianceRatio * 100) / 100,
     shrinkageFactor: Math.round(shrinkageFactor * 100) / 100,
+    profileFlags,
   };
 }
 
@@ -678,6 +760,31 @@ async function loadGameEnvironment(supabase: any): Promise<void> {
   }
 }
 
+// v8.0: Load player behavior profiles into cache
+async function loadPlayerProfiles(supabase: any): Promise<void> {
+  const { data, error } = await supabase
+    .from('player_behavior_profiles')
+    .select('player_name, three_pt_peak_quarters, best_matchups, worst_matchups, fatigue_tendency, blowout_minutes_reduction, film_sample_count, profile_confidence')
+    .gte('games_analyzed', 5); // Only profiles with enough data
+  
+  if (error) {
+    console.warn('[Category Analyzer] Player profiles load error:', error.message);
+    return;
+  }
+  
+  playerProfileCache.clear();
+  for (const p of (data || [])) {
+    playerProfileCache.set(p.player_name?.toLowerCase().trim(), p);
+  }
+  console.log(`[Category Analyzer] v8.0 Loaded ${playerProfileCache.size} player behavior profiles`);
+  
+  // Log sample profile for debugging
+  if (data && data.length > 0) {
+    const sample = data[0];
+    console.log(`[Category Analyzer] Sample profile: ${sample.player_name}, film_samples=${sample.film_sample_count || 0}, confidence=${sample.profile_confidence || 0}`);
+  }
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -692,11 +799,12 @@ serve(async (req) => {
 
     console.log(`[Category Analyzer v4.0] Starting analysis with TRUE PROJECTIONS for category: ${category || 'ALL'}`);
 
-    // v4.0: Load all projection data sources
+    // v8.0: Load all projection data sources including player profiles
     await Promise.all([
       loadArchetypes(supabase),
       loadMatchupHistory(supabase),
-      loadGameEnvironment(supabase)
+      loadGameEnvironment(supabase),
+      loadPlayerProfiles(supabase)
     ]);
 
     // Get today's date for analysis
