@@ -10,8 +10,9 @@ import { ScoutAnalysisResults } from "@/components/scout/ScoutAnalysisResults";
 import { ScoutGameSelector } from "@/components/scout/ScoutGameSelector";
 import { ScoutLiveCapture, LiveObservation } from "@/components/scout/ScoutLiveCapture";
 import { ScoutAutonomousAgent } from "@/components/scout/ScoutAutonomousAgent";
+import { FilmProfileUpload } from "@/components/scout/FilmProfileUpload";
 import { useToast } from "@/hooks/use-toast";
-import { Video, Eye, Zap, Clock, Users, Upload, Radio, Bot } from "lucide-react";
+import { Video, Eye, Zap, Clock, Users, Upload, Radio, Bot, Film } from "lucide-react";
 
 import type { PreGameBaseline, TeamFatigueData } from '@/types/pre-game-baselines';
 
@@ -104,7 +105,7 @@ const Scout = () => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [extractedFrames, setExtractedFrames] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState("upload");
-  const [scoutMode, setScoutMode] = useState<'upload' | 'live' | 'autopilot'>('upload');
+  const [scoutMode, setScoutMode] = useState<'upload' | 'live' | 'autopilot' | 'profile'>('upload');
   const [liveObservations, setLiveObservations] = useState<LiveObservation[]>([]);
 
   const handleLiveObservationsUpdate = useCallback((observations: LiveObservation[]) => {
@@ -170,19 +171,23 @@ const Scout = () => {
         {selectedGame && (
           <>
             {/* Mode Toggle */}
-            <Tabs value={scoutMode} onValueChange={(v) => setScoutMode(v as 'upload' | 'live' | 'autopilot')} className="w-full">
-              <TabsList className="grid w-full grid-cols-3">
-                <TabsTrigger value="upload" className="gap-2">
-                  <Upload className="w-4 h-4" />
-                  Upload
+            <Tabs value={scoutMode} onValueChange={(v) => setScoutMode(v as 'upload' | 'live' | 'autopilot' | 'profile')} className="w-full">
+              <TabsList className="grid w-full grid-cols-4">
+                <TabsTrigger value="upload" className="gap-1 text-xs sm:text-sm sm:gap-2">
+                  <Upload className="w-3 h-3 sm:w-4 sm:h-4" />
+                  <span className="hidden sm:inline">Upload</span>
                 </TabsTrigger>
-                <TabsTrigger value="live" className="gap-2">
-                  <Radio className="w-4 h-4" />
-                  Live
+                <TabsTrigger value="live" className="gap-1 text-xs sm:text-sm sm:gap-2">
+                  <Radio className="w-3 h-3 sm:w-4 sm:h-4" />
+                  <span className="hidden sm:inline">Live</span>
                 </TabsTrigger>
-                <TabsTrigger value="autopilot" className="gap-2">
-                  <Bot className="w-4 h-4" />
-                  Autopilot
+                <TabsTrigger value="autopilot" className="gap-1 text-xs sm:text-sm sm:gap-2">
+                  <Bot className="w-3 h-3 sm:w-4 sm:h-4" />
+                  <span className="hidden sm:inline">Auto</span>
+                </TabsTrigger>
+                <TabsTrigger value="profile" className="gap-1 text-xs sm:text-sm sm:gap-2">
+                  <Film className="w-3 h-3 sm:w-4 sm:h-4" />
+                  <span className="hidden sm:inline">Profile</span>
                 </TabsTrigger>
               </TabsList>
             </Tabs>
@@ -288,6 +293,17 @@ const Scout = () => {
 
             {scoutMode === 'autopilot' && (
               <ScoutAutonomousAgent gameContext={selectedGame} />
+            )}
+
+            {scoutMode === 'profile' && (
+              <FilmProfileUpload 
+                onProfileUpdated={(playerName, profileData) => {
+                  toast({
+                    title: "Profile Built",
+                    description: `${playerName}'s behavior profile updated with film insights`,
+                  });
+                }}
+              />
             )}
           </>
         )}

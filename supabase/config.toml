@@ -3,6 +3,9 @@ project_id = "pajakaqphlxoqjtrxzmi"
 [functions.sync-and-verify-all]
 verify_jwt = false
 
+[functions.extract-youtube-frames]
+verify_jwt = false
+
 [functions.extract-parlay]
 verify_jwt = false
 
