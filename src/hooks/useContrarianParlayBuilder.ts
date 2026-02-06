@@ -39,11 +39,13 @@ async function fetchContrarianPicks(): Promise<ContrarianPick[]> {
   const todayET = getEasternDate();
   
   // Query category_sweet_spots for picks in fade categories
+  // Note: We include inactive picks since these are fade-only categories
+  // The analyzer marks them inactive because they're poor direct plays,
+  // but we're betting the opposite (fading them)
   const { data: sweetSpots, error: spotsError } = await supabase
     .from('category_sweet_spots')
     .select('*')
     .in('category', FADE_CATEGORIES.map(c => c.category))
-    .eq('is_active', true)
     .gte('analysis_date', todayET);
   
   if (spotsError) {
