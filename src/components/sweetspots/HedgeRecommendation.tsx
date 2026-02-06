@@ -1,6 +1,6 @@
-import { AlertTriangle, TrendingDown, TrendingUp, Minus, Snowflake, Flame, Target, Clock, Zap, Coffee, RefreshCw } from "lucide-react";
+import { AlertTriangle, TrendingDown, TrendingUp, Minus, Snowflake, Flame, Target, Clock, Zap, Coffee, RefreshCw, ArrowDown, ArrowUp, DollarSign } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { DeepSweetSpot, ShotChartAnalysis, HedgeStatus, TrendDirection, EnhancedHedgeAction } from "@/types/sweetSpot";
+import type { DeepSweetSpot, ShotChartAnalysis, HedgeStatus, TrendDirection, EnhancedHedgeAction, MiddleOpportunity } from "@/types/sweetSpot";
 import { ShotChartMatchup } from "./ShotChartMatchup";
 import { QuarterTransitionCard } from "./QuarterTransitionCard";
 import { HalftimeRecalibrationCard } from "./HalftimeRecalibrationCard";
@@ -106,11 +106,15 @@ function calculateHitProbability(
   return Math.max(5, Math.min(95, baseProbability));
 }
 
-// Extended hedge action with rotation context
+// Extended hedge action with rotation context and live line data
 interface ExtendedHedgeAction extends EnhancedHedgeAction {
   rotationEstimate?: RotationEstimate;
   playerTier?: PlayerTier;
   rotationMinutes?: number;
+  // v7.2: Live line tracking
+  liveBookLine?: number;
+  lineMovement?: number;
+  middleOpportunity?: MiddleOpportunity;
 }
 
 // Determine hedge sizing recommendation
@@ -119,6 +123,44 @@ function calculateHedgeSizing(gap: number, hitProbability: number): string {
   if (hitProbability >= 50) return "$10-25 (light hedge)";
   if (hitProbability >= 30) return "$25-50 (moderate)";
   return "$50-100 (strong hedge)";
+}
+
+// v7.2: Detect middle bet opportunity when line has moved significantly
+function detectMiddleOpportunity(
+  originalLine: number,
+  liveBookLine: number | undefined,
+  side: 'over' | 'under'
+): MiddleOpportunity | null {
+  if (!liveBookLine) return null;
+  
+  const gap = Math.abs(originalLine - liveBookLine);
+  if (gap < 2) return null; // Not enough gap for a middle
+  
+  if (side === 'over' && liveBookLine < originalLine) {
+    // You bet OVER 28.5, now UNDER 25.5 is available
+    // If player scores 26-28, both win!
+    return {
+      type: 'middle',
+      lowerBound: liveBookLine,
+      upperBound: originalLine,
+      profitWindow: `${Math.floor(liveBookLine + 1)} to ${Math.floor(originalLine)}`,
+      recommendation: `Hedge UNDER ${liveBookLine} for guaranteed profit if player scores ${Math.floor(liveBookLine + 1)}-${Math.floor(originalLine)}`
+    };
+  }
+  
+  if (side === 'under' && liveBookLine > originalLine) {
+    // You bet UNDER 22.5, now OVER 25.5 is available
+    // If player scores 23-25, both win!
+    return {
+      type: 'middle',
+      lowerBound: originalLine,
+      upperBound: liveBookLine,
+      profitWindow: `${Math.ceil(originalLine)} to ${Math.floor(liveBookLine)}`,
+      recommendation: `Hedge OVER ${liveBookLine} for guaranteed profit if player scores ${Math.ceil(originalLine)}-${Math.floor(liveBookLine)}`
+    };
+  }
+  
+  return null;
 }
 
 // Get trend description
@@ -169,9 +211,17 @@ function calculateEnhancedHedgeAction(spot: DeepSweetSpot): ExtendedHedgeAction 
     };
   }
   
-  const { currentValue, projectedFinal, paceRating, riskFlags, gameProgress, trend, ratePerMinute, shotChartMatchup, period, clock, minutesPlayed } = liveData;
+  const { currentValue, projectedFinal, paceRating, riskFlags, gameProgress, trend, ratePerMinute, shotChartMatchup, period, clock, minutesPlayed, liveBookLine, lineMovement } = liveData;
   
   const oppositeSide = side === 'over' ? 'UNDER' : 'OVER';
+  
+  // v7.2: Use live book line for hedge calculations if available
+  const hedgeLine = liveBookLine ?? line;
+  const hasLiveLine = liveBookLine !== undefined;
+  const lineMove = lineMovement ?? 0;
+  
+  // v7.2: Detect middle opportunity
+  const middleOpportunity = detectMiddleOpportunity(line, liveBookLine, side);
   
   // --- ROTATION-AWARE MINUTES CALCULATION ---
   const currentQuarter = parseInt(period) || 1;
@@ -194,21 +244,21 @@ function calculateEnhancedHedgeAction(spot: DeepSweetSpot): ExtendedHedgeAction 
   const isApproachingRest = isApproachingRestWindow(playerTier, currentQuarter, clockMinutes);
   // --- END ROTATION LOGIC ---
   
-  // Calculate gap to line (positive = good for your bet)
+  // v7.2: Calculate gap against LIVE book line (not original)
   const gapToLine = side === 'over' 
-    ? projectedFinal - line 
-    : line - projectedFinal;
+    ? projectedFinal - hedgeLine 
+    : hedgeLine - projectedFinal;
   
-  // Calculate rate needed vs current rate
-  const needed = side === 'over' ? line - currentValue : 0;
+  // Calculate rate needed vs current rate (against live line)
+  const needed = side === 'over' ? hedgeLine - currentValue : 0;
   const rateNeeded = minutesRemaining > 0 ? needed / minutesRemaining : 0;
   const currentRate = ratePerMinute || 0;
   
   // Get zone score for probability calculation
   const zoneScore = shotChartMatchup?.overallMatchupScore;
   
-  // Calculate hit probability WITH zone factor
-  const hitProbability = calculateHitProbability(currentValue, line, currentRate, gameProgress, side, zoneScore, minutesRemaining);
+  // v7.2: Calculate hit probability against live line
+  const hitProbability = calculateHitProbability(currentValue, hedgeLine, currentRate, gameProgress, side, zoneScore, minutesRemaining);
   
   // Map live trend to our trend direction
   const trendDirection: TrendDirection = 
@@ -324,6 +374,26 @@ function calculateEnhancedHedgeAction(spot: DeepSweetSpot): ExtendedHedgeAction 
   // Get zone insight for messaging
   const zoneInsight = getZoneInsight(shotChartMatchup, side);
   
+  // --- v7.2: MIDDLE OPPORTUNITY DETECTION (highest priority) ---
+  if (middleOpportunity) {
+    status = 'profit_lock';
+    headline = '💰 MIDDLE OPPORTUNITY';
+    const moveDir = lineMove > 0 ? 'up' : 'down';
+    message = `Line moved ${moveDir} ${Math.abs(lineMove).toFixed(1)} pts! Original: ${side.toUpperCase()} ${line}, Live: ${hedgeLine}. If player scores ${middleOpportunity.profitWindow}, BOTH bets win!`;
+    action = `💰 BET ${oppositeSide} ${hedgeLine} NOW for guaranteed profit window`;
+    urgency = 'high';
+    
+    return { 
+      status, headline, message, action, urgency, trendDirection, hitProbability, rateNeeded, currentRate, timeRemaining, gapToLine,
+      rotationEstimate,
+      playerTier,
+      rotationMinutes: minutesRemaining,
+      liveBookLine,
+      lineMovement: lineMove,
+      middleOpportunity
+    };
+  }
+  
   // --- ROTATION-AWARE STATUS LOGIC ---
   
   // URGENT: Currently benched and behind pace for OVER
@@ -331,7 +401,7 @@ function calculateEnhancedHedgeAction(spot: DeepSweetSpot): ExtendedHedgeAction 
     status = 'urgent';
     headline = '🪑 PLAYER BENCHED';
     message = `Currently on bench (${rotationEstimate.rotationPhase} rotation rest). ${rotationEstimate.nextTransition}. Producing ${currentRate.toFixed(2)}/min - need ${rateNeeded.toFixed(2)}/min with ~${minutesRemaining.toFixed(0)} play minutes remaining.`;
-    action = `🚨 BET ${oppositeSide} ${line} NOW - Limited remaining court time`;
+    action = `🚨 BET ${oppositeSide} ${hedgeLine} NOW - Limited remaining court time`;
     urgency = 'high';
   }
   // URGENT: Multiple risk factors or very low probability
@@ -342,29 +412,29 @@ function calculateEnhancedHedgeAction(spot: DeepSweetSpot): ExtendedHedgeAction 
     if (hasBlowoutRisk) {
       message = `Blowout detected (${gameProgress.toFixed(0)}% through game). High chance starters sit. Only ${minutesRemaining.toFixed(0)} min of meaningful play remaining.`;
     } else if (hasFoulTrouble) {
-      message = `Player in foul trouble. Minutes at risk. Current: ${currentValue}, need ${line}. ${hitProbability}% chance to hit.`;
+      message = `Player in foul trouble. Minutes at risk. Current: ${currentValue}, need ${hedgeLine}. ${hitProbability}% chance to hit.`;
     } else {
-      message = `Only ${hitProbability}% chance to hit ${line}. Producing ${currentRate.toFixed(2)}/min but need ${rateNeeded.toFixed(2)}/min with ${minutesRemaining.toFixed(0)} min left.`;
+      message = `Only ${hitProbability}% chance to hit ${hedgeLine}. Producing ${currentRate.toFixed(2)}/min but need ${rateNeeded.toFixed(2)}/min with ${minutesRemaining.toFixed(0)} min left.`;
     }
     
     if (zoneInsight && hasZoneDisadvantage) {
       message += ` ${zoneInsight} amplifies risk.`;
     }
     
-    action = `🚨 BET ${oppositeSide} ${line} NOW - ${calculateHedgeSizing(Math.abs(gapToLine), hitProbability)}`;
+    action = `🚨 BET ${oppositeSide} ${hedgeLine} NOW - ${calculateHedgeSizing(Math.abs(gapToLine), hitProbability)}`;
     urgency = 'high';
   }
   // ALERT: Approaching rest window while behind
   else if (isApproachingRest && side === 'over' && hitProbability < 55) {
     status = 'alert';
     headline = '⏰ REST APPROACHING';
-    message = `Approaching bench rotation. Current: ${currentValue}, need ${line}. Only ~${minutesRemaining.toFixed(0)} play minutes projected (vs ${linearMinutes.toFixed(0)} linear).`;
+    message = `Approaching bench rotation. Current: ${currentValue}, need ${hedgeLine}. Only ~${minutesRemaining.toFixed(0)} play minutes projected (vs ${linearMinutes.toFixed(0)} linear).`;
     
     if (zoneInsight) {
       message += ` ${zoneInsight}.`;
     }
     
-    action = `⚠️ Prepare ${oppositeSide} ${line} hedge before rest window`;
+    action = `⚠️ Prepare ${oppositeSide} ${hedgeLine} hedge before rest window`;
     urgency = 'medium';
   }
   // ALERT: Single risk factor or moderate concern
@@ -373,9 +443,9 @@ function calculateEnhancedHedgeAction(spot: DeepSweetSpot): ExtendedHedgeAction 
     headline = '⚠️ HEDGE ALERT';
     
     if (hasSlowPace) {
-      message = `Slow pace (${paceRating.toFixed(0)}) reducing possessions. Projected ${projectedFinal.toFixed(1)} vs line ${line}. Gap: ${gapToLine.toFixed(1)}`;
+      message = `Slow pace (${paceRating.toFixed(0)}) reducing possessions. Projected ${projectedFinal.toFixed(1)} vs line ${hedgeLine}. Gap: ${gapToLine.toFixed(1)}`;
     } else if (hasZoneDisadvantage && shotChartMatchup) {
-      message = `Shot chart mismatch: ${shotChartMatchup.recommendation}. Projected ${projectedFinal.toFixed(1)} vs line ${line}.`;
+      message = `Shot chart mismatch: ${shotChartMatchup.recommendation}. Projected ${projectedFinal.toFixed(1)} vs line ${hedgeLine}.`;
     } else {
       message = `Trailing by ${Math.abs(gapToLine).toFixed(1)} with ${minutesRemaining.toFixed(0)} min left. Current rate ${currentRate.toFixed(2)}/min vs needed ${rateNeeded.toFixed(2)}/min.`;
     }
@@ -384,14 +454,14 @@ function calculateEnhancedHedgeAction(spot: DeepSweetSpot): ExtendedHedgeAction 
       message += ` ${zoneInsight}.`;
     }
     
-    action = `⚠️ Consider ${oppositeSide} ${line} - ${calculateHedgeSizing(Math.abs(gapToLine), hitProbability)}`;
+    action = `⚠️ Consider ${oppositeSide} ${hedgeLine} - ${calculateHedgeSizing(Math.abs(gapToLine), hitProbability)}`;
     urgency = 'medium';
   }
   // MONITOR: Slightly off pace but recoverable
   else if (hitProbability < monitorThreshold || (gapToLine < 0 && gapToLine > -2)) {
     status = 'monitor';
     headline = '⚡ MONITOR CLOSELY';
-    message = `Slightly off pace. Projected ${projectedFinal.toFixed(1)} vs line ${line} (${hitProbability}% probability). ${getTrendDescription(trendDirection, side === 'over')}`;
+    message = `Slightly off pace. Projected ${projectedFinal.toFixed(1)} vs line ${hedgeLine} (${hitProbability}% probability). ${getTrendDescription(trendDirection, side === 'over')}`;
     
     if (zoneInsight) {
       message += ` ${zoneInsight}.`;
@@ -404,7 +474,7 @@ function calculateEnhancedHedgeAction(spot: DeepSweetSpot): ExtendedHedgeAction 
   else {
     status = 'on_track';
     headline = '✓ ON TRACK';
-    message = `Projected ${projectedFinal.toFixed(1)} exceeds line ${line} by ${gapToLine.toFixed(1)}. ${hitProbability}% probability. Rate: ${currentRate.toFixed(2)}/min.`;
+    message = `Projected ${projectedFinal.toFixed(1)} exceeds line ${hedgeLine} by ${gapToLine.toFixed(1)}. ${hitProbability}% probability. Rate: ${currentRate.toFixed(2)}/min.`;
     
     if (zoneInsight && hasZoneAdvantage) {
       message += ` ${zoneInsight} provides additional support.`;
@@ -418,7 +488,10 @@ function calculateEnhancedHedgeAction(spot: DeepSweetSpot): ExtendedHedgeAction 
     status, headline, message, action, urgency, trendDirection, hitProbability, rateNeeded, currentRate, timeRemaining, gapToLine,
     rotationEstimate,
     playerTier,
-    rotationMinutes: minutesRemaining
+    rotationMinutes: minutesRemaining,
+    liveBookLine,
+    lineMovement: lineMove,
+    middleOpportunity
   };
 }
 
@@ -548,9 +621,42 @@ export function HedgeRecommendation({ spot }: HedgeRecommendationProps) {
       {/* Pace Momentum Tracker - game pace evolution */}
       <PaceMomentumTracker spot={spot} className="mb-3" />
       
-      {/* Line and Gap Info */}
-      <div className="flex items-center gap-3 text-xs text-muted-foreground mb-2">
-        <span>Line: <span className="font-mono font-semibold text-foreground">{spot.line}</span></span>
+      {/* v7.2: Live Line Section with Movement Indicator */}
+      <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground mb-2">
+        {/* Original Line */}
+        <span>Your Bet: <span className="font-mono font-semibold text-foreground">{spot.side.toUpperCase()} {spot.line}</span></span>
+        
+        {/* Live Line (if different) */}
+        {hedgeAction.liveBookLine !== undefined && hedgeAction.liveBookLine !== spot.line && (
+          <>
+            <span>|</span>
+            <span className="flex items-center gap-1">
+              <DollarSign className="w-3 h-3" />
+              Live: <span className="font-mono font-semibold text-foreground">{hedgeAction.liveBookLine}</span>
+              {hedgeAction.lineMovement !== undefined && (
+                <span className={cn(
+                  "flex items-center font-semibold",
+                  // Green if movement favors your bet
+                  (spot.side === 'over' && hedgeAction.lineMovement < 0) || 
+                  (spot.side === 'under' && hedgeAction.lineMovement > 0)
+                    ? "text-primary"
+                    : (spot.side === 'over' && hedgeAction.lineMovement > 0) ||
+                      (spot.side === 'under' && hedgeAction.lineMovement < 0)
+                    ? "text-destructive"
+                    : "text-muted-foreground"
+                )}>
+                  {hedgeAction.lineMovement > 0 ? (
+                    <><ArrowUp className="w-3 h-3" />{hedgeAction.lineMovement.toFixed(1)}</>
+                  ) : hedgeAction.lineMovement < 0 ? (
+                    <><ArrowDown className="w-3 h-3" />{Math.abs(hedgeAction.lineMovement).toFixed(1)}</>
+                  ) : null}
+                </span>
+              )}
+            </span>
+          </>
+        )}
+        
+        {/* Gap to current line being used */}
         <span>|</span>
         <span>Gap: <span className={cn(
           "font-mono font-semibold",
@@ -561,6 +667,22 @@ export function HedgeRecommendation({ spot }: HedgeRecommendationProps) {
         <span>|</span>
         <span>Confidence: <span className="font-semibold text-foreground">{confidence}%</span></span>
       </div>
+      
+      {/* Middle Opportunity Alert (v7.2) */}
+      {hedgeAction.middleOpportunity && (
+        <div className="mb-3 p-2 rounded-lg bg-purple-500/10 border border-purple-500/30">
+          <div className="flex items-center gap-2 mb-1">
+            <DollarSign className="w-4 h-4 text-purple-400" />
+            <span className="text-xs font-bold text-purple-400">MIDDLE BET OPPORTUNITY</span>
+          </div>
+          <p className="text-xs text-purple-300">
+            Profit window: <span className="font-mono font-bold">{hedgeAction.middleOpportunity.profitWindow}</span>
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">
+            {hedgeAction.middleOpportunity.recommendation}
+          </p>
+        </div>
+      )}
       
       {/* Shot Chart Section - NOW POSITIONED HIGHER for scoring props */}
       {shotChartMatchup && isScoring && (
