@@ -273,21 +273,26 @@ function calculateSweetSpotScore(
   return Math.round(score * 100);
 }
 
-// Classify quality tier
+// Classify quality tier with side-aware edge requirements
 function classifyQualityTier(
   floorProtection: number,
   hitRateL10: number,
-  edge: number
+  edge: number,
+  line: number,
+  side: PickSide
 ): QualityTier {
+  // Calculate edge as percentage of line for meaningful comparison
+  const edgePct = line > 0 ? edge / line : 0;
+  
   // ELITE: L10 min >= line AND 100% hit rate
   if (floorProtection >= QUALITY_THRESHOLDS.ELITE.minFloor && 
       hitRateL10 >= QUALITY_THRESHOLDS.ELITE.minHitRate) {
     return 'ELITE';
   }
   
-  // PREMIUM: L10 min >= line OR 90%+ hit rate with positive edge
-  if (floorProtection >= QUALITY_THRESHOLDS.PREMIUM.minFloor ||
-      (hitRateL10 >= QUALITY_THRESHOLDS.PREMIUM.minHitRate && edge > 0)) {
+  // PREMIUM: 90%+ hit rate with strong edge (15% for OVER, 10% for UNDER)
+  const premiumEdgeThreshold = side === 'over' ? 0.15 : 0.10;
+  if (hitRateL10 >= QUALITY_THRESHOLDS.PREMIUM.minHitRate && edgePct >= premiumEdgeThreshold) {
     return 'PREMIUM';
   }
   
@@ -296,26 +301,38 @@ function classifyQualityTier(
     return 'STRONG';
   }
   
-  // STANDARD: 70-79% hit rate
-  if (hitRateL10 >= QUALITY_THRESHOLDS.STANDARD.minHitRate) {
+  // STANDARD: 70-79% hit rate with floor protection >= 0.7
+  if (hitRateL10 >= QUALITY_THRESHOLDS.STANDARD.minHitRate && floorProtection >= 0.7) {
     return 'STANDARD';
   }
   
-  // AVOID: Negative edge OR <70% hit rate
+  // AVOID: Weak metrics
   return 'AVOID';
 }
 
-// Determine optimal side (over vs under)
+// Calculate coefficient of variation for variance filtering
+function calculateCoeffOfVariation(values: number[]): number {
+  if (values.length === 0) return 1;
+  const avg = values.reduce((a, b) => a + b, 0) / values.length;
+  if (avg === 0) return 1;
+  const variance = values.reduce((sum, v) => sum + Math.pow(v - avg, 2), 0) / values.length;
+  const stdDev = Math.sqrt(variance);
+  return stdDev / avg;
+}
+
+// Determine optimal side (over vs under) with stronger floor/ceiling logic
 function determineOptimalSide(l10Stats: L10Stats, line: number): PickSide {
   const overHitRate = l10Stats.gamesPlayed > 0 
     ? l10Stats.hitCount / l10Stats.gamesPlayed 
     : 0;
-  const underHitRate = l10Stats.gamesPlayed > 0
-    ? (l10Stats.gamesPlayed - l10Stats.hitCount) / l10Stats.gamesPlayed
-    : 0;
-    
-  // Check floor protection for over
-  const overFloor = l10Stats.min / line;
+  const underHitRate = 1 - overHitRate;
+  
+  // Check floor protection for over and ceiling for under
+  const overFloor = line > 0 ? l10Stats.min / line : 0;
+  const underCeiling = line > 0 ? l10Stats.max / line : Infinity;
+  
+  // Strong floor = L10 min covers at least 50% of line
+  const hasStrongFloor = overFloor >= 0.5;
   
   // If L10 min covers the line, strongly favor over
   if (overFloor >= 1.0) return 'over';
@@ -323,8 +340,14 @@ function determineOptimalSide(l10Stats: L10Stats, line: number): PickSide {
   // If L10 max is below line, favor under
   if (l10Stats.max < line) return 'under';
   
-  // Otherwise, pick side with better hit rate
-  return overHitRate >= underHitRate ? 'over' : 'under';
+  // If no strong floor for OVER, check if UNDER is safer
+  // High ceiling (max is 30%+ above line) + weak floor = favor UNDER
+  if (!hasStrongFloor && underCeiling > 1.3) {
+    return 'under';
+  }
+  
+  // Otherwise, pick side with better hit rate (bias toward UNDER on ties)
+  return overHitRate > underHitRate ? 'over' : 'under';
 }
 
 export function useDeepSweetSpots() {
@@ -438,6 +461,14 @@ export function useDeepSweetSpots() {
           ? l10StatsOver 
           : calculateL10Stats(playerLogs, field, line, 'under');
         
+        // Calculate variance filter - get L10 values for coefficient of variation
+        const l10Values = playerLogs
+          .slice(0, 10)
+          .map(log => log[field as keyof GameLog] as number | null)
+          .filter((v): v is number => v !== null && v !== undefined);
+        
+        const coeffOfVariation = calculateCoeffOfVariation(l10Values);
+        
         const l5Stats = calculateL5Stats(playerLogs, field);
         const { tier: momentum, ratio: momentumRatio } = calculateMomentum(l5Stats.avg, l10Stats.avg);
         
@@ -445,6 +476,16 @@ export function useDeepSweetSpots() {
         const floorProtection = calculateFloorProtection(l10Stats, line, optimalSide);
         const edge = calculateEdge(l10Stats.avg, line, optimalSide);
         const hitRateL10 = l10Stats.gamesPlayed > 0 ? l10Stats.hitCount / l10Stats.gamesPlayed : 0;
+        
+        // NEW: Skip high variance OVER picks (CV > 0.4 = too inconsistent)
+        if (optimalSide === 'over' && coeffOfVariation > 0.4) {
+          continue; // Too risky - player is inconsistent
+        }
+        
+        // NEW: Require minimum edge for OVERs (L10 avg must exceed line by 10%)
+        if (optimalSide === 'over' && edge < line * 0.10) {
+          continue; // Edge too small - books have priced this in
+        }
         
         // Get usage rate from most recent log
         const usageRate = playerLogs[0]?.usage_rate ?? null;
@@ -487,7 +528,8 @@ export function useDeepSweetSpots() {
           line
         );
         
-        const qualityTier = classifyQualityTier(floorProtection, hitRateL10, edge);
+        // Updated to include line and side parameters
+        const qualityTier = classifyQualityTier(floorProtection, hitRateL10, edge, line, optimalSide);
         
         // Skip AVOID tier with very low hit rates
         if (qualityTier === 'AVOID' && hitRateL10 < 0.5) continue;
