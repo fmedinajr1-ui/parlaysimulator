@@ -9,6 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { 
   extractFramesFromVideo, 
+  extractFramesFromUrl,
   validateVideoFile, 
   deduplicateFrames,
   type ExtractionProgress 
@@ -217,13 +218,51 @@ export function FilmProfileUpload({ onProfileUpdated }: FilmProfileUploadProps) 
     }
   }, [toast]);
 
-  // Handle YouTube frames extraction
-  const handleYouTubeFrames = useCallback((frames: string[], videoInfo: VideoInfo) => {
+  // Handle YouTube frames extraction with full video support
+  const handleYouTubeFrames = useCallback(async (frames: string[], videoInfo: VideoInfo) => {
+    // If we have a stream URL, extract real frames from the full video
+    if (videoInfo.streamUrl) {
+      try {
+        setIsProcessingYouTube(true);
+        setExtractionProgress({
+          stage: 'extracting',
+          currentFrame: 0,
+          totalFrames: 0,
+          message: 'Extracting frames from full video stream...',
+        });
+
+        const result = await extractFramesFromUrl(videoInfo.streamUrl, setExtractionProgress);
+        const uniqueFrames = deduplicateFrames(result.frames);
+        
+        setExtractedFrames(uniqueFrames.map(f => f.base64));
+        setPreviewFrames(uniqueFrames.slice(0, 4).map(f => f.base64));
+        
+        setExtractionProgress({
+          stage: 'complete',
+          currentFrame: uniqueFrames.length,
+          totalFrames: uniqueFrames.length,
+          message: `Extracted ${uniqueFrames.length} frames from full video`,
+        });
+
+        toast({
+          title: "Full Video Analyzed",
+          description: `Extracted ${uniqueFrames.length} frames from ${videoInfo.platform}`,
+        });
+        return;
+      } catch (err) {
+        console.warn('[FilmProfileUpload] Stream extraction failed, using thumbnails:', err);
+        // Fall through to use thumbnails as fallback
+      } finally {
+        setIsProcessingYouTube(false);
+      }
+    }
+    
+    // Fallback to thumbnails if no stream or extraction failed
     setExtractedFrames(frames);
     setPreviewFrames(frames.slice(0, 4));
     toast({
-      title: "Frames Extracted",
-      description: `Got ${frames.length} frames from ${videoInfo.platform}`,
+      title: "Frames Ready",
+      description: `Got ${frames.length} preview frames from ${videoInfo.platform}`,
     });
   }, [toast]);
 
