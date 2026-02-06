@@ -20,9 +20,13 @@ export function FloorProtectionBar({
   compact = false 
 }: FloorProtectionBarProps) {
   const isUnder = side === 'under';
-  // Cap at 150% for visual display
-  const displayPercentage = Math.min(floorProtection * 100, 150);
-  const percentage = Math.round(floorProtection * 100);
+  const rawRatio = floorProtection;
+  // Cap at 150% for visual display bar
+  const displayPercentage = Math.min(rawRatio * 100, 150);
+  // Cap percentage text at 100%
+  const percentage = Math.min(Math.round(rawRatio * 100), 100);
+  // Show multiplier when floor/ceiling exceeds line
+  const floorMultiplier = rawRatio >= 1.0 ? Math.round(rawRatio * 10) / 10 : null;
   
   // Color based on protection level - same logic for both sides (higher = better)
   const getColorClass = () => {
@@ -53,7 +57,7 @@ export function FloorProtectionBar({
           />
         </div>
         <span className={cn("text-xs font-mono font-bold", getTextColorClass())}>
-          {percentage}%
+          {floorMultiplier && floorMultiplier > 1 ? `${floorMultiplier}x` : `${percentage}%`}
         </span>
       </div>
     );
@@ -89,7 +93,10 @@ export function FloorProtectionBar({
       </div>
       <div className="flex items-center justify-between">
         <span className={cn("text-sm font-bold", getTextColorClass())}>
-          {percentage}% Coverage
+          {floorMultiplier && floorMultiplier > 1 
+            ? `Full Coverage (${floorMultiplier}x)`
+            : `${percentage}% Coverage`
+          }
         </span>
         {floorProtection >= 1.0 && (
           <span className="text-xs text-green-400 font-medium">
