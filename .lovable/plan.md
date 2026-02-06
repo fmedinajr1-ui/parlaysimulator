@@ -1,16 +1,17 @@
 # Player-Specific Film Learning System
 
-## Status: Phase 1 Complete ✓
+## Status: Phase 2 Complete ✓
 
 ### Implemented
 - [x] `player_behavior_profiles` database table
 - [x] `build-player-profile` edge function
 - [x] `usePlayerProfile` hook
 - [x] `PlayerProfileCard` component
+- [x] `scout-agent-loop` updates profiles with film insights
+- [x] Accumulated fatigue_tendency and body_language_notes
 
 ### Next Steps
 - [ ] Integrate profiles into `category-props-analyzer`
-- [ ] Modify `scout-agent-loop` to update film insights
 - [ ] Add profile display to Sweet Spots cards
 - [ ] Set up nightly cron job for profile building
 
