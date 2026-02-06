@@ -326,8 +326,8 @@ const CATEGORIES: Record<string, CategoryConfig> = {
     lines: [14.5, 15.5, 16.5, 17.5, 18.5, 19.5, 20.5],
     side: 'under',
     minHitRate: 0.55,
-    // v7.0: DISABLED - 45% hit rate, includes starters who explode
-    disabled: true  // Block until redesigned with proper filters
+    // v8.0: RE-ENABLED for contrarian fade strategy (55% OVER hit rate when faded)
+    fadeOnly: true  // Picks generated here are meant to be faded (bet OVER)
   },
   
   // ============ OPTIMAL WINNERS (v3.0) - ARCHETYPE ENFORCED ============
