@@ -1,58 +1,147 @@
-# Deep Sweet Spots v7.2 - Live Line Tracking
 
-## ✅ Completed Features
 
-### Star Player Block (v7.1)
-Star players explicitly blocked from pre-game UNDER recommendations. Hedge system handles live UNDER alerts.
+# Add "MIDDLE" Filter Category for Middle Opportunities
 
-**Players blocked from UNDER:**
-Luka Doncic, Anthony Edwards, SGA, Jayson Tatum, Giannis, Jokic, Ja Morant, Trae Young, Damian Lillard, Kyrie Irving, Donovan Mitchell, De'Aaron Fox, Tyrese Haliburton, LaMelo Ball, Kevin Durant, LeBron James, Stephen Curry, Joel Embiid, Devin Booker, Jaylen Brown, Anthony Davis, Jalen Brunson, Tyrese Maxey, Jimmy Butler, Karl-Anthony Towns, Paolo Banchero, Zion Williamson, Victor Wembanyama
-
-### Live Line Tracking for Hedge Recommendations (v7.2)
-Hedge recommendations now use **actual live book lines** instead of stale pre-game lines.
-
-**New Features:**
-1. **Live Line Display** - Shows current book line vs original bet line
-2. **Line Movement Indicators** - Visual arrows showing line direction (↑/↓)
-3. **Middle Opportunity Detection** - Automatically detects when line movement creates guaranteed profit windows
-4. **Color-coded Movement** - Green when movement favors your bet, red when against
-
-**Technical Implementation:**
-- `useLiveSweetSpotLines` hook fetches live lines every 30s using `fetch-current-odds`
-- `LivePropData` type extended with `liveBookLine`, `lineMovement`, `lastLineUpdate`, `bookmaker`
-- `MiddleOpportunity` type added for profit-lock detection
-- `calculateEnhancedHedgeAction` now calculates gap against live line
-- Hedge action text uses live line for recommendations (e.g., "BET UNDER 25.5" instead of stale "UNDER 28.5")
-
-**Middle Bet Detection Logic:**
-- Triggers when line moves ≥2 points
-- For OVER bets: detects when live UNDER line dropped below original
-- For UNDER bets: detects when live OVER line rose above original
-- Shows profit window (e.g., "26 to 28 = BOTH bets win")
+## Overview
+Add a dedicated filter button to the Sweet Spots Quality filter row that allows users to quickly see all picks with middle opportunity potential. This makes it easy to find high-value hedge situations without scrolling through all picks.
 
 ---
 
-## Architecture
+## What Will Change
 
-```
-Pre-Game Line: OVER 28.5 (your bet)
-Live Book Line: OVER 24.5 (current)
-Line Movement: ↓4.0
+The existing Quality filter row will get a new "MIDDLE" button with a distinct gold/yellow styling:
 
-┌─────────────────────────────────────────────────┐
-│ 💰 MIDDLE OPPORTUNITY                           │
-├─────────────────────────────────────────────────┤
-│ Your Bet: OVER 28.5 (original)                 │
-│ Live: 24.5 ↓4.0                                │
-│                                                 │
-│ Profit window: 25 to 28                        │
-│ Hedge UNDER 24.5 for guaranteed profit!        │
-└─────────────────────────────────────────────────┘
+```text
+┌─────────────────────────────────────────────────────────────────────┐
+│ 🔽 Quality:  [All] [ELITE] [PREMIUM+] [STRONG+] [💰 MIDDLE (2)]    │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-## Files Modified
+When selected, only spots with active middle opportunities (line moved ≥2 points) will be shown.
 
-1. `src/types/sweetSpot.ts` - Added `liveBookLine`, `lineMovement`, `lastLineUpdate`, `bookmaker` to `LivePropData`, added `MiddleOpportunity` interface
-2. `src/hooks/useLiveSweetSpotLines.ts` - NEW: Fetches live lines for sweet spots (30s refresh)
-3. `src/hooks/useSweetSpotLiveData.ts` - Integrated live line fetching
-4. `src/components/sweetspots/HedgeRecommendation.tsx` - Updated to use live lines, show movement indicators, detect middle opportunities
+---
+
+## Implementation Details
+
+### 1. Update QualityFilter Type
+
+Add "MIDDLE" to the available filter options:
+
+```typescript
+// src/pages/SweetSpots.tsx
+type QualityFilter = 'all' | 'ELITE' | 'PREMIUM+' | 'STRONG+' | 'MIDDLE';
+```
+
+### 2. Track Middle Opportunity Count
+
+Use the existing `spotsWithLineMovement` from `useSweetSpotLiveData`:
+
+```typescript
+// Already returned from useSweetSpotLiveData
+const { spots: enrichedSpots, spotsWithLineMovement, liveGameCount } = useSweetSpotLiveData(data?.spots || []);
+
+// Count for button badge
+const middleCount = spotsWithLineMovement.length;
+```
+
+### 3. Add Filter Logic
+
+Extend the filtering logic to handle MIDDLE filter:
+
+```typescript
+// In filteredSpots useMemo
+if (qualityFilter === 'MIDDLE') {
+  // Get IDs of spots with significant line movement
+  const middleIds = new Set(spotsWithLineMovement.map(s => s.id));
+  filtered = filtered.filter(s => middleIds.has(s.id));
+}
+```
+
+### 4. Add MIDDLE Button to Filter Row
+
+Add a new button with distinctive styling (gold/yellow to match the 💰 icon):
+
+```tsx
+{/* Existing quality filters */}
+{(['all', 'ELITE', 'PREMIUM+', 'STRONG+'] as QualityFilter[]).map(...)}
+
+{/* NEW: Middle opportunity filter */}
+{middleCount > 0 && (
+  <Button
+    size="sm"
+    variant={qualityFilter === 'MIDDLE' ? 'default' : 'outline'}
+    onClick={() => setQualityFilter('MIDDLE')}
+    className={cn(
+      "text-xs h-7 px-2 gap-1",
+      qualityFilter === 'MIDDLE' && "bg-yellow-600 hover:bg-yellow-700"
+    )}
+  >
+    <DollarSign size={12} />
+    MIDDLE ({middleCount})
+  </Button>
+)}
+```
+
+### 5. Add Summary Card for Middle Opportunities (Optional)
+
+Add a new summary card alongside ELITE/PREMIUM/STRONG:
+
+```tsx
+{middleCount > 0 && (
+  <Card className="bg-yellow-500/10 border-yellow-500/30">
+    <CardContent className="p-3 text-center">
+      <div className="flex items-center justify-center gap-1.5 mb-1">
+        <DollarSign size={14} className="text-yellow-400" />
+        <span className="text-xs text-yellow-300">MIDDLE</span>
+      </div>
+      <div className="text-2xl font-bold text-yellow-400">
+        {middleCount}
+      </div>
+    </CardContent>
+  </Card>
+)}
+```
+
+---
+
+## Files to Modify
+
+| File | Changes |
+|------|---------|
+| `src/pages/SweetSpots.tsx` | Add MIDDLE to QualityFilter type, add filter logic, add MIDDLE button with count badge |
+
+---
+
+## Visual Result
+
+**Before:**
+```text
+Quality: [All] [ELITE] [PREMIUM+] [STRONG+]
+```
+
+**After:**
+```text
+Quality: [All] [ELITE] [PREMIUM+] [STRONG+] [💰 MIDDLE (2)]
+                                             └─ Only shows when middle opportunities exist
+```
+
+The MIDDLE button will:
+- Only appear when there are active middle opportunities (≥1 pick with ±2pt line movement)
+- Show the count in parentheses
+- Use distinctive gold/yellow coloring to stand out
+- Filter to show only those picks with profit-lock potential
+
+---
+
+## How It Works
+
+```text
+User Flow:
+1. Game is live, Anthony Edwards OVER 28.5 original bet
+2. Line drops to 25.5 (−3.0 movement)
+3. System detects middle opportunity
+4. "💰 MIDDLE (1)" button appears in Quality filter
+5. User clicks MIDDLE → sees only picks with profit-lock potential
+6. Card shows: "Hedge UNDER 25.5 for guaranteed profit if scores 26-28"
+```
+
