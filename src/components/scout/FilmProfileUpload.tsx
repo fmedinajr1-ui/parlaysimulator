@@ -47,6 +47,32 @@ interface UpdatedProfileResult {
   body_language_notes?: string;
   film_sample_count?: number;
   profile_confidence?: number;
+  // Enhanced tracking data for UI display
+  courtZones?: Record<string, number>;
+  shotAttempts?: Array<{ zone: string; result: string; type: string }>;
+  defensiveMatchups?: Array<{ opponent: string; closeoutQuality: number; helpTiming: string }>;
+  rotationSignals?: {
+    stintsObserved: number;
+    benchTimeVisible: boolean;
+    fatigueOnReentry: string;
+  };
+}
+
+interface PlayerTracking {
+  playerName: string;
+  jerseyNumber: string;
+  framesDetected: number[];
+  courtZones: Record<string, number>;
+  shotAttempts: Array<{ zone: string; result: string; type: string }>;
+  rotationSignals: {
+    stintsObserved: number;
+    benchTimeVisible: boolean;
+    fatigueOnReentry: string;
+  };
+  defensiveMatchups: Array<{ opponent: string; closeoutQuality: number; helpTiming: string }>;
+  movementScore: number;
+  fatigueIndicators: string[];
+  confidence: string;
 }
 
 type AnalysisStage = 'idle' | 'uploading' | 'extracting' | 'analyzing' | 'updating' | 'complete' | 'error';
@@ -209,15 +235,16 @@ export function FilmProfileUpload({ onProfileUpdated }: FilmProfileUploadProps) 
     });
   }, [toast]);
 
-  // Helper function to find player observations
-  const findPlayerObservation = (observations: any[], playerName: string) => {
+  // Helper function to find player tracking data
+  const findPlayerTracking = (trackingArray: PlayerTracking[], playerName: string): PlayerTracking | undefined => {
+    if (!trackingArray || trackingArray.length === 0) return undefined;
     const lastName = playerName.split(' ').pop()?.toLowerCase() || playerName.toLowerCase();
-    return observations.find((o: any) => 
-      o.playerName?.toLowerCase().includes(lastName)
-    ) || observations[0]; // Fallback to first observation if no match
+    return trackingArray.find((t: PlayerTracking) => 
+      t.playerName?.toLowerCase().includes(lastName)
+    );
   };
 
-  // Analyze and update profiles for ALL selected players
+  // Analyze and update profiles for ALL selected players with enhanced tracking
   const handleAnalyzeAndUpdate = useCallback(async () => {
     if (selectedPlayers.length === 0 || extractedFrames.length === 0) {
       toast({
@@ -237,6 +264,9 @@ export function FilmProfileUpload({ onProfileUpdated }: FilmProfileUploadProps) 
       // Step 1: Analyze frames with vision AI (single call for all players)
       setStageProgress(40);
       
+      // Pass selected player names for enhanced tracking
+      const selectedPlayerNames = selectedPlayers.map(p => p.player_name);
+      
       const { data: analysisData, error: analysisError } = await supabase.functions.invoke('analyze-game-footage', {
         body: {
           frames: extractedFrames.slice(0, 20), // Limit to 20 frames
@@ -248,6 +278,7 @@ export function FilmProfileUpload({ onProfileUpdated }: FilmProfileUploadProps) 
             eventId: 'profile-upload',
           },
           clipCategory: 'timeout', // Default to timeout for fatigue analysis
+          selectedPlayers: selectedPlayerNames, // NEW: Pass selected players for tracking
         },
       });
 
@@ -257,31 +288,74 @@ export function FilmProfileUpload({ onProfileUpdated }: FilmProfileUploadProps) 
       setStageMessage(`Updating ${selectedPlayers.length} player profile${selectedPlayers.length > 1 ? 's' : ''}...`);
       setAnalysisStage('updating');
 
-      // Step 2: Update profile for EACH selected player
+      // Step 2: Update profile for EACH selected player with enhanced tracking data
       const observations = analysisData?.analysis?.observations || [];
+      const playerTracking = analysisData?.analysis?.playerTracking || [];
       const results: UpdatedProfileResult[] = [];
 
       for (let i = 0; i < selectedPlayers.length; i++) {
         const player = selectedPlayers[i];
-        const playerObs = findPlayerObservation(observations, player.player_name);
+        const tracking = findPlayerTracking(playerTracking, player.player_name);
+        const playerObs = observations.find((o: any) => 
+          o.playerName?.toLowerCase().includes(player.player_name.split(' ').pop()?.toLowerCase() || '')
+        ) || observations[0];
 
         // Calculate progress per player
         const progressPerPlayer = 30 / selectedPlayers.length;
         setStageProgress(60 + (i + 1) * progressPerPlayer);
 
-        // Upsert profile
+        // Build enhanced data from tracking
+        const zoneDistribution = tracking?.courtZones 
+          ? Object.entries(tracking.courtZones).map(([zone, count]) => `${zone}: ${count}`).join(', ')
+          : '';
+        
+        const defensiveNotes = tracking?.defensiveMatchups?.map((m: any) => 
+          `vs ${m.opponent}: closeout ${m.closeoutQuality}/10, help ${m.helpTiming}`
+        ).join('; ') || '';
+        
+        const shotNotes = tracking?.shotAttempts?.map((s: any) => 
+          `${s.zone} ${s.result} (${s.type})`
+        ).join(', ') || '';
+
+        // Build body language notes with all tracking data
+        const datePrefix = `[${new Date().toISOString().split('T')[0]}]`;
+        const bodyLangParts = [];
+        if (tracking?.courtZones && Object.keys(tracking.courtZones).length > 0) {
+          bodyLangParts.push(`Zones: ${zoneDistribution}`);
+        }
+        if (defensiveNotes) {
+          bodyLangParts.push(`Defense: ${defensiveNotes}`);
+        }
+        if (shotNotes) {
+          bodyLangParts.push(`Shots: ${shotNotes}`);
+        }
+        if (playerObs?.bodyLanguage) {
+          bodyLangParts.push(`Body lang: ${playerObs.bodyLanguage}`);
+        }
+
+        // Build zone preferences for scoring_zone_preferences field
+        const zonePreferences: Record<string, number> = {};
+        if (tracking?.shotAttempts) {
+          tracking.shotAttempts.forEach((shot: any) => {
+            zonePreferences[shot.zone] = (zonePreferences[shot.zone] || 0) + 1;
+          });
+        }
+
+        // Upsert profile with enhanced tracking data
         const { data: profileData, error: profileError } = await supabase
           .from('player_behavior_profiles')
           .upsert({
             player_name: player.player_name,
             team: player.team_name,
             // Film-derived insights
-            fatigue_tendency: playerObs?.fatigueIndicators?.join(', ') || null,
-            body_language_notes: playerObs?.bodyLanguage 
-              ? `[${new Date().toISOString().split('T')[0]}] ${playerObs.bodyLanguage}` 
+            fatigue_tendency: tracking?.fatigueIndicators?.join(', ') || playerObs?.fatigueIndicators?.join(', ') || null,
+            body_language_notes: bodyLangParts.length > 0 
+              ? `${datePrefix} ${bodyLangParts.join('. ')}`
               : null,
             film_sample_count: 1, // Will be incremented on subsequent uploads
-            profile_confidence: Math.min(50, (playerObs?.confidence === 'high' ? 20 : 10)),
+            profile_confidence: Math.min(50, (tracking?.confidence === 'high' ? 25 : playerObs?.confidence === 'high' ? 20 : 10)),
+            // Enhanced fields
+            scoring_zone_preferences: Object.keys(zonePreferences).length > 0 ? zonePreferences : null,
             updated_at: new Date().toISOString(),
           }, {
             onConflict: 'player_name',
@@ -293,11 +367,17 @@ export function FilmProfileUpload({ onProfileUpdated }: FilmProfileUploadProps) 
           console.error(`[FilmProfileUpload] Profile update error for ${player.player_name}:`, profileError);
         }
 
-        results.push(profileData || {
+        // Include tracking data in result for UI display
+        results.push({
           player_name: player.player_name,
           team: player.team_name,
-          fatigue_tendency: playerObs?.fatigueIndicators?.join(', '),
-          body_language_notes: playerObs?.bodyLanguage,
+          fatigue_tendency: tracking?.fatigueIndicators?.join(', ') || playerObs?.fatigueIndicators?.join(', '),
+          body_language_notes: bodyLangParts.length > 0 ? bodyLangParts.join('. ') : undefined,
+          courtZones: tracking?.courtZones,
+          shotAttempts: tracking?.shotAttempts,
+          defensiveMatchups: tracking?.defensiveMatchups,
+          rotationSignals: tracking?.rotationSignals,
+          film_sample_count: profileData?.film_sample_count,
         });
 
         onProfileUpdated?.(player.player_name, profileData);
@@ -516,7 +596,7 @@ export function FilmProfileUpload({ onProfileUpdated }: FilmProfileUploadProps) 
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <ImageIcon className="w-4 h-4" />
               Preview ({extractedFrames.length} frames ready)
-              <CheckCircle className="w-4 h-4 text-green-500" />
+              <CheckCircle className="w-4 h-4 text-chart-2" />
             </div>
             <div className="grid grid-cols-4 gap-2">
               {previewFrames.map((frame, i) => (
@@ -543,7 +623,7 @@ export function FilmProfileUpload({ onProfileUpdated }: FilmProfileUploadProps) 
           </div>
         )}
 
-        {/* Success State - Multiple Profiles */}
+        {/* Success State - Multiple Profiles with Enhanced Tracking */}
         {analysisStage === 'complete' && updatedProfiles.length > 0 && (
           <div className="space-y-3">
             {updatedProfiles.map((profile, i) => (
@@ -557,15 +637,72 @@ export function FilmProfileUpload({ onProfileUpdated }: FilmProfileUploadProps) 
                     </Badge>
                   )}
                 </div>
-                <div className="text-sm text-muted-foreground space-y-1 mt-2">
+                <div className="text-sm text-muted-foreground space-y-2 mt-3">
+                  {/* Court Zones */}
+                  {profile.courtZones && Object.keys(profile.courtZones).length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      <span className="text-xs font-medium text-primary">Court Zones:</span>
+                      {Object.entries(profile.courtZones).map(([zone, count]) => (
+                        <Badge key={zone} variant="secondary" className="text-xs">
+                          {zone}: {count as number}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                  
+                  {/* Shot Attempts */}
+                  {profile.shotAttempts && profile.shotAttempts.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      <span className="text-xs font-medium text-chart-2">Shots:</span>
+                      {profile.shotAttempts.map((s, idx) => (
+                        <Badge 
+                          key={idx} 
+                          variant={s.result === 'made' ? 'default' : 'outline'} 
+                          className="text-xs"
+                        >
+                          {s.zone} {s.result} ({s.type})
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                  
+                  {/* Defensive Matchups */}
+                  {profile.defensiveMatchups && profile.defensiveMatchups.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      <span className="text-xs font-medium text-chart-4">Defense:</span>
+                      {profile.defensiveMatchups.map((m, idx) => (
+                        <Badge key={idx} variant="outline" className="text-xs">
+                          vs {m.opponent} ({m.closeoutQuality}/10, {m.helpTiming})
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                  
+                  {/* Rotation Signals */}
+                  {profile.rotationSignals && (
+                    <div className="text-xs">
+                      <span className="font-medium text-chart-5">Rotation:</span>{' '}
+                      {profile.rotationSignals.stintsObserved} stint{profile.rotationSignals.stintsObserved !== 1 ? 's' : ''} observed
+                      {profile.rotationSignals.benchTimeVisible && ', bench time visible'}
+                      {profile.rotationSignals.fatigueOnReentry !== 'none' && 
+                        `, fatigue on reentry: ${profile.rotationSignals.fatigueOnReentry}`
+                      }
+                    </div>
+                  )}
+                  
+                  {/* Fatigue Signals */}
                   {profile.fatigue_tendency && (
-                    <p><strong>Fatigue signals:</strong> {profile.fatigue_tendency}</p>
+                    <p className="text-xs">
+                      <span className="font-medium text-destructive">Fatigue:</span> {profile.fatigue_tendency}
+                    </p>
                   )}
-                  {profile.body_language_notes && (
-                    <p><strong>Body language:</strong> {profile.body_language_notes}</p>
-                  )}
-                  {!profile.fatigue_tendency && !profile.body_language_notes && (
-                    <p className="text-muted-foreground/60 italic">No specific observations extracted</p>
+                  
+                  {/* No Data State */}
+                  {!profile.courtZones && !profile.shotAttempts?.length && !profile.defensiveMatchups?.length && 
+                   !profile.fatigue_tendency && !profile.body_language_notes && (
+                    <p className="text-muted-foreground/60 italic text-xs">
+                      No tracking data extracted - player may not be visible in footage
+                    </p>
                   )}
                 </div>
               </div>

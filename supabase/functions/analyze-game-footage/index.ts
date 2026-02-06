@@ -18,6 +18,7 @@ interface AnalysisRequest {
     eventId: string;
   };
   clipCategory: string;
+  selectedPlayers?: string[]; // NEW: List of player names to track in detail
 }
 
 interface FrameStrategy {
@@ -85,6 +86,37 @@ Focus on: closeout speed, help rotation timing, communication, recovery position
   return instructions[category] || '';
 }
 
+// Enhanced player tracking instructions
+function getPlayerTrackingInstructions(selectedPlayers: string[]): string {
+  if (!selectedPlayers || selectedPlayers.length === 0) return '';
+  
+  return `
+SELECTED PLAYERS TO TRACK: [${selectedPlayers.join(', ')}]
+
+For EACH selected player, provide DETAILED TRACKING in the playerTracking array:
+
+1. JERSEY & COURT POSITION
+   - Confirm jersey number if visible
+   - Track court zones: restricted_area, paint, mid_range, perimeter, corner, transition
+   - Note frame indices where player appears
+
+2. SHOT ATTEMPTS (if visible)
+   - Zone: restricted_area | paint | mid_range | corner_3 | above_break_3
+   - Result: made | missed | blocked
+   - Shot type: catch_shoot | pull_up | post_up | transition
+
+3. ROTATION PATTERNS
+   - Visible stint changes (on/off court)
+   - Bench appearances
+   - Fatigue level when returning to court: none | mild | moderate | heavy
+
+4. DEFENSIVE ASSIGNMENTS
+   - Opponent player being guarded (if identifiable)
+   - Closeout quality: 1-10
+   - Help rotation timing: quick | average | slow
+`;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -95,7 +127,7 @@ serve(async (req) => {
       throw new Error('OPENAI_API_KEY is not configured');
     }
 
-    const { frames, gameContext, clipCategory }: AnalysisRequest = await req.json();
+    const { frames, gameContext, clipCategory, selectedPlayers }: AnalysisRequest = await req.json();
     
     if (!frames || frames.length === 0) {
       throw new Error('No frames provided for analysis');
@@ -103,6 +135,7 @@ serve(async (req) => {
 
     console.log(`[analyze-game-footage] Received ${frames.length} frames for ${gameContext.awayTeam} @ ${gameContext.homeTeam}`);
     console.log(`[analyze-game-footage] Clip category: ${clipCategory}`);
+    console.log(`[analyze-game-footage] Selected players to track: ${selectedPlayers?.join(', ') || 'none'}`);
 
     // Smart frame selection based on clip category
     const strategy = getFrameStrategy(clipCategory, frames.length);
@@ -112,6 +145,9 @@ serve(async (req) => {
 
     // Get category-specific instructions
     const categoryInstructions = getCategorySpecificInstructions(clipCategory);
+    
+    // Get player tracking instructions if players are selected
+    const playerTrackingInstructions = getPlayerTrackingInstructions(selectedPlayers || []);
 
     // Build the analysis prompt
     const systemPrompt = `You are an expert NBA video analyst specializing in detecting betting-relevant signals from game footage. You identify players by jersey numbers and analyze their movement, fatigue, and mechanics for halftime betting insights.
@@ -120,6 +156,8 @@ Your analysis must be grounded in VISUAL OBSERVATIONS from the frames provided. 
 
 ${categoryInstructions}
 
+${playerTrackingInstructions}
+
 KEY ANALYSIS AREAS:
 1. PLAYER IDENTIFICATION - Match jersey numbers to roster names
 2. MOVEMENT QUALITY - Score 1-10 (explosiveness, lateral movement, recovery speed)
@@ -127,12 +165,18 @@ KEY ANALYSIS AREAS:
 4. BODY LANGUAGE - Frustrated, confident, disengaged, locked in
 5. SHOT MECHANICS - Release point, follow-through consistency (if visible)
 6. TEAM DYNAMICS - Communication, defensive rotations, pace
+7. COURT POSITIONING - Where players spend time (paint, perimeter, corner, transition)
 
 FRAME COVERAGE: You are analyzing ${framesToAnalyze.length} frames with ${strategy.interval} distribution for ${clipCategory} clip type.`;
+
+    const selectedPlayersList = selectedPlayers && selectedPlayers.length > 0 
+      ? `\nSELECTED PLAYERS TO TRACK: ${selectedPlayers.join(', ')}`
+      : '';
 
     const userPrompt = `GAME: ${gameContext.awayTeam} @ ${gameContext.homeTeam}
 CLIP CATEGORY: ${clipCategory}
 FRAMES: ${framesToAnalyze.length} frames (${strategy.interval} selection from ${frames.length} total)
+${selectedPlayersList}
 
 ROSTER CONTEXT:
 ${gameContext.homeTeam}: ${gameContext.homeRoster || 'Not available'}
@@ -151,6 +195,34 @@ Analyze the ${framesToAnalyze.length} frames provided and return a JSON object w
       "fatigueIndicators": ["slower lateral movement", "hands on hips"],
       "bodyLanguage": "focused but conserving energy",
       "shotMechanicsNote": null,
+      "confidence": "high"
+    }
+  ],
+  "playerTracking": [
+    {
+      "playerName": "Full Name",
+      "jerseyNumber": "11",
+      "framesDetected": [0, 3, 5, 8, 12],
+      "courtZones": {
+        "paint": 4,
+        "perimeter": 6,
+        "corner": 2,
+        "transition": 3
+      },
+      "shotAttempts": [
+        { "zone": "mid_range", "result": "made", "type": "pull_up" },
+        { "zone": "paint", "result": "missed", "type": "post_up" }
+      ],
+      "rotationSignals": {
+        "stintsObserved": 1,
+        "benchTimeVisible": false,
+        "fatigueOnReentry": "none"
+      },
+      "defensiveMatchups": [
+        { "opponent": "Opponent Name", "closeoutQuality": 7, "helpTiming": "quick" }
+      ],
+      "movementScore": 8,
+      "fatigueIndicators": ["none"],
       "confidence": "high"
     }
   ],
@@ -184,6 +256,7 @@ IMPORTANT:
 - Movement scores should reflect what you SEE, not assumptions
 - Recommendations require at least 2 aligned visual signals
 - If you cannot identify players clearly, state that in the response
+- For playerTracking: ONLY include entries for the SELECTED PLAYERS if specified
 - Return ONLY valid JSON, no markdown or explanation`;
 
     // Build message content with images
