@@ -12,6 +12,7 @@ import {
   extractFramesFromUrl,
   validateVideoFile, 
   deduplicateFrames,
+  detectDuplicateFrameIssue,
   type ExtractionProgress 
 } from "@/lib/video-frame-extractor";
 import { YouTubeLinkInput, VideoInfo } from "./YouTubeLinkInput";
@@ -220,7 +221,7 @@ export function FilmProfileUpload({ onProfileUpdated }: FilmProfileUploadProps) 
 
   // Handle YouTube frames extraction with full video support
   const handleYouTubeFrames = useCallback(async (frames: string[], videoInfo: VideoInfo) => {
-    // If we have a stream URL, extract real frames from the full video
+    // If we have a stream URL, try to extract real frames from the full video
     if (videoInfo.streamUrl) {
       try {
         setIsProcessingYouTube(true);
@@ -234,6 +235,17 @@ export function FilmProfileUpload({ onProfileUpdated }: FilmProfileUploadProps) 
         const result = await extractFramesFromUrl(videoInfo.streamUrl, setExtractionProgress);
         const uniqueFrames = deduplicateFrames(result.frames);
         
+        // Check for duplicate frame issue
+        const duplicateCheck = detectDuplicateFrameIssue(result.frames);
+        if (duplicateCheck.hasDuplicateIssue) {
+          console.warn('[FilmProfileUpload] Duplicate frame issue detected:', duplicateCheck.message);
+          toast({
+            title: "Warning: Limited Frames",
+            description: duplicateCheck.message || "Could only extract similar frames. Try a different video.",
+            variant: "destructive",
+          });
+        }
+        
         setExtractedFrames(uniqueFrames.map(f => f.base64));
         setPreviewFrames(uniqueFrames.slice(0, 4).map(f => f.base64));
         
@@ -241,28 +253,46 @@ export function FilmProfileUpload({ onProfileUpdated }: FilmProfileUploadProps) 
           stage: 'complete',
           currentFrame: uniqueFrames.length,
           totalFrames: uniqueFrames.length,
-          message: `Extracted ${uniqueFrames.length} frames from full video`,
+          message: `Extracted ${uniqueFrames.length} unique frames from full video`,
         });
 
         toast({
           title: "Full Video Analyzed",
-          description: `Extracted ${uniqueFrames.length} frames from ${videoInfo.platform}`,
+          description: `Extracted ${uniqueFrames.length} unique frames from ${videoInfo.platform}`,
         });
         return;
       } catch (err) {
-        console.warn('[FilmProfileUpload] Stream extraction failed, using thumbnails:', err);
-        // Fall through to use thumbnails as fallback
+        console.warn('[FilmProfileUpload] Stream extraction failed, using frames from edge function:', err);
+        // Fall through to use provided frames as fallback
       } finally {
         setIsProcessingYouTube(false);
       }
     }
     
-    // Fallback to thumbnails if no stream or extraction failed
-    setExtractedFrames(frames);
-    setPreviewFrames(frames.slice(0, 4));
+    // Use frames from edge function (storyboards or thumbnails)
+    // Convert string frames to ExtractedFrame format for duplicate detection
+    const frameObjects = frames.map((base64, index) => ({ base64, index, timestamp: index }));
+    const duplicateCheck = detectDuplicateFrameIssue(frameObjects);
+    
+    if (duplicateCheck.hasDuplicateIssue) {
+      toast({
+        title: "Warning: Title Card Detected",
+        description: duplicateCheck.message || "Only got thumbnail images. Try a different video link.",
+        variant: "destructive",
+      });
+    }
+    
+    // Deduplicate the frames
+    const uniqueFrames = deduplicateFrames(frameObjects);
+    
+    setExtractedFrames(uniqueFrames.map(f => f.base64));
+    setPreviewFrames(uniqueFrames.slice(0, 4).map(f => f.base64));
+    
+    const sourceType = videoInfo.isStoryboard ? 'storyboard' : 'preview';
     toast({
-      title: "Frames Ready",
-      description: `Got ${frames.length} preview frames from ${videoInfo.platform}`,
+      title: uniqueFrames.length > 1 ? "Frames Ready" : "Limited Frames",
+      description: `Got ${uniqueFrames.length} ${sourceType} frames from ${videoInfo.platform}`,
+      variant: uniqueFrames.length > 1 ? "default" : "destructive",
     });
   }, [toast]);
 
