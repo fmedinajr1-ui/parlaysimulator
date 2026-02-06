@@ -1,290 +1,308 @@
 
-
-# YouTube Link Support for Player Profile Building - IMPLEMENTED ✅
+# Integrating Player Behavior Profiles into Sweet Spots Logic
 
 ## Overview
 
-Added the ability to paste YouTube links (NBA highlights, game clips) as an alternative to uploading video files. The system extracts frames from the YouTube video and feeds them into the player behavior profile pipeline.
-
-## Implementation Status
-
-| Component | Status |
-|-----------|--------|
-| `extract-youtube-frames` edge function | ✅ Complete |
-| `YouTubeLinkInput.tsx` component | ✅ Complete |
-| `FilmProfileUpload.tsx` component | ✅ Complete |
-| Scout page integration | ✅ Complete |
-| Edge function deployed | ✅ Complete |
-
-YouTube does not provide a direct API for downloading video content. The options are:
-
-| Approach | Feasibility | Notes |
-|----------|-------------|-------|
-| **yt-dlp** (server-side) | Complex | Requires Deno runtime, binary installation, ~50MB overhead |
-| **YouTube Data API** | No | Only metadata, not video content |
-| **Third-party APIs** | Best option | Services like RapidAPI, Cobalt, or self-hosted proxies |
-| **Client-side extraction** | Impossible | CORS blocks direct YouTube access |
-
-### Recommended: Cobalt API (Free, No Auth Required)
-
-Cobalt is a free, open-source YouTube downloader API that works well for this use case:
-
-```
-POST https://api.cobalt.tools/
-{
-  "url": "https://www.youtube.com/watch?v=...",
-  "videoQuality": "480"
-}
-```
-
-Returns a direct download URL that the edge function can stream and extract frames from.
+The Player Behavior Profile system (Phases 1 & 2) is now creating rich player data from historical stats and film analysis, but this data is **not yet being used** in the Sweet Spots prediction engine. This plan bridges that gap.
 
 ---
 
-## Implementation Plan
+## Current State
 
-### 1. New Edge Function: `extract-youtube-frames`
-
-**File**: `supabase/functions/extract-youtube-frames/index.ts`
-
-This edge function will:
-1. Accept a YouTube URL
-2. Call Cobalt API to get a direct video stream URL
-3. Download video to temp storage (or stream directly)
-4. Extract frames using FFmpeg or frame-by-frame processing
-5. Return base64-encoded frames
-
-```typescript
-// Simplified flow
-interface YouTubeFrameRequest {
-  youtubeUrl: string;
-  maxFrames?: number;
-  frameInterval?: number; // seconds between frames
-}
-
-// Response
-{
-  success: true,
-  frames: ["data:image/jpeg;base64,...", ...],
-  videoInfo: {
-    title: "Anthony Edwards 42 Points vs Lakers",
-    duration: 245, // seconds
-  }
-}
-```
-
-### 2. Update Frontend Components
-
-#### A. Modify `FilmProfileUpload.tsx` (New Component)
-
-Add a tabbed interface with two input methods:
-
-```text
-┌────────────────────────────────────────────────────────────────┐
-│ 📹 Build Player Profile from Film                              │
-├────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  [🔍 Search player... Anthony Edwards              ▼]          │
-│                                                                 │
-│  ┌──────────────┐  ┌──────────────┐                            │
-│  │ 📤 Upload    │  │ 🔗 YouTube   │  ← Toggle between tabs      │
-│  └──────────────┘  └──────────────┘                            │
-│                                                                 │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │ Paste YouTube link                                        │  │
-│  │ https://youtube.com/watch?v=...                          │  │
-│  └──────────────────────────────────────────────────────────┘  │
-│                                                                 │
-│  💡 Tips:                                                       │
-│  • Works with YouTube, Twitter/X, and TikTok links             │
-│  • Best for highlights and game clips (1-5 min)                │
-│  • Player must be clearly visible in footage                    │
-│                                                                 │
-│  [      🎬 Extract & Analyze     ]                              │
-│                                                                 │
-└────────────────────────────────────────────────────────────────┘
-```
-
-#### B. Create `YouTubeLinkInput.tsx`
-
-A reusable component for YouTube URL input with validation:
-
-```tsx
-interface YouTubeLinkInputProps {
-  onFramesExtracted: (frames: string[], videoInfo: VideoInfo) => void;
-  onError: (error: string) => void;
-  isProcessing: boolean;
-  setIsProcessing: (processing: boolean) => void;
-}
-```
-
-Features:
-- URL validation (YouTube, Twitter/X, TikTok patterns)
-- Progress indicator during extraction
-- Preview of first 4 extracted frames
-- Error handling with user-friendly messages
-
-### 3. Edge Function Details
-
-#### Frame Extraction Strategy
-
-For a 3-minute highlight video:
-- Extract 1 frame every 5 seconds = ~36 frames
-- Cap at 30 frames maximum (API limits)
-- Prefer key moments (start, middle, end distribution)
-
-```typescript
-function calculateFrameTimestamps(duration: number, maxFrames = 30): number[] {
-  const interval = Math.max(3, duration / maxFrames);
-  const timestamps: number[] = [];
-  
-  for (let t = 0; t < duration && timestamps.length < maxFrames; t += interval) {
-    timestamps.push(t);
-  }
-  
-  return timestamps;
-}
-```
-
-#### Video Info Extraction
-
-Parse video metadata to help with context:
-- Title → May contain player names, game info
-- Duration → Determines frame extraction strategy
-- Channel → Identify official NBA sources for higher quality
-
-### 4. Integration with Profile System
-
-The extracted frames flow into the existing profile pipeline:
-
-```text
-YouTube URL
-    ↓
-extract-youtube-frames (edge function)
-    ↓
-[base64 frames]
-    ↓
-update-player-profile-from-film (existing)
-    ↓
-player_behavior_profiles (database)
-```
-
-### 5. URL Pattern Support
-
-Support multiple video platforms:
-
-| Platform | Pattern | Notes |
-|----------|---------|-------|
-| YouTube | `youtube.com/watch?v=`, `youtu.be/` | Primary target |
-| YouTube Shorts | `youtube.com/shorts/` | Short-form clips |
-| Twitter/X | `twitter.com/*/status/`, `x.com/*/status/` | Game clips posted by reporters |
-| TikTok | `tiktok.com/@*/video/` | Highlight compilations |
+| Component | Status | Integration with Sweet Spots |
+|-----------|--------|------------------------------|
+| `player_behavior_profiles` table | Created | Not queried by Sweet Spots |
+| `build-player-profile` edge function | Working | Runs independently |
+| `scout-agent-loop` film updates | Working | Updates profiles, but not used in predictions |
+| `FilmProfileUpload` component | Working | Updates profiles via direct film analysis |
+| `category-props-analyzer` | Working | Does NOT load player profiles |
+| `useDeepSweetSpots` hook | Working | Does NOT load player profiles |
 
 ---
 
-## Files to Create
+## What Needs to Be Connected
 
-| File | Purpose |
-|------|---------|
-| `supabase/functions/extract-youtube-frames/index.ts` | YouTube → frames extraction |
-| `src/components/scout/YouTubeLinkInput.tsx` | URL input component |
-| `src/components/scout/FilmProfileUpload.tsx` | Combined upload/YouTube UI |
+### 1. Category Props Analyzer Integration
 
-## Files to Modify
+The `category-props-analyzer` edge function calculates `calculateTrueProjection()` for each player. We need to add profile-based adjustments:
+
+```text
+CURRENT FLOW:
+  L10 Median + Matchup H2H + Pace Factor → Projected Value
+
+NEW FLOW (with profiles):
+  L10 Median + Matchup H2H + Pace Factor + PROFILE ADJUSTMENTS → Projected Value
+
+PROFILE ADJUSTMENTS:
+  • 3PT Peak Quarter Match: +0.3 to +0.5 (if prop aligns with peak quarter)
+  • Best Matchup History: +0.5 (from profile.best_matchups)
+  • Worst Matchup History: -0.5 (from profile.worst_matchups)
+  • Fatigue Tendency: -0.3 (if film shows fatigue patterns)
+  • Blowout Minutes Reduction: Flag warning if blowout expected
+  • Film Confidence Boost: +5% confidence if film_sample_count >= 3
+```
+
+### 2. useDeepSweetSpots Hook Integration
+
+The frontend hook that calculates `DeepSweetSpot` objects needs to:
+1. Load player profiles for all players with today's props
+2. Apply profile-based score adjustments
+3. Display profile insights on cards
+
+### 3. Sweet Spot Card Profile Display
+
+Add a compact profile indicator to `SweetSpotCard.tsx`:
+- Peak quarter badge (e.g., "Peak Q4" for 3PT props)
+- Matchup advantage/disadvantage indicator
+- Film confidence badge (if film samples exist)
+
+---
+
+## Implementation Files
+
+### Files to Modify
 
 | File | Changes |
 |------|---------|
-| `supabase/config.toml` | Register new edge function |
-| `src/pages/SweetSpots.tsx` | Add film profile upload section |
-| `src/components/scout/index.ts` | Export new components |
+| `supabase/functions/category-props-analyzer/index.ts` | Load profiles, apply adjustments to `calculateTrueProjection()` |
+| `src/hooks/useDeepSweetSpots.ts` | Fetch profiles, apply score adjustments |
+| `src/components/sweetspots/SweetSpotCard.tsx` | Add profile insights section |
+| `src/types/sweetSpot.ts` | Add profile data to `DeepSweetSpot` interface |
 
 ---
 
-## Error Handling
+## Technical Details
 
-| Scenario | User Message |
-|----------|--------------|
-| Invalid URL | "Please enter a valid YouTube, Twitter, or TikTok link" |
-| Video too long (>10 min) | "Video is too long. Try a clip under 10 minutes" |
-| Private/restricted video | "This video is not accessible. Try a public video" |
-| API rate limit | "Too many requests. Please try again in a few minutes" |
-| Extraction failed | "Could not extract frames. Try a different video" |
+### A. Category Props Analyzer Changes
+
+**1. Add profile loading function:**
+```typescript
+let playerProfileCache: Map<string, PlayerProfile> = new Map();
+
+async function loadPlayerProfiles(supabase: any): Promise<void> {
+  const { data } = await supabase
+    .from('player_behavior_profiles')
+    .select('*')
+    .gte('games_analyzed', 5); // Only profiles with enough data
+  
+  playerProfileCache.clear();
+  for (const p of (data || [])) {
+    playerProfileCache.set(p.player_name?.toLowerCase().trim(), p);
+  }
+}
+```
+
+**2. Modify `calculateTrueProjection()` to apply profile adjustments:**
+```typescript
+// After pace adjustment, add profile adjustments
+let profileAdj = 0;
+const profile = playerProfileCache.get(playerName.toLowerCase().trim());
+
+if (profile) {
+  // A. 3PT Peak Quarter boost (for threes props)
+  if (propType === 'threes' && profile.three_pt_peak_quarters) {
+    const peakQ = Object.entries(profile.three_pt_peak_quarters)
+      .reduce((max, [q, pct]) => pct > max.pct ? {q, pct} : max, {q: 'q1', pct: 0});
+    if (peakQ.pct > 30) {
+      profileAdj += 0.4; // Player has a distinct peak quarter
+    }
+  }
+  
+  // B. Best/Worst matchup from profile
+  const oppNorm = normalizeOpponentName(opponent);
+  const bestMatch = profile.best_matchups?.find(m => m.opponent.includes(oppNorm));
+  const worstMatch = profile.worst_matchups?.find(m => m.opponent.includes(oppNorm));
+  
+  if (bestMatch) profileAdj += 0.5;
+  if (worstMatch) profileAdj -= 0.5;
+  
+  // C. Fatigue tendency (from film)
+  if (profile.fatigue_tendency?.toLowerCase().includes('fatigue')) {
+    profileAdj -= 0.3;
+  }
+  
+  // D. Blowout minutes reduction warning
+  if (profile.blowout_minutes_reduction && profile.blowout_minutes_reduction > 5) {
+    // Add risk flag instead of penalizing projection
+    // projectionSource += '+BLOWOUT_RISK';
+  }
+}
+
+const projectedValue = l10Median + matchupAdj + paceAdj + profileAdj;
+```
+
+**3. Apply confidence boost for film-analyzed players:**
+```typescript
+// In confidence calculation
+if (profile?.film_sample_count >= 3) {
+  confidenceBonus += 0.05; // +5% confidence for film-verified players
+}
+```
+
+### B. useDeepSweetSpots Changes
+
+**1. Fetch profiles alongside other data:**
+```typescript
+// In queryFn, add profile fetch
+const { data: profilesData } = await supabase
+  .from('player_behavior_profiles')
+  .select('player_name, three_pt_peak_quarters, best_matchups, worst_matchups, fatigue_tendency, film_sample_count, profile_confidence')
+  .in('player_name', playerNames);
+
+const profilesByPlayer = new Map();
+for (const p of profilesData || []) {
+  profilesByPlayer.set(p.player_name, p);
+}
+```
+
+**2. Add profile data to DeepSweetSpot:**
+```typescript
+// When building each spot
+const profile = profilesByPlayer.get(prop.player_name);
+
+// Apply profile boost to sweetSpotScore
+let profileBoost = 0;
+if (profile) {
+  if (profile.film_sample_count >= 3) profileBoost += 5;
+  if (profile.profile_confidence >= 70) profileBoost += 3;
+}
+
+const spot: DeepSweetSpot = {
+  // ... existing fields
+  sweetSpotScore: calculateSweetSpotScore(...) + profileBoost,
+  profileData: profile ? {
+    peakQuarters: profile.three_pt_peak_quarters,
+    hasFatigueTendency: profile.fatigue_tendency?.includes('fatigue'),
+    filmSamples: profile.film_sample_count || 0,
+    profileConfidence: profile.profile_confidence || 0,
+  } : undefined,
+};
+```
+
+### C. Type Updates
+
+**Add to `DeepSweetSpot` interface:**
+```typescript
+export interface DeepSweetSpot {
+  // ... existing fields
+  
+  // Profile-based insights (optional)
+  profileData?: {
+    peakQuarters: { q1: number; q2: number; q3: number; q4: number } | null;
+    hasFatigueTendency: boolean;
+    filmSamples: number;
+    profileConfidence: number;
+    matchupAdvantage?: 'favorable' | 'unfavorable' | null;
+  };
+}
+```
+
+### D. Sweet Spot Card UI
+
+**Add profile badges:**
+```tsx
+{/* Profile Insights Row */}
+{spot.profileData && (spot.profileData.filmSamples > 0 || spot.profileData.peakQuarters) && (
+  <div className="flex items-center gap-2 text-xs">
+    {spot.profileData.filmSamples > 0 && (
+      <Badge variant="outline" className="text-purple-400 border-purple-500/30">
+        <Film className="w-3 h-3 mr-1" />
+        {spot.profileData.filmSamples} film
+      </Badge>
+    )}
+    
+    {spot.propType === 'threes' && spot.profileData.peakQuarters && (
+      <Badge variant="outline" className="text-blue-400 border-blue-500/30">
+        Peak Q{getPeakQuarter(spot.profileData.peakQuarters)}
+      </Badge>
+    )}
+    
+    {spot.profileData.hasFatigueTendency && (
+      <Badge variant="outline" className="text-yellow-400 border-yellow-500/30">
+        <AlertTriangle className="w-3 h-3 mr-1" />
+        Fatigue risk
+      </Badge>
+    )}
+  </div>
+)}
+```
 
 ---
 
-## Cobalt API Alternative: Self-Hosted Option
-
-If Cobalt API has reliability issues, can self-host using:
-
-1. **Cloudflare Worker** with yt-dlp WASM build
-2. **Dedicated microservice** running yt-dlp + FFmpeg
-3. **RapidAPI** YouTube downloader endpoints (paid but reliable)
-
-For MVP, start with Cobalt API and add fallbacks as needed.
-
----
-
-## Data Flow Diagram
+## Data Flow After Integration
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                     YOUTUBE → PLAYER PROFILE FLOW                        │
+│                     COMPLETE PROFILE → SWEET SPOTS FLOW                 │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                          │
-│  ┌──────────────────┐                                                    │
-│  │ User pastes      │                                                    │
-│  │ YouTube URL      │                                                    │
-│  └────────┬─────────┘                                                    │
-│           │                                                              │
-│           ▼                                                              │
-│  ┌──────────────────┐    ┌─────────────────────┐                        │
-│  │ YouTubeLinkInput │───→│ extract-youtube-    │                        │
-│  │ Component        │    │ frames (Edge Fn)    │                        │
-│  └──────────────────┘    └──────────┬──────────┘                        │
-│                                     │                                    │
-│                                     │ 1. Call Cobalt API                 │
-│                                     │ 2. Get video stream                │
-│                                     │ 3. Extract frames                  │
-│                                     │ 4. Encode as base64                │
-│                                     ▼                                    │
-│                          ┌──────────────────────┐                        │
-│                          │ [base64 frames]      │                        │
-│                          └──────────┬───────────┘                        │
-│                                     │                                    │
-│                                     ▼                                    │
-│  ┌──────────────────┐    ┌─────────────────────┐                        │
-│  │ FilmProfileUpload│───→│ update-player-      │                        │
-│  │ + Player Select  │    │ profile-from-film   │                        │
-│  └──────────────────┘    └──────────┬──────────┘                        │
-│                                     │                                    │
-│                                     │ AI vision analysis                 │
-│                                     ▼                                    │
-│                          ┌──────────────────────┐                        │
-│                          │ player_behavior_     │                        │
-│                          │ profiles (DB)        │                        │
-│                          └──────────────────────┘                        │
-│                                                                          │
+│  ┌──────────────────┐    ┌─────────────────────────┐                    │
+│  │ YouTube/Film     │───→│ update-player-profile   │                    │
+│  │ Upload           │    │ -from-film (vision AI)  │                    │
+│  └──────────────────┘    └───────────┬─────────────┘                    │
+│                                      │                                   │
+│                                      ▼                                   │
+│  ┌──────────────────┐         ┌─────────────────────┐                   │
+│  │ Game Logs +      │────────→│ player_behavior_    │                   │
+│  │ Zone Stats       │         │ profiles (DB)       │                   │
+│  └──────────────────┘         └───────────┬─────────┘                   │
+│                                           │                              │
+│            ┌──────────────────────────────┼──────────────────────────┐  │
+│            │                              ▼                          │  │
+│            │                   ┌──────────────────────┐              │  │
+│            │                   │ category-props-      │              │  │
+│            │                   │ analyzer             │              │  │
+│            │                   │ (loads profiles)     │              │  │
+│            │                   └──────────┬───────────┘              │  │
+│            │                              │                          │  │
+│            │                              ▼                          │  │
+│            │                   ┌──────────────────────┐              │  │
+│            │                   │ category_sweet_spots │              │  │
+│            │                   │ (with profile adj)   │              │  │
+│            │                   └──────────┬───────────┘              │  │
+│            │                              │                          │  │
+│            ▼                              ▼                          │  │
+│  ┌──────────────────┐         ┌──────────────────────┐              │  │
+│  │ useDeepSweetSpots│────────→│ SweetSpotCard.tsx    │              │  │
+│  │ (loads profiles) │         │ (displays badges)    │              │  │
+│  └──────────────────┘         └──────────────────────┘              │  │
+│                                                                      │  │
+│            ◄─────────── PROFILE DATA ENRICHES ───────────►          │  │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
+## Profile Weight Matrix
+
+| Profile Factor | Condition | Adjustment | Applied To |
+|----------------|-----------|------------|------------|
+| 3PT Peak Quarter | peakQ.pct > 30% | +0.4 projection | threes props |
+| Best Matchup (profile) | opponent in best_matchups | +0.5 projection | all props |
+| Worst Matchup (profile) | opponent in worst_matchups | -0.5 projection | all props |
+| Fatigue Tendency | film shows fatigue | -0.3 projection | all props |
+| Film Confidence | film_sample_count >= 3 | +5% confidence | all props |
+| High Profile Confidence | profile_confidence >= 70 | +3 score points | all props |
+| Blowout Risk | blowout_minutes_reduction > 5 | Add risk flag | minutes-sensitive |
+
+---
+
 ## Implementation Priority
 
-1. **Edge Function**: `extract-youtube-frames` (core functionality)
-2. **Component**: `YouTubeLinkInput.tsx` (URL input + validation)
-3. **Component**: `FilmProfileUpload.tsx` (tabbed upload + YouTube UI)
-4. **Integration**: Connect to existing profile update pipeline
-5. **Page Integration**: Add to Sweet Spots and Scout pages
+1. **Edge Function**: Modify `category-props-analyzer` to load and apply profiles (highest impact)
+2. **Hook**: Update `useDeepSweetSpots` to fetch and attach profile data
+3. **Types**: Add `profileData` to `DeepSweetSpot` interface
+4. **UI**: Add profile badges to `SweetSpotCard`
+5. **Testing**: Verify profile adjustments are reflected in scores
 
 ---
 
 ## Expected Outcome
 
 After implementation:
-- Users can paste a YouTube link of NBA highlights
-- System extracts frames and feeds them to AI vision analysis
-- Player behavior profiles are updated with film-derived insights
-- No need to manually record and upload video files
-- Works with YouTube, Twitter/X, and TikTok game clips
-
+- Film-analyzed players get confidence boosts in Sweet Spots
+- Peak 3PT quarters inform threes prop recommendations
+- Profile-based matchup history supplements H2H data
+- Fatigue tendency from film reduces projections appropriately
+- UI shows profile indicators so users understand why a pick is recommended
+- The system "learns" player behaviors that don't appear in box scores
