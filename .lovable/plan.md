@@ -1,208 +1,178 @@
 
 
-# Enhanced Film Analysis: Player Tracking with Jersey, Rotation, Shot Chart & Defensive Matchups
+# Full Video Frame Extraction Enhancement
 
-## Overview
+## Problem Summary
 
-Reconfigure the Film Profile Upload to perform detailed player tracking when analyzing video. When users select players, the AI vision system will watch the footage and extract:
+The current system **does not analyze the whole video**:
 
-1. **Jersey identification & placement** - Track player positions on court
-2. **Rotation patterns** - Stints, rest times, substitution behavior  
-3. **Shot chart data** - Shooting locations, attempts, makes
-4. **Defensive matchups** - Who they guard, positioning
+| Source | Current Behavior | Problem |
+|--------|------------------|---------|
+| **Local Upload** | Max 30 frames, 1 sec interval | 2-minute video = only 30 frames (covers 30 seconds) |
+| **YouTube Link** | Only fetches 8 static thumbnails | Not actual video content - just preview images |
+| **Twitter/TikTok** | Returns stream URL but doesn't extract | No frames extracted at all |
 
-This enriches `player_behavior_profiles` with actionable film-derived insights that feed into Sweet Spots predictions.
+For accurate player tracking (jersey ID, rotations, shot chart, defensive matchups), we need **dense frame coverage across the entire video duration**.
 
 ---
 
-## What Changes
+## Solution: Client-Side Full Video Extraction
 
-### Current Flow
-```text
-YouTube Link → Extract Frames → Generic Fatigue/Body Language Analysis → Update Profile
-```
+Since edge functions can't run FFmpeg, we must extract frames **client-side** using the browser's video element and canvas. This works for:
+- Direct file uploads (already partially working)
+- YouTube/Twitter/TikTok via the stream URL returned by `extract-youtube-frames`
 
 ### New Flow
+
 ```text
-YouTube Link → Extract Frames → ENHANCED TRACKING ANALYSIS:
-  ├─ Jersey ID & Court Position Mapping
-  ├─ Shot Attempts & Locations (zone classification)
-  ├─ Rotation/Stint Patterns
-  └─ Defensive Assignment Detection
-                ↓
-        Update Profile with Structured Data
+CURRENT:
+  YouTube → Edge Function → 8 static thumbnails → AI
+
+NEW:
+  YouTube → Edge Function → Get stream URL
+                              ↓
+          Client downloads video stream
+                              ↓
+          Client extracts frames every 2-3 seconds
+                              ↓
+          60+ frames for full coverage → AI
 ```
 
 ---
 
 ## Technical Implementation
 
-### 1. Enhanced AI Prompt for `analyze-game-footage`
+### 1. Increase Frame Extraction Limits
 
-Update the edge function to request structured tracking data for selected players:
+**File: `src/lib/video-frame-extractor.ts`**
 
-**New Analysis Categories:**
-| Category | Data Captured | Profile Field |
-|----------|---------------|---------------|
-| **Jersey Tracking** | Jersey #, frames detected, court zone | `body_language_notes` (structured) |
-| **Rotation** | Stint count, bench time, sub patterns | `avg_first_rest_time`, `avg_second_stint_start` |
-| **Shot Chart** | Zone (restricted, paint, mid, corner3, above3), attempts, makes | `scoring_zone_preferences` |
-| **Defensive Matchup** | Opponent guarded, closeout quality | `best_matchups`/`worst_matchups` |
-
-**New AI Prompt Structure:**
 ```typescript
-const trackingPrompt = `
-For EACH selected player (${selectedPlayerNames.join(', ')}), provide detailed tracking:
+// OLD
+const FRAME_INTERVAL_SECONDS = 1;
+const MAX_FRAMES = 30;
 
-1. JERSEY & PLACEMENT
-   - Jersey number confirmed
-   - Court zones observed: paint, perimeter, corner, transition
-   - Frames where player is visible
-
-2. SHOT ATTEMPTS (if visible)
-   - Zone: restricted_area | paint | mid_range | corner_3 | above_break_3
-   - Result: made | missed | blocked
-   - Shot type: catch_shoot | pull_up | post_up | transition
-
-3. ROTATION SIGNALS
-   - On/off court patterns
-   - Bench time indicators
-   - Fatigue upon re-entry
-
-4. DEFENSIVE MATCHUPS
-   - Opponent player guarded (if identifiable)
-   - Closeout quality: 1-10
-   - Help rotation timing: quick | average | slow
-
-Return JSON with this structure:
-{
-  "playerTracking": [
-    {
-      "playerName": "Jalen Brunson",
-      "jerseyNumber": "11",
-      "framesDetected": [0, 3, 5, 8, 12],
-      "courtZones": {
-        "paint": 4,
-        "perimeter": 6,
-        "corner": 2,
-        "transition": 3
-      },
-      "shotAttempts": [
-        { "zone": "mid_range", "result": "made", "type": "pull_up" },
-        { "zone": "paint", "result": "missed", "type": "post_up" }
-      ],
-      "rotationSignals": {
-        "stintsObserved": 1,
-        "benchTimeVisible": false,
-        "fatigueOnReentry": "none"
-      },
-      "defensiveMatchups": [
-        { "opponent": "Cade Cunningham", "closeoutQuality": 7, "helpTiming": "quick" }
-      ],
-      "movementScore": 8,
-      "fatigueIndicators": ["none"],
-      "confidence": "high"
-    }
-  ]
-}
-`;
+// NEW - Extract frames throughout entire video
+const DEFAULT_FRAME_INTERVAL = 2; // 1 frame every 2 seconds
+const MAX_FRAMES = 60; // Up to 60 frames per video
+const MIN_FRAMES_PER_MINUTE = 20; // At least 20 frames per minute of video
 ```
 
-### 2. Update `FilmProfileUpload.tsx` Profile Update Logic
+Update `extractFramesFromVideo` to dynamically calculate interval:
+```typescript
+// Calculate frame interval based on video duration
+// Goal: Extract frames evenly across entire video
+const targetFrameCount = Math.min(
+  MAX_FRAMES,
+  Math.max(20, Math.ceil(duration * MIN_FRAMES_PER_MINUTE / 60))
+);
+const frameInterval = duration / targetFrameCount;
+```
 
-When the AI returns tracking data, map it to profile fields:
+### 2. Add Stream URL Video Extraction
+
+**File: `src/lib/video-frame-extractor.ts`**
+
+New function to extract frames from a remote video URL (the stream URL returned by edge function):
 
 ```typescript
-// Process enhanced tracking data for each player
-for (const player of selectedPlayers) {
-  const tracking = findPlayerTracking(analysisData.playerTracking, player.player_name);
-  
-  if (!tracking) continue;
-  
-  // A. Build shot chart zone preferences
-  const zonePreferences: Record<string, number> = {};
-  if (tracking.shotAttempts?.length > 0) {
-    tracking.shotAttempts.forEach((shot: any) => {
-      zonePreferences[shot.zone] = (zonePreferences[shot.zone] || 0) + 1;
-    });
-  }
-  
-  // B. Build rotation timing data
-  let avgFirstRest = existingProfile?.avg_first_rest_time;
-  let avgSecondStint = existingProfile?.avg_second_stint_start;
-  if (tracking.rotationSignals?.benchTimeVisible) {
-    // Append observation to rotation notes
-  }
-  
-  // C. Build defensive matchup insights
-  const defensiveNotes = tracking.defensiveMatchups?.map((m: any) => 
-    `vs ${m.opponent}: closeout ${m.closeoutQuality}/10, help ${m.helpTiming}`
-  ).join('; ');
-  
-  // D. Build court zone distribution notes
-  const zoneDistribution = Object.entries(tracking.courtZones || {})
-    .map(([zone, count]) => `${zone}: ${count}`)
-    .join(', ');
-  
-  // Upsert profile with enhanced data
-  await supabase.from('player_behavior_profiles').upsert({
-    player_name: player.player_name,
-    team: player.team_name,
-    // Standard fields
-    fatigue_tendency: tracking.fatigueIndicators?.join(', ') || null,
-    body_language_notes: `[${date}] Zones: ${zoneDistribution}. Defense: ${defensiveNotes}`,
-    film_sample_count: existingProfile.film_sample_count + 1,
-    // Enhanced fields
-    scoring_zone_preferences: mergeZonePreferences(
-      existingProfile?.scoring_zone_preferences, 
-      zonePreferences
-    ),
-    // ... other fields
-  }, { onConflict: 'player_name' });
+export async function extractFramesFromUrl(
+  videoUrl: string,
+  onProgress?: (progress: ExtractionProgress) => void
+): Promise<ExtractionResult> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    video.crossOrigin = 'anonymous';
+    video.muted = true;
+    video.playsInline = true;
+    
+    // ... same canvas/extraction logic as file upload
+    // but using URL directly instead of createObjectURL
+    
+    video.src = videoUrl;
+    video.load();
+  });
 }
 ```
 
-### 3. New Database Fields (Optional Future Enhancement)
+### 3. Update FilmProfileUpload to Use Stream URL
 
-The current schema already has JSONB fields that can store this data:
-- `scoring_zone_preferences` → Shot chart zone data
-- `body_language_notes` → Defensive matchup observations
-- `avg_first_rest_time` / `avg_second_stint_start` → Rotation patterns
+**File: `src/components/scout/FilmProfileUpload.tsx`**
 
-No schema changes required - we'll use existing JSONB fields more effectively.
+When YouTube/social link is provided:
+1. Call `extract-youtube-frames` to get stream URL
+2. Use new `extractFramesFromUrl()` to extract actual frames from the video
+3. Fall back to thumbnails only if stream extraction fails
 
-### 4. Update Analysis Results Display
-
-Show the enhanced tracking data in the success state:
-
-```tsx
-{/* Enhanced Tracking Results */}
-{profile.courtZones && (
-  <div className="text-xs text-muted-foreground">
-    <span className="text-blue-400">Court Zones:</span> {
-      Object.entries(profile.courtZones)
-        .map(([z, c]) => `${z}: ${c}`)
-        .join(' | ')
+```typescript
+const handleYouTubeFrames = useCallback(async (
+  thumbnails: string[], 
+  videoInfo: VideoInfo,
+  streamUrl?: string
+) => {
+  // If we have a stream URL, extract real frames from the video
+  if (streamUrl) {
+    try {
+      setIsProcessingYouTube(true);
+      setExtractionProgress({
+        stage: 'extracting',
+        message: 'Extracting frames from video...',
+      });
+      
+      const result = await extractFramesFromUrl(streamUrl, setExtractionProgress);
+      const uniqueFrames = deduplicateFrames(result.frames);
+      
+      setExtractedFrames(uniqueFrames.map(f => f.base64));
+      setPreviewFrames(uniqueFrames.slice(0, 4).map(f => f.base64));
+      
+      toast({
+        title: "Full Video Analyzed",
+        description: `Extracted ${uniqueFrames.length} frames from ${videoInfo.platform}`,
+      });
+      return;
+    } catch (err) {
+      console.warn('Stream extraction failed, using thumbnails');
+    } finally {
+      setIsProcessingYouTube(false);
     }
-  </div>
-)}
-
-{profile.shotAttempts?.length > 0 && (
-  <div className="text-xs text-muted-foreground">
-    <span className="text-green-400">Shots:</span> {
-      profile.shotAttempts.map(s => `${s.zone} ${s.result}`).join(', ')
-    }
-  </div>
-)}
-
-{profile.defensiveMatchups?.length > 0 && (
-  <div className="text-xs text-muted-foreground">
-    <span className="text-orange-400">Defense:</span> {
-      profile.defensiveMatchups.map(m => `vs ${m.opponent}`).join(', ')
-    }
-  </div>
-)}
+  }
+  
+  // Fallback to thumbnails
+  setExtractedFrames(thumbnails);
+  setPreviewFrames(thumbnails.slice(0, 4));
+}, [toast]);
 ```
+
+### 4. Update YouTubeLinkInput Component
+
+Pass `streamUrl` to the callback so `FilmProfileUpload` can use it:
+
+```typescript
+// In YouTubeLinkInput.tsx
+onFramesExtracted?.(
+  data.frames || [],
+  { title: data.videoInfo?.title, platform: data.platform },
+  data.streamUrl // NEW: Pass stream URL for client-side extraction
+);
+```
+
+---
+
+## Frame Distribution Strategy
+
+For accurate player tracking, frames should be distributed evenly across the entire video:
+
+| Video Duration | Target Frames | Interval | Coverage |
+|----------------|---------------|----------|----------|
+| 30 seconds | 15 frames | 2s | Full |
+| 1 minute | 30 frames | 2s | Full |
+| 2 minutes | 60 frames | 2s | Full |
+| 5 minutes | 60 frames | 5s | Full (capped) |
+
+This ensures:
+- **Rotations are captured** - Player stints, bench time visible
+- **Shot attempts tracked** - Multiple frames around shot clock
+- **Defensive matchups** - See who guards who across possessions
+- **Fatigue signals** - Track movement quality over time
 
 ---
 
@@ -210,69 +180,31 @@ Show the enhanced tracking data in the success state:
 
 | File | Changes |
 |------|---------|
-| `supabase/functions/analyze-game-footage/index.ts` | Add enhanced tracking prompt for selected players, new JSON response structure |
-| `src/components/scout/FilmProfileUpload.tsx` | Pass selected player names to edge function, parse tracking response, update profiles with zone/rotation/matchup data |
-
----
-
-## AI Prompt Changes (analyze-game-footage)
-
-**Before:**
-```
-Analyze these frames for fatigue, body language, shot mechanics...
-```
-
-**After:**
-```
-SELECTED PLAYERS TO TRACK: [Jalen Brunson, Cade Cunningham]
-
-For each selected player, provide DETAILED TRACKING:
-
-1. JERSEY & COURT POSITION
-   - Confirm jersey number
-   - Track court zones: restricted_area, paint, mid_range, corner, above_break_3
-   - Note frames where player appears
-
-2. SHOT ATTEMPTS
-   - Zone location (5-zone model matching player_zone_stats)
-   - Result: made/missed/blocked
-   - Shot type: catch_shoot, pull_up, post_up, transition
-
-3. ROTATION PATTERNS
-   - Visible stint changes
-   - Bench appearances
-   - Fatigue level when returning to court
-
-4. DEFENSIVE ASSIGNMENTS
-   - Who is the player guarding
-   - Closeout quality (1-10)
-   - Help rotation timing
-
-Return structured JSON with playerTracking array...
-```
-
----
-
-## Integration with Sweet Spots
-
-After these enhancements, the `category-props-analyzer` can leverage:
-
-| Profile Field | Sweet Spots Usage |
-|---------------|-------------------|
-| `scoring_zone_preferences` | Boost 3PT props if player shows high corner/above-break frequency |
-| Defensive matchup notes | Adjust projections based on defensive difficulty |
-| Rotation signals | Factor into minutes uncertainty |
-
-The existing integration (Phase 3) already applies adjustments based on `scoring_zone_preferences` and other profile fields.
+| `src/lib/video-frame-extractor.ts` | Increase MAX_FRAMES, add dynamic interval calculation, add `extractFramesFromUrl()` function |
+| `src/components/scout/FilmProfileUpload.tsx` | Use stream URL for full extraction, update `handleYouTubeFrames` |
+| `src/components/scout/YouTubeLinkInput.tsx` | Pass stream URL to callback |
 
 ---
 
 ## Expected Outcome
 
 After implementation:
-- Users select 1-5 players before analyzing video
-- AI tracks each player's jersey, position, shots, rotations, and defensive matchups
-- Profile updates include structured shot chart zones and matchup data
-- Sweet Spots uses this data to refine projections (e.g., "Player X shoots 40% from corner 3 based on film analysis")
-- Results display shows breakdown of what was tracked per player
+- 2-minute video = **60 frames** extracted (vs current 8 thumbnails)
+- Frames are evenly distributed across entire video duration
+- Player tracking has enough data to detect:
+  - Jersey movements across the court over time
+  - Rotation patterns (on/off court)
+  - Multiple shot attempts
+  - Defensive assignment changes
+- AI receives comprehensive visual data for accurate profiling
+
+---
+
+## Limitations & Notes
+
+- **CORS**: Stream URLs from Cobalt may have CORS restrictions - we'll need to test
+- **Video size**: Large videos (5+ min) will be capped at 60 frames to avoid memory issues
+- **Mobile**: Frame extraction is memory-intensive; we'll maintain 60-frame limit
+- **Fallback**: If stream extraction fails, system falls back to thumbnails
+
 
