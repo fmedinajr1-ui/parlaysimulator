@@ -200,6 +200,16 @@ export interface QuarterTransitionAlert {
   urgency: 'none' | 'low' | 'medium' | 'high';
 }
 
+// v8.0: Profile-based insights derived from player behavior profiles
+export interface ProfileData {
+  peakQuarters: { q1: number; q2: number; q3: number; q4: number } | null;
+  hasFatigueTendency: boolean;
+  filmSamples: number;
+  profileConfidence: number;
+  matchupAdvantage: 'favorable' | 'unfavorable' | null;
+  profileFlags: string[];
+}
+
 export interface DeepSweetSpot {
   id: string;
   playerName: string;
@@ -249,6 +259,9 @@ export interface DeepSweetSpot {
   
   // Live data (optional - populated when game is in progress)
   liveData?: LivePropData;
+  
+  // v8.0: Profile-based insights (optional - populated if profile exists)
+  profileData?: ProfileData;
 }
 
 export interface SweetSpotStats {

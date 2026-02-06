@@ -13,7 +13,8 @@ import type {
   H2HData,
   JuiceAnalysis,
   SweetSpotStats,
-  PickSide
+  PickSide,
+  ProfileData
 } from "@/types/sweetSpot";
 import { PROP_TYPE_CONFIG, QUALITY_THRESHOLDS, JUICE_THRESHOLDS } from "@/types/sweetSpot";
 
@@ -47,6 +48,18 @@ interface MatchupHistory {
   min_stat: number | null;
   max_stat: number | null;
   games_played: number | null;
+}
+
+// v8.0: Player behavior profile interface
+interface PlayerProfile {
+  player_name: string;
+  three_pt_peak_quarters: { q1: number; q2: number; q3: number; q4: number } | null;
+  best_matchups: { opponent: string; stat: string; avg_vs: number; games: number }[] | null;
+  worst_matchups: { opponent: string; stat: string; avg_vs: number; games: number }[] | null;
+  fatigue_tendency: string | null;
+  blowout_minutes_reduction: number | null;
+  film_sample_count: number | null;
+  profile_confidence: number | null;
 }
 
 // Map unified_props prop_type to our PropType
@@ -487,6 +500,33 @@ export function useDeepSweetSpots() {
         matchupsByPlayerOpponent.set(key, m);
       }
       
+      // v8.0: Fetch player behavior profiles
+      const { data: profilesData, error: profilesError } = await supabase
+        .from('player_behavior_profiles')
+        .select('player_name, three_pt_peak_quarters, best_matchups, worst_matchups, fatigue_tendency, blowout_minutes_reduction, film_sample_count, profile_confidence')
+        .in('player_name', playerNames);
+      
+      if (profilesError) {
+        console.error('[useDeepSweetSpots] Profiles fetch error:', profilesError);
+      }
+      
+      // Build profile lookup map
+      const profilesByPlayer = new Map<string, PlayerProfile>();
+      for (const p of (profilesData || [])) {
+        profilesByPlayer.set(p.player_name, {
+          player_name: p.player_name,
+          three_pt_peak_quarters: p.three_pt_peak_quarters as PlayerProfile['three_pt_peak_quarters'],
+          best_matchups: p.best_matchups as PlayerProfile['best_matchups'],
+          worst_matchups: p.worst_matchups as PlayerProfile['worst_matchups'],
+          fatigue_tendency: p.fatigue_tendency,
+          blowout_minutes_reduction: p.blowout_minutes_reduction,
+          film_sample_count: p.film_sample_count,
+          profile_confidence: p.profile_confidence,
+        });
+      }
+      
+      console.log(`[useDeepSweetSpots] v8.0 Loaded ${profilesByPlayer.size} player profiles`);
+      
       // Process each prop into a DeepSweetSpot
       const spots: DeepSweetSpot[] = [];
       
@@ -582,8 +622,72 @@ export function useDeepSweetSpots() {
         
         const h2hBoost = calculateH2HBoost(h2h, line, optimalSide);
         
-        // Calculate final score and tier
-        const sweetSpotScore = calculateSweetSpotScore(
+        // v8.0: Build profile data and calculate profile boost
+        const profile = profilesByPlayer.get(prop.player_name);
+        let profileBoost = 0;
+        let profileData: ProfileData | undefined;
+        
+        if (profile) {
+          const profileFlags: string[] = [];
+          
+          // Film confidence boost: +5 score points for 3+ film samples
+          if ((profile.film_sample_count || 0) >= 3) {
+            profileBoost += 5;
+            profileFlags.push('FILM_VERIFIED');
+          }
+          
+          // High profile confidence boost: +3 score points for 70%+ confidence
+          if ((profile.profile_confidence || 0) >= 70) {
+            profileBoost += 3;
+            profileFlags.push('HIGH_CONFIDENCE');
+          }
+          
+          // Peak quarter boost for 3PT props
+          if (prop.mappedType === 'threes' && profile.three_pt_peak_quarters) {
+            const peakQ = Object.entries(profile.three_pt_peak_quarters)
+              .reduce((max, [q, pct]) => (pct as number) > max.pct ? { q, pct: pct as number } : max, { q: 'q1', pct: 0 });
+            if (peakQ.pct > 30) {
+              profileBoost += 2;
+              profileFlags.push(`PEAK_Q${peakQ.q.replace('q', '')}`);
+            }
+          }
+          
+          // Fatigue tendency penalty
+          const hasFatigueTendency = profile.fatigue_tendency?.toLowerCase().includes('fatigue') || false;
+          if (hasFatigueTendency) {
+            profileFlags.push('FATIGUE_RISK');
+          }
+          
+          // Check matchup advantage from profile
+          let matchupAdvantage: 'favorable' | 'unfavorable' | null = null;
+          if (profile.best_matchups?.some(m => opponentName.toLowerCase().includes(m.opponent?.toLowerCase() || ''))) {
+            matchupAdvantage = 'favorable';
+            profileFlags.push('BEST_MATCHUP');
+            profileBoost += 2;
+          }
+          if (profile.worst_matchups?.some(m => opponentName.toLowerCase().includes(m.opponent?.toLowerCase() || ''))) {
+            matchupAdvantage = 'unfavorable';
+            profileFlags.push('WORST_MATCHUP');
+            profileBoost -= 2;
+          }
+          
+          // Blowout risk flag
+          if ((profile.blowout_minutes_reduction || 0) > 5) {
+            profileFlags.push('BLOWOUT_RISK');
+          }
+          
+          profileData = {
+            peakQuarters: profile.three_pt_peak_quarters,
+            hasFatigueTendency,
+            filmSamples: profile.film_sample_count || 0,
+            profileConfidence: profile.profile_confidence || 0,
+            matchupAdvantage,
+            profileFlags,
+          };
+        }
+        
+        // Calculate final score and tier with profile boost
+        const baseScore = calculateSweetSpotScore(
           floorProtection,
           edge,
           hitRateL10,
@@ -592,6 +696,7 @@ export function useDeepSweetSpots() {
           h2hBoost,
           line
         );
+        const sweetSpotScore = Math.min(100, baseScore + profileBoost);
         
         // Updated to include line and side parameters
         const qualityTier = classifyQualityTier(floorProtection, hitRateL10, edge, line, optimalSide);
@@ -627,6 +732,7 @@ export function useDeepSweetSpots() {
           sweetSpotScore,
           qualityTier,
           analysisTimestamp: new Date().toISOString(),
+          profileData,
         });
       }
       
