@@ -365,3 +365,6 @@ verify_jwt = false
 
 [functions.generate-matchup-scanner-picks]
 verify_jwt = false
+
+[functions.record-hedge-snapshot]
+verify_jwt = false
