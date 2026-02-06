@@ -320,13 +320,40 @@ function calculateCoeffOfVariation(values: number[]): number {
   return stdDev / avg;
 }
 
+// ============ STAR PLAYER BLOCK (v7.1) ============
+// Never recommend UNDER on star players - hedge system will handle live adjustments
+const STAR_PLAYERS = [
+  'luka doncic', 'anthony edwards', 'shai gilgeous-alexander',
+  'jayson tatum', 'giannis antetokounmpo', 'nikola jokic',
+  'ja morant', 'trae young', 'damian lillard', 'kyrie irving',
+  'donovan mitchell', 'kevin durant', 'lebron james',
+  'stephen curry', 'joel embiid', 'devin booker', 'jaylen brown',
+  'tyrese maxey', 'jimmy butler', 'anthony davis', 'jalen brunson',
+  'tyrese haliburton', 'lamelo ball', 'paolo banchero',
+  'zion williamson', 'victor wembanyama', 'karl-anthony towns',
+  'bam adebayo', 'domantas sabonis', 'de\'aaron fox',
+];
+
+function isStarPlayer(name: string): boolean {
+  const normalized = name.toLowerCase().trim();
+  return STAR_PLAYERS.some(star => normalized.includes(star));
+}
+
 // Determine optimal side (over vs under) with stronger floor/ceiling logic
 // v7.0: Added production metrics to block UNDER on starters
+// v7.1: Added playerName to block UNDER on star players
 function determineOptimalSide(
   l10Stats: L10Stats, 
   line: number, 
-  production?: ProductionMetrics
+  production?: ProductionMetrics,
+  playerName?: string
 ): PickSide {
+  // v7.1: STAR PLAYER BLOCK - Always OVER for stars
+  if (playerName && isStarPlayer(playerName)) {
+    console.log(`[DeepSweetSpots] ⭐ Star player ${playerName}: forcing OVER`);
+    return 'over';
+  }
+
   const overHitRate = l10Stats.gamesPlayed > 0 
     ? l10Stats.hitCount / l10Stats.gamesPlayed 
     : 0;
@@ -476,8 +503,8 @@ export function useDeepSweetSpots() {
         
         // Calculate L10 stats for OVER first to determine optimal side
         const l10StatsOver = calculateL10Stats(playerLogs, field, line, 'over');
-        // v7.0: Pass production metrics for starter protection
-        const optimalSide = determineOptimalSide(l10StatsOver, line, production);
+        // v7.1: Pass player name for star player block + production for starter protection
+        const optimalSide = determineOptimalSide(l10StatsOver, line, production, prop.player_name);
         
         // Recalculate with optimal side
         const l10Stats = optimalSide === 'over' 

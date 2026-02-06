@@ -104,6 +104,39 @@ interface CategoryConfig {
   disabled?: boolean; // v7.0: Disable underperforming categories
 }
 
+// ============ STAR PLAYER BLOCK (v7.1) ============
+// Never recommend UNDER on star players - hedge system will handle live adjustments
+const STAR_PLAYER_NAMES = [
+  // MVP Caliber
+  'luka doncic', 'luka dončić',
+  'anthony edwards',
+  'shai gilgeous-alexander', 'shai gilgeous alexander',
+  'jayson tatum', 'giannis antetokounmpo',
+  'nikola jokic', 'nikola jokić',
+  // All-NBA
+  'ja morant', 'trae young', 'damian lillard',
+  'kyrie irving', 'donovan mitchell',
+  'de\'aaron fox', 'deaaron fox',
+  'kevin durant', 'lebron james',
+  'stephen curry', 'joel embiid',
+  'devin booker',
+  // All-Star
+  'jaylen brown', 'tyrese maxey', 'jimmy butler',
+  'anthony davis', 'jalen brunson',
+  // Rising Stars
+  'tyrese haliburton', 'lamelo ball',
+  'paolo banchero', 'zion williamson', 'victor wembanyama',
+  // Elite Bigs
+  'karl-anthony towns', 'bam adebayo', 'domantas sabonis',
+];
+
+function isStarPlayer(playerName: string): boolean {
+  const normalized = playerName.toLowerCase().trim();
+  return STAR_PLAYER_NAMES.some(star => 
+    normalized.includes(star) || star.includes(normalized)
+  );
+}
+
 // ============ PROJECTION WEIGHTS (v5.0 - TIGHTENED) ============
 const PROJECTION_WEIGHTS = {
   L10_MEDIAN: 0.45,      // Reduced from 0.55 - L10 has high variance
@@ -796,6 +829,13 @@ serve(async (req) => {
           }
           blockedByArchetype++;
           continue; // Skip this player for this category
+        }
+
+        // v7.1: STAR PLAYER BLOCK - Never recommend UNDER on star players
+        // If they're slow during live game, hedge system will alert
+        if (config.side === 'under' && isStarPlayer(playerName)) {
+          console.log(`[Category Analyzer] ⭐ STAR BLOCKED: ${playerName} excluded from ${catKey} - use hedge system for live adjustments`);
+          continue;
         }
 
         // v7.0: STARTER PROTECTION - Block starters from points UNDER categories
