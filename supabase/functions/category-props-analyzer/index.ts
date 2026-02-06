@@ -101,6 +101,7 @@ interface CategoryConfig {
   supportsBounceBack?: boolean;
   requiredArchetypes?: string[];
   blockedArchetypes?: string[];
+  disabled?: boolean; // v7.0: Disable underperforming categories
 }
 
 // ============ PROJECTION WEIGHTS (v5.0 - TIGHTENED) ============
@@ -278,7 +279,9 @@ const CATEGORIES: Record<string, CategoryConfig> = {
     avgRange: { min: 12, max: 22 },  // Players averaging 12-22 points
     lines: [14.5, 15.5, 16.5, 17.5, 18.5, 19.5, 20.5],
     side: 'under',
-    minHitRate: 0.55  // 64% historical win rate on points under 14.5-20
+    minHitRate: 0.55,
+    // v7.0: DISABLED - 45% hit rate, includes starters who explode
+    disabled: true  // Block until redesigned with proper filters
   },
   
   // ============ OPTIMAL WINNERS (v3.0) - ARCHETYPE ENFORCED ============
@@ -369,7 +372,9 @@ const CATEGORIES: Record<string, CategoryConfig> = {
     avgRange: { min: 8, max: 14 },
     lines: [10.5, 11.5, 12.5, 13.5, 14.5],
     side: 'under',
-    minHitRate: 0.7
+    minHitRate: 0.7,
+    // v7.0: Block star scorers and combo guards from UNDER picks
+    blockedArchetypes: ['PURE_SHOOTER', 'COMBO_GUARD', 'SCORING_GUARD', 'PLAYMAKER']
   },
   VOLUME_SCORER: {
     name: 'Volume Scorer',
@@ -754,10 +759,17 @@ serve(async (req) => {
       const config = CATEGORIES[catKey];
       if (!config) continue;
 
+      // v7.0: Skip disabled categories
+      if (config.disabled) {
+        console.log(`[Category Analyzer] ⛔ Skipping disabled category: ${catKey}`);
+        continue;
+      }
+
       console.log(`[Category Analyzer] Analyzing category: ${catKey}`);
       let playersInRange = 0;
       let qualifiedPlayers = 0;
       let blockedByArchetype = 0;
+      let blockedByMinutes = 0;
 
       for (const [playerName, logs] of Object.entries(playerLogs)) {
         // Take last 10 games only
@@ -784,6 +796,19 @@ serve(async (req) => {
           }
           blockedByArchetype++;
           continue; // Skip this player for this category
+        }
+
+        // v7.0: STARTER PROTECTION - Block starters from points UNDER categories
+        // Players averaging 28+ minutes are starters who can explode any night
+        if (config.propType === 'points' && config.side === 'under') {
+          const avgMinutes = l10Logs.reduce((sum, g) => sum + (g.minutes_played || 0), 0) / l10Logs.length;
+          if (avgMinutes >= 28) {
+            if (blockedByMinutes < 5) {
+              console.log(`[Category Analyzer] ⛔ STARTER: ${playerName} blocked from ${catKey} - ${avgMinutes.toFixed(1)} min avg (starters can explode)`);
+            }
+            blockedByMinutes++;
+            continue;
+          }
         }
         
         // v4.0: BREAKOUT PLAYER DETECTION - Block rising stars from UNDER categories

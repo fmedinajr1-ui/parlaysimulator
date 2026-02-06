@@ -321,11 +321,23 @@ function calculateCoeffOfVariation(values: number[]): number {
 }
 
 // Determine optimal side (over vs under) with stronger floor/ceiling logic
-function determineOptimalSide(l10Stats: L10Stats, line: number): PickSide {
+// v7.0: Added production metrics to block UNDER on starters
+function determineOptimalSide(
+  l10Stats: L10Stats, 
+  line: number, 
+  production?: ProductionMetrics
+): PickSide {
   const overHitRate = l10Stats.gamesPlayed > 0 
     ? l10Stats.hitCount / l10Stats.gamesPlayed 
     : 0;
   const underHitRate = 1 - overHitRate;
+  
+  // v7.0: STARTER PROTECTION - Force OVER for high-minute scorers
+  // Players with 28+ min and high production rate are starters who can explode
+  if (production && production.avgMinutes >= 28 && production.statPerMinute >= 0.45) {
+    console.log(`[DeepSweetSpots] Starter protection: forcing OVER (${production.avgMinutes.toFixed(0)} min, ${production.statPerMinute.toFixed(2)} per min)`);
+    return 'over';
+  }
   
   // Check floor protection for over and ceiling for under
   const overFloor = line > 0 ? l10Stats.min / line : 0;
@@ -459,9 +471,13 @@ export function useDeepSweetSpots() {
         const field = propConfig.gameLogField;
         const line = prop.current_line;
         
+        // Calculate production metrics early for starter protection
+        const production = calculateProduction(playerLogs, field, line);
+        
         // Calculate L10 stats for OVER first to determine optimal side
         const l10StatsOver = calculateL10Stats(playerLogs, field, line, 'over');
-        const optimalSide = determineOptimalSide(l10StatsOver, line);
+        // v7.0: Pass production metrics for starter protection
+        const optimalSide = determineOptimalSide(l10StatsOver, line, production);
         
         // Recalculate with optimal side
         const l10Stats = optimalSide === 'over' 
@@ -479,7 +495,7 @@ export function useDeepSweetSpots() {
         const l5Stats = calculateL5Stats(playerLogs, field);
         const { tier: momentum, ratio: momentumRatio } = calculateMomentum(l5Stats.avg, l10Stats.avg);
         
-        const production = calculateProduction(playerLogs, field, line);
+        // Production already calculated above for starter protection
         const floorProtection = calculateFloorProtection(l10Stats, line, optimalSide);
         const edge = calculateEdge(l10Stats.avg, line, optimalSide);
         const hitRateL10 = l10Stats.gamesPlayed > 0 ? l10Stats.hitCount / l10Stats.gamesPlayed : 0;
