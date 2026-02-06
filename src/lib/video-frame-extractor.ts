@@ -357,6 +357,53 @@ export function deduplicateFrames(frames: ExtractedFrame[]): ExtractedFrame[] {
 }
 
 /**
+ * Check if most frames are identical (indicates title card / thumbnail only)
+ * Returns true if extraction likely failed to get actual gameplay
+ */
+export function detectDuplicateFrameIssue(frames: ExtractedFrame[]): {
+  hasDuplicateIssue: boolean;
+  uniqueCount: number;
+  totalCount: number;
+  message?: string;
+} {
+  if (frames.length < 3) {
+    return { hasDuplicateIssue: false, uniqueCount: frames.length, totalCount: frames.length };
+  }
+  
+  // Compare each frame against the first frame
+  const firstFrame = frames[0].base64;
+  let duplicatesOfFirst = 0;
+  
+  for (let i = 1; i < frames.length; i++) {
+    if (areFramesSimilar(firstFrame, frames[i].base64, 0.90)) {
+      duplicatesOfFirst++;
+    }
+  }
+  
+  // Also count total unique frames (not just compared to first)
+  const uniqueFrames = deduplicateFrames(frames);
+  const uniqueCount = uniqueFrames.length;
+  
+  // If more than 70% are identical to the first frame, we have a problem
+  const duplicateRatio = duplicatesOfFirst / (frames.length - 1);
+  const hasDuplicateIssue = duplicateRatio > 0.7 || uniqueCount <= 2;
+  
+  let message: string | undefined;
+  if (hasDuplicateIssue) {
+    message = uniqueCount <= 2 
+      ? 'Only title cards detected - try a different video link'
+      : `Most frames are identical (${Math.round(duplicateRatio * 100)}% duplicates) - may only show thumbnails`;
+  }
+  
+  return {
+    hasDuplicateIssue,
+    uniqueCount,
+    totalCount: frames.length,
+    message,
+  };
+}
+
+/**
  * Validate video file before processing
  */
 export function validateVideoFile(file: File): { valid: boolean; error?: string } {

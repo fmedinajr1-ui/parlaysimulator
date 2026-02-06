@@ -19,6 +19,8 @@ export interface VideoInfo {
   duration?: number;
   platform: string;
   streamUrl?: string; // Stream URL for client-side frame extraction
+  isStoryboard?: boolean; // Whether frames are from storyboard sprites (actual gameplay)
+  frameSource?: string; // 'storyboard' | 'thumbnail' | 'stream'
 }
 
 interface YouTubeLinkInputProps {
@@ -132,6 +134,8 @@ export function YouTubeLinkInput({
         title: data.videoInfo?.title || 'Video',
         platform: detected?.platform || 'unknown',
         streamUrl: data.streamUrl, // Include stream URL for client-side extraction
+        isStoryboard: data.isStoryboard || data.frameSource === 'storyboard',
+        frameSource: data.frameSource,
       };
 
       // Even if no thumbnail frames, we might have a stream URL
