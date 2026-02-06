@@ -3,6 +3,7 @@ import { useUnifiedLiveFeed } from './useUnifiedLiveFeed';
 import { useBatchShotChartAnalysis } from './useBatchShotChartAnalysis';
 import { useQuarterTransition } from './useQuarterTransition';
 import { useHalftimeRecalibration } from './useHalftimeRecalibration';
+import { useLiveSweetSpotLines } from './useLiveSweetSpotLines';
 import type { DeepSweetSpot, LivePropData, PropType, ShotChartAnalysis } from '@/types/sweetSpot';
 
 // Map propType to the unified feed stat key
@@ -16,6 +17,7 @@ const PROP_TO_STAT_KEY: Record<PropType, string> = {
 /**
  * Enriches sweet spots with real-time live data from the unified-player-feed
  * Uses 15s refresh interval to keep projections current during games
+ * v7.2: Now includes live book line tracking for hedge recommendations
  */
 export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
   const { games, findPlayer, getPlayerProjection, isLoading, error } = useUnifiedLiveFeed({
@@ -25,6 +27,19 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
   
   // Batch shot chart data for all players
   const { getMatchup, isLoading: shotChartLoading } = useBatchShotChartAnalysis(spots.length > 0);
+  
+  // v7.2: Live line tracking for hedge recommendations
+  const { 
+    getLineData, 
+    hasSignificantMovement,
+    getStaleness,
+    isLoading: linesLoading,
+    refresh: refreshLines,
+    liveSpotCount 
+  } = useLiveSweetSpotLines(spots, {
+    enabled: spots.length > 0,
+    intervalMs: 30000, // 30s refresh for lines
+  });
   
   const enrichedSpots = useMemo(() => {
     return spots.map(spot => {
@@ -46,9 +61,12 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
         });
       }
       
+      // v7.2: Get live line data for this spot
+      const liveLineData = getLineData(spot.id);
+      
       // If player not in live feed, still return with shot chart data if available
       if (!result) {
-        if (shotChartMatchup) {
+        if (shotChartMatchup || liveLineData) {
           return {
             ...spot,
             liveData: {
@@ -65,6 +83,13 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
               ratePerMinute: 0,
               paceRating: 100,
               shotChartMatchup,
+              currentQuarter: 0,
+              quarterHistory: [],
+              // v7.2: Live line data
+              liveBookLine: liveLineData?.liveBookLine,
+              lineMovement: liveLineData?.lineMovement,
+              lastLineUpdate: liveLineData?.lastUpdate,
+              bookmaker: liveLineData?.bookmaker,
             },
           };
         }
@@ -76,7 +101,7 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
       
       // Only add full live data if game is in progress or halftime
       if (game.status !== 'in_progress' && game.status !== 'halftime') {
-        if (shotChartMatchup) {
+        if (shotChartMatchup || liveLineData) {
           return {
             ...spot,
             liveData: {
@@ -93,6 +118,13 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
               ratePerMinute: 0,
               paceRating: 100,
               shotChartMatchup,
+              currentQuarter: 0,
+              quarterHistory: [],
+              // v7.2: Live line data
+              liveBookLine: liveLineData?.liveBookLine,
+              lineMovement: liveLineData?.lineMovement,
+              lastLineUpdate: liveLineData?.lastUpdate,
+              bookmaker: liveLineData?.bookmaker,
             },
           };
         }
@@ -119,6 +151,11 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
         shotChartMatchup,
         currentQuarter,
         quarterHistory: [],
+        // v7.2: Live line data
+        liveBookLine: liveLineData?.liveBookLine,
+        lineMovement: liveLineData?.lineMovement,
+        lastLineUpdate: liveLineData?.lastUpdate,
+        bookmaker: liveLineData?.bookmaker,
       };
       
       return { ...spot, liveData };
@@ -126,16 +163,18 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
     
     // DEBUG: Summary log
     const spotsWithMatchups = enrichedSpots.filter(s => s.liveData?.shotChartMatchup);
+    const spotsWithLiveLines = enrichedSpots.filter(s => s.liveData?.liveBookLine !== undefined);
     console.log('[SweetSpotLiveData] Summary:', {
       totalSpots: spots.length,
       enrichedCount: enrichedSpots.length,
       spotsWithMatchups: spotsWithMatchups.length,
+      spotsWithLiveLines: spotsWithLiveLines.length,
       pointsSpots: spots.filter(s => s.propType === 'points').length,
       threesSpots: spots.filter(s => s.propType === 'threes').length,
     });
     
     return enrichedSpots;
-  }, [spots, games, findPlayer, getPlayerProjection, getMatchup]);
+  }, [spots, games, findPlayer, getPlayerProjection, getMatchup, getLineData]);
   
   // Apply quarter transition detection
   const spotsWithTransitions = useQuarterTransition(enrichedSpots);
@@ -153,11 +192,20 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
     return spotsWithRecalibration.filter(s => s.liveData?.isLive);
   }, [spotsWithRecalibration]);
   
+  // Get spots with significant line movement (for alerts)
+  const spotsWithLineMovement = useMemo(() => {
+    return spotsWithRecalibration.filter(s => hasSignificantMovement(s.id));
+  }, [spotsWithRecalibration, hasSignificantMovement]);
+  
   return {
     spots: spotsWithRecalibration,
     liveSpots,
     liveGameCount,
-    isLoading: isLoading || shotChartLoading,
+    liveSpotCount,
+    spotsWithLineMovement,
+    refreshLines,
+    getStaleness,
+    isLoading: isLoading || shotChartLoading || linesLoading,
     error,
   };
 }

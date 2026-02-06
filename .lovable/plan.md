@@ -1,222 +1,58 @@
+# Deep Sweet Spots v7.2 - Live Line Tracking
 
+## ✅ Completed Features
 
-# Live Line Tracking for Hedge Recommendations
+### Star Player Block (v7.1)
+Star players explicitly blocked from pre-game UNDER recommendations. Hedge system handles live UNDER alerts.
 
-## Problem Statement
-The hedge recommendation system currently uses the **original pre-game line** for all calculations. During live games, sportsbooks dynamically adjust lines based on player performance:
+**Players blocked from UNDER:**
+Luka Doncic, Anthony Edwards, SGA, Jayson Tatum, Giannis, Jokic, Ja Morant, Trae Young, Damian Lillard, Kyrie Irving, Donovan Mitchell, De'Aaron Fox, Tyrese Haliburton, LaMelo Ball, Kevin Durant, LeBron James, Stephen Curry, Joel Embiid, Devin Booker, Jaylen Brown, Anthony Davis, Jalen Brunson, Tyrese Maxey, Jimmy Butler, Karl-Anthony Towns, Paolo Banchero, Zion Williamson, Victor Wembanyama
 
-| Scenario | Original Line | Live Line | Issue |
-|----------|---------------|-----------|-------|
-| Anthony Edwards slow start | OVER 28.5 | OVER 24.5 | System says "hedge UNDER 28.5" but book only offers UNDER 24.5 |
-| Jalen Brunson hot start | OVER 22.5 | OVER 26.5 | Line moved up, better hedge opportunity exists |
+### Live Line Tracking for Hedge Recommendations (v7.2)
+Hedge recommendations now use **actual live book lines** instead of stale pre-game lines.
 
-**The current system gives stale hedge advice that doesn't match what's actually available to bet.**
+**New Features:**
+1. **Live Line Display** - Shows current book line vs original bet line
+2. **Line Movement Indicators** - Visual arrows showing line direction (↑/↓)
+3. **Middle Opportunity Detection** - Automatically detects when line movement creates guaranteed profit windows
+4. **Color-coded Movement** - Green when movement favors your bet, red when against
+
+**Technical Implementation:**
+- `useLiveSweetSpotLines` hook fetches live lines every 30s using `fetch-current-odds`
+- `LivePropData` type extended with `liveBookLine`, `lineMovement`, `lastLineUpdate`, `bookmaker`
+- `MiddleOpportunity` type added for profit-lock detection
+- `calculateEnhancedHedgeAction` now calculates gap against live line
+- Hedge action text uses live line for recommendations (e.g., "BET UNDER 25.5" instead of stale "UNDER 28.5")
+
+**Middle Bet Detection Logic:**
+- Triggers when line moves ≥2 points
+- For OVER bets: detects when live UNDER line dropped below original
+- For UNDER bets: detects when live OVER line rose above original
+- Shows profit window (e.g., "26 to 28 = BOTH bets win")
 
 ---
 
-## Solution: Integrate Live Line Tracking into Sweet Spots
+## Architecture
 
-### 1. Add Live Line Data to LivePropData Type
-
-Extend the `LivePropData` interface to track live book lines:
-
-```typescript
-// In src/types/sweetSpot.ts
-export interface LivePropData {
-  // ... existing fields
-  
-  // NEW: Live line tracking
-  liveBookLine?: number;        // Current book line (vs originalLine)
-  lineMovement?: number;        // liveBookLine - originalLine
-  lastLineUpdate?: string;      // ISO timestamp of last fetch
-  bookmaker?: string;           // Which book the line is from
-}
 ```
+Pre-Game Line: OVER 28.5 (your bet)
+Live Book Line: OVER 24.5 (current)
+Line Movement: ↓4.0
 
-### 2. Create useLiveSweetSpotLines Hook
-
-New hook that fetches live lines for all active Sweet Spot picks:
-
-```typescript
-// src/hooks/useLiveSweetSpotLines.ts
-
-export function useLiveSweetSpotLines(
-  spots: DeepSweetSpot[],
-  options: { enabled?: boolean; intervalMs?: number } = {}
-) {
-  // Only scan spots with live games
-  const liveSpots = spots.filter(s => s.liveData?.isLive);
-  
-  // Fetch live lines every 30s using fetch-current-odds
-  // Returns Map<spotId, { liveBookLine, lineMovement, bookmaker }>
-  
-  // Key logic:
-  // - For each live spot, call fetch-current-odds
-  // - Track line movement (liveBookLine - spot.line)
-  // - Cache results to avoid redundant API calls
-}
-```
-
-### 3. Update HedgeRecommendation Component
-
-Show both original line and live line, calculate against live line:
-
-**New UI Section:**
-```text
 ┌─────────────────────────────────────────────────┐
-│ ⚠️ HEDGE ALERT                                  │
+│ 💰 MIDDLE OPPORTUNITY                           │
 ├─────────────────────────────────────────────────┤
-│ 📌 Your Bet: OVER 28.5 (original line)         │
-│ 📊 Current Book: UNDER 25.5 (-110)  ↓3.0       │
+│ Your Bet: OVER 28.5 (original)                 │
+│ Live: 24.5 ↓4.0                                │
 │                                                 │
-│ Line moved in your favor! Book dropped 3 pts.  │
-│ Hedge at 25.5 for guaranteed profit window.    │
-├─────────────────────────────────────────────────┤
-│ 🎯 Projected: 24.2 | Gap to 25.5: -1.3         │
-│ ⚡ Action: BET UNDER 25.5 NOW ($25-50)          │
+│ Profit window: 25 to 28                        │
+│ Hedge UNDER 24.5 for guaranteed profit!        │
 └─────────────────────────────────────────────────┘
 ```
 
-**Calculation Changes:**
-```typescript
-function calculateEnhancedHedgeAction(spot: DeepSweetSpot) {
-  // Use LIVE book line if available, otherwise original
-  const hedgeLine = liveData.liveBookLine ?? spot.line;
-  const lineMovement = liveData.lineMovement ?? 0;
-  
-  // Calculate gap against LIVE line
-  const gapToLine = side === 'over' 
-    ? projectedFinal - hedgeLine 
-    : hedgeLine - projectedFinal;
-  
-  // Show "middle opportunity" when line moved significantly
-  if (Math.abs(lineMovement) >= 2) {
-    // Potential profit lock / middle bet opportunity
-    status = 'profit_lock';
-    headline = '💰 MIDDLE OPPORTUNITY';
-    message = `Line moved ${lineMovement.toFixed(1)} pts. Hedge at ${hedgeLine} creates profit window.`;
-  }
-}
-```
+## Files Modified
 
-### 4. Add Line Movement Indicators
-
-Visual indicators for line movement in the hedge card:
-
-| Movement | Display | Meaning |
-|----------|---------|---------|
-| 3.0 | `↓3.0 📉` (green for OVER) | Line dropped, OVER more likely |
-| -2.0 | `↑2.0 📈` (green for UNDER) | Line rose, UNDER more likely |
-| 0.0 | `—` (neutral) | No movement |
-
-Color coding:
-- **Green**: Movement favors your bet
-- **Red**: Movement against your bet
-- **Yellow**: Neutral movement
-
-### 5. Add Line Freshness Indicator
-
-Show when line was last checked:
-
-```text
-Book Line: 25.5 (FanDuel) • Updated 15s ago
-```
-
-With staleness warnings:
-- Under 1 min: Green dot
-- 1-2 min: Yellow dot
-- Over 2 min: "Refresh" button
-
----
-
-## Technical Implementation
-
-### Files to Create
-1. `src/hooks/useLiveSweetSpotLines.ts` - Fetches live lines for sweet spots
-
-### Files to Modify
-1. `src/types/sweetSpot.ts` - Add `liveBookLine`, `lineMovement`, `bookmaker` to `LivePropData`
-2. `src/components/sweetspots/HedgeRecommendation.tsx` - Use live line for calculations, show movement
-3. `src/hooks/useSweetSpotLiveData.ts` - Integrate live line fetching
-
-### API Usage
-- Reuses existing `fetch-current-odds` edge function
-- Batches requests to minimize API calls
-- Caches results for 30s (matches Lock Mode scanner)
-
----
-
-## Hedge Calculation Logic Update
-
-```text
-BEFORE (using original line):
-┌───────────────────────────────────────────────┐
-│ Player: Anthony Edwards                       │
-│ Your Bet: OVER 28.5                           │
-│ Current: 12 pts | Projected: 24.2             │
-│ Gap to 28.5: -4.3 (URGENT)                    │
-│ Action: "Hedge UNDER 28.5"                    │
-│                                               │
-│ ❌ Problem: Book now shows UNDER 25.5         │
-│    The 28.5 line doesn't exist anymore!       │
-└───────────────────────────────────────────────┘
-
-AFTER (using live line):
-┌───────────────────────────────────────────────┐
-│ Player: Anthony Edwards                       │
-│ Your Bet: OVER 28.5 (original)                │
-│ Live Book: 25.5 ↓3.0                          │
-│ Current: 12 pts | Projected: 24.2             │
-│ Gap to 25.5: -1.3 (ALERT)                     │
-│                                               │
-│ 💰 MIDDLE OPPORTUNITY                         │
-│ Original bet: OVER 28.5                       │
-│ Hedge available: UNDER 25.5                   │
-│ If player scores 26-28: BOTH BETS WIN         │
-│                                               │
-│ Action: "BET UNDER 25.5 NOW"                  │
-└───────────────────────────────────────────────┘
-```
-
----
-
-## Middle Bet Detection
-
-When line moves significantly, detect "middle" opportunities:
-
-```typescript
-function detectMiddleOpportunity(
-  originalLine: number,
-  liveBookLine: number,
-  side: 'over' | 'under'
-): MiddleOpportunity | null {
-  const gap = Math.abs(originalLine - liveBookLine);
-  
-  if (gap < 2) return null; // Not enough gap
-  
-  if (side === 'over' && liveBookLine < originalLine) {
-    // You bet OVER 28.5, now UNDER 25.5 is available
-    // If player scores 26-28, both win!
-    return {
-      type: 'middle',
-      lowerBound: liveBookLine,
-      upperBound: originalLine,
-      profitWindow: `${liveBookLine + 0.5} to ${originalLine - 0.5}`,
-      recommendation: `Hedge UNDER ${liveBookLine} for guaranteed profit if player scores ${Math.floor(liveBookLine + 1)}-${Math.floor(originalLine)}`
-    };
-  }
-  
-  return null;
-}
-```
-
----
-
-## Expected Outcomes
-
-1. Hedge recommendations use **actual available lines** from books
-2. Users see when lines have moved in their favor (or against)
-3. "Middle bet" opportunities are automatically detected
-4. Stale line warnings prevent acting on outdated information
-5. Matches the live line tracking already used in Lock Mode
-
+1. `src/types/sweetSpot.ts` - Added `liveBookLine`, `lineMovement`, `lastLineUpdate`, `bookmaker` to `LivePropData`, added `MiddleOpportunity` interface
+2. `src/hooks/useLiveSweetSpotLines.ts` - NEW: Fetches live lines for sweet spots (30s refresh)
+3. `src/hooks/useSweetSpotLiveData.ts` - Integrated live line fetching
+4. `src/components/sweetspots/HedgeRecommendation.tsx` - Updated to use live lines, show movement indicators, detect middle opportunities

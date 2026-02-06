@@ -115,6 +115,21 @@ export interface LivePropData {
   quarterHistory: QuarterSnapshot[];
   quarterTransition?: QuarterTransitionAlert;
   halftimeRecalibration?: HalftimeRecalibration;
+  
+  // Live line tracking (v7.2)
+  liveBookLine?: number;        // Current book line (may differ from original)
+  lineMovement?: number;        // liveBookLine - originalLine (+ = line went up, - = dropped)
+  lastLineUpdate?: string;      // ISO timestamp of last line fetch
+  bookmaker?: string;           // Which book the line is from (e.g., "fanduel")
+}
+
+// Middle opportunity detection for hedge recommendations
+export interface MiddleOpportunity {
+  type: 'middle';
+  lowerBound: number;           // Lower line (for UNDER hedge)
+  upperBound: number;           // Upper line (for OVER original)
+  profitWindow: string;         // e.g., "26 to 28"
+  recommendation: string;       // Action text
 }
 
 export interface HalftimeRecalibration {
