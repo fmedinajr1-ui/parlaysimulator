@@ -10409,6 +10409,20 @@ export type Database = {
           total_picks: number
         }[]
       }
+      get_matchup_scanner_accuracy_breakdown: {
+        Args: { days_back?: number }
+        Returns: {
+          avg_edge_score: number
+          category: string
+          grade: string
+          hit_rate: number
+          hits: number
+          misses: number
+          pushes: number
+          side: string
+          total_picks: number
+        }[]
+      }
       get_median_lock_accuracy_stats: {
         Args: never
         Returns: {
