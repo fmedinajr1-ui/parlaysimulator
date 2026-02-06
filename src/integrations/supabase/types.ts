@@ -6580,6 +6580,75 @@ export type Database = {
         }
         Relationships: []
       }
+      player_behavior_profiles: {
+        Row: {
+          avg_first_rest_time: string | null
+          avg_minutes_per_quarter: Json | null
+          avg_second_stint_start: string | null
+          best_matchups: Json | null
+          blowout_minutes_reduction: number | null
+          body_language_notes: string | null
+          clutch_performance_vs_average: number | null
+          created_at: string
+          fatigue_tendency: string | null
+          film_sample_count: number | null
+          games_analyzed: number | null
+          id: string
+          last_updated: string | null
+          player_name: string
+          profile_confidence: number | null
+          quarter_production: Json | null
+          scoring_zone_preferences: Json | null
+          team: string | null
+          three_pt_peak_quarters: Json | null
+          worst_matchups: Json | null
+        }
+        Insert: {
+          avg_first_rest_time?: string | null
+          avg_minutes_per_quarter?: Json | null
+          avg_second_stint_start?: string | null
+          best_matchups?: Json | null
+          blowout_minutes_reduction?: number | null
+          body_language_notes?: string | null
+          clutch_performance_vs_average?: number | null
+          created_at?: string
+          fatigue_tendency?: string | null
+          film_sample_count?: number | null
+          games_analyzed?: number | null
+          id?: string
+          last_updated?: string | null
+          player_name: string
+          profile_confidence?: number | null
+          quarter_production?: Json | null
+          scoring_zone_preferences?: Json | null
+          team?: string | null
+          three_pt_peak_quarters?: Json | null
+          worst_matchups?: Json | null
+        }
+        Update: {
+          avg_first_rest_time?: string | null
+          avg_minutes_per_quarter?: Json | null
+          avg_second_stint_start?: string | null
+          best_matchups?: Json | null
+          blowout_minutes_reduction?: number | null
+          body_language_notes?: string | null
+          clutch_performance_vs_average?: number | null
+          created_at?: string
+          fatigue_tendency?: string | null
+          film_sample_count?: number | null
+          games_analyzed?: number | null
+          id?: string
+          last_updated?: string | null
+          player_name?: string
+          profile_confidence?: number | null
+          quarter_production?: Json | null
+          scoring_zone_preferences?: Json | null
+          team?: string | null
+          three_pt_peak_quarters?: Json | null
+          worst_matchups?: Json | null
+        }
+        Relationships: []
+      }
       player_prop_hitrates: {
         Row: {
           analyzed_at: string
