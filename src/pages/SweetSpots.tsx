@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { ArrowLeft, RefreshCw, Crown, Star, TrendingUp, Filter, Radio, Flame, Snowflake, Target, Users, Zap } from "lucide-react";
+import { ArrowLeft, RefreshCw, Crown, Star, TrendingUp, Filter, Radio, Flame, Snowflake, Target, Users, Zap, DollarSign } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -19,7 +19,7 @@ import { PROP_TYPE_CONFIG } from "@/types/sweetSpot";
 import type { PlayerMatchupAnalysis } from "@/types/matchupScanner";
 
 type PropFilter = PropType | 'all';
-type QualityFilter = 'all' | 'ELITE' | 'PREMIUM+' | 'STRONG+';
+type QualityFilter = 'all' | 'ELITE' | 'PREMIUM+' | 'STRONG+' | 'MIDDLE';
 type SortOption = 'score' | 'floor' | 'edge' | 'juice';
 type PaceFilter = 'all' | 'live-only' | 'fast' | 'slow';
 type MainTab = 'sweet-spots' | 'matchup-scanner';
@@ -43,7 +43,10 @@ export default function SweetSpots() {
   const [paceFilter, setPaceFilter] = useState<PaceFilter>('all');
   
   // Enrich spots with live data
-  const { spots: enrichedSpots, liveGameCount } = useSweetSpotLiveData(data?.spots || []);
+  const { spots: enrichedSpots, liveGameCount, spotsWithLineMovement } = useSweetSpotLiveData(data?.spots || []);
+  
+  // Count middle opportunities
+  const middleCount = spotsWithLineMovement.length;
   
   const filteredSpots = useMemo(() => {
     let filtered = [...enrichedSpots];
@@ -64,6 +67,10 @@ export default function SweetSpots() {
       filtered = filtered.filter(s => 
         s.qualityTier === 'ELITE' || s.qualityTier === 'PREMIUM' || s.qualityTier === 'STRONG'
       );
+    } else if (qualityFilter === 'MIDDLE') {
+      // Filter to only spots with significant line movement (middle opportunities)
+      const middleIds = new Set(spotsWithLineMovement.map(s => s.id));
+      filtered = filtered.filter(s => middleIds.has(s.id));
     }
     
     // Apply pace filter
@@ -95,7 +102,7 @@ export default function SweetSpots() {
     });
     
     return filtered;
-  }, [enrichedSpots, propFilter, qualityFilter, paceFilter, sortBy]);
+  }, [enrichedSpots, propFilter, qualityFilter, paceFilter, sortBy, spotsWithLineMovement]);
   
   const handleAddToBuilder = (spot: DeepSweetSpot) => {
     const propConfig = PROP_TYPE_CONFIG[spot.propType];
@@ -282,7 +289,7 @@ export default function SweetSpots() {
             <Filter size={14} />
             <span>Quality:</span>
           </div>
-          <div className="flex gap-1.5">
+          <div className="flex gap-1.5 flex-wrap">
             {(['all', 'ELITE', 'PREMIUM+', 'STRONG+'] as QualityFilter[]).map((filter) => (
               <Button
                 key={filter}
@@ -294,6 +301,21 @@ export default function SweetSpots() {
                 {filter === 'all' ? 'All' : filter}
               </Button>
             ))}
+            {/* Middle opportunity filter - only shows when opportunities exist */}
+            {middleCount > 0 && (
+              <Button
+                size="sm"
+                variant={qualityFilter === 'MIDDLE' ? 'default' : 'outline'}
+                onClick={() => setQualityFilter('MIDDLE')}
+                className={cn(
+                  "text-xs h-7 px-2 gap-1",
+                  qualityFilter === 'MIDDLE' && "bg-yellow-600 hover:bg-yellow-700 text-white"
+                )}
+              >
+                <DollarSign size={12} />
+                MIDDLE ({middleCount})
+              </Button>
+            )}
           </div>
           
           <div className="flex-1" />
