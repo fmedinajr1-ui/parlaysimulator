@@ -1,161 +1,199 @@
 
-# Fix Sweet Spots UNDER Selection Logic
+# Track UNDER Pick Performance Over Time
 
-## Problem Identified
+## Overview
+Create a dedicated "Over vs Under Performance" tracking section in the Accuracy Dashboard to monitor the new filtering logic's impact. This will compare historical UNDER hit rates (pre-fix baseline ~60%) against new picks generated with the 70% ceiling protection threshold.
 
-The UNDER picks keep going OVER because of **two critical bugs**:
+## Current State Analysis
 
-### Bug 1: Inverted Side Selection Logic (Line 345)
+### Historical Performance (All-Time)
+| Side | Hits | Misses | Hit Rate |
+|------|------|--------|----------|
+| OVER | 307 | 286 | 51.8% |
+| UNDER | 64 | 42 | **60.4%** |
 
-**Current Code:**
-```typescript
-// If no strong floor for OVER, check if UNDER is safer
-// High ceiling (max is 30%+ above line) + weak floor = favor UNDER
-if (!hasStrongFloor && underCeiling > 1.3) {
-  return 'under';
-}
-```
+### Weekly Trend (Recent)
+| Week | OVER Hit Rate | UNDER Hit Rate |
+|------|--------------|----------------|
+| Feb 2-8 | 48.3% | **80.0%** (4-1) |
+| Jan 26-Feb 1 | 49.2% | 52.2% |
+| Jan 19-25 | 56.6% | 61.5% |
 
-**Why It's Wrong:**
-- `underCeiling > 1.3` means L10 Max is 30%+ ABOVE the line
-- This is the WORST condition for an UNDER bet!
-- Example: Miles Bridges L10 Max = 8, Line = 3.5 → underCeiling = 2.3
-- The code says "if ceiling is really high, pick UNDER" - completely backwards!
-
-**The Fix:**
-```typescript
-// Only favor UNDER if the ceiling is close to or below the line
-// High ceiling = risky for UNDER, so we need the OPPOSITE logic
-if (underCeiling <= 1.1) {
-  return 'under'; // L10 Max is within 10% of line - safe UNDER
-}
-```
+The Feb 2-8 week shows early improvement after the fix was deployed!
 
 ---
 
-### Bug 2: No Ceiling Protection Filter for UNDERs
+## Implementation Plan
 
-The code has these filters for OVERs (lines 481-488):
-```typescript
-// Skip high variance OVER picks
-if (optimalSide === 'over' && coeffOfVariation > 0.4) continue;
+### 1. Create New RPC Function: `get_side_performance_tracking`
 
-// Require minimum edge for OVERs
-if (optimalSide === 'over' && edge < line * 0.10) continue;
+**Purpose**: Return OVER vs UNDER performance broken down by week with trend analysis.
+
+```sql
+CREATE OR REPLACE FUNCTION get_side_performance_tracking(
+  days_back INTEGER DEFAULT 30
+)
+RETURNS TABLE(
+  week_start DATE,
+  side TEXT,
+  hits INTEGER,
+  misses INTEGER,
+  total_picks INTEGER,
+  hit_rate NUMERIC,
+  avg_ceiling_protection NUMERIC,
+  avg_l10_hit_rate NUMERIC
+)
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT 
+    DATE_TRUNC('week', css.analysis_date::timestamp)::date as week_start,
+    css.recommended_side as side,
+    COUNT(*) FILTER (WHERE css.outcome = 'hit')::integer as hits,
+    COUNT(*) FILTER (WHERE css.outcome = 'miss')::integer as misses,
+    COUNT(*) FILTER (WHERE css.outcome IN ('hit', 'miss'))::integer as total_picks,
+    ROUND(
+      COUNT(*) FILTER (WHERE css.outcome = 'hit')::numeric / 
+      NULLIF(COUNT(*) FILTER (WHERE css.outcome IN ('hit', 'miss')), 0) * 100, 
+      1
+    ) as hit_rate,
+    ROUND(AVG(
+      CASE WHEN css.recommended_side = 'under' 
+           THEN css.recommended_line / NULLIF(css.l10_max, 0)
+           ELSE NULL 
+      END
+    )::numeric * 100, 1) as avg_ceiling_protection,
+    ROUND(AVG(css.l10_hit_rate)::numeric * 100, 1) as avg_l10_hit_rate
+  FROM category_sweet_spots css
+  WHERE css.outcome IN ('hit', 'miss')
+    AND css.recommended_side IS NOT NULL
+    AND css.analysis_date >= CURRENT_DATE - (days_back || ' days')::interval
+  GROUP BY week_start, side
+  ORDER BY week_start DESC, side;
+END;
+$$ LANGUAGE plpgsql;
 ```
 
-But **NO equivalent protection for UNDERs!** We need:
+### 2. Create React Hook: `useSidePerformanceTracking`
+
+**File**: `src/hooks/useSidePerformanceTracking.ts`
+
 ```typescript
-// NEW: Skip UNDER picks where ceiling is too high (L10 Max > line * 1.5)
-if (optimalSide === 'under' && l10Stats.max > line * 1.5) {
-  continue; // Too risky - player has exceeded line by 50%+ in L10
+interface SidePerformance {
+  weekStart: string;
+  side: 'over' | 'under';
+  hits: number;
+  misses: number;
+  totalPicks: number;
+  hitRate: number;
+  avgCeilingProtection: number | null;
+  avgL10HitRate: number;
 }
 
-// NEW: Require minimum ceiling protection for UNDERs
-const ceilingProtection = line / l10Stats.max;
-if (optimalSide === 'under' && ceilingProtection < 0.7) {
-  continue; // Ceiling protection too weak - L10 Max is 43%+ above line
+interface SideSummary {
+  side: 'over' | 'under';
+  totalHits: number;
+  totalMisses: number;
+  overallHitRate: number;
+  weeklyTrend: 'improving' | 'stable' | 'declining';
+  recentWeekRate: number;
 }
 ```
 
----
+### 3. Create Component: `SidePerformanceCard`
 
-## Example Analysis from Screenshot
+**File**: `src/components/accuracy/SidePerformanceCard.tsx`
 
-| Player | Line | L10 Max | Ceiling Protection | Current Decision | Should Be |
-|--------|------|---------|-------------------|------------------|-----------|
-| Harrison Barnes | 1.5 | 3 | 50% | UNDER ❌ | SKIP |
-| Miles Bridges | 3.5 | 8 | 44% | UNDER ❌ | SKIP |
+**Design**:
+```text
+┌─────────────────────────────────────────────────┐
+│ 📊 Over vs Under Performance                    │
+├───────────────────────┬─────────────────────────┤
+│ ⬆️ OVER               │ ⬇️ UNDER               │
+│ 51.8%                 │ 60.4%                  │
+│ 307W - 286L           │ 64W - 42L              │
+│ Trend: Stable ➡️       │ Trend: Improving 📈    │
+├───────────────────────┴─────────────────────────┤
+│ Weekly Breakdown                                │
+│ ┌─────────┬─────────┬─────────┬──────────────┐ │
+│ │ Week    │ OVER    │ UNDER   │ Ceiling Prot │ │
+│ ├─────────┼─────────┼─────────┼──────────────┤ │
+│ │ Feb 2-8 │ 48.3%   │ 80.0%🔥 │ 92%          │ │
+│ │ Jan 26  │ 49.2%   │ 52.2%   │ 68%          │ │
+│ │ Jan 19  │ 56.6%   │ 61.5%   │ 71%          │ │
+│ └─────────┴─────────┴─────────┴──────────────┘ │
+│                                                 │
+│ 🎯 New Filter Active: 70% Ceiling Protection   │
+│ Expected improvement: 60% → 70%+ on UNDERs     │
+└─────────────────────────────────────────────────┘
+```
 
-Both would be filtered out with ceiling protection < 70% rule.
+**Key Features**:
+- Side-by-side comparison cards (OVER vs UNDER)
+- Weekly breakdown table with ceiling protection tracking
+- Visual trend indicators (📈 improving, ➡️ stable, 📉 declining)
+- Highlight weeks after fix deployment (Feb 5+)
+- Color-coded hit rates (green ≥55%, yellow 50-55%, red <50%)
 
----
+### 4. Integrate into UnifiedAccuracyView
 
-## Implementation Summary
+**File**: `src/components/accuracy/UnifiedAccuracyView.tsx`
 
-### File: `src/hooks/useDeepSweetSpots.ts`
+Add new collapsible section after Category Breakdown:
 
-**Change 1: Fix `determineOptimalSide()` (Lines 343-347)**
-- Remove the inverted ceiling logic
-- Only recommend UNDER when L10 Max is reasonably close to the line
-
-**Change 2: Add UNDER ceiling filters (After Line 488)**
-- Skip UNDERs where L10 Max exceeds line by more than 50%
-- Skip UNDERs where ceiling protection is below 70%
+```tsx
+{/* Side Performance Tracking */}
+<Card className="p-4 bg-card/50 border-border/50">
+  <Collapsible open={sideOpen} onOpenChange={setSideOpen}>
+    <CollapsibleTrigger className="flex items-center justify-between w-full">
+      <h3 className="font-semibold flex items-center gap-2">
+        <span>⬆️⬇️</span>
+        Over vs Under Performance
+      </h3>
+      <ChevronDown className={cn(
+        "w-4 h-4 transition-transform",
+        sideOpen && "rotate-180"
+      )} />
+    </CollapsibleTrigger>
+    <CollapsibleContent>
+      <SidePerformanceCard />
+    </CollapsibleContent>
+  </Collapsible>
+</Card>
+```
 
 ---
 
 ## Technical Details
 
-### Updated `determineOptimalSide()`:
+### Files to Create
+1. `src/hooks/useSidePerformanceTracking.ts` - Data fetching hook
+2. `src/components/accuracy/SidePerformanceCard.tsx` - UI component
 
-```typescript
-function determineOptimalSide(l10Stats: L10Stats, line: number): PickSide {
-  const overHitRate = l10Stats.gamesPlayed > 0 
-    ? l10Stats.hitCount / l10Stats.gamesPlayed 
-    : 0;
-  const underHitRate = 1 - overHitRate;
-  
-  const overFloor = line > 0 ? l10Stats.min / line : 0;
-  const hasStrongFloor = overFloor >= 0.5;
-  
-  // If L10 min covers the line, strongly favor over
-  if (overFloor >= 1.0) return 'over';
-  
-  // If L10 max is below line, strongly favor under
-  if (l10Stats.max < line) return 'under';
-  
-  // NEW: Check if ceiling is safe for UNDER (max within 30% of line)
-  const ceilingRatio = line > 0 ? l10Stats.max / line : Infinity;
-  const hasSafeCeiling = ceilingRatio <= 1.3;
-  
-  // Favor UNDER only if ceiling is safe
-  if (hasSafeCeiling && underHitRate >= 0.7) {
-    return 'under';
-  }
-  
-  // Favor OVER if has strong floor
-  if (hasStrongFloor) {
-    return 'over';
-  }
-  
-  // Default to side with better hit rate
-  return overHitRate >= underHitRate ? 'over' : 'under';
-}
-```
+### Files to Modify
+1. `src/components/accuracy/UnifiedAccuracyView.tsx` - Add new section
+2. Database migration - Create `get_side_performance_tracking` function
 
-### New UNDER Ceiling Filters:
+### Database Column Usage
+- `recommended_side` - Filter OVER vs UNDER
+- `l10_max` - Calculate ceiling protection for UNDERs
+- `recommended_line` - Calculate ceiling protection ratio
+- `outcome` - Track hit/miss/push
+- `analysis_date` - Group by week
+- `l10_hit_rate` - Track correlation with outcomes
 
-```typescript
-// After line 488 (after OVER filters)
-
-// NEW: Skip UNDER picks where L10 Max far exceeds the line
-if (optimalSide === 'under') {
-  const ceilingProtection = line / l10Stats.max;
-  
-  // Skip if L10 Max is more than 50% above the line
-  if (l10Stats.max > line * 1.5) {
-    continue; // Player's ceiling is way too high for UNDER
-  }
-  
-  // Skip if ceiling protection is below 70%
-  if (ceilingProtection < 0.70) {
-    continue; // Too risky - not enough ceiling protection
-  }
-}
-```
+### Validation Metrics
+Track these to validate the fix is working:
+1. **UNDER Hit Rate Trend**: Target 70%+ post-fix (vs 60% baseline)
+2. **Ceiling Protection Average**: Should be ≥70% for all new UNDERs
+3. **Bad Pick Reduction**: Fewer missed UNDERs per week
 
 ---
 
-## Expected Impact
+## Expected Outcome
 
-| Metric | Before | After (Expected) |
-|--------|--------|------------------|
-| UNDER hit rate | ~60% | 70%+ |
-| Bad UNDER picks per day | 20-30 | 5-10 |
-| Filtered out (high ceiling) | 0 | 10-20 |
-
-The 70% ceiling protection threshold means we only recommend UNDER when:
-- L10 Max ≤ 1.43x the line (e.g., Max 5 on a 3.5 line)
-
-This would have filtered out both Harrison Barnes (Max 2x line) and Miles Bridges (Max 2.3x line).
+After 7 days of data:
+- Clear visualization showing UNDER hit rate improvement
+- Weekly trend comparison pre-fix vs post-fix
+- Ceiling protection correlation with outcomes
+- Automated tracking without manual intervention
