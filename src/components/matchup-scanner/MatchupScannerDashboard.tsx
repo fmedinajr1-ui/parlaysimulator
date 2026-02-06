@@ -7,6 +7,7 @@ import { getEasternDate } from '@/lib/dateUtils';
 import { usePreGameMatchupScanner } from '@/hooks/usePreGameMatchupScanner';
 import { SideFilterBar } from './SideFilterBar';
 import { MatchupGradeCard } from './MatchupGradeCard';
+import { MatchupScannerAccuracyCard } from './MatchupScannerAccuracyCard';
 import type { MatchupScannerFilters, PlayerMatchupAnalysis } from '@/types/matchupScanner';
 
 interface MatchupScannerDashboardProps {
@@ -112,6 +113,9 @@ export function MatchupScannerDashboard({ onAddToBuilder }: MatchupScannerDashbo
           </div>
         </div>
       )}
+      
+      {/* Accuracy Card */}
+      <MatchupScannerAccuracyCard />
       
       {/* Filters */}
       {!isLoading && stats.totalPlayers > 0 && (
