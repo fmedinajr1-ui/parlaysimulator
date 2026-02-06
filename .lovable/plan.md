@@ -1,199 +1,142 @@
 
-# Track UNDER Pick Performance Over Time
+# Fix: Stop Recommending UNDER on Star/Starter Players
 
-## Overview
-Create a dedicated "Over vs Under Performance" tracking section in the Accuracy Dashboard to monitor the new filtering logic's impact. This will compare historical UNDER hit rates (pre-fix baseline ~60%) against new picks generated with the 70% ceiling protection threshold.
+## Problem Summary
+The system is recommending UNDER bets on starter-level players who have high projected minutes and significant scoring upside. This is fundamentally flawed because:
 
-## Current State Analysis
-
-### Historical Performance (All-Time)
-| Side | Hits | Misses | Hit Rate |
-|------|------|--------|----------|
-| OVER | 307 | 286 | 51.8% |
-| UNDER | 64 | 42 | **60.4%** |
-
-### Weekly Trend (Recent)
-| Week | OVER Hit Rate | UNDER Hit Rate |
-|------|--------------|----------------|
-| Feb 2-8 | 48.3% | **80.0%** (4-1) |
-| Jan 26-Feb 1 | 49.2% | 52.2% |
-| Jan 19-25 | 56.6% | 61.5% |
-
-The Feb 2-8 week shows early improvement after the fix was deployed!
+1. **MID_SCORER_UNDER has a 45% hit rate** - It's a losing category
+2. **No archetype protection** - Players like Jusuf Nurkic (15 ppg), Miles Bridges (14.6 ppg), and RJ Barrett (14.5 ppg) are being included
+3. **These players are starters** with 28+ minutes who can explode any given night
 
 ---
 
-## Implementation Plan
+## Current Data Evidence
 
-### 1. Create New RPC Function: `get_side_performance_tracking`
+| Player | Line | L10 Avg | L10 Max | Category | Hit Rate Issue |
+|--------|------|---------|---------|----------|----------------|
+| Jusuf Nurkic | 20.5 | 15.3 | 20 | MID_SCORER_UNDER | Could drop 20+ easily |
+| Miles Bridges | 20.5 | 14.6 | 20 | MID_SCORER_UNDER | Already hit 20 once in L10 |
+| RJ Barrett | 19.5 | 14.5 | 21 | MID_SCORER_UNDER | L10 Max EXCEEDS line |
 
-**Purpose**: Return OVER vs UNDER performance broken down by week with trend analysis.
+### Historical Performance by Points Category
 
-```sql
-CREATE OR REPLACE FUNCTION get_side_performance_tracking(
-  days_back INTEGER DEFAULT 30
-)
-RETURNS TABLE(
-  week_start DATE,
-  side TEXT,
-  hits INTEGER,
-  misses INTEGER,
-  total_picks INTEGER,
-  hit_rate NUMERIC,
-  avg_ceiling_protection NUMERIC,
-  avg_l10_hit_rate NUMERIC
-)
-AS $$
-BEGIN
-  RETURN QUERY
-  SELECT 
-    DATE_TRUNC('week', css.analysis_date::timestamp)::date as week_start,
-    css.recommended_side as side,
-    COUNT(*) FILTER (WHERE css.outcome = 'hit')::integer as hits,
-    COUNT(*) FILTER (WHERE css.outcome = 'miss')::integer as misses,
-    COUNT(*) FILTER (WHERE css.outcome IN ('hit', 'miss'))::integer as total_picks,
-    ROUND(
-      COUNT(*) FILTER (WHERE css.outcome = 'hit')::numeric / 
-      NULLIF(COUNT(*) FILTER (WHERE css.outcome IN ('hit', 'miss')), 0) * 100, 
-      1
-    ) as hit_rate,
-    ROUND(AVG(
-      CASE WHEN css.recommended_side = 'under' 
-           THEN css.recommended_line / NULLIF(css.l10_max, 0)
-           ELSE NULL 
-      END
-    )::numeric * 100, 1) as avg_ceiling_protection,
-    ROUND(AVG(css.l10_hit_rate)::numeric * 100, 1) as avg_l10_hit_rate
-  FROM category_sweet_spots css
-  WHERE css.outcome IN ('hit', 'miss')
-    AND css.recommended_side IS NOT NULL
-    AND css.analysis_date >= CURRENT_DATE - (days_back || ' days')::interval
-  GROUP BY week_start, side
-  ORDER BY week_start DESC, side;
-END;
-$$ LANGUAGE plpgsql;
+| Category | Hit Rate | Recommendation |
+|----------|----------|----------------|
+| LOW_SCORER_UNDER | 65.4% | KEEP |
+| VOLUME_SCORER | 51.8% | KEEP |
+| STAR_FLOOR_OVER | 45.1% | REVIEW |
+| MID_SCORER_UNDER | 45.0% | REMOVE/BLOCK |
+
+---
+
+## Solution Plan
+
+### 1. Disable MID_SCORER_UNDER Category
+
+Remove this losing category from the active analyzer until it can be redesigned with proper filters.
+
+**File**: `supabase/functions/category-props-analyzer/index.ts`
+
+```text
+MID_SCORER_UNDER: {
+  name: 'Mid Scorer Under',
+  propType: 'points',
+  avgRange: { min: 12, max: 22 },
+  lines: [14.5, 15.5, 16.5, 17.5, 18.5, 19.5, 20.5],
+  side: 'under',
+  minHitRate: 0.55,
+  // ADD: Block all starters and high-minute players
+  disabled: true,  // <- NEW: Disable until redesigned
+}
 ```
 
-### 2. Create React Hook: `useSidePerformanceTracking`
+### 2. Add Minutes-Based Filter for All UNDER Categories
 
-**File**: `src/hooks/useSidePerformanceTracking.ts`
+Block any UNDER recommendation for players averaging 28+ minutes (starter threshold).
+
+**File**: `supabase/functions/category-props-analyzer/index.ts`
+
+Add logic in the processing loop:
+```typescript
+// Block starters from ALL points UNDER categories
+if (config.propType === 'points' && config.side === 'under') {
+  const avgMinutes = playerStats?.avg_minutes ?? 30;
+  if (avgMinutes >= 28) {
+    console.log(`[Category Analyzer] Starter blocked from UNDER: ${playerName} (${avgMinutes} min avg)`);
+    continue;
+  }
+}
+```
+
+### 3. Strengthen determineOptimalSide in useDeepSweetSpots.ts
+
+Add production rate check to prevent UNDER on high-usage scorers.
+
+**File**: `src/hooks/useDeepSweetSpots.ts`
 
 ```typescript
-interface SidePerformance {
-  weekStart: string;
-  side: 'over' | 'under';
-  hits: number;
-  misses: number;
-  totalPicks: number;
-  hitRate: number;
-  avgCeilingProtection: number | null;
-  avgL10HitRate: number;
-}
-
-interface SideSummary {
-  side: 'over' | 'under';
-  totalHits: number;
-  totalMisses: number;
-  overallHitRate: number;
-  weeklyTrend: 'improving' | 'stable' | 'declining';
-  recentWeekRate: number;
+function determineOptimalSide(l10Stats: L10Stats, line: number, production: ProductionMetrics): PickSide {
+  // NEW: Block UNDER if player produces at high rate (starter-level)
+  if (production.avgMinutes >= 28 && production.statPerMinute >= 0.45) {
+    return 'over'; // Force OVER for high-minute scorers
+  }
+  
+  // ... existing logic
 }
 ```
 
-### 3. Create Component: `SidePerformanceCard`
+### 4. Add Archetype Restrictions to NON_SCORING_SHOOTER
 
-**File**: `src/components/accuracy/SidePerformanceCard.tsx`
+Currently this category has no restrictions and could include scorers.
 
-**Design**:
-```text
-┌─────────────────────────────────────────────────┐
-│ 📊 Over vs Under Performance                    │
-├───────────────────────┬─────────────────────────┤
-│ ⬆️ OVER               │ ⬇️ UNDER               │
-│ 51.8%                 │ 60.4%                  │
-│ 307W - 286L           │ 64W - 42L              │
-│ Trend: Stable ➡️       │ Trend: Improving 📈    │
-├───────────────────────┴─────────────────────────┤
-│ Weekly Breakdown                                │
-│ ┌─────────┬─────────┬─────────┬──────────────┐ │
-│ │ Week    │ OVER    │ UNDER   │ Ceiling Prot │ │
-│ ├─────────┼─────────┼─────────┼──────────────┤ │
-│ │ Feb 2-8 │ 48.3%   │ 80.0%🔥 │ 92%          │ │
-│ │ Jan 26  │ 49.2%   │ 52.2%   │ 68%          │ │
-│ │ Jan 19  │ 56.6%   │ 61.5%   │ 71%          │ │
-│ └─────────┴─────────┴─────────┴──────────────┘ │
-│                                                 │
-│ 🎯 New Filter Active: 70% Ceiling Protection   │
-│ Expected improvement: 60% → 70%+ on UNDERs     │
-└─────────────────────────────────────────────────┘
-```
+**File**: `supabase/functions/category-props-analyzer/index.ts`
 
-**Key Features**:
-- Side-by-side comparison cards (OVER vs UNDER)
-- Weekly breakdown table with ceiling protection tracking
-- Visual trend indicators (📈 improving, ➡️ stable, 📉 declining)
-- Highlight weeks after fix deployment (Feb 5+)
-- Color-coded hit rates (green ≥55%, yellow 50-55%, red <50%)
-
-### 4. Integrate into UnifiedAccuracyView
-
-**File**: `src/components/accuracy/UnifiedAccuracyView.tsx`
-
-Add new collapsible section after Category Breakdown:
-
-```tsx
-{/* Side Performance Tracking */}
-<Card className="p-4 bg-card/50 border-border/50">
-  <Collapsible open={sideOpen} onOpenChange={setSideOpen}>
-    <CollapsibleTrigger className="flex items-center justify-between w-full">
-      <h3 className="font-semibold flex items-center gap-2">
-        <span>⬆️⬇️</span>
-        Over vs Under Performance
-      </h3>
-      <ChevronDown className={cn(
-        "w-4 h-4 transition-transform",
-        sideOpen && "rotate-180"
-      )} />
-    </CollapsibleTrigger>
-    <CollapsibleContent>
-      <SidePerformanceCard />
-    </CollapsibleContent>
-  </Collapsible>
-</Card>
+```typescript
+NON_SCORING_SHOOTER: {
+  name: 'Non-Scoring Shooter',
+  propType: 'points',
+  avgRange: { min: 8, max: 14 },
+  lines: [10.5, 11.5, 12.5, 13.5, 14.5],
+  side: 'under',
+  minHitRate: 0.7,
+  // ADD: Block star scorers and combo guards
+  blockedArchetypes: ['PURE_SHOOTER', 'COMBO_GUARD', 'SCORING_GUARD', 'PLAYMAKER']
+}
 ```
 
 ---
 
 ## Technical Details
 
-### Files to Create
-1. `src/hooks/useSidePerformanceTracking.ts` - Data fetching hook
-2. `src/components/accuracy/SidePerformanceCard.tsx` - UI component
-
 ### Files to Modify
-1. `src/components/accuracy/UnifiedAccuracyView.tsx` - Add new section
-2. Database migration - Create `get_side_performance_tracking` function
 
-### Database Column Usage
-- `recommended_side` - Filter OVER vs UNDER
-- `l10_max` - Calculate ceiling protection for UNDERs
-- `recommended_line` - Calculate ceiling protection ratio
-- `outcome` - Track hit/miss/push
-- `analysis_date` - Group by week
-- `l10_hit_rate` - Track correlation with outcomes
+1. **`supabase/functions/category-props-analyzer/index.ts`**
+   - Add `disabled: true` to MID_SCORER_UNDER
+   - Add archetype restrictions to NON_SCORING_SHOOTER
+   - Add minutes-based filter for all points UNDER categories
 
-### Validation Metrics
-Track these to validate the fix is working:
-1. **UNDER Hit Rate Trend**: Target 70%+ post-fix (vs 60% baseline)
-2. **Ceiling Protection Average**: Should be ≥70% for all new UNDERs
-3. **Bad Pick Reduction**: Fewer missed UNDERs per week
+2. **`src/hooks/useDeepSweetSpots.ts`**
+   - Update `determineOptimalSide` to check production metrics
+   - Block UNDER for players with 28+ avg minutes and high stat rate
+
+3. **`src/components/market/SweetSpotPicksCard.tsx`**
+   - Filter out MID_SCORER_UNDER from the display
+
+### Validation Logic
+
+```text
+For any points UNDER pick:
+1. Must be LOW_SCORER_UNDER category (5-12 ppg players)
+2. Must average < 28 minutes (not a starter)
+3. Must NOT have star/scorer archetype
+4. L10 Max must be < 1.3x the line (existing ceiling protection)
+```
 
 ---
 
 ## Expected Outcome
 
-After 7 days of data:
-- Clear visualization showing UNDER hit rate improvement
-- Weekly trend comparison pre-fix vs post-fix
-- Ceiling protection correlation with outcomes
-- Automated tracking without manual intervention
+- Remove all starter-level UNDER recommendations
+- Focus points UNDER only on true role players (12 ppg, 20 min)
+- Expected hit rate improvement: 45% -> 60%+ (matching LOW_SCORER_UNDER)
+- Clearer picks that align with common sense (don't bet UNDER on starters)
