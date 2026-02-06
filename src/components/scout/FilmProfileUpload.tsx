@@ -14,7 +14,6 @@ import {
   type ExtractionProgress 
 } from "@/lib/video-frame-extractor";
 import { YouTubeLinkInput, VideoInfo } from "./YouTubeLinkInput";
-import { PlayerProfileCard } from "./PlayerProfileCard";
 import { 
   Upload, 
   Link2, 
@@ -27,6 +26,7 @@ import {
   User,
   ImageIcon,
   Sparkles,
+  X,
 } from "lucide-react";
 
 interface FilmProfileUploadProps {
@@ -40,16 +40,27 @@ interface PlayerSearchResult {
   position: string;
 }
 
+interface UpdatedProfileResult {
+  player_name: string;
+  team: string;
+  fatigue_tendency?: string;
+  body_language_notes?: string;
+  film_sample_count?: number;
+  profile_confidence?: number;
+}
+
 type AnalysisStage = 'idle' | 'uploading' | 'extracting' | 'analyzing' | 'updating' | 'complete' | 'error';
+
+const MAX_PLAYERS = 5;
 
 export function FilmProfileUpload({ onProfileUpdated }: FilmProfileUploadProps) {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   
-  // Player search state
+  // Player search state - now supports multiple players
   const [playerSearch, setPlayerSearch] = useState('');
   const [playerResults, setPlayerResults] = useState<PlayerSearchResult[]>([]);
-  const [selectedPlayer, setSelectedPlayer] = useState<PlayerSearchResult | null>(null);
+  const [selectedPlayers, setSelectedPlayers] = useState<PlayerSearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   
   // Upload state
@@ -63,7 +74,7 @@ export function FilmProfileUpload({ onProfileUpdated }: FilmProfileUploadProps) 
   const [analysisStage, setAnalysisStage] = useState<AnalysisStage>('idle');
   const [stageProgress, setStageProgress] = useState(0);
   const [stageMessage, setStageMessage] = useState('');
-  const [updatedProfile, setUpdatedProfile] = useState<any>(null);
+  const [updatedProfiles, setUpdatedProfiles] = useState<UpdatedProfileResult[]>([]);
   const [isProcessingYouTube, setIsProcessingYouTube] = useState(false);
 
   // Search for players
@@ -94,9 +105,30 @@ export function FilmProfileUpload({ onProfileUpdated }: FilmProfileUploadProps) 
   }, []);
 
   const handleSelectPlayer = (player: PlayerSearchResult) => {
-    setSelectedPlayer(player);
-    setPlayerSearch(player.player_name);
+    // Don't add duplicates
+    if (selectedPlayers.some(p => p.id === player.id)) {
+      setPlayerSearch('');
+      setPlayerResults([]);
+      return;
+    }
+    
+    // Check max limit
+    if (selectedPlayers.length >= MAX_PLAYERS) {
+      toast({
+        title: "Max Players Reached",
+        description: `You can select up to ${MAX_PLAYERS} players per upload`,
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    setSelectedPlayers(prev => [...prev, player]);
+    setPlayerSearch(''); // Clear search after adding
     setPlayerResults([]);
+  };
+
+  const handleRemovePlayer = (playerId: string) => {
+    setSelectedPlayers(prev => prev.filter(p => p.id !== playerId));
   };
 
   // Handle file upload
@@ -177,12 +209,20 @@ export function FilmProfileUpload({ onProfileUpdated }: FilmProfileUploadProps) 
     });
   }, [toast]);
 
-  // Analyze and update profile
+  // Helper function to find player observations
+  const findPlayerObservation = (observations: any[], playerName: string) => {
+    const lastName = playerName.split(' ').pop()?.toLowerCase() || playerName.toLowerCase();
+    return observations.find((o: any) => 
+      o.playerName?.toLowerCase().includes(lastName)
+    ) || observations[0]; // Fallback to first observation if no match
+  };
+
+  // Analyze and update profiles for ALL selected players
   const handleAnalyzeAndUpdate = useCallback(async () => {
-    if (!selectedPlayer || extractedFrames.length === 0) {
+    if (selectedPlayers.length === 0 || extractedFrames.length === 0) {
       toast({
         title: "Missing Information",
-        description: "Please select a player and provide video frames",
+        description: "Please select at least one player and provide video frames",
         variant: "destructive",
       });
       return;
@@ -190,20 +230,20 @@ export function FilmProfileUpload({ onProfileUpdated }: FilmProfileUploadProps) 
 
     setAnalysisStage('analyzing');
     setStageProgress(20);
-    setStageMessage('Analyzing footage with AI vision...');
-    setUpdatedProfile(null);
+    setStageMessage(`Analyzing footage for ${selectedPlayers.length} player${selectedPlayers.length > 1 ? 's' : ''}...`);
+    setUpdatedProfiles([]);
 
     try {
-      // Step 1: Analyze frames with vision AI
+      // Step 1: Analyze frames with vision AI (single call for all players)
       setStageProgress(40);
       
       const { data: analysisData, error: analysisError } = await supabase.functions.invoke('analyze-game-footage', {
         body: {
           frames: extractedFrames.slice(0, 20), // Limit to 20 frames
           gameContext: {
-            homeTeam: selectedPlayer.team_name || 'Unknown',
+            homeTeam: selectedPlayers[0].team_name || 'Unknown',
             awayTeam: 'Opponent',
-            homeRoster: `#0 ${selectedPlayer.player_name} (${selectedPlayer.position})`,
+            homeRoster: selectedPlayers.map(p => `${p.player_name} (${p.position})`).join(', '),
             awayRoster: '',
             eventId: 'profile-upload',
           },
@@ -214,56 +254,64 @@ export function FilmProfileUpload({ onProfileUpdated }: FilmProfileUploadProps) 
       if (analysisError) throw analysisError;
 
       setStageProgress(60);
-      setStageMessage('Updating player profile...');
+      setStageMessage(`Updating ${selectedPlayers.length} player profile${selectedPlayers.length > 1 ? 's' : ''}...`);
       setAnalysisStage('updating');
 
-      // Extract observations for this player
+      // Step 2: Update profile for EACH selected player
       const observations = analysisData?.analysis?.observations || [];
-      const playerObs = observations.find((o: any) => 
-        o.playerName?.toLowerCase().includes(selectedPlayer.player_name.split(' ')[1]?.toLowerCase() || selectedPlayer.player_name.toLowerCase())
-      ) || observations[0];
+      const results: UpdatedProfileResult[] = [];
 
-      // Step 2: Update player behavior profile
-      const { data: profileData, error: profileError } = await supabase
-        .from('player_behavior_profiles')
-        .upsert({
-          player_name: selectedPlayer.player_name,
-          team: selectedPlayer.team_name,
-          // Film-derived insights
-          fatigue_tendency: playerObs?.fatigueIndicators?.join(', ') || null,
-          body_language_notes: playerObs?.bodyLanguage 
-            ? `[${new Date().toISOString().split('T')[0]}] ${playerObs.bodyLanguage}` 
-            : null,
-          film_sample_count: 1, // Will be incremented on subsequent uploads
-          profile_confidence: Math.min(50, (playerObs?.confidence === 'high' ? 20 : 10)),
-          updated_at: new Date().toISOString(),
-        }, {
-          onConflict: 'player_name',
-        })
-        .select()
-        .single();
+      for (let i = 0; i < selectedPlayers.length; i++) {
+        const player = selectedPlayers[i];
+        const playerObs = findPlayerObservation(observations, player.player_name);
 
-      if (profileError) {
-        console.error('[FilmProfileUpload] Profile update error:', profileError);
-        // Continue anyway - profile might not exist yet
+        // Calculate progress per player
+        const progressPerPlayer = 30 / selectedPlayers.length;
+        setStageProgress(60 + (i + 1) * progressPerPlayer);
+
+        // Upsert profile
+        const { data: profileData, error: profileError } = await supabase
+          .from('player_behavior_profiles')
+          .upsert({
+            player_name: player.player_name,
+            team: player.team_name,
+            // Film-derived insights
+            fatigue_tendency: playerObs?.fatigueIndicators?.join(', ') || null,
+            body_language_notes: playerObs?.bodyLanguage 
+              ? `[${new Date().toISOString().split('T')[0]}] ${playerObs.bodyLanguage}` 
+              : null,
+            film_sample_count: 1, // Will be incremented on subsequent uploads
+            profile_confidence: Math.min(50, (playerObs?.confidence === 'high' ? 20 : 10)),
+            updated_at: new Date().toISOString(),
+          }, {
+            onConflict: 'player_name',
+          })
+          .select()
+          .single();
+
+        if (profileError) {
+          console.error(`[FilmProfileUpload] Profile update error for ${player.player_name}:`, profileError);
+        }
+
+        results.push(profileData || {
+          player_name: player.player_name,
+          team: player.team_name,
+          fatigue_tendency: playerObs?.fatigueIndicators?.join(', '),
+          body_language_notes: playerObs?.bodyLanguage,
+        });
+
+        onProfileUpdated?.(player.player_name, profileData);
       }
 
       setStageProgress(100);
-      setStageMessage('Profile updated successfully!');
+      setStageMessage(`${results.length} profile${results.length > 1 ? 's' : ''} updated successfully!`);
       setAnalysisStage('complete');
-      setUpdatedProfile(profileData || {
-        player_name: selectedPlayer.player_name,
-        team: selectedPlayer.team_name,
-        fatigue_tendency: playerObs?.fatigueIndicators?.join(', '),
-        body_language_notes: playerObs?.bodyLanguage,
-      });
+      setUpdatedProfiles(results);
 
       toast({
-        title: "Profile Updated",
-        description: `${selectedPlayer.player_name}'s behavior profile has been enriched with film insights`,
+        title: "Profiles Updated",
+        description: `${results.length} player${results.length > 1 ? 's\'' : '\'s'} behavior profile${results.length > 1 ? 's have' : ' has'} been enriched`,
       });
-
-      onProfileUpdated?.(selectedPlayer.player_name, profileData);
 
     } catch (err) {
       console.error('[FilmProfileUpload] Analysis error:', err);
@@ -275,10 +323,10 @@ export function FilmProfileUpload({ onProfileUpdated }: FilmProfileUploadProps) 
         variant: "destructive",
       });
     }
-  }, [selectedPlayer, extractedFrames, toast, onProfileUpdated]);
+  }, [selectedPlayers, extractedFrames, toast, onProfileUpdated]);
 
   const handleReset = () => {
-    setSelectedPlayer(null);
+    setSelectedPlayers([]);
     setPlayerSearch('');
     setUploadedFile(null);
     setPreviewFrames([]);
@@ -287,10 +335,10 @@ export function FilmProfileUpload({ onProfileUpdated }: FilmProfileUploadProps) 
     setAnalysisStage('idle');
     setStageProgress(0);
     setStageMessage('');
-    setUpdatedProfile(null);
+    setUpdatedProfiles([]);
   };
 
-  const isReady = selectedPlayer && extractedFrames.length > 0;
+  const isReady = selectedPlayers.length > 0 && extractedFrames.length > 0;
   const isProcessing = analysisStage === 'analyzing' || analysisStage === 'updating' || isProcessingYouTube;
 
   return (
@@ -309,15 +357,44 @@ export function FilmProfileUpload({ onProfileUpdated }: FilmProfileUploadProps) 
         <div className="space-y-2">
           <label className="text-sm font-medium flex items-center gap-2">
             <User className="w-4 h-4 text-muted-foreground" />
-            Select Player
+            Select Players
+            <span className="text-xs text-muted-foreground font-normal">
+              ({selectedPlayers.length}/{MAX_PLAYERS})
+            </span>
           </label>
+          
+          {/* Selected Players Badges */}
+          {selectedPlayers.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {selectedPlayers.map((player) => (
+                <Badge 
+                  key={player.id} 
+                  variant="secondary" 
+                  className="gap-1 pr-1"
+                >
+                  <User className="w-3 h-3" />
+                  {player.player_name}
+                  <button
+                    onClick={() => handleRemovePlayer(player.id)}
+                    disabled={isProcessing}
+                    className="ml-1 p-0.5 rounded-full hover:bg-muted-foreground/20 transition-colors disabled:opacity-50"
+                    aria-label={`Remove ${player.player_name}`}
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </Badge>
+              ))}
+            </div>
+          )}
+          
+          {/* Search Input */}
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
-              placeholder="Search player name..."
+              placeholder={selectedPlayers.length >= MAX_PLAYERS ? "Max players reached" : "Search player name..."}
               value={playerSearch}
               onChange={(e) => handlePlayerSearch(e.target.value)}
-              disabled={isProcessing}
+              disabled={isProcessing || selectedPlayers.length >= MAX_PLAYERS}
               className="pl-10"
             />
             {isSearching && (
@@ -328,31 +405,29 @@ export function FilmProfileUpload({ onProfileUpdated }: FilmProfileUploadProps) 
           {/* Search Results Dropdown */}
           {playerResults.length > 0 && (
             <div className="absolute z-10 w-full mt-1 bg-background border border-border rounded-lg shadow-lg max-h-48 overflow-auto">
-              {playerResults.map((player) => (
-                <button
-                  key={player.id}
-                  onClick={() => handleSelectPlayer(player)}
-                  className="w-full px-3 py-2 text-left hover:bg-muted transition-colors flex items-center justify-between"
-                >
-                  <span className="font-medium">{player.player_name}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {player.team_name} • {player.position}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-          
-          {/* Selected Player Badge */}
-          {selectedPlayer && (
-            <div className="flex items-center gap-2">
-              <Badge variant="secondary" className="gap-1">
-                <User className="w-3 h-3" />
-                {selectedPlayer.player_name}
-              </Badge>
-              <Badge variant="outline" className="text-xs">
-                {selectedPlayer.team_name} • {selectedPlayer.position}
-              </Badge>
+              {playerResults.map((player) => {
+                const isSelected = selectedPlayers.some(p => p.id === player.id);
+                return (
+                  <button
+                    key={player.id}
+                    onClick={() => handleSelectPlayer(player)}
+                    disabled={isSelected}
+                    className={`w-full px-3 py-2 text-left transition-colors flex items-center justify-between ${
+                      isSelected 
+                        ? 'opacity-50 cursor-not-allowed bg-muted' 
+                        : 'hover:bg-muted'
+                    }`}
+                  >
+                    <span className="font-medium">
+                      {player.player_name}
+                      {isSelected && <span className="text-xs ml-2 text-muted-foreground">(selected)</span>}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {player.team_name} • {player.position}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
@@ -468,21 +543,33 @@ export function FilmProfileUpload({ onProfileUpdated }: FilmProfileUploadProps) 
           </div>
         )}
 
-        {/* Success State */}
-        {analysisStage === 'complete' && updatedProfile && (
-          <div className="space-y-3 p-4 bg-chart-2/10 rounded-lg border border-chart-2/30">
-            <div className="flex items-center gap-2 text-chart-2">
-              <CheckCircle className="w-5 h-5" />
-              <span className="font-medium">Profile Updated Successfully</span>
-            </div>
-            <div className="text-sm text-muted-foreground space-y-1">
-              {updatedProfile.fatigue_tendency && (
-                <p><strong>Fatigue signals:</strong> {updatedProfile.fatigue_tendency}</p>
-              )}
-              {updatedProfile.body_language_notes && (
-                <p><strong>Body language:</strong> {updatedProfile.body_language_notes}</p>
-              )}
-            </div>
+        {/* Success State - Multiple Profiles */}
+        {analysisStage === 'complete' && updatedProfiles.length > 0 && (
+          <div className="space-y-3">
+            {updatedProfiles.map((profile, i) => (
+              <div key={i} className="p-4 bg-chart-2/10 rounded-lg border border-chart-2/30">
+                <div className="flex items-center gap-2 text-chart-2">
+                  <CheckCircle className="w-5 h-5" />
+                  <span className="font-medium">{profile.player_name}</span>
+                  {profile.team && (
+                    <Badge variant="outline" className="text-xs">
+                      {profile.team}
+                    </Badge>
+                  )}
+                </div>
+                <div className="text-sm text-muted-foreground space-y-1 mt-2">
+                  {profile.fatigue_tendency && (
+                    <p><strong>Fatigue signals:</strong> {profile.fatigue_tendency}</p>
+                  )}
+                  {profile.body_language_notes && (
+                    <p><strong>Body language:</strong> {profile.body_language_notes}</p>
+                  )}
+                  {!profile.fatigue_tendency && !profile.body_language_notes && (
+                    <p className="text-muted-foreground/60 italic">No specific observations extracted</p>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
         )}
 
@@ -510,12 +597,12 @@ export function FilmProfileUpload({ onProfileUpdated }: FilmProfileUploadProps) 
             ) : (
               <>
                 <Sparkles className="w-4 h-4 mr-2" />
-                Analyze & Update Profile
+                Analyze & Update {selectedPlayers.length > 1 ? `${selectedPlayers.length} Profiles` : 'Profile'}
               </>
             )}
           </Button>
           
-          {(selectedPlayer || extractedFrames.length > 0 || analysisStage !== 'idle') && (
+          {(selectedPlayers.length > 0 || extractedFrames.length > 0 || analysisStage !== 'idle') && (
             <Button
               variant="outline"
               onClick={handleReset}
@@ -529,8 +616,8 @@ export function FilmProfileUpload({ onProfileUpdated }: FilmProfileUploadProps) 
         {/* Helper Text */}
         {!isReady && (
           <p className="text-xs text-muted-foreground text-center">
-            {!selectedPlayer && "Select a player above"}
-            {selectedPlayer && extractedFrames.length === 0 && " • Add video footage"}
+            {selectedPlayers.length === 0 && "Select at least one player above"}
+            {selectedPlayers.length > 0 && extractedFrames.length === 0 && " • Add video footage"}
           </p>
         )}
       </CardContent>
