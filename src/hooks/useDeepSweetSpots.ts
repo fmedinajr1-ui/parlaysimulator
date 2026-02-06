@@ -329,7 +329,6 @@ function determineOptimalSide(l10Stats: L10Stats, line: number): PickSide {
   
   // Check floor protection for over and ceiling for under
   const overFloor = line > 0 ? l10Stats.min / line : 0;
-  const underCeiling = line > 0 ? l10Stats.max / line : Infinity;
   
   // Strong floor = L10 min covers at least 50% of line
   const hasStrongFloor = overFloor >= 0.5;
@@ -337,17 +336,25 @@ function determineOptimalSide(l10Stats: L10Stats, line: number): PickSide {
   // If L10 min covers the line, strongly favor over
   if (overFloor >= 1.0) return 'over';
   
-  // If L10 max is below line, favor under
+  // If L10 max is below line, strongly favor under
   if (l10Stats.max < line) return 'under';
   
-  // If no strong floor for OVER, check if UNDER is safer
-  // High ceiling (max is 30%+ above line) + weak floor = favor UNDER
-  if (!hasStrongFloor && underCeiling > 1.3) {
+  // NEW: Check if ceiling is safe for UNDER (max within 30% of line)
+  const ceilingRatio = line > 0 ? l10Stats.max / line : Infinity;
+  const hasSafeCeiling = ceilingRatio <= 1.3;
+  
+  // Favor UNDER only if ceiling is safe AND good under hit rate
+  if (hasSafeCeiling && underHitRate >= 0.7) {
     return 'under';
   }
   
-  // Otherwise, pick side with better hit rate (bias toward UNDER on ties)
-  return overHitRate > underHitRate ? 'over' : 'under';
+  // Favor OVER if has strong floor
+  if (hasStrongFloor) {
+    return 'over';
+  }
+  
+  // Default to side with better hit rate
+  return overHitRate >= underHitRate ? 'over' : 'under';
 }
 
 export function useDeepSweetSpots() {
@@ -485,6 +492,21 @@ export function useDeepSweetSpots() {
         // NEW: Require minimum edge for OVERs (L10 avg must exceed line by 10%)
         if (optimalSide === 'over' && edge < line * 0.10) {
           continue; // Edge too small - books have priced this in
+        }
+        
+        // NEW: Skip UNDER picks where L10 Max far exceeds the line
+        if (optimalSide === 'under') {
+          const ceilingProtection = line / l10Stats.max;
+          
+          // Skip if L10 Max is more than 50% above the line
+          if (l10Stats.max > line * 1.5) {
+            continue; // Player's ceiling is way too high for UNDER
+          }
+          
+          // Skip if ceiling protection is below 70%
+          if (ceilingProtection < 0.70) {
+            continue; // Too risky - not enough ceiling protection
+          }
         }
         
         // Get usage rate from most recent log
