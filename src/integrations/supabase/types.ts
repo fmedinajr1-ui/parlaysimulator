@@ -8861,6 +8861,89 @@ export type Database = {
           },
         ]
       }
+      sweet_spot_hedge_snapshots: {
+        Row: {
+          captured_at: string
+          current_value: number
+          game_progress: number
+          gap_to_line: number | null
+          hedge_status: string
+          hit_probability: number
+          id: number
+          line: number
+          line_movement: number | null
+          live_book_line: number | null
+          pace_rating: number | null
+          player_name: string
+          projected_final: number
+          prop_type: string
+          quarter: number
+          rate_needed: number | null
+          rate_per_minute: number | null
+          risk_flags: string[] | null
+          rotation_tier: string | null
+          side: string
+          sweet_spot_id: string | null
+          zone_matchup_score: number | null
+        }
+        Insert: {
+          captured_at?: string
+          current_value: number
+          game_progress: number
+          gap_to_line?: number | null
+          hedge_status: string
+          hit_probability: number
+          id?: number
+          line: number
+          line_movement?: number | null
+          live_book_line?: number | null
+          pace_rating?: number | null
+          player_name: string
+          projected_final: number
+          prop_type: string
+          quarter: number
+          rate_needed?: number | null
+          rate_per_minute?: number | null
+          risk_flags?: string[] | null
+          rotation_tier?: string | null
+          side: string
+          sweet_spot_id?: string | null
+          zone_matchup_score?: number | null
+        }
+        Update: {
+          captured_at?: string
+          current_value?: number
+          game_progress?: number
+          gap_to_line?: number | null
+          hedge_status?: string
+          hit_probability?: number
+          id?: number
+          line?: number
+          line_movement?: number | null
+          live_book_line?: number | null
+          pace_rating?: number | null
+          player_name?: string
+          projected_final?: number
+          prop_type?: string
+          quarter?: number
+          rate_needed?: number | null
+          rate_per_minute?: number | null
+          risk_flags?: string[] | null
+          rotation_tier?: string | null
+          side?: string
+          sweet_spot_id?: string | null
+          zone_matchup_score?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sweet_spot_hedge_snapshots_sweet_spot_id_fkey"
+            columns: ["sweet_spot_id"]
+            isOneToOne: false
+            referencedRelation: "category_sweet_spots"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sweet_spot_tracking: {
         Row: {
           actual_value: number | null
@@ -10249,6 +10332,30 @@ export type Database = {
           verified_games: number
           win_rate: number
           wins: number
+        }[]
+      }
+      get_hedge_probability_calibration: {
+        Args: { days_back?: number }
+        Returns: {
+          actual_hit_rate: number
+          calibration_error: number
+          expected_hit_rate: number
+          hits: number
+          probability_bucket: string
+          quarter: number
+          total_picks: number
+        }[]
+      }
+      get_hedge_status_accuracy: {
+        Args: { days_back?: number }
+        Returns: {
+          avg_hit_probability: number
+          hedge_status: string
+          hit_rate: number
+          hits: number
+          misses: number
+          quarter: number
+          total_picks: number
         }[]
       }
       get_hitrate_accuracy_stats: {

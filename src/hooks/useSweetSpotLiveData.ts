@@ -4,6 +4,7 @@ import { useBatchShotChartAnalysis } from './useBatchShotChartAnalysis';
 import { useQuarterTransition } from './useQuarterTransition';
 import { useHalftimeRecalibration } from './useHalftimeRecalibration';
 import { useLiveSweetSpotLines } from './useLiveSweetSpotLines';
+import { useHedgeStatusRecorder } from './useHedgeStatusRecorder';
 import type { DeepSweetSpot, LivePropData, PropType, ShotChartAnalysis } from '@/types/sweetSpot';
 
 // Map propType to the unified feed stat key
@@ -182,6 +183,9 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
   // Apply halftime recalibration (after transitions, updates projectedFinal and confidence)
   const spotsWithRecalibration = useHalftimeRecalibration(spotsWithTransitions);
   
+  // Record hedge status at quarter boundaries for accuracy tracking
+  const { recordedCount } = useHedgeStatusRecorder(spotsWithRecalibration);
+  
   // Calculate live game count
   const liveGameCount = useMemo(() => {
     return games.filter(g => g.status === 'in_progress').length;
@@ -205,6 +209,7 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
     spotsWithLineMovement,
     refreshLines,
     getStaleness,
+    hedgeSnapshotsRecorded: recordedCount,
     isLoading: isLoading || shotChartLoading || linesLoading,
     error,
   };

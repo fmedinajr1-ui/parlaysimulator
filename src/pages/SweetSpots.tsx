@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { ArrowLeft, RefreshCw, Crown, Star, TrendingUp, Filter, Radio, Flame, Snowflake, Target, Users, Zap, DollarSign } from "lucide-react";
+import { ArrowLeft, RefreshCw, Crown, Star, TrendingUp, Filter, Radio, Flame, Snowflake, Target, Users, Zap, DollarSign, BarChart3 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -10,6 +10,7 @@ import { useSweetSpotLiveData } from "@/hooks/useSweetSpotLiveData";
 import { useTodayProps } from "@/hooks/useTodayProps";
 import { SweetSpotCard } from "@/components/sweetspots/SweetSpotCard";
 import { TodayPropsSection } from "@/components/sweetspots/TodayPropsSection";
+import { HedgeStatusAccuracyCard } from "@/components/sweetspots/HedgeStatusAccuracyCard";
 import { MatchupScannerDashboard } from "@/components/matchup-scanner";
 import { useParlayBuilder } from "@/contexts/ParlayBuilderContext";
 import { getEasternDate } from "@/lib/dateUtils";
@@ -445,6 +446,11 @@ export default function SweetSpots() {
             {liveSpotCount > 0 && ` (${liveSpotCount} live)`}
           </p>
         )}
+        
+        {/* Hedge Status Accuracy Analytics */}
+        <div className="pt-4">
+          <HedgeStatusAccuracyCard />
+        </div>
           </>
         )}
       </div>
