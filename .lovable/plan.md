@@ -1,111 +1,190 @@
-# Player Behavior Profile → Sweet Spots Integration
 
-## Status: ✅ IMPLEMENTED (February 2026)
+# Multi-Player Selection for Film Profile Upload
 
-The Player Behavior Profile system is now fully integrated into the Sweet Spots prediction engine.
+## Overview
+
+Modify the Film Profile Upload component to allow selecting **multiple players** from a single video, enabling batch profile updates from the same footage (e.g., analyzing both Jalen Brunson and Cade Cunningham from a single game clip).
 
 ---
 
-## What Was Implemented
+## Current Behavior
 
-### 1. Edge Function: `category-props-analyzer` (v8.0)
+- Single player selection via search input
+- One `selectedPlayer` state object
+- Analysis updates one profile at a time
 
-Added profile-based adjustments to `calculateTrueProjection()`:
+## New Behavior
 
-| Profile Factor | Condition | Adjustment | Applied To |
-|----------------|-----------|------------|------------|
-| 3PT Peak Quarter | peakQ.pct > 30% | +0.4 projection | threes props |
-| Best Matchup (profile) | opponent in best_matchups | +0.5 projection | all props |
-| Worst Matchup (profile) | opponent in worst_matchups | -0.5 projection | all props |
-| Fatigue Tendency | film shows fatigue | -0.3 projection | all props |
-| Film Verified | film_sample_count >= 3 | +FILM flag | all props |
-| Blowout Risk | blowout_minutes_reduction > 5 | +BLOWOUT_RISK flag | all props |
+- Multi-select with tag-style player badges
+- Type to search, click to add player to selection list
+- Selected players shown as removable badges
+- Analysis runs once and updates ALL selected player profiles
 
-New function: `loadPlayerProfiles()` loads profiles from `player_behavior_profiles` table.
+---
 
-### 2. Hook: `useDeepSweetSpots` (v8.0)
+## Technical Changes
 
-Added profile data fetching and score adjustments:
+### 1. FilmProfileUpload.tsx State Changes
 
-| Profile Factor | Condition | Score Boost |
-|----------------|-----------|-------------|
-| Film Confidence | film_sample_count >= 3 | +5 points |
-| High Profile Confidence | profile_confidence >= 70 | +3 points |
-| Peak Quarter (3PT) | peakQ.pct > 30% | +2 points |
-| Best Matchup | opponent in best_matchups | +2 points |
-| Worst Matchup | opponent in worst_matchups | -2 points |
-
-New `ProfileData` interface attached to each `DeepSweetSpot`.
-
-### 3. Types: `src/types/sweetSpot.ts`
-
-Added new interface:
+**From:**
 ```typescript
-export interface ProfileData {
-  peakQuarters: { q1: number; q2: number; q3: number; q4: number } | null;
-  hasFatigueTendency: boolean;
-  filmSamples: number;
-  profileConfidence: number;
-  matchupAdvantage: 'favorable' | 'unfavorable' | null;
-  profileFlags: string[];
-}
+const [selectedPlayer, setSelectedPlayer] = useState<PlayerSearchResult | null>(null);
 ```
 
-Added `profileData?: ProfileData` to `DeepSweetSpot` interface.
+**To:**
+```typescript
+const [selectedPlayers, setSelectedPlayers] = useState<PlayerSearchResult[]>([]);
+```
 
-### 4. UI: `SweetSpotCard.tsx`
+### 2. Player Selection UI
 
-Added profile insight badges:
-- 🎬 **Film badges** - Shows "X film" when player has film samples
-- ✨ **Peak Q badges** - Shows "Peak Q4" for 3PT props with shooting peaks
-- 🎯 **Matchup badges** - Shows "Matchup+" or "Matchup-" from profile history
-- ⚠️ **Fatigue badges** - Shows "Fatigue" warning for players with fatigue tendency
-- ✅ **Verified badge** - Shows when profile confidence >= 70%
-
----
-
-## Data Flow
+Replace single-select with multi-select pattern:
 
 ```text
-YouTube/Film Upload → update-player-profile-from-film → player_behavior_profiles
-                                                                    ↓
-Game Logs + Zone Stats → build-player-profile ─────────────────────→│
-                                                                    ↓
-                                                     ┌──────────────────────────┐
-                                                     │   category-props-        │
-                                                     │   analyzer (v8.0)        │
-                                                     │   loads profiles,        │
-                                                     │   applies adjustments    │
-                                                     └──────────────────────────┘
-                                                                    ↓
-                                                     ┌──────────────────────────┐
-                                                     │   useDeepSweetSpots      │
-                                                     │   (v8.0)                 │
-                                                     │   fetches profiles,      │
-                                                     │   applies score boosts   │
-                                                     └──────────────────────────┘
-                                                                    ↓
-                                                     ┌──────────────────────────┐
-                                                     │   SweetSpotCard          │
-                                                     │   displays badges        │
-                                                     └──────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│ 👤 Select Players                                            │
+├──────────────────────────────────────────────────────────────┤
+│                                                               │
+│  ┌─────────────────────────────────────────────────────────┐ │
+│  │ 🔍 Search player name...                                │ │
+│  └─────────────────────────────────────────────────────────┘ │
+│                                                               │
+│  [Jalen Brunson ×] [Cade Cunningham ×]  ← Removable badges  │
+│                                                               │
+│  ┌─ Search Results (dropdown) ──────────────────────────┐   │
+│  │  LeBron James            LAL • SF                    │   │
+│  │  LaMelo Ball             CHA • PG                    │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                                                               │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### 3. Selection Logic
+
+```typescript
+const handleSelectPlayer = (player: PlayerSearchResult) => {
+  // Don't add duplicates
+  if (selectedPlayers.some(p => p.id === player.id)) return;
+  
+  setSelectedPlayers(prev => [...prev, player]);
+  setPlayerSearch(''); // Clear search after adding
+  setPlayerResults([]);
+};
+
+const handleRemovePlayer = (playerId: string) => {
+  setSelectedPlayers(prev => prev.filter(p => p.id !== playerId));
+};
+```
+
+### 4. Analysis Flow Update
+
+When analyzing, loop through all selected players:
+
+```typescript
+const handleAnalyzeAndUpdate = async () => {
+  if (selectedPlayers.length === 0 || extractedFrames.length === 0) return;
+
+  // Step 1: Run vision analysis once (already returns all player observations)
+  const { data: analysisData } = await supabase.functions.invoke('analyze-game-footage', {
+    body: {
+      frames: extractedFrames.slice(0, 20),
+      gameContext: {
+        homeTeam: selectedPlayers[0].team_name,
+        awayTeam: 'Opponent',
+        homeRoster: selectedPlayers.map(p => `${p.player_name} (${p.position})`).join(', '),
+        awayRoster: '',
+        eventId: 'profile-upload',
+      },
+      clipCategory: 'timeout',
+    },
+  });
+
+  // Step 2: Update profile for EACH selected player
+  const updatedProfiles = [];
+  for (const player of selectedPlayers) {
+    // Find observation for this player (fuzzy match on last name)
+    const playerObs = findPlayerObservation(analysisData.observations, player.player_name);
+    
+    // Upsert profile
+    const { data: profileData } = await supabase
+      .from('player_behavior_profiles')
+      .upsert({
+        player_name: player.player_name,
+        team: player.team_name,
+        fatigue_tendency: playerObs?.fatigueIndicators?.join(', '),
+        body_language_notes: playerObs?.bodyLanguage,
+        film_sample_count: 1,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'player_name' })
+      .select()
+      .single();
+    
+    updatedProfiles.push(profileData);
+  }
+  
+  setUpdatedProfiles(updatedProfiles); // Now an array
+};
+```
+
+### 5. Success State UI Update
+
+Show multiple profile cards on success:
+
+```tsx
+{analysisStage === 'complete' && updatedProfiles.length > 0 && (
+  <div className="space-y-3">
+    {updatedProfiles.map((profile, i) => (
+      <div key={i} className="p-4 bg-chart-2/10 rounded-lg border border-chart-2/30">
+        <div className="flex items-center gap-2 text-chart-2">
+          <CheckCircle className="w-5 h-5" />
+          <span className="font-medium">{profile.player_name}</span>
+        </div>
+        {profile.fatigue_tendency && (
+          <p className="text-sm text-muted-foreground mt-1">
+            Fatigue: {profile.fatigue_tendency}
+          </p>
+        )}
+      </div>
+    ))}
+  </div>
+)}
 ```
 
 ---
 
-## Testing
+## Files to Modify
 
-To verify the integration:
-1. Navigate to `/sweet-spots`
-2. Look for players with profile badges (Film, Peak Q, Matchup+/-, Fatigue, Verified)
-3. These players should have boosted scores if they have positive profile factors
-4. Check console logs for `[Projection] v8.0 Profile found:` messages
+| File | Changes |
+|------|---------|
+| `src/components/scout/FilmProfileUpload.tsx` | Multi-select state, tag badges, batch update logic |
 
 ---
 
-## Next Steps (Optional)
+## UI Components Used
 
-- [ ] Add profile insights to parlay builder leg selection
-- [ ] Create admin dashboard to review profile quality
-- [ ] Add manual profile override capability for scouts
-- [ ] Track profile-based pick accuracy vs non-profile picks
+- **Badge** with X button for removable player tags
+- **Input** for search (same as current)
+- **Dropdown** for search results (same as current)
+- Lucide **X** icon for remove button
+
+---
+
+## Edge Cases
+
+| Scenario | Handling |
+|----------|----------|
+| Duplicate player selected | Prevent adding, silently ignore |
+| Player not found in video analysis | Still update profile with empty observations (film_sample_count increments) |
+| Remove all players | Disable analyze button (same as no selection) |
+| Max players | Limit to 5 players per upload to avoid API overload |
+
+---
+
+## Implementation Summary
+
+1. Change `selectedPlayer` (single) → `selectedPlayers` (array)
+2. Add player tag badges with remove (X) button
+3. Keep search input clearing after each selection
+4. Run analysis once, loop through players for profile updates
+5. Show multiple profile results on success
+6. Add max 5 player limit with helpful message
