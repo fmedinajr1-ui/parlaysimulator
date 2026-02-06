@@ -1,183 +1,124 @@
 
+# Build "Contrarian Fade Parlay" Feature
 
-# Fix Video Frame Extraction: Analyze Actual Gameplay, Not Thumbnails
+## Understanding The Strategy
 
-## Problem Identified
+Your accuracy data reveals two categories that **consistently lose**:
 
-Your screenshot shows the core issue:
-- **8 identical thumbnail frames** - all showing the same "FULL GAME HIGHLIGHTS" title card
-- **No tracking data** - because the AI is analyzing title cards, not actual gameplay footage
-- All player tracking returns empty because players aren't visible in thumbnails
+| Category | Record | Hit Rate | Flip Strategy |
+|----------|--------|----------|---------------|
+| ELITE_REB_OVER | 1-4 | 20% | Go **UNDER** = ~80% win |
+| HIGH_ASSIST (OVER) | 11-24 | 31.4% | Go **UNDER** = ~69% win |
 
-### Why This Happens
+When a system is wrong 80% of the time, **betting the opposite** becomes a winning strategy.
 
-| What Should Happen | What Actually Happens |
-|-------------------|----------------------|
-| Extract 60 frames from throughout video | Get 8 YouTube thumbnail variations (all same image) |
-| Stream URL used for client-side extraction | CORS blocks Cobalt stream URLs, fallback to thumbnails |
-| AI sees players, jerseys, court positions | AI sees only "FULL GAME HIGHLIGHTS" text overlay |
+## Feb 7th Contrarian Plays (Flipped to OVER/UNDER)
 
----
+Based on the database, here are the "fade" picks for tomorrow's games:
 
-## Solution: Multi-Tier Frame Extraction
+### ELITE_REB_OVER → Bet UNDER
+| Player | Line | L10 Avg | Edge (for UNDER) | Confidence |
+|--------|------|---------|------------------|------------|
+| **Rudy Gobert** | U 9.5 REB | 12.3 | -2.8 (avg above line) | ⚠️ Risky fade |
 
-### Tier 1: YouTube Storyboard Sprites (Primary for YouTube)
+*Note: Gobert's L10 avg is 12.3, above the 9.5 line - this fade is risky because he's clearing it. The 20% hit rate likely comes from variance in specific games.*
 
-YouTube generates **storyboard sprite sheets** containing many frames from throughout videos. These bypass the thumbnail limitation:
+### HIGH_ASSIST (OVER 3.5) → Bet UNDER 
+| Player | Line | L10 Avg | Fade Edge | Game |
+|--------|------|---------|-----------|------|
+| **Cade Cunningham** | U 3.5 AST | 10.4 | Very risky - avg way above | DET |
+| **Andrew Nembhard** | U 3.5 AST | 9.2 | Very risky | IND |
+| **Russell Westbrook** | U 3.5 AST | 7.5 | Risky | DEN |
+
+## The Problem With This Approach
+
+Looking at the L10 averages, the players in these "worst accuracy" categories actually **clear** their lines easily. The poor hit rate is likely due to:
+1. **Line movement** - lines moved against them after recommendation
+2. **Variance/blowouts** - reduced minutes in blowouts
+3. **Small sample** - only 5 decisions for ELITE_REB_OVER
+
+**Recommendation**: Rather than blindly fading, let me build a smarter "Contrarian Parlay Builder" that:
+1. Targets categories with 40-50% accuracy (true coinflips)
+2. Calculates edge for the **opposite** side
+3. Only fades when the opposite side has positive edge
+
+## What I Will Build
+
+### New Hook: `useContrarianParlayBuilder.ts`
 
 ```text
-OLD: img.youtube.com/vi/{id}/maxresdefault.jpg → Same title card image
-NEW: i.ytimg.com/sb/{id}/storyboard3_L1/M$M.jpg → Actual frames from video
+┌─────────────────────────────────────────────┐
+│         Contrarian Fade Engine              │
+├─────────────────────────────────────────────┤
+│ 1. Query categories with <50% hit rate      │
+│ 2. Cross-reference with today's games       │
+│ 3. Calculate OPPOSITE edge for each pick    │
+│ 4. Filter: only include if fade has +edge   │
+│ 5. Build 3-leg parlay with best fades       │
+└─────────────────────────────────────────────┘
 ```
 
-### Tier 2: Edge Function Proxied Extraction
+### UI Component: Contrarian Section on Sweet Spots Page
 
-For Twitter/TikTok (or when storyboards fail), proxy the stream through the edge function:
-1. Edge function downloads video stream
-2. Use `ffprobe`-like logic to extract frame timestamps
-3. Fetch frame snapshots at intervals server-side
-4. Return actual base64 frames (not thumbnail URLs)
+Add a new tab or card showing:
+- **"Fade These"** picks with accuracy warning badges
+- One-click "Build Contrarian Parlay" button
+- Clear display of original recommendation vs fade recommendation
 
-### Tier 3: Enhanced Error Messaging
+### Files to Create/Modify
 
-When extraction returns identical frames, warn the user clearly:
-- "Detected title card only - try a different video link"
-- "For best results, use game highlight clips that show actual gameplay"
-
----
+| File | Action | Purpose |
+|------|--------|---------|
+| `src/hooks/useContrarianParlayBuilder.ts` | **Create** | Core logic for finding fade opportunities |
+| `src/components/sweetspots/ContrarianFadeCard.tsx` | **Create** | Display individual fade picks |
+| `src/pages/SweetSpots.tsx` | **Modify** | Add Contrarian section/tab |
 
 ## Technical Implementation
 
-### 1. Add YouTube Storyboard Extraction (Edge Function)
-
-Update `extract-youtube-frames/index.ts` to fetch YouTube storyboard sprites:
+### 1. useContrarianParlayBuilder Hook
 
 ```typescript
-// YouTube Storyboard API - contains actual frames from throughout video
-async function getYouTubeStoryboardFrames(videoId: string): Promise<string[]> {
-  const frames: string[] = [];
-  
-  // Try to get storyboard manifest from YouTube
-  // Storyboards are sprite sheets with frames at regular intervals
-  const storyboardUrls = [
-    // L2 storyboards have more frames
-    `https://i.ytimg.com/sb/${videoId}/storyboard3_L2/M0.jpg`,
-    `https://i.ytimg.com/sb/${videoId}/storyboard3_L2/M1.jpg`,
-    `https://i.ytimg.com/sb/${videoId}/storyboard3_L2/M2.jpg`,
-    // L1 storyboards as fallback
-    `https://i.ytimg.com/sb/${videoId}/storyboard3_L1/M0.jpg`,
-    `https://i.ytimg.com/sb/${videoId}/storyboard3_L1/M1.jpg`,
-  ];
-  
-  for (const url of storyboardUrls) {
-    try {
-      const response = await fetch(url);
-      if (response.ok) {
-        // Storyboard is a sprite sheet - extract individual frames
-        const spriteFrames = await extractFramesFromSpriteSheet(response);
-        frames.push(...spriteFrames);
-      }
-    } catch (e) {
-      console.log(`Storyboard fetch failed: ${url}`);
-    }
-  }
-  
-  return frames;
-}
+// Query worst-performing categories
+const FADE_CATEGORIES = [
+  { category: 'ELITE_REB_OVER', hitRate: 0.20, fadeHitRate: 0.80 },
+  { category: 'HIGH_ASSIST', hitRate: 0.314, fadeHitRate: 0.686 },
+  { category: 'MID_SCORER_UNDER', hitRate: 0.45, fadeHitRate: 0.55 },
+];
+
+// For each pick in these categories:
+// 1. Get current line from unified_props
+// 2. Calculate L10 average
+// 3. If original side = OVER and L10 < line → Fade has EDGE
+// 4. If original side = UNDER and L10 > line → Fade has EDGE
 ```
 
-### 2. Extract Individual Frames from Sprite Sheets
-
-YouTube storyboards are grids (typically 5x5 or 10x10 frames). Parse them:
-
-```typescript
-async function extractFramesFromSpriteSheet(
-  response: Response,
-  gridCols: number = 5,
-  gridRows: number = 5
-): Promise<string[]> {
-  // Get sprite sheet as image data
-  const arrayBuffer = await response.arrayBuffer();
-  
-  // In Deno, we'd use image processing to split the grid
-  // Each cell is one frame from the video
-  // Return array of base64 individual frames
-}
-```
-
-### 3. Client-Side: Detect Duplicate Frames
-
-Update `FilmProfileUpload.tsx` to warn when all frames look identical:
-
-```typescript
-// After frame extraction, check for duplicates
-const uniqueCheck = deduplicateFrames(result.frames);
-if (uniqueCheck.length <= 2 && result.frames.length >= 6) {
-  toast({
-    title: "Warning: Thumbnail Only",
-    description: "Could only get video thumbnails, not actual frames. Try a different video.",
-    variant: "destructive",
-  });
-}
-```
-
-### 4. Better UX: Show What's Being Analyzed
-
-Update the UI to clearly show:
-- Source type: "Thumbnails" vs "Full Video Frames"
-- Frame uniqueness: "8 frames (all unique)" vs "8 frames (duplicates detected)"
-- Clear guidance when analysis won't work
-
----
-
-## Files to Modify
-
-| File | Changes |
-|------|---------|
-| `supabase/functions/extract-youtube-frames/index.ts` | Add YouTube storyboard API extraction, sprite sheet parsing, remove duplicate thumbnail fetching |
-| `src/components/scout/FilmProfileUpload.tsx` | Duplicate frame detection warning, better progress messaging |
-| `src/lib/video-frame-extractor.ts` | Add duplicate detection utility that's more strict |
-
----
-
-## New YouTube Storyboard Flow
+### 2. Fade Edge Calculation
 
 ```text
-User pastes YouTube link
-         ↓
-Edge function extracts video ID
-         ↓
-Fetch YouTube storyboard sprites (L2 first, then L1)
-         ↓
-Parse sprite sheets into individual frames (25-100 frames)
-         ↓
-Return actual gameplay frames to client
-         ↓
-AI analyzes real game footage with player visibility
-         ↓
-Jersey tracking, court zones, shots all detected
+Original: Rudy Gobert REB OVER 9.5 (L10 avg: 12.3)
+→ System says OVER but category loses 80%
+→ Fade = UNDER 9.5
+→ Edge check: 12.3 > 9.5 = NO EDGE for under
+→ Skip this fade (risky)
+
+Original: Player X AST OVER 3.5 (L10 avg: 3.2)
+→ System says OVER but category loses 69%
+→ Fade = UNDER 3.5
+→ Edge check: 3.2 < 3.5 = +0.3 EDGE for under
+→ Include this fade ✅
 ```
 
----
+### 3. Parlay Builder Integration
 
-## Expected Outcome
+One-click button adds all validated fades to the universal parlay builder with:
+- Source: `'contrarian'`
+- Badge: `'🔄 FADE'`
+- Confidence based on category fade hit rate
 
-After implementation:
-- YouTube highlights → **25-60 actual gameplay frames** (not 8 identical thumbnails)
-- Each frame shows different moment from video
-- AI can track jersey numbers across frames
-- Court zones and shot attempts visible in footage
-- Player tracking data populated correctly
+## Outcome
 
----
-
-## Alternative: Local Upload Works Better
-
-As a workaround, **local video upload** already extracts real frames:
-- User downloads YouTube video (via browser extension or online tool)
-- Uploads the .mp4 file directly
-- System extracts 60 frames across entire video
-- AI gets actual gameplay footage to analyze
-
-The plan above makes YouTube/social links work as expected without requiring downloads.
-
+After implementation, you'll have:
+1. **Clear visibility** into which categories are failing
+2. **Smart fade selection** that only picks when opposite has edge
+3. **One-click contrarian parlay** for today's games
+4. **Accuracy tracking** to validate if fading actually works better
