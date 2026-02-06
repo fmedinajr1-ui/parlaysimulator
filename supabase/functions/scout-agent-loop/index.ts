@@ -64,6 +64,153 @@ async function recordPropOutcomes(
   }
 }
 
+// ===== PLAYER BEHAVIOR PROFILE UPDATES =====
+
+interface VisionSignal {
+  signalType: 'fatigue' | 'speed' | 'effort' | 'positioning';
+  player: string;
+  jersey: string;
+  value: number;
+  observation: string;
+  confidence: 'low' | 'medium' | 'high';
+  verified?: boolean;
+}
+
+// Update player behavior profiles with film-derived insights
+async function updatePlayerFilmInsights(
+  visionSignals: VisionSignal[],
+  playerStates: Record<string, PlayerLiveState>,
+  gameContext: { homeTeam: string; awayTeam: string }
+): Promise<void> {
+  if (!supabaseUrl || !supabaseKey) {
+    console.log('[Scout Agent] Supabase not configured, skipping profile updates');
+    return;
+  }
+  
+  // Only process verified, medium+ confidence signals
+  const validSignals = visionSignals.filter(s => 
+    s.verified !== false && 
+    s.confidence !== 'low' &&
+    s.player && 
+    !s.player.startsWith('Unknown')
+  );
+  
+  if (validSignals.length === 0) {
+    console.log('[Scout Agent] No valid signals for profile update');
+    return;
+  }
+  
+  const supabase = createClient(supabaseUrl, supabaseKey);
+  
+  // Group signals by player
+  const signalsByPlayer = new Map<string, VisionSignal[]>();
+  for (const signal of validSignals) {
+    const playerName = signal.player;
+    if (!signalsByPlayer.has(playerName)) {
+      signalsByPlayer.set(playerName, []);
+    }
+    signalsByPlayer.get(playerName)!.push(signal);
+  }
+  
+  console.log(`[Scout Agent] Updating film insights for ${signalsByPlayer.size} players`);
+  
+  for (const [playerName, signals] of signalsByPlayer) {
+    try {
+      // Get player's team
+      const playerState = Object.values(playerStates).find(p => 
+        p.playerName.toLowerCase() === playerName.toLowerCase()
+      );
+      const team = playerState?.team || null;
+      
+      // Fetch existing profile
+      const { data: existingProfile } = await supabase
+        .from('player_behavior_profiles')
+        .select('*')
+        .eq('player_name', playerName)
+        .maybeSingle();
+      
+      // Aggregate signal insights
+      const fatigueSignals = signals.filter(s => s.signalType === 'fatigue');
+      const effortSignals = signals.filter(s => s.signalType === 'effort');
+      const speedSignals = signals.filter(s => s.signalType === 'speed');
+      
+      // Build fatigue tendency text (accumulative)
+      let fatigueTendency = existingProfile?.fatigue_tendency || '';
+      if (fatigueSignals.length > 0) {
+        const avgFatigueValue = fatigueSignals.reduce((sum, s) => sum + s.value, 0) / fatigueSignals.length;
+        const fatigueObs = fatigueSignals.map(s => s.observation).filter(Boolean);
+        const newFatigueNote = fatigueObs.length > 0 
+          ? `[${new Date().toISOString().split('T')[0]}] ${fatigueObs[0]} (avg: ${avgFatigueValue > 0 ? '+' : ''}${avgFatigueValue.toFixed(1)})`
+          : null;
+        
+        if (newFatigueNote) {
+          // Keep last 5 observations
+          const existingNotes = fatigueTendency ? fatigueTendency.split('\n').slice(-4) : [];
+          fatigueTendency = [...existingNotes, newFatigueNote].join('\n');
+        }
+      }
+      
+      // Build body language notes (effort + speed insights)
+      let bodyLanguageNotes = existingProfile?.body_language_notes || '';
+      const behaviorSignals = [...effortSignals, ...speedSignals];
+      if (behaviorSignals.length > 0) {
+        const observations = behaviorSignals
+          .map(s => `${s.signalType}: ${s.observation}`)
+          .filter(Boolean);
+        
+        if (observations.length > 0) {
+          const newNote = `[${new Date().toISOString().split('T')[0]}] ${observations.join('; ')}`;
+          const existingNotes = bodyLanguageNotes ? bodyLanguageNotes.split('\n').slice(-4) : [];
+          bodyLanguageNotes = [...existingNotes, newNote].join('\n');
+        }
+      }
+      
+      // Increment film sample count
+      const filmSampleCount = (existingProfile?.film_sample_count || 0) + 1;
+      
+      // Calculate profile confidence boost from film (adds up to 10 points)
+      const baseConfidence = existingProfile?.profile_confidence || 0;
+      const filmConfidenceBoost = Math.min(10, filmSampleCount * 2);
+      const newConfidence = Math.min(100, baseConfidence + (filmConfidenceBoost > 0 && !existingProfile ? filmConfidenceBoost : 0));
+      
+      // Upsert the profile
+      const { error } = await supabase
+        .from('player_behavior_profiles')
+        .upsert({
+          player_name: playerName,
+          team: team,
+          fatigue_tendency: fatigueTendency || null,
+          body_language_notes: bodyLanguageNotes || null,
+          film_sample_count: filmSampleCount,
+          profile_confidence: existingProfile ? existingProfile.profile_confidence : newConfidence,
+          last_updated: new Date().toISOString(),
+          // Preserve existing data if it exists
+          three_pt_peak_quarters: existingProfile?.three_pt_peak_quarters || null,
+          scoring_zone_preferences: existingProfile?.scoring_zone_preferences || null,
+          clutch_performance_vs_average: existingProfile?.clutch_performance_vs_average || null,
+          avg_first_rest_time: existingProfile?.avg_first_rest_time || null,
+          avg_second_stint_start: existingProfile?.avg_second_stint_start || null,
+          avg_minutes_per_quarter: existingProfile?.avg_minutes_per_quarter || null,
+          blowout_minutes_reduction: existingProfile?.blowout_minutes_reduction || null,
+          best_matchups: existingProfile?.best_matchups || null,
+          worst_matchups: existingProfile?.worst_matchups || null,
+          quarter_production: existingProfile?.quarter_production || null,
+          games_analyzed: existingProfile?.games_analyzed || 0,
+        }, {
+          onConflict: 'player_name,team',
+        });
+      
+      if (error) {
+        console.error(`[Scout Agent] Failed to update profile for ${playerName}:`, error.message);
+      } else {
+        console.log(`[Scout Agent] Updated film insights for ${playerName} (sample #${filmSampleCount})`);
+      }
+    } catch (err) {
+      console.error(`[Scout Agent] Error updating profile for ${playerName}:`, err);
+    }
+  }
+}
+
 // ===== ROTATION TRUTH LAYER TYPES =====
 
 type RotationRole = 'STARTER' | 'CLOSER' | 'BENCH_CORE' | 'BENCH_FRINGE';
@@ -2472,6 +2619,15 @@ CRITICAL RULE: You MUST identify players by their jersey numbers and look them u
       '', // espnEventId not available in request type
       analysisDate
     );
+
+    // PHASE 2: Update player behavior profiles with film-derived insights
+    if (visionResult.visionSignals?.length > 0) {
+      await updatePlayerFilmInsights(
+        visionResult.visionSignals,
+        playerStates,
+        gameContext
+      );
+    }
 
     // Generate halftime recommendations if halftime detected
     let halftimeRecommendations: any[] = [];
