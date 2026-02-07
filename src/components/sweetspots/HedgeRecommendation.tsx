@@ -464,7 +464,7 @@ function calculateEnhancedHedgeAction(spot: DeepSweetSpot): ExtendedHedgeAction 
   else if (hitProbability < monitorThreshold || (gapToLine < 0 && gapToLine > -2)) {
     status = 'monitor';
     headline = '⚡ MONITOR CLOSELY';
-    message = `Slightly off pace. Projected ${projectedFinal.toFixed(1)} vs line ${hedgeLine} (${hitProbability}% probability). ${getTrendDescription(trendDirection, side === 'over')}`;
+    message = `Slightly off pace. Projected ${projectedFinal.toFixed(1)} vs ${side.toUpperCase()} ${hedgeLine} (${hitProbability}% probability). ${getTrendDescription(trendDirection, side === 'over')}`;
     
     if (zoneInsight) {
       message += ` ${zoneInsight}.`;
@@ -477,7 +477,7 @@ function calculateEnhancedHedgeAction(spot: DeepSweetSpot): ExtendedHedgeAction 
   else {
     status = 'on_track';
     headline = '✓ ON TRACK';
-    message = `Projected ${projectedFinal.toFixed(1)} exceeds line ${hedgeLine} by ${gapToLine.toFixed(1)}. ${hitProbability}% probability. Rate: ${currentRate.toFixed(2)}/min.`;
+    message = `Projected ${projectedFinal.toFixed(1)} clears ${side.toUpperCase()} ${hedgeLine} by ${gapToLine.toFixed(1)}. ${hitProbability}% probability. Rate: ${currentRate.toFixed(2)}/min.`;
     
     if (zoneInsight && hasZoneAdvantage) {
       message += ` ${zoneInsight} provides additional support.`;
