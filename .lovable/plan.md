@@ -1,117 +1,65 @@
 
 
-# Fix: Hedge Alert Should Respect Projection Buffer
+# Fix: Side-Aware Messaging for ON TRACK Status
 
-## Problem Summary
+## Problem
 
-The screenshot shows **Pelle Larsson OVER 2.5 assists** displaying contradictory information:
-- ✅ Projected: **5.8** (exceeds line by 3.3)
-- ✅ Rate: **0.18/min** (3x faster than the 0.06/min needed)
-- ✅ Pace: **160%** of target
-- ❌ But shows: **"⚠️ HEDGE ALERT"** and **"Consider UNDER 2.5"**
+For **UNDER bets**, the "ON TRACK" message shows confusing/wrong language:
 
-The user is correctly confused - **this bet is clearly on track**, but a slow game pace flag (8 = SLOW) is incorrectly triggering an alert.
+| Bet | Current Display | Issue |
+|-----|-----------------|-------|
+| Kevin Porter Jr. UNDER 9.5 | "Projected 2.0 **exceeds** line 9.5 by 7.5" | 2.0 doesn't exceed 9.5! |
+
+The word "exceeds" only makes sense for OVER bets. For UNDER bets, the projection being **lower** than the line is what makes it on track.
 
 ## Root Cause
 
-In `HedgeRecommendation.tsx`, line 441:
-
-```text
-else if (severeRiskCount >= 1 || hitProbability < alertThreshold || hasSlowPace || hasZoneDisadvantage)
+Line 480 in `HedgeRecommendation.tsx`:
+```typescript
+message = `Projected ${projectedFinal.toFixed(1)} exceeds line ${hedgeLine} by ${gapToLine.toFixed(1)}...`
 ```
 
-The `hasSlowPace` flag triggers an alert **regardless of projection buffer**. Even if you're projected to beat the line by 3+ points, a slow pace still flags an alert.
+This hardcoded message ignores the bet side, making UNDER bet status confusing.
 
 ## Solution
 
-Add a **buffer override** that prevents pace-based alerts when the projection is comfortably ahead of the line:
+Update the ON TRACK message to use side-aware language:
 
-**Logic Change:**
-```text
-// Skip slow-pace alert if projected to clear line by 2+ (clearly on track)
-const hasSignificantBuffer = gapToLine >= 2;
-const effectiveSlowPace = hasSlowPace && !hasSignificantBuffer;
-```
-
-Then use `effectiveSlowPace` instead of `hasSlowPace` in the alert condition.
+| Bet Side | Before (Wrong) | After (Fixed) |
+|----------|----------------|---------------|
+| OVER 2.5 | "Projected 5.8 exceeds line 2.5" | "Projected 5.8 clears OVER 2.5" |
+| UNDER 9.5 | "Projected 2.0 exceeds line 9.5" | "Projected 2.0 clears UNDER 9.5" |
 
 ## File Changes
 
 ### `src/components/sweetspots/HedgeRecommendation.tsx`
 
-| Line | Change |
-|------|--------|
-| ~325 | After `hasSlowPace` calculation, add buffer override logic |
-| ~441 | Replace `hasSlowPace` with `effectiveSlowPace` in the condition |
-| ~445-446 | Update slow pace message to only show when pace is actually threatening |
+**Line 480** - Update ON TRACK message:
 
-**Before (line ~323-325):**
 ```typescript
-const hasSlowPace = paceRating < 95 && side === 'over';
+// Before:
+message = `Projected ${projectedFinal.toFixed(1)} exceeds line ${hedgeLine} by ${gapToLine.toFixed(1)}. ${hitProbability}% probability. Rate: ${currentRate.toFixed(2)}/min.`;
+
+// After:
+message = `Projected ${projectedFinal.toFixed(1)} clears ${side.toUpperCase()} ${hedgeLine} by ${gapToLine.toFixed(1)}. ${hitProbability}% probability. Rate: ${currentRate.toFixed(2)}/min.`;
 ```
 
-**After:**
+### Also update related messages
+
+**Line 467** - MONITOR message (same issue):
 ```typescript
-const hasSlowPace = paceRating < 95 && side === 'over';
-// Don't alert for slow pace if projection is comfortably clearing the line
-const hasSignificantBuffer = gapToLine >= 2;
-const effectivePaceRisk = hasSlowPace && !hasSignificantBuffer;
-```
+// Before:
+message = `Slightly off pace. Projected ${projectedFinal.toFixed(1)} vs line ${hedgeLine}...`
 
-**Before (line ~441):**
-```typescript
-else if (severeRiskCount >= 1 || hitProbability < alertThreshold || hasSlowPace || hasZoneDisadvantage)
-```
-
-**After:**
-```typescript
-else if (severeRiskCount >= 1 || hitProbability < alertThreshold || effectivePaceRisk || hasZoneDisadvantage)
-```
-
-### `src/lib/hedgeStatusUtils.ts`
-
-Apply the same fix to the filter utility for consistency:
-
-| Line | Change |
-|------|--------|
-| 56-60 | Add buffer check before pace-based alert override |
-
-**Before (lines 56-60):**
-```typescript
-// Pace-based override for OVER bets
-if (isOver && (liveData.paceRating ?? 100) < 95) {
-  if (confidence < 45) return 'urgent';
-  if (confidence < 55) return 'alert';
-}
-```
-
-**After:**
-```typescript
-// Pace-based override for OVER bets (only if not already comfortably ahead)
-const hasSignificantBuffer = (projectedFinal - line) >= 2;
-if (isOver && (liveData.paceRating ?? 100) < 95 && !hasSignificantBuffer) {
-  if (confidence < 45) return 'urgent';
-  if (confidence < 55) return 'alert';
-}
+// After (add side for clarity):
+message = `Slightly off pace. Projected ${projectedFinal.toFixed(1)} vs ${side.toUpperCase()} ${hedgeLine}...`
 ```
 
 ## Expected Outcome
 
-After this fix:
+Kevin Porter Jr. UNDER 9.5 will now correctly show:
 
-| Scenario | Before | After |
-|----------|--------|-------|
-| Pelle (5.8 proj vs 2.5 line, slow pace) | ⚠️ HEDGE ALERT | ✓ ON TRACK |
-| Player (3.0 proj vs 2.5 line, slow pace) | ⚠️ HEDGE ALERT | ⚠️ HEDGE ALERT (still tight) |
-| Player (2.0 proj vs 2.5 line, slow pace) | ⚠️ HEDGE ALERT | 🚨 HEDGE NOW (behind) |
+> "Projected 2.0 clears UNDER 9.5 by 7.5. 85% probability."
 
-The fix ensures that **projection buffer takes priority** - if you're projected to clear the line by 2+, pace concerns become secondary.
-
-## Quick Answer for Pelle Larsson
-
-**Stay with OVER 2.5 - No hedge needed!** 
-
-- Projected: 5.8 assists (2.3x the line)
-- Current rate: 0.18/min (3x what you need)
-- This is clearly on track despite the buggy "HEDGE ALERT" display
+This makes it immediately clear that being projected **below** 9.5 is favorable for an UNDER bet.
 
