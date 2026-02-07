@@ -6,7 +6,7 @@ const corsHeaders = {
 };
 
 interface HedgeSnapshotPayload {
-  sweet_spot_id: string;
+  sweet_spot_id?: string; // Now optional - may be null for client-generated spots
   player_name: string;
   prop_type: string;
   line: number;
@@ -26,6 +26,7 @@ interface HedgeSnapshotPayload {
   risk_flags?: string[];
   live_book_line?: number;
   line_movement?: number;
+  analysis_date?: string; // YYYY-MM-DD format for outcome matching
 }
 
 Deno.serve(async (req) => {
@@ -50,10 +51,10 @@ Deno.serve(async (req) => {
       probability: payload.hit_probability,
     });
     
-    // Validate required fields
-    if (!payload.sweet_spot_id || !payload.player_name || !payload.quarter) {
+    // Validate required fields - sweet_spot_id no longer required
+    if (!payload.player_name || !payload.quarter) {
       return new Response(
-        JSON.stringify({ error: 'Missing required fields: sweet_spot_id, player_name, quarter' }),
+        JSON.stringify({ error: 'Missing required fields: player_name, quarter' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -66,35 +67,20 @@ Deno.serve(async (req) => {
       );
     }
     
-    // First verify the sweet_spot_id exists in category_sweet_spots
-    const { data: existingSpot, error: lookupError } = await supabase
-      .from('category_sweet_spots')
-      .select('id')
-      .eq('id', payload.sweet_spot_id)
-      .maybeSingle();
+    // Calculate analysis_date from payload or use current date
+    const analysisDate = payload.analysis_date || new Date().toISOString().split('T')[0];
     
-    if (lookupError) {
-      console.error('[record-hedge-snapshot] Lookup error:', lookupError);
-      return new Response(
-        JSON.stringify({ error: 'Failed to verify sweet spot exists' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    // Generate a composite key for deduplication (player+prop+line+quarter+date)
+    const compositeKey = `${payload.player_name.toLowerCase()}_${payload.prop_type}_${payload.line}_${payload.quarter}_${analysisDate}`;
     
-    if (!existingSpot) {
-      // Spot doesn't exist in DB - skip silently (client-generated spot)
-      console.log('[record-hedge-snapshot] Skipping - spot not in database:', payload.sweet_spot_id);
-      return new Response(
-        JSON.stringify({ success: true, skipped: true, reason: 'spot_not_in_database' }),
-        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    console.log('[record-hedge-snapshot] Recording snapshot with composite key:', compositeKey);
     
-    // Upsert snapshot (allows updating if same spot+quarter already exists)
+    // Insert snapshot directly - no FK validation needed
+    // Use composite key matching for outcome verification later
     const { data, error } = await supabase
       .from('sweet_spot_hedge_snapshots')
       .upsert({
-        sweet_spot_id: payload.sweet_spot_id,
+        sweet_spot_id: payload.sweet_spot_id || null, // Nullable now
         player_name: payload.player_name,
         prop_type: payload.prop_type,
         line: payload.line,
@@ -114,9 +100,11 @@ Deno.serve(async (req) => {
         risk_flags: payload.risk_flags,
         live_book_line: payload.live_book_line,
         line_movement: payload.line_movement,
+        analysis_date: analysisDate,
         captured_at: new Date().toISOString(),
       }, {
-        onConflict: 'sweet_spot_id,quarter',
+        onConflict: 'player_name,prop_type,line,quarter,analysis_date',
+        ignoreDuplicates: false,
       })
       .select()
       .single();

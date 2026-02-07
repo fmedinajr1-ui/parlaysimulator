@@ -8932,6 +8932,7 @@ export type Database = {
       }
       sweet_spot_hedge_snapshots: {
         Row: {
+          analysis_date: string | null
           captured_at: string
           current_value: number
           game_progress: number
@@ -8956,6 +8957,7 @@ export type Database = {
           zone_matchup_score: number | null
         }
         Insert: {
+          analysis_date?: string | null
           captured_at?: string
           current_value: number
           game_progress: number
@@ -8980,6 +8982,7 @@ export type Database = {
           zone_matchup_score?: number | null
         }
         Update: {
+          analysis_date?: string | null
           captured_at?: string
           current_value?: number
           game_progress?: number
@@ -10424,6 +10427,19 @@ export type Database = {
           hits: number
           misses: number
           quarter: number
+          total_picks: number
+        }[]
+      }
+      get_hedge_status_accuracy_v2: {
+        Args: { end_date?: string; start_date?: string }
+        Returns: {
+          avg_probability: number
+          hedge_status: string
+          hit_rate: number
+          hits: number
+          misses: number
+          quarter: number
+          sample_confidence: string
           total_picks: number
         }[]
       }
