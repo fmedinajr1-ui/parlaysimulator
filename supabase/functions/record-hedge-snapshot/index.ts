@@ -66,6 +66,30 @@ Deno.serve(async (req) => {
       );
     }
     
+    // First verify the sweet_spot_id exists in category_sweet_spots
+    const { data: existingSpot, error: lookupError } = await supabase
+      .from('category_sweet_spots')
+      .select('id')
+      .eq('id', payload.sweet_spot_id)
+      .maybeSingle();
+    
+    if (lookupError) {
+      console.error('[record-hedge-snapshot] Lookup error:', lookupError);
+      return new Response(
+        JSON.stringify({ error: 'Failed to verify sweet spot exists' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    if (!existingSpot) {
+      // Spot doesn't exist in DB - skip silently (client-generated spot)
+      console.log('[record-hedge-snapshot] Skipping - spot not in database:', payload.sweet_spot_id);
+      return new Response(
+        JSON.stringify({ success: true, skipped: true, reason: 'spot_not_in_database' }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
     // Upsert snapshot (allows updating if same spot+quarter already exists)
     const { data, error } = await supabase
       .from('sweet_spot_hedge_snapshots')
