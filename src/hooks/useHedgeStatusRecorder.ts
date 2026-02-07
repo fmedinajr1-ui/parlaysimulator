@@ -107,10 +107,21 @@ export function useHedgeStatusRecorder(spots: DeepSweetSpot[]) {
   
   // Main effect: check each spot and record at quarter boundaries
   useEffect(() => {
-    const liveSpots = spots.filter(s => s.liveData?.isLive);
+    // Only record for spots that have a valid database ID (UUID format from category_sweet_spots)
+    // Client-generated spots won't have valid FK references
+    const isValidDatabaseId = (id: string): boolean => {
+      // UUID v4 pattern check - database IDs are UUIDs
+      const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      return uuidPattern.test(id);
+    };
+    
+    const liveSpots = spots.filter(s => 
+      s.liveData?.isLive && 
+      s.id && 
+      isValidDatabaseId(s.id)
+    );
     
     liveSpots.forEach(spot => {
-      const currentQ = spot.liveData?.currentQuarter ?? 0;
       const progress = spot.liveData?.gameProgress ?? 0;
       
       // Check if we should record for any quarter
