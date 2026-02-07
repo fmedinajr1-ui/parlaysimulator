@@ -53,8 +53,9 @@ export function calculateHedgeStatus(spot: DeepSweetSpot): HedgeStatus | null {
     return 'urgent';
   }
   
-  // Pace-based override for OVER bets
-  if (isOver && (liveData.paceRating ?? 100) < 95) {
+  // Pace-based override for OVER bets (only if not already comfortably ahead)
+  const hasSignificantBuffer = (projectedFinal - line) >= 2;
+  if (isOver && (liveData.paceRating ?? 100) < 95 && !hasSignificantBuffer) {
     if (confidence < 45) return 'urgent';
     if (confidence < 55) return 'alert';
   }

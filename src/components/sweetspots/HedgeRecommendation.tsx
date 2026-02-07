@@ -321,6 +321,9 @@ function calculateEnhancedHedgeAction(spot: DeepSweetSpot): ExtendedHedgeAction 
   const hasFoulTrouble = riskFlags.includes('foul_trouble');
   const hasGarbageTime = riskFlags.includes('garbage_time');
   const hasSlowPace = paceRating < 95 && side === 'over';
+  // Don't alert for slow pace if projection is comfortably clearing the line
+  const hasSignificantBuffer = gapToLine >= 2;
+  const effectivePaceRisk = hasSlowPace && !hasSignificantBuffer;
   
   // Zone-based risk modifiers
   const hasZoneDisadvantage = shotChartMatchup && shotChartMatchup.overallMatchupScore < -3;
@@ -438,7 +441,7 @@ function calculateEnhancedHedgeAction(spot: DeepSweetSpot): ExtendedHedgeAction 
     urgency = 'medium';
   }
   // ALERT: Single risk factor or moderate concern
-  else if (severeRiskCount >= 1 || hitProbability < alertThreshold || hasSlowPace || hasZoneDisadvantage) {
+  else if (severeRiskCount >= 1 || hitProbability < alertThreshold || effectivePaceRisk || hasZoneDisadvantage) {
     status = 'alert';
     headline = '⚠️ HEDGE ALERT';
     
