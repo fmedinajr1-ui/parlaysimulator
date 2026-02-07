@@ -11,7 +11,7 @@ const QUARTER_BOUNDARIES = {
 };
 
 interface HedgeSnapshotPayload {
-  sweet_spot_id: string;
+  sweet_spot_id?: string; // Now optional
   player_name: string;
   prop_type: string;
   line: number;
@@ -31,6 +31,7 @@ interface HedgeSnapshotPayload {
   risk_flags?: string[];
   live_book_line?: number;
   line_movement?: number;
+  analysis_date: string; // YYYY-MM-DD for outcome matching
 }
 
 /**
@@ -66,8 +67,11 @@ export function useHedgeStatusRecorder(spots: DeepSweetSpot[]) {
     const hedgeStatus = calculateHedgeStatus(spot);
     const hitProbability = spot.liveData.confidence ?? 50;
     
+    // Use today's date for analysis_date to link with settled outcomes
+    const analysisDate = new Date().toISOString().split('T')[0];
+    
     const payload: HedgeSnapshotPayload = {
-      sweet_spot_id: spot.id,
+      sweet_spot_id: spot.id || undefined, // Optional now - may be client-generated
       player_name: spot.playerName,
       prop_type: spot.propType,
       line: spot.line,
@@ -87,6 +91,7 @@ export function useHedgeStatusRecorder(spots: DeepSweetSpot[]) {
       risk_flags: spot.liveData.riskFlags,
       live_book_line: spot.liveData.liveBookLine,
       line_movement: spot.liveData.lineMovement,
+      analysis_date: analysisDate,
     };
     
     try {
@@ -107,28 +112,20 @@ export function useHedgeStatusRecorder(spots: DeepSweetSpot[]) {
   
   // Main effect: check each spot and record at quarter boundaries
   useEffect(() => {
-    // Only record for spots that have a valid database ID (UUID format from category_sweet_spots)
-    // Client-generated spots won't have valid FK references
-    const isValidDatabaseId = (id: string): boolean => {
-      // UUID v4 pattern check - database IDs are UUIDs
-      const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-      return uuidPattern.test(id);
-    };
-    
-    const liveSpots = spots.filter(s => 
-      s.liveData?.isLive && 
-      s.id && 
-      isValidDatabaseId(s.id)
-    );
+    // Record for ALL live spots - no UUID validation needed
+    // Outcome matching uses composite key (player_name + prop_type + line + date)
+    const liveSpots = spots.filter(s => s.liveData?.isLive && s.playerName);
     
     liveSpots.forEach(spot => {
       const progress = spot.liveData?.gameProgress ?? 0;
+      // Use composite key for deduplication: playerName_propType_line
+      const compositeKey = `${spot.playerName}_${spot.propType}_${spot.line}`;
       
       // Check if we should record for any quarter
       for (let q = 1; q <= 4; q++) {
-        if (shouldRecordAtProgress(q, progress) && !isAlreadyRecorded(spot.id, q)) {
+        if (shouldRecordAtProgress(q, progress) && !isAlreadyRecorded(compositeKey, q)) {
           recordSnapshot(spot, q);
-          markAsRecorded(spot.id, q);
+          markAsRecorded(compositeKey, q);
         }
       }
     });
