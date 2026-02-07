@@ -121,6 +121,9 @@ export interface LivePropData {
   lineMovement?: number;        // liveBookLine - originalLine (+ = line went up, - = dropped)
   lastLineUpdate?: string;      // ISO timestamp of last line fetch
   bookmaker?: string;           // Which book the line is from (e.g., "fanduel")
+  
+  // Computed hedge status (v8.2)
+  hedgeStatus?: HedgeStatus;    // on_track, monitor, alert, urgent, profit_lock
 }
 
 // Middle opportunity detection for hedge recommendations

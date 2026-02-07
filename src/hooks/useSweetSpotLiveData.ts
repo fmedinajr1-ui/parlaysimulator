@@ -5,6 +5,7 @@ import { useQuarterTransition } from './useQuarterTransition';
 import { useHalftimeRecalibration } from './useHalftimeRecalibration';
 import { useLiveSweetSpotLines } from './useLiveSweetSpotLines';
 import { useHedgeStatusRecorder } from './useHedgeStatusRecorder';
+import { calculateHedgeStatus } from '@/lib/hedgeStatusUtils';
 import type { DeepSweetSpot, LivePropData, PropType, ShotChartAnalysis } from '@/types/sweetSpot';
 
 // Map propType to the unified feed stat key
@@ -159,7 +160,11 @@ export function useSweetSpotLiveData(spots: DeepSweetSpot[]) {
         bookmaker: liveLineData?.bookmaker,
       };
       
-      return { ...spot, liveData };
+      // Create temp spot with liveData to calculate hedge status
+      const enrichedSpot = { ...spot, liveData };
+      liveData.hedgeStatus = calculateHedgeStatus(enrichedSpot) ?? undefined;
+      
+      return enrichedSpot;
     });
     
     // DEBUG: Summary log
