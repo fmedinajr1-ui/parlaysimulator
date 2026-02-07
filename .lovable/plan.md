@@ -1,110 +1,117 @@
 
-# Add "On Track" Live Status Filter
 
-## Overview
+# Fix: Hedge Alert Should Respect Projection Buffer
 
-Add a new filter option to the Quality filter bar that shows only live bets with "On Track" status. This helps users quickly find bets that are progressing well during live games.
+## Problem Summary
 
-## Current Architecture
+The screenshot shows **Pelle Larsson OVER 2.5 assists** displaying contradictory information:
+- ✅ Projected: **5.8** (exceeds line by 3.3)
+- ✅ Rate: **0.18/min** (3x faster than the 0.06/min needed)
+- ✅ Pace: **160%** of target
+- ❌ But shows: **"⚠️ HEDGE ALERT"** and **"Consider UNDER 2.5"**
 
-The hedge status (`on_track`, `monitor`, `alert`, `urgent`, `profit_lock`) is calculated dynamically in `HedgeRecommendation.tsx` via `calculateEnhancedHedgeAction()`. However, this calculation is:
-1. Not exported for reuse
-2. Not stored on the `DeepSweetSpot` type
-3. Only computed during render of the HedgeRecommendation component
+The user is correctly confused - **this bet is clearly on track**, but a slow game pace flag (8 = SLOW) is incorrectly triggering an alert.
+
+## Root Cause
+
+In `HedgeRecommendation.tsx`, line 441:
+
+```text
+else if (severeRiskCount >= 1 || hitProbability < alertThreshold || hasSlowPace || hasZoneDisadvantage)
+```
+
+The `hasSlowPace` flag triggers an alert **regardless of projection buffer**. Even if you're projected to beat the line by 3+ points, a slow pace still flags an alert.
 
 ## Solution
 
-### Step 1: Create a Utility Function for Hedge Status Calculation
+Add a **buffer override** that prevents pace-based alerts when the projection is comfortably ahead of the line:
 
-Extract the core hedge status logic into a reusable utility that can be called during data enrichment.
-
-**New file:** `src/lib/hedgeStatusUtils.ts`
-
+**Logic Change:**
 ```text
-This utility will contain:
-- calculateHedgeStatus(spot: DeepSweetSpot): HedgeStatus
-- A simplified version of the logic from HedgeRecommendation.tsx
-- Focus on returning just the status, not the full action details
+// Skip slow-pace alert if projected to clear line by 2+ (clearly on track)
+const hasSignificantBuffer = gapToLine >= 2;
+const effectiveSlowPace = hasSlowPace && !hasSignificantBuffer;
 ```
 
-### Step 2: Extend the LivePropData Type
+Then use `effectiveSlowPace` instead of `hasSlowPace` in the alert condition.
 
-Add a `hedgeStatus` field to store the calculated status.
+## File Changes
 
-**File:** `src/types/sweetSpot.ts`
+### `src/components/sweetspots/HedgeRecommendation.tsx`
 
 | Line | Change |
 |------|--------|
-| ~95 | Add `hedgeStatus?: HedgeStatus;` to LivePropData interface |
+| ~325 | After `hasSlowPace` calculation, add buffer override logic |
+| ~441 | Replace `hasSlowPace` with `effectiveSlowPace` in the condition |
+| ~445-446 | Update slow pace message to only show when pace is actually threatening |
 
-### Step 3: Compute Hedge Status During Live Data Enrichment
+**Before (line ~323-325):**
+```typescript
+const hasSlowPace = paceRating < 95 && side === 'over';
+```
 
-**File:** `src/hooks/useSweetSpotLiveData.ts`
+**After:**
+```typescript
+const hasSlowPace = paceRating < 95 && side === 'over';
+// Don't alert for slow pace if projection is comfortably clearing the line
+const hasSignificantBuffer = gapToLine >= 2;
+const effectivePaceRisk = hasSlowPace && !hasSignificantBuffer;
+```
+
+**Before (line ~441):**
+```typescript
+else if (severeRiskCount >= 1 || hitProbability < alertThreshold || hasSlowPace || hasZoneDisadvantage)
+```
+
+**After:**
+```typescript
+else if (severeRiskCount >= 1 || hitProbability < alertThreshold || effectivePaceRisk || hasZoneDisadvantage)
+```
+
+### `src/lib/hedgeStatusUtils.ts`
+
+Apply the same fix to the filter utility for consistency:
 
 | Line | Change |
 |------|--------|
-| Import | Add import for the new utility |
-| ~137-160 | After creating liveData, call `calculateHedgeStatus(spot)` and add to result |
+| 56-60 | Add buffer check before pace-based alert override |
 
-### Step 4: Add Filter Option to UI
-
-**File:** `src/pages/SweetSpots.tsx`
-
-| Line | Change |
-|------|--------|
-| 25 | Extend QualityFilter type: `'all' | 'ELITE' | 'PREMIUM+' | 'STRONG+' | 'MIDDLE' | 'ON_TRACK'` |
-| 71-85 | Add new filter case for 'ON_TRACK' that filters to spots where `liveData?.hedgeStatus === 'on_track'` |
-| 339-365 | Add "ON TRACK" button to the filter row (only visible when live games exist) |
-
-## UI Changes
-
-The Quality filter bar will display:
-
-```text
-All | ELITE | PREMIUM+ | STRONG+ | [MIDDLE (2)] | [✓ ON TRACK (5)]
+**Before (lines 56-60):**
+```typescript
+// Pace-based override for OVER bets
+if (isOver && (liveData.paceRating ?? 100) < 95) {
+  if (confidence < 45) return 'urgent';
+  if (confidence < 55) return 'alert';
+}
 ```
 
-The "ON TRACK" button:
-- Only appears when there are live games
-- Shows count of spots with on_track status
-- Uses a green color scheme to match the on_track badge styling
-
-## Technical Details
-
-### Hedge Status Calculation (Simplified)
-
-The utility will use a streamlined version of the calculation:
-
-```text
-1. If no live data → null (not applicable)
-2. If game not in progress → null
-3. For OVER bets:
-   - currentValue >= line → 'on_track' (already hit)
-   - projectedFinal >= line + 2 → 'on_track'
-   - projectedFinal >= line → 'monitor'
-   - projectedFinal < line but recoverable → 'alert'
-   - projectedFinal significantly below → 'urgent'
-4. For UNDER bets:
-   - currentValue >= line → 'urgent' (already lost)
-   - projectedFinal < line - 2 → 'on_track'
-   - projectedFinal <= line → 'monitor'
-   - projectedFinal > line → 'alert' or 'urgent'
-5. Middle opportunity detected → 'profit_lock'
+**After:**
+```typescript
+// Pace-based override for OVER bets (only if not already comfortably ahead)
+const hasSignificantBuffer = (projectedFinal - line) >= 2;
+if (isOver && (liveData.paceRating ?? 100) < 95 && !hasSignificantBuffer) {
+  if (confidence < 45) return 'urgent';
+  if (confidence < 55) return 'alert';
+}
 ```
-
-### Files Changed Summary
-
-| File | Change Type |
-|------|-------------|
-| `src/lib/hedgeStatusUtils.ts` | New file - hedge status calculation utility |
-| `src/types/sweetSpot.ts` | Add `hedgeStatus` to LivePropData interface |
-| `src/hooks/useSweetSpotLiveData.ts` | Compute and store hedge status during enrichment |
-| `src/pages/SweetSpots.tsx` | Add "ON TRACK" filter button and filtering logic |
 
 ## Expected Outcome
 
-When live games are active:
-- Users see a new "ON TRACK" filter button in the Quality row
-- Clicking it filters to show only bets with `on_track` status
-- Count badge shows how many bets are currently on track
-- This makes it easy to find bets that are progressing well without needing to read each card individually
+After this fix:
+
+| Scenario | Before | After |
+|----------|--------|-------|
+| Pelle (5.8 proj vs 2.5 line, slow pace) | ⚠️ HEDGE ALERT | ✓ ON TRACK |
+| Player (3.0 proj vs 2.5 line, slow pace) | ⚠️ HEDGE ALERT | ⚠️ HEDGE ALERT (still tight) |
+| Player (2.0 proj vs 2.5 line, slow pace) | ⚠️ HEDGE ALERT | 🚨 HEDGE NOW (behind) |
+
+The fix ensures that **projection buffer takes priority** - if you're projected to clear the line by 2+, pace concerns become secondary.
+
+## Quick Answer for Pelle Larsson
+
+**Stay with OVER 2.5 - No hedge needed!** 
+
+- Projected: 5.8 assists (2.3x the line)
+- Current rate: 0.18/min (3x what you need)
+- This is clearly on track despite the buggy "HEDGE ALERT" display
+
