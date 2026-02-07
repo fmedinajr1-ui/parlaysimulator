@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { ArrowLeft, RefreshCw, Crown, Star, TrendingUp, Filter, Radio, Flame, Snowflake, Target, Users, Zap, DollarSign, BarChart3, RotateCcw } from "lucide-react";
+import { ArrowLeft, RefreshCw, Crown, Star, TrendingUp, Filter, Radio, Flame, Snowflake, Target, Users, Zap, DollarSign, BarChart3, RotateCcw, CheckCircle2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -22,7 +22,7 @@ import { PROP_TYPE_CONFIG } from "@/types/sweetSpot";
 import type { PlayerMatchupAnalysis } from "@/types/matchupScanner";
 
 type PropFilter = PropType | 'all';
-type QualityFilter = 'all' | 'ELITE' | 'PREMIUM+' | 'STRONG+' | 'MIDDLE';
+type QualityFilter = 'all' | 'ELITE' | 'PREMIUM+' | 'STRONG+' | 'MIDDLE' | 'ON_TRACK';
 type SortOption = 'score' | 'floor' | 'edge' | 'juice';
 type PaceFilter = 'all' | 'live-only' | 'fast' | 'slow';
 type MainTab = 'sweet-spots' | 'matchup-scanner' | 'contrarian';
@@ -59,6 +59,14 @@ export default function SweetSpots() {
   // Count middle opportunities
   const middleCount = spotsWithLineMovement.length;
   
+  // Count on-track spots
+  const onTrackCount = useMemo(() => 
+    enrichedSpots.filter(s => 
+      s.liveData?.hedgeStatus === 'on_track' || s.liveData?.hedgeStatus === 'profit_lock'
+    ).length, 
+    [enrichedSpots]
+  );
+  
   const filteredSpots = useMemo(() => {
     let filtered = [...enrichedSpots];
     
@@ -82,6 +90,11 @@ export default function SweetSpots() {
       // Filter to only spots with significant line movement (middle opportunities)
       const middleIds = new Set(spotsWithLineMovement.map(s => s.id));
       filtered = filtered.filter(s => middleIds.has(s.id));
+    } else if (qualityFilter === 'ON_TRACK') {
+      // Filter to only spots with on_track or profit_lock hedge status
+      filtered = filtered.filter(s => 
+        s.liveData?.hedgeStatus === 'on_track' || s.liveData?.hedgeStatus === 'profit_lock'
+      );
     }
     
     // Apply pace filter
@@ -360,6 +373,21 @@ export default function SweetSpots() {
               >
                 <DollarSign size={12} />
                 MIDDLE ({middleCount})
+              </Button>
+            )}
+            {/* On Track filter - only shows when live games exist */}
+            {liveGameCount > 0 && (
+              <Button
+                size="sm"
+                variant={qualityFilter === 'ON_TRACK' ? 'default' : 'outline'}
+                onClick={() => setQualityFilter('ON_TRACK')}
+                className={cn(
+                  "text-xs h-7 px-2 gap-1",
+                  qualityFilter === 'ON_TRACK' && "bg-green-600 hover:bg-green-700 text-white"
+                )}
+              >
+                <CheckCircle2 size={12} />
+                ON TRACK ({onTrackCount})
               </Button>
             )}
           </div>
