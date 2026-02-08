@@ -1,199 +1,229 @@
 
-# Bug Fixes for Today's Props - Stock Market Framework Alignment
+# Two-Way Telegram Bot Communication
 
 ## Overview
-This plan fixes two key issues in the Today's Props feature to align with the "Props as a Stock Market" analytical framework:
-
-1. **Edge calculation bug** - Currently uses `projected_value - line` instead of `L10_avg - line` (OVER) or `line - L10_avg` (UNDER)
-2. **Hit rate mismatch** - UI shows `l10_hit_rate` (calculated against a different line) while displaying `actual_line`
+Add the ability to chat with ParlayIQ Bot via Telegram - send commands, ask for updates, and give recommendations. The bot will use AI to understand natural language requests and respond with relevant data.
 
 ---
 
-## Changes Summary
+## How It Will Work
 
-| File | Changes |
-|------|---------|
-| `src/hooks/useTodayProps.ts` | Fix edge calculation, add `actual_hit_rate` field, update stats to use display hit rate |
-| `src/components/sweetspots/TodayPropsSection.tsx` | Sort and display using correct hit rate (actual_hit_rate when actual_line exists) |
-
----
-
-## Part 1: Fix `useTodayProps.ts`
-
-### 1.1 Update TodayPropPick Interface (lines 51-69)
-
-Add `actual_hit_rate` field with documentation:
-
-```typescript
-export interface TodayPropPick {
-  id: string;
-  player_name: string;
-  prop_type: string;
-  category: string;
-  recommended_line: number;
-  actual_line: number | null;
-  l10_hit_rate: number;
-  l10_avg: number | null;
-  l5_avg: number | null;
-  confidence_score: number;
-  projected_value: number | null;
-  team: string;
-  reliabilityTier: string | null;
-  reliabilityHitRate: number | null;
-  analysis_date: string;
-  /** Edge per framework: L10_avg − line (OVER) or line − L10_avg (UNDER). */
-  edge: number | null;
-  recommended_side: 'OVER' | 'UNDER';
-  /** Hit rate vs actual market line (when actual_line is set). Use for display when available. */
-  actual_hit_rate: number | null;
-}
+```text
+ User sends "start" or "show today's picks"
+              │
+              ▼
+    ┌─────────────────────┐
+    │  Telegram Servers   │
+    └──────────┬──────────┘
+               │ webhook POST
+               ▼
+    ┌─────────────────────────┐
+    │ telegram-webhook (new)  │
+    │  - Parse user message   │
+    │  - Route to handler     │
+    │  - Call AI if needed    │
+    │  - Fetch bot data       │
+    └──────────┬──────────────┘
+               │
+               ▼
+    ┌─────────────────────────┐
+    │    Send reply via       │
+    │    Telegram API         │
+    └─────────────────────────┘
 ```
 
-### 1.2 Fix Edge Calculation in Step 7 (lines 213-254)
+---
 
-Replace the broken edge calculation with the framework-correct logic:
+## User Commands Supported
+
+| Command | Description |
+|---------|-------------|
+| `/start` | Welcome message with available commands |
+| `/status` | Current bot mode, bankroll, streak |
+| `/parlays` | Today's generated parlays summary |
+| `/performance` | Win rate, ROI, recent results |
+| `/weights` | Top category weights |
+| `/generate` | Trigger parlay generation |
+| `/settle` | Trigger settlement |
+| Natural language | AI-powered responses to questions like "how did we do yesterday?" or "what's your best pick?" |
+
+---
+
+## Implementation Plan
+
+### Step 1: Create New Edge Function - `telegram-webhook`
+
+A new edge function to receive incoming Telegram messages:
+
+**File:** `supabase/functions/telegram-webhook/index.ts`
 
 ```typescript
-// Step 7: Transform picks
-const picks: TodayPropPick[] = filteredSpots.map(pick => {
-  const playerKey = pick.player_name?.toLowerCase() || '';
-  const reliabilityKey = `${playerKey}_${config.reliabilityKey}`;
-  const reliability = reliabilityMap.get(reliabilityKey);
-  const team = teamMap.get(playerKey) || 'Unknown';
-  
-  // Use live line from unified_props, fallback to actual_line, then recommended
-  const actualLine = linesMap.get(playerKey) ?? pick.actual_line ?? pick.recommended_line;
-  
-  const l5Avg = l5Map.get(playerKey) ?? null;
-  const l10Avg = pick.l10_avg ?? null;
-  
-  // Determine recommended side from category or explicit field
-  const recommendedSide: 'OVER' | 'UNDER' = 
-    pick.recommended_side === 'UNDER' || pick.category?.includes('UNDER') 
-      ? 'UNDER' 
-      : 'OVER';
+import { Bot, webhookCallback } from "https://deno.land/x/grammy@v1.39.3/mod.ts";
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-  // Edge calculation per framework: L10_avg − line (OVER) or line − L10_avg (UNDER)
-  let edge: number | null = null;
-  if (actualLine != null) {
-    if (l10Avg != null) {
-      edge = recommendedSide === 'OVER' ? l10Avg - actualLine : actualLine - l10Avg;
-    } else if (pick.projected_value != null) {
-      // Fallback to projected_value if no L10 avg
-      edge = pick.projected_value - actualLine;
-    }
+const bot = new Bot(Deno.env.get("TELEGRAM_BOT_TOKEN")!);
+
+// Command handlers
+bot.command("start", async (ctx) => {
+  await ctx.reply(`🤖 *ParlayIQ Bot*\n\nCommands:\n/status - Bot status\n/parlays - Today's picks\n/performance - Stats\n/weights - Category weights\n/generate - Generate parlays\n/settle - Settle & learn\n\nOr just ask me anything!`, { parse_mode: "Markdown" });
+});
+
+bot.command("status", async (ctx) => { /* fetch activation status */ });
+bot.command("parlays", async (ctx) => { /* fetch today's parlays */ });
+bot.command("performance", async (ctx) => { /* fetch win rate, ROI */ });
+bot.command("weights", async (ctx) => { /* fetch top weights */ });
+bot.command("generate", async (ctx) => { /* trigger generation */ });
+bot.command("settle", async (ctx) => { /* trigger settlement */ });
+
+// Natural language via AI
+bot.on("message:text", async (ctx) => {
+  // Use Lovable AI to understand intent and generate response
+});
+
+const handleUpdate = webhookCallback(bot, "std/http");
+Deno.serve(async (req) => {
+  const url = new URL(req.url);
+  const secret = url.searchParams.get("secret");
+  if (secret !== Deno.env.get("FUNCTION_SECRET")) {
+    return new Response("Unauthorized", { status: 401 });
   }
-
-  return {
-    id: pick.id,
-    player_name: pick.player_name || '',
-    prop_type: pick.prop_type || config.reliabilityKey,
-    category: pick.category || '',
-    recommended_line: pick.recommended_line || 0.5,
-    actual_line: actualLine,
-    l10_hit_rate: pick.l10_hit_rate || 0,
-    l10_avg: l10Avg,
-    l5_avg: l5Avg,
-    confidence_score: pick.confidence_score || 0,
-    projected_value: pick.projected_value,
-    team,
-    reliabilityTier: reliability?.tier || null,
-    reliabilityHitRate: reliability?.hitRate || null,
-    analysis_date: pick.analysis_date || analysisDate,
-    edge,
-    recommended_side: recommendedSide,
-    actual_hit_rate: pick.actual_hit_rate ?? null,
-  };
+  return await handleUpdate(req);
 });
 ```
 
-### 1.3 Update Stats Calculation (lines 269-284)
+### Step 2: Add Webhook Secret
 
-Use display hit rate (actual_hit_rate when actual_line exists, else l10_hit_rate):
+Add a new secret for webhook authentication:
+- `TELEGRAM_WEBHOOK_SECRET` - Random string to verify webhook calls
+
+### Step 3: Configure Telegram Webhook URL
+
+After deployment, set the webhook with Telegram:
+```
+https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://pajakaqphlxoqjtrxzmi.supabase.co/functions/v1/telegram-webhook?secret=<SECRET>
+```
+
+### Step 4: Update config.toml
+
+Add the new function configuration:
+```toml
+[functions.telegram-webhook]
+verify_jwt = false
+```
+
+### Step 5: Create Conversation History Table (Optional Enhancement)
+
+Store conversation context for better AI responses:
+
+```sql
+CREATE TABLE bot_conversations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  telegram_chat_id TEXT NOT NULL,
+  role TEXT NOT NULL, -- 'user' or 'assistant'
+  content TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX idx_bot_conversations_chat ON bot_conversations(telegram_chat_id, created_at DESC);
+```
+
+### Step 6: AI Integration for Natural Language
+
+Use Lovable AI (google/gemini-3-flash-preview) to understand user intent:
 
 ```typescript
-const picks = data || [];
-
-// Helper: get display hit rate (actual_hit_rate when we have actual_line, else l10_hit_rate)
-const displayHitRate = (p: TodayPropPick) =>
-  p.actual_line != null && p.actual_hit_rate != null ? p.actual_hit_rate : p.l10_hit_rate;
-
-// Calculate summary stats using display hit rate
-const stats = {
-  totalPicks: picks.length,
-  eliteCount: picks.filter(p => displayHitRate(p) >= 1).length,
-  nearPerfectCount: picks.filter(p => displayHitRate(p) >= 0.97 && displayHitRate(p) < 1).length,
-  strongCount: picks.filter(p => displayHitRate(p) >= 0.90 && displayHitRate(p) < 0.97).length,
-  uniqueTeams: new Set(picks.map(p => p.team)).size,
-  avgHitRate: picks.length > 0 
-    ? picks.reduce((sum, p) => sum + displayHitRate(p), 0) / picks.length 
-    : 0,
-  avgConfidence: picks.length > 0
-    ? picks.reduce((sum, p) => sum + p.confidence_score, 0) / picks.length
-    : 0,
-};
+async function handleNaturalLanguage(message: string, chatId: string) {
+  const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${Deno.env.get("LOVABLE_API_KEY")}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "google/gemini-3-flash-preview",
+      messages: [
+        { 
+          role: "system", 
+          content: `You are ParlayIQ Bot, an autonomous betting bot assistant. 
+          You help users check parlay status, performance, and give recommendations.
+          Available data sources: today's parlays, win rate, bankroll, category weights.
+          Keep responses concise for Telegram (under 300 chars when possible).
+          Use Markdown formatting.` 
+        },
+        { role: "user", content: message }
+      ],
+      tools: [
+        { type: "function", function: { name: "get_status", ... }},
+        { type: "function", function: { name: "get_parlays", ... }},
+        { type: "function", function: { name: "get_performance", ... }},
+      ],
+      tool_choice: "auto"
+    }),
+  });
+  // Process response and tool calls
+}
 ```
 
 ---
 
-## Part 2: Fix `TodayPropsSection.tsx`
+## Files to Create/Modify
 
-### 2.1 Update Sorting Logic (lines 59-63)
+| File | Action | Description |
+|------|--------|-------------|
+| `supabase/functions/telegram-webhook/index.ts` | **Create** | New webhook handler for incoming messages |
+| `supabase/config.toml` | **Modify** | Add `telegram-webhook` function config |
+| Database migration | **Create** | Add `bot_conversations` table |
 
-Sort by display hit rate (consistent with the line being shown):
+---
 
-```typescript
-// Helper: get display hit rate (actual_hit_rate when actual_line + actual_hit_rate exist)
-const displayHitRate = (p: TodayPropPick) =>
-  p.actual_line != null && p.actual_hit_rate != null ? p.actual_hit_rate : p.l10_hit_rate;
+## Security Considerations
 
-// Sort by display hit rate, then confidence
-const sortedPicks = [...picks].sort((a, b) => {
-  const rateA = displayHitRate(a);
-  const rateB = displayHitRate(b);
-  if (rateB !== rateA) return rateB - rateA;
-  return b.confidence_score - a.confidence_score;
-});
+1. **Webhook secret** - Verify all incoming requests with a secret parameter
+2. **Rate limiting** - Limit commands per user to prevent abuse
+3. **Chat ID validation** - Optionally restrict to configured `TELEGRAM_CHAT_ID`
+
+---
+
+## Example Conversation
+
+**User:** "how are we doing today?"
+
+**Bot:**
+```
+📊 Today's Status
+
+Mode: Simulation
+Streak: 2 profitable days
+Bankroll: $1,247
+
+Today's Parlays: 8 generated
+• 2 Conservative (3-leg)
+• 3 Balanced (4-leg)
+• 3 Aggressive (6-leg)
+
+82% real lines verified ✓
 ```
 
-### 2.2 Update PropPickCard Component (lines 141-212)
+**User:** "generate new parlays"
 
-Use display hit rate for elite badge and percentage display:
+**Bot:**
+```
+🎯 Generating parlays...
 
-```typescript
-function PropPickCard({ pick, propType, onAdd }: PropPickCardProps) {
-  // Display hit rate: use actual_hit_rate when we have actual_line, else l10_hit_rate
-  const hitRate = (pick.actual_line != null && pick.actual_hit_rate != null) 
-    ? pick.actual_hit_rate 
-    : pick.l10_hit_rate;
-  
-  const isElite = hitRate >= 1;
-  const isPremium = hitRate >= 0.9 && hitRate < 1;
-  const line = pick.actual_line ?? pick.recommended_line;
-  const edge = pick.edge;
+✅ Created 9 parlays for today
+Distribution:
+• 3-Leg: 2 parlays
+• 4-Leg: 2 parlays
+• 5-Leg: 3 parlays
+• 6-Leg: 2 parlays
 
-  // ... rest of component uses hitRate for display ...
-  
-  // Badge text updates:
-  // - Elite badge: "100%" (when hitRate >= 1)
-  // - Percentage display: (hitRate * 100).toFixed(0)%
-  // - Label: "Hit Rate" instead of "L10 Hit" (since it may be actual_hit_rate)
-}
+View details: /parlays
 ```
 
 ---
 
 ## Technical Notes
 
-1. **Database field**: `actual_hit_rate` already exists in `category_sweet_spots` table and is populated by the `category-props-analyzer` edge function when live lines are matched.
-
-2. **Edge formula per framework**:
-   - **OVER picks**: Edge = L10_avg − line (positive = player averages above the line)
-   - **UNDER picks**: Edge = line − L10_avg (positive = line is above player's average)
-
-3. **Hit rate alignment**: When displaying `actual_line`, we show `actual_hit_rate` (calculated against that specific line). When no actual line exists, we fall back to `l10_hit_rate`.
-
----
-
-## Route to Verify
-`/sweet-spots` → Sweet Spots tab → Today's Props section (visible when there are 3PT or assist picks for today)
+1. **grammY Framework** - Uses the popular Telegram bot framework for Deno, handling message parsing and reply formatting
+2. **Lovable AI** - Powers natural language understanding without requiring additional API keys
+3. **Supabase Integration** - Fetches live data from existing tables (bot_daily_parlays, bot_activation_status, bot_category_weights)
+4. **Activity Logging** - All user interactions logged to `bot_activity_log` for the dashboard feed
