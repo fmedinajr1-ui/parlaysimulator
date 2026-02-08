@@ -2728,6 +2728,78 @@ export type Database = {
         }
         Relationships: []
       }
+      game_bets: {
+        Row: {
+          away_odds: number | null
+          away_team: string
+          bet_type: string
+          bookmaker: string
+          commence_time: string
+          created_at: string | null
+          game_id: string
+          home_odds: number | null
+          home_team: string
+          id: string
+          is_active: boolean | null
+          line: number | null
+          outcome: string | null
+          over_odds: number | null
+          recommended_side: string | null
+          settled_at: string | null
+          sharp_score: number | null
+          signal_sources: Json | null
+          sport: string
+          under_odds: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          away_odds?: number | null
+          away_team: string
+          bet_type: string
+          bookmaker: string
+          commence_time: string
+          created_at?: string | null
+          game_id: string
+          home_odds?: number | null
+          home_team: string
+          id?: string
+          is_active?: boolean | null
+          line?: number | null
+          outcome?: string | null
+          over_odds?: number | null
+          recommended_side?: string | null
+          settled_at?: string | null
+          sharp_score?: number | null
+          signal_sources?: Json | null
+          sport: string
+          under_odds?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          away_odds?: number | null
+          away_team?: string
+          bet_type?: string
+          bookmaker?: string
+          commence_time?: string
+          created_at?: string | null
+          game_id?: string
+          home_odds?: number | null
+          home_team?: string
+          id?: string
+          is_active?: boolean | null
+          line?: number | null
+          outcome?: string | null
+          over_odds?: number | null
+          recommended_side?: string | null
+          settled_at?: string | null
+          sharp_score?: number | null
+          signal_sources?: Json | null
+          sport?: string
+          under_odds?: number | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       game_environment: {
         Row: {
           away_implied_total: number | null
@@ -9644,6 +9716,60 @@ export type Database = {
           team_abbrev?: string
           updated_at?: string | null
           zone?: string
+        }
+        Relationships: []
+      }
+      tennis_player_stats: {
+        Row: {
+          aces: number | null
+          created_at: string | null
+          double_faults: number | null
+          first_serve_pct: number | null
+          games_lost: number | null
+          games_won: number | null
+          id: string
+          is_winner: boolean | null
+          match_date: string
+          opponent: string | null
+          player_name: string
+          sets_lost: number | null
+          sets_won: number | null
+          surface: string | null
+          tournament: string | null
+        }
+        Insert: {
+          aces?: number | null
+          created_at?: string | null
+          double_faults?: number | null
+          first_serve_pct?: number | null
+          games_lost?: number | null
+          games_won?: number | null
+          id?: string
+          is_winner?: boolean | null
+          match_date: string
+          opponent?: string | null
+          player_name: string
+          sets_lost?: number | null
+          sets_won?: number | null
+          surface?: string | null
+          tournament?: string | null
+        }
+        Update: {
+          aces?: number | null
+          created_at?: string | null
+          double_faults?: number | null
+          first_serve_pct?: number | null
+          games_lost?: number | null
+          games_won?: number | null
+          id?: string
+          is_winner?: boolean | null
+          match_date?: string
+          opponent?: string | null
+          player_name?: string
+          sets_lost?: number | null
+          sets_won?: number | null
+          surface?: string | null
+          tournament?: string | null
         }
         Relationships: []
       }
