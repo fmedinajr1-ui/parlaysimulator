@@ -38,19 +38,145 @@ const BOT_RULES = {
   MAX_SAME_CATEGORY: 3,
 };
 
-// Parlay profiles for diverse generation
+// Parlay profiles for diverse generation with alternate line shopping
 const PARLAY_PROFILES = [
-  { legs: 3, strategy: 'conservative', minOddsValue: 55, minHitRate: 68 },
-  { legs: 3, strategy: 'conservative', minOddsValue: 55, minHitRate: 68 },
-  { legs: 4, strategy: 'balanced', minOddsValue: 50, minHitRate: 62 },
-  { legs: 4, strategy: 'balanced', minOddsValue: 50, minHitRate: 62 },
-  { legs: 5, strategy: 'standard', minOddsValue: 45, minHitRate: 58 },
-  { legs: 5, strategy: 'standard', minOddsValue: 45, minHitRate: 58 },
-  { legs: 5, strategy: 'standard', minOddsValue: 45, minHitRate: 58 },
-  { legs: 6, strategy: 'aggressive', minOddsValue: 40, minHitRate: 55 },
-  { legs: 6, strategy: 'aggressive', minOddsValue: 40, minHitRate: 55 },
-  { legs: 6, strategy: 'aggressive', minOddsValue: 40, minHitRate: 55 },
+  // Conservative - NO line shopping
+  { legs: 3, strategy: 'conservative', minOddsValue: 55, minHitRate: 68, useAltLines: false },
+  { legs: 3, strategy: 'conservative', minOddsValue: 55, minHitRate: 68, useAltLines: false },
+  // Balanced - NO line shopping
+  { legs: 4, strategy: 'balanced', minOddsValue: 50, minHitRate: 62, useAltLines: false },
+  { legs: 4, strategy: 'balanced', minOddsValue: 50, minHitRate: 62, useAltLines: false },
+  // Standard - SOME line shopping (only for picks with sufficient buffer)
+  { legs: 5, strategy: 'standard', minOddsValue: 45, minHitRate: 58, useAltLines: true, minBufferMultiplier: 1.5 },
+  { legs: 5, strategy: 'standard', minOddsValue: 45, minHitRate: 58, useAltLines: true, minBufferMultiplier: 1.5 },
+  { legs: 5, strategy: 'standard', minOddsValue: 45, minHitRate: 58, useAltLines: false },
+  // Aggressive - AGGRESSIVE line shopping (plus money priority)
+  { legs: 6, strategy: 'aggressive', minOddsValue: 40, minHitRate: 55, useAltLines: true, minBufferMultiplier: 1.2, preferPlusMoney: true },
+  { legs: 6, strategy: 'aggressive', minOddsValue: 40, minHitRate: 55, useAltLines: true, minBufferMultiplier: 1.2, preferPlusMoney: true },
+  { legs: 6, strategy: 'aggressive', minOddsValue: 40, minHitRate: 55, useAltLines: true, minBufferMultiplier: 1.2, preferPlusMoney: true },
 ];
+
+// Minimum projection buffer by prop type for alternate line shopping
+const MIN_BUFFER_BY_PROP: Record<string, number> = {
+  points: 4.0,
+  rebounds: 2.5,
+  assists: 2.0,
+  threes: 1.0,
+  pra: 6.0,
+  pts_rebs: 4.5,
+  pts_asts: 4.5,
+  rebs_asts: 3.0,
+  steals: 0.8,
+  blocks: 0.8,
+  turnovers: 1.0,
+};
+
+interface AlternateLine {
+  line: number;
+  overOdds: number;
+  underOdds: number;
+  bookmaker?: string;
+}
+
+interface SelectedLine {
+  line: number;
+  odds: number;
+  reason: string;
+  originalLine?: number;
+  oddsImprovement?: number;
+}
+
+// Get minimum buffer for a prop type
+function getMinBuffer(propType: string): number {
+  const normalized = propType.toLowerCase().replace(/[_\s]/g, '');
+  return MIN_BUFFER_BY_PROP[normalized] || MIN_BUFFER_BY_PROP[propType.toLowerCase()] || 3.0;
+}
+
+// Select optimal line based on projection buffer and strategy
+function selectOptimalLine(
+  pick: EnrichedPick,
+  alternateLines: AlternateLine[],
+  strategy: string,
+  preferPlusMoney: boolean = false,
+  minBufferMultiplier: number = 1.0
+): SelectedLine {
+  const projection = pick.projected_value || 0;
+  const mainLine = pick.line;
+  const mainOdds = pick.americanOdds;
+  const side = pick.recommended_side || 'over';
+  const buffer = projection - mainLine;
+  
+  // Only shop lines for risky profiles
+  if (['conservative', 'balanced'].includes(strategy)) {
+    return { line: mainLine, odds: mainOdds, reason: 'safe_profile' };
+  }
+  
+  // Check if buffer is significant enough
+  const minBuffer = getMinBuffer(pick.prop_type) * minBufferMultiplier;
+  if (buffer < minBuffer) {
+    return { line: mainLine, odds: mainOdds, reason: 'insufficient_buffer' };
+  }
+  
+  // No alternates available
+  if (!alternateLines || alternateLines.length === 0) {
+    return { line: mainLine, odds: mainOdds, reason: 'no_alternates' };
+  }
+  
+  // Safety margin: projection - (0.5 * minBuffer)
+  const safetyMargin = minBuffer * 0.5;
+  const maxSafeLine = projection - safetyMargin;
+  
+  // Filter to viable alternates based on side
+  const viableAlts = alternateLines
+    .filter(alt => {
+      const altOdds = side === 'over' ? alt.overOdds : alt.underOdds;
+      return (
+        alt.line <= maxSafeLine &&    // Line is safe given projection
+        alt.line > mainLine &&         // Line is higher than main (for overs)
+        altOdds >= -150 &&             // Not too juiced
+        altOdds <= 200                 // Not too risky
+      );
+    })
+    .map(alt => ({
+      ...alt,
+      relevantOdds: side === 'over' ? alt.overOdds : alt.underOdds,
+      projectionBuffer: projection - alt.line,
+    }));
+  
+  if (viableAlts.length === 0) {
+    return { line: mainLine, odds: mainOdds, reason: 'no_viable_alts' };
+  }
+  
+  // For aggressive parlays, prefer plus money lines
+  if (strategy === 'aggressive' && preferPlusMoney) {
+    const plusMoneyAlts = viableAlts.filter(alt => alt.relevantOdds > 0);
+    if (plusMoneyAlts.length > 0) {
+      // Pick highest plus money line that's still safe
+      const selected = plusMoneyAlts.sort((a, b) => b.line - a.line)[0];
+      return {
+        line: selected.line,
+        odds: selected.relevantOdds,
+        reason: 'aggressive_plus_money',
+        originalLine: mainLine,
+        oddsImprovement: selected.relevantOdds - mainOdds,
+      };
+    }
+  }
+  
+  // For standard risky, pick best odds that's still significantly better
+  const bestOdds = viableAlts.sort((a, b) => b.relevantOdds - a.relevantOdds)[0];
+  if (bestOdds.relevantOdds > mainOdds + 15) { // At least +15 improvement
+    return {
+      line: bestOdds.line,
+      odds: bestOdds.relevantOdds,
+      reason: 'best_ev_alt',
+      originalLine: mainLine,
+      oddsImprovement: bestOdds.relevantOdds - mainOdds,
+    };
+  }
+  
+  return { line: mainLine, odds: mainOdds, reason: 'main_line_best' };
+}
 
 interface SweetSpotPick {
   id: string;
@@ -64,6 +190,7 @@ interface SweetSpotPick {
   l10_hit_rate: number;
   projected_value: number;
   event_id: string;
+  alternateLines?: AlternateLine[];
 }
 
 interface EnrichedPick extends SweetSpotPick {
@@ -345,20 +472,38 @@ Deno.serve(async (req) => {
 
         const weight = weightMap.get(pick.category) || 1.0;
         
+        // Select optimal line based on profile strategy
+        const selectedLine = profile.useAltLines
+          ? selectOptimalLine(
+              pick,
+              pick.alternateLines || [],
+              profile.strategy,
+              (profile as any).preferPlusMoney || false,
+              (profile as any).minBufferMultiplier || 1.0
+            )
+          : { line: pick.line, odds: pick.americanOdds, reason: 'main_line' };
+        
         legs.push({
           id: pick.id,
           player_name: pick.player_name,
           team_name: pick.team_name,
           prop_type: pick.prop_type,
-          line: pick.line,
+          line: selectedLine.line,
           side: pick.recommended_side || 'over',
           category: pick.category,
           weight,
           hit_rate: hitRate,
-          american_odds: pick.americanOdds,
+          american_odds: selectedLine.odds,
           odds_value_score: pick.oddsValueScore,
           composite_score: pick.compositeScore,
           outcome: 'pending',
+          // Alternate line tracking
+          original_line: pick.line,
+          selected_line: selectedLine.line,
+          line_selection_reason: selectedLine.reason,
+          odds_improvement: selectedLine.oddsImprovement || 0,
+          projection_buffer: (pick.projected_value || 0) - selectedLine.line,
+          projected_value: pick.projected_value || 0,
         });
 
         parlayTeamCount.set(pick.team_name, (parlayTeamCount.get(pick.team_name) || 0) + 1);

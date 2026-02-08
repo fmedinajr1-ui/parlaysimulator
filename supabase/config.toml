@@ -383,3 +383,6 @@ verify_jwt = false
 
 [functions.bot-evolve-strategies]
 verify_jwt = false
+
+[functions.fetch-alternate-lines]
+verify_jwt = false

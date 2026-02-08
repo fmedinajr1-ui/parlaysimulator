@@ -6,7 +6,7 @@
  */
 
 import React, { useState } from 'react';
-import { ChevronDown, ChevronUp, TrendingUp, Target, Percent, DollarSign, CheckCircle, XCircle, Clock, Minus, Zap } from 'lucide-react';
+import { ChevronDown, ChevronUp, TrendingUp, Target, Percent, DollarSign, CheckCircle, XCircle, Clock, Minus, Zap, ArrowUpRight } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -156,60 +156,102 @@ export function BotParlayCard({ parlay }: BotParlayCardProps) {
                 Legs ({parlay.legs_hit || 0} hit / {parlay.legs_missed || 0} missed)
               </div>
               
-              {legs.map((leg, idx) => (
-                <div
-                  key={leg.id || idx}
-                  className={cn(
-                    "py-2 px-3 rounded-lg bg-muted/30",
-                    getLegOutcomeStyle(leg.outcome)
-                  )}
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="font-medium text-sm">
-                        {leg.player_name}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {leg.prop_type} {leg.side.toUpperCase()} {leg.line} • {leg.team_name}
-                      </div>
-                      {/* Odds and value display */}
-                      <div className="flex items-center gap-3 mt-1 text-xs">
-                        <span className="text-muted-foreground">
-                          Odds: <span className={cn(
-                            "font-medium",
-                            (leg.american_odds || -110) > 0 ? "text-green-400" : "text-muted-foreground"
-                          )}>
-                            {formatOdds(leg.american_odds)}
-                          </span>
-                        </span>
-                        {leg.odds_value_score !== undefined && (
-                          <span className="flex items-center gap-1">
-                            <Zap className="w-3 h-3 text-amber-400" />
-                            <span className={cn(
-                              "font-medium",
-                              leg.odds_value_score >= 60 ? "text-green-400" :
-                              leg.odds_value_score >= 45 ? "text-amber-400" : "text-red-400"
-                            )}>
-                              {leg.odds_value_score}/100
-                            </span>
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    
-                    <div className="text-right shrink-0">
-                      <Badge variant="outline" className="text-xs h-5">
-                        {leg.category}
-                      </Badge>
-                      {leg.actual_value !== undefined && (
-                        <div className="text-xs mt-1">
-                          Actual: {leg.actual_value}
-                        </div>
+                {legs.map((leg, idx) => {
+                  const hasAltLine = leg.original_line && leg.selected_line && leg.original_line !== leg.selected_line;
+                  const oddsImprovement = leg.odds_improvement || 0;
+                  
+                  return (
+                    <div
+                      key={leg.id || idx}
+                      className={cn(
+                        "py-2 px-3 rounded-lg bg-muted/30",
+                        getLegOutcomeStyle(leg.outcome),
+                        hasAltLine && "border-l-2 border-l-amber-500/50"
                       )}
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="font-medium text-sm">
+                            {leg.player_name}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {leg.prop_type} {leg.side.toUpperCase()} {leg.line}
+                            {hasAltLine && (
+                              <span className="text-amber-400 ml-1">
+                                (alt from {leg.original_line})
+                              </span>
+                            )}
+                            <span className="ml-1">• {leg.team_name}</span>
+                          </div>
+                          
+                          {/* Odds and value display */}
+                          <div className="flex items-center flex-wrap gap-3 mt-1 text-xs">
+                            <span className="text-muted-foreground">
+                              Odds: <span className={cn(
+                                "font-medium",
+                                (leg.american_odds || -110) > 0 ? "text-green-400" : "text-muted-foreground"
+                              )}>
+                                {formatOdds(leg.american_odds)}
+                              </span>
+                              {hasAltLine && oddsImprovement > 0 && (
+                                <span className="text-green-400 ml-1">
+                                  (+{oddsImprovement})
+                                </span>
+                              )}
+                            </span>
+                            
+                            {leg.odds_value_score !== undefined && (
+                              <span className="flex items-center gap-1">
+                                <Zap className="w-3 h-3 text-amber-400" />
+                                <span className={cn(
+                                  "font-medium",
+                                  leg.odds_value_score >= 60 ? "text-green-400" :
+                                  leg.odds_value_score >= 45 ? "text-amber-400" : "text-red-400"
+                                )}>
+                                  {leg.odds_value_score}/100
+                                </span>
+                              </span>
+                            )}
+                            
+                            {/* Projection buffer for alt lines */}
+                            {hasAltLine && leg.projection_buffer !== undefined && (
+                              <span className="flex items-center gap-1 text-amber-400">
+                                <ArrowUpRight className="w-3 h-3" />
+                                <span className="font-medium">
+                                  +{leg.projection_buffer.toFixed(1)} buffer
+                                </span>
+                              </span>
+                            )}
+                          </div>
+                          
+                          {/* Line selection reason for aggressive parlays */}
+                          {leg.line_selection_reason && leg.line_selection_reason !== 'main_line' && (
+                            <div className="text-xs text-amber-400/80 mt-0.5">
+                              {leg.line_selection_reason === 'aggressive_plus_money' && '⚡ Plus money selection'}
+                              {leg.line_selection_reason === 'best_ev_alt' && '📈 Best EV alternate'}
+                            </div>
+                          )}
+                        </div>
+                        
+                        <div className="text-right shrink-0">
+                          <Badge variant="outline" className="text-xs h-5">
+                            {leg.category}
+                          </Badge>
+                          {leg.actual_value !== undefined && (
+                            <div className="text-xs mt-1">
+                              Actual: {leg.actual_value}
+                            </div>
+                          )}
+                          {leg.projected_value !== undefined && !leg.actual_value && (
+                            <div className="text-xs mt-1 text-muted-foreground">
+                              Proj: {leg.projected_value}
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </div>
-              ))}
+                  );
+                })}
               
               {/* Strategy Info */}
               <div className="text-xs text-muted-foreground pt-2 border-t border-border/50 mt-3">

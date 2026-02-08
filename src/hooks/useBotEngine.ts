@@ -32,6 +32,13 @@ export interface BotLeg {
   composite_score?: number;
   outcome?: 'hit' | 'miss' | 'push' | 'pending';
   actual_value?: number;
+  // Alternate line tracking (for aggressive parlays)
+  original_line?: number;           // Main book line
+  selected_line?: number;           // Line we picked (may be alt)
+  line_selection_reason?: string;   // 'main_line' | 'aggressive_plus_money' | 'best_ev_alt'
+  odds_improvement?: number;        // How much better than main line odds
+  projection_buffer?: number;       // projection - selected_line
+  projected_value?: number;         // Player's projected stat value
 }
 
 export interface BotParlay {
@@ -162,19 +169,38 @@ export const BOT_RULES = {
   MAX_SAME_TEAM: 2,          // Max players from same team per parlay
 };
 
-// Parlay profiles for diverse generation
+// Parlay profiles for diverse generation with alternate line shopping
 export const PARLAY_PROFILES = [
-  { legs: 3, strategy: 'conservative', minOddsValue: 55, minHitRate: 68 },
-  { legs: 3, strategy: 'conservative', minOddsValue: 55, minHitRate: 68 },
-  { legs: 4, strategy: 'balanced', minOddsValue: 50, minHitRate: 62 },
-  { legs: 4, strategy: 'balanced', minOddsValue: 50, minHitRate: 62 },
-  { legs: 5, strategy: 'standard', minOddsValue: 45, minHitRate: 58 },
-  { legs: 5, strategy: 'standard', minOddsValue: 45, minHitRate: 58 },
-  { legs: 5, strategy: 'standard', minOddsValue: 45, minHitRate: 58 },
-  { legs: 6, strategy: 'aggressive', minOddsValue: 40, minHitRate: 55 },
-  { legs: 6, strategy: 'aggressive', minOddsValue: 40, minHitRate: 55 },
-  { legs: 6, strategy: 'aggressive', minOddsValue: 40, minHitRate: 55 },
+  // Conservative - NO line shopping
+  { legs: 3, strategy: 'conservative', minOddsValue: 55, minHitRate: 68, useAltLines: false },
+  { legs: 3, strategy: 'conservative', minOddsValue: 55, minHitRate: 68, useAltLines: false },
+  // Balanced - NO line shopping
+  { legs: 4, strategy: 'balanced', minOddsValue: 50, minHitRate: 62, useAltLines: false },
+  { legs: 4, strategy: 'balanced', minOddsValue: 50, minHitRate: 62, useAltLines: false },
+  // Standard - SOME line shopping (only for picks with sufficient buffer)
+  { legs: 5, strategy: 'standard', minOddsValue: 45, minHitRate: 58, useAltLines: true, minBufferMultiplier: 1.5 },
+  { legs: 5, strategy: 'standard', minOddsValue: 45, minHitRate: 58, useAltLines: true, minBufferMultiplier: 1.5 },
+  { legs: 5, strategy: 'standard', minOddsValue: 45, minHitRate: 58, useAltLines: false },
+  // Aggressive - AGGRESSIVE line shopping (plus money priority)
+  { legs: 6, strategy: 'aggressive', minOddsValue: 40, minHitRate: 55, useAltLines: true, minBufferMultiplier: 1.2, preferPlusMoney: true },
+  { legs: 6, strategy: 'aggressive', minOddsValue: 40, minHitRate: 55, useAltLines: true, minBufferMultiplier: 1.2, preferPlusMoney: true },
+  { legs: 6, strategy: 'aggressive', minOddsValue: 40, minHitRate: 55, useAltLines: true, minBufferMultiplier: 1.2, preferPlusMoney: true },
 ];
+
+// Minimum projection buffer by prop type for alternate line shopping
+export const MIN_BUFFER_BY_PROP: Record<string, number> = {
+  points: 4.0,
+  rebounds: 2.5,
+  assists: 2.0,
+  threes: 1.0,
+  pra: 6.0,
+  pts_rebs: 4.5,
+  pts_asts: 4.5,
+  rebs_asts: 3.0,
+  steals: 0.8,
+  blocks: 0.8,
+  turnovers: 1.0,
+};
 
 // ============= USAGE TRACKING TYPES =============
 
