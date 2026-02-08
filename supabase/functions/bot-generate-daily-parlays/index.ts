@@ -40,20 +40,20 @@ const BOT_RULES = {
 
 // Parlay profiles for diverse generation with alternate line shopping
 const PARLAY_PROFILES = [
-  // Conservative - NO line shopping
-  { legs: 3, strategy: 'conservative', minOddsValue: 55, minHitRate: 68, useAltLines: false },
-  { legs: 3, strategy: 'conservative', minOddsValue: 55, minHitRate: 68, useAltLines: false },
+  // Conservative - NO line shopping (lowered thresholds for realistic data)
+  { legs: 3, strategy: 'conservative', minOddsValue: 40, minHitRate: 60, useAltLines: false },
+  { legs: 3, strategy: 'conservative', minOddsValue: 40, minHitRate: 60, useAltLines: false },
   // Balanced - NO line shopping
-  { legs: 4, strategy: 'balanced', minOddsValue: 50, minHitRate: 62, useAltLines: false },
-  { legs: 4, strategy: 'balanced', minOddsValue: 50, minHitRate: 62, useAltLines: false },
+  { legs: 4, strategy: 'balanced', minOddsValue: 38, minHitRate: 55, useAltLines: false },
+  { legs: 4, strategy: 'balanced', minOddsValue: 38, minHitRate: 55, useAltLines: false },
   // Standard - SOME line shopping (only for picks with sufficient buffer)
-  { legs: 5, strategy: 'standard', minOddsValue: 45, minHitRate: 58, useAltLines: true, minBufferMultiplier: 1.5 },
-  { legs: 5, strategy: 'standard', minOddsValue: 45, minHitRate: 58, useAltLines: true, minBufferMultiplier: 1.5 },
-  { legs: 5, strategy: 'standard', minOddsValue: 45, minHitRate: 58, useAltLines: false },
+  { legs: 5, strategy: 'standard', minOddsValue: 35, minHitRate: 50, useAltLines: true, minBufferMultiplier: 1.5 },
+  { legs: 5, strategy: 'standard', minOddsValue: 35, minHitRate: 50, useAltLines: true, minBufferMultiplier: 1.5 },
+  { legs: 5, strategy: 'standard', minOddsValue: 35, minHitRate: 50, useAltLines: false },
   // Aggressive - AGGRESSIVE line shopping (plus money priority)
-  { legs: 6, strategy: 'aggressive', minOddsValue: 40, minHitRate: 55, useAltLines: true, minBufferMultiplier: 1.2, preferPlusMoney: true },
-  { legs: 6, strategy: 'aggressive', minOddsValue: 40, minHitRate: 55, useAltLines: true, minBufferMultiplier: 1.2, preferPlusMoney: true },
-  { legs: 6, strategy: 'aggressive', minOddsValue: 40, minHitRate: 55, useAltLines: true, minBufferMultiplier: 1.2, preferPlusMoney: true },
+  { legs: 6, strategy: 'aggressive', minOddsValue: 35, minHitRate: 50, useAltLines: true, minBufferMultiplier: 1.2, preferPlusMoney: true },
+  { legs: 6, strategy: 'aggressive', minOddsValue: 35, minHitRate: 50, useAltLines: true, minBufferMultiplier: 1.2, preferPlusMoney: true },
+  { legs: 6, strategy: 'aggressive', minOddsValue: 35, minHitRate: 50, useAltLines: true, minBufferMultiplier: 1.2, preferPlusMoney: true },
 ];
 
 // Minimum projection buffer by prop type for alternate line shopping
@@ -181,7 +181,7 @@ function selectOptimalLine(
 interface SweetSpotPick {
   id: string;
   player_name: string;
-  team_name: string;
+  team_name?: string; // Optional - may not exist in category_sweet_spots
   prop_type: string;
   line: number;
   recommended_side: string;
@@ -189,7 +189,7 @@ interface SweetSpotPick {
   confidence_score: number;
   l10_hit_rate: number;
   projected_value: number;
-  event_id: string;
+  event_id?: string;
   alternateLines?: AlternateLine[];
 }
 
@@ -283,9 +283,11 @@ function canUsePickInParlay(
   parlayTeamCount: Map<string, number>,
   parlayCategoryCount: Map<string, number>
 ): boolean {
-  // Max per team in single parlay
-  const teamCount = parlayTeamCount.get(pick.team_name) || 0;
-  if (teamCount >= BOT_RULES.MAX_SAME_TEAM) return false;
+  // Max per team in single parlay (skip if no team_name)
+  if (pick.team_name) {
+    const teamCount = parlayTeamCount.get(pick.team_name) || 0;
+    if (teamCount >= BOT_RULES.MAX_SAME_TEAM) return false;
+  }
   
   // Max per category in single parlay
   const categoryCount = parlayCategoryCount.get(pick.category) || 0;
@@ -351,13 +353,28 @@ Deno.serve(async (req) => {
     }
 
     // 2. Fetch today's sweet spot picks with REAL line verification
+    // Note: confidence_score is stored as decimal (0.0-1.0), not percentage
+    // Category matching: bot_category_weights uses suffixed categories like "HIGH_ASSIST_UNDER"
+    // while category_sweet_spots may have both base ("HIGH_ASSIST") and suffixed ("HIGH_ASSIST_UNDER")
+    // So we include BOTH the original suffixed categories AND the base categories
+    const allMatchingCategories = new Set<string>();
+    eligibleCategories.forEach((cat: string) => {
+      allMatchingCategories.add(cat); // Add original (e.g., HIGH_ASSIST_UNDER)
+      // Also add base category (e.g., HIGH_ASSIST)
+      const baseCat = cat.replace(/_OVER$|_UNDER$/, '');
+      allMatchingCategories.add(baseCat);
+    });
+    const categoriesToMatch = [...allMatchingCategories];
+
+    console.log(`[Bot] Looking for categories: ${categoriesToMatch.join(', ')}`);
+
     const { data: picks, error: picksError } = await supabase
       .from('category_sweet_spots')
       .select('*, actual_line, recommended_line, bookmaker')
       .eq('analysis_date', targetDate)
       .eq('is_active', true)
-      .in('category', eligibleCategories)
-      .gte('confidence_score', 55)
+      .in('category', categoriesToMatch)
+      .gte('confidence_score', 0.55)  // Fixed: decimal not percentage
       .order('confidence_score', { ascending: false })
       .limit(80);
 
@@ -424,12 +441,15 @@ Deno.serve(async (req) => {
       const side = pick.recommended_side || 'over';
       const americanOdds = side === 'over' ? odds.overOdds : odds.underOdds;
       
-      const hitRate = pick.l10_hit_rate || pick.confidence_score || 50;
+      // l10_hit_rate and confidence_score are decimals (0.0-1.0), not percentages
+      // Convert to percentage for display and composite score, keep decimal for odds calculation
+      const hitRateDecimal = pick.l10_hit_rate || pick.confidence_score || 0.5;
+      const hitRatePercent = hitRateDecimal * 100; // For composite score (expects 0-100)
       const edge = (pick.projected_value || 0) - (pick.line || 0);
       const categoryWeight = weightMap.get(pick.category) || 1.0;
       
-      const oddsValueScore = calculateOddsValueScore(americanOdds, hitRate / 100);
-      const compositeScore = calculateCompositeScore(hitRate, edge, oddsValueScore, categoryWeight);
+      const oddsValueScore = calculateOddsValueScore(americanOdds, hitRateDecimal);
+      const compositeScore = calculateCompositeScore(hitRatePercent, edge, oddsValueScore, categoryWeight);
       
       return {
         ...pick,
@@ -461,6 +481,10 @@ Deno.serve(async (req) => {
     validPicks.sort((a, b) => b.compositeScore - a.compositeScore);
 
     console.log(`[Bot] Valid picks after filtering: ${validPicks.length}`);
+    // Debug: log top picks with their scores
+    validPicks.slice(0, 5).forEach(p => {
+      console.log(`[Bot] Top pick: ${p.player_name} - hitRate=${((p.l10_hit_rate || 0) * 100).toFixed(0)}%, oddsValue=${p.oddsValueScore}, composite=${p.compositeScore}`);
+    });
 
     // 6. Get active strategy
     const { data: strategy } = await supabase
@@ -492,9 +516,9 @@ Deno.serve(async (req) => {
         // Check parlay-level constraints
         if (!canUsePickInParlay(pick, parlayTeamCount, parlayCategoryCount)) continue;
         
-        // Check profile-specific requirements
-        const hitRate = pick.l10_hit_rate || pick.confidence_score || 50;
-        if (hitRate < profile.minHitRate) continue;
+        // Check profile-specific requirements (convert decimal hit rate to percentage)
+        const hitRatePercent = (pick.l10_hit_rate || pick.confidence_score || 0.5) * 100;
+        if (hitRatePercent < profile.minHitRate) continue;
         if (pick.oddsValueScore < profile.minOddsValue) continue;
 
         const weight = weightMap.get(pick.category) || 1.0;
@@ -519,7 +543,7 @@ Deno.serve(async (req) => {
           side: pick.recommended_side || 'over',
           category: pick.category,
           weight,
-          hit_rate: hitRate,
+          hit_rate: hitRatePercent,
           american_odds: selectedLine.odds,
           odds_value_score: pick.oddsValueScore,
           composite_score: pick.compositeScore,
@@ -537,7 +561,9 @@ Deno.serve(async (req) => {
           has_real_line: (pick as any).has_real_line || false,
         });
 
-        parlayTeamCount.set(pick.team_name, (parlayTeamCount.get(pick.team_name) || 0) + 1);
+        if (pick.team_name) {
+          parlayTeamCount.set(pick.team_name, (parlayTeamCount.get(pick.team_name) || 0) + 1);
+        }
         parlayCategoryCount.set(pick.category, (parlayCategoryCount.get(pick.category) || 0) + 1);
       }
 
