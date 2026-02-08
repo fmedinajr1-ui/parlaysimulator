@@ -510,6 +510,25 @@ function mapTeamBetToCategory(betType: string, side: string): string {
   return categoryMap[betType]?.[side] || 'TEAM_PROP';
 }
 
+function mapPropTypeToCategory(propType: string): string {
+  const categoryMap: Record<string, string> = {
+    'player_points': 'POINTS',
+    'player_rebounds': 'REBOUNDS',
+    'player_assists': 'ASSISTS',
+    'player_threes': 'THREES',
+    'player_blocks': 'BLOCKS',
+    'player_steals': 'STEALS',
+    'player_goals': 'NHL_GOALS',
+    'player_shots_on_goal': 'NHL_SHOTS',
+    'player_saves': 'NHL_SAVES',
+    'player_pass_yds': 'NFL_PASS_YDS',
+    'player_rush_yds': 'NFL_RUSH_YDS',
+    'player_reception_yds': 'NFL_REC_YDS',
+    'player_receptions': 'NFL_RECEPTIONS',
+  };
+  return categoryMap[propType] || propType.toUpperCase();
+}
+
 // ============= PROP POOL BUILDER =============
 
 async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<string, number>): Promise<PropPool> {
@@ -526,12 +545,13 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     .order('confidence_score', { ascending: false })
     .limit(200);
 
-  // 2. Live odds from unified_props
+  // 2. Live odds from unified_props - get full data for direct use
   const { data: playerProps } = await supabase
     .from('unified_props')
-    .select('player_name, prop_type, over_price, under_price, line, sport')
+    .select('*')
     .eq('is_active', true)
-    .in('sport', ['basketball_nba', 'icehockey_nhl', 'tennis_atp', 'tennis_wta']);
+    .gte('commence_time', new Date().toISOString())
+    .limit(300);
 
   // 3. Team props from game_bets
   const { data: teamProps } = await supabase
@@ -540,23 +560,27 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     .eq('is_active', true)
     .gte('commence_time', new Date().toISOString());
 
+  console.log(`[Bot] Raw data: ${(sweetSpots || []).length} sweet spots, ${(playerProps || []).length} unified_props, ${(teamProps || []).length} team bets`);
+
   // Build odds map
-  const oddsMap = new Map<string, { overOdds: number; underOdds: number }>();
+  const oddsMap = new Map<string, { overOdds: number; underOdds: number; line: number; sport: string }>();
   (playerProps || []).forEach((od: any) => {
     const key = `${od.player_name}_${od.prop_type}`.toLowerCase();
     oddsMap.set(key, {
       overOdds: od.over_price || -110,
-      underOdds: od.under_price || -110
+      underOdds: od.under_price || -110,
+      line: od.current_line,
+      sport: od.sport,
     });
   });
 
   // Enrich sweet spots
-  const enrichedSweetSpots: EnrichedPick[] = (sweetSpots || []).map((pick: SweetSpotPick) => {
+  let enrichedSweetSpots: EnrichedPick[] = (sweetSpots || []).map((pick: SweetSpotPick) => {
     const line = pick.actual_line ?? pick.recommended_line ?? pick.line;
     const hasRealLine = pick.actual_line !== null && pick.actual_line !== undefined;
     
     const oddsKey = `${pick.player_name}_${pick.prop_type}`.toLowerCase();
-    const odds = oddsMap.get(oddsKey) || { overOdds: -110, underOdds: -110 };
+    const odds = oddsMap.get(oddsKey) || { overOdds: -110, underOdds: -110, line: 0, sport: 'basketball_nba' };
     const side = pick.recommended_side || 'over';
     const americanOdds = side === 'over' ? odds.overOdds : odds.underOdds;
     
@@ -580,6 +604,48 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       sport: pick.sport || 'basketball_nba',
     };
   }).filter((p: EnrichedPick) => p.americanOdds >= -200 && p.americanOdds <= 200);
+
+  // FALLBACK: If no sweet spots for today, create picks directly from unified_props
+  if (enrichedSweetSpots.length === 0 && playerProps && playerProps.length > 0) {
+    console.log(`[Bot] No sweet spots for ${targetDate}, using ${playerProps.length} unified_props directly`);
+    
+    enrichedSweetSpots = playerProps.map((prop: any) => {
+      const overOdds = prop.over_price || -110;
+      const underOdds = prop.under_price || -110;
+      // Prefer over bets for favorable odds, under for unfavorable
+      const side = overOdds >= underOdds ? 'over' : 'under';
+      const americanOdds = side === 'over' ? overOdds : underOdds;
+      
+      // Estimate hit rate from composite_score if available
+      const hitRateDecimal = (prop.composite_score || 50) / 100;
+      const categoryWeight = weightMap.get(prop.category) || 1.0;
+      
+      const oddsValueScore = calculateOddsValueScore(americanOdds, hitRateDecimal);
+      const compositeScore = calculateCompositeScore(hitRateDecimal * 100, 0.5, oddsValueScore, categoryWeight);
+      
+      return {
+        id: prop.id,
+        player_name: prop.player_name,
+        prop_type: prop.prop_type,
+        line: prop.current_line,
+        recommended_side: side,
+        category: prop.category || mapPropTypeToCategory(prop.prop_type),
+        confidence_score: hitRateDecimal,
+        l10_hit_rate: hitRateDecimal,
+        projected_value: prop.current_line,
+        sport: prop.sport,
+        americanOdds,
+        oddsValueScore,
+        compositeScore,
+        has_real_line: true,
+        line_source: 'unified_props',
+      } as EnrichedPick;
+    }).filter((p: EnrichedPick) => 
+      p.americanOdds >= -200 && 
+      p.americanOdds <= 200 && 
+      p.line > 0
+    );
+  }
 
   // Enrich team props
   const enrichedTeamPicks: EnrichedTeamPick[] = (teamProps || []).flatMap((game: TeamProp) => {
