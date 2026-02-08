@@ -89,8 +89,6 @@ interface UnifiedPropInsert {
   bookmaker: string;
   game_description: string;
   commence_time: string;
-  home_team: string;
-  away_team: string;
   over_price: number | null;
   under_price: number | null;
   is_active: boolean;
@@ -241,8 +239,6 @@ serve(async (req) => {
                       bookmaker: bookmaker.key,
                       game_description: `${event.away_team} @ ${event.home_team}`,
                       commence_time: event.commence_time,
-                      home_team: event.home_team,
-                      away_team: event.away_team,
                       over_price: outcomes.over?.price ?? null,
                       under_price: outcomes.under?.price ?? null,
                       is_active: true,
