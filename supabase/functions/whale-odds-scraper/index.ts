@@ -135,7 +135,7 @@ serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const { 
       sports = ALL_SPORTS, 
-      limit_events = 10,
+      limit_events = 15,  // Increased from 10 for larger prop pool
       include_player_props = true,
       include_team_props = true
     } = body;
@@ -177,10 +177,10 @@ serve(async (req) => {
       const events: OddsAPIEvent[] = await eventsResponse.json();
       console.log(`[Multi-Sport Scraper] Found ${events.length} events for ${sport}`);
       
-      // Filter to today's and tomorrow's events only
-      const tomorrow = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+      // Filter to next 72 hours for larger event pool
+      const windowEnd = new Date(now.getTime() + 72 * 60 * 60 * 1000);
       const relevantEvents = events
-        .filter(e => new Date(e.commence_time) < tomorrow && new Date(e.commence_time) > now)
+        .filter(e => new Date(e.commence_time) < windowEnd && new Date(e.commence_time) > now)
         .slice(0, limit_events);
       
       console.log(`[Multi-Sport Scraper] Processing ${relevantEvents.length} relevant events for ${sport}`);
