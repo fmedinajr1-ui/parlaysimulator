@@ -270,28 +270,34 @@ GUIDELINES:
 async function handleStart(chatId: string) {
   await logActivity("telegram_start", `User started bot chat`, { chatId });
 
-  return `🤖 *ParlayIQ Bot*
+  return `🤖 *ParlayIQ Bot v2*
 
-Welcome! I'm your autonomous betting assistant.
+Welcome! I'm your autonomous betting assistant with tiered learning.
 
-*Commands:*
+*Core Commands:*
 /status - Bot mode, bankroll, streak
 /parlays - Today's generated parlays
 /performance - Win rate, ROI, stats
 /weights - Top category weights
-/generate - Generate new parlays
+/generate - Generate tiered parlays (65-75)
 /settle - Settle & learn from results
 
-*Multi-Sport Commands:*
-/nhl - Today's NHL picks
+*Tiered Learning:*
+/learning - Learning velocity & confidence
+/tiers - Today's tier breakdown
+/explore - Exploration tier picks (50/day)
+/validate - Validation tier picks (15/day)
+
+*Multi-Sport:*
+/nhl - NHL player props
 /tennis - ATP/WTA picks
 /spreads - Team spread signals
 /totals - Over/Under signals
 
-Or just *ask me anything* in natural language!
-• "How did we do yesterday?"
-• "What's your best NHL pick?"
-• "Show me the sharp spreads"`;
+Or *ask me anything* naturally!
+• "How's the bot learning?"
+• "Show me validation picks"
+• "What's performing best?"`;
 }
 
 async function handleStatus(chatId: string) {
@@ -565,6 +571,169 @@ async function handleTotals(chatId: string) {
   return message;
 }
 
+// Tier-specific handlers
+async function handleLearning(chatId: string) {
+  await logActivity("telegram_learning", `User requested learning metrics`, { chatId });
+  
+  const { data: parlays } = await supabase
+    .from('bot_daily_parlays')
+    .select('tier, outcome')
+    .not('outcome', 'is', null);
+  
+  const tierStats: Record<string, { total: number; won: number; lost: number }> = {
+    exploration: { total: 0, won: 0, lost: 0 },
+    validation: { total: 0, won: 0, lost: 0 },
+    execution: { total: 0, won: 0, lost: 0 },
+  };
+  
+  (parlays || []).forEach((p: any) => {
+    const tier = p.tier || 'execution';
+    if (tierStats[tier]) {
+      tierStats[tier].total++;
+      if (p.outcome === 'won') tierStats[tier].won++;
+      if (p.outcome === 'lost') tierStats[tier].lost++;
+    }
+  });
+  
+  let message = `📊 *Learning Velocity*\n\n`;
+  
+  for (const [tier, stats] of Object.entries(tierStats)) {
+    const winRate = stats.total > 0 ? (stats.won / stats.total * 100).toFixed(1) : '0';
+    const target = tier === 'exploration' ? 500 : 300;
+    const progress = Math.min(100, (stats.total / target) * 100).toFixed(0);
+    const emoji = tier === 'exploration' ? '🔬' : tier === 'validation' ? '✓' : '🚀';
+    
+    message += `${emoji} *${tier.charAt(0).toUpperCase() + tier.slice(1)}*\n`;
+    message += `   ${stats.total}/${target} samples (${progress}%)\n`;
+    message += `   ${stats.won}W-${stats.lost}L (${winRate}% WR)\n\n`;
+  }
+  
+  const totalSamples = Object.values(tierStats).reduce((s, t) => s + t.total, 0);
+  const avgProgress = Object.values(tierStats).reduce((s, t) => {
+    const target = t === tierStats.exploration ? 500 : 300;
+    return s + Math.min(100, (t.total / target) * 100);
+  }, 0) / 3;
+  
+  message += `📈 *Overall:* ${totalSamples} samples, ${avgProgress.toFixed(0)}% to confidence`;
+  
+  return message;
+}
+
+async function handleTiers(chatId: string) {
+  await logActivity("telegram_tiers", `User requested tier summary`, { chatId });
+  
+  const today = new Date().toISOString().split('T')[0];
+  const { data: todayParlays } = await supabase
+    .from('bot_daily_parlays')
+    .select('tier, leg_count, outcome, expected_odds')
+    .eq('parlay_date', today);
+  
+  const tiers: Record<string, any[]> = {
+    exploration: [],
+    validation: [],
+    execution: [],
+  };
+  
+  (todayParlays || []).forEach((p: any) => {
+    const tier = p.tier || 'execution';
+    if (tiers[tier]) tiers[tier].push(p);
+  });
+  
+  let message = `🎯 *Today's Tier Summary*\n\n`;
+  
+  const tierEmoji = { exploration: '🔬', validation: '✓', execution: '🚀' };
+  const tierDesc = { 
+    exploration: 'Edge discovery ($0)', 
+    validation: 'Pattern confirm ($50)', 
+    execution: 'Best bets (Kelly)' 
+  };
+  
+  for (const [tier, parlays] of Object.entries(tiers)) {
+    const emoji = tierEmoji[tier as keyof typeof tierEmoji];
+    const desc = tierDesc[tier as keyof typeof tierDesc];
+    
+    if (parlays.length === 0) {
+      message += `${emoji} *${tier}:* 0 parlays\n\n`;
+    } else {
+      const legDist = parlays.reduce((acc, p) => {
+        acc[p.leg_count] = (acc[p.leg_count] || 0) + 1;
+        return acc;
+      }, {} as Record<number, number>);
+      
+      message += `${emoji} *${tier}* (${parlays.length})\n`;
+      message += `   ${desc}\n`;
+      message += `   ${Object.entries(legDist).map(([l, c]) => `${l}-leg: ${c}`).join(', ')}\n\n`;
+    }
+  }
+  
+  const total = Object.values(tiers).reduce((s, t) => s + t.length, 0);
+  message += `📊 *Total:* ${total} parlays generated today`;
+  
+  return message;
+}
+
+async function handleExplore(chatId: string) {
+  await logActivity("telegram_explore", `User requested exploration tier`, { chatId });
+  
+  const today = new Date().toISOString().split('T')[0];
+  const { data: exploreParlays } = await supabase
+    .from('bot_daily_parlays')
+    .select('*')
+    .eq('parlay_date', today)
+    .eq('tier', 'exploration')
+    .order('combined_probability', { ascending: false })
+    .limit(5);
+  
+  if (!exploreParlays || exploreParlays.length === 0) {
+    return "🔬 *Exploration Tier*\n\nNo exploration parlays generated today.\n\nUse /generate to create tiered parlays!";
+  }
+  
+  let message = `🔬 *Exploration Tier Highlights*\n\n`;
+  message += `_Edge discovery parlays ($0 stake)_\n\n`;
+  
+  exploreParlays.forEach((p: any, i: number) => {
+    const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs || '[]');
+    const topLegs = legs.slice(0, 2).map((l: any) => l.player_name || l.home_team || 'Team').join(', ');
+    
+    message += `${i + 1}. *${p.leg_count}-leg* +${p.expected_odds}\n`;
+    message += `   ${topLegs}${legs.length > 2 ? ` +${legs.length - 2}` : ''}\n`;
+    message += `   Win Rate: ${(p.combined_probability * 100).toFixed(1)}%\n\n`;
+  });
+  
+  return message;
+}
+
+async function handleValidate(chatId: string) {
+  await logActivity("telegram_validate", `User requested validation tier`, { chatId });
+  
+  const today = new Date().toISOString().split('T')[0];
+  const { data: validateParlays } = await supabase
+    .from('bot_daily_parlays')
+    .select('*')
+    .eq('parlay_date', today)
+    .eq('tier', 'validation')
+    .order('simulated_edge', { ascending: false })
+    .limit(5);
+  
+  if (!validateParlays || validateParlays.length === 0) {
+    return "✓ *Validation Tier*\n\nNo validation parlays generated today.\n\nUse /generate to create tiered parlays!";
+  }
+  
+  let message = `✓ *Validation Tier Picks*\n\n`;
+  message += `_Pattern confirmation ($50 stake)_\n\n`;
+  
+  validateParlays.forEach((p: any, i: number) => {
+    const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs || '[]');
+    const topLegs = legs.slice(0, 2).map((l: any) => l.player_name || l.home_team || 'Team').join(', ');
+    
+    message += `${i + 1}. *${p.leg_count}-leg* +${p.expected_odds}\n`;
+    message += `   ${topLegs}${legs.length > 2 ? ` +${legs.length - 2}` : ''}\n`;
+    message += `   Edge: ${((p.simulated_edge || 0) * 100).toFixed(1)}%\n\n`;
+  });
+  
+  return message;
+}
+
 // Main handler
 async function handleMessage(chatId: string, text: string) {
   const command = text.toLowerCase().trim();
@@ -592,6 +761,14 @@ async function handleMessage(chatId: string, text: string) {
     return await handleSpreads(chatId);
   } else if (command === "/totals") {
     return await handleTotals(chatId);
+  } else if (command === "/learning") {
+    return await handleLearning(chatId);
+  } else if (command === "/tiers") {
+    return await handleTiers(chatId);
+  } else if (command === "/explore") {
+    return await handleExplore(chatId);
+  } else if (command === "/validate") {
+    return await handleValidate(chatId);
   } else {
     // Natural language - save and process
     await saveConversation(chatId, "user", text);
