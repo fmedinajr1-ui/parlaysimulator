@@ -1,5 +1,5 @@
-import { useState, useMemo } from "react";
-import { ArrowLeft, RefreshCw, Crown, Star, TrendingUp, Filter, Radio, Flame, Snowflake, Target, Users, Zap, DollarSign, BarChart3, RotateCcw, CheckCircle2 } from "lucide-react";
+import { useState, useMemo, useCallback } from "react";
+import { ArrowLeft, RefreshCw, Crown, Star, TrendingUp, Filter, Radio, Flame, Snowflake, Target, Users, Zap, DollarSign, BarChart3, RotateCcw, CheckCircle2, Dices } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -9,10 +9,12 @@ import { useDeepSweetSpots } from "@/hooks/useDeepSweetSpots";
 import { useSweetSpotLiveData } from "@/hooks/useSweetSpotLiveData";
 import { useTodayProps } from "@/hooks/useTodayProps";
 import { useContrarianParlayBuilder } from "@/hooks/useContrarianParlayBuilder";
+import { useSimulatedParlayBuilder, SimulationMode } from "@/hooks/useSimulatedParlayBuilder";
 import { SweetSpotCard } from "@/components/sweetspots/SweetSpotCard";
 import { TodayPropsSection } from "@/components/sweetspots/TodayPropsSection";
 import { HedgeStatusAccuracyCard } from "@/components/sweetspots/HedgeStatusAccuracyCard";
 import { ContrarianSection } from "@/components/sweetspots/ContrarianFadeCard";
+import { SimulationCard } from "@/components/sweetspots/SimulationCard";
 import { MatchupScannerDashboard } from "@/components/matchup-scanner";
 import { useParlayBuilder } from "@/contexts/ParlayBuilderContext";
 import { getEasternDate } from "@/lib/dateUtils";
@@ -52,6 +54,18 @@ export default function SweetSpots() {
   const [qualityFilter, setQualityFilter] = useState<QualityFilter>('all');
   const [sortBy, setSortBy] = useState<SortOption>('score');
   const [paceFilter, setPaceFilter] = useState<PaceFilter>('all');
+  
+  // Monte Carlo simulation hook
+  const {
+    runSimulation,
+    cancelSimulation,
+    isSimulating,
+    progress: simProgress,
+    bestParlay,
+    viableParlays,
+    config: simConfig,
+    setMode: setSimMode,
+  } = useSimulatedParlayBuilder();
   
   // Enrich spots with live data
   const { spots: enrichedSpots, liveGameCount, spotsWithLineMovement } = useSweetSpotLiveData(data?.spots || []);
@@ -161,6 +175,31 @@ export default function SweetSpots() {
     enrichedSpots.filter(s => s.liveData?.isLive).length, 
     [enrichedSpots]
   );
+  
+  // Convert DeepSweetSpot to SweetSpotPick format for simulation
+  const simulationCandidates = useMemo(() => {
+    return filteredSpots.slice(0, 20).map(spot => ({
+      id: spot.id,
+      player_name: spot.playerName,
+      prop_type: spot.propType,
+      line: spot.line,
+      side: spot.side,
+      confidence_score: spot.sweetSpotScore / 100,
+      edge: spot.edge,
+      archetype: null,
+      category: spot.qualityTier,
+      team_name: spot.teamName,
+      event_id: spot.gameDescription, // Use gameDescription as identifier
+      projectedValue: spot.l10Stats?.avg || spot.line, // Use L10 avg as projection
+      actualLine: spot.line,
+    }));
+  }, [filteredSpots]);
+  
+  // Handler for running simulation
+  const handleRunSimulation = useCallback((mode: SimulationMode) => {
+    setSimMode(mode);
+    runSimulation(simulationCandidates, 6);
+  }, [simulationCandidates, runSimulation, setSimMode]);
   
   return (
     <div className="min-h-screen bg-background pb-24">
@@ -329,6 +368,21 @@ export default function SweetSpots() {
               </CardContent>
             </Card>
           </div>
+        )}
+        
+        {/* Monte Carlo Simulation Card */}
+        {!isLoading && simulationCandidates.length >= 4 && (
+          <SimulationCard
+            isSimulating={isSimulating}
+            progress={simProgress}
+            bestParlay={bestParlay}
+            viableParlays={viableParlays}
+            onRunSimulation={handleRunSimulation}
+            onCancel={cancelSimulation}
+            currentMode={simConfig.mode}
+            candidateCount={simulationCandidates.length}
+            legCount={6}
+          />
         )}
         
         {/* Prop Type Tabs */}

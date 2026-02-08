@@ -484,6 +484,59 @@ export function batchScreenCandidates(
   };
 }
 
+// ============= BATCH SIMULATION HELPER =============
+
+export interface BatchSimulationResult {
+  combinations: ParlayLegInput[][];
+  results: HybridSimulationResult[];
+  bestCombination: ParlayLegInput[] | null;
+  bestResult: HybridSimulationResult | null;
+  viableCount: number;
+  totalSimulated: number;
+}
+
+/**
+ * Run simulations across multiple leg combinations and find the best
+ * Useful for automated parlay building with MC validation
+ */
+export function runBatchSimulation(
+  legCombinations: ParlayLegInput[][],
+  config: HybridSimulationConfig = {},
+  minWinRate: number = 0.12,
+  minEdge: number = 0.03
+): BatchSimulationResult {
+  const results: HybridSimulationResult[] = [];
+  let bestResult: HybridSimulationResult | null = null;
+  let bestCombination: ParlayLegInput[] | null = null;
+  let viableCount = 0;
+
+  for (const combination of legCombinations) {
+    const result = runHybridSimulation(combination, config);
+    results.push(result);
+
+    // Check viability
+    const isViable = result.hybridWinRate >= minWinRate && result.overallEdge >= minEdge;
+    if (isViable) {
+      viableCount++;
+      
+      // Track best by Sharpe ratio
+      if (!bestResult || result.sharpeRatio > bestResult.sharpeRatio) {
+        bestResult = result;
+        bestCombination = combination;
+      }
+    }
+  }
+
+  return {
+    combinations: legCombinations,
+    results,
+    bestCombination,
+    bestResult,
+    viableCount,
+    totalSimulated: legCombinations.length,
+  };
+}
+
 // ============= QUICK ANALYSIS =============
 
 export interface QuickAnalysisResult {
