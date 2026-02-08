@@ -15,6 +15,8 @@ import { BotPerformanceChart } from '@/components/bot/BotPerformanceChart';
 import { LearningLogCard } from '@/components/bot/LearningLogCard';
 import { BotNotificationSettings } from '@/components/bot/BotNotificationSettings';
 import { BotActivityFeed } from '@/components/bot/BotActivityFeed';
+import { BotLearningAnalytics } from '@/components/bot/BotLearningAnalytics';
+import { TierBreakdownCard } from '@/components/bot/TierBreakdownCard';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -160,17 +162,23 @@ export default function BotDashboard() {
           </Button>
         </div>
 
+        {/* Learning Analytics - NEW */}
+        <BotLearningAnalytics />
+
+        {/* Tier Breakdown - NEW */}
+        <TierBreakdownCard parlays={state.todayParlays} />
+
         {/* Today's Parlays */}
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <CardTitle className="text-lg">Today's Bot Parlays</CardTitle>
               <Badge variant="outline">
-                {state.todayParlays.length} of 10 generated
+                {state.todayParlays.length} generated
               </Badge>
             </div>
             <CardDescription>
-              Monte Carlo validated picks using {state.activeStrategy?.strategy_name || 'default'} strategy
+              Monte Carlo validated picks using {state.activeStrategy?.strategy_name || 'tiered_v2'} strategy
             </CardDescription>
             
             {/* Leg count distribution */}
@@ -197,12 +205,17 @@ export default function BotDashboard() {
               <div className="text-center py-8 text-muted-foreground">
                 <Bot className="w-12 h-12 mx-auto mb-3 opacity-50" />
                 <p>No parlays generated yet today</p>
-                <p className="text-sm mt-1">Click "Generate Parlays" to create 8-10 unique picks</p>
+                <p className="text-sm mt-1">Click "Generate Parlays" to create tiered picks (65-75 parlays)</p>
               </div>
             ) : (
-              state.todayParlays.map((parlay) => (
+              state.todayParlays.slice(0, 10).map((parlay) => (
                 <BotParlayCard key={parlay.id} parlay={parlay} />
               ))
+            )}
+            {state.todayParlays.length > 10 && (
+              <p className="text-sm text-muted-foreground text-center pt-2">
+                +{state.todayParlays.length - 10} more parlays
+              </p>
             )}
           </CardContent>
         </Card>

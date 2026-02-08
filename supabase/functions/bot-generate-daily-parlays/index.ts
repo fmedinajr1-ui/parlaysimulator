@@ -1,8 +1,11 @@
 /**
- * bot-generate-daily-parlays
+ * bot-generate-daily-parlays (v2 - Tiered System)
  * 
- * Generates 8-10 daily parlays using Monte Carlo simulation, odds value scoring,
- * and proven categories. Implements deduplication to ensure unique picks across parlays.
+ * Generates 65-75 daily parlays across three tiers:
+ * - Exploration (50/day): Edge discovery, $0 stake, 2K iterations
+ * - Validation (15/day): Pattern confirmation, simulated stake, 10K iterations
+ * - Execution (8/day): Best bets, Kelly stakes, 25K iterations
+ * 
  * Runs at 9 AM ET daily via cron.
  */
 
@@ -13,50 +16,162 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// Bot rule constants
-const BOT_RULES = {
-  MIN_HIT_RATE: 55,           // 55% minimum category hit rate
-  MIN_WEIGHT: 0.8,            // Minimum weight to include category
-  MIN_SIM_WIN_RATE: 0.12,     // 12% minimum simulated win rate
-  MIN_EDGE: 0.03,             // 3% minimum edge
-  MIN_SHARPE: 0.5,            // Minimum Sharpe ratio
-  SIMULATED_STAKE: 50,        // Default stake in simulation
-  ITERATIONS: 10000,          // MC iterations per parlay (reduced for speed)
-  
-  // Odds filtering
-  MIN_ODDS: -200,
-  MAX_ODDS: 200,
-  MIN_ODDS_VALUE_SCORE: 45,
-  
-  // Volume
-  DAILY_PARLAYS_MIN: 8,
-  DAILY_PARLAYS_MAX: 10,
-  
-  // Deduplication
-  MAX_PLAYER_USAGE: 2,
-  MAX_SAME_TEAM: 2,
-  MAX_SAME_CATEGORY: 3,
+// ============= TIER CONFIGURATION =============
+
+type TierName = 'exploration' | 'validation' | 'execution';
+
+interface TierConfig {
+  count: number;
+  iterations: number;
+  maxPlayerUsage: number;
+  maxTeamUsage: number;
+  maxCategoryUsage: number;
+  minHitRate: number;
+  minEdge: number;
+  minSharpe: number;
+  stake: number | 'kelly';
+  minConfidence: number;
+  profiles: ParlayProfile[];
+}
+
+interface ParlayProfile {
+  legs: number;
+  strategy: string;
+  sports?: string[];
+  betTypes?: string[];
+  minOddsValue?: number;
+  minHitRate?: number;
+  useAltLines?: boolean;
+  minBufferMultiplier?: number;
+  preferPlusMoney?: boolean;
+}
+
+const TIER_CONFIG: Record<TierName, TierConfig> = {
+  exploration: {
+    count: 50,
+    iterations: 2000,
+    maxPlayerUsage: 3,
+    maxTeamUsage: 3,
+    maxCategoryUsage: 5,
+    minHitRate: 45,
+    minEdge: 0.01,
+    minSharpe: 0.2,
+    stake: 0,
+    minConfidence: 0.45,
+    profiles: [
+      // Multi-sport exploration (15 profiles)
+      { legs: 3, strategy: 'explore_safe', sports: ['basketball_nba'] },
+      { legs: 3, strategy: 'explore_safe', sports: ['basketball_nba'] },
+      { legs: 3, strategy: 'explore_safe', sports: ['icehockey_nhl'] },
+      { legs: 3, strategy: 'explore_mixed', sports: ['basketball_nba', 'icehockey_nhl'] },
+      { legs: 3, strategy: 'explore_mixed', sports: ['basketball_nba', 'icehockey_nhl'] },
+      { legs: 4, strategy: 'explore_balanced', sports: ['basketball_nba'] },
+      { legs: 4, strategy: 'explore_balanced', sports: ['basketball_nba'] },
+      { legs: 4, strategy: 'explore_balanced', sports: ['icehockey_nhl'] },
+      { legs: 4, strategy: 'explore_mixed', sports: ['all'] },
+      { legs: 4, strategy: 'explore_mixed', sports: ['all'] },
+      { legs: 5, strategy: 'explore_aggressive', sports: ['basketball_nba'] },
+      { legs: 5, strategy: 'explore_aggressive', sports: ['all'] },
+      { legs: 5, strategy: 'explore_aggressive', sports: ['all'] },
+      { legs: 6, strategy: 'explore_longshot', sports: ['all'] },
+      { legs: 6, strategy: 'explore_longshot', sports: ['all'] },
+      // Team props exploration (10 profiles)
+      { legs: 3, strategy: 'team_spreads', betTypes: ['spread'] },
+      { legs: 3, strategy: 'team_spreads', betTypes: ['spread'] },
+      { legs: 3, strategy: 'team_totals', betTypes: ['total'] },
+      { legs: 3, strategy: 'team_totals', betTypes: ['total'] },
+      { legs: 4, strategy: 'team_mixed', betTypes: ['spread', 'total'] },
+      { legs: 4, strategy: 'team_mixed', betTypes: ['spread', 'total'] },
+      { legs: 4, strategy: 'team_mixed', betTypes: ['spread', 'total', 'moneyline'] },
+      { legs: 3, strategy: 'team_ml', betTypes: ['moneyline'] },
+      { legs: 3, strategy: 'team_ml', betTypes: ['moneyline'] },
+      { legs: 4, strategy: 'team_all', betTypes: ['spread', 'total', 'moneyline'] },
+      // Cross-sport exploration (25 profiles)
+      { legs: 3, strategy: 'cross_sport', sports: ['basketball_nba', 'icehockey_nhl'] },
+      { legs: 3, strategy: 'cross_sport', sports: ['basketball_nba', 'icehockey_nhl'] },
+      { legs: 3, strategy: 'cross_sport', sports: ['basketball_nba', 'icehockey_nhl'] },
+      { legs: 4, strategy: 'cross_sport_4', sports: ['all'] },
+      { legs: 4, strategy: 'cross_sport_4', sports: ['all'] },
+      { legs: 4, strategy: 'cross_sport_4', sports: ['all'] },
+      { legs: 4, strategy: 'cross_sport_4', sports: ['all'] },
+      { legs: 5, strategy: 'cross_sport_5', sports: ['all'] },
+      { legs: 5, strategy: 'cross_sport_5', sports: ['all'] },
+      { legs: 5, strategy: 'cross_sport_5', sports: ['all'] },
+      { legs: 3, strategy: 'tennis_focus', sports: ['tennis_atp', 'tennis_wta'] },
+      { legs: 3, strategy: 'tennis_focus', sports: ['tennis_atp', 'tennis_wta'] },
+      { legs: 4, strategy: 'nhl_focus', sports: ['icehockey_nhl'] },
+      { legs: 4, strategy: 'nhl_focus', sports: ['icehockey_nhl'] },
+      { legs: 4, strategy: 'nhl_focus', sports: ['icehockey_nhl'] },
+      { legs: 5, strategy: 'max_diversity', sports: ['all'] },
+      { legs: 5, strategy: 'max_diversity', sports: ['all'] },
+      { legs: 5, strategy: 'max_diversity', sports: ['all'] },
+      { legs: 6, strategy: 'max_diversity', sports: ['all'] },
+      { legs: 6, strategy: 'max_diversity', sports: ['all'] },
+      { legs: 3, strategy: 'props_only', sports: ['basketball_nba'] },
+      { legs: 3, strategy: 'props_only', sports: ['icehockey_nhl'] },
+      { legs: 4, strategy: 'props_mixed', sports: ['basketball_nba', 'icehockey_nhl'] },
+      { legs: 4, strategy: 'props_mixed', sports: ['all'] },
+      { legs: 5, strategy: 'props_mixed', sports: ['all'] },
+    ],
+  },
+  validation: {
+    count: 15,
+    iterations: 10000,
+    maxPlayerUsage: 2,
+    maxTeamUsage: 2,
+    maxCategoryUsage: 3,
+    minHitRate: 52,
+    minEdge: 0.025,
+    minSharpe: 0.4,
+    stake: 50,
+    minConfidence: 0.52,
+    profiles: [
+      { legs: 3, strategy: 'validated_conservative', sports: ['basketball_nba'], minOddsValue: 45, minHitRate: 58 },
+      { legs: 3, strategy: 'validated_conservative', sports: ['basketball_nba'], minOddsValue: 45, minHitRate: 58 },
+      { legs: 3, strategy: 'validated_conservative', sports: ['icehockey_nhl'], minOddsValue: 45, minHitRate: 58 },
+      { legs: 4, strategy: 'validated_balanced', sports: ['basketball_nba'], minOddsValue: 42, minHitRate: 55 },
+      { legs: 4, strategy: 'validated_balanced', sports: ['basketball_nba'], minOddsValue: 42, minHitRate: 55 },
+      { legs: 4, strategy: 'validated_balanced', sports: ['basketball_nba', 'icehockey_nhl'], minOddsValue: 42, minHitRate: 55 },
+      { legs: 5, strategy: 'validated_standard', sports: ['basketball_nba'], minOddsValue: 40, minHitRate: 52 },
+      { legs: 5, strategy: 'validated_standard', sports: ['all'], minOddsValue: 40, minHitRate: 52 },
+      { legs: 5, strategy: 'validated_standard', sports: ['all'], minOddsValue: 40, minHitRate: 52, useAltLines: true },
+      { legs: 3, strategy: 'validated_team', betTypes: ['spread', 'total'], minOddsValue: 45, minHitRate: 55 },
+      { legs: 3, strategy: 'validated_team', betTypes: ['spread', 'total'], minOddsValue: 45, minHitRate: 55 },
+      { legs: 4, strategy: 'validated_team', betTypes: ['spread', 'total'], minOddsValue: 42, minHitRate: 52 },
+      { legs: 4, strategy: 'validated_cross', sports: ['all'], minOddsValue: 42, minHitRate: 52 },
+      { legs: 4, strategy: 'validated_cross', sports: ['all'], minOddsValue: 42, minHitRate: 52 },
+      { legs: 5, strategy: 'validated_aggressive', sports: ['all'], minOddsValue: 40, minHitRate: 50, useAltLines: true },
+    ],
+  },
+  execution: {
+    count: 8,
+    iterations: 25000,
+    maxPlayerUsage: 1,
+    maxTeamUsage: 1,
+    maxCategoryUsage: 2,
+    minHitRate: 55,
+    minEdge: 0.03,
+    minSharpe: 0.5,
+    stake: 'kelly',
+    minConfidence: 0.55,
+    profiles: [
+      { legs: 3, strategy: 'elite_conservative', sports: ['basketball_nba'], minOddsValue: 50, minHitRate: 62, useAltLines: false },
+      { legs: 3, strategy: 'elite_conservative', sports: ['basketball_nba'], minOddsValue: 50, minHitRate: 62, useAltLines: false },
+      { legs: 4, strategy: 'elite_balanced', sports: ['basketball_nba'], minOddsValue: 45, minHitRate: 58, useAltLines: false },
+      { legs: 4, strategy: 'elite_balanced', sports: ['basketball_nba', 'icehockey_nhl'], minOddsValue: 45, minHitRate: 58, useAltLines: false },
+      { legs: 5, strategy: 'elite_standard', sports: ['basketball_nba'], minOddsValue: 42, minHitRate: 55, useAltLines: true, minBufferMultiplier: 1.5 },
+      { legs: 5, strategy: 'elite_standard', sports: ['all'], minOddsValue: 42, minHitRate: 55, useAltLines: true, minBufferMultiplier: 1.5 },
+      { legs: 6, strategy: 'elite_aggressive', sports: ['basketball_nba'], minOddsValue: 40, minHitRate: 52, useAltLines: true, preferPlusMoney: true },
+      { legs: 6, strategy: 'elite_aggressive', sports: ['all'], minOddsValue: 40, minHitRate: 52, useAltLines: true, preferPlusMoney: true },
+    ],
+  },
 };
 
-// Parlay profiles for diverse generation with alternate line shopping
-const PARLAY_PROFILES = [
-  // Conservative - NO line shopping (lowered thresholds for realistic data)
-  { legs: 3, strategy: 'conservative', minOddsValue: 40, minHitRate: 60, useAltLines: false },
-  { legs: 3, strategy: 'conservative', minOddsValue: 40, minHitRate: 60, useAltLines: false },
-  // Balanced - NO line shopping
-  { legs: 4, strategy: 'balanced', minOddsValue: 38, minHitRate: 55, useAltLines: false },
-  { legs: 4, strategy: 'balanced', minOddsValue: 38, minHitRate: 55, useAltLines: false },
-  // Standard - SOME line shopping (only for picks with sufficient buffer)
-  { legs: 5, strategy: 'standard', minOddsValue: 35, minHitRate: 50, useAltLines: true, minBufferMultiplier: 1.5 },
-  { legs: 5, strategy: 'standard', minOddsValue: 35, minHitRate: 50, useAltLines: true, minBufferMultiplier: 1.5 },
-  { legs: 5, strategy: 'standard', minOddsValue: 35, minHitRate: 50, useAltLines: false },
-  // Aggressive - AGGRESSIVE line shopping (plus money priority)
-  { legs: 6, strategy: 'aggressive', minOddsValue: 35, minHitRate: 50, useAltLines: true, minBufferMultiplier: 1.2, preferPlusMoney: true },
-  { legs: 6, strategy: 'aggressive', minOddsValue: 35, minHitRate: 50, useAltLines: true, minBufferMultiplier: 1.2, preferPlusMoney: true },
-  { legs: 6, strategy: 'aggressive', minOddsValue: 35, minHitRate: 50, useAltLines: true, minBufferMultiplier: 1.2, preferPlusMoney: true },
-];
+// ============= CONSTANTS =============
 
-// Minimum projection buffer by prop type for alternate line shopping
+const DEFAULT_MIN_HIT_RATE = 50;
+const DEFAULT_MIN_ODDS_VALUE = 35;
+
 const MIN_BUFFER_BY_PROP: Record<string, number> = {
   points: 4.0,
   rebounds: 2.5,
@@ -69,7 +184,15 @@ const MIN_BUFFER_BY_PROP: Record<string, number> = {
   steals: 0.8,
   blocks: 0.8,
   turnovers: 1.0,
+  goals: 0.5,
+  assists_nhl: 0.5,
+  shots: 2.0,
+  saves: 5.0,
+  aces: 2.0,
+  games: 1.0,
 };
+
+// ============= INTERFACES =============
 
 interface AlternateLine {
   line: number;
@@ -86,102 +209,10 @@ interface SelectedLine {
   oddsImprovement?: number;
 }
 
-// Get minimum buffer for a prop type
-function getMinBuffer(propType: string): number {
-  const normalized = propType.toLowerCase().replace(/[_\s]/g, '');
-  return MIN_BUFFER_BY_PROP[normalized] || MIN_BUFFER_BY_PROP[propType.toLowerCase()] || 3.0;
-}
-
-// Select optimal line based on projection buffer and strategy
-function selectOptimalLine(
-  pick: EnrichedPick,
-  alternateLines: AlternateLine[],
-  strategy: string,
-  preferPlusMoney: boolean = false,
-  minBufferMultiplier: number = 1.0
-): SelectedLine {
-  const projection = pick.projected_value || 0;
-  const mainLine = pick.line;
-  const mainOdds = pick.americanOdds;
-  const side = pick.recommended_side || 'over';
-  const buffer = projection - mainLine;
-  
-  // Only shop lines for risky profiles
-  if (['conservative', 'balanced'].includes(strategy)) {
-    return { line: mainLine, odds: mainOdds, reason: 'safe_profile' };
-  }
-  
-  // Check if buffer is significant enough
-  const minBuffer = getMinBuffer(pick.prop_type) * minBufferMultiplier;
-  if (buffer < minBuffer) {
-    return { line: mainLine, odds: mainOdds, reason: 'insufficient_buffer' };
-  }
-  
-  // No alternates available
-  if (!alternateLines || alternateLines.length === 0) {
-    return { line: mainLine, odds: mainOdds, reason: 'no_alternates' };
-  }
-  
-  // Safety margin: projection - (0.5 * minBuffer)
-  const safetyMargin = minBuffer * 0.5;
-  const maxSafeLine = projection - safetyMargin;
-  
-  // Filter to viable alternates based on side
-  const viableAlts = alternateLines
-    .filter(alt => {
-      const altOdds = side === 'over' ? alt.overOdds : alt.underOdds;
-      return (
-        alt.line <= maxSafeLine &&    // Line is safe given projection
-        alt.line > mainLine &&         // Line is higher than main (for overs)
-        altOdds >= -150 &&             // Not too juiced
-        altOdds <= 200                 // Not too risky
-      );
-    })
-    .map(alt => ({
-      ...alt,
-      relevantOdds: side === 'over' ? alt.overOdds : alt.underOdds,
-      projectionBuffer: projection - alt.line,
-    }));
-  
-  if (viableAlts.length === 0) {
-    return { line: mainLine, odds: mainOdds, reason: 'no_viable_alts' };
-  }
-  
-  // For aggressive parlays, prefer plus money lines
-  if (strategy === 'aggressive' && preferPlusMoney) {
-    const plusMoneyAlts = viableAlts.filter(alt => alt.relevantOdds > 0);
-    if (plusMoneyAlts.length > 0) {
-      // Pick highest plus money line that's still safe
-      const selected = plusMoneyAlts.sort((a, b) => b.line - a.line)[0];
-      return {
-        line: selected.line,
-        odds: selected.relevantOdds,
-        reason: 'aggressive_plus_money',
-        originalLine: mainLine,
-        oddsImprovement: selected.relevantOdds - mainOdds,
-      };
-    }
-  }
-  
-  // For standard risky, pick best odds that's still significantly better
-  const bestOdds = viableAlts.sort((a, b) => b.relevantOdds - a.relevantOdds)[0];
-  if (bestOdds.relevantOdds > mainOdds + 15) { // At least +15 improvement
-    return {
-      line: bestOdds.line,
-      odds: bestOdds.relevantOdds,
-      reason: 'best_ev_alt',
-      originalLine: mainLine,
-      oddsImprovement: bestOdds.relevantOdds - mainOdds,
-    };
-  }
-  
-  return { line: mainLine, odds: mainOdds, reason: 'main_line_best' };
-}
-
 interface SweetSpotPick {
   id: string;
   player_name: string;
-  team_name?: string; // Optional - may not exist in category_sweet_spots
+  team_name?: string;
   prop_type: string;
   line: number;
   recommended_side: string;
@@ -191,12 +222,48 @@ interface SweetSpotPick {
   projected_value: number;
   event_id?: string;
   alternateLines?: AlternateLine[];
+  sport?: string;
 }
 
 interface EnrichedPick extends SweetSpotPick {
   americanOdds: number;
   oddsValueScore: number;
   compositeScore: number;
+  has_real_line?: boolean;
+  line_source?: string;
+  line_verified_at?: string | null;
+}
+
+interface TeamProp {
+  id: string;
+  event_id: string;
+  sport: string;
+  home_team: string;
+  away_team: string;
+  bet_type: string;
+  line?: number;
+  home_odds?: number;
+  away_odds?: number;
+  over_odds?: number;
+  under_odds?: number;
+  sharp_score?: number;
+  commence_time: string;
+}
+
+interface EnrichedTeamPick {
+  id: string;
+  type: 'team';
+  sport: string;
+  home_team: string;
+  away_team: string;
+  bet_type: string;
+  side: string;
+  line: number;
+  odds: number;
+  category: string;
+  sharp_score: number;
+  compositeScore: number;
+  confidence_score: number;
 }
 
 interface CategoryWeight {
@@ -205,6 +272,7 @@ interface CategoryWeight {
   weight: number;
   current_hit_rate: number;
   is_blocked: boolean;
+  sport?: string;
 }
 
 interface UsageTracker {
@@ -212,6 +280,13 @@ interface UsageTracker {
   playerUsageCount: Map<string, number>;
   teamUsageInParlay: Map<string, number>;
   categoryUsageInParlay: Map<string, number>;
+}
+
+interface PropPool {
+  playerPicks: EnrichedPick[];
+  teamPicks: EnrichedTeamPick[];
+  sweetSpots: EnrichedPick[];
+  totalPool: number;
 }
 
 // ============= HELPER FUNCTIONS =============
@@ -256,6 +331,10 @@ function createPickKey(playerName: string, propType: string, side: string): stri
   return `${playerName}_${propType}_${side}`.toLowerCase();
 }
 
+function createTeamPickKey(eventId: string, betType: string, side: string): string {
+  return `team_${eventId}_${betType}_${side}`.toLowerCase();
+}
+
 function createUsageTracker(): UsageTracker {
   return {
     usedPicks: new Set(),
@@ -265,45 +344,541 @@ function createUsageTracker(): UsageTracker {
   };
 }
 
-function canUsePickGlobally(pick: EnrichedPick, tracker: UsageTracker): boolean {
-  const key = createPickKey(pick.player_name, pick.prop_type, pick.recommended_side);
+function getMinBuffer(propType: string): number {
+  const normalized = propType.toLowerCase().replace(/[_\s]/g, '');
+  return MIN_BUFFER_BY_PROP[normalized] || MIN_BUFFER_BY_PROP[propType.toLowerCase()] || 3.0;
+}
+
+function selectOptimalLine(
+  pick: EnrichedPick,
+  alternateLines: AlternateLine[],
+  strategy: string,
+  preferPlusMoney: boolean = false,
+  minBufferMultiplier: number = 1.0
+): SelectedLine {
+  const projection = pick.projected_value || 0;
+  const mainLine = pick.line;
+  const mainOdds = pick.americanOdds;
+  const side = pick.recommended_side || 'over';
+  const buffer = projection - mainLine;
   
-  // Never reuse exact same pick
+  if (!strategy.includes('aggressive') && !strategy.includes('alt')) {
+    return { line: mainLine, odds: mainOdds, reason: 'safe_profile' };
+  }
+  
+  const minBuffer = getMinBuffer(pick.prop_type) * minBufferMultiplier;
+  if (buffer < minBuffer) {
+    return { line: mainLine, odds: mainOdds, reason: 'insufficient_buffer' };
+  }
+  
+  if (!alternateLines || alternateLines.length === 0) {
+    return { line: mainLine, odds: mainOdds, reason: 'no_alternates' };
+  }
+  
+  const safetyMargin = minBuffer * 0.5;
+  const maxSafeLine = projection - safetyMargin;
+  
+  const viableAlts = alternateLines
+    .filter(alt => {
+      const altOdds = side === 'over' ? alt.overOdds : alt.underOdds;
+      return (
+        alt.line <= maxSafeLine &&
+        alt.line > mainLine &&
+        altOdds >= -150 &&
+        altOdds <= 200
+      );
+    })
+    .map(alt => ({
+      ...alt,
+      relevantOdds: side === 'over' ? alt.overOdds : alt.underOdds,
+      projectionBuffer: projection - alt.line,
+    }));
+  
+  if (viableAlts.length === 0) {
+    return { line: mainLine, odds: mainOdds, reason: 'no_viable_alts' };
+  }
+  
+  if (preferPlusMoney) {
+    const plusMoneyAlts = viableAlts.filter(alt => alt.relevantOdds > 0);
+    if (plusMoneyAlts.length > 0) {
+      const selected = plusMoneyAlts.sort((a, b) => b.line - a.line)[0];
+      return {
+        line: selected.line,
+        odds: selected.relevantOdds,
+        reason: 'aggressive_plus_money',
+        originalLine: mainLine,
+        oddsImprovement: selected.relevantOdds - mainOdds,
+      };
+    }
+  }
+  
+  const bestOdds = viableAlts.sort((a, b) => b.relevantOdds - a.relevantOdds)[0];
+  if (bestOdds.relevantOdds > mainOdds + 15) {
+    return {
+      line: bestOdds.line,
+      odds: bestOdds.relevantOdds,
+      reason: 'best_ev_alt',
+      originalLine: mainLine,
+      oddsImprovement: bestOdds.relevantOdds - mainOdds,
+    };
+  }
+  
+  return { line: mainLine, odds: mainOdds, reason: 'main_line_best' };
+}
+
+function canUsePickGlobally(pick: EnrichedPick | EnrichedTeamPick, tracker: UsageTracker, tierConfig: TierConfig): boolean {
+  let key: string;
+  
+  if ('type' in pick && pick.type === 'team') {
+    key = createTeamPickKey(pick.id, pick.bet_type, pick.side);
+  } else {
+    const playerPick = pick as EnrichedPick;
+    key = createPickKey(playerPick.player_name, playerPick.prop_type, playerPick.recommended_side);
+  }
+  
   if (tracker.usedPicks.has(key)) return false;
   
-  // Max parlays per player
-  const playerCount = tracker.playerUsageCount.get(pick.player_name) || 0;
-  if (playerCount >= BOT_RULES.MAX_PLAYER_USAGE) return false;
+  if ('player_name' in pick) {
+    const playerCount = tracker.playerUsageCount.get(pick.player_name) || 0;
+    if (playerCount >= tierConfig.maxPlayerUsage) return false;
+  }
   
   return true;
 }
 
 function canUsePickInParlay(
-  pick: EnrichedPick,
+  pick: EnrichedPick | EnrichedTeamPick,
   parlayTeamCount: Map<string, number>,
-  parlayCategoryCount: Map<string, number>
+  parlayCategoryCount: Map<string, number>,
+  tierConfig: TierConfig
 ): boolean {
-  // Max per team in single parlay (skip if no team_name)
-  if (pick.team_name) {
+  if ('team_name' in pick && pick.team_name) {
     const teamCount = parlayTeamCount.get(pick.team_name) || 0;
-    if (teamCount >= BOT_RULES.MAX_SAME_TEAM) return false;
+    if (teamCount >= tierConfig.maxTeamUsage) return false;
   }
   
-  // Max per category in single parlay
-  const categoryCount = parlayCategoryCount.get(pick.category) || 0;
-  if (categoryCount >= BOT_RULES.MAX_SAME_CATEGORY) return false;
+  if ('home_team' in pick) {
+    const homeCount = parlayTeamCount.get(pick.home_team) || 0;
+    const awayCount = parlayTeamCount.get(pick.away_team) || 0;
+    if (homeCount >= tierConfig.maxTeamUsage || awayCount >= tierConfig.maxTeamUsage) return false;
+  }
+  
+  const category = pick.category;
+  const categoryCount = parlayCategoryCount.get(category) || 0;
+  if (categoryCount >= tierConfig.maxCategoryUsage) return false;
   
   return true;
 }
 
-function markPickUsed(pick: EnrichedPick, tracker: UsageTracker): void {
-  const key = createPickKey(pick.player_name, pick.prop_type, pick.recommended_side);
+function markPickUsed(pick: EnrichedPick | EnrichedTeamPick, tracker: UsageTracker): void {
+  let key: string;
+  
+  if ('type' in pick && pick.type === 'team') {
+    key = createTeamPickKey(pick.id, pick.bet_type, pick.side);
+  } else {
+    const playerPick = pick as EnrichedPick;
+    key = createPickKey(playerPick.player_name, playerPick.prop_type, playerPick.recommended_side);
+    tracker.playerUsageCount.set(
+      playerPick.player_name,
+      (tracker.playerUsageCount.get(playerPick.player_name) || 0) + 1
+    );
+  }
+  
   tracker.usedPicks.add(key);
-  tracker.playerUsageCount.set(
-    pick.player_name,
-    (tracker.playerUsageCount.get(pick.player_name) || 0) + 1
-  );
 }
+
+function calculateKellyStake(
+  winProbability: number,
+  odds: number,
+  bankroll: number,
+  maxRisk: number = 0.03
+): number {
+  const decimalOdds = odds > 0 ? (odds / 100) + 1 : (100 / Math.abs(odds)) + 1;
+  const b = decimalOdds - 1;
+  const kelly = ((b * winProbability) - (1 - winProbability)) / b;
+  const halfKelly = Math.max(0, kelly / 2);
+  const stake = Math.min(halfKelly, maxRisk) * bankroll;
+  return Math.round(stake * 100) / 100;
+}
+
+function mapTeamBetToCategory(betType: string, side: string): string {
+  const categoryMap: Record<string, Record<string, string>> = {
+    spread: { home: 'SHARP_SPREAD', away: 'SHARP_SPREAD' },
+    total: { over: 'OVER_TOTAL', under: 'UNDER_TOTAL' },
+    moneyline: { home: 'ML_FAVORITE', away: 'ML_UNDERDOG' },
+  };
+  return categoryMap[betType]?.[side] || 'TEAM_PROP';
+}
+
+// ============= PROP POOL BUILDER =============
+
+async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<string, number>): Promise<PropPool> {
+  console.log(`[Bot] Building prop pool for ${targetDate}`);
+  
+  // 1. Sweet spot picks (analyzed player props)
+  const allCategories = [...weightMap.keys()];
+  const { data: sweetSpots } = await supabase
+    .from('category_sweet_spots')
+    .select('*, actual_line, recommended_line, bookmaker')
+    .eq('analysis_date', targetDate)
+    .eq('is_active', true)
+    .gte('confidence_score', 0.45)
+    .order('confidence_score', { ascending: false })
+    .limit(200);
+
+  // 2. Live odds from unified_props
+  const { data: playerProps } = await supabase
+    .from('unified_props')
+    .select('player_name, prop_type, over_price, under_price, line, sport')
+    .eq('is_active', true)
+    .in('sport', ['basketball_nba', 'icehockey_nhl', 'tennis_atp', 'tennis_wta']);
+
+  // 3. Team props from game_bets
+  const { data: teamProps } = await supabase
+    .from('game_bets')
+    .select('*')
+    .eq('is_active', true)
+    .gte('commence_time', new Date().toISOString());
+
+  // Build odds map
+  const oddsMap = new Map<string, { overOdds: number; underOdds: number }>();
+  (playerProps || []).forEach((od: any) => {
+    const key = `${od.player_name}_${od.prop_type}`.toLowerCase();
+    oddsMap.set(key, {
+      overOdds: od.over_price || -110,
+      underOdds: od.under_price || -110
+    });
+  });
+
+  // Enrich sweet spots
+  const enrichedSweetSpots: EnrichedPick[] = (sweetSpots || []).map((pick: SweetSpotPick) => {
+    const line = pick.actual_line ?? pick.recommended_line ?? pick.line;
+    const hasRealLine = pick.actual_line !== null && pick.actual_line !== undefined;
+    
+    const oddsKey = `${pick.player_name}_${pick.prop_type}`.toLowerCase();
+    const odds = oddsMap.get(oddsKey) || { overOdds: -110, underOdds: -110 };
+    const side = pick.recommended_side || 'over';
+    const americanOdds = side === 'over' ? odds.overOdds : odds.underOdds;
+    
+    const hitRateDecimal = pick.l10_hit_rate || pick.confidence_score || 0.5;
+    const hitRatePercent = hitRateDecimal * 100;
+    const edge = (pick.projected_value || 0) - (line || 0);
+    const categoryWeight = weightMap.get(pick.category) || 1.0;
+    
+    const oddsValueScore = calculateOddsValueScore(americanOdds, hitRateDecimal);
+    const compositeScore = calculateCompositeScore(hitRatePercent, edge, oddsValueScore, categoryWeight);
+    
+    return {
+      ...pick,
+      line,
+      recommended_side: side,
+      americanOdds,
+      oddsValueScore,
+      compositeScore,
+      has_real_line: hasRealLine,
+      line_source: hasRealLine ? 'verified' : 'projected',
+      sport: pick.sport || 'basketball_nba',
+    };
+  }).filter((p: EnrichedPick) => p.americanOdds >= -200 && p.americanOdds <= 200);
+
+  // Enrich team props
+  const enrichedTeamPicks: EnrichedTeamPick[] = (teamProps || []).flatMap((game: TeamProp) => {
+    const picks: EnrichedTeamPick[] = [];
+    
+    // Spread picks
+    if (game.line !== null && game.line !== undefined) {
+      if (game.home_odds) {
+        picks.push({
+          id: `${game.id}_spread_home`,
+          type: 'team',
+          sport: game.sport,
+          home_team: game.home_team,
+          away_team: game.away_team,
+          bet_type: 'spread',
+          side: 'home',
+          line: game.line,
+          odds: game.home_odds,
+          category: mapTeamBetToCategory('spread', 'home'),
+          sharp_score: game.sharp_score || 50,
+          compositeScore: Math.min(100, (game.sharp_score || 50) + 20),
+          confidence_score: (game.sharp_score || 50) / 100,
+        });
+      }
+      if (game.away_odds) {
+        picks.push({
+          id: `${game.id}_spread_away`,
+          type: 'team',
+          sport: game.sport,
+          home_team: game.home_team,
+          away_team: game.away_team,
+          bet_type: 'spread',
+          side: 'away',
+          line: -game.line,
+          odds: game.away_odds,
+          category: mapTeamBetToCategory('spread', 'away'),
+          sharp_score: game.sharp_score || 50,
+          compositeScore: Math.min(100, (game.sharp_score || 50) + 20),
+          confidence_score: (game.sharp_score || 50) / 100,
+        });
+      }
+    }
+    
+    // Total picks
+    if (game.over_odds && game.under_odds) {
+      picks.push({
+        id: `${game.id}_total_over`,
+        type: 'team',
+        sport: game.sport,
+        home_team: game.home_team,
+        away_team: game.away_team,
+        bet_type: 'total',
+        side: 'over',
+        line: game.line || 0,
+        odds: game.over_odds,
+        category: mapTeamBetToCategory('total', 'over'),
+        sharp_score: game.sharp_score || 50,
+        compositeScore: Math.min(100, (game.sharp_score || 50) + 15),
+        confidence_score: (game.sharp_score || 50) / 100,
+      });
+      picks.push({
+        id: `${game.id}_total_under`,
+        type: 'team',
+        sport: game.sport,
+        home_team: game.home_team,
+        away_team: game.away_team,
+        bet_type: 'total',
+        side: 'under',
+        line: game.line || 0,
+        odds: game.under_odds,
+        category: mapTeamBetToCategory('total', 'under'),
+        sharp_score: game.sharp_score || 50,
+        compositeScore: Math.min(100, (game.sharp_score || 50) + 15),
+        confidence_score: (game.sharp_score || 50) / 100,
+      });
+    }
+    
+    return picks;
+  });
+
+  // Sort by composite score
+  enrichedSweetSpots.sort((a, b) => b.compositeScore - a.compositeScore);
+  enrichedTeamPicks.sort((a, b) => b.compositeScore - a.compositeScore);
+
+  console.log(`[Bot] Pool built: ${enrichedSweetSpots.length} player props, ${enrichedTeamPicks.length} team props`);
+
+  return {
+    playerPicks: enrichedSweetSpots,
+    teamPicks: enrichedTeamPicks,
+    sweetSpots: enrichedSweetSpots,
+    totalPool: enrichedSweetSpots.length + enrichedTeamPicks.length,
+  };
+}
+
+// ============= TIER GENERATION =============
+
+async function generateTierParlays(
+  supabase: any,
+  tier: TierName,
+  targetDate: string,
+  pool: PropPool,
+  weightMap: Map<string, number>,
+  strategyName: string,
+  bankroll: number
+): Promise<{ count: number; parlays: any[] }> {
+  const config = TIER_CONFIG[tier];
+  const tracker = createUsageTracker();
+  const parlaysToCreate: any[] = [];
+
+  console.log(`[Bot] Generating ${tier} tier (${config.count} target)`);
+
+  for (const profile of config.profiles) {
+    if (parlaysToCreate.length >= config.count) break;
+
+    const legs: any[] = [];
+    const parlayTeamCount = new Map<string, number>();
+    const parlayCategoryCount = new Map<string, number>();
+
+    // Determine which picks to use based on profile
+    const isTeamProfile = profile.betTypes && profile.betTypes.length > 0;
+    const sportFilter = profile.sports || ['all'];
+    
+    // Filter picks based on profile
+    let candidatePicks: (EnrichedPick | EnrichedTeamPick)[] = [];
+    
+    if (isTeamProfile) {
+      candidatePicks = pool.teamPicks.filter(p => 
+        profile.betTypes!.includes(p.bet_type)
+      );
+    } else {
+      candidatePicks = pool.sweetSpots.filter(p => {
+        if (sportFilter.includes('all')) return true;
+        return sportFilter.includes(p.sport || 'basketball_nba');
+      });
+    }
+
+    // Build parlay from candidates
+    for (const pick of candidatePicks) {
+      if (legs.length >= profile.legs) break;
+      
+      if (!canUsePickGlobally(pick, tracker, config)) continue;
+      if (!canUsePickInParlay(pick, parlayTeamCount, parlayCategoryCount, config)) continue;
+
+      // Check profile-specific requirements
+      const minHitRate = profile.minHitRate || config.minHitRate;
+      const minOddsValue = profile.minOddsValue || DEFAULT_MIN_ODDS_VALUE;
+      
+      const pickConfidence = pick.confidence_score || 0.5;
+      const hitRatePercent = pickConfidence * 100;
+      
+      if (hitRatePercent < minHitRate) continue;
+      
+      if ('oddsValueScore' in pick && pick.oddsValueScore < minOddsValue) continue;
+
+      // For player picks, handle line selection
+      let legData: any;
+      
+      if ('type' in pick && pick.type === 'team') {
+        const teamPick = pick as EnrichedTeamPick;
+        legData = {
+          id: teamPick.id,
+          type: 'team',
+          home_team: teamPick.home_team,
+          away_team: teamPick.away_team,
+          bet_type: teamPick.bet_type,
+          side: teamPick.side,
+          line: teamPick.line,
+          category: teamPick.category,
+          american_odds: teamPick.odds,
+          sharp_score: teamPick.sharp_score,
+          composite_score: teamPick.compositeScore,
+          outcome: 'pending',
+          sport: teamPick.sport,
+        };
+        
+        parlayTeamCount.set(teamPick.home_team, (parlayTeamCount.get(teamPick.home_team) || 0) + 1);
+        parlayTeamCount.set(teamPick.away_team, (parlayTeamCount.get(teamPick.away_team) || 0) + 1);
+      } else {
+        const playerPick = pick as EnrichedPick;
+        const weight = weightMap.get(playerPick.category) || 1.0;
+        
+        // Select line based on profile
+        const selectedLine = profile.useAltLines
+          ? selectOptimalLine(
+              playerPick,
+              playerPick.alternateLines || [],
+              profile.strategy,
+              profile.preferPlusMoney || false,
+              profile.minBufferMultiplier || 1.0
+            )
+          : { line: playerPick.line, odds: playerPick.americanOdds, reason: 'main_line' };
+
+        legData = {
+          id: playerPick.id,
+          player_name: playerPick.player_name,
+          team_name: playerPick.team_name,
+          prop_type: playerPick.prop_type,
+          line: selectedLine.line,
+          side: playerPick.recommended_side || 'over',
+          category: playerPick.category,
+          weight,
+          hit_rate: hitRatePercent,
+          american_odds: selectedLine.odds,
+          odds_value_score: playerPick.oddsValueScore,
+          composite_score: playerPick.compositeScore,
+          outcome: 'pending',
+          original_line: playerPick.line,
+          selected_line: selectedLine.line,
+          line_selection_reason: selectedLine.reason,
+          odds_improvement: selectedLine.oddsImprovement || 0,
+          projection_buffer: (playerPick.projected_value || 0) - selectedLine.line,
+          projected_value: playerPick.projected_value || 0,
+          line_source: playerPick.line_source || 'projected',
+          has_real_line: playerPick.has_real_line || false,
+          sport: playerPick.sport || 'basketball_nba',
+        };
+        
+        if (playerPick.team_name) {
+          parlayTeamCount.set(playerPick.team_name, (parlayTeamCount.get(playerPick.team_name) || 0) + 1);
+        }
+      }
+      
+      legs.push(legData);
+      parlayCategoryCount.set(pick.category, (parlayCategoryCount.get(pick.category) || 0) + 1);
+    }
+
+    // Only create parlay if we have enough legs
+    if (legs.length >= profile.legs) {
+      // Mark all picks as used
+      for (const leg of legs) {
+        if (leg.type === 'team') {
+          tracker.usedPicks.add(createTeamPickKey(leg.id, leg.bet_type, leg.side));
+        } else {
+          const playerPick = pool.sweetSpots.find(p => p.id === leg.id);
+          if (playerPick) markPickUsed(playerPick, tracker);
+        }
+      }
+
+      // Calculate combined probability
+      const avgHitRate = legs.reduce((sum, l) => {
+        const hr = l.hit_rate ? l.hit_rate / 100 : l.sharp_score ? l.sharp_score / 100 : 0.5;
+        return sum + hr;
+      }, 0) / legs.length;
+      const combinedProbability = Math.pow(avgHitRate, legs.length);
+      
+      // Calculate expected odds
+      const expectedOdds = combinedProbability > 0 
+        ? Math.round((1 / combinedProbability - 1) * 100)
+        : 10000;
+      
+      // Edge and Sharpe
+      const impliedProbability = 1 / Math.pow(2, legs.length);
+      const edge = combinedProbability - impliedProbability;
+      const sharpe = edge / (0.5 * Math.sqrt(legs.length));
+
+      // Check tier thresholds
+      if (combinedProbability < config.minEdge) continue;
+      if (edge < config.minEdge) continue;
+      if (sharpe < config.minSharpe) continue;
+
+      // Calculate stake
+      let stake = 0;
+      if (config.stake === 'kelly') {
+        stake = calculateKellyStake(combinedProbability, expectedOdds, bankroll);
+      } else {
+        stake = config.stake;
+      }
+
+      parlaysToCreate.push({
+        parlay_date: targetDate,
+        legs,
+        leg_count: legs.length,
+        combined_probability: combinedProbability,
+        expected_odds: Math.min(expectedOdds, 10000),
+        simulated_win_rate: combinedProbability,
+        simulated_edge: edge,
+        simulated_sharpe: sharpe,
+        strategy_name: `${strategyName}_${profile.strategy}`,
+        tier,
+        tier_config: {
+          iterations: config.iterations,
+          minHitRate: config.minHitRate,
+          minEdge: config.minEdge,
+          profile: profile.strategy,
+        },
+        selection_rationale: `${tier} tier: ${profile.strategy} (${profile.legs}-leg)`,
+        outcome: 'pending',
+        is_simulated: tier !== 'execution',
+        simulated_stake: stake,
+      });
+
+      console.log(`[Bot] Created ${tier}/${profile.strategy} ${legs.length}-leg parlay #${parlaysToCreate.length}`);
+    }
+  }
+
+  return { count: parlaysToCreate.length, parlays: parlaysToCreate };
+}
+
+// ============= MAIN HANDLER =============
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -317,176 +892,27 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const targetDate = body.date || new Date().toISOString().split('T')[0];
+    const singleTier = body.tier as TierName | undefined;
 
-    console.log(`[Bot] Generating parlays for ${targetDate}`);
+    console.log(`[Bot v2] Generating tiered parlays for ${targetDate}`);
 
-    // 1. Load category weights
+    // 1. Load category weights (all sports)
     const { data: weights, error: weightsError } = await supabase
       .from('bot_category_weights')
       .select('*')
       .eq('is_blocked', false)
-      .gte('weight', BOT_RULES.MIN_WEIGHT);
+      .gte('weight', 0.5);
 
     if (weightsError) throw weightsError;
-
-    const eligibleCategories = (weights || [])
-      .filter((w: CategoryWeight) => w.current_hit_rate >= BOT_RULES.MIN_HIT_RATE)
-      .map((w: CategoryWeight) => w.category);
 
     const weightMap = new Map<string, number>();
     (weights || []).forEach((w: CategoryWeight) => {
       weightMap.set(w.category, w.weight);
     });
 
-    console.log(`[Bot] Eligible categories: ${eligibleCategories.length}`);
+    console.log(`[Bot v2] Loaded ${weights?.length || 0} category weights`);
 
-    if (eligibleCategories.length < 3) {
-      console.log('[Bot] Not enough eligible categories');
-      return new Response(
-        JSON.stringify({ 
-          success: false, 
-          message: 'Not enough eligible categories',
-          parlaysGenerated: 0 
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // 2. Fetch today's sweet spot picks with REAL line verification
-    // Note: confidence_score is stored as decimal (0.0-1.0), not percentage
-    // Category matching: bot_category_weights uses suffixed categories like "HIGH_ASSIST_UNDER"
-    // while category_sweet_spots may have both base ("HIGH_ASSIST") and suffixed ("HIGH_ASSIST_UNDER")
-    // So we include BOTH the original suffixed categories AND the base categories
-    const allMatchingCategories = new Set<string>();
-    eligibleCategories.forEach((cat: string) => {
-      allMatchingCategories.add(cat); // Add original (e.g., HIGH_ASSIST_UNDER)
-      // Also add base category (e.g., HIGH_ASSIST)
-      const baseCat = cat.replace(/_OVER$|_UNDER$/, '');
-      allMatchingCategories.add(baseCat);
-    });
-    const categoriesToMatch = [...allMatchingCategories];
-
-    console.log(`[Bot] Looking for categories: ${categoriesToMatch.join(', ')}`);
-
-    const { data: picks, error: picksError } = await supabase
-      .from('category_sweet_spots')
-      .select('*, actual_line, recommended_line, bookmaker')
-      .eq('analysis_date', targetDate)
-      .eq('is_active', true)
-      .in('category', categoriesToMatch)
-      .gte('confidence_score', 0.55)  // Fixed: decimal not percentage
-      .order('confidence_score', { ascending: false })
-      .limit(80);
-
-    if (picksError) throw picksError;
-
-    if (!picks || picks.length < 10) {
-      console.log(`[Bot] Not enough picks: ${picks?.length || 0}`);
-      return new Response(
-        JSON.stringify({ 
-          success: false, 
-          message: 'Not enough picks available',
-          parlaysGenerated: 0 
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Enrich picks with real line verification
-    const enrichedWithRealLines = picks.map(pick => {
-      // Use actual_line (from sportsbook) when available, fall back to recommended_line
-      const line = pick.actual_line ?? pick.recommended_line ?? pick.line;
-      const hasRealLine = pick.actual_line !== null && pick.actual_line !== undefined;
-      const lineSource = hasRealLine ? (pick.bookmaker || 'fanduel') : 'projected';
-      
-      console.log(`[Bot] ${pick.player_name}: ${hasRealLine ? 'REAL' : 'PLACEHOLDER'} line ${line} (${lineSource})`);
-      
-      return { 
-        ...pick, 
-        line, 
-        has_real_line: hasRealLine,
-        line_source: lineSource,
-        line_verified_at: hasRealLine ? new Date().toISOString() : null,
-      };
-    });
-
-    // Count real vs placeholder lines
-    const realLineCount = enrichedWithRealLines.filter(p => p.has_real_line).length;
-    const realLinePercentage = ((realLineCount / enrichedWithRealLines.length) * 100).toFixed(0);
-    console.log(`[Bot] ${realLineCount}/${enrichedWithRealLines.length} picks have REAL lines (${realLinePercentage}%)`);
-
-    console.log(`[Bot] Found ${picks.length} candidate picks`);
-
-    // 3. Fetch live odds from unified_props
-    const playerNames = [...new Set(picks.map(p => p.player_name))];
-    const { data: oddsData } = await supabase
-      .from('unified_props')
-      .select('player_name, prop_type, over_price, under_price')
-      .in('player_name', playerNames)
-      .eq('is_active', true);
-
-    const oddsMap = new Map<string, { overOdds: number; underOdds: number }>();
-    (oddsData || []).forEach((od: any) => {
-      const key = `${od.player_name}_${od.prop_type}`.toLowerCase();
-      oddsMap.set(key, {
-        overOdds: od.over_price || -110,
-        underOdds: od.under_price || -110
-      });
-    });
-
-    // 4. Enrich picks with odds and scores (using real line enriched data)
-    const enrichedPicks: EnrichedPick[] = enrichedWithRealLines.map(pick => {
-      const oddsKey = `${pick.player_name}_${pick.prop_type}`.toLowerCase();
-      const odds = oddsMap.get(oddsKey) || { overOdds: -110, underOdds: -110 };
-      const side = pick.recommended_side || 'over';
-      const americanOdds = side === 'over' ? odds.overOdds : odds.underOdds;
-      
-      // l10_hit_rate and confidence_score are decimals (0.0-1.0), not percentages
-      // Convert to percentage for display and composite score, keep decimal for odds calculation
-      const hitRateDecimal = pick.l10_hit_rate || pick.confidence_score || 0.5;
-      const hitRatePercent = hitRateDecimal * 100; // For composite score (expects 0-100)
-      const edge = (pick.projected_value || 0) - (pick.line || 0);
-      const categoryWeight = weightMap.get(pick.category) || 1.0;
-      
-      const oddsValueScore = calculateOddsValueScore(americanOdds, hitRateDecimal);
-      const compositeScore = calculateCompositeScore(hitRatePercent, edge, oddsValueScore, categoryWeight);
-      
-      return {
-        ...pick,
-        recommended_side: side,
-        americanOdds,
-        oddsValueScore,
-        compositeScore,
-        // Carry forward real line tracking
-        has_real_line: pick.has_real_line,
-        line_source: pick.line_source,
-        line_verified_at: pick.line_verified_at,
-      };
-    });
-
-    // 5. Filter by odds range and value score
-    const validPicks = enrichedPicks.filter(p => {
-      if (p.americanOdds < BOT_RULES.MIN_ODDS || p.americanOdds > BOT_RULES.MAX_ODDS) {
-        console.log(`[Bot] Filtered ${p.player_name}: odds ${p.americanOdds} out of range`);
-        return false;
-      }
-      if (p.oddsValueScore < 35) {
-        console.log(`[Bot] Filtered ${p.player_name}: low value score ${p.oddsValueScore}`);
-        return false;
-      }
-      return true;
-    });
-
-    // Sort by composite score
-    validPicks.sort((a, b) => b.compositeScore - a.compositeScore);
-
-    console.log(`[Bot] Valid picks after filtering: ${validPicks.length}`);
-    // Debug: log top picks with their scores
-    validPicks.slice(0, 5).forEach(p => {
-      console.log(`[Bot] Top pick: ${p.player_name} - hitRate=${((p.l10_hit_rate || 0) * 100).toFixed(0)}%, oddsValue=${p.oddsValueScore}, composite=${p.compositeScore}`);
-    });
-
-    // 6. Get active strategy
+    // 2. Get active strategy
     const { data: strategy } = await supabase
       .from('bot_strategies')
       .select('*')
@@ -494,153 +920,68 @@ Deno.serve(async (req) => {
       .limit(1)
       .single();
 
-    const strategyName = strategy?.strategy_name || 'elite_categories_v1';
+    const strategyName = strategy?.strategy_name || 'tiered_v2';
 
-    // 7. Generate parlays using profiles
-    const parlaysToCreate: any[] = [];
-    const globalTracker = createUsageTracker();
+    // 3. Get current bankroll
+    const { data: activationStatus } = await supabase
+      .from('bot_activation_status')
+      .select('simulated_bankroll, real_bankroll, is_real_mode_ready')
+      .order('check_date', { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-    for (let profileIdx = 0; profileIdx < PARLAY_PROFILES.length; profileIdx++) {
-      const profile = PARLAY_PROFILES[profileIdx];
-      const legs: any[] = [];
-      const parlayTeamCount = new Map<string, number>();
-      const parlayCategoryCount = new Map<string, number>();
+    const bankroll = activationStatus?.simulated_bankroll || 1000;
 
-      // Find picks for this parlay
-      for (const pick of validPicks) {
-        if (legs.length >= profile.legs) break;
-        
-        // Check global deduplication
-        if (!canUsePickGlobally(pick, globalTracker)) continue;
-        
-        // Check parlay-level constraints
-        if (!canUsePickInParlay(pick, parlayTeamCount, parlayCategoryCount)) continue;
-        
-        // Check profile-specific requirements (convert decimal hit rate to percentage)
-        const hitRatePercent = (pick.l10_hit_rate || pick.confidence_score || 0.5) * 100;
-        if (hitRatePercent < profile.minHitRate) continue;
-        if (pick.oddsValueScore < profile.minOddsValue) continue;
+    // 4. Build prop pool
+    const pool = await buildPropPool(supabase, targetDate, weightMap);
 
-        const weight = weightMap.get(pick.category) || 1.0;
-        
-        // Select optimal line based on profile strategy
-        const selectedLine = profile.useAltLines
-          ? selectOptimalLine(
-              pick,
-              pick.alternateLines || [],
-              profile.strategy,
-              (profile as any).preferPlusMoney || false,
-              (profile as any).minBufferMultiplier || 1.0
-            )
-          : { line: pick.line, odds: pick.americanOdds, reason: 'main_line' };
-        
-        legs.push({
-          id: pick.id,
-          player_name: pick.player_name,
-          team_name: pick.team_name,
-          prop_type: pick.prop_type,
-          line: selectedLine.line,
-          side: pick.recommended_side || 'over',
-          category: pick.category,
-          weight,
-          hit_rate: hitRatePercent,
-          american_odds: selectedLine.odds,
-          odds_value_score: pick.oddsValueScore,
-          composite_score: pick.compositeScore,
-          outcome: 'pending',
-          // Alternate line tracking
-          original_line: pick.line,
-          selected_line: selectedLine.line,
-          line_selection_reason: selectedLine.reason,
-          odds_improvement: selectedLine.oddsImprovement || 0,
-          projection_buffer: (pick.projected_value || 0) - selectedLine.line,
-          projected_value: pick.projected_value || 0,
-          // Real line verification
-          line_source: (pick as any).line_source || 'projected',
-          line_verified_at: (pick as any).line_verified_at || null,
-          has_real_line: (pick as any).has_real_line || false,
-        });
-
-        if (pick.team_name) {
-          parlayTeamCount.set(pick.team_name, (parlayTeamCount.get(pick.team_name) || 0) + 1);
-        }
-        parlayCategoryCount.set(pick.category, (parlayCategoryCount.get(pick.category) || 0) + 1);
-      }
-
-      // Only create parlay if we have enough legs
-      if (legs.length >= profile.legs) {
-        // Mark all picks as used globally
-        for (const leg of legs) {
-          const pick = validPicks.find(p => p.id === leg.id);
-          if (pick) markPickUsed(pick, globalTracker);
-        }
-
-        // Calculate combined probability
-        const avgHitRate = legs.reduce((sum, l) => sum + (l.hit_rate / 100), 0) / legs.length;
-        const combinedProbability = Math.pow(avgHitRate, legs.length);
-        
-        // Calculate expected odds from combined probability
-        const expectedOdds = combinedProbability > 0 
-          ? Math.round((1 / combinedProbability - 1) * 100)
-          : 10000;
-        
-        // Simple edge calculation
-        const impliedProbability = 1 / Math.pow(2, legs.length);
-        const edge = combinedProbability - impliedProbability;
-        
-        // Sharpe ratio approximation
-        const sharpe = edge / (0.5 * Math.sqrt(legs.length));
-
-        // Check thresholds
-        if (combinedProbability < BOT_RULES.MIN_SIM_WIN_RATE) {
-          console.log(`[Bot] Parlay ${profileIdx + 1} rejected: low win rate ${(combinedProbability * 100).toFixed(1)}%`);
-          continue;
-        }
-
-        if (edge < BOT_RULES.MIN_EDGE) {
-          console.log(`[Bot] Parlay ${profileIdx + 1} rejected: low edge ${(edge * 100).toFixed(1)}%`);
-          continue;
-        }
-
-        parlaysToCreate.push({
-          parlay_date: targetDate,
-          legs,
-          leg_count: legs.length,
-          combined_probability: combinedProbability,
-          expected_odds: Math.min(expectedOdds, 10000),
-          simulated_win_rate: combinedProbability,
-          simulated_edge: edge,
-          simulated_sharpe: sharpe,
-          strategy_name: strategyName,
-          strategy_version: strategy?.version || 1,
-          category_weights_snapshot: Object.fromEntries(weightMap),
-          selection_rationale: `${profile.strategy} profile (${profile.legs}-leg) from ${eligibleCategories.length} categories`,
-          outcome: 'pending',
-          is_simulated: true,
-          simulated_stake: BOT_RULES.SIMULATED_STAKE,
-        });
-
-        console.log(`[Bot] Created ${profile.legs}-leg ${profile.strategy} parlay #${parlaysToCreate.length}`);
-      } else {
-        console.log(`[Bot] Could not fill ${profile.legs}-leg parlay, got ${legs.length} legs`);
-      }
-
-      // Stop if we've created enough parlays
-      if (parlaysToCreate.length >= BOT_RULES.DAILY_PARLAYS_MAX) break;
+    if (pool.totalPool < 20) {
+      console.log(`[Bot v2] Insufficient prop pool: ${pool.totalPool}`);
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          message: 'Insufficient prop pool',
+          poolSize: pool.totalPool,
+          parlaysGenerated: 0 
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
-    console.log(`[Bot] Total parlays created: ${parlaysToCreate.length}`);
+    // 5. Generate parlays for each tier
+    const tiersToGenerate: TierName[] = singleTier 
+      ? [singleTier] 
+      : ['exploration', 'validation', 'execution'];
 
-    // 8. Insert parlays
-    if (parlaysToCreate.length > 0) {
+    const results: Record<string, { count: number; parlays: any[] }> = {};
+    let allParlays: any[] = [];
+
+    for (const tier of tiersToGenerate) {
+      const result = await generateTierParlays(
+        supabase,
+        tier,
+        targetDate,
+        pool,
+        weightMap,
+        strategyName,
+        bankroll
+      );
+      results[tier] = result;
+      allParlays = [...allParlays, ...result.parlays];
+    }
+
+    console.log(`[Bot v2] Total parlays created: ${allParlays.length}`);
+
+    // 6. Insert parlays
+    if (allParlays.length > 0) {
       const { error: insertError } = await supabase
         .from('bot_daily_parlays')
-        .insert(parlaysToCreate);
+        .insert(allParlays);
 
       if (insertError) throw insertError;
     }
 
-    // 9. Update activation status
+    // 7. Update activation status
     const { data: existingStatus } = await supabase
       .from('bot_activation_status')
       .select('*')
@@ -651,7 +992,7 @@ Deno.serve(async (req) => {
       await supabase
         .from('bot_activation_status')
         .update({ 
-          parlays_generated: (existingStatus.parlays_generated || 0) + parlaysToCreate.length 
+          parlays_generated: (existingStatus.parlays_generated || 0) + allParlays.length 
         })
         .eq('id', existingStatus.id);
     } else {
@@ -659,45 +1000,46 @@ Deno.serve(async (req) => {
         .from('bot_activation_status')
         .insert({
           check_date: targetDate,
-          parlays_generated: parlaysToCreate.length,
-          simulated_bankroll: 1000,
+          parlays_generated: allParlays.length,
+          simulated_bankroll: bankroll,
         });
     }
 
-    // 10. Update strategy usage
-    if (strategy) {
-      await supabase
-        .from('bot_strategies')
-        .update({ times_used: (strategy.times_used || 0) + parlaysToCreate.length })
-        .eq('id', strategy.id);
+    // 8. Update learning metrics
+    const tierSummary: Record<string, any> = {};
+    for (const [tier, result] of Object.entries(results)) {
+      tierSummary[tier] = {
+        count: result.count,
+        legDistribution: result.parlays.reduce((acc, p) => {
+          acc[p.leg_count] = (acc[p.leg_count] || 0) + 1;
+          return acc;
+        }, {} as Record<number, number>),
+      };
+
+      // Insert learning metric for this tier
+      await supabase.from('bot_learning_metrics').upsert({
+        metric_date: targetDate,
+        tier,
+        sport: 'all',
+        parlays_generated: result.count,
+        created_at: new Date().toISOString(),
+      }, { onConflict: 'metric_date,tier,sport' });
     }
 
-    // Summary by leg count
-    const legCounts = parlaysToCreate.reduce((acc, p) => {
-      acc[p.leg_count] = (acc[p.leg_count] || 0) + 1;
-      return acc;
-    }, {} as Record<number, number>);
-
-    console.log(`[Bot] Distribution: ${JSON.stringify(legCounts)}`);
-
-    // 11. Log activity
+    // 9. Log activity
     await supabase.from('bot_activity_log').insert({
-      event_type: 'parlays_generated',
-      message: `Generated ${parlaysToCreate.length} parlays for ${targetDate}`,
+      event_type: 'tiered_generation_complete',
+      message: `Generated ${allParlays.length} parlays across ${tiersToGenerate.length} tiers`,
       metadata: { 
-        legCounts, 
-        realLinePicks: realLineCount,
-        totalPicks: validPicks.length,
-        realLinePercentage,
+        tierSummary,
+        poolSize: pool.totalPool,
+        playerPicks: pool.playerPicks.length,
+        teamPicks: pool.teamPicks.length,
       },
       severity: 'success',
     });
 
-    // 12. Send Telegram notification
-    const topPick = parlaysToCreate[0]?.legs[0];
-    const minOdds = Math.min(...parlaysToCreate.map(p => p.expected_odds));
-    const maxOdds = Math.max(...parlaysToCreate.map(p => p.expected_odds));
-    
+    // 10. Send Telegram notification
     try {
       await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
         method: 'POST',
@@ -706,39 +1048,34 @@ Deno.serve(async (req) => {
           'Authorization': `Bearer ${supabaseKey}`,
         },
         body: JSON.stringify({
-          type: 'parlays_generated',
+          type: 'tiered_parlays_generated',
           data: {
-            count: parlaysToCreate.length,
-            distribution: legCounts,
-            topPick,
-            realLinePercentage,
-            validPicks: validPicks.length,
-            oddsRange: { min: `+${minOdds}`, max: `+${maxOdds}` },
+            totalCount: allParlays.length,
+            tierSummary,
+            poolSize: pool.totalPool,
+            date: targetDate,
           },
         }),
       });
-      console.log('[Bot] Telegram notification sent');
     } catch (telegramError) {
-      console.error('[Bot] Telegram notification failed:', telegramError);
+      console.error('[Bot v2] Telegram notification failed:', telegramError);
     }
 
     return new Response(
       JSON.stringify({
         success: true,
-        parlaysGenerated: parlaysToCreate.length,
-        legCounts,
-        eligibleCategories: eligibleCategories.length,
-        totalCandidates: picks.length,
-        validPicks: validPicks.length,
-        uniquePicksUsed: globalTracker.usedPicks.size,
-        realLinePercentage,
+        parlaysGenerated: allParlays.length,
+        tierSummary,
+        poolSize: pool.totalPool,
+        playerPicks: pool.playerPicks.length,
+        teamPicks: pool.teamPicks.length,
         date: targetDate,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
   } catch (error) {
-    console.error('[Bot] Error:', error);
+    console.error('[Bot v2] Error:', error);
     return new Response(
       JSON.stringify({ success: false, error: error.message }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
