@@ -1,186 +1,199 @@
 
-# Fix Accuracy Display and Remove Parlay Auth Requirement
+# Bug Fixes for Today's Props - Stock Market Framework Alignment
 
 ## Overview
-This plan addresses two main issues:
-1. **Accuracy problems**: Wrong percentages, missing data, incorrect grades, hit rates not updating, and player names with props not displaying correctly
-2. **Auth requirement**: Remove sign-in requirement for viewing parlays on the home page
+This plan fixes two key issues in the Today's Props feature to align with the "Props as a Stock Market" analytical framework:
+
+1. **Edge calculation bug** - Currently uses `projected_value - line` instead of `L10_avg - line` (OVER) or `line - L10_avg` (UNDER)
+2. **Hit rate mismatch** - UI shows `l10_hit_rate` (calculated against a different line) while displaying `actual_line`
 
 ---
 
-## Part 1: Remove Sign-In Requirement for Viewing Parlays
-
-### Current Problem
-On the Index page (`src/pages/Index.tsx`), parlays and related content are wrapped in auth checks:
-```tsx
-{(isPilotUser || isSubscribed || isAdmin) && (
-  <div className="mb-4">
-    <DailyParlayHub />
-  </div>
-)}
-```
-This hides all parlay content from non-authenticated users.
-
-### Solution
-Remove the auth conditionals from parlay display components on the Index page, making them publicly viewable:
-
-| File | Change |
-|------|--------|
-| `src/pages/Index.tsx` | Remove `(isPilotUser \|\| isSubscribed \|\| isAdmin) &&` conditionals from: DailyParlayHub, Elite3PTFixedParlay, SweetSpotPicksCard, WeeklyParlayHistory, and SlateRefreshControls |
-
----
-
-## Part 2: Fix Accuracy Display Issues
-
-### Issue 2.1: Wrong Percentages and Hit Rates
-The accuracy data from `get_unified_system_accuracy` RPC is correct (e.g., 63.2% for 3PT Shooters), but UI components may have type coercion issues.
-
-**Files to audit:**
-| File | Issue | Fix |
-|------|-------|-----|
-| `src/hooks/useUnifiedAccuracy.ts` | Hit rate from DB is already a percentage | Ensure no double multiplication (e.g., `hitRate * 100`) |
-| `src/components/accuracy/SystemAccuracyCard.tsx` | Displays `system.hitRate` directly | Already correct - no multiplication needed |
-| `src/components/accuracy/CompositeGradeCard.tsx` | Check percentage display logic | Audit for double calculation |
-
-### Issue 2.2: Missing Accuracy Data
-Some systems show "N/A" or "Needs Data" when they should have values. The RPC shows:
-- `whale_proxy`: 0 verified picks, hit_rate: null
-- `lock_mode`: 0 verified picks, hit_rate: null
-- `matchup_scanner_pts/3pt`: 0 picks each
-
-**Root Cause:** These systems have no verified/settled picks in `scout_prop_outcomes` table within the selected time period.
-
-**Fix:** This is expected behavior - systems with no settled picks cannot show accuracy. However, we can improve the UI messaging:
-
-| File | Change |
-|------|--------|
-| `src/components/accuracy/SystemAccuracyCard.tsx` | Add clearer "0 verified picks" message instead of just "Needs Data" |
-
-### Issue 2.3: Wrong Grade Calculations
-The `calculateGrade` function in `src/lib/accuracy-calculator.ts` uses correct thresholds:
-- A+: >=60% with >=100 samples
-- A: >=55% with >=50 samples
-- N/A: <10 samples
-
-**Potential issue:** Grades not updating when data changes. This could be a React Query caching issue.
-
-| File | Change |
-|------|--------|
-| `src/hooks/useUnifiedAccuracy.ts` | Add `refetchOnMount: true` to ensure fresh data on page load |
-
-### Issue 2.4: Player Names with Props Display
-Parlay cards display player info using leg data. Issues can occur when:
-- `player_name` is undefined or an object instead of string
-- `prop_type` is missing
-
-**Files to fix:**
-| File | Change |
-|------|--------|
-| `src/components/parlays/UnifiedParlayCard.tsx` | Add null checks: `leg.playerName ?? 'Unknown Player'` |
-| `src/components/bot/BotParlayCard.tsx` | Add null checks: `leg.player_name ?? 'Unknown Player'` |
-| `src/hooks/useDailyParlays.ts` | Ensure legs are properly typed and validated |
-
----
-
-## Technical Implementation Details
-
-### File 1: `src/pages/Index.tsx`
-Remove auth conditionals to make parlays public:
-
-```tsx
-// BEFORE:
-{(isPilotUser || isSubscribed || isAdmin) && (
-  <div className="mb-4">
-    <SlateRefreshControls />
-  </div>
-)}
-
-// AFTER:
-<div className="mb-4">
-  <SlateRefreshControls />
-</div>
-```
-
-Apply same change to:
-- `<Elite3PTFixedParlay />`
-- `<DailyParlayHub />`
-- `<SweetSpotPicksCard />`
-- `<WeeklyParlayHistory />`
-
-### File 2: `src/hooks/useUnifiedAccuracy.ts`
-Add refetch options for fresh data:
-
-```tsx
-const { data, isLoading, error, refetch } = useQuery({
-  queryKey: ['unified-accuracy', daysBack],
-  queryFn: async () => { ... },
-  staleTime: 1000 * 60 * 5,
-  gcTime: 1000 * 60 * 30,
-  refetchOnMount: true, // ADD THIS
-  refetchOnWindowFocus: true, // ADD THIS
-});
-```
-
-### File 3: `src/components/parlays/UnifiedParlayCard.tsx`
-Add null safety for player display:
-
-```tsx
-function LegRow({ leg, index }: { leg: UnifiedParlayLeg; index: number }) {
-  const playerName = leg.playerName ?? 'Unknown';
-  const propType = leg.propType ?? 'Prop';
-  // ...
-  return (
-    <div>
-      <span className="font-medium">{playerName}</span>
-      <span className="text-muted-foreground ml-1">{propType}</span>
-    </div>
-  );
-}
-```
-
-### File 4: `src/components/bot/BotParlayCard.tsx`
-Add null safety:
-
-```tsx
-{legs.map((leg, idx) => {
-  const playerName = leg.player_name ?? 'Unknown';
-  const propType = leg.prop_type ?? 'Prop';
-  // ...
-})}
-```
-
-### File 5: `src/components/accuracy/SystemAccuracyCard.tsx`
-Improve empty state messaging:
-
-```tsx
-{system.verifiedPicks === 0 ? (
-  <span className="text-muted-foreground">No data yet</span>
-) : (
-  <span className={cn("text-lg font-bold", getHitRateColor())}>
-    {system.hitRate}%
-  </span>
-)}
-```
-
----
-
-## Files Changed Summary
+## Changes Summary
 
 | File | Changes |
 |------|---------|
-| `src/pages/Index.tsx` | Remove auth conditionals from 5 components |
-| `src/hooks/useUnifiedAccuracy.ts` | Add refetch options |
-| `src/components/parlays/UnifiedParlayCard.tsx` | Add null safety for player/prop display |
-| `src/components/bot/BotParlayCard.tsx` | Add null safety for leg display |
-| `src/components/accuracy/SystemAccuracyCard.tsx` | Improve empty state messaging |
+| `src/hooks/useTodayProps.ts` | Fix edge calculation, add `actual_hit_rate` field, update stats to use display hit rate |
+| `src/components/sweetspots/TodayPropsSection.tsx` | Sort and display using correct hit rate (actual_hit_rate when actual_line exists) |
 
 ---
 
-## Expected Results
+## Part 1: Fix `useTodayProps.ts`
 
-After implementation:
-1. All users (logged in or not) can view daily parlays, elite picks, sweet spot picks, and weekly history
-2. Accuracy percentages display correctly without double multiplication
-3. Player names and props always show (with fallbacks for missing data)
-4. Grades update properly when new data is available
-5. Systems with no verified picks show clear "No data yet" messaging
+### 1.1 Update TodayPropPick Interface (lines 51-69)
+
+Add `actual_hit_rate` field with documentation:
+
+```typescript
+export interface TodayPropPick {
+  id: string;
+  player_name: string;
+  prop_type: string;
+  category: string;
+  recommended_line: number;
+  actual_line: number | null;
+  l10_hit_rate: number;
+  l10_avg: number | null;
+  l5_avg: number | null;
+  confidence_score: number;
+  projected_value: number | null;
+  team: string;
+  reliabilityTier: string | null;
+  reliabilityHitRate: number | null;
+  analysis_date: string;
+  /** Edge per framework: L10_avg − line (OVER) or line − L10_avg (UNDER). */
+  edge: number | null;
+  recommended_side: 'OVER' | 'UNDER';
+  /** Hit rate vs actual market line (when actual_line is set). Use for display when available. */
+  actual_hit_rate: number | null;
+}
+```
+
+### 1.2 Fix Edge Calculation in Step 7 (lines 213-254)
+
+Replace the broken edge calculation with the framework-correct logic:
+
+```typescript
+// Step 7: Transform picks
+const picks: TodayPropPick[] = filteredSpots.map(pick => {
+  const playerKey = pick.player_name?.toLowerCase() || '';
+  const reliabilityKey = `${playerKey}_${config.reliabilityKey}`;
+  const reliability = reliabilityMap.get(reliabilityKey);
+  const team = teamMap.get(playerKey) || 'Unknown';
+  
+  // Use live line from unified_props, fallback to actual_line, then recommended
+  const actualLine = linesMap.get(playerKey) ?? pick.actual_line ?? pick.recommended_line;
+  
+  const l5Avg = l5Map.get(playerKey) ?? null;
+  const l10Avg = pick.l10_avg ?? null;
+  
+  // Determine recommended side from category or explicit field
+  const recommendedSide: 'OVER' | 'UNDER' = 
+    pick.recommended_side === 'UNDER' || pick.category?.includes('UNDER') 
+      ? 'UNDER' 
+      : 'OVER';
+
+  // Edge calculation per framework: L10_avg − line (OVER) or line − L10_avg (UNDER)
+  let edge: number | null = null;
+  if (actualLine != null) {
+    if (l10Avg != null) {
+      edge = recommendedSide === 'OVER' ? l10Avg - actualLine : actualLine - l10Avg;
+    } else if (pick.projected_value != null) {
+      // Fallback to projected_value if no L10 avg
+      edge = pick.projected_value - actualLine;
+    }
+  }
+
+  return {
+    id: pick.id,
+    player_name: pick.player_name || '',
+    prop_type: pick.prop_type || config.reliabilityKey,
+    category: pick.category || '',
+    recommended_line: pick.recommended_line || 0.5,
+    actual_line: actualLine,
+    l10_hit_rate: pick.l10_hit_rate || 0,
+    l10_avg: l10Avg,
+    l5_avg: l5Avg,
+    confidence_score: pick.confidence_score || 0,
+    projected_value: pick.projected_value,
+    team,
+    reliabilityTier: reliability?.tier || null,
+    reliabilityHitRate: reliability?.hitRate || null,
+    analysis_date: pick.analysis_date || analysisDate,
+    edge,
+    recommended_side: recommendedSide,
+    actual_hit_rate: pick.actual_hit_rate ?? null,
+  };
+});
+```
+
+### 1.3 Update Stats Calculation (lines 269-284)
+
+Use display hit rate (actual_hit_rate when actual_line exists, else l10_hit_rate):
+
+```typescript
+const picks = data || [];
+
+// Helper: get display hit rate (actual_hit_rate when we have actual_line, else l10_hit_rate)
+const displayHitRate = (p: TodayPropPick) =>
+  p.actual_line != null && p.actual_hit_rate != null ? p.actual_hit_rate : p.l10_hit_rate;
+
+// Calculate summary stats using display hit rate
+const stats = {
+  totalPicks: picks.length,
+  eliteCount: picks.filter(p => displayHitRate(p) >= 1).length,
+  nearPerfectCount: picks.filter(p => displayHitRate(p) >= 0.97 && displayHitRate(p) < 1).length,
+  strongCount: picks.filter(p => displayHitRate(p) >= 0.90 && displayHitRate(p) < 0.97).length,
+  uniqueTeams: new Set(picks.map(p => p.team)).size,
+  avgHitRate: picks.length > 0 
+    ? picks.reduce((sum, p) => sum + displayHitRate(p), 0) / picks.length 
+    : 0,
+  avgConfidence: picks.length > 0
+    ? picks.reduce((sum, p) => sum + p.confidence_score, 0) / picks.length
+    : 0,
+};
+```
+
+---
+
+## Part 2: Fix `TodayPropsSection.tsx`
+
+### 2.1 Update Sorting Logic (lines 59-63)
+
+Sort by display hit rate (consistent with the line being shown):
+
+```typescript
+// Helper: get display hit rate (actual_hit_rate when actual_line + actual_hit_rate exist)
+const displayHitRate = (p: TodayPropPick) =>
+  p.actual_line != null && p.actual_hit_rate != null ? p.actual_hit_rate : p.l10_hit_rate;
+
+// Sort by display hit rate, then confidence
+const sortedPicks = [...picks].sort((a, b) => {
+  const rateA = displayHitRate(a);
+  const rateB = displayHitRate(b);
+  if (rateB !== rateA) return rateB - rateA;
+  return b.confidence_score - a.confidence_score;
+});
+```
+
+### 2.2 Update PropPickCard Component (lines 141-212)
+
+Use display hit rate for elite badge and percentage display:
+
+```typescript
+function PropPickCard({ pick, propType, onAdd }: PropPickCardProps) {
+  // Display hit rate: use actual_hit_rate when we have actual_line, else l10_hit_rate
+  const hitRate = (pick.actual_line != null && pick.actual_hit_rate != null) 
+    ? pick.actual_hit_rate 
+    : pick.l10_hit_rate;
+  
+  const isElite = hitRate >= 1;
+  const isPremium = hitRate >= 0.9 && hitRate < 1;
+  const line = pick.actual_line ?? pick.recommended_line;
+  const edge = pick.edge;
+
+  // ... rest of component uses hitRate for display ...
+  
+  // Badge text updates:
+  // - Elite badge: "100%" (when hitRate >= 1)
+  // - Percentage display: (hitRate * 100).toFixed(0)%
+  // - Label: "Hit Rate" instead of "L10 Hit" (since it may be actual_hit_rate)
+}
+```
+
+---
+
+## Technical Notes
+
+1. **Database field**: `actual_hit_rate` already exists in `category_sweet_spots` table and is populated by the `category-props-analyzer` edge function when live lines are matched.
+
+2. **Edge formula per framework**:
+   - **OVER picks**: Edge = L10_avg − line (positive = player averages above the line)
+   - **UNDER picks**: Edge = line − L10_avg (positive = line is above player's average)
+
+3. **Hit rate alignment**: When displaying `actual_line`, we show `actual_hit_rate` (calculated against that specific line). When no actual line exists, we fall back to `l10_hit_rate`.
+
+---
+
+## Route to Verify
+`/sweet-spots` → Sweet Spots tab → Today's Props section (visible when there are 3PT or assist picks for today)
