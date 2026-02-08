@@ -1,0 +1,391 @@
+/**
+ * useBotEngine.ts
+ * 
+ * Core bot logic hook that manages the autonomous betting bot lifecycle.
+ * Handles generation, settlement, learning, and activation.
+ */
+
+import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { supabase } from '@/integrations/supabase/client';
+import { 
+  runHybridSimulation, 
+  HybridSimulationResult, 
+  ParlayLegInput,
+  quickHybridAnalysis,
+} from '@/lib/hybrid-monte-carlo';
+
+// ============= TYPES =============
+
+export interface BotLeg {
+  id: string;
+  player_name: string;
+  team_name: string;
+  prop_type: string;
+  line: number;
+  side: 'over' | 'under';
+  category: string;
+  weight: number;
+  hit_rate: number;
+  outcome?: 'hit' | 'miss' | 'push' | 'pending';
+  actual_value?: number;
+}
+
+export interface BotParlay {
+  id: string;
+  parlay_date: string;
+  legs: BotLeg[];
+  leg_count: number;
+  combined_probability: number;
+  expected_odds: number;
+  simulated_win_rate: number;
+  simulated_edge: number;
+  simulated_sharpe: number;
+  strategy_name: string;
+  strategy_version?: number;
+  outcome: 'pending' | 'won' | 'lost' | 'partial' | 'push';
+  legs_hit: number;
+  legs_missed: number;
+  is_simulated: boolean;
+  simulated_stake: number;
+  simulated_payout: number;
+  profit_loss: number;
+}
+
+export interface CategoryWeight {
+  id: string;
+  category: string;
+  side: string;
+  weight: number;
+  current_hit_rate: number;
+  total_picks: number;
+  total_hits: number;
+  is_blocked: boolean;
+  block_reason: string | null;
+  current_streak: number;
+  best_streak: number;
+  worst_streak: number;
+  updated_at?: string;
+}
+
+export interface BotStrategy {
+  id: string;
+  strategy_name: string;
+  rules: {
+    min_hit_rate: number;
+    min_weight: number;
+    min_sim_win_rate: number;
+    min_edge: number;
+    min_sharpe: number;
+    max_legs: number;
+    iterations: number;
+  };
+  times_used: number;
+  times_won: number;
+  win_rate: number;
+  roi: number;
+  is_active: boolean;
+}
+
+export interface BotActivationStatus {
+  id: string;
+  check_date: string;
+  parlays_generated: number;
+  parlays_won: number;
+  parlays_lost: number;
+  daily_profit_loss: number;
+  is_profitable_day: boolean;
+  consecutive_profitable_days: number;
+  is_real_mode_ready: boolean;
+  simulated_bankroll: number;
+  real_bankroll: number;
+}
+
+export interface BotState {
+  isLoading: boolean;
+  mode: 'simulated' | 'real';
+  consecutiveProfitDays: number;
+  simulatedBankroll: number;
+  realBankroll: number;
+  isRealModeReady: boolean;
+  todayParlays: BotParlay[];
+  categoryWeights: CategoryWeight[];
+  activeStrategy: BotStrategy | null;
+  activationStatus: BotActivationStatus | null;
+  overallWinRate: number;
+  totalParlays: number;
+}
+
+export interface WeightAdjustmentResult {
+  newWeight: number;
+  blocked: boolean;
+  newStreak: number;
+}
+
+// ============= CONSTANTS =============
+
+export const BOT_RULES = {
+  MIN_HIT_RATE: 0.55,        // 55% minimum category hit rate
+  MIN_WEIGHT: 0.8,           // Minimum weight to include category
+  MIN_SIM_WIN_RATE: 0.12,    // 12% minimum simulated win rate
+  MIN_EDGE: 0.03,            // 3% minimum edge
+  MIN_SHARPE: 0.5,           // Minimum Sharpe ratio
+  MAX_LEGS: 6,               // Maximum legs per parlay
+  DAILY_PARLAYS: 3,          // Max parlays per day
+  SIMULATED_STAKE: 50,       // Default stake in simulation
+  ACTIVATION_DAYS: 3,        // Days needed for real mode
+  ACTIVATION_WIN_RATE: 0.60, // 60% win rate needed
+  MIN_PARLAYS_ACTIVATION: 5, // Minimum parlays before activation
+  MAX_BANKROLL_RISK: 0.03,   // Max 3% of bankroll per bet
+};
+
+// ============= LEARNING FUNCTIONS (Exported for testing) =============
+
+/**
+ * Adjust category weight based on outcome
+ */
+export function adjustCategoryWeight(
+  currentWeight: number,
+  hit: boolean,
+  currentStreak: number
+): WeightAdjustmentResult {
+  let newStreak = currentStreak;
+  
+  if (hit) {
+    // Boost on hits, more boost for streaks
+    newStreak = Math.max(1, currentStreak + 1);
+    const boost = 0.02 + (Math.max(0, newStreak - 1) * 0.005);
+    return {
+      newWeight: Math.min(currentWeight + boost, 1.5),
+      blocked: false,
+      newStreak,
+    };
+  } else {
+    // Penalty on misses
+    newStreak = Math.min(-1, currentStreak - 1);
+    const absStreak = Math.abs(newStreak);
+    const penalty = 0.03 + ((absStreak - 1) * 0.01);
+    const newWeight = currentWeight - penalty;
+    
+    // Auto-block if weight drops below 0.5
+    if (newWeight < 0.5) {
+      return { newWeight: 0, blocked: true, newStreak };
+    }
+    return { newWeight: Math.max(newWeight, 0.5), blocked: false, newStreak };
+  }
+}
+
+/**
+ * Filter categories eligible for bot picks
+ */
+export function filterEligibleCategories(
+  categories: Array<{ category: string; hitRate: number; weight: number; is_blocked?: boolean }>
+): Array<{ category: string; hitRate: number; weight: number }> {
+  return categories.filter(cat => 
+    cat.hitRate >= BOT_RULES.MIN_HIT_RATE * 100 && // MIN_HIT_RATE is 0.55, hitRate is in percent (55)
+    cat.weight >= BOT_RULES.MIN_WEIGHT &&
+    !cat.is_blocked
+  );
+}
+
+/**
+ * Check if bot can activate real mode
+ */
+export function checkActivation(params: {
+  consecutiveDays: number;
+  totalParlays: number;
+  winRate: number;
+}): boolean {
+  return (
+    params.consecutiveDays >= BOT_RULES.ACTIVATION_DAYS &&
+    params.totalParlays >= BOT_RULES.MIN_PARLAYS_ACTIVATION &&
+    params.winRate >= BOT_RULES.ACTIVATION_WIN_RATE
+  );
+}
+
+/**
+ * Calculate Kelly stake
+ */
+export function calculateKellyStake(
+  winProbability: number,
+  odds: number,
+  bankroll: number,
+  maxRisk: number = BOT_RULES.MAX_BANKROLL_RISK
+): number {
+  // Convert American odds to decimal
+  const decimalOdds = odds > 0 ? (odds / 100) + 1 : (100 / Math.abs(odds)) + 1;
+  
+  // Kelly formula: (bp - q) / b where b = decimal odds - 1, p = win prob, q = 1 - p
+  const b = decimalOdds - 1;
+  const kelly = ((b * winProbability) - (1 - winProbability)) / b;
+  
+  // Half-Kelly for safety, capped at max risk
+  const halfKelly = Math.max(0, kelly / 2);
+  const stake = Math.min(halfKelly, maxRisk) * bankroll;
+  
+  return Math.round(stake * 100) / 100;
+}
+
+// ============= HOOK =============
+
+export function useBotEngine() {
+  const queryClient = useQueryClient();
+  
+  // Fetch today's parlays
+  const { data: todayParlays = [], isLoading: parlaysLoading } = useQuery({
+    queryKey: ['bot-parlays-today'],
+    queryFn: async () => {
+      const today = new Date().toISOString().split('T')[0];
+      const { data, error } = await supabase
+        .from('bot_daily_parlays')
+        .select('*')
+        .eq('parlay_date', today)
+        .order('created_at', { ascending: false });
+      
+      if (error) throw error;
+      return (data || []).map(p => ({
+        ...p,
+        legs: Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs as string),
+      })) as BotParlay[];
+    },
+  });
+  
+  // Fetch category weights
+  const { data: categoryWeights = [], isLoading: weightsLoading } = useQuery({
+    queryKey: ['bot-category-weights'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('bot_category_weights')
+        .select('*')
+        .order('weight', { ascending: false });
+      
+      if (error) throw error;
+      return data as CategoryWeight[];
+    },
+  });
+  
+  // Fetch active strategy
+  const { data: activeStrategy, isLoading: strategyLoading } = useQuery({
+    queryKey: ['bot-active-strategy'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('bot_strategies')
+        .select('*')
+        .eq('is_active', true)
+        .limit(1)
+        .maybeSingle();
+      
+      if (error) throw error;
+      if (!data) return null;
+      
+      return {
+        ...data,
+        rules: typeof data.rules === 'string' ? JSON.parse(data.rules) : data.rules,
+      } as BotStrategy;
+    },
+  });
+  
+  // Fetch activation status
+  const { data: activationStatus, isLoading: activationLoading } = useQuery({
+    queryKey: ['bot-activation-status'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('bot_activation_status')
+        .select('*')
+        .order('check_date', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      
+      if (error) throw error;
+      return data as BotActivationStatus | null;
+    },
+  });
+  
+  // Fetch all parlays for stats
+  const { data: allParlays = [] } = useQuery({
+    queryKey: ['bot-all-parlays'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('bot_daily_parlays')
+        .select('outcome')
+        .neq('outcome', 'pending');
+      
+      if (error) throw error;
+      return data || [];
+    },
+  });
+  
+  // Calculate stats
+  const stats = useMemo(() => {
+    const total = allParlays.length;
+    const wins = allParlays.filter(p => p.outcome === 'won').length;
+    return {
+      totalParlays: total,
+      overallWinRate: total > 0 ? wins / total : 0,
+    };
+  }, [allParlays]);
+  
+  // Trigger parlay generation
+  const generateParlaysMutation = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke('bot-generate-daily-parlays', {
+        body: { date: new Date().toISOString().split('T')[0] },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bot-parlays-today'] });
+      queryClient.invalidateQueries({ queryKey: ['bot-activation-status'] });
+    },
+  });
+  
+  // Trigger settlement
+  const settleParlaysMutation = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke('bot-settle-and-learn', {
+        body: {},
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bot-parlays-today'] });
+      queryClient.invalidateQueries({ queryKey: ['bot-category-weights'] });
+      queryClient.invalidateQueries({ queryKey: ['bot-activation-status'] });
+      queryClient.invalidateQueries({ queryKey: ['bot-all-parlays'] });
+    },
+  });
+  
+  // Determine mode
+  const mode = activationStatus?.is_real_mode_ready ? 'real' : 'simulated';
+  
+  // Build state
+  const state: BotState = {
+    isLoading: parlaysLoading || weightsLoading || strategyLoading || activationLoading,
+    mode,
+    consecutiveProfitDays: activationStatus?.consecutive_profitable_days || 0,
+    simulatedBankroll: activationStatus?.simulated_bankroll || 1000,
+    realBankroll: activationStatus?.real_bankroll || 0,
+    isRealModeReady: activationStatus?.is_real_mode_ready || false,
+    todayParlays,
+    categoryWeights,
+    activeStrategy,
+    activationStatus,
+    overallWinRate: stats.overallWinRate,
+    totalParlays: stats.totalParlays,
+  };
+  
+  return {
+    state,
+    generateParlays: generateParlaysMutation.mutateAsync,
+    settleParlays: settleParlaysMutation.mutateAsync,
+    isGenerating: generateParlaysMutation.isPending,
+    isSettling: settleParlaysMutation.isPending,
+    refetch: () => {
+      queryClient.invalidateQueries({ queryKey: ['bot-parlays-today'] });
+      queryClient.invalidateQueries({ queryKey: ['bot-category-weights'] });
+      queryClient.invalidateQueries({ queryKey: ['bot-activation-status'] });
+    },
+  };
+}

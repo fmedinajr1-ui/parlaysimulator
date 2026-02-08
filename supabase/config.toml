@@ -374,3 +374,12 @@ verify_jwt = false
 
 [functions.build-player-profile]
 verify_jwt = false
+
+[functions.bot-generate-daily-parlays]
+verify_jwt = false
+
+[functions.bot-settle-and-learn]
+verify_jwt = false
+
+[functions.bot-evolve-strategies]
+verify_jwt = false

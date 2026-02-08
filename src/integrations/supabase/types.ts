@@ -810,6 +810,240 @@ export type Database = {
         }
         Relationships: []
       }
+      bot_activation_status: {
+        Row: {
+          activated_at: string | null
+          check_date: string
+          consecutive_profitable_days: number | null
+          created_at: string | null
+          daily_profit_loss: number | null
+          id: string
+          is_profitable_day: boolean | null
+          is_real_mode_ready: boolean | null
+          parlays_generated: number | null
+          parlays_lost: number | null
+          parlays_won: number | null
+          real_bankroll: number | null
+          simulated_bankroll: number | null
+        }
+        Insert: {
+          activated_at?: string | null
+          check_date?: string
+          consecutive_profitable_days?: number | null
+          created_at?: string | null
+          daily_profit_loss?: number | null
+          id?: string
+          is_profitable_day?: boolean | null
+          is_real_mode_ready?: boolean | null
+          parlays_generated?: number | null
+          parlays_lost?: number | null
+          parlays_won?: number | null
+          real_bankroll?: number | null
+          simulated_bankroll?: number | null
+        }
+        Update: {
+          activated_at?: string | null
+          check_date?: string
+          consecutive_profitable_days?: number | null
+          created_at?: string | null
+          daily_profit_loss?: number | null
+          id?: string
+          is_profitable_day?: boolean | null
+          is_real_mode_ready?: boolean | null
+          parlays_generated?: number | null
+          parlays_lost?: number | null
+          parlays_won?: number | null
+          real_bankroll?: number | null
+          simulated_bankroll?: number | null
+        }
+        Relationships: []
+      }
+      bot_category_weights: {
+        Row: {
+          best_streak: number | null
+          block_reason: string | null
+          category: string
+          created_at: string | null
+          current_hit_rate: number | null
+          current_streak: number | null
+          id: string
+          is_blocked: boolean | null
+          side: string
+          total_hits: number | null
+          total_picks: number | null
+          updated_at: string | null
+          weight: number | null
+          worst_streak: number | null
+        }
+        Insert: {
+          best_streak?: number | null
+          block_reason?: string | null
+          category: string
+          created_at?: string | null
+          current_hit_rate?: number | null
+          current_streak?: number | null
+          id?: string
+          is_blocked?: boolean | null
+          side?: string
+          total_hits?: number | null
+          total_picks?: number | null
+          updated_at?: string | null
+          weight?: number | null
+          worst_streak?: number | null
+        }
+        Update: {
+          best_streak?: number | null
+          block_reason?: string | null
+          category?: string
+          created_at?: string | null
+          current_hit_rate?: number | null
+          current_streak?: number | null
+          id?: string
+          is_blocked?: boolean | null
+          side?: string
+          total_hits?: number | null
+          total_picks?: number | null
+          updated_at?: string | null
+          weight?: number | null
+          worst_streak?: number | null
+        }
+        Relationships: []
+      }
+      bot_daily_parlays: {
+        Row: {
+          category_weights_snapshot: Json | null
+          combined_probability: number
+          created_at: string
+          expected_odds: number
+          id: string
+          is_simulated: boolean | null
+          leg_count: number
+          legs: Json
+          legs_hit: number | null
+          legs_missed: number | null
+          lesson_learned: string | null
+          outcome: string | null
+          parlay_date: string
+          profit_loss: number | null
+          selection_rationale: string | null
+          settled_at: string | null
+          simulated_edge: number | null
+          simulated_payout: number | null
+          simulated_sharpe: number | null
+          simulated_stake: number | null
+          simulated_win_rate: number | null
+          strategy_name: string
+          strategy_version: number | null
+        }
+        Insert: {
+          category_weights_snapshot?: Json | null
+          combined_probability?: number
+          created_at?: string
+          expected_odds?: number
+          id?: string
+          is_simulated?: boolean | null
+          leg_count?: number
+          legs?: Json
+          legs_hit?: number | null
+          legs_missed?: number | null
+          lesson_learned?: string | null
+          outcome?: string | null
+          parlay_date?: string
+          profit_loss?: number | null
+          selection_rationale?: string | null
+          settled_at?: string | null
+          simulated_edge?: number | null
+          simulated_payout?: number | null
+          simulated_sharpe?: number | null
+          simulated_stake?: number | null
+          simulated_win_rate?: number | null
+          strategy_name: string
+          strategy_version?: number | null
+        }
+        Update: {
+          category_weights_snapshot?: Json | null
+          combined_probability?: number
+          created_at?: string
+          expected_odds?: number
+          id?: string
+          is_simulated?: boolean | null
+          leg_count?: number
+          legs?: Json
+          legs_hit?: number | null
+          legs_missed?: number | null
+          lesson_learned?: string | null
+          outcome?: string | null
+          parlay_date?: string
+          profit_loss?: number | null
+          selection_rationale?: string | null
+          settled_at?: string | null
+          simulated_edge?: number | null
+          simulated_payout?: number | null
+          simulated_sharpe?: number | null
+          simulated_stake?: number | null
+          simulated_win_rate?: number | null
+          strategy_name?: string
+          strategy_version?: number | null
+        }
+        Relationships: []
+      }
+      bot_strategies: {
+        Row: {
+          auto_generated: boolean | null
+          created_at: string
+          description: string | null
+          id: string
+          is_active: boolean | null
+          parent_strategy: string | null
+          retire_reason: string | null
+          retired_at: string | null
+          roi: number | null
+          rules: Json
+          strategy_name: string
+          times_used: number | null
+          times_won: number | null
+          updated_at: string | null
+          version: number | null
+          win_rate: number | null
+        }
+        Insert: {
+          auto_generated?: boolean | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          parent_strategy?: string | null
+          retire_reason?: string | null
+          retired_at?: string | null
+          roi?: number | null
+          rules?: Json
+          strategy_name: string
+          times_used?: number | null
+          times_won?: number | null
+          updated_at?: string | null
+          version?: number | null
+          win_rate?: number | null
+        }
+        Update: {
+          auto_generated?: boolean | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          parent_strategy?: string | null
+          retire_reason?: string | null
+          retired_at?: string | null
+          roi?: number | null
+          rules?: Json
+          strategy_name?: string
+          times_used?: number | null
+          times_won?: number | null
+          updated_at?: string | null
+          version?: number | null
+          win_rate?: number | null
+        }
+        Relationships: []
+      }
       calibration_buckets: {
         Row: {
           actual_avg: number
