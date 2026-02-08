@@ -1,168 +1,237 @@
 
-# Fix Hedge Status Recording System
 
-## Problem Analysis
+# Monte Carlo Simulation Integration for Parlay Generation
 
-The hedge status recording system is **not capturing any data** because of an ID mismatch between the frontend and database:
+## Current State Analysis
 
-| Component | Data Source | ID Type |
-|-----------|-------------|---------|
-| `useDeepSweetSpots` | `unified_props` table | UUID from `unified_props.id` |
-| `useHedgeStatusRecorder` | Expects | UUID from `category_sweet_spots.id` |
-| `record-hedge-snapshot` | Validates | UUID exists in `category_sweet_spots` |
+### Existing Assets
 
-The frontend generates spots using `unified_props.id`, but the hedge recorder requires `category_sweet_spots.id`. Since these are **different UUIDs for the same player/prop**, the foreign key validation fails silently.
+| Component | Status | Purpose |
+|-----------|--------|---------|
+| `src/lib/hybrid-monte-carlo.ts` | ✅ Built | 50,000 iteration MC simulation with Cholesky correlation |
+| `runHybridSimulation()` | ✅ Ready | Returns win probability, edge, Kelly fraction, Sharpe ratio |
+| `useSweetSpotParlayBuilder.ts` | ✅ Active | Builds 6-leg parlays using pattern scoring |
+| Integration | ❌ Missing | **MC engine not connected to parlay builder** |
 
-**Database Status:**
-- `category_sweet_spots`: 400 records for Feb 6 (populated daily by `category-props-analyzer`)
-- `sweet_spot_hedge_snapshots`: 0 records (nothing recorded due to ID mismatch)
+### The Gap
 
-## Solution
+Your parlay builder uses **rule-based scoring** (L10 hit rate, pattern matching, synergy) but doesn't run the actual probability simulation before recommending picks. This means:
+- Combined probability is estimated, not simulated
+- Leg correlations are scored but not mathematically modeled
+- No variance/risk metrics shown to user
 
-Remove the strict foreign key dependency and record snapshots using a composite key (player_name + prop_type + line + analysis_date) instead of relying on exact UUID matching.
+## Solution: Add Simulation-Validated Parlay Generation
 
-### 1. Update Edge Function (`record-hedge-snapshot`)
-
-**File:** `supabase/functions/record-hedge-snapshot/index.ts`
-
-Changes:
-- Remove the `category_sweet_spots` lookup validation
-- Make `sweet_spot_id` nullable in the insert
-- Add `analysis_date` field for linking snapshots to picks
-- Use the payload data directly without FK validation
+### Architecture
 
 ```text
-Before:
-- Check if sweet_spot_id exists in category_sweet_spots
-- Skip if not found (causing 0 recordings)
-
-After:
-- Accept payload directly
-- Record with nullable sweet_spot_id
-- Link via player_name + prop_type + line + date for outcome verification
+┌─────────────────────────────────────────────────────────────────┐
+│                SIMULATION-VALIDATED PARLAY FLOW                  │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Step 1: CANDIDATE GENERATION                                   │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ useSweetSpotParlayBuilder                                 │   │
+│  │ • Category filtering (60%+ hit rate only)                 │   │
+│  │ • Edge thresholds (4.5+ points, 2.5+ rebounds)            │   │
+│  │ • Synergy scoring (same-game correlation)                 │   │
+│  │ • Output: Top 20 candidate picks                          │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                             │                                    │
+│                             ▼                                    │
+│  Step 2: COMBINATION SIMULATION                                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ runHybridSimulation() x N combinations                    │   │
+│  │ • Generate all 6-leg combinations from top 20             │   │
+│  │ • Run 10,000 iterations per combination                   │   │
+│  │ • Apply Cholesky correlation (same-game boost)            │   │
+│  │ • Calculate: win rate, edge, Sharpe, Kelly                │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                             │                                    │
+│                             ▼                                    │
+│  Step 3: OPTIMAL SELECTION                                       │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ Select parlay with:                                       │   │
+│  │ • Highest simulation win rate (not just rule score)       │   │
+│  │ • Positive expected value (EV > 0)                        │   │
+│  │ • Best Sharpe ratio (reward-to-risk)                      │   │
+│  │ • Kelly fraction > 1% (bankroll-worthy)                   │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### 2. Update Database Schema
+### Implementation Plan
 
-**Migration:** Add `analysis_date` column to `sweet_spot_hedge_snapshots`
+#### 1. Create Simulation Wrapper Hook
 
-```sql
-ALTER TABLE sweet_spot_hedge_snapshots
-  ADD COLUMN IF NOT EXISTS analysis_date date DEFAULT CURRENT_DATE;
+**New File:** `src/hooks/useSimulatedParlayBuilder.ts`
 
--- Make sweet_spot_id nullable (remove FK constraint if exists)
-ALTER TABLE sweet_spot_hedge_snapshots
-  ALTER COLUMN sweet_spot_id DROP NOT NULL;
-
--- Add composite index for efficient outcome matching
-CREATE INDEX IF NOT EXISTS idx_hedge_snapshots_lookup 
-  ON sweet_spot_hedge_snapshots(player_name, prop_type, line, analysis_date);
-```
-
-### 3. Update Client Hook (`useHedgeStatusRecorder`)
-
-**File:** `src/hooks/useHedgeStatusRecorder.ts`
-
-Changes:
-- Remove UUID validation filter
-- Add `analysis_date` to payload
-- Record for all live spots regardless of ID format
+Wraps the existing builder and adds MC validation:
 
 ```typescript
-// Before: Only record spots with valid category_sweet_spots UUIDs
-const isValidDatabaseId = (id: string): boolean => {
-  const uuidPattern = /^[0-9a-f]{8}-...$/i;
-  return uuidPattern.test(id);
-};
-
-// After: Record all live spots
-const liveSpots = spots.filter(s => s.liveData?.isLive && s.id);
+// Key function signature
+function buildSimulatedParlay(
+  candidates: SweetSpotPick[],
+  config: {
+    legCount: 4 | 5 | 6;
+    iterations: 10000 | 25000 | 50000;
+    minWinRate: 0.15;  // 15% minimum
+    minEdge: 0.03;     // 3% minimum
+  }
+): SimulatedParlayResult {
+  // 1. Generate top candidate combinations
+  const combinations = generateCombinations(candidates, legCount);
+  
+  // 2. Simulate each combination
+  const results = combinations.map(combo => 
+    runHybridSimulation(convertToLegInputs(combo), { iterations })
+  );
+  
+  // 3. Filter to viable parlays only
+  const viable = results.filter(r => 
+    r.hybridWinRate >= minWinRate && 
+    r.overallEdge >= minEdge
+  );
+  
+  // 4. Select best by Sharpe ratio
+  return viable.sort((a, b) => b.sharpeRatio - a.sharpeRatio)[0];
+}
 ```
 
-### 4. Update Accuracy Query
+#### 2. Add Simulation Results to UI
 
-**Create RPC:** `get_hedge_status_accuracy_v2`
+**Modify:** `src/pages/SweetSpots.tsx`
 
-Link snapshots to outcomes via player_name + prop_type + line + date:
+Display simulation metrics alongside picks:
 
-```sql
-CREATE OR REPLACE FUNCTION get_hedge_status_accuracy_v2(
-  start_date date DEFAULT CURRENT_DATE - INTERVAL '30 days',
-  end_date date DEFAULT CURRENT_DATE
-)
-RETURNS TABLE (
-  hedge_status text,
-  quarter int,
-  total_picks bigint,
-  hits bigint,
-  misses bigint,
-  hit_rate numeric,
-  avg_probability int,
-  sample_confidence text
-) AS $$
-BEGIN
-  RETURN QUERY
-  SELECT 
-    s.hedge_status,
-    s.quarter,
-    COUNT(*) as total_picks,
-    COUNT(*) FILTER (WHERE c.outcome = 'hit') as hits,
-    COUNT(*) FILTER (WHERE c.outcome = 'miss') as misses,
-    ROUND(
-      COUNT(*) FILTER (WHERE c.outcome = 'hit')::numeric / 
-      NULLIF(COUNT(*) FILTER (WHERE c.outcome IN ('hit', 'miss')), 0) * 100, 1
-    ) as hit_rate,
-    AVG(s.hit_probability)::int as avg_probability,
-    CASE 
-      WHEN COUNT(*) >= 50 THEN 'HIGH'
-      WHEN COUNT(*) >= 20 THEN 'MEDIUM'
-      ELSE 'LOW'
-    END as sample_confidence
-  FROM sweet_spot_hedge_snapshots s
-  LEFT JOIN category_sweet_spots c ON 
-    LOWER(s.player_name) = LOWER(c.player_name) AND
-    s.prop_type = c.prop_type AND
-    ABS(s.line - COALESCE(c.actual_line, c.recommended_line)) < 0.5 AND
-    s.analysis_date = c.analysis_date
-  WHERE s.analysis_date BETWEEN start_date AND end_date
-  GROUP BY s.hedge_status, s.quarter
-  ORDER BY s.quarter, s.hedge_status;
-END;
-$$ LANGUAGE plpgsql;
+```text
+Current: "Optimal 6-Leg: 62% avg confidence"
+
+After: "Optimal 6-Leg: 18.4% simulated win rate • 8.2% edge • 1.3 Sharpe"
+       "Simulated 38,760 combinations • Best of 847 viable parlays"
+```
+
+#### 3. Add "Run Simulation" Button
+
+Allow users to trigger deeper simulation:
+
+```text
+┌────────────────────────────────────────┐
+│ 🎲 Simulation Analysis                  │
+├────────────────────────────────────────┤
+│ [Quick (10K)]  [Standard (25K)]  [Deep (50K)] │
+│                                        │
+│ Results:                               │
+│ • Win Probability: 18.4%               │
+│ • Edge vs Implied: +8.2%               │
+│ • Sharpe Ratio: 1.32                   │
+│ • Kelly Stake: 2.1% of bankroll        │
+│ • Confidence: 94% (based on variance)  │
+│                                        │
+│ Recommendation: ✅ STRONG BET          │
+└────────────────────────────────────────┘
+```
+
+#### 4. Bot Integration
+
+Connect to the autonomous bot for daily parlay generation:
+
+```typescript
+// In bot-generate-daily-parlays edge function
+const candidates = await getCategoryPicks(); // 60%+ categories only
+const simResult = runHybridSimulation(
+  convertToLegInputs(candidates.slice(0, 6)),
+  { iterations: 50000, useCorrelations: true }
+);
+
+// Only generate parlay if simulation passes
+if (simResult.recommendation === 'strong_bet' || 
+    simResult.recommendation === 'value_bet') {
+  await saveBotParlay(candidates, simResult);
+}
 ```
 
 ## Technical Details
 
-### File Changes Summary
+### File Changes
 
 | File | Change |
 |------|--------|
-| `supabase/functions/record-hedge-snapshot/index.ts` | Remove FK validation, add analysis_date |
-| `src/hooks/useHedgeStatusRecorder.ts` | Remove UUID filter, add analysis_date to payload |
-| Database migration | Add analysis_date column, nullable sweet_spot_id, composite index |
-| Database RPC | Create `get_hedge_status_accuracy_v2` for outcome matching |
+| `src/hooks/useSimulatedParlayBuilder.ts` | **NEW** - MC-validated parlay builder |
+| `src/components/sweetspots/SimulationCard.tsx` | **NEW** - Display simulation results |
+| `src/hooks/useSweetSpotParlayBuilder.ts` | Add simulation integration |
+| `src/pages/SweetSpots.tsx` | Add simulation UI section |
+| `src/lib/hybrid-monte-carlo.ts` | Add batch simulation helper |
 
-### Data Flow After Fix
+### Performance Optimization
+
+Running 50,000 iterations for hundreds of combinations would be slow. Optimization strategy:
 
 ```text
-1. Live game in progress (e.g., Q1 at 24% progress)
-2. useHedgeStatusRecorder detects quarter boundary
-3. Sends payload with:
-   - player_name: "Kevin Porter Jr."
-   - prop_type: "assists"
-   - line: 9.5
-   - side: "under"
-   - quarter: 1
-   - hedge_status: "on_track"
-   - analysis_date: "2026-02-07"
-4. Edge function records to sweet_spot_hedge_snapshots
-5. After game settles, RPC matches via player_name + prop_type + line + date
-6. Accuracy Dashboard shows: "ON TRACK at Q1: 85% hit rate"
+1. QUICK FILTER (no simulation)
+   - Rule-based scoring reduces 100+ picks to top 20
+   
+2. LIMITED COMBINATIONS
+   - Instead of C(20,6) = 38,760 combinations
+   - Use greedy selection: pick best, then best compatible, etc.
+   - Reduces to ~50-100 combinations to simulate
+   
+3. ADAPTIVE ITERATIONS
+   - Quick mode: 5,000 iterations (for browsing)
+   - Standard: 25,000 (for daily picks)
+   - Deep: 50,000 (for bot/real money)
+   
+4. WEB WORKER
+   - Run simulation in background thread
+   - Show loading state while computing
 ```
 
-### Expected Outcome
+### Simulation Metrics Explained
 
-After this fix:
-- Snapshots will be recorded at each quarter boundary during live games
-- The Accuracy Dashboard will show hedge status accuracy (on_track, monitor, alert, urgent)
-- You'll be able to see which status levels are most reliable for parlay building
+| Metric | Description | Target |
+|--------|-------------|--------|
+| Win Rate | % of iterations where all legs hit | >15% for 6-leg |
+| Edge | Win rate minus implied probability | >5% |
+| Sharpe Ratio | Return per unit of risk | >1.0 |
+| Kelly Fraction | Optimal bet size | 1-3% |
+| Confidence | Based on variance of simulation | >80% |
+
+### OpticOdds Alternative
+
+Since OpticOdds requires paid enterprise access, continue using:
+- **The Odds API** (already integrated) for DraftKings/FanDuel lines
+- **Manual verification** that Hard Rock lines match (usually within 0.5)
+- **Category accuracy data** from your own database (most valuable)
+
+Your 30-day category hit rates (HIGH_ASSIST_UNDER 69%, LOW_SCORER_UNDER 66%) are more predictive than any odds source.
+
+## Expected Outcome
+
+After this integration:
+
+1. **Every parlay recommendation is simulation-validated**
+   - Not just rule scores, but actual Monte Carlo probability
+
+2. **Users see real risk metrics**
+   - Win probability, edge, Sharpe ratio, Kelly stake
+
+3. **Bot uses simulation for daily picks**
+   - Only generates parlays that pass MC validation
+
+4. **Historical tracking improves**
+   - Compare simulated vs actual outcomes
+   - Calibrate model over time
+
+## Accuracy Improvement Path
+
+```text
+Week 1: Integrate MC simulation
+Week 2: Track simulated vs actual outcomes  
+Week 3: Calibrate correlation factors
+Week 4: A/B test MC picks vs rule-only picks
+Week 5+: Continuous learning from results
+```
+
+The simulation doesn't guarantee 100% accuracy - that's impossible in sports betting. But it provides **mathematically sound probability estimates** rather than rule-based guesses.
+
