@@ -896,6 +896,7 @@ export type Database = {
           id: string
           is_blocked: boolean | null
           side: string
+          sport: string | null
           total_hits: number | null
           total_picks: number | null
           updated_at: string | null
@@ -912,6 +913,7 @@ export type Database = {
           id?: string
           is_blocked?: boolean | null
           side?: string
+          sport?: string | null
           total_hits?: number | null
           total_picks?: number | null
           updated_at?: string | null
@@ -928,6 +930,7 @@ export type Database = {
           id?: string
           is_blocked?: boolean | null
           side?: string
+          sport?: string | null
           total_hits?: number | null
           total_picks?: number | null
           updated_at?: string | null
