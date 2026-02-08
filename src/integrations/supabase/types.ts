@@ -858,6 +858,33 @@ export type Database = {
         }
         Relationships: []
       }
+      bot_activity_log: {
+        Row: {
+          created_at: string | null
+          event_type: string
+          id: string
+          message: string
+          metadata: Json | null
+          severity: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          event_type: string
+          id?: string
+          message: string
+          metadata?: Json | null
+          severity?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          event_type?: string
+          id?: string
+          message?: string
+          metadata?: Json | null
+          severity?: string | null
+        }
+        Relationships: []
+      }
       bot_category_weights: {
         Row: {
           best_streak: number | null
@@ -984,6 +1011,54 @@ export type Database = {
           simulated_win_rate?: number | null
           strategy_name?: string
           strategy_version?: number | null
+        }
+        Relationships: []
+      }
+      bot_notification_settings: {
+        Row: {
+          created_at: string | null
+          id: string
+          notify_activation_ready: boolean | null
+          notify_parlays_generated: boolean | null
+          notify_settlement: boolean | null
+          notify_strategy_updates: boolean | null
+          notify_weight_changes: boolean | null
+          quiet_end_hour: number | null
+          quiet_start_hour: number | null
+          telegram_chat_id: string | null
+          telegram_enabled: boolean | null
+          updated_at: string | null
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          notify_activation_ready?: boolean | null
+          notify_parlays_generated?: boolean | null
+          notify_settlement?: boolean | null
+          notify_strategy_updates?: boolean | null
+          notify_weight_changes?: boolean | null
+          quiet_end_hour?: number | null
+          quiet_start_hour?: number | null
+          telegram_chat_id?: string | null
+          telegram_enabled?: boolean | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          notify_activation_ready?: boolean | null
+          notify_parlays_generated?: boolean | null
+          notify_settlement?: boolean | null
+          notify_strategy_updates?: boolean | null
+          notify_weight_changes?: boolean | null
+          quiet_end_hour?: number | null
+          quiet_start_hour?: number | null
+          telegram_chat_id?: string | null
+          telegram_enabled?: boolean | null
+          updated_at?: string | null
+          user_id?: string | null
         }
         Relationships: []
       }
