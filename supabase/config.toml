@@ -386,3 +386,6 @@ verify_jwt = false
 
 [functions.fetch-alternate-lines]
 verify_jwt = false
+
+[functions.bot-send-telegram]
+verify_jwt = false
