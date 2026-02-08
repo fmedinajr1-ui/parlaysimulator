@@ -282,10 +282,16 @@ Welcome! I'm your autonomous betting assistant.
 /generate - Generate new parlays
 /settle - Settle & learn from results
 
+*Multi-Sport Commands:*
+/nhl - Today's NHL picks
+/tennis - ATP/WTA picks
+/spreads - Team spread signals
+/totals - Over/Under signals
+
 Or just *ask me anything* in natural language!
 • "How did we do yesterday?"
-• "What's your best pick?"
-• "Show me today's aggressive parlays"`;
+• "What's your best NHL pick?"
+• "Show me the sharp spreads"`;
 }
 
 async function handleStatus(chatId: string) {
@@ -443,6 +449,122 @@ async function handleSettle(chatId: string) {
   }
 }
 
+// Multi-sport data fetchers
+async function getNHLPicks() {
+  const { data } = await supabase
+    .from('whale_picks')
+    .select('*')
+    .eq('sport', 'hockey_nhl')
+    .gte('expires_at', new Date().toISOString())
+    .order('sharp_score', { ascending: false })
+    .limit(5);
+  return data || [];
+}
+
+async function getTennisPicks() {
+  const { data } = await supabase
+    .from('whale_picks')
+    .select('*')
+    .or('sport.eq.tennis_atp,sport.eq.tennis_wta')
+    .gte('expires_at', new Date().toISOString())
+    .order('sharp_score', { ascending: false })
+    .limit(5);
+  return data || [];
+}
+
+async function getTeamBets(betType: string) {
+  const { data } = await supabase
+    .from('game_bets')
+    .select('*')
+    .eq('bet_type', betType)
+    .eq('is_active', true)
+    .gt('commence_time', new Date().toISOString())
+    .order('sharp_score', { ascending: false })
+    .limit(5);
+  return data || [];
+}
+
+// Multi-sport command handlers
+async function handleNHL(chatId: string) {
+  await logActivity("telegram_nhl", `User requested NHL picks`, { chatId });
+  
+  const picks = await getNHLPicks();
+  
+  if (picks.length === 0) {
+    return "🏒 *NHL Picks*\n\nNo active NHL signals right now.\n\nCheck back closer to game time!";
+  }
+  
+  let message = "🏒 *NHL Sharp Signals*\n\n";
+  picks.forEach((p, i) => {
+    const grade = p.sharp_score >= 80 ? 'A' : p.sharp_score >= 65 ? 'B' : 'C';
+    message += `${i + 1}. *${p.player_name}* ${p.stat_type}\n`;
+    message += `   ${p.recommended_side} ${p.pp_line} (Grade ${grade})\n`;
+    message += `   📍 ${p.matchup}\n\n`;
+  });
+  
+  return message;
+}
+
+async function handleTennis(chatId: string) {
+  await logActivity("telegram_tennis", `User requested Tennis picks`, { chatId });
+  
+  const picks = await getTennisPicks();
+  
+  if (picks.length === 0) {
+    return "🎾 *Tennis Picks*\n\nNo active tennis signals right now.\n\nCheck back when tournaments are in play!";
+  }
+  
+  let message = "🎾 *Tennis Sharp Signals*\n\n";
+  picks.forEach((p, i) => {
+    const grade = p.sharp_score >= 80 ? 'A' : p.sharp_score >= 65 ? 'B' : 'C';
+    const tour = p.sport === 'tennis_atp' ? 'ATP' : 'WTA';
+    message += `${i + 1}. *${p.player_name}* ${p.stat_type} [${tour}]\n`;
+    message += `   ${p.recommended_side} ${p.pp_line} (Grade ${grade})\n`;
+    message += `   📍 ${p.matchup}\n\n`;
+  });
+  
+  return message;
+}
+
+async function handleSpreads(chatId: string) {
+  await logActivity("telegram_spreads", `User requested spread signals`, { chatId });
+  
+  const bets = await getTeamBets('spread');
+  
+  if (bets.length === 0) {
+    return "📊 *Spread Signals*\n\nNo active spread signals right now.\n\nCheck back closer to game time!";
+  }
+  
+  let message = "📊 *Sharp Spread Signals*\n\n";
+  bets.forEach((b: any, i: number) => {
+    const grade = (b.sharp_score || 0) >= 80 ? 'A' : (b.sharp_score || 0) >= 65 ? 'B' : 'C';
+    const line = b.line > 0 ? `+${b.line}` : b.line;
+    message += `${i + 1}. *${b.away_team} @ ${b.home_team}*\n`;
+    message += `   ${b.recommended_side || 'TBD'} ${line} (Grade ${grade})\n\n`;
+  });
+  
+  return message;
+}
+
+async function handleTotals(chatId: string) {
+  await logActivity("telegram_totals", `User requested totals signals`, { chatId });
+  
+  const bets = await getTeamBets('total');
+  
+  if (bets.length === 0) {
+    return "🎯 *Totals Signals*\n\nNo active O/U signals right now.\n\nCheck back closer to game time!";
+  }
+  
+  let message = "🎯 *Sharp Totals Signals*\n\n";
+  bets.forEach((b: any, i: number) => {
+    const grade = (b.sharp_score || 0) >= 80 ? 'A' : (b.sharp_score || 0) >= 65 ? 'B' : 'C';
+    message += `${i + 1}. *${b.away_team} @ ${b.home_team}*\n`;
+    message += `   ${b.recommended_side || 'TBD'} ${b.line} (Grade ${grade})\n\n`;
+  });
+  
+  return message;
+}
+
 // Main handler
 async function handleMessage(chatId: string, text: string) {
   const command = text.toLowerCase().trim();
@@ -462,6 +584,14 @@ async function handleMessage(chatId: string, text: string) {
     return await handleGenerate(chatId);
   } else if (command === "/settle") {
     return await handleSettle(chatId);
+  } else if (command === "/nhl") {
+    return await handleNHL(chatId);
+  } else if (command === "/tennis") {
+    return await handleTennis(chatId);
+  } else if (command === "/spreads") {
+    return await handleSpreads(chatId);
+  } else if (command === "/totals") {
+    return await handleTotals(chatId);
   } else {
     // Natural language - save and process
     await saveConversation(chatId, "user", text);

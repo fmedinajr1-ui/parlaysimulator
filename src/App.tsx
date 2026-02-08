@@ -63,6 +63,7 @@ const TomorrowAssists = React.lazy(() => import("./pages/TomorrowAssists"));
 const AccuracyDashboard = React.lazy(() => import("./pages/AccuracyDashboard"));
 const SweetSpots = React.lazy(() => import("./pages/SweetSpots"));
 const BotDashboard = React.lazy(() => import("./pages/BotDashboard"));
+const TeamBets = React.lazy(() => import("./pages/TeamBets"));
 
 // QueryClient with optimized defaults
 const queryClient = new QueryClient({
@@ -145,6 +146,7 @@ function AnimatedRoutes() {
               <Route path="/accuracy" element={<AccuracyDashboard />} />
               <Route path="/sweet-spots" element={<SweetSpots />} />
               <Route path="/bot" element={<BotDashboard />} />
+              <Route path="/team-bets" element={<TeamBets />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </React.Suspense>
