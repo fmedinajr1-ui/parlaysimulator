@@ -1,17 +1,24 @@
 /**
  * BotParlayCard.tsx
  * 
- * Displays a single bot-generated parlay with simulation metrics.
+ * Displays a single bot-generated parlay with simulation metrics,
+ * odds value scoring, and leg details.
  */
 
 import React, { useState } from 'react';
-import { ChevronDown, ChevronUp, TrendingUp, Target, Percent, DollarSign, CheckCircle, XCircle, Clock, Minus } from 'lucide-react';
+import { ChevronDown, ChevronUp, TrendingUp, Target, Percent, DollarSign, CheckCircle, XCircle, Clock, Minus, Zap } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import type { BotParlay, BotLeg } from '@/hooks/useBotEngine';
+
+// Format American odds for display
+function formatOdds(odds?: number): string {
+  if (!odds) return '-110';
+  return odds > 0 ? `+${odds}` : `${odds}`;
+}
 
 interface BotParlayCardProps {
   parlay: BotParlay;
@@ -153,30 +160,53 @@ export function BotParlayCard({ parlay }: BotParlayCardProps) {
                 <div
                   key={leg.id || idx}
                   className={cn(
-                    "flex items-center justify-between py-2 px-3 rounded-lg bg-muted/30",
+                    "py-2 px-3 rounded-lg bg-muted/30",
                     getLegOutcomeStyle(leg.outcome)
                   )}
                 >
-                  <div className="flex-1">
-                    <div className="font-medium text-sm">
-                      {leg.player_name}
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="font-medium text-sm">
+                        {leg.player_name}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {leg.prop_type} {leg.side.toUpperCase()} {leg.line} • {leg.team_name}
+                      </div>
+                      {/* Odds and value display */}
+                      <div className="flex items-center gap-3 mt-1 text-xs">
+                        <span className="text-muted-foreground">
+                          Odds: <span className={cn(
+                            "font-medium",
+                            (leg.american_odds || -110) > 0 ? "text-green-400" : "text-muted-foreground"
+                          )}>
+                            {formatOdds(leg.american_odds)}
+                          </span>
+                        </span>
+                        {leg.odds_value_score !== undefined && (
+                          <span className="flex items-center gap-1">
+                            <Zap className="w-3 h-3 text-amber-400" />
+                            <span className={cn(
+                              "font-medium",
+                              leg.odds_value_score >= 60 ? "text-green-400" :
+                              leg.odds_value_score >= 45 ? "text-amber-400" : "text-red-400"
+                            )}>
+                              {leg.odds_value_score}/100
+                            </span>
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    <div className="text-xs text-muted-foreground">
-                      {leg.prop_type} {leg.side.toUpperCase()} {leg.line} • {leg.team_name}
-                    </div>
-                  </div>
-                  
-                  <div className="text-right shrink-0">
-                    <div className="text-xs">
+                    
+                    <div className="text-right shrink-0">
                       <Badge variant="outline" className="text-xs h-5">
                         {leg.category}
                       </Badge>
+                      {leg.actual_value !== undefined && (
+                        <div className="text-xs mt-1">
+                          Actual: {leg.actual_value}
+                        </div>
+                      )}
                     </div>
-                    {leg.actual_value !== undefined && (
-                      <div className="text-xs mt-1">
-                        Actual: {leg.actual_value}
-                      </div>
-                    )}
                   </div>
                 </div>
               ))}
