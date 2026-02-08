@@ -1,4 +1,3 @@
-import { Bot, webhookCallback } from "https://deno.land/x/grammy@v1.39.3/mod.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -7,14 +6,28 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
-// Initialize bot with token
-const bot = new Bot(Deno.env.get("TELEGRAM_BOT_TOKEN")!);
-
 // Create Supabase client
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
 );
+
+const TELEGRAM_BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
+const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
+
+// Helper: Send message via Telegram API
+async function sendMessage(chatId: string, text: string, parseMode = "Markdown") {
+  const response = await fetch(`${TELEGRAM_API}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text,
+      parse_mode: parseMode,
+    }),
+  });
+  return response.json();
+}
 
 // Helper: Log activity to bot_activity_log
 async function logActivity(
@@ -253,13 +266,11 @@ GUIDELINES:
   }
 }
 
-// Command: /start
-bot.command("start", async (ctx) => {
-  const chatId = ctx.chat.id.toString();
+// Command handlers
+async function handleStart(chatId: string) {
   await logActivity("telegram_start", `User started bot chat`, { chatId });
 
-  await ctx.reply(
-    `🤖 *ParlayIQ Bot*
+  return `🤖 *ParlayIQ Bot*
 
 Welcome! I'm your autonomous betting assistant.
 
@@ -274,21 +285,16 @@ Welcome! I'm your autonomous betting assistant.
 Or just *ask me anything* in natural language!
 • "How did we do yesterday?"
 • "What's your best pick?"
-• "Show me today's aggressive parlays"`,
-    { parse_mode: "Markdown" }
-  );
-});
+• "Show me today's aggressive parlays"`;
+}
 
-// Command: /status
-bot.command("status", async (ctx) => {
-  const chatId = ctx.chat.id.toString();
+async function handleStatus(chatId: string) {
   await logActivity("telegram_status", `User requested status`, { chatId });
 
   const status = await getStatus();
   const parlays = await getParlays();
 
-  await ctx.reply(
-    `📊 *Bot Status*
+  return `📊 *Bot Status*
 
 *Mode:* ${status.mode === "Real" ? "🟢 Real" : "🟡 Simulation"}
 *Streak:* ${status.consecutiveProfitableDays}/3 profitable days
@@ -303,24 +309,16 @@ ${
   status.isReady
     ? "✅ Bot is ready for real betting!"
     : `⏳ ${3 - status.consecutiveProfitableDays} more profitable day(s) needed`
-}`,
-    { parse_mode: "Markdown" }
-  );
-});
+}`;
+}
 
-// Command: /parlays
-bot.command("parlays", async (ctx) => {
-  const chatId = ctx.chat.id.toString();
+async function handleParlays(chatId: string) {
   await logActivity("telegram_parlays", `User requested parlays`, { chatId });
 
   const parlays = await getParlays();
 
   if (parlays.count === 0) {
-    await ctx.reply(
-      "📭 No parlays generated today yet.\n\nUse /generate to create new parlays!",
-      { parse_mode: "Markdown" }
-    );
-    return;
+    return "📭 No parlays generated today yet.\n\nUse /generate to create new parlays!";
   }
 
   let message = `🎯 *Today's Parlays* (${parlays.count} total)\n\n`;
@@ -337,46 +335,33 @@ bot.command("parlays", async (ctx) => {
     .map(([legs, count]) => `• ${legs}-Leg: ${count}`)
     .join("\n");
 
-  await ctx.reply(message, { parse_mode: "Markdown" });
-});
+  return message;
+}
 
-// Command: /performance
-bot.command("performance", async (ctx) => {
-  const chatId = ctx.chat.id.toString();
+async function handlePerformance(chatId: string) {
   await logActivity("telegram_performance", `User requested performance`, {
     chatId,
   });
 
   const perf = await getPerformance();
 
-  await ctx.reply(
-    `📈 *Performance Stats*
+  return `📈 *Performance Stats*
 
 *Win Rate:* ${perf.winRate.toFixed(1)}%
 *ROI:* ${perf.roi >= 0 ? "+" : ""}${perf.roi.toFixed(1)}%
 
 *Record:* ${perf.wins}W - ${perf.losses}L
 *Total Settled:* ${perf.totalSettled} parlays
-*Net Profit:* ${perf.totalProfit >= 0 ? "+" : ""}$${perf.totalProfit.toFixed(
-      0
-    )}`,
-    { parse_mode: "Markdown" }
-  );
-});
+*Net Profit:* ${perf.totalProfit >= 0 ? "+" : ""}$${perf.totalProfit.toFixed(0)}`;
+}
 
-// Command: /weights
-bot.command("weights", async (ctx) => {
-  const chatId = ctx.chat.id.toString();
+async function handleWeights(chatId: string) {
   await logActivity("telegram_weights", `User requested weights`, { chatId });
 
   const weights = await getWeights();
 
   if (weights.length === 0) {
-    await ctx.reply(
-      "📊 No category weights learned yet.\n\nThe bot will learn from settled parlays!",
-      { parse_mode: "Markdown" }
-    );
-    return;
+    return "📊 No category weights learned yet.\n\nThe bot will learn from settled parlays!";
   }
 
   let message = `⚖️ *Top Category Weights*\n\n`;
@@ -389,17 +374,13 @@ bot.command("weights", async (ctx) => {
     message += `   Weight: ${(w.weight * 100).toFixed(0)}% ${hitRate}\n`;
   });
 
-  await ctx.reply(message, { parse_mode: "Markdown" });
-});
+  return message;
+}
 
-// Command: /generate
-bot.command("generate", async (ctx) => {
-  const chatId = ctx.chat.id.toString();
+async function handleGenerate(chatId: string) {
   await logActivity("telegram_generate", `User triggered generation`, {
     chatId,
   });
-
-  await ctx.reply("🎯 *Generating parlays...*", { parse_mode: "Markdown" });
 
   try {
     const response = await fetch(
@@ -421,25 +402,15 @@ bot.command("generate", async (ctx) => {
     const result = await response.json();
     const count = result.parlays?.length || result.totalParlays || 0;
 
-    await ctx.reply(
-      `✅ *Generation Complete!*\n\n${count} parlays created.\n\nUse /parlays to view them.`,
-      { parse_mode: "Markdown" }
-    );
+    return `✅ *Generation Complete!*\n\n${count} parlays created.\n\nUse /parlays to view them.`;
   } catch (error) {
     console.error("Generation error:", error);
-    await ctx.reply(
-      "❌ Generation failed. Please try again later or check the dashboard.",
-      { parse_mode: "Markdown" }
-    );
+    return "❌ Generation failed. Please try again later or check the dashboard.";
   }
-});
+}
 
-// Command: /settle
-bot.command("settle", async (ctx) => {
-  const chatId = ctx.chat.id.toString();
+async function handleSettle(chatId: string) {
   await logActivity("telegram_settle", `User triggered settlement`, { chatId });
-
-  await ctx.reply("💰 *Settling parlays...*", { parse_mode: "Markdown" });
 
   try {
     const response = await fetch(
@@ -460,50 +431,50 @@ bot.command("settle", async (ctx) => {
 
     const result = await response.json();
 
-    await ctx.reply(
-      `✅ *Settlement Complete!*\n\n${
-        result.summary ||
-        `Settled ${result.settledCount || 0} parlays.\nProfit/Loss: ${
-          result.totalProfitLoss >= 0 ? "+" : ""
-        }$${result.totalProfitLoss?.toFixed(0) || 0}`
-      }\n\nUse /performance to see updated stats.`,
-      { parse_mode: "Markdown" }
-    );
+    return `✅ *Settlement Complete!*\n\n${
+      result.summary ||
+      `Settled ${result.settledCount || 0} parlays.\nProfit/Loss: ${
+        result.totalProfitLoss >= 0 ? "+" : ""
+      }$${result.totalProfitLoss?.toFixed(0) || 0}`
+    }\n\nUse /performance to see updated stats.`;
   } catch (error) {
     console.error("Settlement error:", error);
-    await ctx.reply(
-      "❌ Settlement failed. Please try again later or check the dashboard.",
-      { parse_mode: "Markdown" }
-    );
+    return "❌ Settlement failed. Please try again later or check the dashboard.";
   }
-});
+}
 
-// Natural language handler for all other text messages
-bot.on("message:text", async (ctx) => {
-  const chatId = ctx.chat.id.toString();
-  const message = ctx.message.text;
+// Main handler
+async function handleMessage(chatId: string, text: string) {
+  const command = text.toLowerCase().trim();
 
-  // Save user message
-  await saveConversation(chatId, "user", message);
-  await logActivity("telegram_message", `User sent message`, {
-    chatId,
-    messagePreview: message.slice(0, 50),
-  });
+  // Handle commands
+  if (command === "/start") {
+    return await handleStart(chatId);
+  } else if (command === "/status") {
+    return await handleStatus(chatId);
+  } else if (command === "/parlays") {
+    return await handleParlays(chatId);
+  } else if (command === "/performance") {
+    return await handlePerformance(chatId);
+  } else if (command === "/weights") {
+    return await handleWeights(chatId);
+  } else if (command === "/generate") {
+    return await handleGenerate(chatId);
+  } else if (command === "/settle") {
+    return await handleSettle(chatId);
+  } else {
+    // Natural language - save and process
+    await saveConversation(chatId, "user", text);
+    await logActivity("telegram_message", `User sent message`, {
+      chatId,
+      messagePreview: text.slice(0, 50),
+    });
 
-  // Show typing indicator
-  await ctx.replyWithChatAction("typing");
-
-  // Get AI response
-  const response = await handleNaturalLanguage(message, chatId);
-
-  // Save assistant response
-  await saveConversation(chatId, "assistant", response);
-
-  await ctx.reply(response, { parse_mode: "Markdown" });
-});
-
-// Create webhook handler
-const handleUpdate = webhookCallback(bot, "std/http");
+    const response = await handleNaturalLanguage(text, chatId);
+    await saveConversation(chatId, "assistant", response);
+    return response;
+  }
+}
 
 // Main server
 Deno.serve(async (req) => {
@@ -523,7 +494,19 @@ Deno.serve(async (req) => {
   }
 
   try {
-    return await handleUpdate(req);
+    const update = await req.json();
+    console.log("Received Telegram update:", JSON.stringify(update));
+
+    // Handle message
+    if (update.message?.text) {
+      const chatId = update.message.chat.id.toString();
+      const text = update.message.text;
+
+      const response = await handleMessage(chatId, text);
+      await sendMessage(chatId, response);
+    }
+
+    return new Response("OK", { status: 200 });
   } catch (error) {
     console.error("Webhook error:", error);
     return new Response("Internal Server Error", { status: 500 });
