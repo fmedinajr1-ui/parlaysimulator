@@ -1,532 +1,390 @@
 
-
-# Autonomous Betting Bot with Self-Learning & Testing
+# Enhanced Autonomous Bot: Multi-Odds Comparison & 8-10 Daily Parlays
 
 ## Overview
 
-Build a complete autonomous betting bot system that:
-1. **Generates daily parlays** using Monte Carlo simulation + proven 60%+ categories
-2. **Tracks outcomes** in simulation mode (no real money)
-3. **Learns from mistakes** by adjusting category weights dynamically
-4. **Creates/retires strategies** based on performance
-5. **Activates real betting** only after 3 consecutive profitable simulation days
+Upgrade the bot to:
+1. **Compare odds across the -200 to +200 range** for optimal value detection
+2. **Generate 8-10 unique parlays daily** with varying leg counts (3-6 legs)
+3. **Eliminate duplicate picks** across parlays using player-prop deduplication
+4. **Score picks based on odds value** (juiced vs de-juiced lines)
 
 ## Current State Analysis
 
-### Existing Infrastructure
+### What Exists
+| Component | Status |
+|-----------|--------|
+| `bot-generate-daily-parlays` | Generates only 3 parlays/day, fixed 6-leg |
+| `unified_props` | Has `over_price`, `under_price` columns (-200 to +200 range) |
+| `hybrid-monte-carlo.ts` | Calculates probabilities but doesn't factor odds juice |
+| `fetch-current-odds` | Can fetch live odds from multiple bookmakers |
 
-| Component | Status | Purpose |
-|-----------|--------|---------|
-| `useSimulatedParlayBuilder.ts` | ✅ Built | MC simulation with 5K/25K/50K iterations |
-| `hybrid-monte-carlo.ts` | ✅ Built | Cholesky correlation + parametric screening |
-| `useSweetSpotParlayBuilder.ts` | ✅ Built | Rule-based scoring with pattern matching |
-| `SimulationCard.tsx` | ✅ Built | UI for simulation results |
-| Bot tracking tables | ❌ Missing | Need bot_daily_parlays, bot_strategies, etc. |
-| Bot edge functions | ❌ Missing | Need generate/settle/learn functions |
-| Bot tests | ❌ Missing | Unit + integration tests |
-
-### Proven Category Performance (From Memory)
-
-| Category | Hit Rate | Status |
-|----------|----------|--------|
-| HIGH_ASSIST_UNDER | 69.2% | **ELITE** - Bot approved |
-| LOW_SCORER_UNDER | 66.0% | **ELITE** - Bot approved |
-| THREE_POINT_SHOOTER | 63.2% | **ELITE** - Bot approved |
-| BIG_ASSIST_OVER | 59.0% | **RELIABLE** - Bot approved |
-| ROLE_PLAYER_REB | 48.2% | **BLOCKED** - Below 55% |
-| HIGH_ASSIST (OVER) | 33.3% | **BLOCKED** - Major loser |
+### Gaps Identified
+1. **No odds comparison** - Bot uses implied probabilities but doesn't compare actual book odds
+2. **Fixed 3 parlays/day** - Need 8-10 with varying structures
+3. **No deduplication** - Same player can appear in multiple parlays
+4. **No odds-based scoring** - Juiced lines (-130) vs Plus-money (+110) not weighted
 
 ## Implementation Plan
 
-### Phase 1: Database Schema
+### Phase 1: Odds Value Scoring Engine
 
-#### 1.1 Create `bot_daily_parlays` Table
+#### 1.1 Create `calculateOddsValue()` Function
 
-Stores each day's generated parlays with full traceability:
-
-```sql
-CREATE TABLE bot_daily_parlays (
-  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-  created_at timestamptz DEFAULT now(),
-  parlay_date date NOT NULL DEFAULT CURRENT_DATE,
-  
-  -- Parlay Details
-  legs jsonb NOT NULL,
-  leg_count int NOT NULL,
-  combined_probability numeric NOT NULL,
-  expected_odds int NOT NULL,
-  simulated_win_rate numeric,
-  simulated_edge numeric,
-  simulated_sharpe numeric,
-  
-  -- Strategy Used
-  strategy_name text NOT NULL,
-  strategy_version int DEFAULT 1,
-  category_weights_snapshot jsonb,
-  selection_rationale text,
-  
-  -- Outcome Tracking  
-  outcome text DEFAULT 'pending' CHECK (outcome IN ('pending', 'won', 'lost', 'partial', 'push')),
-  legs_hit int DEFAULT 0,
-  legs_missed int DEFAULT 0,
-  settled_at timestamptz,
-  
-  -- Learning Feedback
-  profit_loss numeric,
-  lesson_learned text,
-  
-  -- Mode Tracking
-  is_simulated boolean DEFAULT true,
-  simulated_stake numeric DEFAULT 50,
-  simulated_payout numeric
-);
-```
-
-#### 1.2 Create `bot_category_weights` Table
-
-Dynamic category performance weights that adjust based on outcomes:
-
-```sql
-CREATE TABLE bot_category_weights (
-  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-  category text UNIQUE NOT NULL,
-  side text NOT NULL,
-  
-  -- Performance Metrics
-  total_picks int DEFAULT 0,
-  total_hits int DEFAULT 0,
-  current_hit_rate numeric DEFAULT 0,
-  
-  -- Dynamic Weight (0.5-1.5 range)
-  weight numeric DEFAULT 1.0 CHECK (weight >= 0 AND weight <= 1.5),
-  is_blocked boolean DEFAULT false,
-  block_reason text,
-  
-  -- Streaks
-  current_streak int DEFAULT 0,
-  best_streak int DEFAULT 0,
-  worst_streak int DEFAULT 0,
-  
-  updated_at timestamptz DEFAULT now()
-);
-```
-
-#### 1.3 Create `bot_strategies` Table
-
-Versioned strategy rules with performance tracking:
-
-```sql
-CREATE TABLE bot_strategies (
-  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-  strategy_name text UNIQUE NOT NULL,
-  created_at timestamptz DEFAULT now(),
-  
-  -- Strategy Rules
-  rules jsonb NOT NULL,
-  
-  -- Performance
-  times_used int DEFAULT 0,
-  times_won int DEFAULT 0,
-  win_rate numeric DEFAULT 0,
-  roi numeric DEFAULT 0,
-  
-  -- Status
-  is_active boolean DEFAULT true,
-  retired_at timestamptz,
-  retire_reason text,
-  
-  -- Auto-evolution
-  auto_generated boolean DEFAULT false,
-  parent_strategy text
-);
-```
-
-#### 1.4 Create `bot_activation_status` Table
-
-Track readiness for real betting (3-day requirement):
-
-```sql
-CREATE TABLE bot_activation_status (
-  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-  check_date date UNIQUE NOT NULL DEFAULT CURRENT_DATE,
-  
-  -- Daily Performance
-  parlays_generated int DEFAULT 0,
-  parlays_won int DEFAULT 0,
-  daily_profit_loss numeric DEFAULT 0,
-  is_profitable_day boolean DEFAULT false,
-  
-  -- Streak Tracking
-  consecutive_profitable_days int DEFAULT 0,
-  
-  -- Activation Status
-  is_real_mode_ready boolean DEFAULT false,
-  activated_at timestamptz,
-  
-  -- Bankroll
-  simulated_bankroll numeric DEFAULT 1000,
-  real_bankroll numeric DEFAULT 0
-);
-```
-
-### Phase 2: Core Bot Hook
-
-#### 2.1 Create `useBotEngine.ts`
-
-Central hook that manages the entire bot lifecycle:
+Add to `src/lib/parlay-calculator.ts`:
 
 ```typescript
-// Key exports
-export interface BotState {
-  isActive: boolean;
-  mode: 'simulated' | 'real';
-  consecutiveProfitDays: number;
-  simulatedBankroll: number;
-  todayParlays: BotParlay[];
-  categoryWeights: Map<string, CategoryWeight>;
-  activeStrategy: BotStrategy;
-}
-
-export interface BotParlay {
-  id: string;
-  legs: BotLeg[];
-  simulation: HybridSimulationResult;
-  outcome: 'pending' | 'won' | 'lost' | 'partial';
-  stake: number;
-}
-
-export function useBotEngine(): {
-  state: BotState;
-  generateDailyParlays: () => Promise<BotParlay[]>;
-  settleYesterdayParlays: () => Promise<void>;
-  learnFromOutcomes: () => Promise<void>;
-  checkActivation: () => boolean;
+/**
+ * Calculate value score based on odds vs implied probability
+ * Range: -200 to +200 American odds
+ * 
+ * Returns: value score from 0-100
+ * - 100 = Maximum value (plus money on high-probability pick)
+ * - 50 = Fair value (standard -110 juice)
+ * - 0 = Poor value (heavily juiced line)
+ */
+function calculateOddsValueScore(
+  americanOdds: number,
+  estimatedHitRate: number
+): number {
+  // Convert odds to implied probability
+  const impliedProb = americanToImplied(americanOdds);
+  
+  // Calculate edge (estimated - implied)
+  const edge = estimatedHitRate - impliedProb;
+  
+  // Juice factor: how much are you overpaying?
+  // -110 = 52.4% implied (fair)
+  // -130 = 56.5% implied (overpaying)
+  // +110 = 47.6% implied (value)
+  const juicePenalty = Math.max(0, impliedProb - 0.524) * 100;
+  const juiceBonus = Math.max(0, 0.524 - impliedProb) * 80;
+  
+  // Edge contribution (bigger edge = better)
+  const edgeScore = Math.min(40, edge * 400);
+  
+  // Base score + edge + juice adjustment
+  const score = 50 + edgeScore - juicePenalty + juiceBonus;
+  
+  return Math.max(0, Math.min(100, score));
 }
 ```
 
-#### 2.2 Learning Algorithm
+#### 1.2 Add Odds Filtering to Bot Rules
 
-Weight adjustment rules hardcoded into the bot:
+Update `BOT_RULES` in `useBotEngine.ts`:
 
 ```typescript
-function adjustCategoryWeight(
-  currentWeight: number,
-  hit: boolean,
-  currentStreak: number
-): { newWeight: number; blocked: boolean } {
-  if (hit) {
-    // Boost on hits, more boost for streaks
-    const boost = 0.02 + (Math.max(0, currentStreak) * 0.005);
-    return {
-      newWeight: Math.min(currentWeight + boost, 1.5),
-      blocked: false
-    };
-  } else {
-    // Penalty on misses
-    const penalty = 0.03 + (Math.abs(Math.min(0, currentStreak)) * 0.01);
-    const newWeight = currentWeight - penalty;
-    
-    // Auto-block if weight drops below 0.5
-    if (newWeight < 0.5) {
-      return { newWeight: 0, blocked: true };
-    }
-    return { newWeight: Math.max(newWeight, 0.5), blocked: false };
+export const BOT_RULES = {
+  // Existing rules...
+  
+  // NEW: Odds filtering
+  MIN_ODDS: -200,           // Don't bet on heavy favorites
+  MAX_ODDS: 200,            // Don't bet on long shots
+  PREFER_PLUS_MONEY: true,  // Prioritize plus-money lines
+  MIN_ODDS_VALUE_SCORE: 45, // Minimum odds value score
+  
+  // NEW: Volume rules
+  DAILY_PARLAYS_MIN: 8,     // Minimum parlays per day
+  DAILY_PARLAYS_MAX: 10,    // Maximum parlays per day
+  LEG_COUNTS: [3, 4, 5, 6], // Varying leg counts
+};
+```
+
+### Phase 2: Enhanced Parlay Generation
+
+#### 2.1 Update `bot-generate-daily-parlays` Edge Function
+
+Major refactor to generate 8-10 unique parlays:
+
+```text
+GENERATION FLOW:
+
+1. LOAD DATA
+   ├── Category weights (60%+ hit rate only)
+   ├── All eligible picks from category_sweet_spots
+   └── Live odds from unified_props (over_price, under_price)
+
+2. SCORE ALL PICKS
+   For each pick:
+   ├── Base score = L10 hit rate * category weight
+   ├── Odds value score = calculateOddsValueScore()
+   ├── Edge score = projected - line
+   └── Total score = weighted combination
+
+3. CREATE PICK POOL (Deduplicated)
+   - Sort by total score descending
+   - Track used: Map<"player_prop", boolean>
+   - Pool size: 40-60 picks
+
+4. GENERATE PARLAYS (8-10 unique)
+   For parlayNum = 1 to 10:
+   ├── Determine leg count: [3, 4, 4, 5, 5, 5, 6, 6, 6, 6]
+   ├── Select legs using greedy algorithm:
+   │   ├── Skip already-used player+prop combinations
+   │   ├── Max 2 per team (existing rule)
+   │   ├── Diversify categories (max 3 from same category)
+   │   └── Balance overs/unders (40-60% split)
+   ├── Run MC simulation (10K iterations for speed)
+   ├── If passes thresholds → Add to output
+   └── Mark used picks to prevent duplicates
+
+5. VALIDATION
+   - Ensure 8+ parlays generated
+   - Ensure no duplicate player+prop across parlays
+   - Ensure varying leg counts represented
+```
+
+#### 2.2 Parlay Diversity Strategy
+
+Create different "profiles" for the 10 daily parlays:
+
+| Parlay # | Legs | Strategy | Risk Level |
+|----------|------|----------|------------|
+| 1-2 | 3 | Conservative - Top 3 picks only | Low |
+| 3-4 | 4 | Balanced - Mix ELITE + RELIABLE | Medium |
+| 5-7 | 5 | Standard - Diversified categories | Medium |
+| 8-10 | 6 | Aggressive - Higher edge required | Higher |
+
+### Phase 3: Deduplication System
+
+#### 3.1 Create Global Usage Tracker
+
+```typescript
+interface UsageTracker {
+  // Track used player+prop+side combinations
+  usedPicks: Set<string>; // "LeBron James_points_over"
+  
+  // Track player usage (max 2 parlays per player)
+  playerUsageCount: Map<string, number>;
+  
+  // Track category distribution
+  categoryUsageCount: Map<string, number>;
+}
+
+function createPickKey(pick: SweetSpotPick): string {
+  return `${pick.player_name}_${pick.prop_type}_${pick.side}`.toLowerCase();
+}
+
+function canUsePick(
+  pick: SweetSpotPick,
+  tracker: UsageTracker
+): boolean {
+  const key = createPickKey(pick);
+  
+  // Never reuse same pick
+  if (tracker.usedPicks.has(key)) return false;
+  
+  // Max 2 parlays per player
+  const playerCount = tracker.playerUsageCount.get(pick.player_name) || 0;
+  if (playerCount >= 2) return false;
+  
+  return true;
+}
+```
+
+### Phase 4: Odds Comparison Integration
+
+#### 4.1 Enrich Picks with Live Odds
+
+Before scoring, fetch current odds:
+
+```typescript
+async function enrichPicksWithOdds(
+  picks: SweetSpotPick[],
+  supabase: any
+): Promise<EnrichedPick[]> {
+  // Get odds from unified_props
+  const { data: oddsData } = await supabase
+    .from('unified_props')
+    .select('player_name, prop_type, over_price, under_price')
+    .in('player_name', picks.map(p => p.player_name))
+    .is('is_active', true);
+  
+  const oddsMap = new Map();
+  for (const od of oddsData || []) {
+    const key = `${od.player_name}_${od.prop_type}`;
+    oddsMap.set(key, {
+      overOdds: od.over_price,
+      underOdds: od.under_price
+    });
   }
+  
+  return picks.map(pick => {
+    const key = `${pick.player_name}_${pick.prop_type}`;
+    const odds = oddsMap.get(key) || { overOdds: -110, underOdds: -110 };
+    const relevantOdds = pick.side === 'over' ? odds.overOdds : odds.underOdds;
+    
+    return {
+      ...pick,
+      americanOdds: relevantOdds,
+      oddsValueScore: calculateOddsValueScore(relevantOdds, pick.l10HitRate / 100)
+    };
+  });
 }
 ```
 
-### Phase 3: Edge Functions
-
-#### 3.1 Create `bot-generate-daily-parlays`
-
-Runs daily at 9 AM ET:
-
-```text
-Logic Flow:
-1. Load current category weights from bot_category_weights
-2. Fetch today's picks from category_sweet_spots
-3. Filter to 60%+ hit rate categories AND weight >= 0.8
-4. Run MC simulation on top combinations (25K iterations)
-5. Select parlays that pass viability thresholds:
-   - Win probability >= 12%
-   - Edge >= 3%
-   - Sharpe >= 0.5
-6. Save 2-3 parlays to bot_daily_parlays
-7. Update bot_activation_status
-```
-
-#### 3.2 Create `bot-settle-and-learn`
-
-Runs daily at 6 AM ET:
-
-```text
-Logic Flow:
-1. Get yesterday's bot_daily_parlays with outcome='pending'
-2. For each parlay:
-   - Check each leg against nba_player_game_logs
-   - Calculate hit/miss for each leg
-   - Determine overall outcome
-3. For each settled leg:
-   - Update bot_category_weights (weight adjustment)
-   - Track streaks
-   - Auto-block if weight < 0.5
-4. Calculate daily profit/loss
-5. Update bot_activation_status:
-   - If profitable: consecutive_days++
-   - If loss: consecutive_days = 0
-6. Check activation: If 3+ consecutive profitable days → ready for real mode
-```
-
-#### 3.3 Create `bot-evolve-strategies`
-
-Runs weekly (Sunday 11 PM ET):
-
-```text
-Logic Flow:
-1. Get strategies with 20+ uses
-2. For each strategy:
-   - If win_rate < 40%: RETIRE and create mutated version
-   - If win_rate >= 65%: BOOST priority
-3. Analyze winning patterns from last 7 days
-4. Auto-generate new strategies from patterns
-5. Log evolution decisions to bot_strategies
-```
-
-### Phase 4: Bot Dashboard UI
-
-#### 4.1 Create `/bot` Route
-
-New page at `src/pages/BotDashboard.tsx`:
-
-```text
-Sections:
-1. ACTIVATION PROGRESS
-   - "Day 2 of 3" progress ring
-   - Simulated bankroll display
-   - Real mode activation countdown
-
-2. TODAY'S BOT PARLAYS
-   - Cards showing 2-3 generated parlays
-   - MC simulation metrics (win rate, edge, Sharpe)
-   - Leg details with category weights
-
-3. CATEGORY WEIGHTS (Live)
-   - Visual bars (0.5-1.5 range)
-   - Red = blocked, Yellow = caution, Green = boosted
-   - Click to see learning history
-
-4. LEARNING LOG
-   - Recent weight adjustments
-   - Strategy changes
-   - Block/unblock events
-
-5. HISTORICAL PERFORMANCE
-   - Simulated bankroll chart
-   - Win rate by strategy
-   - ROI by category
-```
-
-#### 4.2 UI Components
-
-| Component | Purpose |
-|-----------|---------|
-| `BotActivationCard.tsx` | 3-day progress ring + activation status |
-| `BotParlayCard.tsx` | Individual parlay with simulation metrics |
-| `CategoryWeightsChart.tsx` | Live category weight visualization |
-| `LearningLogCard.tsx` | Real-time learning actions feed |
-| `BotPerformanceChart.tsx` | Bankroll growth + win rate chart |
-
-### Phase 5: Testing Suite
-
-#### 5.1 Unit Tests for Bot Engine
-
-Create `src/hooks/useBotEngine.test.ts`:
+#### 4.2 Filter by Odds Range
 
 ```typescript
-describe('Bot Engine - Weight Adjustment', () => {
-  it('increases weight on hit', () => {
-    const result = adjustCategoryWeight(1.0, true, 0);
-    expect(result.newWeight).toBeGreaterThan(1.0);
-  });
-  
-  it('decreases weight on miss', () => {
-    const result = adjustCategoryWeight(1.0, false, 0);
-    expect(result.newWeight).toBeLessThan(1.0);
-  });
-  
-  it('blocks category when weight drops below 0.5', () => {
-    const result = adjustCategoryWeight(0.52, false, -3);
-    expect(result.blocked).toBe(true);
-  });
-  
-  it('caps weight at 1.5 maximum', () => {
-    const result = adjustCategoryWeight(1.48, true, 5);
-    expect(result.newWeight).toBe(1.5);
-  });
-});
-
-describe('Bot Engine - Category Filtering', () => {
-  it('blocks categories below 55% hit rate', () => {
-    const categories = filterEligibleCategories([
-      { category: 'HIGH_ASSIST_UNDER', hitRate: 69, weight: 1.0 },
-      { category: 'ROLE_PLAYER_REB', hitRate: 48, weight: 1.0 },
-    ]);
-    expect(categories.length).toBe(1);
-    expect(categories[0].category).toBe('HIGH_ASSIST_UNDER');
-  });
-  
-  it('blocks categories with weight < 0.8', () => {
-    const categories = filterEligibleCategories([
-      { category: 'HIGH_ASSIST_UNDER', hitRate: 69, weight: 1.0 },
-      { category: 'BIG_ASSIST_OVER', hitRate: 60, weight: 0.6 },
-    ]);
-    expect(categories.length).toBe(1);
-  });
-});
-
-describe('Bot Engine - Activation Logic', () => {
-  it('requires 3 consecutive profitable days', () => {
-    expect(checkActivation({ consecutiveDays: 2, totalParlays: 10, winRate: 0.65 })).toBe(false);
-    expect(checkActivation({ consecutiveDays: 3, totalParlays: 10, winRate: 0.65 })).toBe(true);
-  });
-  
-  it('requires 60%+ overall win rate', () => {
-    expect(checkActivation({ consecutiveDays: 3, totalParlays: 10, winRate: 0.55 })).toBe(false);
-  });
-  
-  it('requires minimum 5 parlays generated', () => {
-    expect(checkActivation({ consecutiveDays: 3, totalParlays: 3, winRate: 0.65 })).toBe(false);
-  });
-});
-```
-
-#### 5.2 Integration Tests for Simulation
-
-Create `src/hooks/useBotSimulation.test.ts`:
-
-```typescript
-describe('Bot Simulation Integration', () => {
-  it('generates viable parlays from proven categories', async () => {
-    const candidates = createMockCandidates([
-      { category: 'HIGH_ASSIST_UNDER', hitRate: 70 },
-      { category: 'LOW_SCORER_UNDER', hitRate: 66 },
-      { category: 'THREE_POINT_SHOOTER', hitRate: 63 },
-      { category: 'BIG_ASSIST_OVER', hitRate: 59 },
-    ]);
+function filterByOddsRange(
+  picks: EnrichedPick[],
+  minOdds: number = -200,
+  maxOdds: number = 200
+): EnrichedPick[] {
+  return picks.filter(p => {
+    const odds = p.americanOdds;
     
-    const result = await generateBotParlay(candidates, 4);
+    // Must be within range
+    if (odds < minOdds || odds > maxOdds) return false;
     
-    expect(result.simulation.hybridWinRate).toBeGreaterThan(0.10);
-    expect(result.simulation.overallEdge).toBeGreaterThan(0);
-  });
-  
-  it('rejects parlays with negative edge', async () => {
-    const candidates = createMockCandidates([
-      { category: 'ROLE_PLAYER_REB', hitRate: 48 }, // Below threshold
-    ]);
-    
-    const result = await generateBotParlay(candidates, 4);
-    
-    expect(result).toBeNull();
-  });
-});
-```
-
-#### 5.3 Edge Function Tests
-
-Create `supabase/functions/bot-generate-daily-parlays/index_test.ts`:
-
-```typescript
-import "https://deno.land/std@0.224.0/dotenv/load.ts";
-
-Deno.test("generates parlays for valid date", async () => {
-  const response = await fetch(
-    `${Deno.env.get("VITE_SUPABASE_URL")}/functions/v1/bot-generate-daily-parlays`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${Deno.env.get("VITE_SUPABASE_PUBLISHABLE_KEY")}`,
-      },
-      body: JSON.stringify({ date: "2026-02-08" }),
+    // Warn on heavily juiced lines
+    if (odds <= -180) {
+      console.log(`[OddsFilter] ${p.player_name}: Heavily juiced ${odds}, value: ${p.oddsValueScore}`);
+      return p.oddsValueScore >= 50; // Only allow if exceptional value
     }
-  );
-  
-  const data = await response.json();
-  await response.text(); // Consume body
-  
-  assertEquals(response.status, 200);
-  assertEquals(data.parlaysGenerated >= 0, true);
-});
+    
+    return true;
+  });
+}
 ```
 
-### Phase 6: Cron Jobs
+### Phase 5: Updated Scoring Formula
 
-| Time (ET) | Function | Purpose |
-|-----------|----------|---------|
-| 9:00 AM | `bot-generate-daily-parlays` | Generate today's picks |
-| 6:00 AM | `bot-settle-and-learn` | Settle yesterday + learn |
-| 11:00 PM (Sun) | `bot-evolve-strategies` | Weekly strategy evolution |
+#### 5.1 New Composite Scoring
+
+```typescript
+function calculateCompositeBotScore(
+  pick: EnrichedPick,
+  categoryWeight: number
+): number {
+  // Component weights
+  const WEIGHTS = {
+    hitRate: 0.30,     // Historical accuracy
+    edge: 0.25,        // Projection vs line
+    oddsValue: 0.25,   // Betting value
+    categoryWeight: 0.20, // Bot learning weight
+  };
+  
+  // Normalize components to 0-100 scale
+  const hitRateScore = Math.min(100, pick.l10HitRate || 50);
+  const edgeScore = Math.min(100, Math.max(0, pick.edge * 20 + 50));
+  const oddsValueScore = pick.oddsValueScore || 50;
+  const weightScore = categoryWeight * 66.67; // 1.5 max → 100
+  
+  // Weighted sum
+  const composite = 
+    (hitRateScore * WEIGHTS.hitRate) +
+    (edgeScore * WEIGHTS.edge) +
+    (oddsValueScore * WEIGHTS.oddsValue) +
+    (weightScore * WEIGHTS.categoryWeight);
+  
+  return Math.round(composite);
+}
+```
+
+### Phase 6: Edge Function Changes
+
+#### 6.1 Updated `bot-generate-daily-parlays/index.ts`
+
+Key changes:
+- Generate 8-10 parlays instead of 3
+- Varying leg counts: 3, 4, 5, 6
+- Odds value scoring integration
+- Global deduplication across all parlays
+- MC simulation for each parlay (10K iterations for speed)
+
+#### 6.2 New Parlay Profiles
+
+```typescript
+const PARLAY_PROFILES = [
+  { legs: 3, strategy: 'conservative', minOddsValue: 55, minHitRate: 68 },
+  { legs: 3, strategy: 'conservative', minOddsValue: 55, minHitRate: 68 },
+  { legs: 4, strategy: 'balanced', minOddsValue: 50, minHitRate: 62 },
+  { legs: 4, strategy: 'balanced', minOddsValue: 50, minHitRate: 62 },
+  { legs: 5, strategy: 'standard', minOddsValue: 45, minHitRate: 58 },
+  { legs: 5, strategy: 'standard', minOddsValue: 45, minHitRate: 58 },
+  { legs: 5, strategy: 'standard', minOddsValue: 45, minHitRate: 58 },
+  { legs: 6, strategy: 'aggressive', minOddsValue: 40, minHitRate: 55 },
+  { legs: 6, strategy: 'aggressive', minOddsValue: 40, minHitRate: 55 },
+  { legs: 6, strategy: 'aggressive', minOddsValue: 40, minHitRate: 55 },
+];
+```
+
+### Phase 7: UI Updates
+
+#### 7.1 Update `BotDashboard.tsx`
+
+- Show parlay count: "8 of 10 generated today"
+- Group by leg count: "3-Leg (2) | 4-Leg (2) | 5-Leg (3) | 6-Leg (3)"
+- Add odds value indicator on each leg
+
+#### 7.2 Update `BotParlayCard.tsx`
+
+Add odds display for each leg:
+```text
+LeBron James
+Points OVER 25.5 • Lakers
+Odds: -115 | Value: 72/100
+```
 
 ### File Changes Summary
 
-#### New Files
-
-| File | Purpose |
-|------|---------|
-| `src/hooks/useBotEngine.ts` | Core bot logic hook |
-| `src/hooks/useBotEngine.test.ts` | Unit tests for bot engine |
-| `src/hooks/useBotSimulation.test.ts` | Integration tests |
-| `src/pages/BotDashboard.tsx` | Bot dashboard page |
-| `src/components/bot/BotActivationCard.tsx` | Activation progress UI |
-| `src/components/bot/BotParlayCard.tsx` | Individual parlay display |
-| `src/components/bot/CategoryWeightsChart.tsx` | Weight visualization |
-| `src/components/bot/LearningLogCard.tsx` | Learning actions feed |
-| `src/components/bot/BotPerformanceChart.tsx` | Performance charts |
-| `supabase/functions/bot-generate-daily-parlays/index.ts` | Daily generation |
-| `supabase/functions/bot-settle-and-learn/index.ts` | Settlement + learning |
-| `supabase/functions/bot-evolve-strategies/index.ts` | Strategy evolution |
-| `supabase/functions/bot-generate-daily-parlays/index_test.ts` | Edge function tests |
-
-#### Modified Files
-
 | File | Change |
 |------|--------|
-| `src/App.tsx` | Add `/bot` route |
-| `src/components/BottomNav.tsx` | Add Bot tab |
-| `supabase/config.toml` | Add new edge functions |
+| `src/lib/parlay-calculator.ts` | Add `calculateOddsValueScore()` function |
+| `src/hooks/useBotEngine.ts` | Update `BOT_RULES`, add deduplication types |
+| `supabase/functions/bot-generate-daily-parlays/index.ts` | Major refactor for 8-10 parlays, odds scoring |
+| `src/pages/BotDashboard.tsx` | Add parlay count display, grouping |
+| `src/components/bot/BotParlayCard.tsx` | Add odds value display |
 
-### Expert Betting Rules (Hardcoded in Bot)
+### Expected Output
 
-1. **Category Gate**: ONLY bet categories with 55%+ verified hit rate
-2. **Weight Gate**: ONLY use categories with weight >= 0.8
-3. **Edge Gate**: Minimum 2.0+ edge for any pick
-4. **Simulation Gate**: Must pass MC validation (12%+ win rate, 3%+ edge)
-5. **Diversity Gate**: Max 1 player per team
-6. **Stake Gate**: Half-Kelly sizing, max 3% per bet in real mode
-7. **Volume Gate**: 2-3 parlays per day maximum
-8. **Activation Gate**: 3 consecutive profitable simulation days required
-
-### Expected Flow
+After implementation, daily bot generation will produce:
 
 ```text
-Day 1 (Simulation):
-  9 AM: Bot generates 3 parlays using MC simulation
-  6 PM: Games settle
+Day 1 (9 AM ET):
+  Generated 10 parlays:
+  - 2x 3-leg (Conservative): +280, +310
+  - 2x 4-leg (Balanced): +520, +580
+  - 3x 5-leg (Standard): +850, +920, +1050
+  - 3x 6-leg (Aggressive): +1400, +1650, +1800
   
-Day 2 (6 AM):
-  Bot settles Day 1 parlays
-  2 won, 1 lost → Profitable day (+$80)
-  Updates category weights (HIGH_ASSIST_UNDER: 1.0 → 1.02)
-  consecutive_profitable_days = 1
-
-Day 2 (9 AM):
-  Bot generates 3 new parlays with updated weights
-  ...
-
-Day 4 (6 AM):
-  consecutive_profitable_days = 3
-  ✅ REAL MODE ACTIVATED
-  Bot starts placing real bets with Kelly sizing
+  No duplicate picks across parlays
+  All picks within -200 to +200 odds range
+  Average odds value score: 62/100
 ```
 
+### Technical Details
+
+#### Scoring Example
+
+```text
+Pick: LeBron James Points OVER 25.5
+- L10 Hit Rate: 72%
+- Odds: -115 (implied: 53.5%)
+- Projection: 27.2 (edge: +1.7)
+- Category Weight: 1.15
+
+Odds Value Score:
+- Edge: 72% - 53.5% = 18.5% → +40 points
+- Juice: -115 is slightly juiced → -3 points
+- Base: 50
+- Total: 87/100 (Excellent value)
+
+Composite Score:
+- Hit Rate: 72 * 0.30 = 21.6
+- Edge: 67 * 0.25 = 16.75
+- Odds Value: 87 * 0.25 = 21.75
+- Category: 77 * 0.20 = 15.4
+- TOTAL: 75.5/100
+```
+
+#### Deduplication Example
+
+```text
+Parlay 1 uses: LeBron_points_over, Curry_threes_over, Jokic_assists_over
+Parlay 2 cannot use: LeBron_points_over (already used)
+Parlay 2 can use: LeBron_rebounds_over (different prop)
+Parlay 3 cannot use: LeBron (already in 2 parlays)
+```
