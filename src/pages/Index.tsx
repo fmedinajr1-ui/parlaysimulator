@@ -149,39 +149,29 @@ const Index = () => {
         </div>
 
         {/* Slate Control - Unified Refresh All Engines */}
-        {(isPilotUser || isSubscribed || isAdmin) && (
-          <div className="mb-4">
-            <SlateRefreshControls />
-          </div>
-        )}
+        <div className="mb-4">
+          <SlateRefreshControls />
+        </div>
         
         {/* ★ ELITE 3PT FIXED PARLAY - Today's 100% L10 Picks ★ */}
-        {(isPilotUser || isSubscribed || isAdmin) && (
-          <div className="mb-4">
-            <Elite3PTFixedParlay />
-          </div>
-        )}
+        <div className="mb-4">
+          <Elite3PTFixedParlay />
+        </div>
 
         {/* ★ DAILY PARLAY HUB - Primary Content ★ */}
-        {(isPilotUser || isSubscribed || isAdmin) && (
-          <div className="mb-4">
-            <DailyParlayHub />
-          </div>
-        )}
+        <div className="mb-4">
+          <DailyParlayHub />
+        </div>
 
         {/* Sweet Spot Individual Picks */}
-        {(isPilotUser || isSubscribed || isAdmin) && (
-          <div className="mb-4">
-            <SweetSpotPicksCard />
-          </div>
-        )}
+        <div className="mb-4">
+          <SweetSpotPicksCard />
+        </div>
 
         {/* 7-Day Performance History */}
-        {(isPilotUser || isSubscribed || isAdmin) && (
-          <div className="mb-4">
-            <WeeklyParlayHistory />
-          </div>
-        )}
+        <div className="mb-4">
+          <WeeklyParlayHistory />
+        </div>
 
         <HowItWorks />
       </div>

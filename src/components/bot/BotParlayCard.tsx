@@ -172,10 +172,10 @@ export function BotParlayCard({ parlay }: BotParlayCardProps) {
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
                           <div className="font-medium text-sm">
-                            {leg.player_name}
+                            {leg.player_name ?? 'Unknown'}
                           </div>
                           <div className="text-xs text-muted-foreground">
-                            {leg.prop_type} {leg.side.toUpperCase()} {leg.line}
+                            {leg.prop_type ?? 'Prop'} {(leg.side ?? 'over').toUpperCase()} {leg.line ?? 0}
                             {hasAltLine && (
                               <span className="text-amber-400 ml-1">
                                 (alt from {leg.original_line})

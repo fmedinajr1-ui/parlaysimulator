@@ -61,9 +61,13 @@ export function SystemAccuracyCard({ system }: SystemAccuracyCardProps) {
         <div>
           <div className="flex items-baseline justify-between mb-1">
             <span className="text-xs text-muted-foreground">Hit Rate</span>
-            <span className={cn("text-lg font-bold", getHitRateColor())}>
-              {system.verifiedPicks > 0 ? `${system.hitRate}%` : '--'}
-            </span>
+            {system.verifiedPicks === 0 ? (
+              <span className="text-sm text-muted-foreground">No data yet</span>
+            ) : (
+              <span className={cn("text-lg font-bold", getHitRateColor())}>
+                {system.hitRate}%
+              </span>
+            )}
           </div>
           <div className="relative">
             <Progress 
