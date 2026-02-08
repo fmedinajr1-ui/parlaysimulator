@@ -9240,15 +9240,7 @@ export type Database = {
           sweet_spot_id?: string | null
           zone_matchup_score?: number | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "sweet_spot_hedge_snapshots_sweet_spot_id_fkey"
-            columns: ["sweet_spot_id"]
-            isOneToOne: false
-            referencedRelation: "category_sweet_spots"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       sweet_spot_tracking: {
         Row: {
