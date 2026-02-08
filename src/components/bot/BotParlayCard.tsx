@@ -6,7 +6,7 @@
  */
 
 import React, { useState } from 'react';
-import { ChevronDown, ChevronUp, TrendingUp, Target, Percent, DollarSign, CheckCircle, XCircle, Clock, Minus, Zap, ArrowUpRight } from 'lucide-react';
+import { ChevronDown, ChevronUp, TrendingUp, Target, Percent, DollarSign, CheckCircle, XCircle, Clock, Minus, Zap, ArrowUpRight, MapPin } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -219,6 +219,16 @@ export function BotParlayCard({ parlay }: BotParlayCardProps) {
                                 <ArrowUpRight className="w-3 h-3" />
                                 <span className="font-medium">
                                   +{leg.projection_buffer.toFixed(1)} buffer
+                                </span>
+                              </span>
+                            )}
+                            
+                            {/* Line source verification */}
+                            {(leg as any).line_source && (leg as any).line_source !== 'projected' && (
+                              <span className="flex items-center gap-1 text-primary">
+                                <MapPin className="w-3 h-3" />
+                                <span className="font-medium capitalize">
+                                  {(leg as any).line_source}
                                 </span>
                               </span>
                             )}

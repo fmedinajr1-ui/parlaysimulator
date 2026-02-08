@@ -13,6 +13,8 @@ import { BotParlayCard } from '@/components/bot/BotParlayCard';
 import { CategoryWeightsChart } from '@/components/bot/CategoryWeightsChart';
 import { BotPerformanceChart } from '@/components/bot/BotPerformanceChart';
 import { LearningLogCard } from '@/components/bot/LearningLogCard';
+import { BotNotificationSettings } from '@/components/bot/BotNotificationSettings';
+import { BotActivityFeed } from '@/components/bot/BotActivityFeed';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -204,6 +206,12 @@ export default function BotDashboard() {
             )}
           </CardContent>
         </Card>
+
+        {/* Notifications & Activity Row */}
+        <div className="grid md:grid-cols-2 gap-4">
+          <BotNotificationSettings />
+          <BotActivityFeed />
+        </div>
 
         {/* Category Weights */}
         <CategoryWeightsChart weights={state.categoryWeights} />

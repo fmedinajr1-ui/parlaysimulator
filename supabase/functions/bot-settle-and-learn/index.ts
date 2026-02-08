@@ -336,6 +336,49 @@ Deno.serve(async (req) => {
 
     console.log(`[Bot Settle] Complete. P/L: $${totalProfitLoss}, Consecutive: ${newConsecutive}`);
 
+    // 7. Log activity
+    await supabase.from('bot_activity_log').insert({
+      event_type: 'settlement_complete',
+      message: `Settled ${parlaysSettled} parlays: ${parlaysWon}W ${parlaysLost}L`,
+      metadata: { 
+        parlaysWon,
+        parlaysLost,
+        totalProfitLoss,
+        consecutiveDays: newConsecutive,
+        isRealModeReady,
+        newBankroll,
+      },
+      severity: isProfitableDay ? 'success' : 'warning',
+    });
+
+    // 8. Send Telegram notification
+    try {
+      await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseKey}`,
+        },
+        body: JSON.stringify({
+          type: isRealModeReady && !prevStatus?.is_real_mode_ready ? 'activation_ready' : 'settlement_complete',
+          data: {
+            parlaysWon,
+            parlaysLost,
+            profitLoss: totalProfitLoss,
+            consecutiveDays: newConsecutive,
+            bankroll: newBankroll,
+            isRealModeReady,
+            winRate: parlaysWon + parlaysLost > 0 
+              ? Math.round((parlaysWon / (parlaysWon + parlaysLost)) * 100) 
+              : 0,
+          },
+        }),
+      });
+      console.log('[Bot Settle] Telegram notification sent');
+    } catch (telegramError) {
+      console.error('[Bot Settle] Telegram notification failed:', telegramError);
+    }
+
     return new Response(
       JSON.stringify({
         success: true,

@@ -350,10 +350,10 @@ Deno.serve(async (req) => {
       );
     }
 
-    // 2. Fetch today's sweet spot picks
+    // 2. Fetch today's sweet spot picks with REAL line verification
     const { data: picks, error: picksError } = await supabase
       .from('category_sweet_spots')
-      .select('*')
+      .select('*, actual_line, recommended_line, bookmaker')
       .eq('analysis_date', targetDate)
       .eq('is_active', true)
       .in('category', eligibleCategories)
@@ -375,6 +375,29 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Enrich picks with real line verification
+    const enrichedWithRealLines = picks.map(pick => {
+      // Use actual_line (from sportsbook) when available, fall back to recommended_line
+      const line = pick.actual_line ?? pick.recommended_line ?? pick.line;
+      const hasRealLine = pick.actual_line !== null && pick.actual_line !== undefined;
+      const lineSource = hasRealLine ? (pick.bookmaker || 'fanduel') : 'projected';
+      
+      console.log(`[Bot] ${pick.player_name}: ${hasRealLine ? 'REAL' : 'PLACEHOLDER'} line ${line} (${lineSource})`);
+      
+      return { 
+        ...pick, 
+        line, 
+        has_real_line: hasRealLine,
+        line_source: lineSource,
+        line_verified_at: hasRealLine ? new Date().toISOString() : null,
+      };
+    });
+
+    // Count real vs placeholder lines
+    const realLineCount = enrichedWithRealLines.filter(p => p.has_real_line).length;
+    const realLinePercentage = ((realLineCount / enrichedWithRealLines.length) * 100).toFixed(0);
+    console.log(`[Bot] ${realLineCount}/${enrichedWithRealLines.length} picks have REAL lines (${realLinePercentage}%)`);
+
     console.log(`[Bot] Found ${picks.length} candidate picks`);
 
     // 3. Fetch live odds from unified_props
@@ -394,8 +417,8 @@ Deno.serve(async (req) => {
       });
     });
 
-    // 4. Enrich picks with odds and scores
-    const enrichedPicks: EnrichedPick[] = picks.map(pick => {
+    // 4. Enrich picks with odds and scores (using real line enriched data)
+    const enrichedPicks: EnrichedPick[] = enrichedWithRealLines.map(pick => {
       const oddsKey = `${pick.player_name}_${pick.prop_type}`.toLowerCase();
       const odds = oddsMap.get(oddsKey) || { overOdds: -110, underOdds: -110 };
       const side = pick.recommended_side || 'over';
@@ -414,6 +437,10 @@ Deno.serve(async (req) => {
         americanOdds,
         oddsValueScore,
         compositeScore,
+        // Carry forward real line tracking
+        has_real_line: pick.has_real_line,
+        line_source: pick.line_source,
+        line_verified_at: pick.line_verified_at,
       };
     });
 
@@ -504,6 +531,10 @@ Deno.serve(async (req) => {
           odds_improvement: selectedLine.oddsImprovement || 0,
           projection_buffer: (pick.projected_value || 0) - selectedLine.line,
           projected_value: pick.projected_value || 0,
+          // Real line verification
+          line_source: (pick as any).line_source || 'projected',
+          line_verified_at: (pick as any).line_verified_at || null,
+          has_real_line: (pick as any).has_real_line || false,
         });
 
         parlayTeamCount.set(pick.team_name, (parlayTeamCount.get(pick.team_name) || 0) + 1);
@@ -623,6 +654,48 @@ Deno.serve(async (req) => {
 
     console.log(`[Bot] Distribution: ${JSON.stringify(legCounts)}`);
 
+    // 11. Log activity
+    await supabase.from('bot_activity_log').insert({
+      event_type: 'parlays_generated',
+      message: `Generated ${parlaysToCreate.length} parlays for ${targetDate}`,
+      metadata: { 
+        legCounts, 
+        realLinePicks: realLineCount,
+        totalPicks: validPicks.length,
+        realLinePercentage,
+      },
+      severity: 'success',
+    });
+
+    // 12. Send Telegram notification
+    const topPick = parlaysToCreate[0]?.legs[0];
+    const minOdds = Math.min(...parlaysToCreate.map(p => p.expected_odds));
+    const maxOdds = Math.max(...parlaysToCreate.map(p => p.expected_odds));
+    
+    try {
+      await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseKey}`,
+        },
+        body: JSON.stringify({
+          type: 'parlays_generated',
+          data: {
+            count: parlaysToCreate.length,
+            distribution: legCounts,
+            topPick,
+            realLinePercentage,
+            validPicks: validPicks.length,
+            oddsRange: { min: `+${minOdds}`, max: `+${maxOdds}` },
+          },
+        }),
+      });
+      console.log('[Bot] Telegram notification sent');
+    } catch (telegramError) {
+      console.error('[Bot] Telegram notification failed:', telegramError);
+    }
+
     return new Response(
       JSON.stringify({
         success: true,
@@ -632,6 +705,7 @@ Deno.serve(async (req) => {
         totalCandidates: picks.length,
         validPicks: validPicks.length,
         uniquePicksUsed: globalTracker.usedPicks.size,
+        realLinePercentage,
         date: targetDate,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
