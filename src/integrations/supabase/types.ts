@@ -936,6 +936,30 @@ export type Database = {
         }
         Relationships: []
       }
+      bot_conversations: {
+        Row: {
+          content: string
+          created_at: string | null
+          id: string
+          role: string
+          telegram_chat_id: string
+        }
+        Insert: {
+          content: string
+          created_at?: string | null
+          id?: string
+          role: string
+          telegram_chat_id: string
+        }
+        Update: {
+          content?: string
+          created_at?: string | null
+          id?: string
+          role?: string
+          telegram_chat_id?: string
+        }
+        Relationships: []
+      }
       bot_daily_parlays: {
         Row: {
           category_weights_snapshot: Json | null

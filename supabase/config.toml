@@ -389,3 +389,6 @@ verify_jwt = false
 
 [functions.bot-send-telegram]
 verify_jwt = false
+
+[functions.telegram-webhook]
+verify_jwt = false
