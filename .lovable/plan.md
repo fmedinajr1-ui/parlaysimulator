@@ -1,229 +1,237 @@
 
-# Two-Way Telegram Bot Communication
+
+# Multi-Sport Expansion: NHL, Tennis, and Team Props
 
 ## Overview
-Add the ability to chat with ParlayIQ Bot via Telegram - send commands, ask for updates, and give recommendations. The bot will use AI to understand natural language requests and respond with relevant data.
 
----
+You're currently focused on **NBA player props**. This plan expands the platform to support:
 
-## How It Will Work
+1. **NHL player props** (goals, assists, shots on goal, saves)
+2. **Tennis player props** (ATP/WTA - games, aces, double faults)  
+3. **Team/Game props** (spreads, totals, moneylines) for all supported sports
 
-```text
- User sends "start" or "show today's picks"
-              │
-              ▼
-    ┌─────────────────────┐
-    │  Telegram Servers   │
-    └──────────┬──────────┘
-               │ webhook POST
-               ▼
-    ┌─────────────────────────┐
-    │ telegram-webhook (new)  │
-    │  - Parse user message   │
-    │  - Route to handler     │
-    │  - Call AI if needed    │
-    │  - Fetch bot data       │
-    └──────────┬──────────────┘
-               │
-               ▼
-    ┌─────────────────────────┐
-    │    Send reply via       │
-    │    Telegram API         │
-    └─────────────────────────┘
-```
+## Current State
 
----
+Your infrastructure is surprisingly ready for this:
+- The `unified_props` table already supports a `sport` column (currently only `basketball_nba`)
+- The `whale-odds-scraper` already fetches NHL props (`hockey_nhl`)
+- The `whale-signal-detector` already includes `tennis_atp` and `tennis_wta` in its default sports list
+- You have an `nhl-stats-fetcher` that collects NHL player game logs
+- The `AllSportsTracker` component already has tabs for NHL, NFL, MLB, UFC
 
-## User Commands Supported
+## What's Missing
 
-| Command | Description |
-|---------|-------------|
-| `/start` | Welcome message with available commands |
-| `/status` | Current bot mode, bankroll, streak |
-| `/parlays` | Today's generated parlays summary |
-| `/performance` | Win rate, ROI, recent results |
-| `/weights` | Top category weights |
-| `/generate` | Trigger parlay generation |
-| `/settle` | Trigger settlement |
-| Natural language | AI-powered responses to questions like "how did we do yesterday?" or "what's your best pick?" |
+| Gap | Description |
+|-----|-------------|
+| Tennis odds fetching | No scraper currently pulls tennis player props from The Odds API |
+| Team/game props | Only player props are stored - spreads, totals, moneylines aren't captured |
+| NHL/Tennis analysis | No sweet spot or risk engine analysis for non-NBA sports |
+| UI for new props | Dashboards are NBA-focused with hardcoded stat types |
 
 ---
 
 ## Implementation Plan
 
-### Step 1: Create New Edge Function - `telegram-webhook`
+### Phase 1: Data Collection (Backend)
 
-A new edge function to receive incoming Telegram messages:
+**1.1 Extend the Odds Scraper for All Sports + Bet Types**
 
-**File:** `supabase/functions/telegram-webhook/index.ts`
+Update `whale-odds-scraper` to fetch:
+- Tennis player props: `tennis_atp`, `tennis_wta` 
+- Team props: `spreads`, `totals`, `h2h` (moneylines) for NBA, NHL, NFL, NCAAB
 
-```typescript
-import { Bot, webhookCallback } from "https://deno.land/x/grammy@v1.39.3/mod.ts";
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-
-const bot = new Bot(Deno.env.get("TELEGRAM_BOT_TOKEN")!);
-
-// Command handlers
-bot.command("start", async (ctx) => {
-  await ctx.reply(`🤖 *ParlayIQ Bot*\n\nCommands:\n/status - Bot status\n/parlays - Today's picks\n/performance - Stats\n/weights - Category weights\n/generate - Generate parlays\n/settle - Settle & learn\n\nOr just ask me anything!`, { parse_mode: "Markdown" });
-});
-
-bot.command("status", async (ctx) => { /* fetch activation status */ });
-bot.command("parlays", async (ctx) => { /* fetch today's parlays */ });
-bot.command("performance", async (ctx) => { /* fetch win rate, ROI */ });
-bot.command("weights", async (ctx) => { /* fetch top weights */ });
-bot.command("generate", async (ctx) => { /* trigger generation */ });
-bot.command("settle", async (ctx) => { /* trigger settlement */ });
-
-// Natural language via AI
-bot.on("message:text", async (ctx) => {
-  // Use Lovable AI to understand intent and generate response
-});
-
-const handleUpdate = webhookCallback(bot, "std/http");
-Deno.serve(async (req) => {
-  const url = new URL(req.url);
-  const secret = url.searchParams.get("secret");
-  if (secret !== Deno.env.get("FUNCTION_SECRET")) {
-    return new Response("Unauthorized", { status: 401 });
-  }
-  return await handleUpdate(req);
-});
+Add new markets:
+```
+Tennis: player_aces, player_double_faults, player_games_won
+NHL: player_goals, player_assists, player_shots_on_goal, player_saves  
+Team: spreads, totals, h2h
 ```
 
-### Step 2: Add Webhook Secret
+**1.2 Create Team Props Table**
 
-Add a new secret for webhook authentication:
-- `TELEGRAM_WEBHOOK_SECRET` - Random string to verify webhook calls
+New `game_bets` table to store team-level bets:
+- `game_id`, `sport`, `bet_type` (spread/total/moneyline)
+- `home_team`, `away_team`, `line`, `home_odds`, `away_odds`
+- `bookmaker`, `commence_time`
 
-### Step 3: Configure Telegram Webhook URL
+**1.3 Add Tennis Stats Fetcher**
 
-After deployment, set the webhook with Telegram:
-```
-https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://pajakaqphlxoqjtrxzmi.supabase.co/functions/v1/telegram-webhook?secret=<SECRET>
-```
+New edge function `tennis-stats-fetcher` to pull player stats from ESPN Tennis API for historical analysis.
 
-### Step 4: Update config.toml
+---
 
-Add the new function configuration:
-```toml
-[functions.telegram-webhook]
-verify_jwt = false
-```
+### Phase 2: Analysis Engines
 
-### Step 5: Create Conversation History Table (Optional Enhancement)
+**2.1 Multi-Sport Signal Detector**
 
-Store conversation context for better AI responses:
+Extend `whale-signal-detector` to:
+- Process NHL divergence signals (book vs book comparison)
+- Process tennis divergence signals
+- Generate signals for team props (sharp money detection on spreads/totals)
+
+**2.2 Sport-Specific Sweet Spot Categories**
+
+Add new category mappings:
+| Sport | Categories |
+|-------|------------|
+| NHL | `GOAL_SCORER`, `PLAYMAKER`, `SHOT_VOLUME`, `GOALIE_SAVES` |
+| Tennis | `ACE_MACHINE`, `TIGHT_MATCHER`, `SERVICE_HOLD` |
+| Team | `SHARP_SPREAD`, `OVER_TOTAL`, `UNDER_TOTAL`, `ML_UNDERDOG` |
+
+---
+
+### Phase 3: UI Components
+
+**3.1 Universal Props Dashboard**
+
+New `/all-props` page with:
+- Sport selector: NBA | NHL | Tennis | All
+- Bet type tabs: Player Props | Spreads | Totals | Moneylines
+- Unified card display showing confidence scores and signals
+
+**3.2 Team Bets Dashboard**
+
+New `/team-bets` page featuring:
+- Today's game spreads with sharp money indicators
+- Over/Under totals with pace analysis
+- Moneyline value plays with implied probability comparison
+
+**3.3 Enhanced AllSportsTracker**
+
+Add Tennis tab and show bet type breakdown in the existing tracker.
+
+---
+
+### Phase 4: Integration
+
+**4.1 Parlay Builder Support**
+
+Update the universal parlay builder to:
+- Accept team props (spread/total/ML legs)
+- Mix sports in same parlay (NBA player + NHL total)
+- Calculate combined odds correctly
+
+**4.2 Telegram Bot Commands**
+
+New commands:
+- `/nhl` - Today's NHL player props
+- `/tennis` - ATP/WTA picks
+- `/spreads` - Team spread recommendations
+- `/totals` - Over/Under picks
+
+---
+
+## Technical Details
+
+### Database Changes
 
 ```sql
-CREATE TABLE bot_conversations (
+-- New table for team-level bets
+CREATE TABLE game_bets (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  telegram_chat_id TEXT NOT NULL,
-  role TEXT NOT NULL, -- 'user' or 'assistant'
-  content TEXT NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT now()
+  game_id TEXT NOT NULL,
+  sport TEXT NOT NULL,
+  bet_type TEXT NOT NULL, -- 'spread', 'total', 'h2h'
+  home_team TEXT NOT NULL,
+  away_team TEXT NOT NULL,
+  line NUMERIC,
+  home_odds NUMERIC,
+  away_odds NUMERIC,
+  over_odds NUMERIC,
+  under_odds NUMERIC,
+  bookmaker TEXT NOT NULL,
+  commence_time TIMESTAMPTZ NOT NULL,
+  sharp_score NUMERIC,
+  recommended_side TEXT,
+  signal_sources JSONB,
+  is_active BOOLEAN DEFAULT true,
+  outcome TEXT,
+  settled_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(game_id, bet_type, bookmaker)
 );
-CREATE INDEX idx_bot_conversations_chat ON bot_conversations(telegram_chat_id, created_at DESC);
+
+-- Tennis player stats table
+CREATE TABLE tennis_player_stats (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  player_name TEXT NOT NULL,
+  match_date DATE NOT NULL,
+  opponent TEXT,
+  tournament TEXT,
+  surface TEXT, -- hard, clay, grass
+  aces INTEGER,
+  double_faults INTEGER,
+  first_serve_pct NUMERIC,
+  games_won INTEGER,
+  games_lost INTEGER,
+  sets_won INTEGER,
+  sets_lost INTEGER,
+  is_winner BOOLEAN,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(player_name, match_date, opponent)
+);
 ```
 
-### Step 6: AI Integration for Natural Language
+### Edge Functions to Create/Modify
 
-Use Lovable AI (google/gemini-3-flash-preview) to understand user intent:
+| Function | Action |
+|----------|--------|
+| `whale-odds-scraper` | Add tennis sports, add team markets |
+| `tennis-stats-fetcher` | New - fetch ATP/WTA player stats |
+| `multi-sport-analyzer` | New - analyze props across all sports |
+| `team-bet-signal-detector` | New - sharp signals for spreads/totals |
 
-```typescript
-async function handleNaturalLanguage(message: string, chatId: string) {
-  const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${Deno.env.get("LOVABLE_API_KEY")}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "google/gemini-3-flash-preview",
-      messages: [
-        { 
-          role: "system", 
-          content: `You are ParlayIQ Bot, an autonomous betting bot assistant. 
-          You help users check parlay status, performance, and give recommendations.
-          Available data sources: today's parlays, win rate, bankroll, category weights.
-          Keep responses concise for Telegram (under 300 chars when possible).
-          Use Markdown formatting.` 
-        },
-        { role: "user", content: message }
-      ],
-      tools: [
-        { type: "function", function: { name: "get_status", ... }},
-        { type: "function", function: { name: "get_parlays", ... }},
-        { type: "function", function: { name: "get_performance", ... }},
-      ],
-      tool_choice: "auto"
-    }),
-  });
-  // Process response and tool calls
-}
-```
+### API Sport Keys (The Odds API)
 
----
-
-## Files to Create/Modify
-
-| File | Action | Description |
-|------|--------|-------------|
-| `supabase/functions/telegram-webhook/index.ts` | **Create** | New webhook handler for incoming messages |
-| `supabase/config.toml` | **Modify** | Add `telegram-webhook` function config |
-| Database migration | **Create** | Add `bot_conversations` table |
-
----
-
-## Security Considerations
-
-1. **Webhook secret** - Verify all incoming requests with a secret parameter
-2. **Rate limiting** - Limit commands per user to prevent abuse
-3. **Chat ID validation** - Optionally restrict to configured `TELEGRAM_CHAT_ID`
-
----
-
-## Example Conversation
-
-**User:** "how are we doing today?"
-
-**Bot:**
-```
-📊 Today's Status
-
-Mode: Simulation
-Streak: 2 profitable days
-Bankroll: $1,247
-
-Today's Parlays: 8 generated
-• 2 Conservative (3-leg)
-• 3 Balanced (4-leg)
-• 3 Aggressive (6-leg)
-
-82% real lines verified ✓
-```
-
-**User:** "generate new parlays"
-
-**Bot:**
-```
-🎯 Generating parlays...
-
-✅ Created 9 parlays for today
-Distribution:
-• 3-Leg: 2 parlays
-• 4-Leg: 2 parlays
-• 5-Leg: 3 parlays
-• 6-Leg: 2 parlays
-
-View details: /parlays
+```text
+Tennis: tennis_atp_french_open, tennis_wta_us_open, etc.
+NHL: icehockey_nhl
+NFL: americanfootball_nfl
+NCAAB: basketball_ncaab
 ```
 
 ---
 
-## Technical Notes
+## Rollout Sequence
 
-1. **grammY Framework** - Uses the popular Telegram bot framework for Deno, handling message parsing and reply formatting
-2. **Lovable AI** - Powers natural language understanding without requiring additional API keys
-3. **Supabase Integration** - Fetches live data from existing tables (bot_daily_parlays, bot_activation_status, bot_category_weights)
-4. **Activity Logging** - All user interactions logged to `bot_activity_log` for the dashboard feed
+```text
+Week 1: Phase 1 (Data Collection)
+  - Update odds scraper for all sports
+  - Create game_bets table
+  - Start collecting NHL + Tennis props
+
+Week 2: Phase 2 (Analysis)
+  - Extend signal detector
+  - Add sport-specific categories
+  - Build confidence scoring for new sports
+
+Week 3: Phase 3 (UI)
+  - Build All Props dashboard
+  - Build Team Bets dashboard
+  - Update tracker
+
+Week 4: Phase 4 (Integration)
+  - Parlay builder updates
+  - Telegram commands
+  - Testing and refinement
+```
+
+---
+
+## Risk Considerations
+
+- **API Usage**: Tennis has many tournaments - The Odds API calls will increase significantly
+- **Data Quality**: Tennis player name matching is harder (accents, transliterations)
+- **Analysis Accuracy**: No historical data yet for NHL/Tennis to calibrate models
+- **PrizePicks Coverage**: PP may not offer all the sports/markets you want
+
+## Recommendation
+
+Start with **NHL player props** first since you already have:
+- Stats fetcher working (`nhl-stats-fetcher`)
+- Odds scraper configured (`whale-odds-scraper` includes `hockey_nhl`)
+- Basic UI support in `AllSportsTracker`
+
+Then expand to Tennis and Team props in subsequent phases.
+
