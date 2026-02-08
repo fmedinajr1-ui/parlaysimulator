@@ -1,9 +1,16 @@
 /**
- * bot-settle-and-learn
+ * bot-settle-and-learn (v2 - Calibration Integration)
  * 
  * Settles yesterday's parlays, updates category weights based on outcomes,
- * and tracks activation progress.
- * Runs at 6 AM ET daily via cron.
+ * syncs weights from category_sweet_spots verified outcomes, and tracks activation progress.
+ * 
+ * Now includes:
+ * - Direct sync from category_sweet_spots settled outcomes (last 24h)
+ * - Streak-based weight adjustments for bot parlay legs
+ * - Auto-blocking for underperforming categories
+ * - Triggers calibrate-bot-weights after processing
+ * 
+ * Runs 3x daily via cron (6 AM, 12 PM, 6 PM ET).
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -21,6 +28,11 @@ const WEIGHT_PENALTY_STREAK = 0.01;
 const MIN_WEIGHT = 0.5;
 const MAX_WEIGHT = 1.5;
 
+// Blocking thresholds
+const BLOCK_STREAK_THRESHOLD = -5; // Block after 5 consecutive misses
+const BLOCK_HIT_RATE_THRESHOLD = 35; // Block if hit rate drops below 35%
+const BLOCK_MIN_SAMPLES = 20;
+
 interface BotLeg {
   id: string;
   player_name: string;
@@ -35,11 +47,18 @@ interface BotLeg {
   actual_value?: number;
 }
 
+interface RecentOutcome {
+  category: string;
+  recommended_side: string;
+  outcome: string;
+  settled_at: string;
+}
+
 function adjustWeight(
   currentWeight: number,
   hit: boolean,
   currentStreak: number
-): { newWeight: number; blocked: boolean; newStreak: number } {
+): { newWeight: number; blocked: boolean; newStreak: number; blockReason?: string } {
   let newStreak = currentStreak;
   
   if (hit) {
@@ -56,8 +75,23 @@ function adjustWeight(
     const penalty = WEIGHT_PENALTY_BASE + ((absStreak - 1) * WEIGHT_PENALTY_STREAK);
     const newWeight = currentWeight - penalty;
     
+    // Check streak-based blocking
+    if (newStreak <= BLOCK_STREAK_THRESHOLD) {
+      return { 
+        newWeight: 0, 
+        blocked: true, 
+        newStreak,
+        blockReason: `${absStreak} consecutive misses`,
+      };
+    }
+    
     if (newWeight < MIN_WEIGHT) {
-      return { newWeight: 0, blocked: true, newStreak };
+      return { 
+        newWeight: 0, 
+        blocked: true, 
+        newStreak,
+        blockReason: 'Weight dropped below minimum threshold',
+      };
     }
     return { newWeight: Math.max(newWeight, MIN_WEIGHT), blocked: false, newStreak };
   }
@@ -336,10 +370,128 @@ Deno.serve(async (req) => {
 
     console.log(`[Bot Settle] Complete. P/L: $${totalProfitLoss}, Consecutive: ${newConsecutive}`);
 
-    // 7. Log activity
+    // 7. Sync weights from recently settled category_sweet_spots (last 24h)
+    // This provides continuous learning from verified outcomes beyond bot parlays
+    let sweetSpotSynced = 0;
+    try {
+      const yesterday24h = new Date();
+      yesterday24h.setHours(yesterday24h.getHours() - 24);
+      
+      const { data: recentOutcomes, error: recentError } = await supabase
+        .from('category_sweet_spots')
+        .select('category, recommended_side, outcome, settled_at')
+        .gte('settled_at', yesterday24h.toISOString())
+        .not('outcome', 'is', null);
+
+      if (!recentError && recentOutcomes && recentOutcomes.length > 0) {
+        // Group by category+side
+        const outcomeMap = new Map<string, { hits: number; misses: number }>();
+        
+        for (const outcome of recentOutcomes as RecentOutcome[]) {
+          const key = `${outcome.category}__${outcome.recommended_side || 'over'}`;
+          let stats = outcomeMap.get(key);
+          if (!stats) {
+            stats = { hits: 0, misses: 0 };
+            outcomeMap.set(key, stats);
+          }
+          
+          if (outcome.outcome === 'hit') {
+            stats.hits++;
+          } else if (outcome.outcome === 'miss') {
+            stats.misses++;
+          }
+        }
+
+        // Apply incremental learning to each category
+        for (const [key, stats] of outcomeMap) {
+          const [category, side] = key.split('__');
+          
+          const { data: existingWeight } = await supabase
+            .from('bot_category_weights')
+            .select('*')
+            .eq('category', category)
+            .eq('side', side)
+            .maybeSingle();
+
+          if (existingWeight && !existingWeight.is_blocked) {
+            let currentWeight = existingWeight.weight || 1.0;
+            let currentStreak = existingWeight.current_streak || 0;
+            let blocked = false;
+            let blockReason: string | null = null;
+
+            // Apply learning for hits first, then misses
+            for (let i = 0; i < stats.hits; i++) {
+              const result = adjustWeight(currentWeight, true, currentStreak);
+              currentWeight = result.newWeight;
+              currentStreak = result.newStreak;
+            }
+
+            for (let i = 0; i < stats.misses; i++) {
+              const result = adjustWeight(currentWeight, false, currentStreak);
+              currentWeight = result.newWeight;
+              currentStreak = result.newStreak;
+              if (result.blocked) {
+                blocked = true;
+                blockReason = result.blockReason || 'Weight dropped below threshold';
+              }
+            }
+
+            // Check hit rate blocking
+            const newTotalPicks = (existingWeight.total_picks || 0) + stats.hits + stats.misses;
+            const newTotalHits = (existingWeight.total_hits || 0) + stats.hits;
+            const newHitRate = newTotalPicks > 0 ? (newTotalHits / newTotalPicks) * 100 : 0;
+
+            if (newTotalPicks >= BLOCK_MIN_SAMPLES && newHitRate < BLOCK_HIT_RATE_THRESHOLD) {
+              blocked = true;
+              blockReason = `Hit rate ${newHitRate.toFixed(1)}% below ${BLOCK_HIT_RATE_THRESHOLD}% with ${newTotalPicks} samples`;
+              currentWeight = 0;
+            }
+
+            await supabase
+              .from('bot_category_weights')
+              .update({
+                weight: currentWeight,
+                is_blocked: blocked,
+                block_reason: blockReason,
+                current_streak: currentStreak,
+                best_streak: Math.max(existingWeight.best_streak || 0, currentStreak > 0 ? currentStreak : 0),
+                worst_streak: Math.min(existingWeight.worst_streak || 0, currentStreak < 0 ? currentStreak : 0),
+                total_picks: newTotalPicks,
+                total_hits: newTotalHits,
+                current_hit_rate: newHitRate,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', existingWeight.id);
+
+            sweetSpotSynced++;
+          }
+        }
+        
+        console.log(`[Bot Settle] Synced ${sweetSpotSynced} categories from ${recentOutcomes.length} sweet spot outcomes`);
+      }
+    } catch (syncError) {
+      console.error('[Bot Settle] Sweet spot sync error:', syncError);
+    }
+
+    // 8. Trigger calibration function for full recalculation
+    try {
+      await fetch(`${supabaseUrl}/functions/v1/calibrate-bot-weights`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseKey}`,
+        },
+        body: JSON.stringify({ fullRebuild: false }),
+      });
+      console.log('[Bot Settle] Calibration triggered');
+    } catch (calibrateError) {
+      console.error('[Bot Settle] Calibration trigger failed:', calibrateError);
+    }
+
+    // 9. Log activity
     await supabase.from('bot_activity_log').insert({
       event_type: 'settlement_complete',
-      message: `Settled ${parlaysSettled} parlays: ${parlaysWon}W ${parlaysLost}L`,
+      message: `Settled ${parlaysSettled} parlays: ${parlaysWon}W ${parlaysLost}L | Synced ${sweetSpotSynced} categories`,
       metadata: { 
         parlaysWon,
         parlaysLost,
@@ -347,11 +499,17 @@ Deno.serve(async (req) => {
         consecutiveDays: newConsecutive,
         isRealModeReady,
         newBankroll,
+        sweetSpotSynced,
+        categoryUpdates: Array.from(categoryUpdates.entries()).map(([cat, stats]) => ({
+          category: cat,
+          hits: stats.hits,
+          misses: stats.misses,
+        })),
       },
       severity: isProfitableDay ? 'success' : 'warning',
     });
 
-    // 8. Send Telegram notification
+    // 10. Send Telegram notification
     try {
       await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
         method: 'POST',
@@ -368,6 +526,7 @@ Deno.serve(async (req) => {
             consecutiveDays: newConsecutive,
             bankroll: newBankroll,
             isRealModeReady,
+            sweetSpotSynced,
             winRate: parlaysWon + parlaysLost > 0 
               ? Math.round((parlaysWon / (parlaysWon + parlaysLost)) * 100) 
               : 0,
@@ -390,6 +549,7 @@ Deno.serve(async (req) => {
         consecutiveProfitDays: newConsecutive,
         isRealModeReady,
         newBankroll,
+        sweetSpotSynced,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

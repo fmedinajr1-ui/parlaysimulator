@@ -895,6 +895,7 @@ export type Database = {
           current_streak: number | null
           id: string
           is_blocked: boolean | null
+          last_calibrated_at: string | null
           side: string
           sport: string | null
           total_hits: number | null
@@ -912,6 +913,7 @@ export type Database = {
           current_streak?: number | null
           id?: string
           is_blocked?: boolean | null
+          last_calibrated_at?: string | null
           side?: string
           sport?: string | null
           total_hits?: number | null
@@ -929,6 +931,7 @@ export type Database = {
           current_streak?: number | null
           id?: string
           is_blocked?: boolean | null
+          last_calibrated_at?: string | null
           side?: string
           sport?: string | null
           total_hits?: number | null
