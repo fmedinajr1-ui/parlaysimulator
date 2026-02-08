@@ -6,6 +6,30 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// All supported sports including Tennis and NFL
+const ALL_SPORTS = [
+  'basketball_nba', 
+  'hockey_nhl', 
+  'basketball_wnba', 
+  'tennis_atp', 
+  'tennis_wta',
+  'americanfootball_nfl',
+  'basketball_ncaab',
+  'americanfootball_ncaaf',
+];
+
+// Sport-specific signal thresholds
+const SPORT_THRESHOLDS: Record<string, { minDivergence: number; minScore: number }> = {
+  'basketball_nba': { minDivergence: 0.5, minScore: 50 },
+  'hockey_nhl': { minDivergence: 0.3, minScore: 45 },
+  'tennis_atp': { minDivergence: 0.5, minScore: 50 },
+  'tennis_wta': { minDivergence: 0.5, minScore: 50 },
+  'americanfootball_nfl': { minDivergence: 1.0, minScore: 50 },
+  'basketball_wnba': { minDivergence: 0.5, minScore: 50 },
+  'basketball_ncaab': { minDivergence: 1.0, minScore: 50 },
+  'americanfootball_ncaaf': { minDivergence: 1.5, minScore: 50 },
+};
+
 interface PPSnapshot {
   id: string;
   player_name: string;
@@ -29,6 +53,22 @@ interface UnifiedProp {
   event_id: string;
   bookmaker: string;
   game_description: string;
+  commence_time: string;
+}
+
+interface GameBet {
+  id: string;
+  game_id: string;
+  sport: string;
+  bet_type: string;
+  home_team: string;
+  away_team: string;
+  line: number | null;
+  home_odds: number | null;
+  away_odds: number | null;
+  over_odds: number | null;
+  under_odds: number | null;
+  bookmaker: string;
   commence_time: string;
 }
 
@@ -65,6 +105,62 @@ function getRecommendedSide(ppLine: number, bookConsensus: number): string {
   return ppLine < bookConsensus ? 'OVER' : 'UNDER';
 }
 
+// Calculate sharp money signal for team props (spreads, totals)
+function calculateTeamSharpScore(
+  lines: number[],
+  homeOdds: number[],
+  awayOdds: number[],
+  betType: string
+): { sharpScore: number; recommendedSide: string; whyShort: string[] } {
+  const whyShort: string[] = [];
+  let sharpScore = 40; // Base score
+  
+  // Check line divergence
+  if (lines.length >= 2) {
+    const spread = Math.max(...lines) - Math.min(...lines);
+    if (spread >= 0.5) {
+      sharpScore += Math.min(25, spread * 15);
+      whyShort.push(`${spread.toFixed(1)} pt line divergence`);
+    }
+  }
+  
+  // Check odds movement (sharp money indicator)
+  // If one side has significantly better odds across books, sharps may be on it
+  const validHomeOdds = homeOdds.filter(o => o != null && !isNaN(o));
+  const validAwayOdds = awayOdds.filter(o => o != null && !isNaN(o));
+  
+  let recommendedSide = 'AWAY';
+  
+  if (validHomeOdds.length >= 2 && validAwayOdds.length >= 2) {
+    const avgHome = validHomeOdds.reduce((a, b) => a + b, 0) / validHomeOdds.length;
+    const avgAway = validAwayOdds.reduce((a, b) => a + b, 0) / validAwayOdds.length;
+    
+    // Odds divergence indicates sharp action
+    const oddsDiff = Math.abs(avgHome - avgAway);
+    if (oddsDiff >= 10) {
+      sharpScore += Math.min(20, oddsDiff / 2);
+      whyShort.push('Odds divergence detected');
+    }
+    
+    // Recommend the side with worse (more negative or less positive) odds - that's where sharps are
+    if (betType === 'spread') {
+      recommendedSide = avgHome < avgAway ? 'HOME' : 'AWAY';
+    } else if (betType === 'total') {
+      recommendedSide = avgHome < avgAway ? 'OVER' : 'UNDER';
+    } else {
+      recommendedSide = avgHome < avgAway ? 'HOME' : 'AWAY';
+    }
+  }
+  
+  // Volume bonus
+  if (lines.length >= 3) {
+    sharpScore += 10;
+    whyShort.push(`${lines.length} books tracked`);
+  }
+  
+  return { sharpScore: Math.round(sharpScore), recommendedSide, whyShort };
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -75,51 +171,19 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, supabaseKey);
 
   try {
-    const { sports = ['basketball_nba', 'hockey_nhl', 'basketball_wnba', 'tennis_atp', 'tennis_wta'] } = await req.json().catch(() => ({}));
+    const { 
+      sports = ALL_SPORTS,
+      include_player_props = true,
+      include_team_props = true
+    } = await req.json().catch(() => ({}));
     
-    console.log('[Whale Detector] Starting signal detection for sports:', sports);
+    console.log('[Whale Detector] Starting multi-sport signal detection for:', sports);
+    console.log('[Whale Detector] Player props:', include_player_props, 'Team props:', include_team_props);
     
     const now = new Date();
     const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
     const fifteenMinutesAgo = new Date(now.getTime() - 15 * 60 * 1000);
     
-    // Get fresh PP snapshots (last 5 minutes)
-    const { data: ppSnapshots, error: ppError } = await supabase
-      .from('pp_snapshot')
-      .select('*')
-      .in('sport', sports)
-      .gte('captured_at', fiveMinutesAgo.toISOString())
-      .gt('start_time', now.toISOString())
-      .order('captured_at', { ascending: false });
-
-    if (ppError) {
-      console.error('[Whale Detector] PP snapshot fetch error:', ppError);
-      throw new Error(`Failed to fetch PP snapshots: ${ppError.message}`);
-    }
-
-    const snapshots = (ppSnapshots || []) as PPSnapshot[];
-    // Filter out placeholder names
-    const realSnapshots = snapshots.filter(s => 
-      !s.player_name.toLowerCase().startsWith('player ') &&
-      s.player_name.split(' ').length >= 2
-    );
-    console.log('[Whale Detector] Found', snapshots.length, 'PP snapshots,', realSnapshots.length, 'real ones');
-
-    // ALWAYS check book-to-book divergence (primary signal source)
-    console.log('[Whale Detector] Checking book-to-book divergence...');
-    
-    const { data: bookDivergenceData } = await supabase
-      .from('unified_props')
-      .select('*')
-      .in('sport', sports)
-      .gt('commence_time', now.toISOString())
-      .order('commence_time', { ascending: true })
-      .limit(500);
-    
-    const bookDivergence = bookDivergenceData || [];
-    console.log('[Whale Detector] Found', bookDivergence.length, 'book props for divergence analysis');
-    
-    // Generate book divergence signals
     const divergenceSignals: Array<{
       market_key: string;
       player_name: string;
@@ -144,179 +208,118 @@ serve(async (req) => {
       why_short: string[];
     }> = [];
 
-    if (bookDivergence.length > 0) {
-      // Group by player + prop_type
-      const playerMap = new Map<string, any[]>();
-      for (const prop of bookDivergence as any[]) {
-        const key = `${prop.player_name}_${prop.prop_type}`;
-        if (!playerMap.has(key)) {
-          playerMap.set(key, []);
-        }
-        playerMap.get(key)!.push(prop);
+    // ========== PLAYER PROPS DIVERGENCE ==========
+    if (include_player_props) {
+      // Get fresh PP snapshots (last 5 minutes)
+      const { data: ppSnapshots, error: ppError } = await supabase
+        .from('pp_snapshot')
+        .select('*')
+        .in('sport', sports)
+        .gte('captured_at', fiveMinutesAgo.toISOString())
+        .gt('start_time', now.toISOString())
+        .order('captured_at', { ascending: false });
+
+      if (ppError) {
+        console.error('[Whale Detector] PP snapshot fetch error:', ppError);
       }
 
-      // Find props where bookmakers disagree by >= 0.5 points
-      for (const [key, props] of playerMap) {
-        if (props.length < 2) continue;
-        
-        const lines = props.map((p: any) => p.current_line).filter((l: number) => l != null && !isNaN(l));
-        if (lines.length < 2) continue;
-        
-        const spread = Math.max(...lines) - Math.min(...lines);
-        
-        if (spread >= 0.5) {
-          const avgLine = lines.reduce((a: number, b: number) => a + b, 0) / lines.length;
-          const minLine = Math.min(...lines);
-          
-          // Enhanced scoring with volume bonus
-          const divergencePts = Math.min(40, spread * 12);
-          const volumeBonus = Math.min(15, (props.length - 2) * 5);
-          const sharpScore = 50 + divergencePts + volumeBonus;
-          
-          const confidenceGrade = sharpScore >= 80 ? 'A' : sharpScore >= 65 ? 'B' : 'C';
-          const firstProp = props[0];
-          const startTime = new Date(firstProp.commence_time);
-          const expiresAt = new Date(startTime.getTime() - 5 * 60 * 1000);
-          
-          const whyShort = [`${spread.toFixed(1)} pt book divergence`, `${props.length} books disagree`];
-          if (volumeBonus > 0) whyShort.push('High volume');
-          
-          divergenceSignals.push({
-            market_key: `divergence_${firstProp.sport}_${firstProp.player_name}_${firstProp.prop_type}`,
-            player_name: firstProp.player_name,
-            stat_type: firstProp.prop_type,
-            sport: firstProp.sport,
-            pp_line: avgLine,
-            book_consensus: avgLine,
-            sharp_score: Math.round(sharpScore),
-            confidence_grade: confidenceGrade,
-            confidence: confidenceGrade,
-            divergence_pts: Math.round(divergencePts),
-            move_speed_pts: 0,
-            confirmation_pts: 0,
-            board_behavior_pts: 0,
-            recommended_side: minLine < avgLine ? 'OVER' : 'UNDER',
-            pick_side: minLine < avgLine ? 'OVER' : 'UNDER',
-            matchup: firstProp.game_description || 'TBD',
-            start_time: firstProp.commence_time,
-            expires_at: expiresAt.toISOString(),
-            created_at: now.toISOString(),
-            signal_type: 'book_divergence',
-            why_short: whyShort,
-          });
-        }
-      }
-      
-      console.log('[Whale Detector] Generated', divergenceSignals.length, 'book divergence signals');
-      
-      if (divergenceSignals.length > 0) {
-        // Delete old divergence signals and insert new ones
-        await supabase
-          .from('whale_picks')
-          .delete()
-          .eq('signal_type', 'book_divergence');
-        
-        const { error: insertError } = await supabase
-          .from('whale_picks')
-          .insert(divergenceSignals);
-
-        if (insertError) {
-          console.error('[Whale Detector] Divergence insert error:', insertError);
-        } else {
-          console.log('[Whale Detector] Inserted', divergenceSignals.length, 'divergence signals');
-        }
-      }
-    }
-
-    // If we have no real PP snapshots, return now with divergence results
-    if (realSnapshots.length === 0) {
-      await supabase.from('cron_job_history').insert({
-        job_name: 'whale-signal-detector',
-        status: 'completed',
-        started_at: now.toISOString(),
-        completed_at: new Date().toISOString(),
-        result: {
-          divergenceSignalsGenerated: divergenceSignals.length,
-          ppSnapshotsProcessed: 0,
-          source: 'book_divergence_only',
-        }
-      });
-
-      return new Response(
-        JSON.stringify({
-          success: true,
-          signalsGenerated: divergenceSignals.length,
-          ppSnapshotsProcessed: 0,
-          source: 'book_divergence',
-          sampleSignals: divergenceSignals.slice(0, 3).map(s => ({
-            player: s.player_name,
-            stat: s.stat_type,
-            divergence: s.divergence_pts,
-            grade: s.confidence_grade,
-          })),
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      const snapshots = (ppSnapshots || []) as PPSnapshot[];
+      const realSnapshots = snapshots.filter(s => 
+        !s.player_name.toLowerCase().startsWith('player ') &&
+        s.player_name.split(' ').length >= 2
       );
-    }
+      console.log('[Whale Detector] Found', snapshots.length, 'PP snapshots,', realSnapshots.length, 'real ones');
 
-    // Process PP snapshots if we have real ones
-    const playerNames = [...new Set(realSnapshots.map((p) => p.player_name))];
-    
-    const { data: bookProps, error: bookError } = await supabase
-      .from('unified_props')
-      .select('*')
-      .in('player_name', playerNames)
-      .in('sport', sports)
-      .gt('commence_time', now.toISOString());
-
-    if (bookError) {
-      console.error('[Whale Detector] Book props fetch error:', bookError);
-    }
-
-    const books = (bookProps || []) as UnifiedProp[];
-    console.log('[Whale Detector] Found', books.length, 'book props for PP matching');
-
-    // Build consensus map
-    const consensusMap = new Map<string, { avgLine: number; lines: number[]; matchup: string; startTime: string }>();
-    
-    for (const prop of books) {
-      const statType = prop.prop_type.replace('player_', '');
-      const key = `${prop.player_name.toLowerCase()}_${statType}`;
+      // Book-to-book divergence for player props
+      console.log('[Whale Detector] Checking book-to-book divergence...');
       
-      if (!consensusMap.has(key)) {
-        consensusMap.set(key, {
-          avgLine: prop.current_line,
-          lines: [prop.current_line],
-          matchup: prop.game_description || 'TBD',
-          startTime: prop.commence_time,
-        });
-      } else {
-        const existing = consensusMap.get(key)!;
-        existing.lines.push(prop.current_line);
-        existing.avgLine = existing.lines.reduce((a, b) => a + b, 0) / existing.lines.length;
+      const { data: bookDivergenceData } = await supabase
+        .from('unified_props')
+        .select('*')
+        .in('sport', sports)
+        .gt('commence_time', now.toISOString())
+        .eq('is_active', true)
+        .order('commence_time', { ascending: true })
+        .limit(1000);
+      
+      const bookDivergence = bookDivergenceData || [];
+      console.log('[Whale Detector] Found', bookDivergence.length, 'book props for divergence analysis');
+      
+      if (bookDivergence.length > 0) {
+        // Group by player + prop_type
+        const playerMap = new Map<string, any[]>();
+        for (const prop of bookDivergence as any[]) {
+          const key = `${prop.player_name}_${prop.prop_type}`;
+          if (!playerMap.has(key)) {
+            playerMap.set(key, []);
+          }
+          playerMap.get(key)!.push(prop);
+        }
+
+        // Find props where bookmakers disagree
+        for (const [key, props] of playerMap) {
+          if (props.length < 2) continue;
+          
+          const lines = props.map((p: any) => p.current_line).filter((l: number) => l != null && !isNaN(l));
+          if (lines.length < 2) continue;
+          
+          const sport = props[0].sport;
+          const threshold = SPORT_THRESHOLDS[sport] || SPORT_THRESHOLDS['basketball_nba'];
+          const spread = Math.max(...lines) - Math.min(...lines);
+          
+          if (spread >= threshold.minDivergence) {
+            const avgLine = lines.reduce((a: number, b: number) => a + b, 0) / lines.length;
+            const minLine = Math.min(...lines);
+            
+            // Enhanced scoring with volume bonus
+            const divergencePts = Math.min(40, spread * 12);
+            const volumeBonus = Math.min(15, (props.length - 2) * 5);
+            const sharpScore = 50 + divergencePts + volumeBonus;
+            
+            if (sharpScore < threshold.minScore) continue;
+            
+            const confidenceGrade = sharpScore >= 80 ? 'A' : sharpScore >= 65 ? 'B' : 'C';
+            const firstProp = props[0];
+            const startTime = new Date(firstProp.commence_time);
+            const expiresAt = new Date(startTime.getTime() - 5 * 60 * 1000);
+            
+            const whyShort = [`${spread.toFixed(1)} pt book divergence`, `${props.length} books disagree`];
+            if (volumeBonus > 0) whyShort.push('High volume');
+            
+            divergenceSignals.push({
+              market_key: `divergence_${firstProp.sport}_${firstProp.player_name}_${firstProp.prop_type}`,
+              player_name: firstProp.player_name,
+              stat_type: firstProp.prop_type,
+              sport: firstProp.sport,
+              pp_line: avgLine,
+              book_consensus: avgLine,
+              sharp_score: Math.round(sharpScore),
+              confidence_grade: confidenceGrade,
+              confidence: confidenceGrade,
+              divergence_pts: Math.round(divergencePts),
+              move_speed_pts: 0,
+              confirmation_pts: 0,
+              board_behavior_pts: 0,
+              recommended_side: minLine < avgLine ? 'OVER' : 'UNDER',
+              pick_side: minLine < avgLine ? 'OVER' : 'UNDER',
+              matchup: firstProp.game_description || 'TBD',
+              start_time: firstProp.commence_time,
+              expires_at: expiresAt.toISOString(),
+              created_at: now.toISOString(),
+              signal_type: 'book_divergence',
+              why_short: whyShort,
+            });
+          }
+        }
+        
+        console.log('[Whale Detector] Generated', divergenceSignals.length, 'player prop divergence signals');
       }
     }
 
-    // Get existing whale picks for deduplication
-    const { data: existingPicks } = await supabase
-      .from('whale_picks')
-      .select('market_key, sharp_score, created_at')
-      .gte('created_at', fifteenMinutesAgo.toISOString());
-
-    const existingPickMap = new Map<string, { score: number; createdAt: string }>();
-    if (existingPicks && Array.isArray(existingPicks)) {
-      for (const pick of existingPicks as { market_key: string; sharp_score: number; created_at: string }[]) {
-        existingPickMap.set(pick.market_key, {
-          score: pick.sharp_score,
-          createdAt: pick.created_at,
-        });
-      }
-    }
-
-    // Generate PP divergence signals
-    const newPicks: Array<{
+    // ========== TEAM PROPS (Spreads, Totals, Moneylines) ==========
+    const teamSignals: Array<{
       market_key: string;
-      player_name: string;
+      player_name: string; // Will be team matchup
       stat_type: string;
       sport: string;
       pp_line: number;
@@ -338,102 +341,106 @@ serve(async (req) => {
       why_short: string[];
     }> = [];
     
-    const processedKeys = new Set<string>();
-
-    for (const ppProp of realSnapshots) {
-      try {
-        const statType = ppProp.stat_type.replace('player_', '');
-        const lookupKey = `${ppProp.player_name.toLowerCase()}_${statType}`;
-        const marketKey = ppProp.market_key || `${ppProp.sport}_${ppProp.player_name}_${ppProp.stat_type}`;
-
-        if (processedKeys.has(marketKey)) continue;
-        processedKeys.add(marketKey);
-
-        // Find book consensus
-        let consensus = consensusMap.get(lookupKey);
-        
-        if (!consensus) {
-          const lastName = ppProp.player_name.toLowerCase().split(' ').pop() || '';
-          for (const [key, value] of consensusMap.entries()) {
-            if (key.includes(lastName) && key.includes(statType)) {
-              consensus = value;
-              break;
-            }
+    if (include_team_props) {
+      console.log('[Whale Detector] Checking team props for sharp signals...');
+      
+      const { data: teamBets } = await supabase
+        .from('game_bets')
+        .select('*')
+        .in('sport', sports)
+        .gt('commence_time', now.toISOString())
+        .eq('is_active', true)
+        .order('commence_time', { ascending: true })
+        .limit(500);
+      
+      const bets = (teamBets || []) as GameBet[];
+      console.log('[Whale Detector] Found', bets.length, 'team bets to analyze');
+      
+      if (bets.length > 0) {
+        // Group by game + bet_type
+        const gameMap = new Map<string, GameBet[]>();
+        for (const bet of bets) {
+          const key = `${bet.game_id}_${bet.bet_type}`;
+          if (!gameMap.has(key)) {
+            gameMap.set(key, []);
           }
+          gameMap.get(key)!.push(bet);
         }
-
-        if (!consensus) continue;
-
-        const bookConsensus = consensus.avgLine;
-        if (bookConsensus === 0) continue;
-
-        // Calculate SharpScore components
-        const divergencePts = calculateDivergence(ppProp.pp_line, bookConsensus);
-        const capturedAt = new Date(ppProp.captured_at);
-        const minutesSinceChange = (now.getTime() - capturedAt.getTime()) / 60000;
-        const moveSpeedPts = calculateMoveSpeed(ppProp.pp_line, ppProp.previous_line, minutesSinceChange);
-        const confirmationPts = calculateConfirmation(ppProp.pp_line, consensus.lines);
-        const boardBehaviorPts = ppProp.previous_line ? 10 : 0;
-
-        const sharpScore = Math.round(25 + divergencePts + moveSpeedPts + confirmationPts + boardBehaviorPts);
         
-        if (sharpScore < 50) continue;
-
-        const confidenceGrade = getConfidenceGrade(sharpScore);
+        for (const [key, gameBets] of gameMap) {
+          if (gameBets.length < 2) continue;
+          
+          const sport = gameBets[0].sport;
+          const betType = gameBets[0].bet_type;
+          const threshold = SPORT_THRESHOLDS[sport] || SPORT_THRESHOLDS['basketball_nba'];
+          
+          const lines = gameBets.map(b => b.line).filter((l): l is number => l != null && !isNaN(l));
+          const homeOdds = gameBets.map(b => b.home_odds || b.over_odds).filter((o): o is number => o != null);
+          const awayOdds = gameBets.map(b => b.away_odds || b.under_odds).filter((o): o is number => o != null);
+          
+          const { sharpScore, recommendedSide, whyShort } = calculateTeamSharpScore(
+            lines, homeOdds, awayOdds, betType
+          );
+          
+          if (sharpScore < threshold.minScore) continue;
+          
+          const firstBet = gameBets[0];
+          const avgLine = lines.length > 0 ? lines.reduce((a, b) => a + b, 0) / lines.length : 0;
+          const startTime = new Date(firstBet.commence_time);
+          const expiresAt = new Date(startTime.getTime() - 5 * 60 * 1000);
+          const confidenceGrade = sharpScore >= 80 ? 'A' : sharpScore >= 65 ? 'B' : 'C';
+          const matchup = `${firstBet.away_team} @ ${firstBet.home_team}`;
+          
+          const signalType = betType === 'spread' ? 'sharp_spread' : 
+                            betType === 'total' ? 'sharp_total' : 'sharp_moneyline';
+          
+          teamSignals.push({
+            market_key: `team_${firstBet.sport}_${firstBet.game_id}_${betType}`,
+            player_name: matchup, // Use matchup as "player" for team bets
+            stat_type: betType,
+            sport: firstBet.sport,
+            pp_line: avgLine,
+            book_consensus: avgLine,
+            sharp_score: sharpScore,
+            confidence_grade: confidenceGrade,
+            confidence: confidenceGrade,
+            divergence_pts: Math.round(sharpScore - 40),
+            move_speed_pts: 0,
+            confirmation_pts: 0,
+            board_behavior_pts: 0,
+            recommended_side: recommendedSide,
+            pick_side: recommendedSide,
+            matchup,
+            start_time: firstBet.commence_time,
+            expires_at: expiresAt.toISOString(),
+            created_at: now.toISOString(),
+            signal_type: signalType,
+            why_short: whyShort,
+          });
+        }
         
-        const existing = existingPickMap.get(marketKey);
-        if (existing && sharpScore - existing.score < 15) continue;
-
-        const startTime = new Date(ppProp.start_time);
-        const expiresAt = new Date(startTime.getTime() - 5 * 60 * 1000);
-
-        const recommendedSide = getRecommendedSide(ppProp.pp_line, bookConsensus);
-        
-        const whyShort: string[] = [];
-        if (divergencePts >= 20) whyShort.push(`${(ppProp.pp_line - bookConsensus).toFixed(1)} pt divergence`);
-        if (moveSpeedPts >= 10) whyShort.push('Fast line movement');
-        if (confirmationPts >= 10) whyShort.push('Books confirming');
-        if (boardBehaviorPts > 0) whyShort.push('Line relisted');
-
-        newPicks.push({
-          market_key: marketKey,
-          player_name: ppProp.player_name,
-          stat_type: ppProp.stat_type,
-          sport: ppProp.sport,
-          pp_line: ppProp.pp_line,
-          book_consensus: bookConsensus,
-          sharp_score: sharpScore,
-          confidence_grade: confidenceGrade,
-          confidence: confidenceGrade,
-          divergence_pts: divergencePts,
-          move_speed_pts: moveSpeedPts,
-          confirmation_pts: confirmationPts,
-          board_behavior_pts: boardBehaviorPts,
-          recommended_side: recommendedSide,
-          pick_side: recommendedSide,
-          matchup: consensus.matchup,
-          start_time: ppProp.start_time,
-          expires_at: expiresAt.toISOString(),
-          created_at: now.toISOString(),
-          signal_type: 'pp_divergence',
-          why_short: whyShort,
-        });
-        
-      } catch (propError) {
-        console.error('[Whale Detector] Error processing prop:', propError);
+        console.log('[Whale Detector] Generated', teamSignals.length, 'team prop sharp signals');
       }
     }
-
-    console.log('[Whale Detector] Generated', newPicks.length, 'PP divergence signals');
-
-    if (newPicks.length > 0) {
+    
+    const allSignals = [...divergenceSignals, ...teamSignals];
+    
+    // Insert all signals
+    if (allSignals.length > 0) {
+      // Delete old signals first
+      await supabase
+        .from('whale_picks')
+        .delete()
+        .in('signal_type', ['book_divergence', 'sharp_spread', 'sharp_total', 'sharp_moneyline']);
+      
       const { error: insertError } = await supabase
         .from('whale_picks')
-        .upsert(newPicks, { onConflict: 'market_key' });
+        .insert(allSignals);
 
       if (insertError) {
         console.error('[Whale Detector] Insert error:', insertError);
-        throw new Error(`Failed to insert picks: ${insertError.message}`);
+      } else {
+        console.log('[Whale Detector] Inserted', allSignals.length, 'total signals');
       }
     }
 
@@ -443,6 +450,24 @@ serve(async (req) => {
       .delete()
       .lt('expires_at', now.toISOString());
 
+    // Update game_bets with sharp scores
+    if (teamSignals.length > 0) {
+      for (const signal of teamSignals) {
+        const gameId = signal.market_key.split('_')[2]; // Extract game_id
+        const betType = signal.stat_type;
+        
+        await supabase
+          .from('game_bets')
+          .update({ 
+            sharp_score: signal.sharp_score,
+            recommended_side: signal.recommended_side,
+            signal_sources: signal.why_short
+          })
+          .eq('game_id', gameId)
+          .eq('bet_type', betType);
+      }
+    }
+
     // Log to cron history
     await supabase.from('cron_job_history').insert({
       job_name: 'whale-signal-detector',
@@ -450,27 +475,28 @@ serve(async (req) => {
       started_at: now.toISOString(),
       completed_at: new Date().toISOString(),
       result: {
-        ppSignalsGenerated: newPicks.length,
-        divergenceSignalsGenerated: divergenceSignals.length,
-        ppSnapshotsProcessed: realSnapshots.length,
-        bookPropsMatched: books.length,
+        playerPropSignals: divergenceSignals.length,
+        teamPropSignals: teamSignals.length,
+        totalSignals: allSignals.length,
+        sports: sports,
       }
     });
 
     return new Response(
       JSON.stringify({
         success: true,
-        signalsGenerated: newPicks.length + divergenceSignals.length,
-        ppSignals: newPicks.length,
-        divergenceSignals: divergenceSignals.length,
-        ppSnapshotsProcessed: realSnapshots.length,
-        sampleSignals: [...newPicks, ...divergenceSignals].slice(0, 5).map(p => ({
-          player: p.player_name,
-          stat: p.stat_type,
-          sharpScore: p.sharp_score,
-          grade: p.confidence_grade,
-          side: p.recommended_side,
-          type: p.signal_type,
+        playerPropSignals: divergenceSignals.length,
+        teamPropSignals: teamSignals.length,
+        totalSignals: allSignals.length,
+        sports: sports,
+        sampleSignals: allSignals.slice(0, 5).map(s => ({
+          player: s.player_name,
+          stat: s.stat_type,
+          sport: s.sport,
+          sharpScore: s.sharp_score,
+          grade: s.confidence_grade,
+          side: s.recommended_side,
+          type: s.signal_type,
         })),
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
