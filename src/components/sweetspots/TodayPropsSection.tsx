@@ -56,9 +56,15 @@ export function TodayPropsSection({
   const picks = activeTab === 'threes' ? threesPicks : assistsPicks;
   const stats = activeTab === 'threes' ? threesStats : assistsStats;
 
-  // Sort by hit rate, then confidence
+  // Helper: get display hit rate (actual_hit_rate when actual_line + actual_hit_rate exist)
+  const displayHitRate = (p: TodayPropPick) =>
+    p.actual_line != null && p.actual_hit_rate != null ? p.actual_hit_rate : p.l10_hit_rate;
+
+  // Sort by display hit rate, then confidence
   const sortedPicks = [...picks].sort((a, b) => {
-    if (b.l10_hit_rate !== a.l10_hit_rate) return b.l10_hit_rate - a.l10_hit_rate;
+    const rateA = displayHitRate(a);
+    const rateB = displayHitRate(b);
+    if (rateB !== rateA) return rateB - rateA;
     return b.confidence_score - a.confidence_score;
   });
 
@@ -139,8 +145,13 @@ interface PropPickCardProps {
 }
 
 function PropPickCard({ pick, propType, onAdd }: PropPickCardProps) {
-  const isElite = pick.l10_hit_rate >= 1;
-  const isPremium = pick.l10_hit_rate >= 0.9 && pick.l10_hit_rate < 1;
+  // Display hit rate: use actual_hit_rate when we have actual_line, else l10_hit_rate
+  const hitRate = (pick.actual_line != null && pick.actual_hit_rate != null) 
+    ? pick.actual_hit_rate 
+    : pick.l10_hit_rate;
+  
+  const isElite = hitRate >= 1;
+  const isPremium = hitRate >= 0.9 && hitRate < 1;
   const line = pick.actual_line ?? pick.recommended_line;
   const edge = pick.edge;
 
@@ -158,7 +169,7 @@ function PropPickCard({ pick, propType, onAdd }: PropPickCardProps) {
           <span className="font-medium text-sm truncate">{pick.player_name}</span>
           {isElite && (
             <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30 text-[10px] px-1 py-0">
-              100% L10
+              100%
             </Badge>
           )}
         </div>
@@ -195,9 +206,9 @@ function PropPickCard({ pick, propType, onAdd }: PropPickCardProps) {
             "text-sm font-bold",
             isElite ? "text-amber-400" : isPremium ? "text-teal-400" : "text-foreground"
           )}>
-            {(pick.l10_hit_rate * 100).toFixed(0)}%
+            {(hitRate * 100).toFixed(0)}%
           </div>
-          <div className="text-[10px] text-muted-foreground">L10 Hit</div>
+          <div className="text-[10px] text-muted-foreground">Hit Rate</div>
         </div>
         <Button
           size="sm"

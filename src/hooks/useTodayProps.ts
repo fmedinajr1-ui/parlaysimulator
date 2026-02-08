@@ -64,8 +64,11 @@ export interface TodayPropPick {
   reliabilityTier: string | null;
   reliabilityHitRate: number | null;
   analysis_date: string;
+  /** Edge per framework: L10_avg − line (OVER) or line − L10_avg (UNDER). */
   edge: number | null;
   recommended_side: 'OVER' | 'UNDER';
+  /** Hit rate vs actual market line (when actual_line is set). Use for display when available. */
+  actual_hit_rate: number | null;
 }
 
 interface UseTodayPropsOptions {
@@ -220,17 +223,25 @@ export function useTodayProps(options: UseTodayPropsOptions) {
         // Use live line from unified_props, fallback to actual_line, then recommended
         const actualLine = linesMap.get(playerKey) ?? pick.actual_line ?? pick.recommended_line;
         
-        const edge = pick.projected_value && actualLine
-          ? pick.projected_value - actualLine
-          : null;
-
         const l5Avg = l5Map.get(playerKey) ?? null;
+        const l10Avg = pick.l10_avg ?? null;
         
         // Determine recommended side from category or explicit field
         const recommendedSide: 'OVER' | 'UNDER' = 
           pick.recommended_side === 'UNDER' || pick.category?.includes('UNDER') 
             ? 'UNDER' 
             : 'OVER';
+
+        // Edge calculation per framework: L10_avg − line (OVER) or line − L10_avg (UNDER)
+        let edge: number | null = null;
+        if (actualLine != null) {
+          if (l10Avg != null) {
+            edge = recommendedSide === 'OVER' ? l10Avg - actualLine : actualLine - l10Avg;
+          } else if (pick.projected_value != null) {
+            // Fallback to projected_value if no L10 avg
+            edge = pick.projected_value - actualLine;
+          }
+        }
 
         return {
           id: pick.id,
@@ -240,7 +251,7 @@ export function useTodayProps(options: UseTodayPropsOptions) {
           recommended_line: pick.recommended_line || 0.5,
           actual_line: actualLine,
           l10_hit_rate: pick.l10_hit_rate || 0,
-          l10_avg: pick.l10_avg ?? null,
+          l10_avg: l10Avg,
           l5_avg: l5Avg,
           confidence_score: pick.confidence_score || 0,
           projected_value: pick.projected_value,
@@ -250,6 +261,7 @@ export function useTodayProps(options: UseTodayPropsOptions) {
           analysis_date: pick.analysis_date || analysisDate,
           edge,
           recommended_side: recommendedSide,
+          actual_hit_rate: pick.actual_hit_rate ?? null,
         };
       });
 
@@ -268,15 +280,19 @@ export function useTodayProps(options: UseTodayPropsOptions) {
 
   const picks = data || [];
   
-  // Calculate summary stats
+  // Helper: get display hit rate (actual_hit_rate when we have actual_line, else l10_hit_rate)
+  const displayHitRate = (p: TodayPropPick) =>
+    p.actual_line != null && p.actual_hit_rate != null ? p.actual_hit_rate : p.l10_hit_rate;
+
+  // Calculate summary stats using display hit rate
   const stats = {
     totalPicks: picks.length,
-    eliteCount: picks.filter(p => p.l10_hit_rate >= 1).length,
-    nearPerfectCount: picks.filter(p => p.l10_hit_rate >= 0.97 && p.l10_hit_rate < 1).length,
-    strongCount: picks.filter(p => p.l10_hit_rate >= 0.90 && p.l10_hit_rate < 0.97).length,
+    eliteCount: picks.filter(p => displayHitRate(p) >= 1).length,
+    nearPerfectCount: picks.filter(p => displayHitRate(p) >= 0.97 && displayHitRate(p) < 1).length,
+    strongCount: picks.filter(p => displayHitRate(p) >= 0.90 && displayHitRate(p) < 0.97).length,
     uniqueTeams: new Set(picks.map(p => p.team)).size,
     avgHitRate: picks.length > 0 
-      ? picks.reduce((sum, p) => sum + p.l10_hit_rate, 0) / picks.length 
+      ? picks.reduce((sum, p) => sum + displayHitRate(p), 0) / picks.length 
       : 0,
     avgConfidence: picks.length > 0
       ? picks.reduce((sum, p) => sum + p.confidence_score, 0) / picks.length
