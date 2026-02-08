@@ -1,5 +1,88 @@
 import { ParlayLeg, ParlaySimulation, DegenerateLevel, SimulationHighlight } from '@/types/parlay';
 
+// ============= ODDS VALUE SCORING =============
+
+/**
+ * Calculate value score based on odds vs implied probability
+ * Range: -200 to +200 American odds
+ * 
+ * Returns: value score from 0-100
+ * - 100 = Maximum value (plus money on high-probability pick)
+ * - 50 = Fair value (standard -110 juice)
+ * - 0 = Poor value (heavily juiced line)
+ */
+export function calculateOddsValueScore(
+  americanOdds: number,
+  estimatedHitRate: number
+): number {
+  // Convert odds to implied probability
+  const impliedProb = americanToImplied(americanOdds);
+  
+  // Calculate edge (estimated - implied)
+  const edge = estimatedHitRate - impliedProb;
+  
+  // Juice factor: how much are you overpaying?
+  // -110 = 52.4% implied (fair)
+  // -130 = 56.5% implied (overpaying)
+  // +110 = 47.6% implied (value)
+  const juicePenalty = Math.max(0, impliedProb - 0.524) * 100;
+  const juiceBonus = Math.max(0, 0.524 - impliedProb) * 80;
+  
+  // Edge contribution (bigger edge = better)
+  const edgeScore = Math.min(40, edge * 400);
+  
+  // Base score + edge + juice adjustment
+  const score = 50 + edgeScore - juicePenalty + juiceBonus;
+  
+  return Math.max(0, Math.min(100, score));
+}
+
+/**
+ * Calculate composite bot score for a pick
+ * Combines hit rate, edge, odds value, and category weight
+ */
+export function calculateCompositeBotScore(
+  hitRate: number,      // 0-100 (percentage)
+  edge: number,         // projection - line
+  oddsValueScore: number, // 0-100
+  categoryWeight: number  // 0.5-1.5
+): number {
+  // Component weights
+  const WEIGHTS = {
+    hitRate: 0.30,       // Historical accuracy
+    edge: 0.25,          // Projection vs line
+    oddsValue: 0.25,     // Betting value
+    categoryWeight: 0.20, // Bot learning weight
+  };
+  
+  // Normalize components to 0-100 scale
+  const hitRateScore = Math.min(100, hitRate);
+  const edgeScore = Math.min(100, Math.max(0, edge * 20 + 50));
+  const weightScore = categoryWeight * 66.67; // 1.5 max → 100
+  
+  // Weighted sum
+  const composite = 
+    (hitRateScore * WEIGHTS.hitRate) +
+    (edgeScore * WEIGHTS.edge) +
+    (oddsValueScore * WEIGHTS.oddsValue) +
+    (weightScore * WEIGHTS.categoryWeight);
+  
+  return Math.round(composite);
+}
+
+/**
+ * Check if odds are within acceptable range
+ */
+export function isOddsInRange(
+  odds: number,
+  minOdds: number = -200,
+  maxOdds: number = 200
+): boolean {
+  return odds >= minOdds && odds <= maxOdds;
+}
+
+// ============= CORE PROBABILITY FUNCTIONS =============
+
 // Convert American odds to implied probability
 export function americanToImplied(odds: number): number {
   if (odds > 0) {

@@ -27,6 +27,9 @@ export interface BotLeg {
   category: string;
   weight: number;
   hit_rate: number;
+  american_odds?: number;
+  odds_value_score?: number;
+  composite_score?: number;
   outcome?: 'hit' | 'miss' | 'push' | 'pending';
   actual_value?: number;
 }
@@ -125,19 +128,104 @@ export interface WeightAdjustmentResult {
 // ============= CONSTANTS =============
 
 export const BOT_RULES = {
+  // Category filtering
   MIN_HIT_RATE: 0.55,        // 55% minimum category hit rate
   MIN_WEIGHT: 0.8,           // Minimum weight to include category
+  
+  // Simulation thresholds
   MIN_SIM_WIN_RATE: 0.12,    // 12% minimum simulated win rate
   MIN_EDGE: 0.03,            // 3% minimum edge
   MIN_SHARPE: 0.5,           // Minimum Sharpe ratio
+  
+  // Odds filtering (NEW)
+  MIN_ODDS: -200,            // Don't bet on heavy favorites
+  MAX_ODDS: 200,             // Don't bet on long shots
+  PREFER_PLUS_MONEY: true,   // Prioritize plus-money lines
+  MIN_ODDS_VALUE_SCORE: 45,  // Minimum odds value score
+  
+  // Volume rules (UPDATED)
+  DAILY_PARLAYS_MIN: 8,      // Minimum parlays per day
+  DAILY_PARLAYS_MAX: 10,     // Maximum parlays per day
+  LEG_COUNTS: [3, 4, 5, 6],  // Varying leg counts
   MAX_LEGS: 6,               // Maximum legs per parlay
-  DAILY_PARLAYS: 3,          // Max parlays per day
+  
+  // Stake management
   SIMULATED_STAKE: 50,       // Default stake in simulation
   ACTIVATION_DAYS: 3,        // Days needed for real mode
   ACTIVATION_WIN_RATE: 0.60, // 60% win rate needed
   MIN_PARLAYS_ACTIVATION: 5, // Minimum parlays before activation
   MAX_BANKROLL_RISK: 0.03,   // Max 3% of bankroll per bet
+  
+  // Deduplication (NEW)
+  MAX_PLAYER_USAGE: 2,       // Max parlays per player per day
+  MAX_SAME_CATEGORY: 3,      // Max legs from same category per parlay
+  MAX_SAME_TEAM: 2,          // Max players from same team per parlay
 };
+
+// Parlay profiles for diverse generation
+export const PARLAY_PROFILES = [
+  { legs: 3, strategy: 'conservative', minOddsValue: 55, minHitRate: 68 },
+  { legs: 3, strategy: 'conservative', minOddsValue: 55, minHitRate: 68 },
+  { legs: 4, strategy: 'balanced', minOddsValue: 50, minHitRate: 62 },
+  { legs: 4, strategy: 'balanced', minOddsValue: 50, minHitRate: 62 },
+  { legs: 5, strategy: 'standard', minOddsValue: 45, minHitRate: 58 },
+  { legs: 5, strategy: 'standard', minOddsValue: 45, minHitRate: 58 },
+  { legs: 5, strategy: 'standard', minOddsValue: 45, minHitRate: 58 },
+  { legs: 6, strategy: 'aggressive', minOddsValue: 40, minHitRate: 55 },
+  { legs: 6, strategy: 'aggressive', minOddsValue: 40, minHitRate: 55 },
+  { legs: 6, strategy: 'aggressive', minOddsValue: 40, minHitRate: 55 },
+];
+
+// ============= USAGE TRACKING TYPES =============
+
+export interface UsageTracker {
+  usedPicks: Set<string>;                    // "player_prop_side"
+  playerUsageCount: Map<string, number>;     // player → count
+  categoryUsageCount: Map<string, number>;   // category → count
+}
+
+export function createUsageTracker(): UsageTracker {
+  return {
+    usedPicks: new Set(),
+    playerUsageCount: new Map(),
+    categoryUsageCount: new Map(),
+  };
+}
+
+export function createPickKey(playerName: string, propType: string, side: string): string {
+  return `${playerName}_${propType}_${side}`.toLowerCase();
+}
+
+export function canUsePick(
+  playerName: string,
+  propType: string,
+  side: string,
+  tracker: UsageTracker
+): boolean {
+  const key = createPickKey(playerName, propType, side);
+  
+  // Never reuse same pick
+  if (tracker.usedPicks.has(key)) return false;
+  
+  // Max parlays per player
+  const playerCount = tracker.playerUsageCount.get(playerName) || 0;
+  if (playerCount >= BOT_RULES.MAX_PLAYER_USAGE) return false;
+  
+  return true;
+}
+
+export function markPickUsed(
+  playerName: string,
+  propType: string,
+  side: string,
+  category: string,
+  tracker: UsageTracker
+): void {
+  const key = createPickKey(playerName, propType, side);
+  tracker.usedPicks.add(key);
+  tracker.playerUsageCount.set(playerName, (tracker.playerUsageCount.get(playerName) || 0) + 1);
+  tracker.categoryUsageCount.set(category, (tracker.categoryUsageCount.get(category) || 0) + 1);
+}
 
 // ============= LEARNING FUNCTIONS (Exported for testing) =============
 

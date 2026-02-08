@@ -164,19 +164,38 @@ export default function BotDashboard() {
             <div className="flex items-center justify-between">
               <CardTitle className="text-lg">Today's Bot Parlays</CardTitle>
               <Badge variant="outline">
-                {state.todayParlays.length} generated
+                {state.todayParlays.length} of 10 generated
               </Badge>
             </div>
             <CardDescription>
               Monte Carlo validated picks using {state.activeStrategy?.strategy_name || 'default'} strategy
             </CardDescription>
+            
+            {/* Leg count distribution */}
+            {state.todayParlays.length > 0 && (
+              <div className="flex gap-2 mt-2 flex-wrap">
+                {[3, 4, 5, 6].map(legCount => {
+                  const count = state.todayParlays.filter(p => p.leg_count === legCount).length;
+                  if (count === 0) return null;
+                  return (
+                    <Badge 
+                      key={legCount} 
+                      variant="secondary" 
+                      className="text-xs"
+                    >
+                      {legCount}-Leg ({count})
+                    </Badge>
+                  );
+                })}
+              </div>
+            )}
           </CardHeader>
           <CardContent className="space-y-3">
             {state.todayParlays.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
                 <Bot className="w-12 h-12 mx-auto mb-3 opacity-50" />
                 <p>No parlays generated yet today</p>
-                <p className="text-sm mt-1">Click "Generate Parlays" to create today's picks</p>
+                <p className="text-sm mt-1">Click "Generate Parlays" to create 8-10 unique picks</p>
               </div>
             ) : (
               state.todayParlays.map((parlay) => (
