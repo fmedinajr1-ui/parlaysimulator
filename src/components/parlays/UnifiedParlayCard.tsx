@@ -240,15 +240,17 @@ function getEdgeBadge(projectedValue: number | undefined, actualLine: number | u
 // Individual leg row
 function LegRow({ leg, index }: { leg: UnifiedParlayLeg; index: number }) {
   const edgeBadge = getEdgeBadge(leg.projectedValue, leg.actualLine ?? leg.line, leg.side);
+  const playerName = leg.playerName ?? 'Unknown';
+  const propType = leg.propType ?? 'Prop';
   
   return (
     <div className="flex items-center justify-between p-2 bg-muted/50 rounded text-xs">
       <div className="flex items-center gap-2 flex-1 min-w-0">
         <span className="text-muted-foreground font-mono w-4">{index}.</span>
         <div className="truncate">
-          <span className="font-medium">{leg.playerName}</span>
+          <span className="font-medium">{playerName}</span>
           <span className="text-muted-foreground ml-1">
-            {leg.propType}
+            {propType}
           </span>
         </div>
       </div>
