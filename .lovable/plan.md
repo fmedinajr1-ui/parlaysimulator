@@ -1,68 +1,109 @@
 
 
-# Fix: Bot Not Generating Parlays
+# Fix: Availability Gate + Daily Injury Scraping
 
-## Root Cause Analysis
+## Problems Found
 
-The bot has a pool of 599 picks but generates 0 parlays due to **3 cascading failures**:
+1. **Availability gate was never implemented** - the functions `fetchActivePlayersToday`, `fetchInjuryBlocklist`, and `getEasternDateRange` do not exist in `bot-generate-daily-parlays/index.ts`. Sweet spots are passed through unfiltered.
 
-### Failure 1: Sweet Spots All Inactive
-All 300 `category_sweet_spots` for today have `is_active: false`. The query filters by `.eq('is_active', true)`, returning 0 results. This forces the fallback path.
+2. **Players out for the season are in parlays** - Collin Gillespie, Klay Thompson (traded/injured), Joel Embiid (OUT), Kawhi Leonard (OUT), Jimmy Butler III (suspended/traded) all appear in today's generated parlays.
 
-### Failure 2: Fallback Picks Have 0% Hit Rate
-The fallback path creates picks from `unified_props`, but every prop has:
-- `composite_score: 0` (never populated by the analyzer)
-- `category: 'uncategorized'` (never categorized)
+3. **Lineup scraper has no cron job** - `firecrawl-lineup-scraper` is not scheduled, so `lineup_alerts` data stops at Feb 8. The bot has zero injury data for today.
 
-The fallback formula `(prop.composite_score || 50) / 100` should yield 50%, BUT the value is `0` (not null), so `0 || 50` evaluates to `50` -- wait, actually `0 || 50 = 50` in JS. Let me re-check...
-
-Actually `0` is falsy in JS, so `(0 || 50) / 100 = 0.5`. The hit rate should be 50%. The issue is elsewhere -- it's the **tier threshold checks at lines 904-907**:
-
-```
-if (combinedProbability < config.minEdge) continue;  // 0.5^3 = 0.125 vs 0.01 -- PASSES
-if (edge < config.minEdge) continue;                  // edge calc issue
-if (sharpe < config.minSharpe) continue;               // sharpe calc issue
-```
-
-The `edge` is calculated as `combinedProbability - impliedProbability` where `impliedProbability = 1 / Math.pow(2, legs.length)`. For 3 legs: `1/8 = 0.125`. Combined probability for 50% picks: `0.5^3 = 0.125`. So **edge = 0.125 - 0.125 = 0**, which fails `edge < 0.01`.
-
-This means all parlays from fallback picks will have exactly 0 edge (since the estimated 50% default matches the naive coin-flip model), so they all get filtered out.
-
-### Failure 3: No Sweet Spot Reactivation
-The sweet spots were likely deactivated by an expiry mechanism but never reactivated when new data came in today.
+4. **`unified_props` query is unbounded** - still uses `>= NOW()` which pulls tomorrow's games into today's pool.
 
 ## Solution
 
-### Fix 1: Remove `is_active` filter on sweet spots (or use both active and recent)
-Query sweet spots without `is_active = true` for today's date, since they were just generated today. The `analysis_date` filter is sufficient.
+### Part 1: Actually implement the 3-Layer Availability Gate in `bot-generate-daily-parlays/index.ts`
 
-### Fix 2: Fix fallback hit rate estimation  
-Instead of defaulting to 50% (which creates 0 edge), use a smarter estimation:
-- Map prop types to their calibrated category weights from `bot_category_weights`
-- Use the category's `current_hit_rate` as the estimated hit rate
-- Fall back to 55% (not 50%) to provide a small positive edge
+Add three functions and integrate them into `buildPropPool()`:
 
-### Fix 3: Fix edge calculation for team props
-Team props use `sharp_score / 100` as confidence but the edge formula treats them the same as random coin flips. Add a minimum edge bonus for team props with sharp signals.
+**`getEasternDateRange()`** - Returns UTC timestamps for today's ET noon-to-noon window (matching how sportsbooks slate games):
+- Start: today 12:00 PM ET as UTC
+- End: tomorrow 12:00 PM ET as UTC
 
-### Fix 4: Relax thresholds slightly for exploration tier
-The exploration tier is meant for discovery -- its edge threshold of 0.01 and Sharpe of 0.2 should be relaxed to 0.005 and 0.1 respectively, since this tier uses $0 stakes anyway.
+**`fetchActivePlayersToday()`** - Queries `unified_props` with the bounded ET window and returns a `Set<string>` of player names with active lines today.
 
-## Technical Changes
+**`fetchInjuryBlocklist()`** - Queries `lineup_alerts` for today's game date:
+- Returns blocklist (OUT, DOUBTFUL players)
+- Returns penalty map (GTD = 0.7x weight, QUESTIONABLE = 0.85x)
 
-### File: `supabase/functions/bot-generate-daily-parlays/index.ts`
+**Filter integration** - After fetching sweet spots, filter them:
+- Remove any player NOT in `activePlayersToday` set
+- Remove any player in the injury blocklist
+- Apply weight penalties for GTD/QUESTIONABLE players
+- Log all filtered-out players for debugging
 
-1. **Line 543**: Remove `.eq('is_active', true)` from sweet spots query (today's analysis_date is sufficient)
-2. **Lines 620-621**: Improve fallback hit rate estimation -- use category weight's `current_hit_rate` or default to 55%
-3. **Lines 900-907**: Adjust threshold checks:
-   - Exploration tier: `minEdge: 0.005`, `minSharpe: 0.1`
-   - Add minimum edge floor of 0.005 for picks with positive composite scores
-4. **Line 893**: Fix combined probability calculation -- use geometric mean of individual hit rates instead of raising average to power (which underestimates correlated picks)
+Also fix the `unified_props` query in the fallback path to use the bounded date window instead of `>= NOW()`.
+
+### Part 2: Schedule daily injury scraping via cron
+
+Add a cron job for `firecrawl-lineup-scraper` to run twice daily:
+- 8:00 AM ET (early morning injury reports)
+- 4:00 PM ET (pre-game injury updates)
+
+This ensures `lineup_alerts` has fresh data when the bot generates parlays at 9 AM ET and for afternoon refreshes.
+
+SQL migration:
+```text
+SELECT cron.schedule(
+  'lineup-scraper-morning', '0 13 * * *',  -- 8 AM ET = 13:00 UTC
+  net.http_post(firecrawl-lineup-scraper)
+);
+SELECT cron.schedule(
+  'lineup-scraper-afternoon', '0 21 * * *',  -- 4 PM ET = 21:00 UTC
+  net.http_post(firecrawl-lineup-scraper)
+);
+```
+
+### Part 3: Trigger an immediate injury scrape
+
+After deploying, invoke `firecrawl-lineup-scraper` to populate today's `lineup_alerts` so the availability gate has injury data to work with.
+
+## Technical Details
+
+### Changes to `supabase/functions/bot-generate-daily-parlays/index.ts`
+
+**Add before `buildPropPool`:**
+```text
+function getEasternDateRange() {
+  // Calculate today's ET date, then create noon-to-noon UTC window
+  // ET is UTC-5 (EST) or UTC-4 (EDT)
+  // Noon ET = 17:00 UTC (EST) or 16:00 UTC (EDT)
+}
+
+async function fetchActivePlayersToday(supabase, startUtc, endUtc) {
+  // Query unified_props WHERE commence_time BETWEEN start AND end
+  // Return Set<string> of lowercase player names
+}
+
+async function fetchInjuryBlocklist(supabase, gameDate) {
+  // Query lineup_alerts WHERE game_date = gameDate
+  // Return { blocklist: Set<string>, penalties: Map<string, number> }
+}
+```
+
+**Modify `buildPropPool`:**
+```text
+1. Call getEasternDateRange() at the top
+2. Call fetchActivePlayersToday() 
+3. Call fetchInjuryBlocklist()
+4. After enriching sweet spots, filter:
+   - Remove players NOT in activePlayersToday
+   - Remove players in blocklist
+   - Apply weight penalties from penalties map
+5. Fix unified_props query: replace >= NOW() with BETWEEN start/end
+6. Log: "Active players: X, Blocked: Y, Filtered sweet spots: Z -> W"
+```
+
+### Database Migration (cron jobs)
+
+Schedule `firecrawl-lineup-scraper` to run at 8 AM and 4 PM ET daily.
 
 ## Expected Outcome
 
-After these fixes:
-- Sweet spots will be found (300 available today)
-- Fallback picks will have realistic hit rates from calibrated weights
-- Exploration tier will generate 30-50 parlays even with moderate-edge picks
-- Validation and execution tiers will still maintain strict quality gates
+- Only players with active game-day lines appear in parlays
+- OUT/DOUBTFUL players (Embiid, Kawhi, etc.) are automatically blocked
+- Season-out players (Gillespie, etc.) are excluded since they have no lines
+- Fresh injury data is scraped twice daily before parlay generation windows
+
