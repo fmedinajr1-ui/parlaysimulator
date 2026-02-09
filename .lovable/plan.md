@@ -1,60 +1,86 @@
 
-# Deep Calibration & Weighting System Overhaul
 
-## ✅ COMPLETED
+# Fix: Bot Player Availability Validation
 
-### Phase 1: Bootstrap Weights from Historical Data ✅
-- Created `calibrate-bot-weights` edge function
-- Queries actual hit rates from `category_sweet_spots` (8,863+ settled picks)
-- Calculates true hit rates per category/side
-- Upserts ALL active categories into `bot_category_weights` with real data
-- Weight formula: `clamp(0.5, 1.5, base(1.0) + (hitRate - 0.50) * 0.8 + sampleBonus)`
+## Problem
 
-**Initial Calibration Results:**
-| Category | Side | Hit Rate | Weight | Samples | Status |
-|----------|------|----------|--------|---------|--------|
-| THREE_POINT_SHOOTER | over | 63.2% | 1.21 | 105 | ✅ Active |
-| LOW_SCORER_UNDER | under | 66.0% | 1.18 | 60 | ✅ Active |
-| BIG_ASSIST_OVER | over | 59.0% | 1.12 | 69 | ✅ Active |
-| VOLUME_SCORER | over | 52.4% | 1.12 | 141 | ✅ Active |
-| BIG_REBOUNDER | over | 52.4% | 1.07 | 88 | ✅ Active |
-| ROLE_PLAYER_REB | over | 48.2% | 1.09 | 155 | ✅ Active |
-| HIGH_ASSIST | over | 33.3% | 0.00 | 43 | 🚫 BLOCKED |
+The bot's parlay generator has **zero player availability checking**. It pulls picks from `category_sweet_spots` and `unified_props` without verifying:
 
-### Phase 2: Continuous Learning Integration ✅
-- Modified `bot-settle-and-learn` to sync from `category_sweet_spots` verified outcomes
-- Queries recently settled picks (last 24h) and applies incremental learning
-- Auto-triggers `calibrate-bot-weights` after each settlement run
-- Added streak-based blocking (5+ consecutive misses)
-- Added hit-rate-based blocking (<35% with 20+ samples)
+1. **The player's team is actually playing today** -- Haliburton (Pacers) and Tatum (Celtics) have no game today (next NBA games are Feb 10)
+2. **The player isn't injured/OUT** -- Tatum has been OUT in recent games per `lineup_alerts`
+3. **The commence_time filter is too broad** -- `unified_props` query uses `>= NOW()` which pulls ALL future games, not just today's
 
-### Phase 3: Blocking Rules ✅
-Implemented automatic category blocking when:
-- ✅ Hit rate drops below 35% with 20+ samples
-- ✅ 5+ consecutive misses (streak-based block)
-- ✅ Weight drops below minimum threshold
+## Root Causes
 
-### Phase 4: Database Migration ✅
-- Added `last_calibrated_at` timestamp column
-- Created index on `(category, side)` for faster lookups
-- Created index on `(outcome, settled_at)` for outcome queries
+```text
++-----------------------------------+------------------------------------------+
+| Data Source                       | Missing Filter                           |
++-----------------------------------+------------------------------------------+
+| category_sweet_spots              | No game-day validation at all            |
+|   (analysis_date filter only)     | Picks generated for ALL known players    |
++-----------------------------------+------------------------------------------+
+| unified_props (fallback)          | commence_time >= NOW() pulls tomorrow+   |
+|                                   | No injury status check                   |
++-----------------------------------+------------------------------------------+
+| lineup_alerts                     | Never consulted during parlay generation |
++-----------------------------------+------------------------------------------+
+```
 
----
+## Solution: 3-Layer Availability Gate
 
-## Files Changed
+Add three filters to `buildPropPool()` in `bot-generate-daily-parlays`:
 
-| File | Status |
-|------|--------|
-| `supabase/functions/calibrate-bot-weights/index.ts` | ✅ Created |
-| `supabase/functions/bot-settle-and-learn/index.ts` | ✅ Updated |
-| `supabase/config.toml` | ✅ Updated |
-| Database migration | ✅ Applied |
+### Layer 1: Active Game Verification
+- Query `unified_props` for today's games only (commence_time between today start and end)
+- Build a Set of player names who actually have lines posted today
+- Only include sweet spot picks whose `player_name` exists in the active player set
 
----
+### Layer 2: Injury/Lineup Cross-Reference
+- Query `lineup_alerts` for today's date
+- Build a blocklist of players with status `OUT` or `DOUBTFUL`
+- Remove any blocked players from the candidate pool
+- Log warnings for `GTD` / `QUESTIONABLE` players (reduce weight but don't block)
 
-## Next Steps (Optional Enhancements)
+### Layer 3: Tighten commence_time Window
+- Change `unified_props` query from `>= NOW()` to a proper date window (today only in ET)
+- This prevents pulling tomorrow's props into today's parlays
 
-1. **Add cron job** for weekly full weight rebuild (Sundays)
-2. **Add Telegram /calibrate command** for manual triggering
-3. **Dashboard UI** to visualize category weights and performance
+## Technical Changes
+
+### Modified File: `supabase/functions/bot-generate-daily-parlays/index.ts`
+
+**In `buildPropPool()` function:**
+
+1. Add ET date calculation for proper game-day windowing
+2. Query `unified_props` with a bounded date range (today only)
+3. Build `activePlayersToday` Set from unified_props player names
+4. Query `lineup_alerts` for today to get injury blocklist
+5. Filter `category_sweet_spots` results: only keep players in `activePlayersToday` AND not in injury blocklist
+6. Apply injury weight penalties: GTD players get 0.7x weight, QUESTIONABLE get 0.85x
+7. Log filtered-out players for debugging
+
+**Key code additions:**
+
+```text
+1. getEasternDateRange() -- returns today's start/end timestamps in UTC
+2. fetchActivePlayersToday() -- queries unified_props for today's window
+3. fetchInjuryBlocklist() -- queries lineup_alerts for OUT/DOUBTFUL
+4. Filter sweet spots against both sets before enrichment
+5. Add availability metadata to leg data (injury_status field)
+```
+
+### Expected Logging Output
+```text
+[Bot] Active players today: 85 (from 6 NBA games)
+[Bot] Injury blocklist: 4 players (OUT: 3, DOUBTFUL: 1)
+[Bot] Filtered sweet spots: 120 -> 72 (removed 48 players not playing today)
+[Bot] GTD weight penalties applied to 2 players
+```
+
+## Expected Outcome
+
+- Players without a game today are completely excluded
+- OUT/DOUBTFUL players are blocked from all parlays
+- GTD players are penalized but not blocked (allows late-scratch handling)
+- The bot only generates parlays with players who are confirmed active for today's slate
 
