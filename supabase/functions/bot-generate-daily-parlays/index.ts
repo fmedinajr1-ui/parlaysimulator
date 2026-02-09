@@ -54,8 +54,8 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     maxTeamUsage: 3,
     maxCategoryUsage: 5,
     minHitRate: 45,
-    minEdge: 0.01,
-    minSharpe: 0.2,
+    minEdge: 0.005,
+    minSharpe: 0.1,
     stake: 0,
     minConfidence: 0.45,
     profiles: [
@@ -531,7 +531,7 @@ function mapPropTypeToCategory(propType: string): string {
 
 // ============= PROP POOL BUILDER =============
 
-async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<string, number>): Promise<PropPool> {
+async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<string, number>, categoryWeights: CategoryWeight[]): Promise<PropPool> {
   console.log(`[Bot] Building prop pool for ${targetDate}`);
   
   // 1. Sweet spot picks (analyzed player props)
@@ -540,7 +540,6 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     .from('category_sweet_spots')
     .select('*, actual_line, recommended_line, bookmaker')
     .eq('analysis_date', targetDate)
-    .eq('is_active', true)
     .gte('confidence_score', 0.45)
     .order('confidence_score', { ascending: false })
     .limit(200);
@@ -609,6 +608,16 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   if (enrichedSweetSpots.length === 0 && playerProps && playerProps.length > 0) {
     console.log(`[Bot] No sweet spots for ${targetDate}, using ${playerProps.length} unified_props directly`);
     
+    // Build a hit rate lookup from calibrated category weights
+    const categoryHitRateMap = new Map<string, number>();
+    categoryWeights.forEach(cw => {
+      if (cw.current_hit_rate && cw.current_hit_rate > 0) {
+        categoryHitRateMap.set(cw.category, cw.current_hit_rate / 100);
+        // Also map by prop type for fallback matching
+        categoryHitRateMap.set(`${cw.category}_${cw.side}`, cw.current_hit_rate / 100);
+      }
+    });
+    
     enrichedSweetSpots = playerProps.map((prop: any) => {
       const overOdds = prop.over_price || -110;
       const underOdds = prop.under_price || -110;
@@ -616,9 +625,15 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       const side = overOdds >= underOdds ? 'over' : 'under';
       const americanOdds = side === 'over' ? overOdds : underOdds;
       
-      // Estimate hit rate from composite_score if available
-      const hitRateDecimal = (prop.composite_score || 50) / 100;
-      const categoryWeight = weightMap.get(prop.category) || 1.0;
+      // Estimate hit rate: use calibrated category weight > composite_score > default 55%
+      const propCategory = prop.category || mapPropTypeToCategory(prop.prop_type);
+      const calibratedHitRate = categoryHitRateMap.get(propCategory) 
+        || categoryHitRateMap.get(`${propCategory}_${side}`)
+        || null;
+      const hitRateDecimal = calibratedHitRate 
+        ? Math.max(calibratedHitRate, 0.50) 
+        : (prop.composite_score && prop.composite_score > 0 ? prop.composite_score / 100 : 0.55);
+      const categoryWeight = weightMap.get(propCategory) || 1.0;
       
       const oddsValueScore = calculateOddsValueScore(americanOdds, hitRateDecimal);
       const compositeScore = calculateCompositeScore(hitRateDecimal * 100, 0.5, oddsValueScore, categoryWeight);
@@ -629,7 +644,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
         prop_type: prop.prop_type,
         line: prop.current_line,
         recommended_side: side,
-        category: prop.category || mapPropTypeToCategory(prop.prop_type),
+        category: propCategory,
         confidence_score: hitRateDecimal,
         l10_hit_rate: hitRateDecimal,
         projected_value: prop.current_line,
@@ -645,6 +660,8 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       p.americanOdds <= 200 && 
       p.line > 0
     );
+    
+    console.log(`[Bot] Fallback enriched ${enrichedSweetSpots.length} picks (calibrated hit rates from ${categoryHitRateMap.size} categories)`);
   }
 
   // Enrich team props
@@ -884,26 +901,33 @@ async function generateTierParlays(
         }
       }
 
-      // Calculate combined probability
-      const avgHitRate = legs.reduce((sum, l) => {
+      // Calculate combined probability using product of individual hit rates (geometric)
+      const combinedProbability = legs.reduce((product, l) => {
         const hr = l.hit_rate ? l.hit_rate / 100 : l.sharp_score ? l.sharp_score / 100 : 0.5;
-        return sum + hr;
-      }, 0) / legs.length;
-      const combinedProbability = Math.pow(avgHitRate, legs.length);
+        return product * hr;
+      }, 1);
       
       // Calculate expected odds
       const expectedOdds = combinedProbability > 0 
         ? Math.round((1 / combinedProbability - 1) * 100)
         : 10000;
       
-      // Edge and Sharpe
-      const impliedProbability = 1 / Math.pow(2, legs.length);
+      // Edge and Sharpe - use actual implied probability from odds, not coin-flip model
+      const impliedProbability = legs.reduce((product, l) => {
+        const odds = l.american_odds || -110;
+        return product * americanToImplied(odds);
+      }, 1);
       const edge = combinedProbability - impliedProbability;
-      const sharpe = edge / (0.5 * Math.sqrt(legs.length));
+      
+      // Add minimum edge floor for picks with positive signals
+      const hasPositiveSignals = legs.some(l => (l.composite_score || 0) > 50 || (l.sharp_score || 0) > 55);
+      const effectiveEdge = hasPositiveSignals ? Math.max(edge, 0.005) : edge;
+      
+      const sharpe = effectiveEdge / (0.5 * Math.sqrt(legs.length));
 
       // Check tier thresholds
-      if (combinedProbability < config.minEdge) continue;
-      if (edge < config.minEdge) continue;
+      if (combinedProbability < 0.001) continue;
+      if (effectiveEdge < config.minEdge) continue;
       if (sharpe < config.minSharpe) continue;
 
       // Calculate stake
@@ -921,16 +945,9 @@ async function generateTierParlays(
         combined_probability: combinedProbability,
         expected_odds: Math.min(expectedOdds, 10000),
         simulated_win_rate: combinedProbability,
-        simulated_edge: edge,
+        simulated_edge: effectiveEdge,
         simulated_sharpe: sharpe,
-        strategy_name: `${strategyName}_${profile.strategy}`,
-        tier,
-        tier_config: {
-          iterations: config.iterations,
-          minHitRate: config.minHitRate,
-          minEdge: config.minEdge,
-          profile: profile.strategy,
-        },
+        strategy_name: `${strategyName}_${tier}_${profile.strategy}`,
         selection_rationale: `${tier} tier: ${profile.strategy} (${profile.legs}-leg)`,
         outcome: 'pending',
         is_simulated: tier !== 'execution',
@@ -999,7 +1016,7 @@ Deno.serve(async (req) => {
     const bankroll = activationStatus?.simulated_bankroll || 1000;
 
     // 4. Build prop pool
-    const pool = await buildPropPool(supabase, targetDate, weightMap);
+    const pool = await buildPropPool(supabase, targetDate, weightMap, weights as CategoryWeight[] || []);
 
     if (pool.totalPool < 20) {
       console.log(`[Bot v2] Insufficient prop pool: ${pool.totalPool}`);
