@@ -529,13 +529,135 @@ function mapPropTypeToCategory(propType: string): string {
   return categoryMap[propType] || propType.toUpperCase();
 }
 
+// ============= AVAILABILITY GATE =============
+
+function getEasternDateRange(): { startUtc: string; endUtc: string; gameDate: string } {
+  const now = new Date();
+  // Get current ET date
+  const etFormatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  const gameDate = etFormatter.format(now); // YYYY-MM-DD in ET
+
+  // Determine if EDT or EST
+  const jan = new Date(now.getFullYear(), 0, 1);
+  const jul = new Date(now.getFullYear(), 6, 1);
+  const stdOffset = Math.max(jan.getTimezoneOffset(), jul.getTimezoneOffset());
+  // ET offset: -5 for EST, -4 for EDT
+  const etOffsetHours = now.getTimezoneOffset() < stdOffset ? 4 : 5;
+  // But we're on server (UTC), so just check if US is in DST
+  // Safer: noon ET = 12 + offset hours in UTC
+  const noonUtcHour = 12 + etOffsetHours; // 17 for EST, 16 for EDT
+
+  // Start: today noon ET as UTC
+  const [year, month, day] = gameDate.split('-').map(Number);
+  const startDate = new Date(Date.UTC(year, month - 1, day, noonUtcHour, 0, 0));
+  // End: tomorrow noon ET as UTC
+  const endDate = new Date(startDate.getTime() + 24 * 60 * 60 * 1000);
+
+  return {
+    startUtc: startDate.toISOString(),
+    endUtc: endDate.toISOString(),
+    gameDate,
+  };
+}
+
+async function fetchActivePlayersToday(
+  supabase: any,
+  startUtc: string,
+  endUtc: string
+): Promise<Set<string>> {
+  const { data, error } = await supabase
+    .from('unified_props')
+    .select('player_name')
+    .eq('is_active', true)
+    .gte('commence_time', startUtc)
+    .lt('commence_time', endUtc);
+
+  if (error) {
+    console.error('[AvailabilityGate] Error fetching active players:', error);
+    return new Set();
+  }
+
+  const players = new Set<string>();
+  (data || []).forEach((row: any) => {
+    if (row.player_name) {
+      players.add(row.player_name.toLowerCase().trim());
+    }
+  });
+
+  console.log(`[AvailabilityGate] ${players.size} active players with lines today`);
+  return players;
+}
+
+async function fetchInjuryBlocklist(
+  supabase: any,
+  gameDate: string
+): Promise<{ blocklist: Set<string>; penalties: Map<string, number> }> {
+  const blocklist = new Set<string>();
+  const penalties = new Map<string, number>();
+
+  // Query recent injury alerts (today and yesterday to catch late updates)
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = yesterday.toISOString().split('T')[0];
+
+  const { data, error } = await supabase
+    .from('lineup_alerts')
+    .select('player_name, alert_type')
+    .gte('game_date', yesterdayStr)
+    .lte('game_date', gameDate);
+
+  if (error) {
+    console.error('[AvailabilityGate] Error fetching injury blocklist:', error);
+    return { blocklist, penalties };
+  }
+
+  const blockedNames: string[] = [];
+  const penalizedNames: string[] = [];
+
+  (data || []).forEach((alert: any) => {
+    const name = alert.player_name?.toLowerCase().trim();
+    if (!name) return;
+
+    const status = (alert.alert_type || '').toUpperCase();
+    if (status === 'OUT' || status === 'DOUBTFUL') {
+      blocklist.add(name);
+      blockedNames.push(`${alert.player_name} (${status})`);
+    } else if (status === 'GTD' || status === 'DTD') {
+      penalties.set(name, 0.7);
+      penalizedNames.push(`${alert.player_name} (${status} → 0.7x)`);
+    } else if (status === 'QUESTIONABLE') {
+      penalties.set(name, 0.85);
+      penalizedNames.push(`${alert.player_name} (${status} → 0.85x)`);
+    }
+  });
+
+  console.log(`[AvailabilityGate] Blocked ${blocklist.size}: ${blockedNames.slice(0, 10).join(', ')}${blockedNames.length > 10 ? '...' : ''}`);
+  console.log(`[AvailabilityGate] Penalized ${penalties.size}: ${penalizedNames.slice(0, 10).join(', ')}${penalizedNames.length > 10 ? '...' : ''}`);
+
+  return { blocklist, penalties };
+}
+
 // ============= PROP POOL BUILDER =============
 
 async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<string, number>, categoryWeights: CategoryWeight[]): Promise<PropPool> {
   console.log(`[Bot] Building prop pool for ${targetDate}`);
-  
-  // 1. Sweet spot picks (analyzed player props)
-  const allCategories = [...weightMap.keys()];
+
+  // === AVAILABILITY GATE ===
+  const { startUtc, endUtc, gameDate } = getEasternDateRange();
+  console.log(`[Bot] ET window: ${startUtc} → ${endUtc} (gameDate: ${gameDate})`);
+
+  const [activePlayersToday, injuryData] = await Promise.all([
+    fetchActivePlayersToday(supabase, startUtc, endUtc),
+    fetchInjuryBlocklist(supabase, gameDate),
+  ]);
+  const { blocklist, penalties } = injuryData;
+
+  // 1. Sweet spot picks (analyzed player props) - no is_active filter, analysis_date is sufficient
   const { data: sweetSpots } = await supabase
     .from('category_sweet_spots')
     .select('*, actual_line, recommended_line, bookmaker')
@@ -544,20 +666,22 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     .order('confidence_score', { ascending: false })
     .limit(200);
 
-  // 2. Live odds from unified_props - get full data for direct use
+  // 2. Live odds from unified_props - bounded to today's ET window
   const { data: playerProps } = await supabase
     .from('unified_props')
     .select('*')
     .eq('is_active', true)
-    .gte('commence_time', new Date().toISOString())
-    .limit(300);
+    .gte('commence_time', startUtc)
+    .lt('commence_time', endUtc)
+    .limit(500);
 
-  // 3. Team props from game_bets
+  // 3. Team props from game_bets - bounded to today's ET window
   const { data: teamProps } = await supabase
     .from('game_bets')
     .select('*')
     .eq('is_active', true)
-    .gte('commence_time', new Date().toISOString());
+    .gte('commence_time', startUtc)
+    .lt('commence_time', endUtc);
 
   console.log(`[Bot] Raw data: ${(sweetSpots || []).length} sweet spots, ${(playerProps || []).length} unified_props, ${(teamProps || []).length} team bets`);
 
@@ -662,6 +786,59 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     );
     
     console.log(`[Bot] Fallback enriched ${enrichedSweetSpots.length} picks (calibrated hit rates from ${categoryHitRateMap.size} categories)`);
+  }
+
+  // === APPLY AVAILABILITY GATE TO PLAYER PICKS ===
+  const preFilterCount = enrichedSweetSpots.length;
+  const filteredOutPlayers: string[] = [];
+
+  if (activePlayersToday.size > 0) {
+    enrichedSweetSpots = enrichedSweetSpots.filter(pick => {
+      const normalizedName = pick.player_name.toLowerCase().trim();
+
+      // Block: player not in today's active lines
+      if (!activePlayersToday.has(normalizedName)) {
+        filteredOutPlayers.push(`${pick.player_name} (no active lines)`);
+        return false;
+      }
+
+      // Block: OUT or DOUBTFUL
+      if (blocklist.has(normalizedName)) {
+        filteredOutPlayers.push(`${pick.player_name} (injury blocklist)`);
+        return false;
+      }
+
+      // Penalize: GTD/QUESTIONABLE - reduce confidence
+      const penalty = penalties.get(normalizedName);
+      if (penalty) {
+        pick.confidence_score *= penalty;
+        pick.l10_hit_rate *= penalty;
+        pick.compositeScore = Math.round(pick.compositeScore * penalty);
+      }
+
+      return true;
+    });
+  } else {
+    // If no active players data, at least apply injury blocklist
+    enrichedSweetSpots = enrichedSweetSpots.filter(pick => {
+      const normalizedName = pick.player_name.toLowerCase().trim();
+      if (blocklist.has(normalizedName)) {
+        filteredOutPlayers.push(`${pick.player_name} (injury blocklist)`);
+        return false;
+      }
+      const penalty = penalties.get(normalizedName);
+      if (penalty) {
+        pick.confidence_score *= penalty;
+        pick.l10_hit_rate *= penalty;
+        pick.compositeScore = Math.round(pick.compositeScore * penalty);
+      }
+      return true;
+    });
+  }
+
+  console.log(`[AvailabilityGate] Filtered sweet spots: ${preFilterCount} → ${enrichedSweetSpots.length}`);
+  if (filteredOutPlayers.length > 0) {
+    console.log(`[AvailabilityGate] Removed players: ${filteredOutPlayers.slice(0, 20).join(', ')}${filteredOutPlayers.length > 20 ? ` ...and ${filteredOutPlayers.length - 20} more` : ''}`);
   }
 
   // Enrich team props
