@@ -122,15 +122,24 @@ async function getParlays() {
     return { count: 0, parlays: [], distribution: {} };
   }
 
+  // Only show the most recent generation batch
+  const latestCreatedAt = parlays[0].created_at;
+  const latestBatchTime = new Date(latestCreatedAt).getTime();
+  // Include parlays within 5 minutes of the latest one (same batch)
+  const batchWindow = 5 * 60 * 1000;
+  const latestBatch = parlays.filter(
+    (p) => Math.abs(new Date(p.created_at).getTime() - latestBatchTime) < batchWindow
+  );
+
   const distribution: Record<number, number> = {};
-  parlays.forEach((p) => {
+  latestBatch.forEach((p) => {
     const legCount = p.leg_count || 3;
     distribution[legCount] = (distribution[legCount] || 0) + 1;
   });
 
   return {
-    count: parlays.length,
-    parlays: parlays.slice(0, 5).map((p) => ({
+    count: latestBatch.length,
+    parlays: latestBatch.slice(0, 5).map((p) => ({
       strategy: p.strategy_name,
       legs: p.leg_count,
       odds: p.expected_odds,

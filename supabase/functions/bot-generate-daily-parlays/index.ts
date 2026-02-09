@@ -534,34 +534,26 @@ function mapPropTypeToCategory(propType: string): string {
 function getEasternDateRange(): { startUtc: string; endUtc: string; gameDate: string } {
   const now = new Date();
   // Get current ET date
-  const etFormatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/New_York',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  });
-  const gameDate = etFormatter.format(now); // YYYY-MM-DD in ET
+  const etDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(now);
 
-  // Determine if EDT or EST
-  const jan = new Date(now.getFullYear(), 0, 1);
-  const jul = new Date(now.getFullYear(), 6, 1);
-  const stdOffset = Math.max(jan.getTimezoneOffset(), jul.getTimezoneOffset());
-  // ET offset: -5 for EST, -4 for EDT
-  const etOffsetHours = now.getTimezoneOffset() < stdOffset ? 4 : 5;
-  // But we're on server (UTC), so just check if US is in DST
-  // Safer: noon ET = 12 + offset hours in UTC
-  const noonUtcHour = 12 + etOffsetHours; // 17 for EST, 16 for EDT
+  // Reliable DST check: compare ET hour vs UTC hour
+  const etHour = parseInt(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', hour: 'numeric', hour12: false
+  }).format(now));
+  const utcHour = now.getUTCHours();
+  const etOffset = (utcHour - etHour + 24) % 24; // 5 for EST, 4 for EDT
 
-  // Start: today noon ET as UTC
-  const [year, month, day] = gameDate.split('-').map(Number);
-  const startDate = new Date(Date.UTC(year, month - 1, day, noonUtcHour, 0, 0));
-  // End: tomorrow noon ET as UTC
+  // Noon ET in UTC
+  const [year, month, day] = etDate.split('-').map(Number);
+  const startDate = new Date(Date.UTC(year, month - 1, day, 12 + etOffset, 0, 0));
   const endDate = new Date(startDate.getTime() + 24 * 60 * 60 * 1000);
+
+  console.log(`[DST] ET offset: ${etOffset}h, gameDate: ${etDate}, window: ${startDate.toISOString()} - ${endDate.toISOString()}`);
 
   return {
     startUtc: startDate.toISOString(),
     endUtc: endDate.toISOString(),
-    gameDate,
+    gameDate: etDate,
   };
 }
 
@@ -1232,7 +1224,20 @@ Deno.serve(async (req) => {
 
     console.log(`[Bot v2] Total parlays created: ${allParlays.length}`);
 
-    // 6. Insert parlays
+    // 6. Clean up old pending parlays for this date, then insert new ones
+    const { data: deletedOld, error: cleanupError } = await supabase
+      .from('bot_daily_parlays')
+      .delete()
+      .eq('parlay_date', targetDate)
+      .eq('outcome', 'pending')
+      .select('id');
+    
+    if (cleanupError) {
+      console.warn(`[Bot v2] Cleanup warning: ${cleanupError.message}`);
+    } else {
+      console.log(`[Bot v2] Cleaned up ${deletedOld?.length || 0} old pending parlays for ${targetDate}`);
+    }
+
     if (allParlays.length > 0) {
       const { error: insertError } = await supabase
         .from('bot_daily_parlays')
