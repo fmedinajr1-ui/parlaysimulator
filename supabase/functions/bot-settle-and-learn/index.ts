@@ -107,18 +107,34 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Get yesterday's date
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const targetDate = yesterday.toISOString().split('T')[0];
+    // Accept targetDate from request body, or settle both yesterday and today
+    let targetDates: string[] = [];
+    try {
+      const body = await req.json();
+      if (body.date) {
+        targetDates = [body.date];
+      }
+    } catch {
+      // No body - use defaults
+    }
 
-    console.log(`[Bot Settle] Processing parlays for ${targetDate}`);
+    if (targetDates.length === 0) {
+      const now = new Date();
+      const todayET = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+      const todayStr = todayET.toISOString().split('T')[0];
+      const yesterdayET = new Date(todayET);
+      yesterdayET.setDate(yesterdayET.getDate() - 1);
+      const yesterdayStr = yesterdayET.toISOString().split('T')[0];
+      targetDates = [yesterdayStr, todayStr];
+    }
 
-    // 1. Get pending parlays from yesterday
+    console.log(`[Bot Settle] Processing parlays for dates: ${targetDates.join(', ')}`);
+
+    // 1. Get pending parlays from target dates
     const { data: pendingParlays, error: parlaysError } = await supabase
       .from('bot_daily_parlays')
       .select('*')
-      .eq('parlay_date', targetDate)
+      .in('parlay_date', targetDates)
       .eq('outcome', 'pending');
 
     if (parlaysError) throw parlaysError;
