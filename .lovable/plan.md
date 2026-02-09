@@ -1,60 +1,85 @@
 
+# Fix: Remove Inactive Players from Telegram + Clean Up Bad Parlays
 
-# Fix: Bot Settlement Pipeline Blocked by `is_active` Filter
+## Root Causes
 
-## Problem Chain
+### 1. Old pre-fix parlays still in database
+There are **44 parlays** for Feb 9 - 40 were generated BEFORE the availability gate was implemented. These contain Kawhi Leonard, Joel Embiid, Collin Gillespie, Jimmy Butler III, Klay Thompson, Stephen Curry (no game today), etc. The Telegram `/parlays` command shows ALL of them.
 
-The settle-and-learn cycle cannot complete because of a cascading dependency:
+### 2. No injury data for today
+`lineup_alerts` has zero entries for Feb 9. The cron jobs were just scheduled but haven't run yet. Even with the availability gate, the injury blocklist is empty.
 
-```text
-Sweet Spots (is_active: false)
-  --> Verifier skips them (requires is_active: true)
-    --> No outcomes settled
-      --> Bot settlement finds all legs "pending"
-        --> All parlays stay pending forever
-```
+### 3. DST detection bug in the availability gate
+`getEasternDateRange()` uses `now.getTimezoneOffset()` to detect EDT vs EST, but on a UTC server this value is always 0, making the comparison meaningless. The offset calculation defaults to EST (UTC-5) which may be wrong during daylight saving time.
 
-Evidence from the database:
-- Feb 7: 300 sweet spots, ALL `is_active: false`, ALL `outcome: pending`
-- Feb 8: 400 sweet spots, ALL `is_active: false`, ALL `outcome: pending`
-- Feb 9: 300 sweet spots, ALL `is_active: false`, ALL `outcome: pending`
-- Game logs exist through Feb 8 (447 records), so data IS available to grade
-
-Only Feb 6 has any settled outcomes (27 hits, 32 misses) because those 66 picks happened to be `is_active: true`.
+### 4. Generator doesn't clean up old parlays
+When `/generate` is called multiple times in a day, new parlays are appended without removing stale ones from earlier runs that may have used an unfiltered pool.
 
 ## Solution
 
-### Fix 1: Remove `is_active` filter from `verify-sweet-spot-outcomes/index.ts`
+### Part 1: Fix `bot-generate-daily-parlays/index.ts`
 
-Same fix we applied to the generator. The `analysis_date` and `outcome = 'pending'` filters are sufficient. The `is_active` flag was meant for manual activation of "elite picks" but it blocks the entire automated pipeline.
+**Fix DST detection** - Replace the broken `getTimezoneOffset()` approach with a reliable method that checks the actual ET offset by formatting a date in both ET and UTC and comparing:
 
-Change at line 130: Remove `.eq('is_active', true)` from the pending picks query.
+```text
+function getEasternDateRange() {
+  const now = new Date();
+  // Get ET date string
+  const etDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(now);
+  
+  // Reliable DST check: compare ET hour vs UTC hour
+  const etHour = parseInt(new Intl.DateTimeFormat('en-US', { 
+    timeZone: 'America/New_York', hour: 'numeric', hour12: false 
+  }).format(now));
+  const utcHour = now.getUTCHours();
+  const etOffset = (utcHour - etHour + 24) % 24; // 5 for EST, 4 for EDT
+  
+  // Noon ET in UTC
+  const [year, month, day] = etDate.split('-').map(Number);
+  const startDate = new Date(Date.UTC(year, month - 1, day, 12 + etOffset, 0, 0));
+  const endDate = new Date(startDate.getTime() + 24 * 60 * 60 * 1000);
+  
+  return { startUtc: startDate.toISOString(), endUtc: endDate.toISOString(), gameDate: etDate };
+}
+```
 
-### Fix 2: Also allow bot settlement to process today's parlays
+**Add cleanup before generation** - Before inserting new parlays, delete any existing parlays for the same date that were generated from a previous run. This prevents stale/bad parlays from accumulating:
 
-Currently `bot-settle-and-learn` only looks at yesterday's date. But games finish throughout the day, so today's parlays for completed games should also be settleable. Add a parameter to allow settling today's date as well, or expand the query to include both today and yesterday.
+```text
+// In the main handler, before saving new parlays:
+await supabase.from('bot_daily_parlays')
+  .delete()
+  .eq('parlay_date', targetDate)
+  .eq('outcome', 'pending');
+```
 
-Change at lines 110-113: Query for both yesterday AND today when settling, so parlays from earlier today (for games that have finished) can be processed.
+### Part 2: Fix `telegram-webhook/index.ts`
 
-### Fix 3: Trigger the full chain after deploying
+Update `getParlays()` to only show the most recent generation batch (by `created_at`), not all parlays for the day. This way even if cleanup doesn't run, users only see the latest filtered set.
 
-1. Run `verify-sweet-spot-outcomes` for Feb 7 and Feb 8 (backfill)
-2. Run `bot-settle-and-learn` to settle the Feb 6 parlays (which have some settled outcomes)
-3. Verify the learning loop updates category weights
+### Part 3: Immediate cleanup
 
-## Technical Changes
+- Delete the 40 bad pre-fix parlays from Feb 9 (keep only the 4 clean ones from 21:04 UTC)
+- Run the injury scraper immediately to populate today's `lineup_alerts`
+- Re-generate parlays with fresh injury data
 
-### File: `supabase/functions/verify-sweet-spot-outcomes/index.ts`
-- Line 130: Remove `.eq('is_active', true)`
+## Technical Details
 
-### File: `supabase/functions/bot-settle-and-learn/index.ts`
-- Lines 110-122: Change date logic to query both yesterday and today, or accept a `targetDate` parameter from the request body
-- This allows the settlement to process parlays for games that have already completed today
+### File changes
 
-## Expected Outcome
+**`supabase/functions/bot-generate-daily-parlays/index.ts`**:
+- Fix `getEasternDateRange()` DST logic (lines 534-565): Replace `getTimezoneOffset()` with `Intl.DateTimeFormat` hour comparison
+- Add cleanup of old pending parlays before inserting new ones (in the main handler, before the save step)
 
-After these fixes and a manual trigger:
-- 700+ sweet spots from Feb 7-8 will be graded against existing game logs
-- Bot parlays with settled legs will be marked won/lost
-- Category weights will update based on real outcomes
-- The learning loop will be fully functional for the first time
+**`supabase/functions/telegram-webhook/index.ts`**:
+- Update `getParlays()` (lines 112-141): After fetching all parlays for today, group by `created_at` and only return parlays from the latest generation batch
+
+### Database cleanup (one-time)
+- Delete bot_daily_parlays where parlay_date = '2026-02-09' AND created_at < '2026-02-09T21:00:00Z' (the 40 bad parlays)
+
+### Execution sequence
+1. Deploy both function fixes
+2. Clean up bad parlays from database
+3. Trigger `firecrawl-lineup-scraper` for fresh injury data
+4. Trigger `bot-generate-daily-parlays` for a clean generation with availability gate + injury data
+5. Verify via `/parlays` on Telegram that only active, healthy players appear
