@@ -1061,6 +1061,22 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   };
 }
 
+// ============= DEDUPLICATION =============
+
+/**
+ * Create a fingerprint for a parlay based on its sorted leg keys.
+ * Two parlays with the same set of player+prop+side (or team+bet+side) legs are duplicates.
+ */
+function createParlayFingerprint(legs: any[]): string {
+  const keys = legs.map(leg => {
+    if (leg.type === 'team') {
+      return `T:${leg.home_team}_${leg.away_team}_${leg.bet_type}_${leg.side}`.toLowerCase();
+    }
+    return `P:${leg.player_name}_${leg.prop_type}_${leg.side}_${leg.line}`.toLowerCase();
+  });
+  return keys.sort().join('|');
+}
+
 // ============= TIER GENERATION =============
 
 async function generateTierParlays(
@@ -1070,7 +1086,8 @@ async function generateTierParlays(
   pool: PropPool,
   weightMap: Map<string, number>,
   strategyName: string,
-  bankroll: number
+  bankroll: number,
+  globalFingerprints: Set<string> = new Set()
 ): Promise<{ count: number; parlays: any[] }> {
   const config = TIER_CONFIG[tier];
   const tracker = createUsageTracker();
@@ -1195,6 +1212,14 @@ async function generateTierParlays(
 
     // Only create parlay if we have enough legs
     if (legs.length >= profile.legs) {
+      // Deduplication: skip if identical leg combination already exists
+      const fingerprint = createParlayFingerprint(legs);
+      if (globalFingerprints.has(fingerprint)) {
+        console.log(`[Bot] Skipping duplicate ${tier}/${profile.strategy} parlay (fingerprint match)`);
+        continue;
+      }
+      globalFingerprints.add(fingerprint);
+
       // Mark all picks as used
       for (const leg of legs) {
         if (leg.type === 'team') {
@@ -1364,6 +1389,7 @@ Deno.serve(async (req) => {
 
     const results: Record<string, { count: number; parlays: any[] }> = {};
     let allParlays: any[] = [];
+    const globalFingerprints = new Set<string>();
 
     for (const tier of tiersToGenerate) {
       const result = await generateTierParlays(
@@ -1373,7 +1399,8 @@ Deno.serve(async (req) => {
         pool,
         weightMap,
         strategyName,
-        bankroll
+        bankroll,
+        globalFingerprints
       );
       results[tier] = result;
       allParlays = [...allParlays, ...result.parlays];
