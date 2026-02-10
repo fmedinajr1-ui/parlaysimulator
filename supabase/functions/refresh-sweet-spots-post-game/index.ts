@@ -99,7 +99,7 @@ serve(async (req) => {
     let verifyResult = null;
     try {
       const { data, error } = await supabase.functions.invoke('verify-sweet-spot-outcomes', {
-        body: { targetDate: todayET },
+        body: { date: todayET },
       });
       
       if (error) {

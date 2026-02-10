@@ -144,6 +144,27 @@ Deno.serve(async (req) => {
 
     console.log(`[Bot Settle] Processing parlays for dates: ${targetDates.join(', ')}`);
 
+    // 0. Pre-step: Verify sweet spot outcomes for target dates BEFORE settlement
+    // This ensures picks are graded (hit/miss) so parlays can be settled
+    for (const targetDate of targetDates) {
+      try {
+        console.log(`[Bot Settle] Triggering verify-sweet-spot-outcomes for ${targetDate}...`);
+        const { data: verifyData, error: verifyError } = await supabase.functions.invoke('verify-sweet-spot-outcomes', {
+          body: { date: targetDate },
+        });
+        if (verifyError) {
+          console.error(`[Bot Settle] Verification error for ${targetDate}:`, verifyError);
+        } else {
+          console.log(`[Bot Settle] Verification result for ${targetDate}:`, JSON.stringify(verifyData));
+        }
+      } catch (vErr) {
+        console.error(`[Bot Settle] Verification invoke failed for ${targetDate}:`, vErr);
+      }
+    }
+
+    // Brief pause to let verification complete
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
     // 1. Get pending parlays from target dates
     const { data: pendingParlays, error: parlaysError } = await supabase
       .from('bot_daily_parlays')
