@@ -523,6 +523,26 @@ async function handleSettle(chatId: string) {
   }
 }
 
+// Format a parlay leg for display in Telegram
+function formatLegDisplay(leg: any): string {
+  if (leg.type === 'team') {
+    const matchup = `${leg.away_team || ''} @ ${leg.home_team || ''}`.trim();
+    const betLabel = (leg.bet_type || '').charAt(0).toUpperCase() + (leg.bet_type || '').slice(1);
+    const sideLabel = leg.side === 'home' ? (leg.home_team || 'HOME') :
+                      leg.side === 'away' ? (leg.away_team || 'AWAY') :
+                      (leg.side || '').toUpperCase();
+    const line = leg.line !== null && leg.line !== undefined ? ` ${leg.line}` : '';
+    const odds = leg.american_odds ? (leg.american_odds > 0 ? ` (+${leg.american_odds})` : ` (${leg.american_odds})`) : '';
+    return `${matchup} ${betLabel} ${sideLabel}${line}${odds}`;
+  }
+  // Player prop leg
+  const name = leg.player_name || 'Player';
+  const side = (leg.side || 'over').toUpperCase();
+  const line = leg.line || leg.selected_line || '';
+  const odds = leg.american_odds ? (leg.american_odds > 0 ? ` (+${leg.american_odds})` : ` (${leg.american_odds})`) : '';
+  return `${name} ${side} ${line}${odds}`;
+}
+
 // Multi-sport data fetchers
 async function getNHLPicks() {
   const { data } = await supabase
@@ -767,10 +787,10 @@ async function handleExplore(chatId: string) {
   
   exploreParlays.slice(0, 5).forEach((p: any, i: number) => {
     const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs || '[]');
-    const topLegs = legs.slice(0, 2).map((l: any) => l.player_name || l.home_team || 'Team').join(', ');
+    const topLegs = legs.slice(0, 3).map((l: any) => formatLegDisplay(l)).join('\n   ');
     
     message += `${i + 1}. *${p.leg_count}-leg* +${p.expected_odds}\n`;
-    message += `   ${topLegs}${legs.length > 2 ? ` +${legs.length - 2}` : ''}\n`;
+    message += `   ${topLegs}${legs.length > 3 ? `\n   +${legs.length - 3} more` : ''}\n`;
     message += `   Win Rate: ${(p.combined_probability * 100).toFixed(1)}%\n\n`;
   });
   
@@ -806,10 +826,10 @@ async function handleValidate(chatId: string) {
   
   validateParlays.slice(0, 5).forEach((p: any, i: number) => {
     const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs || '[]');
-    const topLegs = legs.slice(0, 2).map((l: any) => l.player_name || l.home_team || 'Team').join(', ');
+    const topLegs = legs.slice(0, 3).map((l: any) => formatLegDisplay(l)).join('\n   ');
     
     message += `${i + 1}. *${p.leg_count}-leg* +${p.expected_odds}\n`;
-    message += `   ${topLegs}${legs.length > 2 ? ` +${legs.length - 2}` : ''}\n`;
+    message += `   ${topLegs}${legs.length > 3 ? `\n   +${legs.length - 3} more` : ''}\n`;
     message += `   Edge: ${((p.simulated_edge || 0) * 100).toFixed(1)}%\n\n`;
   });
   

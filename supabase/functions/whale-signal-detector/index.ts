@@ -339,6 +339,7 @@ serve(async (req) => {
       created_at: string;
       signal_type: string;
       why_short: string[];
+      _game_id: string; // stored for accurate game_bets update
     }> = [];
     
     if (include_team_props) {
@@ -416,6 +417,7 @@ serve(async (req) => {
             created_at: now.toISOString(),
             signal_type: signalType,
             why_short: whyShort,
+            _game_id: firstBet.game_id, // stored for accurate game_bets update
           });
         }
         
@@ -453,18 +455,23 @@ serve(async (req) => {
     // Update game_bets with sharp scores
     if (teamSignals.length > 0) {
       for (const signal of teamSignals) {
-        const gameId = signal.market_key.split('_')[2]; // Extract game_id
         const betType = signal.stat_type;
         
-        await supabase
+        const { error: updateError } = await supabase
           .from('game_bets')
           .update({ 
             sharp_score: signal.sharp_score,
             recommended_side: signal.recommended_side,
             signal_sources: signal.why_short
           })
-          .eq('game_id', gameId)
+          .eq('game_id', signal._game_id)
           .eq('bet_type', betType);
+        
+        if (updateError) {
+          console.error(`[Whale Detector] Failed to update game_bets for ${signal._game_id}/${betType}:`, updateError);
+        } else {
+          console.log(`[Whale Detector] Updated game_bets: ${signal._game_id}/${betType} → ${signal.recommended_side} (score: ${signal.sharp_score})`);
+        }
       }
     }
 
