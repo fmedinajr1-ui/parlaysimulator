@@ -322,6 +322,7 @@ interface TeamProp {
   under_odds?: number;
   sharp_score?: number;
   commence_time: string;
+  updated_at?: string;
 }
 
 interface EnrichedTeamPick {
@@ -338,6 +339,162 @@ interface EnrichedTeamPick {
   sharp_score: number;
   compositeScore: number;
   confidence_score: number;
+  score_breakdown?: Record<string, number>;
+}
+
+// ============= TEAM INTELLIGENCE DATA =============
+
+interface PaceData { pace_rating: number; pace_rank: number; tempo_factor: number; }
+interface DefenseData { overall_rank: number; }
+interface GameEnvData { vegas_total: number; vegas_spread: number; shootout_factor: number; grind_factor: number; blowout_probability: number; }
+interface HomeCourtData { home_win_rate: number; home_cover_rate: number; home_over_rate: number; }
+
+function clampScore(min: number, max: number, value: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function calculateTeamCompositeScore(
+  game: TeamProp,
+  betType: string,
+  side: string,
+  paceMap: Map<string, PaceData>,
+  defenseMap: Map<string, number>,
+  envMap: Map<string, GameEnvData>,
+  homeCourtMap: Map<string, HomeCourtData>
+): { score: number; breakdown: Record<string, number> } {
+  let score = 50;
+  const breakdown: Record<string, number> = { base: 50 };
+
+  const homeAbbrev = game.home_team;
+  const awayAbbrev = game.away_team;
+  const gameKey = `${homeAbbrev}_${awayAbbrev}`;
+  const env = envMap.get(gameKey);
+  const homeCourt = homeCourtMap.get(homeAbbrev);
+  const homeDefRank = defenseMap.get(homeAbbrev) || 15;
+  const awayDefRank = defenseMap.get(awayAbbrev) || 15;
+
+  if (betType === 'spread') {
+    // Defense rank differential: better defense (lower rank) = more confident
+    const defDiff = awayDefRank - homeDefRank; // positive = home has better defense
+    const sideDefAdv = side === 'home' ? defDiff : -defDiff;
+    const defBonus = clampScore(-15, 15, sideDefAdv * 1.5);
+    score += defBonus;
+    breakdown.defense_edge = defBonus;
+
+    // Home court cover rate
+    if (homeCourt && side === 'home' && homeCourt.home_cover_rate > 0.55) {
+      const coverBonus = Math.round((homeCourt.home_cover_rate - 0.50) * 100);
+      score += clampScore(0, 10, coverBonus);
+      breakdown.home_cover = clampScore(0, 10, coverBonus);
+    }
+
+    // Blowout probability favors favorite spread
+    if (env && env.blowout_probability > 0.25) {
+      const blowoutBonus = Math.round(env.blowout_probability * 20);
+      // Only boost if on the favorite side (negative spread = favorite)
+      const isFavSide = (side === 'home' && (env.vegas_spread || 0) < 0) ||
+                        (side === 'away' && (env.vegas_spread || 0) > 0);
+      if (isFavSide) {
+        score += clampScore(0, 10, blowoutBonus);
+        breakdown.blowout = clampScore(0, 10, blowoutBonus);
+      }
+    }
+
+    // Penalize close spreads (< 3 pts) as coin-flip territory
+    const absLine = Math.abs(game.line || 0);
+    if (absLine > 0 && absLine < 3) {
+      score -= 8;
+      breakdown.close_spread_penalty = -8;
+    }
+  }
+
+  if (betType === 'total') {
+    const homePace = paceMap.get(homeAbbrev);
+    const awayPace = paceMap.get(awayAbbrev);
+
+    if (homePace && awayPace) {
+      const avgPace = (homePace.pace_rating + awayPace.pace_rating) / 2;
+      if (side === 'over' && avgPace > 101) {
+        const paceBonus = Math.round((avgPace - 99) * 3);
+        score += clampScore(0, 15, paceBonus);
+        breakdown.pace_fast = clampScore(0, 15, paceBonus);
+      } else if (side === 'under' && avgPace < 99) {
+        const paceBonus = Math.round((99 - avgPace) * 3);
+        score += clampScore(0, 15, paceBonus);
+        breakdown.pace_slow = clampScore(0, 15, paceBonus);
+      } else if ((side === 'over' && avgPace < 98) || (side === 'under' && avgPace > 102)) {
+        score -= 10; // Pace contradicts the side
+        breakdown.pace_mismatch = -10;
+      }
+    }
+
+    // Shootout / grind factor
+    if (env) {
+      if (side === 'over' && env.shootout_factor > 0.25) {
+        const shootBonus = Math.round(env.shootout_factor * 30);
+        score += clampScore(0, 10, shootBonus);
+        breakdown.shootout = clampScore(0, 10, shootBonus);
+      }
+      if (side === 'under' && env.grind_factor > 0.75) {
+        const grindBonus = Math.round((env.grind_factor - 0.70) * 40);
+        score += clampScore(0, 10, grindBonus);
+        breakdown.grind = clampScore(0, 10, grindBonus);
+      }
+    }
+
+    // Home over rate
+    if (homeCourt && side === 'over' && homeCourt.home_over_rate > 0.55) {
+      score += 5;
+      breakdown.home_over_rate = 5;
+    }
+  }
+
+  if (betType === 'moneyline') {
+    // Defense rank differential
+    const defDiff = awayDefRank - homeDefRank;
+    const sideDefAdv = side === 'home' ? defDiff : -defDiff;
+    const defBonus = clampScore(-12, 12, sideDefAdv * 1.2);
+    score += defBonus;
+    breakdown.defense_edge = defBonus;
+
+    // Home win rate
+    if (homeCourt && side === 'home' && homeCourt.home_win_rate > 0.55) {
+      const winBonus = Math.round((homeCourt.home_win_rate - 0.50) * 60);
+      score += clampScore(0, 12, winBonus);
+      breakdown.home_win_rate = clampScore(0, 12, winBonus);
+    }
+
+    // Penalize heavy favorites (implied prob > 75%) as low-value
+    const odds = side === 'home' ? (game.home_odds || -110) : (game.away_odds || -110);
+    const impliedProb = americanToImplied(odds);
+    if (impliedProb > 0.75) {
+      score -= 12;
+      breakdown.heavy_fav_penalty = -12;
+    }
+  }
+
+  return { score: clampScore(30, 95, score), breakdown };
+}
+
+// ============= TEAM CONFLICT DETECTION =============
+
+function canAddTeamLegToParlay(
+  newLeg: EnrichedTeamPick,
+  existingLegs: any[]
+): boolean {
+  for (const existing of existingLegs) {
+    if (existing.type !== 'team') continue;
+    
+    // Same game check (match home_team + away_team)
+    const sameGame = existing.home_team === newLeg.home_team && existing.away_team === newLeg.away_team;
+    if (!sameGame) continue;
+    
+    // Block: same bet_type from the same game (no 2 spreads, no 2 totals)
+    if (existing.bet_type === newLeg.bet_type) {
+      return false;
+    }
+  }
+  return true;
 }
 
 interface CategoryWeight {
@@ -539,7 +696,8 @@ function canUsePickInParlay(
   pick: EnrichedPick | EnrichedTeamPick,
   parlayTeamCount: Map<string, number>,
   parlayCategoryCount: Map<string, number>,
-  tierConfig: TierConfig
+  tierConfig: TierConfig,
+  existingLegs?: any[]
 ): boolean {
   if ('team_name' in pick && pick.team_name) {
     const teamCount = parlayTeamCount.get(pick.team_name) || 0;
@@ -555,6 +713,11 @@ function canUsePickInParlay(
   const category = pick.category;
   const categoryCount = parlayCategoryCount.get(category) || 0;
   if (categoryCount >= tierConfig.maxCategoryUsage) return false;
+  
+  // Team conflict detection: no contradictory or duplicate same-game legs
+  if ('type' in pick && pick.type === 'team' && existingLegs) {
+    if (!canAddTeamLegToParlay(pick as EnrichedTeamPick, existingLegs)) return false;
+  }
   
   return true;
 }
@@ -776,14 +939,66 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     .limit(500);
 
   // 3. Team props from game_bets - bounded to today's ET window
-  const { data: teamProps } = await supabase
+  const { data: rawTeamProps } = await supabase
     .from('game_bets')
     .select('*')
     .eq('is_active', true)
     .gte('commence_time', startUtc)
     .lt('commence_time', endUtc);
 
-  console.log(`[Bot] Raw data: ${(sweetSpots || []).length} sweet spots, ${(playerProps || []).length} unified_props, ${(teamProps || []).length} team bets`);
+  // 4. Fetch team intelligence data in parallel
+  const [paceResult, defenseResult, envResult, homeCourtResult] = await Promise.all([
+    supabase.from('nba_team_pace_projections').select('team_abbrev, team_name, pace_rating, pace_rank, tempo_factor'),
+    supabase.from('team_defense_rankings').select('team_abbreviation, team_name, overall_rank').eq('is_current', true),
+    supabase.from('game_environment').select('home_team_abbrev, away_team_abbrev, vegas_total, vegas_spread, shootout_factor, grind_factor, blowout_probability').eq('game_date', gameDate),
+    supabase.from('home_court_advantage_stats').select('team_name, home_win_rate, home_cover_rate, home_over_rate').eq('sport', 'basketball_nba'),
+  ]);
+
+  // Build lookup maps
+  const paceMap = new Map<string, PaceData>();
+  const nameToAbbrev = new Map<string, string>();
+  (paceResult.data || []).forEach((p: any) => {
+    paceMap.set(p.team_abbrev, { pace_rating: p.pace_rating, pace_rank: p.pace_rank, tempo_factor: p.tempo_factor });
+    if (p.team_name) nameToAbbrev.set(p.team_name, p.team_abbrev);
+  });
+
+  const defenseMap = new Map<string, number>();
+  (defenseResult.data || []).forEach((d: any) => {
+    defenseMap.set(d.team_abbreviation, d.overall_rank);
+    if (d.team_name) nameToAbbrev.set(d.team_name, d.team_abbreviation);
+  });
+
+  const envMap = new Map<string, GameEnvData>();
+  (envResult.data || []).forEach((e: any) => {
+    envMap.set(`${e.home_team_abbrev}_${e.away_team_abbrev}`, {
+      vegas_total: e.vegas_total, vegas_spread: e.vegas_spread,
+      shootout_factor: e.shootout_factor, grind_factor: e.grind_factor,
+      blowout_probability: e.blowout_probability,
+    });
+  });
+
+  const homeCourtMap = new Map<string, HomeCourtData>();
+  (homeCourtResult.data || []).forEach((h: any) => {
+    homeCourtMap.set(h.team_name, { home_win_rate: h.home_win_rate, home_cover_rate: h.home_cover_rate, home_over_rate: h.home_over_rate });
+    // Also map by abbreviation
+    const abbrev = nameToAbbrev.get(h.team_name);
+    if (abbrev) homeCourtMap.set(abbrev, { home_win_rate: h.home_win_rate, home_cover_rate: h.home_cover_rate, home_over_rate: h.home_over_rate });
+  });
+
+  console.log(`[Bot] Intelligence data: ${paceMap.size} pace, ${defenseMap.size} defense, ${envMap.size} env, ${homeCourtMap.size} home court`);
+
+  // Deduplicate game_bets by home_team + away_team + bet_type (keep most recent)
+  const seenGameBets = new Map<string, TeamProp>();
+  for (const game of (rawTeamProps || []) as TeamProp[]) {
+    const key = `${game.home_team}_${game.away_team}_${game.bet_type}`;
+    const existing = seenGameBets.get(key);
+    if (!existing || (game.updated_at || '') > (existing.updated_at || '')) {
+      seenGameBets.set(key, game);
+    }
+  }
+  const teamProps = Array.from(seenGameBets.values());
+
+  console.log(`[Bot] Raw data: ${(sweetSpots || []).length} sweet spots, ${(playerProps || []).length} unified_props, ${(rawTeamProps || []).length} raw team bets → ${teamProps.length} deduped`);
 
   // Build odds map
   const oddsMap = new Map<string, { overOdds: number; underOdds: number; line: number; sport: string }>();
@@ -949,87 +1164,111 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     console.log(`[AvailabilityGate] Removed players: ${filteredOutPlayers.slice(0, 20).join(', ')}${filteredOutPlayers.length > 20 ? ` ...and ${filteredOutPlayers.length - 20} more` : ''}`);
   }
 
-  // Enrich team props
+  // Enrich team props with real intelligence scoring
+  // Resolve team names to abbreviations for lookup
+  const resolveAbbrev = (teamName: string): string => {
+    return nameToAbbrev.get(teamName) || teamName;
+  };
+
   const enrichedTeamPicks: EnrichedTeamPick[] = (teamProps || []).flatMap((game: TeamProp) => {
     const picks: EnrichedTeamPick[] = [];
-    
-    // Helper: check if odds are plus-money
     const isPlusMoney = (odds: number | undefined) => odds !== undefined && odds > 0;
     
+    // Create a version of the game with abbreviations for scoring
+    const homeAbbrev = resolveAbbrev(game.home_team);
+    const awayAbbrev = resolveAbbrev(game.away_team);
+    const gameForScoring = { ...game, home_team: homeAbbrev, away_team: awayAbbrev };
+
     // Spread picks
-    if (game.line !== null && game.line !== undefined) {
+    if (game.bet_type === 'spread' && game.line !== null && game.line !== undefined) {
       if (game.home_odds) {
         const plusBonus = isPlusMoney(game.home_odds) ? 5 : 0;
+        const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'spread', 'home', paceMap, defenseMap, envMap, homeCourtMap);
         picks.push({
           id: `${game.id}_spread_home`,
-          type: 'team',
-          sport: game.sport,
-          home_team: game.home_team,
-          away_team: game.away_team,
-          bet_type: 'spread',
-          side: 'home',
-          line: game.line,
-          odds: game.home_odds,
+          type: 'team', sport: game.sport, home_team: game.home_team, away_team: game.away_team,
+          bet_type: 'spread', side: 'home', line: game.line, odds: game.home_odds,
           category: mapTeamBetToCategory('spread', 'home'),
           sharp_score: game.sharp_score || 50,
-          compositeScore: Math.min(100, (game.sharp_score || 50) + 20 + plusBonus),
-          confidence_score: (game.sharp_score || 50) / 100,
+          compositeScore: clampScore(30, 95, score + plusBonus),
+          confidence_score: score / 100,
+          score_breakdown: breakdown,
         });
       }
       if (game.away_odds) {
         const plusBonus = isPlusMoney(game.away_odds) ? 5 : 0;
+        const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'spread', 'away', paceMap, defenseMap, envMap, homeCourtMap);
         picks.push({
           id: `${game.id}_spread_away`,
-          type: 'team',
-          sport: game.sport,
-          home_team: game.home_team,
-          away_team: game.away_team,
-          bet_type: 'spread',
-          side: 'away',
-          line: -game.line,
-          odds: game.away_odds,
+          type: 'team', sport: game.sport, home_team: game.home_team, away_team: game.away_team,
+          bet_type: 'spread', side: 'away', line: -(game.line), odds: game.away_odds,
           category: mapTeamBetToCategory('spread', 'away'),
           sharp_score: game.sharp_score || 50,
-          compositeScore: Math.min(100, (game.sharp_score || 50) + 20 + plusBonus),
-          confidence_score: (game.sharp_score || 50) / 100,
+          compositeScore: clampScore(30, 95, score + plusBonus),
+          confidence_score: score / 100,
+          score_breakdown: breakdown,
         });
       }
     }
     
     // Total picks
-    if (game.over_odds && game.under_odds) {
+    if (game.bet_type === 'total' && game.over_odds && game.under_odds) {
+      const { score: overScore, breakdown: overBreakdown } = calculateTeamCompositeScore(gameForScoring, 'total', 'over', paceMap, defenseMap, envMap, homeCourtMap);
       const overPlusBonus = isPlusMoney(game.over_odds) ? 5 : 0;
       picks.push({
         id: `${game.id}_total_over`,
-        type: 'team',
-        sport: game.sport,
-        home_team: game.home_team,
-        away_team: game.away_team,
-        bet_type: 'total',
-        side: 'over',
-        line: game.line || 0,
-        odds: game.over_odds,
+        type: 'team', sport: game.sport, home_team: game.home_team, away_team: game.away_team,
+        bet_type: 'total', side: 'over', line: game.line || 0, odds: game.over_odds,
         category: mapTeamBetToCategory('total', 'over'),
         sharp_score: game.sharp_score || 50,
-        compositeScore: Math.min(100, (game.sharp_score || 50) + 15 + overPlusBonus),
-        confidence_score: (game.sharp_score || 50) / 100,
+        compositeScore: clampScore(30, 95, overScore + overPlusBonus),
+        confidence_score: overScore / 100,
+        score_breakdown: overBreakdown,
       });
+      const { score: underScore, breakdown: underBreakdown } = calculateTeamCompositeScore(gameForScoring, 'total', 'under', paceMap, defenseMap, envMap, homeCourtMap);
       const underPlusBonus = isPlusMoney(game.under_odds) ? 5 : 0;
       picks.push({
         id: `${game.id}_total_under`,
-        type: 'team',
-        sport: game.sport,
-        home_team: game.home_team,
-        away_team: game.away_team,
-        bet_type: 'total',
-        side: 'under',
-        line: game.line || 0,
-        odds: game.under_odds,
+        type: 'team', sport: game.sport, home_team: game.home_team, away_team: game.away_team,
+        bet_type: 'total', side: 'under', line: game.line || 0, odds: game.under_odds,
         category: mapTeamBetToCategory('total', 'under'),
         sharp_score: game.sharp_score || 50,
-        compositeScore: Math.min(100, (game.sharp_score || 50) + 15 + underPlusBonus),
-        confidence_score: (game.sharp_score || 50) / 100,
+        compositeScore: clampScore(30, 95, underScore + underPlusBonus),
+        confidence_score: underScore / 100,
+        score_breakdown: underBreakdown,
       });
+    }
+
+    // Moneyline picks
+    if (game.bet_type === 'h2h') {
+      if (game.home_odds) {
+        const plusBonus = isPlusMoney(game.home_odds) ? 5 : 0;
+        const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'moneyline', 'home', paceMap, defenseMap, envMap, homeCourtMap);
+        picks.push({
+          id: `${game.id}_ml_home`,
+          type: 'team', sport: game.sport, home_team: game.home_team, away_team: game.away_team,
+          bet_type: 'moneyline', side: 'home', line: 0, odds: game.home_odds,
+          category: mapTeamBetToCategory('moneyline', 'home'),
+          sharp_score: game.sharp_score || 50,
+          compositeScore: clampScore(30, 95, score + plusBonus),
+          confidence_score: score / 100,
+          score_breakdown: breakdown,
+        });
+      }
+      if (game.away_odds) {
+        const plusBonus = isPlusMoney(game.away_odds) ? 5 : 0;
+        const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'moneyline', 'away', paceMap, defenseMap, envMap, homeCourtMap);
+        picks.push({
+          id: `${game.id}_ml_away`,
+          type: 'team', sport: game.sport, home_team: game.home_team, away_team: game.away_team,
+          bet_type: 'moneyline', side: 'away', line: 0, odds: game.away_odds,
+          category: mapTeamBetToCategory('moneyline', 'away'),
+          sharp_score: game.sharp_score || 50,
+          compositeScore: clampScore(30, 95, score + plusBonus),
+          confidence_score: score / 100,
+          score_breakdown: breakdown,
+        });
+      }
     }
     
     return picks;
@@ -1125,7 +1364,7 @@ async function generateTierParlays(
       if (legs.length >= profile.legs) break;
       
       if (!canUsePickGlobally(pick, tracker, config)) continue;
-      if (!canUsePickInParlay(pick, parlayTeamCount, parlayCategoryCount, config)) continue;
+      if (!canUsePickInParlay(pick, parlayTeamCount, parlayCategoryCount, config, legs)) continue;
 
       // Check profile-specific requirements
       const minHitRate = profile.minHitRate || config.minHitRate;
