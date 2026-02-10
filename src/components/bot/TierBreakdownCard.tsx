@@ -49,7 +49,8 @@ export function TierBreakdownCard({ parlays }: TierBreakdownCardProps) {
 
   // Group parlays by tier
   const tierGroups = parlays.reduce((acc, parlay) => {
-    const tier = (parlay as any).tier || 'execution';
+    const sn = (parlay.strategy_name || '').toLowerCase();
+    const tier = sn.includes('exploration') ? 'exploration' : sn.includes('validation') ? 'validation' : 'execution';
     if (!acc[tier]) acc[tier] = [];
     acc[tier].push(parlay);
     return acc;
