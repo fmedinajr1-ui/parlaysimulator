@@ -1188,7 +1188,8 @@ serve(async (req) => {
         }
       }
       
-      const key = `${prop.player_name.toLowerCase().trim()}_${prop.prop_type.toLowerCase()}`;
+      const normalizedPropType = prop.prop_type.toLowerCase().replace(/^player_/, '');
+      const key = `${prop.player_name.toLowerCase().trim()}_${normalizedPropType}`;
       // Only keep first occurrence (most recent)
       if (!actualLineMap.has(key)) {
         actualLineMap.set(key, {
