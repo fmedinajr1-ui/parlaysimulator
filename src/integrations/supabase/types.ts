@@ -1092,6 +1092,51 @@ export type Database = {
         }
         Relationships: []
       }
+      bot_research_findings: {
+        Row: {
+          action_taken: string | null
+          actionable: boolean | null
+          category: string
+          created_at: string
+          id: string
+          key_insights: Json | null
+          relevance_score: number | null
+          research_date: string
+          sources: string[] | null
+          summary: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          action_taken?: string | null
+          actionable?: boolean | null
+          category: string
+          created_at?: string
+          id?: string
+          key_insights?: Json | null
+          relevance_score?: number | null
+          research_date?: string
+          sources?: string[] | null
+          summary: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          action_taken?: string | null
+          actionable?: boolean | null
+          category?: string
+          created_at?: string
+          id?: string
+          key_insights?: Json | null
+          relevance_score?: number | null
+          research_date?: string
+          sources?: string[] | null
+          summary?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       bot_strategies: {
         Row: {
           auto_generated: boolean | null
