@@ -1228,13 +1228,35 @@ Deno.serve(async (req) => {
     // 4. Build prop pool
     const pool = await buildPropPool(supabase, targetDate, weightMap, weights as CategoryWeight[] || []);
 
-    if (pool.totalPool < 20) {
-      console.log(`[Bot v2] Insufficient prop pool: ${pool.totalPool}`);
+    // Check if we have real odds data
+    const realLinePicks = pool.playerPicks.filter(p => p.has_real_line);
+    if (pool.totalPool < 20 || (realLinePicks.length < 5 && pool.teamPicks.length < 5)) {
+      const reason = pool.totalPool < 20 
+        ? `Insufficient prop pool (${pool.totalPool})` 
+        : `No real odds data (${realLinePicks.length} real lines, ${pool.teamPicks.length} team picks)`;
+      console.log(`[Bot v2] Skipping generation: ${reason}`);
+
+      // Notify via Telegram
+      try {
+        await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${supabaseKey}`,
+          },
+          body: JSON.stringify({
+            type: 'daily_summary',
+            data: { parlaysCount: 0, winRate: 0, edge: 0, bankroll, mode: `Skipped - ${reason}` },
+          }),
+        });
+      } catch (_) { /* ignore */ }
+
       return new Response(
         JSON.stringify({ 
           success: false, 
-          message: 'Insufficient prop pool',
+          message: reason,
           poolSize: pool.totalPool,
+          realLinePicks: realLinePicks.length,
           parlaysGenerated: 0 
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

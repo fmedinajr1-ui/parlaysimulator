@@ -35,7 +35,18 @@ async function sendMessage(chatId: string, text: string, parseMode = "Markdown")
       parse_mode: parseMode,
     }),
   });
-  return response.json();
+  const result = await response.json();
+  // If Markdown parsing fails, retry without parse_mode
+  if (!result.ok && result.description?.includes('parse') && parseMode) {
+    console.warn('[Telegram] Markdown parse failed, retrying as plain text');
+    const fallback = await fetch(`${TELEGRAM_API}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text }),
+    });
+    return fallback.json();
+  }
+  return result;
 }
 
 // Helper: Log activity to bot_activity_log
