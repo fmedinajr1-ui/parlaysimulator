@@ -1220,9 +1220,63 @@ async function handleCallbackQuery(callbackQueryId: string, data: string, chatId
 
     await answerCallbackQuery(callbackQueryId);
     await sendMessage(chatId, msg);
+  } else if (data.startsWith('fix:')) {
+    await handleFixAction(callbackQueryId, data.slice(4), chatId);
   } else {
     await answerCallbackQuery(callbackQueryId, "Unknown action");
   }
+}
+
+// ==================== FIX ACTION HANDLER ====================
+
+async function handleFixAction(callbackQueryId: string, action: string, chatId: string) {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+  const fixConfig: Record<string, { label: string; functions: string[] }> = {
+    'refresh_props': { label: 'Refresh Props', functions: ['refresh-todays-props'] },
+    'calibrate': { label: 'Calibrate Weights', functions: ['calibrate-bot-weights'] },
+    'generate': { label: 'Generate Parlays', functions: ['bot-generate-daily-parlays'] },
+    'settle': { label: 'Settle Parlays', functions: ['bot-settle-and-learn'] },
+    'run_crons': { label: 'Run All Jobs', functions: ['calibrate-bot-weights', 'bot-settle-and-learn', 'bot-generate-daily-parlays'] },
+  };
+
+  const config = fixConfig[action];
+  if (!config) {
+    await answerCallbackQuery(callbackQueryId, "Unknown fix action");
+    return;
+  }
+
+  await answerCallbackQuery(callbackQueryId, `Running ${config.label}...`);
+  await sendMessage(chatId, `⏳ *Running ${config.label}...*`);
+  await logActivity("fix_action", `Fix triggered: ${action}`, { chatId, action }, "info");
+
+  const results: string[] = [];
+  for (const fnName of config.functions) {
+    try {
+      const resp = await fetch(`${supabaseUrl}/functions/v1/${fnName}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${serviceKey}`,
+        },
+        body: JSON.stringify({}),
+      });
+      const body = await resp.text();
+      if (resp.ok) {
+        results.push(`✅ ${fnName}`);
+      } else {
+        results.push(`❌ ${fnName}: ${resp.status}`);
+        console.error(`[Fix] ${fnName} failed:`, body);
+      }
+    } catch (err) {
+      results.push(`❌ ${fnName}: ${err.message}`);
+      console.error(`[Fix] ${fnName} error:`, err);
+    }
+  }
+
+  const summary = `*${config.label} Complete*\n\n${results.join('\n')}`;
+  await sendMessage(chatId, summary);
 }
 
 // ==================== WEEKLY DIGEST ====================
