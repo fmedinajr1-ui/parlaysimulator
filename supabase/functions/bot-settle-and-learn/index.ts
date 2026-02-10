@@ -273,12 +273,14 @@ Deno.serve(async (req) => {
 
     console.log(`[Bot Settle] Settled ${parlaysSettled} parlays (${parlaysWon}W ${parlaysLost}L)`);
 
-    // 4. Update category weights based on outcomes
+    // 4. Update category weights based on outcomes and collect deltas
+    const weightChanges: Array<{ category: string; oldWeight: number; newWeight: number; delta: number }> = [];
+    
     for (const [category, stats] of categoryUpdates) {
       const existing = weightMap.get(category);
       if (!existing) continue;
 
-      // Apply learning for each hit/miss
+      const oldWeight = existing.weight;
       let currentWeight = existing.weight;
       let currentStreak = existing.current_streak;
 
@@ -292,6 +294,16 @@ Deno.serve(async (req) => {
         const result = adjustWeight(currentWeight, false, currentStreak);
         currentWeight = result.newWeight;
         currentStreak = result.newStreak;
+      }
+
+      // Track weight change
+      if (currentWeight !== oldWeight) {
+        weightChanges.push({
+          category,
+          oldWeight,
+          newWeight: currentWeight,
+          delta: currentWeight - oldWeight,
+        });
       }
 
       // Update in database
@@ -539,7 +551,38 @@ Deno.serve(async (req) => {
       severity: isProfitableDay ? 'success' : 'warning',
     });
 
-    // 10. Send Telegram notification
+    // 10. Gather strategy info and blocked categories for Telegram
+    let activeStrategyName: string | undefined;
+    let activeStrategyWinRate: number | undefined;
+    let blockedCategories: string[] = [];
+
+    try {
+      const { data: activeStrategy } = await supabase
+        .from('bot_strategies')
+        .select('strategy_name, win_rate')
+        .eq('is_active', true)
+        .limit(1)
+        .maybeSingle();
+
+      if (activeStrategy) {
+        activeStrategyName = activeStrategy.strategy_name;
+        activeStrategyWinRate = activeStrategy.win_rate ?? undefined;
+      }
+
+      const { data: blockedRows } = await supabase
+        .from('bot_category_weights')
+        .select('category, side')
+        .eq('is_blocked', true)
+        .limit(10);
+
+      if (blockedRows) {
+        blockedCategories = blockedRows.map(r => `${r.category}_${r.side}`);
+      }
+    } catch (stratError) {
+      console.error('[Bot Settle] Strategy/blocked query error:', stratError);
+    }
+
+    // Send Telegram notification
     try {
       await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
         method: 'POST',
@@ -560,6 +603,10 @@ Deno.serve(async (req) => {
             winRate: parlaysWon + parlaysLost > 0 
               ? Math.round((parlaysWon / (parlaysWon + parlaysLost)) * 100) 
               : 0,
+            weightChanges,
+            strategyName: activeStrategyName,
+            strategyWinRate: activeStrategyWinRate,
+            blockedCategories,
           },
         }),
       });
