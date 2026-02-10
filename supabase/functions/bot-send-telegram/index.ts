@@ -116,57 +116,57 @@ function formatTieredParlaysGenerated(data: Record<string, any>, dateStr: string
 
 function formatSettlement(data: Record<string, any>, dateStr: string): string {
   const { parlaysWon, parlaysLost, profitLoss, consecutiveDays, bankroll, isRealModeReady, weightChanges, strategyName, strategyWinRate, blockedCategories, unblockedCategories } = data;
-  const totalParlays = parlaysWon + parlaysLost;
+  const totalParlays = (parlaysWon || 0) + (parlaysLost || 0);
   const winRate = totalParlays > 0 ? ((parlaysWon / totalParlays) * 100).toFixed(0) : 0;
   
-  let msg = `💰 *DAILY SETTLEMENT REPORT*\n`;
-  msg += `━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-  msg += `Yesterday: ${dateStr}\n`;
-  msg += `Result: *${parlaysWon}/${totalParlays} parlays hit* (${winRate}%)\n\n`;
+  let msg = `DAILY SETTLEMENT REPORT\n`;
+  msg += `========================\n\n`;
+  msg += `Date: ${dateStr}\n`;
+  msg += `Result: ${parlaysWon || 0}/${totalParlays} parlays hit (${winRate}%)\n\n`;
   
   const plSign = profitLoss >= 0 ? '+' : '';
-  msg += `P/L: *${plSign}$${profitLoss?.toFixed(0) || 0}* (simulation)\n`;
+  msg += `P/L: ${plSign}$${profitLoss?.toFixed(0) || 0} (simulation)\n`;
   
   if (bankroll !== undefined) {
     const prevBankroll = bankroll - (profitLoss || 0);
-    msg += `Bankroll: $${prevBankroll.toFixed(0)} → *$${bankroll.toFixed(0)}*\n\n`;
+    msg += `Bankroll: $${prevBankroll.toFixed(0)} -> $${bankroll.toFixed(0)}\n\n`;
   }
   
   if (consecutiveDays !== undefined) {
     if (consecutiveDays > 0) {
-      msg += `🔥 Streak: *${consecutiveDays} consecutive profitable days*\n`;
+      msg += `Streak: ${consecutiveDays} consecutive profitable days\n`;
       if (!isRealModeReady && consecutiveDays < 3) {
-        msg += `⚡ ${3 - consecutiveDays} MORE DAY${3 - consecutiveDays > 1 ? 'S' : ''} until Real Mode!\n`;
+        msg += `${3 - consecutiveDays} MORE DAY${3 - consecutiveDays > 1 ? 'S' : ''} until Real Mode!\n`;
       }
     } else {
-      msg += `📊 Streak reset - rebuilding momentum\n`;
+      msg += `Streak reset - rebuilding momentum\n`;
     }
   }
   
   if (isRealModeReady) {
-    msg += `\n🚀 *REAL MODE READY!*\n`;
+    msg += `\nREAL MODE READY!\n`;
   }
   
   // Tomorrow's Strategy section
   if (strategyName) {
-    msg += `\n📋 *Tomorrow's Strategy*\n`;
+    msg += `\nTomorrow's Strategy\n`;
     msg += `Active: ${strategyName}\n`;
-    if (strategyWinRate !== undefined) {
+    if (strategyWinRate !== undefined && strategyWinRate !== null) {
       msg += `Win Rate: ${(strategyWinRate * 100).toFixed(1)}%\n`;
     }
     if (blockedCategories && blockedCategories.length > 0) {
-      msg += `🚫 Blocked: ${blockedCategories.slice(0, 5).join(', ')}\n`;
+      msg += `Blocked: ${blockedCategories.slice(0, 5).join(', ')}\n`;
     }
     if (unblockedCategories && unblockedCategories.length > 0) {
-      msg += `✅ Unblocked: ${unblockedCategories.join(', ')}\n`;
+      msg += `Unblocked: ${unblockedCategories.join(', ')}\n`;
     }
   }
   
   if (weightChanges && weightChanges.length > 0) {
-    msg += `\n⚖️ Weight Changes:\n`;
+    msg += `\nWeight Changes:\n`;
     for (const change of weightChanges.slice(0, 8)) {
-      const arrow = change.delta > 0 ? '↑' : '↓';
-      msg += `${arrow} ${change.category}: ${change.oldWeight.toFixed(2)} → ${change.newWeight.toFixed(2)}\n`;
+      const arrow = change.delta > 0 ? '+' : '';
+      msg += `${change.category}: ${change.oldWeight.toFixed(2)} -> ${change.newWeight.toFixed(2)} (${arrow}${change.delta.toFixed(2)})\n`;
     }
   }
   
@@ -270,6 +270,7 @@ Deno.serve(async (req) => {
         // Check if this notification type is enabled
         const notifyMap: Record<string, string> = {
           'parlays_generated': 'notify_parlays_generated',
+          'tiered_parlays_generated': 'notify_parlays_generated',
           'settlement_complete': 'notify_settlement',
           'activation_ready': 'notify_activation_ready',
           'weight_change': 'notify_weight_changes',
