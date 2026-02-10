@@ -8,6 +8,7 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { getEasternDate } from '@/lib/dateUtils';
 import { 
   runHybridSimulation, 
   HybridSimulationResult, 
@@ -349,7 +350,7 @@ export function useBotEngine() {
   const { data: todayParlays = [], isLoading: parlaysLoading } = useQuery({
     queryKey: ['bot-parlays-today'],
     queryFn: async () => {
-      const today = new Date().toISOString().split('T')[0];
+      const today = getEasternDate();
       const { data, error } = await supabase
         .from('bot_daily_parlays')
         .select('*')
