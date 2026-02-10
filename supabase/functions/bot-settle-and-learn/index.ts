@@ -261,8 +261,8 @@ Deno.serve(async (req) => {
       let outcome = 'pending';
       let profitLoss = 0;
       
-      if (activeLegCount === 0) {
-        // All legs voided — void entire parlay
+      if (activeLegCount === 0 || legsVoided > legs.length / 2) {
+        // All or majority of legs voided — void entire parlay
         outcome = 'void';
         parlaysSettled++;
       } else if (legsHit + legsMissed === activeLegCount) {
