@@ -24,7 +24,7 @@ export interface BotLeg {
   team_name: string;
   prop_type: string;
   line: number;
-  side: 'over' | 'under';
+  side: 'over' | 'under' | 'home' | 'away';
   category: string;
   weight: number;
   hit_rate: number;
@@ -33,6 +33,11 @@ export interface BotLeg {
   composite_score?: number;
   outcome?: 'hit' | 'miss' | 'push' | 'pending';
   actual_value?: number;
+  // Team bet fields
+  type?: 'player' | 'team';
+  home_team?: string;
+  away_team?: string;
+  bet_type?: string; // spread, total, moneyline
   // Alternate line tracking (for aggressive parlays)
   original_line?: number;           // Main book line
   selected_line?: number;           // Line we picked (may be alt)
