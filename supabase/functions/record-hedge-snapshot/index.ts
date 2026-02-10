@@ -68,7 +68,7 @@ Deno.serve(async (req) => {
     }
     
     // Calculate analysis_date from payload or use current date
-    const analysisDate = payload.analysis_date || new Date().toISOString().split('T')[0];
+    const analysisDate = payload.analysis_date || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
     
     // Generate a composite key for deduplication (player+prop+line+quarter+date)
     const compositeKey = `${payload.player_name.toLowerCase()}_${payload.prop_type}_${payload.line}_${payload.quarter}_${analysisDate}`;

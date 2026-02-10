@@ -6,6 +6,14 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// EST-aware date helper
+function getEasternDate(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date());
+}
+
 // NHL team mappings
 const NHL_TEAMS: Record<string, string> = {
   'ANA': 'Anaheim Ducks', 'ARI': 'Arizona Coyotes', 'BOS': 'Boston Bruins',
@@ -80,7 +88,7 @@ serve(async (req) => {
     }
 
     const injuries: any[] = [];
-    const today = new Date().toISOString().split('T')[0];
+    const today = getEasternDate();
 
     for (const [abbr, fullName] of Object.entries(NHL_TEAMS)) {
       if (!teamsInGames.has(fullName)) continue;

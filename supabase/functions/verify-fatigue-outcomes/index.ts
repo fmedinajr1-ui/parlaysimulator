@@ -5,6 +5,14 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// EST-aware date helper
+function getEasternDate(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date());
+}
+
 interface FatigueEdge {
   id: string;
   event_id: string;
@@ -39,7 +47,7 @@ Deno.serve(async (req) => {
     console.log('Starting fatigue outcome verification...');
 
     // Get unverified fatigue edges from past games
-    const today = new Date().toISOString().split('T')[0];
+    const today = getEasternDate();
     const { data: pendingEdges, error: fetchError } = await supabase
       .from('fatigue_edge_tracking')
       .select('*')

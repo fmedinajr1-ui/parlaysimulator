@@ -6,6 +6,14 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// EST-aware date helper
+function getEasternDate(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date());
+}
+
 // Initialize Supabase client for logging outcomes
 const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
 const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
@@ -140,7 +148,7 @@ async function updatePlayerFilmInsights(
         const avgFatigueValue = fatigueSignals.reduce((sum, s) => sum + s.value, 0) / fatigueSignals.length;
         const fatigueObs = fatigueSignals.map(s => s.observation).filter(Boolean);
         const newFatigueNote = fatigueObs.length > 0 
-          ? `[${new Date().toISOString().split('T')[0]}] ${fatigueObs[0]} (avg: ${avgFatigueValue > 0 ? '+' : ''}${avgFatigueValue.toFixed(1)})`
+          ? `[${getEasternDate()}] ${fatigueObs[0]} (avg: ${avgFatigueValue > 0 ? '+' : ''}${avgFatigueValue.toFixed(1)})`
           : null;
         
         if (newFatigueNote) {
@@ -159,7 +167,7 @@ async function updatePlayerFilmInsights(
           .filter(Boolean);
         
         if (observations.length > 0) {
-          const newNote = `[${new Date().toISOString().split('T')[0]}] ${observations.join('; ')}`;
+          const newNote = `[${getEasternDate()}] ${observations.join('; ')}`;
           const existingNotes = bodyLanguageNotes ? bodyLanguageNotes.split('\n').slice(-4) : [];
           bodyLanguageNotes = [...existingNotes, newNote].join('\n');
         }
@@ -2612,7 +2620,7 @@ CRITICAL RULE: You MUST identify players by their jersey numbers and look them u
     console.log(`[Scout Agent] Analysis complete: ${visionResult.visionSignals?.length || 0} signals, ${propEdges.length} edges`);
 
     // Record prop outcomes for calibration tracking
-    const analysisDate = new Date().toISOString().split('T')[0];
+    const analysisDate = getEasternDate();
     await recordPropOutcomes(
       propEdges,
       gameContext.eventId,
@@ -2644,7 +2652,7 @@ CRITICAL RULE: You MUST identify players by their jersey numbers and look them u
     if (pbpData && supabaseUrl && supabaseKey) {
       try {
         const supabase = createClient(supabaseUrl, supabaseKey);
-        const today = new Date().toISOString().split('T')[0];
+        const today = getEasternDate();
         
         // Try to fetch Vegas lines from game_environment
         const { data: gameEnv, error: envError } = await supabase

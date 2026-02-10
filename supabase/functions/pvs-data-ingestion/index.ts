@@ -6,6 +6,14 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// EST-aware date helper
+function getEasternDate(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date());
+}
+
 // NBA Teams with their defensive and pace ratings (2024-25 approximations)
 const NBA_TEAM_STATS = {
   "Boston Celtics": [106.5, 2, 101.2, 12, 108.2, 42.1, 24.5, 12.8, 4.2],
@@ -275,7 +283,7 @@ serve(async (req) => {
     // 4. Generate sample injury reports
     if (mode === 'all' || mode === 'injuries') {
       console.log('[PVS Data Ingestion] Generating injury reports...');
-      const today = new Date().toISOString().split('T')[0];
+      const today = getEasternDate();
       
       // Delete existing injury reports for today
       await supabase

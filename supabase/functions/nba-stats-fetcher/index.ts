@@ -6,6 +6,14 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// EST-aware date helper
+function getEasternDate(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date());
+}
+
 const BDL_API_BASE = "https://api.balldontlie.io/v1";
 const ESPN_NBA_API = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba";
 
@@ -586,7 +594,7 @@ serve(async (req) => {
       // Fetch injuries
       if (mode === 'sync' || mode === 'injuries') {
         const injuries = await fetchInjuries(apiKey);
-        const today = new Date().toISOString().split('T')[0];
+        const today = getEasternDate();
         
         await supabase
           .from('nba_injury_reports')

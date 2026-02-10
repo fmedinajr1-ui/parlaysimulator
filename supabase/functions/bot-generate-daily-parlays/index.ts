@@ -1177,7 +1177,7 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     const body = await req.json().catch(() => ({}));
-    const targetDate = body.date || new Date().toISOString().split('T')[0];
+    const targetDate = body.date || getEasternDateRange().gameDate;
     const singleTier = body.tier as TierName | undefined;
 
     console.log(`[Bot v2] Generating tiered parlays for ${targetDate}`);
