@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { getEasternDate } from "@/lib/dateUtils";
 
 export interface ManualProp {
   id: string;
@@ -76,7 +77,7 @@ export function useManualBuilder(statFilter: string = "all") {
   const { data: props, isLoading: propsLoading } = useQuery({
     queryKey: ["manual-builder-props", statFilter],
     queryFn: async () => {
-      const today = new Date().toISOString().split("T")[0];
+      const today = getEasternDate();
       
       let query = supabase
         .from("unified_props")
@@ -123,7 +124,7 @@ export function useManualBuilder(statFilter: string = "all") {
   const { data: projections } = useQuery({
     queryKey: ["manual-builder-projections"],
     queryFn: async () => {
-      const today = new Date().toISOString().split("T")[0];
+      const today = getEasternDate();
       const { data, error } = await supabase
         .from("category_sweet_spots")
         .select("player_name, prop_type, projected_value, l10_median, l10_avg, recommended_side, confidence_score, actual_line")

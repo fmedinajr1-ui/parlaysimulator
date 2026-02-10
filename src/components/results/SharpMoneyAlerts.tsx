@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { FeedCard } from "../FeedCard";
 import { supabase } from "@/integrations/supabase/client";
+import { getEasternDate } from "@/lib/dateUtils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Zap, TrendingUp, TrendingDown, Clock, BatteryLow } from "lucide-react";
@@ -67,7 +68,7 @@ export function SharpMoneyAlerts({ delay = 0, limit = 5 }: SharpMoneyAlertsProps
 
     const fetchFatigueData = async () => {
       try {
-        const today = new Date().toISOString().split('T')[0];
+        const today = getEasternDate();
         const { data, error } = await supabase
           .from('nba_fatigue_scores')
           .select('event_id, team_name, fatigue_score, fatigue_category')

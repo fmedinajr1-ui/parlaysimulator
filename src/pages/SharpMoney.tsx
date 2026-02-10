@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { getEasternDate } from "@/lib/dateUtils";
 import { FeedCard, FeedCardHeader } from "@/components/FeedCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -117,7 +118,7 @@ export default function SharpMoney() {
 
   const fetchFatigueData = useCallback(async () => {
     try {
-      const today = new Date().toISOString().split('T')[0];
+      const today = getEasternDate();
       const { data, error } = await supabase
         .from('nba_fatigue_scores')
         .select('*')

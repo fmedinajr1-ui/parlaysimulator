@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { getEasternDate } from '@/lib/dateUtils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -472,7 +473,7 @@ export function AIGenerativeProgressDashboard() {
 
   // Fetch data freshness for player stats tables
   const fetchDataFreshness = async () => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getEasternDate();
     
     const [nbaRes, nflRes, nhlRes] = await Promise.all([
       supabase.from('nba_player_game_logs').select('game_date').order('game_date', { ascending: false }).limit(1),

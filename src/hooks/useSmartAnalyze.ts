@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
+import { getEasternDate } from '@/lib/dateUtils';
 import { usePilotUser } from './usePilotUser';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
@@ -123,7 +124,7 @@ export function useSmartAnalyze(options: UseSmartAnalyzeOptions = {}) {
   const buildEnginePayload = (engineName: string, basePayload: any): any => {
     switch (engineName) {
       case 'median-lock-engine':
-        return { action: 'get_candidates', date: new Date().toISOString().split('T')[0] };
+        return { action: 'get_candidates', date: getEasternDate() };
       case 'median-edge-engine':
         return { action: 'analyze_auto' };
       case 'market-signal-engine':

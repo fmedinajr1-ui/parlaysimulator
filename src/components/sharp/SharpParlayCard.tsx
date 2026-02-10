@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { getEasternDate } from '@/lib/dateUtils';
 import { 
   Shield, 
   Target, 
@@ -167,7 +168,7 @@ export function SharpParlayCards() {
   const { data: parlays, isLoading, error, refetch } = useQuery({
     queryKey: ['sharp-parlays'],
     queryFn: async () => {
-      const today = new Date().toISOString().split('T')[0];
+      const today = getEasternDate();
       const { data, error } = await supabase
         .from('sharp_ai_parlays')
         .select('*')

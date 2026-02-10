@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { getEasternDate } from "@/lib/dateUtils";
 import { AppShell } from "@/components/layout/AppShell";
 import { MobileHeader } from "@/components/layout/MobileHeader";
 import { FeedCard } from "@/components/FeedCard";
@@ -111,7 +112,7 @@ export default function SportsFatigue() {
 
   const fetchFatigueData = useCallback(async () => {
     try {
-      const today = new Date().toISOString().split('T')[0];
+      const today = getEasternDate();
       const { data, error } = await supabase
         .from('sports_fatigue_scores')
         .select('*')

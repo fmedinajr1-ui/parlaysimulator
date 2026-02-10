@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Calculator, Database, ChevronDown, ChevronUp, RefreshCw, Activity, TrendingUp, TrendingDown, Loader2, Sparkles, Shield, Zap, Target, Users, Layers, Trophy, Star } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { getEasternDate } from "@/lib/dateUtils";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -371,7 +372,7 @@ export function MedianEdgePicksCard() {
   const { data: picks, isLoading, refetch, isFetching } = useQuery({
     queryKey: ['median-edge-picks'],
     queryFn: async () => {
-      const today = new Date().toISOString().split('T')[0];
+      const today = getEasternDate();
       const { data, error } = await supabase
         .from('median_edge_picks')
         .select('*')
