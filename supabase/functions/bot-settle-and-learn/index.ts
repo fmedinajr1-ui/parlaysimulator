@@ -129,12 +129,18 @@ async function settleTeamLeg(
 
   // Query game logs for players on these teams to aggregate scores
   // Search in a 3-day window around parlay date
+  // Try both NBA and NCAAB tables
   const windowEnd = new Date(parlayDate + 'T12:00:00Z');
   windowEnd.setDate(windowEnd.getDate() + 2);
   const windowEndStr = windowEnd.toISOString().split('T')[0];
 
+  // Detect sport from leg data (default to NBA)
+  const legSport = (leg as any).sport || '';
+  const isNCAAB = legSport.includes('ncaab') || legSport.includes('college');
+  const logTable = isNCAAB ? 'ncaab_player_game_logs' : 'nba_player_game_logs';
+
   const { data: homeLogs } = await supabase
-    .from('nba_player_game_logs')
+    .from(logTable)
     .select('points, game_date, team')
     .ilike('team', `%${homeTeam}%`)
     .gte('game_date', parlayDate)
@@ -142,20 +148,43 @@ async function settleTeamLeg(
     .limit(20);
 
   const { data: awayLogs } = await supabase
-    .from('nba_player_game_logs')
+    .from(logTable)
     .select('points, game_date, team')
     .ilike('team', `%${awayTeam}%`)
     .gte('game_date', parlayDate)
     .lte('game_date', windowEndStr)
     .limit(20);
 
+  // If NCAAB returned no data, fallback to NBA table (and vice versa)
+  let homeLogsResult = homeLogs;
+  let awayLogsResult = awayLogs;
   if ((!homeLogs || homeLogs.length === 0) && (!awayLogs || awayLogs.length === 0)) {
+    const fallbackTable = isNCAAB ? 'nba_player_game_logs' : 'ncaab_player_game_logs';
+    const { data: fbHome } = await supabase
+      .from(fallbackTable)
+      .select('points, game_date, team')
+      .ilike('team', `%${homeTeam}%`)
+      .gte('game_date', parlayDate)
+      .lte('game_date', windowEndStr)
+      .limit(20);
+    const { data: fbAway } = await supabase
+      .from(fallbackTable)
+      .select('points, game_date, team')
+      .ilike('team', `%${awayTeam}%`)
+      .gte('game_date', parlayDate)
+      .lte('game_date', windowEndStr)
+      .limit(20);
+    homeLogsResult = fbHome;
+    awayLogsResult = fbAway;
+  }
+
+  if ((!homeLogsResult || homeLogsResult.length === 0) && (!awayLogsResult || awayLogsResult.length === 0)) {
     return { outcome: 'no_data', actual_value: null };
   }
 
   // Sum points per team from individual player logs
-  const homeScore = (homeLogs || []).reduce((sum: number, log: any) => sum + (Number(log.points) || 0), 0);
-  const awayScore = (awayLogs || []).reduce((sum: number, log: any) => sum + (Number(log.points) || 0), 0);
+  const homeScore = (homeLogsResult || []).reduce((sum: number, log: any) => sum + (Number(log.points) || 0), 0);
+  const awayScore = (awayLogsResult || []).reduce((sum: number, log: any) => sum + (Number(log.points) || 0), 0);
 
   if (homeScore === 0 && awayScore === 0) {
     return { outcome: 'no_data', actual_value: null };

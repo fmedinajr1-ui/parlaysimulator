@@ -149,29 +149,41 @@ Deno.serve(async (req) => {
 
     console.log(`[verify-sweet-spot-outcomes] Found ${pendingPicks.length} pending picks`);
 
-    // Step 2: Fetch game logs in a 3-day window (analysis_date to analysis_date + 2)
-    // Picks generated on Day N are typically for games on Day N or N+1
+    // Step 2: Fetch game logs in a 3-day window from BOTH NBA and NCAAB tables
     const windowStart = targetDate;
     const windowEnd = addDays(targetDate, 2);
 
-    const { data: gameLogs, error: logsError } = await supabase
+    // Fetch NBA game logs
+    const { data: nbaLogs, error: nbaLogsError } = await supabase
       .from('nba_player_game_logs')
       .select('player_name, game_date, points, rebounds, assists, threes_made, steals, blocks, turnovers')
       .gte('game_date', windowStart)
       .lte('game_date', windowEnd);
 
-    if (logsError) {
-      throw new Error(`Failed to fetch game logs: ${logsError.message}`);
+    if (nbaLogsError) {
+      throw new Error(`Failed to fetch NBA game logs: ${nbaLogsError.message}`);
     }
 
-    console.log(`[verify-sweet-spot-outcomes] Found ${gameLogs?.length || 0} game logs in window ${windowStart} to ${windowEnd}`);
+    // Fetch NCAAB game logs
+    const { data: ncaabLogs, error: ncaabLogsError } = await supabase
+      .from('ncaab_player_game_logs')
+      .select('player_name, game_date, points, rebounds, assists, threes_made, steals, blocks, turnovers')
+      .gte('game_date', windowStart)
+      .lte('game_date', windowEnd);
+
+    if (ncaabLogsError) {
+      console.warn(`[verify-sweet-spot-outcomes] NCAAB logs fetch warning: ${ncaabLogsError.message}`);
+    }
+
+    // Merge all game logs (NCAAB + NBA)
+    const allGameLogs = [...(nbaLogs || []), ...(ncaabLogs || [])];
+    console.log(`[verify-sweet-spot-outcomes] Found ${nbaLogs?.length || 0} NBA + ${ncaabLogs?.length || 0} NCAAB game logs in window ${windowStart} to ${windowEnd}`);
 
     // Build normalized name lookup — use the most recent game log per player
     const gameLogMap = new Map<string, any>();
-    for (const log of gameLogs || []) {
+    for (const log of allGameLogs) {
       const normalizedName = normalizeName(log.player_name);
       const existing = gameLogMap.get(normalizedName);
-      // Keep the most recent game log if player has multiple in the window
       if (!existing || log.game_date > existing.game_date) {
         gameLogMap.set(normalizedName, log);
       }
