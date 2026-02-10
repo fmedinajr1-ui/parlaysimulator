@@ -1,97 +1,99 @@
 
 
-# Fix: Settlement Premature Loss + Missing Prop Type in Telegram Display
+# Fix Settlement Data Pipeline: Complete Diagnosis and Corrections
 
-## Issues Found
+## Root Cause Analysis
 
-### Issue 1: Premature "LOST" marking in settlement
-**Location**: `supabase/functions/bot-settle-and-learn/index.ts`, lines 271-275
+The settlement pipeline has a chain of failures preventing accurate results:
 
-The settlement logic marks a parlay as "lost" the moment **any single leg misses**, even if other legs haven't been settled yet. Yesterday (Feb 9): 30 parlays still pending, 20 already marked lost -- many with only 1 miss but unsettled legs remaining.
+### Problem 1: Game Log Scraper Returns Incomplete Data
+The ESPN box score fetcher (`backfill-player-stats`) only captures ~219 of ~300+ players per game day. Key stars like Giannis Antetokounmpo, Karl-Anthony Towns, Domantas Sabonis, Derrick White, and many others are missing from Feb 9 game logs. The scraper likely fails silently on some box scores (ESPN API returns paginated or partial data for some games).
 
-```
-Current logic:
-  if (some settled AND any missed) --> outcome = 'lost'
+### Problem 2: Backfill Only Targets 7 Players
+The `backfill-player-stats` function only looks up player names from pending parlays (`playerNamesFound: 7`). It should be backfilling ALL players who played that day, especially those in `category_sweet_spots`.
 
-Correct logic:
-  if (some settled AND any missed) --> outcome = 'pending' (wait for all legs)
-  Only mark 'lost' when ALL legs are settled
-```
+### Problem 3: `verify-sweet-spot-outcomes` Only Processes `pending`, Not `no_data`
+Once a pick is marked `no_data` (because game logs weren't available yet), the verification function **never retries it** -- it only queries `outcome = 'pending'` (line 129). Even if game logs arrive later, those 168 picks stay stuck as `no_data` forever.
 
-### Issue 2: Missing prop type in Telegram leg display
-**Location**: `supabase/functions/telegram-webhook/index.ts`, line 688-703
+### Problem 4: Parlays Can't Settle Because 133 Legs Point to `no_data` Picks
+48 parlays remain pending because their underlying sweet spot picks are `no_data`. The settlement correctly waits (after our previous fix), but it will wait indefinitely.
 
-`formatLegDisplay()` outputs: `"Cooper Flagg OVER 0.5 (+138)"`
-Should output: `"Cooper Flagg OVER 0.5 Threes (+138)"`
-
-The `prop_type` field (e.g., "threes", "assists", "points") exists in every leg object but is never shown. This makes it impossible to know what the bet is actually on.
-
-### Issue 3: "View Legs" callback shows pending parlays as LOST
-**Location**: `supabase/functions/telegram-webhook/index.ts`, line 1212
-
-The callback handler has:
-```
-if (parlay.outcome) msg += ` | ${parlay.outcome === 'won' ? '✅ WON' : '❌ LOST'}`
-```
-Since `outcome = 'pending'` is truthy, it falls into the else branch and displays "LOST" for games that haven't even been played yet. This is what the screenshot shows.
-
-### Issue 4: Yesterday's 30 pending parlays need re-settlement
-Feb 9 currently has: 20 lost, 1 won, 30 still pending. Those 30 pending parlays may have legs that can now be graded against game logs.
+### Current State (Feb 9)
+- 107 sweet spot picks: `hit`
+- 25 sweet spot picks: `miss`  
+- 168 sweet spot picks: `no_data` (stuck -- game logs missing)
+- 48 parlays: `pending`, 2: `lost`, 1: `won`
 
 ---
 
-## Fixes
+## Fix Plan
 
-### Fix 1: Settlement logic -- only mark lost when ALL legs settled
-In `bot-settle-and-learn/index.ts`, remove the early "lost" shortcut at lines 271-275. A parlay should only be marked "lost" when every leg has been graded. If some legs are hit and some are missed but others remain pending, keep the parlay as "pending".
+### Fix 1: Update `verify-sweet-spot-outcomes` to Retry `no_data` Picks
+Change the query filter from `outcome = 'pending'` to `outcome IN ('pending', 'no_data')`. This way, when game logs become available (e.g., after a backfill), previously `no_data` picks get another chance to be verified.
 
-### Fix 2: Add prop type to formatLegDisplay
-In `telegram-webhook/index.ts`, update `formatLegDisplay()` to include `leg.prop_type` in the output string. Format it as a readable label (e.g., "threes" becomes "3PT", "assists" becomes "AST", "points" becomes "PTS", etc.).
+**File**: `supabase/functions/verify-sweet-spot-outcomes/index.ts`
+- Line 129: Change `.eq('outcome', 'pending')` to `.in('outcome', ['pending', 'no_data'])`
 
-### Fix 3: Handle pending outcome in callback handler
-In `telegram-webhook/index.ts`, update line 1212 to handle all three states:
-- `won` --> "WON"
-- `lost` --> "LOST"  
-- `pending` --> "PENDING"
+### Fix 2: Improve Backfill to Target All Sweet Spot Players
+Update `backfill-player-stats` to also pull player names from `category_sweet_spots` where `outcome = 'no_data'` for the target date range. This ensures the backfill fetches stats for all players the bot has picks on, not just the 7 from pending parlays.
 
-Also update the `/parlays` handler (line 529) which has the same issue.
+**File**: `supabase/functions/backfill-player-stats/index.ts`
+- After the existing pending parlay player name collection, also query `category_sweet_spots` for `no_data` players and add them to the set.
 
-### Fix 4: Fix yesterday's prematurely-lost parlays
-Reset the 20 "lost" parlays from Feb 9 that have unsettled legs back to "pending" so the next settlement run can properly grade them.
+### Fix 3: Add BallDontLie as Fallback in Verification
+The BDL API returned 804 stats vs ESPN's 800, suggesting it has fuller coverage. The backfill already uses both sources. But the stats it inserts may not cover all the missing players if the BDL game ID mapping is incomplete. We need to ensure the upsert is working correctly and not skipping players due to name mismatches.
+
+### Fix 4: Run Immediate Data Correction
+After deploying the fixes:
+1. Reset the 168 `no_data` picks for Feb 9 back to `pending` so they get re-verified
+2. Trigger `backfill-player-stats` for Feb 9 to pull any missing game logs
+3. Trigger `verify-sweet-spot-outcomes` for Feb 9 to re-grade all picks
+4. Trigger `bot-settle-and-learn` with date Feb 9 to finalize parlays
+
+### Fix 5: Add Turnovers to Backfill Insert
+The `backfill-player-stats` upsert is missing the `turnovers` field (the game log table has it, but the insert doesn't include it). Add it to prevent `no_data` on turnover props.
 
 ---
 
 ## Technical Details
 
-### File: `supabase/functions/bot-settle-and-learn/index.ts`
-- Lines 271-278: Remove the early-exit `lost` branch. Only determine outcome when `legsHit + legsMissed === legs.length`.
+### File: `supabase/functions/verify-sweet-spot-outcomes/index.ts`
+**Line 129**: Change filter to also retry `no_data` picks:
+```typescript
+// Before
+.eq('outcome', 'pending');
+// After  
+.in('outcome', ['pending', 'no_data']);
+```
 
-### File: `supabase/functions/telegram-webhook/index.ts`
-- Lines 688-704: Add prop type mapping and include in display string
-- Line 529: Fix outcome emoji to handle `'pending'` state
-- Line 1212: Fix callback handler to handle `'pending'` state
+### File: `supabase/functions/backfill-player-stats/index.ts`
+After the pending parlay player name collection (~line 300), add:
+```typescript
+// Also get players from no_data sweet spots
+const { data: noDataPicks } = await supabase
+  .from('category_sweet_spots')
+  .select('player_name')
+  .in('outcome', ['pending', 'no_data'])
+  .gte('analysis_date', start)
+  .lte('analysis_date', end);
 
-### SQL fix for yesterday's data
-Reset Feb 9 parlays that were prematurely marked lost (where `legs_hit + legs_missed < leg_count`):
+for (const pick of noDataPicks || []) {
+  if (pick.player_name) playerNames.add(pick.player_name);
+}
+```
+
+### SQL Data Reset (to be run after deployment)
 ```sql
-UPDATE bot_daily_parlays
-SET outcome = 'pending', profit_loss = 0
-WHERE parlay_date = '2026-02-09'
-  AND outcome = 'lost'
-  AND legs_hit + legs_missed < leg_count;
+UPDATE category_sweet_spots 
+SET outcome = 'pending', actual_value = NULL, settled_at = NULL
+WHERE analysis_date = '2026-02-09' AND outcome = 'no_data';
 ```
 
-### Prop type label mapping
-```text
-threes    -> 3PT
-points    -> PTS
-assists   -> AST
-rebounds  -> REB
-steals    -> STL
-blocks    -> BLK
-turnovers -> TO
-pra       -> PRA
-pts_rebs  -> P+R
-pts_asts  -> P+A
-rebs_asts -> R+A
-```
+### Post-Deploy Sequence
+1. Deploy updated `verify-sweet-spot-outcomes` and `backfill-player-stats`
+2. Reset `no_data` picks to `pending`
+3. Invoke `backfill-player-stats` for Feb 9
+4. Invoke `verify-sweet-spot-outcomes` for Feb 9
+5. Invoke `bot-settle-and-learn` for Feb 9
+6. Verify final state: all picks should be `hit`, `miss`, `push`, or legitimately `no_data` (player didn't play)
+
