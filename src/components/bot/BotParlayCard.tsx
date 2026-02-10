@@ -172,16 +172,31 @@ export function BotParlayCard({ parlay }: BotParlayCardProps) {
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
                           <div className="font-medium text-sm">
-                            {leg.player_name ?? 'Unknown'}
+                            {leg.type === 'team'
+                              ? leg.bet_type === 'total'
+                                ? `${leg.home_team} vs ${leg.away_team}`
+                                : `${leg.side === 'home' ? leg.home_team : leg.away_team}`
+                              : (leg.player_name ?? 'Unknown')}
                           </div>
                           <div className="text-xs text-muted-foreground">
-                            {leg.prop_type ?? 'Prop'} {(leg.side ?? 'over').toUpperCase()} {leg.line ?? 0}
-                            {hasAltLine && (
-                              <span className="text-amber-400 ml-1">
-                                (alt from {leg.original_line})
-                              </span>
+                            {leg.type === 'team' ? (
+                              <>
+                                {(leg.bet_type ?? 'spread').charAt(0).toUpperCase() + (leg.bet_type ?? 'spread').slice(1)}{' '}
+                                {leg.bet_type === 'total'
+                                  ? `${(leg.side ?? 'over').toUpperCase()} ${leg.line ?? 0}`
+                                  : `${leg.line ?? 0}`}
+                              </>
+                            ) : (
+                              <>
+                                {leg.prop_type ?? 'Prop'} {(leg.side ?? 'over').toUpperCase()} {leg.line ?? 0}
+                                {hasAltLine && (
+                                  <span className="text-amber-400 ml-1">
+                                    (alt from {leg.original_line})
+                                  </span>
+                                )}
+                                <span className="ml-1">• {leg.team_name}</span>
+                              </>
                             )}
-                            <span className="ml-1">• {leg.team_name}</span>
                           </div>
                           
                           {/* Odds and value display */}
