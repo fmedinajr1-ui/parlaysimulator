@@ -1,21 +1,21 @@
 /**
- * bot-settle-and-learn (v2 - Calibration Integration)
+ * bot-settle-and-learn (v3 - Pipeline Fix)
  * 
  * Settles yesterday's parlays, updates category weights based on outcomes,
  * syncs weights from category_sweet_spots verified outcomes, and tracks activation progress.
  * 
- * Now includes:
- * - Direct sync from category_sweet_spots settled outcomes (last 24h)
- * - Streak-based weight adjustments for bot parlay legs
- * - Auto-blocking for underperforming categories
- * - Triggers calibrate-bot-weights after processing
+ * v3 changes:
+ * - Removed inline verify-sweet-spot-outcomes call (handled by separate cron)
+ * - Added date guard: only settle parlays where parlay_date < today ET
+ * - Batch leg lookups instead of individual queries
+ * - Team leg settlement via aggregated game scores
  * 
  * Runs 3x daily via cron (6 AM, 12 PM, 6 PM ET).
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-// EST-aware date helper to avoid UTC date mismatch after 7 PM EST
+// EST-aware date helper
 function getEasternDate(): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/New_York',
@@ -38,10 +38,12 @@ const WEIGHT_PENALTY_STREAK = 0.01;
 const MIN_WEIGHT = 0.5;
 const MAX_WEIGHT = 1.5;
 
-// Blocking thresholds
-const BLOCK_STREAK_THRESHOLD = -5; // Block after 5 consecutive misses
-const BLOCK_HIT_RATE_THRESHOLD = 35; // Block if hit rate drops below 35%
+const BLOCK_STREAK_THRESHOLD = -5;
+const BLOCK_HIT_RATE_THRESHOLD = 35;
 const BLOCK_MIN_SAMPLES = 20;
+
+// Team-related categories
+const TEAM_CATEGORIES = ['SHARP_SPREAD', 'UNDER_TOTAL', 'OVER_TOTAL', 'ML_UNDERDOG', 'ML_FAVORITE'];
 
 interface BotLeg {
   id: string;
@@ -55,6 +57,10 @@ interface BotLeg {
   hit_rate: number;
   outcome?: string;
   actual_value?: number;
+  type?: string;
+  home_team?: string;
+  away_team?: string;
+  bet_type?: string;
 }
 
 interface RecentOutcome {
@@ -62,6 +68,12 @@ interface RecentOutcome {
   recommended_side: string;
   outcome: string;
   settled_at: string;
+}
+
+function isTeamLeg(leg: BotLeg): boolean {
+  return leg.type === 'team' ||
+    TEAM_CATEGORIES.includes(leg.category ?? '') ||
+    (!!leg.home_team && !!leg.away_team);
 }
 
 function adjustWeight(
@@ -85,26 +97,101 @@ function adjustWeight(
     const penalty = WEIGHT_PENALTY_BASE + ((absStreak - 1) * WEIGHT_PENALTY_STREAK);
     const newWeight = currentWeight - penalty;
     
-    // Check streak-based blocking
     if (newStreak <= BLOCK_STREAK_THRESHOLD) {
       return { 
-        newWeight: 0, 
-        blocked: true, 
-        newStreak,
+        newWeight: 0, blocked: true, newStreak,
         blockReason: `${absStreak} consecutive misses`,
       };
     }
     
     if (newWeight < MIN_WEIGHT) {
       return { 
-        newWeight: 0, 
-        blocked: true, 
-        newStreak,
+        newWeight: 0, blocked: true, newStreak,
         blockReason: 'Weight dropped below minimum threshold',
       };
     }
     return { newWeight: Math.max(newWeight, MIN_WEIGHT), blocked: false, newStreak };
   }
+}
+
+// Settle a team leg by looking up final scores from game logs
+async function settleTeamLeg(
+  supabase: any,
+  leg: BotLeg,
+  parlayDate: string
+): Promise<{ outcome: string; actual_value: number | null }> {
+  const homeTeam = leg.home_team;
+  const awayTeam = leg.away_team;
+  
+  if (!homeTeam || !awayTeam) {
+    return { outcome: 'no_data', actual_value: null };
+  }
+
+  // Query game logs for players on these teams to aggregate scores
+  // Search in a 3-day window around parlay date
+  const windowEnd = new Date(parlayDate + 'T12:00:00Z');
+  windowEnd.setDate(windowEnd.getDate() + 2);
+  const windowEndStr = windowEnd.toISOString().split('T')[0];
+
+  const { data: homeLogs } = await supabase
+    .from('nba_player_game_logs')
+    .select('points, game_date, team')
+    .ilike('team', `%${homeTeam}%`)
+    .gte('game_date', parlayDate)
+    .lte('game_date', windowEndStr)
+    .limit(20);
+
+  const { data: awayLogs } = await supabase
+    .from('nba_player_game_logs')
+    .select('points, game_date, team')
+    .ilike('team', `%${awayTeam}%`)
+    .gte('game_date', parlayDate)
+    .lte('game_date', windowEndStr)
+    .limit(20);
+
+  if ((!homeLogs || homeLogs.length === 0) && (!awayLogs || awayLogs.length === 0)) {
+    return { outcome: 'no_data', actual_value: null };
+  }
+
+  // Sum points per team from individual player logs
+  const homeScore = (homeLogs || []).reduce((sum: number, log: any) => sum + (Number(log.points) || 0), 0);
+  const awayScore = (awayLogs || []).reduce((sum: number, log: any) => sum + (Number(log.points) || 0), 0);
+
+  if (homeScore === 0 && awayScore === 0) {
+    return { outcome: 'no_data', actual_value: null };
+  }
+
+  const betType = leg.bet_type || leg.prop_type || '';
+  const side = (leg.side || '').toLowerCase();
+  const line = leg.line || 0;
+
+  // Total
+  if (betType === 'total' || leg.category === 'OVER_TOTAL' || leg.category === 'UNDER_TOTAL') {
+    const combinedScore = homeScore + awayScore;
+    if (combinedScore === line) return { outcome: 'push', actual_value: combinedScore };
+    if (side === 'over' || side === 'o' || leg.category === 'OVER_TOTAL') {
+      return { outcome: combinedScore > line ? 'hit' : 'miss', actual_value: combinedScore };
+    }
+    return { outcome: combinedScore < line ? 'hit' : 'miss', actual_value: combinedScore };
+  }
+
+  // Spread
+  if (betType === 'spread' || leg.category === 'SHARP_SPREAD') {
+    const margin = homeScore - awayScore;
+    const actualMargin = side === 'away' ? -margin : margin;
+    if (actualMargin + line === 0) return { outcome: 'push', actual_value: margin };
+    return { outcome: actualMargin + line > 0 ? 'hit' : 'miss', actual_value: margin };
+  }
+
+  // Moneyline
+  if (betType === 'moneyline' || leg.category === 'ML_UNDERDOG' || leg.category === 'ML_FAVORITE') {
+    if (homeScore === awayScore) return { outcome: 'push', actual_value: 0 };
+    const homeWon = homeScore > awayScore;
+    if (side === 'home') return { outcome: homeWon ? 'hit' : 'miss', actual_value: homeScore - awayScore };
+    return { outcome: !homeWon ? 'hit' : 'miss', actual_value: awayScore - homeScore };
+  }
+
+  return { outcome: 'no_data', actual_value: null };
 }
 
 Deno.serve(async (req) => {
@@ -117,7 +204,9 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Accept targetDate from request body, or settle both yesterday and today
+    const todayET = getEasternDate();
+
+    // Accept targetDate from request body
     let targetDates: string[] = [];
     try {
       const body = await req.json();
@@ -129,8 +218,7 @@ Deno.serve(async (req) => {
     }
 
     if (targetDates.length === 0) {
-      const todayStr = getEasternDate();
-      // Calculate yesterday in Eastern time
+      // Only settle PAST dates — not today (games may still be in progress)
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
       const yesterdayStr = new Intl.DateTimeFormat('en-CA', {
@@ -139,31 +227,33 @@ Deno.serve(async (req) => {
         month: '2-digit',
         day: '2-digit',
       }).format(yesterday);
-      targetDates = [yesterdayStr, todayStr];
+      
+      const twoDaysAgo = new Date();
+      twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+      const twoDaysAgoStr = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/New_York',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(twoDaysAgo);
+      
+      targetDates = [twoDaysAgoStr, yesterdayStr];
     }
 
-    console.log(`[Bot Settle] Processing parlays for dates: ${targetDates.join(', ')}`);
+    // Date guard: filter out today's date to prevent premature settlement
+    targetDates = targetDates.filter(d => d < todayET);
 
-    // 0. Pre-step: Verify sweet spot outcomes for target dates BEFORE settlement
-    // This ensures picks are graded (hit/miss) so parlays can be settled
-    for (const targetDate of targetDates) {
-      try {
-        console.log(`[Bot Settle] Triggering verify-sweet-spot-outcomes for ${targetDate}...`);
-        const { data: verifyData, error: verifyError } = await supabase.functions.invoke('verify-sweet-spot-outcomes', {
-          body: { date: targetDate },
-        });
-        if (verifyError) {
-          console.error(`[Bot Settle] Verification error for ${targetDate}:`, verifyError);
-        } else {
-          console.log(`[Bot Settle] Verification result for ${targetDate}:`, JSON.stringify(verifyData));
-        }
-      } catch (vErr) {
-        console.error(`[Bot Settle] Verification invoke failed for ${targetDate}:`, vErr);
-      }
+    if (targetDates.length === 0) {
+      console.log('[Bot Settle] All target dates are today or future — skipping settlement');
+      return new Response(
+        JSON.stringify({ success: true, parlaysSettled: 0, message: 'No past dates to settle' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
-    // Brief pause to let verification complete
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    console.log(`[Bot Settle] Processing parlays for dates: ${targetDates.join(', ')} (today ET: ${todayET})`);
+
+    // NOTE: verify-sweet-spot-outcomes is handled by separate cron — no inline call needed
 
     // 1. Get pending parlays from target dates
     const { data: pendingParlays, error: parlaysError } = await supabase
@@ -184,7 +274,42 @@ Deno.serve(async (req) => {
 
     console.log(`[Bot Settle] Found ${pendingParlays.length} pending parlays`);
 
-    // 2. Load category weights for learning
+    // 2. Batch fetch all leg IDs from category_sweet_spots at once
+    const allPlayerLegIds: string[] = [];
+    for (const parlay of pendingParlays) {
+      const legs = (Array.isArray(parlay.legs) ? parlay.legs : JSON.parse(parlay.legs)) as BotLeg[];
+      for (const leg of legs) {
+        if (!isTeamLeg(leg) && leg.id) {
+          allPlayerLegIds.push(leg.id);
+        }
+      }
+    }
+
+    // Batch query for all player leg outcomes at once
+    const sweetSpotMap = new Map<string, { outcome: string; actual_value: number | null }>();
+    if (allPlayerLegIds.length > 0) {
+      // Supabase IN filter supports up to ~1000 items, chunk if needed
+      const chunks = [];
+      for (let i = 0; i < allPlayerLegIds.length; i += 500) {
+        chunks.push(allPlayerLegIds.slice(i, i + 500));
+      }
+      for (const chunk of chunks) {
+        const { data: sweetSpots } = await supabase
+          .from('category_sweet_spots')
+          .select('id, outcome, actual_value')
+          .in('id', chunk);
+        
+        if (sweetSpots) {
+          for (const ss of sweetSpots) {
+            sweetSpotMap.set(ss.id, { outcome: ss.outcome, actual_value: ss.actual_value });
+          }
+        }
+      }
+    }
+
+    console.log(`[Bot Settle] Batch loaded ${sweetSpotMap.size} sweet spot outcomes for ${allPlayerLegIds.length} player legs`);
+
+    // 3. Load category weights for learning
     const { data: categoryWeights, error: weightsError } = await supabase
       .from('bot_category_weights')
       .select('*');
@@ -196,7 +321,7 @@ Deno.serve(async (req) => {
       weightMap.set(w.category, w);
     });
 
-    // 3. For each parlay, check leg outcomes
+    // 4. Process each parlay
     let parlaysSettled = 0;
     let parlaysWon = 0;
     let parlaysLost = 0;
@@ -211,64 +336,58 @@ Deno.serve(async (req) => {
       const updatedLegs: BotLeg[] = [];
 
       for (const leg of legs) {
-        // Check outcome from category_sweet_spots
-        const { data: sweetSpot } = await supabase
-          .from('category_sweet_spots')
-          .select('outcome, actual_value')
-          .eq('id', leg.id)
-          .maybeSingle();
+        let legOutcome = 'pending';
+        let actualValue: number | null = null;
 
-        if (sweetSpot) {
-          let legOutcome: string;
-          if (sweetSpot.outcome === 'hit') {
-            legOutcome = 'hit';
-            legsHit++;
-          } else if (sweetSpot.outcome === 'miss') {
-            legOutcome = 'miss';
-            legsMissed++;
-          } else if (sweetSpot.outcome === 'no_data') {
-            // Player didn't play — void this leg
-            legOutcome = 'void';
-            legsVoided++;
-          } else {
-            legOutcome = 'pending';
-          }
-
-          updatedLegs.push({
-            ...leg,
-            outcome: legOutcome,
-            actual_value: sweetSpot.actual_value,
-          });
-
-          // Track for category weight updates
-          if (legOutcome === 'hit' || legOutcome === 'miss') {
-            const existing = categoryUpdates.get(leg.category) || { hits: 0, misses: 0 };
-            if (legOutcome === 'hit') {
-              existing.hits++;
-            } else {
-              existing.misses++;
-            }
-            categoryUpdates.set(leg.category, existing);
-          }
+        if (isTeamLeg(leg)) {
+          // Team leg settlement
+          const teamResult = await settleTeamLeg(supabase, leg, parlay.parlay_date);
+          legOutcome = teamResult.outcome;
+          actualValue = teamResult.actual_value;
         } else {
-          updatedLegs.push(leg);
+          // Player leg — use batch-loaded sweet spot data
+          const sweetSpot = sweetSpotMap.get(leg.id);
+          if (sweetSpot) {
+            if (sweetSpot.outcome === 'hit') {
+              legOutcome = 'hit';
+            } else if (sweetSpot.outcome === 'miss') {
+              legOutcome = 'miss';
+            } else if (sweetSpot.outcome === 'no_data') {
+              legOutcome = 'void';
+            } else {
+              legOutcome = 'pending';
+            }
+            actualValue = sweetSpot.actual_value;
+          }
+        }
+
+        // Count outcomes
+        if (legOutcome === 'hit') legsHit++;
+        else if (legOutcome === 'miss') legsMissed++;
+        else if (legOutcome === 'void' || legOutcome === 'no_data') legsVoided++;
+
+        updatedLegs.push({ ...leg, outcome: legOutcome, actual_value: actualValue ?? undefined });
+
+        // Track for category weight updates
+        if ((legOutcome === 'hit' || legOutcome === 'miss') && leg.category) {
+          const existing = categoryUpdates.get(leg.category) || { hits: 0, misses: 0 };
+          if (legOutcome === 'hit') existing.hits++;
+          else existing.misses++;
+          categoryUpdates.set(leg.category, existing);
         }
       }
 
       // Determine parlay outcome
-      // Voided legs (no_data = player didn't play) are excluded from grading
       const activeLegCount = legs.length - legsVoided;
       let outcome = 'pending';
       let profitLoss = 0;
       
       if (activeLegCount === 0 || legsVoided > legs.length / 2) {
-        // All or majority of legs voided — void entire parlay
         outcome = 'void';
         parlaysSettled++;
       } else if (legsHit + legsMissed === activeLegCount) {
         if (legsMissed === 0) {
           outcome = 'won';
-          // Calculate payout: stake * (odds / 100 + 1)
           const payout = (parlay.simulated_stake || 50) * ((parlay.expected_odds || 500) / 100 + 1);
           profitLoss = payout - (parlay.simulated_stake || 50);
           parlaysWon++;
@@ -279,9 +398,7 @@ Deno.serve(async (req) => {
         }
         parlaysSettled++;
         totalProfitLoss += profitLoss;
-    }
-      // If some legs missed but not all settled yet, keep as pending
-      // Only mark lost when ALL legs have been graded
+      }
 
       // Update parlay
       await supabase
@@ -300,7 +417,7 @@ Deno.serve(async (req) => {
 
     console.log(`[Bot Settle] Settled ${parlaysSettled} parlays (${parlaysWon}W ${parlaysLost}L)`);
 
-    // 4. Update category weights based on outcomes and collect deltas
+    // 5. Update category weights based on outcomes
     const weightChanges: Array<{ category: string; oldWeight: number; newWeight: number; delta: number }> = [];
     
     for (const [category, stats] of categoryUpdates) {
@@ -323,17 +440,10 @@ Deno.serve(async (req) => {
         currentStreak = result.newStreak;
       }
 
-      // Track weight change
       if (currentWeight !== oldWeight) {
-        weightChanges.push({
-          category,
-          oldWeight,
-          newWeight: currentWeight,
-          delta: currentWeight - oldWeight,
-        });
+        weightChanges.push({ category, oldWeight, newWeight: currentWeight, delta: currentWeight - oldWeight });
       }
 
-      // Update in database
       await supabase
         .from('bot_category_weights')
         .update({
@@ -352,11 +462,10 @@ Deno.serve(async (req) => {
         .eq('id', existing.id);
     }
 
-    // 5. Update activation status
+    // 6. Update activation status
     const today = getEasternDate();
     const isProfitableDay = totalProfitLoss > 0;
 
-    // Get previous day's status for consecutive days calculation
     const { data: prevStatus } = await supabase
       .from('bot_activation_status')
       .select('*')
@@ -370,7 +479,6 @@ Deno.serve(async (req) => {
     const prevBankroll = prevStatus?.simulated_bankroll || 1000;
     const newBankroll = prevBankroll + totalProfitLoss;
 
-    // Check if ready for real mode
     const isRealModeReady = newConsecutive >= 3 && 
                             (parlaysWon / Math.max(1, parlaysWon + parlaysLost)) >= 0.60;
 
@@ -412,7 +520,7 @@ Deno.serve(async (req) => {
         });
     }
 
-    // 6. Update strategy performance
+    // 7. Update strategy performance
     if (parlaysSettled > 0) {
       const { data: strategy } = await supabase
         .from('bot_strategies')
@@ -439,8 +547,7 @@ Deno.serve(async (req) => {
 
     console.log(`[Bot Settle] Complete. P/L: $${totalProfitLoss}, Consecutive: ${newConsecutive}`);
 
-    // 7. Sync weights from recently settled category_sweet_spots (last 24h)
-    // This provides continuous learning from verified outcomes beyond bot parlays
+    // 8. Sync weights from recently settled category_sweet_spots (last 24h)
     let sweetSpotSynced = 0;
     try {
       const yesterday24h = new Date();
@@ -453,7 +560,6 @@ Deno.serve(async (req) => {
         .not('outcome', 'is', null);
 
       if (!recentError && recentOutcomes && recentOutcomes.length > 0) {
-        // Group by category+side
         const outcomeMap = new Map<string, { hits: number; misses: number }>();
         
         for (const outcome of recentOutcomes as RecentOutcome[]) {
@@ -463,15 +569,10 @@ Deno.serve(async (req) => {
             stats = { hits: 0, misses: 0 };
             outcomeMap.set(key, stats);
           }
-          
-          if (outcome.outcome === 'hit') {
-            stats.hits++;
-          } else if (outcome.outcome === 'miss') {
-            stats.misses++;
-          }
+          if (outcome.outcome === 'hit') stats.hits++;
+          else if (outcome.outcome === 'miss') stats.misses++;
         }
 
-        // Apply incremental learning to each category
         for (const [key, stats] of outcomeMap) {
           const [category, side] = key.split('__');
           
@@ -488,7 +589,6 @@ Deno.serve(async (req) => {
             let blocked = false;
             let blockReason: string | null = null;
 
-            // Apply learning for hits first, then misses
             for (let i = 0; i < stats.hits; i++) {
               const result = adjustWeight(currentWeight, true, currentStreak);
               currentWeight = result.newWeight;
@@ -505,7 +605,6 @@ Deno.serve(async (req) => {
               }
             }
 
-            // Check hit rate blocking
             const newTotalPicks = (existingWeight.total_picks || 0) + stats.hits + stats.misses;
             const newTotalHits = (existingWeight.total_hits || 0) + stats.hits;
             const newHitRate = newTotalPicks > 0 ? (newTotalHits / newTotalPicks) * 100 : 0;
@@ -542,7 +641,7 @@ Deno.serve(async (req) => {
       console.error('[Bot Settle] Sweet spot sync error:', syncError);
     }
 
-    // 8. Trigger calibration function for full recalculation
+    // 9. Trigger calibration
     try {
       await fetch(`${supabaseUrl}/functions/v1/calibrate-bot-weights`, {
         method: 'POST',
@@ -557,7 +656,7 @@ Deno.serve(async (req) => {
       console.error('[Bot Settle] Calibration trigger failed:', calibrateError);
     }
 
-    // 9. Log activity
+    // 10. Log activity
     await supabase.from('bot_activity_log').insert({
       event_type: 'settlement_complete',
       message: `Settled ${parlaysSettled} parlays: ${parlaysWon}W ${parlaysLost}L | Synced ${sweetSpotSynced} categories`,
@@ -570,15 +669,13 @@ Deno.serve(async (req) => {
         newBankroll,
         sweetSpotSynced,
         categoryUpdates: Array.from(categoryUpdates.entries()).map(([cat, stats]) => ({
-          category: cat,
-          hits: stats.hits,
-          misses: stats.misses,
+          category: cat, hits: stats.hits, misses: stats.misses,
         })),
       },
       severity: isProfitableDay ? 'success' : 'warning',
     });
 
-    // 10. Gather strategy info and blocked categories for Telegram
+    // 11. Gather strategy info and send Telegram
     let activeStrategyName: string | undefined;
     let activeStrategyWinRate: number | undefined;
     let blockedCategories: string[] = [];
@@ -609,7 +706,6 @@ Deno.serve(async (req) => {
       console.error('[Bot Settle] Strategy/blocked query error:', stratError);
     }
 
-    // Send Telegram notification
     try {
       await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
         method: 'POST',

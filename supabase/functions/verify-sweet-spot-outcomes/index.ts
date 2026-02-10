@@ -49,7 +49,6 @@ const extractStatValue = (gameLog: any, propType: string): number | null => {
   const statField = propTypeToStat[normalizedProp];
   
   if (!statField) {
-    // Try direct field access
     if (gameLog[normalizedProp] !== undefined) {
       return Number(gameLog[normalizedProp]);
     }
@@ -59,10 +58,7 @@ const extractStatValue = (gameLog: any, propType: string): number | null => {
   
   // Handle combo stats
   if (statField === 'pra') {
-    const pts = Number(gameLog.points) || 0;
-    const reb = Number(gameLog.rebounds) || 0;
-    const ast = Number(gameLog.assists) || 0;
-    return pts + reb + ast;
+    return (Number(gameLog.points) || 0) + (Number(gameLog.rebounds) || 0) + (Number(gameLog.assists) || 0);
   }
   if (statField === 'pr') {
     return (Number(gameLog.points) || 0) + (Number(gameLog.rebounds) || 0);
@@ -81,21 +77,30 @@ const extractStatValue = (gameLog: any, propType: string): number | null => {
 // Determine outcome with push handling
 const determineOutcome = (actual: number, line: number, side: string): 'hit' | 'miss' | 'push' => {
   if (actual === line) return 'push';
-  
   const normalizedSide = side.toLowerCase();
   if (normalizedSide === 'over' || normalizedSide === 'o') {
     return actual > line ? 'hit' : 'miss';
   }
-  // Under
   return actual < line ? 'hit' : 'miss';
 };
 
 // Get Eastern date string
 const getEasternDate = (daysAgo: number = 0): string => {
   const now = new Date();
-  const eastern = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  eastern.setDate(eastern.getDate() - daysAgo);
-  return eastern.toISOString().split('T')[0];
+  now.setDate(now.getDate() - daysAgo);
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+};
+
+// Add days to a date string
+const addDays = (dateStr: string, days: number): string => {
+  const d = new Date(dateStr + 'T12:00:00Z');
+  d.setDate(d.getDate() + days);
+  return d.toISOString().split('T')[0];
 };
 
 Deno.serve(async (req) => {
@@ -114,7 +119,7 @@ Deno.serve(async (req) => {
     let targetDate: string;
     try {
       const body = await req.json();
-      targetDate = body.date || getEasternDate(1); // Default to yesterday ET
+      targetDate = body.date || getEasternDate(1);
     } catch {
       targetDate = getEasternDate(1);
     }
@@ -144,24 +149,35 @@ Deno.serve(async (req) => {
 
     console.log(`[verify-sweet-spot-outcomes] Found ${pendingPicks.length} pending picks`);
 
-    // Step 2: Fetch all game logs for the target date
+    // Step 2: Fetch game logs in a 3-day window (analysis_date to analysis_date + 2)
+    // Picks generated on Day N are typically for games on Day N or N+1
+    const windowStart = targetDate;
+    const windowEnd = addDays(targetDate, 2);
+
     const { data: gameLogs, error: logsError } = await supabase
       .from('nba_player_game_logs')
       .select('player_name, game_date, points, rebounds, assists, threes_made, steals, blocks, turnovers')
-      .eq('game_date', targetDate);
+      .gte('game_date', windowStart)
+      .lte('game_date', windowEnd);
 
     if (logsError) {
       throw new Error(`Failed to fetch game logs: ${logsError.message}`);
     }
 
-    console.log(`[verify-sweet-spot-outcomes] Found ${gameLogs?.length || 0} game logs for ${targetDate}`);
+    console.log(`[verify-sweet-spot-outcomes] Found ${gameLogs?.length || 0} game logs in window ${windowStart} to ${windowEnd}`);
 
-    // Build normalized name lookup
+    // Build normalized name lookup — use the most recent game log per player
     const gameLogMap = new Map<string, any>();
     for (const log of gameLogs || []) {
       const normalizedName = normalizeName(log.player_name);
-      gameLogMap.set(normalizedName, log);
+      const existing = gameLogMap.get(normalizedName);
+      // Keep the most recent game log if player has multiple in the window
+      if (!existing || log.game_date > existing.game_date) {
+        gameLogMap.set(normalizedName, log);
+      }
     }
+
+    console.log(`[verify-sweet-spot-outcomes] Unique players with game logs: ${gameLogMap.size}`);
 
     // Step 3: Match and verify each pick
     const results = {
@@ -181,7 +197,6 @@ Deno.serve(async (req) => {
       const gameLog = gameLogMap.get(normalizedPlayerName);
 
       if (!gameLog) {
-        // No game log found - player may not have played
         updates.push({
           id: pick.id,
           actual_value: null,
@@ -194,12 +209,11 @@ Deno.serve(async (req) => {
           player: pick.player_name,
           propType: pick.prop_type,
           status: 'no_data',
-          reason: 'No game log found'
+          reason: 'No game log found in window'
         });
         continue;
       }
 
-      // Extract the stat value
       const actualValue = extractStatValue(gameLog, pick.prop_type);
       
       if (actualValue === null) {
@@ -220,7 +234,6 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Determine outcome - prioritize actual_line over recommended_line
       const line = pick.actual_line || pick.recommended_line || 0;
       const side = pick.recommended_side || 'over';
       const outcome = determineOutcome(actualValue, line, side);
@@ -245,6 +258,7 @@ Deno.serve(async (req) => {
         line,
         actual: actualValue,
         outcome,
+        gameDate: gameLog.game_date,
         l10HitRate: pick.l10_hit_rate,
         confidence: pick.confidence_score
       });
@@ -279,6 +293,7 @@ Deno.serve(async (req) => {
       duration_ms: duration,
       result: {
         date: targetDate,
+        window: { start: windowStart, end: windowEnd },
         summary: {
           total: results.total,
           verified: results.verified,
@@ -297,6 +312,7 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({
       success: true,
       date: targetDate,
+      window: { start: windowStart, end: windowEnd },
       duration_ms: duration,
       summary: {
         total: results.total,
@@ -316,7 +332,6 @@ Deno.serve(async (req) => {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error('[verify-sweet-spot-outcomes] Error:', errorMessage);
     
-    // Log error to cron_job_history
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
