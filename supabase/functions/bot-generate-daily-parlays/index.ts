@@ -1049,7 +1049,9 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       line_source: hasRealLine ? 'verified' : 'projected',
       sport: pick.sport || 'basketball_nba',
     };
-  }).filter((p: EnrichedPick) => p.americanOdds >= -200 && p.americanOdds <= 200 && !blockedByHitRate.has(p.category));
+  }).filter((p: EnrichedPick) => p.americanOdds >= -200 && p.americanOdds <= 200 && !blockedByHitRate.has(p.category) && p.has_real_line);
+
+  console.log(`[Bot] Filtered to ${enrichedSweetSpots.length} picks with verified sportsbook lines (removed projected-only legs)`);
 
   // FALLBACK: If no sweet spots for today, create picks directly from unified_props
   if (enrichedSweetSpots.length === 0 && playerProps && playerProps.length > 0) {
