@@ -444,7 +444,7 @@ export function useBotEngine() {
   const generateParlaysMutation = useMutation({
     mutationFn: async () => {
       const { data, error } = await supabase.functions.invoke('bot-generate-daily-parlays', {
-        body: { date: new Date().toISOString().split('T')[0] },
+        body: { date: getEasternDate() },
       });
       if (error) throw error;
       return data;
