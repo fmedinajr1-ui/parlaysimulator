@@ -25,6 +25,7 @@ type NotificationType =
   | 'daily_summary'
   | 'weight_change'
   | 'strategy_update'
+  | 'diagnostic_report'
   | 'test';
 
 interface NotificationData {
@@ -51,6 +52,8 @@ function formatMessage(type: NotificationType, data: Record<string, any>): strin
       return formatWeightChange(data);
     case 'strategy_update':
       return formatStrategyUpdate(data);
+    case 'diagnostic_report':
+      return formatDiagnosticReport(data, dateStr);
     case 'test':
       return `🤖 *ParlayIQ Bot Test*\n\nConnection successful! You'll receive notifications here.\n\n_Sent ${dateStr}_`;
     default:
@@ -223,6 +226,46 @@ function formatStrategyUpdate(data: Record<string, any>): string {
   msg += `Action: ${action}\n`;
   if (winRate !== undefined) msg += `Win Rate: ${(winRate * 100).toFixed(1)}%\n`;
   if (reason) msg += `Reason: ${reason}`;
+  
+  return msg;
+}
+
+function formatDiagnosticReport(data: Record<string, any>, dateStr: string): string {
+  const { checks, improvementMetrics, passed, warned, failed, overall } = data;
+  
+  let msg = `BOT DAILY DIAGNOSTIC\n`;
+  msg += `=======================\n`;
+  msg += `Date: ${dateStr}\n\n`;
+  
+  msg += `HEALTH CHECKS\n`;
+  if (Array.isArray(checks)) {
+    for (const c of checks) {
+      const label = (c.name || '').padEnd(24, '.');
+      const status = c.status === 'pass' ? 'PASS' : c.status === 'warn' ? 'WARN' : 'FAIL';
+      const detail = c.detail && c.status !== 'pass' ? ` (${c.detail})` : '';
+      msg += `  ${label} ${status}${detail}\n`;
+    }
+  }
+  
+  if (improvementMetrics) {
+    msg += `\nIMPROVEMENT TRENDS\n`;
+    if (improvementMetrics.win_rate?.current !== null && improvementMetrics.win_rate?.current !== undefined) {
+      const wr = improvementMetrics.win_rate;
+      const delta = wr.delta !== null ? ` (${wr.delta >= 0 ? '+' : ''}${wr.delta}%)` : '';
+      msg += `  Win Rate: ${wr.prior ?? '?'}% -> ${wr.current}%${delta}\n`;
+    }
+    if (improvementMetrics.bankroll?.current !== null && improvementMetrics.bankroll?.current !== undefined) {
+      const br = improvementMetrics.bankroll;
+      const delta = br.delta !== null ? ` (${br.delta >= 0 ? '+' : ''}$${br.delta})` : '';
+      msg += `  Bankroll: $${br.prior ?? '?'} -> $${Math.round(br.current)}${delta}\n`;
+    }
+    if (improvementMetrics.weight_stability !== undefined) {
+      msg += `  Weight Stability: ${improvementMetrics.weight_stability} std dev\n`;
+    }
+  }
+  
+  msg += `\nOverall: ${passed || 0}/7 PASS, ${warned || 0} WARN, ${failed || 0} FAIL`;
+  if (overall === 'critical') msg += ` ⚠️`;
   
   return msg;
 }
