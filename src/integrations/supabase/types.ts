@@ -1044,6 +1044,42 @@ export type Database = {
         }
         Relationships: []
       }
+      bot_diagnostic_runs: {
+        Row: {
+          checks_failed: number
+          checks_passed: number
+          checks_warned: number
+          created_at: string
+          id: string
+          improvement_metrics: Json
+          overall_status: string
+          results: Json
+          run_date: string
+        }
+        Insert: {
+          checks_failed?: number
+          checks_passed?: number
+          checks_warned?: number
+          created_at?: string
+          id?: string
+          improvement_metrics?: Json
+          overall_status?: string
+          results?: Json
+          run_date?: string
+        }
+        Update: {
+          checks_failed?: number
+          checks_passed?: number
+          checks_warned?: number
+          created_at?: string
+          id?: string
+          improvement_metrics?: Json
+          overall_status?: string
+          results?: Json
+          run_date?: string
+        }
+        Relationships: []
+      }
       bot_notification_settings: {
         Row: {
           created_at: string | null
