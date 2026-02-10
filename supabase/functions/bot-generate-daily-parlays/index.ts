@@ -52,7 +52,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     iterations: 2000,
     maxPlayerUsage: 3,
     maxTeamUsage: 3,
-    maxCategoryUsage: 5,
+    maxCategoryUsage: 2,
     minHitRate: 45,
     minEdge: 0.003,
     minSharpe: 0.01,
@@ -119,7 +119,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     iterations: 10000,
     maxPlayerUsage: 2,
     maxTeamUsage: 2,
-    maxCategoryUsage: 3,
+    maxCategoryUsage: 1,
     minHitRate: 52,
     minEdge: 0.008,
     minSharpe: 0.02,
@@ -148,7 +148,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     iterations: 25000,
     maxPlayerUsage: 1,
     maxTeamUsage: 1,
-    maxCategoryUsage: 2,
+    maxCategoryUsage: 1,
     minHitRate: 55,
     minEdge: 0.012,
     minSharpe: 0.03,
@@ -191,6 +191,34 @@ const MIN_BUFFER_BY_PROP: Record<string, number> = {
   aces: 2.0,
   games: 1.0,
 };
+
+// ============= CATEGORY INTERLEAVE =============
+
+function interleaveByCategory(picks: EnrichedPick[]): EnrichedPick[] {
+  const groups = new Map<string, EnrichedPick[]>();
+  for (const pick of picks) {
+    const cat = pick.category;
+    if (!groups.has(cat)) groups.set(cat, []);
+    groups.get(cat)!.push(pick);
+  }
+  
+  const result: EnrichedPick[] = [];
+  const iterators = [...groups.values()].map(g => ({ picks: g, index: 0 }));
+  iterators.sort((a, b) => b.picks[0].compositeScore - a.picks[0].compositeScore);
+  
+  let added = true;
+  while (added) {
+    added = false;
+    for (const iter of iterators) {
+      if (iter.index < iter.picks.length) {
+        result.push(iter.picks[iter.index]);
+        iter.index++;
+        added = true;
+      }
+    }
+  }
+  return result;
+}
 
 // ============= INTERFACES =============
 
@@ -742,7 +770,12 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       const americanOdds = side === 'over' ? overOdds : underOdds;
       
       // Estimate hit rate: use calibrated category weight > composite_score > default 55%
-      const propCategory = prop.category || mapPropTypeToCategory(prop.prop_type);
+      const rawCategory = prop.category || '';
+      // Skip data-source names (e.g. 'balldontlie') — always derive category from prop_type
+      const knownSourceNames = ['balldontlie', 'odds_api', 'the_odds_api', 'espn', 'rotowire'];
+      const propCategory = knownSourceNames.includes(rawCategory.toLowerCase()) 
+        ? mapPropTypeToCategory(prop.prop_type)
+        : (rawCategory || mapPropTypeToCategory(prop.prop_type));
       const calibratedHitRate = categoryHitRateMap.get(propCategory) 
         || categoryHitRateMap.get(`${propCategory}_${side}`)
         || null;
@@ -912,8 +945,9 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     return picks;
   });
 
-  // Sort by composite score
+  // Sort by composite score, then interleave by category for diversity
   enrichedSweetSpots.sort((a, b) => b.compositeScore - a.compositeScore);
+  enrichedSweetSpots = interleaveByCategory(enrichedSweetSpots);
   enrichedTeamPicks.sort((a, b) => b.compositeScore - a.compositeScore);
 
   console.log(`[Bot] Pool built: ${enrichedSweetSpots.length} player props, ${enrichedTeamPicks.length} team props`);
