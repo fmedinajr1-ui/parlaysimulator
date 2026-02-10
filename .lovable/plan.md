@@ -1,94 +1,71 @@
 
 
-# Fix Settlement Pipeline and Telegram Notifications
+# Fix UTC Date Bug Showing Feb 10 Instead of Feb 9
 
-## Issues Found
+## Root Cause
 
-### 1. Generation notification type mismatch (SILENT FAILURE)
-`bot-generate-daily-parlays` sends type `tiered_parlays_generated` (line 1350), but `bot-send-telegram` only handles `parlays_generated` in its switch statement (line 39). This means generation notifications fall through to the `default` case and send a raw JSON dump instead of the formatted message.
+The date mismatch comes from multiple sources:
 
-**Fix:** Add `tiered_parlays_generated` as a recognized type in `bot-send-telegram/index.ts` and create a proper formatter that shows tier breakdown (Exploration/Validation/Execution counts).
+1. **`bot_activation_status` has a `check_date: 2026-02-10` record** created at midnight UTC (7 PM EST Feb 9). This record is returned as the "latest" activation status on the dashboard, potentially confusing the display even though the parlay query itself filters correctly by Eastern date.
 
-### 2. Settlement notification missing weight changes and strategy
-`bot-settle-and-learn` sends the settlement Telegram notification (line 542-568) with win/loss stats, but does NOT include:
-- `weightChanges` array (even though `formatSettlement` in `bot-send-telegram` already has rendering code for it)
-- Active strategy details or next-day recommendations
+2. **`BotPerformanceChart` parses `check_date` strings with `new Date()` constructor**, which interprets "YYYY-MM-DD" as midnight UTC. In EST, that shifts back a day (e.g., `new Date("2026-02-10")` displays as "Feb 9" in EST, but `new Date("2026-02-09")` displays as "Feb 8"). This causes the chart x-axis to show wrong dates.
 
-**Fix:** Collect weight change deltas during the learning loop in `bot-settle-and-learn` and pass them in the Telegram payload. Also query and include the active strategy name and its current win rate.
-
-### 3. No next-day strategy info in settlement message
-The settlement Telegram message doesn't tell the user what strategy the bot will use tomorrow or any adjustments.
-
-**Fix:** Add a "Tomorrow's Strategy" section to the settlement message showing the active strategy name, current win rate, and any categories that were blocked/unblocked during this settlement.
-
----
+3. **Many files throughout the codebase still use `new Date().toISOString().split('T')[0]`** instead of `getEasternDate()`, causing UTC date bugs after 7 PM EST. While not all are on the /bot page, they affect other pages the user navigates to.
 
 ## Changes
 
-### File 1: `supabase/functions/bot-send-telegram/index.ts`
+### 1. Fix BotPerformanceChart date parsing
+**File: `src/components/bot/BotPerformanceChart.tsx`**
 
-- Add `tiered_parlays_generated` to the `NotificationType` union type
-- Add it to the `switch` statement, mapping to a new `formatTieredParlaysGenerated()` function
-- New formatter shows tier counts, pool size, and date in a clean Telegram message
-- Update `formatSettlement()` to include a "Tomorrow's Strategy" section showing the active strategy and any blocked/unblocked categories
-
-### File 2: `supabase/functions/bot-settle-and-learn/index.ts`
-
-- During the weight update loop (step 4, lines 277-314), collect weight change deltas into an array
-- After settlement, query the active strategy from `bot_strategies`
-- Query newly blocked/unblocked categories
-- Include `weightChanges`, `strategyName`, `strategyWinRate`, and `blockedCategories` in the Telegram notification payload (step 10, lines 542-568)
-
----
-
-## Technical Details
-
-### New Telegram notification type
+Replace:
 ```typescript
-// bot-send-telegram - add to NotificationType
-| 'tiered_parlays_generated'
-
-// New formatter
-function formatTieredParlaysGenerated(data, dateStr) {
-  // Shows: total count, tier breakdown, pool size
-}
+date: new Date(day.check_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 ```
-
-### Settlement payload additions
+With timezone-safe parsing that treats the date string as a local date (not UTC):
 ```typescript
-// bot-settle-and-learn - enhanced Telegram data
-{
-  type: 'settlement_complete',
-  data: {
-    parlaysWon, parlaysLost, profitLoss,
-    consecutiveDays, bankroll, isRealModeReady,
-    // NEW:
-    weightChanges: [{ category, oldWeight, newWeight, delta }],
-    strategyName: strategy?.name,
-    strategyWinRate: strategy?.win_rate,
-    blockedCategories: ['REBOUNDS_over', ...],
-    unblockedCategories: [],
-  }
-}
+date: (() => {
+  const [y, m, d] = day.check_date.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+})()
 ```
 
-### Updated settlement Telegram message format
-```text
-DAILY SETTLEMENT REPORT
-Yesterday: Feb 10
-Result: 12/68 parlays hit (18%)
-P/L: -$2,800 (simulation)
-Bankroll: $1,000 -> -$1,800
+### 2. Fix widespread `toISOString().split('T')[0]` usage (13 files)
 
-Tomorrow's Strategy
-Active: elite_categories_v1
-Win Rate: 22%
-Blocked: REBOUNDS_over, STEALS_under
+Replace all instances of `new Date().toISOString().split('T')[0]` with `getEasternDate()` from `@/lib/dateUtils` in these files:
 
-Weight Changes:
- POINTS_over: 1.00 -> 0.97
- ASSISTS_over: 1.02 -> 1.04
+| File | Lines | Current |
+|------|-------|---------|
+| `src/hooks/useManualBuilder.ts` | 79, 126 | `new Date().toISOString().split("T")[0]` |
+| `src/hooks/useHedgeStatusRecorder.ts` | 71 | `new Date().toISOString().split('T')[0]` |
+| `src/pages/SportsFatigue.tsx` | 114 | `new Date().toISOString().split('T')[0]` |
+| `src/components/admin/AIGenerativeProgressDashboard.tsx` | 475 | `new Date().toISOString().split('T')[0]` |
+| `src/components/market/PropMarketWidget.tsx` | 67 | `new Date().toISOString().split('T')[0]` |
+| `src/components/results/FatigueImpactCard.tsx` | 72 | `new Date().toISOString().split('T')[0]` |
+| `src/components/results/SharpMoneyAlerts.tsx` | 70 | `new Date().toISOString().split('T')[0]` |
+| `src/hooks/useSmartAnalyze.ts` | 126 | `new Date().toISOString().split('T')[0]` |
+| `src/pages/SharpMoney.tsx` | 120 | `new Date().toISOString().split('T')[0]` |
+| `src/components/suggestions/DailyEliteHitterCard.tsx` | 299, 327 | `new Date().toISOString().split('T')[0]` |
+| `src/components/suggestions/MedianEdgePicksCard.tsx` | 374 | `new Date().toISOString().split('T')[0]` |
+| `src/components/sharp/SharpParlayCard.tsx` | 170 | `new Date().toISOString().split('T')[0]` |
+| `src/components/suggestions/CategoryPropsCard.tsx` | 275 | `new Date().toISOString()` (for commence_time filter) |
+
+Each file will import `getEasternDate` from `@/lib/dateUtils` and use it instead.
+
+### 3. Fix date-string parsing across components
+
+Any component that creates a `Date` object from a "YYYY-MM-DD" string (like `new Date("2026-02-10")`) risks a timezone shift. These will be updated to parse components manually:
+
+```typescript
+// Before (UTC midnight = wrong day in EST):
+new Date(dateStr).toLocaleDateString(...)
+
+// After (local date, no shift):
+const [y, m, d] = dateStr.split('-').map(Number);
+new Date(y, m - 1, d).toLocaleDateString(...)
 ```
 
-### Deployment
-Both `bot-send-telegram` and `bot-settle-and-learn` edge functions will be redeployed.
+## Summary
+
+- 1 chart fix for date axis labels
+- 13+ files converted from UTC `toISOString()` to Eastern-aware `getEasternDate()`
+- Consistent date-string parsing to prevent timezone shift artifacts
