@@ -326,6 +326,67 @@ GUIDELINES:
 }
 
 // Command handlers
+async function handleCalendar(chatId: string) {
+  await logActivity("telegram_calendar", `User requested P&L calendar`, { chatId });
+
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth(); // 0-indexed
+  const monthStart = `${year}-${String(month + 1).padStart(2, '0')}-01`;
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  const monthEnd = `${year}-${String(month + 1).padStart(2, '0')}-${lastDay}`;
+
+  const { data: days } = await supabase
+    .from('bot_activation_status')
+    .select('check_date, daily_profit_loss, is_profitable_day, parlays_won, parlays_lost, simulated_bankroll')
+    .gte('check_date', monthStart)
+    .lte('check_date', monthEnd)
+    .order('check_date', { ascending: true });
+
+  if (!days || days.length === 0) {
+    return `📅 *${new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(now)} P&L*\n\nNo data recorded yet this month.\n\n📊 View full calendar:\nhttps://parlaysimulator.lovable.app/bot`;
+  }
+
+  const totalPnL = days.reduce((s, d) => s + (d.daily_profit_loss || 0), 0);
+  const winDays = days.filter(d => d.is_profitable_day).length;
+  const lossDays = days.filter(d => !d.is_profitable_day && (d.daily_profit_loss || 0) !== 0).length;
+  const totalDays = winDays + lossDays;
+  const winPct = totalDays > 0 ? ((winDays / totalDays) * 100).toFixed(0) : '0';
+
+  let bestDay = days[0];
+  let worstDay = days[0];
+  let streak = 0;
+  let bestStreak = 0;
+  let currentStreak = 0;
+  days.forEach(d => {
+    if ((d.daily_profit_loss || 0) > (bestDay.daily_profit_loss || 0)) bestDay = d;
+    if ((d.daily_profit_loss || 0) < (worstDay.daily_profit_loss || 0)) worstDay = d;
+    if (d.is_profitable_day) { streak++; bestStreak = Math.max(bestStreak, streak); }
+    else { streak = 0; }
+  });
+  currentStreak = streak;
+
+  const lastBankroll = days[days.length - 1].simulated_bankroll || 0;
+  const monthName = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(now);
+  const bestDate = new Date(bestDay.check_date + 'T12:00:00');
+  const worstDate = new Date(worstDay.check_date + 'T12:00:00');
+  const fmtDate = (d: Date) => new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(d);
+  const fmtPnL = (v: number) => v >= 0 ? `+$${v.toFixed(0)}` : `-$${Math.abs(v).toFixed(0)}`;
+
+  return `📅 *${monthName} P&L*
+
+*Record:* ${winDays}W - ${lossDays}L (${winPct}%)
+*Total P&L:* ${fmtPnL(totalPnL)}
+*Best Day:* ${fmtDate(bestDate)} (${fmtPnL(bestDay.daily_profit_loss || 0)})
+*Worst Day:* ${fmtDate(worstDate)} (${fmtPnL(worstDay.daily_profit_loss || 0)})
+*Current Streak:* ${currentStreak}W
+*Best Streak:* ${bestStreak}W
+*Bankroll:* $${lastBankroll.toLocaleString()}
+
+📊 View full calendar:
+https://parlaysimulator.lovable.app/bot`;
+}
+
 async function handleStart(chatId: string) {
   await logActivity("telegram_start", `User started bot chat`, { chatId });
 
@@ -338,6 +399,7 @@ Welcome! I'm your autonomous betting assistant with tiered learning.
 /parlays - Today's generated parlays
 /performance - Win rate, ROI, stats
 /weights - Top category weights
+/calendar - Monthly P&L calendar
 /generate - Generate tiered parlays (65-75)
 /settle - Settle & learn from results
 
@@ -886,6 +948,8 @@ async function handleMessage(chatId: string, text: string) {
     return await handleExplore(chatId);
   } else if (command === "/validate") {
     return await handleValidate(chatId);
+  } else if (command === "/calendar") {
+    return await handleCalendar(chatId);
   } else {
     // Natural language - save and process
     await saveConversation(chatId, "user", text);
