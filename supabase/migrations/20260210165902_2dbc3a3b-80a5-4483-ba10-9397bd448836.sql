@@ -1,0 +1,2 @@
+ALTER TABLE bot_daily_parlays DROP CONSTRAINT bot_daily_parlays_outcome_check;
+ALTER TABLE bot_daily_parlays ADD CONSTRAINT bot_daily_parlays_outcome_check CHECK (outcome = ANY (ARRAY['pending', 'won', 'lost', 'partial', 'push', 'void']));
