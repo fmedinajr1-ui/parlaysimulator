@@ -33,7 +33,7 @@ interface NotificationData {
   data: Record<string, any>;
 }
 
-function formatMessage(type: NotificationType, data: Record<string, any>): string {
+function formatMessage(type: NotificationType, data: Record<string, any>): string | { text: string; reply_markup?: object } {
   const now = new Date();
   const dateStr = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' });
 
@@ -230,7 +230,7 @@ function formatStrategyUpdate(data: Record<string, any>): string {
   return msg;
 }
 
-function formatDiagnosticReport(data: Record<string, any>, dateStr: string): string {
+function formatDiagnosticReport(data: Record<string, any>, dateStr: string): { text: string; reply_markup?: object } {
   const { checks, improvementMetrics, passed, warned, failed, overall } = data;
   
   let msg = `BOT DAILY DIAGNOSTIC\n`;
@@ -266,8 +266,28 @@ function formatDiagnosticReport(data: Record<string, any>, dateStr: string): str
   
   msg += `\nOverall: ${passed || 0}/7 PASS, ${warned || 0} WARN, ${failed || 0} FAIL`;
   if (overall === 'critical') msg += ` ⚠️`;
-  
-  return msg;
+
+  // Build inline keyboard for failed/warned checks
+  const fixMap: Record<string, { label: string; action: string }> = {
+    'Data Freshness': { label: '🔄 Fix: Refresh Props', action: 'fix:refresh_props' },
+    'Weight Calibration': { label: '⚖️ Fix: Calibrate', action: 'fix:calibrate' },
+    'Parlay Generation': { label: '📊 Fix: Generate Parlays', action: 'fix:generate' },
+    'Settlement Pipeline': { label: '💰 Fix: Settle Parlays', action: 'fix:settle' },
+    'Cron Jobs': { label: '⚙️ Fix: Run All Jobs', action: 'fix:run_crons' },
+  };
+
+  const buttons: Array<{ text: string; callback_data: string }[]> = [];
+  if (Array.isArray(checks)) {
+    for (const c of checks) {
+      if ((c.status === 'fail' || c.status === 'warn') && fixMap[c.name]) {
+        buttons.push([{ text: fixMap[c.name].label, callback_data: fixMap[c.name].action }]);
+      }
+    }
+  }
+
+  const reply_markup = buttons.length > 0 ? { inline_keyboard: buttons } : undefined;
+
+  return { text: msg, reply_markup };
 }
 
 function formatOdds(odds?: number): string {
@@ -361,19 +381,31 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Format message
-    const message = formatMessage(type, data);
+    // Format message - diagnostic_report returns { text, reply_markup }
+    const formatted = formatMessage(type, data);
+    let message: string;
+    let replyMarkup: object | undefined;
+    
+    if (typeof formatted === 'object' && formatted !== null && 'text' in formatted) {
+      message = (formatted as { text: string; reply_markup?: object }).text;
+      replyMarkup = (formatted as { text: string; reply_markup?: object }).reply_markup;
+    } else {
+      message = formatted as string;
+    }
     
     // Send via Telegram API with Markdown, fallback to plain text
+    const sendBody: Record<string, any> = {
+      chat_id: chatId,
+      text: message,
+      parse_mode: 'Markdown',
+      disable_web_page_preview: true,
+    };
+    if (replyMarkup) sendBody.reply_markup = replyMarkup;
+
     let telegramResponse = await fetch(`${TELEGRAM_API}${botToken}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: message,
-        parse_mode: 'Markdown',
-        disable_web_page_preview: true,
-      }),
+      body: JSON.stringify(sendBody),
     });
 
     let telegramResult = await telegramResponse.json();
@@ -381,14 +413,16 @@ Deno.serve(async (req) => {
     // If Markdown parsing fails, retry without parse_mode
     if (!telegramResponse.ok && telegramResult?.description?.includes('parse')) {
       console.warn('[Telegram] Markdown parse failed, retrying as plain text');
+      const fallbackBody: Record<string, any> = {
+        chat_id: chatId,
+        text: message,
+        disable_web_page_preview: true,
+      };
+      if (replyMarkup) fallbackBody.reply_markup = replyMarkup;
       telegramResponse = await fetch(`${TELEGRAM_API}${botToken}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: message,
-          disable_web_page_preview: true,
-        }),
+        body: JSON.stringify(fallbackBody),
       });
       telegramResult = await telegramResponse.json();
     }
