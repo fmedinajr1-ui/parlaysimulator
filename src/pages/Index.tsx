@@ -89,27 +89,20 @@ const Index = () => {
       >
         <HeroBanner />
 
-        {/* Auth Button */}
-        <div className="flex justify-end mb-4">
-          <Button 
-            variant="outline" 
-            size="sm" 
-            onClick={handleAuthAction}
-            className="gap-2"
-          >
-            {user ? (
-              <>
-                <LogOut className="w-4 h-4" />
-                Sign Out
-              </>
-            ) : (
-              <>
-                <LogIn className="w-4 h-4" />
-                Sign In
-              </>
-            )}
-          </Button>
-        </div>
+        {/* Auth Button - Sign Out only (login removed) */}
+        {user && (
+          <div className="flex justify-end mb-4">
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={handleAuthAction}
+              className="gap-2"
+            >
+              <LogOut className="w-4 h-4" />
+              Sign Out
+            </Button>
+          </div>
+        )}
 
         {/* Pilot Mode Welcome Message */}
         {isPilotRestricted && (

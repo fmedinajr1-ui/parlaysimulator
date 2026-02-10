@@ -106,7 +106,7 @@ function AnimatedRoutes() {
               <Route path="/upload" element={<Upload />} />
               <Route path="/results" element={<Results />} />
               <Route path="/profile" element={<Profile />} />
-              <Route path="/auth" element={<Auth />} />
+              <Route path="/auth" element={<Navigate to="/" replace />} />
               <Route path="/admin" element={<Admin />} />
               <Route path="/collaborate" element={<Collaborate />} />
               <Route path="/compare" element={<Compare />} />
