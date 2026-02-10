@@ -15,6 +15,16 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
+// EST-aware date helper to avoid UTC date mismatch after 7 PM EST
+function getEasternDate(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -119,12 +129,16 @@ Deno.serve(async (req) => {
     }
 
     if (targetDates.length === 0) {
-      const now = new Date();
-      const todayET = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-      const todayStr = todayET.toISOString().split('T')[0];
-      const yesterdayET = new Date(todayET);
-      yesterdayET.setDate(yesterdayET.getDate() - 1);
-      const yesterdayStr = yesterdayET.toISOString().split('T')[0];
+      const todayStr = getEasternDate();
+      // Calculate yesterday in Eastern time
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayStr = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/New_York',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(yesterday);
       targetDates = [yesterdayStr, todayStr];
     }
 
@@ -300,7 +314,7 @@ Deno.serve(async (req) => {
     }
 
     // 5. Update activation status
-    const today = new Date().toISOString().split('T')[0];
+    const today = getEasternDate();
     const isProfitableDay = totalProfitLoss > 0;
 
     // Get previous day's status for consecutive days calculation
