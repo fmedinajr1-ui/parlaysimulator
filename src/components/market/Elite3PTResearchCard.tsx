@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { getEasternDate } from '@/lib/dateUtils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -48,7 +49,7 @@ export function Elite3PTResearchCard() {
   const recordWin = () => {
     if (quickLegs.length > 0) {
       recordOutcome({
-        parlay_date: new Date().toISOString().split('T')[0],
+        parlay_date: getEasternDate(),
         total_legs: quickLegs.length,
         legs: quickLegs,
         outcome: 'won',

@@ -7,6 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { getEasternDate } from "@/lib/dateUtils";
 import { 
   extractFramesFromVideo, 
   extractFramesFromUrl,
@@ -387,7 +388,7 @@ export function FilmProfileUpload({ onProfileUpdated }: FilmProfileUploadProps) 
         ).join(', ') || '';
 
         // Build body language notes with all tracking data
-        const datePrefix = `[${new Date().toISOString().split('T')[0]}]`;
+        const datePrefix = `[${getEasternDate()}]`;
         const bodyLangParts = [];
         if (tracking?.courtZones && Object.keys(tracking.courtZones).length > 0) {
           bodyLangParts.push(`Zones: ${zoneDistribution}`);

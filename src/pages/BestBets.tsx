@@ -9,6 +9,7 @@ import { AccuracyBadge } from '@/components/ui/accuracy-badge';
 import { BestBetCard } from '@/components/bestbets/BestBetCard';
 import { AddToParlayButton } from '@/components/parlay/AddToParlayButton';
 import { supabase } from '@/integrations/supabase/client';
+import { getEasternDate } from '@/lib/dateUtils';
 import { useParlayBuilder } from '@/contexts/ParlayBuilderContext';
 import { useBankroll } from '@/hooks/useBankroll';
 import { Loader2, Trophy, Zap, TrendingDown, Target, RefreshCw, Sparkles } from 'lucide-react';
@@ -160,7 +161,7 @@ export default function BestBets() {
         .from('fatigue_edge_tracking')
         .select('*')
         .gte('fatigue_differential', 20)
-        .gte('game_date', new Date().toISOString().split('T')[0])
+        .gte('game_date', getEasternDate())
         .order('fatigue_differential', { ascending: false })
         .limit(10);
 

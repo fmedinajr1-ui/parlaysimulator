@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
+import { getEasternDate } from "@/lib/dateUtils";
 import { toast } from "sonner";
 import { Database, Plus, Loader2, RefreshCw, Download, Calendar } from "lucide-react";
 
@@ -17,7 +18,7 @@ export const ManualStatsEntry = ({ onStatsAdded }: ManualStatsEntryProps) => {
   const [isBackfilling, setIsBackfilling] = useState(false);
   const [formData, setFormData] = useState({
     player_name: "",
-    game_date: new Date().toISOString().split("T")[0],
+    game_date: getEasternDate(),
     opponent: "",
     points: "",
     rebounds: "",
@@ -84,7 +85,7 @@ export const ManualStatsEntry = ({ onStatsAdded }: ManualStatsEntryProps) => {
     setIsBackfilling(true);
     try {
       const days = parseInt(backfillDays) || 5;
-      const endDate = new Date().toISOString().split('T')[0];
+      const endDate = getEasternDate();
       const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
       
       toast.info(`Backfilling stats from ${startDate} to ${endDate}...`);

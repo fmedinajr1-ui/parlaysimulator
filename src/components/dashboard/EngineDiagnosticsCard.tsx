@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { getEasternDate } from "@/lib/dateUtils";
 import { Activity, CheckCircle, AlertTriangle, XCircle, RefreshCw, Database } from "lucide-react";
 import { useState } from "react";
 
@@ -19,7 +20,7 @@ export function EngineDiagnosticsCard() {
   const { data: diagnostics, refetch, isLoading } = useQuery({
     queryKey: ['engine-diagnostics'],
     queryFn: async () => {
-      const today = new Date().toISOString().split('T')[0];
+      const today = getEasternDate();
       const now = new Date();
 
       // Fetch multiple diagnostics in parallel
