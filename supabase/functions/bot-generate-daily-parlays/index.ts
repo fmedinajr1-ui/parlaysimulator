@@ -870,9 +870,13 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   const enrichedTeamPicks: EnrichedTeamPick[] = (teamProps || []).flatMap((game: TeamProp) => {
     const picks: EnrichedTeamPick[] = [];
     
+    // Helper: check if odds are plus-money
+    const isPlusMoney = (odds: number | undefined) => odds !== undefined && odds > 0;
+    
     // Spread picks
     if (game.line !== null && game.line !== undefined) {
       if (game.home_odds) {
+        const plusBonus = isPlusMoney(game.home_odds) ? 5 : 0;
         picks.push({
           id: `${game.id}_spread_home`,
           type: 'team',
@@ -885,11 +889,12 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
           odds: game.home_odds,
           category: mapTeamBetToCategory('spread', 'home'),
           sharp_score: game.sharp_score || 50,
-          compositeScore: Math.min(100, (game.sharp_score || 50) + 20),
+          compositeScore: Math.min(100, (game.sharp_score || 50) + 20 + plusBonus),
           confidence_score: (game.sharp_score || 50) / 100,
         });
       }
       if (game.away_odds) {
+        const plusBonus = isPlusMoney(game.away_odds) ? 5 : 0;
         picks.push({
           id: `${game.id}_spread_away`,
           type: 'team',
@@ -902,7 +907,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
           odds: game.away_odds,
           category: mapTeamBetToCategory('spread', 'away'),
           sharp_score: game.sharp_score || 50,
-          compositeScore: Math.min(100, (game.sharp_score || 50) + 20),
+          compositeScore: Math.min(100, (game.sharp_score || 50) + 20 + plusBonus),
           confidence_score: (game.sharp_score || 50) / 100,
         });
       }
@@ -910,6 +915,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     
     // Total picks
     if (game.over_odds && game.under_odds) {
+      const overPlusBonus = isPlusMoney(game.over_odds) ? 5 : 0;
       picks.push({
         id: `${game.id}_total_over`,
         type: 'team',
@@ -922,9 +928,10 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
         odds: game.over_odds,
         category: mapTeamBetToCategory('total', 'over'),
         sharp_score: game.sharp_score || 50,
-        compositeScore: Math.min(100, (game.sharp_score || 50) + 15),
+        compositeScore: Math.min(100, (game.sharp_score || 50) + 15 + overPlusBonus),
         confidence_score: (game.sharp_score || 50) / 100,
       });
+      const underPlusBonus = isPlusMoney(game.under_odds) ? 5 : 0;
       picks.push({
         id: `${game.id}_total_under`,
         type: 'team',
@@ -937,7 +944,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
         odds: game.under_odds,
         category: mapTeamBetToCategory('total', 'under'),
         sharp_score: game.sharp_score || 50,
-        compositeScore: Math.min(100, (game.sharp_score || 50) + 15),
+        compositeScore: Math.min(100, (game.sharp_score || 50) + 15 + underPlusBonus),
         confidence_score: (game.sharp_score || 50) / 100,
       });
     }
