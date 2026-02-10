@@ -1,67 +1,32 @@
 
+# Fix "Unknown" Display for Team Bet Legs
 
-# Add "Fix" Buttons to Diagnostic Report
+## Problem
 
-## Overview
+Team bet legs in the database have `home_team`, `away_team`, `bet_type`, `side`, and `type: 'team'` — but no `player_name`. The `BotParlayCard` always renders `leg.player_name ?? 'Unknown'`, so every team leg shows "Unknown".
 
-When the daily diagnostic Telegram report shows failures, add inline buttons below the message that let you trigger fixes directly from the chat. Each failed check gets a corresponding "Fix" button that calls the right backend function.
+## Solution
 
-## What Changes
+Two changes needed:
 
-### 1. Update `bot-send-telegram` -- add inline keyboard to diagnostic reports
+### 1. Update `BotLeg` type (`src/hooks/useBotEngine.ts`)
 
-The `formatDiagnosticReport` function currently returns just a text string. The Telegram send logic needs to also return an `inline_keyboard` when the report contains failures.
+Add optional team-specific fields to the `BotLeg` interface:
+- `type?: 'player' | 'team'`
+- `home_team?: string`
+- `away_team?: string`
+- `bet_type?: string` (spread, total, moneyline)
 
-Mapping of failed checks to fix actions:
+### 2. Update `BotParlayCard` rendering (`src/components/bot/BotParlayCard.tsx`)
 
-| Failed Check | Button Label | Callback Action |
-|---|---|---|
-| Data Freshness | Fix: Refresh Props | `fix:refresh_props` |
-| Weight Calibration | Fix: Calibrate | `fix:calibrate` |
-| Parlay Generation | Fix: Generate Parlays | `fix:generate` |
-| Settlement Pipeline | Fix: Settle Parlays | `fix:settle` |
-| Cron Jobs | Fix: Run All Jobs | `fix:run_crons` |
+Check `leg.type === 'team'` and render differently:
 
-Checks like "Blocked Categories" and "Orphaned Data" don't have simple one-click fixes, so they won't get buttons.
+- **Name line**: Instead of `player_name`, show the matchup like `"Lakers vs Spurs"` (using `home_team` and `away_team`), or show the specific side (e.g., `"Lakers -9.5"` for spreads, `"Over 229.5"` for totals).
+- **Detail line**: Show `bet_type` (Spread/Total/Moneyline) instead of `prop_type`, and show the side contextually (home/away for spreads, over/under for totals).
+- **Team badge**: Skip the `team_name` dot since the teams are already in the name.
 
-The function will return both the message text and an optional `reply_markup` object with the inline keyboard. The send logic will pass this through to the Telegram API.
+For player legs, everything stays exactly as it is now.
 
-### 2. Update `telegram-webhook` -- handle `fix:*` callbacks
-
-Extend `handleCallbackQuery` to recognize `fix:` prefixed callback data and trigger the appropriate edge function:
-
-- `fix:refresh_props` -- calls `engine-cascade-runner` (or `refresh-todays-props`)
-- `fix:calibrate` -- calls `calibrate-bot-weights`
-- `fix:generate` -- calls `bot-generate-daily-parlays`
-- `fix:settle` -- calls `bot-settle-and-learn`
-- `fix:run_crons` -- runs calibrate + settle + generate in sequence
-
-Each fix action will:
-1. Answer the callback query with "Running fix..."
-2. Send a status message: "Running [fix name]..."
-3. Call the edge function
-4. Send a result message with success/failure
-
-### 3. Update `bot-daily-diagnostics` -- pass failure data to Telegram
-
-The diagnostics function already sends the full `checks` array to telegram. No changes needed here -- the `bot-send-telegram` function will read the check statuses to determine which buttons to show.
-
-## Technical Details
-
-### `bot-send-telegram` changes
-
-- Refactor `formatDiagnosticReport` to return `{ text: string, reply_markup?: object }` instead of just a string
-- Update the main handler to detect when a formatter returns an object with `reply_markup` and pass it to the Telegram API
-- Build the inline keyboard dynamically based on which checks have `status: 'fail'` or `status: 'warn'`
-
-### `telegram-webhook` changes
-
-- Add `fix:` handling branch in `handleCallbackQuery`
-- Create a `handleFixAction(action, chatId)` helper that maps action names to edge function URLs
-- Each fix calls the corresponding function via `fetch()` with the service role key
-- Report back with success/error message
-
-### Files modified
-1. `supabase/functions/bot-send-telegram/index.ts` -- diagnostic format + send logic
-2. `supabase/functions/telegram-webhook/index.ts` -- callback handler for fix actions
-
+### Files Modified
+1. `src/hooks/useBotEngine.ts` -- add team fields to BotLeg interface
+2. `src/components/bot/BotParlayCard.tsx` -- conditional rendering for team vs player legs
