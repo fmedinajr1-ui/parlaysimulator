@@ -1,70 +1,104 @@
 
 
-# Fix: Tier Generation Creating Only 4 Instead of 65-75 Parlays
+# Fix: Category Diversification + Trigger Lineup Scraper
 
-## Root Cause
+## Problem 1: Category Monoculture
 
-The Sharpe ratio formula produces values in the **0.01-0.03 range**, but the tier thresholds require **0.1-0.5**. This makes it mathematically impossible for validation and execution tiers to produce any parlays, and most exploration profiles fail too.
+All parlays are dominated by the `THREE_POINT_SHOOTER` category because:
 
-**Math proof** (3-leg parlay, 55% hit rate, -110 odds):
-- Combined probability: 0.55^3 = 0.166
-- Implied probability: 0.524^3 = 0.144
-- Edge: 0.022
-- Sharpe: 0.022 / (0.5 x sqrt(3)) = **0.025**
-- Exploration threshold: 0.1 -- FAILS
-- Validation threshold: 0.4 -- impossible
-- Execution threshold: 0.5 -- impossible
+1. **Sorted pool is top-heavy**: The pick pool is sorted by `compositeScore` (line 916), and THREE_POINT_SHOOTER has the highest weight (1.30) + highest hit rate (75%), so it always occupies the top of the sorted list
+2. **109 of 300 sweet spots** are THREE_POINT_SHOOTER - more than any other category
+3. **Per-parlay limit is too loose**: `maxCategoryUsage` allows 5 picks per category per parlay in exploration. With 3-leg parlays, ALL legs can be the same category
+4. **No cross-parlay diversity**: Once a THREE_POINT_SHOOTER pick is used in one parlay, it's marked globally used, but there are 109 more to choose from
 
-Only 4 exploration parlays sneak through because a few picks happen to have better odds than -110, pushing their edge/sharpe just above 0.1.
+### Fix: Enforce category diversity within each parlay
 
-## Solution
+The `maxCategoryUsage` values need to be tightened so parlays can't be mono-category:
 
-Recalibrate the edge and sharpe thresholds to match what the formula actually produces. The formula itself is fine -- it correctly measures risk-adjusted edge. The thresholds just need to be realistic.
+| Tier | Parlay Sizes | Current maxCategoryUsage | New maxCategoryUsage |
+|------|-------------|------------------------|---------------------|
+| Exploration | 3-6 legs | 5 | 2 |
+| Validation | 3-6 legs | 3 | 1 |
+| Execution | 3-6 legs | 2 | 1 |
 
-### New Thresholds
+Setting validation/execution to 1 means every leg MUST be a different category, creating true diversification. Exploration at 2 allows some category doubling for larger parlays but prevents monoculture.
 
-| Tier | Current minEdge | New minEdge | Current minSharpe | New minSharpe |
-|------|----------------|-------------|-------------------|---------------|
-| Exploration | 0.005 | 0.003 | 0.1 | 0.01 |
-| Validation | 0.025 | 0.008 | 0.4 | 0.02 |
-| Execution | 0.03 | 0.012 | 0.5 | 0.03 |
+Additionally, add a **shuffle step** before pick selection: instead of always iterating the composite-score-sorted list top-down (which gives the same THREE_POINT_SHOOTER picks every time), shuffle the top candidates with a weighted random approach. This creates parlay variety while still preferring high-quality picks.
 
-These still enforce a hierarchy (execution is 4x stricter than exploration) while being achievable with real data.
+### Implementation
 
-### Also fix: minConfidence filter
+**File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
 
-The `minConfidence` field on each tier (0.45, 0.52, 0.55) isn't used anywhere in the generation loop, so it's harmless. But the `minHitRate` on profiles IS enforced. Execution profiles require 55-62% hit rate while fallback picks have exactly 55% -- so profiles requiring 58% or 62% will always fail. Lower the strictest profile requirements slightly:
+1. Change `maxCategoryUsage` values:
+   - Exploration: 5 to 2
+   - Validation: 3 to 1
+   - Execution: 2 to 1
 
-- `elite_conservative`: 62% down to 56%
-- `elite_balanced`: 58% down to 55%
-- `validated_conservative`: 58% down to 55%
+2. Add a weighted shuffle function that groups candidates by category and interleaves them, so the iteration order isn't always the same top-scoring category
 
-## Technical Changes
+3. In the parlay building loop (line 965-969), after filtering by sport, apply the category-interleave so picks from different categories alternate in the candidate list
 
-### File: `supabase/functions/bot-generate-daily-parlays/index.ts`
+## Problem 2: No Injury Data for Today
 
-**Lines 57-58** (exploration tier thresholds):
-- `minEdge: 0.005` to `minEdge: 0.003`
-- `minSharpe: 0.1` to `minSharpe: 0.01`
+The lineup scraper cron jobs run at 8 AM and 4 PM ET but haven't populated data for the current date yet.
 
-**Lines 124-125** (validation tier thresholds):
-- `minEdge: 0.025` to `minEdge: 0.008`
-- `minSharpe: 0.4` to `minSharpe: 0.02`
+### Fix: Trigger manually
 
-**Lines 153-154** (execution tier thresholds):
-- `minEdge: 0.03` to `minEdge: 0.012`
-- `minSharpe: 0.5` to `minSharpe: 0.03`
+After deploying the code fix, manually invoke `firecrawl-lineup-scraper` to populate `lineup_alerts` for today so the availability gate has injury data to work with.
 
-**Lines 129-131** (validation profile minHitRate):
-- `validated_conservative` profiles: `minHitRate: 58` to `minHitRate: 55`
+## Technical Details
 
-**Lines 158-159** (execution profile minHitRate):
-- `elite_conservative` profiles: `minHitRate: 62` to `minHitRate: 56`
-- `elite_balanced` profiles: `minHitRate: 58` to `minHitRate: 55`
+### Changes to `bot-generate-daily-parlays/index.ts`
 
-### Post-deploy
+**Lines 54-55** - Exploration tier:
+- `maxCategoryUsage: 5` to `maxCategoryUsage: 2`
 
-1. Trigger `bot-generate-daily-parlays` with `{"date": "2026-02-09"}` (today)
-2. Verify all 3 tiers produce parlays (target: 50 exploration + 15 validation + 8 execution = 73)
-3. Check Telegram `/parlays` shows the new full set
+**Lines 121-122** - Validation tier:
+- `maxCategoryUsage: 3` to `maxCategoryUsage: 1`
+
+**Lines 150-151** - Execution tier:
+- `maxCategoryUsage: 2` to `maxCategoryUsage: 1`
+
+**New function** - Add `interleaveByCategory()` around line 915:
+```text
+function interleaveByCategory(picks: EnrichedPick[]): EnrichedPick[] {
+  // Group by category, keeping each group sorted by compositeScore
+  const groups = new Map<string, EnrichedPick[]>();
+  for (const pick of picks) {
+    const cat = pick.category;
+    if (!groups.has(cat)) groups.set(cat, []);
+    groups.get(cat)!.push(pick);
+  }
+  
+  // Round-robin interleave: take the best pick from each category in turn
+  const result: EnrichedPick[] = [];
+  const iterators = [...groups.values()].map(g => ({ picks: g, index: 0 }));
+  // Sort category groups by their best pick's composite score
+  iterators.sort((a, b) => b.picks[0].compositeScore - a.picks[0].compositeScore);
+  
+  let added = true;
+  while (added) {
+    added = false;
+    for (const iter of iterators) {
+      if (iter.index < iter.picks.length) {
+        result.push(iter.picks[iter.index]);
+        iter.index++;
+        added = true;
+      }
+    }
+  }
+  return result;
+}
+```
+
+**Line 916** - Apply interleave:
+- Replace: `enrichedSweetSpots.sort((a, b) => b.compositeScore - a.compositeScore);`
+- With: `enrichedSweetSpots.sort((a, b) => b.compositeScore - a.compositeScore); enrichedSweetSpots = interleaveByCategory(enrichedSweetSpots);`
+
+### Post-deploy steps
+
+1. Deploy the updated edge function
+2. Trigger `firecrawl-lineup-scraper` with `{"sport": "basketball_nba"}` to populate injury data
+3. Trigger `bot-generate-daily-parlays` with `{"date": "2026-02-09"}` to regenerate with diversity
+4. Verify parlays contain picks from multiple categories (THREE_POINT_SHOOTER, ROLE_PLAYER_REB, HIGH_ASSIST, VOLUME_SCORER, etc.)
 
