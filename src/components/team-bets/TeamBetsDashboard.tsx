@@ -77,7 +77,7 @@ export function TeamBetsDashboard() {
   const [selectedBetType, setSelectedBetType] = useState('all');
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Fetch team bets
+  // Fetch team bets (upcoming)
   const { data: bets, refetch, isLoading } = useQuery({
     queryKey: ['team-bets', selectedSport, selectedBetType],
     queryFn: async () => {
@@ -122,6 +122,30 @@ export function TeamBetsDashboard() {
       return consolidated;
     },
     refetchInterval: 60000,
+  });
+
+  // Fetch recent games when no upcoming bets exist
+  const { data: recentBets } = useQuery({
+    queryKey: ['team-bets-recent', selectedSport, selectedBetType],
+    queryFn: async () => {
+      let query = supabase
+        .from('game_bets')
+        .select('*')
+        .order('commence_time', { ascending: false })
+        .limit(10);
+
+      if (selectedSport !== 'ALL') {
+        query = query.eq('sport', getSportKey(selectedSport));
+      }
+      if (selectedBetType !== 'all') {
+        query = query.eq('bet_type', selectedBetType);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return data as GameBet[];
+    },
+    enabled: !isLoading && (!bets || bets.length === 0),
   });
 
   const handleRefresh = async () => {
@@ -248,8 +272,21 @@ export function TeamBetsDashboard() {
                 Loading bets...
               </div>
             ) : bets?.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                No bets found for selected filters
+              <div className="space-y-4">
+                <div className="text-center py-4 text-muted-foreground">
+                  <p className="font-medium">No upcoming games available</p>
+                  <p className="text-xs mt-1">The odds data source may need to be refreshed. Try clicking Refresh above.</p>
+                </div>
+                {recentBets && recentBets.length > 0 && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-muted-foreground mb-2">Recent Games</h3>
+                    <div className="space-y-2">
+                      {recentBets.map((bet) => (
+                        <TeamBetCard key={bet.id} bet={bet} />
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               <AnimatePresence mode="popLayout">

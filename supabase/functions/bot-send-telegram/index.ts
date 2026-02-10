@@ -209,7 +209,7 @@ function formatWeightChange(data: Record<string, any>): string {
   
   let msg = `${arrow} *Weight Update*\n\n`;
   msg += `Category: ${category}\n`;
-  msg += `Weight: ${oldWeight?.toFixed(2)} → ${newWeight?.toFixed(2)}\n`;
+  msg += `Weight: ${oldWeight?.toFixed(2)} -> ${newWeight?.toFixed(2)}\n`;
   if (reason) msg += `Reason: ${reason}`;
   
   return msg;
@@ -321,8 +321,8 @@ Deno.serve(async (req) => {
     // Format message
     const message = formatMessage(type, data);
     
-    // Send via Telegram API
-    const telegramResponse = await fetch(`${TELEGRAM_API}${botToken}/sendMessage`, {
+    // Send via Telegram API with Markdown, fallback to plain text
+    let telegramResponse = await fetch(`${TELEGRAM_API}${botToken}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -333,7 +333,22 @@ Deno.serve(async (req) => {
       }),
     });
 
-    const telegramResult = await telegramResponse.json();
+    let telegramResult = await telegramResponse.json();
+
+    // If Markdown parsing fails, retry without parse_mode
+    if (!telegramResponse.ok && telegramResult?.description?.includes('parse')) {
+      console.warn('[Telegram] Markdown parse failed, retrying as plain text');
+      telegramResponse = await fetch(`${TELEGRAM_API}${botToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: message,
+          disable_web_page_preview: true,
+        }),
+      });
+      telegramResult = await telegramResponse.json();
+    }
 
     if (!telegramResponse.ok) {
       console.error('[Telegram] API error:', telegramResult);
