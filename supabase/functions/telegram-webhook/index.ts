@@ -415,6 +415,9 @@ Welcome! I'm your autonomous betting assistant with tiered learning.
 /spreads - Team spread signals
 /totals - Over/Under signals
 
+*Intelligence:*
+/research - Run AI research agent on demand
+
 Or *ask me anything* naturally!
 • "How's the bot learning?"
 • "Show me validation picks"
@@ -913,6 +916,46 @@ async function handleValidate(chatId: string) {
   return message;
 }
 
+// /research - trigger AI research agent on demand
+async function handleResearch(chatId: string) {
+  await logActivity("telegram_research", "User triggered AI research agent", { chatId });
+  await sendMessage(chatId, "🔬 Running AI research agent... This may take a minute.");
+
+  try {
+    const { data, error } = await supabase.functions.invoke('ai-research-agent');
+
+    if (error) {
+      console.error('[Research] Invoke error:', error);
+      return "❌ Research agent failed to run. Check logs for details.";
+    }
+
+    if (!data?.success) {
+      return `❌ Research agent returned an error: ${data?.error || 'Unknown'}`;
+    }
+
+    const categoryLabels: Record<string, string> = {
+      competing_ai: '🤖 Competing AI Systems',
+      statistical_models: '📊 Statistical Models',
+      injury_intel: '🏥 Injury/Lineup Intel',
+    };
+
+    let message = `✅ *Research Complete*\n\n`;
+    for (const f of (data.findings || [])) {
+      const label = categoryLabels[f.category] || f.category;
+      const relevance = f.relevance >= 0.65 ? 'high' : f.relevance >= 0.40 ? 'medium' : 'low';
+      message += `${label}: ${f.insightsCount} insights (${relevance} relevance)\n`;
+    }
+
+    message += `\n📈 ${data.actionableCount}/${data.findingsCount} categories with actionable intel`;
+    message += `\n🔗 Full digest also sent to notification channel.`;
+
+    return message;
+  } catch (err) {
+    console.error('[Research] Error:', err);
+    return "❌ Research agent failed unexpectedly. Try again later.";
+  }
+}
+
 // Main handler
 async function handleMessage(chatId: string, text: string) {
   const command = text.toLowerCase().trim();
@@ -950,6 +993,8 @@ async function handleMessage(chatId: string, text: string) {
     return await handleValidate(chatId);
   } else if (command === "/calendar") {
     return await handleCalendar(chatId);
+  } else if (command === "/research") {
+    return await handleResearch(chatId);
   } else {
     // Natural language - save and process
     await saveConversation(chatId, "user", text);
