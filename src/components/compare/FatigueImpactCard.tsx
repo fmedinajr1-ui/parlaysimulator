@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { getEasternDate } from '@/lib/dateUtils';
 import { ParlaySimulation } from '@/types/parlay';
 import { FeedCard } from '@/components/FeedCard';
 import { Badge } from '@/components/ui/badge';
@@ -47,7 +48,7 @@ export function FatigueImpactCard({ simulations }: FatigueImpactCardProps) {
   const { data: fatigueScores, isLoading } = useQuery({
     queryKey: ['compare-fatigue-scores'],
     queryFn: async () => {
-      const today = new Date().toISOString().split('T')[0];
+      const today = getEasternDate();
       const { data, error } = await supabase
         .from('nba_fatigue_scores')
         .select('team_name, fatigue_score, fatigue_category, is_back_to_back, opponent')

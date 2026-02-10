@@ -826,13 +826,13 @@ export function AIGenerativeProgressDashboard() {
                     </Button>
                   </div>
                   <div className="grid grid-cols-3 gap-2 mt-2 text-xs">
-                    <div className={dataFreshness.nba < new Date().toISOString().split('T')[0] ? 'text-yellow-500' : 'text-green-500'}>
+                    <div className={dataFreshness.nba < getEasternDate() ? 'text-yellow-500' : 'text-green-500'}>
                       NBA: {dataFreshness.nba}
                     </div>
-                    <div className={dataFreshness.nfl < new Date().toISOString().split('T')[0] ? 'text-yellow-500' : 'text-green-500'}>
+                    <div className={dataFreshness.nfl < getEasternDate() ? 'text-yellow-500' : 'text-green-500'}>
                       NFL: {dataFreshness.nfl}
                     </div>
-                    <div className={dataFreshness.nhl < new Date().toISOString().split('T')[0] ? 'text-yellow-500' : 'text-green-500'}>
+                    <div className={dataFreshness.nhl < getEasternDate() ? 'text-yellow-500' : 'text-green-500'}>
                       NHL: {dataFreshness.nhl}
                     </div>
                   </div>
