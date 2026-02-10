@@ -146,6 +146,35 @@ async function getParlays() {
     distribution[legCount] = (distribution[legCount] || 0) + 1;
   });
 
+  // Group by tier parsed from strategy_name
+  const tierGroups: Record<string, typeof latestBatch> = { exploration: [], validation: [], execution: [] };
+  latestBatch.forEach((p) => {
+    const name = (p.strategy_name || '').toLowerCase();
+    if (name.includes('exploration') || name.includes('explore') || name.includes('cross_sport') || name.includes('team_') || name.includes('props_') || name.includes('tennis_') || name.includes('nhl_') || name.includes('max_diversity')) {
+      tierGroups.exploration.push(p);
+    } else if (name.includes('validation') || name.includes('validated')) {
+      tierGroups.validation.push(p);
+    } else if (name.includes('execution') || name.includes('elite')) {
+      tierGroups.execution.push(p);
+    } else {
+      tierGroups.exploration.push(p); // default
+    }
+  });
+
+  const tierSummary: Record<string, { count: number; topParlays: Array<{ strategy: string; legs: number; odds: number; outcome: string | null }> }> = {};
+  for (const [tier, group] of Object.entries(tierGroups)) {
+    if (group.length === 0) continue;
+    tierSummary[tier] = {
+      count: group.length,
+      topParlays: group.slice(0, 2).map((p) => ({
+        strategy: p.strategy_name,
+        legs: p.leg_count,
+        odds: p.expected_odds,
+        outcome: p.outcome,
+      })),
+    };
+  }
+
   return {
     count: latestBatch.length,
     parlays: latestBatch.slice(0, 5).map((p) => ({
@@ -155,6 +184,7 @@ async function getParlays() {
       outcome: p.outcome,
     })),
     distribution,
+    tierSummary,
   };
 }
 
@@ -353,14 +383,34 @@ async function handleParlays(chatId: string) {
 
   let message = `🎯 *Today's Parlays* (${parlays.count} total)\n\n`;
 
-  parlays.parlays.forEach((p, i) => {
-    const outcomeEmoji =
-      p.outcome === "won" ? "✅" : p.outcome === "lost" ? "❌" : "⏳";
-    message += `${i + 1}. *${p.strategy}* (${p.legs}-leg)\n`;
-    message += `   Odds: ${p.odds > 0 ? "+" : ""}${p.odds} ${outcomeEmoji}\n`;
-  });
+  const tierLabels: Record<string, string> = {
+    exploration: '🔍 Exploration',
+    validation: '✅ Validation',
+    execution: '💰 Execution',
+  };
+  const tierDescriptions: Record<string, string> = {
+    exploration: '$0 stake',
+    validation: 'simulated',
+    execution: 'Kelly stakes',
+  };
 
-  message += `\n*Distribution:*\n`;
+  if (parlays.tierSummary) {
+    for (const tier of ['exploration', 'validation', 'execution']) {
+      const info = parlays.tierSummary[tier];
+      if (!info) continue;
+      message += `${tierLabels[tier]} (${info.count}) — _${tierDescriptions[tier]}_\n`;
+      info.topParlays.forEach((p, i) => {
+        const outcomeEmoji = p.outcome === 'won' ? '✅' : p.outcome === 'lost' ? '❌' : '⏳';
+        message += `  ${i + 1}. ${p.strategy} (${p.legs}-leg) ${p.odds > 0 ? '+' : ''}${p.odds} ${outcomeEmoji}\n`;
+      });
+      if (info.count > 2) {
+        message += `  ... +${info.count - 2} more\n`;
+      }
+      message += `\n`;
+    }
+  }
+
+  message += `*Distribution:*\n`;
   message += Object.entries(parlays.distribution)
     .map(([legs, count]) => `• ${legs}-Leg: ${count}`)
     .join("\n");
