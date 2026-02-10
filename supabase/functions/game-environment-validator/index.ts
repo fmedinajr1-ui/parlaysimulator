@@ -15,9 +15,10 @@ const corsHeaders = {
 
 // Helper: Get current date in Eastern Time
 function getEasternDate(): string {
-  const now = new Date();
-  const eastern = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
-  return eastern.toISOString().split('T')[0];
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date());
 }
 
 // ============================================================================

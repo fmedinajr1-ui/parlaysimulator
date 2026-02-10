@@ -6,6 +6,14 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// EST-aware date helper
+function getEasternDate(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date());
+}
+
 // Timezone to UTC offset mapping
 const TIMEZONE_OFFSETS: Record<string, number> = {
   'America/New_York': -5,
@@ -417,7 +425,7 @@ serve(async (req) => {
 
     if (action === 'get-today') {
       // Get all fatigue scores for today's games
-      const today = new Date().toISOString().split('T')[0];
+      const today = getEasternDate();
       
       const { data: scores, error } = await supabase
         .from('nba_fatigue_scores')

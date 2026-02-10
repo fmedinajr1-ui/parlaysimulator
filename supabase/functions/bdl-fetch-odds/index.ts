@@ -6,6 +6,14 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// EST-aware date helper
+function getEasternDate(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date());
+}
+
 // V1 for games, players, stats - V2 for betting endpoints only
 const BDL_V1_URL = 'https://api.balldontlie.io/v1';
 const BDL_V2_URL = 'https://api.balldontlie.io/v2';
@@ -161,7 +169,7 @@ serve(async (req) => {
 
     // Action: Fetch today's games
     if (action === 'fetch_games') {
-      const today = new Date().toISOString().split('T')[0];
+      const today = getEasternDate();
       const gamesUrl = `${BDL_V1_URL}/games?dates[]=${today}`;
       
       console.log(`[bdl-fetch-odds] Fetching games from: ${gamesUrl}`);
@@ -194,7 +202,7 @@ serve(async (req) => {
 
     // Action: Fetch game odds (spreads, moneylines, totals)
     if (action === 'fetch_game_odds') {
-      const today = new Date().toISOString().split('T')[0];
+      const today = getEasternDate();
       const oddsUrl = `${BDL_V2_URL}/odds?dates[]=${today}`;
       
       console.log(`[bdl-fetch-odds] Fetching game odds from: ${oddsUrl}`);
@@ -287,7 +295,7 @@ serve(async (req) => {
     // Action: Sync BDL props to unified_props table
     if (action === 'sync_to_unified_props') {
       // Step 1: Get today's games from BDL
-      const today = new Date().toISOString().split('T')[0];
+      const today = getEasternDate();
       const gamesUrl = `${BDL_V1_URL}/games?dates[]=${today}`;
       
       const gamesResponse = await fetch(gamesUrl, { headers });
@@ -458,7 +466,7 @@ serve(async (req) => {
 
     // Action: Pre-populate player cache for all players in today's games
     if (action === 'populate_player_cache') {
-      const today = new Date().toISOString().split('T')[0];
+      const today = getEasternDate();
       const gamesUrl = `${BDL_V1_URL}/games?dates[]=${today}`;
       
       console.log(`[bdl-fetch-odds] Populating player cache for ${today}`);

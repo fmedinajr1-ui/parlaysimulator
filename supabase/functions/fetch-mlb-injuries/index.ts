@@ -6,6 +6,14 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// EST-aware date helper
+function getEasternDate(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date());
+}
+
 // MLB team mappings
 const MLB_TEAMS: Record<string, string> = {
   'ARI': 'Arizona Diamondbacks', 'ATL': 'Atlanta Braves', 'BAL': 'Baltimore Orioles',
@@ -80,7 +88,7 @@ serve(async (req) => {
     }
 
     const injuries: any[] = [];
-    const today = new Date().toISOString().split('T')[0];
+    const today = getEasternDate();
 
     for (const [abbr, fullName] of Object.entries(MLB_TEAMS)) {
       if (!teamsInGames.has(fullName)) continue;

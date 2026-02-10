@@ -5,6 +5,14 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// EST-aware date helper
+function getEasternDate(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date());
+}
+
 interface TeamLocation {
   team_name: string;
   city: string;
@@ -110,7 +118,7 @@ Deno.serve(async (req) => {
     console.log('Starting daily fatigue calculation...');
 
     // Get today's date
-    const today = new Date().toISOString().split('T')[0];
+    const today = getEasternDate();
     console.log(`Calculating fatigue for date: ${today}`);
 
     // Get all team locations

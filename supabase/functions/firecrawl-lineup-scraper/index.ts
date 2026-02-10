@@ -5,6 +5,14 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// EST-aware date helper
+function getEasternDate(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date());
+}
+
 interface PlayerStatus {
   name: string;
   team?: string;
@@ -158,7 +166,7 @@ async function fetchTodaysGames(): Promise<GameInfo[]> {
   console.log('[ESPN] Fetching today\'s games from scoreboard...');
   
   try {
-    const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
+    const today = getEasternDate().replace(/-/g, '');
     const url = `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates=${today}`;
     
     const response = await fetch(url, {
@@ -446,7 +454,7 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseKey);
     const firecrawlKey = Deno.env.get('FIRECRAWL_API_KEY');
 
-    const today = new Date().toISOString().split('T')[0];
+    const today = getEasternDate();
     const sourceCounts = { espn: 0, espn_gameday: 0, rotowire: 0 };
 
     // STEP 1: Fetch ESPN injuries (always reliable, no API key needed)

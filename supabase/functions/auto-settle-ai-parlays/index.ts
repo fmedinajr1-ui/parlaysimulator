@@ -6,6 +6,14 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// EST-aware date helper
+function getEasternDate(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date());
+}
+
 interface LegResult {
   legIndex: number;
   description: string;
@@ -742,7 +750,7 @@ serve(async (req) => {
     };
 
     // Check data freshness for each sport's player stats
-    const today = new Date().toISOString().split('T')[0];
+    const today = getEasternDate();
     const sportTables = ['nba_player_game_logs', 'nfl_player_game_logs', 'nhl_player_game_logs'];
     
     for (const table of sportTables) {

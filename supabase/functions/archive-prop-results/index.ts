@@ -6,6 +6,14 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// EST-aware date helper
+function getEasternDate(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date());
+}
+
 interface ArchiveResult {
   risk_engine_archived: number;
   sharp_parlays_archived: number;
@@ -44,7 +52,7 @@ serve(async (req) => {
     errors: [],
   };
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = getEasternDate();
 
   try {
     // 1. Archive nba_risk_engine_picks (settled picks from past games)

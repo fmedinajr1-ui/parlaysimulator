@@ -6,6 +6,14 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// EST-aware date helper
+function getEasternDate(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date());
+}
+
 interface GameResult {
   eventId: string;
   status: 'scheduled' | 'in_progress' | 'final' | 'postponed';
@@ -92,7 +100,7 @@ serve(async (req) => {
     console.log(`[sync-median-lock-game-status] Starting sync, trigger: ${trigger || 'manual'}`);
 
     // Get today's date
-    const today = new Date().toISOString().split('T')[0];
+    const today = getEasternDate();
 
     // Fetch all candidates that need status updates (not final)
     const { data: candidates, error: candidatesError } = await supabase

@@ -13,6 +13,14 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// EST-aware date helper
+function getEasternDate(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date());
+}
+
 interface GameLog {
   player_name: string;
   game_date: string;
@@ -737,7 +745,7 @@ async function loadMatchupHistory(supabase: any): Promise<void> {
 
 // Load game environment into cache
 async function loadGameEnvironment(supabase: any): Promise<void> {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getEasternDate();
   const { data, error } = await supabase
     .from('game_environment')
     .select('game_id, home_team, away_team, vegas_total, vegas_spread, pace_rating, game_script')
@@ -808,7 +816,7 @@ serve(async (req) => {
     ]);
 
     // Get today's date for analysis
-    const today = new Date().toISOString().split('T')[0];
+    const today = getEasternDate();
 
     // Check if we already have fresh data
     if (!forceRefresh) {
