@@ -1,73 +1,94 @@
 
 
-# Fix Parlay Count Discrepancy and Telegram Display
+# Fix Settlement Pipeline and Telegram Notifications
 
 ## Issues Found
 
-1. **Dashboard generate button uses UTC date** -- `useBotEngine.ts` line 447 still uses `new Date().toISOString().split('T')[0]` instead of the EST helper, causing it to sometimes generate parlays for the wrong date after 7 PM EST.
+### 1. Generation notification type mismatch (SILENT FAILURE)
+`bot-generate-daily-parlays` sends type `tiered_parlays_generated` (line 1350), but `bot-send-telegram` only handles `parlays_generated` in its switch statement (line 39). This means generation notifications fall through to the `default` case and send a raw JSON dump instead of the formatted message.
 
-2. **Only 16 parlays generated instead of 65-75** -- The generator targets 50 Exploration + 15 Validation + 8 Execution = 73, but the pick pool is too small (63 picks in the last run). With tight deduplication limits (`maxCategoryUsage: 2` for Exploration, `1` for Validation/Execution), the engine exhausts unique combinations early. The fix: relax `maxCategoryUsage` and `maxPlayerUsage` limits to allow more combinations from the available pool.
+**Fix:** Add `tiered_parlays_generated` as a recognized type in `bot-send-telegram/index.ts` and create a proper formatter that shows tier breakdown (Exploration/Validation/Execution counts).
 
-3. **Telegram /parlays only shows 5 items** -- `getParlays()` has `latestBatch.slice(0, 5)`, so even though the count says "16 total", only 5 are previewed. The fix: group by tier and show a summary with top picks per tier.
+### 2. Settlement notification missing weight changes and strategy
+`bot-settle-and-learn` sends the settlement Telegram notification (line 542-568) with win/loss stats, but does NOT include:
+- `weightChanges` array (even though `formatSettlement` in `bot-send-telegram` already has rendering code for it)
+- Active strategy details or next-day recommendations
 
-4. **Active player enforcement** -- The generator already has a 3-layer availability gate (unified_props + lineup_alerts for OUT/DOUBTFUL blocking). No changes needed here, but we should verify the gate is working by checking tomorrow's batch after generation.
+**Fix:** Collect weight change deltas during the learning loop in `bot-settle-and-learn` and pass them in the Telegram payload. Also query and include the active strategy name and its current win rate.
+
+### 3. No next-day strategy info in settlement message
+The settlement Telegram message doesn't tell the user what strategy the bot will use tomorrow or any adjustments.
+
+**Fix:** Add a "Tomorrow's Strategy" section to the settlement message showing the active strategy name, current win rate, and any categories that were blocked/unblocked during this settlement.
+
+---
 
 ## Changes
 
-### 1. Fix UTC bug in dashboard generate button
-**File: `src/hooks/useBotEngine.ts` (line 447)**
-Replace `new Date().toISOString().split('T')[0]` with `getEasternDate()` (already imported at line 11).
+### File 1: `supabase/functions/bot-send-telegram/index.ts`
 
-### 2. Increase parlay output by relaxing deduplication limits
-**File: `supabase/functions/bot-generate-daily-parlays/index.ts` (lines 49-100)**
-- Exploration: `maxCategoryUsage: 2 -> 4`, `maxPlayerUsage: 3 -> 5`
-- Validation: `maxCategoryUsage: 1 -> 3`, `maxPlayerUsage: 2 -> 4`
-- Execution: `maxCategoryUsage: 1 -> 2`, `maxPlayerUsage: 2 -> 3`
+- Add `tiered_parlays_generated` to the `NotificationType` union type
+- Add it to the `switch` statement, mapping to a new `formatTieredParlaysGenerated()` function
+- New formatter shows tier counts, pool size, and date in a clean Telegram message
+- Update `formatSettlement()` to include a "Tomorrow's Strategy" section showing the active strategy and any blocked/unblocked categories
 
-This allows more unique parlays from the same pool without sacrificing diversity (interleaveByCategory still applies).
+### File 2: `supabase/functions/bot-settle-and-learn/index.ts`
 
-### 3. Fix Telegram /parlays to show tier-grouped summary
-**File: `supabase/functions/telegram-webhook/index.ts`**
+- During the weight update loop (step 4, lines 277-314), collect weight change deltas into an array
+- After settlement, query the active strategy from `bot_strategies`
+- Query newly blocked/unblocked categories
+- Include `weightChanges`, `strategyName`, `strategyWinRate`, and `blockedCategories` in the Telegram notification payload (step 10, lines 542-568)
 
-Update `getParlays()` (lines 121-158):
-- Remove `slice(0, 5)` limit
-- Add tier grouping by parsing `strategy_name`
-- Return tier counts and top 2 picks per tier
-
-Update `handleParlays()` (lines 345-368):
-- Display tier-grouped format showing counts and sample picks per tier
-- Keep message under Telegram's 4096 char limit
-
-### 4. Redeploy and regenerate
-- Deploy updated `bot-generate-daily-parlays` and `telegram-webhook`
-- Trigger generation for today's date to verify output hits 65+ parlays
-- Verify tier distribution
+---
 
 ## Technical Details
 
-### Telegram Output Format (after fix)
-```text
-Today's Parlays (68 total)
-
-Exploration (45) -- $0 stake
-  3-leg: 12 | 4-leg: 15 | 5-leg: 10 | 6-leg: 8
-  Top: Deni Avdija 3s O0.5, LeBron Ast O2.5... +450
-
-Validation (15) -- simulated
-  3-leg: 5 | 4-leg: 6 | 5-leg: 4
-  Top: Joel Embiid Reb O6.5, Maxey Ast O3.5... +820
-
-Execution (8) -- Kelly stakes
-  3-leg: 3 | 4-leg: 3 | 5-leg: 2
-  Top: Holiday Ast O3.5, Avdija Pts O14.5... +620
-```
-
-### Dashboard Fix
-Single line change in `useBotEngine.ts`:
+### New Telegram notification type
 ```typescript
-// Before (UTC bug):
-body: { date: new Date().toISOString().split('T')[0] },
+// bot-send-telegram - add to NotificationType
+| 'tiered_parlays_generated'
 
-// After (EST-aware):
-body: { date: getEasternDate() },
+// New formatter
+function formatTieredParlaysGenerated(data, dateStr) {
+  // Shows: total count, tier breakdown, pool size
+}
 ```
+
+### Settlement payload additions
+```typescript
+// bot-settle-and-learn - enhanced Telegram data
+{
+  type: 'settlement_complete',
+  data: {
+    parlaysWon, parlaysLost, profitLoss,
+    consecutiveDays, bankroll, isRealModeReady,
+    // NEW:
+    weightChanges: [{ category, oldWeight, newWeight, delta }],
+    strategyName: strategy?.name,
+    strategyWinRate: strategy?.win_rate,
+    blockedCategories: ['REBOUNDS_over', ...],
+    unblockedCategories: [],
+  }
+}
+```
+
+### Updated settlement Telegram message format
+```text
+DAILY SETTLEMENT REPORT
+Yesterday: Feb 10
+Result: 12/68 parlays hit (18%)
+P/L: -$2,800 (simulation)
+Bankroll: $1,000 -> -$1,800
+
+Tomorrow's Strategy
+Active: elite_categories_v1
+Win Rate: 22%
+Blocked: REBOUNDS_over, STEALS_under
+
+Weight Changes:
+ POINTS_over: 1.00 -> 0.97
+ ASSISTS_over: 1.02 -> 1.04
+```
+
+### Deployment
+Both `bot-send-telegram` and `bot-settle-and-learn` edge functions will be redeployed.
