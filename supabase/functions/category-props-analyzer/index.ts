@@ -848,37 +848,57 @@ serve(async (req) => {
       }
     }
 
-    // Fetch all game logs from last 30 days to ensure we have L10 for most players
-    // Use pagination to get all logs (Supabase has 1000 row limit)
+    // Fetch all game logs from last 30 days - BOTH NBA and NCAAB
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0];
 
     let allGameLogs: GameLog[] = [];
+    
+    // Fetch NBA logs with pagination
     let page = 0;
     const pageSize = 1000;
-    
     while (true) {
       const { data: gameLogs, error: logsError } = await supabase
         .from('nba_player_game_logs')
         .select('player_name, game_date, points, rebounds, assists, steals, blocks, threes_made, minutes_played')
-        .gte('game_date', thirtyDaysAgo.toISOString().split('T')[0])
+        .gte('game_date', thirtyDaysAgoStr)
         .order('game_date', { ascending: false })
         .range(page * pageSize, (page + 1) * pageSize - 1);
 
       if (logsError) {
-        console.error('[Category Analyzer] Error fetching game logs:', logsError);
-        throw new Error(`Failed to fetch game logs: ${logsError.message}`);
+        console.error('[Category Analyzer] Error fetching NBA game logs:', logsError);
+        throw new Error(`Failed to fetch NBA game logs: ${logsError.message}`);
       }
-
       if (!gameLogs || gameLogs.length === 0) break;
-      
       allGameLogs = allGameLogs.concat(gameLogs as GameLog[]);
-      console.log(`[Category Analyzer] Fetched page ${page + 1} with ${gameLogs.length} logs`);
-      
       if (gameLogs.length < pageSize) break;
       page++;
     }
+    console.log(`[Category Analyzer] NBA game logs fetched: ${allGameLogs.length}`);
 
+    // Fetch NCAAB logs with pagination
+    let ncaabPage = 0;
+    let ncaabCount = 0;
+    while (true) {
+      const { data: ncaabLogs, error: ncaabError } = await supabase
+        .from('ncaab_player_game_logs')
+        .select('player_name, game_date, points, rebounds, assists, steals, blocks, threes_made, minutes_played')
+        .gte('game_date', thirtyDaysAgoStr)
+        .order('game_date', { ascending: false })
+        .range(ncaabPage * pageSize, (ncaabPage + 1) * pageSize - 1);
+
+      if (ncaabError) {
+        console.warn('[Category Analyzer] NCAAB game logs warning:', ncaabError.message);
+        break;
+      }
+      if (!ncaabLogs || ncaabLogs.length === 0) break;
+      allGameLogs = allGameLogs.concat(ncaabLogs as GameLog[]);
+      ncaabCount += ncaabLogs.length;
+      if (ncaabLogs.length < pageSize) break;
+      ncaabPage++;
+    }
+    console.log(`[Category Analyzer] NCAAB game logs fetched: ${ncaabCount}`);
     console.log(`[Category Analyzer] Total game logs fetched: ${allGameLogs.length}`);
 
     if (allGameLogs.length === 0) {

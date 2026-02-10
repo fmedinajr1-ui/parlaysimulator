@@ -395,3 +395,6 @@ verify_jwt = false
 
 [functions.calibrate-bot-weights]
 verify_jwt = false
+
+[functions.ncaab-data-ingestion]
+verify_jwt = false

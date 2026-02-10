@@ -5936,6 +5936,105 @@ export type Database = {
         }
         Relationships: []
       }
+      ncaab_player_game_logs: {
+        Row: {
+          assists: number | null
+          blocks: number | null
+          created_at: string
+          game_date: string
+          id: string
+          is_home: boolean | null
+          minutes_played: number | null
+          opponent: string | null
+          player_name: string
+          points: number | null
+          rebounds: number | null
+          steals: number | null
+          team: string | null
+          threes_made: number | null
+          turnovers: number | null
+        }
+        Insert: {
+          assists?: number | null
+          blocks?: number | null
+          created_at?: string
+          game_date: string
+          id?: string
+          is_home?: boolean | null
+          minutes_played?: number | null
+          opponent?: string | null
+          player_name: string
+          points?: number | null
+          rebounds?: number | null
+          steals?: number | null
+          team?: string | null
+          threes_made?: number | null
+          turnovers?: number | null
+        }
+        Update: {
+          assists?: number | null
+          blocks?: number | null
+          created_at?: string
+          game_date?: string
+          id?: string
+          is_home?: boolean | null
+          minutes_played?: number | null
+          opponent?: string | null
+          player_name?: string
+          points?: number | null
+          rebounds?: number | null
+          steals?: number | null
+          team?: string | null
+          threes_made?: number | null
+          turnovers?: number | null
+        }
+        Relationships: []
+      }
+      ncaab_team_stats: {
+        Row: {
+          adj_defense: number | null
+          adj_offense: number | null
+          adj_tempo: number | null
+          ats_record: string | null
+          away_record: string | null
+          conference: string | null
+          home_record: string | null
+          id: string
+          kenpom_rank: number | null
+          over_under_record: string | null
+          team_name: string
+          updated_at: string
+        }
+        Insert: {
+          adj_defense?: number | null
+          adj_offense?: number | null
+          adj_tempo?: number | null
+          ats_record?: string | null
+          away_record?: string | null
+          conference?: string | null
+          home_record?: string | null
+          id?: string
+          kenpom_rank?: number | null
+          over_under_record?: string | null
+          team_name: string
+          updated_at?: string
+        }
+        Update: {
+          adj_defense?: number | null
+          adj_offense?: number | null
+          adj_tempo?: number | null
+          ats_record?: string | null
+          away_record?: string | null
+          conference?: string | null
+          home_record?: string | null
+          id?: string
+          kenpom_rank?: number | null
+          over_under_record?: string | null
+          team_name?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       nfl_player_game_logs: {
         Row: {
           attempts: number | null
