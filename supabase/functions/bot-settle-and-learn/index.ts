@@ -268,14 +268,9 @@ Deno.serve(async (req) => {
         }
         parlaysSettled++;
         totalProfitLoss += profitLoss;
-      } else if (legsHit + legsMissed > 0 && legsMissed > 0) {
-        // Some settled, some missed = lost
-        outcome = 'lost';
-        profitLoss = -(parlay.simulated_stake || 50);
-        parlaysLost++;
-        parlaysSettled++;
-        totalProfitLoss += profitLoss;
-      }
+    }
+      // If some legs missed but not all settled yet, keep as pending
+      // Only mark lost when ALL legs have been graded
 
       // Update parlay
       await supabase

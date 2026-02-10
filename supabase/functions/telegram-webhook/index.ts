@@ -696,11 +696,18 @@ function formatLegDisplay(leg: any): string {
     const odds = leg.american_odds ? (leg.american_odds > 0 ? ` (+${leg.american_odds})` : ` (${leg.american_odds})`) : '';
     return `${matchup} ${betLabel} ${sideLabel}${line}${odds}`;
   }
+  const propLabels: Record<string, string> = {
+    threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
+    steals: 'STL', blocks: 'BLK', turnovers: 'TO', pra: 'PRA',
+    pts_rebs: 'P+R', pts_asts: 'P+A', rebs_asts: 'R+A',
+    three_pointers_made: '3PT', fantasy_score: 'FPTS',
+  };
   const name = leg.player_name || 'Player';
   const side = (leg.side || 'over').toUpperCase();
   const line = leg.line || leg.selected_line || '';
+  const propType = leg.prop_type ? ` ${propLabels[leg.prop_type] || leg.prop_type.toUpperCase()}` : '';
   const odds = leg.american_odds ? (leg.american_odds > 0 ? ` (+${leg.american_odds})` : ` (${leg.american_odds})`) : '';
-  return `${name} ${side} ${line}${odds}`;
+  return `${name} ${side} ${line}${propType}${odds}`;
 }
 
 // ==================== ANALYTICS COMMANDS ====================
@@ -1209,7 +1216,7 @@ async function handleCallbackQuery(callbackQueryId: string, data: string, chatId
       msg += `${i + 1}. ${formatLegDisplay(leg)}\n`;
     });
     msg += `\nOdds: ${parlay.expected_odds > 0 ? '+' : ''}${parlay.expected_odds}`;
-    if (parlay.outcome) msg += ` | ${parlay.outcome === 'won' ? '✅ WON' : '❌ LOST'}`;
+    if (parlay.outcome) msg += ` | ${parlay.outcome === 'won' ? '✅ WON' : parlay.outcome === 'lost' ? '❌ LOST' : '⏳ PENDING'}`;
 
     await answerCallbackQuery(callbackQueryId);
     await sendMessage(chatId, msg);
