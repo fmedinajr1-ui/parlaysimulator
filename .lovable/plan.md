@@ -1,50 +1,44 @@
 
 
-# Fix: Date Alignment and Prop Type Mismatches
+# Add `/research` Command to Telegram Bot
 
-## Root Causes Found
+## What It Does
+Adds a `/research` command that triggers the AI Research Agent on demand from Telegram, so you can get fresh intelligence anytime -- not just from the daily cron.
 
-There are **3 distinct bugs** causing the entire pipeline to break:
+## How It Works
 
-### Bug 1: Prop Type Mismatch (Frontend picks always empty)
-- `unified_props` table stores prop types as `player_threes`, `player_assists`
-- `useTodayProps` hook queries with `threes`, `assists`
-- Result: **0 active players found, every time** -- picks page always shows empty
+1. You type `/research` in Telegram
+2. Bot replies "Running research agent..." immediately
+3. Bot invokes the `ai-research-agent` edge function
+4. When complete, bot sends the results summary back to you in chat
 
-### Bug 2: Field Name Mismatch (Verification never triggers from post-game refresh)
-- `refresh-sweet-spots-post-game` calls verify with `{ targetDate: todayET }`
-- `verify-sweet-spot-outcomes` reads `body.date`
-- Result: verification always falls back to "yesterday" instead of the intended date
+## Changes
 
-### Bug 3: Feb 9 Picks Never Verified
-- 300 sweet spots for Feb 9 are still "pending"
-- 211 game logs exist for Feb 9 -- data is there
-- 51 parlays from Feb 9 can't settle because the picks they reference aren't graded yet
+### File: `supabase/functions/telegram-webhook/index.ts`
 
-## Fix Plan
+**Add a `handleResearch` function** that:
+- Sends an immediate "running..." acknowledgment message
+- Calls `supabase.functions.invoke('ai-research-agent')` 
+- Parses the response (findings count, actionable count, category summaries)
+- Formats a Telegram-friendly digest with category insights and relevance scores
+- Returns the formatted results
 
-### Step 1: Fix `useTodayProps.ts` -- prop type mapping
-Update the `PROP_CONFIG` to use the correct `unified_props` prop types:
-- `threes` config: change `propType` from `'threes'` to `'player_threes'`
-- `assists` config: change `propType` from `'assists'` to `'player_assists'`
+**Add the command route** in the `handleMessage` function:
+- Add `else if (command === "/research")` before the natural language fallback
 
-### Step 2: Fix `refresh-sweet-spots-post-game/index.ts` -- field name
-Change the invoke body from `{ targetDate: todayET }` to `{ date: todayET }` so `verify-sweet-spot-outcomes` actually receives the correct date.
+**Update the `/start` help text** to include `/research` in the command list under a new "Intelligence" section.
 
-### Step 3: Fix `bot-settle-and-learn/index.ts` -- add verification step
-Add a call to `verify-sweet-spot-outcomes` at the beginning of the settlement run, BEFORE reading outcomes. This ensures:
-- Sweet spots get graded against game logs first
-- Then parlays can be settled using the freshly graded picks
-- The pipeline becomes self-healing instead of depending on a separate cron
+## Expected Output in Telegram
 
-### Step 4: Manual test run
-After deploying all fixes:
-1. Trigger `verify-sweet-spot-outcomes` for Feb 9 to grade the 300 pending picks
-2. Trigger `bot-settle-and-learn` to settle the 51 pending parlays
-3. Verify the Telegram settlement report is sent
+```text
+Running AI research agent...
 
-## Files Changed
-- `src/hooks/useTodayProps.ts` -- fix prop type strings in PROP_CONFIG
-- `supabase/functions/refresh-sweet-spots-post-game/index.ts` -- fix field name (`targetDate` to `date`)
-- `supabase/functions/bot-settle-and-learn/index.ts` -- add verification call before settlement
+Research Complete
+- Competing AI Systems: 4 insights (high relevance)
+- Statistical Models: 8 insights (high relevance)  
+- Injury/Lineup Intel: 10 insights (high relevance)
+
+3/3 categories with actionable intel
+Full digest also sent to notification channel.
+```
 
