@@ -1,51 +1,39 @@
 
 
-# Fix: UTC Date Bug in Telegram Bot + Settlement
+# Regenerate Feb 9 Parlays and Verify Tier Distribution
 
-## Root Cause
+## Current State
 
-The Telegram bot (`telegram-webhook/index.ts`) uses `new Date().toISOString().split("T")[0]` in **25 places** to determine "today." After 7 PM EST, this returns the next UTC date (Feb 10 instead of Feb 9), so `/parlays` shows the old stale Feb 10 batch -- which contains Haliburton and other inactive players.
+There are already **22 parlays** for Feb 9 with tiers parsed from `strategy_name`:
+- Exploration: 10
+- Validation: 7
+- Execution: 5
 
-The same bug exists in `bot-settle-and-learn/index.ts` (1 instance).
+The `tier` column does **not exist** in `bot_daily_parlays` -- tier is embedded in `strategy_name` (e.g., `elite_categories_v1_exploration_...`).
 
-## The Fix
+## Plan
 
-Add an EST-aware date helper at the top of both files, then replace all 26 instances:
+### Step 1: Trigger fresh generation
+Call `bot-generate-daily-parlays` with `{"date": "2026-02-09"}` to regenerate. The generator deletes existing pending parlays before inserting a new batch, so this will produce a clean set.
 
-```text
-function getEasternDate(): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/New_York',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date());
-}
-```
+### Step 2: Verify tier distribution
+Query `bot_daily_parlays` to confirm all three tiers are populated and the total is in the 65-75 range (or whatever the current pick pool supports).
 
-### File 1: `supabase/functions/telegram-webhook/index.ts`
+### Step 3: Fix /tiers, /explore, /validate commands
+The Telegram commands query a non-existent `tier` column. Update them to filter by `strategy_name` pattern instead:
+- `/tiers`: Group by tier parsed from `strategy_name`
+- `/explore`: Filter `strategy_name ilike '%exploration%'`
+- `/validate`: Filter `strategy_name ilike '%validation%'`
 
-Replace all 25 occurrences of `new Date().toISOString().split("T")[0]` or `new Date().toISOString().split('T')[0]` with `getEasternDate()`.
+## Technical Details
 
-Key locations:
-- Line 82 (`getStatus`)
-- Line 113 (`getParlays`)
-- Line 632 (`/tiers` command)
-- Line 687 (`/explore` command)
-- Line 718 (`/validate` command)
-- Plus ~20 more throughout the file
+### File: `supabase/functions/telegram-webhook/index.ts`
 
-### File 2: `supabase/functions/bot-settle-and-learn/index.ts`
+**handleTiers** (~line 640): Replace `.eq('tier', ...)` queries with strategy_name pattern matching. Parse tier from strategy_name for grouping.
 
-- Line 303: Replace UTC date with `getEasternDate()`
+**handleExplore** (~line 693): Change `.eq('tier', 'exploration')` to `.ilike('strategy_name', '%exploration%')`.
 
-## Post-Deploy
+**handleValidate** (~line 724): Change `.eq('tier', 'validation')` to `.ilike('strategy_name', '%validation%')`.
 
-After deploying:
-1. Delete the stale Feb 10 parlays (the old 38 batch generated before fixes)
-2. Trigger a fresh generation for Feb 9 to get the final clean batch
-3. Test `/parlays` in Telegram to confirm it shows Feb 9 parlays with no Haliburton
+This ensures all Telegram tier commands work correctly without requiring a schema change.
 
-## Why Haliburton Appeared
-
-The `/parlays` command was querying `parlay_date = '2026-02-10'` (UTC date) and returning the old 38-parlay batch from 01:29 UTC -- generated before the category diversification fix and before any injury data existed. The correct Feb 9 batch (22 parlays, no Haliburton) was invisible to Telegram because it was filed under a different date.
