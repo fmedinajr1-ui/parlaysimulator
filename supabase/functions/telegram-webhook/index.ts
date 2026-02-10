@@ -293,12 +293,36 @@ async function handleNaturalLanguage(
 
   const history = await getConversationHistory(chatId, 6);
 
-  const [status, parlays, performance, weights] = await Promise.all([
+  const [status, parlays, performance, weights, pendingLegsRes] = await Promise.all([
     getStatus(),
     getParlays(),
     getPerformance(),
     getWeights(),
+    supabase.from("bot_daily_parlays").select("legs").eq("parlay_date", getEasternDate()).eq("outcome", "pending").limit(10),
   ]);
+
+  // Extract real pending legs for the AI to reference
+  const seenLegKeys = new Set<string>();
+  const realLegs: string[] = [];
+  for (const p of (pendingLegsRes.data || [])) {
+    const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs || '[]');
+    for (const leg of legs) {
+      if (leg.type === 'team') continue;
+      const key = `${(leg.player_name || '').toLowerCase()}_${leg.prop_type}_${leg.side}`;
+      if (seenLegKeys.has(key)) continue;
+      seenLegKeys.add(key);
+      const side = (leg.side || 'over').toUpperCase();
+      const line = leg.line || leg.selected_line || '?';
+      const propType = leg.prop_type ? leg.prop_type.toUpperCase() : '';
+      realLegs.push(`${leg.player_name || 'Unknown'} ${side} ${line} ${propType}`);
+      if (realLegs.length >= 5) break;
+    }
+    if (realLegs.length >= 5) break;
+  }
+
+  const pendingLegsContext = realLegs.length > 0
+    ? `- Top Pending Legs (REAL DATA - do NOT make up player names):\n${realLegs.map((l, i) => `  ${i + 1}. ${l}`).join('\n')}`
+    : '- No pending legs today';
 
   const systemPrompt = `You are ParlayIQ Bot, an autonomous sports betting bot assistant running on Telegram.
 You help users check parlay status, performance, and give recommendations.
@@ -316,14 +340,15 @@ CURRENT DATA:
     .slice(0, 3)
     .map((w) => `${w.category} ${w.side}: ${(w.weight * 100).toFixed(0)}%`)
     .join(", ") || "None learned yet"}
+${pendingLegsContext}
 
-GUIDELINES:
+CRITICAL RULES:
+- NEVER invent or guess player names. Only mention players listed in "Top Pending Legs" above.
+- If you don't have specific player data, say "use /parlay to see today's actual legs" instead of guessing.
 - Keep responses concise for Telegram (under 500 chars when possible)
 - Use Telegram Markdown formatting (*bold*, _italic_)
 - Use emojis for visual appeal
-- Be helpful and conversational
-- If asked about specific parlays, summarize the top ones
-- For recommendations, suggest based on current weights and hit rates`;
+- Be helpful and conversational`;
 
   const messages = [
     { role: "system" as const, content: systemPrompt },
@@ -437,7 +462,7 @@ async function handleStart(chatId: string) {
   return `🤖 *ParlayIQ Bot v3*
 
 *Core:*
-/status /parlays /performance /weights /calendar
+/status /parlays /parlay /performance /weights /calendar
 
 *Actions:*
 /generate /settle /force-settle [date]
@@ -1529,6 +1554,65 @@ async function handleResearch(chatId: string) {
   } catch (err) { console.error('[Research] Error:', err); return "❌ Research agent failed unexpectedly."; }
 }
 
+// ==================== /parlay HANDLER ====================
+
+async function handleParlayStatus(chatId: string) {
+  await logActivity("telegram_parlay", "User requested /parlay summary", { chatId });
+  const today = getEasternDate();
+
+  const [parlaysRes, weightsRes, statusData] = await Promise.all([
+    supabase.from("bot_daily_parlays").select("*").eq("parlay_date", today).eq("outcome", "pending").order("combined_probability", { ascending: false }),
+    supabase.from("bot_category_weights").select("category, side, weight, current_hit_rate").eq("is_blocked", false).order("weight", { ascending: false }).limit(20),
+    getStatus(),
+  ]);
+
+  const pendingParlays = parlaysRes.data || [];
+  if (pendingParlays.length === 0) {
+    const perfData = await getPerformance();
+    return `🎯 *Today's Parlays*\n\nNo pending parlays for today.\n\n*Stats:* ${perfData.wins}W-${perfData.losses}L (${perfData.winRate.toFixed(1)}%)\n*Mode:* ${statusData.mode}\n*Bankroll:* $${statusData.bankroll?.toFixed(0) || "1,000"}\n\nUse /generate to create new parlays!`;
+  }
+
+  // Extract and deduplicate legs
+  const weightMap = new Map<string, number>();
+  (weightsRes.data || []).forEach((w: any) => weightMap.set(`${w.category}_${w.side}`, w.weight || 0));
+
+  const seenLegs = new Set<string>();
+  const allLegs: Array<{ display: string; weight: number; verified: boolean }> = [];
+
+  for (const p of pendingParlays) {
+    const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs || '[]');
+    for (const leg of legs) {
+      if (leg.type === 'team') continue;
+      const key = `${(leg.player_name || '').toLowerCase()}_${leg.prop_type}_${leg.side}`;
+      if (seenLegs.has(key)) continue;
+      seenLegs.add(key);
+      const w = weightMap.get(`${leg.category || leg.prop_type}_${leg.side}`) || 0;
+      const hasRealLine = leg.has_real_line || leg.verified_line || leg.bookmaker;
+      allLegs.push({ display: formatLegDisplay(leg), weight: w, verified: !!hasRealLine });
+    }
+  }
+
+  allLegs.sort((a, b) => b.weight - a.weight);
+  const topLegs = allLegs.slice(0, 8);
+
+  const perfData = await getPerformance();
+
+  let message = `🎯 *Today's Pending Parlays* (${pendingParlays.length})\n\n`;
+  message += `*Top Legs:*\n`;
+  topLegs.forEach((leg, i) => {
+    const badge = leg.verified ? '✅' : '⚠️';
+    message += `${i + 1}. ${leg.display} ${badge}\n`;
+  });
+  if (allLegs.length > 8) message += `_+${allLegs.length - 8} more legs_\n`;
+
+  message += `\n*Mode:* ${statusData.mode}\n`;
+  message += `*Bankroll:* $${statusData.bankroll?.toFixed(0) || "1,000"}\n`;
+  message += `*ROI:* ${perfData.roi.toFixed(1)}% | *WR:* ${perfData.winRate.toFixed(1)}%\n`;
+  message += `\n✅ = Verified line | ⚠️ = Projected`;
+
+  return message;
+}
+
 // ==================== MAIN ROUTER ====================
 
 async function handleMessage(chatId: string, text: string) {
@@ -1539,6 +1623,7 @@ async function handleMessage(chatId: string, text: string) {
 
   if (cmd === "/start") return await handleStart(chatId);
   if (cmd === "/status") return await handleStatus(chatId);
+  if (cmd === "/parlay") return await handleParlayStatus(chatId);
   if (cmd === "/parlays") { await handleParlays(chatId); return null; }
   if (cmd === "/performance") return await handlePerformance(chatId);
   if (cmd === "/weights") return await handleWeights(chatId);
