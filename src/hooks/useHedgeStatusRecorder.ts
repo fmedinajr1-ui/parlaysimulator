@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { getEasternDate } from '@/lib/dateUtils';
 import type { DeepSweetSpot } from '@/types/sweetSpot';
 
 // Quarter boundary thresholds (game progress %)
@@ -68,7 +69,7 @@ export function useHedgeStatusRecorder(spots: DeepSweetSpot[]) {
     const hitProbability = spot.liveData.confidence ?? 50;
     
     // Use today's date for analysis_date to link with settled outcomes
-    const analysisDate = new Date().toISOString().split('T')[0];
+    const analysisDate = getEasternDate();
     
     const payload: HedgeSnapshotPayload = {
       sweet_spot_id: spot.id || undefined, // Optional now - may be client-generated

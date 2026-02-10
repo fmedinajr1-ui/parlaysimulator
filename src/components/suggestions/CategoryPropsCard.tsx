@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { format } from 'date-fns';
+import { getEasternDate } from '@/lib/dateUtils';
 import { RefreshCw, Shield, Target, TrendingDown, TrendingUp, Plus, ChevronDown, ChevronUp, Zap, Lock, Unlock } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -263,7 +263,7 @@ export const CategoryPropsCard = () => {
     isLocked
   } = useCategoryParlayBuilder();
 
-  const today = format(new Date(), 'yyyy-MM-dd');
+  const today = getEasternDate();
 
   const { data: allCategoryData, isLoading, refetch } = useQuery({
     queryKey: ['category-sweet-spots-all', today],

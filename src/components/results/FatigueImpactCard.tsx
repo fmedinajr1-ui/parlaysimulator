@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
+import { getEasternDate } from "@/lib/dateUtils";
 import { Battery, BatteryLow, BatteryWarning, TrendingUp, TrendingDown, Minus, Plane, Clock } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ParlayLeg, LegAnalysis } from "@/types/parlay";
@@ -69,7 +70,7 @@ export function FatigueImpactCard({ legs, legAnalyses, delay = 0 }: FatigueImpac
     const fetchFatigueData = async () => {
       setIsLoading(true);
       try {
-        const today = new Date().toISOString().split('T')[0];
+        const today = getEasternDate();
         const { data, error } = await supabase
           .from('nba_fatigue_scores')
           .select('*')

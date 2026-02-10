@@ -37,10 +37,10 @@ export function BotPerformanceChart() {
   });
 
   const chartData = activationHistory.map((day) => ({
-    date: new Date(day.check_date).toLocaleDateString('en-US', { 
-      month: 'short', 
-      day: 'numeric' 
-    }),
+    date: (() => {
+      const [y, m, d] = day.check_date.split('-').map(Number);
+      return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    })(),
     bankroll: day.simulated_bankroll || 1000,
     profit: day.daily_profit_loss || 0,
     winRate: ((day.parlays_won || 0) / Math.max(1, (day.parlays_won || 0) + (day.parlays_lost || 0))) * 100,
