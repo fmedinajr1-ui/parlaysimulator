@@ -444,6 +444,46 @@ serve(async (req) => {
       console.error('[Multi-Sport Scraper] Deactivate bets error:', deactivateBetsError);
     }
     
+    // ========== LINE MOVEMENT ALERTS ==========
+    try {
+      const today = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+      }).format(now);
+
+      const { data: activePicks } = await supabase
+        .from('category_sweet_spots')
+        .select('player_name, prop_type, recommended_line, recommended_side')
+        .eq('analysis_date', today)
+        .is('outcome', null);
+
+      if (activePicks && activePicks.length > 0) {
+        let lineAlerts = 0;
+        for (const pick of activePicks) {
+          const matchingProp = allPlayerProps.find(p =>
+            p.player_name.toLowerCase() === pick.player_name.toLowerCase() &&
+            p.prop_type.toLowerCase().includes(pick.prop_type.toLowerCase().replace('_', ''))
+          );
+          if (!matchingProp || !pick.recommended_line) continue;
+          const diff = Math.abs(matchingProp.current_line - pick.recommended_line);
+          if (diff >= 1.5) {
+            const direction = matchingProp.current_line > pick.recommended_line ? '📈 UP' : '📉 DOWN';
+            const alertMsg = `⚡ *Line Movement Alert*\n\n${pick.player_name} ${pick.prop_type}\nBot line: ${pick.recommended_line} → Market: ${matchingProp.current_line}\nMoved ${direction} by ${diff.toFixed(1)} pts\nSide: ${(pick.recommended_side || 'over').toUpperCase()}`;
+
+            // Send via bot-send-telegram
+            await supabase.functions.invoke('bot-send-telegram', {
+              body: { type: 'strategy_update', data: { strategyName: 'Line Movement', action: alertMsg, reason: `${pick.player_name} ${pick.prop_type} moved ${diff.toFixed(1)}` } },
+            });
+            lineAlerts++;
+          }
+        }
+        if (lineAlerts > 0) {
+          console.log(`[Multi-Sport Scraper] Sent ${lineAlerts} line movement alerts`);
+        }
+      }
+    } catch (lineErr) {
+      console.error('[Multi-Sport Scraper] Line movement check error:', lineErr);
+    }
+
     // Log to cron history
     await supabase.from('cron_job_history').insert({
       job_name: 'whale-odds-scraper',
