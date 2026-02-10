@@ -1,99 +1,67 @@
 
-# Daily Bot Diagnostics Pipeline
+
+# Add "Fix" Buttons to Diagnostic Report
 
 ## Overview
 
-Create an automated daily health check that runs every morning, validates the entire bot pipeline is working, tracks improvement trends over time, and sends a Telegram report. This ensures nothing silently breaks and gives you visibility into whether the bot is actually getting better.
+When the daily diagnostic Telegram report shows failures, add inline buttons below the message that let you trigger fixes directly from the chat. Each failed check gets a corresponding "Fix" button that calls the right backend function.
 
-## What Gets Checked
+## What Changes
 
-The diagnostic will run 7 health checks and 3 improvement metrics:
+### 1. Update `bot-send-telegram` -- add inline keyboard to diagnostic reports
 
-### Health Checks (pass/warn/fail)
-1. **Data freshness** -- Are upcoming props loaded? Are game logs recent?
-2. **Weight calibration** -- When was the last calibration? Any stale weights?
-3. **Parlay generation** -- Did yesterday's generation run? How many parlays were created?
-4. **Settlement pipeline** -- Are there unsettled parlays older than 48 hours?
-5. **Blocked categories** -- How many categories are blocked? Is it growing?
-6. **Orphaned data** -- Any parlays referencing missing sweet spot IDs?
-7. **Cron health** -- Did each scheduled job fire in the last 24 hours? (checked via bot_activity_log)
+The `formatDiagnosticReport` function currently returns just a text string. The Telegram send logic needs to also return an `inline_keyboard` when the report contains failures.
 
-### Improvement Tracking (trend arrows)
-1. **Win rate trend** -- 7-day rolling win rate vs. prior 7 days
-2. **Bankroll trajectory** -- Current simulated bankroll vs. 7 days ago
-3. **Category convergence** -- Are weights stabilizing (less volatility = more confidence)?
+Mapping of failed checks to fix actions:
 
-## New Components
+| Failed Check | Button Label | Callback Action |
+|---|---|---|
+| Data Freshness | Fix: Refresh Props | `fix:refresh_props` |
+| Weight Calibration | Fix: Calibrate | `fix:calibrate` |
+| Parlay Generation | Fix: Generate Parlays | `fix:generate` |
+| Settlement Pipeline | Fix: Settle Parlays | `fix:settle` |
+| Cron Jobs | Fix: Run All Jobs | `fix:run_crons` |
 
-### 1. Edge function: `bot-daily-diagnostics`
-Runs all checks, stores results in `bot_diagnostic_runs` table, and sends a Telegram summary.
+Checks like "Blocked Categories" and "Orphaned Data" don't have simple one-click fixes, so they won't get buttons.
 
-### 2. Database table: `bot_diagnostic_runs`
-Stores each diagnostic run with pass/warn/fail counts and full results JSON for historical tracking.
+The function will return both the message text and an optional `reply_markup` object with the inline keyboard. The send logic will pass this through to the Telegram API.
 
-### 3. Cron job
-Scheduled daily at 8:00 AM ET (13:00 UTC) to run the diagnostic before the day's first parlay generation.
+### 2. Update `telegram-webhook` -- handle `fix:*` callbacks
 
-### 4. Telegram notification type
-New `diagnostic_report` type added to `bot-send-telegram` with a formatted health report.
+Extend `handleCallbackQuery` to recognize `fix:` prefixed callback data and trigger the appropriate edge function:
 
-## Telegram Report Format
+- `fix:refresh_props` -- calls `engine-cascade-runner` (or `refresh-todays-props`)
+- `fix:calibrate` -- calls `calibrate-bot-weights`
+- `fix:generate` -- calls `bot-generate-daily-parlays`
+- `fix:settle` -- calls `bot-settle-and-learn`
+- `fix:run_crons` -- runs calibrate + settle + generate in sequence
 
-```text
-BOT DAILY DIAGNOSTIC
-=======================
-Date: Feb 10
+Each fix action will:
+1. Answer the callback query with "Running fix..."
+2. Send a status message: "Running [fix name]..."
+3. Call the edge function
+4. Send a result message with success/failure
 
-HEALTH CHECKS
-  Data Freshness ............. PASS
-  Weight Calibration ......... PASS
-  Parlay Generation .......... PASS
-  Settlement Pipeline ........ WARN (3 unsettled >48h)
-  Blocked Categories ......... PASS (2/16)
-  Orphaned Data .............. PASS
-  Cron Jobs .................. PASS
+### 3. Update `bot-daily-diagnostics` -- pass failure data to Telegram
 
-IMPROVEMENT TRENDS
-  Win Rate: 42% -> 48% (+6%)
-  Bankroll: $980 -> $1,040 (+$60)
-  Weight Stability: 0.12 -> 0.08 (converging)
-
-Overall: 6/7 PASS, 1 WARN, 0 FAIL
-```
+The diagnostics function already sends the full `checks` array to telegram. No changes needed here -- the `bot-send-telegram` function will read the check statuses to determine which buttons to show.
 
 ## Technical Details
 
-### Database migration
-Create `bot_diagnostic_runs` table:
-- `id` (uuid, PK)
-- `run_date` (date)
-- `checks_passed` (int)
-- `checks_warned` (int)
-- `checks_failed` (int)
-- `overall_status` (text: healthy/degraded/critical)
-- `results` (jsonb -- full check details)
-- `improvement_metrics` (jsonb -- trend data)
-- `created_at` (timestamptz)
+### `bot-send-telegram` changes
 
-### Edge function logic (`bot-daily-diagnostics`)
-1. Query `unified_props` for upcoming count
-2. Query `bot_category_weights` for blocked count, last calibrated timestamps
-3. Query `bot_daily_parlays` for yesterday's generation count and unsettled backlog
-4. Query `bot_activation_status` for last 14 days to compute win rate trends
-5. Query `bot_activity_log` for last 24h to verify cron jobs fired
-6. Check for orphaned parlay legs (legs referencing missing sweet spot IDs)
-7. Compute 7-day vs prior-7-day improvement metrics
-8. Insert results into `bot_diagnostic_runs`
-9. Send Telegram report via `bot-send-telegram`
+- Refactor `formatDiagnosticReport` to return `{ text: string, reply_markup?: object }` instead of just a string
+- Update the main handler to detect when a formatter returns an object with `reply_markup` and pass it to the Telegram API
+- Build the inline keyboard dynamically based on which checks have `status: 'fail'` or `status: 'warn'`
 
-### Updates to `bot-send-telegram`
-Add `diagnostic_report` notification type with the formatted health check output.
+### `telegram-webhook` changes
 
-### Cron schedule
-Daily at 13:00 UTC (8:00 AM ET), before the first parlay generation cycle.
+- Add `fix:` handling branch in `handleCallbackQuery`
+- Create a `handleFixAction(action, chatId)` helper that maps action names to edge function URLs
+- Each fix calls the corresponding function via `fetch()` with the service role key
+- Report back with success/error message
 
-### Execution order
-1. Create `bot_diagnostic_runs` table (migration)
-2. Create `bot-daily-diagnostics` edge function
-3. Update `bot-send-telegram` with new notification type
-4. Schedule cron job
+### Files modified
+1. `supabase/functions/bot-send-telegram/index.ts` -- diagnostic format + send logic
+2. `supabase/functions/telegram-webhook/index.ts` -- callback handler for fix actions
+
