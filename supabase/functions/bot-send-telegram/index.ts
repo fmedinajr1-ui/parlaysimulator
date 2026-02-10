@@ -34,7 +34,7 @@ interface NotificationData {
 
 function formatMessage(type: NotificationType, data: Record<string, any>): string {
   const now = new Date();
-  const dateStr = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const dateStr = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' });
 
   switch (type) {
     case 'parlays_generated':
