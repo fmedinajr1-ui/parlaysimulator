@@ -746,22 +746,26 @@ async function handleExplore(chatId: string) {
   await logActivity("telegram_explore", `User requested exploration tier`, { chatId });
   
   const today = getEasternDate();
-  const { data: exploreParlays } = await supabase
+  const { data: allParlays } = await supabase
     .from('bot_daily_parlays')
     .select('*')
     .eq('parlay_date', today)
-    .ilike('strategy_name', '%exploration%')
-    .order('combined_probability', { ascending: false })
-    .limit(5);
+    .order('combined_probability', { ascending: false });
   
-  if (!exploreParlays || exploreParlays.length === 0) {
+  // Filter exploration tier by parsing strategy_name
+  const exploreParlays = (allParlays || []).filter((p: any) => {
+    const sn = (p.strategy_name || '').toLowerCase();
+    return sn.includes('exploration') || sn.includes('explore') || sn.includes('cross_sport') || sn.includes('team_') || sn.includes('props_') || sn.includes('tennis_') || sn.includes('nhl_') || sn.includes('max_diversity');
+  });
+  
+  if (exploreParlays.length === 0) {
     return "🔬 *Exploration Tier*\n\nNo exploration parlays generated today.\n\nUse /generate to create tiered parlays!";
   }
   
-  let message = `🔬 *Exploration Tier Highlights*\n\n`;
+  let message = `🔬 *Exploration Tier Highlights* (${exploreParlays.length} total)\n\n`;
   message += `_Edge discovery parlays ($0 stake)_\n\n`;
   
-  exploreParlays.forEach((p: any, i: number) => {
+  exploreParlays.slice(0, 5).forEach((p: any, i: number) => {
     const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs || '[]');
     const topLegs = legs.slice(0, 2).map((l: any) => l.player_name || l.home_team || 'Team').join(', ');
     
@@ -770,6 +774,10 @@ async function handleExplore(chatId: string) {
     message += `   Win Rate: ${(p.combined_probability * 100).toFixed(1)}%\n\n`;
   });
   
+  if (exploreParlays.length > 5) {
+    message += `... +${exploreParlays.length - 5} more exploration parlays`;
+  }
+  
   return message;
 }
 
@@ -777,22 +785,26 @@ async function handleValidate(chatId: string) {
   await logActivity("telegram_validate", `User requested validation tier`, { chatId });
   
   const today = getEasternDate();
-  const { data: validateParlays } = await supabase
+  const { data: allParlays } = await supabase
     .from('bot_daily_parlays')
     .select('*')
     .eq('parlay_date', today)
-    .ilike('strategy_name', '%validation%')
-    .order('simulated_edge', { ascending: false })
-    .limit(5);
+    .order('simulated_edge', { ascending: false });
   
-  if (!validateParlays || validateParlays.length === 0) {
+  // Filter validation tier by parsing strategy_name
+  const validateParlays = (allParlays || []).filter((p: any) => {
+    const sn = (p.strategy_name || '').toLowerCase();
+    return sn.includes('validation') || sn.includes('validated');
+  });
+  
+  if (validateParlays.length === 0) {
     return "✓ *Validation Tier*\n\nNo validation parlays generated today.\n\nUse /generate to create tiered parlays!";
   }
   
-  let message = `✓ *Validation Tier Picks*\n\n`;
+  let message = `✓ *Validation Tier Picks* (${validateParlays.length} total)\n\n`;
   message += `_Pattern confirmation ($50 stake)_\n\n`;
   
-  validateParlays.forEach((p: any, i: number) => {
+  validateParlays.slice(0, 5).forEach((p: any, i: number) => {
     const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs || '[]');
     const topLegs = legs.slice(0, 2).map((l: any) => l.player_name || l.home_team || 'Team').join(', ');
     
@@ -800,6 +812,10 @@ async function handleValidate(chatId: string) {
     message += `   ${topLegs}${legs.length > 2 ? ` +${legs.length - 2}` : ''}\n`;
     message += `   Edge: ${((p.simulated_edge || 0) * 100).toFixed(1)}%\n\n`;
   });
+  
+  if (validateParlays.length > 5) {
+    message += `... +${validateParlays.length - 5} more validation parlays`;
+  }
   
   return message;
 }
