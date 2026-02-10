@@ -11,9 +11,18 @@ const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
 );
-
 const TELEGRAM_BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
 const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
+
+// EST-aware date helper to avoid UTC date mismatch after 7 PM EST
+function getEasternDate(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
 
 // Helper: Send message via Telegram API
 async function sendMessage(chatId: string, text: string, parseMode = "Markdown") {
@@ -79,7 +88,7 @@ async function getConversationHistory(chatId: string, limit: number = 10) {
 
 // Data fetching functions for AI tools
 async function getStatus() {
-  const today = new Date().toISOString().split("T")[0];
+  const today = getEasternDate();
 
   const { data: activation } = await supabase
     .from("bot_activation_status")
@@ -110,7 +119,7 @@ async function getStatus() {
 }
 
 async function getParlays() {
-  const today = new Date().toISOString().split("T")[0];
+  const today = getEasternDate();
 
   const { data: parlays } = await supabase
     .from("bot_daily_parlays")
@@ -631,7 +640,7 @@ async function handleLearning(chatId: string) {
 async function handleTiers(chatId: string) {
   await logActivity("telegram_tiers", `User requested tier summary`, { chatId });
   
-  const today = new Date().toISOString().split('T')[0];
+  const today = getEasternDate();
   const { data: todayParlays } = await supabase
     .from('bot_daily_parlays')
     .select('tier, leg_count, outcome, expected_odds')
@@ -684,7 +693,7 @@ async function handleTiers(chatId: string) {
 async function handleExplore(chatId: string) {
   await logActivity("telegram_explore", `User requested exploration tier`, { chatId });
   
-  const today = new Date().toISOString().split('T')[0];
+  const today = getEasternDate();
   const { data: exploreParlays } = await supabase
     .from('bot_daily_parlays')
     .select('*')
@@ -715,7 +724,7 @@ async function handleExplore(chatId: string) {
 async function handleValidate(chatId: string) {
   await logActivity("telegram_validate", `User requested validation tier`, { chatId });
   
-  const today = new Date().toISOString().split('T')[0];
+  const today = getEasternDate();
   const { data: validateParlays } = await supabase
     .from('bot_daily_parlays')
     .select('*')
