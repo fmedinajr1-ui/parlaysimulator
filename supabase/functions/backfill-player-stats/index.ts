@@ -19,6 +19,7 @@ interface PlayerStats {
   threes_made: number;
   blocks: number;
   steals: number;
+  turnovers: number;
   is_home: boolean;
 }
 
@@ -98,6 +99,7 @@ async function fetchESPNGameBoxscores(gameDate: string): Promise<PlayerStats[]> 
             const assists = getStatByLabel('AST');
             const blocks = getStatByLabel('BLK');
             const steals = getStatByLabel('STL');
+            const turnovers = getStatByLabel('TO');
             const threesMade = getStatByLabel('3PT');
             
             // Validate - skip players with clearly invalid stats
@@ -122,6 +124,7 @@ async function fetchESPNGameBoxscores(gameDate: string): Promise<PlayerStats[]> 
               threes_made: threesMade,
               blocks,
               steals,
+              turnovers,
               is_home: isHome,
             });
           }
@@ -204,6 +207,7 @@ async function fetchBDLStats(apiKey: string, startDate: string, endDate: string)
               threes_made: stat.fg3m || 0,
               blocks: stat.blk || 0,
               steals: stat.stl || 0,
+              turnovers: stat.turnover || 0,
               is_home: isHome,
             });
           }
@@ -296,8 +300,22 @@ serve(async (req) => {
       .limit(300);
     
     const playerNames = extractPlayerNames(pendingParlays || []);
-    results.playerNamesFound = playerNames.size;
     console.log(`[Backfill] Found ${playerNames.size} unique player names from pending parlays`);
+
+    // Also get players from no_data/pending sweet spots for the date range
+    const { data: sweetSpotPicks } = await supabase
+      .from('category_sweet_spots')
+      .select('player_name')
+      .in('outcome', ['pending', 'no_data'])
+      .gte('analysis_date', start)
+      .lte('analysis_date', end);
+
+    for (const pick of sweetSpotPicks || []) {
+      if (pick.player_name) playerNames.add(pick.player_name);
+    }
+
+    results.playerNamesFound = playerNames.size;
+    console.log(`[Backfill] Total ${playerNames.size} unique players (including sweet spot no_data picks)`);
     
     // Collect all stats
     let allStats: PlayerStats[] = [];
@@ -357,8 +375,9 @@ serve(async (req) => {
             threes_made: s.threes_made,
             blocks: s.blocks,
             steals: s.steals,
+            turnovers: (s as any).turnovers || 0,
             is_home: s.is_home,
-          })), { 
+          })), {
             onConflict: 'player_name,game_date',
             ignoreDuplicates: false 
           });
