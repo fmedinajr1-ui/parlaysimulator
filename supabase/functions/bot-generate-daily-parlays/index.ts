@@ -1030,7 +1030,8 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     
     const hitRateDecimal = pick.l10_hit_rate || pick.confidence_score || 0.5;
     const hitRatePercent = hitRateDecimal * 100;
-    const edge = (pick.projected_value || 0) - (line || 0);
+    const projectedValue = pick.projected_value || pick.l10_avg || pick.l10_median || line || 0;
+    const edge = projectedValue - (line || 0);
     const categoryWeight = weightMap.get(pick.category) || 1.0;
     
     const oddsValueScore = calculateOddsValueScore(americanOdds, hitRateDecimal);
@@ -1439,8 +1440,8 @@ async function generateTierParlays(
           selected_line: selectedLine.line,
           line_selection_reason: selectedLine.reason,
           odds_improvement: selectedLine.oddsImprovement || 0,
-          projection_buffer: (playerPick.projected_value || 0) - selectedLine.line,
-          projected_value: playerPick.projected_value || 0,
+          projection_buffer: (playerPick.projected_value || playerPick.l10_avg || 0) - selectedLine.line,
+          projected_value: playerPick.projected_value || playerPick.l10_avg || 0,
           line_source: playerPick.line_source || 'projected',
           has_real_line: playerPick.has_real_line || false,
           sport: playerPick.sport || 'basketball_nba',
