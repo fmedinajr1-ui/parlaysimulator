@@ -1,34 +1,49 @@
 
-# Add 50% Void Threshold to Settlement Logic
 
-## What Changes
+# Void Orphaned Parlays, Recalibrate, and Generate Fresh Parlays
 
-In `supabase/functions/bot-settle-and-learn/index.ts`, lines 264-282, add a check: if more than 50% of a parlay's legs are voided, mark the entire parlay as `void` regardless of the remaining legs' outcomes.
+## Overview
 
-## Current Logic
+Three-step pipeline: void the 4 orphaned Feb 9 parlays, recalibrate all bot weights from verified historical data, then generate today's parlays with the updated weights.
+
+## Step 1: Void Orphaned Feb 9 Parlays
+
+Run a SQL update to mark the 4 remaining `pending` Feb 9 parlays as `void` since their source data no longer exists and they cannot be graded.
+
 ```text
-if activeLegCount === 0 --> void
-else if all active legs graded --> won or lost
+UPDATE bot_daily_parlays 
+SET outcome = 'void', 
+    settled_at = NOW(), 
+    lesson_learned = 'Voided: source data missing, cannot grade'
+WHERE parlay_date = '2025-02-09' AND outcome = 'pending';
 ```
 
-## New Logic
+## Step 2: Recalibrate Bot Weights
+
+Invoke `calibrate-bot-weights` to rebuild all category weights from the full historical outcome dataset in `category_sweet_spots`. This uses the weight formula:
+
 ```text
-if activeLegCount === 0 --> void
-else if legsVoided > legs.length / 2 --> void (too many DNPs)
-else if all active legs graded --> won or lost
+weight = clamp(0.5, 1.5, 1.0 + (hitRate - 0.50) * 0.8 + sampleBonus)
 ```
+
+Categories below 40% hit rate (min 10 samples) get auto-blocked.
+
+## Step 3: Generate New Daily Parlays
+
+Invoke `bot-generate-daily-parlays` to produce today's parlays using the freshly calibrated weights. The generator creates parlays across three tiers:
+- **Exploration** (50): Edge discovery, low-cost
+- **Validation** (15): Pattern confirmation
+- **Execution** (8): Best bets with Kelly sizing
 
 ## Technical Details
 
-### File: `supabase/functions/bot-settle-and-learn/index.ts`
-**Lines 264-267**: Expand the void condition to include the 50% threshold:
+### Execution Order (sequential, each depends on prior step)
 
-```typescript
-if (activeLegCount === 0 || legsVoided > legs.length / 2) {
-  // All or majority of legs voided — void entire parlay
-  outcome = 'void';
-  parlaysSettled++;
-}
-```
+1. **SQL migration** -- void the 4 orphaned parlays
+2. **Call** `calibrate-bot-weights` -- full weight rebuild
+3. **Call** `bot-generate-daily-parlays` -- generate today's parlays with new weights
+4. **Query results** -- show the user a summary of new parlays generated, weight changes, and blocked categories
 
-This is a one-line change -- adding `|| legsVoided > legs.length / 2` to the existing void check. Everything else stays the same.
+### No Code Changes Required
+
+All three functions already exist and are deployed. This is purely an operational execution -- run the pipeline in order and report results.
