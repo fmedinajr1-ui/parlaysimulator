@@ -14,6 +14,24 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { cn } from '@/lib/utils';
 import type { BotParlay, BotLeg } from '@/hooks/useBotEngine';
 
+const TEAM_CATEGORIES = ['SHARP_SPREAD', 'UNDER_TOTAL', 'OVER_TOTAL', 'ML_UNDERDOG', 'ML_FAVORITE'];
+
+function isTeamLeg(leg: BotLeg): boolean {
+  return leg.type === 'team' ||
+    TEAM_CATEGORIES.includes(leg.category ?? '') ||
+    (!!leg.home_team && !!leg.away_team);
+}
+
+function getTeamLegName(leg: BotLeg): string {
+  if (leg.bet_type === 'total' && leg.home_team && leg.away_team) {
+    return `${leg.home_team} vs ${leg.away_team}`;
+  }
+  if (leg.home_team && leg.away_team) {
+    return leg.side === 'home' ? leg.home_team : (leg.side === 'away' ? leg.away_team : leg.home_team);
+  }
+  return leg.category ?? 'Team Bet';
+}
+
 // Format American odds for display
 function formatOdds(odds?: number): string {
   if (!odds) return '-110';
@@ -172,14 +190,12 @@ export function BotParlayCard({ parlay }: BotParlayCardProps) {
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
                           <div className="font-medium text-sm">
-                            {leg.type === 'team'
-                              ? leg.bet_type === 'total'
-                                ? `${leg.home_team} vs ${leg.away_team}`
-                                : `${leg.side === 'home' ? leg.home_team : leg.away_team}`
+                            {isTeamLeg(leg)
+                              ? getTeamLegName(leg)
                               : (leg.player_name ?? 'Unknown')}
                           </div>
                           <div className="text-xs text-muted-foreground">
-                            {leg.type === 'team' ? (
+                            {isTeamLeg(leg) ? (
                               <>
                                 {(leg.bet_type ?? 'spread').charAt(0).toUpperCase() + (leg.bet_type ?? 'spread').slice(1)}{' '}
                                 {leg.bet_type === 'total'
