@@ -207,6 +207,7 @@ Deno.serve(async (req) => {
       const legs = (Array.isArray(parlay.legs) ? parlay.legs : JSON.parse(parlay.legs)) as BotLeg[];
       let legsHit = 0;
       let legsMissed = 0;
+      let legsVoided = 0;
       const updatedLegs: BotLeg[] = [];
 
       for (const leg of legs) {
@@ -225,6 +226,10 @@ Deno.serve(async (req) => {
           } else if (sweetSpot.outcome === 'miss') {
             legOutcome = 'miss';
             legsMissed++;
+          } else if (sweetSpot.outcome === 'no_data') {
+            // Player didn't play — void this leg
+            legOutcome = 'void';
+            legsVoided++;
           } else {
             legOutcome = 'pending';
           }
@@ -236,7 +241,7 @@ Deno.serve(async (req) => {
           });
 
           // Track for category weight updates
-          if (legOutcome !== 'pending') {
+          if (legOutcome === 'hit' || legOutcome === 'miss') {
             const existing = categoryUpdates.get(leg.category) || { hits: 0, misses: 0 };
             if (legOutcome === 'hit') {
               existing.hits++;
@@ -251,10 +256,16 @@ Deno.serve(async (req) => {
       }
 
       // Determine parlay outcome
+      // Voided legs (no_data = player didn't play) are excluded from grading
+      const activeLegCount = legs.length - legsVoided;
       let outcome = 'pending';
       let profitLoss = 0;
       
-      if (legsHit + legsMissed === legs.length) {
+      if (activeLegCount === 0) {
+        // All legs voided — void entire parlay
+        outcome = 'void';
+        parlaysSettled++;
+      } else if (legsHit + legsMissed === activeLegCount) {
         if (legsMissed === 0) {
           outcome = 'won';
           // Calculate payout: stake * (odds / 100 + 1)
