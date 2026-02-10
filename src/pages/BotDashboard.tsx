@@ -9,6 +9,7 @@ import React from 'react';
 import { Bot, RefreshCw, Play, CheckCircle, AlertTriangle, TrendingUp } from 'lucide-react';
 import { useBotEngine } from '@/hooks/useBotEngine';
 import { BotActivationCard } from '@/components/bot/BotActivationCard';
+import { BotPnLCalendar } from '@/components/bot/BotPnLCalendar';
 import { BotParlayCard } from '@/components/bot/BotParlayCard';
 import { CategoryWeightsChart } from '@/components/bot/CategoryWeightsChart';
 import { BotPerformanceChart } from '@/components/bot/BotPerformanceChart';
@@ -131,6 +132,9 @@ export default function BotDashboard() {
           totalParlays={state.totalParlays}
           isRealModeReady={state.isRealModeReady}
         />
+
+        {/* P&L Calendar */}
+        <BotPnLCalendar />
 
         {/* Action Buttons */}
         <div className="grid grid-cols-2 gap-3">
