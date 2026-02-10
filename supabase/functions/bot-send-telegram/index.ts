@@ -19,6 +19,7 @@ const TELEGRAM_API = 'https://api.telegram.org/bot';
 
 type NotificationType = 
   | 'parlays_generated'
+  | 'tiered_parlays_generated'
   | 'settlement_complete'
   | 'activation_ready'
   | 'daily_summary'
@@ -38,6 +39,8 @@ function formatMessage(type: NotificationType, data: Record<string, any>): strin
   switch (type) {
     case 'parlays_generated':
       return formatParlaysGenerated(data, dateStr);
+    case 'tiered_parlays_generated':
+      return formatTieredParlaysGenerated(data, dateStr);
     case 'settlement_complete':
       return formatSettlement(data, dateStr);
     case 'activation_ready':
@@ -91,8 +94,28 @@ function formatParlaysGenerated(data: Record<string, any>, dateStr: string): str
   return msg;
 }
 
+function formatTieredParlaysGenerated(data: Record<string, any>, dateStr: string): string {
+  const { totalCount, exploration, validation, execution, poolSize } = data;
+  
+  let msg = `📊 *TIERED PARLAY GENERATION COMPLETE*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  msg += `Generated: *${totalCount || 0} parlays* for ${dateStr}\n\n`;
+  
+  msg += `🔬 Exploration: ${exploration || 0} parlays\n`;
+  msg += `✅ Validation: ${validation || 0} parlays\n`;
+  msg += `🎯 Execution: ${execution || 0} parlays\n\n`;
+  
+  if (poolSize) {
+    msg += `📍 Pool Size: ${poolSize} picks\n`;
+  }
+  
+  msg += `\n[View Dashboard](https://parlaysimulator.lovable.app/bot)`;
+  
+  return msg;
+}
+
 function formatSettlement(data: Record<string, any>, dateStr: string): string {
-  const { parlaysWon, parlaysLost, profitLoss, consecutiveDays, bankroll, isRealModeReady, weightChanges } = data;
+  const { parlaysWon, parlaysLost, profitLoss, consecutiveDays, bankroll, isRealModeReady, weightChanges, strategyName, strategyWinRate, blockedCategories, unblockedCategories } = data;
   const totalParlays = parlaysWon + parlaysLost;
   const winRate = totalParlays > 0 ? ((parlaysWon / totalParlays) * 100).toFixed(0) : 0;
   
@@ -124,9 +147,24 @@ function formatSettlement(data: Record<string, any>, dateStr: string): string {
     msg += `\n🚀 *REAL MODE READY!*\n`;
   }
   
+  // Tomorrow's Strategy section
+  if (strategyName) {
+    msg += `\n📋 *Tomorrow's Strategy*\n`;
+    msg += `Active: ${strategyName}\n`;
+    if (strategyWinRate !== undefined) {
+      msg += `Win Rate: ${(strategyWinRate * 100).toFixed(1)}%\n`;
+    }
+    if (blockedCategories && blockedCategories.length > 0) {
+      msg += `🚫 Blocked: ${blockedCategories.slice(0, 5).join(', ')}\n`;
+    }
+    if (unblockedCategories && unblockedCategories.length > 0) {
+      msg += `✅ Unblocked: ${unblockedCategories.join(', ')}\n`;
+    }
+  }
+  
   if (weightChanges && weightChanges.length > 0) {
-    msg += `\nWeight Changes:\n`;
-    for (const change of weightChanges.slice(0, 5)) {
+    msg += `\n⚖️ Weight Changes:\n`;
+    for (const change of weightChanges.slice(0, 8)) {
       const arrow = change.delta > 0 ? '↑' : '↓';
       msg += `${arrow} ${change.category}: ${change.oldWeight.toFixed(2)} → ${change.newWeight.toFixed(2)}\n`;
     }
