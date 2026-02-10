@@ -595,7 +595,7 @@ async function handleLearning(chatId: string) {
   
   const { data: parlays } = await supabase
     .from('bot_daily_parlays')
-    .select('tier, outcome')
+    .select('strategy_name, outcome')
     .not('outcome', 'is', null);
   
   const tierStats: Record<string, { total: number; won: number; lost: number }> = {
@@ -605,7 +605,8 @@ async function handleLearning(chatId: string) {
   };
   
   (parlays || []).forEach((p: any) => {
-    const tier = p.tier || 'execution';
+    const sn = (p.strategy_name || '').toLowerCase();
+    const tier = sn.includes('exploration') ? 'exploration' : sn.includes('validation') ? 'validation' : 'execution';
     if (tierStats[tier]) {
       tierStats[tier].total++;
       if (p.outcome === 'won') tierStats[tier].won++;
@@ -643,7 +644,7 @@ async function handleTiers(chatId: string) {
   const today = getEasternDate();
   const { data: todayParlays } = await supabase
     .from('bot_daily_parlays')
-    .select('tier, leg_count, outcome, expected_odds')
+    .select('strategy_name, leg_count, outcome, expected_odds')
     .eq('parlay_date', today);
   
   const tiers: Record<string, any[]> = {
@@ -653,7 +654,8 @@ async function handleTiers(chatId: string) {
   };
   
   (todayParlays || []).forEach((p: any) => {
-    const tier = p.tier || 'execution';
+    const sn = (p.strategy_name || '').toLowerCase();
+    const tier = sn.includes('exploration') ? 'exploration' : sn.includes('validation') ? 'validation' : 'execution';
     if (tiers[tier]) tiers[tier].push(p);
   });
   
@@ -698,7 +700,7 @@ async function handleExplore(chatId: string) {
     .from('bot_daily_parlays')
     .select('*')
     .eq('parlay_date', today)
-    .eq('tier', 'exploration')
+    .ilike('strategy_name', '%exploration%')
     .order('combined_probability', { ascending: false })
     .limit(5);
   
@@ -729,7 +731,7 @@ async function handleValidate(chatId: string) {
     .from('bot_daily_parlays')
     .select('*')
     .eq('parlay_date', today)
-    .eq('tier', 'validation')
+    .ilike('strategy_name', '%validation%')
     .order('simulated_edge', { ascending: false })
     .limit(5);
   
