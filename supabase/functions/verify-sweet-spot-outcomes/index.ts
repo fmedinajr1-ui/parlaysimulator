@@ -126,7 +126,7 @@ Deno.serve(async (req) => {
       .from('category_sweet_spots')
       .select('id, player_name, prop_type, recommended_side, recommended_line, actual_line, category, l10_hit_rate, confidence_score')
       .eq('analysis_date', targetDate)
-      .eq('outcome', 'pending');
+      .in('outcome', ['pending', 'no_data']);
 
     if (fetchError) {
       throw new Error(`Failed to fetch pending picks: ${fetchError.message}`);
