@@ -1,60 +1,52 @@
 
-# Fix "Proj: 0" for Unmatched Sweet Spot Players
-
-## Problem
-
-Players like Julian Champagnie and Stephon Castle show **"Proj: 0"** in bot parlays because their `category_sweet_spots` entries have `projected_value = NULL` and `actual_line = NULL`.
+# Fix: AI Hallucinating Player Names in `/parlay` Telegram Command
 
 ## Root Cause
 
-The `category-props-analyzer` builds a lookup map from `unified_props` using the raw `prop_type` as-is (e.g., `player_rebounds`, `player_points`). But sweet spots use simplified prop types (`rebounds`, `points`). When the first matching entry in `unified_props` uses the `player_` prefixed variant, a second entry with the unprefixed variant may exist but the map already has a key for that player/prop -- just under a different key format.
+The `/parlay` command is not a registered Telegram command. It falls through to the AI natural language handler, which sends high-level stats (win rate, ROI, category weights) to Gemini Flash but **zero actual parlay leg data**. The AI model fabricates player names like "Trae Young" based on category names like "THREE_POINT_SHOOTER" -- even though Trae Young has been OUT since January 24th and has no active props.
 
-The lookup at validation time uses `{player_name}_{prop_type}` where `prop_type` comes from the category config (e.g., `rebounds`), but the map may only have `{player_name}_player_rebounds`. Result: no match, so `actual_line` and `projected_value` stay null.
+This is not a data pipeline issue. The scraper, analyzer, and generator are all correctly excluding Trae Young. The problem is purely in the Telegram AI response.
 
-When the bot parlay builder reads these entries, it does `pick.projected_value || 0`, resulting in "Proj: 0".
+## Fix: Two Changes
 
-## Fix (2 changes)
+### 1. Register `/parlay` as a proper command (not AI fallback)
 
-### 1. Normalize prop types in `category-props-analyzer` lookup map
+Add a dedicated `/parlay` handler that fetches **real pending parlay data** from `bot_daily_parlays` and displays the actual top-weighted legs. This eliminates AI hallucination entirely.
 
-In the `actualLineMap` builder (around line 1191), strip the `player_` prefix so both `player_rebounds` and `rebounds` resolve to the same key:
+The handler will:
+- Query `bot_daily_parlays` for today's pending parlays
+- Extract and deduplicate all legs across parlays
+- Sort by category weight or confidence score
+- Display the top 3-5 real legs with actual player names, lines, and props
+- Include the same bankroll/mode/ROI summary
 
-```typescript
-// Before
-const key = `${prop.player_name.toLowerCase().trim()}_${prop.prop_type.toLowerCase()}`;
+### 2. Add real leg data to the AI system prompt
 
-// After  
-const normalizedPropType = prop.prop_type.toLowerCase().replace(/^player_/, '');
-const key = `${prop.player_name.toLowerCase().trim()}_${normalizedPropType}`;
+For the natural language fallback, inject the top 5 actual pending legs into the system prompt so the AI can reference real data instead of guessing. This prevents hallucination for any free-form question about current parlays.
+
+## Technical Details
+
+### File Modified
+- `supabase/functions/telegram-webhook/index.ts`
+
+### New `/parlay` Handler
+```text
+Register: if (cmd === "/parlay") return await handleParlayStatus(chatId);
+
+handleParlayStatus():
+  1. Query bot_daily_parlays WHERE outcome = 'pending' AND parlay_date = today
+  2. Extract all legs, deduplicate by player_name + prop_type
+  3. Sort by category weight (from bot_category_weights)
+  4. Format top 5 legs with real data:
+     "1. Steph Curry O 4.5 3PM (Verified)"
+     "2. Alex Caruso U 8.5 PTS (Verified)"
+  5. Include parlay count, bankroll, mode, ROI
 ```
 
-This ensures that `player_rebounds`, `player_points`, `player_assists`, etc. all map to `rebounds`, `points`, `assists` -- matching the category system's prop types.
-
-### 2. Fallback projection in `bot-generate-daily-parlays`
-
-When enriching sweet spots (line 1033), if `projected_value` is null/0, fall back to `l10_avg` instead of 0:
-
-```typescript
-// Before
-const edge = (pick.projected_value || 0) - (line || 0);
-
-// After
-const projectedValue = pick.projected_value || pick.l10_avg || pick.l10_median || line || 0;
-const edge = projectedValue - (line || 0);
+### AI Prompt Enhancement
+Add to the system prompt context:
+```text
+- Top Pending Legs: {actual legs from bot_daily_parlays}
 ```
 
-Also update the leg output (line 1443):
-```typescript
-projected_value: playerPick.projected_value || playerPick.l10_avg || 0,
-```
-
-## Files Modified
-
-- `supabase/functions/category-props-analyzer/index.ts` -- normalize prop type keys in actualLineMap
-- `supabase/functions/bot-generate-daily-parlays/index.ts` -- fallback projection from L10 avg
-
-## Expected Result
-
-- All players with game logs will get proper `projected_value` in `category_sweet_spots`
-- Bot parlays will show actual projections (e.g., "Proj: 5.5") instead of "Proj: 0"
-- "Verified" badges will appear for all legs that have matching sportsbook lines
+This way both the dedicated command and the AI fallback will show real, verified player data instead of fabricated names.
