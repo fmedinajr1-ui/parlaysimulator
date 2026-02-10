@@ -194,7 +194,53 @@ const MIN_BUFFER_BY_PROP: Record<string, number> = {
 
 // ============= CATEGORY INTERLEAVE =============
 
-function interleaveByCategory(picks: EnrichedPick[]): EnrichedPick[] {
+function interleaveByCategory(picks: EnrichedPick[], goldenCategories?: Set<string>): EnrichedPick[] {
+  // If golden categories provided, front-load golden picks
+  if (goldenCategories && goldenCategories.size > 0) {
+    const goldenPicks = picks.filter(p => goldenCategories.has(p.category));
+    const regularPicks = picks.filter(p => !goldenCategories.has(p.category));
+    
+    // Sort each group by composite score
+    goldenPicks.sort((a, b) => b.compositeScore - a.compositeScore);
+    regularPicks.sort((a, b) => b.compositeScore - a.compositeScore);
+    
+    // Interleave: golden first, then regular, maintaining category diversity
+    const result: EnrichedPick[] = [];
+    const usedCategories = new Set<string>();
+    
+    // First pass: one from each golden category
+    for (const pick of goldenPicks) {
+      if (!usedCategories.has(pick.category)) {
+        result.push(pick);
+        usedCategories.add(pick.category);
+      }
+    }
+    // Second pass: remaining golden picks
+    for (const pick of goldenPicks) {
+      if (!result.includes(pick)) result.push(pick);
+    }
+    // Third pass: regular picks interleaved
+    const regularGroups = new Map<string, EnrichedPick[]>();
+    for (const pick of regularPicks) {
+      if (!regularGroups.has(pick.category)) regularGroups.set(pick.category, []);
+      regularGroups.get(pick.category)!.push(pick);
+    }
+    const regularIterators = [...regularGroups.values()].map(g => ({ picks: g, index: 0 }));
+    let added = true;
+    while (added) {
+      added = false;
+      for (const iter of regularIterators) {
+        if (iter.index < iter.picks.length) {
+          result.push(iter.picks[iter.index]);
+          iter.index++;
+          added = true;
+        }
+      }
+    }
+    return result;
+  }
+
+  // Default round-robin interleave
   const groups = new Map<string, EnrichedPick[]>();
   for (const pick of picks) {
     const cat = pick.category;
@@ -301,6 +347,7 @@ interface CategoryWeight {
   current_hit_rate: number;
   is_blocked: boolean;
   sport?: string;
+  total_picks?: number;
 }
 
 interface UsageTracker {
@@ -341,18 +388,32 @@ function calculateCompositeScore(
   hitRate: number,
   edge: number,
   oddsValueScore: number,
-  categoryWeight: number
+  categoryWeight: number,
+  calibratedHitRate?: number
 ): number {
   const hitRateScore = Math.min(100, hitRate);
   const edgeScore = Math.min(100, Math.max(0, edge * 20 + 50));
   const weightScore = categoryWeight * 66.67;
   
-  return Math.round(
+  let baseScore = Math.round(
     (hitRateScore * 0.30) +
     (edgeScore * 0.25) +
     (oddsValueScore * 0.25) +
     (weightScore * 0.20)
   );
+
+  // Hit-rate tier multiplier based on calibrated category performance
+  if (calibratedHitRate !== undefined && calibratedHitRate > 0) {
+    if (calibratedHitRate >= 65) {
+      baseScore = Math.round(baseScore * 1.5);
+    } else if (calibratedHitRate >= 55) {
+      baseScore = Math.round(baseScore * 1.2);
+    } else if (calibratedHitRate < 45) {
+      baseScore = Math.round(baseScore * 0.5);
+    }
+  }
+
+  return baseScore;
 }
 
 function createPickKey(playerName: string, propType: string, side: string): string {
@@ -667,6 +728,25 @@ async function fetchInjuryBlocklist(
 async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<string, number>, categoryWeights: CategoryWeight[]): Promise<PropPool> {
   console.log(`[Bot] Building prop pool for ${targetDate}`);
 
+  // === AUTO-BLOCK LOW HIT-RATE CATEGORIES ===
+  const blockedByHitRate = new Set<string>();
+  categoryWeights.forEach(cw => {
+    if (cw.current_hit_rate < 40 && (cw.total_picks || 0) >= 10) {
+      blockedByHitRate.add(cw.category);
+    }
+  });
+  if (blockedByHitRate.size > 0) {
+    console.log(`[Bot] Auto-blocked ${blockedByHitRate.size} low hit-rate categories: ${[...blockedByHitRate].join(', ')}`);
+  }
+
+  // Build calibrated hit-rate lookup for composite score multipliers
+  const calibratedHitRateMap = new Map<string, number>();
+  categoryWeights.forEach(cw => {
+    if (cw.current_hit_rate && cw.current_hit_rate > 0) {
+      calibratedHitRateMap.set(cw.category, cw.current_hit_rate);
+    }
+  });
+
   // === AVAILABILITY GATE ===
   const { startUtc, endUtc, gameDate } = getEasternDateRange();
   console.log(`[Bot] ET window: ${startUtc} → ${endUtc} (gameDate: ${gameDate})`);
@@ -733,7 +813,8 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     const categoryWeight = weightMap.get(pick.category) || 1.0;
     
     const oddsValueScore = calculateOddsValueScore(americanOdds, hitRateDecimal);
-    const compositeScore = calculateCompositeScore(hitRatePercent, edge, oddsValueScore, categoryWeight);
+    const catHitRate = calibratedHitRateMap.get(pick.category);
+    const compositeScore = calculateCompositeScore(hitRatePercent, edge, oddsValueScore, categoryWeight, catHitRate);
     
     return {
       ...pick,
@@ -746,7 +827,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       line_source: hasRealLine ? 'verified' : 'projected',
       sport: pick.sport || 'basketball_nba',
     };
-  }).filter((p: EnrichedPick) => p.americanOdds >= -200 && p.americanOdds <= 200);
+  }).filter((p: EnrichedPick) => p.americanOdds >= -200 && p.americanOdds <= 200 && !blockedByHitRate.has(p.category));
 
   // FALLBACK: If no sweet spots for today, create picks directly from unified_props
   if (enrichedSweetSpots.length === 0 && playerProps && playerProps.length > 0) {
@@ -785,7 +866,8 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       const categoryWeight = weightMap.get(propCategory) || 1.0;
       
       const oddsValueScore = calculateOddsValueScore(americanOdds, hitRateDecimal);
-      const compositeScore = calculateCompositeScore(hitRateDecimal * 100, 0.5, oddsValueScore, categoryWeight);
+      const catHitRatePercent = calibratedHitRate ? calibratedHitRate * 100 : undefined;
+      const compositeScore = calculateCompositeScore(hitRateDecimal * 100, 0.5, oddsValueScore, categoryWeight, catHitRatePercent);
       
       return {
         id: prop.id,
@@ -807,7 +889,8 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     }).filter((p: EnrichedPick) => 
       p.americanOdds >= -200 && 
       p.americanOdds <= 200 && 
-      p.line > 0
+      p.line > 0 &&
+      !blockedByHitRate.has(p.category)
     );
     
     console.log(`[Bot] Fallback enriched ${enrichedSweetSpots.length} picks (calibrated hit rates from ${categoryHitRateMap.size} categories)`);
@@ -952,9 +1035,20 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     return picks;
   });
 
-  // Sort by composite score, then interleave by category for diversity
+  // Build golden categories set (60%+ hit rate with 20+ samples)
+  const goldenCategories = new Set<string>();
+  categoryWeights.forEach(cw => {
+    if (cw.current_hit_rate >= 60 && (cw.total_picks || 0) >= 20) {
+      goldenCategories.add(cw.category);
+    }
+  });
+  if (goldenCategories.size > 0) {
+    console.log(`[Bot] Golden categories (60%+ hit rate, 20+ samples): ${[...goldenCategories].join(', ')}`);
+  }
+
+  // Sort by composite score, then interleave with golden category priority
   enrichedSweetSpots.sort((a, b) => b.compositeScore - a.compositeScore);
-  enrichedSweetSpots = interleaveByCategory(enrichedSweetSpots);
+  enrichedSweetSpots = interleaveByCategory(enrichedSweetSpots, goldenCategories);
   enrichedTeamPicks.sort((a, b) => b.compositeScore - a.compositeScore);
 
   console.log(`[Bot] Pool built: ${enrichedSweetSpots.length} player props, ${enrichedTeamPicks.length} team props`);

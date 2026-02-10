@@ -34,8 +34,8 @@ const LARGE_SAMPLE_BONUS = 0.10;
 const MEDIUM_SAMPLE_BONUS = 0.05;
 
 // Blocking thresholds
-const BLOCK_HIT_RATE_THRESHOLD = 0.35; // Block if hit rate < 35%
-const BLOCK_MIN_SAMPLES = 20; // Need at least 20 samples to block
+const BLOCK_HIT_RATE_THRESHOLD = 0.40; // Block if hit rate < 40%
+const BLOCK_MIN_SAMPLES = 10; // Need at least 10 samples to block
 
 interface CategoryStats {
   category: string;
