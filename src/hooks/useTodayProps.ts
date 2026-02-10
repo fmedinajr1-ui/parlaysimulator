@@ -33,13 +33,13 @@ function getUTCBoundariesForEasternDate(easternDate: string) {
 // Configuration for each prop type
 const PROP_CONFIG = {
   threes: {
-    propType: 'threes',
+    propType: 'player_threes',
     sweetSpotCategories: ['THREE_POINT_SHOOTER'],
     gameLogField: 'threes_made' as const,
     reliabilityKey: 'player_threes',
   },
   assists: {
-    propType: 'assists',
+    propType: 'player_assists',
     sweetSpotCategories: ['BIG_ASSIST_OVER', 'HIGH_ASSIST_UNDER', 'HIGH_ASSIST', 'ASSIST_ANCHOR'],
     gameLogField: 'assists' as const,
     reliabilityKey: 'player_assists',
