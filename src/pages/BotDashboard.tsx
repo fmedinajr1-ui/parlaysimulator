@@ -1,12 +1,5 @@
-/**
- * BotDashboard.tsx
- * 
- * Main dashboard for the autonomous betting bot system.
- * Shows activation progress, parlays, weights, and performance.
- */
-
 import React from 'react';
-import { Bot, RefreshCw, Play, CheckCircle, AlertTriangle, TrendingUp } from 'lucide-react';
+import { Bot, RefreshCw, Play, CheckCircle, Settings2 } from 'lucide-react';
 import { useBotEngine } from '@/hooks/useBotEngine';
 import { BotActivationCard } from '@/components/bot/BotActivationCard';
 import { BotPnLCalendar } from '@/components/bot/BotPnLCalendar';
@@ -18,10 +11,13 @@ import { BotNotificationSettings } from '@/components/bot/BotNotificationSetting
 import { BotActivityFeed } from '@/components/bot/BotActivityFeed';
 import { BotLearningAnalytics } from '@/components/bot/BotLearningAnalytics';
 import { TierBreakdownCard } from '@/components/bot/TierBreakdownCard';
+import { BotQuickStats } from '@/components/bot/BotQuickStats';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 
@@ -39,32 +35,18 @@ export default function BotDashboard() {
   const handleGenerate = async () => {
     try {
       const result = await generateParlays();
-      toast({
-        title: 'Parlays Generated',
-        description: `Created ${result?.parlaysGenerated || 0} new parlay(s)`,
-      });
+      toast({ title: 'Parlays Generated', description: `Created ${result?.parlaysGenerated || 0} new parlay(s)` });
     } catch (error) {
-      toast({
-        title: 'Generation Failed',
-        description: error instanceof Error ? error.message : 'Unknown error',
-        variant: 'destructive',
-      });
+      toast({ title: 'Generation Failed', description: error instanceof Error ? error.message : 'Unknown error', variant: 'destructive' });
     }
   };
 
   const handleSettle = async () => {
     try {
       const result = await settleParlays();
-      toast({
-        title: 'Settlement Complete',
-        description: `Settled ${result?.parlaysSettled || 0} parlay(s)`,
-      });
+      toast({ title: 'Settlement Complete', description: `Settled ${result?.parlaysSettled || 0} parlay(s)` });
     } catch (error) {
-      toast({
-        title: 'Settlement Failed',
-        description: error instanceof Error ? error.message : 'Unknown error',
-        variant: 'destructive',
-      });
+      toast({ title: 'Settlement Failed', description: error instanceof Error ? error.message : 'Unknown error', variant: 'destructive' });
     }
   };
 
@@ -75,211 +57,170 @@ export default function BotDashboard() {
           <Bot className="w-8 h-8 text-primary" />
           <h1 className="text-2xl font-bold">Betting Bot</h1>
         </div>
-        <div className="grid gap-4">
-          <Skeleton className="h-48 w-full" />
-          <Skeleton className="h-64 w-full" />
-          <Skeleton className="h-48 w-full" />
-        </div>
+        <Skeleton className="h-12 w-full" />
+        <Skeleton className="h-48 w-full" />
+        <Skeleton className="h-64 w-full" />
       </div>
     );
   }
 
+  const totalPnL = (state.simulatedBankroll || 1000) - 1000;
+
   return (
     <div className="min-h-screen bg-background p-4 pb-32">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <div className={cn(
-            "p-2 rounded-xl",
-            state.mode === 'real' 
-              ? "bg-green-500/20 text-green-400" 
-              : "bg-amber-500/20 text-amber-400"
-          )}>
-            <Bot className="w-6 h-6" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold">Betting Bot</h1>
-            <div className="flex items-center gap-2 mt-0.5">
-              <Badge variant={state.mode === 'real' ? 'default' : 'secondary'}>
+      {/* Hero Header */}
+      <div className="relative rounded-2xl p-4 mb-4 overflow-hidden bg-gradient-to-br from-card via-card to-primary/5 border border-border/50">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-3">
+            <div className={cn(
+              'p-2 rounded-xl',
+              state.mode === 'real' ? 'bg-green-500/20 text-green-400' : 'bg-primary/20 text-primary'
+            )}>
+              <Bot className="w-6 h-6" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold">Betting Bot</h1>
+              <Badge variant={state.mode === 'real' ? 'default' : 'secondary'} className="text-[10px] mt-0.5">
                 {state.mode === 'real' ? 'Real Mode' : 'Simulation'}
               </Badge>
-              {state.isRealModeReady && state.mode === 'simulated' && (
-                <Badge variant="outline" className="text-green-400 border-green-400/50">
-                  Ready for Real
-                </Badge>
-              )}
             </div>
           </div>
+          <div className="flex items-center gap-1">
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-8 w-8">
+                  <Settings2 className="w-4 h-4" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-80" align="end">
+                <BotNotificationSettings />
+              </PopoverContent>
+            </Popover>
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={refetch}>
+              <RefreshCw className="w-4 h-4" />
+            </Button>
+          </div>
         </div>
-        
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={refetch}
-          className="shrink-0"
-        >
-          <RefreshCw className="w-5 h-5" />
-        </Button>
-      </div>
 
-      <div className="space-y-6">
-        {/* Activation Progress */}
-        <BotActivationCard
-          consecutiveDays={state.consecutiveProfitDays}
-          requiredDays={3}
-          simulatedBankroll={state.simulatedBankroll}
-          overallWinRate={state.overallWinRate}
-          totalParlays={state.totalParlays}
-          isRealModeReady={state.isRealModeReady}
+        {/* Quick Stats */}
+        <BotQuickStats
+          totalPnL={totalPnL}
+          winRate={state.overallWinRate}
+          streak={state.activationStatus?.consecutive_profitable_days || 0}
+          bankroll={state.simulatedBankroll}
         />
 
-        {/* P&L Calendar */}
-        <BotPnLCalendar />
+        {/* Activation Strip */}
+        <div className="mt-3">
+          <BotActivationCard
+            consecutiveDays={state.consecutiveProfitDays}
+            requiredDays={3}
+            simulatedBankroll={state.simulatedBankroll}
+            overallWinRate={state.overallWinRate}
+            totalParlays={state.totalParlays}
+            isRealModeReady={state.isRealModeReady}
+          />
+        </div>
+      </div>
 
-        {/* Action Buttons */}
-        <div className="grid grid-cols-2 gap-3">
+      {/* Tabbed Content */}
+      <Tabs defaultValue="overview" className="space-y-4">
+        <TabsList className="w-full">
+          <TabsTrigger value="overview" className="flex-1">Overview</TabsTrigger>
+          <TabsTrigger value="parlays" className="flex-1">Parlays</TabsTrigger>
+          <TabsTrigger value="analytics" className="flex-1">Analytics</TabsTrigger>
+        </TabsList>
+
+        {/* Overview Tab */}
+        <TabsContent value="overview" className="space-y-4">
+          <BotPnLCalendar />
+          <BotPerformanceChart />
+          {state.activeStrategy && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Active Strategy</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">{state.activeStrategy.strategy_name}</span>
+                  <div className="flex items-center gap-3">
+                    <span className={cn('font-medium', state.activeStrategy.win_rate >= 0.6 ? 'text-green-400' : 'text-amber-400')}>
+                      {(state.activeStrategy.win_rate * 100).toFixed(0)}% WR
+                    </span>
+                    <span className={cn('font-medium', (state.activeStrategy.roi || 0) >= 0 ? 'text-green-400' : 'text-red-400')}>
+                      {((state.activeStrategy.roi || 0) * 100).toFixed(1)}% ROI
+                    </span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        {/* Parlays Tab */}
+        <TabsContent value="parlays" className="space-y-4">
+          <TierBreakdownCard parlays={state.todayParlays} />
+
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg">Today's Parlays</CardTitle>
+                <Badge variant="outline">{state.todayParlays.length} generated</Badge>
+              </div>
+              <CardDescription>
+                {state.activeStrategy?.strategy_name || 'tiered_v2'} strategy
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {state.todayParlays.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Bot className="w-10 h-10 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">No parlays yet — hit Generate below</p>
+                </div>
+              ) : (
+                state.todayParlays.slice(0, 10).map((parlay) => (
+                  <BotParlayCard key={parlay.id} parlay={parlay} />
+                ))
+              )}
+              {state.todayParlays.length > 10 && (
+                <p className="text-sm text-muted-foreground text-center pt-2">
+                  +{state.todayParlays.length - 10} more
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Analytics Tab */}
+        <TabsContent value="analytics" className="space-y-4">
+          <BotLearningAnalytics />
+          <CategoryWeightsChart weights={state.categoryWeights} />
+          <LearningLogCard weights={state.categoryWeights} />
+          <BotActivityFeed />
+        </TabsContent>
+      </Tabs>
+
+      {/* Sticky Bottom Action Bar */}
+      <div className="fixed bottom-20 left-0 right-0 px-4 z-40">
+        <div className="max-w-lg mx-auto flex gap-2 p-2 rounded-2xl bg-card/95 backdrop-blur-md border border-border/50 shadow-lg">
           <Button
             onClick={handleGenerate}
             disabled={isGenerating}
-            className="h-12"
+            className="flex-1 h-11"
           >
-            {isGenerating ? (
-              <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-            ) : (
-              <Play className="w-4 h-4 mr-2" />
-            )}
-            Generate Parlays
+            {isGenerating ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : <Play className="w-4 h-4 mr-2" />}
+            Generate
           </Button>
-          
           <Button
             variant="secondary"
             onClick={handleSettle}
             disabled={isSettling}
-            className="h-12"
+            className="flex-1 h-11"
           >
-            {isSettling ? (
-              <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-            ) : (
-              <CheckCircle className="w-4 h-4 mr-2" />
-            )}
-            Settle & Learn
+            {isSettling ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : <CheckCircle className="w-4 h-4 mr-2" />}
+            Settle
           </Button>
         </div>
-
-        {/* Learning Analytics - NEW */}
-        <BotLearningAnalytics />
-
-        {/* Tier Breakdown - NEW */}
-        <TierBreakdownCard parlays={state.todayParlays} />
-
-        {/* Today's Parlays */}
-        <Card>
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-lg">Today's Bot Parlays</CardTitle>
-              <Badge variant="outline">
-                {state.todayParlays.length} generated
-              </Badge>
-            </div>
-            <CardDescription>
-              Monte Carlo validated picks using {state.activeStrategy?.strategy_name || 'tiered_v2'} strategy
-            </CardDescription>
-            
-            {/* Leg count distribution */}
-            {state.todayParlays.length > 0 && (
-              <div className="flex gap-2 mt-2 flex-wrap">
-                {[3, 4, 5, 6].map(legCount => {
-                  const count = state.todayParlays.filter(p => p.leg_count === legCount).length;
-                  if (count === 0) return null;
-                  return (
-                    <Badge 
-                      key={legCount} 
-                      variant="secondary" 
-                      className="text-xs"
-                    >
-                      {legCount}-Leg ({count})
-                    </Badge>
-                  );
-                })}
-              </div>
-            )}
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {state.todayParlays.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                <Bot className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                <p>No parlays generated yet today</p>
-                <p className="text-sm mt-1">Click "Generate Parlays" to create tiered picks (65-75 parlays)</p>
-              </div>
-            ) : (
-              state.todayParlays.slice(0, 10).map((parlay) => (
-                <BotParlayCard key={parlay.id} parlay={parlay} />
-              ))
-            )}
-            {state.todayParlays.length > 10 && (
-              <p className="text-sm text-muted-foreground text-center pt-2">
-                +{state.todayParlays.length - 10} more parlays
-              </p>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Notifications & Activity Row */}
-        <div className="grid md:grid-cols-2 gap-4">
-          <BotNotificationSettings />
-          <BotActivityFeed />
-        </div>
-
-        {/* Category Weights */}
-        <CategoryWeightsChart weights={state.categoryWeights} />
-
-        {/* Learning Log */}
-        <LearningLogCard weights={state.categoryWeights} />
-
-        {/* Performance Chart */}
-        <BotPerformanceChart />
-
-        {/* Strategy Info */}
-        {state.activeStrategy && (
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <TrendingUp className="w-5 h-5 text-primary" />
-                Active Strategy
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Name</span>
-                  <span className="font-medium">{state.activeStrategy.strategy_name}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Win Rate</span>
-                  <span className={cn(
-                    "font-medium",
-                    state.activeStrategy.win_rate >= 0.6 ? "text-green-400" : "text-amber-400"
-                  )}>
-                    {(state.activeStrategy.win_rate * 100).toFixed(1)}%
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Times Used</span>
-                  <span className="font-medium">{state.activeStrategy.times_used}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">ROI</span>
-                  <span className={cn(
-                    "font-medium",
-                    (state.activeStrategy.roi || 0) >= 0 ? "text-green-400" : "text-red-400"
-                  )}>
-                    {((state.activeStrategy.roi || 0) * 100).toFixed(1)}%
-                  </span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
       </div>
     </div>
   );
