@@ -16,6 +16,8 @@ export interface MonthStats {
   totalPnL: number;
   winDays: number;
   lossDays: number;
+  totalWins: number;
+  totalLosses: number;
   bestDay: { date: string; amount: number } | null;
   worstDay: { date: string; amount: number } | null;
   currentStreak: number;
@@ -71,12 +73,14 @@ export function useBotPnLCalendar() {
   const stats: MonthStats = useMemo(() => {
     const entries = Array.from(dailyMap.values());
     if (entries.length === 0) {
-      return { totalPnL: 0, winDays: 0, lossDays: 0, bestDay: null, worstDay: null, currentStreak: 0, bestStreak: 0, roi: 0 };
+      return { totalPnL: 0, winDays: 0, lossDays: 0, totalWins: 0, totalLosses: 0, bestDay: null, worstDay: null, currentStreak: 0, bestStreak: 0, roi: 0 };
     }
 
     const totalPnL = entries.reduce((s, d) => s + d.profitLoss, 0);
     const winDays = entries.filter((d) => d.isProfitable).length;
     const lossDays = entries.filter((d) => !d.isProfitable && d.profitLoss !== 0).length;
+    const totalWins = entries.reduce((s, d) => s + d.parlaysWon, 0);
+    const totalLosses = entries.reduce((s, d) => s + d.parlaysLost, 0);
 
     let bestDay: MonthStats['bestDay'] = null;
     let worstDay: MonthStats['worstDay'] = null;
@@ -103,7 +107,7 @@ export function useBotPnLCalendar() {
     const totalStaked = entries.length * 10;
     const roi = totalStaked > 0 ? (totalPnL / totalStaked) * 100 : 0;
 
-    return { totalPnL, winDays, lossDays, bestDay, worstDay, currentStreak, bestStreak, roi };
+    return { totalPnL, winDays, lossDays, totalWins, totalLosses, bestDay, worstDay, currentStreak, bestStreak, roi };
   }, [dailyMap]);
 
   const goToPrevMonth = () => setSelectedMonth((m) => subMonths(m, 1));
