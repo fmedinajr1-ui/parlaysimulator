@@ -467,6 +467,42 @@ export type Database = {
         }
         Relationships: []
       }
+      api_budget_tracker: {
+        Row: {
+          calls_limit: number
+          calls_used: number
+          created_at: string
+          date: string
+          id: string
+          last_full_scrape: string | null
+          last_scout: string | null
+          last_targeted: string | null
+          warning_sent: boolean
+        }
+        Insert: {
+          calls_limit?: number
+          calls_used?: number
+          created_at?: string
+          date: string
+          id?: string
+          last_full_scrape?: string | null
+          last_scout?: string | null
+          last_targeted?: string | null
+          warning_sent?: boolean
+        }
+        Update: {
+          calls_limit?: number
+          calls_used?: number
+          created_at?: string
+          date?: string
+          id?: string
+          last_full_scrape?: string | null
+          last_scout?: string | null
+          last_targeted?: string | null
+          warning_sent?: boolean
+        }
+        Relationships: []
+      }
       app_releases: {
         Row: {
           body: string | null
@@ -11444,6 +11480,14 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      increment_api_calls: {
+        Args: { p_count?: number; p_date: string }
+        Returns: {
+          daily_limit: number
+          is_over_limit: boolean
+          new_total: number
+        }[]
       }
       increment_scan_count: { Args: { p_user_id: string }; Returns: undefined }
       is_collaborator: { Args: { _user_id: string }; Returns: boolean }
