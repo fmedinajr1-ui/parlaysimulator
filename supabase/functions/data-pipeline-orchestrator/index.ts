@@ -80,15 +80,17 @@ serve(async (req) => {
       await runFunction('bot-generate-daily-parlays', { source: 'pipeline' });
     }
 
-    // ============ PHASE 4: OUTCOME VERIFICATION ============
+    // ============ PHASE 4: OUTCOME VERIFICATION & SETTLEMENT ============
     if (mode === 'full' || mode === 'verify') {
       await runFunction('verify-all-engine-outcomes', {});
       await runFunction('verify-sharp-outcomes', {});
       await runFunction('verify-juiced-outcomes', {});
-      await runFunction('auto-settle-parlays', {});
       await runFunction('verify-fatigue-outcomes', {});
       await runFunction('verify-sweet-spot-outcomes', {});
       await runFunction('verify-best-bets-outcomes', {});
+      // Settlement: user parlays + bot parlays (P&L calendar)
+      await runFunction('auto-settle-parlays', {});
+      await runFunction('bot-settle-and-learn', {});
     }
 
     // ============ PHASE 5: CALIBRATION & LEARNING ============
