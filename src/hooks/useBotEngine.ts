@@ -442,14 +442,14 @@ export function useBotEngine() {
     },
   });
 
-  // Fetch all parlays for stats
+  // Fetch all parlays for stats (only won/lost, exclude void/pending)
   const { data: allParlays = [] } = useQuery({
     queryKey: ['bot-all-parlays'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('bot_daily_parlays')
         .select('outcome')
-        .neq('outcome', 'pending');
+        .in('outcome', ['won', 'lost']);
       
       if (error) throw error;
       return data || [];
