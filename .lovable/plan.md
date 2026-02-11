@@ -1,69 +1,72 @@
 
 
-# Use Real Sportsbook Odds for Parlay Payouts
+# Run Team Props & Other Sports Through the Pipeline
 
-## Problem
-The current `expected_odds` is calculated from hit-rate probability (`1/probability - 1`), which gives "fair" odds -- not real sportsbook odds. Real parlays multiply the actual decimal odds of each leg together. For example, a 3-leg parlay at -110, +120, -105 multiplies those decimal equivalents to get the true parlay odds.
+## What's Already Working
+The generator already has **30+ profiles** for team props (spreads, totals, moneylines) and multi-sport (NHL, NCAAB, tennis) across all three tiers. The pipeline already scrapes odds for NBA, NHL, WNBA, NCAAB, ATP, and WTA. Settlement already handles team legs (spreads via margin, totals via combined score, moneylines via winner).
 
-## How Real Sportsbook Parlay Math Works
+## What Needs to Change
 
-```text
-Leg 1: -110 => decimal 1.909
-Leg 2: +120 => decimal 2.200
-Leg 3: -105 => decimal 1.952
+### 1. Expand Pipeline Coverage for All Sports
+The `whale-signal-detector` and `track-odds-movement` currently miss some sports. Update the orchestrator to pass all supported sports to these functions so team props and other sports get the same sharp money and movement analysis as NBA.
 
-Total decimal odds = 1.909 x 2.200 x 1.952 = 8.20
-Total American odds = +720
+### 2. Add Bankroll Floor Protection ($1,000 minimum)
+Before generating parlays, the bot checks its current bankroll:
+- At or below $1,000: pause generation entirely, log a protection event
+- Below $1,200: skip exploration tier (reduce exposure, only run validation + execution)
+- Settlement clamps bankroll so it never drops below $1,000 in the database
 
-$10 stake => payout = $10 x 8.20 = $82.00
-Profit = $82.00 - $10.00 = $72.00
+### 3. Add Team Prop Category Tracking to Calibration
+Ensure `calibrate-bot-weights` creates and updates weight entries for team categories (SHARP_SPREAD, OVER_TOTAL, UNDER_TOTAL, ML_FAVORITE, ML_UNDERDOG) so the learning loop covers team props the same way it covers player props.
+
+---
+
+## Technical Details
+
+### File: `supabase/functions/data-pipeline-orchestrator/index.ts`
+- Update `track-odds-movement` call to include `['basketball_nba', 'icehockey_nhl', 'basketball_wnba', 'basketball_ncaab']`
+- Update `whale-signal-detector` call to include `'basketball_ncaab'` in the sports array
+
+### File: `supabase/functions/bot-generate-daily-parlays/index.ts`
+Add bankroll floor protection before pool building (around line 1768):
+
+```
+const BANKROLL_FLOOR = 1000;
+
+if (bankroll <= BANKROLL_FLOOR) {
+  // Log and return -- protect capital
+  await supabase.from('bot_activity_log').insert({
+    event_type: 'bankroll_floor_hit',
+    message: `Bankroll at $${bankroll}. Generation paused to protect capital.`,
+    severity: 'warning',
+  });
+  return Response with parlaysGenerated: 0, reason: 'bankroll_floor_protection';
+}
+
+// Reduce exposure if near floor
+const isLowBankroll = bankroll < BANKROLL_FLOOR * 1.2;
+if (isLowBankroll) {
+  tiersToGenerate = tiersToGenerate.filter(t => t !== 'exploration');
+}
 ```
 
-## Changes
-
-### 1. Generator: Calculate real parlay odds (`bot-generate-daily-parlays/index.ts`)
-Replace the current `expectedOdds` formula (lines 1662-1665) with actual sportsbook math:
+### File: `supabase/functions/bot-settle-and-learn/index.ts`
+Clamp bankroll at $1,000 floor during activation status update:
 
 ```
-// OLD: expectedOdds from probability (fake odds)
-const expectedOdds = combinedProbability > 0
-  ? Math.round((1 / combinedProbability - 1) * 100)
-  : 10000;
-
-// NEW: multiply actual decimal odds from each leg
-const totalDecimalOdds = legs.reduce((product, l) => {
-  const odds = l.american_odds || -110;
-  const decimal = odds > 0 ? (odds / 100) + 1 : (100 / Math.abs(odds)) + 1;
-  return product * decimal;
-}, 1);
-const expectedOdds = totalDecimalOdds >= 2
-  ? Math.round((totalDecimalOdds - 1) * 100)   // positive American
-  : Math.round(-100 / (totalDecimalOdds - 1));  // negative American
+const BANKROLL_FLOOR = 1000;
+const accumulatedBankroll = Math.max(
+  BANKROLL_FLOOR,
+  prevBankroll + datePnL.profitLoss
+);
 ```
 
-### 2. Settlement: Use real odds for payout (`bot-settle-and-learn/index.ts`)
-The settlement payout formula on line 424 currently does:
-```
-const payout = stake * ((expected_odds || 500) / 100 + 1);
-```
+### File: `supabase/functions/calibrate-bot-weights/index.ts`
+Ensure team categories are seeded in `bot_category_weights` if they don't already exist, so team prop performance feeds back into the next day's generation weights.
 
-This only works for positive American odds. Update to handle both positive and negative:
-```
-const odds = parlay.expected_odds || 500;
-const decimalOdds = odds > 0 ? (odds / 100) + 1 : (100 / Math.abs(odds)) + 1;
-const payout = stake * decimalOdds;
-```
+### Summary of Changes
+- `data-pipeline-orchestrator/index.ts` -- expand sport coverage for odds movement and whale signals
+- `bot-generate-daily-parlays/index.ts` -- bankroll floor gate
+- `bot-settle-and-learn/index.ts` -- bankroll floor clamp
+- `calibrate-bot-weights/index.ts` -- seed team prop categories into weight tracking
 
-### 3. Backfill existing parlays
-Run a SQL update to recalculate `expected_odds` for existing parlays using the stored leg odds, then recalculate `profit_loss` and `simulated_payout` for won parlays using the corrected odds.
-
-```sql
--- This will be done programmatically since we need to read
--- each parlay's legs JSON, multiply decimal odds, and update.
--- A backend function call or manual query will handle this.
-```
-
-### Files Modified
-- `supabase/functions/bot-generate-daily-parlays/index.ts` -- real parlay odds calculation
-- `supabase/functions/bot-settle-and-learn/index.ts` -- correct payout formula for +/- odds
-- Database backfill for existing parlays' `expected_odds`, `profit_loss`, `simulated_payout`
