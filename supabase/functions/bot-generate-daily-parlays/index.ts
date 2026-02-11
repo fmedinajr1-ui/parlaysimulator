@@ -1021,7 +1021,9 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   // Enrich sweet spots
   let enrichedSweetSpots: EnrichedPick[] = (sweetSpots || []).map((pick: SweetSpotPick) => {
     const line = pick.actual_line ?? pick.recommended_line ?? pick.line;
-    const hasRealLine = pick.actual_line !== null && pick.actual_line !== undefined;
+    // Check if this player has real sportsbook odds in unified_props (oddsMap)
+    const oddsKey = `${pick.player_name}_${pick.prop_type}`.toLowerCase();
+    const hasRealLine = oddsMap.has(oddsKey) || (pick.actual_line !== null && pick.actual_line !== undefined);
     
     const oddsKey = `${pick.player_name}_${pick.prop_type}`.toLowerCase();
     const odds = oddsMap.get(oddsKey) || { overOdds: -110, underOdds: -110, line: 0, sport: 'basketball_nba' };
