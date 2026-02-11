@@ -86,12 +86,12 @@ export function BotParlayCard({ parlay }: BotParlayCardProps) {
               <span className="text-xs text-muted-foreground">{parlay.leg_count}L</span>
               <div className="flex items-center gap-2 text-xs">
                 <span className="text-green-400 font-medium">+{((parlay.simulated_edge || 0) * 100).toFixed(1)}%</span>
-                <span className="text-muted-foreground">${parlay.simulated_stake || 50}</span>
+                <span className="text-muted-foreground">${parlay.simulated_stake || 10}</span>
                 {parlay.outcome === 'won' && (
                   <span className="text-green-400 font-medium">→ +${(parlay.profit_loss || 0).toFixed(0)}</span>
                 )}
                 {parlay.outcome === 'lost' && (
-                  <span className="text-red-400 font-medium">→ -${parlay.simulated_stake || 50}</span>
+                  <span className="text-red-400 font-medium">→ -${parlay.simulated_stake || 10}</span>
                 )}
               </div>
             </div>

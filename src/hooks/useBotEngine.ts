@@ -164,7 +164,7 @@ export const BOT_RULES = {
   MAX_LEGS: 6,               // Maximum legs per parlay
   
   // Stake management
-  SIMULATED_STAKE: 50,       // Default stake in simulation
+  SIMULATED_STAKE: 10,       // Default stake in simulation
   ACTIVATION_DAYS: 3,        // Days needed for real mode
   ACTIVATION_WIN_RATE: 0.60, // 60% win rate needed
   MIN_PARLAYS_ACTIVATION: 5, // Minimum parlays before activation
