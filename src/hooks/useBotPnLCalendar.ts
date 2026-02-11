@@ -25,6 +25,7 @@ export interface MonthStats {
 
 export function useBotPnLCalendar() {
   const [selectedMonth, setSelectedMonth] = useState(() => startOfMonth(new Date()));
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   const monthStart = format(startOfMonth(selectedMonth), 'yyyy-MM-dd');
   const monthEnd = format(endOfMonth(selectedMonth), 'yyyy-MM-dd');
@@ -117,6 +118,8 @@ export function useBotPnLCalendar() {
   return {
     selectedMonth,
     setSelectedMonth,
+    selectedDate,
+    setSelectedDate,
     calendarDays,
     dailyMap,
     stats,

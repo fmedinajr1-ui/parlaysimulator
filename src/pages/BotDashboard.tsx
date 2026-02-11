@@ -189,6 +189,26 @@ export default function BotDashboard() {
               )}
             </CardContent>
           </Card>
+
+          {/* Recent Settled Results */}
+          {state.recentSettled.length > 0 && (
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-lg">Recent Results</CardTitle>
+                  <Badge variant="outline">
+                    {state.recentSettled.filter(p => p.outcome === 'won').length}W - {state.recentSettled.filter(p => p.outcome === 'lost').length}L
+                  </Badge>
+                </div>
+                <CardDescription>Settled parlays from previous days</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {state.recentSettled.map((parlay) => (
+                  <BotParlayCard key={parlay.id} parlay={parlay} />
+                ))}
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         {/* Analytics Tab */}

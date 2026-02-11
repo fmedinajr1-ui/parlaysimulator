@@ -125,6 +125,7 @@ export interface BotState {
   realBankroll: number;
   isRealModeReady: boolean;
   todayParlays: BotParlay[];
+  recentSettled: BotParlay[];
   categoryWeights: CategoryWeight[];
   activeStrategy: BotStrategy | null;
   activationStatus: BotActivationStatus | null;
@@ -421,6 +422,26 @@ export function useBotEngine() {
     },
   });
   
+  // Fetch recent settled parlays (last 7 days, won/lost only)
+  const { data: recentSettled = [], isLoading: recentSettledLoading } = useQuery({
+    queryKey: ['bot-recent-settled'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('bot_daily_parlays')
+        .select('*')
+        .neq('outcome', 'pending')
+        .neq('outcome', 'void')
+        .order('settled_at', { ascending: false })
+        .limit(20);
+      
+      if (error) throw error;
+      return (data || []).map(p => ({
+        ...p,
+        legs: Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs as string),
+      })) as BotParlay[];
+    },
+  });
+
   // Fetch all parlays for stats
   const { data: allParlays = [] } = useQuery({
     queryKey: ['bot-all-parlays'],
@@ -482,13 +503,14 @@ export function useBotEngine() {
   
   // Build state
   const state: BotState = {
-    isLoading: parlaysLoading || weightsLoading || strategyLoading || activationLoading,
+    isLoading: parlaysLoading || weightsLoading || strategyLoading || activationLoading || recentSettledLoading,
     mode,
     consecutiveProfitDays: activationStatus?.consecutive_profitable_days || 0,
     simulatedBankroll: activationStatus?.simulated_bankroll || 1000,
     realBankroll: activationStatus?.real_bankroll || 0,
     isRealModeReady: activationStatus?.is_real_mode_ready || false,
     todayParlays,
+    recentSettled,
     categoryWeights,
     activeStrategy,
     activationStatus,

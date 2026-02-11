@@ -7,6 +7,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useBotPnLCalendar } from '@/hooks/useBotPnLCalendar';
+import { DayParlayDetail } from '@/components/bot/DayParlayDetail';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ResponsiveContainer,
@@ -27,6 +28,8 @@ function getHeatmapIntensity(amount: number, maxAbsAmount: number): number {
 export function BotPnLCalendar() {
   const {
     selectedMonth,
+    selectedDate,
+    setSelectedDate,
     calendarDays,
     dailyMap,
     stats,
@@ -162,11 +165,13 @@ export function BotPnLCalendar() {
                   </div>
                 );
 
-                if (!hasData) return <React.Fragment key={dateStr}>{cellContent}</React.Fragment>;
+                const handleClick = () => setSelectedDate(dateStr);
+
+                if (!hasData) return <div key={dateStr} onClick={handleClick} className="cursor-pointer">{cellContent}</div>;
 
                 return (
                   <Tooltip key={dateStr}>
-                    <TooltipTrigger asChild>{cellContent}</TooltipTrigger>
+                    <TooltipTrigger asChild><div onClick={handleClick} className="cursor-pointer">{cellContent}</div></TooltipTrigger>
                     <TooltipContent side="top" className="text-xs space-y-1">
                       <p className="font-medium">{format(day, 'MMM d')}</p>
                       <p className={isProfitable ? 'text-green-400' : 'text-red-400'}>
@@ -216,6 +221,13 @@ export function BotPnLCalendar() {
           </div>
         )}
       </CardContent>
+
+      {/* Day detail drawer */}
+      <DayParlayDetail
+        date={selectedDate}
+        open={!!selectedDate}
+        onOpenChange={(open) => { if (!open) setSelectedDate(null); }}
+      />
     </Card>
   );
 }

@@ -2,7 +2,9 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { ParlayHistoryCard } from './ParlayHistoryCard';
-import { Loader2, History } from 'lucide-react';
+import { BotParlayCard } from '@/components/bot/BotParlayCard';
+import { Loader2, History, Bot } from 'lucide-react';
+import type { BotParlay } from '@/hooks/useBotEngine';
 
 interface ParlayLeg {
   description: string;
@@ -30,11 +32,13 @@ interface ParlayHistoryFeedProps {
 export const ParlayHistoryFeed = ({ onStatsUpdate }: ParlayHistoryFeedProps) => {
   const { user } = useAuth();
   const [history, setHistory] = useState<ParlayHistoryItem[]>([]);
+  const [botParlays, setBotParlays] = useState<BotParlay[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     if (user) {
       fetchHistory();
+      fetchBotParlays();
     }
   }, [user]);
 
@@ -50,7 +54,6 @@ export const ParlayHistoryFeed = ({ onStatsUpdate }: ParlayHistoryFeedProps) => 
 
       if (error) throw error;
       
-      // Type cast the data properly
       const typedData = (data || []).map(item => ({
         ...item,
         legs: item.legs as unknown as ParlayLeg[],
@@ -62,6 +65,27 @@ export const ParlayHistoryFeed = ({ onStatsUpdate }: ParlayHistoryFeedProps) => 
       console.error('Error fetching history:', error);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const fetchBotParlays = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('bot_daily_parlays')
+        .select('*')
+        .neq('outcome', 'pending')
+        .neq('outcome', 'void')
+        .order('settled_at', { ascending: false })
+        .limit(20);
+
+      if (error) throw error;
+      const typed = (data || []).map(p => ({
+        ...p,
+        legs: Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs as string),
+      })) as BotParlay[];
+      setBotParlays(typed);
+    } catch (error) {
+      console.error('Error fetching bot parlays:', error);
     }
   };
 
@@ -80,7 +104,9 @@ export const ParlayHistoryFeed = ({ onStatsUpdate }: ParlayHistoryFeedProps) => 
     );
   }
 
-  if (history.length === 0) {
+  const hasNoData = history.length === 0 && botParlays.length === 0;
+
+  if (hasNoData) {
     return (
       <div className="text-center py-8">
         <History className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
@@ -94,24 +120,40 @@ export const ParlayHistoryFeed = ({ onStatsUpdate }: ParlayHistoryFeedProps) => 
 
   return (
     <div className="space-y-4">
-      <h3 className="font-display text-lg text-foreground">PARLAY HISTORY</h3>
-      {history.map((item) => (
-        <ParlayHistoryCard
-          key={item.id}
-          id={item.id}
-          legs={item.legs}
-          stake={item.stake}
-          potentialPayout={item.potential_payout}
-          combinedProbability={item.combined_probability}
-          degenerateLevel={item.degenerate_level}
-          isWon={item.is_won}
-          isSettled={item.is_settled}
-          aiRoasts={item.ai_roasts}
-          createdAt={item.created_at}
-          eventStartTime={item.event_start_time}
-          onSettle={handleSettle}
-        />
-      ))}
+      {history.length > 0 && (
+        <>
+          <h3 className="font-display text-lg text-foreground">PARLAY HISTORY</h3>
+          {history.map((item) => (
+            <ParlayHistoryCard
+              key={item.id}
+              id={item.id}
+              legs={item.legs}
+              stake={item.stake}
+              potentialPayout={item.potential_payout}
+              combinedProbability={item.combined_probability}
+              degenerateLevel={item.degenerate_level}
+              isWon={item.is_won}
+              isSettled={item.is_settled}
+              aiRoasts={item.ai_roasts}
+              createdAt={item.created_at}
+              eventStartTime={item.event_start_time}
+              onSettle={handleSettle}
+            />
+          ))}
+        </>
+      )}
+
+      {botParlays.length > 0 && (
+        <>
+          <div className="flex items-center gap-2 mt-2">
+            <Bot className="w-4 h-4 text-primary" />
+            <h3 className="font-display text-lg text-foreground">BOT RESULTS</h3>
+          </div>
+          {botParlays.map((parlay) => (
+            <BotParlayCard key={parlay.id} parlay={parlay} />
+          ))}
+        </>
+      )}
     </div>
   );
 };
