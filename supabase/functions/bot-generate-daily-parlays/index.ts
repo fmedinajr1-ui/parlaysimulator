@@ -1659,10 +1659,15 @@ async function generateTierParlays(
         return product * hr;
       }, 1);
       
-      // Calculate expected odds
-      const expectedOdds = combinedProbability > 0 
-        ? Math.round((1 / combinedProbability - 1) * 100)
-        : 10000;
+      // Calculate real sportsbook parlay odds by multiplying decimal odds of each leg
+      const totalDecimalOdds = legs.reduce((product, l) => {
+        const odds = l.american_odds || -110;
+        const decimal = odds > 0 ? (odds / 100) + 1 : (100 / Math.abs(odds)) + 1;
+        return product * decimal;
+      }, 1);
+      const expectedOdds = totalDecimalOdds >= 2
+        ? Math.round((totalDecimalOdds - 1) * 100)   // positive American
+        : Math.round(-100 / (totalDecimalOdds - 1));  // negative American
       
       // Edge and Sharpe - use actual implied probability from odds, not coin-flip model
       const impliedProbability = legs.reduce((product, l) => {
