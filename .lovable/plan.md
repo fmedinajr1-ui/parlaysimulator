@@ -1,30 +1,76 @@
 
+# Prioritize Winning Archetypes in Bot Parlay Generation
 
-# Fix: Date Click Drawer Not Opening
+## Current Behavior
+
+The bot has a "Golden Categories" system that identifies archetypes with 60%+ hit rate and 20+ samples. Right now, the three golden categories are:
+
+| Category | Hit Rate | Picks | Weight |
+|----------|----------|-------|--------|
+| THREE_POINT_SHOOTER | 75.3% | 214 | 1.30 |
+| LOW_SCORER_UNDER | 65.4% | 60 | 1.17 |
+| BIG_ASSIST_OVER | 61.7% | 65 | 1.14 |
+
+The bot front-loads golden picks in the candidate pool via `interleaveByCategory()`, and the composite score formula gives a 1.5x multiplier to categories with 65%+ calibrated hit rates. However, when building execution-tier parlays (the real-money "cash lock" plays), the round-robin interleave still mixes in weaker categories like ROLE_PLAYER_REB (53.5%) and HIGH_ASSIST (no golden status). Meanwhile LOW_SCORER_UNDER, the #2 golden category, barely appears.
 
 ## Problem
 
-The previous fix added `snapPoints` and a no-op `setActiveSnapPoint={() => {}}` to the `MobileDetailDrawer`. The no-op function prevents the drawer from transitioning to any snap point, so it never visually appears even though its `open` state is `true`.
+1. Execution-tier parlays don't enforce a minimum golden-leg ratio -- they just iterate the interleaved pool in order
+2. The interleave distributes category diversity equally, diluting golden categories with 50-55% hit rate ones
+3. No sorting by category weight within the candidate selection loop
 
-## Fix
+## Proposed Fix
 
-**File**: `src/components/ui/mobile-detail-drawer.tsx` (line 46)
+**File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
 
-Remove the `snapPoints`, `activeSnapPoint`, and `setActiveSnapPoint` props from the `Drawer` component. These were added to fix a "tab won't go up" issue but the no-op handler broke opening entirely.
+### Change 1: Sort candidates by category weight for execution tier
 
-Replace:
-```tsx
-<Drawer open={open} onOpenChange={handleOpenChange} snapPoints={[0.5, 1]} activeSnapPoint={1} setActiveSnapPoint={() => {}}>
+In `generateTierParlays()` (around line 1532), after the sport/bet-type filtering but before the candidate loop, add weight-based re-sorting for the execution tier. When `sortBy` is not explicitly `hit_rate`, sort candidates by their category weight descending (from `bot_category_weights`), then by composite score as tiebreaker. This ensures the highest-winning archetypes are tried first.
+
+```
+// For non-hit-rate-sorted profiles, sort by category weight descending
+if (profile.sortBy !== 'hit_rate' && tier === 'execution') {
+  candidatePicks = [...candidatePicks].sort((a, b) => {
+    const aWeight = weightMap.get(a.category) || 1.0;
+    const bWeight = weightMap.get(b.category) || 1.0;
+    if (bWeight !== aWeight) return bWeight - aWeight;
+    return (b.compositeScore || 0) - (a.compositeScore || 0);
+  });
+}
 ```
 
-With:
-```tsx
-<Drawer open={open} onOpenChange={handleOpenChange}>
+### Change 2: Enforce minimum golden legs in execution parlays
+
+After a parlay is fully built (around line 1645, before the fingerprint check), add a golden-leg ratio check for execution-tier parlays. At least 50% of legs (rounded down) must come from golden categories. If not, skip the parlay.
+
+```
+// Execution tier: require at least half the legs from golden categories
+if (tier === 'execution') {
+  const goldenLegCount = legs.filter(l => goldenCategories.has(l.category)).length;
+  const minGoldenLegs = Math.floor(profile.legs / 2);
+  if (goldenLegCount < minGoldenLegs) {
+    console.log(`[Bot] Skipping ${tier}/${profile.strategy}: only ${goldenLegCount}/${profile.legs} golden legs (need ${minGoldenLegs})`);
+    continue;
+  }
+}
 ```
 
-Also revert the max-height changes that aren't needed without snap points:
-- `DrawerContent`: `max-h-[92vh]` back to `max-h-[85vh]`
-- Scrollable content div: `max-h-[70vh]` back to `max-h-[60vh]` (a modest increase from original 50vh to address the "won't go up" concern)
+This requires passing `goldenCategories` into `generateTierParlays()` as a parameter.
 
-This is a 3-line revert in a single file. The drawer will open normally on date click and show the day's parlay details.
+### Change 3: Pass goldenCategories to generateTierParlays
 
+Update the function signature to accept the golden categories set, and pass it from the caller (around line 1480 where the function is invoked).
+
+## Impact
+
+- Execution parlays will heavily favor THREE_POINT_SHOOTER (75.3%), LOW_SCORER_UNDER (65.4%), and BIG_ASSIST_OVER (61.7%)
+- Exploration and validation tiers are unchanged -- they keep discovering new patterns
+- As categories earn/lose golden status through calibration, the bot automatically adapts
+- No database changes required
+
+## Technical Details
+
+- Three insertions in `supabase/functions/bot-generate-daily-parlays/index.ts`
+- One function signature update (add `goldenCategories: Set<string>` parameter)
+- One caller update to pass the set through
+- Edge function will be redeployed automatically
