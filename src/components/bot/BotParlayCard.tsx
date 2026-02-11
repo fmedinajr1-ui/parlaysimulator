@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ChevronDown, ChevronUp, TrendingUp, Target, Percent, DollarSign, CheckCircle, XCircle, Clock, Minus, Zap, ArrowUpRight, MapPin } from 'lucide-react';
+import { format, parseISO } from 'date-fns';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -84,6 +85,9 @@ export function BotParlayCard({ parlay }: BotParlayCardProps) {
                 <span className="ml-1 capitalize">{parlay.outcome}</span>
               </Badge>
               <span className="text-xs text-muted-foreground">{parlay.leg_count}L</span>
+              {parlay.parlay_date && (
+                <span className="text-xs text-muted-foreground">· {format(parseISO(parlay.parlay_date), 'MMM d')}</span>
+              )}
               <div className="flex items-center gap-2 text-xs">
                 <span className="text-green-400 font-medium">+{((parlay.simulated_edge || 0) * 100).toFixed(1)}%</span>
                 <span className="text-muted-foreground">${parlay.simulated_stake || 10}</span>
