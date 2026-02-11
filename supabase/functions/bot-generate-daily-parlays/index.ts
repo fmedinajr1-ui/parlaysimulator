@@ -535,6 +535,7 @@ interface PropPool {
   teamPicks: EnrichedTeamPick[];
   sweetSpots: EnrichedPick[];
   totalPool: number;
+  goldenCategories: Set<string>;
 }
 
 // ============= HELPER FUNCTIONS =============
@@ -1469,6 +1470,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     teamPicks: enrichedTeamPicks,
     sweetSpots: enrichedSweetSpots,
     totalPool: enrichedSweetSpots.length + enrichedTeamPicks.length,
+    goldenCategories,
   };
 }
 
@@ -1498,7 +1500,8 @@ async function generateTierParlays(
   weightMap: Map<string, number>,
   strategyName: string,
   bankroll: number,
-  globalFingerprints: Set<string> = new Set()
+  globalFingerprints: Set<string> = new Set(),
+  goldenCategories: Set<string> = new Set()
 ): Promise<{ count: number; parlays: any[] }> {
   const config = TIER_CONFIG[tier];
   const tracker = createUsageTracker();
@@ -1537,6 +1540,16 @@ async function generateTierParlays(
         const aHitRate = 'l10_hit_rate' in a ? (a as EnrichedPick).l10_hit_rate : (a.confidence_score || 0);
         const bHitRate = 'l10_hit_rate' in b ? (b as EnrichedPick).l10_hit_rate : (b.confidence_score || 0);
         return bHitRate - aHitRate;
+      });
+    }
+
+    // Execution tier: sort candidates by category weight descending to prioritize golden archetypes
+    if (profile.sortBy !== 'hit_rate' && tier === 'execution') {
+      candidatePicks = [...candidatePicks].sort((a, b) => {
+        const aWeight = weightMap.get(a.category) || 1.0;
+        const bWeight = weightMap.get(b.category) || 1.0;
+        if (bWeight !== aWeight) return bWeight - aWeight;
+        return (b.compositeScore || 0) - (a.compositeScore || 0);
       });
     }
 
@@ -1643,6 +1656,16 @@ async function generateTierParlays(
 
     // Only create parlay if we have enough legs
     if (legs.length >= profile.legs) {
+      // Execution tier: require at least half the legs from golden categories
+      if (tier === 'execution' && goldenCategories.size > 0) {
+        const goldenLegCount = legs.filter(l => goldenCategories.has(l.category)).length;
+        const minGoldenLegs = Math.floor(profile.legs / 2);
+        if (goldenLegCount < minGoldenLegs) {
+          console.log(`[Bot] Skipping ${tier}/${profile.strategy}: only ${goldenLegCount}/${profile.legs} golden legs (need ${minGoldenLegs})`);
+          continue;
+        }
+      }
+
       // Deduplication: skip if identical leg combination already exists
       const fingerprint = createParlayFingerprint(legs);
       if (globalFingerprints.has(fingerprint)) {
@@ -1860,7 +1883,8 @@ Deno.serve(async (req) => {
         weightMap,
         strategyName,
         bankroll,
-        globalFingerprints
+        globalFingerprints,
+        pool.goldenCategories
       );
       results[tier] = result;
       allParlays = [...allParlays, ...result.parlays];
