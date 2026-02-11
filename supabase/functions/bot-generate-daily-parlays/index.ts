@@ -44,6 +44,8 @@ interface ParlayProfile {
   useAltLines?: boolean;
   minBufferMultiplier?: number;
   preferPlusMoney?: boolean;
+  sortBy?: 'composite' | 'hit_rate';
+  boostLegs?: number;
 }
 
 const TIER_CONFIG: Record<TierName, TierConfig> = {
@@ -139,36 +141,44 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 4, strategy: 'validated_balanced', sports: ['basketball_nba'], minOddsValue: 42, minHitRate: 55 },
       { legs: 4, strategy: 'validated_balanced', sports: ['basketball_nba', 'icehockey_nhl'], minOddsValue: 42, minHitRate: 55 },
       { legs: 4, strategy: 'validated_balanced', sports: ['basketball_nba', 'basketball_ncaab'], minOddsValue: 42, minHitRate: 55 },
-      { legs: 5, strategy: 'validated_standard', sports: ['basketball_nba'], minOddsValue: 40, minHitRate: 52 },
-      { legs: 5, strategy: 'validated_standard', sports: ['all'], minOddsValue: 40, minHitRate: 52 },
-      { legs: 5, strategy: 'validated_standard', sports: ['all'], minOddsValue: 40, minHitRate: 52, useAltLines: true },
+      { legs: 5, strategy: 'validated_standard', sports: ['basketball_nba'], minOddsValue: 40, minHitRate: 55 },
+      { legs: 5, strategy: 'validated_standard', sports: ['all'], minOddsValue: 40, minHitRate: 55 },
+      { legs: 5, strategy: 'validated_standard', sports: ['all'], minOddsValue: 40, minHitRate: 55, useAltLines: true },
       { legs: 3, strategy: 'validated_team', betTypes: ['spread', 'total'], minOddsValue: 45, minHitRate: 55 },
       { legs: 3, strategy: 'validated_team', betTypes: ['spread', 'total'], minOddsValue: 45, minHitRate: 55 },
-      { legs: 4, strategy: 'validated_team', betTypes: ['spread', 'total'], minOddsValue: 42, minHitRate: 52 },
-      { legs: 4, strategy: 'validated_cross', sports: ['all'], minOddsValue: 42, minHitRate: 52 },
-      { legs: 5, strategy: 'validated_aggressive', sports: ['all'], minOddsValue: 40, minHitRate: 50, useAltLines: true },
+      { legs: 4, strategy: 'validated_team', betTypes: ['spread', 'total'], minOddsValue: 42, minHitRate: 55 },
+      { legs: 4, strategy: 'validated_cross', sports: ['all'], minOddsValue: 42, minHitRate: 55 },
+      { legs: 5, strategy: 'validated_aggressive', sports: ['all'], minOddsValue: 40, minHitRate: 52, useAltLines: true },
+      // Win-rate-first validated profiles
+      { legs: 3, strategy: 'validated_winrate', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate' },
+      { legs: 4, strategy: 'validated_winrate', sports: ['basketball_nba'], minHitRate: 58, sortBy: 'hit_rate' },
     ],
   },
   execution: {
-    count: 8,
+    count: 10,
     iterations: 25000,
     maxPlayerUsage: 3,
     maxTeamUsage: 2,
     maxCategoryUsage: 2,
-    minHitRate: 55,
-    minEdge: 0.012,
-    minSharpe: 0.03,
+    minHitRate: 60,
+    minEdge: 0.008,
+    minSharpe: 0.02,
     stake: 'kelly',
-    minConfidence: 0.55,
+    minConfidence: 0.60,
     profiles: [
-      { legs: 3, strategy: 'elite_conservative', sports: ['basketball_nba'], minOddsValue: 50, minHitRate: 56, useAltLines: false },
-      { legs: 3, strategy: 'elite_conservative', sports: ['basketball_nba'], minOddsValue: 50, minHitRate: 56, useAltLines: false },
-      { legs: 4, strategy: 'elite_balanced', sports: ['basketball_nba'], minOddsValue: 45, minHitRate: 55, useAltLines: false },
-      { legs: 4, strategy: 'elite_balanced', sports: ['basketball_nba', 'icehockey_nhl'], minOddsValue: 45, minHitRate: 55, useAltLines: false },
-      { legs: 4, strategy: 'elite_ncaab', sports: ['basketball_nba', 'basketball_ncaab'], minOddsValue: 45, minHitRate: 55, useAltLines: false },
-      { legs: 5, strategy: 'elite_standard', sports: ['all'], minOddsValue: 42, minHitRate: 55, useAltLines: true, minBufferMultiplier: 1.5 },
-      { legs: 5, strategy: 'elite_standard', sports: ['all'], minOddsValue: 42, minHitRate: 55, useAltLines: true, minBufferMultiplier: 1.5 },
-      { legs: 6, strategy: 'elite_aggressive', sports: ['all'], minOddsValue: 40, minHitRate: 52, useAltLines: true, preferPlusMoney: true },
+      // CASH LOCKS: Max win rate, main lines only
+      { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: false },
+      { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: false },
+      { legs: 4, strategy: 'strong_cash', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
+      { legs: 4, strategy: 'strong_cash', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
+      // BOOSTED: Same high-rate picks, but shop odds on some legs
+      { legs: 3, strategy: 'boosted_cash', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      { legs: 4, strategy: 'boosted_cash', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.5 },
+      { legs: 5, strategy: 'premium_boost', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, preferPlusMoney: true, minBufferMultiplier: 1.2 },
+      { legs: 5, strategy: 'max_boost', sports: ['all'], minHitRate: 58, sortBy: 'hit_rate', useAltLines: true, boostLegs: 3, preferPlusMoney: true, minBufferMultiplier: 1.0 },
+      // CROSS-SPORT cash plays
+      { legs: 3, strategy: 'cash_lock_cross', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
+      { legs: 4, strategy: 'strong_cash_cross', sports: ['all'], minHitRate: 58, sortBy: 'hit_rate', useAltLines: false },
     ],
   },
 };
@@ -1428,6 +1438,15 @@ async function generateTierParlays(
       });
     }
 
+    // Win-rate-first sorting: re-sort by L10 hit rate descending
+    if (profile.sortBy === 'hit_rate') {
+      candidatePicks = [...candidatePicks].sort((a, b) => {
+        const aHitRate = 'l10_hit_rate' in a ? (a as EnrichedPick).l10_hit_rate : (a.confidence_score || 0);
+        const bHitRate = 'l10_hit_rate' in b ? (b as EnrichedPick).l10_hit_rate : (b.confidence_score || 0);
+        return bHitRate - aHitRate;
+      });
+    }
+
     // Build parlay from candidates
     for (const pick of candidatePicks) {
       if (legs.length >= profile.legs) break;
@@ -1473,8 +1492,11 @@ async function generateTierParlays(
         const playerPick = pick as EnrichedPick;
         const weight = weightMap.get(playerPick.category) || 1.0;
         
-        // Select line based on profile
-        const selectedLine = profile.useAltLines
+        // Select line based on profile (with boost leg limiting)
+        const boostLimit = profile.boostLegs ?? (profile.useAltLines ? profile.legs : 0);
+        const boostedCount = legs.filter(l => l.line_selection_reason && l.line_selection_reason !== 'main_line' && l.line_selection_reason !== 'safe_profile').length;
+
+        const selectedLine = (profile.useAltLines && boostedCount < boostLimit)
           ? selectOptimalLine(
               playerPick,
               playerPick.alternateLines || [],
