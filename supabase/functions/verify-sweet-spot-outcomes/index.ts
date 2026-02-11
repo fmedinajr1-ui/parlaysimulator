@@ -15,6 +15,18 @@ const normalizeName = (s: string): string =>
     .replace(/\s+/g, ' ')
     .trim();
 
+// Extract last name for fuzzy fallback
+const getLastName = (s: string): string => {
+  const parts = normalizeName(s).split(' ');
+  return parts[parts.length - 1] || '';
+};
+
+// Extract first initial for disambiguation
+const getFirstInitial = (s: string): string => {
+  const parts = normalizeName(s).split(' ');
+  return parts[0]?.substring(0, 3) || '';
+};
+
 // Map prop_type to stat field in game logs
 const propTypeToStat: Record<string, string> = {
   'points': 'points',
@@ -32,7 +44,6 @@ const propTypeToStat: Record<string, string> = {
   'blk': 'blocks',
   'turnovers': 'turnovers',
   'to': 'turnovers',
-  // Combos
   'pra': 'pra',
   'points_rebounds_assists': 'pra',
   'pr': 'pr',
@@ -56,7 +67,6 @@ const extractStatValue = (gameLog: any, propType: string): number | null => {
     return null;
   }
   
-  // Handle combo stats
   if (statField === 'pra') {
     return (Number(gameLog.points) || 0) + (Number(gameLog.rebounds) || 0) + (Number(gameLog.assists) || 0);
   }
@@ -143,7 +153,7 @@ Deno.serve(async (req) => {
         success: true,
         date: targetDate,
         message: 'No pending picks to verify',
-        summary: { total: 0, verified: 0, noData: 0, hits: 0, misses: 0, pushes: 0 }
+        summary: { total: 0, verified: 0, noData: 0, pending: 0, hits: 0, misses: 0, pushes: 0 }
       }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
@@ -153,7 +163,6 @@ Deno.serve(async (req) => {
     const windowStart = targetDate;
     const windowEnd = addDays(targetDate, 2);
 
-    // Fetch NBA game logs
     const { data: nbaLogs, error: nbaLogsError } = await supabase
       .from('nba_player_game_logs')
       .select('player_name, game_date, points, rebounds, assists, threes_made, steals, blocks, turnovers')
@@ -175,30 +184,47 @@ Deno.serve(async (req) => {
       console.warn(`[verify-sweet-spot-outcomes] NCAAB logs fetch warning: ${ncaabLogsError.message}`);
     }
 
-    // Merge all game logs (NCAAB + NBA)
     const allGameLogs = [...(nbaLogs || []), ...(ncaabLogs || [])];
     console.log(`[verify-sweet-spot-outcomes] Found ${nbaLogs?.length || 0} NBA + ${ncaabLogs?.length || 0} NCAAB game logs in window ${windowStart} to ${windowEnd}`);
 
     // Build normalized name lookup — use the most recent game log per player
     const gameLogMap = new Map<string, any>();
+    // Also build a last-name index for fuzzy fallback
+    const lastNameIndex = new Map<string, any[]>();
+    
     for (const log of allGameLogs) {
       const normalizedName = normalizeName(log.player_name);
       const existing = gameLogMap.get(normalizedName);
       if (!existing || log.game_date > existing.game_date) {
         gameLogMap.set(normalizedName, log);
       }
+      
+      // Build last name index
+      const lastName = getLastName(log.player_name);
+      if (lastName.length >= 3) {
+        const arr = lastNameIndex.get(lastName) || [];
+        arr.push(log);
+        lastNameIndex.set(lastName, arr);
+      }
     }
 
-    console.log(`[verify-sweet-spot-outcomes] Unique players with game logs: ${gameLogMap.size}`);
+    const totalPlayersWithLogs = gameLogMap.size;
+    console.log(`[verify-sweet-spot-outcomes] Unique players with game logs: ${totalPlayersWithLogs}`);
+
+    // Determine if we have enough game data to verify
+    // If very few game logs exist, games likely haven't been played yet
+    const hasSubstantialData = totalPlayersWithLogs >= 10;
 
     // Step 3: Match and verify each pick
     const results = {
       total: pendingPicks.length,
       verified: 0,
       noData: 0,
+      pending: 0,
       hits: 0,
       misses: 0,
       pushes: 0,
+      fuzzyMatches: 0,
       details: [] as any[]
     };
 
@@ -206,9 +232,50 @@ Deno.serve(async (req) => {
 
     for (const pick of pendingPicks) {
       const normalizedPlayerName = normalizeName(pick.player_name);
-      const gameLog = gameLogMap.get(normalizedPlayerName);
+      let gameLog = gameLogMap.get(normalizedPlayerName);
+      let matchType = 'exact';
+
+      // Fuzzy fallback: try last name + first 3 chars match
+      if (!gameLog) {
+        const lastName = getLastName(pick.player_name);
+        const firstPrefix = getFirstInitial(pick.player_name);
+        const candidates = lastNameIndex.get(lastName) || [];
+        
+        if (candidates.length === 1) {
+          // Only one player with this last name — safe match
+          gameLog = candidates[0];
+          matchType = 'fuzzy_lastname_unique';
+          results.fuzzyMatches++;
+        } else if (candidates.length > 1 && firstPrefix.length >= 3) {
+          // Multiple matches — use first 3 chars of first name to disambiguate
+          const match = candidates.find(c => {
+            const candFirst = getFirstInitial(c.player_name);
+            return candFirst.startsWith(firstPrefix) || firstPrefix.startsWith(candFirst);
+          });
+          if (match) {
+            gameLog = match;
+            matchType = 'fuzzy_firstname_prefix';
+            results.fuzzyMatches++;
+          }
+        }
+      }
 
       if (!gameLog) {
+        // No game log found — but was the player's game even scheduled?
+        // If we have very few logs, the game probably hasn't happened yet → keep as pending
+        if (!hasSubstantialData) {
+          results.pending++;
+          results.details.push({
+            player: pick.player_name,
+            propType: pick.prop_type,
+            status: 'pending',
+            reason: 'Insufficient game data in window — games may not have been played yet'
+          });
+          // Don't update — leave as pending/no_data for retry
+          continue;
+        }
+        
+        // We have substantial data but this player isn't in it — mark no_data
         updates.push({
           id: pick.id,
           actual_value: null,
@@ -221,7 +288,7 @@ Deno.serve(async (req) => {
           player: pick.player_name,
           propType: pick.prop_type,
           status: 'no_data',
-          reason: 'No game log found in window'
+          reason: 'No game log found — player likely did not play'
         });
         continue;
       }
@@ -255,7 +322,7 @@ Deno.serve(async (req) => {
         actual_value: actualValue,
         outcome,
         settled_at: new Date().toISOString(),
-        verified_source: 'nba_player_game_logs'
+        verified_source: `nba_player_game_logs (${matchType})`
       });
 
       results.verified++;
@@ -270,6 +337,7 @@ Deno.serve(async (req) => {
         line,
         actual: actualValue,
         outcome,
+        matchType,
         gameDate: gameLog.game_date,
         l10HitRate: pick.l10_hit_rate,
         confidence: pick.confidence_score
@@ -277,7 +345,7 @@ Deno.serve(async (req) => {
     }
 
     // Step 4: Batch update all picks
-    console.log(`[verify-sweet-spot-outcomes] Updating ${updates.length} picks...`);
+    console.log(`[verify-sweet-spot-outcomes] Updating ${updates.length} picks (${results.pending} left pending for retry)...`);
     
     for (const update of updates) {
       const { error: updateError } = await supabase
@@ -297,6 +365,10 @@ Deno.serve(async (req) => {
 
     // Step 5: Log to cron_job_history
     const duration = Date.now() - startTime;
+    const hitRate = (results.hits + results.misses) > 0
+      ? (results.hits / (results.hits + results.misses)).toFixed(4)
+      : null;
+
     await supabase.from('cron_job_history').insert({
       job_name: 'verify-sweet-spot-outcomes',
       status: 'completed',
@@ -306,20 +378,23 @@ Deno.serve(async (req) => {
       result: {
         date: targetDate,
         window: { start: windowStart, end: windowEnd },
+        totalPlayersWithLogs: totalPlayersWithLogs,
         summary: {
           total: results.total,
           verified: results.verified,
           noData: results.noData,
+          pending: results.pending,
           hits: results.hits,
           misses: results.misses,
           pushes: results.pushes,
-          hitRate: results.verified > 0 ? (results.hits / (results.hits + results.misses)).toFixed(4) : null
+          fuzzyMatches: results.fuzzyMatches,
+          hitRate
         }
       }
     });
 
     console.log(`[verify-sweet-spot-outcomes] Completed in ${duration}ms`);
-    console.log(`Summary: ${results.verified} verified, ${results.noData} no data, ${results.hits} hits, ${results.misses} misses, ${results.pushes} pushes`);
+    console.log(`Summary: ${results.verified} verified (${results.fuzzyMatches} fuzzy), ${results.noData} no_data, ${results.pending} pending, ${results.hits} hits, ${results.misses} misses`);
 
     return new Response(JSON.stringify({
       success: true,
@@ -330,18 +405,20 @@ Deno.serve(async (req) => {
         total: results.total,
         verified: results.verified,
         noData: results.noData,
+        pending: results.pending,
         hits: results.hits,
         misses: results.misses,
         pushes: results.pushes,
-        hitRate: results.verified > 0 ? results.hits / (results.hits + results.misses) : null
+        fuzzyMatches: results.fuzzyMatches,
+        hitRate
       },
-      details: results.details
+      details: results.details.slice(0, 50) // Limit detail payload
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
 
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
     console.error('[verify-sweet-spot-outcomes] Error:', errorMessage);
     
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
