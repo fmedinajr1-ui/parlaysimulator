@@ -1,63 +1,36 @@
 
+# Add Outcome Filter Tabs to Day Parlay Detail Drawer
 
-## Fix: Show Settled Parlays (Won/Lost) Across All Views
+## Problem
+When clicking a date on the P&L Calendar, the drawer shows ALL parlays including void ones (28 void on Feb 9th alone), making it hard to find the 13 winners and 10 losers.
 
-### Root Cause
+## Solution
+Add filter tabs (All / Won / Lost / Void) at the top of the `DayParlayDetail` drawer so users can quickly isolate the parlays they care about. Winners will be shown first by default, sorted by profit descending.
 
-1. **Bot Dashboard Parlays tab** only queries `bot_daily_parlays` for today's date -- settled parlays from previous days are invisible.
-2. **Profile Parlay History** reads from `parlay_history` (user-uploaded slips), not from `bot_daily_parlays`. If you're logged in as a user without manually settled slips, you see nothing.
-3. There is no "past settled parlays" view that spans multiple days.
+## Changes
 
-### Database Status (confirmed)
+### 1. `src/components/bot/DayParlayDetail.tsx`
+- Add a local `filter` state with options: `all`, `won`, `lost`, `void`
+- Render a row of small toggle buttons/tabs below the header showing counts (e.g., "Won (13)", "Lost (10)", "Void (28)")
+- Filter the displayed parlays based on the active tab
+- Default to `all` but exclude void from "All" view -- actually, keep "All" as truly all, but sort won first, then lost, then void/pending
+- Sort won parlays by profit descending, lost by profit ascending (biggest losses first)
 
-- `bot_daily_parlays`: 13 won, 10 lost, 35 void, 9 pending (all settled ones from Feb 9)
-- `parlay_history`: 59 settled for user `2839f89e`, 0 settled for other users
-- `user_parlay_outcomes`: empty (no recorded outcomes)
-- `bot_activation_status`: P/L calendar data exists and is writing correctly
+### 2. `src/components/bot/BotPnLCalendar.tsx`
+- No changes needed -- clicking a calendar date already opens the `DayParlayDetail` drawer via `selectedDate` state. This flow works correctly.
 
-### Plan
+## Technical Details
 
-#### 1. Add "Recent Settled" Section to Bot Dashboard Parlays Tab
-
-Update `useBotEngine` to include a second query fetching recently settled bot parlays (last 7 days, outcome != 'pending'):
+In `DayParlayDetail.tsx`:
 
 ```
-bot_daily_parlays
-  .select('*')
-  .neq('outcome', 'pending')
-  .neq('outcome', 'void')
-  .order('settled_at', { ascending: false })
-  .limit(20)
+- Add: const [filter, setFilter] = useState<'all' | 'won' | 'lost' | 'void'>('all');
+- Compute filteredParlays by filtering on outcome, then sorting:
+  - won: descending by profit_loss
+  - lost: ascending by profit_loss
+  - all: won first (desc profit), then lost (asc profit), then void/pending
+- Render filter tabs using small Badge-style buttons with counts
+- Update the description line to reflect filtered count vs total
 ```
 
-Display these in the Parlays tab below today's parlays, grouped as "Recent Results" with won/lost indicators.
-
-#### 2. Make P/L Calendar Days Clickable
-
-When you tap a day cell in `BotPnLCalendar`, show a detail panel listing the individual bot parlays for that date -- each with its outcome (won/lost/void), legs hit/missed, and profit/loss amount.
-
-This requires:
-- Adding a `selectedDate` state to the calendar
-- A new query in `useBotPnLCalendar` that fetches `bot_daily_parlays` for the selected date
-- A `DayDetailPanel` component showing the parlays
-
-#### 3. Fix Profile Parlay History to Show Bot Parlays Too
-
-Update `ParlayHistoryFeed` to also query `bot_daily_parlays` for the logged-in user's settled bot parlays (if any exist) and merge them with `parlay_history` entries. Alternatively, add a separate "Bot Results" section.
-
-Note: `bot_daily_parlays` is not user-scoped (no `user_id` column), so this section would show all bot results. If user-scoping is needed, that's a separate migration.
-
-### Technical Details
-
-**Files to modify:**
-- `src/hooks/useBotEngine.ts` -- Add `recentSettled` query for last 7 days of non-pending bot parlays
-- `src/pages/BotDashboard.tsx` -- Render "Recent Results" section in the Parlays tab
-- `src/hooks/useBotPnLCalendar.ts` -- Add `selectedDate` state and day-detail query
-- `src/components/bot/BotPnLCalendar.tsx` -- Make day cells clickable, show detail panel
-- `src/components/profile/ParlayHistoryFeed.tsx` -- Optionally merge bot parlay results
-
-**New component:**
-- `src/components/bot/DayParlayDetail.tsx` -- Panel showing individual parlays for a selected calendar day
-
-**No database migrations needed** -- all data already exists in `bot_daily_parlays` and `bot_activation_status`.
-
+The query already fetches all parlays for the date. We just add client-side filtering and better sorting so the 13 winners and 10 losers are easy to browse.
