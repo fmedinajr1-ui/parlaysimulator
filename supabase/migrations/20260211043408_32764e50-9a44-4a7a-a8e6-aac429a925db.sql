@@ -1,0 +1,1 @@
+ALTER TABLE bot_daily_parlays ADD COLUMN IF NOT EXISTS legs_voided integer DEFAULT 0;
