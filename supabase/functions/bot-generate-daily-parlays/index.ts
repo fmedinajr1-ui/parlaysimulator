@@ -1623,6 +1623,14 @@ async function generateTierParlays(
           has_real_line: playerPick.has_real_line || false,
           sport: playerPick.sport || 'basketball_nba',
         };
+
+        // NEGATIVE-EDGE GATE: Block legs where projection contradicts bet direction
+        const projBuffer = legData.projection_buffer || 0;
+        const projValue = legData.projected_value || 0;
+        if (projValue > 0 && projBuffer < 0) {
+          console.log(`[NegEdgeBlock] Blocked ${legData.player_name} ${legData.prop_type} ${legData.side} ${legData.line} (proj: ${projValue}, buffer: ${projBuffer.toFixed(1)})`);
+          continue;
+        }
         
         if (playerPick.team_name) {
           parlayTeamCount.set(playerPick.team_name, (parlayTeamCount.get(playerPick.team_name) || 0) + 1);
