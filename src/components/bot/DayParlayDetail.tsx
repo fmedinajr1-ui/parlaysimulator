@@ -127,7 +127,7 @@ export function DayParlayDetail({ date, open, onOpenChange }: DayParlayDetailPro
             ))}
           </div>
 
-          <ScrollArea className="max-h-[45vh]">
+          <div>
             <div className="space-y-3">
               {filteredParlays.map((parlay) => {
               const legs = parlay.legs as BotLeg[];
@@ -201,7 +201,7 @@ export function DayParlayDetail({ date, open, onOpenChange }: DayParlayDetailPro
               );
             })}
             </div>
-          </ScrollArea>
+          </div>
         </>
       )}
     </MobileDetailDrawer>
