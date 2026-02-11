@@ -939,6 +939,80 @@ async function fetchInjuryBlocklist(
   return { blocklist, penalties };
 }
 
+// ============= RESEARCH INTELLIGENCE =============
+
+async function fetchResearchInjuryIntel(
+  supabase: any,
+  gameDate: string
+): Promise<Set<string>> {
+  const researchBlocklist = new Set<string>();
+  
+  const { data } = await supabase
+    .from('bot_research_findings')
+    .select('key_insights, id')
+    .eq('category', 'injury_intel')
+    .eq('research_date', gameDate)
+    .order('created_at', { ascending: false })
+    .limit(3);
+
+  if (!data?.length) return researchBlocklist;
+
+  const outPattern = /([A-Z][a-z]+ [A-Z][a-z]+)\s+(?:Out|OUT|ruled out|RULED OUT)/gi;
+  for (const finding of data) {
+    const insights = Array.isArray(finding.key_insights) 
+      ? finding.key_insights.join(' ') 
+      : String(finding.key_insights || '');
+    let match;
+    while ((match = outPattern.exec(insights)) !== null) {
+      researchBlocklist.add(match[1].toLowerCase().trim());
+    }
+    outPattern.lastIndex = 0;
+  }
+
+  console.log(`[ResearchIntel] Found ${researchBlocklist.size} OUT players from research`);
+  return researchBlocklist;
+}
+
+async function fetchResearchEdgeThreshold(supabase: any): Promise<number | null> {
+  const { data } = await supabase
+    .from('bot_research_findings')
+    .select('key_insights, id')
+    .eq('category', 'statistical_models')
+    .eq('actionable', true)
+    .is('action_taken', null)
+    .order('relevance_score', { ascending: false })
+    .limit(1);
+
+  if (!data?.[0]) return null;
+  
+  const text = Array.isArray(data[0].key_insights) 
+    ? data[0].key_insights.join(' ') 
+    : String(data[0].key_insights || '');
+  
+  const edgeMatch = text.match(/edge\s*[>≥]\s*(\d+(?:\.\d+)?)\s*%/i);
+  if (edgeMatch) {
+    const threshold = parseFloat(edgeMatch[1]) / 100;
+    console.log(`[ResearchIntel] Dynamic edge threshold from research: ${threshold}`);
+    return threshold;
+  }
+  return null;
+}
+
+async function markResearchConsumed(supabase: any, gameDate: string): Promise<void> {
+  const { error } = await supabase
+    .from('bot_research_findings')
+    .update({ action_taken: `Applied to generation on ${gameDate}` })
+    .in('category', ['injury_intel', 'statistical_models'])
+    .eq('research_date', gameDate)
+    .is('action_taken', null);
+
+  if (error) {
+    console.warn(`[ResearchIntel] Failed to mark research consumed:`, error.message);
+  } else {
+    console.log(`[ResearchIntel] Marked research findings as consumed for ${gameDate}`);
+  }
+}
+
 // ============= PROP POOL BUILDER =============
 
 async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<string, number>, categoryWeights: CategoryWeight[]): Promise<PropPool> {
@@ -967,12 +1041,31 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   const { startUtc, endUtc, gameDate } = getEasternDateRange();
   console.log(`[Bot] ET window: ${startUtc} → ${endUtc} (gameDate: ${gameDate})`);
 
-  const [activePlayersToday, injuryData, teamsPlayingToday] = await Promise.all([
+  const [activePlayersToday, injuryData, teamsPlayingToday, researchBlocklist, researchEdge] = await Promise.all([
     fetchActivePlayersToday(supabase, startUtc, endUtc),
     fetchInjuryBlocklist(supabase, gameDate),
     fetchTeamsPlayingToday(supabase, startUtc, endUtc, gameDate),
+    fetchResearchInjuryIntel(supabase, gameDate),
+    fetchResearchEdgeThreshold(supabase),
   ]);
   const { blocklist, penalties } = injuryData;
+
+  // Merge research injury intel into blocklist
+  for (const player of researchBlocklist) {
+    blocklist.add(player);
+  }
+  if (researchBlocklist.size > 0) {
+    console.log(`[Bot] Merged ${researchBlocklist.size} research-sourced OUT players into blocklist`);
+  }
+
+  // Apply dynamic edge threshold from research if available
+  if (researchEdge !== null) {
+    for (const tierKey of Object.keys(TIER_CONFIG) as TierName[]) {
+      const original = TIER_CONFIG[tierKey].minEdge;
+      TIER_CONFIG[tierKey].minEdge = Math.max(original, researchEdge);
+    }
+    console.log(`[Bot] Applied research edge threshold: ${researchEdge} (overrides lower defaults)`);
+  }
 
   // 1. Sweet spot picks (analyzed player props) - no is_active filter, analysis_date is sufficient
   const { data: sweetSpots } = await supabase
@@ -1758,6 +1851,9 @@ Deno.serve(async (req) => {
         .insert(allParlays);
 
       if (insertError) throw insertError;
+
+      // Mark research findings as consumed
+      await markResearchConsumed(supabase, targetDate);
     }
 
     // 7. Update activation status
