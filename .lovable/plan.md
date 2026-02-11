@@ -1,116 +1,73 @@
 
 
-# Smart API Budget Plan for 100K Odds API Requests
+# Fix Sweet Spot Pipeline: Activate Picks and Sync Projections
 
-## The Problem
+## Problem Summary
 
-The whale-odds-scraper currently runs **every 5 minutes** (288 times/day), making **165 API calls per run**. That's **~47,500 calls/day** -- your 100K would be gone in 2 days.
+Two critical issues are blocking the bot from generating parlays today:
 
-Most of those calls are wasted: the scraper fetches odds for **14 sports**, **6+ markets each**, across **15 events per sport** -- even when most sports have no games or the bot doesn't need fresh data yet.
+1. **All 300 category_sweet_spots picks are `is_active: false`** - The analyzer matched only 22 players to live lines (out of 300) because it uses `commence_time >= now()` which misses games that already tipped or are about to start. The other 278 were marked inactive.
 
-## The Strategy: "Scout First, Then Pull Odds"
+2. **unified_props are unenriched** - All 2,061 live lines have `composite_score: 0`, `category: uncategorized`, and `true_line: null`. Projections from category_sweet_spots aren't synced back.
 
-Instead of blindly scraping everything every 5 minutes, the bot will follow a **two-phase approach**:
+Additionally, several picks in the top 10 have **negative edges** (projection goes against the recommended side), which means the bot would bet on losing positions.
 
-**Phase 1 - Scout (cheap):** One API call per sport to check what games exist today. This costs ~4-5 calls total.
+## Fix Plan
 
-**Phase 2 - Pull Odds (targeted):** Only fetch player prop markets for sports/events that actually have games, and only for the prop types the bot cares about most.
+### Step 1: Re-activate valid sweet spots with edge validation
 
-## Budget Breakdown (per day)
+Write a quick SQL update to set `is_active = true` on category_sweet_spots rows that:
+- Have `actual_line IS NOT NULL` (matched to a real sportsbook line)
+- Have a **positive directional edge** (projection supports the recommended side)
+- Have `l10_hit_rate >= 0.70`
 
-| Activity | Frequency | Calls/Run | Daily Total |
-|---|---|---|---|
-| Scouting (events check) | Every 30 min (48x) | 5 calls | 240 |
-| Full player prop scrape | 3x/day (9AM, 12PM, 5PM ET) | ~120 calls | 360 |
-| Team props (spreads/totals/ML) | 3x/day | ~20 calls | 60 |
-| Pre-generation refresh | 1x before bot runs | ~80 calls | 80 |
-| Line movement checks | Every 15 min for active picks | ~10 calls | 960 |
+This filters out bad picks like LaMelo Assists OVER 8.5 (proj only 7.5) while activating good ones like Donovan Mitchell Assists OVER 5.5 (proj 7.0, 100% L10 hit rate).
 
-**Estimated daily usage: ~1,700 calls/day** (down from 47,500)
+### Step 2: Sync projections into unified_props
 
-At 1,700/day, 100K lasts **~59 days** (about 2 months).
+Update the `category-props-analyzer` to write projection data back to `unified_props` after analysis. This means updating:
+- `true_line` = projected_value from category_sweet_spots
+- `true_line_diff` = projected_value - current_line
+- `composite_score` = confidence_score from sweet spots
+- `category` = category from sweet spots
+- `recommended_side` = from sweet spots
 
-## What Changes
+This is a new sync step at the end of the analyzer function that joins on `player_name` + `prop_type` (normalized).
 
-### 1. Add API Budget Tracker (new database table)
+### Step 3: Fix the `commence_time` filter in the analyzer
 
-Track daily API usage so the bot knows when to slow down or stop:
-- `api_budget_tracker` table with daily call counts and remaining quota
-- Hard ceiling: if daily calls exceed 2,500, pause all scraping until next day
-- Warning threshold at 2,000 calls
-
-### 2. Rewrite Scraper Scheduling Logic
-
-Replace the "scrape everything every 5 minutes" approach with smart tiers:
-
-- **Scouting mode** (every 30 min): Only fetch events endpoints (1 call per sport) to know what games exist. No player props.
-- **Full scrape** (3x/day at 9AM, 12PM, 5PM ET): Pull all player props and team props for today's games only. Focus on NBA + NHL (where the bot has the best data).
-- **Targeted refresh** (every 15 min, active picks only): Only re-fetch odds for players already in `category_sweet_spots` with pending outcomes -- typically 20-40 players, not hundreds.
-
-### 3. Sport Priority System
-
-Not all sports deserve equal API spend. Rank by bot performance:
-
-- **Tier 1 (always fetch):** NBA, NHL -- best historical data, most profitable
-- **Tier 2 (fetch if games exist):** NCAAB, WNBA (when in season)
-- **Tier 3 (skip for now):** NFL/NCAAF (offseason), Tennis (low volume)
-
-This alone cuts API calls by ~60% since tennis tournaments and football add ~8 sports with 0 games right now.
-
-### 4. Dedup Market Requests
-
-Currently the scraper fetches each market separately (6 calls per NBA event). Batch multiple markets into a single API call where The Odds API supports it (comma-separated markets parameter). This cuts player prop calls from 6 per event to 2-3.
-
-### 5. Pre-Generation Refresh Gate
-
-Before `bot-generate-daily-parlays` runs, trigger a targeted odds refresh ONLY for the players/props in today's `category_sweet_spots`. This ensures the bot has fresh lines without scraping the entire market.
-
-## Technical Details
-
-### New table: `api_budget_tracker`
-
-```sql
-CREATE TABLE api_budget_tracker (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  date DATE NOT NULL UNIQUE,
-  calls_used INTEGER DEFAULT 0,
-  calls_limit INTEGER DEFAULT 2500,
-  last_full_scrape TIMESTAMPTZ,
-  last_scout TIMESTAMPTZ,
-  created_at TIMESTAMPTZ DEFAULT now()
-);
+Change the analyzer's unified_props query from:
+```
+.gte('commence_time', nowIso)
+```
+to a wider window that includes today's games even if they've already started:
+```
+.gte('commence_time', todayStartUtc)  // Start of today in UTC
 ```
 
-### File: `supabase/functions/whale-odds-scraper/index.ts`
+This ensures games that tipped off 30 minutes ago still get their players matched.
 
-Major changes:
-- Add `mode` parameter: `'scout'` (events only), `'full'` (all props), `'targeted'` (active picks only)
-- In scout mode: only call events endpoints, store game counts, cost ~5 API calls
-- In full mode: batch markets where possible, only fetch Tier 1+2 sports with active games
-- In targeted mode: only fetch odds for players in today's `category_sweet_spots`
-- Before every API call, increment `api_budget_tracker` and check against daily limit
-- Skip sports with 0 upcoming events (saves ~60% of current calls)
+### Step 4: Add negative-edge blocking
 
-### File: `supabase/functions/data-pipeline-orchestrator/index.ts`
+Add validation in the analyzer so picks with projections that contradict the recommended side are automatically blocked:
+- OVER picks: require `projected_value > actual_line`
+- UNDER picks: require `projected_value < actual_line`
 
-- Before calling `whale-odds-scraper` in full mode, check `api_budget_tracker` for remaining budget
-- Call scraper in `'targeted'` mode before parlay generation instead of full mode
-- Log API budget status in pipeline results
+This prevents the bot from ever recommending LaMelo Assists OVER 8.5 when the projection is only 7.5.
 
-### Cron Schedule Changes
+## Technical Changes
 
-Replace the current 5-minute cron with:
-- Every 30 minutes: `whale-odds-scraper` in `scout` mode
-- 3x daily (9AM, 12PM, 5PM ET): `whale-odds-scraper` in `full` mode
-- Before bot generation: `whale-odds-scraper` in `targeted` mode
+### Files Modified
 
-## Summary
+1. **`supabase/functions/category-props-analyzer/index.ts`**
+   - Fix `commence_time` filter (line ~1161): use start-of-day UTC instead of `now()`
+   - Add negative-edge blocking after projection calculation (around line 1304)
+   - Add unified_props sync step at end of function (new ~50 lines)
 
-| Metric | Before | After |
-|---|---|---|
-| Daily API calls | ~47,500 | ~1,700 |
-| 100K lasts | ~2 days | ~59 days |
-| Sports scraped | 14 (incl. offseason) | 2-4 (active only) |
-| Calls per event | 6-7 separate | 2-3 batched |
-| Refresh frequency | Every 5 min (everything) | Smart tiers (scout/full/targeted) |
+2. **Database migration**: No schema changes needed -- `unified_props` already has `true_line`, `true_line_diff`, `composite_score`, `category`, `recommended_side` columns
+
+### Estimated impact
+- Activates ~15-20 valid sweet spot picks for today (from current 0)
+- Enriches ~200-400 unified_props rows with projections and categories
+- Blocks ~5-8 negative-edge picks that would have hurt parlay accuracy
 
