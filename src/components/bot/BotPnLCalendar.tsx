@@ -85,9 +85,9 @@ export function BotPnLCalendar() {
           </div>
           <div className="text-center p-2 rounded-lg bg-muted/50">
             <p className="text-sm font-bold">
-              <span className="text-green-400">{stats.winDays}W</span>
-              <span className="text-muted-foreground mx-0.5">-</span>
-              <span className="text-red-400">{stats.lossDays}L</span>
+              <span className="text-green-400">{stats.totalWins}W</span>
+              <span className="text-muted-foreground mx-0.5">–</span>
+              <span className="text-red-400">{stats.totalLosses}L</span>
             </p>
             <p className="text-[10px] text-muted-foreground">Record</p>
           </div>
