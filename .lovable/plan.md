@@ -1,134 +1,149 @@
 
 
-# Win-Rate-First Parlay Strategy + Boosted Odds Variants
+# Close the Research-to-Generation Gap
 
-## Overview
-Restructure the bot's execution tier to prioritize **maximum win rate** by selecting only from the highest-hitting categories and picks, then automatically generate **boosted odds variants** of those same parlays by shopping for alternate lines on select legs.
+## Problem
+The bot collects valuable research data (injury intelligence, statistical model recommendations, sharp money signals) but **never uses any of it** during parlay generation. Out of 149 research findings, 9 are flagged actionable with 0 acted upon. This is the single biggest disconnect in the pipeline.
 
-## Current Problem
-The bot generates parlays across all tiers with composite scoring that blends hit rate, edge, odds value, and category weight equally (30/25/25/20). This means a pick with 53% hit rate but great odds can outrank a 75% hit rate pick. The result: parlays that look good on paper but don't win consistently.
+## What Needs to Change
 
-## Strategy
+### 1. Feed Research Injury Intel Into the Generator
+Currently the generator only checks `lineup_alerts` for injury data. The research agent independently fetches detailed injury reports from Perplexity (player OUT statuses, usage impact analysis, minute projections for replacements) but stores them in `bot_research_findings` where they're never read.
 
-### 1. New "Max Win Rate" Profiles (Execution Tier)
-Replace the current 8 execution profiles with a **win-rate-first** selection approach:
+**Fix**: Add a `fetchResearchInjuryIntel` function that queries today's `bot_research_findings` where `category = 'injury_intel'` and extracts player names with OUT/Questionable statuses. Merge these into the existing injury blocklist as a secondary source, so even if `lineup_alerts` is stale, the research data catches gaps.
 
-- **Sort picks strictly by L10 hit rate** (not composite score) for these profiles
-- **Minimum hit rate floor: 60%** per leg (currently 55%)
-- **Golden Category Lock**: Only draw from categories with 55%+ calibrated hit rate and 20+ samples
-- **New profiles**:
-  - 3-leg "Cash Lock" (3 legs, all 65%+ hit rate, main lines only)
-  - 3-leg "Cash Lock" x2 (second variant for diversity)
-  - 4-leg "Strong Cash" (4 legs, all 60%+ hit rate, main lines only)
-  - 4-leg "Strong Cash" x2
-  - 3-leg "Boosted Cash" (same 65%+ picks but with alt-line shopping on 1 leg)
-  - 4-leg "Boosted Cash" (same 60%+ picks but with alt-line shopping on 1-2 legs)
-  - 5-leg "Premium Boost" (60%+ picks, alt-lines on 2 legs, prefer plus-money)
-  - 5-leg "Max Boost" (60%+ picks, aggressive alt-lines, all legs shopped)
+### 2. Apply Statistical Model Insights to Scoring
+Research findings in the `statistical_models` category contain specific recommendations like:
+- Kelly Criterion sizing formulas
+- Bayesian projection adjustments using recent form
+- Sharp money detection thresholds (5-10% edge minimum)
+- Per-36 scaling for usage rate changes
 
-### 2. Win-Rate-First Pick Selection
-Add a new sorting mode in `generateTierParlays` that, for profiles tagged `sortBy: 'hit_rate'`, sorts the candidate pool by `l10_hit_rate` descending instead of `compositeScore`. This ensures the bot picks the most historically reliable legs first.
+**Fix**: Parse the most recent `statistical_models` finding and extract the minimum edge threshold. Feed this into the tier config's `minEdge` parameter dynamically rather than using a hardcoded 0.008. If research says "target 5-10% edges", set `minEdge: 0.05`.
 
-### 3. Boosted Odds Variant Generation
-For "Boosted" profiles:
-- Start with the same high-win-rate picks selected by the Cash Lock profiles
-- Apply `selectOptimalLine` with `useAltLines: true` and `preferPlusMoney: true` on a subset of legs
-- The `minBufferMultiplier` ensures the alt line is still safely within the projection buffer
-- This creates a parlay with the same core picks but higher potential payout
+### 3. Mark Research as Acted Upon
+After the generator reads and applies a research finding, update `action_taken` on that row so we can track what's been consumed vs ignored.
 
-### 4. Category Priority Queue
-Build a priority queue from `bot_category_weights` where categories are ranked by `current_hit_rate`:
-- **Tier 1 (65%+)**: THREE_POINT_SHOOTER, HIGH_ASSIST_UNDER, LOW_SCORER_UNDER
-- **Tier 2 (55%+)**: ASSIST_ANCHOR, BIG_ASSIST_OVER, BIG_REBOUNDER
-- Picks from Tier 1 categories are selected first, then Tier 2 fills remaining legs
+### 4. Fix Settlement Accuracy
+Won parlays showing `legs_hit < leg_count` (e.g., 5-leg with 3 hit) indicates voided legs are being ignored rather than treated properly. A 5-leg parlay with 2 voided legs and 3 hits should be settled as a 3-leg parlay win, but the `legs_hit` count needs to accurately reflect this for learning to work.
+
+**Fix**: Update settlement logic to set `legs_hit` = actual hits and `leg_count` = non-voided legs (or add `legs_voided` column) so win rate calculations are accurate.
+
+### 5. Track New Strategy Profiles
+The new cash_lock, boosted_cash, premium_boost, and max_boost strategies need entries in `bot_strategies` so their individual win rates can be monitored and compared.
 
 ## Technical Details
 
-### File Modified
-- `supabase/functions/bot-generate-daily-parlays/index.ts`
+### File: `supabase/functions/bot-generate-daily-parlays/index.ts`
 
-### Changes to ParlayProfile interface (line 37)
-Add `sortBy` field:
+#### New function: `fetchResearchInjuryIntel`
 ```typescript
-interface ParlayProfile {
-  legs: number;
-  strategy: string;
-  sports?: string[];
-  betTypes?: string[];
-  minOddsValue?: number;
-  minHitRate?: number;
-  useAltLines?: boolean;
-  minBufferMultiplier?: number;
-  preferPlusMoney?: boolean;
-  sortBy?: 'composite' | 'hit_rate';  // NEW
-  boostLegs?: number;                  // NEW: how many legs to shop for alt lines
+async function fetchResearchInjuryIntel(
+  supabase: any,
+  gameDate: string
+): Promise<Set<string>> {
+  const researchBlocklist = new Set<string>();
+  
+  const { data } = await supabase
+    .from('bot_research_findings')
+    .select('key_insights')
+    .eq('category', 'injury_intel')
+    .eq('research_date', gameDate)
+    .order('created_at', { ascending: false })
+    .limit(3);
+
+  if (!data?.length) return researchBlocklist;
+
+  // Extract player names with "Out" status from research text
+  const outPattern = /([A-Z][a-z]+ [A-Z][a-z]+)\s+(?:Out|OUT)/g;
+  for (const finding of data) {
+    const insights = Array.isArray(finding.key_insights) 
+      ? finding.key_insights.join(' ') 
+      : String(finding.key_insights);
+    let match;
+    while ((match = outPattern.exec(insights)) !== null) {
+      researchBlocklist.add(match[1].toLowerCase().trim());
+    }
+  }
+
+  console.log(`[ResearchIntel] Found ${researchBlocklist.size} OUT players from research`);
+  return researchBlocklist;
 }
 ```
 
-### New Execution Tier Profiles (replace lines 163-172)
+#### Integration in Promise.all block (around line 970)
 ```typescript
-execution: {
-  count: 10,  // increased from 8
-  iterations: 25000,
-  maxPlayerUsage: 3,
-  maxTeamUsage: 2,
-  maxCategoryUsage: 2,
-  minHitRate: 60,       // raised from 55
-  minEdge: 0.008,       // slightly relaxed since win rate is primary
-  minSharpe: 0.02,
-  stake: 'kelly',
-  minConfidence: 0.60,  // raised from 0.55
-  profiles: [
-    // CASH LOCKS: Max win rate, main lines only
-    { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: false },
-    { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: false },
-    { legs: 4, strategy: 'strong_cash', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
-    { legs: 4, strategy: 'strong_cash', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
-    // BOOSTED: Same high-rate picks, but shop odds on some legs
-    { legs: 3, strategy: 'boosted_cash', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
-    { legs: 4, strategy: 'boosted_cash', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.5 },
-    { legs: 5, strategy: 'premium_boost', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, preferPlusMoney: true, minBufferMultiplier: 1.2 },
-    { legs: 5, strategy: 'max_boost', sports: ['all'], minHitRate: 58, sortBy: 'hit_rate', useAltLines: true, boostLegs: 3, preferPlusMoney: true, minBufferMultiplier: 1.0 },
-    // CROSS-SPORT cash plays
-    { legs: 3, strategy: 'cash_lock_cross', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
-    { legs: 4, strategy: 'strong_cash_cross', sports: ['all'], minHitRate: 58, sortBy: 'hit_rate', useAltLines: false },
-  ],
-},
-```
+const [activePlayersToday, injuryData, teamsPlayingToday, researchBlocklist] = await Promise.all([
+  fetchActivePlayersToday(supabase, startUtc, endUtc),
+  fetchInjuryBlocklist(supabase, gameDate),
+  fetchTeamsPlayingToday(supabase, startUtc, endUtc, gameDate),
+  fetchResearchInjuryIntel(supabase, gameDate),
+]);
 
-### Modified pick selection in generateTierParlays (around line 1418-1429)
-When `profile.sortBy === 'hit_rate'`, re-sort the candidate pool by hit rate:
-```typescript
-if (profile.sortBy === 'hit_rate') {
-  candidatePicks = [...candidatePicks].sort((a, b) => {
-    const aHitRate = 'l10_hit_rate' in a ? (a as EnrichedPick).l10_hit_rate : a.confidence_score;
-    const bHitRate = 'l10_hit_rate' in b ? (b as EnrichedPick).l10_hit_rate : b.confidence_score;
-    return bHitRate - aHitRate;
-  });
+// Merge research blocklist into injury blocklist
+for (const player of researchBlocklist) {
+  blocklist.add(player);
 }
 ```
 
-### Boosted legs logic in line selection (around line 1477-1485)
-Apply alt-line shopping only to the first N legs (controlled by `boostLegs`):
+#### New function: `fetchResearchEdgeThreshold`
 ```typescript
-const boostLimit = profile.boostLegs ?? (profile.useAltLines ? legs.length : 0);
-const boostedCount = legs.filter(l => l.line_selection_reason !== 'main_line' && l.line_selection_reason !== 'safe_profile').length;
+async function fetchResearchEdgeThreshold(supabase: any): Promise<number | null> {
+  const { data } = await supabase
+    .from('bot_research_findings')
+    .select('key_insights')
+    .eq('category', 'statistical_models')
+    .eq('actionable', true)
+    .is('action_taken', null)
+    .order('relevance_score', { ascending: false })
+    .limit(1);
 
-const selectedLine = (profile.useAltLines && boostedCount < boostLimit)
-  ? selectOptimalLine(playerPick, playerPick.alternateLines || [], profile.strategy, profile.preferPlusMoney || false, profile.minBufferMultiplier || 1.0)
-  : { line: playerPick.line, odds: playerPick.americanOdds, reason: 'main_line' };
+  if (!data?.[0]) return null;
+  
+  const text = Array.isArray(data[0].key_insights) 
+    ? data[0].key_insights.join(' ') 
+    : String(data[0].key_insights);
+  
+  // Extract edge threshold recommendation (e.g., "edge > 5%")
+  const edgeMatch = text.match(/edge\s*[>≥]\s*(\d+(?:\.\d+)?)\s*%/i);
+  if (edgeMatch) {
+    return parseFloat(edgeMatch[1]) / 100;
+  }
+  return null;
+}
 ```
 
-### Validation Tier Update
-Also raise the validation tier's hit rate floor slightly (52 to 55) and add 2 hit-rate-sorted profiles:
+#### Mark findings as consumed (after generation completes)
 ```typescript
-{ legs: 3, strategy: 'validated_winrate', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate' },
-{ legs: 4, strategy: 'validated_winrate', sports: ['basketball_nba'], minHitRate: 58, sortBy: 'hit_rate' },
+await supabase
+  .from('bot_research_findings')
+  .update({ action_taken: `Applied to generation on ${gameDate}` })
+  .eq('category', 'injury_intel')
+  .eq('research_date', gameDate)
+  .is('action_taken', null);
 ```
 
-## Expected Outcome
-- **Cash Lock parlays**: 3-4 legs from 65%+ categories, conservative lines, highest probability of cashing
-- **Boosted parlays**: Same reliable picks with 1-3 legs shopped for better odds, higher payout potential with similar base win probability
-- Categories like THREE_POINT_SHOOTER (75%), HIGH_ASSIST_UNDER (75%), LOW_SCORER_UNDER (65%) will dominate execution-tier selections
-- Clear labeling in the UI: "Cash Lock" vs "Boosted Cash" so you can see which are safe vs which are swinging for more
+### Database Migration: Add `legs_voided` column
+```sql
+ALTER TABLE bot_daily_parlays ADD COLUMN IF NOT EXISTS legs_voided integer DEFAULT 0;
+```
+
+### Database Migration: Insert new strategy entries
+```sql
+INSERT INTO bot_strategies (strategy_name, description, is_active, times_used, times_won, win_rate, roi)
+VALUES 
+  ('cash_lock', '3-leg max win rate, main lines only, 65%+ hit rate per leg', true, 0, 0, 0, 0),
+  ('strong_cash', '4-leg high win rate, main lines only, 60%+ hit rate', true, 0, 0, 0, 0),
+  ('boosted_cash', 'High win rate picks with alt-line shopping on 1-2 legs', true, 0, 0, 0, 0),
+  ('premium_boost', '5-leg 60%+ with 2 boosted legs, plus-money preferred', true, 0, 0, 0, 0),
+  ('max_boost', '5-leg aggressive alt-lines on all legs', true, 0, 0, 0, 0)
+ON CONFLICT (strategy_name) DO NOTHING;
+```
+
+## Expected Impact
+- Research injury data plugs gaps where `lineup_alerts` is stale (catches late scratches)
+- Edge threshold from statistical models raises the quality floor dynamically
+- Accurate `legs_voided` tracking fixes misleading win rate calculations
+- Strategy-level tracking enables comparing cash_lock vs boosted performance over time
+- Every piece of stored research data is now consumed and marked, closing the feedback loop
 
