@@ -1,52 +1,44 @@
 
-# Fix Telegram Not Showing Parlay Counts
+# Make "+28 more" Expandable to Show All Parlays
 
-## Root Cause
+## Current Behavior
+On the Bot Dashboard, only the first 10 parlays are shown, with a static "+X more" text label for the rest. Users can't see the hidden parlays.
 
-The Telegram notification is actually being sent (logs confirm it), but the **tier counts display as 0** because of a data format mismatch.
+## Change
 
-The generator sends:
-```
-data: {
-  totalCount: 10,
-  tierSummary: { execution: { count: 10, legDistribution: {...} } },
-  poolSize: 150,
-  date: '2026-02-11'
-}
-```
+**File**: `src/pages/BotDashboard.tsx` (lines 180-189)
 
-But `formatTieredParlaysGenerated()` expects:
-```
-{ totalCount, exploration, validation, execution, poolSize }
-```
+Replace the static "+X more" text with a collapsible expand/collapse button:
 
-It destructures `exploration`, `validation`, `execution` directly from `data` -- but those fields don't exist at the top level. They're nested inside `tierSummary`. So the message reads "0 parlays" for every tier.
+1. Add a `showAllParlays` state variable (`useState(false)`)
+2. Change `.slice(0, 10)` to conditionally show all or first 10 based on state
+3. Replace the static `<p>` with a clickable button that toggles expansion:
+   - Collapsed: "+28 more" with a ChevronDown icon
+   - Expanded: "Show less" with a ChevronUp icon
 
-## Fix
-
-**File**: `supabase/functions/bot-generate-daily-parlays/index.ts` (lines 1987-1995)
-
-Flatten the tier counts into the Telegram payload so `formatTieredParlaysGenerated` can read them:
+### Technical Detail
 
 ```typescript
-body: JSON.stringify({
-  type: 'tiered_parlays_generated',
-  data: {
-    totalCount: allParlays.length,
-    exploration: results['exploration']?.count || 0,
-    validation: results['validation']?.count || 0,
-    execution: results['execution']?.count || 0,
-    poolSize: pool.totalPool,
-    date: targetDate,
-  },
-}),
+const [showAllParlays, setShowAllParlays] = useState(false);
+
+// In render:
+{(showAllParlays ? state.todayParlays : state.todayParlays.slice(0, 10)).map((parlay) => (
+  <BotParlayCard key={parlay.id} parlay={parlay} />
+))}
+{state.todayParlays.length > 10 && (
+  <Button
+    variant="ghost"
+    size="sm"
+    className="w-full text-muted-foreground"
+    onClick={() => setShowAllParlays(!showAllParlays)}
+  >
+    {showAllParlays ? (
+      <>Show less <ChevronUp className="ml-1 h-4 w-4" /></>
+    ) : (
+      <>+{state.todayParlays.length - 10} more <ChevronDown className="ml-1 h-4 w-4" /></>
+    )}
+  </Button>
+)}
 ```
 
-No changes needed to `bot-send-telegram/index.ts` -- the formatter already handles this shape correctly.
-
-## Impact
-
-- Telegram messages will now correctly show per-tier parlay counts (e.g., "Exploration: 19, Validation: 11, Execution: 10")
-- The `totalCount` already works and will continue to
-- Single-tier calls will show 0 for the other tiers (accurate)
-- One-line change, redeploy automatically
+Imports needed: `ChevronDown`, `ChevronUp` from lucide-react (check if already imported), and `useState` (already imported).
