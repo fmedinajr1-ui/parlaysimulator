@@ -1,62 +1,59 @@
 
 
-# Settle Feb 10 Parlays Now
+# Bot Dashboard UI Overhaul + Calendar Enhancement
 
-## The Problem
+## Overview
+Complete redesign of the Bot Dashboard page with a modern, polished layout and an upgraded P&L Calendar. The goal is a cleaner visual hierarchy, better information density, and a more professional look.
 
-The settlement function has a date guard on **line 273** that blocks settlement of "today's" parlays:
+## Changes
 
-```typescript
-targetDates = targetDates.filter(d => d < todayET);
-```
+### 1. P&L Calendar Upgrade (`BotPnLCalendar.tsx`)
+- Add tooltip/popover on day cells showing detailed breakdown (parlays won/lost, bankroll)
+- Animate the day cells with subtle fade-in on month change
+- Add a heatmap intensity scale (darker green/red for larger P&L amounts)
+- Show a mini sparkline of daily P&L below the calendar grid
+- Improve the stats row with proper card-style containers and icons
 
-Right now it's still Feb 10 in Eastern Time (~10:47 PM ET), so `2026-02-10 < 2026-02-10` is false, and the function skips it. This is normally correct (prevents settling while games are in progress), but tonight's NBA games are done.
+### 2. Bot Dashboard Layout Overhaul (`BotDashboard.tsx`)
+- **Hero Section**: Merge the header + activation card into a single hero banner with a gradient background, showing mode (Sim/Real), bankroll, and streak in a compact top bar
+- **Tabbed Layout**: Organize the 10+ cards into 3 tabs:
+  - **Overview**: Activation progress, P&L Calendar, Performance Chart, Action Buttons
+  - **Parlays**: Today's parlays with tier breakdown, parlay cards
+  - **Analytics**: Learning Analytics, Category Weights, Learning Log, Activity Feed
+- **Quick Actions Bar**: Sticky bottom bar with Generate + Settle buttons (replace the mid-page grid)
+- **Notification Settings**: Move to a settings icon/popover instead of a full card
 
-Additionally, the request body field is `body.date`, not `body.targetDate`.
+### 3. Component Visual Upgrades
+- **BotActivationCard**: Reduce to a compact horizontal strip at top instead of a full card. Show progress ring inline with key stats
+- **BotPerformanceChart**: Add toggle between Bankroll and Daily P&L views
+- **BotParlayCard**: Add color-coded left border by tier (blue/amber/green), compact the metrics into a single row
+- **CategoryWeightsChart**: Add a mini bar chart visualization instead of just progress bars
+- **TierBreakdownCard**: Show as a horizontal segmented bar (exploration | validation | execution) with proportional widths
+- **BotActivityFeed**: Compact timeline style with dot indicators instead of full icon blocks
 
-## Fix: Add a `force` flag for manual triggers
+### 4. New Components
+- **BotQuickStats**: A horizontal stat strip showing key numbers (Total P&L, Win Rate, Streak, ROI) always visible at top
+- **BotTabNavigation**: Tab component for organizing the dashboard sections
 
-### Change 1: `supabase/functions/bot-settle-and-learn/index.ts` (lines 238-273)
+## Technical Details
 
-Add a `force` parameter that bypasses the date guard when manually triggering settlement:
+### Files Modified
+- `src/pages/BotDashboard.tsx` -- Complete layout restructure with tabs
+- `src/components/bot/BotPnLCalendar.tsx` -- Heatmap intensity, day tooltips, sparkline
+- `src/components/bot/BotActivationCard.tsx` -- Compact horizontal layout
+- `src/components/bot/BotPerformanceChart.tsx` -- Dual view toggle (bankroll/daily)
+- `src/components/bot/BotParlayCard.tsx` -- Tier color borders, compact metrics
+- `src/components/bot/BotActivityFeed.tsx` -- Timeline dot style
+- `src/components/bot/TierBreakdownCard.tsx` -- Horizontal segmented bar
 
-```typescript
-let targetDates: string[] = [];
-let forceSettle = false;
-try {
-  const body = await req.json();
-  if (body.date) {
-    targetDates = [body.date];
-  }
-  if (body.force === true) {
-    forceSettle = true;
-  }
-} catch {
-  // No body - use defaults
-}
+### Files Created
+- `src/components/bot/BotQuickStats.tsx` -- Top stat strip
+- `src/components/bot/BotTabNavigation.tsx` -- Tab wrapper
 
-// ... existing default date logic stays the same ...
+### Dependencies Used
+- Existing: `@radix-ui/react-tabs`, `recharts`, `framer-motion`, `@radix-ui/react-tooltip`
+- No new dependencies needed
 
-// Date guard: filter out today's date to prevent premature settlement
-// Skip guard when force=true (for manual triggers after games are done)
-if (!forceSettle) {
-  targetDates = targetDates.filter(d => d < todayET);
-}
-```
+### Architecture
+The dashboard will use Radix Tabs to organize content into 3 sections. The quick stats bar and action buttons will remain outside the tabs for persistent visibility. All existing data hooks (`useBotEngine`, `useBotPnLCalendar`) remain unchanged -- this is purely a UI/layout update.
 
-### After deployment
-
-Trigger settlement with:
-```json
-{ "date": "2026-02-10", "force": true }
-```
-
-This will settle the 7 pending parlays and accumulate the results into the existing Feb 10 activation status row.
-
-## File Modified
-
-- `supabase/functions/bot-settle-and-learn/index.ts` -- add `force` bypass for date guard
-
-## Risk
-
-Low -- the `force` flag only applies when manually calling the function with an explicit date. The cron jobs don't send `force: true`, so normal operation is unaffected.
