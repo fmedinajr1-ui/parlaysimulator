@@ -115,6 +115,9 @@ function adjustWeight(
 }
 
 // Settle a team leg by looking up final scores from game logs
+// nba_player_game_logs has: player_name, opponent, is_home, points, game_date
+// Home team players: is_home=true, opponent=<away_team_name>
+// Away team players: is_home=false, opponent=<home_team_name>
 async function settleTeamLeg(
   supabase: any,
   leg: BotLeg,
@@ -127,65 +130,101 @@ async function settleTeamLeg(
     return { outcome: 'no_data', actual_value: null };
   }
 
-  // Query game logs for players on these teams to aggregate scores
   // Search in a 3-day window around parlay date
-  // Try both NBA and NCAAB tables
   const windowEnd = new Date(parlayDate + 'T12:00:00Z');
   windowEnd.setDate(windowEnd.getDate() + 2);
   const windowEndStr = windowEnd.toISOString().split('T')[0];
 
-  // Detect sport from leg data (default to NBA)
   const legSport = (leg as any).sport || '';
   const isNCAAB = legSport.includes('ncaab') || legSport.includes('college');
   const logTable = isNCAAB ? 'ncaab_player_game_logs' : 'nba_player_game_logs';
 
-  const { data: homeLogs } = await supabase
-    .from(logTable)
-    .select('points, game_date, team')
-    .ilike('team', `%${homeTeam}%`)
-    .gte('game_date', parlayDate)
-    .lte('game_date', windowEndStr)
-    .limit(20);
+  // Helper to normalize team names for matching (e.g., "Los Angeles Clippers" vs "LA Clippers")
+  const normalizeTeam = (name: string) => name.toLowerCase()
+    .replace(/\b(los angeles|la)\b/g, 'la')
+    .replace(/\s+/g, ' ')
+    .trim();
 
-  const { data: awayLogs } = await supabase
+  // Home team score = sum points of players where is_home=true AND opponent matches away team
+  // We use ilike on opponent to match the away team name
+  const { data: homePlayerLogs } = await supabase
     .from(logTable)
-    .select('points, game_date, team')
-    .ilike('team', `%${awayTeam}%`)
+    .select('points, game_date, opponent, is_home')
+    .eq('is_home', true)
     .gte('game_date', parlayDate)
-    .lte('game_date', windowEndStr)
-    .limit(20);
+    .lte('game_date', windowEndStr);
 
-  // If NCAAB returned no data, fallback to NBA table (and vice versa)
-  let homeLogsResult = homeLogs;
-  let awayLogsResult = awayLogs;
-  if ((!homeLogs || homeLogs.length === 0) && (!awayLogs || awayLogs.length === 0)) {
+  const { data: awayPlayerLogs } = await supabase
+    .from(logTable)
+    .select('points, game_date, opponent, is_home')
+    .eq('is_home', false)
+    .gte('game_date', parlayDate)
+    .lte('game_date', windowEndStr);
+
+  // Filter logs to this specific game by matching opponent names
+  const normAway = normalizeTeam(awayTeam);
+  const normHome = normalizeTeam(homeTeam);
+
+  const homeScoreLogs = (homePlayerLogs || []).filter((log: any) => {
+    const normOpp = normalizeTeam(log.opponent || '');
+    return normOpp.includes(normAway) || normAway.includes(normOpp);
+  });
+
+  const awayScoreLogs = (awayPlayerLogs || []).filter((log: any) => {
+    const normOpp = normalizeTeam(log.opponent || '');
+    return normOpp.includes(normHome) || normHome.includes(normOpp);
+  });
+
+  // If no fallback data found in primary table, try the other table
+  if (homeScoreLogs.length === 0 && awayScoreLogs.length === 0) {
     const fallbackTable = isNCAAB ? 'nba_player_game_logs' : 'ncaab_player_game_logs';
     const { data: fbHome } = await supabase
       .from(fallbackTable)
-      .select('points, game_date, team')
-      .ilike('team', `%${homeTeam}%`)
+      .select('points, game_date, opponent, is_home')
+      .eq('is_home', true)
       .gte('game_date', parlayDate)
-      .lte('game_date', windowEndStr)
-      .limit(20);
+      .lte('game_date', windowEndStr);
     const { data: fbAway } = await supabase
       .from(fallbackTable)
-      .select('points, game_date, team')
-      .ilike('team', `%${awayTeam}%`)
+      .select('points, game_date, opponent, is_home')
+      .eq('is_home', false)
       .gte('game_date', parlayDate)
-      .lte('game_date', windowEndStr)
-      .limit(20);
-    homeLogsResult = fbHome;
-    awayLogsResult = fbAway;
+      .lte('game_date', windowEndStr);
+
+    const fbHomeLogs = (fbHome || []).filter((log: any) => {
+      const normOpp = normalizeTeam(log.opponent || '');
+      return normOpp.includes(normAway) || normAway.includes(normOpp);
+    });
+    const fbAwayLogs = (fbAway || []).filter((log: any) => {
+      const normOpp = normalizeTeam(log.opponent || '');
+      return normOpp.includes(normHome) || normHome.includes(normOpp);
+    });
+
+    if (fbHomeLogs.length === 0 && fbAwayLogs.length === 0) {
+      return { outcome: 'no_data', actual_value: null };
+    }
+
+    const homeScore = fbHomeLogs.reduce((sum: number, log: any) => sum + (Number(log.points) || 0), 0);
+    const awayScore = fbAwayLogs.reduce((sum: number, log: any) => sum + (Number(log.points) || 0), 0);
+    return resolveTeamOutcome(leg, homeScore, awayScore);
   }
 
-  if ((!homeLogsResult || homeLogsResult.length === 0) && (!awayLogsResult || awayLogsResult.length === 0)) {
+  const homeScore = homeScoreLogs.reduce((sum: number, log: any) => sum + (Number(log.points) || 0), 0);
+  const awayScore = awayScoreLogs.reduce((sum: number, log: any) => sum + (Number(log.points) || 0), 0);
+
+  if (homeScore === 0 && awayScore === 0) {
     return { outcome: 'no_data', actual_value: null };
   }
 
-  // Sum points per team from individual player logs
-  const homeScore = (homeLogsResult || []).reduce((sum: number, log: any) => sum + (Number(log.points) || 0), 0);
-  const awayScore = (awayLogsResult || []).reduce((sum: number, log: any) => sum + (Number(log.points) || 0), 0);
+  console.log(`[Bot Settle] Team leg: ${homeTeam} (${homeScore}) vs ${awayTeam} (${awayScore}) | bet=${leg.bet_type} side=${leg.side} line=${leg.line}`);
+  return resolveTeamOutcome(leg, homeScore, awayScore);
+}
 
+function resolveTeamOutcome(
+  leg: BotLeg,
+  homeScore: number,
+  awayScore: number
+): { outcome: string; actual_value: number | null } {
   if (homeScore === 0 && awayScore === 0) {
     return { outcome: 'no_data', actual_value: null };
   }
