@@ -1,36 +1,52 @@
 
+# Fix Telegram Not Showing Parlay Counts
 
-# Disable Golden Category Gate and Regenerate Parlays
+## Root Cause
 
-## What Changed
+The Telegram notification is actually being sent (logs confirm it), but the **tier counts display as 0** because of a data format mismatch.
 
-The golden category enforcement we just added is skipping ~9 execution-tier parlays that don't meet the 50% golden-leg threshold. You want those parlays back -- so we'll disable the gate for now.
-
-## Changes
-
-**File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
-
-### 1. Comment out the golden-leg enforcement block (lines 1659-1667)
-
-Wrap the entire golden category check in a feature flag set to `false`, so the logic is preserved but inactive:
-
-```typescript
-// Golden category gate — disabled for now
-const ENFORCE_GOLDEN_GATE = false;
-if (ENFORCE_GOLDEN_GATE && tier === 'execution' && goldenCategories.size > 0) {
-  ...
+The generator sends:
+```
+data: {
+  totalCount: 10,
+  tierSummary: { execution: { count: 10, legDistribution: {...} } },
+  poolSize: 150,
+  date: '2026-02-11'
 }
 ```
 
-The weight-based sorting (Change 1 from last edit) will remain active so golden categories still get slight priority in ordering, but no parlays will be rejected.
+But `formatTieredParlaysGenerated()` expects:
+```
+{ totalCount, exploration, validation, execution, poolSize }
+```
 
-### 2. Redeploy and trigger generation
+It destructures `exploration`, `validation`, `execution` directly from `data` -- but those fields don't exist at the top level. They're nested inside `tierSummary`. So the message reads "0 parlays" for every tier.
 
-After deploying, we'll call the edge function to regenerate today's parlays so all execution-tier parlays come through without being filtered.
+## Fix
+
+**File**: `supabase/functions/bot-generate-daily-parlays/index.ts` (lines 1987-1995)
+
+Flatten the tier counts into the Telegram payload so `formatTieredParlaysGenerated` can read them:
+
+```typescript
+body: JSON.stringify({
+  type: 'tiered_parlays_generated',
+  data: {
+    totalCount: allParlays.length,
+    exploration: results['exploration']?.count || 0,
+    validation: results['validation']?.count || 0,
+    execution: results['execution']?.count || 0,
+    poolSize: pool.totalPool,
+    date: targetDate,
+  },
+}),
+```
+
+No changes needed to `bot-send-telegram/index.ts` -- the formatter already handles this shape correctly.
 
 ## Impact
 
-- All parlays that were previously skipped will now be generated
-- Golden categories still sort higher (soft preference), but nothing gets blocked
-- Easy to re-enable later by flipping `ENFORCE_GOLDEN_GATE` to `true`
-
+- Telegram messages will now correctly show per-tier parlay counts (e.g., "Exploration: 19, Validation: 11, Execution: 10")
+- The `totalCount` already works and will continue to
+- Single-tier calls will show 0 for the other tiers (accurate)
+- One-line change, redeploy automatically
