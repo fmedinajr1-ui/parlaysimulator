@@ -1,66 +1,69 @@
 
-# Standardize $10 Stake and Show Voided Legs
 
-## What Changes
+# Use Real Sportsbook Odds for Parlay Payouts
 
-### 1. Set all parlay stakes to $10
-Every parlay the bot generates will use a flat **$10 simulated stake**, regardless of tier (exploration, validation, or execution). This replaces the current mix of $0 (exploration), $50 (validation), and Kelly-calculated stakes.
+## Problem
+The current `expected_odds` is calculated from hit-rate probability (`1/probability - 1`), which gives "fair" odds -- not real sportsbook odds. Real parlays multiply the actual decimal odds of each leg together. For example, a 3-leg parlay at -110, +120, -105 multiplies those decimal equivalents to get the true parlay odds.
 
-### 2. Show "VOIDED" on legs with no score
-Legs like "Nikola Vucevic Assists O 2.5" that have no actual value and no outcome will display a "VOIDED" label instead of appearing as pending/unknown.
+## How Real Sportsbook Parlay Math Works
 
-### 3. Backfill existing data
-All existing parlays with stake of $0 or $50 will be updated to $10, and P&L will be recalculated proportionally.
+```text
+Leg 1: -110 => decimal 1.909
+Leg 2: +120 => decimal 2.200
+Leg 3: -105 => decimal 1.952
 
----
+Total decimal odds = 1.909 x 2.200 x 1.952 = 8.20
+Total American odds = +720
 
-## Technical Details
-
-### File: `supabase/functions/bot-generate-daily-parlays/index.ts`
-- Change exploration tier `stake: 0` to `stake: 10` (line 61)
-- Change validation tier `stake: 50` to `stake: 10` (line 133)
-- Change execution tier stake to `stake: 10` (remove Kelly calculation)
-- Change fallback on line 1690 from `config.stake || 50` to `config.stake || 10`
-
-### File: `supabase/functions/bot-settle-and-learn/index.ts`
-- Change all `parlay.simulated_stake || 50` fallbacks to `parlay.simulated_stake || 10` (lines 424, 425, 429, 454)
-
-### File: `src/components/bot/BotParlayCard.tsx`
-- Change `parlay.simulated_stake || 50` to `parlay.simulated_stake || 10` (lines 89, 94)
-
-### File: `src/hooks/useBotEngine.ts`
-- Change `SIMULATED_STAKE: 50` to `SIMULATED_STAKE: 10` (line 167)
-
-### File: `src/components/bot/DayParlayDetail.tsx`
-- In the leg rendering section (lines 172-189), add logic: if the parlay outcome is `void` or the leg has no outcome and no `actual_value`, show a "VOIDED" badge/icon instead of the pending clock icon
-- Add a muted "VOIDED" text label next to the leg description
-
-### Database Backfill (migration)
-```sql
--- Update all parlays to $10 stake
-UPDATE bot_daily_parlays
-SET simulated_stake = 10
-WHERE simulated_stake IS NULL OR simulated_stake != 10;
-
--- Recalculate P&L for won parlays (scale proportionally)
--- For won parlays that had stake=0 but got settled with implicit $50:
--- New profit = old_profit * (10 / 50)
-UPDATE bot_daily_parlays
-SET profit_loss = profit_loss * (10.0 / 50.0),
-    simulated_payout = simulated_payout * (10.0 / 50.0)
-WHERE outcome = 'won'
-  AND (simulated_stake IS NULL OR simulated_stake = 0 OR simulated_stake = 50)
-  AND profit_loss IS NOT NULL
-  AND profit_loss != 0;
-
--- For lost parlays, loss = -$10
-UPDATE bot_daily_parlays
-SET profit_loss = -10
-WHERE outcome = 'lost'
-  AND profit_loss IS NOT NULL;
-
--- Recalculate bot_activation_status daily totals from corrected parlays
--- (Will need to recompute daily_profit_loss, parlays_won, parlays_lost, simulated_bankroll)
+$10 stake => payout = $10 x 8.20 = $82.00
+Profit = $82.00 - $10.00 = $72.00
 ```
 
-After the backfill, Feb 9's net P&L will be recalculated based on the $10 stake: 13 wins with scaled payouts minus 10 losses at $10 each.
+## Changes
+
+### 1. Generator: Calculate real parlay odds (`bot-generate-daily-parlays/index.ts`)
+Replace the current `expectedOdds` formula (lines 1662-1665) with actual sportsbook math:
+
+```
+// OLD: expectedOdds from probability (fake odds)
+const expectedOdds = combinedProbability > 0
+  ? Math.round((1 / combinedProbability - 1) * 100)
+  : 10000;
+
+// NEW: multiply actual decimal odds from each leg
+const totalDecimalOdds = legs.reduce((product, l) => {
+  const odds = l.american_odds || -110;
+  const decimal = odds > 0 ? (odds / 100) + 1 : (100 / Math.abs(odds)) + 1;
+  return product * decimal;
+}, 1);
+const expectedOdds = totalDecimalOdds >= 2
+  ? Math.round((totalDecimalOdds - 1) * 100)   // positive American
+  : Math.round(-100 / (totalDecimalOdds - 1));  // negative American
+```
+
+### 2. Settlement: Use real odds for payout (`bot-settle-and-learn/index.ts`)
+The settlement payout formula on line 424 currently does:
+```
+const payout = stake * ((expected_odds || 500) / 100 + 1);
+```
+
+This only works for positive American odds. Update to handle both positive and negative:
+```
+const odds = parlay.expected_odds || 500;
+const decimalOdds = odds > 0 ? (odds / 100) + 1 : (100 / Math.abs(odds)) + 1;
+const payout = stake * decimalOdds;
+```
+
+### 3. Backfill existing parlays
+Run a SQL update to recalculate `expected_odds` for existing parlays using the stored leg odds, then recalculate `profit_loss` and `simulated_payout` for won parlays using the corrected odds.
+
+```sql
+-- This will be done programmatically since we need to read
+-- each parlay's legs JSON, multiply decimal odds, and update.
+-- A backend function call or manual query will handle this.
+```
+
+### Files Modified
+- `supabase/functions/bot-generate-daily-parlays/index.ts` -- real parlay odds calculation
+- `supabase/functions/bot-settle-and-learn/index.ts` -- correct payout formula for +/- odds
+- Database backfill for existing parlays' `expected_odds`, `profit_loss`, `simulated_payout`
