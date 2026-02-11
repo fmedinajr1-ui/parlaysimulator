@@ -1,52 +1,72 @@
 
-# Fix: AI Hallucinating Player Names in `/parlay` Telegram Command
 
-## Root Cause
+# Fix P&L Calculation in bot-settle-and-learn
 
-The `/parlay` command is not a registered Telegram command. It falls through to the AI natural language handler, which sends high-level stats (win rate, ROI, category weights) to Gemini Flash but **zero actual parlay leg data**. The AI model fabricates player names like "Trae Young" based on category names like "THREE_POINT_SHOOTER" -- even though Trae Young has been OUT since January 24th and has no active props.
+## Root Cause: Overwrite vs Accumulate
 
-This is not a data pipeline issue. The scraper, analyzer, and generator are all correctly excluding Trae Young. The problem is purely in the Telegram AI response.
+The settlement cron runs **3 times daily** (6 AM, 12 PM, 6 PM ET). Each run writes to `bot_activation_status` for today's date. The problem is on **line 526**:
 
-## Fix: Two Changes
-
-### 1. Register `/parlay` as a proper command (not AI fallback)
-
-Add a dedicated `/parlay` handler that fetches **real pending parlay data** from `bot_daily_parlays` and displays the actual top-weighted legs. This eliminates AI hallucination entirely.
-
-The handler will:
-- Query `bot_daily_parlays` for today's pending parlays
-- Extract and deduplicate all legs across parlays
-- Sort by category weight or confidence score
-- Display the top 3-5 real legs with actual player names, lines, and props
-- Include the same bankroll/mode/ROI summary
-
-### 2. Add real leg data to the AI system prompt
-
-For the natural language fallback, inject the top 5 actual pending legs into the system prompt so the AI can reference real data instead of guessing. This prevents hallucination for any free-form question about current parlays.
-
-## Technical Details
-
-### File Modified
-- `supabase/functions/telegram-webhook/index.ts`
-
-### New `/parlay` Handler
-```text
-Register: if (cmd === "/parlay") return await handleParlayStatus(chatId);
-
-handleParlayStatus():
-  1. Query bot_daily_parlays WHERE outcome = 'pending' AND parlay_date = today
-  2. Extract all legs, deduplicate by player_name + prop_type
-  3. Sort by category weight (from bot_category_weights)
-  4. Format top 5 legs with real data:
-     "1. Steph Curry O 4.5 3PM (Verified)"
-     "2. Alex Caruso U 8.5 PTS (Verified)"
-  5. Include parlay count, bankroll, mode, ROI
+```typescript
+// BUG: Overwrites instead of accumulating
+daily_profit_loss: totalProfitLoss,
+simulated_bankroll: newBankroll,
 ```
 
-### AI Prompt Enhancement
-Add to the system prompt context:
-```text
-- Top Pending Legs: {actual legs from bot_daily_parlays}
+Here's what happens:
+1. **Run 1 (6 AM):** Settles 20 parlays, P&L = +$4,344. Writes `daily_profit_loss: 4344` 
+2. **Run 2 (12 PM):** Settles 1 more parlay, P&L = +$50. **Overwrites** `daily_profit_loss: 50` (the $4,344 is lost!)
+3. **Run 3 (6 PM):** Settles 0 parlays, P&L = $0. **Overwrites** `daily_profit_loss: 0`
+
+The `parlays_won` and `parlays_lost` correctly accumulate (`existingToday.parlays_won + parlaysWon`), but `daily_profit_loss` and `simulated_bankroll` do not.
+
+**Proof from data:** Feb 9 parlays have $5,194 in wins and -$850 in losses (net +$4,344), but `bot_activation_status` shows `daily_profit_loss: 0` and `simulated_bankroll: 1000`.
+
+## Secondary Issue: Zero Stakes
+
+Most parlays have `simulated_stake: 0` from the generator. The settlement code has a fallback (`parlay.simulated_stake || 50`), which works but produces inconsistent P&L. The generator should set a proper default stake.
+
+## Fix (2 changes in 1 file)
+
+### Change 1: Accumulate P&L on update (line 526)
+
+```typescript
+// BEFORE (overwrites)
+daily_profit_loss: totalProfitLoss,
+simulated_bankroll: newBankroll,
+
+// AFTER (accumulates)
+daily_profit_loss: (existingToday.daily_profit_loss || 0) + totalProfitLoss,
+simulated_bankroll: (existingToday.simulated_bankroll || prevBankroll) + totalProfitLoss,
+is_profitable_day: ((existingToday.daily_profit_loss || 0) + totalProfitLoss) > 0,
 ```
 
-This way both the dedicated command and the AI fallback will show real, verified player data instead of fabricated names.
+Also update `consecutive_profitable_days` and `is_real_mode_ready` to use the accumulated value.
+
+### Change 2: Fix bankroll reference for `newBankroll` variable
+
+The `newBankroll` variable (line 509) is used later for Telegram and logging. It should reflect the accumulated value:
+
+```typescript
+// Compute accumulated values for downstream use
+const accumulatedPnL = (existingToday?.daily_profit_loss || 0) + totalProfitLoss;
+const accumulatedBankroll = existingToday 
+  ? (existingToday.simulated_bankroll || prevBankroll) + totalProfitLoss
+  : prevBankroll + totalProfitLoss;
+```
+
+### Change 3: Default stake in generator
+
+In `bot-generate-daily-parlays`, ensure `simulated_stake` defaults to 50 when generating parlays, so the settlement doesn't rely on a fallback.
+
+## File Modified
+
+- `supabase/functions/bot-settle-and-learn/index.ts` -- accumulate P&L and bankroll across runs
+- `supabase/functions/bot-generate-daily-parlays/index.ts` -- default simulated_stake to 50
+
+## Expected Result
+
+- `daily_profit_loss` correctly accumulates across all 3 daily cron runs
+- `simulated_bankroll` properly tracks cumulative gains/losses from $1,000 starting point
+- P&L Calendar shows real green/red days instead of $0 everywhere
+- Consecutive profitable day tracking works, enabling real-mode activation logic
+
