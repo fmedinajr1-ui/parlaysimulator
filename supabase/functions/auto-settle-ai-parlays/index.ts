@@ -915,7 +915,7 @@ serve(async (req) => {
               
               // Trigger learning engine for this settlement
               try {
-                await supabase.functions.invoke('ai-learning-engine', {
+                await supabase.functions.invoke('calibrate-bot-weights', {
                   body: {
                     action: 'process_settlement',
                     parlayId: parlay.id,
@@ -942,7 +942,7 @@ serve(async (req) => {
     if (results.settled > 0) {
       try {
         console.log('🧠 Starting full learning cycle...');
-        const { data: learnData, error: learnError } = await supabase.functions.invoke('ai-learning-engine', {
+        const { data: learnData, error: learnError } = await supabase.functions.invoke('calibrate-bot-weights', {
           body: { action: 'full_learning_cycle' }
         });
         
