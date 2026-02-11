@@ -1151,14 +1151,15 @@ serve(async (req) => {
     // ======= NEW: Validate against actual bookmaker lines from unified_props =======
     console.log(`[CAT-ANALYZER-CRITICAL] Starting unified_props fetch...`);
     
-    // Fetch actual lines from unified_props for upcoming games
-    const nowIso = new Date().toISOString();
-    console.log(`[CAT-ANALYZER-CRITICAL] Using timestamp: ${nowIso}`);
+    // Fetch actual lines from unified_props for today's games (including already started)
+    // v4.2: Use start-of-day UTC instead of now() to catch games that already tipped
+    const todayStartUtc = new Date().toISOString().split('T')[0] + 'T00:00:00Z';
+    console.log(`[CAT-ANALYZER-CRITICAL] Using today start UTC: ${todayStartUtc}`);
     
     const { data: upcomingProps, error: propsError } = await supabase
       .from('unified_props')
       .select('player_name, prop_type, current_line, over_price, under_price, bookmaker, commence_time, game_description')
-      .gte('commence_time', nowIso)
+      .gte('commence_time', todayStartUtc)
       .order('commence_time', { ascending: true });
 
     if (propsError) {
@@ -1305,6 +1306,31 @@ serve(async (req) => {
         spot.matchup_adjustment = projection.matchupAdj;
         spot.pace_adjustment = projection.paceAdj;
         spot.projection_source = projection.projectedValue ? projection.projectionSource : 'fallback_l10_median';
+        
+        // v4.2: NEGATIVE-EDGE BLOCKING
+        // Block picks where projection contradicts the recommended side
+        if (spot.recommended_side === 'over' && spot.projected_value <= actualData.line) {
+          console.log(`[Edge Block] ✗ ${spot.player_name} ${spot.prop_type}: OVER ${actualData.line} but proj only ${spot.projected_value} — negative edge blocked`);
+          spot.is_active = false;
+          spot.risk_level = 'BLOCKED';
+          spot.recommendation = `Negative edge: proj ${spot.projected_value} <= line ${actualData.line}`;
+          spot.actual_line = actualData.line;
+          spot.bookmaker = actualData.bookmaker;
+          validatedSpots.push(spot);
+          droppedCount++;
+          continue;
+        }
+        if (spot.recommended_side === 'under' && spot.projected_value >= actualData.line) {
+          console.log(`[Edge Block] ✗ ${spot.player_name} ${spot.prop_type}: UNDER ${actualData.line} but proj ${spot.projected_value} — negative edge blocked`);
+          spot.is_active = false;
+          spot.risk_level = 'BLOCKED';
+          spot.recommendation = `Negative edge: proj ${spot.projected_value} >= line ${actualData.line}`;
+          spot.actual_line = actualData.line;
+          spot.bookmaker = actualData.bookmaker;
+          validatedSpots.push(spot);
+          droppedCount++;
+          continue;
+        }
         
         // v4.1: Log projection for debugging
         console.log(`[Projection] ${spot.player_name} ${spot.prop_type} vs ${upcomingOpponent || 'unknown'}: Proj=${spot.projected_value?.toFixed(1)}, MatchupAdj=${projection.matchupAdj.toFixed(1)}, PaceAdj=${projection.paceAdj.toFixed(1)}, Source=${spot.projection_source}`);
@@ -1576,6 +1602,41 @@ serve(async (req) => {
       }
       
       console.log(`[Category Analyzer] Inserted ${insertedCount}/${dedupedSpots.length} sweet spots (${insertErrors} errors)`);
+      
+      // v4.2: SYNC PROJECTIONS BACK TO unified_props
+      // Enrich unified_props with projection data from category_sweet_spots
+      console.log(`[Category Analyzer] Starting unified_props sync...`);
+      const activeForSync = dedupedSpots.filter(s => s.is_active && s.projected_value != null && s.actual_line != null);
+      let syncCount = 0;
+      let syncErrors = 0;
+      
+      for (const spot of activeForSync) {
+        const normalizedPropType = `player_${spot.prop_type}`;
+        const trueLine = spot.projected_value;
+        const trueLineDiff = trueLine - spot.actual_line;
+        
+        const { error: syncError } = await supabase
+          .from('unified_props')
+          .update({
+            true_line: trueLine,
+            true_line_diff: Math.round(trueLineDiff * 10) / 10,
+            composite_score: spot.confidence_score || 0,
+            category: spot.category,
+            recommended_side: spot.recommended_side,
+          })
+          .ilike('player_name', spot.player_name)
+          .eq('prop_type', normalizedPropType)
+          .gte('commence_time', todayStartUtc);
+        
+        if (syncError) {
+          syncErrors++;
+          if (syncErrors <= 3) console.error(`[Sync] Error for ${spot.player_name}: ${syncError.message}`);
+        } else {
+          syncCount++;
+        }
+      }
+      
+      console.log(`[Category Analyzer] Synced ${syncCount}/${activeForSync.length} projections to unified_props (${syncErrors} errors)`);
     }
 
     // Group by category for response (only active ones)
