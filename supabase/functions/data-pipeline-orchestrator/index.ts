@@ -63,7 +63,7 @@ serve(async (req) => {
     if (mode === 'full' || mode === 'collect') {
       await runFunction('whale-odds-scraper', { sports: ['basketball_nba', 'icehockey_nhl', 'basketball_wnba', 'basketball_ncaab'] });
       await runFunction('daily-fatigue-calculator', {});
-      await runFunction('track-odds-movement', { sports: ['basketball_nba', 'icehockey_nhl'] });
+      await runFunction('track-odds-movement', { sports: ['basketball_nba', 'icehockey_nhl', 'basketball_wnba', 'basketball_ncaab'] });
       await runFunction('pp-props-scraper', { sports: ['NBA', 'NHL', 'WNBA', 'ATP', 'WTA'] });
       await runFunction('firecrawl-lineup-scraper', {});
     }
@@ -72,7 +72,7 @@ serve(async (req) => {
     if (mode === 'full' || mode === 'analyze') {
       await runFunction('category-props-analyzer', { limit: 100 });
       await runFunction('auto-refresh-sharp-tracker', {});
-      await runFunction('whale-signal-detector', { sports: ['basketball_nba', 'icehockey_nhl', 'basketball_wnba'] });
+      await runFunction('whale-signal-detector', { sports: ['basketball_nba', 'icehockey_nhl', 'basketball_wnba', 'basketball_ncaab'] });
     }
 
     // ============ PHASE 3: PARLAY GENERATION ============

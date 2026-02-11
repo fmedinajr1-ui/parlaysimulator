@@ -298,7 +298,49 @@ Deno.serve(async (req) => {
 
     console.log(`[Calibrate] Complete: ${updated} updated, ${created} created, ${blocked} blocked`);
 
-    // 5. Send summary via Telegram if significant changes
+    // 5. Seed team prop categories if they don't exist yet
+    const TEAM_CATEGORIES = [
+      { category: 'SHARP_SPREAD', side: 'home', sport },
+      { category: 'SHARP_SPREAD', side: 'away', sport },
+      { category: 'OVER_TOTAL', side: 'over', sport },
+      { category: 'UNDER_TOTAL', side: 'under', sport },
+      { category: 'ML_FAVORITE', side: 'home', sport },
+      { category: 'ML_UNDERDOG', side: 'away', sport },
+      { category: 'TEAM_TOTAL_OVER', side: 'over', sport },
+      { category: 'TEAM_TOTAL_UNDER', side: 'under', sport },
+    ];
+
+    let seeded = 0;
+    for (const tc of TEAM_CATEGORIES) {
+      const key = `${tc.category}__${tc.side}`;
+      if (!existingMap.has(key) && !categoryMap.has(key)) {
+        const { error: seedError } = await supabase
+          .from('bot_category_weights')
+          .insert({
+            category: tc.category,
+            side: tc.side,
+            sport: tc.sport,
+            weight: BASE_WEIGHT,
+            current_hit_rate: 0,
+            total_picks: 0,
+            total_hits: 0,
+            is_blocked: false,
+            current_streak: 0,
+            best_streak: 0,
+            worst_streak: 0,
+            last_calibrated_at: new Date().toISOString(),
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          });
+        if (!seedError) seeded++;
+      }
+    }
+
+    if (seeded > 0) {
+      console.log(`[Calibrate] Seeded ${seeded} new team prop categories`);
+    }
+
+    // 6. Send summary via Telegram if significant changes
     if (created > 0 || blocked > 0) {
       try {
         await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {

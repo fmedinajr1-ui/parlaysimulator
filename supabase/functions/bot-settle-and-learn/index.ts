@@ -543,9 +543,13 @@ Deno.serve(async (req) => {
       const accumulatedPnL = (existingEntry?.daily_profit_loss || 0) + datePnL.profitLoss;
       const accumulatedWon = (existingEntry?.parlays_won || 0) + datePnL.won;
       const accumulatedLost = (existingEntry?.parlays_lost || 0) + datePnL.lost;
-      const accumulatedBankroll = existingEntry 
-        ? (existingEntry.simulated_bankroll || prevBankroll) + datePnL.profitLoss
-        : prevBankroll + datePnL.profitLoss;
+      const BANKROLL_FLOOR = 1000;
+      const accumulatedBankroll = Math.max(
+        BANKROLL_FLOOR,
+        existingEntry 
+          ? (existingEntry.simulated_bankroll || prevBankroll) + datePnL.profitLoss
+          : prevBankroll + datePnL.profitLoss
+      );
       const dateIsProfitable = accumulatedPnL > 0;
       const dateConsecutive = dateIsProfitable ? prevConsecutive + 1 : 0;
       const dateIsRealModeReady = dateConsecutive >= 3 && 

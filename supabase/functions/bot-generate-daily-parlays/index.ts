@@ -1767,6 +1767,29 @@ Deno.serve(async (req) => {
 
     const bankroll = activationStatus?.simulated_bankroll || 1000;
 
+    // === BANKROLL FLOOR PROTECTION ===
+    const BANKROLL_FLOOR = 1000;
+    if (bankroll <= BANKROLL_FLOOR) {
+      console.log(`[Bot v2] Bankroll at floor ($${bankroll}). Pausing generation to protect capital.`);
+      await supabase.from('bot_activity_log').insert({
+        event_type: 'bankroll_floor_hit',
+        message: `Bankroll at $${bankroll} (floor: $${BANKROLL_FLOOR}). Generation paused to protect capital.`,
+        severity: 'warning',
+        metadata: { bankroll, floor: BANKROLL_FLOOR },
+      });
+      try {
+        await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseKey}` },
+          body: JSON.stringify({ type: 'daily_summary', data: { parlaysCount: 0, winRate: 0, edge: 0, bankroll, mode: 'Paused - Bankroll Floor Protection' } }),
+        });
+      } catch (_) { /* ignore */ }
+      return new Response(
+        JSON.stringify({ success: true, parlaysGenerated: 0, reason: 'bankroll_floor_protection', bankroll }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     // 4. Build prop pool
     const pool = await buildPropPool(supabase, targetDate, weightMap, weights as CategoryWeight[] || []);
 
@@ -1806,9 +1829,15 @@ Deno.serve(async (req) => {
     }
 
     // 5. Generate parlays for each tier
-    const tiersToGenerate: TierName[] = singleTier 
+    // Reduce exposure if bankroll is near floor
+    const isLowBankroll = bankroll < BANKROLL_FLOOR * 1.2; // Below $1,200
+    let tiersToGenerate: TierName[] = singleTier 
       ? [singleTier] 
       : ['exploration', 'validation', 'execution'];
+    if (isLowBankroll && !singleTier) {
+      tiersToGenerate = tiersToGenerate.filter(t => t !== 'exploration');
+      console.log(`[Bot v2] Low bankroll ($${bankroll}). Skipping exploration tier.`);
+    }
 
     const results: Record<string, { count: number; parlays: any[] }> = {};
     let allParlays: any[] = [];
