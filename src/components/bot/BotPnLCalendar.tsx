@@ -1,14 +1,28 @@
 import React from 'react';
 import { format } from 'date-fns';
-import { ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Flame } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Flame } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useBotPnLCalendar } from '@/hooks/useBotPnLCalendar';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  Tooltip as RechartsTooltip,
+} from 'recharts';
 
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
+function getHeatmapIntensity(amount: number, maxAbsAmount: number): number {
+  if (maxAbsAmount === 0) return 0.15;
+  return Math.max(0.15, Math.min(1, Math.abs(amount) / maxAbsAmount));
+}
 
 export function BotPnLCalendar() {
   const {
@@ -27,6 +41,17 @@ export function BotPnLCalendar() {
   }
 
   const formatPnL = (val: number) => (val >= 0 ? `+$${val.toFixed(0)}` : `-$${Math.abs(val).toFixed(0)}`);
+
+  // Calculate max absolute PnL for heatmap scaling
+  const allPnLValues = Array.from(dailyMap.values()).map(d => Math.abs(d.profitLoss)).filter(v => v > 0);
+  const maxAbsPnL = allPnLValues.length > 0 ? Math.max(...allPnLValues) : 100;
+
+  // Sparkline data
+  const sparklineData = Array.from(dailyMap.values())
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map(d => ({ date: d.date.slice(5), pnl: d.profitLoss }));
+
+  const monthKey = format(selectedMonth, 'yyyy-MM');
 
   return (
     <Card>
@@ -71,33 +96,9 @@ export function BotPnLCalendar() {
             <p className="text-[10px] text-muted-foreground">Streak</p>
           </div>
         </div>
-
-        {/* Best / Worst / ROI row */}
-        <div className="flex flex-wrap gap-2 mt-2">
-          {stats.bestDay && (
-            <Badge variant="outline" className="text-green-400 border-green-400/30 text-[10px]">
-              <TrendingUp className="h-3 w-3 mr-1" />
-              Best: {formatPnL(stats.bestDay.amount)}
-            </Badge>
-          )}
-          {stats.worstDay && (
-            <Badge variant="outline" className="text-red-400 border-red-400/30 text-[10px]">
-              <TrendingDown className="h-3 w-3 mr-1" />
-              Worst: {formatPnL(stats.worstDay.amount)}
-            </Badge>
-          )}
-          <Badge variant="outline" className="text-[10px]">
-            ROI: {stats.roi.toFixed(1)}%
-          </Badge>
-          {stats.bestStreak > 0 && (
-            <Badge variant="outline" className="text-orange-400 border-orange-400/30 text-[10px]">
-              Best Streak: {stats.bestStreak}W
-            </Badge>
-          )}
-        </div>
       </CardHeader>
 
-      <CardContent className="pt-2">
+      <CardContent className="pt-2 space-y-3">
         {/* Day headers */}
         <div className="grid grid-cols-7 gap-1 mb-1">
           {DAY_LABELS.map((d, i) => (
@@ -107,43 +108,113 @@ export function BotPnLCalendar() {
           ))}
         </div>
 
-        {/* Calendar grid */}
-        <div className="grid grid-cols-7 gap-1">
-          {/* Empty cells for offset */}
-          {Array.from({ length: calendarDays.startDayOfWeek }).map((_, i) => (
-            <div key={`empty-${i}`} className="aspect-square" />
-          ))}
+        {/* Calendar grid with animation */}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={monthKey}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.2 }}
+            className="grid grid-cols-7 gap-1"
+          >
+            {/* Empty cells for offset */}
+            {Array.from({ length: calendarDays.startDayOfWeek }).map((_, i) => (
+              <div key={`empty-${i}`} className="aspect-square" />
+            ))}
 
-          {calendarDays.days.map((day) => {
-            const dateStr = format(day, 'yyyy-MM-dd');
-            const data = dailyMap.get(dateStr);
-            const hasData = !!data && data.profitLoss !== 0;
-            const isProfitable = data?.isProfitable ?? false;
-            const isToday = dateStr === format(new Date(), 'yyyy-MM-dd');
+            <TooltipProvider delayDuration={200}>
+              {calendarDays.days.map((day) => {
+                const dateStr = format(day, 'yyyy-MM-dd');
+                const data = dailyMap.get(dateStr);
+                const hasData = !!data && data.profitLoss !== 0;
+                const isProfitable = data?.isProfitable ?? false;
+                const isToday = dateStr === format(new Date(), 'yyyy-MM-dd');
+                const intensity = hasData ? getHeatmapIntensity(data!.profitLoss, maxAbsPnL) : 0;
 
-            return (
-              <div
-                key={dateStr}
-                className={cn(
-                  'aspect-square rounded-md flex flex-col items-center justify-center text-[10px] border transition-colors',
-                  hasData && isProfitable && 'bg-green-500/15 border-green-500/30 text-green-400',
-                  hasData && !isProfitable && 'bg-red-500/15 border-red-500/30 text-red-400',
-                  !hasData && 'border-border/30 text-muted-foreground',
-                  isToday && 'ring-1 ring-primary'
-                )}
-              >
-                <span className={cn('font-medium', isToday && 'text-primary')}>
-                  {format(day, 'd')}
-                </span>
-                {hasData && (
-                  <span className="text-[8px] font-bold leading-tight">
-                    {data!.profitLoss >= 0 ? '+' : ''}{data!.profitLoss.toFixed(0)}
-                  </span>
-                )}
-              </div>
-            );
-          })}
-        </div>
+                const cellContent = (
+                  <div
+                    className={cn(
+                      'aspect-square rounded-md flex flex-col items-center justify-center text-[10px] border transition-colors',
+                      !hasData && 'border-border/30 text-muted-foreground',
+                      isToday && 'ring-1 ring-primary'
+                    )}
+                    style={hasData ? {
+                      backgroundColor: isProfitable
+                        ? `hsl(145 100% 45% / ${intensity * 0.25})`
+                        : `hsl(0 80% 55% / ${intensity * 0.25})`,
+                      borderColor: isProfitable
+                        ? `hsl(145 100% 45% / ${intensity * 0.5})`
+                        : `hsl(0 80% 55% / ${intensity * 0.5})`,
+                      color: isProfitable
+                        ? `hsl(145 100% 55%)`
+                        : `hsl(0 80% 60%)`,
+                    } : undefined}
+                  >
+                    <span className={cn('font-medium', isToday && 'text-primary')}>
+                      {format(day, 'd')}
+                    </span>
+                    {hasData && (
+                      <span className="text-[8px] font-bold leading-tight">
+                        {data!.profitLoss >= 0 ? '+' : ''}{data!.profitLoss.toFixed(0)}
+                      </span>
+                    )}
+                  </div>
+                );
+
+                if (!hasData) return <React.Fragment key={dateStr}>{cellContent}</React.Fragment>;
+
+                return (
+                  <Tooltip key={dateStr}>
+                    <TooltipTrigger asChild>{cellContent}</TooltipTrigger>
+                    <TooltipContent side="top" className="text-xs space-y-1">
+                      <p className="font-medium">{format(day, 'MMM d')}</p>
+                      <p className={isProfitable ? 'text-green-400' : 'text-red-400'}>
+                        P&L: {formatPnL(data!.profitLoss)}
+                      </p>
+                      <p>Won: {data!.parlaysWon} / Lost: {data!.parlaysLost}</p>
+                      <p>Bankroll: ${data!.bankroll.toLocaleString()}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                );
+              })}
+            </TooltipProvider>
+          </motion.div>
+        </AnimatePresence>
+
+        {/* Mini Sparkline */}
+        {sparklineData.length > 1 && (
+          <div className="h-16 mt-2">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={sparklineData} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
+                <defs>
+                  <linearGradient id="sparkPnlGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <XAxis dataKey="date" hide />
+                <YAxis hide domain={['dataMin - 20', 'dataMax + 20']} />
+                <RechartsTooltip
+                  contentStyle={{
+                    backgroundColor: 'hsl(var(--card))',
+                    border: '1px solid hsl(var(--border))',
+                    borderRadius: '8px',
+                    fontSize: '11px',
+                  }}
+                  formatter={(value: number) => [`$${value.toFixed(0)}`, 'P&L']}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="pnl"
+                  stroke="hsl(var(--primary))"
+                  strokeWidth={1.5}
+                  fill="url(#sparkPnlGrad)"
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
