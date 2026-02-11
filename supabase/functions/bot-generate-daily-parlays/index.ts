@@ -1507,12 +1507,12 @@ async function generateTierParlays(
       if (effectiveEdge < config.minEdge) continue;
       if (sharpe < config.minSharpe) continue;
 
-      // Calculate stake
+      // Calculate stake (default to 50 if tier stake is 0)
       let stake = 0;
       if (config.stake === 'kelly') {
         stake = calculateKellyStake(combinedProbability, expectedOdds, bankroll);
       } else {
-        stake = config.stake;
+        stake = config.stake || 50;
       }
 
       parlaysToCreate.push({

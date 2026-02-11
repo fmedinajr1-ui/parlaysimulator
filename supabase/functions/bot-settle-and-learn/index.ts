@@ -493,8 +493,6 @@ Deno.serve(async (req) => {
 
     // 6. Update activation status
     const today = getEasternDate();
-    const isProfitableDay = totalProfitLoss > 0;
-
     const { data: prevStatus } = await supabase
       .from('bot_activation_status')
       .select('*')
@@ -504,12 +502,7 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     const prevConsecutive = prevStatus?.consecutive_profitable_days || 0;
-    const newConsecutive = isProfitableDay ? prevConsecutive + 1 : 0;
     const prevBankroll = prevStatus?.simulated_bankroll || 1000;
-    const newBankroll = prevBankroll + totalProfitLoss;
-
-    const isRealModeReady = newConsecutive >= 3 && 
-                            (parlaysWon / Math.max(1, parlaysWon + parlaysLost)) >= 0.60;
 
     const { data: existingToday } = await supabase
       .from('bot_activation_status')
@@ -517,17 +510,32 @@ Deno.serve(async (req) => {
       .eq('check_date', today)
       .maybeSingle();
 
+    // Accumulate P&L across multiple daily runs instead of overwriting
+    const accumulatedPnL = (existingToday?.daily_profit_loss || 0) + totalProfitLoss;
+    const accumulatedWon = (existingToday?.parlays_won || 0) + parlaysWon;
+    const accumulatedLost = (existingToday?.parlays_lost || 0) + parlaysLost;
+    const accumulatedBankroll = existingToday 
+      ? (existingToday.simulated_bankroll || prevBankroll) + totalProfitLoss
+      : prevBankroll + totalProfitLoss;
+    const isProfitableDay = accumulatedPnL > 0;
+    const newConsecutive = isProfitableDay ? prevConsecutive + 1 : 0;
+    const isRealModeReady = newConsecutive >= 3 && 
+                            (accumulatedWon / Math.max(1, accumulatedWon + accumulatedLost)) >= 0.60;
+
+    // Use accumulated values for downstream logging/Telegram
+    const newBankroll = accumulatedBankroll;
+
     if (existingToday) {
       await supabase
         .from('bot_activation_status')
         .update({
-          parlays_won: (existingToday.parlays_won || 0) + parlaysWon,
-          parlays_lost: (existingToday.parlays_lost || 0) + parlaysLost,
-          daily_profit_loss: totalProfitLoss,
+          parlays_won: accumulatedWon,
+          parlays_lost: accumulatedLost,
+          daily_profit_loss: accumulatedPnL,
           is_profitable_day: isProfitableDay,
           consecutive_profitable_days: newConsecutive,
           is_real_mode_ready: isRealModeReady,
-          simulated_bankroll: newBankroll,
+          simulated_bankroll: accumulatedBankroll,
           activated_at: isRealModeReady && !existingToday.is_real_mode_ready 
             ? new Date().toISOString() 
             : existingToday.activated_at,
@@ -541,10 +549,10 @@ Deno.serve(async (req) => {
           parlays_won: parlaysWon,
           parlays_lost: parlaysLost,
           daily_profit_loss: totalProfitLoss,
-          is_profitable_day: isProfitableDay,
-          consecutive_profitable_days: newConsecutive,
+          is_profitable_day: totalProfitLoss > 0,
+          consecutive_profitable_days: totalProfitLoss > 0 ? prevConsecutive + 1 : 0,
           is_real_mode_ready: isRealModeReady,
-          simulated_bankroll: newBankroll,
+          simulated_bankroll: prevBankroll + totalProfitLoss,
           activated_at: isRealModeReady ? new Date().toISOString() : null,
         });
     }
