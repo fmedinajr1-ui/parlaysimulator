@@ -1656,8 +1656,9 @@ async function generateTierParlays(
 
     // Only create parlay if we have enough legs
     if (legs.length >= profile.legs) {
-      // Execution tier: require at least half the legs from golden categories
-      if (tier === 'execution' && goldenCategories.size > 0) {
+      // Golden category gate — disabled for now
+      const ENFORCE_GOLDEN_GATE = false;
+      if (ENFORCE_GOLDEN_GATE && tier === 'execution' && goldenCategories.size > 0) {
         const goldenLegCount = legs.filter(l => goldenCategories.has(l.category)).length;
         const minGoldenLegs = Math.floor(profile.legs / 2);
         if (goldenLegCount < minGoldenLegs) {
