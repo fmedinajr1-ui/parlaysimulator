@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { format, parseISO } from 'date-fns';
@@ -29,7 +29,11 @@ interface BotLeg {
   bet_type?: string;
 }
 
+type FilterType = 'all' | 'won' | 'lost' | 'void';
+
 export function DayParlayDetail({ date, open, onOpenChange }: DayParlayDetailProps) {
+  const [filter, setFilter] = useState<FilterType>('all');
+
   const { data: parlays = [], isLoading } = useQuery({
     queryKey: ['bot-day-parlays', date],
     queryFn: async () => {
@@ -49,8 +53,28 @@ export function DayParlayDetail({ date, open, onOpenChange }: DayParlayDetailPro
     enabled: !!date && open,
   });
 
-  const won = parlays.filter(p => p.outcome === 'won').length;
-  const lost = parlays.filter(p => p.outcome === 'lost').length;
+  const counts = useMemo(() => ({
+    all: parlays.length,
+    won: parlays.filter(p => p.outcome === 'won').length,
+    lost: parlays.filter(p => p.outcome === 'lost').length,
+    void: parlays.filter(p => p.outcome === 'void').length,
+  }), [parlays]);
+
+  const filteredParlays = useMemo(() => {
+    const list = filter === 'all' ? parlays : parlays.filter(p => p.outcome === filter);
+    return [...list].sort((a, b) => {
+      const order: Record<string, number> = { won: 0, lost: 1, pending: 2, void: 3 };
+      const oa = order[a.outcome || 'pending'] ?? 2;
+      const ob = order[b.outcome || 'pending'] ?? 2;
+      if (oa !== ob) return oa - ob;
+      if (a.outcome === 'won') return (b.profit_loss || 0) - (a.profit_loss || 0);
+      if (a.outcome === 'lost') return (a.profit_loss || 0) - (b.profit_loss || 0);
+      return 0;
+    });
+  }, [parlays, filter]);
+
+  const won = counts.won;
+  const lost = counts.lost;
   const totalPnL = parlays.reduce((s, p) => s + (p.profit_loss || 0), 0);
 
   const getOutcomeIcon = (outcome: string) => {
@@ -81,9 +105,31 @@ export function DayParlayDetail({ date, open, onOpenChange }: DayParlayDetailPro
       ) : parlays.length === 0 ? (
         <p className="text-center text-sm text-muted-foreground py-8">No parlays on this day</p>
       ) : (
-        <ScrollArea className="max-h-[50vh]">
-          <div className="space-y-3">
-            {parlays.map((parlay) => {
+        <>
+          {/* Filter tabs */}
+          <div className="flex gap-1.5 mb-3">
+            {(['all', 'won', 'lost', 'void'] as FilterType[]).map(f => (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                className={cn(
+                  'px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors capitalize',
+                  filter === f
+                    ? f === 'won' ? 'bg-green-500/20 text-green-400 ring-1 ring-green-500/30'
+                    : f === 'lost' ? 'bg-red-500/20 text-red-400 ring-1 ring-red-500/30'
+                    : f === 'void' ? 'bg-muted text-muted-foreground ring-1 ring-border'
+                    : 'bg-primary/10 text-primary ring-1 ring-primary/30'
+                    : 'text-muted-foreground hover:bg-muted/50'
+                )}
+              >
+                {f} ({counts[f]})
+              </button>
+            ))}
+          </div>
+
+          <ScrollArea className="max-h-[45vh]">
+            <div className="space-y-3">
+              {filteredParlays.map((parlay) => {
               const legs = parlay.legs as BotLeg[];
               return (
                 <div
@@ -154,8 +200,9 @@ export function DayParlayDetail({ date, open, onOpenChange }: DayParlayDetailPro
                 </div>
               );
             })}
-          </div>
-        </ScrollArea>
+            </div>
+          </ScrollArea>
+        </>
       )}
     </MobileDetailDrawer>
   );
