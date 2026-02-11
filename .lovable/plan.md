@@ -1,72 +1,62 @@
 
 
-# Fix P&L Calculation in bot-settle-and-learn
+# Settle Feb 10 Parlays Now
 
-## Root Cause: Overwrite vs Accumulate
+## The Problem
 
-The settlement cron runs **3 times daily** (6 AM, 12 PM, 6 PM ET). Each run writes to `bot_activation_status` for today's date. The problem is on **line 526**:
-
-```typescript
-// BUG: Overwrites instead of accumulating
-daily_profit_loss: totalProfitLoss,
-simulated_bankroll: newBankroll,
-```
-
-Here's what happens:
-1. **Run 1 (6 AM):** Settles 20 parlays, P&L = +$4,344. Writes `daily_profit_loss: 4344` 
-2. **Run 2 (12 PM):** Settles 1 more parlay, P&L = +$50. **Overwrites** `daily_profit_loss: 50` (the $4,344 is lost!)
-3. **Run 3 (6 PM):** Settles 0 parlays, P&L = $0. **Overwrites** `daily_profit_loss: 0`
-
-The `parlays_won` and `parlays_lost` correctly accumulate (`existingToday.parlays_won + parlaysWon`), but `daily_profit_loss` and `simulated_bankroll` do not.
-
-**Proof from data:** Feb 9 parlays have $5,194 in wins and -$850 in losses (net +$4,344), but `bot_activation_status` shows `daily_profit_loss: 0` and `simulated_bankroll: 1000`.
-
-## Secondary Issue: Zero Stakes
-
-Most parlays have `simulated_stake: 0` from the generator. The settlement code has a fallback (`parlay.simulated_stake || 50`), which works but produces inconsistent P&L. The generator should set a proper default stake.
-
-## Fix (2 changes in 1 file)
-
-### Change 1: Accumulate P&L on update (line 526)
+The settlement function has a date guard on **line 273** that blocks settlement of "today's" parlays:
 
 ```typescript
-// BEFORE (overwrites)
-daily_profit_loss: totalProfitLoss,
-simulated_bankroll: newBankroll,
-
-// AFTER (accumulates)
-daily_profit_loss: (existingToday.daily_profit_loss || 0) + totalProfitLoss,
-simulated_bankroll: (existingToday.simulated_bankroll || prevBankroll) + totalProfitLoss,
-is_profitable_day: ((existingToday.daily_profit_loss || 0) + totalProfitLoss) > 0,
+targetDates = targetDates.filter(d => d < todayET);
 ```
 
-Also update `consecutive_profitable_days` and `is_real_mode_ready` to use the accumulated value.
+Right now it's still Feb 10 in Eastern Time (~10:47 PM ET), so `2026-02-10 < 2026-02-10` is false, and the function skips it. This is normally correct (prevents settling while games are in progress), but tonight's NBA games are done.
 
-### Change 2: Fix bankroll reference for `newBankroll` variable
+Additionally, the request body field is `body.date`, not `body.targetDate`.
 
-The `newBankroll` variable (line 509) is used later for Telegram and logging. It should reflect the accumulated value:
+## Fix: Add a `force` flag for manual triggers
+
+### Change 1: `supabase/functions/bot-settle-and-learn/index.ts` (lines 238-273)
+
+Add a `force` parameter that bypasses the date guard when manually triggering settlement:
 
 ```typescript
-// Compute accumulated values for downstream use
-const accumulatedPnL = (existingToday?.daily_profit_loss || 0) + totalProfitLoss;
-const accumulatedBankroll = existingToday 
-  ? (existingToday.simulated_bankroll || prevBankroll) + totalProfitLoss
-  : prevBankroll + totalProfitLoss;
+let targetDates: string[] = [];
+let forceSettle = false;
+try {
+  const body = await req.json();
+  if (body.date) {
+    targetDates = [body.date];
+  }
+  if (body.force === true) {
+    forceSettle = true;
+  }
+} catch {
+  // No body - use defaults
+}
+
+// ... existing default date logic stays the same ...
+
+// Date guard: filter out today's date to prevent premature settlement
+// Skip guard when force=true (for manual triggers after games are done)
+if (!forceSettle) {
+  targetDates = targetDates.filter(d => d < todayET);
+}
 ```
 
-### Change 3: Default stake in generator
+### After deployment
 
-In `bot-generate-daily-parlays`, ensure `simulated_stake` defaults to 50 when generating parlays, so the settlement doesn't rely on a fallback.
+Trigger settlement with:
+```json
+{ "date": "2026-02-10", "force": true }
+```
+
+This will settle the 7 pending parlays and accumulate the results into the existing Feb 10 activation status row.
 
 ## File Modified
 
-- `supabase/functions/bot-settle-and-learn/index.ts` -- accumulate P&L and bankroll across runs
-- `supabase/functions/bot-generate-daily-parlays/index.ts` -- default simulated_stake to 50
+- `supabase/functions/bot-settle-and-learn/index.ts` -- add `force` bypass for date guard
 
-## Expected Result
+## Risk
 
-- `daily_profit_loss` correctly accumulates across all 3 daily cron runs
-- `simulated_bankroll` properly tracks cumulative gains/losses from $1,000 starting point
-- P&L Calendar shows real green/red days instead of $0 everywhere
-- Consecutive profitable day tracking works, enabling real-mode activation logic
-
+Low -- the `force` flag only applies when manually calling the function with an explicit date. The cron jobs don't send `force: true`, so normal operation is unaffected.
