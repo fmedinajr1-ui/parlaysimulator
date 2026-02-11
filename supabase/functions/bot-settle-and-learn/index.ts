@@ -235,12 +235,16 @@ Deno.serve(async (req) => {
 
     const todayET = getEasternDate();
 
-    // Accept targetDate from request body
+    // Accept targetDate and force flag from request body
     let targetDates: string[] = [];
+    let forceSettle = false;
     try {
       const body = await req.json();
       if (body.date) {
         targetDates = [body.date];
+      }
+      if (body.force === true) {
+        forceSettle = true;
       }
     } catch {
       // No body - use defaults
@@ -270,7 +274,10 @@ Deno.serve(async (req) => {
     }
 
     // Date guard: filter out today's date to prevent premature settlement
-    targetDates = targetDates.filter(d => d < todayET);
+    // Skip guard when force=true (for manual triggers after games are done)
+    if (!forceSettle) {
+      targetDates = targetDates.filter(d => d < todayET);
+    }
 
     if (targetDates.length === 0) {
       console.log('[Bot Settle] All target dates are today or future — skipping settlement');
