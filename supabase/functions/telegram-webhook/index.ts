@@ -146,12 +146,12 @@ async function getConversationHistory(chatId: string, limit: number = 10) {
 
 // Data fetching functions for AI tools
 async function getStatus() {
-  const today = getEasternDate();
-
+  // Match desktop: get latest entry regardless of date
   const { data: activation } = await supabase
     .from("bot_activation_status")
     .select("*")
-    .eq("check_date", today)
+    .order("check_date", { ascending: false })
+    .limit(1)
     .maybeSingle();
 
   const { data: recentDays } = await supabase
@@ -246,10 +246,11 @@ async function getParlays() {
 }
 
 async function getPerformance() {
+  // Exclude voided parlays to match desktop
   const { data: settled } = await supabase
     .from("bot_daily_parlays")
     .select("outcome, profit_loss, expected_odds")
-    .not("outcome", "is", null);
+    .in("outcome", ["won", "lost"]);
 
   if (!settled || settled.length === 0) {
     return { winRate: 0, roi: 0, totalSettled: 0, wins: 0, losses: 0, totalProfit: 0 };
@@ -600,11 +601,12 @@ async function handleWeights(chatId: string) {
   let message = `⚖️ *Top Category Weights*\n\n`;
 
   weights.slice(0, 8).forEach((w, i) => {
-    const hitRate = w.current_hit_rate
-      ? `(${(w.current_hit_rate * 100).toFixed(0)}% hit)`
+    // current_hit_rate is already stored as a percentage (e.g. 64.1)
+    const hitRate = w.current_hit_rate !== null && w.current_hit_rate !== undefined
+      ? `(${w.current_hit_rate.toFixed(0)}% hit)`
       : "";
     message += `${i + 1}. *${w.category}* ${w.side}\n`;
-    message += `   Weight: ${(w.weight * 100).toFixed(0)}% ${hitRate}\n`;
+    message += `   Weight: ${((w.weight || 1) * 100).toFixed(0)}% ${hitRate}\n`;
   });
 
   return message;
@@ -632,7 +634,7 @@ async function handleGenerate(chatId: string) {
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${Deno.env.get("SUPABASE_ANON_KEY")}`,
+          Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({}),
@@ -662,7 +664,7 @@ async function handleSettle(chatId: string) {
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${Deno.env.get("SUPABASE_ANON_KEY")}`,
+          Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({}),
@@ -741,9 +743,9 @@ async function handleRoi(chatId: string) {
   await logActivity("telegram_roi", "User requested ROI breakdown", { chatId });
 
   const [settled7d, settled30d, settledAll] = await Promise.all([
-    supabase.from("bot_daily_parlays").select("strategy_name, outcome, profit_loss, expected_odds").not("outcome", "is", null).gte("parlay_date", getEasternDateDaysAgo(7)),
-    supabase.from("bot_daily_parlays").select("strategy_name, outcome, profit_loss, expected_odds").not("outcome", "is", null).gte("parlay_date", getEasternDateDaysAgo(30)),
-    supabase.from("bot_daily_parlays").select("strategy_name, outcome, profit_loss, expected_odds").not("outcome", "is", null),
+    supabase.from("bot_daily_parlays").select("strategy_name, outcome, profit_loss, expected_odds").in("outcome", ["won", "lost"]).gte("parlay_date", getEasternDateDaysAgo(7)),
+    supabase.from("bot_daily_parlays").select("strategy_name, outcome, profit_loss, expected_odds").in("outcome", ["won", "lost"]).gte("parlay_date", getEasternDateDaysAgo(30)),
+    supabase.from("bot_daily_parlays").select("strategy_name, outcome, profit_loss, expected_odds").in("outcome", ["won", "lost"]),
   ]);
 
   const calcRoi = (data: any[]) => {
@@ -797,9 +799,9 @@ async function handleRoi(chatId: string) {
 
   if (topCats.length > 0) {
     msg += `🔥 *Best Categories:*\n`;
-    topCats.forEach(c => msg += `• ${c.category} ${c.side}: ${((c.current_hit_rate || 0) * 100).toFixed(0)}% hit\n`);
+    topCats.forEach(c => msg += `• ${c.category} ${c.side}: ${(c.current_hit_rate || 0).toFixed(0)}% hit\n`);
     msg += `\n❄️ *Worst Categories:*\n`;
-    bottomCats.forEach(c => msg += `• ${c.category} ${c.side}: ${((c.current_hit_rate || 0) * 100).toFixed(0)}% hit\n`);
+    bottomCats.forEach(c => msg += `• ${c.category} ${c.side}: ${(c.current_hit_rate || 0).toFixed(0)}% hit\n`);
   }
 
   return msg;
@@ -824,7 +826,7 @@ async function handleStreaks(chatId: string) {
   } else {
     hot.forEach(w => {
       msg += `• *${w.category}* ${w.side}: ${w.current_streak} in a row ✅\n`;
-      msg += `  Best ever: ${w.best_streak || 0} | Hit rate: ${((w.current_hit_rate || 0) * 100).toFixed(0)}%\n`;
+      msg += `  Best ever: ${w.best_streak || 0} | Hit rate: ${(w.current_hit_rate || 0).toFixed(0)}%\n`;
     });
     msg += `\n`;
   }
@@ -835,7 +837,7 @@ async function handleStreaks(chatId: string) {
   } else {
     cold.forEach(w => {
       msg += `• *${w.category}* ${w.side}: ${Math.abs(w.current_streak || 0)} misses ❌\n`;
-      msg += `  Worst ever: ${w.worst_streak || 0} | Hit rate: ${((w.current_hit_rate || 0) * 100).toFixed(0)}%\n`;
+      msg += `  Worst ever: ${w.worst_streak || 0} | Hit rate: ${(w.current_hit_rate || 0).toFixed(0)}%\n`;
     });
   }
 
@@ -849,8 +851,8 @@ async function handleCompare(chatId: string) {
   const d30 = getEasternDateDaysAgo(30);
 
   const [res7, res30] = await Promise.all([
-    supabase.from("bot_daily_parlays").select("strategy_name, outcome, profit_loss, expected_odds").not("outcome", "is", null).gte("parlay_date", d7),
-    supabase.from("bot_daily_parlays").select("strategy_name, outcome, profit_loss, expected_odds").not("outcome", "is", null).gte("parlay_date", d30).lt("parlay_date", d7),
+    supabase.from("bot_daily_parlays").select("strategy_name, outcome, profit_loss, expected_odds").in("outcome", ["won", "lost"]).gte("parlay_date", d7),
+    supabase.from("bot_daily_parlays").select("strategy_name, outcome, profit_loss, expected_odds").in("outcome", ["won", "lost"]).gte("parlay_date", d30).lt("parlay_date", d7),
   ]);
 
   const analyze = (data: any[]) => {
@@ -898,7 +900,7 @@ async function handleSharp(chatId: string) {
 
   let msg = `🎯 *Sharpest Categories*\n\n`;
   weights.forEach((w, i) => {
-    const hr = (w.current_hit_rate || 0) * 100;
+    const hr = w.current_hit_rate || 0;
     const samples = w.total_picks || 0;
     const isGolden = hr >= 60 && samples >= 20;
     const label = isGolden ? ' 🌟 GOLDEN' : '';
@@ -906,7 +908,7 @@ async function handleSharp(chatId: string) {
     msg += `   ${hr.toFixed(1)}% hit | ${samples} samples | wt ${((w.weight || 1) * 100).toFixed(0)}%\n`;
   });
 
-  const goldenCount = weights.filter(w => (w.current_hit_rate || 0) >= 0.6 && (w.total_picks || 0) >= 20).length;
+  const goldenCount = weights.filter(w => (w.current_hit_rate || 0) >= 60 && (w.total_picks || 0) >= 20).length;
   if (goldenCount > 0) msg += `\n🌟 ${goldenCount} golden categories (60%+ hit, 20+ samples)`;
 
   return msg;
@@ -917,7 +919,7 @@ async function handleAvoid(chatId: string) {
 
   const [blocked, nearBlock] = await Promise.all([
     supabase.from("bot_category_weights").select("category, side, block_reason, current_hit_rate, total_picks").eq("is_blocked", true).order("current_hit_rate", { ascending: true }),
-    supabase.from("bot_category_weights").select("category, side, current_hit_rate, total_picks").eq("is_blocked", false).not("current_hit_rate", "is", null).gte("total_picks", 5).lte("current_hit_rate", 0.45).order("current_hit_rate", { ascending: true }).limit(5),
+    supabase.from("bot_category_weights").select("category, side, current_hit_rate, total_picks").eq("is_blocked", false).not("current_hit_rate", "is", null).gte("total_picks", 5).lte("current_hit_rate", 45).order("current_hit_rate", { ascending: true }).limit(5),
   ]);
 
   let msg = `🚫 *Blocked Categories*\n\n`;
@@ -927,7 +929,7 @@ async function handleAvoid(chatId: string) {
   } else {
     blocked.data.forEach(b => {
       msg += `• *${b.category}* ${b.side}\n`;
-      msg += `  ${((b.current_hit_rate || 0) * 100).toFixed(0)}% hit (${b.total_picks || 0} samples)\n`;
+      msg += `  ${(b.current_hit_rate || 0).toFixed(0)}% hit (${b.total_picks || 0} samples)\n`;
       if (b.block_reason) msg += `  Reason: ${b.block_reason}\n`;
     });
     msg += `\n`;
@@ -936,7 +938,7 @@ async function handleAvoid(chatId: string) {
   if (nearBlock.data && nearBlock.data.length > 0) {
     msg += `⚠️ *Near Block Threshold (40-45%):*\n`;
     nearBlock.data.forEach(n => {
-      msg += `• ${n.category} ${n.side}: ${((n.current_hit_rate || 0) * 100).toFixed(0)}% (${n.total_picks || 0} samples)\n`;
+      msg += `• ${n.category} ${n.side}: ${(n.current_hit_rate || 0).toFixed(0)}% (${n.total_picks || 0} samples)\n`;
     });
   }
 
@@ -1310,7 +1312,7 @@ async function handleWeeklySummary(chatId: string) {
   const d7 = getEasternDateDaysAgo(7);
 
   const [parlaysRes, daysRes, weightsRes] = await Promise.all([
-    supabase.from("bot_daily_parlays").select("strategy_name, outcome, profit_loss").not("outcome", "is", null).gte("parlay_date", d7),
+    supabase.from("bot_daily_parlays").select("strategy_name, outcome, profit_loss").in("outcome", ["won", "lost"]).gte("parlay_date", d7),
     supabase.from("bot_activation_status").select("check_date, daily_profit_loss, is_profitable_day, parlays_won, parlays_lost").gte("check_date", d7).order("check_date"),
     supabase.from("bot_category_weights").select("category, side, current_hit_rate, total_picks").eq("is_blocked", false).not("current_hit_rate", "is", null).order("current_hit_rate", { ascending: false }).limit(5),
   ]);
@@ -1333,7 +1335,7 @@ async function handleWeeklySummary(chatId: string) {
 
   if (topWeights.length > 0) {
     msg += `*Top Categories:*\n`;
-    topWeights.forEach(w => msg += `• ${w.category} ${w.side}: ${((w.current_hit_rate || 0) * 100).toFixed(0)}%\n`);
+    topWeights.forEach(w => msg += `• ${w.category} ${w.side}: ${(w.current_hit_rate || 0).toFixed(0)}%\n`);
     msg += `\n`;
   }
 
@@ -1582,8 +1584,9 @@ async function handleParlayStatus(chatId: string) {
   for (const p of pendingParlays) {
     const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs || '[]');
     for (const leg of legs) {
-      if (leg.type === 'team') continue;
-      const key = `${(leg.player_name || '').toLowerCase()}_${leg.prop_type}_${leg.side}`;
+      const key = leg.type === 'team' 
+        ? `team_${(leg.home_team || '').toLowerCase()}_${leg.bet_type}_${leg.side}`
+        : `${(leg.player_name || '').toLowerCase()}_${leg.prop_type}_${leg.side}`;
       if (seenLegs.has(key)) continue;
       seenLegs.add(key);
       const w = weightMap.get(`${leg.category || leg.prop_type}_${leg.side}`) || 0;
