@@ -1,44 +1,29 @@
 
-# Make "+28 more" Expandable to Show All Parlays
 
-## Current Behavior
-On the Bot Dashboard, only the first 10 parlays are shown, with a static "+X more" text label for the rest. Users can't see the hidden parlays.
+# Add Dates to Recent Results Parlay Cards
+
+## What's Happening Now
+
+The "Recent Results" section shows settled parlays from the last 7 days, but there's no date shown on each card — so you can't tell which day a parlay was from.
 
 ## Change
 
-**File**: `src/pages/BotDashboard.tsx` (lines 180-189)
+**File**: `src/components/bot/BotParlayCard.tsx`
 
-Replace the static "+X more" text with a collapsible expand/collapse button:
+Add the parlay date to the card header row, displayed as a short date (e.g., "Feb 10") next to the leg count. The `parlay_date` field already exists on every parlay record, so no data changes are needed.
 
-1. Add a `showAllParlays` state variable (`useState(false)`)
-2. Change `.slice(0, 10)` to conditionally show all or first 10 based on state
-3. Replace the static `<p>` with a clickable button that toggles expansion:
-   - Collapsed: "+28 more" with a ChevronDown icon
-   - Expanded: "Show less" with a ChevronUp icon
+Specifically, after the leg count badge (`3L`, `4L`, etc.), add a small formatted date label using `date-fns` `format()`:
 
-### Technical Detail
-
-```typescript
-const [showAllParlays, setShowAllParlays] = useState(false);
-
-// In render:
-{(showAllParlays ? state.todayParlays : state.todayParlays.slice(0, 10)).map((parlay) => (
-  <BotParlayCard key={parlay.id} parlay={parlay} />
-))}
-{state.todayParlays.length > 10 && (
-  <Button
-    variant="ghost"
-    size="sm"
-    className="w-full text-muted-foreground"
-    onClick={() => setShowAllParlays(!showAllParlays)}
-  >
-    {showAllParlays ? (
-      <>Show less <ChevronUp className="ml-1 h-4 w-4" /></>
-    ) : (
-      <>+{state.todayParlays.length - 10} more <ChevronDown className="ml-1 h-4 w-4" /></>
-    )}
-  </Button>
-)}
+```
+[Won] 4L  Feb 10  +8.8% $10 → +$474
 ```
 
-Imports needed: `ChevronDown`, `ChevronUp` from lucide-react (check if already imported), and `useState` (already imported).
+### Technical Details
+
+- Import `format` and `parseISO` from `date-fns` (already a project dependency)
+- Format `parlay.parlay_date` as `"MMM d"` (e.g., "Feb 10")
+- Render it as a small muted text span between the leg count and edge percentage
+- Add a subtle dot separator for visual clarity
+
+This is a one-file, ~5-line change.
+
