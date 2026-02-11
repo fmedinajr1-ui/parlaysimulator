@@ -1984,11 +1984,13 @@ Deno.serve(async (req) => {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${supabaseKey}`,
         },
-        body: JSON.stringify({
+         body: JSON.stringify({
           type: 'tiered_parlays_generated',
           data: {
             totalCount: allParlays.length,
-            tierSummary,
+            exploration: results['exploration']?.count || 0,
+            validation: results['validation']?.count || 0,
+            execution: results['execution']?.count || 0,
             poolSize: pool.totalPool,
             date: targetDate,
           },
