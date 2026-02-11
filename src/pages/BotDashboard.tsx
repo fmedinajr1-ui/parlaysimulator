@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bot, RefreshCw, Play, CheckCircle, Settings2 } from 'lucide-react';
+import { Bot, RefreshCw, Play, CheckCircle, Settings2, ChevronDown, ChevronUp } from 'lucide-react';
 import { useBotEngine } from '@/hooks/useBotEngine';
 import { BotActivationCard } from '@/components/bot/BotActivationCard';
 import { BotPnLCalendar } from '@/components/bot/BotPnLCalendar';
@@ -23,6 +23,7 @@ import { cn } from '@/lib/utils';
 
 export default function BotDashboard() {
   const { toast } = useToast();
+  const [showAllParlays, setShowAllParlays] = React.useState(false);
   const {
     state,
     generateParlays,
@@ -178,14 +179,23 @@ export default function BotDashboard() {
                   <p className="text-sm">No parlays yet — hit Generate below</p>
                 </div>
               ) : (
-                state.todayParlays.slice(0, 10).map((parlay) => (
+                (showAllParlays ? state.todayParlays : state.todayParlays.slice(0, 10)).map((parlay) => (
                   <BotParlayCard key={parlay.id} parlay={parlay} />
                 ))
               )}
               {state.todayParlays.length > 10 && (
-                <p className="text-sm text-muted-foreground text-center pt-2">
-                  +{state.todayParlays.length - 10} more
-                </p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full text-muted-foreground"
+                  onClick={() => setShowAllParlays(!showAllParlays)}
+                >
+                  {showAllParlays ? (
+                    <>Show less <ChevronUp className="ml-1 h-4 w-4" /></>
+                  ) : (
+                    <>+{state.todayParlays.length - 10} more <ChevronDown className="ml-1 h-4 w-4" /></>
+                  )}
+                </Button>
               )}
             </CardContent>
           </Card>
