@@ -6,6 +6,15 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+function getEasternDate(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -58,10 +67,36 @@ serve(async (req) => {
     
     console.log(`[Pipeline] Starting unified pipeline in ${mode} mode...`);
     const pipelineStart = Date.now();
+    const today = getEasternDate();
+
+    // Check API budget status before data collection
+    let budgetStatus = { calls_used: 0, calls_limit: 2500 };
+    const { data: budgetData } = await supabase
+      .from('api_budget_tracker')
+      .select('calls_used, calls_limit')
+      .eq('date', today)
+      .maybeSingle();
+    
+    if (budgetData) {
+      budgetStatus = budgetData;
+      console.log(`[Pipeline] API Budget: ${budgetData.calls_used}/${budgetData.calls_limit} calls used today`);
+    }
 
     // ============ PHASE 1: DATA COLLECTION ============
     if (mode === 'full' || mode === 'collect') {
-      await runFunction('whale-odds-scraper', { sports: ['basketball_nba', 'icehockey_nhl', 'basketball_wnba', 'basketball_ncaab'] });
+      const budgetRemaining = budgetStatus.calls_limit - budgetStatus.calls_used;
+      
+      if (budgetRemaining > 200) {
+        // Use 'full' mode scraper for scheduled full scrapes
+        await runFunction('whale-odds-scraper', { 
+          mode: 'full',
+          sports: ['basketball_nba', 'icehockey_nhl', 'basketball_wnba', 'basketball_ncaab'] 
+        });
+      } else {
+        console.log(`[Pipeline] Low budget (${budgetRemaining} remaining), using targeted scrape only`);
+        await runFunction('whale-odds-scraper', { mode: 'targeted' });
+      }
+      
       await runFunction('daily-fatigue-calculator', {});
       await runFunction('track-odds-movement', { sports: ['basketball_nba', 'icehockey_nhl', 'basketball_wnba', 'basketball_ncaab'] });
       await runFunction('pp-props-scraper', { sports: ['NBA', 'NHL', 'WNBA', 'ATP', 'WTA'] });
@@ -77,6 +112,8 @@ serve(async (req) => {
 
     // ============ PHASE 3: PARLAY GENERATION ============
     if (mode === 'full' || mode === 'generate') {
+      // Targeted refresh before generation to ensure fresh lines
+      await runFunction('whale-odds-scraper', { mode: 'targeted' });
       await runFunction('bot-generate-daily-parlays', { source: 'pipeline' });
     }
 
@@ -88,7 +125,6 @@ serve(async (req) => {
       await runFunction('verify-fatigue-outcomes', {});
       await runFunction('verify-sweet-spot-outcomes', {});
       await runFunction('verify-best-bets-outcomes', {});
-      // Settlement: user parlays + bot parlays (P&L calendar)
       await runFunction('auto-settle-parlays', {});
       await runFunction('bot-settle-and-learn', {});
     }
@@ -105,6 +141,13 @@ serve(async (req) => {
     const totalSteps = Object.keys(results).length;
     const successfulSteps = Object.values(results).filter(r => r.success).length;
     const failedSteps = Object.values(results).filter(r => !r.success).length;
+
+    // Re-fetch budget after pipeline run
+    const { data: finalBudget } = await supabase
+      .from('api_budget_tracker')
+      .select('calls_used, calls_limit')
+      .eq('date', today)
+      .maybeSingle();
     
     await supabase.from('ai_performance_metrics').upsert({
       sport: 'pipeline',
@@ -127,6 +170,7 @@ serve(async (req) => {
         totalSteps,
         successfulSteps,
         failedSteps,
+        apiBudget: finalBudget || budgetStatus,
         phases: {
           collect: mode === 'full' || mode === 'collect',
           analyze: mode === 'full' || mode === 'analyze',
@@ -143,6 +187,7 @@ serve(async (req) => {
       totalSteps,
       successfulSteps,
       failedSteps,
+      apiBudget: finalBudget || budgetStatus,
       pipelineHealth: failedSteps === 0 ? 'healthy' : failedSteps <= 2 ? 'degraded' : 'unhealthy',
       results,
     };

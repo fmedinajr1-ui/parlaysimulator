@@ -6,51 +6,35 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// All sports supported by the multi-sport scraper
-const ALL_SPORTS = [
-  // Basketball
-  'basketball_nba',
-  'basketball_wnba',
-  'basketball_ncaab',
-  // Hockey
-  'icehockey_nhl',
-  // Football
-  'americanfootball_nfl',
-  'americanfootball_ncaaf',
-  // Tennis (major tournaments)
-  'tennis_atp_australian_open',
-  'tennis_atp_french_open',
-  'tennis_atp_us_open',
-  'tennis_atp_wimbledon',
-  'tennis_wta_australian_open',
-  'tennis_wta_french_open',
-  'tennis_wta_us_open',
-  'tennis_wta_wimbledon',
-];
+// ============ SPORT TIERS ============
+// Tier 1: Always fetch (best historical data)
+const TIER_1_SPORTS = ['basketball_nba', 'icehockey_nhl'];
+// Tier 2: Fetch if games exist (seasonal)
+const TIER_2_SPORTS = ['basketball_wnba', 'basketball_ncaab'];
+// Tier 3: Skip for now (offseason / low volume)
+// NFL, NCAAF, Tennis - not fetched to save API budget
 
-// Player prop markets by sport
-const PLAYER_MARKETS: Record<string, string[]> = {
-  'basketball_nba': ['player_points', 'player_rebounds', 'player_assists', 'player_threes', 'player_blocks', 'player_steals'],
-  'basketball_wnba': ['player_points', 'player_rebounds', 'player_assists', 'player_threes'],
-  'basketball_ncaab': ['player_points', 'player_rebounds', 'player_assists'],
-  'icehockey_nhl': ['player_points', 'player_assists', 'player_goals', 'player_shots_on_goal', 'player_saves'],
-  'americanfootball_nfl': ['player_pass_yds', 'player_rush_yds', 'player_reception_yds', 'player_pass_tds', 'player_receptions'],
-  'americanfootball_ncaaf': ['player_pass_yds', 'player_rush_yds', 'player_reception_yds'],
-  // Tennis player props
-  'tennis_atp_australian_open': ['player_aces', 'player_double_faults', 'player_games'],
-  'tennis_atp_french_open': ['player_aces', 'player_double_faults', 'player_games'],
-  'tennis_atp_us_open': ['player_aces', 'player_double_faults', 'player_games'],
-  'tennis_atp_wimbledon': ['player_aces', 'player_double_faults', 'player_games'],
-  'tennis_wta_australian_open': ['player_aces', 'player_double_faults', 'player_games'],
-  'tennis_wta_french_open': ['player_aces', 'player_double_faults', 'player_games'],
-  'tennis_wta_us_open': ['player_aces', 'player_double_faults', 'player_games'],
-  'tennis_wta_wimbledon': ['player_aces', 'player_double_faults', 'player_games'],
+const ALL_ACTIVE_SPORTS = [...TIER_1_SPORTS, ...TIER_2_SPORTS];
+
+// Batched player prop markets (comma-separated to reduce API calls)
+const PLAYER_MARKET_BATCHES: Record<string, string[][]> = {
+  'basketball_nba': [
+    ['player_points', 'player_rebounds', 'player_assists'],
+    ['player_threes', 'player_blocks', 'player_steals'],
+  ],
+  'basketball_wnba': [
+    ['player_points', 'player_rebounds', 'player_assists', 'player_threes'],
+  ],
+  'basketball_ncaab': [
+    ['player_points', 'player_rebounds', 'player_assists'],
+  ],
+  'icehockey_nhl': [
+    ['player_points', 'player_assists', 'player_goals'],
+    ['player_shots_on_goal', 'player_saves'],
+  ],
 };
 
-// Team-level markets (spreads, totals, moneylines)
 const TEAM_MARKETS = ['spreads', 'totals', 'h2h'];
-
-// Priority bookmakers
 const BOOKMAKERS = ['fanduel', 'draftkings', 'betmgm', 'caesars'];
 
 interface OddsAPIEvent {
@@ -110,12 +94,20 @@ interface GameBetInsert {
   is_active: boolean;
 }
 
-// Helper to normalize sport key for storage
 function normalizeSportKey(sportKey: string): string {
   if (sportKey.startsWith('tennis_atp')) return 'tennis_atp';
   if (sportKey.startsWith('tennis_wta')) return 'tennis_wta';
   if (sportKey === 'icehockey_nhl') return 'hockey_nhl';
   return sportKey;
+}
+
+function getEasternDate(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
 }
 
 serve(async (req) => {
@@ -126,113 +118,179 @@ serve(async (req) => {
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const apiKey = Deno.env.get('THE_ODDS_API_KEY');
-  
   const supabase = createClient(supabaseUrl, supabaseKey);
 
   try {
     const body = await req.json().catch(() => ({}));
-    const { 
-      sports = ALL_SPORTS, 
-      limit_events = 15,  // Increased from 10 for larger prop pool
-      include_player_props = true,
-      include_team_props = true
+    const {
+      mode = 'full', // 'scout' | 'full' | 'targeted'
+      sports = ALL_ACTIVE_SPORTS,
+      limit_events = 15,
     } = body;
-    
-    console.log('[Multi-Sport Scraper] Starting odds fetch for sports:', sports);
-    console.log('[Multi-Sport Scraper] Player props:', include_player_props, 'Team props:', include_team_props);
-    
+
+    console.log(`[Scraper] Mode: ${mode} | Sports: ${sports.join(', ')}`);
+
     if (!apiKey) {
-      console.error('[Multi-Sport Scraper] THE_ODDS_API_KEY not configured');
       return new Response(
-        JSON.stringify({ success: false, error: 'Odds API key not configured' }),
+        JSON.stringify({ success: false, error: 'THE_ODDS_API_KEY not configured' }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
+    const today = getEasternDate();
     const now = new Date();
-    const allPlayerProps: UnifiedPropInsert[] = [];
-    const allTeamBets: GameBetInsert[] = [];
     let totalApiCalls = 0;
-    
-    for (const sport of sports) {
-      if (!ALL_SPORTS.includes(sport)) {
-        console.log(`[Multi-Sport Scraper] Skipping unsupported sport: ${sport}`);
-        continue;
+
+    // ============ BUDGET CHECK ============
+    const checkBudget = async (callsNeeded: number): Promise<boolean> => {
+      const { data } = await supabase.rpc('increment_api_calls', {
+        p_date: today,
+        p_count: callsNeeded,
+      });
+      if (data && data.length > 0 && data[0].is_over_limit) {
+        console.log(`[Scraper] BUDGET EXCEEDED: ${data[0].new_total}/${data[0].daily_limit} calls used today`);
+        return false;
       }
-      
-      console.log(`[Multi-Sport Scraper] Fetching events for ${sport}...`);
-      
-      // Fetch upcoming events for this sport
-      const eventsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events?apiKey=${apiKey}&dateFormat=iso`;
-      const eventsResponse = await fetch(eventsUrl);
-      totalApiCalls++;
-      
-      if (!eventsResponse.ok) {
-        console.error(`[Multi-Sport Scraper] Events fetch failed for ${sport}:`, eventsResponse.status);
-        continue;
+      return true;
+    };
+
+    const trackApiCall = async (count = 1) => {
+      totalApiCalls += count;
+      // We already pre-checked budget, just track
+    };
+
+    // ============ MODE: SCOUT ============
+    if (mode === 'scout') {
+      // Only fetch events endpoints to see what games exist (~1 call per sport)
+      const canProceed = await checkBudget(ALL_ACTIVE_SPORTS.length);
+      if (!canProceed) {
+        return new Response(JSON.stringify({
+          success: false, error: 'Daily API budget exceeded', mode: 'scout',
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
-      
-      const events: OddsAPIEvent[] = await eventsResponse.json();
-      console.log(`[Multi-Sport Scraper] Found ${events.length} events for ${sport}`);
-      
-      // Filter to next 72 hours for larger event pool
-      const windowEnd = new Date(now.getTime() + 72 * 60 * 60 * 1000);
-      const relevantEvents = events
-        .filter(e => new Date(e.commence_time) < windowEnd && new Date(e.commence_time) > now)
-        .slice(0, limit_events);
-      
-      console.log(`[Multi-Sport Scraper] Processing ${relevantEvents.length} relevant events for ${sport}`);
-      
-      // ========== PLAYER PROPS ==========
-      if (include_player_props) {
-        const markets = PLAYER_MARKETS[sport] || [];
-        
-        for (const event of relevantEvents) {
-          for (const market of markets) {
+
+      const scoutResults: Record<string, number> = {};
+
+      for (const sport of ALL_ACTIVE_SPORTS) {
+        try {
+          const eventsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events?apiKey=${apiKey}&dateFormat=iso`;
+          const resp = await fetch(eventsUrl);
+          await trackApiCall();
+
+          if (resp.ok) {
+            const events: OddsAPIEvent[] = await resp.json();
+            const windowEnd = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+            const todayEvents = events.filter(e =>
+              new Date(e.commence_time) < windowEnd && new Date(e.commence_time) > now
+            );
+            scoutResults[sport] = todayEvents.length;
+            console.log(`[Scout] ${sport}: ${todayEvents.length} events today`);
+          } else {
+            scoutResults[sport] = 0;
+            console.log(`[Scout] ${sport}: API error ${resp.status}`);
+          }
+        } catch (e) {
+          scoutResults[sport] = 0;
+        }
+      }
+
+      // Update tracker with last scout time
+      await supabase.from('api_budget_tracker').upsert({
+        date: today, last_scout: now.toISOString(),
+      }, { onConflict: 'date' });
+
+      await supabase.from('cron_job_history').insert({
+        job_name: 'whale-odds-scraper',
+        status: 'completed',
+        started_at: now.toISOString(),
+        completed_at: new Date().toISOString(),
+        result: { mode: 'scout', scoutResults, apiCalls: totalApiCalls },
+      });
+
+      return new Response(JSON.stringify({
+        success: true, mode: 'scout', scoutResults, apiCalls: totalApiCalls,
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // ============ MODE: TARGETED ============
+    if (mode === 'targeted') {
+      // Only fetch odds for players in today's category_sweet_spots with pending outcomes
+      const { data: activePicks } = await supabase
+        .from('category_sweet_spots')
+        .select('player_name, prop_type, recommended_line, recommended_side, category')
+        .eq('analysis_date', today)
+        .is('outcome', null);
+
+      if (!activePicks || activePicks.length === 0) {
+        console.log('[Targeted] No active picks to refresh');
+        return new Response(JSON.stringify({
+          success: true, mode: 'targeted', message: 'No active picks', apiCalls: 0,
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      console.log(`[Targeted] Refreshing odds for ${activePicks.length} active picks`);
+
+      // Group picks by sport events we need to fetch
+      // First, scout events to get event IDs
+      const eventsPerSport: Record<string, OddsAPIEvent[]> = {};
+      const estimatedCalls = TIER_1_SPORTS.length + activePicks.length; // rough estimate
+      const canProceed = await checkBudget(Math.min(estimatedCalls, 100));
+      if (!canProceed) {
+        return new Response(JSON.stringify({
+          success: false, error: 'Daily API budget exceeded', mode: 'targeted',
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      for (const sport of TIER_1_SPORTS) {
+        try {
+          const eventsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events?apiKey=${apiKey}&dateFormat=iso`;
+          const resp = await fetch(eventsUrl);
+          await trackApiCall();
+          if (resp.ok) {
+            const events: OddsAPIEvent[] = await resp.json();
+            const windowEnd = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+            eventsPerSport[sport] = events
+              .filter(e => new Date(e.commence_time) < windowEnd && new Date(e.commence_time) > now)
+              .slice(0, limit_events);
+          }
+        } catch (_) { /* skip */ }
+      }
+
+      // For each event, fetch batched props and extract only the players we care about
+      const allPlayerProps: UnifiedPropInsert[] = [];
+      const playerNamesLower = new Set(activePicks.map(p => p.player_name.toLowerCase()));
+
+      for (const [sport, events] of Object.entries(eventsPerSport)) {
+        const batches = PLAYER_MARKET_BATCHES[sport] || [];
+        for (const event of events) {
+          for (const batch of batches) {
             try {
-              const propsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${apiKey}&regions=us&markets=${market}&oddsFormat=american&bookmakers=${BOOKMAKERS.join(',')}`;
-              
-              const propsResponse = await fetch(propsUrl);
-              totalApiCalls++;
-              
-              if (!propsResponse.ok) {
-                if (propsResponse.status === 404) continue;
-                console.error(`[Multi-Sport Scraper] Props fetch failed for ${event.id}/${market}:`, propsResponse.status);
-                continue;
-              }
-              
-              const propsData = await propsResponse.json();
-              const bookmakers: Bookmaker[] = propsData.bookmakers || [];
-              
-              for (const bookmaker of bookmakers) {
-                for (const propMarket of bookmaker.markets) {
-                  if (propMarket.key !== market) continue;
-                  
+              const marketsParam = batch.join(',');
+              const url = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${apiKey}&regions=us&markets=${marketsParam}&oddsFormat=american&bookmakers=${BOOKMAKERS.join(',')}`;
+              const resp = await fetch(url);
+              await trackApiCall();
+              if (!resp.ok) continue;
+
+              const data = await resp.json();
+              for (const bookmaker of (data.bookmakers || []) as Bookmaker[]) {
+                for (const market of bookmaker.markets) {
                   const playerMap = new Map<string, { over?: PropOutcome; under?: PropOutcome }>();
-                  
-                  for (const outcome of propMarket.outcomes) {
-                    const playerName = outcome.description || outcome.name;
-                    if (!playerName || playerName.length < 3) continue;
-                    
-                    if (!playerMap.has(playerName)) {
-                      playerMap.set(playerName, {});
-                    }
-                    
-                    const playerOutcomes = playerMap.get(playerName)!;
-                    if (outcome.name === 'Over') {
-                      playerOutcomes.over = outcome;
-                    } else if (outcome.name === 'Under') {
-                      playerOutcomes.under = outcome;
-                    }
+                  for (const outcome of market.outcomes) {
+                    const name = outcome.description || outcome.name;
+                    if (!name || name.length < 3) continue;
+                    if (!playerMap.has(name)) playerMap.set(name, {});
+                    const po = playerMap.get(name)!;
+                    if (outcome.name === 'Over') po.over = outcome;
+                    else if (outcome.name === 'Under') po.under = outcome;
                   }
-                  
                   for (const [playerName, outcomes] of playerMap) {
+                    // Only keep players we care about in targeted mode
+                    if (!playerNamesLower.has(playerName.toLowerCase())) continue;
                     const line = outcomes.over?.point ?? outcomes.under?.point;
                     if (line === undefined || line === null) continue;
-                    
                     allPlayerProps.push({
                       player_name: playerName,
-                      prop_type: market,
+                      prop_type: market.key,
                       current_line: line,
                       sport: normalizeSportKey(sport),
                       event_id: event.id,
@@ -246,210 +304,255 @@ serve(async (req) => {
                   }
                 }
               }
-            } catch (marketError) {
-              console.error(`[Multi-Sport Scraper] Error fetching ${market} for ${event.id}:`, marketError);
-            }
+            } catch (_) { /* skip individual market errors */ }
           }
-          
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await new Promise(r => setTimeout(r, 50));
         }
       }
-      
-      // ========== TEAM PROPS (Spreads, Totals, Moneylines) ==========
-      if (include_team_props && !sport.startsWith('tennis_')) {
-        for (const event of relevantEvents) {
+
+      // Upsert targeted props
+      if (allPlayerProps.length > 0) {
+        const uniqueProps = new Map<string, UnifiedPropInsert>();
+        for (const prop of allPlayerProps) {
+          uniqueProps.set(`${prop.event_id}_${prop.player_name}_${prop.prop_type}_${prop.bookmaker}`, prop);
+        }
+        const propsToInsert = Array.from(uniqueProps.values());
+        for (let i = 0; i < propsToInsert.length; i += 100) {
+          await supabase.from('unified_props').upsert(propsToInsert.slice(i, i + 100), {
+            onConflict: 'event_id,player_name,prop_type,bookmaker',
+            ignoreDuplicates: false,
+          });
+        }
+      }
+
+      await supabase.from('api_budget_tracker').upsert({
+        date: today, last_targeted: now.toISOString(),
+      }, { onConflict: 'date' });
+
+      await supabase.from('cron_job_history').insert({
+        job_name: 'whale-odds-scraper',
+        status: 'completed',
+        started_at: now.toISOString(),
+        completed_at: new Date().toISOString(),
+        result: { mode: 'targeted', propsRefreshed: allPlayerProps.length, activePicks: activePicks.length, apiCalls: totalApiCalls },
+      });
+
+      return new Response(JSON.stringify({
+        success: true, mode: 'targeted', propsRefreshed: allPlayerProps.length,
+        activePicks: activePicks.length, apiCalls: totalApiCalls,
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // ============ MODE: FULL ============
+    // Full scrape - fetch all props for active sports with games
+    const activeSports = sports.filter((s: string) => ALL_ACTIVE_SPORTS.includes(s));
+    console.log(`[Full] Active sports: ${activeSports.join(', ')}`);
+
+    // Estimate API calls: events calls + (events * market_batches) + team props
+    const estimatedEventsCalls = activeSports.length;
+    const canProceed = await checkBudget(estimatedEventsCalls);
+    if (!canProceed) {
+      return new Response(JSON.stringify({
+        success: false, error: 'Daily API budget exceeded', mode: 'full',
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    const allPlayerProps: UnifiedPropInsert[] = [];
+    const allTeamBets: GameBetInsert[] = [];
+
+    for (const sport of activeSports) {
+      // Phase 1: Fetch events
+      console.log(`[Full] Fetching events for ${sport}...`);
+      const eventsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events?apiKey=${apiKey}&dateFormat=iso`;
+      const eventsResponse = await fetch(eventsUrl);
+      await trackApiCall();
+
+      if (!eventsResponse.ok) {
+        console.error(`[Full] Events fetch failed for ${sport}: ${eventsResponse.status}`);
+        continue;
+      }
+
+      const events: OddsAPIEvent[] = await eventsResponse.json();
+      const windowEnd = new Date(now.getTime() + 72 * 60 * 60 * 1000);
+      const relevantEvents = events
+        .filter(e => new Date(e.commence_time) < windowEnd && new Date(e.commence_time) > now)
+        .slice(0, limit_events);
+
+      console.log(`[Full] ${sport}: ${relevantEvents.length} relevant events`);
+
+      if (relevantEvents.length === 0) {
+        console.log(`[Full] Skipping ${sport} - no upcoming events`);
+        continue;
+      }
+
+      // Check budget before fetching props for this sport
+      const batches = PLAYER_MARKET_BATCHES[sport] || [];
+      const propsCallsNeeded = relevantEvents.length * batches.length;
+      const teamCallsNeeded = relevantEvents.length; // 1 call per event for team props (batched markets)
+      const sportBudgetOk = await checkBudget(propsCallsNeeded + teamCallsNeeded);
+      if (!sportBudgetOk) {
+        console.log(`[Full] Budget exceeded, stopping at sport ${sport}`);
+        break;
+      }
+
+      // Phase 2: Fetch BATCHED player props (reduces calls by ~50%)
+      for (const event of relevantEvents) {
+        for (const batch of batches) {
           try {
-            const teamUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${apiKey}&regions=us&markets=${TEAM_MARKETS.join(',')}&oddsFormat=american&bookmakers=${BOOKMAKERS.join(',')}`;
-            
-            const teamResponse = await fetch(teamUrl);
-            totalApiCalls++;
-            
-            if (!teamResponse.ok) {
-              if (teamResponse.status === 404) continue;
-              console.error(`[Multi-Sport Scraper] Team props fetch failed for ${event.id}:`, teamResponse.status);
+            const marketsParam = batch.join(',');
+            const propsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${apiKey}&regions=us&markets=${marketsParam}&oddsFormat=american&bookmakers=${BOOKMAKERS.join(',')}`;
+            const propsResponse = await fetch(propsUrl);
+            await trackApiCall();
+
+            if (!propsResponse.ok) {
+              if (propsResponse.status === 404) continue;
+              console.error(`[Full] Props batch failed for ${event.id}: ${propsResponse.status}`);
               continue;
             }
-            
+
+            const propsData = await propsResponse.json();
+            for (const bookmaker of (propsData.bookmakers || []) as Bookmaker[]) {
+              for (const propMarket of bookmaker.markets) {
+                const playerMap = new Map<string, { over?: PropOutcome; under?: PropOutcome }>();
+                for (const outcome of propMarket.outcomes) {
+                  const playerName = outcome.description || outcome.name;
+                  if (!playerName || playerName.length < 3) continue;
+                  if (!playerMap.has(playerName)) playerMap.set(playerName, {});
+                  const po = playerMap.get(playerName)!;
+                  if (outcome.name === 'Over') po.over = outcome;
+                  else if (outcome.name === 'Under') po.under = outcome;
+                }
+                for (const [playerName, outcomes] of playerMap) {
+                  const line = outcomes.over?.point ?? outcomes.under?.point;
+                  if (line === undefined || line === null) continue;
+                  allPlayerProps.push({
+                    player_name: playerName,
+                    prop_type: propMarket.key,
+                    current_line: line,
+                    sport: normalizeSportKey(sport),
+                    event_id: event.id,
+                    bookmaker: bookmaker.key,
+                    game_description: `${event.away_team} @ ${event.home_team}`,
+                    commence_time: event.commence_time,
+                    over_price: outcomes.over?.price ?? null,
+                    under_price: outcomes.under?.price ?? null,
+                    is_active: true,
+                  });
+                }
+              }
+            }
+          } catch (e) {
+            console.error(`[Full] Error fetching batch for ${event.id}:`, e);
+          }
+        }
+
+        // Phase 3: Fetch team props (spreads/totals/h2h) - single batched call
+        try {
+          const teamUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${apiKey}&regions=us&markets=${TEAM_MARKETS.join(',')}&oddsFormat=american&bookmakers=${BOOKMAKERS.join(',')}`;
+          const teamResponse = await fetch(teamUrl);
+          await trackApiCall();
+
+          if (teamResponse.ok) {
             const teamData = await teamResponse.json();
-            const bookmakers: Bookmaker[] = teamData.bookmakers || [];
-            
-            for (const bookmaker of bookmakers) {
+            for (const bookmaker of (teamData.bookmakers || []) as Bookmaker[]) {
               for (const market of bookmaker.markets) {
-                const betType = market.key;
-                
-                if (betType === 'spreads') {
-                  // Spread betting
+                if (market.key === 'spreads') {
                   const homeOutcome = market.outcomes.find(o => o.name === event.home_team);
                   const awayOutcome = market.outcomes.find(o => o.name === event.away_team);
-                  
                   if (homeOutcome || awayOutcome) {
                     allTeamBets.push({
-                      game_id: event.id,
-                      sport: normalizeSportKey(sport),
-                      bet_type: 'spread',
-                      home_team: event.home_team,
-                      away_team: event.away_team,
+                      game_id: event.id, sport: normalizeSportKey(sport), bet_type: 'spread',
+                      home_team: event.home_team, away_team: event.away_team,
                       line: homeOutcome?.point ?? null,
-                      home_odds: homeOutcome?.price ?? null,
-                      away_odds: awayOutcome?.price ?? null,
-                      over_odds: null,
-                      under_odds: null,
-                      bookmaker: bookmaker.key,
-                      commence_time: event.commence_time,
-                      is_active: true,
+                      home_odds: homeOutcome?.price ?? null, away_odds: awayOutcome?.price ?? null,
+                      over_odds: null, under_odds: null,
+                      bookmaker: bookmaker.key, commence_time: event.commence_time, is_active: true,
                     });
                   }
-                } else if (betType === 'totals') {
-                  // Over/Under totals
+                } else if (market.key === 'totals') {
                   const overOutcome = market.outcomes.find(o => o.name === 'Over');
                   const underOutcome = market.outcomes.find(o => o.name === 'Under');
-                  
                   if (overOutcome || underOutcome) {
                     allTeamBets.push({
-                      game_id: event.id,
-                      sport: normalizeSportKey(sport),
-                      bet_type: 'total',
-                      home_team: event.home_team,
-                      away_team: event.away_team,
+                      game_id: event.id, sport: normalizeSportKey(sport), bet_type: 'total',
+                      home_team: event.home_team, away_team: event.away_team,
                       line: overOutcome?.point ?? underOutcome?.point ?? null,
-                      home_odds: null,
-                      away_odds: null,
-                      over_odds: overOutcome?.price ?? null,
-                      under_odds: underOutcome?.price ?? null,
-                      bookmaker: bookmaker.key,
-                      commence_time: event.commence_time,
-                      is_active: true,
+                      home_odds: null, away_odds: null,
+                      over_odds: overOutcome?.price ?? null, under_odds: underOutcome?.price ?? null,
+                      bookmaker: bookmaker.key, commence_time: event.commence_time, is_active: true,
                     });
                   }
-                } else if (betType === 'h2h') {
-                  // Moneyline
+                } else if (market.key === 'h2h') {
                   const homeOutcome = market.outcomes.find(o => o.name === event.home_team);
                   const awayOutcome = market.outcomes.find(o => o.name === event.away_team);
-                  
                   if (homeOutcome || awayOutcome) {
                     allTeamBets.push({
-                      game_id: event.id,
-                      sport: normalizeSportKey(sport),
-                      bet_type: 'h2h',
-                      home_team: event.home_team,
-                      away_team: event.away_team,
+                      game_id: event.id, sport: normalizeSportKey(sport), bet_type: 'h2h',
+                      home_team: event.home_team, away_team: event.away_team,
                       line: null,
-                      home_odds: homeOutcome?.price ?? null,
-                      away_odds: awayOutcome?.price ?? null,
-                      over_odds: null,
-                      under_odds: null,
-                      bookmaker: bookmaker.key,
-                      commence_time: event.commence_time,
-                      is_active: true,
+                      home_odds: homeOutcome?.price ?? null, away_odds: awayOutcome?.price ?? null,
+                      over_odds: null, under_odds: null,
+                      bookmaker: bookmaker.key, commence_time: event.commence_time, is_active: true,
                     });
                   }
                 }
               }
             }
-          } catch (teamError) {
-            console.error(`[Multi-Sport Scraper] Error fetching team props for ${event.id}:`, teamError);
           }
-          
-          await new Promise(resolve => setTimeout(resolve, 100));
+        } catch (e) {
+          console.error(`[Full] Team props error for ${event.id}:`, e);
         }
+
+        await new Promise(r => setTimeout(r, 50));
       }
     }
-    
-    console.log(`[Multi-Sport Scraper] Collected ${allPlayerProps.length} player props and ${allTeamBets.length} team bets from ${totalApiCalls} API calls`);
-    
+
+    console.log(`[Full] Collected ${allPlayerProps.length} player props, ${allTeamBets.length} team bets from ${totalApiCalls} API calls`);
+
     // ========== UPSERT PLAYER PROPS ==========
     if (allPlayerProps.length > 0) {
       const uniqueProps = new Map<string, UnifiedPropInsert>();
       for (const prop of allPlayerProps) {
-        const key = `${prop.event_id}_${prop.player_name}_${prop.prop_type}_${prop.bookmaker}`;
-        uniqueProps.set(key, prop);
+        uniqueProps.set(`${prop.event_id}_${prop.player_name}_${prop.prop_type}_${prop.bookmaker}`, prop);
       }
-      
       const propsToInsert = Array.from(uniqueProps.values());
-      console.log(`[Multi-Sport Scraper] Upserting ${propsToInsert.length} unique player props`);
-      
-      const CHUNK_SIZE = 100;
       let insertedCount = 0;
-      
-      for (let i = 0; i < propsToInsert.length; i += CHUNK_SIZE) {
-        const chunk = propsToInsert.slice(i, i + CHUNK_SIZE);
-        
-        const { error: upsertError } = await supabase
-          .from('unified_props')
-          .upsert(chunk, {
-            onConflict: 'event_id,player_name,prop_type,bookmaker',
-            ignoreDuplicates: false,
-          });
-        
-        if (upsertError) {
-          console.error(`[Multi-Sport Scraper] Player props upsert error:`, upsertError);
-        } else {
-          insertedCount += chunk.length;
-        }
+      for (let i = 0; i < propsToInsert.length; i += 100) {
+        const { error } = await supabase.from('unified_props').upsert(propsToInsert.slice(i, i + 100), {
+          onConflict: 'event_id,player_name,prop_type,bookmaker',
+          ignoreDuplicates: false,
+        });
+        if (!error) insertedCount += Math.min(100, propsToInsert.length - i);
+        else console.error('[Full] Props upsert error:', error);
       }
-      
-      console.log(`[Multi-Sport Scraper] Successfully upserted ${insertedCount} player props`);
+      console.log(`[Full] Upserted ${insertedCount} player props`);
     }
-    
+
     // ========== UPSERT TEAM BETS ==========
     if (allTeamBets.length > 0) {
       const uniqueBets = new Map<string, GameBetInsert>();
       for (const bet of allTeamBets) {
-        const key = `${bet.game_id}_${bet.bet_type}_${bet.bookmaker}`;
-        uniqueBets.set(key, bet);
+        uniqueBets.set(`${bet.game_id}_${bet.bet_type}_${bet.bookmaker}`, bet);
       }
-      
       const betsToInsert = Array.from(uniqueBets.values());
-      console.log(`[Multi-Sport Scraper] Upserting ${betsToInsert.length} unique team bets`);
-      
-      const CHUNK_SIZE = 100;
       let insertedCount = 0;
-      
-      for (let i = 0; i < betsToInsert.length; i += CHUNK_SIZE) {
-        const chunk = betsToInsert.slice(i, i + CHUNK_SIZE);
-        
-        const { error: upsertError } = await supabase
-          .from('game_bets')
-          .upsert(chunk, {
-            onConflict: 'game_id,bet_type,bookmaker',
-            ignoreDuplicates: false,
-          });
-        
-        if (upsertError) {
-          console.error(`[Multi-Sport Scraper] Team bets upsert error:`, upsertError);
-        } else {
-          insertedCount += chunk.length;
-        }
+      for (let i = 0; i < betsToInsert.length; i += 100) {
+        const { error } = await supabase.from('game_bets').upsert(betsToInsert.slice(i, i + 100), {
+          onConflict: 'game_id,bet_type,bookmaker',
+          ignoreDuplicates: false,
+        });
+        if (!error) insertedCount += Math.min(100, betsToInsert.length - i);
+        else console.error('[Full] Team bets upsert error:', error);
       }
-      
-      console.log(`[Multi-Sport Scraper] Successfully upserted ${insertedCount} team bets`);
+      console.log(`[Full] Upserted ${insertedCount} team bets`);
     }
-    
-    // Mark old props as inactive
-    const { error: deactivatePropsError } = await supabase
-      .from('unified_props')
-      .update({ is_active: false })
-      .lt('commence_time', now.toISOString());
-    
-    if (deactivatePropsError) {
-      console.error('[Multi-Sport Scraper] Deactivate props error:', deactivatePropsError);
-    }
-    
-    const { error: deactivateBetsError } = await supabase
-      .from('game_bets')
-      .update({ is_active: false })
-      .lt('commence_time', now.toISOString());
-    
-    if (deactivateBetsError) {
-      console.error('[Multi-Sport Scraper] Deactivate bets error:', deactivateBetsError);
-    }
-    
-    // ========== LINE MOVEMENT ALERTS ==========
-    try {
-      const today = new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
-      }).format(now);
 
+    // Mark old props as inactive
+    await supabase.from('unified_props').update({ is_active: false }).lt('commence_time', now.toISOString());
+    await supabase.from('game_bets').update({ is_active: false }).lt('commence_time', now.toISOString());
+
+    // ========== LINE MOVEMENT ALERTS (only in full mode) ==========
+    try {
       const { data: activePicks } = await supabase
         .from('category_sweet_spots')
         .select('player_name, prop_type, recommended_line, recommended_side')
@@ -468,65 +571,51 @@ serve(async (req) => {
           if (diff >= 1.5) {
             const direction = matchingProp.current_line > pick.recommended_line ? '📈 UP' : '📉 DOWN';
             const alertMsg = `⚡ *Line Movement Alert*\n\n${pick.player_name} ${pick.prop_type}\nBot line: ${pick.recommended_line} → Market: ${matchingProp.current_line}\nMoved ${direction} by ${diff.toFixed(1)} pts\nSide: ${(pick.recommended_side || 'over').toUpperCase()}`;
-
-            // Send via bot-send-telegram
             await supabase.functions.invoke('bot-send-telegram', {
               body: { type: 'strategy_update', data: { strategyName: 'Line Movement', action: alertMsg, reason: `${pick.player_name} ${pick.prop_type} moved ${diff.toFixed(1)}` } },
             });
             lineAlerts++;
           }
         }
-        if (lineAlerts > 0) {
-          console.log(`[Multi-Sport Scraper] Sent ${lineAlerts} line movement alerts`);
-        }
+        if (lineAlerts > 0) console.log(`[Full] Sent ${lineAlerts} line movement alerts`);
       }
     } catch (lineErr) {
-      console.error('[Multi-Sport Scraper] Line movement check error:', lineErr);
+      console.error('[Full] Line movement check error:', lineErr);
     }
 
-    // Log to cron history
+    // Update tracker
+    await supabase.from('api_budget_tracker').upsert({
+      date: today, last_full_scrape: now.toISOString(),
+    }, { onConflict: 'date' });
+
     await supabase.from('cron_job_history').insert({
       job_name: 'whale-odds-scraper',
       status: 'completed',
       started_at: now.toISOString(),
       completed_at: new Date().toISOString(),
       result: {
+        mode: 'full',
         playerPropsCollected: allPlayerProps.length,
         teamBetsCollected: allTeamBets.length,
         apiCalls: totalApiCalls,
-        sports: sports,
-      }
+        sports: activeSports,
+      },
     });
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        playerPropsCollected: allPlayerProps.length,
-        teamBetsCollected: allTeamBets.length,
-        apiCalls: totalApiCalls,
-        sports: sports,
-        samplePlayerProps: allPlayerProps.slice(0, 5).map(p => ({
-          player: p.player_name,
-          market: p.prop_type,
-          line: p.current_line,
-          sport: p.sport,
-          book: p.bookmaker,
-        })),
-        sampleTeamBets: allTeamBets.slice(0, 5).map(b => ({
-          game: `${b.away_team} @ ${b.home_team}`,
-          type: b.bet_type,
-          line: b.line,
-          sport: b.sport,
-          book: b.bookmaker,
-        })),
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return new Response(JSON.stringify({
+      success: true, mode: 'full',
+      playerPropsCollected: allPlayerProps.length,
+      teamBetsCollected: allTeamBets.length,
+      apiCalls: totalApiCalls,
+      sports: activeSports,
+      samplePlayerProps: allPlayerProps.slice(0, 5).map(p => ({
+        player: p.player_name, market: p.prop_type, line: p.current_line, sport: p.sport, book: p.bookmaker,
+      })),
+    }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[Multi-Sport Scraper] Fatal error:', errorMessage);
-    
+    console.error('[Scraper] Fatal error:', errorMessage);
     return new Response(
       JSON.stringify({ success: false, error: errorMessage }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
