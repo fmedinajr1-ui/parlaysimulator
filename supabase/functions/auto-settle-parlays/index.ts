@@ -189,6 +189,8 @@ serve(async (req) => {
         let allLegsWon = true;
         let anyLegLost = false;
         let determinedLegs = 0;
+        let voidedLegs = 0;
+        let legsHit = 0;
         
         for (let i = 0; i < legs.length; i++) {
           const game = gameResults[i];
@@ -196,6 +198,13 @@ serve(async (req) => {
           if (!game) {
             console.log(`Leg ${i}: No game matched`);
             allGamesFinished = false;
+            continue;
+          }
+          
+          if (game.status === 'postponed') {
+            console.log(`Leg ${i}: Game postponed (VOIDED)`);
+            voidedLegs++;
+            determinedLegs++;
             continue;
           }
           
@@ -228,15 +237,20 @@ serve(async (req) => {
               allLegsWon = false;
               console.log(`Leg ${i}: LOST ❌`);
             } else {
+              legsHit++;
               console.log(`Leg ${i}: WON ✓`);
             }
           }
         }
         
-        console.log(`Summary: ${determinedLegs}/${legs.length} determined, anyLost: ${anyLegLost}, allWon: ${allLegsWon && allGamesFinished}`);
+        // Check void threshold: if >50% legs voided, mark entire parlay as void
+        const nonVoidedLegs = legs.length - voidedLegs;
+        const voidThreshold = legs.length / 2;
         
-        // If any leg lost, the parlay is lost
-        if (anyLegLost) {
+        console.log(`Summary: ${determinedLegs}/${legs.length} determined, ${legsHit} hit, ${voidedLegs} voided, anyLost: ${anyLegLost}`);
+        
+        // Handle void threshold: >50% voided = void the parlay
+        if (voidedLegs > voidThreshold) {
           await supabase
             .from('parlay_history')
             .update({
@@ -247,7 +261,25 @@ serve(async (req) => {
             })
             .eq('id', parlay.id);
           
-          // Update training data
+          results.push({
+            parlayId: parlay.id,
+            status: 'settled',
+            details: `VOID - ${voidedLegs}/${legs.length} legs voided (exceeds 50% threshold)`,
+          });
+          console.log(`Parlay ${parlay.id}: VOIDED (${voidedLegs}/${legs.length} voided)`);
+
+        } else if (anyLegLost) {
+          // If any non-voided leg lost, the parlay is lost
+          await supabase
+            .from('parlay_history')
+            .update({
+              is_settled: true,
+              is_won: false,
+              settled_at: new Date().toISOString(),
+              all_games_started: true,
+            })
+            .eq('id', parlay.id);
+          
           await supabase
             .from('parlay_training_data')
             .update({
@@ -256,7 +288,6 @@ serve(async (req) => {
             })
             .eq('parlay_history_id', parlay.id);
           
-          // Update profile stats - fetch current values and increment
           const { data: profile } = await supabase
             .from('profiles')
             .select('total_losses, total_staked')
@@ -273,37 +304,23 @@ serve(async (req) => {
               .eq('user_id', parlay.user_id);
           }
           
-          // TRAP LEARNING: Record patterns from losses
           if (parlay.suggested_parlay_id) {
             try {
-              console.log(`Recording trap patterns for suggested parlay loss...`);
               await fetch(`${supabaseUrl}/functions/v1/record-trap-pattern`, {
                 method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${supabaseServiceKey}`,
-                },
-                body: JSON.stringify({
-                  parlayId: parlay.id,
-                  suggestedParlayId: parlay.suggested_parlay_id,
-                  wasLoss: true,
-                  lossAmount: Number(parlay.stake),
-                }),
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseServiceKey}` },
+                body: JSON.stringify({ parlayId: parlay.id, suggestedParlayId: parlay.suggested_parlay_id, wasLoss: true, lossAmount: Number(parlay.stake) }),
               });
             } catch (trapError) {
               console.error('Failed to record trap pattern:', trapError);
             }
           }
           
-          results.push({
-            parlayId: parlay.id,
-            status: 'settled',
-            details: 'LOST - at least one leg failed',
-          });
+          results.push({ parlayId: parlay.id, status: 'settled', details: `LOST - ${legsHit}/${nonVoidedLegs} legs hit (${voidedLegs} voided)` });
           console.log(`Parlay ${parlay.id}: SETTLED as LOST`);
           
         } else if (allGamesFinished && allLegsWon) {
-          // All games finished and all legs won
+          // All non-voided games finished and all non-voided legs won
           await supabase
             .from('parlay_history')
             .update({
@@ -314,7 +331,6 @@ serve(async (req) => {
             })
             .eq('id', parlay.id);
           
-          // Update training data
           await supabase
             .from('parlay_training_data')
             .update({
@@ -323,7 +339,6 @@ serve(async (req) => {
             })
             .eq('parlay_history_id', parlay.id);
           
-          // Update profile stats - fetch current values and increment
           const { data: profile } = await supabase
             .from('profiles')
             .select('total_wins, total_staked, total_payout')
@@ -341,40 +356,26 @@ serve(async (req) => {
               .eq('user_id', parlay.user_id);
           }
           
-          // TRAP LEARNING: Record winning patterns
           if (parlay.suggested_parlay_id) {
             try {
-              console.log(`Recording winning sharp patterns...`);
               await fetch(`${supabaseUrl}/functions/v1/record-trap-pattern`, {
                 method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${supabaseServiceKey}`,
-                },
-                body: JSON.stringify({
-                  parlayId: parlay.id,
-                  suggestedParlayId: parlay.suggested_parlay_id,
-                  wasLoss: false,
-                  lossAmount: 0,
-                }),
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseServiceKey}` },
+                body: JSON.stringify({ parlayId: parlay.id, suggestedParlayId: parlay.suggested_parlay_id, wasLoss: false, lossAmount: 0 }),
               });
             } catch (trapError) {
               console.error('Failed to record winning pattern:', trapError);
             }
           }
           
-          results.push({
-            parlayId: parlay.id,
-            status: 'settled',
-            details: 'WON - all legs hit! 🎉',
-          });
+          results.push({ parlayId: parlay.id, status: 'settled', details: `WON - ${legsHit}/${nonVoidedLegs} legs hit (${voidedLegs} voided) 🎉` });
           console.log(`Parlay ${parlay.id}: SETTLED as WON 🎉`);
           
         } else {
           results.push({
             parlayId: parlay.id,
             status: 'pending',
-            details: `${determinedLegs}/${legs.length} legs determined, waiting for more games`,
+            details: `${determinedLegs}/${legs.length} legs determined (${voidedLegs} voided), waiting for more games`,
           });
           console.log(`Parlay ${parlay.id}: Still pending`);
         }
