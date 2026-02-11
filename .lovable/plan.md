@@ -1,67 +1,52 @@
 
 
-# Build Custom 4-Leg Parlay
+# Fix: Negative-Edge Blocking at Generation Time
 
-## The Parlay
+## Problem
 
-| # | Player | Prop | Line | Projection | Edge | Best Odds | Hit Rate |
-|---|--------|------|------|------------|------|-----------|----------|
-| 1 | Joel Embiid | Points OVER | 27.5 | 34.0 | +6.5 | -125 | 100% L10 |
-| 2 | James Harden | Assists OVER | 7.5 | 8.5 | +1.0 | -148 | 100% L10 |
-| 3 | Cade Cunningham | Assists OVER | 8.5 | ~10.5* | ~+2.0 | -125 | 82%** |
-| 4 | Jalen Johnson | Rebounds OVER | 9.5 | 12.5 | +3.0 | -139 | 100% L10 |
+The bot calculates `projection_buffer` for each leg (line 1620) but never checks if it's negative before adding the leg to a parlay. This allows "dirty" legs -- where the projection contradicts the bet direction (e.g., OVER 4.5 with a 4.0 projection) -- to slip into parlays.
 
-*Cunningham AST is not in today's `category_sweet_spots` pool (only his PTS O25.5 is). His assists line at 8.5 has odds between -125 and -152 across books. The projection and hit rate are estimated from prior context -- this leg has slightly less data backing than the other three.
+## Root Cause
 
-**From earlier analysis context.
+In `generateTierParlays()`, around lines 1584-1632, player legs are built and pushed into the `legs` array without any projection buffer validation. The buffer is stored as metadata but never used as a gate.
 
-## Combined Math (using best available odds)
+## Fix (Single File Change)
 
-- Decimal odds: 1.80 x 1.68 x 1.80 x 1.72 = ~9.37
-- American odds: approximately +837
-- Implied probability: ~10.7%
-- $10 stake wins ~$93.70
+**File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
 
-## What Will Be Done
+Add a negative-edge blocking check right after the leg data is constructed (after line 1625), before the leg is pushed into the array. The check will:
 
-1. **Insert one row** into `bot_daily_parlays` with:
-   - `strategy_name`: `'custom_manual'`
-   - `parlay_date`: `'2026-02-11'`
-   - `leg_count`: 4
-   - `legs`: JSONB array with all four legs including player name, prop type, line, side, odds, projection, projection buffer, hit rate, and category
-   - `outcome`: `'pending'`
-   - `simulated_stake`: 10
-   - `simulated_payout`: ~93.70
-   - `expected_odds`: +837
-   - `selection_rationale`: Manual custom build -- all legs positive edge, 79%+ hit rates
-   - `is_simulated`: true
+1. For **OVER** bets: reject if `projected_value <= line` (projection doesn't exceed the line)
+2. For **UNDER** bets: reject if `projected_value >= line` (projection doesn't go below the line)
+3. Log each blocked leg so we can track filtering in production
 
-2. **No code changes needed** -- this is a direct database insert of a single custom parlay record.
+### Exact Change Location
 
-## Technical SQL
+Inside `generateTierParlays()`, after the player leg `legData` object is built (around line 1625) and before `legs.push(legData)` (line 1632), insert:
 
-```sql
-INSERT INTO bot_daily_parlays (
-  parlay_date, legs, leg_count, expected_odds,
-  strategy_name, outcome, is_simulated,
-  simulated_stake, simulated_payout, selection_rationale
-) VALUES (
-  '2026-02-11',
-  '[
-    {"player_name":"Joel Embiid","prop_type":"points","side":"over","line":27.5,
-     "american_odds":-125,"projected_value":34.0,"projection_buffer":6.5,
-     "hit_rate":100,"category":"VOLUME_SCORER","sport":"basketball_nba","outcome":"pending"},
-    {"player_name":"James Harden","prop_type":"assists","side":"over","line":7.5,
-     "american_odds":-148,"projected_value":8.5,"projection_buffer":1.0,
-     "hit_rate":100,"category":"HIGH_ASSIST","sport":"basketball_nba","outcome":"pending"},
-    {"player_name":"Cade Cunningham","prop_type":"assists","side":"over","line":8.5,
-     "american_odds":-125,"projected_value":10.5,"projection_buffer":2.0,
-     "hit_rate":82,"category":"HIGH_ASSIST","sport":"basketball_nba","outcome":"pending"},
-    {"player_name":"Jalen Johnson","prop_type":"rebounds","side":"over","line":9.5,
-     "american_odds":-139,"projected_value":12.5,"projection_buffer":3.0,
-     "hit_rate":100,"category":"BIG_REBOUNDER","sport":"basketball_nba","outcome":"pending"}
-  ]'::jsonb,
-  4, 837, 'custom_manual', 'pending', true, 10, 93.70,
-  'Manual custom build: all 4 legs have positive projection edges and 79%+ L10 hit rates'
-);
+```text
+// NEGATIVE-EDGE GATE: Block legs where projection contradicts bet direction
+const projBuffer = legData.projection_buffer || 0;
+const projValue = legData.projected_value || 0;
+if (projValue > 0 && projBuffer < 0) {
+  console.log(`[NegEdgeBlock] Blocked ${legData.player_name} ${legData.prop_type} ${legData.side} ${legData.line} (proj: ${projValue}, buffer: ${projBuffer.toFixed(1)})`);
+  continue;
+}
 ```
+
+This is a 5-line insertion. No other files need changes. The gate fires per-leg inside the candidate loop, so blocked legs are simply skipped and the next candidate is tried instead.
+
+## Why This Works
+
+- Catches the exact scenario that produced the 18 dirty parlays today
+- Uses data already computed (`projected_value` and `projection_buffer`) -- no new queries needed
+- `projValue > 0` guard ensures we only block when we actually have projection data (avoids false blocks on team legs or missing data)
+- Placed before `legs.push()` so dirty legs never enter any parlay
+- Logging enables monitoring of how many legs get blocked per run
+
+## No Impact On
+
+- Team prop legs (they don't have `projection_buffer`)
+- Legs with legitimate positive edges (buffer >= 0 passes through)
+- Overall parlay count (blocked legs are replaced by next best candidate)
+
