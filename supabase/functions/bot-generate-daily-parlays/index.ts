@@ -1063,7 +1063,6 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     const oddsKey = `${pick.player_name}_${pick.prop_type}`.toLowerCase();
     const hasRealLine = oddsMap.has(oddsKey) || (pick.actual_line !== null && pick.actual_line !== undefined);
     
-    const oddsKey = `${pick.player_name}_${pick.prop_type}`.toLowerCase();
     const odds = oddsMap.get(oddsKey) || { overOdds: -110, underOdds: -110, line: 0, sport: 'basketball_nba' };
     const side = pick.recommended_side || 'over';
     const americanOdds = side === 'over' ? odds.overOdds : odds.underOdds;
