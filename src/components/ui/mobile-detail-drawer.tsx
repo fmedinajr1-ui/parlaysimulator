@@ -43,8 +43,8 @@ export function MobileDetailDrawer({
   };
 
   return (
-    <Drawer open={open} onOpenChange={handleOpenChange} snapPoints={[0.5, 1]} activeSnapPoint={1} setActiveSnapPoint={() => {}}>
-      <DrawerContent className="max-h-[92vh]">
+    <Drawer open={open} onOpenChange={handleOpenChange}>
+      <DrawerContent className="max-h-[85vh]">
         <div className="mx-auto w-full max-w-lg">
           <DrawerHeader className="relative">
             <DrawerClose asChild>
@@ -79,7 +79,7 @@ export function MobileDetailDrawer({
             </div>
           </DrawerHeader>
           
-          <div className="px-4 pb-4 overflow-y-auto max-h-[70vh]">
+          <div className="px-4 pb-4 overflow-y-auto max-h-[60vh]">
             {children}
           </div>
           
