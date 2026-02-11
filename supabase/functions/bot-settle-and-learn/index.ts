@@ -357,12 +357,14 @@ Deno.serve(async (req) => {
       weightMap.set(w.category, w);
     });
 
-    // 4. Process each parlay
+    // 4. Process each parlay — track P&L per parlay_date (not run date)
     let parlaysSettled = 0;
     let parlaysWon = 0;
     let parlaysLost = 0;
     let totalProfitLoss = 0;
     const categoryUpdates = new Map<string, { hits: number; misses: number }>();
+    // Track P&L per parlay_date for correct date attribution
+    const pnlByDate = new Map<string, { won: number; lost: number; profitLoss: number }>();
 
     for (const parlay of pendingParlays) {
       const legs = (Array.isArray(parlay.legs) ? parlay.legs : JSON.parse(parlay.legs)) as BotLeg[];
@@ -376,12 +378,10 @@ Deno.serve(async (req) => {
         let actualValue: number | null = null;
 
         if (isTeamLeg(leg)) {
-          // Team leg settlement
           const teamResult = await settleTeamLeg(supabase, leg, parlay.parlay_date);
           legOutcome = teamResult.outcome;
           actualValue = teamResult.actual_value;
         } else {
-          // Player leg — use batch-loaded sweet spot data
           const sweetSpot = sweetSpotMap.get(leg.id);
           if (sweetSpot) {
             if (sweetSpot.outcome === 'hit') {
@@ -397,14 +397,12 @@ Deno.serve(async (req) => {
           }
         }
 
-        // Count outcomes
         if (legOutcome === 'hit') legsHit++;
         else if (legOutcome === 'miss') legsMissed++;
         else if (legOutcome === 'void' || legOutcome === 'no_data') legsVoided++;
 
         updatedLegs.push({ ...leg, outcome: legOutcome, actual_value: actualValue ?? undefined });
 
-        // Track for category weight updates
         if ((legOutcome === 'hit' || legOutcome === 'miss') && leg.category) {
           const existing = categoryUpdates.get(leg.category) || { hits: 0, misses: 0 };
           if (legOutcome === 'hit') existing.hits++;
@@ -413,7 +411,6 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Determine parlay outcome
       const activeLegCount = legs.length - legsVoided;
       let outcome = 'pending';
       let profitLoss = 0;
@@ -436,7 +433,16 @@ Deno.serve(async (req) => {
         totalProfitLoss += profitLoss;
       }
 
-      // Update parlay
+      // Accumulate P&L under the parlay's own date, not the run date
+      if (outcome === 'won' || outcome === 'lost') {
+        const dateKey = parlay.parlay_date;
+        const existing = pnlByDate.get(dateKey) || { won: 0, lost: 0, profitLoss: 0 };
+        if (outcome === 'won') existing.won++;
+        else existing.lost++;
+        existing.profitLoss += profitLoss;
+        pnlByDate.set(dateKey, existing);
+      }
+
       await supabase
         .from('bot_daily_parlays')
         .update({
@@ -452,6 +458,7 @@ Deno.serve(async (req) => {
     }
 
     console.log(`[Bot Settle] Settled ${parlaysSettled} parlays (${parlaysWon}W ${parlaysLost}L)`);
+    console.log(`[Bot Settle] P&L by date: ${JSON.stringify(Object.fromEntries(pnlByDate))}`);
 
     // 5. Update category weights based on outcomes
     const weightChanges: Array<{ category: string; oldWeight: number; newWeight: number; delta: number }> = [];
@@ -498,70 +505,101 @@ Deno.serve(async (req) => {
         .eq('id', existing.id);
     }
 
-    // 6. Update activation status
-    const today = getEasternDate();
-    const { data: prevStatus } = await supabase
-      .from('bot_activation_status')
-      .select('*')
-      .lt('check_date', today)
-      .order('check_date', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    // 6. Update activation status — write P&L to each parlay_date, not today
+    // This ensures Feb 9 parlays settled on Feb 10 show up on Feb 9 in the calendar
+    let isProfitableDay = false;
+    let newConsecutive = 0;
+    let isRealModeReady = false;
+    let newBankroll = 0;
 
-    const prevConsecutive = prevStatus?.consecutive_profitable_days || 0;
-    const prevBankroll = prevStatus?.simulated_bankroll || 1000;
+    // Process each date that had settlements
+    const datesToProcess = pnlByDate.size > 0 ? [...pnlByDate.keys()] : [];
 
-    const { data: existingToday } = await supabase
-      .from('bot_activation_status')
-      .select('*')
-      .eq('check_date', today)
-      .maybeSingle();
-
-    // Accumulate P&L across multiple daily runs instead of overwriting
-    const accumulatedPnL = (existingToday?.daily_profit_loss || 0) + totalProfitLoss;
-    const accumulatedWon = (existingToday?.parlays_won || 0) + parlaysWon;
-    const accumulatedLost = (existingToday?.parlays_lost || 0) + parlaysLost;
-    const accumulatedBankroll = existingToday 
-      ? (existingToday.simulated_bankroll || prevBankroll) + totalProfitLoss
-      : prevBankroll + totalProfitLoss;
-    const isProfitableDay = accumulatedPnL > 0;
-    const newConsecutive = isProfitableDay ? prevConsecutive + 1 : 0;
-    const isRealModeReady = newConsecutive >= 3 && 
-                            (accumulatedWon / Math.max(1, accumulatedWon + accumulatedLost)) >= 0.60;
-
-    // Use accumulated values for downstream logging/Telegram
-    const newBankroll = accumulatedBankroll;
-
-    if (existingToday) {
-      await supabase
+    for (const dateKey of datesToProcess) {
+      const datePnL = pnlByDate.get(dateKey)!;
+      
+      // Get the previous day's status for bankroll chaining
+      const { data: prevStatus } = await supabase
         .from('bot_activation_status')
-        .update({
-          parlays_won: accumulatedWon,
-          parlays_lost: accumulatedLost,
-          daily_profit_loss: accumulatedPnL,
-          is_profitable_day: isProfitableDay,
-          consecutive_profitable_days: newConsecutive,
-          is_real_mode_ready: isRealModeReady,
-          simulated_bankroll: accumulatedBankroll,
-          activated_at: isRealModeReady && !existingToday.is_real_mode_ready 
-            ? new Date().toISOString() 
-            : existingToday.activated_at,
-        })
-        .eq('id', existingToday.id);
-    } else {
-      await supabase
+        .select('*')
+        .lt('check_date', dateKey)
+        .order('check_date', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const prevConsecutive = prevStatus?.consecutive_profitable_days || 0;
+      const prevBankroll = prevStatus?.simulated_bankroll || 1000;
+
+      // Check if there's already an entry for this date
+      const { data: existingEntry } = await supabase
         .from('bot_activation_status')
-        .insert({
-          check_date: today,
-          parlays_won: parlaysWon,
-          parlays_lost: parlaysLost,
-          daily_profit_loss: totalProfitLoss,
-          is_profitable_day: totalProfitLoss > 0,
-          consecutive_profitable_days: totalProfitLoss > 0 ? prevConsecutive + 1 : 0,
-          is_real_mode_ready: isRealModeReady,
-          simulated_bankroll: prevBankroll + totalProfitLoss,
-          activated_at: isRealModeReady ? new Date().toISOString() : null,
-        });
+        .select('*')
+        .eq('check_date', dateKey)
+        .maybeSingle();
+
+      // Accumulate P&L across multiple runs
+      const accumulatedPnL = (existingEntry?.daily_profit_loss || 0) + datePnL.profitLoss;
+      const accumulatedWon = (existingEntry?.parlays_won || 0) + datePnL.won;
+      const accumulatedLost = (existingEntry?.parlays_lost || 0) + datePnL.lost;
+      const accumulatedBankroll = existingEntry 
+        ? (existingEntry.simulated_bankroll || prevBankroll) + datePnL.profitLoss
+        : prevBankroll + datePnL.profitLoss;
+      const dateIsProfitable = accumulatedPnL > 0;
+      const dateConsecutive = dateIsProfitable ? prevConsecutive + 1 : 0;
+      const dateIsRealModeReady = dateConsecutive >= 3 && 
+                              (accumulatedWon / Math.max(1, accumulatedWon + accumulatedLost)) >= 0.60;
+
+      if (existingEntry) {
+        await supabase
+          .from('bot_activation_status')
+          .update({
+            parlays_won: accumulatedWon,
+            parlays_lost: accumulatedLost,
+            daily_profit_loss: accumulatedPnL,
+            is_profitable_day: dateIsProfitable,
+            consecutive_profitable_days: dateConsecutive,
+            is_real_mode_ready: dateIsRealModeReady,
+            simulated_bankroll: accumulatedBankroll,
+            activated_at: dateIsRealModeReady && !existingEntry.is_real_mode_ready 
+              ? new Date().toISOString() 
+              : existingEntry.activated_at,
+          })
+          .eq('id', existingEntry.id);
+      } else {
+        await supabase
+          .from('bot_activation_status')
+          .insert({
+            check_date: dateKey,
+            parlays_won: datePnL.won,
+            parlays_lost: datePnL.lost,
+            daily_profit_loss: datePnL.profitLoss,
+            is_profitable_day: datePnL.profitLoss > 0,
+            consecutive_profitable_days: datePnL.profitLoss > 0 ? prevConsecutive + 1 : 0,
+            is_real_mode_ready: dateIsRealModeReady,
+            simulated_bankroll: prevBankroll + datePnL.profitLoss,
+            activated_at: dateIsRealModeReady ? new Date().toISOString() : null,
+          });
+      }
+
+      // Track latest values for Telegram notification
+      isProfitableDay = dateIsProfitable;
+      newConsecutive = dateConsecutive;
+      isRealModeReady = dateIsRealModeReady;
+      newBankroll = accumulatedBankroll;
+    }
+
+    // If no dates had settlements, still set defaults for downstream
+    if (datesToProcess.length === 0) {
+      const { data: latestStatus } = await supabase
+        .from('bot_activation_status')
+        .select('*')
+        .order('check_date', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      
+      newBankroll = latestStatus?.simulated_bankroll || 1000;
+      newConsecutive = latestStatus?.consecutive_profitable_days || 0;
+      isRealModeReady = latestStatus?.is_real_mode_ready || false;
     }
 
     // 7. Update strategy performance
@@ -758,7 +796,7 @@ Deno.serve(async (req) => {
           'Authorization': `Bearer ${supabaseKey}`,
         },
         body: JSON.stringify({
-          type: isRealModeReady && !prevStatus?.is_real_mode_ready ? 'activation_ready' : 'settlement_complete',
+          type: isRealModeReady ? 'activation_ready' : 'settlement_complete',
           data: {
             parlaysWon,
             parlaysLost,
