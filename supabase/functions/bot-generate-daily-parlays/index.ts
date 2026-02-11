@@ -843,6 +843,43 @@ async function fetchActivePlayersToday(
   return players;
 }
 
+async function fetchTeamsPlayingToday(
+  supabase: any,
+  startUtc: string,
+  endUtc: string,
+  gameDate: string
+): Promise<Set<string>> {
+  const teams = new Set<string>();
+
+  // Source 1: upcoming_games_cache (most reliable for schedule)
+  const { data: upcoming } = await supabase
+    .from('upcoming_games_cache')
+    .select('home_team, away_team')
+    .gte('commence_time', startUtc)
+    .lt('commence_time', endUtc);
+
+  (upcoming || []).forEach((g: any) => {
+    if (g.home_team) teams.add(g.home_team.toLowerCase().trim());
+    if (g.away_team) teams.add(g.away_team.toLowerCase().trim());
+  });
+
+  // Source 2: game_bets (backup)
+  const { data: bets } = await supabase
+    .from('game_bets')
+    .select('home_team, away_team')
+    .eq('is_active', true)
+    .gte('commence_time', startUtc)
+    .lt('commence_time', endUtc);
+
+  (bets || []).forEach((g: any) => {
+    if (g.home_team) teams.add(g.home_team.toLowerCase().trim());
+    if (g.away_team) teams.add(g.away_team.toLowerCase().trim());
+  });
+
+  console.log(`[GameSchedule] ${teams.size} teams playing today`);
+  return teams;
+}
+
 async function fetchInjuryBlocklist(
   supabase: any,
   gameDate: string
@@ -920,9 +957,10 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   const { startUtc, endUtc, gameDate } = getEasternDateRange();
   console.log(`[Bot] ET window: ${startUtc} → ${endUtc} (gameDate: ${gameDate})`);
 
-  const [activePlayersToday, injuryData] = await Promise.all([
+  const [activePlayersToday, injuryData, teamsPlayingToday] = await Promise.all([
     fetchActivePlayersToday(supabase, startUtc, endUtc),
     fetchInjuryBlocklist(supabase, gameDate),
+    fetchTeamsPlayingToday(supabase, startUtc, endUtc, gameDate),
   ]);
   const { blocklist, penalties } = injuryData;
 
@@ -1173,6 +1211,27 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   console.log(`[AvailabilityGate] Filtered sweet spots: ${preFilterCount} → ${enrichedSweetSpots.length}`);
   if (filteredOutPlayers.length > 0) {
     console.log(`[AvailabilityGate] Removed players: ${filteredOutPlayers.slice(0, 20).join(', ')}${filteredOutPlayers.length > 20 ? ` ...and ${filteredOutPlayers.length - 20} more` : ''}`);
+  }
+
+  // === GAME SCHEDULE GATE ===
+  if (teamsPlayingToday.size > 0) {
+    const preScheduleCount = enrichedSweetSpots.length;
+    const removedBySchedule: string[] = [];
+
+    enrichedSweetSpots = enrichedSweetSpots.filter(pick => {
+      const teamName = (pick.team_name || '').toLowerCase().trim();
+      if (!teamName) return true; // No team info, rely on other gates
+      if (teamsPlayingToday.has(teamName)) return true;
+      removedBySchedule.push(`${pick.player_name} (${pick.team_name})`);
+      return false;
+    });
+
+    console.log(`[GameSchedule] Filtered: ${preScheduleCount} -> ${enrichedSweetSpots.length} (removed ${removedBySchedule.length} players on teams not playing)`);
+    if (removedBySchedule.length > 0) {
+      console.log(`[GameSchedule] Removed: ${removedBySchedule.slice(0, 15).join(', ')}`);
+    }
+  } else {
+    console.log(`[GameSchedule] WARNING: No teams found playing today - skipping schedule gate`);
   }
 
   // Enrich team props with real intelligence scoring
