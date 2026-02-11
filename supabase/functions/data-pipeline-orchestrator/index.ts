@@ -56,104 +56,54 @@ serve(async (req) => {
   try {
     const { mode = 'full' } = await req.json().catch(() => ({}));
     
-    console.log(`[Pipeline] Starting AI-driven unified pipeline in ${mode} mode...`);
+    console.log(`[Pipeline] Starting unified pipeline in ${mode} mode...`);
     const pipelineStart = Date.now();
 
     // ============ PHASE 1: DATA COLLECTION ============
     if (mode === 'full' || mode === 'collect') {
-      // Step 1a: Run unified props engine (fetches ALL props, analyzes through ALL signals)
-      await runFunction('unified-props-engine', { sports: ['basketball_nba', 'hockey_nhl'] });
-      
-      // Step 1b: Scan for juiced props (morning scanner for additional juice detection)
-      await runFunction('morning-props-scanner', { sports: ['basketball_nba', 'hockey_nhl', 'americanfootball_nfl'] });
-      
-      // Step 1c: Calculate NBA fatigue scores for today's games
+      await runFunction('whale-odds-scraper', { sports: ['basketball_nba', 'icehockey_nhl', 'basketball_wnba', 'basketball_ncaab'] });
       await runFunction('daily-fatigue-calculator', {});
-      
-      // Step 1d: Track odds movements for sharp money detection
-      await runFunction('track-odds-movement', { sports: ['basketball_nba', 'hockey_nhl'] });
-      
-      // Step 1e: Scrape PrizePicks projections via Firecrawl
+      await runFunction('track-odds-movement', { sports: ['basketball_nba', 'icehockey_nhl'] });
       await runFunction('pp-props-scraper', { sports: ['NBA', 'NHL', 'WNBA', 'ATP', 'WTA'] });
+      await runFunction('firecrawl-lineup-scraper', {});
     }
 
-    // ============ PHASE 2: ANALYSIS & CATEGORIZATION ============
+    // ============ PHASE 2: ANALYSIS ============
     if (mode === 'full' || mode === 'analyze') {
-      // Step 2a: Analyze player prop hit rates
-      await runFunction('analyze-hitrate-props', { limit: 100 });
-      
-      // Step 2b: Predict upsets using unified data + calibrated signals
-      await runFunction('predict-upsets', {});
-      
-      // Step 2c: Analyze sharp line movements
-      await runFunction('analyze-sharp-line', {});
-      
-      // Step 2d: Analyze coaching tendencies for today's NBA games
-      await runFunction('coach-tendencies-engine', { teams: [] });
-      
-      // Step 2e: Detect whale signals by comparing PP vs book consensus
-      await runFunction('whale-signal-detector', { sports: ['basketball_nba', 'hockey_nhl', 'basketball_wnba'] });
+      await runFunction('category-props-analyzer', { limit: 100 });
+      await runFunction('auto-refresh-sharp-tracker', {});
+      await runFunction('whale-signal-detector', { sports: ['basketball_nba', 'icehockey_nhl', 'basketball_wnba'] });
     }
 
-    // ============ PHASE 3: PARLAY & SUGGESTION GENERATION ============
+    // ============ PHASE 3: PARLAY GENERATION ============
     if (mode === 'full' || mode === 'generate') {
-      // Step 3a: Build high hit-rate parlays from unified data
-      await runFunction('build-hitrate-parlays', { runSharpAnalysis: true });
-      
-      // Step 3b: Generate AI-driven suggestions with all signals
-      await runFunction('generate-suggestions', { sports: ['basketball_nba', 'hockey_nhl'] });
+      await runFunction('bot-generate-daily-parlays', { source: 'pipeline' });
     }
 
     // ============ PHASE 4: OUTCOME VERIFICATION ============
     if (mode === 'full' || mode === 'verify') {
-      // Step 4a: Verify unified props outcomes
-      await runFunction('verify-unified-outcomes', {});
-      
-      // Step 4b: Verify sharp money outcomes
+      await runFunction('verify-all-engine-outcomes', {});
       await runFunction('verify-sharp-outcomes', {});
-      
-      // Step 4c: Verify hit rate parlay outcomes
-      await runFunction('verify-hitrate-outcomes', {});
-      
-      // Step 4d: Verify upset prediction outcomes
-      await runFunction('verify-upset-outcomes', {});
-      
-      // Step 4e: Verify God Mode upset predictions
-      await runFunction('verify-god-mode-outcomes', {});
-      
-      // Step 4f: Verify juiced props outcomes
       await runFunction('verify-juiced-outcomes', {});
-      
-      // Step 4g: Auto-settle user parlays
       await runFunction('auto-settle-parlays', {});
-      
-      // Step 4h: Verify fatigue edge outcomes
       await runFunction('verify-fatigue-outcomes', {});
-      
-      // Step 4i: Verify coaching prediction outcomes
-      await runFunction('verify-coaching-outcomes', {});
+      await runFunction('verify-sweet-spot-outcomes', {});
+      await runFunction('verify-best-bets-outcomes', {});
     }
 
     // ============ PHASE 5: CALIBRATION & LEARNING ============
     if (mode === 'full' || mode === 'calibrate') {
-      // Step 5a: Calculate/update calibration factors from all verified outcomes
       await runFunction('calculate-calibration', {});
-      
-      // Step 5b: Recalibrate sharp signals based on accuracy
       await runFunction('recalibrate-sharp-signals', {});
-      
-      // Step 5c: Run AI learning engine to update weights
-      await runFunction('ai-learning-engine', {});
+      await runFunction('calibrate-bot-weights', {});
     }
 
     const totalDuration = Date.now() - pipelineStart;
     
-    // Calculate pipeline metrics
     const totalSteps = Object.keys(results).length;
     const successfulSteps = Object.values(results).filter(r => r.success).length;
     const failedSteps = Object.values(results).filter(r => !r.success).length;
     
-    // Log pipeline run to database for tracking
     await supabase.from('ai_performance_metrics').upsert({
       sport: 'pipeline',
       bet_type: 'unified_orchestrator',
@@ -164,7 +114,6 @@ serve(async (req) => {
       updated_at: new Date().toISOString(),
     }, { onConflict: 'sport,bet_type,confidence_level' });
 
-    // Log to cron history
     await supabase.from('cron_job_history').insert({
       job_name: 'data-pipeline-orchestrator',
       status: failedSteps === 0 ? 'completed' : 'partial',
