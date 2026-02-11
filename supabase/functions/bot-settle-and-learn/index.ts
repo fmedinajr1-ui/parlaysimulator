@@ -421,12 +421,12 @@ Deno.serve(async (req) => {
       } else if (legsHit + legsMissed === activeLegCount) {
         if (legsMissed === 0) {
           outcome = 'won';
-          const payout = (parlay.simulated_stake || 50) * ((parlay.expected_odds || 500) / 100 + 1);
-          profitLoss = payout - (parlay.simulated_stake || 50);
+          const payout = (parlay.simulated_stake || 10) * ((parlay.expected_odds || 500) / 100 + 1);
+          profitLoss = payout - (parlay.simulated_stake || 10);
           parlaysWon++;
         } else {
           outcome = 'lost';
-          profitLoss = -(parlay.simulated_stake || 50);
+          profitLoss = -(parlay.simulated_stake || 10);
           parlaysLost++;
         }
         parlaysSettled++;
@@ -451,7 +451,7 @@ Deno.serve(async (req) => {
           legs_hit: legsHit,
           legs_missed: legsMissed,
           profit_loss: profitLoss,
-          simulated_payout: outcome === 'won' ? profitLoss + (parlay.simulated_stake || 50) : 0,
+          simulated_payout: outcome === 'won' ? profitLoss + (parlay.simulated_stake || 10) : 0,
           settled_at: outcome !== 'pending' ? new Date().toISOString() : null,
         })
         .eq('id', parlay.id);

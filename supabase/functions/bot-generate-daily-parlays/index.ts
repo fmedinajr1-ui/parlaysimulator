@@ -58,7 +58,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     minHitRate: 45,
     minEdge: 0.003,
     minSharpe: 0.01,
-    stake: 0,
+    stake: 10,
     minConfidence: 0.45,
     profiles: [
       // Multi-sport exploration (15 profiles)
@@ -130,7 +130,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     minHitRate: 52,
     minEdge: 0.008,
     minSharpe: 0.02,
-    stake: 50,
+    stake: 10,
     minConfidence: 0.52,
     profiles: [
       { legs: 3, strategy: 'validated_conservative', sports: ['basketball_nba'], minOddsValue: 45, minHitRate: 55 },
@@ -163,7 +163,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     minHitRate: 60,
     minEdge: 0.008,
     minSharpe: 0.02,
-    stake: 'kelly',
+    stake: 10,
     minConfidence: 0.60,
     profiles: [
       // CASH LOCKS: Max win rate, main lines only
@@ -1682,13 +1682,8 @@ async function generateTierParlays(
       if (effectiveEdge < config.minEdge) continue;
       if (sharpe < config.minSharpe) continue;
 
-      // Calculate stake (default to 50 if tier stake is 0)
-      let stake = 0;
-      if (config.stake === 'kelly') {
-        stake = calculateKellyStake(combinedProbability, expectedOdds, bankroll);
-      } else {
-        stake = config.stake || 50;
-      }
+      // Calculate stake (flat $10 for all tiers)
+      const stake = typeof config.stake === 'number' && config.stake > 0 ? config.stake : 10;
 
       parlaysToCreate.push({
         parlay_date: targetDate,
