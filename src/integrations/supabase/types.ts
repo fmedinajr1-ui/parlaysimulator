@@ -1028,6 +1028,7 @@ export type Database = {
           simulated_win_rate: number | null
           strategy_name: string
           strategy_version: number | null
+          tier: string | null
         }
         Insert: {
           category_weights_snapshot?: Json | null
@@ -1054,6 +1055,7 @@ export type Database = {
           simulated_win_rate?: number | null
           strategy_name: string
           strategy_version?: number | null
+          tier?: string | null
         }
         Update: {
           category_weights_snapshot?: Json | null
@@ -1080,6 +1082,7 @@ export type Database = {
           simulated_win_rate?: number | null
           strategy_name?: string
           strategy_version?: number | null
+          tier?: string | null
         }
         Relationships: []
       }
@@ -1116,6 +1119,54 @@ export type Database = {
           overall_status?: string
           results?: Json
           run_date?: string
+        }
+        Relationships: []
+      }
+      bot_learning_metrics: {
+        Row: {
+          ci_lower: number | null
+          ci_upper: number | null
+          created_at: string | null
+          days_to_convergence: number | null
+          id: string
+          losses: number | null
+          sample_sufficiency: number | null
+          snapshot_date: string
+          tier: string
+          total_generated: number | null
+          total_settled: number | null
+          win_rate: number | null
+          wins: number | null
+        }
+        Insert: {
+          ci_lower?: number | null
+          ci_upper?: number | null
+          created_at?: string | null
+          days_to_convergence?: number | null
+          id?: string
+          losses?: number | null
+          sample_sufficiency?: number | null
+          snapshot_date: string
+          tier?: string
+          total_generated?: number | null
+          total_settled?: number | null
+          win_rate?: number | null
+          wins?: number | null
+        }
+        Update: {
+          ci_lower?: number | null
+          ci_upper?: number | null
+          created_at?: string | null
+          days_to_convergence?: number | null
+          id?: string
+          losses?: number | null
+          sample_sufficiency?: number | null
+          snapshot_date?: string
+          tier?: string
+          total_generated?: number | null
+          total_settled?: number | null
+          win_rate?: number | null
+          wins?: number | null
         }
         Relationships: []
       }

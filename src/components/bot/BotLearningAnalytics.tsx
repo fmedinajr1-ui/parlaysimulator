@@ -2,6 +2,7 @@
  * BotLearningAnalytics.tsx
  * 
  * Displays learning velocity, tier performance, and statistical confidence metrics.
+ * Reads from bot_learning_metrics table for pre-computed snapshots.
  */
 
 import React from 'react';
@@ -31,66 +32,98 @@ const TIER_TARGETS = {
   execution: { minSamples: 300, label: 'Execution', colorClass: 'bg-accent' },
 };
 
+function computeTierFromParlays(parlays: any[]): Record<string, TierMetrics> {
+  const tierStats: Record<string, TierMetrics> = {};
+  for (const tier of ['exploration', 'validation', 'execution'] as const) {
+    const tierParlays = parlays.filter(p => (p.tier || 'execution') === tier);
+    const settled = tierParlays.filter(p => p.outcome && p.outcome !== 'pending');
+    const wins = settled.filter(p => p.outcome === 'won').length;
+    const losses = settled.filter(p => p.outcome === 'lost').length;
+    const totalSettled = settled.length;
+    const winRate = totalSettled > 0 ? (wins / totalSettled) * 100 : 0;
+    const targetSamples = TIER_TARGETS[tier].minSamples;
+    const sampleSufficiency = Math.min(100, (totalSettled / targetSamples) * 100);
+
+    const z = 1.96;
+    const n = totalSettled || 1;
+    const p = wins / n;
+    const denominator = 1 + z * z / n;
+    const center = p + z * z / (2 * n);
+    const spread = z * Math.sqrt((p * (1 - p) + z * z / (4 * n)) / n);
+    const lower = Math.max(0, (center - spread) / denominator) * 100;
+    const upper = Math.min(1, (center + spread) / denominator) * 100;
+
+    const dailyRate = tierParlays.length / 7;
+    const remainingSamples = Math.max(0, targetSamples - totalSettled);
+    const daysToConvergence = dailyRate > 0 ? Math.ceil(remainingSamples / dailyRate) : 999;
+
+    tierStats[tier] = {
+      tier, totalGenerated: tierParlays.length, totalSettled, wins, losses,
+      winRate, sampleSufficiency, confidenceInterval: { lower, upper }, daysToConvergence,
+    };
+  }
+  return tierStats;
+}
+
 export function BotLearningAnalytics() {
   const { data: metrics, isLoading } = useQuery({
     queryKey: ['bot-learning-metrics'],
     queryFn: async () => {
-      // Get all parlays - tier column may exist or not depending on migration status
-      const { data: parlaysRaw } = await supabase
-        .from('bot_daily_parlays')
-        .select('*');
+      // Try reading from bot_learning_metrics first
+      const { data: snapshots } = await supabase
+        .from('bot_learning_metrics')
+        .select('*')
+        .order('snapshot_date', { ascending: false })
+        .limit(3);
 
-      // Safely extract tier and outcome from parlays
-      const parlays = (parlaysRaw || []).map((p: any) => ({
-        tier: p.tier || 'execution', // Default to execution if tier not set
-        outcome: p.outcome,
-        profit_loss: p.profit_loss,
-        created_at: p.created_at,
-      }));
+      if (snapshots && snapshots.length > 0) {
+        // Get the latest date's snapshots
+        const latestDate = (snapshots as any[])[0].snapshot_date;
+        const latest = (snapshots as any[]).filter((s: any) => s.snapshot_date === latestDate);
 
-      // Calculate tier-level metrics
-      const tierStats: Record<string, TierMetrics> = {};
-      
-      for (const tier of ['exploration', 'validation', 'execution'] as const) {
-        const tierParlays = parlays.filter(p => p.tier === tier);
-        const settled = tierParlays.filter(p => p.outcome && p.outcome !== 'pending');
-        const wins = settled.filter(p => p.outcome === 'won').length;
-        const losses = settled.filter(p => p.outcome === 'lost').length;
-        
-        const totalSettled = settled.length;
-        const winRate = totalSettled > 0 ? (wins / totalSettled) * 100 : 0;
-        const targetSamples = TIER_TARGETS[tier].minSamples;
-        const sampleSufficiency = Math.min(100, (totalSettled / targetSamples) * 100);
-        
-        // Wilson score interval for confidence
-        const z = 1.96; // 95% CI
-        const n = totalSettled || 1;
-        const p = wins / n;
-        const denominator = 1 + z * z / n;
-        const center = p + z * z / (2 * n);
-        const spread = z * Math.sqrt((p * (1 - p) + z * z / (4 * n)) / n);
-        
-        const lower = Math.max(0, (center - spread) / denominator) * 100;
-        const upper = Math.min(1, (center + spread) / denominator) * 100;
-        
-        // Estimate days to convergence
-        const dailyRate = tierParlays.length / 7; // Assuming 7 days of data
-        const remainingSamples = Math.max(0, targetSamples - totalSettled);
-        const daysToConvergence = dailyRate > 0 ? Math.ceil(remainingSamples / dailyRate) : 999;
-        
-        tierStats[tier] = {
-          tier,
-          totalGenerated: tierParlays.length,
-          totalSettled,
-          wins,
-          losses,
-          winRate,
-          sampleSufficiency,
-          confidenceInterval: { lower, upper },
-          daysToConvergence,
-        };
+        const tierStats: Record<string, TierMetrics> = {};
+        let totalParlays = 0;
+        let totalSettled = 0;
+
+        for (const tier of ['exploration', 'validation', 'execution'] as const) {
+          const snap = latest.find((s: any) => s.tier === tier);
+          if (snap) {
+            tierStats[tier] = {
+              tier,
+              totalGenerated: snap.total_generated,
+              totalSettled: snap.total_settled,
+              wins: snap.wins,
+              losses: snap.losses,
+              winRate: snap.total_settled > 0 ? (snap.wins / snap.total_settled) * 100 : 0,
+              sampleSufficiency: snap.sample_sufficiency,
+              confidenceInterval: { lower: snap.ci_lower, upper: snap.ci_upper },
+              daysToConvergence: snap.days_to_convergence,
+            };
+            totalParlays += snap.total_generated;
+            totalSettled += snap.total_settled;
+          } else {
+            tierStats[tier] = {
+              tier, totalGenerated: 0, totalSettled: 0, wins: 0, losses: 0,
+              winRate: 0, sampleSufficiency: 0, confidenceInterval: { lower: 0, upper: 100 },
+              daysToConvergence: 999,
+            };
+          }
+        }
+
+        return { tierStats, totalParlays, totalSettled };
       }
 
+      // Fallback: compute from parlays
+      const { data: parlaysRaw } = await supabase
+        .from('bot_daily_parlays')
+        .select('tier, outcome, profit_loss, created_at');
+
+      const parlays = (parlaysRaw || []).map((p: any) => ({
+        tier: p.tier || 'execution',
+        outcome: p.outcome,
+      }));
+
+      const tierStats = computeTierFromParlays(parlays);
       return {
         tierStats,
         totalParlays: parlays.length,
