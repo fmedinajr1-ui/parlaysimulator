@@ -1921,19 +1921,8 @@ Deno.serve(async (req) => {
 
     console.log(`[Bot v2] Total parlays created: ${allParlays.length}`);
 
-    // 6. Clean up old pending parlays for this date, then insert new ones
-    const { data: deletedOld, error: cleanupError } = await supabase
-      .from('bot_daily_parlays')
-      .delete()
-      .eq('parlay_date', targetDate)
-      .eq('outcome', 'pending')
-      .select('id');
-    
-    if (cleanupError) {
-      console.warn(`[Bot v2] Cleanup warning: ${cleanupError.message}`);
-    } else {
-      console.log(`[Bot v2] Cleaned up ${deletedOld?.length || 0} old pending parlays for ${targetDate}`);
-    }
+    // 6. Append new parlays (no longer deletes previous runs so multiple generations accumulate)
+    console.log(`[Bot v2] Appending ${allParlays.length} new parlays for ${targetDate}`);
 
     if (allParlays.length > 0) {
       const { error: insertError } = await supabase
