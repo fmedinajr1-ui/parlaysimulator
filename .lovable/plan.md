@@ -1,47 +1,119 @@
 
 
-# Expand Execution Tier: Team Props + Relaxed Golden Gate
+# Reconfigure Parlay Farm: Bot + Sweet Spots Only
+
+## Overview
+
+Strip the site down to two core pages -- **Bot Dashboard** (homepage) and **Player Analysis / Sweet Spots** -- removing all other pages, navigation clutter, and unused components. The UI will be tightened and polished for a focused, premium experience.
 
 ## What Changes
 
-### 1. Add mixed execution profiles that include team props
-Add 3 new execution profiles that combine player props with team legs (spreads, totals, moneylines). These "hybrid" profiles will pull from both the player prop pool and the team prop pool, increasing the combinatorial space and reducing duplicate parlays.
+### 1. Make Bot Dashboard the Homepage
+- Route `/` renders `BotDashboard` instead of the old `Index` page
+- Keep `/sweet-spots` as the second page
+- Redirect all removed routes to `/`
+- Wrap `BotDashboard` in `AppShell` for consistent layout
 
-New profiles added to the execution tier:
-- 3-leg hybrid: 2 player props + 1 team prop (spread/total/ML)
-- 3-leg hybrid: 2 player props + 1 team prop (cross-sport)
-- 3-leg team-only: 3 team legs (ML/spread/total mix)
+### 2. Strip Routes (App.tsx)
+Remove all routes except:
+- `/` -- Bot Dashboard (new homepage)
+- `/sweet-spots` -- Player Analysis
+- `/auth` -- Redirect to `/`
+- `/verify-email` -- Keep for auth flow
+- `/admin` -- Keep for admin access
+- `/admin/releases` -- Keep for admin
+- `/collaborate` -- Keep for admin
+- `/offline` -- PWA offline fallback
+- `*` -- NotFound (redirects to `/`)
 
-### 2. Relax Golden Gate to allow 1 non-golden leg
-Change the Golden Gate formula from `minGoldenLegs = Math.floor(profile.legs / 2)` to `minGoldenLegs = profile.legs - 1`. For 3-leg parlays, this means 2 of 3 legs must be golden (currently it's also `floor(3/2) = 1`, so this actually tightens it slightly for player legs while exempting team legs from the golden check entirely).
+All other routes (`/upload`, `/compare`, `/pools`, `/profile`, `/bot`, `/best-bets`, `/live-dashboard`, `/scout`, etc.) will be removed or redirected to `/`.
 
-More precisely: team legs will be excluded from the golden gate count since they don't have sweet-spot categories. The gate will only apply to player legs in the parlay.
+### 3. Simplify Navigation
 
-### 3. Build hybrid candidate pools
-For hybrid profiles, the candidate selection logic will merge player props and team props into a single pool, with player props prioritized first (sorted by hit rate), then team props appended (sorted by composite score). The existing `canAddTeamLegToParlay` conflict detection ensures no contradictory same-game bets.
+**Desktop Sidebar** -- Only 2 main nav items:
+- Bot (Home icon, `/`)
+- Player Analysis (Target icon, `/sweet-spots`)
+- Admin section stays for admin users
+
+**Mobile Bottom Nav** -- Only 2 tabs + Menu:
+- Bot (Home icon, `/`)
+- Analysis (Target icon, `/sweet-spots`)
+- More menu (admin tools only)
+
+**Menu Drawer** -- Remove "Tools" section (Manual Builder, Tomorrow 3PT, Tomorrow Assists). Keep admin section only.
+
+### 4. Enhance Bot Dashboard UI
+- Wrap in `AppShell` for consistent sidebar/mobile layout
+- Remove the `min-h-screen bg-background p-4 pb-32` wrapper (AppShell handles it)
+- Make the sticky bottom action bar (Generate/Settle) work within AppShell's padding
+- Add a quick-link card/button to navigate to Sweet Spots from the Bot page
+
+### 5. Enhance Sweet Spots Page
+- Remove the back arrow button (no longer needed, sidebar handles nav)
+- Wrap in `AppShell` for consistent layout
+- Keep the sticky header with tabs (Scanner, Sweet Spots, Fades)
+
+### 6. Remove Unused Lazy Imports
+Remove ~30 lazy import declarations from App.tsx for pages that no longer have routes. The page files themselves stay in the repo (no deletion) but won't be loaded.
+
+### 7. Remove HeroBanner and Index Page References
+- The old Index page with HeroBanner, DailyParlayHub, Quick Actions, etc. is replaced entirely
+- Remove `HeroBanner`, `HowItWorks`, `SampleParlayButton` from the active code path
 
 ## Technical Details
 
-**File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
-
-**Execution profiles** (lines 173-187) -- add 3 hybrid profiles:
-```typescript
-// HYBRID: Mix player props + team props for diversity
-{ legs: 3, strategy: 'hybrid_exec', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false, allowTeamLegs: 1 },
-{ legs: 3, strategy: 'hybrid_exec_cross', sports: ['all'], minHitRate: 58, sortBy: 'hit_rate', useAltLines: false, allowTeamLegs: 1 },
-// TEAM EXECUTION: Pure team props with high composite scores
-{ legs: 3, strategy: 'team_exec', betTypes: ['moneyline', 'spread', 'total'], minHitRate: 55 },
+### App.tsx Changes
+```text
+Routes reduced from ~45 to ~8:
+  / --> BotDashboard
+  /sweet-spots --> SweetSpots
+  /auth --> Navigate to /
+  /verify-email --> VerifyEmail
+  /admin --> Admin
+  /admin/releases --> ReleaseManager  
+  /collaborate --> Collaborate
+  /offline --> Offline
+  * --> NotFound
 ```
 
-**Candidate pool logic** (around line 1525) -- add hybrid pool building:
-- When `profile.allowTeamLegs` is set, build candidates from player props first, then append top team props
-- Cap team legs per parlay at `profile.allowTeamLegs` (default 1)
+### DesktopSidebar.tsx
+```text
+mainNavItems = [
+  { icon: Home, label: "Bot", path: "/" },
+  { icon: Target, label: "Analysis", path: "/sweet-spots" },
+]
+```
 
-**Golden Gate** (lines 1688-1695) -- exempt team legs:
-- Only count player legs toward the golden gate requirement
-- Team legs pass through without needing a golden category
+### BottomNav.tsx
+```text
+allNavItems = [
+  { icon: Home, label: "Bot", path: "/" },
+  { icon: Target, label: "Analysis", path: "/sweet-spots" },
+]
+```
 
-**Profile type** (line 36) -- add `allowTeamLegs?: number` to the profile interface
+### BotDashboard.tsx
+- Wrap content in `<AppShell>` 
+- Adjust padding/margins for AppShell compatibility
+- Fix sticky bottom bar positioning for desktop layout
 
-After deploying, run `bot-generate-daily-parlays` for Feb 12 to fill out the execution tier with the new hybrid profiles.
+### SweetSpots.tsx
+- Wrap in `<AppShell noPadding>`
+- Remove back arrow button
+- Keep sticky header behavior
+
+### MenuDrawer.tsx
+- Remove `toolItems` array
+- Only show admin items when admin
+
+## Files Modified
+1. `src/App.tsx` -- Routes + lazy imports
+2. `src/components/layout/DesktopSidebar.tsx` -- Nav items
+3. `src/components/BottomNav.tsx` -- Nav items
+4. `src/components/layout/MenuDrawer.tsx` -- Remove tools section
+5. `src/pages/BotDashboard.tsx` -- AppShell wrapper + UI tweaks
+6. `src/pages/SweetSpots.tsx` -- AppShell wrapper + remove back button
+
+## No Files Deleted
+All page files remain in the repo for reference. They just won't have routes pointing to them.
 
