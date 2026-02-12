@@ -1,50 +1,47 @@
 
 
-# Fix: Auto-Flip Logic Bug (no_data Contamination)
+# Expand Execution Tier: Team Props + Relaxed Golden Gate
 
-## Problem
-The `autoFlipUnderperformingCategories` function in `category-props-analyzer` has a critical bug: it includes `no_data` outcomes in the total count when calculating hit rates, but doesn't count them as hits. This deflates every category's hit rate by 30-60%, causing 6 of 8 categories to be incorrectly flipped to the "under" side -- including categories with 55-60% true win rates.
+## What Changes
 
-## Impact
-- **ROLE_PLAYER_REB** (60% true hit rate) was demoted to weight 0.50
-- **BIG_ASSIST_OVER** (57.6%), **BIG_REBOUNDER** (55.7%), **STAR_FLOOR_OVER** (54.8%) all incorrectly penalized
-- **THREE_POINT_SHOOTER** (78.8% true rate!) was calculated at 43.2% and nearly flipped
-- Tomorrow's parlay generation would exclude or underweight these profitable categories
+### 1. Add mixed execution profiles that include team props
+Add 3 new execution profiles that combine player props with team legs (spreads, totals, moneylines). These "hybrid" profiles will pull from both the player prop pool and the team prop pool, increasing the combinatorial space and reducing duplicate parlays.
 
-## Fix (2 Steps)
+New profiles added to the execution tier:
+- 3-leg hybrid: 2 player props + 1 team prop (spread/total/ML)
+- 3-leg hybrid: 2 player props + 1 team prop (cross-sport)
+- 3-leg team-only: 3 team legs (ML/spread/total mix)
 
-### Step 1: Fix the auto-flip function
-In `supabase/functions/category-props-analyzer/index.ts`, update `autoFlipUnderperformingCategories` to:
-- Only count `hit` and `miss` outcomes (exclude `no_data`, `push`, `void`)
-- Match the same logic used in `calibrate-bot-weights` which correctly does `hitRate = hits / (hits + misses)`
+### 2. Relax Golden Gate to allow 1 non-golden leg
+Change the Golden Gate formula from `minGoldenLegs = Math.floor(profile.legs / 2)` to `minGoldenLegs = profile.legs - 1`. For 3-leg parlays, this means 2 of 3 legs must be golden (currently it's also `floor(3/2) = 1`, so this actually tightens it slightly for player legs while exempting team legs from the golden check entirely).
 
-```text
-Current (buggy):
-  s.total++                        <-- counts ALL outcomes including no_data
-  if (row.outcome === 'hit') s.hits++
+More precisely: team legs will be excluded from the golden gate count since they don't have sweet-spot categories. The gate will only apply to player legs in the parlay.
 
-Fixed:
-  if (row.outcome === 'hit') { s.hits++; s.graded++; }
-  else if (row.outcome === 'miss') { s.graded++; }
-  // skip no_data, push, void
-  hitRate = s.hits / s.graded      <-- only graded picks
+### 3. Build hybrid candidate pools
+For hybrid profiles, the candidate selection logic will merge player props and team props into a single pool, with player props prioritized first (sorted by hit rate), then team props appended (sorted by composite score). The existing `canAddTeamLegToParlay` conflict detection ensures no contradictory same-game bets.
+
+## Technical Details
+
+**File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
+
+**Execution profiles** (lines 173-187) -- add 3 hybrid profiles:
+```typescript
+// HYBRID: Mix player props + team props for diversity
+{ legs: 3, strategy: 'hybrid_exec', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false, allowTeamLegs: 1 },
+{ legs: 3, strategy: 'hybrid_exec_cross', sports: ['all'], minHitRate: 58, sortBy: 'hit_rate', useAltLines: false, allowTeamLegs: 1 },
+// TEAM EXECUTION: Pure team props with high composite scores
+{ legs: 3, strategy: 'team_exec', betTypes: ['moneyline', 'spread', 'total'], minHitRate: 55 },
 ```
 
-### Step 2: Restore incorrectly flipped category weights
-Run a database correction to restore the 6 incorrectly flipped categories:
-- **BIG_ASSIST_OVER** over: restore weight from 0.50 to calibrated value
-- **BIG_REBOUNDER** over: restore weight
-- **LOW_LINE_REBOUNDER** over: restore weight
-- **ROLE_PLAYER_REB** over: restore weight
-- **STAR_FLOOR_OVER** over: restore weight
-- **VOLUME_SCORER** over: restore weight (this one is borderline at 51.2%, may still warrant monitoring)
-- Keep **HIGH_ASSIST** over at 0.50 (legitimate flip at 49.6%)
+**Candidate pool logic** (around line 1525) -- add hybrid pool building:
+- When `profile.allowTeamLegs` is set, build candidates from player props first, then append top team props
+- Cap team legs per parlay at `profile.allowTeamLegs` (default 1)
 
-Weights will be restored by triggering `calibrate-bot-weights` after the code fix, which already uses correct hit rate math.
+**Golden Gate** (lines 1688-1695) -- exempt team legs:
+- Only count player legs toward the golden gate requirement
+- Team legs pass through without needing a golden category
 
-### Technical Details
-- File changed: `supabase/functions/category-props-analyzer/index.ts` (the `autoFlipUnderperformingCategories` function)
-- Deploy updated edge function
-- Run `calibrate-bot-weights` to restore correct weights from the accurate hit rate calculations
-- Optionally re-run cascade to regenerate tomorrow's props with corrected weights
+**Profile type** (line 36) -- add `allowTeamLegs?: number` to the profile interface
+
+After deploying, run `bot-generate-daily-parlays` for Feb 12 to fill out the execution tier with the new hybrid profiles.
 
