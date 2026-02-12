@@ -830,6 +830,84 @@ async function loadSideOverrides(supabase: any): Promise<Map<string, 'over' | 'u
   return sideOverrideMap;
 }
 
+// v10.0: Auto-flip detection — check historical outcomes and auto-create flipped weight entries
+// When a category's "over" hit rate < 50% with 30+ samples, auto-promote "under" side
+async function autoFlipUnderperformingCategories(supabase: any): Promise<string[]> {
+  const flipped: string[] = [];
+  
+  // Query settled outcomes grouped by category + side
+  const { data: outcomes, error } = await supabase
+    .from('category_sweet_spots')
+    .select('category, recommended_side, outcome')
+    .not('outcome', 'is', null)
+    .not('settled_at', 'is', null);
+  
+  if (error || !outcomes) {
+    console.warn('[Category Analyzer] v10.0 Auto-flip: could not load outcomes');
+    return flipped;
+  }
+  
+  // Aggregate hit rates by category + side
+  const stats = new Map<string, { hits: number; total: number }>();
+  for (const row of outcomes) {
+    const key = `${row.category}__${row.recommended_side || 'over'}`;
+    let s = stats.get(key);
+    if (!s) { s = { hits: 0, total: 0 }; stats.set(key, s); }
+    s.total++;
+    if (row.outcome === 'hit') s.hits++;
+  }
+  
+  // Find categories where "over" is underperforming (< 50% hit rate, 30+ samples)
+  for (const [key, s] of stats) {
+    const [category, side] = key.split('__');
+    if (side !== 'over' || s.total < 30) continue;
+    
+    const hitRate = s.hits / s.total;
+    if (hitRate >= 0.50) continue;
+    
+    // Check if under-side weight already exists and is promoted
+    const underKey = `${category}__under`;
+    const underStats = stats.get(underKey);
+    
+    console.log(`[Category Analyzer] v10.0 AUTO-FLIP CANDIDATE: ${category} over=${(hitRate * 100).toFixed(1)}% (${s.total} picks) — promoting under side`);
+    
+    // Auto-create/update weight entries
+    // Deprioritize over side
+    await supabase.from('bot_category_weights')
+      .update({ weight: 0.50, updated_at: new Date().toISOString() })
+      .eq('category', category)
+      .eq('side', 'over');
+    
+    // Promote under side (upsert)
+    const underWeight = hitRate < 0.40 ? 1.00 : 1.10; // Less confidence if terrible over rate
+    const { data: existing } = await supabase.from('bot_category_weights')
+      .select('id').eq('category', category).eq('side', 'under').limit(1);
+    
+    if (existing && existing.length > 0) {
+      await supabase.from('bot_category_weights')
+        .update({ weight: underWeight, is_blocked: false, updated_at: new Date().toISOString() })
+        .eq('id', existing[0].id);
+    } else {
+      await supabase.from('bot_category_weights').insert({
+        category, side: 'under', sport: 'basketball_nba',
+        weight: underWeight, current_hit_rate: 55, total_picks: 0, total_hits: 0,
+        is_blocked: false, current_streak: 0, best_streak: 0, worst_streak: 0,
+        created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      });
+    }
+    
+    // Update the runtime override map
+    sideOverrideMap.set(category, 'under');
+    flipped.push(`${category}: over ${(hitRate * 100).toFixed(1)}% → flipped to under (weight ${underWeight})`);
+  }
+  
+  if (flipped.length > 0) {
+    console.log(`[Category Analyzer] v10.0 Auto-flipped ${flipped.length} categories: ${flipped.join('; ')}`);
+  }
+  
+  return flipped;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -853,6 +931,9 @@ serve(async (req) => {
       loadPlayerProfiles(supabase),
       loadSideOverrides(supabase)
     ]);
+
+    // v10.0: Auto-flip underperforming categories before analysis
+    const autoFlipped = await autoFlipUnderperformingCategories(supabase);
 
     // Get today's date for analysis
     const today = getEasternDate();
