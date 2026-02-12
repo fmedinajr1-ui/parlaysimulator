@@ -1,119 +1,93 @@
 
+# Enhance NCAAB Team Prop Accuracy
 
-# Reconfigure Parlay Farm: Bot + Sweet Spots Only
+## The Problem
 
-## Overview
+Right now NCAAB team props are essentially random picks. Here is what the data shows:
 
-Strip the site down to two core pages -- **Bot Dashboard** (homepage) and **Player Analysis / Sweet Spots** -- removing all other pages, navigation clutter, and unused components. The UI will be tightened and polished for a focused, premium experience.
+- **519 NCAAB game bets** in the system, but **zero have been settled** (no outcomes tracked)
+- **0 rows** in the NCAAB team stats table (KenPom efficiency/tempo data is missing)
+- Every NCAAB team pick gets a **flat composite score of 55** because there is no college-specific intelligence
+- Winning parlays with NCAAB legs show `no_data` for those legs, meaning they cannot be verified
 
-## What Changes
+Meanwhile, winning bot strategies like `cross_sport` and `team_all` already include NCAAB legs -- they just lack the data to score them properly.
 
-### 1. Make Bot Dashboard the Homepage
-- Route `/` renders `BotDashboard` instead of the old `Index` page
-- Keep `/sweet-spots` as the second page
-- Redirect all removed routes to `/`
-- Wrap `BotDashboard` in `AppShell` for consistent layout
+## The Fix: 3 Components
 
-### 2. Strip Routes (App.tsx)
-Remove all routes except:
-- `/` -- Bot Dashboard (new homepage)
-- `/sweet-spots` -- Player Analysis
-- `/auth` -- Redirect to `/`
-- `/verify-email` -- Keep for auth flow
-- `/admin` -- Keep for admin access
-- `/admin/releases` -- Keep for admin
-- `/collaborate` -- Keep for admin
-- `/offline` -- PWA offline fallback
-- `*` -- NotFound (redirects to `/`)
+### 1. Populate NCAAB Team Intelligence (KenPom-Style Data)
 
-All other routes (`/upload`, `/compare`, `/pools`, `/profile`, `/bot`, `/best-bets`, `/live-dashboard`, `/scout`, etc.) will be removed or redirected to `/`.
+Create a new backend function `ncaab-team-stats-fetcher` that scrapes or fetches college basketball team efficiency data and populates the existing `ncaab_team_stats` table with:
 
-### 3. Simplify Navigation
+- **Adjusted Offense/Defense** ratings (the most predictive college basketball metrics)
+- **Adjusted Tempo** (critical for totals -- college game pace varies wildly, from 60 to 75+ possessions)
+- **Conference**, **Home/Away records**, **ATS record**, **Over/Under record**
+- **KenPom Rank** (overall team quality tier)
 
-**Desktop Sidebar** -- Only 2 main nav items:
-- Bot (Home icon, `/`)
-- Player Analysis (Target icon, `/sweet-spots`)
-- Admin section stays for admin users
+This data feeds directly into the composite scoring engine.
 
-**Mobile Bottom Nav** -- Only 2 tabs + Menu:
-- Bot (Home icon, `/`)
-- Analysis (Target icon, `/sweet-spots`)
-- More menu (admin tools only)
+### 2. NCAAB-Aware Composite Scoring
 
-**Menu Drawer** -- Remove "Tools" section (Manual Builder, Tomorrow 3PT, Tomorrow Assists). Keep admin section only.
+Upgrade `calculateTeamCompositeScore` in the parlay generator to use NCAAB-specific logic when the sport is college basketball:
 
-### 4. Enhance Bot Dashboard UI
-- Wrap in `AppShell` for consistent sidebar/mobile layout
-- Remove the `min-h-screen bg-background p-4 pb-32` wrapper (AppShell handles it)
-- Make the sticky bottom action bar (Generate/Settle) work within AppShell's padding
-- Add a quick-link card/button to navigate to Sweet Spots from the Bot page
+- **KenPom efficiency differential** for spreads and moneylines (adj_offense - adj_defense gap between teams)
+- **Tempo-based total scoring** using college-specific pace thresholds (college games average ~67 possessions vs NBA's ~100)
+- **Conference matchup context** (conference games are tighter, non-conference early season is more volatile)
+- **ATS/O-U record weighting** from historical team performance
+- **Rank-based tier filtering** (Top 50 KenPom teams are far more predictable than 200+)
 
-### 5. Enhance Sweet Spots Page
-- Remove the back arrow button (no longer needed, sidebar handles nav)
-- Wrap in `AppShell` for consistent layout
-- Keep the sticky header with tabs (Scanner, Sweet Spots, Fades)
+### 3. NCAAB Settlement via ESPN Scores
 
-### 6. Remove Unused Lazy Imports
-Remove ~30 lazy import declarations from App.tsx for pages that no longer have routes. The page files themselves stay in the repo (no deletion) but won't be loaded.
+Upgrade the settlement function to resolve NCAAB team legs using ESPN scoreboard data directly (instead of summing individual player box scores, which is unreliable for 350+ college teams):
 
-### 7. Remove HeroBanner and Index Page References
-- The old Index page with HeroBanner, DailyParlayHub, Quick Actions, etc. is replaced entirely
-- Remove `HeroBanner`, `HowItWorks`, `SampleParlayButton` from the active code path
+- Fetch final scores from the ESPN NCAAB scoreboard API (already used by `ncaab-data-ingestion`)
+- Match games by team name fuzzy matching
+- Settle spreads, moneylines, and totals against actual final scores
+- Back-settle the 519 existing unsettled NCAAB game_bets to establish a historical accuracy baseline
+
+### 4. NCAAB-Specific Bot Profiles
+
+Add dedicated NCAAB parlay profiles to the bot:
+
+- `ncaab_ml_lock` -- 3-leg moneyline parlays using only KenPom Top 100 teams with efficiency edges
+- `ncaab_totals` -- 3-leg totals parlays using tempo differentials (the most predictable NCAAB bet type)
+- Require minimum composite score of 62+ (vs current flat 55)
 
 ## Technical Details
 
-### App.tsx Changes
-```text
-Routes reduced from ~45 to ~8:
-  / --> BotDashboard
-  /sweet-spots --> SweetSpots
-  /auth --> Navigate to /
-  /verify-email --> VerifyEmail
-  /admin --> Admin
-  /admin/releases --> ReleaseManager  
-  /collaborate --> Collaborate
-  /offline --> Offline
-  * --> NotFound
-```
+### New Backend Function: `ncaab-team-stats-fetcher`
+- Fetches team efficiency data from public college basketball statistics APIs
+- Populates `ncaab_team_stats` table (already exists with correct schema)
+- Runs daily on cron alongside existing data pipeline
 
-### DesktopSidebar.tsx
-```text
-mainNavItems = [
-  { icon: Home, label: "Bot", path: "/" },
-  { icon: Target, label: "Analysis", path: "/sweet-spots" },
-]
-```
+### Modified: `bot-generate-daily-parlays/index.ts`
+- Add `ncaabTeamStatsMap` data source alongside existing pace/defense maps
+- Branch `calculateTeamCompositeScore` for NCAAB sport:
+  - Use KenPom efficiency gap instead of NBA defense rankings
+  - Use college tempo thresholds (65-75 range vs NBA 95-105)
+  - Weight ATS/O-U records from `ncaab_team_stats`
+  - Add rank-tier filter (reject teams ranked 200+)
+- Add 2 new execution profiles: `ncaab_ml_lock`, `ncaab_totals`
 
-### BottomNav.tsx
-```text
-allNavItems = [
-  { icon: Home, label: "Bot", path: "/" },
-  { icon: Target, label: "Analysis", path: "/sweet-spots" },
-]
-```
+### Modified: `bot-settle-and-learn/index.ts`
+- For NCAAB team legs, fetch ESPN scoreboard directly instead of summing player logs
+- Use the same ESPN API endpoint already configured in `sync-live-scores`
+- Fuzzy match team names from leg data to ESPN event data
 
-### BotDashboard.tsx
-- Wrap content in `<AppShell>` 
-- Adjust padding/margins for AppShell compatibility
-- Fix sticky bottom bar positioning for desktop layout
+### New Database Migration
+- Add `sport` column to `game_bets` outcome tracking (for filtered accuracy queries)
+- Create `ncaab_team_accuracy_metrics` view for NCAAB-specific win rate tracking
 
-### SweetSpots.tsx
-- Wrap in `<AppShell noPadding>`
-- Remove back arrow button
-- Keep sticky header behavior
+## Expected Impact
 
-### MenuDrawer.tsx
-- Remove `toolItems` array
-- Only show admin items when admin
+With proper KenPom data feeding the scoring engine:
+- **Totals** become highly predictable (tempo is the strongest predictor in college basketball)
+- **Spreads** with large efficiency gaps (10+ point KenPom differential) hit at 60%+
+- **Moneylines** for Top 50 teams at home hit at very high rates
+- Settlement data creates a feedback loop for continuous improvement
 
-## Files Modified
-1. `src/App.tsx` -- Routes + lazy imports
-2. `src/components/layout/DesktopSidebar.tsx` -- Nav items
-3. `src/components/BottomNav.tsx` -- Nav items
-4. `src/components/layout/MenuDrawer.tsx` -- Remove tools section
-5. `src/pages/BotDashboard.tsx` -- AppShell wrapper + UI tweaks
-6. `src/pages/SweetSpots.tsx` -- AppShell wrapper + remove back button
+## Files to Create/Modify
 
-## No Files Deleted
-All page files remain in the repo for reference. They just won't have routes pointing to them.
-
+1. **Create** `supabase/functions/ncaab-team-stats-fetcher/index.ts` -- New data ingestion function
+2. **Modify** `supabase/functions/bot-generate-daily-parlays/index.ts` -- NCAAB scoring + profiles
+3. **Modify** `supabase/functions/bot-settle-and-learn/index.ts` -- ESPN-based NCAAB settlement
+4. **Database migration** -- accuracy tracking support
