@@ -1,89 +1,66 @@
 
 
-# Flip Losing Categories Instead of Blocking + Recalibrate Winners
+# Boost Team Moneyline Parlays
 
-## Strategy
+## What Won Yesterday
 
-Instead of blocking underperforming categories (which wastes data), we **flip the bet direction**. If "VOLUME_SCORER over" keeps missing at a -17 streak, the under side is likely hitting. Same logic for ROLE_PLAYER_REB, BIG_ASSIST_OVER, and ELITE_REB_OVER.
+The winning $464 parlay was a 4-leg team moneyline mix: heavy NBA favorites (safe legs) paired with NCAAB plus-money underdogs (high-reward legs). This asymmetric structure -- low-risk anchors multiplied by high-upside shots -- is the key pattern to replicate.
 
-## Weight Changes
+## Changes
 
-### Flip to opposite side (not block)
-| Category | Old Side | Old Weight | New Side | New Weight | Reasoning |
-|---|---|---|---|---|---|
-| VOLUME_SCORER | over | 1.125 | **under** | **1.10** | -17 streak on over = under is hitting |
-| ROLE_PLAYER_REB | over | 1.128 | **under** | **1.10** | -16 streak on over |
-| BIG_ASSIST_OVER | over | 1.143 | **under** | **1.05** | -9 streak on over |
-| ELITE_REB_OVER | over | 0.76 | **under** | **1.00** | 20% hit rate on over, small sample |
+### 1. Boost ML category weights in the database
 
-The original "over" entries get blocked (weight 0) so they stop generating, and new "under" entries are created with moderate weights to let them prove themselves.
+| Category | Side | Current Weight | New Weight | Reasoning |
+|---|---|---|---|---|
+| ML_FAVORITE | away | 0.98 | **1.25** | Yesterday's winner relied on favorites |
+| ML_FAVORITE | home | 1.00 | **1.25** | Equal treatment for home favorites |
+| ML_UNDERDOG | away | 0.96 | **1.15** | Underdogs provided the payout multiplier |
+| ML_UNDERDOG | home | 1.00 | **1.15** | Equal treatment for home underdogs |
 
-### Boost winning categories
-| Category | Side | Old Weight | New Weight |
-|---|---|---|---|
-| STAR_FLOOR_OVER | over | 1.06 | **1.30** |
-| MID_SCORER_UNDER | under | 1.05 | **1.25** |
-| ASSIST_ANCHOR | under | 1.11 | **1.25** |
+### 2. Add more team ML parlay profiles
 
-### Cautious unblock
-| Category | Side | Action |
-|---|---|---|
-| HIGH_ASSIST | over | Unblock with weight **0.90** (62.5% yesterday) |
+Currently: 2 profiles generating 3-leg ML parlays + 1 mixed 4-leg profile (out of 50 total exploration profiles).
 
-## Technical Implementation
+New allocation -- replace some underperforming spread profiles (SHARP_SPREAD/away is blocked at 0-6 anyway):
 
-### 1. Database updates to `bot_category_weights`
+| Remove | Add |
+|---|---|
+| 2x `team_spreads` (3-leg) | 2x `team_ml` (3-leg) -- more pure ML parlays |
+| 1x `team_mixed` (4-leg spread+total) | 1x `team_ml` (4-leg) -- bigger ML parlays |
+| -- | 2x `team_ml_cross` (3-leg) -- NBA + NCAAB ML mix |
 
-**Block the losing "over" sides** (4 UPDATE statements):
-- Set `weight = 0`, `is_blocked = true`, `block_reason = 'Flipped to under side'` for VOLUME_SCORER/over, ROLE_PLAYER_REB/over, BIG_ASSIST_OVER/over, ELITE_REB_OVER/over
+This takes team ML profiles from **2 to 7** (plus 2 cross-sport ML), giving roughly 5x more moneyline parlay generation while keeping the 50-profile total unchanged.
 
-**Insert new "under" counterparts** (4 INSERT statements):
-- Create VOLUME_SCORER/under (weight 1.10), ROLE_PLAYER_REB/under (weight 1.10), BIG_ASSIST_OVER/under (weight 1.05), ELITE_REB_OVER/under (weight 1.00)
-- Initial streak = 0, total_picks = 0 (fresh start for the flipped side)
+### 3. Add a cross-sport ML strategy
 
-**Boost winners** (3 UPDATE statements):
-- STAR_FLOOR_OVER weight -> 1.30
-- MID_SCORER_UNDER weight -> 1.25
-- ASSIST_ANCHOR/under weight -> 1.25
+Create a `team_ml_cross` strategy that specifically mixes NBA moneylines with NCAAB moneylines -- replicating the exact structure of yesterday's winner.
 
-**Unblock HIGH_ASSIST** (1 UPDATE):
-- Set `is_blocked = false`, `weight = 0.90`
+## Technical Details
 
-### 2. Update the generator to be side-aware
+### Database updates (4 UPDATE statements on `bot_category_weights`)
+- Update ML_FAVORITE/away weight to 1.25
+- Update ML_FAVORITE/home weight to 1.25
+- Update ML_UNDERDOG/away weight to 1.15
+- Update ML_UNDERDOG/home weight to 1.15
 
-**File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
+### Generator profile changes in `bot-generate-daily-parlays/index.ts`
 
-The `weightMap` currently keys by category only (`weightMap.set(w.category, w.weight)`). This means both VOLUME_SCORER/over and VOLUME_SCORER/under would share the same weight — defeating the flip.
+Replace in the exploration profiles array:
+- Lines 87-88: Change 2x `team_spreads` to 2x `team_ml` (3-leg)
+- Line 91: Change 1x `team_mixed` (4-leg spread+total) to `team_ml` (4-leg moneyline only)
+- Lines 93: Change `team_mixed` (spread+total+moneyline) to `team_ml_cross` with sports `['basketball_nba', 'basketball_ncaab']`
+- Line 96: Change `team_all` to `team_ml_cross` with sports `['basketball_nba', 'basketball_ncaab']`
 
-Fix: Make the weightMap key include the side:
-```typescript
-// Before
-weightMap.set(w.category, w.weight);
+Final team ML profile count: **4 pure team_ml + 2 team_ml_cross + 2 team_mixed remaining = 8 team-focused profiles** (up from 3 ML-capable).
 
-// After  
-weightMap.set(`${w.category}__${w.side}`, w.weight);
-// Also keep category-only key as fallback
-if (!weightMap.has(w.category)) {
-  weightMap.set(w.category, w.weight);
-}
-```
+### Generator strategy logic
 
-Then update all `weightMap.get(category)` lookups to first try `weightMap.get(`${category}__${side}`)` before falling back to `weightMap.get(category)`.
+Add handling for the new `team_ml_cross` strategy that:
+- Filters team picks to moneyline only
+- Requires at least one leg from each sport (NBA + NCAAB)
+- Prioritizes the favorite+underdog mix pattern (1-2 safe favorites + 1-2 plus-money underdogs)
 
-This affects ~5 lookup sites in the generator.
+### Trigger regeneration
 
-### 3. Update `category-props-analyzer` to support flipped sides
+After deploying the updated function and weights, call `bot-generate-daily-parlays` with `forceRegenerate: true` to generate new parlays with the boosted ML allocation for today's slate.
 
-The analyzer needs to know that when a category weight exists for the "under" side, it should recommend "under" instead of the default "over". Check the `recommended_side` logic in the analyzer and ensure flipped categories produce picks with the correct side.
-
-### 4. Trigger recalibration and regeneration
-
-- Call `calibrate-bot-weights` to sync the new weights
-- Call `bot-generate-daily-parlays` to regenerate today's (Feb 12) parlays with the flipped categories
-
-## What Changes for Today's Parlays
-
-- Categories that were bleeding money on "over" will now generate "under" picks instead
-- Winners (STAR_FLOOR, MID_SCORER_UNDER, ASSIST_ANCHOR) get priority with boosted weights
-- The system learns both directions independently -- if the flip works, the weight grows; if not, it gets blocked too
-- No data is wasted by blocking -- we extract value from the pattern in both directions
