@@ -1,4 +1,4 @@
-import { Home, BarChart3, User, WifiOff, Users, Radio, Activity } from "lucide-react";
+import { Home, Target, WifiOff } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { usePWA } from "@/hooks/usePWA";
@@ -11,11 +11,8 @@ import { ScanBalanceBadge } from "@/components/ui/scan-balance-badge";
 import { useHapticFeedback } from "@/hooks/useHapticFeedback";
 
 const allNavItems = [
-  { icon: Home, label: "Home", path: "/" },
-  { icon: BarChart3, label: "Analyze", path: "/upload" },
-  { icon: Activity, label: "Engines", path: "/engine-dashboard" },
-  { icon: Users, label: "Pools", path: "/pools" },
-  { icon: User, label: "Profile", path: "/profile" },
+  { icon: Home, label: "Bot", path: "/" },
+  { icon: Target, label: "Analysis", path: "/sweet-spots" },
 ];
 
 // Routes where bottom nav should always be visible (no hide on scroll)
