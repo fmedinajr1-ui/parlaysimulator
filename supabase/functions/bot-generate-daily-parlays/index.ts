@@ -1956,7 +1956,20 @@ Deno.serve(async (req) => {
 
     const results: Record<string, { count: number; parlays: any[] }> = {};
     let allParlays: any[] = [];
+
+    // Pre-load existing fingerprints from DB to prevent cross-run duplicates
     const globalFingerprints = new Set<string>();
+    const { data: existingParlays } = await supabase
+      .from('bot_daily_parlays')
+      .select('legs')
+      .eq('parlay_date', targetDate);
+    if (existingParlays) {
+      for (const p of existingParlays) {
+        const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs);
+        globalFingerprints.add(createParlayFingerprint(legs));
+      }
+      console.log(`[Bot v2] Pre-loaded ${globalFingerprints.size} existing fingerprints for ${targetDate}`);
+    }
 
     for (const tier of tiersToGenerate) {
       const result = await generateTierParlays(
