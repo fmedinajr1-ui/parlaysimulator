@@ -1,5 +1,6 @@
 import React from 'react';
-import { Bot, RefreshCw, Play, CheckCircle, Settings2, ChevronDown, ChevronUp } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Bot, RefreshCw, Play, CheckCircle, Settings2, ChevronDown, ChevronUp, Target } from 'lucide-react';
 import { useBotEngine } from '@/hooks/useBotEngine';
 import { BotActivationCard } from '@/components/bot/BotActivationCard';
 import { BotPnLCalendar } from '@/components/bot/BotPnLCalendar';
@@ -20,6 +21,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import { AppShell } from '@/components/layout/AppShell';
 
 export default function BotDashboard() {
   const { toast } = useToast();
@@ -53,22 +55,25 @@ export default function BotDashboard() {
 
   if (state.isLoading) {
     return (
-      <div className="min-h-screen bg-background p-4 pb-32 space-y-4">
-        <div className="flex items-center gap-3 mb-6">
-          <Bot className="w-8 h-8 text-primary" />
-          <h1 className="text-2xl font-bold">Betting Bot</h1>
+      <AppShell>
+        <div className="space-y-4 pb-32">
+          <div className="flex items-center gap-3 mb-6">
+            <Bot className="w-8 h-8 text-primary" />
+            <h1 className="text-2xl font-bold">Betting Bot</h1>
+          </div>
+          <Skeleton className="h-12 w-full" />
+          <Skeleton className="h-48 w-full" />
+          <Skeleton className="h-64 w-full" />
         </div>
-        <Skeleton className="h-12 w-full" />
-        <Skeleton className="h-48 w-full" />
-        <Skeleton className="h-64 w-full" />
-      </div>
+      </AppShell>
     );
   }
 
   const totalPnL = (state.simulatedBankroll || 1000) - 1000;
 
   return (
-    <div className="min-h-screen bg-background p-4 pb-32">
+    <AppShell>
+    <div className="pb-32">
       {/* Hero Header */}
       <div className="relative rounded-2xl p-4 mb-4 overflow-hidden bg-gradient-to-br from-card via-card to-primary/5 border border-border/50">
         <div className="flex items-center justify-between mb-3">
@@ -253,5 +258,6 @@ export default function BotDashboard() {
         </div>
       </div>
     </div>
+    </AppShell>
   );
 }

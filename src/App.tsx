@@ -19,51 +19,15 @@ import { RouteErrorBoundary } from "@/components/RouteErrorBoundary";
 import { useRoutePersistence } from "@/hooks/useRoutePersistence";
 import { usePageLifecycle } from "@/hooks/usePageLifecycle";
 
-// Lazy load all pages for code splitting
-const Index = React.lazy(() => import("./pages/Index"));
-const Upload = React.lazy(() => import("./pages/Upload"));
-const Results = React.lazy(() => import("./pages/Results"));
-const Profile = React.lazy(() => import("./pages/Profile"));
-const Auth = React.lazy(() => import("./pages/Auth"));
+// Lazy load pages
+const BotDashboard = React.lazy(() => import("./pages/BotDashboard"));
+const SweetSpots = React.lazy(() => import("./pages/SweetSpots"));
+const VerifyEmail = React.lazy(() => import("./pages/VerifyEmail"));
 const Admin = React.lazy(() => import("./pages/Admin"));
 const Collaborate = React.lazy(() => import("./pages/Collaborate"));
-const Compare = React.lazy(() => import("./pages/Compare"));
-const Suggestions = React.lazy(() => import("./pages/Suggestions"));
-const OddsMovement = React.lazy(() => import("./pages/OddsMovement"));
-const SharpMoney = React.lazy(() => import("./pages/SharpMoney"));
-const LineShopping = React.lazy(() => import("./pages/LineShopping"));
-const SportsFatigue = React.lazy(() => import("./pages/SportsFatigue"));
-const Install = React.lazy(() => import("./pages/Install"));
+const ReleaseManager = React.lazy(() => import("./pages/admin/ReleaseManager"));
 const Offline = React.lazy(() => import("./pages/Offline"));
 const NotFound = React.lazy(() => import("./pages/NotFound"));
-const PVSCalculator = React.lazy(() => import("./pages/PVSCalculator"));
-const GodModeUpsets = React.lazy(() => import("./pages/GodModeUpsets"));
-const GodModeDashboard = React.lazy(() => import("./pages/GodModeDashboard"));
-const BestBets = React.lazy(() => import("./pages/BestBets"));
-const SharpComparison = React.lazy(() => import("./pages/SharpComparison"));
-const FanDuelTraps = React.lazy(() => import("./pages/FanDuelTraps"));
-const AllSportsTracker = React.lazy(() => import("./pages/AllSportsTracker"));
-const Kelly = React.lazy(() => import("./pages/Kelly"));
-const VerifyEmail = React.lazy(() => import("./pages/VerifyEmail"));
-const Pools = React.lazy(() => import("./pages/Pools"));
-const PoolDetail = React.lazy(() => import("./pages/PoolDetail"));
-const JoinPool = React.lazy(() => import("./pages/JoinPool"));
-const Changelog = React.lazy(() => import("./pages/Changelog"));
-const ReleaseManager = React.lazy(() => import("./pages/admin/ReleaseManager"));
-const LiveDashboard = React.lazy(() => import("./pages/LiveDashboard"));
-const PropMarket = React.lazy(() => import("./pages/PropMarket"));
-const PropResults = React.lazy(() => import("./pages/PropResults"));
-const EngineDashboard = React.lazy(() => import("./pages/EngineDashboard"));
-const Scout = React.lazy(() => import("./pages/Scout"));
-const ManualBuilder = React.lazy(() => import("./pages/ManualBuilder"));
-const DraftView = React.lazy(() => import("./pages/DraftView"));
-const WhaleProxy = React.lazy(() => import("./pages/WhaleProxy"));
-const Tomorrow3PT = React.lazy(() => import("./pages/Tomorrow3PT"));
-const TomorrowAssists = React.lazy(() => import("./pages/TomorrowAssists"));
-const AccuracyDashboard = React.lazy(() => import("./pages/AccuracyDashboard"));
-const SweetSpots = React.lazy(() => import("./pages/SweetSpots"));
-const BotDashboard = React.lazy(() => import("./pages/BotDashboard"));
-const TeamBets = React.lazy(() => import("./pages/TeamBets"));
 
 // QueryClient with optimized defaults
 const queryClient = new QueryClient({
@@ -102,51 +66,14 @@ function AnimatedRoutes() {
         <RouteErrorBoundary>
           <React.Suspense fallback={<WolfLoadingOverlay />}>
             <Routes location={location}>
-              <Route path="/" element={<Index />} />
-              <Route path="/upload" element={<Upload />} />
-              <Route path="/results" element={<Results />} />
-              <Route path="/profile" element={<Profile />} />
-              <Route path="/auth" element={<Navigate to="/" replace />} />
-              <Route path="/admin" element={<Admin />} />
-              <Route path="/collaborate" element={<Collaborate />} />
-              <Route path="/compare" element={<Compare />} />
-              <Route path="/suggestions" element={<Suggestions />} />
-              <Route path="/odds" element={<OddsMovement />} />
-              <Route path="/sharp" element={<SharpMoney />} />
-              <Route path="/line-shopping" element={<LineShopping />} />
-              <Route path="/sports-fatigue" element={<SportsFatigue />} />
-              <Route path="/nba-fatigue" element={<SportsFatigue />} />
-              <Route path="/install" element={<Install />} />
-              <Route path="/offline" element={<Offline />} />
-              <Route path="/pvs-calculator" element={<PVSCalculator />} />
-              <Route path="/god-mode" element={<GodModeUpsets />} />
-              <Route path="/god-mode-tracker" element={<GodModeDashboard />} />
-              <Route path="/best-bets" element={<BestBets />} />
-              <Route path="/sharp-comparison" element={<SharpComparison />} />
-              <Route path="/fanduel-traps" element={<FanDuelTraps />} />
-              <Route path="/tracker" element={<AllSportsTracker />} />
-              <Route path="/kelly" element={<Kelly />} />
-              <Route path="/verify-email" element={<VerifyEmail />} />
-              <Route path="/verify-phone" element={<Navigate to="/verify-email" replace />} />
-              <Route path="/pools" element={<Pools />} />
-              <Route path="/pools/:id" element={<PoolDetail />} />
-              <Route path="/pools/join/:inviteCode" element={<JoinPool />} />
-              <Route path="/changelog" element={<Changelog />} />
-              <Route path="/admin/releases" element={<ReleaseManager />} />
-              <Route path="/live-dashboard" element={<LiveDashboard />} />
-              <Route path="/prop-market" element={<PropMarket />} />
-              <Route path="/prop-results" element={<PropResults />} />
-              <Route path="/engine-dashboard" element={<EngineDashboard />} />
-              <Route path="/scout" element={<Scout />} />
-              <Route path="/manual-builder" element={<ManualBuilder />} />
-              <Route path="/draft/:shareCode" element={<DraftView />} />
-              <Route path="/whale-proxy" element={<WhaleProxy />} />
-              <Route path="/tomorrow-3pt" element={<Tomorrow3PT />} />
-              <Route path="/tomorrow-assists" element={<TomorrowAssists />} />
-              <Route path="/accuracy" element={<AccuracyDashboard />} />
+              <Route path="/" element={<BotDashboard />} />
               <Route path="/sweet-spots" element={<SweetSpots />} />
-              <Route path="/bot" element={<BotDashboard />} />
-              <Route path="/team-bets" element={<TeamBets />} />
+              <Route path="/auth" element={<Navigate to="/" replace />} />
+              <Route path="/verify-email" element={<VerifyEmail />} />
+              <Route path="/admin" element={<Admin />} />
+              <Route path="/admin/releases" element={<ReleaseManager />} />
+              <Route path="/collaborate" element={<Collaborate />} />
+              <Route path="/offline" element={<Offline />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </React.Suspense>

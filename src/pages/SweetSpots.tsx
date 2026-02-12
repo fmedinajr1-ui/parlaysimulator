@@ -1,6 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
-import { ArrowLeft, RefreshCw, Crown, Star, TrendingUp, Filter, Radio, Flame, Snowflake, Target, Users, Zap, DollarSign, BarChart3, RotateCcw, CheckCircle2, Dices } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { RefreshCw, Crown, Star, TrendingUp, Filter, Radio, Flame, Snowflake, Target, Users, Zap, DollarSign, BarChart3, RotateCcw, CheckCircle2, Dices } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -19,6 +18,7 @@ import { MatchupScannerDashboard } from "@/components/matchup-scanner";
 import { useParlayBuilder } from "@/contexts/ParlayBuilderContext";
 import { getEasternDate } from "@/lib/dateUtils";
 import { cn } from "@/lib/utils";
+import { AppShell } from "@/components/layout/AppShell";
 import type { PropType, DeepSweetSpot } from "@/types/sweetSpot";
 import { PROP_TYPE_CONFIG } from "@/types/sweetSpot";
 import type { PlayerMatchupAnalysis } from "@/types/matchupScanner";
@@ -30,7 +30,6 @@ type PaceFilter = 'all' | 'live-only' | 'fast' | 'slow';
 type MainTab = 'sweet-spots' | 'matchup-scanner' | 'contrarian';
 
 export default function SweetSpots() {
-  const navigate = useNavigate();
   const { data, isLoading, error, refetch, isFetching } = useDeepSweetSpots();
   const { addLeg } = useParlayBuilder();
   const todayET = getEasternDate();
@@ -202,19 +201,13 @@ export default function SweetSpots() {
   }, [simulationCandidates, runSimulation, setSimMode]);
   
   return (
-    <div className="min-h-screen bg-background pb-24">
+    <AppShell noPadding>
+    <div className="pb-24">
       {/* Header */}
       <div className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b border-border">
         <div className="max-w-4xl mx-auto px-4 py-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <Button 
-                variant="ghost" 
-                size="icon"
-                onClick={() => navigate(-1)}
-              >
-                <ArrowLeft size={20} />
-              </Button>
               <div>
                 <div className="flex items-center gap-2">
                   <h1 className="text-lg font-bold text-foreground">Player Analysis</h1>
@@ -582,5 +575,6 @@ export default function SweetSpots() {
         )}
       </div>
     </div>
+    </AppShell>
   );
 }
