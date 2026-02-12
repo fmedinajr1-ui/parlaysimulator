@@ -1,114 +1,91 @@
 
 
-# Bot Learning Metrics Table and Accelerated Data Collection
+# Execution Tier: 3-Leg Focus + Smart Side Flipping for Losing Categories
 
-## Overview
+## The Problem
 
-The Learning Analytics dashboard currently has two problems:
-1. **No persistent metrics store** -- every page load re-queries all parlays and computes stats from scratch
-2. **No `tier` column** on `bot_daily_parlays` -- the dashboard defaults everything to "execution", making tier breakdowns meaningless
-3. **Only 61 settled parlays** (17W / 44L) -- far below the 300+ per tier needed for statistical confidence
-
-This plan adds a dedicated `bot_learning_metrics` table, backfills it from existing data, adds a `tier` column to parlays, and wires the settlement pipeline to update metrics automatically.
-
----
+Feb 11 showed that 4-5 leg execution parlays are fragile -- a single "poison" category kills the whole bet. All 4 winners that day were 3-leg builds. Meanwhile, categories like VOLUME_SCORER (53% over) are penalized but never actually flipped to their winning side (under).
 
 ## What Changes
 
-### 1. Add `tier` column to `bot_daily_parlays`
+### 1. Cap Execution Tier at 3 Legs Max
 
-The strategy names already encode the tier (e.g., `elite_categories_v1_exploration_explore_mixed`). We'll add the column and backfill it by parsing the strategy name.
+The current execution tier has 4-leg and 5-leg profiles that dilute win probability. We'll replace them with more 3-leg variants focused on golden categories.
 
-### 2. Create `bot_learning_metrics` table
+**Current execution profiles (10 total):**
+- 3x 3-leg profiles
+- 4x 4-leg profiles  
+- 2x 5-leg profiles
+- 1x 4-leg cross-sport
 
-A daily snapshot table that stores pre-computed stats per tier:
+**New execution profiles (10 total):**
+- 6x 3-leg profiles (cash locks, boosted, cross-sport)
+- 4x 4-leg profiles moved to validation tier (they become "proving ground" builds)
 
-| Column | Type | Purpose |
-|---|---|---|
-| id | uuid | Primary key |
-| snapshot_date | date | When this snapshot was taken |
-| tier | text | exploration / validation / execution |
-| total_generated | integer | Parlays generated in this tier |
-| total_settled | integer | Parlays with outcomes |
-| wins | integer | Won parlays |
-| losses | integer | Lost parlays |
-| win_rate | numeric | wins / settled |
-| sample_sufficiency | numeric | % toward target sample count |
-| ci_lower | numeric | Wilson score lower bound |
-| ci_upper | numeric | Wilson score upper bound |
-| days_to_convergence | integer | Estimated days remaining |
-| created_at | timestamptz | Row creation time |
+### 2. Smart Side Flipping (Not Blocking)
 
-Unique constraint on `(snapshot_date, tier)` so each day has one row per tier.
+Instead of blocking losing categories, the generator will **auto-flip them to the winning side**. The data already supports this:
 
-### 3. Backfill tier and initial metrics
+| Category | Over Hit Rate | Under Hit Rate | Action |
+|---|---|---|---|
+| VOLUME_SCORER | 53.1% (128 picks) | Untested | Flip to under, weight 1.10 |
+| ROLE_PLAYER_REB | 53.5% (176 picks) | Untested | Flip to under, weight 1.10 |
+| LOW_LINE_REBOUNDER | 39.1% (40 picks) | Untested | Flip to under, weight 1.00 |
 
-SQL migration will:
-- Add `tier` column with default `'execution'`
-- Parse existing `strategy_name` values to extract tier (`_exploration_`, `_validation_`, `_execution_`)
-- Insert initial snapshot rows into `bot_learning_metrics`
+The generator already uses side-aware weight keys (`VOLUME_SCORER__under`). We need to make the **category-props-analyzer** actually generate "under" sweet spots for these categories, so the generator has under-side candidates to pick from.
 
-### 4. Update settlement pipeline
+### 3. Enable Golden Gate for Execution
 
-Modify `bot-settle-and-learn` to:
-- Set the `tier` on new parlays based on strategy name
-- After settling, upsert a new snapshot row into `bot_learning_metrics`
-
-### 5. Update `BotLearningAnalytics.tsx`
-
-Instead of fetching all parlays and computing on the fly, read the latest snapshot from `bot_learning_metrics`. Falls back to live computation if no snapshots exist yet.
+The `ENFORCE_GOLDEN_GATE` flag (line 1683) is currently `false`. We'll enable it for execution tier only, requiring at least 50% of legs to come from golden categories (60%+ hit rate, 20+ samples). Current golden categories:
+- THREE_POINT_SHOOTER (75.3%, 214 picks)
+- HIGH_ASSIST_UNDER (75%, 12 picks)
+- LOW_SCORER_UNDER (65.4%, 60 picks)
+- ASSIST_ANCHOR under (63.6%, 18 picks)
+- BIG_ASSIST_OVER (61.7%, 65 picks)
 
 ---
 
 ## Technical Details
 
-### Database Migration
+### Generator Changes (`bot-generate-daily-parlays/index.ts`)
 
-```sql
--- 1. Add tier column
-ALTER TABLE bot_daily_parlays 
-  ADD COLUMN IF NOT EXISTS tier text DEFAULT 'execution';
-
--- 2. Backfill tier from strategy_name
-UPDATE bot_daily_parlays SET tier = 'exploration' 
-  WHERE strategy_name LIKE '%exploration%';
-UPDATE bot_daily_parlays SET tier = 'validation' 
-  WHERE strategy_name LIKE '%validation%';
-UPDATE bot_daily_parlays SET tier = 'execution' 
-  WHERE strategy_name LIKE '%execution%' 
-    AND tier = 'execution';
-
--- 3. Create metrics table
-CREATE TABLE bot_learning_metrics (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  snapshot_date date NOT NULL,
-  tier text NOT NULL DEFAULT 'execution',
-  total_generated integer DEFAULT 0,
-  total_settled integer DEFAULT 0,
-  wins integer DEFAULT 0,
-  losses integer DEFAULT 0,
-  win_rate numeric DEFAULT 0,
-  sample_sufficiency numeric DEFAULT 0,
-  ci_lower numeric DEFAULT 0,
-  ci_upper numeric DEFAULT 0,
-  days_to_convergence integer DEFAULT 999,
-  created_at timestamptz DEFAULT now(),
-  UNIQUE(snapshot_date, tier)
-);
-
--- 4. RLS policy (service role only, read by anon)
-ALTER TABLE bot_learning_metrics ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Allow read access" ON bot_learning_metrics
-  FOR SELECT USING (true);
+**Execution profiles** -- replace lines 168-182:
+```typescript
+profiles: [
+  // ALL 3-LEG: Maximum win probability
+  { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: false },
+  { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: false },
+  { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
+  { legs: 3, strategy: 'cash_lock_cross', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
+  { legs: 3, strategy: 'boosted_cash', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+  { legs: 3, strategy: 'boosted_cash', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+  { legs: 3, strategy: 'boosted_cash_cross', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.2 },
+  { legs: 3, strategy: 'golden_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
+  { legs: 3, strategy: 'golden_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
+  { legs: 3, strategy: 'golden_lock_cross', sports: ['all'], minHitRate: 58, sortBy: 'hit_rate', useAltLines: false },
+],
 ```
 
-### Edge Function Changes
+**Move 4-5 leg profiles to validation tier** -- add them to the validation profiles array so they still get tested but aren't in the "cash" tier.
 
-**`bot-settle-and-learn/index.ts`**: After settlement, compute and upsert metrics snapshot for the current date.
+**Enable golden gate** -- change `ENFORCE_GOLDEN_GATE` from `false` to `true` (line 1683).
 
-**`bot-generate-daily-parlays/index.ts`**: Set `tier` field on each parlay based on which profile generated it (exploration/validation/execution).
+### Category Analyzer Changes (`category-props-analyzer/index.ts`)
 
-### Frontend Changes
+Add auto-flip logic: when a category's "over" hit rate drops below 50% with 30+ samples, generate "under" sweet spots for it instead. This feeds the generator with under-side candidates for VOLUME_SCORER, ROLE_PLAYER_REB, and LOW_LINE_REBOUNDER.
 
-**`BotLearningAnalytics.tsx`**: Query `bot_learning_metrics` for the latest snapshot per tier instead of fetching all parlays. The dashboard will load instantly instead of scanning the entire parlays table.
+### Database Updates
+
+Update `bot_category_weights` to properly reflect the flip strategy:
+- VOLUME_SCORER over: keep weight 0.50 (deprioritized, not blocked)
+- VOLUME_SCORER under: weight 1.10 (promoted)
+- Same pattern for ROLE_PLAYER_REB and LOW_LINE_REBOUNDER
+
+These weight entries already exist from the previous flipping work -- no schema changes needed.
+
+### Summary of File Changes
+
+1. **`supabase/functions/bot-generate-daily-parlays/index.ts`** -- Replace execution profiles with all-3-leg builds, move 4-5 leg to validation, enable golden gate
+2. **`supabase/functions/category-props-analyzer/index.ts`** -- Add auto-flip logic for underperforming over categories
+3. **Database** -- No migration needed, existing weight rows support this
 
