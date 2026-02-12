@@ -84,16 +84,16 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 4, strategy: 'ncaab_mixed', sports: ['basketball_nba', 'basketball_ncaab'] },
       { legs: 5, strategy: 'ncaab_aggressive', sports: ['basketball_ncaab'] },
       // Team props exploration (10 profiles)
-      { legs: 3, strategy: 'team_spreads', betTypes: ['spread'] },
-      { legs: 3, strategy: 'team_spreads', betTypes: ['spread'] },
+      { legs: 3, strategy: 'team_ml', betTypes: ['moneyline'] },
+      { legs: 3, strategy: 'team_ml', betTypes: ['moneyline'] },
+      { legs: 3, strategy: 'team_ml', betTypes: ['moneyline'] },
       { legs: 3, strategy: 'team_totals', betTypes: ['total'] },
+      { legs: 4, strategy: 'team_ml', betTypes: ['moneyline'] },
+      { legs: 4, strategy: 'team_mixed', betTypes: ['spread', 'total'] },
+      { legs: 3, strategy: 'team_ml_cross', betTypes: ['moneyline'], sports: ['basketball_nba', 'basketball_ncaab'] },
+      { legs: 3, strategy: 'team_ml_cross', betTypes: ['moneyline'], sports: ['basketball_nba', 'basketball_ncaab'] },
       { legs: 3, strategy: 'team_totals', betTypes: ['total'] },
-      { legs: 4, strategy: 'team_mixed', betTypes: ['spread', 'total'] },
-      { legs: 4, strategy: 'team_mixed', betTypes: ['spread', 'total'] },
       { legs: 4, strategy: 'team_mixed', betTypes: ['spread', 'total', 'moneyline'] },
-      { legs: 3, strategy: 'team_ml', betTypes: ['moneyline'] },
-      { legs: 3, strategy: 'team_ml', betTypes: ['moneyline'] },
-      { legs: 4, strategy: 'team_all', betTypes: ['spread', 'total', 'moneyline'] },
       // Cross-sport exploration (20 profiles)
       { legs: 3, strategy: 'cross_sport', sports: ['basketball_nba', 'icehockey_nhl'] },
       { legs: 3, strategy: 'cross_sport', sports: ['basketball_nba', 'basketball_ncaab'] },
@@ -1527,6 +1527,19 @@ async function generateTierParlays(
       candidatePicks = pool.teamPicks.filter(p => 
         profile.betTypes!.includes(p.bet_type)
       );
+      
+      // team_ml_cross: filter to specific sports and ensure cross-sport mix
+      if (profile.strategy === 'team_ml_cross' && profile.sports && !profile.sports.includes('all')) {
+        candidatePicks = candidatePicks.filter(p => profile.sports!.includes(p.sport));
+        // Sort: favorites first (higher composite), then underdogs for asymmetric mix
+        candidatePicks = [...candidatePicks].sort((a, b) => {
+          // Prioritize favorites (negative odds = favorite)
+          const aIsFav = a.odds < 0;
+          const bIsFav = b.odds < 0;
+          if (aIsFav !== bIsFav) return aIsFav ? -1 : 1;
+          return b.compositeScore - a.compositeScore;
+        });
+      }
     } else {
       candidatePicks = pool.sweetSpots.filter(p => {
         if (sportFilter.includes('all')) return true;
@@ -1656,6 +1669,16 @@ async function generateTierParlays(
 
     // Only create parlay if we have enough legs
     if (legs.length >= profile.legs) {
+      // Cross-sport ML gate: require at least one leg from each specified sport
+      if (profile.strategy === 'team_ml_cross' && profile.sports && profile.sports.length > 1) {
+        const legSports = new Set(legs.map(l => l.sport));
+        const missingSports = profile.sports.filter(s => !legSports.has(s));
+        if (missingSports.length > 0) {
+          console.log(`[Bot] Skipping ${tier}/team_ml_cross: missing sports ${missingSports.join(', ')}`);
+          continue;
+        }
+      }
+
       // Golden category gate — disabled for now
       const ENFORCE_GOLDEN_GATE = false;
       if (ENFORCE_GOLDEN_GATE && tier === 'execution' && goldenCategories.size > 0) {
