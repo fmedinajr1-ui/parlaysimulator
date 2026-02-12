@@ -847,29 +847,32 @@ async function autoFlipUnderperformingCategories(supabase: any): Promise<string[
     return flipped;
   }
   
-  // Aggregate hit rates by category + side
-  const stats = new Map<string, { hits: number; total: number }>();
+  // Aggregate hit rates by category + side (only graded outcomes: hit/miss)
+  const stats = new Map<string, { hits: number; graded: number }>();
   for (const row of outcomes) {
+    // Only count graded outcomes — exclude no_data, push, void
+    if (row.outcome !== 'hit' && row.outcome !== 'miss') continue;
+    
     const key = `${row.category}__${row.recommended_side || 'over'}`;
     let s = stats.get(key);
-    if (!s) { s = { hits: 0, total: 0 }; stats.set(key, s); }
-    s.total++;
+    if (!s) { s = { hits: 0, graded: 0 }; stats.set(key, s); }
+    s.graded++;
     if (row.outcome === 'hit') s.hits++;
   }
   
-  // Find categories where "over" is underperforming (< 50% hit rate, 30+ samples)
+  // Find categories where "over" is underperforming (< 50% hit rate, 30+ graded samples)
   for (const [key, s] of stats) {
     const [category, side] = key.split('__');
-    if (side !== 'over' || s.total < 30) continue;
+    if (side !== 'over' || s.graded < 30) continue;
     
-    const hitRate = s.hits / s.total;
+    const hitRate = s.hits / s.graded;
     if (hitRate >= 0.50) continue;
     
     // Check if under-side weight already exists and is promoted
     const underKey = `${category}__under`;
     const underStats = stats.get(underKey);
     
-    console.log(`[Category Analyzer] v10.0 AUTO-FLIP CANDIDATE: ${category} over=${(hitRate * 100).toFixed(1)}% (${s.total} picks) — promoting under side`);
+    console.log(`[Category Analyzer] v10.0 AUTO-FLIP CANDIDATE: ${category} over=${(hitRate * 100).toFixed(1)}% (${s.graded} graded picks) — promoting under side`);
     
     // Auto-create/update weight entries
     // Deprioritize over side
