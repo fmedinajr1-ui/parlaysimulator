@@ -783,7 +783,60 @@ Deno.serve(async (req) => {
       console.error('[Bot Settle] Calibration trigger failed:', calibrateError);
     }
 
-    // 10. Log activity
+    // 10. Upsert bot_learning_metrics snapshot
+    try {
+      for (const tier of ['exploration', 'validation', 'execution']) {
+        const { data: tierParlays } = await supabase
+          .from('bot_daily_parlays')
+          .select('outcome, tier')
+          .eq('tier', tier);
+
+        const all = tierParlays || [];
+        const settled = all.filter((p: any) => p.outcome && p.outcome !== 'pending');
+        const wins = settled.filter((p: any) => p.outcome === 'won').length;
+        const losses = settled.filter((p: any) => p.outcome === 'lost').length;
+        const totalSettled = settled.length;
+        const winRate = totalSettled > 0 ? wins / totalSettled : 0;
+        const targetSamples = tier === 'exploration' ? 500 : 300;
+        const sampleSufficiency = Math.min(100, (totalSettled / targetSamples) * 100);
+
+        // Wilson score interval
+        const z = 1.96;
+        const n = totalSettled || 1;
+        const p = wins / n;
+        const denom = 1 + z * z / n;
+        const center = p + z * z / (2 * n);
+        const spread = z * Math.sqrt((p * (1 - p) + z * z / (4 * n)) / n);
+        const ciLower = Math.max(0, (center - spread) / denom) * 100;
+        const ciUpper = Math.min(1, (center + spread) / denom) * 100;
+
+        const dailyRate = all.length / 7;
+        const remaining = Math.max(0, targetSamples - totalSettled);
+        const daysToConvergence = dailyRate > 0 ? Math.ceil(remaining / dailyRate) : 999;
+
+        const today = new Date().toISOString().split('T')[0];
+        await supabase
+          .from('bot_learning_metrics')
+          .upsert({
+            snapshot_date: today,
+            tier,
+            total_generated: all.length,
+            total_settled: totalSettled,
+            wins,
+            losses,
+            win_rate: winRate,
+            sample_sufficiency: sampleSufficiency,
+            ci_lower: ciLower,
+            ci_upper: ciUpper,
+            days_to_convergence: daysToConvergence,
+          }, { onConflict: 'snapshot_date,tier' });
+      }
+      console.log('[Bot Settle] Learning metrics snapshot upserted');
+    } catch (metricsError) {
+      console.error('[Bot Settle] Learning metrics error:', metricsError);
+    }
+
+    // 11. Log activity
     await supabase.from('bot_activity_log').insert({
       event_type: 'settlement_complete',
       message: `Settled ${parlaysSettled} parlays: ${parlaysWon}W ${parlaysLost}L | Synced ${sweetSpotSynced} categories`,

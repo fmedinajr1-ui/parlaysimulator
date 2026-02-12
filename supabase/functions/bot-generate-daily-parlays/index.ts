@@ -1759,6 +1759,7 @@ async function generateTierParlays(
         outcome: 'pending',
         is_simulated: tier !== 'execution',
         simulated_stake: stake,
+        tier: tier,
       });
 
       console.log(`[Bot] Created ${tier}/${profile.strategy} ${legs.length}-leg parlay #${parlaysToCreate.length}`);
