@@ -1,58 +1,114 @@
 
 
-# Fix: More Player Prop Parlays Getting Through
+# Bot Learning Metrics Table and Accelerated Data Collection
 
-## The Problem
+## Overview
 
-Only 1 player prop parlay was generated today vs. 5 team ML parlays. The root cause: **too many player prop categories are blocked**, starving the pool.
+The Learning Analytics dashboard currently has two problems:
+1. **No persistent metrics store** -- every page load re-queries all parlays and computes stats from scratch
+2. **No `tier` column** on `bot_daily_parlays` -- the dashboard defaults everything to "execution", making tier breakdowns meaningless
+3. **Only 61 settled parlays** (17W / 44L) -- far below the 300+ per tier needed for statistical confidence
 
-Out of 400 sweet spot picks today:
-- 163 picks (41%) belong to **blocked categories** (ROLE_PLAYER_REB, VOLUME_SCORER, LOW_LINE_REBOUNDER, BIG_ASSIST_OVER, ELITE_REB_OVER)
-- After additional filters (odds range, real lines, availability gate, game schedule gate), the remaining pool is too small for most profiles to build valid parlays
+This plan adds a dedicated `bot_learning_metrics` table, backfills it from existing data, adds a `tier` column to parlays, and wires the settlement pipeline to update metrics automatically.
 
-## The Fix
+---
 
-### 1. Unblock categories that have flipped "under" counterparts
+## What Changes
 
-The flip strategy was meant to redirect those categories to the UNDER side -- not kill them entirely. Right now the "over" side is blocked but the analyzer isn't generating enough "under" picks for those categories (only 14 under picks total vs. 386 over picks).
+### 1. Add `tier` column to `bot_daily_parlays`
 
-**Action**: Unblock these categories on the "over" side but apply a **heavy weight penalty** (0.50) instead of full block. This lets them participate as filler legs while the higher-weighted categories (THREE_POINT_SHOOTER at 1.30, STAR_FLOOR_OVER at 1.30) get priority through the weight-based sorting.
+The strategy names already encode the tier (e.g., `elite_categories_v1_exploration_explore_mixed`). We'll add the column and backfill it by parsing the strategy name.
 
-| Category | Current State | New State |
+### 2. Create `bot_learning_metrics` table
+
+A daily snapshot table that stores pre-computed stats per tier:
+
+| Column | Type | Purpose |
 |---|---|---|
-| ROLE_PLAYER_REB / over | blocked, weight=0 | unblocked, weight=0.50 |
-| VOLUME_SCORER / over | blocked, weight=0 | unblocked, weight=0.50 |
-| LOW_LINE_REBOUNDER / over | blocked, weight=0 | unblocked, weight=0.50 |
-| BIG_ASSIST_OVER / over | blocked, weight=0 | unblocked, weight=0.50 |
-| ELITE_REB_OVER / over | blocked, weight=0 | unblocked, weight=0.50 |
+| id | uuid | Primary key |
+| snapshot_date | date | When this snapshot was taken |
+| tier | text | exploration / validation / execution |
+| total_generated | integer | Parlays generated in this tier |
+| total_settled | integer | Parlays with outcomes |
+| wins | integer | Won parlays |
+| losses | integer | Lost parlays |
+| win_rate | numeric | wins / settled |
+| sample_sufficiency | numeric | % toward target sample count |
+| ci_lower | numeric | Wilson score lower bound |
+| ci_upper | numeric | Wilson score upper bound |
+| days_to_convergence | integer | Estimated days remaining |
+| created_at | timestamptz | Row creation time |
 
-### 2. Increase the category usage cap in exploration tier
+Unique constraint on `(snapshot_date, tier)` so each day has one row per tier.
 
-Currently `maxCategoryUsage: 4` means at most 4 legs from the same category. With THREE_POINT_SHOOTER having 128 picks (the biggest unblocked category), the generator is forced to spread across categories -- but if most other categories are blocked, it can't fill parlays.
+### 3. Backfill tier and initial metrics
 
-**Action**: Increase `maxCategoryUsage` from 4 to 6 in the exploration tier so the dominant unblocked categories can fill more slots.
+SQL migration will:
+- Add `tier` column with default `'execution'`
+- Parse existing `strategy_name` values to extract tier (`_exploration_`, `_validation_`, `_execution_`)
+- Insert initial snapshot rows into `bot_learning_metrics`
 
-### 3. Lower minimum hit rate for exploration profiles
+### 4. Update settlement pipeline
 
-Some exploration profiles require 45%+ hit rate. With the flipped "under" categories having no track record yet (0 picks, 0 hit rate), they automatically fail this gate.
+Modify `bot-settle-and-learn` to:
+- Set the `tier` on new parlays based on strategy name
+- After settling, upsert a new snapshot row into `bot_learning_metrics`
 
-**Action**: Set the flipped "under" categories to a baseline hit rate of 55% in the database so they can pass the exploration gates.
+### 5. Update `BotLearningAnalytics.tsx`
+
+Instead of fetching all parlays and computing on the fly, read the latest snapshot from `bot_learning_metrics`. Falls back to live computation if no snapshots exist yet.
+
+---
 
 ## Technical Details
 
-### Database changes (SQL)
-- UPDATE `bot_category_weights` to set `is_blocked = false, weight = 0.50` for ROLE_PLAYER_REB/over, VOLUME_SCORER/over, LOW_LINE_REBOUNDER/over, BIG_ASSIST_OVER/over, ELITE_REB_OVER/over
-- UPDATE `bot_category_weights` to set `current_hit_rate = 55` for the flipped "under" entries that currently show 0% (VOLUME_SCORER/under, ROLE_PLAYER_REB/under, BIG_ASSIST_OVER/under)
+### Database Migration
 
-### Code change in `bot-generate-daily-parlays/index.ts`
-- Change exploration tier `maxCategoryUsage` from 4 to 6 (line 57)
+```sql
+-- 1. Add tier column
+ALTER TABLE bot_daily_parlays 
+  ADD COLUMN IF NOT EXISTS tier text DEFAULT 'execution';
 
-### Regeneration
-- Trigger `bot-generate-daily-parlays` with `forceRegenerate: true` after deploying changes
+-- 2. Backfill tier from strategy_name
+UPDATE bot_daily_parlays SET tier = 'exploration' 
+  WHERE strategy_name LIKE '%exploration%';
+UPDATE bot_daily_parlays SET tier = 'validation' 
+  WHERE strategy_name LIKE '%validation%';
+UPDATE bot_daily_parlays SET tier = 'execution' 
+  WHERE strategy_name LIKE '%execution%' 
+    AND tier = 'execution';
 
-## Expected Outcome
-- 163 previously blocked picks return to the pool at low priority (weight 0.50)
-- Higher-weighted categories (THREE_POINT_SHOOTER 1.30, STAR_FLOOR_OVER 1.30) still get selected first
-- More player prop parlays generated alongside the team ML parlays
-- Today's total should go from 1 player prop parlay to 10-15+
+-- 3. Create metrics table
+CREATE TABLE bot_learning_metrics (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  snapshot_date date NOT NULL,
+  tier text NOT NULL DEFAULT 'execution',
+  total_generated integer DEFAULT 0,
+  total_settled integer DEFAULT 0,
+  wins integer DEFAULT 0,
+  losses integer DEFAULT 0,
+  win_rate numeric DEFAULT 0,
+  sample_sufficiency numeric DEFAULT 0,
+  ci_lower numeric DEFAULT 0,
+  ci_upper numeric DEFAULT 0,
+  days_to_convergence integer DEFAULT 999,
+  created_at timestamptz DEFAULT now(),
+  UNIQUE(snapshot_date, tier)
+);
+
+-- 4. RLS policy (service role only, read by anon)
+ALTER TABLE bot_learning_metrics ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow read access" ON bot_learning_metrics
+  FOR SELECT USING (true);
+```
+
+### Edge Function Changes
+
+**`bot-settle-and-learn/index.ts`**: After settlement, compute and upsert metrics snapshot for the current date.
+
+**`bot-generate-daily-parlays/index.ts`**: Set `tier` field on each parlay based on which profile generated it (exploration/validation/execution).
+
+### Frontend Changes
+
+**`BotLearningAnalytics.tsx`**: Query `bot_learning_metrics` for the latest snapshot per tier instead of fetching all parlays. The dashboard will load instantly instead of scanning the entire parlays table.
 
