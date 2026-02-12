@@ -793,6 +793,43 @@ async function loadPlayerProfiles(supabase: any): Promise<void> {
   }
 }
 
+// v9.0: Side override map - loaded from bot_category_weights to support flipped categories
+let sideOverrideMap: Map<string, 'over' | 'under'> = new Map();
+
+async function loadSideOverrides(supabase: any): Promise<Map<string, 'over' | 'under'>> {
+  sideOverrideMap.clear();
+  const { data, error } = await supabase
+    .from('bot_category_weights')
+    .select('category, side, weight, is_blocked')
+    .order('weight', { ascending: false });
+  
+  if (error || !data) return sideOverrideMap;
+  
+  // For each category, find the active (non-blocked, highest weight) side
+  const categoryBestSide = new Map<string, { side: string; weight: number }>();
+  for (const w of data) {
+    if (w.is_blocked || (w.weight || 0) <= 0) continue;
+    const existing = categoryBestSide.get(w.category);
+    if (!existing || (w.weight || 0) > existing.weight) {
+      categoryBestSide.set(w.category, { side: w.side, weight: w.weight || 0 });
+    }
+  }
+  
+  for (const [cat, best] of categoryBestSide) {
+    sideOverrideMap.set(cat, best.side as 'over' | 'under');
+  }
+  
+  console.log(`[Category Analyzer] v9.0 Loaded ${sideOverrideMap.size} side overrides`);
+  for (const [cat, side] of sideOverrideMap) {
+    const config = CATEGORIES[cat];
+    if (config && config.side !== side) {
+      console.log(`[Category Analyzer] ↔️ FLIPPED: ${cat} ${config.side} -> ${side}`);
+    }
+  }
+  
+  return sideOverrideMap;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -808,11 +845,13 @@ serve(async (req) => {
     console.log(`[Category Analyzer v4.0] Starting analysis with TRUE PROJECTIONS for category: ${category || 'ALL'}`);
 
     // v8.0: Load all projection data sources including player profiles
-    await Promise.all([
+    // v9.0: Load category weight overrides for flipped sides
+    const [, , , , sideOverrides] = await Promise.all([
       loadArchetypes(supabase),
       loadMatchupHistory(supabase),
       loadGameEnvironment(supabase),
-      loadPlayerProfiles(supabase)
+      loadPlayerProfiles(supabase),
+      loadSideOverrides(supabase)
     ]);
 
     // Get today's date for analysis
@@ -928,6 +967,9 @@ serve(async (req) => {
       const config = CATEGORIES[catKey];
       if (!config) continue;
 
+      // v9.0: Apply side override from bot_category_weights (flipped categories)
+      const effectiveSide = sideOverrideMap.get(catKey) || config.side;
+
       // v7.0: Skip disabled categories
       if (config.disabled) {
         console.log(`[Category Analyzer] ⛔ Skipping disabled category: ${catKey}`);
@@ -969,14 +1011,14 @@ serve(async (req) => {
 
         // v7.1: STAR PLAYER BLOCK - Never recommend UNDER on star players
         // If they're slow during live game, hedge system will alert
-        if (config.side === 'under' && isStarPlayer(playerName)) {
+        if (effectiveSide === 'under' && isStarPlayer(playerName)) {
           console.log(`[Category Analyzer] ⭐ STAR BLOCKED: ${playerName} excluded from ${catKey} - use hedge system for live adjustments`);
           continue;
         }
 
         // v7.0: STARTER PROTECTION - Block starters from points UNDER categories
         // Players averaging 28+ minutes are starters who can explode any night
-        if (config.propType === 'points' && config.side === 'under') {
+        if (config.propType === 'points' && effectiveSide === 'under') {
           const avgMinutes = l10Logs.reduce((sum, g) => sum + (g.minutes_played || 0), 0) / l10Logs.length;
           if (avgMinutes >= 28) {
             if (blockedByMinutes < 5) {
@@ -989,7 +1031,7 @@ serve(async (req) => {
         
         // v4.0: BREAKOUT PLAYER DETECTION - Block rising stars from UNDER categories
         // Prevents picks like "Evan Mobley UNDER 18.5" when he's on an upward trend
-        if (config.side === 'under') {
+        if (effectiveSide === 'under') {
           const l5Logs = l10Logs.slice(0, 5);
           const l5Values = l5Logs.map(log => getStatValue(log, config.propType));
           const l5Avg = l5Values.reduce((a, b) => a + b, 0) / l5Values.length;
@@ -1043,7 +1085,7 @@ serve(async (req) => {
         let bestHitRate = 0;
 
         for (const line of config.lines) {
-          const hitRate = calculateHitRate(statValues, line, config.side);
+          const hitRate = calculateHitRate(statValues, line, effectiveSide);
           
           if (hitRate >= (minHitRate || config.minHitRate) && hitRate > bestHitRate) {
             bestHitRate = hitRate;
@@ -1060,7 +1102,7 @@ serve(async (req) => {
         const consistency = l10Avg > 0 ? 1 - (l10StdDev / l10Avg) : 0;
         
         // v5.0: TIGHTENED UNDER CRITERIA - UNDERs hit at 63.6% vs 78% for OVERs
-        if (config.side === 'under') {
+        if (effectiveSide === 'under') {
           const underMinHitRate = 0.65; // Higher threshold for unders
           const maxVarianceRatio = 0.30; // Variance must be < 30% of avg
           const varianceRatio = l10Avg > 0 ? l10StdDev / l10Avg : 1;
@@ -1093,7 +1135,7 @@ serve(async (req) => {
           // Add variance penalty, side-specific bonus, sample size bonus
           const baseConfidence = (bestHitRate * 0.50) + (Math.max(0, consistency) * 0.30);
           const variancePenalty = l10Avg > 0 ? (l10StdDev / l10Avg) * 0.12 : 0;
-          const sideBonus = config.side === 'over' ? 0.06 : 0; // OVERs historically hit higher
+          const sideBonus = effectiveSide === 'over' ? 0.06 : 0; // OVERs historically hit higher
           const sampleBonus = l10Logs.length >= 10 ? 0.04 : 0;
           const confidenceScore = Math.min(0.92, Math.max(0.35, baseConfidence - variancePenalty + sideBonus + sampleBonus));
 
@@ -1102,7 +1144,7 @@ serve(async (req) => {
             player_name: playerName,
             prop_type: config.propType,
             recommended_line: bestLine,
-            recommended_side: config.side,
+            recommended_side: effectiveSide,
             l10_hit_rate: Math.round(bestHitRate * 100) / 100,
             l10_avg: Math.round(l10Avg * 10) / 10,
             l10_min: l10Min,
@@ -1123,7 +1165,7 @@ serve(async (req) => {
             player_name: playerName,
             prop_type: config.propType,
             recommended_line: null, // Will be set during validation
-            recommended_side: config.side,
+            recommended_side: effectiveSide,
             l10_hit_rate: null,
             l10_avg: Math.round(l10Avg * 10) / 10,
             l10_min: l10Min,

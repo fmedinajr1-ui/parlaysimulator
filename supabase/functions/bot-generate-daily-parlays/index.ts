@@ -1175,7 +1175,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     const hitRatePercent = hitRateDecimal * 100;
     const projectedValue = pick.projected_value || pick.l10_avg || pick.l10_median || line || 0;
     const edge = projectedValue - (line || 0);
-    const categoryWeight = weightMap.get(pick.category) || 1.0;
+    const categoryWeight = weightMap.get(`${pick.category}__${pick.recommended_side}`) ?? weightMap.get(pick.category) ?? 1.0;
     
     const oddsValueScore = calculateOddsValueScore(americanOdds, hitRateDecimal);
     const catHitRate = calibratedHitRateMap.get(pick.category);
@@ -1230,7 +1230,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       const hitRateDecimal = calibratedHitRate 
         ? Math.max(calibratedHitRate, 0.50) 
         : (prop.composite_score && prop.composite_score > 0 ? prop.composite_score / 100 : 0.55);
-      const categoryWeight = weightMap.get(propCategory) || 1.0;
+      const categoryWeight = weightMap.get(`${propCategory}__${prop.side || 'over'}`) ?? weightMap.get(propCategory) ?? 1.0;
       
       const oddsValueScore = calculateOddsValueScore(americanOdds, hitRateDecimal);
       const catHitRatePercent = calibratedHitRate ? calibratedHitRate * 100 : undefined;
@@ -1546,8 +1546,8 @@ async function generateTierParlays(
     // Execution tier: sort candidates by category weight descending to prioritize golden archetypes
     if (profile.sortBy !== 'hit_rate' && tier === 'execution') {
       candidatePicks = [...candidatePicks].sort((a, b) => {
-        const aWeight = weightMap.get(a.category) || 1.0;
-        const bWeight = weightMap.get(b.category) || 1.0;
+        const aWeight = weightMap.get(`${a.category}__${a.recommended_side}`) ?? weightMap.get(a.category) ?? 1.0;
+        const bWeight = weightMap.get(`${b.category}__${b.recommended_side}`) ?? weightMap.get(b.category) ?? 1.0;
         if (bWeight !== aWeight) return bWeight - aWeight;
         return (b.compositeScore || 0) - (a.compositeScore || 0);
       });
@@ -1596,7 +1596,7 @@ async function generateTierParlays(
         parlayTeamCount.set(teamPick.away_team, (parlayTeamCount.get(teamPick.away_team) || 0) + 1);
       } else {
         const playerPick = pick as EnrichedPick;
-        const weight = weightMap.get(playerPick.category) || 1.0;
+        const weight = weightMap.get(`${playerPick.category}__${playerPick.recommended_side}`) ?? weightMap.get(playerPick.category) ?? 1.0;
         
         // Select line based on profile (with boost leg limiting)
         const boostLimit = profile.boostLegs ?? (profile.useAltLines ? profile.legs : 0);
@@ -1774,7 +1774,12 @@ Deno.serve(async (req) => {
 
     const weightMap = new Map<string, number>();
     (weights || []).forEach((w: CategoryWeight) => {
-      weightMap.set(w.category, w.weight);
+      // Side-aware key: category__side (e.g., VOLUME_SCORER__under)
+      weightMap.set(`${w.category}__${w.side}`, w.weight);
+      // Also keep category-only key as fallback (first non-blocked wins)
+      if (!weightMap.has(w.category) || w.weight > 0) {
+        weightMap.set(w.category, w.weight);
+      }
     });
 
     console.log(`[Bot v2] Loaded ${weights?.length || 0} category weights`);
