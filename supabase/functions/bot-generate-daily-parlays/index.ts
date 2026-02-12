@@ -152,6 +152,11 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // Win-rate-first validated profiles
       { legs: 3, strategy: 'validated_winrate', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate' },
       { legs: 4, strategy: 'validated_winrate', sports: ['basketball_nba'], minHitRate: 58, sortBy: 'hit_rate' },
+      // Promoted from execution: 4-5 leg proving ground (moved from execution tier)
+      { legs: 4, strategy: 'proving_cash', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
+      { legs: 4, strategy: 'proving_cash', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
+      { legs: 4, strategy: 'proving_boosted', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.5 },
+      { legs: 5, strategy: 'proving_boost', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, preferPlusMoney: true, minBufferMultiplier: 1.2 },
     ],
   },
   execution: {
@@ -166,19 +171,19 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     stake: 10,
     minConfidence: 0.60,
     profiles: [
-      // CASH LOCKS: Max win rate, main lines only
+      // ALL 3-LEG: Maximum win probability (Feb 11 analysis: all 4 winners were 3-leg)
       { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: false },
       { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: false },
-      { legs: 4, strategy: 'strong_cash', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
-      { legs: 4, strategy: 'strong_cash', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
-      // BOOSTED: Same high-rate picks, but shop odds on some legs
-      { legs: 3, strategy: 'boosted_cash', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
-      { legs: 4, strategy: 'boosted_cash', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.5 },
-      { legs: 5, strategy: 'premium_boost', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, preferPlusMoney: true, minBufferMultiplier: 1.2 },
-      { legs: 5, strategy: 'max_boost', sports: ['all'], minHitRate: 58, sortBy: 'hit_rate', useAltLines: true, boostLegs: 3, preferPlusMoney: true, minBufferMultiplier: 1.0 },
-      // CROSS-SPORT cash plays
+      { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
       { legs: 3, strategy: 'cash_lock_cross', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
-      { legs: 4, strategy: 'strong_cash_cross', sports: ['all'], minHitRate: 58, sortBy: 'hit_rate', useAltLines: false },
+      // BOOSTED: Shop odds on 1 leg for plus-money
+      { legs: 3, strategy: 'boosted_cash', sports: ['basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      { legs: 3, strategy: 'boosted_cash', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.5 },
+      { legs: 3, strategy: 'boosted_cash_cross', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 1, minBufferMultiplier: 1.2 },
+      // GOLDEN LOCKS: Require golden category legs
+      { legs: 3, strategy: 'golden_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
+      { legs: 3, strategy: 'golden_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
+      { legs: 3, strategy: 'golden_lock_cross', sports: ['all'], minHitRate: 58, sortBy: 'hit_rate', useAltLines: false },
     ],
   },
 };
@@ -1679,8 +1684,8 @@ async function generateTierParlays(
         }
       }
 
-      // Golden category gate — disabled for now
-      const ENFORCE_GOLDEN_GATE = false;
+      // Golden category gate — enabled for execution tier (Feb 11 analysis)
+      const ENFORCE_GOLDEN_GATE = true;
       if (ENFORCE_GOLDEN_GATE && tier === 'execution' && goldenCategories.size > 0) {
         const goldenLegCount = legs.filter(l => goldenCategories.has(l.category)).length;
         const minGoldenLegs = Math.floor(profile.legs / 2);
