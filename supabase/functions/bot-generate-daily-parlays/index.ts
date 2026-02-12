@@ -190,6 +190,9 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'hybrid_exec_cross', sports: ['all'], minHitRate: 58, sortBy: 'hit_rate', useAltLines: false, allowTeamLegs: 1 },
       // TEAM EXECUTION: Pure team props with high composite scores
       { legs: 3, strategy: 'team_exec', betTypes: ['moneyline', 'spread', 'total'], minHitRate: 55 },
+      // NCAAB EXECUTION: KenPom-powered NCAAB-specific profiles
+      { legs: 3, strategy: 'ncaab_ml_lock', sports: ['basketball_ncaab'], betTypes: ['moneyline'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 3, strategy: 'ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
     ],
   },
 };
@@ -376,8 +379,207 @@ interface DefenseData { overall_rank: number; }
 interface GameEnvData { vegas_total: number; vegas_spread: number; shootout_factor: number; grind_factor: number; blowout_probability: number; }
 interface HomeCourtData { home_win_rate: number; home_cover_rate: number; home_over_rate: number; }
 
+// NCAAB team intelligence data
+interface NcaabTeamStats {
+  team_name: string;
+  conference: string | null;
+  kenpom_rank: number | null;
+  adj_offense: number | null;
+  adj_defense: number | null;
+  adj_tempo: number | null;
+  home_record: string | null;
+  away_record: string | null;
+  ats_record: string | null;
+  over_under_record: string | null;
+}
+
 function clampScore(min: number, max: number, value: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function parseRecord(record: string | null): { wins: number; losses: number; rate: number } {
+  if (!record) return { wins: 0, losses: 0, rate: 0.5 };
+  const match = record.match(/(\d+)-(\d+)/);
+  if (!match) return { wins: 0, losses: 0, rate: 0.5 };
+  const wins = parseInt(match[1]);
+  const losses = parseInt(match[2]);
+  const total = wins + losses;
+  return { wins, losses, rate: total > 0 ? wins / total : 0.5 };
+}
+
+// NCAAB-specific composite scoring using KenPom-style data
+function calculateNcaabTeamCompositeScore(
+  game: TeamProp,
+  betType: string,
+  side: string,
+  ncaabStatsMap: Map<string, NcaabTeamStats>
+): { score: number; breakdown: Record<string, number> } {
+  let score = 50;
+  const breakdown: Record<string, number> = { base: 50 };
+
+  const homeStats = ncaabStatsMap.get(game.home_team);
+  const awayStats = ncaabStatsMap.get(game.away_team);
+
+  // If no NCAAB data available, return flat score
+  if (!homeStats && !awayStats) {
+    breakdown.no_data = 0;
+    return { score: 55, breakdown };
+  }
+
+  const homeOff = homeStats?.adj_offense || 70;
+  const homeDef = homeStats?.adj_defense || 70;
+  const awayOff = awayStats?.adj_offense || 70;
+  const awayDef = awayStats?.adj_defense || 70;
+  const homeRank = homeStats?.kenpom_rank || 200;
+  const awayRank = awayStats?.kenpom_rank || 200;
+  const homeTempo = homeStats?.adj_tempo || 67;
+  const awayTempo = awayStats?.adj_tempo || 67;
+
+  // Reject teams ranked 200+ (too unpredictable)
+  const sideRank = side === 'home' ? homeRank : awayRank;
+  if (sideRank > 200) {
+    score -= 15;
+    breakdown.low_rank_penalty = -15;
+  }
+
+  // Rank tier bonus: Top 50 teams are far more predictable
+  if (sideRank <= 25) {
+    score += 10;
+    breakdown.elite_rank = 10;
+  } else if (sideRank <= 50) {
+    score += 7;
+    breakdown.top50_rank = 7;
+  } else if (sideRank <= 100) {
+    score += 3;
+    breakdown.top100_rank = 3;
+  }
+
+  if (betType === 'spread') {
+    // KenPom efficiency differential: (team_offense - opp_defense) gap
+    const homeNetAdv = (homeOff - awayDef) - (awayOff - homeDef);
+    const sideAdv = side === 'home' ? homeNetAdv : -homeNetAdv;
+    
+    // Large efficiency gaps (10+ points) are highly predictive in NCAAB
+    const effBonus = clampScore(-15, 15, sideAdv * 1.0);
+    score += effBonus;
+    breakdown.efficiency_edge = effBonus;
+
+    // Home court is worth ~3.5 points in college (bigger than NBA)
+    if (side === 'home') {
+      score += 5;
+      breakdown.home_court = 5;
+    }
+
+    // ATS record weighting
+    const sideTeam = side === 'home' ? homeStats : awayStats;
+    if (sideTeam?.ats_record) {
+      const ats = parseRecord(sideTeam.ats_record);
+      if (ats.rate > 0.55 && ats.wins + ats.losses >= 10) {
+        const atsBonus = Math.round((ats.rate - 0.50) * 40);
+        score += clampScore(0, 8, atsBonus);
+        breakdown.ats_record = clampScore(0, 8, atsBonus);
+      }
+    }
+
+    // Penalize close spreads in NCAAB (< 3 pts)
+    const absLine = Math.abs(game.line || 0);
+    if (absLine > 0 && absLine < 3) {
+      score -= 8;
+      breakdown.close_spread_penalty = -8;
+    }
+
+    // Conference matchup context: conference games are tighter
+    if (homeStats?.conference && awayStats?.conference && homeStats.conference === awayStats.conference) {
+      score -= 5; // Conference games are harder to predict
+      breakdown.conference_game = -5;
+    }
+  }
+
+  if (betType === 'total') {
+    const avgTempo = (homeTempo + awayTempo) / 2;
+    
+    // College tempo thresholds (65-75 range vs NBA 95-105)
+    // Tempo is THE strongest predictor in college basketball totals
+    if (side === 'over' && avgTempo > 70) {
+      const paceBonus = Math.round((avgTempo - 68) * 4);
+      score += clampScore(0, 18, paceBonus);
+      breakdown.tempo_fast = clampScore(0, 18, paceBonus);
+    } else if (side === 'under' && avgTempo < 65) {
+      const paceBonus = Math.round((65 - avgTempo) * 5);
+      score += clampScore(0, 18, paceBonus);
+      breakdown.tempo_slow = clampScore(0, 18, paceBonus);
+    } else if ((side === 'over' && avgTempo < 64) || (side === 'under' && avgTempo > 71)) {
+      score -= 12;
+      breakdown.tempo_mismatch = -12;
+    }
+
+    // Offensive efficiency: both teams scoring well = over, both defensive = under
+    const combinedOff = homeOff + awayOff;
+    const combinedDef = homeDef + awayDef;
+    if (side === 'over' && combinedOff > 148) { // Both teams above 74 ppg
+      score += 5;
+      breakdown.high_scoring = 5;
+    }
+    if (side === 'under' && combinedDef < 128) { // Both teams allow < 64 ppg
+      score += 5;
+      breakdown.strong_defense = 5;
+    }
+
+    // O/U record weighting
+    const sideTeam = side === 'home' ? homeStats : awayStats;
+    if (sideTeam?.over_under_record) {
+      const ou = parseRecord(sideTeam.over_under_record);
+      if (ou.rate > 0.55 && ou.wins + ou.losses >= 10) {
+        const ouBonus = Math.round((ou.rate - 0.50) * 30);
+        score += clampScore(0, 6, ouBonus);
+        breakdown.ou_record = clampScore(0, 6, ouBonus);
+      }
+    }
+  }
+
+  if (betType === 'moneyline') {
+    // Efficiency differential for ML
+    const homeNetAdv = (homeOff - awayDef) - (awayOff - homeDef);
+    const sideAdv = side === 'home' ? homeNetAdv : -homeNetAdv;
+    const effBonus = clampScore(-12, 12, sideAdv * 0.8);
+    score += effBonus;
+    breakdown.efficiency_edge = effBonus;
+
+    // Rank differential: picking top team vs low rank = high confidence
+    const rankDiff = side === 'home' ? awayRank - homeRank : homeRank - awayRank;
+    if (rankDiff > 100) {
+      score += 10;
+      breakdown.rank_mismatch = 10;
+    } else if (rankDiff > 50) {
+      score += 6;
+      breakdown.rank_edge = 6;
+    }
+
+    // Home court advantage in NCAAB is stronger than NBA
+    if (side === 'home') {
+      score += 6;
+      breakdown.home_court = 6;
+    }
+
+    // Home record weighting
+    if (side === 'home' && homeStats?.home_record) {
+      const hr = parseRecord(homeStats.home_record);
+      if (hr.rate > 0.70 && hr.wins + hr.losses >= 5) {
+        score += 5;
+        breakdown.strong_home_record = 5;
+      }
+    }
+
+    // Penalize heavy favorites
+    const odds = side === 'home' ? (game.home_odds || -110) : (game.away_odds || -110);
+    const impliedProb = americanToImplied(odds);
+    if (impliedProb > 0.80) {
+      score -= 10;
+      breakdown.heavy_fav_penalty = -10;
+    }
+  }
+
+  return { score: clampScore(30, 95, score), breakdown };
 }
 
 function calculateTeamCompositeScore(
@@ -387,8 +589,15 @@ function calculateTeamCompositeScore(
   paceMap: Map<string, PaceData>,
   defenseMap: Map<string, number>,
   envMap: Map<string, GameEnvData>,
-  homeCourtMap: Map<string, HomeCourtData>
+  homeCourtMap: Map<string, HomeCourtData>,
+  ncaabStatsMap?: Map<string, NcaabTeamStats>
 ): { score: number; breakdown: Record<string, number> } {
+  // Route NCAAB games to specialized scoring
+  const isNCAAB = game.sport?.includes('ncaab') || game.sport?.includes('college');
+  if (isNCAAB && ncaabStatsMap && ncaabStatsMap.size > 0) {
+    return calculateNcaabTeamCompositeScore(game, betType, side, ncaabStatsMap);
+  }
+
   let score = 50;
   const breakdown: Record<string, number> = { base: 50 };
 
@@ -1105,12 +1314,13 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     .gte('commence_time', startUtc)
     .lt('commence_time', endUtc);
 
-  // 4. Fetch team intelligence data in parallel
-  const [paceResult, defenseResult, envResult, homeCourtResult] = await Promise.all([
+  // 4. Fetch team intelligence data in parallel (including NCAAB stats)
+  const [paceResult, defenseResult, envResult, homeCourtResult, ncaabStatsResult] = await Promise.all([
     supabase.from('nba_team_pace_projections').select('team_abbrev, team_name, pace_rating, pace_rank, tempo_factor'),
     supabase.from('team_defense_rankings').select('team_abbreviation, team_name, overall_rank').eq('is_current', true),
     supabase.from('game_environment').select('home_team_abbrev, away_team_abbrev, vegas_total, vegas_spread, shootout_factor, grind_factor, blowout_probability').eq('game_date', gameDate),
     supabase.from('home_court_advantage_stats').select('team_name, home_win_rate, home_cover_rate, home_over_rate').eq('sport', 'basketball_nba'),
+    supabase.from('ncaab_team_stats').select('team_name, conference, kenpom_rank, adj_offense, adj_defense, adj_tempo, home_record, away_record, ats_record, over_under_record'),
   ]);
 
   // Build lookup maps
@@ -1139,12 +1349,17 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   const homeCourtMap = new Map<string, HomeCourtData>();
   (homeCourtResult.data || []).forEach((h: any) => {
     homeCourtMap.set(h.team_name, { home_win_rate: h.home_win_rate, home_cover_rate: h.home_cover_rate, home_over_rate: h.home_over_rate });
-    // Also map by abbreviation
     const abbrev = nameToAbbrev.get(h.team_name);
     if (abbrev) homeCourtMap.set(abbrev, { home_win_rate: h.home_win_rate, home_cover_rate: h.home_cover_rate, home_over_rate: h.home_over_rate });
   });
 
-  console.log(`[Bot] Intelligence data: ${paceMap.size} pace, ${defenseMap.size} defense, ${envMap.size} env, ${homeCourtMap.size} home court`);
+  // Build NCAAB team stats map
+  const ncaabStatsMap = new Map<string, NcaabTeamStats>();
+  (ncaabStatsResult.data || []).forEach((t: any) => {
+    ncaabStatsMap.set(t.team_name, t as NcaabTeamStats);
+  });
+
+  console.log(`[Bot] Intelligence data: ${paceMap.size} pace, ${defenseMap.size} defense, ${envMap.size} env, ${homeCourtMap.size} home court, ${ncaabStatsMap.size} NCAAB teams`);
 
   // Deduplicate game_bets by home_team + away_team + bet_type (keep most recent)
   const seenGameBets = new Map<string, TeamProp>();
@@ -1367,7 +1582,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     if (game.bet_type === 'spread' && game.line !== null && game.line !== undefined) {
       if (game.home_odds) {
         const plusBonus = isPlusMoney(game.home_odds) ? 5 : 0;
-        const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'spread', 'home', paceMap, defenseMap, envMap, homeCourtMap);
+        const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'spread', 'home', paceMap, defenseMap, envMap, homeCourtMap, ncaabStatsMap);
         picks.push({
           id: `${game.id}_spread_home`,
           type: 'team', sport: game.sport, home_team: game.home_team, away_team: game.away_team,
@@ -1381,7 +1596,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       }
       if (game.away_odds) {
         const plusBonus = isPlusMoney(game.away_odds) ? 5 : 0;
-        const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'spread', 'away', paceMap, defenseMap, envMap, homeCourtMap);
+        const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'spread', 'away', paceMap, defenseMap, envMap, homeCourtMap, ncaabStatsMap);
         picks.push({
           id: `${game.id}_spread_away`,
           type: 'team', sport: game.sport, home_team: game.home_team, away_team: game.away_team,
@@ -1397,7 +1612,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     
     // Total picks
     if (game.bet_type === 'total' && game.over_odds && game.under_odds) {
-      const { score: overScore, breakdown: overBreakdown } = calculateTeamCompositeScore(gameForScoring, 'total', 'over', paceMap, defenseMap, envMap, homeCourtMap);
+      const { score: overScore, breakdown: overBreakdown } = calculateTeamCompositeScore(gameForScoring, 'total', 'over', paceMap, defenseMap, envMap, homeCourtMap, ncaabStatsMap);
       const overPlusBonus = isPlusMoney(game.over_odds) ? 5 : 0;
       picks.push({
         id: `${game.id}_total_over`,
@@ -1409,7 +1624,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
         confidence_score: overScore / 100,
         score_breakdown: overBreakdown,
       });
-      const { score: underScore, breakdown: underBreakdown } = calculateTeamCompositeScore(gameForScoring, 'total', 'under', paceMap, defenseMap, envMap, homeCourtMap);
+      const { score: underScore, breakdown: underBreakdown } = calculateTeamCompositeScore(gameForScoring, 'total', 'under', paceMap, defenseMap, envMap, homeCourtMap, ncaabStatsMap);
       const underPlusBonus = isPlusMoney(game.under_odds) ? 5 : 0;
       picks.push({
         id: `${game.id}_total_under`,
@@ -1427,7 +1642,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     if (game.bet_type === 'h2h') {
       if (game.home_odds) {
         const plusBonus = isPlusMoney(game.home_odds) ? 5 : 0;
-        const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'moneyline', 'home', paceMap, defenseMap, envMap, homeCourtMap);
+        const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'moneyline', 'home', paceMap, defenseMap, envMap, homeCourtMap, ncaabStatsMap);
         picks.push({
           id: `${game.id}_ml_home`,
           type: 'team', sport: game.sport, home_team: game.home_team, away_team: game.away_team,
@@ -1441,7 +1656,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       }
       if (game.away_odds) {
         const plusBonus = isPlusMoney(game.away_odds) ? 5 : 0;
-        const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'moneyline', 'away', paceMap, defenseMap, envMap, homeCourtMap);
+        const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'moneyline', 'away', paceMap, defenseMap, envMap, homeCourtMap, ncaabStatsMap);
         picks.push({
           id: `${game.id}_ml_away`,
           type: 'team', sport: game.sport, home_team: game.home_team, away_team: game.away_team,
