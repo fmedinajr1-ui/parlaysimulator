@@ -114,10 +114,74 @@ function adjustWeight(
   }
 }
 
-// Settle a team leg by looking up final scores from game logs
-// nba_player_game_logs has: player_name, opponent, is_home, points, game_date
-// Home team players: is_home=true, opponent=<away_team_name>
-// Away team players: is_home=false, opponent=<home_team_name>
+// Settle a team leg by looking up final scores
+// For NCAAB: use ESPN scoreboard API directly (more reliable than summing player logs)
+// For NBA: sum player game logs
+const ESPN_NCAAB_SCOREBOARD = 'https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard';
+
+function fuzzyMatchTeam(name: string, target: string): boolean {
+  const n = name.toLowerCase().replace(/[^a-z\s]/g, '').trim();
+  const t = target.toLowerCase().replace(/[^a-z\s]/g, '').trim();
+  if (n === t) return true;
+  if (n.includes(t) || t.includes(n)) return true;
+  // Match last word (mascot) or first words (city/school)
+  const nWords = n.split(/\s+/);
+  const tWords = t.split(/\s+/);
+  if (nWords[nWords.length - 1] === tWords[tWords.length - 1]) return true;
+  if (nWords[0] === tWords[0] && nWords.length > 1 && tWords.length > 1) return true;
+  return false;
+}
+
+async function settleNcaabTeamLegViaESPN(
+  leg: BotLeg,
+  parlayDate: string
+): Promise<{ outcome: string; actual_value: number | null }> {
+  const homeTeam = leg.home_team;
+  const awayTeam = leg.away_team;
+  if (!homeTeam || !awayTeam) return { outcome: 'no_data', actual_value: null };
+
+  // Search 3-day window
+  for (let d = 0; d < 3; d++) {
+    const searchDate = new Date(parlayDate + 'T12:00:00Z');
+    searchDate.setDate(searchDate.getDate() + d);
+    const dateStr = searchDate.toISOString().split('T')[0].replace(/-/g, '');
+    
+    try {
+      const resp = await fetch(`${ESPN_NCAAB_SCOREBOARD}?dates=${dateStr}&limit=200`);
+      if (!resp.ok) continue;
+      const data = await resp.json();
+      const events = data.events || [];
+      
+      for (const event of events) {
+        if (event.status?.type?.completed !== true && event.status?.type?.name !== 'STATUS_FINAL') continue;
+        
+        const competitors = event.competitions?.[0]?.competitors || [];
+        if (competitors.length !== 2) continue;
+        
+        const home = competitors.find((c: any) => c.homeAway === 'home');
+        const away = competitors.find((c: any) => c.homeAway === 'away');
+        if (!home || !away) continue;
+        
+        const homeName = home.team?.displayName || home.team?.shortDisplayName || '';
+        const awayName = away.team?.displayName || away.team?.shortDisplayName || '';
+        
+        if (fuzzyMatchTeam(homeName, homeTeam) && fuzzyMatchTeam(awayName, awayTeam)) {
+          const homeScore = parseInt(home.score) || 0;
+          const awayScore = parseInt(away.score) || 0;
+          console.log(`[Bot Settle] ESPN NCAAB: ${homeName} (${homeScore}) vs ${awayName} (${awayScore})`);
+          return resolveTeamOutcome(leg, homeScore, awayScore);
+        }
+      }
+    } catch (e) {
+      console.error(`[Bot Settle] ESPN NCAAB fetch error for ${dateStr}:`, e);
+    }
+    
+    await new Promise(r => setTimeout(r, 200));
+  }
+  
+  return { outcome: 'no_data', actual_value: null };
+}
+
 async function settleTeamLeg(
   supabase: any,
   leg: BotLeg,
@@ -130,38 +194,37 @@ async function settleTeamLeg(
     return { outcome: 'no_data', actual_value: null };
   }
 
-  // Search in a 3-day window around parlay date
+  // Route NCAAB to ESPN scoreboard (more reliable than summing player logs)
+  const legSport = (leg as any).sport || '';
+  const isNCAAB = legSport.includes('ncaab') || legSport.includes('college');
+  if (isNCAAB) {
+    return settleNcaabTeamLegViaESPN(leg, parlayDate);
+  }
+
+  // NBA: use player game logs aggregation
   const windowEnd = new Date(parlayDate + 'T12:00:00Z');
   windowEnd.setDate(windowEnd.getDate() + 2);
   const windowEndStr = windowEnd.toISOString().split('T')[0];
 
-  const legSport = (leg as any).sport || '';
-  const isNCAAB = legSport.includes('ncaab') || legSport.includes('college');
-  const logTable = isNCAAB ? 'ncaab_player_game_logs' : 'nba_player_game_logs';
-
-  // Helper to normalize team names for matching (e.g., "Los Angeles Clippers" vs "LA Clippers")
   const normalizeTeam = (name: string) => name.toLowerCase()
     .replace(/\b(los angeles|la)\b/g, 'la')
     .replace(/\s+/g, ' ')
     .trim();
 
-  // Home team score = sum points of players where is_home=true AND opponent matches away team
-  // We use ilike on opponent to match the away team name
   const { data: homePlayerLogs } = await supabase
-    .from(logTable)
+    .from('nba_player_game_logs')
     .select('points, game_date, opponent, is_home')
     .eq('is_home', true)
     .gte('game_date', parlayDate)
     .lte('game_date', windowEndStr);
 
   const { data: awayPlayerLogs } = await supabase
-    .from(logTable)
+    .from('nba_player_game_logs')
     .select('points, game_date, opponent, is_home')
     .eq('is_home', false)
     .gte('game_date', parlayDate)
     .lte('game_date', windowEndStr);
 
-  // Filter logs to this specific game by matching opponent names
   const normAway = normalizeTeam(awayTeam);
   const normHome = normalizeTeam(homeTeam);
 
@@ -175,38 +238,8 @@ async function settleTeamLeg(
     return normOpp.includes(normHome) || normHome.includes(normOpp);
   });
 
-  // If no fallback data found in primary table, try the other table
   if (homeScoreLogs.length === 0 && awayScoreLogs.length === 0) {
-    const fallbackTable = isNCAAB ? 'nba_player_game_logs' : 'ncaab_player_game_logs';
-    const { data: fbHome } = await supabase
-      .from(fallbackTable)
-      .select('points, game_date, opponent, is_home')
-      .eq('is_home', true)
-      .gte('game_date', parlayDate)
-      .lte('game_date', windowEndStr);
-    const { data: fbAway } = await supabase
-      .from(fallbackTable)
-      .select('points, game_date, opponent, is_home')
-      .eq('is_home', false)
-      .gte('game_date', parlayDate)
-      .lte('game_date', windowEndStr);
-
-    const fbHomeLogs = (fbHome || []).filter((log: any) => {
-      const normOpp = normalizeTeam(log.opponent || '');
-      return normOpp.includes(normAway) || normAway.includes(normOpp);
-    });
-    const fbAwayLogs = (fbAway || []).filter((log: any) => {
-      const normOpp = normalizeTeam(log.opponent || '');
-      return normOpp.includes(normHome) || normHome.includes(normOpp);
-    });
-
-    if (fbHomeLogs.length === 0 && fbAwayLogs.length === 0) {
-      return { outcome: 'no_data', actual_value: null };
-    }
-
-    const homeScore = fbHomeLogs.reduce((sum: number, log: any) => sum + (Number(log.points) || 0), 0);
-    const awayScore = fbAwayLogs.reduce((sum: number, log: any) => sum + (Number(log.points) || 0), 0);
-    return resolveTeamOutcome(leg, homeScore, awayScore);
+    return { outcome: 'no_data', actual_value: null };
   }
 
   const homeScore = homeScoreLogs.reduce((sum: number, log: any) => sum + (Number(log.points) || 0), 0);

@@ -10935,6 +10935,19 @@ export type Database = {
       }
     }
     Views: {
+      ncaab_team_accuracy_metrics: {
+        Row: {
+          bet_type: string | null
+          losses: number | null
+          pushes: number | null
+          sport: string | null
+          total_bets: number | null
+          unsettled: number | null
+          win_rate: number | null
+          wins: number | null
+        }
+        Relationships: []
+      }
       scout_confidence_calibration: {
         Row: {
           avg_confidence_raw: number | null
