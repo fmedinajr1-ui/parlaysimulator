@@ -1,10 +1,10 @@
 /**
  * ncaab-team-stats-fetcher
  * 
- * Fetches NCAAB team efficiency data from ESPN team stats APIs
- * and populates the ncaab_team_stats table with KenPom-style metrics.
+ * Fetches NCAAB team efficiency data from ESPN APIs
+ * and populates ncaab_team_stats with KenPom-style metrics.
  * 
- * Runs daily on cron alongside existing data pipeline.
+ * Optimized: extracts stats from team detail endpoints in parallel batches.
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -15,11 +15,10 @@ const corsHeaders = {
 };
 
 const ESPN_TEAMS_URL = 'https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/teams';
-const ESPN_STANDINGS_URL = 'https://site.api.espn.com/apis/v2/sports/basketball/mens-college-basketball/standings';
-const ESPN_STATS_URL = 'https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/teams';
 
 interface TeamStats {
   team_name: string;
+  espn_id: string;
   conference: string | null;
   kenpom_rank: number | null;
   adj_offense: number | null;
@@ -31,147 +30,99 @@ interface TeamStats {
   over_under_record: string | null;
 }
 
-// Top 25 conferences by team count (cover ~95% of D1)
-const MAJOR_CONFERENCES = [
-  '1', '2', '3', '4', '5', '7', '8', '9', '10', '12',  // Power + major conferences
-  '11', '13', '14', '15', '16', '17', '18', '19', '20', '21',
-  '22', '23', '24', '25', '26', '27', '28', '29', '30', '44', '46', '62'
-];
-
-async function fetchTeamStatsFromESPN(): Promise<TeamStats[]> {
-  const allTeams: TeamStats[] = [];
-  const seenTeams = new Set<string>();
-
-  // Fetch teams across pages
-  for (let page = 1; page <= 4; page++) {
+async function fetchWithRetry(url: string, retries = 2): Promise<Response | null> {
+  for (let i = 0; i <= retries; i++) {
     try {
-      const url = `${ESPN_TEAMS_URL}?limit=100&page=${page}`;
-      console.log(`[NCAAB Stats] Fetching page ${page}: ${url}`);
       const resp = await fetch(url);
-      if (!resp.ok) break;
-      const data = await resp.json();
-      
-      const teams = data.sports?.[0]?.leagues?.[0]?.teams || [];
-      if (teams.length === 0) break;
-      
-      for (const entry of teams) {
-        const team = entry.team || entry;
-        if (!team.displayName || seenTeams.has(team.displayName)) continue;
-        seenTeams.add(team.displayName);
-
-        const conference = team.groups?.parent?.shortName || team.groups?.name || null;
-        allTeams.push({
-          team_name: team.displayName,
-          conference,
-          kenpom_rank: null,
-          adj_offense: null,
-          adj_defense: null,
-          adj_tempo: null,
-          home_record: null,
-          away_record: null,
-          ats_record: null,
-          over_under_record: null,
-        });
+      if (resp.ok) return resp;
+      if (resp.status === 429 && i < retries) {
+        await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+        continue;
       }
-      await new Promise(r => setTimeout(r, 300));
-    } catch (e) {
-      console.error(`[NCAAB Stats] Error fetching page ${page}:`, e);
-      break;
-    }
-  }
-
-  console.log(`[NCAAB Stats] Found ${allTeams.length} teams, enriching with stats...`);
-
-  // Enrich each team with stats from individual team endpoint
-  // Process in batches to avoid rate limits
-  let enriched = 0;
-  for (const team of allTeams) {
-    try {
-      // Search for team ID from the teams list
-      const searchUrl = `${ESPN_TEAMS_URL}?search=${encodeURIComponent(team.team_name)}&limit=1`;
-      const searchResp = await fetch(searchUrl);
-      if (!searchResp.ok) continue;
-      const searchData = await searchResp.json();
-      
-      const foundTeam = searchData.sports?.[0]?.leagues?.[0]?.teams?.[0]?.team;
-      if (!foundTeam?.id) continue;
-      
-      // Fetch team stats
-      const statsUrl = `${ESPN_STATS_URL}/${foundTeam.id}/statistics`;
-      const statsResp = await fetch(statsUrl);
-      if (!statsResp.ok) continue;
-      const statsData = await statsResp.json();
-      
-      // Extract scoring stats
-      const splits = statsData.resultSets || statsData.splits || {};
-      const categories = splits.categories || statsData.statistics?.splits?.categories || [];
-      
-      let ppg = 0, oppg = 0;
-      for (const cat of categories) {
-        const stats = cat.stats || [];
-        for (const stat of stats) {
-          if (stat.name === 'avgPoints' || stat.abbreviation === 'PTS') ppg = parseFloat(stat.value) || ppg;
-          if (stat.name === 'avgPointsAgainst' || stat.abbreviation === 'OPP') oppg = parseFloat(stat.value) || oppg;
-        }
-      }
-      
-      // Fallback: try record stats
-      if (ppg === 0 && foundTeam.record?.items) {
-        for (const item of foundTeam.record.items) {
-          for (const stat of (item.stats || [])) {
-            if (stat.name === 'pointsFor' || stat.name === 'avgPointsFor') ppg = parseFloat(stat.value) || ppg;
-            if (stat.name === 'pointsAgainst' || stat.name === 'avgPointsAgainst') oppg = parseFloat(stat.value) || oppg;
-          }
-          // Extract home/away records
-          for (const stat of (item.stats || [])) {
-            if (stat.name === 'homeRecord') team.home_record = stat.summary || stat.displayValue || null;
-            if (stat.name === 'awayRecord') team.away_record = stat.summary || stat.displayValue || null;
-          }
-        }
-      }
-
-      if (ppg > 0) {
-        team.adj_offense = ppg;
-        team.adj_defense = oppg > 0 ? oppg : null;
-        // Estimate tempo from combined scoring
-        if (oppg > 0) {
-          const totalPPG = ppg + oppg;
-          const avgTotal = 135;
-          const avgTempo = 67;
-          const tempoDelta = ((totalPPG - avgTotal) / 10) * 3;
-          team.adj_tempo = Math.round((avgTempo + tempoDelta) * 10) / 10;
-        }
-        enriched++;
-      }
-      
-      // Rate limit
-      if (enriched % 10 === 0) await new Promise(r => setTimeout(r, 500));
-      else await new Promise(r => setTimeout(r, 150));
-      
-      // Cap at 150 to stay within edge function time limits
-      if (enriched >= 150) break;
+      return null;
     } catch {
-      // Non-critical, continue
+      if (i < retries) await new Promise(r => setTimeout(r, 500));
+    }
+  }
+  return null;
+}
+
+async function fetchAllTeamIds(): Promise<{ id: string; name: string; conference: string | null }[]> {
+  const teams: { id: string; name: string; conference: string | null }[] = [];
+  const seen = new Set<string>();
+
+  for (let page = 1; page <= 4; page++) {
+    const resp = await fetchWithRetry(`${ESPN_TEAMS_URL}?limit=100&page=${page}`);
+    if (!resp) break;
+    const data = await resp.json();
+    const entries = data.sports?.[0]?.leagues?.[0]?.teams || [];
+    if (entries.length === 0) break;
+
+    for (const entry of entries) {
+      const t = entry.team || entry;
+      if (!t.id || !t.displayName || seen.has(t.id)) continue;
+      seen.add(t.id);
+      teams.push({
+        id: t.id,
+        name: t.displayName,
+        conference: t.groups?.parent?.shortName || t.groups?.name || null,
+      });
+    }
+    await new Promise(r => setTimeout(r, 200));
+  }
+  return teams;
+}
+
+async function enrichTeamStats(teamId: string): Promise<{
+  ppg: number; oppg: number; home: string | null; away: string | null;
+} | null> {
+  // Fetch team summary which includes record + stats
+  const resp = await fetchWithRetry(`${ESPN_TEAMS_URL}/${teamId}`);
+  if (!resp) return null;
+  const data = await resp.json();
+
+  const team = data.team || data;
+  let ppg = 0, oppg = 0, home: string | null = null, away: string | null = null;
+
+  // Extract from record items
+  const recordItems = team.record?.items || [];
+  for (const item of recordItems) {
+    if (item.type === 'home') home = item.summary || null;
+    if (item.type === 'away') away = item.summary || null;
+    if (item.type === 'total' || !item.type) {
+      for (const stat of (item.stats || [])) {
+        if (stat.name === 'avgPointsFor' || stat.name === 'pointsFor') {
+          const v = parseFloat(stat.value);
+          if (stat.name === 'avgPointsFor') ppg = v;
+          else if (v > 0 && ppg === 0) ppg = v; // raw total, will need games played
+        }
+        if (stat.name === 'avgPointsAgainst' || stat.name === 'pointsAgainst') {
+          const v = parseFloat(stat.value);
+          if (stat.name === 'avgPointsAgainst') oppg = v;
+          else if (v > 0 && oppg === 0) oppg = v;
+        }
+      }
     }
   }
 
-  console.log(`[NCAAB Stats] Enriched ${enriched}/${allTeams.length} teams with scoring stats`);
+  // If we got total points but not averages, try to compute
+  if (ppg > 200 && recordItems.length > 0) {
+    // Looks like total points, need to divide by games
+    const totalItem = recordItems.find((i: any) => i.type === 'total' || !i.type);
+    if (totalItem) {
+      const gpStat = (totalItem.stats || []).find((s: any) => s.name === 'gamesPlayed');
+      if (gpStat) {
+        const gp = parseFloat(gpStat.value);
+        if (gp > 0) {
+          if (ppg > 200) ppg = ppg / gp;
+          if (oppg > 200) oppg = oppg / gp;
+        }
+      }
+    }
+  }
 
-  // Rank teams by efficiency differential
-  const rankedTeams = allTeams
-    .filter(t => t.adj_offense !== null && t.adj_defense !== null)
-    .sort((a, b) => {
-      const effA = (a.adj_offense || 0) - (a.adj_defense || 100);
-      const effB = (b.adj_offense || 0) - (b.adj_defense || 100);
-      return effB - effA;
-    });
-
-  rankedTeams.forEach((team, index) => {
-    team.kenpom_rank = index + 1;
-  });
-
-  console.log(`[NCAAB Stats] Processed ${allTeams.length} teams, ${rankedTeams.length} ranked`);
-  return allTeams;
+  if (ppg === 0) return null;
+  return { ppg, oppg, home, away };
 }
 
 Deno.serve(async (req) => {
@@ -186,53 +137,136 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    console.log('[NCAAB Stats] Starting team stats fetch');
+    console.log('[NCAAB Stats] Starting optimized fetch');
 
-    const teamStats = await fetchTeamStatsFromESPN();
-    
-    if (teamStats.length === 0) {
-      console.log('[NCAAB Stats] No teams fetched - check ESPN API availability');
-      return new Response(JSON.stringify({ success: false, error: 'No teams fetched' }), {
+    // Step 1: Get all team IDs
+    const teams = await fetchAllTeamIds();
+    console.log(`[NCAAB Stats] Found ${teams.length} teams`);
+
+    if (teams.length === 0) {
+      return new Response(JSON.stringify({ success: false, error: 'No teams found' }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Upsert into ncaab_team_stats
-    const upsertData = teamStats.map(t => ({
-      team_name: t.team_name,
-      conference: t.conference,
-      kenpom_rank: t.kenpom_rank,
-      adj_offense: t.adj_offense,
-      adj_defense: t.adj_defense,
-      adj_tempo: t.adj_tempo,
-      home_record: t.home_record,
-      away_record: t.away_record,
-      ats_record: t.ats_record,
-      over_under_record: t.over_under_record,
-      updated_at: new Date().toISOString(),
-    }));
+    // Step 2: Enrich in parallel batches of 15
+    const BATCH_SIZE = 15;
+    const MAX_TEAMS = 200; // Focus on top teams, stay within time limits
+    const teamsToEnrich = teams.slice(0, MAX_TEAMS);
+    const results: TeamStats[] = [];
+    let enriched = 0;
 
-    // Batch upsert in chunks of 100
+    for (let i = 0; i < teamsToEnrich.length; i += BATCH_SIZE) {
+      const batch = teamsToEnrich.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.allSettled(
+        batch.map(async (t) => {
+          const stats = await enrichTeamStats(t.id);
+          return { team: t, stats };
+        })
+      );
+
+      for (const r of batchResults) {
+        if (r.status === 'fulfilled' && r.value.stats) {
+          const { team: t, stats } = r.value;
+          const avgTempo = 67;
+          const avgTotal = 135;
+          let tempo: number | null = null;
+
+          if (stats.oppg > 0) {
+            const totalPPG = stats.ppg + stats.oppg;
+            const tempoDelta = ((totalPPG - avgTotal) / 10) * 3;
+            tempo = Math.round((avgTempo + tempoDelta) * 10) / 10;
+          }
+
+          results.push({
+            team_name: t.name,
+            espn_id: t.id,
+            conference: t.conference,
+            kenpom_rank: null,
+            adj_offense: Math.round(stats.ppg * 10) / 10,
+            adj_defense: stats.oppg > 0 ? Math.round(stats.oppg * 10) / 10 : null,
+            adj_tempo: tempo,
+            home_record: stats.home,
+            away_record: stats.away,
+            ats_record: null,
+            over_under_record: null,
+          });
+          enriched++;
+        }
+      }
+
+      // Check time budget (50s max for edge function)
+      if (Date.now() - startTime > 45000) {
+        console.log(`[NCAAB Stats] Time budget hit at batch ${i}, stopping enrichment`);
+        break;
+      }
+
+      await new Promise(r => setTimeout(r, 300));
+    }
+
+    // Also add non-enriched teams (basic info only)
+    const enrichedNames = new Set(results.map(r => r.team_name));
+    for (const t of teams) {
+      if (!enrichedNames.has(t.name)) {
+        results.push({
+          team_name: t.name,
+          espn_id: t.id,
+          conference: t.conference,
+          kenpom_rank: null,
+          adj_offense: null,
+          adj_defense: null,
+          adj_tempo: null,
+          home_record: null,
+          away_record: null,
+          ats_record: null,
+          over_under_record: null,
+        });
+      }
+    }
+
+    // Rank by efficiency differential
+    const ranked = results
+      .filter(t => t.adj_offense !== null && t.adj_defense !== null)
+      .sort((a, b) => {
+        const effA = (a.adj_offense || 0) - (a.adj_defense || 100);
+        const effB = (b.adj_offense || 0) - (b.adj_defense || 100);
+        return effB - effA;
+      });
+
+    ranked.forEach((team, idx) => { team.kenpom_rank = idx + 1; });
+
+    console.log(`[NCAAB Stats] Enriched ${enriched}, ranked ${ranked.length}`);
+
+    // Upsert in chunks
     let totalUpserted = 0;
     const errors: string[] = [];
-    
-    for (let i = 0; i < upsertData.length; i += 100) {
-      const chunk = upsertData.slice(i, i + 100);
+
+    for (let i = 0; i < results.length; i += 100) {
+      const chunk = results.slice(i, i + 100).map(t => ({
+        team_name: t.team_name,
+        conference: t.conference,
+        kenpom_rank: t.kenpom_rank,
+        adj_offense: t.adj_offense,
+        adj_defense: t.adj_defense,
+        adj_tempo: t.adj_tempo,
+        home_record: t.home_record,
+        away_record: t.away_record,
+        ats_record: t.ats_record,
+        over_under_record: t.over_under_record,
+        updated_at: new Date().toISOString(),
+      }));
+
       const { error } = await supabase
         .from('ncaab_team_stats')
         .upsert(chunk, { onConflict: 'team_name' });
-      
-      if (error) {
-        errors.push(`Chunk ${i}: ${error.message}`);
-      } else {
-        totalUpserted += chunk.length;
-      }
+
+      if (error) errors.push(error.message);
+      else totalUpserted += chunk.length;
     }
 
     const duration = Date.now() - startTime;
 
-    // Log to cron_job_history
     await supabase.from('cron_job_history').insert({
       job_name: 'ncaab-team-stats-fetcher',
       status: errors.length > 0 ? 'completed_with_errors' : 'completed',
@@ -240,23 +274,23 @@ Deno.serve(async (req) => {
       completed_at: new Date().toISOString(),
       duration_ms: duration,
       result: {
-        teams_fetched: teamStats.length,
+        teams_fetched: results.length,
+        teams_enriched: enriched,
+        teams_ranked: ranked.length,
         teams_upserted: totalUpserted,
-        teams_with_offense: teamStats.filter(t => t.adj_offense !== null).length,
-        teams_with_tempo: teamStats.filter(t => t.adj_tempo !== null).length,
-        teams_ranked: teamStats.filter(t => t.kenpom_rank !== null).length,
-        errors: errors.slice(0, 5),
+        errors: errors.slice(0, 3),
       },
     });
 
-    console.log(`[NCAAB Stats] Done in ${duration}ms: ${totalUpserted} teams upserted`);
+    console.log(`[NCAAB Stats] Done in ${duration}ms: ${totalUpserted} upserted, ${enriched} enriched`);
 
     return new Response(JSON.stringify({
       success: true,
       duration_ms: duration,
-      teams_fetched: teamStats.length,
+      teams_fetched: results.length,
+      teams_enriched: enriched,
+      teams_ranked: ranked.length,
       teams_upserted: totalUpserted,
-      errors: errors.slice(0, 5),
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
@@ -264,7 +298,6 @@ Deno.serve(async (req) => {
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     console.error('[NCAAB Stats] Fatal error:', msg);
-
     return new Response(JSON.stringify({ success: false, error: msg }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
