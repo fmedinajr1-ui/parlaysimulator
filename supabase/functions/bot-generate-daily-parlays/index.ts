@@ -46,6 +46,7 @@ interface ParlayProfile {
   preferPlusMoney?: boolean;
   sortBy?: 'composite' | 'hit_rate';
   boostLegs?: number;
+  allowTeamLegs?: number;
 }
 
 const TIER_CONFIG: Record<TierName, TierConfig> = {
@@ -184,6 +185,11 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'golden_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
       { legs: 3, strategy: 'golden_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
       { legs: 3, strategy: 'golden_lock_cross', sports: ['all'], minHitRate: 58, sortBy: 'hit_rate', useAltLines: false },
+      // HYBRID: Mix player props + team props for diversity
+      { legs: 3, strategy: 'hybrid_exec', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false, allowTeamLegs: 1 },
+      { legs: 3, strategy: 'hybrid_exec_cross', sports: ['all'], minHitRate: 58, sortBy: 'hit_rate', useAltLines: false, allowTeamLegs: 1 },
+      // TEAM EXECUTION: Pure team props with high composite scores
+      { legs: 3, strategy: 'team_exec', betTypes: ['moneyline', 'spread', 'total'], minHitRate: 55 },
     ],
   },
 };
@@ -1523,6 +1529,7 @@ async function generateTierParlays(
 
     // Determine which picks to use based on profile
     const isTeamProfile = profile.betTypes && profile.betTypes.length > 0;
+    const isHybridProfile = !!profile.allowTeamLegs && !isTeamProfile;
     const sportFilter = profile.sports || ['all'];
     
     // Filter picks based on profile
@@ -1545,6 +1552,21 @@ async function generateTierParlays(
           return b.compositeScore - a.compositeScore;
         });
       }
+    } else if (isHybridProfile) {
+      // HYBRID: player props first (sorted by hit rate), then team props appended
+      const playerPicks = pool.sweetSpots.filter(p => {
+        if (sportFilter.includes('all')) return true;
+        return sportFilter.includes(p.sport || 'basketball_nba');
+      });
+      const teamPicks = pool.teamPicks
+        .filter(p => {
+          if (sportFilter.includes('all')) return true;
+          return sportFilter.includes(p.sport);
+        })
+        .sort((a, b) => b.compositeScore - a.compositeScore);
+      // Player props first, team props appended at the end
+      candidatePicks = [...playerPicks, ...teamPicks];
+      console.log(`[Bot] Hybrid pool: ${playerPicks.length} player + ${teamPicks.length} team picks`);
     } else {
       candidatePicks = pool.sweetSpots.filter(p => {
         if (sportFilter.includes('all')) return true;
@@ -1578,14 +1600,30 @@ async function generateTierParlays(
       if (!canUsePickGlobally(pick, tracker, config)) continue;
       if (!canUsePickInParlay(pick, parlayTeamCount, parlayCategoryCount, config, legs)) continue;
 
+      // Hybrid profile: cap team legs AND player legs to ensure mix
+      if (isHybridProfile) {
+        const isTeamPick = 'type' in pick && pick.type === 'team';
+        const currentTeamLegs = legs.filter(l => l.type === 'team').length;
+        const currentPlayerLegs = legs.filter(l => l.type !== 'team').length;
+        const maxTeamLegs = profile.allowTeamLegs || 1;
+        const maxPlayerLegs = profile.legs - maxTeamLegs;
+        
+        if (isTeamPick && currentTeamLegs >= maxTeamLegs) continue;
+        if (!isTeamPick && currentPlayerLegs >= maxPlayerLegs) continue;
+      }
+
       // Check profile-specific requirements
       const minHitRate = profile.minHitRate || config.minHitRate;
       const minOddsValue = profile.minOddsValue || DEFAULT_MIN_ODDS_VALUE;
       
-      const pickConfidence = pick.confidence_score || 0.5;
+      const pickConfidence = pick.confidence_score || ('sharp_score' in pick ? (pick as any).sharp_score / 100 : 0.5);
       const hitRatePercent = pickConfidence * 100;
       
-      if (hitRatePercent < minHitRate) continue;
+      // For hybrid profiles, use a lower hit rate floor for team legs
+      const effectiveMinHitRate = (isHybridProfile && 'type' in pick && pick.type === 'team') 
+        ? Math.min(minHitRate, 55) 
+        : minHitRate;
+      if (hitRatePercent < effectiveMinHitRate) continue;
       
       if ('oddsValueScore' in pick && pick.oddsValueScore < minOddsValue) continue;
 
@@ -1673,7 +1711,11 @@ async function generateTierParlays(
     }
 
     // Only create parlay if we have enough legs
-    if (legs.length >= profile.legs) {
+    if (legs.length < profile.legs) {
+      if (tier === 'execution') {
+        console.log(`[Bot] ${tier}/${profile.strategy}: only ${legs.length}/${profile.legs} legs built from ${candidatePicks.length} candidates`);
+      }
+    } else {
       // Cross-sport ML gate: require at least one leg from each specified sport
       if (profile.strategy === 'team_ml_cross' && profile.sports && profile.sports.length > 1) {
         const legSports = new Set(legs.map(l => l.sport));
@@ -1685,14 +1727,20 @@ async function generateTierParlays(
       }
 
       // Golden category gate — enabled for execution tier (Feb 11 analysis)
+      // Team legs are exempt from the golden gate check (they don't have sweet-spot categories)
       const ENFORCE_GOLDEN_GATE = true;
-      if (ENFORCE_GOLDEN_GATE && tier === 'execution' && goldenCategories.size > 0) {
-        const goldenLegCount = legs.filter(l => goldenCategories.has(l.category)).length;
-        const minGoldenLegs = Math.floor(profile.legs / 2);
-        if (goldenLegCount < minGoldenLegs) {
-          console.log(`[Bot] Skipping ${tier}/${profile.strategy}: only ${goldenLegCount}/${profile.legs} golden legs (need ${minGoldenLegs})`);
-          continue;
+      const skipGoldenGate = isHybridProfile || isTeamProfile;
+      if (ENFORCE_GOLDEN_GATE && !skipGoldenGate && tier === 'execution' && goldenCategories.size > 0) {
+        const playerLegs = legs.filter(l => l.type !== 'team');
+        if (playerLegs.length > 0) {
+          const goldenLegCount = playerLegs.filter(l => goldenCategories.has(l.category)).length;
+          const minGoldenLegs = Math.max(1, playerLegs.length - 1); // Allow 1 non-golden player leg
+          if (goldenLegCount < minGoldenLegs) {
+            console.log(`[Bot] Skipping ${tier}/${profile.strategy}: only ${goldenLegCount}/${playerLegs.length} golden player legs (need ${minGoldenLegs})`);
+            continue;
+          }
         }
+        // If no player legs (pure team parlay), skip golden gate entirely
       }
 
       // Deduplication: skip if identical leg combination already exists
@@ -1743,9 +1791,10 @@ async function generateTierParlays(
       const sharpe = effectiveEdge / (0.5 * Math.sqrt(legs.length));
 
       // Check tier thresholds
-      if (combinedProbability < 0.001) continue;
-      if (effectiveEdge < config.minEdge) continue;
-      if (sharpe < config.minSharpe) continue;
+      if (combinedProbability < 0.001) { if (tier === 'execution') console.log(`[Bot] ${tier}/${profile.strategy}: failed prob (${combinedProbability.toFixed(4)})`); continue; }
+      const effectiveMinEdge = (isHybridProfile || isTeamProfile) ? Math.min(config.minEdge, 0.008) : config.minEdge;
+      if (effectiveEdge < effectiveMinEdge) { if (tier === 'execution') console.log(`[Bot] ${tier}/${profile.strategy}: failed edge (${effectiveEdge.toFixed(4)} < ${effectiveMinEdge})`); continue; }
+      if (sharpe < config.minSharpe) { if (tier === 'execution') console.log(`[Bot] ${tier}/${profile.strategy}: failed sharpe (${sharpe.toFixed(4)} < ${config.minSharpe})`); continue; }
 
       // Calculate stake (flat $10 for all tiers)
       const stake = typeof config.stake === 'number' && config.stake > 0 ? config.stake : 10;
