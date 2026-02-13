@@ -47,6 +47,7 @@ interface ParlayProfile {
   sortBy?: 'composite' | 'hit_rate';
   boostLegs?: number;
   allowTeamLegs?: number;
+  maxMlLegs?: number;
 }
 
 const TIER_CONFIG: Record<TierName, TierConfig> = {
@@ -90,8 +91,8 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'baseball_spreads', sports: ['baseball_ncaa'], betTypes: ['spread'] },
       { legs: 3, strategy: 'baseball_mixed', sports: ['baseball_ncaa'], betTypes: ['spread', 'total'] },
       { legs: 3, strategy: 'baseball_cross', sports: ['baseball_ncaa', 'basketball_ncaab'] },
-      // Team props exploration (13 profiles) - shifted from ML to totals/spreads
-      { legs: 3, strategy: 'team_ml', betTypes: ['moneyline'] },
+      // Team props exploration (13 profiles) - ML Sniper: hybrid profiles with maxMlLegs: 1
+      { legs: 3, strategy: 'team_hybrid', betTypes: ['moneyline', 'spread', 'total'], maxMlLegs: 1 },
       { legs: 3, strategy: 'team_totals', betTypes: ['total'] },
       { legs: 3, strategy: 'team_totals', betTypes: ['total'] },
       { legs: 3, strategy: 'team_totals', betTypes: ['total'] },
@@ -99,7 +100,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'team_spreads', betTypes: ['spread'] },
       { legs: 3, strategy: 'team_spreads', betTypes: ['spread'] },
       { legs: 4, strategy: 'team_mixed', betTypes: ['spread', 'total'] },
-      { legs: 3, strategy: 'team_ml_cross', betTypes: ['moneyline'], sports: ['basketball_nba', 'basketball_ncaab'] },
+      { legs: 3, strategy: 'team_hybrid_cross', betTypes: ['moneyline', 'spread', 'total'], sports: ['basketball_nba', 'basketball_ncaab'], maxMlLegs: 1 },
       { legs: 4, strategy: 'team_mixed', betTypes: ['spread', 'total'] },
       // Cross-sport exploration (20 profiles)
       { legs: 3, strategy: 'cross_sport', sports: ['basketball_nba', 'icehockey_nhl'] },
@@ -1937,36 +1938,81 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     return picks;
   });
 
-  // === NCAAB ML SAFETY GATE: Block NCAAB ML favorites ranked outside Top 150 ===
-  const preNcaabGateCount = enrichedTeamPicks.length;
-  const ncaabMlBlocked: string[] = [];
+  // === ML SNIPER GATE: Surgical moneyline filtering ===
+  const preGateCount = enrichedTeamPicks.length;
+  const mlBlocked: string[] = [];
   const filteredTeamPicks = enrichedTeamPicks.filter(pick => {
     const isNCAAB = pick.sport?.includes('ncaab') || pick.sport?.includes('college');
-    if (!isNCAAB) return true;
+    const isNBA = pick.sport?.includes('nba');
+    const isML = pick.bet_type === 'moneyline';
 
-    // Block NCAAB ML favorites (negative odds = favorite) ranked outside Top 150
-    if (pick.bet_type === 'moneyline' && pick.odds < 0) {
-      const teamName = pick.side === 'home' ? pick.home_team : pick.away_team;
-      const stats = ncaabStatsMap.get(teamName);
-      const rank = stats?.kenpom_rank || 999;
-      if (rank > 150) {
-        ncaabMlBlocked.push(`${teamName} (rank ${rank})`);
+    // === ML-specific gates ===
+    if (isML) {
+      // Gate 1: Raise composite score floor for ALL ML picks to 70 (was 62)
+      if (pick.compositeScore < 70) {
+        mlBlocked.push(`${pick.home_team} vs ${pick.away_team} ML (composite ${pick.compositeScore.toFixed(0)} < 70)`);
         return false;
+      }
+
+      // Gate 2: Odds-value gate — block implied prob >85% or <30%
+      const impliedProb = pick.odds < 0
+        ? Math.abs(pick.odds) / (Math.abs(pick.odds) + 100)
+        : 100 / (pick.odds + 100);
+      if (impliedProb > 0.85) {
+        mlBlocked.push(`${pick.home_team} vs ${pick.away_team} ML (implied ${(impliedProb * 100).toFixed(0)}% > 85% — too juicy)`);
+        return false;
+      }
+      if (impliedProb < 0.30) {
+        mlBlocked.push(`${pick.home_team} vs ${pick.away_team} ML (implied ${(impliedProb * 100).toFixed(0)}% < 30% — too risky)`);
+        return false;
+      }
+
+      // Gate 3: NCAAB ML — restrict to Top 50 KenPom only
+      if (isNCAAB) {
+        const teamName = pick.side === 'home' ? pick.home_team : pick.away_team;
+        const stats = ncaabStatsMap.get(teamName);
+        const rank = stats?.kenpom_rank || 999;
+        if (rank > 50) {
+          mlBlocked.push(`${teamName} NCAAB ML (rank ${rank} > 50)`);
+          return false;
+        }
+        // NCAAB favorites: only allow odds between -110 and -300
+        if (pick.odds < 0 && (pick.odds < -300 || pick.odds > -110)) {
+          mlBlocked.push(`${teamName} NCAAB ML fav (odds ${pick.odds} outside -110 to -300)`);
+          return false;
+        }
+        // NCAAB underdogs: only allow odds between +150 and +350
+        if (pick.odds > 0 && (pick.odds < 150 || pick.odds > 350)) {
+          mlBlocked.push(`${teamName} NCAAB ML dog (odds +${pick.odds} outside +150 to +350)`);
+          return false;
+        }
+      }
+
+      // Gate 4: NBA ML — only home favorites between -110 and -300
+      if (isNBA) {
+        if (pick.side !== 'home') {
+          mlBlocked.push(`${pick.away_team} NBA ML away (blocked — road ML too volatile)`);
+          return false;
+        }
+        if (pick.odds >= 0 || pick.odds < -300 || pick.odds > -110) {
+          mlBlocked.push(`${pick.home_team} NBA ML (odds ${pick.odds} outside home fav -110 to -300)`);
+          return false;
+        }
       }
     }
 
-    // Raise composite score floor for NCAAB team legs to 62
-    if (pick.compositeScore < 62) {
+    // Non-ML NCAAB: keep composite floor at 62
+    if (isNCAAB && !isML && pick.compositeScore < 62) {
       return false;
     }
 
     return true;
   });
 
-  if (ncaabMlBlocked.length > 0) {
-    console.log(`[NCAAB Safety] Blocked ${ncaabMlBlocked.length} ML favorites ranked 150+: ${ncaabMlBlocked.join(', ')}`);
+  if (mlBlocked.length > 0) {
+    console.log(`[ML Sniper] Blocked ${mlBlocked.length} picks: ${mlBlocked.slice(0, 10).join('; ')}`);
   }
-  console.log(`[NCAAB Safety] Team picks: ${preNcaabGateCount} → ${filteredTeamPicks.length}`);
+  console.log(`[ML Sniper] Team picks: ${preGateCount} → ${filteredTeamPicks.length}`);
 
   // Replace enrichedTeamPicks with filtered version
   enrichedTeamPicks.length = 0;
@@ -2057,15 +2103,24 @@ async function generateTierParlays(
         return sportFilter.includes(p.sport);
       });
       
-      // team_ml_cross: filter to specific sports and ensure cross-sport mix
-      if (profile.strategy === 'team_ml_cross' && profile.sports && !profile.sports.includes('all')) {
+      // team_hybrid_cross: filter to specific sports and ensure cross-sport mix
+      if (profile.strategy === 'team_hybrid_cross' && profile.sports && !profile.sports.includes('all')) {
         candidatePicks = candidatePicks.filter(p => profile.sports!.includes(p.sport));
-        // Sort: favorites first (higher composite), then underdogs for asymmetric mix
+        // Sort: highest composite ML pick first (the 1 allowed ML leg), then spreads/totals
         candidatePicks = [...candidatePicks].sort((a, b) => {
-          // Prioritize favorites (negative odds = favorite)
-          const aIsFav = a.odds < 0;
-          const bIsFav = b.odds < 0;
-          if (aIsFav !== bIsFav) return aIsFav ? -1 : 1;
+          const aIsML = a.bet_type === 'moneyline';
+          const bIsML = b.bet_type === 'moneyline';
+          // ML picks first (they get picked as the 1 allowed ML leg)
+          if (aIsML !== bIsML) return aIsML ? -1 : 1;
+          return b.compositeScore - a.compositeScore;
+        });
+      }
+      // team_hybrid: sort ML picks first, then spreads/totals
+      if (profile.strategy === 'team_hybrid') {
+        candidatePicks = [...candidatePicks].sort((a, b) => {
+          const aIsML = a.bet_type === 'moneyline';
+          const bIsML = b.bet_type === 'moneyline';
+          if (aIsML !== bIsML) return aIsML ? -1 : 1;
           return b.compositeScore - a.compositeScore;
         });
       }
@@ -2127,6 +2182,15 @@ async function generateTierParlays(
         
         if (isTeamPick && currentTeamLegs >= maxTeamLegs) continue;
         if (!isTeamPick && currentPlayerLegs >= maxPlayerLegs) continue;
+      }
+
+      // ML Sniper: cap moneyline legs per parlay (maxMlLegs constraint)
+      if (profile.maxMlLegs !== undefined && 'type' in pick && pick.type === 'team') {
+        const teamPick = pick as EnrichedTeamPick;
+        if (teamPick.bet_type === 'moneyline') {
+          const currentMlLegs = legs.filter(l => l.bet_type === 'moneyline').length;
+          if (currentMlLegs >= profile.maxMlLegs) continue;
+        }
       }
 
       // Check profile-specific requirements
@@ -2233,8 +2297,8 @@ async function generateTierParlays(
         console.log(`[Bot] ${tier}/${profile.strategy}: only ${legs.length}/${profile.legs} legs built from ${candidatePicks.length} candidates`);
       }
     } else {
-      // Cross-sport ML gate: require at least one leg from each specified sport
-      if (profile.strategy === 'team_ml_cross' && profile.sports && profile.sports.length > 1) {
+      // Cross-sport gate: require at least one leg from each specified sport
+      if ((profile.strategy === 'team_hybrid_cross' || profile.strategy === 'team_ml_cross') && profile.sports && profile.sports.length > 1) {
         const legSports = new Set(legs.map(l => l.sport));
         const missingSports = profile.sports.filter(s => !legSports.has(s));
         if (missingSports.length > 0) {
