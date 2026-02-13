@@ -1,63 +1,103 @@
 
 
-# Fix NCAA Baseball Stats Fetcher: Switch to ESPN Standings Endpoint
+# Enhance Research Agent: NCAA Baseball Pitching Matchups + Weather Impact
 
-## Problem
-The current `ncaa-baseball-team-stats-fetcher` calls the individual team endpoint (`/teams/{id}`) for each of 234 teams. This endpoint is returning 400 errors for college baseball, resulting in all stat columns (ERA, batting avg, runs per game, etc.) being NULL. This means the scoring engine has no statistical data to work with.
+## What Changes
 
-## Solution
-Replace the broken individual-team enrichment with the ESPN **standings** endpoint, which returns all teams with their records and stats in a single bulk request per conference. This is the same pattern already used successfully in `fetch-season-standings` for NBA and NFL.
+Add two new research categories to the AI research agent so it gathers daily intelligence on:
+
+1. **NCAA Baseball Pitching Matchups** -- starting pitcher stats, ERA comparisons, bullpen depth, and recent form for today's games
+2. **Weather Impact on Totals** -- wind speed/direction, temperature, humidity, and park factors that affect over/under lines
+
+These findings will flow through the existing research-to-generation bridge, giving the scoring engine and parlay generator richer context for NCAA baseball bets.
 
 ## How It Works
 
-### Current (broken) flow:
-1. Fetch all team IDs via `/teams?limit=100&page=X` (6 pages)
-2. For each team, call `/teams/{id}` individually (200+ requests) -- **these return 400 errors**
-3. Parse `record.items` for stats -- **no data returned**
+### New Research Queries
 
-### New flow:
-1. Fetch standings from `https://site.api.espn.com/apis/v2/sports/baseball/college-baseball/standings`
-2. Parse all conferences and their team entries in one response
-3. Extract wins, losses, win percentage, points for/against, home/away records
-4. Calculate runs per game and runs allowed per game from the standings stats
-5. Fall back to team list endpoint only for teams missing from standings (if any)
+Two entries are added to the `RESEARCH_QUERIES` array:
+
+**`ncaa_baseball_pitching`**
+- Asks Perplexity for today's probable NCAA baseball starting pitchers, their season ERAs, recent game logs (last 3 starts), bullpen usage/fatigue, and any pitcher injuries or pitch-count limitations.
+- System prompt focuses on actionable pitching matchup data with specific stat lines.
+
+**`weather_totals_impact`**
+- Asks Perplexity for today's college baseball game-day weather: wind speed/direction, temperature, humidity at game-time for major matchups, plus known park factors (hitter-friendly vs pitcher-friendly).
+- System prompt focuses on quantifying weather effects on run totals (e.g., "10+ mph wind blowing out historically adds 1.5 runs").
+
+### Updated Telegram Digest
+
+- New emoji mappings: baseball emoji for pitching matchups, cloud/wind emoji for weather
+- Title map entries for the two new categories
+
+### Generation Engine Integration
+
+The existing `fetchResearchInjuryIntel` and `fetchResearchEdgeThreshold` functions already consume from `bot_research_findings` by category. A new companion function `fetchResearchPitchingWeather` will be added to the generation engine to:
+
+1. Pull today's `ncaa_baseball_pitching` findings and extract pitcher names + ERA values
+2. Pull today's `weather_totals_impact` findings and flag games where weather strongly favors overs or unders
+3. Surface this as a `weatherBias` map (game key to "over"/"under"/"neutral") that the parlay generator can use when selecting totals legs
+
+---
 
 ## Technical Details
 
-### File: `supabase/functions/ncaa-baseball-team-stats-fetcher/index.ts`
+### File 1: `supabase/functions/ai-research-agent/index.ts`
 
-**Full rewrite** of the fetcher to:
+**Changes to `RESEARCH_QUERIES` array** (add 2 entries after line 35):
 
-1. **Replace `ESPN_TEAMS_URL` with standings URL**:
-   - Primary: `https://site.api.espn.com/apis/v2/sports/baseball/college-baseball/standings`
-   - Fallback team list: keep existing `/teams` endpoint for any missing teams
+```typescript
+{
+  category: 'ncaa_baseball_pitching',
+  query: "What are today's NCAA college baseball probable starting pitchers for the major conferences (SEC, ACC, Big 12, Big Ten, Pac-12)? Include each starter's season ERA, WHIP, last 3 game logs, and any pitch count or injury concerns. Also note any bullpen arms that are unavailable due to recent heavy usage.",
+  systemPrompt: 'You are a college baseball pitching analyst. Provide specific pitcher names, teams, ERAs, WHIPs, and recent performance trends. Flag any starters on short rest or with declining velocity. Focus on data that would affect game totals and run lines.',
+},
+{
+  category: 'weather_totals_impact',
+  query: "What is today's weather forecast for major NCAA college baseball games? Include temperature, wind speed and direction relative to the field, humidity, and any rain delays expected. Which ballparks are known as hitter-friendly or pitcher-friendly? How does today's weather historically affect over/under totals?",
+  systemPrompt: 'You are a sports weather analyst specializing in baseball. Quantify how weather conditions affect run scoring. Cite specific thresholds (e.g., wind >10mph blowing out adds ~1.5 runs). Include park factors and altitude effects. Be specific about which games are most impacted.',
+},
+```
 
-2. **New `fetchStandings()` function** replacing `fetchAllTeamIds()` + `enrichTeamStats()`:
-   - Single request fetches all conferences
-   - Parse `data.children[]` (conferences) -> `standings.entries[]` (teams)
-   - Extract from `entry.stats[]`: wins, losses, winPercent, avgPointsFor, avgPointsAgainst, home/away records
-   - Map stat names to our schema (runs_per_game, runs_allowed_per_game, etc.)
-   - Conference name from `conference.name` or `conference.abbreviation`
+**Changes to `titleMap`** (around line 123, add 2 entries):
 
-3. **Preserve existing logic**:
-   - National ranking by run differential (unchanged)
-   - Upsert to `ncaa_baseball_team_stats` on conflict `team_name` (unchanged)
-   - Cron job history logging (unchanged)
-   - Time budget safety (45s, unchanged)
+```typescript
+ncaa_baseball_pitching: 'NCAA Baseball Pitching Matchups',
+weather_totals_impact: 'Weather Impact on Totals',
+```
 
-4. **Stat mapping** (from ESPN standings stat names):
-   - `avgPointsFor` or `pointsFor` / games -> `runs_per_game`
-   - `avgPointsAgainst` or `pointsAgainst` / games -> `runs_allowed_per_game`
-   - `Home_display` or `home_display` -> `home_record`
-   - `Road_display` or `away_display` -> `away_record`
-   - ERA and batting average are not in standings data -- these will remain NULL (standings don't include pitching/batting detail stats)
+**Changes to Telegram emoji mapping** (around line 183, extend the ternary):
 
-### Post-deploy steps (automated):
-1. Deploy the updated edge function
-2. Invoke `ncaa-baseball-team-stats-fetcher` to re-enrich all teams
-3. Invoke `team-bets-scoring-engine` for `baseball_ncaa` to rescore today's bets with real stat data
+```typescript
+const emoji = f.category === 'competing_ai' ? '🤖' :
+              f.category === 'statistical_models' ? '📊' :
+              f.category === 'ncaa_baseball_pitching' ? '⚾' :
+              f.category === 'weather_totals_impact' ? '🌬️' : '🏥';
+```
 
-## Trade-offs
-- **ERA and batting_avg will remain NULL** since standings data doesn't include detailed pitching/batting stats. However, runs_per_game, runs_allowed_per_game, home/away records, and national rank will all be populated -- which are the primary inputs to `scoreBaseballNcaa`.
-- This is a massive improvement over the current state where ALL columns are NULL.
+### File 2: `supabase/functions/bot-generate-daily-parlays/index.ts`
+
+**New function `fetchResearchPitchingWeather`** (after the existing research intelligence section ~line 1280):
+
+- Queries `bot_research_findings` for today's `ncaa_baseball_pitching` and `weather_totals_impact` categories
+- From pitching findings: extracts pitcher names and ERA values using regex (e.g., `ERA 5.40` flags high-ERA starters as over-friendly)
+- From weather findings: extracts wind/temperature signals using regex patterns like `wind.*blowing out`, `high humidity`, `cold.*pitcher` to produce a bias for each game
+- Returns a `Map<string, 'over' | 'under' | 'neutral'>` keyed by team name
+- This map is consumed during leg selection to boost or penalize totals picks
+
+**Wire into main generation flow** (~line 1327):
+
+- Add `fetchResearchPitchingWeather(supabase, gameDate)` to the parallel fetch
+- Pass the weather bias map into the leg filtering logic so totals picks in weather-affected games get a score adjustment
+
+### No Database Changes Required
+
+Both new categories use the existing `bot_research_findings` table schema (category, title, summary, key_insights, sources, relevance_score, actionable). No migration needed.
+
+### Post-Deploy
+
+1. Deploy the updated `ai-research-agent` function
+2. Invoke it to verify the two new categories produce findings
+3. Deploy the updated `bot-generate-daily-parlays` function
+4. The next parlay generation cycle will automatically consume the new research data
 
