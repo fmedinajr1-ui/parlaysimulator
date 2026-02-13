@@ -1,54 +1,55 @@
 
-# Fix NCAA Baseball Parlays + Block NCAAB Player Props
+# Fix Baseball Parlay Generation + Clean Up NCAAB Player Prop Parlays
 
-## Problems Found
+## Problem 1: No Baseball Parlays Generated
+The synthetic baseball test data in `game_bets` has `commence_time` set to **Feb 15**, not today (Feb 13). The bot's query filters team bets to today's UTC window (`startUtc` to `endUtc`), so baseball picks are invisible to the generator.
 
-1. **Baseball profiles pull basketball bets**: The team profile filtering (line 1848-1851) only filters by `betTypes` but ignores the `sports` filter. So a profile like `{ sports: ['baseball_ncaa'], betTypes: ['spread'] }` pulls ALL spreads across all sports, not just baseball.
+**Fix**: Update the `commence_time` on all 8 baseball test records to today's date so they fall within the bot's daily window. Then regenerate parlays.
 
-2. **NCAAB player props are still used in parlays**: There is no filter blocking `basketball_ncaab` player props. The player pick pool includes any sport from `unified_props` and `category_sweet_spots`, including NCAAB players.
+## Problem 2: NCAAB Player Prop Parlays Polluting P&L
+Old parlays from Feb 9-11 contain NCAAB player props (Carson Cooper, Coen Carr, John Blackwell, Jaxon Kohler - all `basketball_ncaab` players). Many are marked `void` or `lost`, which inflates the loss count in the P&L calendar and dashboard.
 
-## Changes
+**Fix**: Delete all `bot_daily_parlays` records that contain NCAAB player prop legs. These can be identified by checking if any leg has a `player_name` set AND `sport = basketball_ncaab` in the legs JSON.
 
-### 1. Fix sport filtering for team profiles
+## Steps
 
-**File**: `supabase/functions/bot-generate-daily-parlays/index.ts` (~line 1848-1851)
+1. **Delete all parlays containing NCAAB player props** from `bot_daily_parlays` (any date). This cleans the P&L history.
 
-Add sport filtering to the team profile branch so it respects `profile.sports`:
+2. **Update baseball test data** - change `commence_time` on the 8 `baseball_ncaa` records in `game_bets` to today (Feb 13) so the bot can pick them up.
 
-```text
-Before:
-  if (isTeamProfile) {
-    candidatePicks = pool.teamPicks.filter(p => 
-      profile.betTypes!.includes(p.bet_type)
-    );
+3. **Clear today's parlays** from `bot_daily_parlays` (the 5 NCAAB-only team bet parlays) to allow a fresh generation that includes baseball.
 
-After:
-  if (isTeamProfile) {
-    candidatePicks = pool.teamPicks.filter(p => {
-      if (!profile.betTypes!.includes(p.bet_type)) return false;
-      // Apply sport filter
-      if (sportFilter.includes('all')) return true;
-      return sportFilter.includes(p.sport);
-    });
+4. **Regenerate today's parlays** - trigger `bot-generate-daily-parlays` to produce a new batch that should now include baseball profiles alongside NCAAB team bets.
+
+## Technical Details
+
+### SQL: Remove NCAAB player prop parlays
+```sql
+DELETE FROM bot_daily_parlays 
+WHERE id IN (
+  SELECT id FROM bot_daily_parlays 
+  WHERE EXISTS (
+    SELECT 1 FROM jsonb_array_elements(legs) AS leg 
+    WHERE leg->>'sport' = 'basketball_ncaab' 
+    AND leg->>'player_name' IS NOT NULL
+  )
+);
 ```
 
-### 2. Block NCAAB player props entirely
+### SQL: Fix baseball commence times
+```sql
+UPDATE game_bets 
+SET commence_time = '2026-02-13T19:00:00Z' 
+WHERE sport = 'baseball_ncaa' AND home_team = 'LSU Tigers';
 
-**File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
+UPDATE game_bets 
+SET commence_time = '2026-02-13T21:00:00Z' 
+WHERE sport = 'baseball_ncaa' AND home_team = 'Vanderbilt Commodores';
 
-Add a filter after the enriched sweet spots are built (around line 1481 and line 1547) to exclude any picks where `sport` is `basketball_ncaab`. This ensures NCAAB player props never enter the pick pool.
-
-```text
-// After enriching sweet spots, remove NCAAB player props
-enrichedSweetSpots = enrichedSweetSpots.filter(p => p.sport !== 'basketball_ncaab');
+UPDATE game_bets 
+SET commence_time = '2026-02-13T23:00:00Z' 
+WHERE sport = 'baseball_ncaa' AND home_team = 'Florida Gators';
 ```
 
-Same filter applied in the fallback unified_props path.
-
-### 3. Redeploy and regenerate
-
-- Deploy the updated `bot-generate-daily-parlays` edge function
-- Regenerate today's parlays to verify:
-  - Baseball profiles produce baseball-only legs (or skip if no baseball games today)
-  - No NCAAB player props appear in any parlay
-  - NCAAB team bets (spreads/totals) still work in their dedicated profiles
+### Regeneration
+Delete today's 5 parlays, then trigger `bot-generate-daily-parlays` to rebuild with baseball included.
