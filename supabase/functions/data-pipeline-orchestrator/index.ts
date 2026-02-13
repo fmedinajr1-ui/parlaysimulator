@@ -108,6 +108,7 @@ serve(async (req) => {
       await runFunction('category-props-analyzer', { limit: 100 });
       await runFunction('auto-refresh-sharp-tracker', {});
       await runFunction('whale-signal-detector', { sports: ['basketball_nba', 'icehockey_nhl', 'basketball_wnba', 'basketball_ncaab'] });
+      await runFunction('team-bets-scoring-engine', {});
     }
 
     // ============ PHASE 3: PARLAY GENERATION ============

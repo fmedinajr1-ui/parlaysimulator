@@ -43,6 +43,8 @@ interface GameBet {
   bookmaker: string;
   commence_time: string;
   sharp_score: number | null;
+  composite_score: number | null;
+  score_breakdown: Record<string, number | string> | null;
   recommended_side: string | null;
   signal_sources: string[] | null;
   is_active: boolean;
@@ -138,12 +140,15 @@ export function TeamBetsDashboard() {
       // Return best line for each game/bet_type combo
       const consolidated: GameBet[] = [];
       for (const [, gameBets] of gameMap) {
-        // Pick the bet with highest sharp_score, or first one
+        // Pick the bet with highest composite_score (fallback to sharp_score)
         const best = gameBets.reduce((a, b) => 
-          (b.sharp_score || 0) > (a.sharp_score || 0) ? b : a
+          ((b.composite_score || b.sharp_score || 0) > (a.composite_score || a.sharp_score || 0)) ? b : a
         );
         consolidated.push(best);
       }
+      
+      // Sort by composite_score DESC
+      consolidated.sort((a, b) => (b.composite_score || b.sharp_score || 0) - (a.composite_score || a.sharp_score || 0));
       
       return consolidated;
     },
@@ -196,7 +201,7 @@ export function TeamBetsDashboard() {
 
   // Stats
   const totalBets = bets?.length || 0;
-  const sharpBets = bets?.filter(b => (b.sharp_score || 0) >= 50).length || 0;
+  const qualityBets = bets?.filter(b => (b.composite_score || b.sharp_score || 0) >= 62).length || 0;
   const spreadBets = bets?.filter(b => b.bet_type === 'spread').length || 0;
   const totalBets2 = bets?.filter(b => b.bet_type === 'total').length || 0;
 
@@ -234,8 +239,8 @@ export function TeamBetsDashboard() {
         </Card>
         <Card className="bg-primary/10 border-primary/20">
           <CardContent className="p-3 text-center">
-            <div className="text-2xl font-bold text-primary">{sharpBets}</div>
-            <div className="text-xs text-muted-foreground">Sharp Signals</div>
+            <div className="text-2xl font-bold text-primary">{qualityBets}</div>
+            <div className="text-xs text-muted-foreground">Quality Picks (62+)</div>
           </CardContent>
         </Card>
         <Card className="bg-chart-2/10 border-chart-2/20">
