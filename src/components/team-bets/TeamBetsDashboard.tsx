@@ -20,7 +20,7 @@ import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 import { TeamBetCard } from './TeamBetCard';
 
-const SPORTS = ['ALL', 'NCAAB', 'NBA', 'NHL', 'NFL', 'NCAAF', 'WNBA'];
+const SPORTS = ['ALL', 'NCAAB', 'NBA', 'NHL', 'NFL', 'NCAAF', 'WNBA', 'BASEBALL'];
 const BET_TYPES = [
   { id: 'all', label: 'All Bets', icon: Activity },
   { id: 'spread', label: 'Spreads', icon: TrendingUp },
@@ -60,6 +60,7 @@ function getSportDisplay(sport: string): string {
     'basketball_ncaab': 'NCAAB',
     'americanfootball_ncaaf': 'NCAAF',
     'basketball_wnba': 'WNBA',
+    'baseball_ncaa': 'BASEBALL',
   };
   return map[sport] || sport.toUpperCase();
 }
@@ -72,6 +73,7 @@ function getSportKey(display: string): string {
     'NCAAB': 'basketball_ncaab',
     'NCAAF': 'americanfootball_ncaaf',
     'WNBA': 'basketball_wnba',
+    'BASEBALL': 'baseball_ncaa',
   };
   return map[display] || display.toLowerCase();
 }
