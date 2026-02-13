@@ -82,6 +82,7 @@ const SPORT_KEYS: Record<string, string> = {
   'NCAAB': 'basketball_ncaab',
   'NHL': 'icehockey_nhl',
   'MLB': 'baseball_mlb',
+  'BASEBALL': 'baseball_ncaa',
 };
 
 // OPTIMIZED: Only track 2 key prop markets to avoid timeouts
