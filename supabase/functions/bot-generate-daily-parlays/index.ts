@@ -84,6 +84,12 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'] },
       { legs: 3, strategy: 'ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'] },
       { legs: 4, strategy: 'ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'] },
+      // NCAA Baseball exploration (5 profiles)
+      { legs: 3, strategy: 'baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'] },
+      { legs: 3, strategy: 'baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'] },
+      { legs: 3, strategy: 'baseball_spreads', sports: ['baseball_ncaa'], betTypes: ['spread'] },
+      { legs: 3, strategy: 'baseball_mixed', sports: ['baseball_ncaa'], betTypes: ['spread', 'total'] },
+      { legs: 3, strategy: 'baseball_cross', sports: ['baseball_ncaa', 'basketball_ncaab'] },
       // Team props exploration (13 profiles) - shifted from ML to totals/spreads
       { legs: 3, strategy: 'team_ml', betTypes: ['moneyline'] },
       { legs: 3, strategy: 'team_totals', betTypes: ['total'] },
@@ -139,6 +145,9 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'validated_conservative', sports: ['icehockey_nhl'], minOddsValue: 45, minHitRate: 55 },
       { legs: 3, strategy: 'validated_ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'], minOddsValue: 45, minHitRate: 55 },
       { legs: 3, strategy: 'validated_ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'], minOddsValue: 45, minHitRate: 55 },
+      // Validated baseball
+      { legs: 3, strategy: 'validated_baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'], minOddsValue: 45, minHitRate: 55 },
+      { legs: 3, strategy: 'validated_baseball_spreads', sports: ['baseball_ncaa'], betTypes: ['spread'], minOddsValue: 45, minHitRate: 55 },
       { legs: 4, strategy: 'validated_balanced', sports: ['basketball_nba'], minOddsValue: 42, minHitRate: 55 },
       { legs: 4, strategy: 'validated_balanced', sports: ['basketball_nba', 'icehockey_nhl'], minOddsValue: 42, minHitRate: 55 },
       { legs: 4, strategy: 'validated_balanced', sports: ['basketball_nba', 'basketball_ncaab'], minOddsValue: 42, minHitRate: 55 },
@@ -194,6 +203,8 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
       { legs: 3, strategy: 'ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
       { legs: 3, strategy: 'ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'], minHitRate: 55, sortBy: 'composite' },
+      // NCAA Baseball execution
+      { legs: 3, strategy: 'baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
     ],
   },
 };

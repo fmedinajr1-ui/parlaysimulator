@@ -349,6 +349,142 @@ function scoreNhl(
   return { score: clampScore(30, 95, score), breakdown };
 }
 
+// ============= NCAA BASEBALL SCORING =============
+interface BaseballTeamStats {
+  team_name: string;
+  conference: string | null;
+  national_rank: number | null;
+  runs_per_game: number | null;
+  runs_allowed_per_game: number | null;
+  era: number | null;
+  batting_avg: number | null;
+  home_record: string | null;
+  away_record: string | null;
+}
+
+function resolveBaseballTeam(teamName: string, statsMap: Map<string, BaseballTeamStats>): BaseballTeamStats | undefined {
+  let stats = statsMap.get(teamName);
+  if (stats) return stats;
+  // Fuzzy matching
+  for (const [key, val] of statsMap) {
+    if (key.includes(teamName) || teamName.includes(key)) return val;
+    const teamLast = teamName.split(' ').pop()?.toLowerCase();
+    const keyLast = key.split(' ').pop()?.toLowerCase();
+    if (teamLast && keyLast && teamLast === keyLast && teamLast.length > 3) return val;
+  }
+  return undefined;
+}
+
+function scoreBaseballNcaa(
+  bet: GameBet,
+  side: string,
+  baseballMap: Map<string, BaseballTeamStats>
+): { score: number; breakdown: Record<string, number | string> } {
+  let score = 50;
+  const breakdown: Record<string, number | string> = { base: 50 };
+
+  const homeStats = resolveBaseballTeam(bet.home_team, baseballMap);
+  const awayStats = resolveBaseballTeam(bet.away_team, baseballMap);
+
+  if (!homeStats && !awayStats) {
+    if (bet.sharp_score && bet.sharp_score >= 50) {
+      score = bet.sharp_score;
+      breakdown.sharp_only = bet.sharp_score - 50;
+    }
+    return { score: clampScore(30, 95, score), breakdown };
+  }
+
+  const homeRPG = homeStats?.runs_per_game || 4.5;
+  const homeRA = homeStats?.runs_allowed_per_game || 4.5;
+  const awayRPG = awayStats?.runs_per_game || 4.5;
+  const awayRA = awayStats?.runs_allowed_per_game || 4.5;
+  const homeRank = homeStats?.national_rank || 150;
+  const awayRank = awayStats?.national_rank || 150;
+  const homeERA = homeStats?.era || 4.50;
+  const awayERA = awayStats?.era || 4.50;
+  const homeBA = homeStats?.batting_avg || 0.260;
+  const awayBA = awayStats?.batting_avg || 0.260;
+
+  // Rank tier bonus
+  const sideRank = side === 'HOME' ? homeRank : awayRank;
+  if (sideRank <= 10) { score += 10; breakdown.elite_rank = 10; }
+  else if (sideRank <= 25) { score += 7; breakdown.top25_rank = 7; }
+  else if (sideRank <= 50) { score += 4; breakdown.top50_rank = 4; }
+  else if (sideRank > 150) { score -= 10; breakdown.low_rank_penalty = -10; }
+
+  if (bet.bet_type === 'spread' || bet.bet_type === 'h2h') {
+    // Run differential edge
+    const homeRunDiff = homeRPG - homeRA;
+    const awayRunDiff = awayRPG - awayRA;
+    const sideAdv = side === 'HOME' ? homeRunDiff - awayRunDiff : awayRunDiff - homeRunDiff;
+    const runBonus = clampScore(-12, 12, sideAdv * 3);
+    score += runBonus;
+    breakdown.run_differential = runBonus;
+    if (Math.abs(runBonus) > 3) breakdown.run_label = `${(side === 'HOME' ? homeRunDiff : awayRunDiff).toFixed(1)} run diff`;
+
+    // Home field
+    if (side === 'HOME') { score += 4; breakdown.home_field = 4; }
+
+    // ERA advantage (lower = better pitching)
+    const sideERA = side === 'HOME' ? homeERA : awayERA;
+    const oppERA = side === 'HOME' ? awayERA : homeERA;
+    if (sideERA < oppERA - 0.5) {
+      const eraBonus = clampScore(0, 8, Math.round((oppERA - sideERA) * 4));
+      score += eraBonus;
+      breakdown.era_edge = eraBonus;
+    }
+
+    // Batting avg edge
+    const sideBA = side === 'HOME' ? homeBA : awayBA;
+    if (sideBA > 0.280) { score += 4; breakdown.strong_hitting = 4; }
+
+    // Rank mismatch for ML
+    if (bet.bet_type === 'h2h') {
+      const rankDiff = side === 'HOME' ? awayRank - homeRank : homeRank - awayRank;
+      if (rankDiff > 80) { score += 8; breakdown.rank_mismatch = 8; }
+      else if (rankDiff > 40) { score += 4; breakdown.rank_edge = 4; }
+    }
+  }
+
+  if (bet.bet_type === 'total') {
+    const combinedRPG = homeRPG + awayRPG;
+    const avgERA = (homeERA + awayERA) / 2;
+
+    if (side === 'OVER') {
+      if (combinedRPG > 10) {
+        const bonus = clampScore(0, 12, Math.round((combinedRPG - 9) * 6));
+        score += bonus;
+        breakdown.high_scoring = bonus;
+        breakdown.scoring_label = `Combined ${combinedRPG.toFixed(1)} RPG`;
+      }
+      if (avgERA > 5.0) { score += 5; breakdown.weak_pitching = 5; }
+      if (homeBA > 0.270 && awayBA > 0.270) { score += 4; breakdown.both_hitting = 4; }
+    }
+    if (side === 'UNDER') {
+      if (combinedRPG < 8) {
+        const bonus = clampScore(0, 12, Math.round((9 - combinedRPG) * 6));
+        score += bonus;
+        breakdown.low_scoring = bonus;
+        breakdown.scoring_label = `Combined ${combinedRPG.toFixed(1)} RPG`;
+      }
+      if (avgERA < 3.5) {
+        const bonus = clampScore(0, 8, Math.round((4.0 - avgERA) * 8));
+        score += bonus;
+        breakdown.strong_pitching = bonus;
+      }
+    }
+  }
+
+  // Sharp confirmation
+  if (bet.sharp_score && bet.sharp_score >= 60) {
+    const sharpBonus = clampScore(0, 15, Math.round((bet.sharp_score - 50) * 0.5));
+    score += sharpBonus;
+    breakdown.sharp_confirmation = sharpBonus;
+  }
+
+  return { score: clampScore(30, 95, score), breakdown };
+}
+
 // ============= GENERIC SCORING (NBA, etc.) =============
 function scoreGeneric(
   bet: GameBet,
@@ -416,13 +552,22 @@ serve(async (req) => {
       if (s.team_abbrev) nhlMap.set(s.team_abbrev, s);
     });
 
+    // Load NCAA Baseball stats
+    const { data: baseballStats } = await supabase
+      .from('ncaa_baseball_team_stats')
+      .select('team_name, conference, national_rank, runs_per_game, runs_allowed_per_game, era, batting_avg, home_record, away_record');
+
+    const baseballMap = new Map<string, BaseballTeamStats>();
+    (baseballStats || []).forEach((s: any) => baseballMap.set(s.team_name, s));
+
     // Score each bet with both sides, pick the better one
     let scored = 0;
     const updates: { id: string; composite_score: number; recommended_side: string; score_breakdown: any }[] = [];
 
     for (const bet of bets as GameBet[]) {
-      const isNCAAB = bet.sport?.includes('ncaab');
+      const isNCAAB = bet.sport?.includes('ncaab') && !bet.sport?.includes('baseball');
       const isNHL = bet.sport?.includes('nhl') || bet.sport?.includes('hockey');
+      const isBaseballNcaa = bet.sport?.includes('baseball_ncaa');
 
       // Determine sides to evaluate
       let sides: string[];
@@ -438,7 +583,9 @@ serve(async (req) => {
 
       for (const side of sides) {
         let result;
-        if (isNCAAB) {
+        if (isBaseballNcaa) {
+          result = scoreBaseballNcaa(bet, side, baseballMap);
+        } else if (isNCAAB) {
           result = scoreNcaab(bet, side, ncaabMap);
         } else if (isNHL) {
           result = scoreNhl(bet, side, nhlMap);
@@ -484,11 +631,12 @@ serve(async (req) => {
       highQuality,
       avgScore,
       sportBreakdown: {
-        ncaab: updates.filter(u => bets.find((b: any) => b.id === u.id)?.sport?.includes('ncaab')).length,
+        ncaab: updates.filter(u => bets.find((b: any) => b.id === u.id)?.sport?.includes('ncaab') && !bets.find((b: any) => b.id === u.id)?.sport?.includes('baseball')).length,
         nhl: updates.filter(u => bets.find((b: any) => b.id === u.id)?.sport?.includes('nhl')).length,
+        baseball_ncaa: updates.filter(u => bets.find((b: any) => b.id === u.id)?.sport?.includes('baseball_ncaa')).length,
         other: updates.filter(u => {
           const sport = bets.find((b: any) => b.id === u.id)?.sport || '';
-          return !sport.includes('ncaab') && !sport.includes('nhl');
+          return !sport.includes('ncaab') && !sport.includes('nhl') && !sport.includes('baseball');
         }).length,
       },
     };
