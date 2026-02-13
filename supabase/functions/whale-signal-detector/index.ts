@@ -9,7 +9,7 @@ const corsHeaders = {
 // All supported sports including Tennis and NFL
 const ALL_SPORTS = [
   'basketball_nba', 
-  'hockey_nhl', 
+  'icehockey_nhl', 
   'basketball_wnba', 
   'tennis_atp', 
   'tennis_wta',
@@ -21,7 +21,7 @@ const ALL_SPORTS = [
 // Sport-specific signal thresholds
 const SPORT_THRESHOLDS: Record<string, { minDivergence: number; minScore: number }> = {
   'basketball_nba': { minDivergence: 0.5, minScore: 50 },
-  'hockey_nhl': { minDivergence: 0.3, minScore: 45 },
+  'icehockey_nhl': { minDivergence: 0.3, minScore: 45 },
   'tennis_atp': { minDivergence: 0.5, minScore: 50 },
   'tennis_wta': { minDivergence: 0.5, minScore: 50 },
   'americanfootball_nfl': { minDivergence: 1.0, minScore: 50 },

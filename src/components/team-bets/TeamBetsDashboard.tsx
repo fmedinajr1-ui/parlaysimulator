@@ -20,7 +20,7 @@ import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 import { TeamBetCard } from './TeamBetCard';
 
-const SPORTS = ['ALL', 'NCAAB', 'NBA', 'NHL', 'NFL', 'NCAAF'];
+const SPORTS = ['ALL', 'NCAAB', 'NBA', 'NHL', 'NFL', 'NCAAF', 'WNBA'];
 const BET_TYPES = [
   { id: 'all', label: 'All Bets', icon: Activity },
   { id: 'spread', label: 'Spreads', icon: TrendingUp },
@@ -55,10 +55,11 @@ interface GameBet {
 function getSportDisplay(sport: string): string {
   const map: Record<string, string> = {
     'basketball_nba': 'NBA',
-    'hockey_nhl': 'NHL',
+    'icehockey_nhl': 'NHL',
     'americanfootball_nfl': 'NFL',
     'basketball_ncaab': 'NCAAB',
     'americanfootball_ncaaf': 'NCAAF',
+    'basketball_wnba': 'WNBA',
   };
   return map[sport] || sport.toUpperCase();
 }
@@ -66,10 +67,11 @@ function getSportDisplay(sport: string): string {
 function getSportKey(display: string): string {
   const map: Record<string, string> = {
     'NBA': 'basketball_nba',
-    'NHL': 'hockey_nhl',
+    'NHL': 'icehockey_nhl',
     'NFL': 'americanfootball_nfl',
     'NCAAB': 'basketball_ncaab',
     'NCAAF': 'americanfootball_ncaaf',
+    'WNBA': 'basketball_wnba',
   };
   return map[display] || display.toLowerCase();
 }
@@ -100,8 +102,10 @@ export function TeamBetsDashboard() {
 
   // Default to NCAAB when it has games but NBA doesn't
   useEffect(() => {
-    if (sportCounts && !sportCounts['NBA'] && sportCounts['NCAAB'] && selectedSport === 'ALL') {
-      setSelectedSport('NCAAB');
+    if (sportCounts && selectedSport === 'ALL') {
+      if (sportCounts['NBA']) return;
+      if (sportCounts['NCAAB']) { setSelectedSport('NCAAB'); return; }
+      if (sportCounts['NHL']) { setSelectedSport('NHL'); return; }
     }
   }, [sportCounts]);
 

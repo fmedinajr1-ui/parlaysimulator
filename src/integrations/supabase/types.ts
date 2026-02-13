@@ -6428,6 +6428,7 @@ export type Database = {
           id: string
           losses: number | null
           ot_losses: number | null
+          save_pct: number | null
           season: string | null
           shot_differential: number | null
           shot_generation_rank: number | null
@@ -6437,6 +6438,7 @@ export type Database = {
           team_abbrev: string
           team_name: string
           updated_at: string | null
+          win_pct: number | null
           wins: number | null
         }
         Insert: {
@@ -6447,6 +6449,7 @@ export type Database = {
           id?: string
           losses?: number | null
           ot_losses?: number | null
+          save_pct?: number | null
           season?: string | null
           shot_differential?: number | null
           shot_generation_rank?: number | null
@@ -6456,6 +6459,7 @@ export type Database = {
           team_abbrev: string
           team_name: string
           updated_at?: string | null
+          win_pct?: number | null
           wins?: number | null
         }
         Update: {
@@ -6466,6 +6470,7 @@ export type Database = {
           id?: string
           losses?: number | null
           ot_losses?: number | null
+          save_pct?: number | null
           season?: string | null
           shot_differential?: number | null
           shot_generation_rank?: number | null
@@ -6475,6 +6480,7 @@ export type Database = {
           team_abbrev?: string
           team_name?: string
           updated_at?: string | null
+          win_pct?: number | null
           wins?: number | null
         }
         Relationships: []

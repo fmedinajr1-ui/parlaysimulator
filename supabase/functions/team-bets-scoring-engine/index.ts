@@ -224,6 +224,31 @@ function scoreNcaab(
   return { score: clampScore(30, 95, score), breakdown };
 }
 
+// ============= NHL NAME MAP =============
+const NHL_NAME_MAP: Record<string, string> = {
+  'NY Rangers': 'New York Rangers', 'NY Islanders': 'New York Islanders',
+  'LA Kings': 'Los Angeles Kings', 'TB Lightning': 'Tampa Bay Lightning',
+  'St Louis Blues': 'St. Louis Blues', 'NJ Devils': 'New Jersey Devils',
+  'SJ Sharks': 'San Jose Sharks', 'Vegas Golden Knights': 'Vegas Golden Knights',
+  'Columbus Blue Jackets': 'Columbus Blue Jackets',
+};
+
+function resolveNhlTeam(teamName: string, nhlMap: Map<string, any>): any | undefined {
+  let stats = nhlMap.get(teamName);
+  if (stats) return stats;
+  const mapped = NHL_NAME_MAP[teamName];
+  if (mapped) { stats = nhlMap.get(mapped); if (stats) return stats; }
+  // Fuzzy: check if team name is contained in any key or vice versa
+  for (const [key, val] of nhlMap) {
+    if (key.includes(teamName) || teamName.includes(key)) return val;
+    // Match by last word (e.g. "Avalanche")
+    const teamLast = teamName.split(' ').pop()?.toLowerCase();
+    const keyLast = key.split(' ').pop()?.toLowerCase();
+    if (teamLast && keyLast && teamLast === keyLast && teamLast.length > 3) return val;
+  }
+  return undefined;
+}
+
 // ============= NHL SCORING =============
 function scoreNhl(
   bet: GameBet,
@@ -233,11 +258,10 @@ function scoreNhl(
   let score = 50;
   const breakdown: Record<string, number | string> = { base: 50 };
 
-  const homeStats = nhlMap.get(bet.home_team);
-  const awayStats = nhlMap.get(bet.away_team);
+  const homeStats = resolveNhlTeam(bet.home_team, nhlMap);
+  const awayStats = resolveNhlTeam(bet.away_team, nhlMap);
 
   if (!homeStats && !awayStats) {
-    // Still use sharp_score as fallback
     if (bet.sharp_score && bet.sharp_score >= 50) {
       score = bet.sharp_score;
       breakdown.sharp_only = bet.sharp_score - 50;
@@ -245,7 +269,7 @@ function scoreNhl(
     return { score: clampScore(30, 95, score), breakdown };
   }
 
-  // Shot differential
+  // Shot differential (±12 pts)
   const homeShotDiff = (homeStats?.shots_for_per_game || 30) - (homeStats?.shots_against_per_game || 30);
   const awayShotDiff = (awayStats?.shots_for_per_game || 30) - (awayStats?.shots_against_per_game || 30);
 
@@ -254,16 +278,36 @@ function scoreNhl(
     const shotBonus = clampScore(-12, 12, sideShots * 1.5);
     score += shotBonus;
     breakdown.shot_differential = shotBonus;
+    if (Math.abs(shotBonus) > 3) breakdown.shot_label = `${(side === 'HOME' ? homeShotDiff : awayShotDiff).toFixed(1)} shot diff`;
 
+    // Home ice (+4)
     if (side === 'HOME') { score += 4; breakdown.home_ice = 4; }
 
-    // Save percentage edge
+    // Save percentage edge (±8 pts) — now uses real data
     const homeSv = homeStats?.save_pct || 0.900;
     const awaySv = awayStats?.save_pct || 0.900;
     const svDiff = side === 'HOME' ? (homeSv - awaySv) * 200 : (awaySv - homeSv) * 200;
     const svBonus = clampScore(-8, 8, svDiff);
     score += svBonus;
     breakdown.goaltending = svBonus;
+    if (Math.abs(svBonus) > 2) breakdown.sv_label = `SV% .${Math.round((side === 'HOME' ? homeSv : awaySv) * 1000)}`;
+
+    // Win percentage edge (±8 pts)
+    const homeWinPct = homeStats?.win_pct || 0.5;
+    const awayWinPct = awayStats?.win_pct || 0.5;
+    const winDiff = side === 'HOME' ? (homeWinPct - awayWinPct) * 40 : (awayWinPct - homeWinPct) * 40;
+    const winBonus = clampScore(-8, 8, winDiff);
+    score += winBonus;
+    breakdown.win_pct_edge = winBonus;
+
+    // Defensive structure bonus (0-6 pts) — low shots against
+    const sideSA = side === 'HOME' ? (homeStats?.shots_against_per_game || 30) : (awayStats?.shots_against_per_game || 30);
+    if (sideSA < 28) {
+      const defBonus = clampScore(0, 6, Math.round((30 - sideSA) * 2));
+      score += defBonus;
+      breakdown.defensive_structure = defBonus;
+      breakdown.defense_label = `${sideSA.toFixed(1)} SA/G`;
+    }
   }
 
   if (bet.bet_type === 'total') {
@@ -283,8 +327,19 @@ function scoreNhl(
       breakdown.low_scoring = bonus;
       breakdown.scoring_label = `Combined ${combinedScoring.toFixed(1)} GPG`;
     }
+
+    // Save pct matters for unders
+    const homeSv = homeStats?.save_pct || 0.900;
+    const awaySv = awayStats?.save_pct || 0.900;
+    const avgSv = (homeSv + awaySv) / 2;
+    if (side === 'UNDER' && avgSv > 0.910) {
+      const svBonus = clampScore(0, 6, Math.round((avgSv - 0.900) * 300));
+      score += svBonus;
+      breakdown.goaltending = svBonus;
+    }
   }
 
+  // Sharp confirmation (0-15 pts)
   if (bet.sharp_score && bet.sharp_score >= 60) {
     const sharpBonus = clampScore(0, 15, Math.round((bet.sharp_score - 50) * 0.5));
     score += sharpBonus;
@@ -356,7 +411,10 @@ serve(async (req) => {
       .select('*');
 
     const nhlMap = new Map<string, any>();
-    (nhlStats || []).forEach((s: any) => nhlMap.set(s.team_name, s));
+    (nhlStats || []).forEach((s: any) => {
+      nhlMap.set(s.team_name, s);
+      if (s.team_abbrev) nhlMap.set(s.team_abbrev, s);
+    });
 
     // Score each bet with both sides, pick the better one
     let scored = 0;
