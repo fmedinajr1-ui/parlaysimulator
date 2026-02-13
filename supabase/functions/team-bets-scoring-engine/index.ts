@@ -585,12 +585,14 @@ serve(async (req) => {
   try {
     console.log('[Scoring Engine] Starting multi-layer scoring...');
 
-    // Fetch active game_bets
+    // Fetch active game_bets (include games from today, even if already started)
+    const todayStart = new Date();
+    todayStart.setUTCHours(0, 0, 0, 0);
     const { data: bets, error: betsErr } = await supabase
       .from('game_bets')
       .select('*')
       .eq('is_active', true)
-      .gt('commence_time', new Date().toISOString());
+      .gte('commence_time', todayStart.toISOString());
 
     if (betsErr) throw betsErr;
     if (!bets || bets.length === 0) {
