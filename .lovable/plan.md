@@ -1,66 +1,71 @@
 
-# Fix: Game Log Backfill Missing Most Players
 
-## Root Cause
+# Focus Team Bets on NCAAB: Moneylines, Totals, and Spreads
 
-The `backfill-player-stats` function is only capturing a fraction of NBA games. On Feb 12, it ingested just **3 of ~8+ games** (70 players), completely missing stars like Jokic, Wembanyama, SGA, Luka, KAT, and Anthony Edwards. This caused `verify-sweet-spot-outcomes` to mark **247 of 300 picks as `no_data`** instead of grading them.
+## What We're Building
 
-Two bugs in `backfill-player-stats/index.ts` cause this:
+Since there's no NBA today (All-Star break), we'll tighten the NCAAB team prop pipeline to produce higher-quality picks by enriching the existing data with KenPom-style intelligence and improving the UI to default to NCAAB.
 
-1. **Line 49: `event.status?.type?.completed !== true`** -- The ESPN scoreboard API requires the game to be marked "completed" at the moment of fetch. If the backfill runs while games are still in progress (or shortly after, before ESPN updates), those games are permanently skipped. Later backfill runs won't revisit them because ESPN may return a different scoreboard state.
+## Current State
 
-2. **ESPN scoreboard pagination** -- The ESPN API endpoint `/scoreboard?dates=YYYYMMDD` sometimes omits late-night games (West Coast tip-offs finishing after midnight ET) or returns a partial list. The function does not verify game count against known schedule data.
+- **39 active NCAAB game_bets** across spreads, totals, and moneylines for tonight's slate
+- **200 teams** enriched in `ncaab_team_stats` with offense, defense, and tempo ratings
+- The composite scoring engine already handles NCAAB-specific logic (efficiency differentials, tempo-based totals, home court weighting, conference game penalties)
+- **Problem 1**: Team name mismatches -- game_bets has "Michigan St Spartans" but ncaab_team_stats has "Michigan State Spartans", causing the scoring engine to miss data and return flat 55 scores
+- **Problem 2**: UNLV Rebels has no stats data at all (null offense/defense/tempo)
+- **Problem 3**: The Team Bets page defaults to "ALL" sports, burying NCAAB picks among empty NBA/NHL slots
+- **Problem 4**: Totals lack Over/Under direction labels (same issue we just fixed for parlays)
 
-## Fix Plan
+## Plan
 
-### Change 1: Remove the `completed` gate and handle in-progress gracefully
+### 1. Fix NCAAB Team Name Fuzzy Matching (backend function)
 
-In `backfill-player-stats/index.ts`, change the game filter from requiring `completed === true` to accepting any game that has boxscore data available. ESPN boxscores contain stats even for in-progress games. We still skip games that are truly "scheduled" (not started).
+Update `bot-generate-daily-parlays` to normalize team names before looking up `ncaab_team_stats`. Add a mapping layer that handles common abbreviation mismatches:
+- "Michigan St" -> "Michigan State"
+- "UConn" -> "Connecticut"
+- Other known ESPN abbreviations
 
-```
-Before (line 49):
-  if (event.status?.type?.completed !== true) continue;
+This ensures the composite scoring engine gets real KenPom data instead of falling back to flat 55 scores.
 
-After:
-  const state = event.status?.type?.state;
-  if (state === 'pre') continue; // Skip games that haven't started
-  // Accept 'in' (in-progress) and 'post' (completed) games
-```
+### 2. Default Team Bets Page to NCAAB
 
-This ensures late-finishing games are captured on the next cron cycle even if they weren't "completed" during the first run.
+When no NBA games exist (like today), auto-detect and default the sport filter to NCAAB. This surfaces tonight's college basketball slate immediately instead of showing "No upcoming games."
 
-### Change 2: Add a retry pass for missed dates
+### 3. Add Over/Under Direction to Team Bet Cards
 
-After the primary ESPN fetch, add a secondary check: query `category_sweet_spots` for `no_data` picks whose players are still missing from `nba_player_game_logs`. For each missing player's game date, re-fetch that date's ESPN scoreboard. This acts as a self-healing mechanism.
+For totals bets, display "Over 152.5" or "Under 152.5" in the pick banner and odds display, matching what we did for parlays.
 
-### Change 3: Use ESPN summary endpoint directly for missing games
+### 4. Enrich Team Bet Cards with KenPom Context
 
-When the scoreboard returns fewer games than expected, fall back to fetching individual game summaries by looking up event IDs from `live_game_scores` or the schedule endpoint. This ensures West Coast late games are never permanently lost.
+Add a small contextual line showing the key scoring factor for each pick:
+- Spreads: "Efficiency edge: +12.3 pts"
+- Totals: "Combined tempo: 73.2 (fast)"  
+- Moneylines: "Rank #16 vs #47, home court"
 
-### Change 4: Fix verify-sweet-spot-outcomes retry behavior
+This gives users confidence in *why* a pick is recommended.
 
-Currently, the 13:01 cron run re-graded already-settled picks as `no_data` (overwriting the 11:00 run's correct results). This is because the query on line 144 includes `no_data` in its filter -- it re-processes picks that were already marked `no_data` by a previous run, but if the game logs haven't been updated since, it just re-marks them `no_data` again.
+### 5. Re-run Whale Signal Detector for NCAAB
 
-Add a guard: skip picks that were already settled with an `actual_value` set, regardless of their `outcome` field. This prevents the second cron run from overwriting valid settlements.
+After deploying the name-matching fix, trigger a fresh signal detection pass so tonight's NCAAB picks get properly scored composite values instead of flat defaults.
 
-```
-Before (line 144):
-  .in('outcome', ['pending', 'no_data']);
+## Technical Details
 
-After:
-  .in('outcome', ['pending', 'no_data'])
-  .is('actual_value', null);
-```
+### Files Modified
 
-This ensures that once a pick has been verified with real data, subsequent runs won't regress it.
+1. **`supabase/functions/bot-generate-daily-parlays/index.ts`**
+   - Add `normalizeTeamName()` function with abbreviation map
+   - Apply normalization when looking up `ncaabStatsMap` in `calculateNcaabTeamCompositeScore`
 
-## Files Modified
+2. **`src/components/team-bets/TeamBetsDashboard.tsx`**
+   - Auto-detect sport: if no upcoming NBA bets exist, default `selectedSport` to "NCAAB"
+   - Move NCAAB to second position in sport tabs (after ALL)
 
-1. `supabase/functions/backfill-player-stats/index.ts` -- Remove `completed` gate, add retry for missed dates, fall back to direct game summary fetches
-2. `supabase/functions/verify-sweet-spot-outcomes/index.ts` -- Add `actual_value is null` guard to prevent overwriting settled picks
+3. **`src/components/team-bets/TeamBetPickBanner.tsx`**
+   - For totals, show "Over {line}" or "Under {line}" based on `recommended_side`
 
-## Expected Impact
+4. **`src/components/team-bets/TeamBetCard.tsx`**
+   - Add optional KenPom context line beneath matchup for NCAAB games
 
-- Game log coverage should jump from ~70 players/day to **200-300+ players/day** (full slate)
-- `no_data` rate should drop from **82%** (247/300) to under **5%** (only DNP players)
-- Settlement accuracy for player props will become reliable, correctly grading Clingan, Kuzma, AJ Green and all other picks
+5. **`src/components/team-bets/TeamBetOddsDisplay.tsx`**
+   - Show directional label for totals (Over/Under)
+
