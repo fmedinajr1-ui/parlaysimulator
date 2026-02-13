@@ -1283,7 +1283,7 @@ async function markResearchConsumed(supabase: any, gameDate: string): Promise<vo
   const { error } = await supabase
     .from('bot_research_findings')
     .update({ action_taken: `Applied to generation on ${gameDate}` })
-    .in('category', ['injury_intel', 'statistical_models'])
+    .in('category', ['injury_intel', 'statistical_models', 'ncaa_baseball_pitching', 'weather_totals_impact'])
     .eq('research_date', gameDate)
     .is('action_taken', null);
 
@@ -1292,6 +1292,70 @@ async function markResearchConsumed(supabase: any, gameDate: string): Promise<vo
   } else {
     console.log(`[ResearchIntel] Marked research findings as consumed for ${gameDate}`);
   }
+}
+
+async function fetchResearchPitchingWeather(supabase: any, gameDate: string): Promise<Map<string, 'over' | 'under' | 'neutral'>> {
+  const weatherBias = new Map<string, 'over' | 'under' | 'neutral'>();
+  
+  try {
+    const { data: findings } = await supabase
+      .from('bot_research_findings')
+      .select('category, summary, key_insights')
+      .in('category', ['ncaa_baseball_pitching', 'weather_totals_impact'])
+      .eq('research_date', gameDate)
+      .gte('relevance_score', 0.40);
+
+    if (!findings || findings.length === 0) {
+      console.log(`[ResearchIntel] No pitching/weather findings for ${gameDate}`);
+      return weatherBias;
+    }
+
+    for (const f of findings) {
+      const text = f.summary + ' ' + (Array.isArray(f.key_insights) ? f.key_insights.join(' ') : String(f.key_insights || ''));
+
+      if (f.category === 'ncaa_baseball_pitching') {
+        // Extract high-ERA starters (ERA >= 5.0) as over-friendly signals
+        const eraMatches = text.matchAll(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s*.*?ERA\s*[:\s]*(\d+\.\d+)/gi);
+        for (const match of eraMatches) {
+          const team = match[1].trim();
+          const era = parseFloat(match[2]);
+          if (era >= 5.0) {
+            weatherBias.set(team.toLowerCase(), 'over');
+            console.log(`[ResearchIntel] High-ERA starter flagged: ${team} (ERA ${era}) → over bias`);
+          } else if (era <= 2.5) {
+            weatherBias.set(team.toLowerCase(), 'under');
+            console.log(`[ResearchIntel] Low-ERA starter flagged: ${team} (ERA ${era}) → under bias`);
+          }
+        }
+      }
+
+      if (f.category === 'weather_totals_impact') {
+        // Wind blowing out = over-friendly
+        if (/wind.*blow(?:ing)?\s*out/i.test(text) || /wind.*(?:1[0-9]|2[0-9])\s*mph/i.test(text)) {
+          // Try to extract team names near wind mentions
+          const windTeams = text.match(/(?:at|vs\.?|@)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/g);
+          if (windTeams) {
+            for (const wt of windTeams) {
+              const team = wt.replace(/^(?:at|vs\.?|@)\s+/i, '').trim().toLowerCase();
+              if (team.length > 2) {
+                weatherBias.set(team, 'over');
+              }
+            }
+          }
+        }
+        // Cold + low humidity = under-friendly
+        if (/cold|below\s*5[0-9]\s*°?F?|freezing/i.test(text) && /pitcher.friendly|low\s*humidity/i.test(text)) {
+          console.log(`[ResearchIntel] Cold weather + pitcher-friendly conditions detected → under bias`);
+        }
+      }
+    }
+
+    console.log(`[ResearchIntel] Weather bias map: ${weatherBias.size} entries for ${gameDate}`);
+  } catch (err) {
+    console.warn(`[ResearchIntel] Error fetching pitching/weather research:`, err);
+  }
+
+  return weatherBias;
 }
 
 // ============= PROP POOL BUILDER =============
@@ -1322,12 +1386,13 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   const { startUtc, endUtc, gameDate } = getEasternDateRange();
   console.log(`[Bot] ET window: ${startUtc} → ${endUtc} (gameDate: ${gameDate})`);
 
-  const [activePlayersToday, injuryData, teamsPlayingToday, researchBlocklist, researchEdge] = await Promise.all([
+  const [activePlayersToday, injuryData, teamsPlayingToday, researchBlocklist, researchEdge, weatherBiasMap] = await Promise.all([
     fetchActivePlayersToday(supabase, startUtc, endUtc),
     fetchInjuryBlocklist(supabase, gameDate),
     fetchTeamsPlayingToday(supabase, startUtc, endUtc, gameDate),
     fetchResearchInjuryIntel(supabase, gameDate),
     fetchResearchEdgeThreshold(supabase),
+    fetchResearchPitchingWeather(supabase, gameDate),
   ]);
   const { blocklist, penalties } = injuryData;
 
@@ -1680,13 +1745,30 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     if (game.bet_type === 'total' && game.over_odds && game.under_odds) {
       const { score: overScore, breakdown: overBreakdown } = calculateTeamCompositeScore(gameForScoring, 'total', 'over', paceMap, defenseMap, envMap, homeCourtMap, ncaabStatsMap);
       const overPlusBonus = isPlusMoney(game.over_odds) ? 5 : 0;
+      
+      // Weather/pitching research bias adjustment for totals
+      let overWeatherBonus = 0;
+      let underWeatherBonus = 0;
+      const homeKey = (game.home_team || '').toLowerCase();
+      const awayKey = (game.away_team || '').toLowerCase();
+      const homeBias = weatherBiasMap.get(homeKey);
+      const awayBias = weatherBiasMap.get(awayKey);
+      if (homeBias === 'over' || awayBias === 'over') {
+        overWeatherBonus = 8;
+        console.log(`[Bot] Weather/pitching over boost +8 for ${game.home_team} vs ${game.away_team}`);
+      }
+      if (homeBias === 'under' || awayBias === 'under') {
+        underWeatherBonus = 8;
+        console.log(`[Bot] Weather/pitching under boost +8 for ${game.home_team} vs ${game.away_team}`);
+      }
+
       picks.push({
         id: `${game.id}_total_over`,
         type: 'team', sport: game.sport, home_team: game.home_team, away_team: game.away_team,
         bet_type: 'total', side: 'over', line: game.line || 0, odds: game.over_odds,
         category: mapTeamBetToCategory('total', 'over'),
         sharp_score: game.sharp_score || 50,
-        compositeScore: clampScore(30, 95, overScore + overPlusBonus),
+        compositeScore: clampScore(30, 95, overScore + overPlusBonus + overWeatherBonus),
         confidence_score: overScore / 100,
         score_breakdown: overBreakdown,
       });
@@ -1698,7 +1780,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
         bet_type: 'total', side: 'under', line: game.line || 0, odds: game.under_odds,
         category: mapTeamBetToCategory('total', 'under'),
         sharp_score: game.sharp_score || 50,
-        compositeScore: clampScore(30, 95, underScore + underPlusBonus),
+        compositeScore: clampScore(30, 95, underScore + underPlusBonus + underWeatherBonus),
         confidence_score: underScore / 100,
         score_breakdown: underBreakdown,
       });

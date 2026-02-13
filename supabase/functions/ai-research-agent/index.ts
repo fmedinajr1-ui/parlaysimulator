@@ -33,6 +33,16 @@ const RESEARCH_QUERIES = [
     query: 'What are today\'s latest NBA and NHL injury reports, lineup changes, rest days, and load management decisions? Include any surprise scratches or returns from injury.',
     systemPrompt: 'You are a sports injury analyst. Provide the most current injury updates with specific player names, teams, and expected impact on games. Focus on information that would affect player props.',
   },
+  {
+    category: 'ncaa_baseball_pitching',
+    query: "What are today's NCAA college baseball probable starting pitchers for the major conferences (SEC, ACC, Big 12, Big Ten, Pac-12)? Include each starter's season ERA, WHIP, last 3 game logs, and any pitch count or injury concerns. Also note any bullpen arms that are unavailable due to recent heavy usage.",
+    systemPrompt: 'You are a college baseball pitching analyst. Provide specific pitcher names, teams, ERAs, WHIPs, and recent performance trends. Flag any starters on short rest or with declining velocity. Focus on data that would affect game totals and run lines.',
+  },
+  {
+    category: 'weather_totals_impact',
+    query: "What is today's weather forecast for major NCAA college baseball games? Include temperature, wind speed and direction relative to the field, humidity, and any rain delays expected. Which ballparks are known as hitter-friendly or pitcher-friendly? How does today's weather historically affect over/under totals?",
+    systemPrompt: 'You are a sports weather analyst specializing in baseball. Quantify how weather conditions affect run scoring. Cite specific thresholds (e.g., wind >10mph blowing out adds ~1.5 runs). Include park factors and altitude effects. Be specific about which games are most impacted.',
+  },
 ];
 
 async function queryPerplexity(
@@ -124,6 +134,8 @@ Deno.serve(async (req) => {
           competing_ai: 'AI Betting Systems Intelligence',
           statistical_models: 'Statistical Edge Research',
           injury_intel: 'Injury & Lineup Intel',
+          ncaa_baseball_pitching: 'NCAA Baseball Pitching Matchups',
+          weather_totals_impact: 'Weather Impact on Totals',
         };
 
         findings.push({
@@ -181,7 +193,9 @@ Deno.serve(async (req) => {
 
     for (const f of findings) {
       const emoji = f.category === 'competing_ai' ? '🤖' :
-                    f.category === 'statistical_models' ? '📊' : '🏥';
+                    f.category === 'statistical_models' ? '📊' :
+                    f.category === 'ncaa_baseball_pitching' ? '⚾' :
+                    f.category === 'weather_totals_impact' ? '🌬️' : '🏥';
       const score = f.relevance_score >= 0.65 ? '🟢' : f.relevance_score >= 0.40 ? '🟡' : '🔴';
       
       digestMessage += `${emoji} *${f.title}* ${score}\n`;
