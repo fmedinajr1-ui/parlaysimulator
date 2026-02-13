@@ -362,16 +362,84 @@ interface BaseballTeamStats {
   away_record: string | null;
 }
 
+// Alias map: Odds API name -> ESPN name
+const BASEBALL_TEAM_ALIASES: Record<string, string> = {
+  'Wright St Raiders': 'Wright State Raiders',
+  'Georgia St Panthers': 'Georgia State Panthers',
+  'Kansas St Wildcats': 'Kansas State Wildcats',
+  'Oregon St Beavers': 'Oregon State Beavers',
+  'Oklahoma St Cowboys': 'Oklahoma State Cowboys',
+  'Michigan St Spartans': 'Michigan State Spartans',
+  'Mississippi St Bulldogs': 'Mississippi State Bulldogs',
+  'Wichita St Shockers': 'Wichita State Shockers',
+  'Fresno St Bulldogs': 'Fresno State Bulldogs',
+  'San Diego St Aztecs': 'San Diego State Aztecs',
+  'Boise St Broncos': 'Boise State Broncos',
+  'Arizona St Sun Devils': 'Arizona State Sun Devils',
+  'Penn St Nittany Lions': 'Penn State Nittany Lions',
+  'Ohio St Buckeyes': 'Ohio State Buckeyes',
+  'Iowa St Cyclones': 'Iowa State Cyclones',
+  'NC State Wolfpack': 'NC State Wolfpack',
+  'Army Knights': 'Army Black Knights',
+  'UConn Huskies': 'Connecticut Huskies',
+  'UMass Minutemen': 'Massachusetts Minutemen',
+  'UTSA Roadrunners': 'UT San Antonio Roadrunners',
+  'UCF Knights': 'UCF Knights',
+  'SMU Mustangs': 'SMU Mustangs',
+  'LSU Tigers': 'LSU Tigers',
+  'USC Trojans': 'USC Trojans',
+  'UCLA Bruins': 'UCLA Bruins',
+  'BYU Cougars': 'BYU Cougars',
+  'UNC Greensboro Spartans': 'UNC Greensboro Spartans',
+  'UNC Wilmington Seahawks': 'UNC Wilmington Seahawks',
+  'SE Missouri St Redhawks': 'Southeast Missouri State Redhawks',
+  'S Illinois Salukis': 'Southern Illinois Salukis',
+  'N Illinois Huskies': 'Northern Illinois Huskies',
+  'E Kentucky Colonels': 'Eastern Kentucky Colonels',
+  'W Kentucky Hilltoppers': 'Western Kentucky Hilltoppers',
+  'FGCU Eagles': 'Florida Gulf Coast Eagles',
+  'FIU Panthers': 'FIU Panthers',
+  'FAU Owls': 'Florida Atlantic Owls',
+};
+
+function normalizeBaseballName(name: string): string {
+  return name
+    .replace(/\bSt\b/g, 'State')
+    .replace(/\bN\.\s*/g, 'North ')
+    .replace(/\bS\.\s*/g, 'South ')
+    .replace(/\bW\.\s*/g, 'West ')
+    .replace(/\bE\.\s*/g, 'East ')
+    .trim();
+}
+
 function resolveBaseballTeam(teamName: string, statsMap: Map<string, BaseballTeamStats>): BaseballTeamStats | undefined {
+  // Pass 1: Exact match
   let stats = statsMap.get(teamName);
   if (stats) return stats;
-  // Fuzzy matching
-  for (const [key, val] of statsMap) {
-    if (key.includes(teamName) || teamName.includes(key)) return val;
-    const teamLast = teamName.split(' ').pop()?.toLowerCase();
-    const keyLast = key.split(' ').pop()?.toLowerCase();
-    if (teamLast && keyLast && teamLast === keyLast && teamLast.length > 3) return val;
+
+  // Pass 2: Alias lookup
+  const alias = BASEBALL_TEAM_ALIASES[teamName];
+  if (alias) {
+    stats = statsMap.get(alias);
+    if (stats) return stats;
   }
+
+  // Pass 3: Normalized name ("St" -> "State", etc.)
+  const normalized = normalizeBaseballName(teamName);
+  stats = statsMap.get(normalized);
+  if (stats) return stats;
+
+  // Pass 4: School name substring (first word(s) before mascot)
+  const words = teamName.split(' ');
+  if (words.length >= 2) {
+    const school = words.slice(0, -1).join(' ').toLowerCase();
+    if (school.length >= 4) {
+      for (const [key, val] of statsMap) {
+        if (key.toLowerCase().startsWith(school)) return val;
+      }
+    }
+  }
+
   return undefined;
 }
 
