@@ -97,7 +97,6 @@ interface GameBetInsert {
 function normalizeSportKey(sportKey: string): string {
   if (sportKey.startsWith('tennis_atp')) return 'tennis_atp';
   if (sportKey.startsWith('tennis_wta')) return 'tennis_wta';
-  if (sportKey === 'icehockey_nhl') return 'hockey_nhl';
   return sportKey;
 }
 
