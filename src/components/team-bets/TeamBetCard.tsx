@@ -42,7 +42,7 @@ function getSportEmoji(sport: string): string {
     'basketball_nba': '🏀',
     'hockey_nhl': '🏒',
     'americanfootball_nfl': '🏈',
-    'basketball_ncaab': '🏀',
+    'basketball_ncaab': '🎓',
     'americanfootball_ncaaf': '🏈',
   };
   return map[sport] || '🎯';

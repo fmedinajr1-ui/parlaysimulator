@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -20,7 +20,7 @@ import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 import { TeamBetCard } from './TeamBetCard';
 
-const SPORTS = ['ALL', 'NBA', 'NHL', 'NFL', 'NCAAB', 'NCAAF'];
+const SPORTS = ['ALL', 'NCAAB', 'NBA', 'NHL', 'NFL', 'NCAAF'];
 const BET_TYPES = [
   { id: 'all', label: 'All Bets', icon: Activity },
   { id: 'spread', label: 'Spreads', icon: TrendingUp },
@@ -76,6 +76,32 @@ export function TeamBetsDashboard() {
   const [selectedSport, setSelectedSport] = useState('ALL');
   const [selectedBetType, setSelectedBetType] = useState('all');
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Auto-detect: default to NCAAB if no other sports have upcoming bets
+  const { data: sportCounts } = useQuery({
+    queryKey: ['team-bets-sport-counts'],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('game_bets')
+        .select('sport')
+        .eq('is_active', true)
+        .gt('commence_time', new Date().toISOString());
+      const counts: Record<string, number> = {};
+      (data || []).forEach((r: any) => {
+        const display = getSportDisplay(r.sport);
+        counts[display] = (counts[display] || 0) + 1;
+      });
+      return counts;
+    },
+    staleTime: 60000,
+  });
+
+  // Default to NCAAB when it has games but NBA doesn't
+  useEffect(() => {
+    if (sportCounts && !sportCounts['NBA'] && sportCounts['NCAAB'] && selectedSport === 'ALL') {
+      setSelectedSport('NCAAB');
+    }
+  }, [sportCounts]);
 
   // Fetch team bets (upcoming)
   const { data: bets, refetch, isLoading } = useQuery({
