@@ -1,55 +1,38 @@
 
-# Fix Baseball Parlay Generation + Clean Up NCAAB Player Prop Parlays
 
-## Problem 1: No Baseball Parlays Generated
-The synthetic baseball test data in `game_bets` has `commence_time` set to **Feb 15**, not today (Feb 13). The bot's query filters team bets to today's UTC window (`startUtc` to `endUtc`), so baseball picks are invisible to the generator.
+# Fix NCAA Baseball: Replace Synthetic Data with Real Games from The Odds API
 
-**Fix**: Update the `commence_time` on all 8 baseball test records to today's date so they fall within the bot's daily window. Then regenerate parlays.
+## The Problem
+The `game_bets` table currently contains **synthetic test data** for baseball (LSU vs Georgia, Vanderbilt vs Fresno State, Florida vs Oregon) that doesn't match the **real games today** (Wright State vs #15 Georgia, Washington vs #17 NC State, #23 Vanderbilt vs #10 TCU, #18 Kentucky, etc. as shown in the screenshot).
 
-## Problem 2: NCAAB Player Prop Parlays Polluting P&L
-Old parlays from Feb 9-11 contain NCAAB player props (Carson Cooper, Coen Carr, John Blackwell, Jaxon Kohler - all `basketball_ncaab` players). Many are marked `void` or `lost`, which inflates the loss count in the P&L calendar and dashboard.
-
-**Fix**: Delete all `bot_daily_parlays` records that contain NCAAB player prop legs. These can be identified by checking if any leg has a `player_name` set AND `sport = basketball_ncaab` in the legs JSON.
+The `whale-odds-scraper` function already supports `baseball_ncaa` and fetches from The Odds API -- it just needs to be triggered to pull today's real games. However, the `track-odds-movement` function has a bug: it receives `baseball_ncaa` from the orchestrator but silently skips it because `baseball_ncaa` is missing from its `SPORT_KEYS` map.
 
 ## Steps
 
-1. **Delete all parlays containing NCAAB player props** from `bot_daily_parlays` (any date). This cleans the P&L history.
+### 1. Fix `track-odds-movement` SPORT_KEYS mapping
+Add the missing `baseball_ncaa` entry so the orchestrator's calls actually process baseball odds movements:
 
-2. **Update baseball test data** - change `commence_time` on the 8 `baseball_ncaa` records in `game_bets` to today (Feb 13) so the bot can pick them up.
-
-3. **Clear today's parlays** from `bot_daily_parlays` (the 5 NCAAB-only team bet parlays) to allow a fresh generation that includes baseball.
-
-4. **Regenerate today's parlays** - trigger `bot-generate-daily-parlays` to produce a new batch that should now include baseball profiles alongside NCAAB team bets.
-
-## Technical Details
-
-### SQL: Remove NCAAB player prop parlays
-```sql
-DELETE FROM bot_daily_parlays 
-WHERE id IN (
-  SELECT id FROM bot_daily_parlays 
-  WHERE EXISTS (
-    SELECT 1 FROM jsonb_array_elements(legs) AS leg 
-    WHERE leg->>'sport' = 'basketball_ncaab' 
-    AND leg->>'player_name' IS NOT NULL
-  )
-);
+```
+const SPORT_KEYS = {
+  'NBA': 'basketball_nba',
+  'NFL': 'americanfootball_nfl',
+  'NCAAF': 'americanfootball_ncaaf',
+  'NCAAB': 'basketball_ncaab',
+  'NHL': 'icehockey_nhl',
+  'MLB': 'baseball_mlb',
+  'BASEBALL': 'baseball_ncaa',   // <-- add this
+};
 ```
 
-### SQL: Fix baseball commence times
-```sql
-UPDATE game_bets 
-SET commence_time = '2026-02-13T19:00:00Z' 
-WHERE sport = 'baseball_ncaa' AND home_team = 'LSU Tigers';
+### 2. Delete the synthetic baseball test data
+Remove the 8 fake `baseball_ncaa` rows from `game_bets` so they don't conflict with or duplicate real data.
 
-UPDATE game_bets 
-SET commence_time = '2026-02-13T21:00:00Z' 
-WHERE sport = 'baseball_ncaa' AND home_team = 'Vanderbilt Commodores';
+### 3. Run `whale-odds-scraper` to fetch real games
+Trigger the scraper in full mode for `baseball_ncaa`. This will call The Odds API at `https://api.the-odds-api.com/v4/sports/baseball_ncaa/odds/` and upsert today's real matchups (Wright State vs Georgia, Washington vs NC State, Vanderbilt vs TCU, Kentucky, etc.) into `game_bets` with actual spreads, totals, and moneylines.
 
-UPDATE game_bets 
-SET commence_time = '2026-02-13T23:00:00Z' 
-WHERE sport = 'baseball_ncaa' AND home_team = 'Florida Gators';
-```
+### 4. Regenerate today's parlays
+Clear today's existing parlays and re-trigger `bot-generate-daily-parlays` so the new real baseball data flows into parlay generation.
 
-### Regeneration
-Delete today's 5 parlays, then trigger `bot-generate-daily-parlays` to rebuild with baseball included.
+### 5. Verify
+Confirm the `game_bets` table now contains the real NCAA baseball matchups matching what the user sees in the screenshot.
+
