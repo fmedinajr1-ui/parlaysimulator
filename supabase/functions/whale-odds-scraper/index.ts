@@ -10,7 +10,7 @@ const corsHeaders = {
 // Tier 1: Always fetch (best historical data)
 const TIER_1_SPORTS = ['basketball_nba', 'icehockey_nhl'];
 // Tier 2: Fetch if games exist (seasonal)
-const TIER_2_SPORTS = ['basketball_wnba', 'basketball_ncaab'];
+const TIER_2_SPORTS = ['basketball_wnba', 'basketball_ncaab', 'baseball_ncaa'];
 // Tier 3: Skip for now (offseason / low volume)
 // NFL, NCAAF, Tennis - not fetched to save API budget
 
@@ -31,6 +31,9 @@ const PLAYER_MARKET_BATCHES: Record<string, string[][]> = {
   'icehockey_nhl': [
     ['player_points', 'player_assists', 'player_goals'],
     ['player_shots_on_goal', 'player_saves'],
+  ],
+  'baseball_ncaa': [
+    ['batter_hits', 'batter_rbis', 'batter_runs_scored', 'batter_total_bases'],
   ],
 };
 
