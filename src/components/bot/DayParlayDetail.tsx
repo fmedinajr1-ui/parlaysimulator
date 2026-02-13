@@ -149,6 +149,11 @@ export function DayParlayDetail({ date, open, onOpenChange }: DayParlayDetailPro
                         {parlay.outcome || 'pending'}
                       </Badge>
                       <span className="text-xs text-muted-foreground">{parlay.leg_count}L</span>
+                      {parlay.created_at && (
+                        <span className="text-[10px] text-muted-foreground">
+                          {format(parseISO(parlay.created_at), 'h:mm a')}
+                        </span>
+                      )}
                     </div>
                     <span className={cn(
                       'text-xs font-medium',
@@ -180,8 +185,10 @@ export function DayParlayDetail({ date, open, onOpenChange }: DayParlayDetailPro
                             <span className="truncate">{name}</span>
                             <span className="text-muted-foreground shrink-0">
                               {isTeam
-                                ? `${(leg.bet_type || 'spread')} ${leg.line || 0}`
-                                : `${leg.prop_type || ''} ${(leg.side || 'O').charAt(0).toUpperCase()} ${leg.line || 0}`}
+                                ? leg.bet_type === 'total'
+                                  ? <>{leg.bet_type} <span className={(leg.side ?? 'over') === 'over' ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'}>{(leg.side ?? 'over').toUpperCase()}</span> {leg.line || 0}</>
+                                  : `${(leg.bet_type || 'spread')} ${leg.line || 0}`
+                                : <>{leg.prop_type || ''} <span className={(leg.side ?? 'over') === 'over' ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'}>{(leg.side || 'O').charAt(0).toUpperCase() === 'O' ? 'OVER' : 'UNDER'}</span> {leg.line || 0}</>}
                             </span>
                           </div>
                           {leg.actual_value != null && (
