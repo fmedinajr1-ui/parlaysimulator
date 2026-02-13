@@ -6032,6 +6032,117 @@ export type Database = {
         }
         Relationships: []
       }
+      ncaa_baseball_player_game_logs: {
+        Row: {
+          at_bats: number | null
+          batting_avg: number | null
+          created_at: string
+          earned_runs: number | null
+          game_date: string
+          hits: number | null
+          home_runs: number | null
+          id: string
+          innings_pitched: number | null
+          is_home: boolean | null
+          opponent: string
+          pitcher_strikeouts: number | null
+          player_name: string
+          rbis: number | null
+          runs: number | null
+          stolen_bases: number | null
+          strikeouts: number | null
+          team: string
+          walks: number | null
+        }
+        Insert: {
+          at_bats?: number | null
+          batting_avg?: number | null
+          created_at?: string
+          earned_runs?: number | null
+          game_date: string
+          hits?: number | null
+          home_runs?: number | null
+          id?: string
+          innings_pitched?: number | null
+          is_home?: boolean | null
+          opponent: string
+          pitcher_strikeouts?: number | null
+          player_name: string
+          rbis?: number | null
+          runs?: number | null
+          stolen_bases?: number | null
+          strikeouts?: number | null
+          team: string
+          walks?: number | null
+        }
+        Update: {
+          at_bats?: number | null
+          batting_avg?: number | null
+          created_at?: string
+          earned_runs?: number | null
+          game_date?: string
+          hits?: number | null
+          home_runs?: number | null
+          id?: string
+          innings_pitched?: number | null
+          is_home?: boolean | null
+          opponent?: string
+          pitcher_strikeouts?: number | null
+          player_name?: string
+          rbis?: number | null
+          runs?: number | null
+          stolen_bases?: number | null
+          strikeouts?: number | null
+          team?: string
+          walks?: number | null
+        }
+        Relationships: []
+      }
+      ncaa_baseball_team_stats: {
+        Row: {
+          away_record: string | null
+          batting_avg: number | null
+          conference: string | null
+          era: number | null
+          espn_id: string | null
+          home_record: string | null
+          id: string
+          national_rank: number | null
+          runs_allowed_per_game: number | null
+          runs_per_game: number | null
+          team_name: string
+          updated_at: string
+        }
+        Insert: {
+          away_record?: string | null
+          batting_avg?: number | null
+          conference?: string | null
+          era?: number | null
+          espn_id?: string | null
+          home_record?: string | null
+          id?: string
+          national_rank?: number | null
+          runs_allowed_per_game?: number | null
+          runs_per_game?: number | null
+          team_name: string
+          updated_at?: string
+        }
+        Update: {
+          away_record?: string | null
+          batting_avg?: number | null
+          conference?: string | null
+          era?: number | null
+          espn_id?: string | null
+          home_record?: string | null
+          id?: string
+          national_rank?: number | null
+          runs_allowed_per_game?: number | null
+          runs_per_game?: number | null
+          team_name?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       ncaab_player_game_logs: {
         Row: {
           assists: number | null
