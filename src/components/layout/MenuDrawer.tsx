@@ -6,6 +6,7 @@ import {
   Calculator,
   Shield,
   Users,
+  Target,
   ChevronRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -15,6 +16,10 @@ import { Separator } from "@/components/ui/separator";
 import { usePilotUser } from "@/hooks/usePilotUser";
 import { useViewport } from "@/hooks/useViewport";
 
+
+const menuItems = [
+  { icon: Target, label: "Team Bets", path: "/team-bets", description: "NCAAB spreads, totals & ML" },
+];
 
 const adminItems = [
   { icon: Activity, label: "All-Sports Tracker", path: "/tracker", description: "Real-time picks from all engines" },
@@ -118,6 +123,39 @@ export function MenuDrawer() {
         </SheetHeader>
         
         <div className="flex flex-col py-2">
+          {/* Main Menu Items */}
+          <div className={cn("px-3", isMobileCompact ? "py-1" : "py-2")}>
+            {menuItems.map((item) => (
+              <Link
+                key={item.path}
+                to={item.path}
+                onClick={() => setOpen(false)}
+                className={cn(
+                  "flex items-center gap-3 px-3 rounded-lg transition-colors",
+                  "hover:bg-muted/50 active:bg-muted",
+                  isActive(item.path) && "bg-primary/10 text-primary",
+                  isMobileCompact ? "py-2" : "py-3"
+                )}
+              >
+                <item.icon className={cn(
+                  isMobileCompact ? "w-4 h-4" : "w-5 h-5",
+                  isActive(item.path) ? "text-primary" : "text-muted-foreground"
+                )} />
+                <div className="flex-1">
+                  <p className={cn(
+                    "text-sm font-medium",
+                    isActive(item.path) && "text-primary"
+                  )}>
+                    {item.label}
+                  </p>
+                  {!isMobileCompact && (
+                    <p className="text-xs text-muted-foreground">{item.description}</p>
+                  )}
+                </div>
+                <ChevronRight className="w-4 h-4 text-muted-foreground/50" />
+              </Link>
+            ))}
+          </div>
 
           {/* Admin Section */}
           {isAdmin && (
