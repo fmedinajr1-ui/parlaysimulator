@@ -44,8 +44,9 @@ function getPickDescription(bet: GameBet): { label: string; detail: string } {
 
   if (bet.bet_type === 'total') {
     const line = bet.line !== null ? bet.line : '';
+    const direction = side === 'OVER' ? 'Over' : 'Under';
     const odds = side === 'OVER' ? formatOdds(bet.over_odds) : formatOdds(bet.under_odds);
-    return { label: `Take ${side} ${line}`, detail: odds };
+    return { label: `Take ${direction} ${line}`, detail: odds };
   }
 
   if (bet.bet_type === 'h2h') {

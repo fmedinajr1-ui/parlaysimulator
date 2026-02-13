@@ -408,6 +408,54 @@ function parseRecord(record: string | null): { wins: number; losses: number; rat
   return { wins, losses, rate: total > 0 ? wins / total : 0.5 };
 }
 
+// NCAAB team name normalization for abbreviation mismatches
+const NCAAB_NAME_MAP: Record<string, string> = {
+  'Michigan St': 'Michigan State', 'Michigan St Spartans': 'Michigan State Spartans',
+  'Ohio St': 'Ohio State', 'Ohio St Buckeyes': 'Ohio State Buckeyes',
+  'Penn St': 'Penn State', 'Penn St Nittany Lions': 'Penn State Nittany Lions',
+  'Oklahoma St': 'Oklahoma State', 'Oklahoma St Cowboys': 'Oklahoma State Cowboys',
+  'Iowa St': 'Iowa State', 'Iowa St Cyclones': 'Iowa State Cyclones',
+  'Kansas St': 'Kansas State', 'Kansas St Wildcats': 'Kansas State Wildcats',
+  'Boise St': 'Boise State', 'Boise St Broncos': 'Boise State Broncos',
+  'San Diego St': 'San Diego State', 'San Diego St Aztecs': 'San Diego State Aztecs',
+  'Colorado St': 'Colorado State', 'Colorado St Rams': 'Colorado State Rams',
+  'Fresno St': 'Fresno State', 'Fresno St Bulldogs': 'Fresno State Bulldogs',
+  'Arizona St': 'Arizona State', 'Arizona St Sun Devils': 'Arizona State Sun Devils',
+  'Oregon St': 'Oregon State', 'Oregon St Beavers': 'Oregon State Beavers',
+  'Washington St': 'Washington State', 'Washington St Cougars': 'Washington State Cougars',
+  'Miss St': 'Mississippi State', 'Miss St Bulldogs': 'Mississippi State Bulldogs',
+  'UConn': 'Connecticut', 'UConn Huskies': 'Connecticut Huskies',
+  'UNC': 'North Carolina', 'UNC Tar Heels': 'North Carolina Tar Heels',
+  'SMU': 'SMU Mustangs',
+  'UCF': 'UCF Knights',
+  'UNLV': 'UNLV Rebels',
+  'USC': 'USC Trojans',
+  'LSU': 'LSU Tigers',
+  'BYU': 'BYU Cougars',
+};
+
+function resolveNcaabTeam(teamName: string, statsMap: Map<string, NcaabTeamStats>): NcaabTeamStats | undefined {
+  // Direct match
+  let stats = statsMap.get(teamName);
+  if (stats) return stats;
+  // Try mapped name
+  const mapped = NCAAB_NAME_MAP[teamName];
+  if (mapped) { stats = statsMap.get(mapped); if (stats) return stats; }
+  // Fuzzy: try matching on last word (mascot) or first word
+  for (const [key, val] of statsMap) {
+    if (key.includes(teamName) || teamName.includes(key)) return val;
+    // Match mascot: "Spartans" in both
+    const teamMascot = teamName.split(' ').pop()?.toLowerCase();
+    const statMascot = key.split(' ').pop()?.toLowerCase();
+    if (teamMascot && statMascot && teamMascot === statMascot && teamMascot.length > 3) {
+      // Confirm first word also partially matches
+      const teamFirst = teamName.split(' ')[0].toLowerCase();
+      if (key.toLowerCase().includes(teamFirst)) return val;
+    }
+  }
+  return undefined;
+}
+
 // NCAAB-specific composite scoring using KenPom-style data
 function calculateNcaabTeamCompositeScore(
   game: TeamProp,
@@ -418,8 +466,8 @@ function calculateNcaabTeamCompositeScore(
   let score = 50;
   const breakdown: Record<string, number> = { base: 50 };
 
-  const homeStats = ncaabStatsMap.get(game.home_team);
-  const awayStats = ncaabStatsMap.get(game.away_team);
+  const homeStats = resolveNcaabTeam(game.home_team, ncaabStatsMap);
+  const awayStats = resolveNcaabTeam(game.away_team, ncaabStatsMap);
 
   // If no NCAAB data available, return flat score
   if (!homeStats && !awayStats) {
