@@ -1,64 +1,66 @@
 
+# Fix: Game Log Backfill Missing Most Players
 
-# Shift NCAAB Strategy: Totals and Spreads Over Moneylines
+## Root Cause
 
-## Why
+The `backfill-player-stats` function is only capturing a fraction of NBA games. On Feb 12, it ingested just **3 of ~8+ games** (70 players), completely missing stars like Jokic, Wembanyama, SGA, Luka, KAT, and Anthony Edwards. This caused `verify-sweet-spot-outcomes` to mark **247 of 300 picks as `no_data`** instead of grading them.
 
-Yesterday's data was clear:
-- NCAAB ML Favorites: **0/12 (0%)**
-- NCAAB Totals: **100% hit rate**
-- NCAAB Spreads: **43% hit rate**
-- NCAAB Underdogs: **71% hit rate**
+Two bugs in `backfill-player-stats/index.ts` cause this:
 
-College moneyline favorites -- especially outside the Top 50 -- are unreliable. Totals are the most predictable bet type in college basketball because tempo is measurable. Spreads with large efficiency gaps also carry edge.
+1. **Line 49: `event.status?.type?.completed !== true`** -- The ESPN scoreboard API requires the game to be marked "completed" at the moment of fetch. If the backfill runs while games are still in progress (or shortly after, before ESPN updates), those games are permanently skipped. Later backfill runs won't revisit them because ESPN may return a different scoreboard state.
 
-## Changes to `bot-generate-daily-parlays/index.ts`
+2. **ESPN scoreboard pagination** -- The ESPN API endpoint `/scoreboard?dates=YYYYMMDD` sometimes omits late-night games (West Coast tip-offs finishing after midnight ET) or returns a partial list. The function does not verify game count against known schedule data.
 
-### Exploration Tier (lines 81-97)
+## Fix Plan
 
-**Before:** 5 generic NCAAB profiles + 6 ML-heavy team profiles
-**After:** Rebalance to favor totals/spreads, reduce pure ML exposure
+### Change 1: Remove the `completed` gate and handle in-progress gracefully
 
-| Profile | Before | After |
-|---------|--------|-------|
-| `ncaab_safe` (generic) | 2 | 0 (replaced with totals-focused) |
-| `ncaab_totals` | 0 | 3 (new) |
-| `ncaab_spreads` | 0 | 2 (new) |
-| `team_ml` (pure ML) | 4 | 1 |
-| `team_ml_cross` (ML cross-sport) | 2 | 1 |
-| `team_totals` | 2 | 4 |
-| `team_spreads` | 0 | 2 (new) |
+In `backfill-player-stats/index.ts`, change the game filter from requiring `completed === true` to accepting any game that has boxscore data available. ESPN boxscores contain stats even for in-progress games. We still skip games that are truly "scheduled" (not started).
 
-### Validation Tier (lines 140-141)
+```
+Before (line 49):
+  if (event.status?.type?.completed !== true) continue;
 
-**Before:** 2 generic `validated_ncaab` profiles
-**After:** Split into 1 totals-focused + 1 spreads-focused, both requiring composite score 62+
+After:
+  const state = event.status?.type?.state;
+  if (state === 'pre') continue; // Skip games that haven't started
+  // Accept 'in' (in-progress) and 'post' (completed) games
+```
 
-### Execution Tier (lines 193-195)
+This ensures late-finishing games are captured on the next cron cycle even if they weren't "completed" during the first run.
 
-**Before:** 1 `ncaab_ml_lock` (moneyline) + 1 `ncaab_totals`
-**After:** Remove `ncaab_ml_lock` entirely, replace with:
-- 2x `ncaab_totals` (tempo-driven, most reliable)
-- 1x `ncaab_spreads` (efficiency-gap driven, Top 100 only)
+### Change 2: Add a retry pass for missed dates
 
-### Safety Gate: Block NCAAB ML Favorites Ranked 150+
+After the primary ESPN fetch, add a secondary check: query `category_sweet_spots` for `no_data` picks whose players are still missing from `nba_player_game_logs`. For each missing player's game date, re-fetch that date's ESPN scoreboard. This acts as a self-healing mechanism.
 
-Add a filter in the team leg selection logic: when sport is `basketball_ncaab` and bet type is `moneyline` and the team's KenPom rank is outside the Top 150, **reject the leg**. This prevents the bot from blindly backing weak favorites like Binghamton or Maine.
+### Change 3: Use ESPN summary endpoint directly for missing games
 
-### Composite Score Minimum for NCAAB
+When the scoreboard returns fewer games than expected, fall back to fetching individual game summaries by looking up event IDs from `live_game_scores` or the schedule endpoint. This ensures West Coast late games are never permanently lost.
 
-Raise the minimum composite score for NCAAB team legs from 55 to 62 across all tiers. The KenPom scoring engine now produces real differentiated scores, so a higher floor filters out low-confidence noise.
+### Change 4: Fix verify-sweet-spot-outcomes retry behavior
 
-## Summary of Profile Count Changes
+Currently, the 13:01 cron run re-graded already-settled picks as `no_data` (overwriting the 11:00 run's correct results). This is because the query on line 144 includes `no_data` in its filter -- it re-processes picks that were already marked `no_data` by a previous run, but if the game logs haven't been updated since, it just re-marks them `no_data` again.
 
-| Bet Type | Before (all tiers) | After (all tiers) |
-|----------|--------------------|--------------------|
-| NCAAB Moneyline | ~8 profiles | 1 profile (underdog-only, Top 100) |
-| NCAAB Totals | 1 profile | 6 profiles |
-| NCAAB Spreads | 0 profiles | 5 profiles |
-| Generic NCAAB | 7 profiles | 0 profiles |
+Add a guard: skip picks that were already settled with an `actual_value` set, regardless of their `outcome` field. This prevents the second cron run from overwriting valid settlements.
 
-## File Modified
+```
+Before (line 144):
+  .in('outcome', ['pending', 'no_data']);
 
-1. `supabase/functions/bot-generate-daily-parlays/index.ts` -- Profile rebalancing, NCAAB ML safety gate, composite score floor increase
+After:
+  .in('outcome', ['pending', 'no_data'])
+  .is('actual_value', null);
+```
 
+This ensures that once a pick has been verified with real data, subsequent runs won't regress it.
+
+## Files Modified
+
+1. `supabase/functions/backfill-player-stats/index.ts` -- Remove `completed` gate, add retry for missed dates, fall back to direct game summary fetches
+2. `supabase/functions/verify-sweet-spot-outcomes/index.ts` -- Add `actual_value is null` guard to prevent overwriting settled picks
+
+## Expected Impact
+
+- Game log coverage should jump from ~70 players/day to **200-300+ players/day** (full slate)
+- `no_data` rate should drop from **82%** (247/300) to under **5%** (only DNP players)
+- Settlement accuracy for player props will become reliable, correctly grading Clingan, Kuzma, AJ Green and all other picks
