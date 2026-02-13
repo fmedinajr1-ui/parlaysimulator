@@ -1284,7 +1284,7 @@ async function markResearchConsumed(supabase: any, gameDate: string): Promise<vo
   const { error } = await supabase
     .from('bot_research_findings')
     .update({ action_taken: `Applied to generation on ${gameDate}` })
-    .in('category', ['injury_intel', 'statistical_models', 'ncaa_baseball_pitching', 'weather_totals_impact', 'ncaab_kenpom_matchups', 'ncaab_injury_lineups', 'ncaab_sharp_signals'])
+    .in('category', ['injury_intel', 'statistical_models', 'ncaa_baseball_pitching', 'weather_totals_impact', 'ncaab_kenpom_matchups', 'ncaab_injury_lineups', 'ncaab_sharp_signals', 'nba_nhl_sharp_signals', 'value_line_discrepancies', 'situational_spots'])
     .eq('research_date', gameDate)
     .is('action_taken', null);
 
@@ -1440,6 +1440,107 @@ async function fetchResearchNcaabIntel(supabase: any, gameDate: string): Promise
   return { sharpBias, injuryImpact, tempoMismatches };
 }
 
+// === NEW: Fetch NBA/NHL whale signals, value discrepancies, and situational spots ===
+async function fetchResearchWhaleAndSituational(supabase: any, gameDate: string): Promise<{
+  whaleSignals: Map<string, { direction: 'over' | 'under' | 'home' | 'away'; boost: number }>;
+  valueDiscrepancies: Map<string, { direction: 'over' | 'under' | 'home' | 'away'; boost: number }>;
+  situationalSpots: Map<string, { type: string; direction: 'over' | 'under' | 'home' | 'away'; boost: number }>;
+}> {
+  const whaleSignals = new Map<string, { direction: 'over' | 'under' | 'home' | 'away'; boost: number }>();
+  const valueDiscrepancies = new Map<string, { direction: 'over' | 'under' | 'home' | 'away'; boost: number }>();
+  const situationalSpots = new Map<string, { type: string; direction: 'over' | 'under' | 'home' | 'away'; boost: number }>();
+
+  try {
+    const { data: findings } = await supabase
+      .from('bot_research_findings')
+      .select('category, summary, key_insights')
+      .in('category', ['nba_nhl_sharp_signals', 'value_line_discrepancies', 'situational_spots'])
+      .eq('research_date', gameDate)
+      .gte('relevance_score', 0.40);
+
+    if (!findings || findings.length === 0) {
+      console.log(`[ResearchIntel] No whale/value/situational findings for ${gameDate}`);
+      return { whaleSignals, valueDiscrepancies, situationalSpots };
+    }
+
+    for (const f of findings) {
+      const text = f.summary + ' ' + (Array.isArray(f.key_insights) ? f.key_insights.join(' ') : String(f.key_insights || ''));
+
+      if (f.category === 'nba_nhl_sharp_signals') {
+        // Extract sharp/whale signals on overs/unders
+        const overMatches = text.matchAll(/(?:sharp|whale|syndicate|steam)\s*(?:money|action|bettors?)?\s*(?:on|loading|hammering)\s*(?:the\s+)?over\s*(?:in|for|:)?\s*(?:the\s+)?([A-Z][a-z]+(?:\s+(?:vs\.?|at|@|-)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)?)/gi);
+        for (const match of overMatches) {
+          const key = match[1].trim().toLowerCase().split(/\s+/)[0]; // First team name
+          whaleSignals.set(key, { direction: 'over', boost: 8 });
+          console.log(`[ResearchIntel] NBA/NHL whale OVER signal: ${key}`);
+        }
+        const underMatches = text.matchAll(/(?:sharp|whale|syndicate|steam)\s*(?:money|action|bettors?)?\s*(?:on|loading|hammering)\s*(?:the\s+)?under\s*(?:in|for|:)?\s*(?:the\s+)?([A-Z][a-z]+(?:\s+(?:vs\.?|at|@|-)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)?)/gi);
+        for (const match of underMatches) {
+          const key = match[1].trim().toLowerCase().split(/\s+/)[0];
+          whaleSignals.set(key, { direction: 'under', boost: 8 });
+          console.log(`[ResearchIntel] NBA/NHL whale UNDER signal: ${key}`);
+        }
+        // Spread signals
+        const spreadMatches = text.matchAll(/(?:sharp|whale)\s*(?:money|action)?\s*(?:on|loading)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s*(?:[-+]\d)/gi);
+        for (const match of spreadMatches) {
+          const key = match[1].trim().toLowerCase();
+          whaleSignals.set(key, { direction: 'home', boost: 7 }); // Direction refined by context
+        }
+        console.log(`[ResearchIntel] NBA/NHL whale signals: ${whaleSignals.size} detected`);
+      }
+
+      if (f.category === 'value_line_discrepancies') {
+        // Extract value plays: "X-point value on [team]" or "models project [team] by X"
+        const valueMatches = text.matchAll(/(\d+(?:\.\d+)?)[- ]+point\s+(?:value|edge|discrepancy)\s+(?:on|for)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/gi);
+        for (const match of valueMatches) {
+          const gap = parseFloat(match[1]);
+          const team = match[2].trim().toLowerCase();
+          if (gap >= 3) {
+            valueDiscrepancies.set(team, { direction: 'home', boost: Math.min(10, Math.round(gap * 1.5)) });
+            console.log(`[ResearchIntel] Value discrepancy: ${team} (${gap}pt edge) → +${Math.min(10, Math.round(gap * 1.5))} boost`);
+          }
+        }
+        // Total value: "over/under value by X points"
+        const totalValueMatches = text.matchAll(/(?:over|under)\s*(?:value|edge)\s*(?:by\s*)?(\d+(?:\.\d+)?)\s*(?:points?)?\s*(?:in|for|:)?\s*([A-Z][a-z]+(?:\s+(?:vs\.?|at|@)\s+[A-Z][a-z]+)?)/gi);
+        for (const match of totalValueMatches) {
+          const gap = parseFloat(match[1]);
+          const key = match[2].trim().toLowerCase().split(/\s+/)[0];
+          const dir = text.toLowerCase().includes('over') ? 'over' : 'under';
+          if (gap >= 3) {
+            valueDiscrepancies.set(key + '_total', { direction: dir as any, boost: Math.min(9, Math.round(gap * 1.2)) });
+          }
+        }
+        console.log(`[ResearchIntel] Value discrepancies: ${valueDiscrepancies.size} detected`);
+      }
+
+      if (f.category === 'situational_spots') {
+        // Extract situational angles
+        const situations = [
+          { regex: /letdown\s*(?:spot|game).*?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/gi, type: 'letdown', boost: 6, direction: 'away' as const },
+          { regex: /revenge\s*(?:game|spot|matchup).*?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/gi, type: 'revenge', boost: 5, direction: 'home' as const },
+          { regex: /(?:fatigue|tired|exhausted|back-to-back|b2b).*?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/gi, type: 'fatigue', boost: 7, direction: 'away' as const },
+          { regex: /lookahead\s*(?:spot|game).*?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/gi, type: 'lookahead', boost: 6, direction: 'away' as const },
+        ];
+        for (const sit of situations) {
+          const matches = text.matchAll(sit.regex);
+          for (const match of matches) {
+            const team = match[1].trim().toLowerCase();
+            if (team.length > 2 && team.length < 30) {
+              situationalSpots.set(team, { type: sit.type, direction: sit.direction, boost: sit.boost });
+              console.log(`[ResearchIntel] Situational ${sit.type}: ${team} → +${sit.boost} boost for opponent`);
+            }
+          }
+        }
+        console.log(`[ResearchIntel] Situational spots: ${situationalSpots.size} detected`);
+      }
+    }
+  } catch (err) {
+    console.warn(`[ResearchIntel] Error fetching whale/situational research:`, err);
+  }
+
+  return { whaleSignals, valueDiscrepancies, situationalSpots };
+}
+
 // ============= PROP POOL BUILDER =============
 
 async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<string, number>, categoryWeights: CategoryWeight[]): Promise<PropPool> {
@@ -1468,7 +1569,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   const { startUtc, endUtc, gameDate } = getEasternDateRange();
   console.log(`[Bot] ET window: ${startUtc} → ${endUtc} (gameDate: ${gameDate})`);
 
-  const [activePlayersToday, injuryData, teamsPlayingToday, researchBlocklist, researchEdge, weatherBiasMap, ncaabResearch] = await Promise.all([
+  const [activePlayersToday, injuryData, teamsPlayingToday, researchBlocklist, researchEdge, weatherBiasMap, ncaabResearch, whaleAndSituational] = await Promise.all([
     fetchActivePlayersToday(supabase, startUtc, endUtc),
     fetchInjuryBlocklist(supabase, gameDate),
     fetchTeamsPlayingToday(supabase, startUtc, endUtc, gameDate),
@@ -1476,6 +1577,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     fetchResearchEdgeThreshold(supabase),
     fetchResearchPitchingWeather(supabase, gameDate),
     fetchResearchNcaabIntel(supabase, gameDate),
+    fetchResearchWhaleAndSituational(supabase, gameDate),
   ]);
   const { blocklist, penalties } = injuryData;
 
@@ -1802,6 +1904,47 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
 
     // Spread picks
     if (game.bet_type === 'spread' && game.line !== null && game.line !== undefined) {
+      // === Situational & value boosts for spreads ===
+      let homeSpreadBoost = 0;
+      let awaySpreadBoost = 0;
+      const hKey = (game.home_team || '').toLowerCase();
+      const aKey = (game.away_team || '').toLowerCase();
+      
+      // If away team is in a letdown/lookahead/fatigue spot, boost home spread
+      const awaySit = whaleAndSituational.situationalSpots.get(aKey);
+      if (awaySit) {
+        homeSpreadBoost += awaySit.boost;
+        console.log(`[Bot] Situational ${awaySit.type} boost +${awaySit.boost} for ${game.home_team} (${game.away_team} in ${awaySit.type} spot)`);
+      }
+      // If home team is in a letdown/lookahead/fatigue spot, boost away spread
+      const homeSit = whaleAndSituational.situationalSpots.get(hKey);
+      if (homeSit) {
+        awaySpreadBoost += homeSit.boost;
+        console.log(`[Bot] Situational ${homeSit.type} boost +${homeSit.boost} for ${game.away_team} (${game.home_team} in ${homeSit.type} spot)`);
+      }
+      // Value discrepancy boosts for spreads
+      const homeValSpread = whaleAndSituational.valueDiscrepancies.get(hKey);
+      if (homeValSpread && (homeValSpread.direction === 'home')) {
+        homeSpreadBoost += homeValSpread.boost;
+        console.log(`[Bot] Value discrepancy spread boost +${homeValSpread.boost} for ${game.home_team}`);
+      }
+      const awayValSpread = whaleAndSituational.valueDiscrepancies.get(aKey);
+      if (awayValSpread && (awayValSpread.direction === 'away')) {
+        awaySpreadBoost += awayValSpread.boost;
+        console.log(`[Bot] Value discrepancy spread boost +${awayValSpread.boost} for ${game.away_team}`);
+      }
+      // Whale/sharp spread signals
+      const homeWhaleSpread = whaleAndSituational.whaleSignals.get(hKey);
+      if (homeWhaleSpread && homeWhaleSpread.direction === 'home') {
+        homeSpreadBoost += homeWhaleSpread.boost;
+        console.log(`[Bot] Whale spread boost +${homeWhaleSpread.boost} for ${game.home_team}`);
+      }
+      const awayWhaleSpread = whaleAndSituational.whaleSignals.get(aKey);
+      if (awayWhaleSpread && awayWhaleSpread.direction === 'away') {
+        awaySpreadBoost += awayWhaleSpread.boost;
+        console.log(`[Bot] Whale spread boost +${awayWhaleSpread.boost} for ${game.away_team}`);
+      }
+
       if (game.home_odds) {
         const plusBonus = isPlusMoney(game.home_odds) ? 5 : 0;
         const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'spread', 'home', paceMap, defenseMap, envMap, homeCourtMap, ncaabStatsMap);
@@ -1811,7 +1954,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
           bet_type: 'spread', side: 'home', line: game.line, odds: game.home_odds,
           category: mapTeamBetToCategory('spread', 'home'),
           sharp_score: game.sharp_score || 50,
-          compositeScore: clampScore(30, 95, score + plusBonus),
+          compositeScore: clampScore(30, 95, score + plusBonus + homeSpreadBoost),
           confidence_score: score / 100,
           score_breakdown: breakdown,
         });
@@ -1825,7 +1968,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
           bet_type: 'spread', side: 'away', line: -(game.line), odds: game.away_odds,
           category: mapTeamBetToCategory('spread', 'away'),
           sharp_score: game.sharp_score || 50,
-          compositeScore: clampScore(30, 95, score + plusBonus),
+          compositeScore: clampScore(30, 95, score + plusBonus + awaySpreadBoost),
           confidence_score: score / 100,
           score_breakdown: breakdown,
         });
@@ -1877,6 +2020,30 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
           underWeatherBonus += 7;
           console.log(`[Bot] NCAAB sharp under boost +7 for ${game.home_team} vs ${game.away_team}`);
         }
+      }
+
+      // === NEW: Whale/sharp signal boosts for NBA/NHL ===
+      const homeWhale = whaleAndSituational.whaleSignals.get(homeKey);
+      const awayWhale = whaleAndSituational.whaleSignals.get(awayKey);
+      if (homeWhale?.direction === 'over' || awayWhale?.direction === 'over') {
+        overWeatherBonus += 8;
+        console.log(`[Bot] Whale OVER boost +8 for ${game.home_team} vs ${game.away_team}`);
+      }
+      if (homeWhale?.direction === 'under' || awayWhale?.direction === 'under') {
+        underWeatherBonus += 8;
+        console.log(`[Bot] Whale UNDER boost +8 for ${game.home_team} vs ${game.away_team}`);
+      }
+
+      // === NEW: Value line discrepancy boosts ===
+      const homeValue = whaleAndSituational.valueDiscrepancies.get(homeKey + '_total') || whaleAndSituational.valueDiscrepancies.get(homeKey);
+      const awayValue = whaleAndSituational.valueDiscrepancies.get(awayKey + '_total') || whaleAndSituational.valueDiscrepancies.get(awayKey);
+      if (homeValue?.direction === 'over' || awayValue?.direction === 'over') {
+        overWeatherBonus += (homeValue?.boost || awayValue?.boost || 6);
+        console.log(`[Bot] Value discrepancy OVER boost for ${game.home_team} vs ${game.away_team}`);
+      }
+      if (homeValue?.direction === 'under' || awayValue?.direction === 'under') {
+        underWeatherBonus += (homeValue?.boost || awayValue?.boost || 6);
+        console.log(`[Bot] Value discrepancy UNDER boost for ${game.home_team} vs ${game.away_team}`);
       }
 
       picks.push({

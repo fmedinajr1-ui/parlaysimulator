@@ -10,6 +10,9 @@
  * 6. NCAAB KenPom matchups & tempo analysis
  * 7. NCAAB injury & lineup intel
  * 8. NCAAB sharp money & line movement
+ * 9. NBA/NHL sharp money & whale alerts (NEW)
+ * 10. Value line discrepancies — consensus models vs books (NEW)
+ * 11. Situational spots — letdown, revenge, travel fatigue (NEW)
  * 
  * Stores findings in bot_research_findings table and sends Telegram digest.
  * Runs daily via cron.
@@ -62,6 +65,24 @@ const RESEARCH_QUERIES = [
     category: 'ncaab_sharp_signals',
     query: "What are today's sharpest NCAA college basketball betting signals? Include significant line movements (3+ points), reverse line movement, steam moves, and where professional bettors are loading. Which NCAAB spreads and totals have the most lopsided sharp action? Are there any contrarian plays where the public is heavily on one side but sharps are on the other?",
     systemPrompt: 'You are a sports betting market analyst specializing in college basketball. Focus on quantifiable sharp signals: opening vs current lines, handle percentages, ticket splits, and steam move timestamps. Distinguish between sharp money and public money. Cite specific line movements and percentages.',
+  },
+  // === NEW: NBA/NHL Whale Watching & Sharp Money ===
+  {
+    category: 'nba_nhl_sharp_signals',
+    query: "What are today's sharpest NBA and NHL betting signals? Include: 1) Significant line movements (1.5+ points for spreads, 3+ for totals), 2) Reverse line movement where the line moves opposite of ticket percentages, 3) Steam moves on specific player props (points, assists, rebounds, shots, saves), 4) Where professional/whale bettors are loading heaviest, 5) Any props where books have moved the line 1+ point since open. Focus on tonight's games only.",
+    systemPrompt: 'You are an elite sports betting market analyst who tracks whale money and sharp action in NBA and NHL. Provide specific: player names, prop types, opening vs current lines, direction of movement, and ticket vs money splits. Quantify everything — e.g., "LeBron PTS opened at 25.5, now 27.5 with 70% money on UNDER despite 60% tickets on OVER." Flag steam moves with timestamps when available. Distinguish between sharp syndicate action and public squares.',
+  },
+  // === NEW: Value Line Discrepancies — Consensus Models vs Books ===
+  {
+    category: 'value_line_discrepancies',
+    query: "Which NBA, NHL, and NCAAB games today have the biggest discrepancies between consensus model projections (ESPN BPI, KenPom, FiveThirtyEight, Sagarin, Massey, numberFire) and current sportsbook lines? Look for: 1) Spreads where models disagree with books by 3+ points, 2) Totals where projections differ by 5+ points from the posted line, 3) Moneyline odds where implied probability diverges 10%+ from model predictions. Include specific numbers for each discrepancy.",
+    systemPrompt: 'You are a quantitative betting analyst who compares public consensus models against sportsbook lines. For each discrepancy: cite the model name, its projection, the current book line, and the gap. Rank discrepancies by magnitude. E.g., "KenPom projects Duke 78 vs UNC 72 (Duke -6), but books have Duke -2.5 = 3.5-point value on Duke." Focus on actionable value plays with the highest edge.',
+  },
+  // === NEW: Situational Spots — Letdown, Revenge, Travel, Lookahead ===
+  {
+    category: 'situational_spots',
+    query: "What are today's strongest situational betting angles for NBA, NHL, and NCAAB? Look for: 1) LETDOWN spots — teams coming off big emotional wins (rivalries, buzzer beaters, upsets) now facing lesser opponents, 2) REVENGE games — teams facing an opponent that beat them earlier this season, especially by a large margin, 3) TRAVEL/FATIGUE — teams on 3+ game road trips, back-to-backs, or 3-in-4-nights, especially crossing time zones, 4) LOOKAHEAD — teams with a marquee matchup in 2 days who may overlook tonight's opponent, 5) SCHEDULING — any team playing their 4th game in 6 days.",
+    systemPrompt: 'You are a sports betting situational analyst. For each spot: name the teams, cite the specific situation (e.g., "Lakers won a buzzer-beater vs Celtics last night, now face Hornets"), quantify the historical ATS record for that situation type (e.g., "NBA teams in letdown spots are 42-58 ATS historically"), and recommend spread/total/ML direction. Focus on spots with the strongest historical edge. Be specific about game times and whether the team is home or away.',
   },
 ];
 
@@ -159,6 +180,9 @@ Deno.serve(async (req) => {
           ncaab_kenpom_matchups: 'NCAAB KenPom Matchup Analysis',
           ncaab_injury_lineups: 'NCAAB Injury & Lineup Intel',
           ncaab_sharp_signals: 'NCAAB Sharp Money Signals',
+          nba_nhl_sharp_signals: 'NBA/NHL Whale & Sharp Signals',
+          value_line_discrepancies: 'Value Line Discrepancies',
+          situational_spots: 'Situational Betting Spots',
         };
 
         findings.push({
@@ -221,7 +245,10 @@ Deno.serve(async (req) => {
                     f.category === 'weather_totals_impact' ? '🌬️' :
                     f.category === 'ncaab_kenpom_matchups' ? '🎓' :
                     f.category === 'ncaab_injury_lineups' ? '🏀' :
-                    f.category === 'ncaab_sharp_signals' ? '💰' : '🏥';
+                    f.category === 'ncaab_sharp_signals' ? '💰' :
+                    f.category === 'nba_nhl_sharp_signals' ? '🐋' :
+                    f.category === 'value_line_discrepancies' ? '📐' :
+                    f.category === 'situational_spots' ? '🎯' : '🏥';
       const score = f.relevance_score >= 0.65 ? '🟢' : f.relevance_score >= 0.40 ? '🟡' : '🔴';
       
       digestMessage += `${emoji} *${f.title}* ${score}\n`;
