@@ -180,11 +180,31 @@ export function UnifiedParlayCard({ parlay }: UnifiedParlayCardProps) {
           </div>
         )}
         
-        {/* Collapsible Leg Details */}
+        {/* Compact Leg Summary (always visible) */}
+        <div className="space-y-0.5">
+          {parlay.legs.map((leg, idx) => (
+            <div key={idx} className="flex items-center justify-between text-xs px-1">
+              <span className="truncate text-muted-foreground">
+                {leg.playerName ?? 'Unknown'} – {leg.propType ?? 'Prop'}
+              </span>
+              <Badge 
+                variant="outline" 
+                className={cn(
+                  "text-[10px] px-1.5 shrink-0 ml-1",
+                  leg.side === 'over' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
+                )}
+              >
+                {leg.side.toUpperCase()} {leg.line}
+              </Badge>
+            </div>
+          ))}
+        </div>
+
+        {/* Collapsible Leg Details (full info) */}
         <Collapsible open={isOpen} onOpenChange={setIsOpen}>
           <CollapsibleTrigger asChild>
             <Button variant="ghost" size="sm" className="w-full justify-between h-8 text-xs">
-              <span>View Legs</span>
+              <span>Details</span>
               {isOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
             </Button>
           </CollapsibleTrigger>
