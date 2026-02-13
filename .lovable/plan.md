@@ -1,47 +1,55 @@
 
+# Smarter Team Moneyline Strategy
 
-# Add Timestamps and Over/Under Labels to Bot Parlays
+## The Problem
+Team moneyline parlays are currently **0-8** (with 2 voids). The losses come from:
+- Picking obscure NCAAB teams (IUPUI, Binghamton, Maine) that lack reliable data
+- Mixing too many ML legs together (3-4 ML picks per parlay = very low combined probability)
+- No odds-value filtering -- heavy favorites offer low value, underdogs bust too often
+- Composite scores not being enforced strongly enough (current floor is rank 150)
 
-## What Changes
+## The Solution: "ML Sniper" Approach
 
-1. **Creation timestamp on each parlay card** -- shows the time the parlay was generated (e.g., "2:34 PM") next to the date
-2. **Explicit OVER / UNDER label on totals legs** -- totals legs will clearly display "OVER" or "UNDER" with color coding so it's immediately obvious which side was picked
+Instead of removing moneyline entirely, restructure it to be surgical:
 
-## How It Works
+### Change 1: Restrict ML to Top-Tier Teams Only
+- Tighten the NCAAB ML gate from rank 150 to **rank 50** -- only allow Top 50 KenPom teams on moneyline
+- For NBA, require the team to be a home favorite with odds between -110 and -300 (sweet spot -- not too heavy, not a coin flip)
 
-### Timestamp Display
-Each BotParlayCard header already shows the date (e.g., "Feb 13"). It will now also show the creation time (e.g., "Feb 13 2:34 PM") pulled from the `created_at` column that already exists in the database.
+### Change 2: Limit ML Legs Per Parlay to 1
+- Never build a pure 3-leg ML parlay again -- those are the ones going 0-8
+- Instead, allow **at most 1 ML leg** mixed into spread/total parlays as a "confidence anchor"
+- This keeps ML exposure while preventing compound failure
 
-### Totals Over/Under
-Team total legs currently show something like `Total 220.5`. They will now show `Total OVER 220.5` or `Total UNDER 220.5` with green (over) or red (under) color styling to match the rest of the app's conventions.
+### Change 3: Add Odds-Value Gate
+- Block ML picks with implied probability above 85% (too much juice, not enough value)
+- Block ML underdogs with implied probability below 30% (too risky for parlays)
+- Sweet spot: 35-75% implied probability range
 
----
+### Change 4: Replace Pure ML Profiles with Hybrid Profiles
+- Remove the dedicated `team_ml` and `team_ml_cross` profiles from exploration tier
+- Replace with `team_hybrid` profiles that mix 1 ML leg + 2 spread/total legs
+- Keep the cross-sport concept but enforce the 1-ML-max rule
 
 ## Technical Details
 
-### File 1: `src/hooks/useBotEngine.ts`
+### File: `supabase/functions/bot-generate-daily-parlays/index.ts`
 
-Add `created_at` to the `BotParlay` interface (around line 50):
+**Profile changes (lines 94, 102):**
+- Replace `team_ml` profile with `team_hybrid` that has `betTypes: ['moneyline', 'spread', 'total']` and a new `maxMlLegs: 1` constraint
+- Replace `team_ml_cross` with `team_hybrid_cross` using the same `maxMlLegs: 1` rule
 
-```typescript
-export interface BotParlay {
-  id: string;
-  parlay_date: string;
-  created_at?: string;  // <-- NEW
-  legs: BotLeg[];
-  // ...rest unchanged
-}
-```
+**NCAAB ML gate (lines 1947-1956):**
+- Tighten rank gate from 150 to 50
+- Add odds range filter: block picks outside -110 to -300 for favorites, +150 to +350 for underdogs
 
-### File 2: `src/components/bot/BotParlayCard.tsx`
+**NBA ML filter (new, near line 1960):**
+- Add NBA-specific gate: only allow home favorites between -110 and -300
+- Block all NBA road ML picks (away ML is historically volatile)
 
-**Timestamp in header** (around line 88-90):
-- Parse `parlay.created_at` with `parseISO` and format as `'MMM d h:mm a'` (e.g., "Feb 13 2:34 PM")
-- Replace the existing date-only display with this timestamp
-- Falls back to date-only if `created_at` is missing
+**Parlay assembly (near line 2060):**
+- For `team_hybrid` and `team_hybrid_cross` profiles, add logic to cap ML legs at 1 per parlay
+- Sort candidates so the highest-composite ML pick is selected first, then fill remaining legs with spreads/totals
 
-**Totals leg label** (around line 126):
-- For team legs where `bet_type === 'total'`, the side value (`over`/`under`) is already being shown via `.toUpperCase()` but it's embedded in a muted color span
-- Add color coding: green for OVER, red for UNDER on the side label specifically
-- Ensure the format reads clearly as: `TeamA vs TeamB  Total OVER 220.5`
-
+**Composite score floor for ML:**
+- Raise minimum composite score for moneyline picks from 62 to **70** -- only the strongest ML signals get through
