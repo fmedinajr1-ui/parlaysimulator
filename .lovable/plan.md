@@ -1,93 +1,64 @@
 
-# Enhance NCAAB Team Prop Accuracy
 
-## The Problem
+# Shift NCAAB Strategy: Totals and Spreads Over Moneylines
 
-Right now NCAAB team props are essentially random picks. Here is what the data shows:
+## Why
 
-- **519 NCAAB game bets** in the system, but **zero have been settled** (no outcomes tracked)
-- **0 rows** in the NCAAB team stats table (KenPom efficiency/tempo data is missing)
-- Every NCAAB team pick gets a **flat composite score of 55** because there is no college-specific intelligence
-- Winning parlays with NCAAB legs show `no_data` for those legs, meaning they cannot be verified
+Yesterday's data was clear:
+- NCAAB ML Favorites: **0/12 (0%)**
+- NCAAB Totals: **100% hit rate**
+- NCAAB Spreads: **43% hit rate**
+- NCAAB Underdogs: **71% hit rate**
 
-Meanwhile, winning bot strategies like `cross_sport` and `team_all` already include NCAAB legs -- they just lack the data to score them properly.
+College moneyline favorites -- especially outside the Top 50 -- are unreliable. Totals are the most predictable bet type in college basketball because tempo is measurable. Spreads with large efficiency gaps also carry edge.
 
-## The Fix: 3 Components
+## Changes to `bot-generate-daily-parlays/index.ts`
 
-### 1. Populate NCAAB Team Intelligence (KenPom-Style Data)
+### Exploration Tier (lines 81-97)
 
-Create a new backend function `ncaab-team-stats-fetcher` that scrapes or fetches college basketball team efficiency data and populates the existing `ncaab_team_stats` table with:
+**Before:** 5 generic NCAAB profiles + 6 ML-heavy team profiles
+**After:** Rebalance to favor totals/spreads, reduce pure ML exposure
 
-- **Adjusted Offense/Defense** ratings (the most predictive college basketball metrics)
-- **Adjusted Tempo** (critical for totals -- college game pace varies wildly, from 60 to 75+ possessions)
-- **Conference**, **Home/Away records**, **ATS record**, **Over/Under record**
-- **KenPom Rank** (overall team quality tier)
+| Profile | Before | After |
+|---------|--------|-------|
+| `ncaab_safe` (generic) | 2 | 0 (replaced with totals-focused) |
+| `ncaab_totals` | 0 | 3 (new) |
+| `ncaab_spreads` | 0 | 2 (new) |
+| `team_ml` (pure ML) | 4 | 1 |
+| `team_ml_cross` (ML cross-sport) | 2 | 1 |
+| `team_totals` | 2 | 4 |
+| `team_spreads` | 0 | 2 (new) |
 
-This data feeds directly into the composite scoring engine.
+### Validation Tier (lines 140-141)
 
-### 2. NCAAB-Aware Composite Scoring
+**Before:** 2 generic `validated_ncaab` profiles
+**After:** Split into 1 totals-focused + 1 spreads-focused, both requiring composite score 62+
 
-Upgrade `calculateTeamCompositeScore` in the parlay generator to use NCAAB-specific logic when the sport is college basketball:
+### Execution Tier (lines 193-195)
 
-- **KenPom efficiency differential** for spreads and moneylines (adj_offense - adj_defense gap between teams)
-- **Tempo-based total scoring** using college-specific pace thresholds (college games average ~67 possessions vs NBA's ~100)
-- **Conference matchup context** (conference games are tighter, non-conference early season is more volatile)
-- **ATS/O-U record weighting** from historical team performance
-- **Rank-based tier filtering** (Top 50 KenPom teams are far more predictable than 200+)
+**Before:** 1 `ncaab_ml_lock` (moneyline) + 1 `ncaab_totals`
+**After:** Remove `ncaab_ml_lock` entirely, replace with:
+- 2x `ncaab_totals` (tempo-driven, most reliable)
+- 1x `ncaab_spreads` (efficiency-gap driven, Top 100 only)
 
-### 3. NCAAB Settlement via ESPN Scores
+### Safety Gate: Block NCAAB ML Favorites Ranked 150+
 
-Upgrade the settlement function to resolve NCAAB team legs using ESPN scoreboard data directly (instead of summing individual player box scores, which is unreliable for 350+ college teams):
+Add a filter in the team leg selection logic: when sport is `basketball_ncaab` and bet type is `moneyline` and the team's KenPom rank is outside the Top 150, **reject the leg**. This prevents the bot from blindly backing weak favorites like Binghamton or Maine.
 
-- Fetch final scores from the ESPN NCAAB scoreboard API (already used by `ncaab-data-ingestion`)
-- Match games by team name fuzzy matching
-- Settle spreads, moneylines, and totals against actual final scores
-- Back-settle the 519 existing unsettled NCAAB game_bets to establish a historical accuracy baseline
+### Composite Score Minimum for NCAAB
 
-### 4. NCAAB-Specific Bot Profiles
+Raise the minimum composite score for NCAAB team legs from 55 to 62 across all tiers. The KenPom scoring engine now produces real differentiated scores, so a higher floor filters out low-confidence noise.
 
-Add dedicated NCAAB parlay profiles to the bot:
+## Summary of Profile Count Changes
 
-- `ncaab_ml_lock` -- 3-leg moneyline parlays using only KenPom Top 100 teams with efficiency edges
-- `ncaab_totals` -- 3-leg totals parlays using tempo differentials (the most predictable NCAAB bet type)
-- Require minimum composite score of 62+ (vs current flat 55)
+| Bet Type | Before (all tiers) | After (all tiers) |
+|----------|--------------------|--------------------|
+| NCAAB Moneyline | ~8 profiles | 1 profile (underdog-only, Top 100) |
+| NCAAB Totals | 1 profile | 6 profiles |
+| NCAAB Spreads | 0 profiles | 5 profiles |
+| Generic NCAAB | 7 profiles | 0 profiles |
 
-## Technical Details
+## File Modified
 
-### New Backend Function: `ncaab-team-stats-fetcher`
-- Fetches team efficiency data from public college basketball statistics APIs
-- Populates `ncaab_team_stats` table (already exists with correct schema)
-- Runs daily on cron alongside existing data pipeline
+1. `supabase/functions/bot-generate-daily-parlays/index.ts` -- Profile rebalancing, NCAAB ML safety gate, composite score floor increase
 
-### Modified: `bot-generate-daily-parlays/index.ts`
-- Add `ncaabTeamStatsMap` data source alongside existing pace/defense maps
-- Branch `calculateTeamCompositeScore` for NCAAB sport:
-  - Use KenPom efficiency gap instead of NBA defense rankings
-  - Use college tempo thresholds (65-75 range vs NBA 95-105)
-  - Weight ATS/O-U records from `ncaab_team_stats`
-  - Add rank-tier filter (reject teams ranked 200+)
-- Add 2 new execution profiles: `ncaab_ml_lock`, `ncaab_totals`
-
-### Modified: `bot-settle-and-learn/index.ts`
-- For NCAAB team legs, fetch ESPN scoreboard directly instead of summing player logs
-- Use the same ESPN API endpoint already configured in `sync-live-scores`
-- Fuzzy match team names from leg data to ESPN event data
-
-### New Database Migration
-- Add `sport` column to `game_bets` outcome tracking (for filtered accuracy queries)
-- Create `ncaab_team_accuracy_metrics` view for NCAAB-specific win rate tracking
-
-## Expected Impact
-
-With proper KenPom data feeding the scoring engine:
-- **Totals** become highly predictable (tempo is the strongest predictor in college basketball)
-- **Spreads** with large efficiency gaps (10+ point KenPom differential) hit at 60%+
-- **Moneylines** for Top 50 teams at home hit at very high rates
-- Settlement data creates a feedback loop for continuous improvement
-
-## Files to Create/Modify
-
-1. **Create** `supabase/functions/ncaab-team-stats-fetcher/index.ts` -- New data ingestion function
-2. **Modify** `supabase/functions/bot-generate-daily-parlays/index.ts` -- NCAAB scoring + profiles
-3. **Modify** `supabase/functions/bot-settle-and-learn/index.ts` -- ESPN-based NCAAB settlement
-4. **Database migration** -- accuracy tracking support
