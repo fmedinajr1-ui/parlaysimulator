@@ -1283,7 +1283,7 @@ async function markResearchConsumed(supabase: any, gameDate: string): Promise<vo
   const { error } = await supabase
     .from('bot_research_findings')
     .update({ action_taken: `Applied to generation on ${gameDate}` })
-    .in('category', ['injury_intel', 'statistical_models', 'ncaa_baseball_pitching', 'weather_totals_impact'])
+    .in('category', ['injury_intel', 'statistical_models', 'ncaa_baseball_pitching', 'weather_totals_impact', 'ncaab_kenpom_matchups', 'ncaab_injury_lineups', 'ncaab_sharp_signals'])
     .eq('research_date', gameDate)
     .is('action_taken', null);
 
@@ -1358,6 +1358,87 @@ async function fetchResearchPitchingWeather(supabase: any, gameDate: string): Pr
   return weatherBias;
 }
 
+async function fetchResearchNcaabIntel(supabase: any, gameDate: string): Promise<{
+  sharpBias: Map<string, 'over' | 'under' | 'spread_home' | 'spread_away'>;
+  injuryImpact: Set<string>;
+  tempoMismatches: Map<string, 'over' | 'under'>;
+}> {
+  const sharpBias = new Map<string, 'over' | 'under' | 'spread_home' | 'spread_away'>();
+  const injuryImpact = new Set<string>();
+  const tempoMismatches = new Map<string, 'over' | 'under'>();
+
+  try {
+    const { data: findings } = await supabase
+      .from('bot_research_findings')
+      .select('category, summary, key_insights')
+      .in('category', ['ncaab_kenpom_matchups', 'ncaab_injury_lineups', 'ncaab_sharp_signals'])
+      .eq('research_date', gameDate)
+      .gte('relevance_score', 0.40);
+
+    if (!findings || findings.length === 0) {
+      console.log(`[ResearchIntel] No NCAAB research findings for ${gameDate}`);
+      return { sharpBias, injuryImpact, tempoMismatches };
+    }
+
+    for (const f of findings) {
+      const text = f.summary + ' ' + (Array.isArray(f.key_insights) ? f.key_insights.join(' ') : String(f.key_insights || ''));
+
+      if (f.category === 'ncaab_kenpom_matchups') {
+        // Detect tempo mismatches: fast-paced matchups favor overs
+        const tempoMatches = text.matchAll(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s*.*?(?:AdjT|tempo|pace)\s*[:\s]*(\d+(?:\.\d+)?)/gi);
+        for (const match of tempoMatches) {
+          const team = match[1].trim().toLowerCase();
+          const tempo = parseFloat(match[2]);
+          if (tempo >= 72) {
+            tempoMismatches.set(team, 'over');
+            console.log(`[ResearchIntel] NCAAB high-tempo team: ${team} (AdjT ${tempo}) → over lean`);
+          } else if (tempo <= 63) {
+            tempoMismatches.set(team, 'under');
+            console.log(`[ResearchIntel] NCAAB low-tempo team: ${team} (AdjT ${tempo}) → under lean`);
+          }
+        }
+      }
+
+      if (f.category === 'ncaab_injury_lineups') {
+        // Extract injured/out NCAAB players
+        const outMatches = text.matchAll(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\s*(?:is\s+)?(?:out|ruled out|will not play|DNP|suspended|questionable)/gi);
+        for (const match of outMatches) {
+          const player = match[1].trim();
+          if (player.length > 4 && player.length < 40) {
+            injuryImpact.add(player);
+          }
+        }
+        console.log(`[ResearchIntel] NCAAB injury intel: ${injuryImpact.size} players flagged`);
+      }
+
+      if (f.category === 'ncaab_sharp_signals') {
+        // Extract sharp side signals: "sharp money on [team] [side]"
+        const sharpOverMatches = text.matchAll(/sharp\s*(?:money|action|bettors?)\s*(?:on|loading|hammering)\s*(?:the\s+)?over\s*(?:in|for|:)?\s*([A-Z][a-z]+(?:\s+(?:vs\.?|at|@)\s+[A-Z][a-z]+)?)/gi);
+        for (const match of sharpOverMatches) {
+          const game = match[1].trim().toLowerCase();
+          if (game.length > 2) sharpBias.set(game, 'over');
+        }
+        const sharpUnderMatches = text.matchAll(/sharp\s*(?:money|action|bettors?)\s*(?:on|loading|hammering)\s*(?:the\s+)?under\s*(?:in|for|:)?\s*([A-Z][a-z]+(?:\s+(?:vs\.?|at|@)\s+[A-Z][a-z]+)?)/gi);
+        for (const match of sharpUnderMatches) {
+          const game = match[1].trim().toLowerCase();
+          if (game.length > 2) sharpBias.set(game, 'under');
+        }
+        // Line movement signals (3+ point moves)
+        const lineMoveMatches = text.matchAll(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s*.*?(?:moved|shifted|steamed)\s*(?:from\s*)?[-+]?\d+(?:\.\d+)?\s*to\s*([-+]?\d+(?:\.\d+)?)/gi);
+        for (const match of lineMoveMatches) {
+          const team = match[1].trim().toLowerCase();
+          console.log(`[ResearchIntel] NCAAB line movement detected for: ${team}`);
+        }
+        console.log(`[ResearchIntel] NCAAB sharp signals: ${sharpBias.size} directional biases`);
+      }
+    }
+  } catch (err) {
+    console.warn(`[ResearchIntel] Error fetching NCAAB research:`, err);
+  }
+
+  return { sharpBias, injuryImpact, tempoMismatches };
+}
+
 // ============= PROP POOL BUILDER =============
 
 async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<string, number>, categoryWeights: CategoryWeight[]): Promise<PropPool> {
@@ -1386,13 +1467,14 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   const { startUtc, endUtc, gameDate } = getEasternDateRange();
   console.log(`[Bot] ET window: ${startUtc} → ${endUtc} (gameDate: ${gameDate})`);
 
-  const [activePlayersToday, injuryData, teamsPlayingToday, researchBlocklist, researchEdge, weatherBiasMap] = await Promise.all([
+  const [activePlayersToday, injuryData, teamsPlayingToday, researchBlocklist, researchEdge, weatherBiasMap, ncaabResearch] = await Promise.all([
     fetchActivePlayersToday(supabase, startUtc, endUtc),
     fetchInjuryBlocklist(supabase, gameDate),
     fetchTeamsPlayingToday(supabase, startUtc, endUtc, gameDate),
     fetchResearchInjuryIntel(supabase, gameDate),
     fetchResearchEdgeThreshold(supabase),
     fetchResearchPitchingWeather(supabase, gameDate),
+    fetchResearchNcaabIntel(supabase, gameDate),
   ]);
   const { blocklist, penalties } = injuryData;
 
@@ -1402,6 +1484,14 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   }
   if (researchBlocklist.size > 0) {
     console.log(`[Bot] Merged ${researchBlocklist.size} research-sourced OUT players into blocklist`);
+  }
+
+  // Merge NCAAB research injury intel into blocklist
+  for (const player of ncaabResearch.injuryImpact) {
+    blocklist.add(player);
+  }
+  if (ncaabResearch.injuryImpact.size > 0) {
+    console.log(`[Bot] Merged ${ncaabResearch.injuryImpact.size} NCAAB research-sourced injuries into blocklist`);
   }
 
   // Apply dynamic edge threshold from research if available
@@ -1760,6 +1850,32 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       if (homeBias === 'under' || awayBias === 'under') {
         underWeatherBonus = 8;
         console.log(`[Bot] Weather/pitching under boost +8 for ${game.home_team} vs ${game.away_team}`);
+      }
+
+      // NCAAB research bias adjustments (tempo + sharp signals)
+      const isNcaab = game.sport === 'basketball_ncaab';
+      if (isNcaab) {
+        const homeTempo = ncaabResearch.tempoMismatches.get(homeKey);
+        const awayTempo = ncaabResearch.tempoMismatches.get(awayKey);
+        if (homeTempo === 'over' || awayTempo === 'over') {
+          overWeatherBonus += 6;
+          console.log(`[Bot] NCAAB tempo over boost +6 for ${game.home_team} vs ${game.away_team}`);
+        }
+        if (homeTempo === 'under' || awayTempo === 'under') {
+          underWeatherBonus += 6;
+          console.log(`[Bot] NCAAB tempo under boost +6 for ${game.home_team} vs ${game.away_team}`);
+        }
+        // Sharp money signals on totals
+        const homeSharp = ncaabResearch.sharpBias.get(homeKey);
+        const awaySharp = ncaabResearch.sharpBias.get(awayKey);
+        if (homeSharp === 'over' || awaySharp === 'over') {
+          overWeatherBonus += 7;
+          console.log(`[Bot] NCAAB sharp over boost +7 for ${game.home_team} vs ${game.away_team}`);
+        }
+        if (homeSharp === 'under' || awaySharp === 'under') {
+          underWeatherBonus += 7;
+          console.log(`[Bot] NCAAB sharp under boost +7 for ${game.home_team} vs ${game.away_team}`);
+        }
       }
 
       picks.push({
