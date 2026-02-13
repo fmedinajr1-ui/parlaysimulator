@@ -1,35 +1,63 @@
 
 
-# Regenerate Parlays with Top Baseball Sharp Signals + NCAAB
+# Fix NCAA Baseball Stats Fetcher: Switch to ESPN Standings Endpoint
 
-## Current State
-- **13 parlays** exist for today (all exploration tier)
-- **6 high-quality baseball picks** identified with sharp scores 70-95:
-  1. Clemson vs Army **Over 12** (composite 78, sharp 78)
-  2. Clemson **-4.5** vs Army (composite 70, sharp 70)
-  3. Charlotte **-1.5** vs San Diego (composite 70, sharp 70)
-  4. Oregon St **-3.5** vs Michigan (composite 69, sharp 95)
-  5. UNC Greensboro **+2.5** vs Kentucky (composite 69, sharp 95)
-  6. East Carolina **-2.5** vs Xavier (composite 69, sharp 85)
-  7. Washington **+2.5** vs NC State (composite 69, sharp 85)
-- **NCAAB picks are weak today** - only 1 matchup at 60 composite score (Manhattan vs Niagara)
+## Problem
+The current `ncaa-baseball-team-stats-fetcher` calls the individual team endpoint (`/teams/{id}`) for each of 234 teams. This endpoint is returning 400 errors for college baseball, resulting in all stat columns (ERA, batting avg, runs per game, etc.) being NULL. This means the scoring engine has no statistical data to work with.
 
-## Plan
+## Solution
+Replace the broken individual-team enrichment with the ESPN **standings** endpoint, which returns all teams with their records and stats in a single bulk request per conference. This is the same pattern already used successfully in `fetch-season-standings` for NBA and NFL.
 
-### Step 1: Clear today's existing parlays
-Delete the 13 current parlays to allow fresh generation with better data.
+## How It Works
 
-### Step 2: Re-trigger the generation engine
-Call `bot-generate-daily-parlays` to regenerate. The engine will now pick up all the enriched baseball data (with proper team name matching from the alias fix) and the limited NCAAB picks.
+### Current (broken) flow:
+1. Fetch all team IDs via `/teams?limit=100&page=X` (6 pages)
+2. For each team, call `/teams/{id}` individually (200+ requests) -- **these return 400 errors**
+3. Parse `record.items` for stats -- **no data returned**
 
-### Step 3: Verify results
-Query the new parlays to confirm they include the top baseball sharp signal picks (Clemson total, Oregon St spread, UNCG spread, etc.) and check leg composition.
+### New flow:
+1. Fetch standings from `https://site.api.espn.com/apis/v2/sports/baseball/college-baseball/standings`
+2. Parse all conferences and their team entries in one response
+3. Extract wins, losses, win percentage, points for/against, home/away records
+4. Calculate runs per game and runs allowed per game from the standings stats
+5. Fall back to team list endpoint only for teams missing from standings (if any)
 
 ## Technical Details
 
-- **Database**: `DELETE FROM bot_daily_parlays WHERE parlay_date = '2026-02-13'`
-- **Edge Function**: Invoke `bot-generate-daily-parlays` with default params
-- **Verification**: Query `bot_daily_parlays` to confirm baseball legs are included with the correct team names and lines
+### File: `supabase/functions/ncaa-baseball-team-stats-fetcher/index.ts`
 
-Since NCAAB quality is very low today (only 1 pick above 55), the regenerated parlays will be heavily baseball-weighted, which aligns with where the sharp signals are strongest.
+**Full rewrite** of the fetcher to:
+
+1. **Replace `ESPN_TEAMS_URL` with standings URL**:
+   - Primary: `https://site.api.espn.com/apis/v2/sports/baseball/college-baseball/standings`
+   - Fallback team list: keep existing `/teams` endpoint for any missing teams
+
+2. **New `fetchStandings()` function** replacing `fetchAllTeamIds()` + `enrichTeamStats()`:
+   - Single request fetches all conferences
+   - Parse `data.children[]` (conferences) -> `standings.entries[]` (teams)
+   - Extract from `entry.stats[]`: wins, losses, winPercent, avgPointsFor, avgPointsAgainst, home/away records
+   - Map stat names to our schema (runs_per_game, runs_allowed_per_game, etc.)
+   - Conference name from `conference.name` or `conference.abbreviation`
+
+3. **Preserve existing logic**:
+   - National ranking by run differential (unchanged)
+   - Upsert to `ncaa_baseball_team_stats` on conflict `team_name` (unchanged)
+   - Cron job history logging (unchanged)
+   - Time budget safety (45s, unchanged)
+
+4. **Stat mapping** (from ESPN standings stat names):
+   - `avgPointsFor` or `pointsFor` / games -> `runs_per_game`
+   - `avgPointsAgainst` or `pointsAgainst` / games -> `runs_allowed_per_game`
+   - `Home_display` or `home_display` -> `home_record`
+   - `Road_display` or `away_display` -> `away_record`
+   - ERA and batting average are not in standings data -- these will remain NULL (standings don't include pitching/batting detail stats)
+
+### Post-deploy steps (automated):
+1. Deploy the updated edge function
+2. Invoke `ncaa-baseball-team-stats-fetcher` to re-enrich all teams
+3. Invoke `team-bets-scoring-engine` for `baseball_ncaa` to rescore today's bets with real stat data
+
+## Trade-offs
+- **ERA and batting_avg will remain NULL** since standings data doesn't include detailed pitching/batting stats. However, runs_per_game, runs_allowed_per_game, home/away records, and national rank will all be populated -- which are the primary inputs to `scoreBaseballNcaa`.
+- This is a massive improvement over the current state where ALL columns are NULL.
 
