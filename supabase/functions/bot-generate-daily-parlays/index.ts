@@ -1480,7 +1480,10 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     };
   }).filter((p: EnrichedPick) => p.americanOdds >= -200 && p.americanOdds <= 200 && !blockedByHitRate.has(p.category) && p.has_real_line);
 
-  console.log(`[Bot] Filtered to ${enrichedSweetSpots.length} picks with verified sportsbook lines (removed projected-only legs)`);
+  // Block NCAAB player props from ever entering the pick pool
+  enrichedSweetSpots = enrichedSweetSpots.filter(p => p.sport !== 'basketball_ncaab');
+
+  console.log(`[Bot] Filtered to ${enrichedSweetSpots.length} picks with verified sportsbook lines (removed projected-only legs, blocked NCAAB player props)`);
 
   // FALLBACK: If no sweet spots for today, create picks directly from unified_props
   if (enrichedSweetSpots.length === 0 && playerProps && playerProps.length > 0) {
@@ -1545,8 +1548,11 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       p.line > 0 &&
       !blockedByHitRate.has(p.category)
     );
+
+    // Block NCAAB player props from fallback path too
+    enrichedSweetSpots = enrichedSweetSpots.filter(p => p.sport !== 'basketball_ncaab');
     
-    console.log(`[Bot] Fallback enriched ${enrichedSweetSpots.length} picks (calibrated hit rates from ${categoryHitRateMap.size} categories)`);
+    console.log(`[Bot] Fallback enriched ${enrichedSweetSpots.length} picks (calibrated hit rates from ${categoryHitRateMap.size} categories, blocked NCAAB player props)`);
   }
 
   // === APPLY AVAILABILITY GATE TO PLAYER PICKS ===
@@ -1846,9 +1852,12 @@ async function generateTierParlays(
     let candidatePicks: (EnrichedPick | EnrichedTeamPick)[] = [];
     
     if (isTeamProfile) {
-      candidatePicks = pool.teamPicks.filter(p => 
-        profile.betTypes!.includes(p.bet_type)
-      );
+      candidatePicks = pool.teamPicks.filter(p => {
+        if (!profile.betTypes!.includes(p.bet_type)) return false;
+        // Apply sport filter so baseball profiles only get baseball picks, etc.
+        if (sportFilter.includes('all')) return true;
+        return sportFilter.includes(p.sport);
+      });
       
       // team_ml_cross: filter to specific sports and ensure cross-sport mix
       if (profile.strategy === 'team_ml_cross' && profile.sports && !profile.sports.includes('all')) {
