@@ -50,6 +50,7 @@ export interface BotLeg {
 export interface BotParlay {
   id: string;
   parlay_date: string;
+  created_at?: string;
   legs: BotLeg[];
   leg_count: number;
   combined_probability: number;
