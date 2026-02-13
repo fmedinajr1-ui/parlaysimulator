@@ -85,8 +85,12 @@ export function BotParlayCard({ parlay }: BotParlayCardProps) {
                 <span className="ml-1 capitalize">{parlay.outcome}</span>
               </Badge>
               <span className="text-xs text-muted-foreground">{parlay.leg_count}L</span>
-              {parlay.parlay_date && (
-                <span className="text-xs text-muted-foreground">· {format(parseISO(parlay.parlay_date), 'MMM d')}</span>
+              {(parlay.created_at || parlay.parlay_date) && (
+                <span className="text-xs text-muted-foreground">
+                  · {parlay.created_at
+                    ? format(parseISO(parlay.created_at), 'MMM d h:mm a')
+                    : format(parseISO(parlay.parlay_date), 'MMM d')}
+                </span>
               )}
               <div className="flex items-center gap-2 text-xs">
                 <span className="text-green-400 font-medium">+{((parlay.simulated_edge || 0) * 100).toFixed(1)}%</span>
@@ -123,8 +127,10 @@ export function BotParlayCard({ parlay }: BotParlayCardProps) {
                         </span>
                         <span className="text-muted-foreground ml-1.5">
                           {isTeamLeg(leg)
-                            ? `${(leg.bet_type ?? 'spread').charAt(0).toUpperCase() + (leg.bet_type ?? 'spread').slice(1)} ${leg.bet_type === 'total' ? `${(leg.side ?? 'over').toUpperCase()} ${leg.line ?? 0}` : `${leg.line ?? 0}`}`
-                            : `${leg.prop_type ?? 'Prop'} ${(leg.side ?? 'over').toUpperCase()} ${leg.line ?? 0}`}
+                            ? leg.bet_type === 'total'
+                              ? <>Total <span className={(leg.side ?? 'over') === 'over' ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'}>{(leg.side ?? 'over').toUpperCase()}</span> {leg.line ?? 0}</>
+                              : `${(leg.bet_type ?? 'spread').charAt(0).toUpperCase() + (leg.bet_type ?? 'spread').slice(1)} ${leg.line ?? 0}`
+                            : <>{leg.prop_type ?? 'Prop'} <span className={(leg.side ?? 'over') === 'over' ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'}>{(leg.side ?? 'over').toUpperCase()}</span> {leg.line ?? 0}</>}
                           {hasAltLine && <span className="text-amber-400 ml-1">(alt)</span>}
                         </span>
                       </div>
