@@ -46,7 +46,9 @@ async function fetchESPNGameBoxscores(gameDate: string): Promise<PlayerStats[]> 
     console.log(`[ESPN] Found ${events.length} games`);
     
     for (const event of events) {
-      if (event.status?.type?.completed !== true) continue;
+      // Skip games that haven't started yet; accept in-progress and completed
+      const gameState = event.status?.type?.state;
+      if (gameState === 'pre') continue;
       
       const homeTeam = event.competitions?.[0]?.competitors?.find((c: any) => c.homeAway === 'home');
       const awayTeam = event.competitions?.[0]?.competitors?.find((c: any) => c.homeAway === 'away');
@@ -351,6 +353,47 @@ serve(async (req) => {
         if (!existingKeys.has(key)) {
           allStats.push(stat);
           existingKeys.add(key);
+        }
+      }
+    }
+    
+    // Self-healing retry: find no_data picks with missing game logs and re-fetch those dates
+    console.log('[Backfill] Running self-healing retry for no_data picks...');
+    const { data: noDataPicks } = await supabase
+      .from('category_sweet_spots')
+      .select('player_name, analysis_date')
+      .eq('outcome', 'no_data')
+      .is('actual_value', null)
+      .gte('analysis_date', start)
+      .lte('analysis_date', end)
+      .limit(200);
+    
+    if (noDataPicks && noDataPicks.length > 0) {
+      // Find which dates need re-fetching
+      const coveredKeys = new Set(allStats.map(s => `${s.player_name.toLowerCase()}_${s.game_date}`));
+      const retryDates = new Set<string>();
+      
+      for (const pick of noDataPicks) {
+        // Check analysis_date and next 2 days (3-day window used by verifier)
+        for (let d = 0; d <= 2; d++) {
+          const checkDate = new Date(new Date(pick.analysis_date).getTime() + d * 86400000).toISOString().split('T')[0];
+          const key = `${pick.player_name.toLowerCase()}_${checkDate}`;
+          if (!coveredKeys.has(key)) {
+            retryDates.add(checkDate);
+          }
+        }
+      }
+      
+      console.log(`[Backfill] Self-heal: ${noDataPicks.length} no_data picks, ${retryDates.size} dates to retry`);
+      
+      for (const dateStr of retryDates) {
+        const retryStats = await fetchESPNGameBoxscores(dateStr);
+        for (const stat of retryStats) {
+          const key = `${stat.player_name.toLowerCase()}_${stat.game_date}`;
+          if (!coveredKeys.has(key)) {
+            allStats.push(stat);
+            coveredKeys.add(key);
+          }
         }
       }
     }
