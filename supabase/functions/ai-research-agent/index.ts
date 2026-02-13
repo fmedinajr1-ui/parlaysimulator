@@ -5,6 +5,11 @@
  * 1. Competing AI betting systems & strategies
  * 2. Advanced statistical models & edges
  * 3. Injury/lineup intel across sports
+ * 4. NCAA Baseball pitching matchups
+ * 5. Weather impact on totals
+ * 6. NCAAB KenPom matchups & tempo analysis
+ * 7. NCAAB injury & lineup intel
+ * 8. NCAAB sharp money & line movement
  * 
  * Stores findings in bot_research_findings table and sends Telegram digest.
  * Runs daily via cron.
@@ -42,6 +47,21 @@ const RESEARCH_QUERIES = [
     category: 'weather_totals_impact',
     query: "What is today's weather forecast for major NCAA college baseball games? Include temperature, wind speed and direction relative to the field, humidity, and any rain delays expected. Which ballparks are known as hitter-friendly or pitcher-friendly? How does today's weather historically affect over/under totals?",
     systemPrompt: 'You are a sports weather analyst specializing in baseball. Quantify how weather conditions affect run scoring. Cite specific thresholds (e.g., wind >10mph blowing out adds ~1.5 runs). Include park factors and altitude effects. Be specific about which games are most impacted.',
+  },
+  {
+    category: 'ncaab_kenpom_matchups',
+    query: "What are today's most interesting NCAA college basketball matchups based on KenPom efficiency ratings, tempo mismatches, and adjusted offensive/defensive rankings? Which games feature significant tempo differentials (fast vs slow teams)? Which totals are most likely to go over or under based on pace-adjusted projections? Include specific KenPom rankings, AdjO, AdjD, and AdjT values for each team.",
+    systemPrompt: 'You are a college basketball analytics expert specializing in KenPom and tempo-based analysis. Provide specific efficiency ratings, tempo values, and pace-adjusted projections. Quantify mismatches (e.g., "Team A ranks 15th in AdjO at 118.5 vs Team B 200th in AdjD at 105.2"). Focus on actionable totals and spread implications.',
+  },
+  {
+    category: 'ncaab_injury_lineups',
+    query: "What are today's latest NCAA college basketball injury reports, suspensions, and starting lineup changes for major conference games (Big 12, SEC, ACC, Big Ten, Big East, AAC)? Include any surprise DNPs, players returning from injury, and key rotation changes. Which games are most impacted by missing starters?",
+    systemPrompt: 'You are an NCAAB injury and lineup analyst. Provide specific player names, their statistical impact (PPG, RPG, APG), and how their absence or return affects spread and total projections. Flag games where a missing starter shifts the line by 2+ points.',
+  },
+  {
+    category: 'ncaab_sharp_signals',
+    query: "What are today's sharpest NCAA college basketball betting signals? Include significant line movements (3+ points), reverse line movement, steam moves, and where professional bettors are loading. Which NCAAB spreads and totals have the most lopsided sharp action? Are there any contrarian plays where the public is heavily on one side but sharps are on the other?",
+    systemPrompt: 'You are a sports betting market analyst specializing in college basketball. Focus on quantifiable sharp signals: opening vs current lines, handle percentages, ticket splits, and steam move timestamps. Distinguish between sharp money and public money. Cite specific line movements and percentages.',
   },
 ];
 
@@ -136,6 +156,9 @@ Deno.serve(async (req) => {
           injury_intel: 'Injury & Lineup Intel',
           ncaa_baseball_pitching: 'NCAA Baseball Pitching Matchups',
           weather_totals_impact: 'Weather Impact on Totals',
+          ncaab_kenpom_matchups: 'NCAAB KenPom Matchup Analysis',
+          ncaab_injury_lineups: 'NCAAB Injury & Lineup Intel',
+          ncaab_sharp_signals: 'NCAAB Sharp Money Signals',
         };
 
         findings.push({
@@ -195,7 +218,10 @@ Deno.serve(async (req) => {
       const emoji = f.category === 'competing_ai' ? '🤖' :
                     f.category === 'statistical_models' ? '📊' :
                     f.category === 'ncaa_baseball_pitching' ? '⚾' :
-                    f.category === 'weather_totals_impact' ? '🌬️' : '🏥';
+                    f.category === 'weather_totals_impact' ? '🌬️' :
+                    f.category === 'ncaab_kenpom_matchups' ? '🎓' :
+                    f.category === 'ncaab_injury_lineups' ? '🏀' :
+                    f.category === 'ncaab_sharp_signals' ? '💰' : '🏥';
       const score = f.relevance_score >= 0.65 ? '🟢' : f.relevance_score >= 0.40 ? '🟡' : '🔴';
       
       digestMessage += `${emoji} *${f.title}* ${score}\n`;
