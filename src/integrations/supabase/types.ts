@@ -2912,6 +2912,7 @@ export type Database = {
           bet_type: string
           bookmaker: string
           commence_time: string
+          composite_score: number | null
           created_at: string | null
           game_id: string
           home_odds: number | null
@@ -2922,6 +2923,7 @@ export type Database = {
           outcome: string | null
           over_odds: number | null
           recommended_side: string | null
+          score_breakdown: Json | null
           settled_at: string | null
           sharp_score: number | null
           signal_sources: Json | null
@@ -2935,6 +2937,7 @@ export type Database = {
           bet_type: string
           bookmaker: string
           commence_time: string
+          composite_score?: number | null
           created_at?: string | null
           game_id: string
           home_odds?: number | null
@@ -2945,6 +2948,7 @@ export type Database = {
           outcome?: string | null
           over_odds?: number | null
           recommended_side?: string | null
+          score_breakdown?: Json | null
           settled_at?: string | null
           sharp_score?: number | null
           signal_sources?: Json | null
@@ -2958,6 +2962,7 @@ export type Database = {
           bet_type?: string
           bookmaker?: string
           commence_time?: string
+          composite_score?: number | null
           created_at?: string | null
           game_id?: string
           home_odds?: number | null
@@ -2968,6 +2973,7 @@ export type Database = {
           outcome?: string | null
           over_odds?: number | null
           recommended_side?: string | null
+          score_breakdown?: Json | null
           settled_at?: string | null
           sharp_score?: number | null
           signal_sources?: Json | null
