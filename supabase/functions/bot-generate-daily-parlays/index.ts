@@ -78,23 +78,23 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 5, strategy: 'explore_aggressive', sports: ['all'] },
       { legs: 6, strategy: 'explore_longshot', sports: ['all'] },
       { legs: 6, strategy: 'explore_longshot', sports: ['all'] },
-      // NCAAB exploration (5 profiles)
-      { legs: 3, strategy: 'ncaab_safe', sports: ['basketball_ncaab'] },
-      { legs: 3, strategy: 'ncaab_safe', sports: ['basketball_ncaab'] },
-      { legs: 4, strategy: 'ncaab_balanced', sports: ['basketball_ncaab'] },
-      { legs: 4, strategy: 'ncaab_mixed', sports: ['basketball_nba', 'basketball_ncaab'] },
-      { legs: 5, strategy: 'ncaab_aggressive', sports: ['basketball_ncaab'] },
-      // Team props exploration (10 profiles)
-      { legs: 3, strategy: 'team_ml', betTypes: ['moneyline'] },
-      { legs: 3, strategy: 'team_ml', betTypes: ['moneyline'] },
+      // NCAAB exploration (5 profiles) - totals/spreads focused (was ML-heavy)
+      { legs: 3, strategy: 'ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'] },
+      { legs: 3, strategy: 'ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'] },
+      { legs: 3, strategy: 'ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'] },
+      { legs: 3, strategy: 'ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'] },
+      { legs: 4, strategy: 'ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'] },
+      // Team props exploration (13 profiles) - shifted from ML to totals/spreads
       { legs: 3, strategy: 'team_ml', betTypes: ['moneyline'] },
       { legs: 3, strategy: 'team_totals', betTypes: ['total'] },
-      { legs: 4, strategy: 'team_ml', betTypes: ['moneyline'] },
+      { legs: 3, strategy: 'team_totals', betTypes: ['total'] },
+      { legs: 3, strategy: 'team_totals', betTypes: ['total'] },
+      { legs: 3, strategy: 'team_totals', betTypes: ['total'] },
+      { legs: 3, strategy: 'team_spreads', betTypes: ['spread'] },
+      { legs: 3, strategy: 'team_spreads', betTypes: ['spread'] },
       { legs: 4, strategy: 'team_mixed', betTypes: ['spread', 'total'] },
       { legs: 3, strategy: 'team_ml_cross', betTypes: ['moneyline'], sports: ['basketball_nba', 'basketball_ncaab'] },
-      { legs: 3, strategy: 'team_ml_cross', betTypes: ['moneyline'], sports: ['basketball_nba', 'basketball_ncaab'] },
-      { legs: 3, strategy: 'team_totals', betTypes: ['total'] },
-      { legs: 4, strategy: 'team_mixed', betTypes: ['spread', 'total', 'moneyline'] },
+      { legs: 4, strategy: 'team_mixed', betTypes: ['spread', 'total'] },
       // Cross-sport exploration (20 profiles)
       { legs: 3, strategy: 'cross_sport', sports: ['basketball_nba', 'icehockey_nhl'] },
       { legs: 3, strategy: 'cross_sport', sports: ['basketball_nba', 'basketball_ncaab'] },
@@ -137,8 +137,8 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'validated_conservative', sports: ['basketball_nba'], minOddsValue: 45, minHitRate: 55 },
       { legs: 3, strategy: 'validated_conservative', sports: ['basketball_nba'], minOddsValue: 45, minHitRate: 55 },
       { legs: 3, strategy: 'validated_conservative', sports: ['icehockey_nhl'], minOddsValue: 45, minHitRate: 55 },
-      { legs: 3, strategy: 'validated_ncaab', sports: ['basketball_ncaab'], minOddsValue: 45, minHitRate: 55 },
-      { legs: 3, strategy: 'validated_ncaab', sports: ['basketball_ncaab'], minOddsValue: 45, minHitRate: 55 },
+      { legs: 3, strategy: 'validated_ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'], minOddsValue: 45, minHitRate: 55 },
+      { legs: 3, strategy: 'validated_ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'], minOddsValue: 45, minHitRate: 55 },
       { legs: 4, strategy: 'validated_balanced', sports: ['basketball_nba'], minOddsValue: 42, minHitRate: 55 },
       { legs: 4, strategy: 'validated_balanced', sports: ['basketball_nba', 'icehockey_nhl'], minOddsValue: 42, minHitRate: 55 },
       { legs: 4, strategy: 'validated_balanced', sports: ['basketball_nba', 'basketball_ncaab'], minOddsValue: 42, minHitRate: 55 },
@@ -190,9 +190,10 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'hybrid_exec_cross', sports: ['all'], minHitRate: 58, sortBy: 'hit_rate', useAltLines: false, allowTeamLegs: 1 },
       // TEAM EXECUTION: Pure team props with high composite scores
       { legs: 3, strategy: 'team_exec', betTypes: ['moneyline', 'spread', 'total'], minHitRate: 55 },
-      // NCAAB EXECUTION: KenPom-powered NCAAB-specific profiles
-      { legs: 3, strategy: 'ncaab_ml_lock', sports: ['basketball_ncaab'], betTypes: ['moneyline'], minHitRate: 55, sortBy: 'composite' },
+      // NCAAB EXECUTION: KenPom-powered, totals/spreads only (ML favorites were 0/12)
       { legs: 3, strategy: 'ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 3, strategy: 'ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 3, strategy: 'ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'], minHitRate: 55, sortBy: 'composite' },
     ],
   },
 };
@@ -1672,6 +1673,41 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     
     return picks;
   });
+
+  // === NCAAB ML SAFETY GATE: Block NCAAB ML favorites ranked outside Top 150 ===
+  const preNcaabGateCount = enrichedTeamPicks.length;
+  const ncaabMlBlocked: string[] = [];
+  const filteredTeamPicks = enrichedTeamPicks.filter(pick => {
+    const isNCAAB = pick.sport?.includes('ncaab') || pick.sport?.includes('college');
+    if (!isNCAAB) return true;
+
+    // Block NCAAB ML favorites (negative odds = favorite) ranked outside Top 150
+    if (pick.bet_type === 'moneyline' && pick.odds < 0) {
+      const teamName = pick.side === 'home' ? pick.home_team : pick.away_team;
+      const stats = ncaabStatsMap.get(teamName);
+      const rank = stats?.kenpom_rank || 999;
+      if (rank > 150) {
+        ncaabMlBlocked.push(`${teamName} (rank ${rank})`);
+        return false;
+      }
+    }
+
+    // Raise composite score floor for NCAAB team legs to 62
+    if (pick.compositeScore < 62) {
+      return false;
+    }
+
+    return true;
+  });
+
+  if (ncaabMlBlocked.length > 0) {
+    console.log(`[NCAAB Safety] Blocked ${ncaabMlBlocked.length} ML favorites ranked 150+: ${ncaabMlBlocked.join(', ')}`);
+  }
+  console.log(`[NCAAB Safety] Team picks: ${preNcaabGateCount} → ${filteredTeamPicks.length}`);
+
+  // Replace enrichedTeamPicks with filtered version
+  enrichedTeamPicks.length = 0;
+  enrichedTeamPicks.push(...filteredTeamPicks);
 
   // Build golden categories set (60%+ hit rate with 20+ samples)
   const goldenCategories = new Set<string>();
