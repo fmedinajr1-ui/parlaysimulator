@@ -1,0 +1,3 @@
+ALTER TABLE nhl_team_pace_stats
+  ADD COLUMN IF NOT EXISTS save_pct NUMERIC,
+  ADD COLUMN IF NOT EXISTS win_pct NUMERIC;

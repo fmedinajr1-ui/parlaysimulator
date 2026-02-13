@@ -58,6 +58,8 @@ interface TeamPaceStats {
   losses: number;
   ot_losses: number;
   season: string;
+  save_pct: number;
+  win_pct: number;
 }
 
 serve(async (req) => {
@@ -134,6 +136,11 @@ serve(async (req) => {
           shotsAgainst = Math.round(shotsFor / goalRatio) || shotsFor;
         }
         
+        const saPerGame = gamesPlayed > 0 ? shotsAgainst / gamesPlayed : 30;
+        const gaPerGame = gamesPlayed > 0 ? goalsAgainst / gamesPlayed : 3;
+        const savePct = saPerGame > 0 ? 1 - (gaPerGame / saPerGame) : 0.900;
+        const winPct = gamesPlayed > 0 ? (team.wins || 0) / gamesPlayed : 0;
+
         const teamStats: TeamPaceStats = {
           team_abbrev: teamAbbrev,
           team_name: teamName,
@@ -147,6 +154,8 @@ serve(async (req) => {
           losses: team.losses || 0,
           ot_losses: team.otLosses || 0,
           season,
+          save_pct: Math.round(savePct * 1000) / 1000,
+          win_pct: Math.round(winPct * 1000) / 1000,
         };
         
         allTeamStats.push(teamStats);
