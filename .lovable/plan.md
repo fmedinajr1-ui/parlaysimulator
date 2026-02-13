@@ -1,51 +1,75 @@
 
 
-# Fix NHL Sport Key in whale-odds-scraper + Verify Pipeline
+# Add NCAA Baseball Data Ingestion
 
-## Problem
+## Overview
 
-Two issues preventing NHL picks from appearing:
+Create a full NCAA baseball ingestion pipeline mirroring the existing NCAAB pattern: a player game log table, a team stats table, an ESPN-based data ingestion function, and wire it into the odds scraper and pipeline orchestrator.
 
-1. **No NHL games today** -- The Odds API returned 0 events for `icehockey_nhl`. This is likely an off-day or All-Star break. No action needed here; games will appear when the schedule resumes.
+## What Gets Built
 
-2. **Sport key normalization bug** -- Line 100 of `whale-odds-scraper/index.ts` converts `icehockey_nhl` to `hockey_nhl` when storing odds:
-   ```
-   if (sportKey === 'icehockey_nhl') return 'hockey_nhl';
-   ```
-   This means when NHL games DO exist, the stored `game_bets` will have `sport = 'hockey_nhl'`, but the whale-signal-detector and scoring engine now expect `icehockey_nhl`. The data will never match.
+### 1. Database Tables
 
-## Fix
+**`ncaa_baseball_player_game_logs`** -- stores individual player box score data from ESPN
+- Columns: player_name, team, game_date, opponent, at_bats, hits, runs, rbis, home_runs, stolen_bases, walks, strikeouts, batting_avg (per-game), innings_pitched, earned_runs, pitcher_strikeouts, is_home
+- Unique constraint on (player_name, game_date) for upsert
 
-### `supabase/functions/whale-odds-scraper/index.ts`
+**`ncaa_baseball_team_stats`** -- stores team-level efficiency metrics (analogous to KenPom for basketball)
+- Columns: team_name, espn_id, conference, national_rank, runs_per_game, runs_allowed_per_game, era, batting_avg, home_record, away_record, updated_at
+- Unique constraint on team_name for upsert
 
-Remove the `icehockey_nhl` → `hockey_nhl` conversion from `normalizeSportKey()` (line 100). Keep `icehockey_nhl` as-is so it matches the signal detector, scoring engine, and UI tab.
+### 2. Edge Function: `ncaa-baseball-data-ingestion`
 
-**Before:**
-```typescript
-function normalizeSportKey(sportKey: string): string {
-  if (sportKey.startsWith('tennis_atp')) return 'tennis_atp';
-  if (sportKey.startsWith('tennis_wta')) return 'tennis_wta';
-  if (sportKey === 'icehockey_nhl') return 'hockey_nhl';
-  return sportKey;
-}
-```
+Modeled directly on `ncaab-data-ingestion`:
+- Uses ESPN college baseball scoreboard API (`/sports/baseball/college-baseball/scoreboard`)
+- Uses ESPN college baseball summary API for box scores
+- Filters to players with active props in `unified_props` where `sport = 'baseball_ncaa'`
+- Parses batting and pitching stats from ESPN box score labels
+- Upserts into `ncaa_baseball_player_game_logs`
+- Logs results to `cron_job_history`
 
-**After:**
-```typescript
-function normalizeSportKey(sportKey: string): string {
-  if (sportKey.startsWith('tennis_atp')) return 'tennis_atp';
-  if (sportKey.startsWith('tennis_wta')) return 'tennis_wta';
-  return sportKey;
-}
-```
+### 3. Edge Function: `ncaa-baseball-team-stats-fetcher`
 
-### Verification
+Modeled on `ncaab-team-stats-fetcher`:
+- Uses ESPN college baseball teams API (`/sports/baseball/college-baseball/teams`)
+- Fetches team-level stats (runs scored, runs allowed, ERA, batting avg) via parallel batches
+- Computes national ranking by run differential
+- Upserts into `ncaa_baseball_team_stats`
 
-After deploying, the next time the pipeline runs with NHL games on the schedule:
-1. `whale-odds-scraper` stores `game_bets` with `sport = 'icehockey_nhl'`
-2. `whale-signal-detector` finds them and adds sharp scores
-3. `team-bets-scoring-engine` scores them with shot differential, save %, win %, home ice
-4. NHL tab on Team Bets page displays the scored picks
+### 4. Wire Into Existing Pipeline
 
-No other files need changes -- this is the last piece of the sport key alignment.
+**`whale-odds-scraper/index.ts`**:
+- Add `'baseball_ncaa'` to `TIER_2_SPORTS` array
+- Add player market batch: `'baseball_ncaa': [['batter_hits', 'batter_rbis', 'batter_runs_scored', 'batter_total_bases']]`
+
+**`data-pipeline-orchestrator/index.ts`**:
+- Add `'baseball_ncaa'` to the sports arrays in Phase 1 (odds scraper), Phase 1 (track-odds-movement), and Phase 2 (whale-signal-detector)
+- Add calls to `ncaa-baseball-data-ingestion` and `ncaa-baseball-team-stats-fetcher` in Phase 1
+
+**`pp-props-scraper`** call in orchestrator:
+- Add `'NCAAB_BASEBALL'` or appropriate sport tag if PrizePicks covers college baseball
+
+## Technical Details
+
+### ESPN API Endpoints
+- Scoreboard: `https://site.api.espn.com/apis/site/v2/sports/baseball/college-baseball/scoreboard`
+- Box Score: `https://site.api.espn.com/apis/site/v2/sports/baseball/college-baseball/summary?event={id}`
+- Teams: `https://site.api.espn.com/apis/site/v2/sports/baseball/college-baseball/teams`
+
+### Baseball-Specific Box Score Parsing
+ESPN baseball labels differ from basketball. Expected labels include:
+- Batting: AB, R, H, RBI, HR, BB, SO, SB, AVG
+- Pitching: IP, H, R, ER, BB, SO, HR, ERA
+
+The parser will extract both batting lines and pitching lines from each box score, storing them in the same table with nullable pitching columns.
+
+### Odds API Sport Key
+The Odds API uses `baseball_ncaa` for NCAA baseball. This will be used consistently throughout the scraper, signal detector, and scoring engine -- no normalization needed.
+
+### Files Changed
+1. **New**: `supabase/functions/ncaa-baseball-data-ingestion/index.ts`
+2. **New**: `supabase/functions/ncaa-baseball-team-stats-fetcher/index.ts`
+3. **Edit**: `supabase/functions/whale-odds-scraper/index.ts` -- add baseball_ncaa to tiers + markets
+4. **Edit**: `supabase/functions/data-pipeline-orchestrator/index.ts` -- add baseball_ncaa to sport arrays + call new functions
+5. **Migration**: Create two new tables with RLS disabled (service-role only access from edge functions)
 
