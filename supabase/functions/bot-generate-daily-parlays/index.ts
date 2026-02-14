@@ -85,12 +85,9 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'] },
       { legs: 3, strategy: 'ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'] },
       { legs: 4, strategy: 'ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'] },
-      // NCAA Baseball exploration (5 profiles)
-      { legs: 3, strategy: 'baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'] },
+      // NCAA Baseball exploration (2 profiles — reduced from 5, season-gated)
       { legs: 3, strategy: 'baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'] },
       { legs: 3, strategy: 'baseball_spreads', sports: ['baseball_ncaa'], betTypes: ['spread'] },
-      { legs: 3, strategy: 'baseball_mixed', sports: ['baseball_ncaa'], betTypes: ['spread', 'total'] },
-      { legs: 3, strategy: 'baseball_cross', sports: ['baseball_ncaa', 'basketball_ncaab'] },
       // Team props exploration (13 profiles) - ML Sniper: hybrid profiles with maxMlLegs: 1
       { legs: 3, strategy: 'team_hybrid', betTypes: ['moneyline', 'spread', 'total'], maxMlLegs: 1 },
       { legs: 3, strategy: 'team_totals', betTypes: ['total'] },
@@ -146,9 +143,8 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'validated_conservative', sports: ['icehockey_nhl'], minOddsValue: 45, minHitRate: 55 },
       { legs: 3, strategy: 'validated_ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'], minOddsValue: 45, minHitRate: 55 },
       { legs: 3, strategy: 'validated_ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'], minOddsValue: 45, minHitRate: 55 },
-      // Validated baseball
+      // Validated baseball (1 profile — reduced from 2, season-gated)
       { legs: 3, strategy: 'validated_baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'], minOddsValue: 45, minHitRate: 55 },
-      { legs: 3, strategy: 'validated_baseball_spreads', sports: ['baseball_ncaa'], betTypes: ['spread'], minOddsValue: 45, minHitRate: 55 },
       { legs: 4, strategy: 'validated_balanced', sports: ['basketball_nba'], minOddsValue: 42, minHitRate: 55 },
       { legs: 4, strategy: 'validated_balanced', sports: ['basketball_nba', 'icehockey_nhl'], minOddsValue: 42, minHitRate: 55 },
       { legs: 4, strategy: 'validated_balanced', sports: ['basketball_nba', 'basketball_ncaab'], minOddsValue: 42, minHitRate: 55 },
@@ -2173,6 +2169,21 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       return false;
     }
 
+    // NCAAB Quality Gate: block obscure matchups in validation/execution tiers
+    // Both teams must NOT be outside Top 200 KenPom to avoid unsettleable voids
+    if (isNCAAB && ncaabStatsMap && ncaabStatsMap.size > 0) {
+      const homeStats = ncaabStatsMap.get(pick.home_team);
+      const awayStats = ncaabStatsMap.get(pick.away_team);
+      const homeRank = homeStats?.kenpom_rank || 999;
+      const awayRank = awayStats?.kenpom_rank || 999;
+      
+      if (homeRank > 200 && awayRank > 200) {
+        // Block entirely from validation and execution
+        mlBlocked.push(`${pick.home_team} vs ${pick.away_team} NCAAB (both outside Top 200: #${homeRank} vs #${awayRank})`);
+        return false;
+      }
+    }
+
     return true;
   });
 
@@ -2247,7 +2258,19 @@ async function generateTierParlays(
 
   console.log(`[Bot] Generating ${tier} tier (${config.count} target)`);
 
+  // === BASEBALL SEASON GATE ===
+  // Skip NCAA baseball profiles before March 1st (no reliable score coverage)
+  const etDateForGate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+  const isBaseballSeasonActive = etDateForGate >= `${etDateForGate.slice(0, 4)}-03-01`;
+  if (!isBaseballSeasonActive) {
+    console.log(`[Bot] Baseball season gate: ACTIVE (${etDateForGate} < March 1st) — skipping baseball_ncaa profiles`);
+  }
+
   for (const profile of config.profiles) {
+    // Season gate: skip baseball profiles before March 1st
+    if (!isBaseballSeasonActive && profile.sports?.includes('baseball_ncaa')) {
+      continue;
+    }
     if (parlaysToCreate.length >= config.count) break;
 
     const legs: any[] = [];
