@@ -1,67 +1,45 @@
 
 
-# Reduce Void Rate: NCAA Baseball Gate + Settlement Guardrails
+# Fix AI Research Agent Errors
 
-## Root Cause
-17 of 21 parlays voided on Feb 13th. **12 of those 17 contain NCAA baseball legs** with `no_data` outcomes. Early-season college baseball (mid-February) has extremely limited score coverage on ESPN, making these parlays unsettleable.
+## Problems Found
 
-The remaining 5 voids are from NCAAB games that also returned `no_data`, likely minor conference games with sparse coverage.
+### 1. Telegram Digest Failing ("sent: false")
+The digest message is too long for Telegram (4096 char limit). With 11 categories, each showing up to 3 insights at 150 chars each, the message easily hits 5000+ characters. Additionally, Perplexity responses contain special characters like parentheses, brackets, and underscores that break Telegram's Markdown parser -- causing the "Markdown failed, retrying plain text" warning.
 
-## Current State
-The bot has **8 dedicated baseball profiles** across all 3 tiers:
-- Exploration: 5 profiles (totals x2, spreads, mixed, cross-sport)
-- Validation: 2 profiles (totals, spreads)
-- Execution: 1 profile (totals)
+### 2. Duplicate Research Runs
+The logs show the agent running 4-5 times in quick succession (every 1-2 minutes). This wastes Perplexity API credits and creates duplicate entries in `bot_research_findings`.
 
-These generate ~12-15 parlays daily that almost all void, wasting pick slots and inflating the void count.
+## Fixes
 
-## Proposed Changes
+### File: `supabase/functions/ai-research-agent/index.ts`
 
-### 1. Add a Baseball Season Gate
-Add a date-based gate in the generation engine that only enables NCAA baseball profiles after **March 1st** (when the season is fully underway and ESPN coverage is reliable). Before that date, baseball profiles are skipped entirely.
+**Fix 1 -- Telegram Message Length**
+- Truncate the digest to fit under 4096 characters
+- Show only the category name, insight count, and relevance level (no full insight text)
+- Add a character-count check before sending; if over limit, trim to summary-only format
+- Use `MarkdownV2` parse mode with proper character escaping (escape `.`, `-`, `(`, `)`, `!`, etc.) or switch to HTML parse mode which is more forgiving
 
-```text
-Feb 14 -> baseball profiles SKIPPED (too early)
-Mar 1  -> baseball profiles ACTIVE (season in full swing)
-```
+**Fix 2 -- Escape Special Characters**
+- Before building the Telegram message, sanitize all insight text by escaping Markdown-reserved characters
+- Or switch to `parse_mode: 'HTML'` which handles special chars more gracefully and use `<b>` tags instead of `*` for bold
 
-### 2. Reduce Baseball Profile Count
-Even after March 1st, 8 profiles is excessive for a sport with less data coverage. Reduce to:
-- Exploration: 2 profiles (totals, spreads)
-- Validation: 1 profile (totals)
-- Execution: 1 profile (totals)
-Total: 4 profiles (down from 8)
+**Fix 3 -- Deduplicate Runs**
+- Before running the research, check `bot_research_findings` for entries with today's date
+- If entries already exist for today, skip the research and return early with a "already ran today" message
+- This prevents wasted API calls and duplicate data
 
-### 3. Add a "Settleable Score Source" Pre-check for Team Legs
-Before including any team leg in a parlay, verify that the sport+league combination has a working score source. Add a simple allowlist check:
-- `basketball_nba` -- always settleable (ESPN + game logs)
-- `basketball_ncaab` -- settleable for Top 200 teams only (via ESPN Scoreboard)
-- `icehockey_nhl` -- always settleable
-- `baseball_ncaa` -- only after March 1st, and only for D1 conferences
+### Expected Code Changes
 
-### 4. Tighten NCAAB Minor Conference Filter
-The 5 non-baseball voids were likely from obscure NCAAB matchups (Iona vs Canisius, etc.) where scores weren't found. Add a filter to block NCAAB games where **both teams are outside the Top 200 KenPom rankings** from execution and validation tiers.
+**Deduplication guard** (near the top of the handler, after Supabase client creation):
+- Query `bot_research_findings` for `research_date = today`
+- If count > 0, return early with a message saying research already completed
 
-## Technical Details
+**Telegram formatting** (in the digest builder):
+- Switch from `parse_mode: 'Markdown'` to `parse_mode: 'HTML'`
+- Replace `*bold*` with `<b>bold</b>`
+- Cap message at 4000 characters with truncation indicator
+- Show compact format: emoji + category + insight count + relevance badge
 
-### File: `supabase/functions/bot-generate-daily-parlays/index.ts`
-
-**Season gate** (near the profile loop, around line 2230):
-- Before iterating baseball profiles, check if the current Eastern date is >= March 1st
-- If not, skip all profiles where `sports` includes `baseball_ncaa`
-
-**Profile reduction** (lines 88-93, 149-151, 207-208):
-- Remove 3 exploration baseball profiles (keep totals + spreads only)
-- Remove 1 validation baseball profile (keep totals only)
-- Keep 1 execution baseball profile as-is
-
-**NCAAB quality gate** (in the team pick filtering logic):
-- For validation and execution tiers, require at least one team in an NCAAB matchup to be in the Top 200 KenPom
-- For exploration, allow all NCAAB but apply a 0.7x weight penalty to games where both teams are unranked
-
-### Expected Impact
-- Eliminates ~12-15 unsettleable baseball parlays per day until March
-- Reduces NCAAB voids from minor conference games
-- Void rate should drop from ~80% to under 15%
-- More pick slots available for NBA/NCAAB/NHL parlays that can actually be graded
+**Result**: Research runs once per day, Telegram digest reliably delivers a clean summary under the character limit.
 
