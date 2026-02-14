@@ -1,45 +1,58 @@
 
 
-# Fix AI Research Agent Errors
+# Use Alternate Spreads Instead of High Spreads
 
-## Problems Found
+## Problem
+The bot is picking up massive spreads like -16.5, -17.5 in NCAAB (e.g., UCLA -16.5, St. John's -16.5, Loyola -17.5). These are hard to cover and unreliable. Instead of using the main spread line, we should shop for alternate (lower) spreads with adjusted odds -- similar to how the bot already shops for alternate player prop lines.
 
-### 1. Telegram Digest Failing ("sent: false")
-The digest message is too long for Telegram (4096 char limit). With 11 categories, each showing up to 3 insights at 150 chars each, the message easily hits 5000+ characters. Additionally, Perplexity responses contain special characters like parentheses, brackets, and underscores that break Telegram's Markdown parser -- causing the "Markdown failed, retrying plain text" warning.
+## Current State
+- The `fetch-alternate-lines` edge function only supports **player prop** alternate markets (points, rebounds, assists, etc.)
+- The `selectOptimalLine` function only works on player props
+- There is **no spread alternate line shopping** -- spread picks always use the main book line
+- The Odds API supports `spreads_alternate` as a market key for team alternate spreads
 
-### 2. Duplicate Research Runs
-The logs show the agent running 4-5 times in quick succession (every 1-2 minutes). This wastes Perplexity API credits and creates duplicate entries in `bot_research_findings`.
+## Changes
 
-## Fixes
+### 1. Add Alternate Spread Markets to `fetch-alternate-lines`
+Add team-level alternate spread market keys to the `ALTERNATE_MARKETS` map so the function can fetch alternate spreads from The Odds API.
 
-### File: `supabase/functions/ai-research-agent/index.ts`
+**File:** `supabase/functions/fetch-alternate-lines/index.ts`
+- Add `spreads: 'spreads_alternate'` (or the correct Odds API key for alternate team spreads)
+- Update the player matching logic to also support team-based outcomes (spreads use team names, not player names)
+- Add a new `teamName` parameter alongside `playerName` to support team-level lookups
 
-**Fix 1 -- Telegram Message Length**
-- Truncate the digest to fit under 4096 characters
-- Show only the category name, insight count, and relevance level (no full insight text)
-- Add a character-count check before sending; if over limit, trim to summary-only format
-- Use `MarkdownV2` parse mode with proper character escaping (escape `.`, `-`, `(`, `)`, `!`, etc.) or switch to HTML parse mode which is more forgiving
+### 2. Add a Spread Cap + Alt Spread Shopping in Generation
+When a spread pick has `abs(line) >= 10`, instead of using the raw line, shop for an alternate lower spread. For example, if the main line is -16.5, look for -10.5 or -12.5 at adjusted (plus-money) odds.
 
-**Fix 2 -- Escape Special Characters**
-- Before building the Telegram message, sanitize all insight text by escaping Markdown-reserved characters
-- Or switch to `parse_mode: 'HTML'` which handles special chars more gracefully and use `<b>` tags instead of `*` for bold
+**File:** `supabase/functions/bot-generate-daily-parlays/index.ts`
 
-**Fix 3 -- Deduplicate Runs**
-- Before running the research, check `bot_research_findings` for entries with today's date
-- If entries already exist for today, skip the research and return early with a "already ran today" message
-- This prevents wasted API calls and duplicate data
+**Spread cap constant:**
+```text
+MAX_SPREAD_LINE = 10  -- any spread above this triggers alt shopping
+```
 
-### Expected Code Changes
+**In the spread pick building section (~line 1902):**
+- After creating the spread pick, check if `abs(line) >= MAX_SPREAD_LINE`
+- If so, call `fetch-alternate-lines` with the event ID and team name
+- Select the best alternate spread that is closer to -10 but still has reasonable odds (-150 to +200)
+- Replace the pick's line and odds with the alternate values
+- Tag the pick with `original_line` and `selected_line` for tracking (same pattern as player prop alt lines)
 
-**Deduplication guard** (near the top of the handler, after Supabase client creation):
-- Query `bot_research_findings` for `research_date = today`
-- If count > 0, return early with a message saying research already completed
+**Selection logic for alt spreads:**
+- Target range: abs(line) between 7 and MAX_SPREAD_LINE
+- Prefer the spread closest to -10 with the best odds
+- Safety floor: don't go below abs(7) as that loses the edge entirely
+- If no viable alternate found, **skip the pick entirely** rather than using the high spread
 
-**Telegram formatting** (in the digest builder):
-- Switch from `parse_mode: 'Markdown'` to `parse_mode: 'HTML'`
-- Replace `*bold*` with `<b>bold</b>`
-- Cap message at 4000 characters with truncation indicator
-- Show compact format: emoji + category + insight count + relevance badge
+### 3. Hard Block on Spreads > MAX_SPREAD_LINE Without Alts
+If a spread is above the cap and no alternate line is found, block it from the pool entirely. This prevents any parlay from containing a -15.5 or -17.5 spread.
 
-**Result**: Research runs once per day, Telegram digest reliably delivers a clean summary under the character limit.
+**In the team pick filter (~line 2289):**
+- Add a filter: if `bet_type === 'spread'` and `abs(line) >= MAX_SPREAD_LINE` and no alt line was applied, exclude the pick
+
+## Expected Impact
+- No more -15, -16, -17 point spreads in parlays
+- High-spread games get converted to alt spreads around -10 to -12 with plus-money odds
+- Better hit rates on spread legs since covering 10 points is far more likely than covering 17
+- Tracked via `original_line` vs `selected_line` for performance analysis
 
