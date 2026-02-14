@@ -25,6 +25,11 @@ const ALTERNATE_MARKETS: Record<string, string> = {
   steals: 'player_steals_alternate',
   blocks: 'player_blocks_alternate',
   turnovers: 'player_turnovers_alternate',
+  // Team-level alternate markets
+  spreads: 'alternate_spreads',
+  spread: 'alternate_spreads',
+  totals: 'alternate_totals',
+  total: 'alternate_totals',
 };
 
 interface AlternateLine {
@@ -36,7 +41,8 @@ interface AlternateLine {
 
 interface RequestBody {
   eventId: string;
-  playerName: string;
+  playerName?: string;
+  teamName?: string;
   propType: string;
   sport?: string;
 }
@@ -53,14 +59,17 @@ Deno.serve(async (req) => {
     }
 
     const body: RequestBody = await req.json();
-    const { eventId, playerName, propType, sport = 'basketball_nba' } = body;
+    const { eventId, playerName, teamName, propType, sport = 'basketball_nba' } = body;
 
-    if (!eventId || !playerName || !propType) {
+    const lookupName = playerName || teamName;
+    if (!eventId || !lookupName || !propType) {
       return new Response(
-        JSON.stringify({ error: 'Missing required fields: eventId, playerName, propType' }),
+        JSON.stringify({ error: 'Missing required fields: eventId, playerName/teamName, propType' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+    
+    const isTeamMarket = ['spreads', 'spread', 'totals', 'total'].includes(propType.toLowerCase());
 
     // Get the alternate market key
     const normalizedPropType = propType.toLowerCase().replace(/[_\s]/g, '');
@@ -74,7 +83,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    console.log(`[AltLines] Fetching ${marketKey} for ${playerName} in event ${eventId}`);
+    console.log(`[AltLines] Fetching ${marketKey} for ${lookupName} in event ${eventId} (team=${isTeamMarket})`);
 
     // Fetch alternate lines from The Odds API
     const url = `https://api.the-odds-api.com/v4/sports/${sport}/events/${eventId}/odds?apiKey=${oddsApiKey}&regions=us&markets=${marketKey}&oddsFormat=american`;
@@ -93,36 +102,74 @@ Deno.serve(async (req) => {
     const data = await response.json();
     const alternateLines: AlternateLine[] = [];
 
-    // Parse the response to extract lines for the specific player
-    const normalizedPlayerName = playerName.toLowerCase().replace(/[^a-z\s]/g, '');
+    // Parse the response to extract lines for the specific player/team
+    const normalizedLookupName = (lookupName || '').toLowerCase().replace(/[^a-z\s]/g, '');
 
     for (const bookmaker of data.bookmakers || []) {
       for (const market of bookmaker.markets || []) {
         if (market.key !== marketKey) continue;
 
         for (const outcome of market.outcomes || []) {
-          const outcomePlayer = (outcome.description || '').toLowerCase().replace(/[^a-z\s]/g, '');
-          
-          // Check if this outcome matches the player
-          if (!outcomePlayer.includes(normalizedPlayerName) && !normalizedPlayerName.includes(outcomePlayer)) {
-            continue;
-          }
-
-          const line = outcome.point;
-          const isOver = outcome.name === 'Over';
-          const odds = outcome.price;
-
-          // Find or create line entry
-          let lineEntry = alternateLines.find(l => l.line === line && l.bookmaker === bookmaker.key);
-          if (!lineEntry) {
-            lineEntry = { line, overOdds: -110, underOdds: -110, bookmaker: bookmaker.key };
-            alternateLines.push(lineEntry);
-          }
-
-          if (isOver) {
-            lineEntry.overOdds = odds;
+          if (isTeamMarket) {
+            // Team spreads/totals: outcome.name is team name or Over/Under
+            // For spreads: outcomes have name = team name, point = spread line
+            // For totals: outcomes have name = Over/Under, point = total line
+            const outcomeName = (outcome.name || '').toLowerCase().replace(/[^a-z\s]/g, '');
+            
+            if (propType.toLowerCase().includes('spread')) {
+              // Spread: match team name
+              if (!outcomeName.includes(normalizedLookupName) && !normalizedLookupName.includes(outcomeName)) {
+                continue;
+              }
+              const line = outcome.point;
+              const odds = outcome.price;
+              // For spreads, store as overOdds (the team covering odds)
+              let lineEntry = alternateLines.find(l => l.line === line && l.bookmaker === bookmaker.key);
+              if (!lineEntry) {
+                lineEntry = { line, overOdds: odds, underOdds: -110, bookmaker: bookmaker.key };
+                alternateLines.push(lineEntry);
+              } else {
+                lineEntry.overOdds = odds;
+              }
+            } else {
+              // Totals: Over/Under
+              const line = outcome.point;
+              const isOver = outcome.name === 'Over';
+              const odds = outcome.price;
+              let lineEntry = alternateLines.find(l => l.line === line && l.bookmaker === bookmaker.key);
+              if (!lineEntry) {
+                lineEntry = { line, overOdds: -110, underOdds: -110, bookmaker: bookmaker.key };
+                alternateLines.push(lineEntry);
+              }
+              if (isOver) {
+                lineEntry.overOdds = odds;
+              } else {
+                lineEntry.underOdds = odds;
+              }
+            }
           } else {
-            lineEntry.underOdds = odds;
+            // Player props: match by description
+            const outcomePlayer = (outcome.description || '').toLowerCase().replace(/[^a-z\s]/g, '');
+            
+            if (!outcomePlayer.includes(normalizedLookupName) && !normalizedLookupName.includes(outcomePlayer)) {
+              continue;
+            }
+
+            const line = outcome.point;
+            const isOver = outcome.name === 'Over';
+            const odds = outcome.price;
+
+            let lineEntry = alternateLines.find(l => l.line === line && l.bookmaker === bookmaker.key);
+            if (!lineEntry) {
+              lineEntry = { line, overOdds: -110, underOdds: -110, bookmaker: bookmaker.key };
+              alternateLines.push(lineEntry);
+            }
+
+            if (isOver) {
+              lineEntry.overOdds = odds;
+            } else {
+              lineEntry.underOdds = odds;
+            }
           }
         }
       }
@@ -139,14 +186,16 @@ Deno.serve(async (req) => {
 
     const sortedLines = Array.from(uniqueLines.values()).sort((a, b) => a.line - b.line);
 
-    console.log(`[AltLines] Found ${sortedLines.length} alternate lines for ${playerName}`);
+    console.log(`[AltLines] Found ${sortedLines.length} alternate lines for ${lookupName}`);
 
     return new Response(
       JSON.stringify({
         lines: sortedLines,
-        playerName,
+        playerName: playerName || null,
+        teamName: teamName || null,
         propType,
         marketKey,
+        isTeamMarket,
         count: sortedLines.length,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
