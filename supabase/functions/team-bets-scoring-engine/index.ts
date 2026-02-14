@@ -164,19 +164,47 @@ function scoreNcaab(
   if (bet.bet_type === 'total') {
     const avgTempo = (homeTempo + awayTempo) / 2;
     
-    if (side === 'OVER' && avgTempo > 70) {
-      const paceBonus = clampScore(0, 18, Math.round((avgTempo - 68) * 4));
+    // --- Tightened tempo thresholds (no dead zone) ---
+    if (side === 'OVER' && avgTempo >= 67) {
+      const paceBonus = clampScore(0, 18, Math.round((avgTempo - 65) * 4));
       score += paceBonus;
       breakdown.tempo_fast = paceBonus;
       breakdown.tempo_label = `Combined tempo: ${avgTempo.toFixed(1)} (fast)`;
-    } else if (side === 'UNDER' && avgTempo < 65) {
-      const paceBonus = clampScore(0, 18, Math.round((65 - avgTempo) * 5));
+    } else if (side === 'UNDER' && avgTempo < 67) {
+      const paceBonus = clampScore(0, 18, Math.round((67 - avgTempo) * 5));
       score += paceBonus;
       breakdown.tempo_slow = paceBonus;
       breakdown.tempo_label = `Combined tempo: ${avgTempo.toFixed(1)} (slow)`;
-    } else if ((side === 'OVER' && avgTempo < 64) || (side === 'UNDER' && avgTempo > 71)) {
+    }
+    // Mismatch penalty for extreme cases
+    if ((side === 'OVER' && avgTempo < 62) || (side === 'UNDER' && avgTempo > 72)) {
       score -= 12;
       breakdown.tempo_mismatch = -12;
+    }
+
+    // --- Projected Total vs Line (KenPom-style) ---
+    const tempoFactor = avgTempo / 67;
+    const projectedTotal = ((homeOff + awayOff) / 2) * tempoFactor * 2;
+    const lineEdge = projectedTotal - (bet.line || 0);
+    breakdown.projected_total = Math.round(projectedTotal * 10) / 10;
+
+    if (side === 'OVER' && lineEdge < -5) {
+      // Line is inflated — projected total well below the posted line
+      const penalty = clampScore(-15, 0, Math.round(lineEdge * 2));
+      score += penalty;
+      breakdown.line_inflated = penalty;
+      breakdown.line_edge_label = `Proj ${projectedTotal.toFixed(0)} vs Line ${bet.line} (inflated)`;
+    } else if (side === 'UNDER' && lineEdge < -3) {
+      // Line is too high — value on the under
+      const bonus = clampScore(0, 12, Math.round(Math.abs(lineEdge) * 2));
+      score += bonus;
+      breakdown.line_value = bonus;
+      breakdown.line_edge_label = `Proj ${projectedTotal.toFixed(0)} vs Line ${bet.line} (value under)`;
+    } else if (side === 'OVER' && lineEdge > 3) {
+      // Projected total above line — value on the over
+      score += 5;
+      breakdown.line_value = 5;
+      breakdown.line_edge_label = `Proj ${projectedTotal.toFixed(0)} vs Line ${bet.line} (value over)`;
     }
 
     const combinedOff = homeOff + awayOff;
