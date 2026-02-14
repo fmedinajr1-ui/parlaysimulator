@@ -16,6 +16,9 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// ============= SPREAD CAP =============
+const MAX_SPREAD_LINE = 10; // Spreads above this trigger alt line shopping or get blocked
+
 // ============= TIER CONFIGURATION =============
 
 type TierName = 'exploration' | 'validation' | 'execution';
@@ -2403,6 +2406,71 @@ async function generateTierParlays(
       
       if ('type' in pick && pick.type === 'team') {
         const teamPick = pick as EnrichedTeamPick;
+        
+        // SPREAD CAP: Block high spreads or shop for alt lines
+        if (teamPick.bet_type === 'spread' && Math.abs(teamPick.line) >= MAX_SPREAD_LINE) {
+          console.log(`[SpreadCap] High spread detected: ${teamPick.home_team} vs ${teamPick.away_team} line=${teamPick.line}, shopping for alt...`);
+          
+          // Try to fetch alternate spread lines
+          let altApplied = false;
+          try {
+            const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
+            const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+            const teamToLookup = teamPick.side === 'home' ? teamPick.home_team : teamPick.away_team;
+            
+            const altResponse = await fetch(`${supabaseUrl}/functions/v1/fetch-alternate-lines`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${supabaseKey}`,
+              },
+              body: JSON.stringify({
+                eventId: teamPick.id.split('_spread_')[0],
+                teamName: teamToLookup,
+                propType: 'spread',
+                sport: teamPick.sport,
+              }),
+            });
+            
+            if (altResponse.ok) {
+              const altData = await altResponse.json();
+              const altLines: { line: number; overOdds: number }[] = altData.lines || [];
+              
+              // Find best alt spread: abs(line) between 7 and MAX_SPREAD_LINE, reasonable odds
+              const isNegative = teamPick.line < 0;
+              const viableAlts = altLines.filter(alt => {
+                const absLine = Math.abs(alt.line);
+                // Same sign as original
+                if (isNegative && alt.line > 0) return false;
+                if (!isNegative && alt.line < 0) return false;
+                // Target range
+                if (absLine < 7 || absLine > MAX_SPREAD_LINE) return false;
+                // Reasonable odds (-150 to +200)
+                if (alt.overOdds < -150 || alt.overOdds > 200) return false;
+                return true;
+              });
+              
+              if (viableAlts.length > 0) {
+                // Pick the one closest to -10 / +10
+                viableAlts.sort((a, b) => Math.abs(Math.abs(a.line) - 10) - Math.abs(Math.abs(b.line) - 10));
+                const bestAlt = viableAlts[0];
+                console.log(`[SpreadCap] Alt spread found: ${teamPick.line} → ${bestAlt.line} @ ${bestAlt.overOdds}`);
+                teamPick.line = bestAlt.line;
+                teamPick.odds = bestAlt.overOdds;
+                altApplied = true;
+              }
+            }
+          } catch (err) {
+            console.error(`[SpreadCap] Error fetching alt spreads:`, err);
+          }
+          
+          // Hard block: if no alt was found, skip this pick entirely
+          if (!altApplied) {
+            console.log(`[SpreadCap] BLOCKED: No viable alt spread for ${teamPick.home_team} vs ${teamPick.away_team} (line=${teamPick.line})`);
+            continue;
+          }
+        }
+        
         legData = {
           id: teamPick.id,
           type: 'team',
