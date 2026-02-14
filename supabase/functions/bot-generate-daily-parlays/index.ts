@@ -88,6 +88,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'] },
       { legs: 3, strategy: 'ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'] },
       { legs: 4, strategy: 'ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'] },
+      { legs: 3, strategy: 'ncaab_mixed', sports: ['basketball_ncaab'], betTypes: ['spread', 'total'] },
       // NCAA Baseball exploration (2 profiles — reduced from 5, season-gated)
       { legs: 3, strategy: 'baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'] },
       { legs: 3, strategy: 'baseball_spreads', sports: ['baseball_ncaa'], betTypes: ['spread'] },
@@ -203,6 +204,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
       { legs: 3, strategy: 'ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
       { legs: 3, strategy: 'ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 3, strategy: 'ncaab_mixed', sports: ['basketball_ncaab'], betTypes: ['spread', 'total'], minHitRate: 55, sortBy: 'composite' },
       // NCAA Baseball execution
       { legs: 3, strategy: 'baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
     ],
