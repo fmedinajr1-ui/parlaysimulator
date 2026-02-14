@@ -2483,9 +2483,7 @@ async function generateTierParlays(
 
     // Only create parlay if we have enough legs
     if (legs.length < profile.legs) {
-      if (tier === 'execution') {
-        console.log(`[Bot] ${tier}/${profile.strategy}: only ${legs.length}/${profile.legs} legs built from ${candidatePicks.length} candidates`);
-      }
+      console.log(`[Bot] ${tier}/${profile.strategy}: only ${legs.length}/${profile.legs} legs built from ${candidatePicks.length} candidates`);
     } else {
       // Cross-sport gate: require at least one leg from each specified sport
       if ((profile.strategy === 'team_hybrid_cross' || profile.strategy === 'team_ml_cross') && profile.sports && profile.sports.length > 1) {
@@ -2681,7 +2679,7 @@ Deno.serve(async (req) => {
 
     // Check if we have real odds data
     const realLinePicks = pool.playerPicks.filter(p => p.has_real_line);
-    if (pool.totalPool < 20 || (realLinePicks.length < 5 && pool.teamPicks.length < 5)) {
+    if (pool.totalPool < 8 || (realLinePicks.length < 5 && pool.teamPicks.length < 5)) {
       const reason = pool.totalPool < 20 
         ? `Insufficient prop pool (${pool.totalPool})` 
         : `No real odds data (${realLinePicks.length} real lines, ${pool.teamPicks.length} team picks)`;
