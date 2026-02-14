@@ -86,6 +86,8 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'] },
       { legs: 3, strategy: 'ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'] },
       { legs: 3, strategy: 'ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'] },
+      { legs: 3, strategy: 'ncaab_unders', sports: ['basketball_ncaab'], betTypes: ['total'] },
+      { legs: 3, strategy: 'ncaab_unders', sports: ['basketball_ncaab'], betTypes: ['total'] },
       { legs: 3, strategy: 'ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'] },
       { legs: 4, strategy: 'ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'] },
       { legs: 3, strategy: 'ncaab_mixed', sports: ['basketball_ncaab'], betTypes: ['spread', 'total'] },
@@ -203,6 +205,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // NCAAB EXECUTION: KenPom-powered, totals/spreads only (ML favorites were 0/12)
       { legs: 3, strategy: 'ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
       { legs: 3, strategy: 'ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
+      { legs: 3, strategy: 'ncaab_unders', sports: ['basketball_ncaab'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
       { legs: 3, strategy: 'ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'], minHitRate: 55, sortBy: 'composite' },
       { legs: 3, strategy: 'ncaab_mixed', sports: ['basketball_ncaab'], betTypes: ['spread', 'total'], minHitRate: 55, sortBy: 'composite' },
       // NCAA Baseball execution
@@ -2294,8 +2297,12 @@ async function generateTierParlays(
       candidatePicks = pool.teamPicks.filter(p => {
         if (!profile.betTypes!.includes(p.bet_type)) return false;
         // Apply sport filter so baseball profiles only get baseball picks, etc.
-        if (sportFilter.includes('all')) return true;
-        return sportFilter.includes(p.sport);
+        if (!sportFilter.includes('all') && !sportFilter.includes(p.sport)) return false;
+        // ncaab_unders: only allow UNDER side for totals
+        if (profile.strategy === 'ncaab_unders' && p.bet_type === 'total') {
+          return (p as EnrichedTeamPick).side?.toUpperCase() === 'UNDER';
+        }
+        return true;
       });
       
       // team_hybrid_cross: filter to specific sports and ensure cross-sport mix
