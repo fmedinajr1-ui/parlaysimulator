@@ -1,30 +1,42 @@
 
+# Show Full Research Reports
 
-# Add Research Tab to Bot Dashboard
+## Problem
+Research finding summaries are truncated to 3 lines (`line-clamp-3`), hiding the full report content. The `key_insights` and `sources` data are also not displayed.
 
-## What Changes
-
-Add a fourth tab "Research" to the Bot Dashboard's existing tab bar (Overview, Parlays, Analytics, **Research**) that renders the full `ResearchIntelligencePanel` inline.
+## Solution
+Make each finding card expandable to show the full report, including:
+- Full summary text (remove line-clamp)
+- Key insights list (from `key_insights` field)
+- Clickable source links (from `sources` array)
 
 ## Technical Details
 
-### Modified File: `src/pages/BotDashboard.tsx`
+### Modified File: `src/components/admin/ResearchIntelligencePanel.tsx`
 
-1. Add import for `ResearchIntelligencePanel` from `@/components/admin/ResearchIntelligencePanel`
-2. Add a new `TabsTrigger` with value `"research"` to the `TabsList`
-3. Add a new `TabsContent` with value `"research"` that renders `<ResearchIntelligencePanel />`
+1. Add `expandedFindings` state (`Set<string>`) to track which findings are expanded
+2. Replace the static `line-clamp-3` summary with a toggleable view:
+   - Collapsed: 3-line clamp with "Show more" button
+   - Expanded: full summary + key insights + source links
+3. Each finding card becomes clickable to toggle expand/collapse
+4. When expanded, render:
+   - Full `summary` text (no clamp)
+   - `key_insights` as a bulleted list (if present)
+   - `sources` as clickable links (if present)
 
-The existing `ResearchSummaryCard` in the Overview tab stays as-is for a quick glance.
-
-### Changes Summary
-
+### UI Structure (expanded state)
 ```
-TabsList:
-  Overview | Parlays | Analytics | Research  <-- new tab added
+[Title]                    [85%] [Applied to generation...]
+Full summary text without truncation...
 
-TabsContent value="research":
-  <ResearchIntelligencePanel />  <-- already built, just needs to be wired in
+Key Insights:
+  - Insight 1
+  - Insight 2
+
+Sources:
+  source1.com  source2.com  ...
+
+12:01 PM                                      5 sources
 ```
 
-No new files, no database changes. Single file edit.
-
+Single file change, no database modifications.
