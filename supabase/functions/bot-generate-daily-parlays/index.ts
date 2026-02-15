@@ -2663,6 +2663,27 @@ function createParlayFingerprint(legs: any[]): string {
   return keys.sort().join('|');
 }
 
+/**
+ * Create a mirror fingerprint that strips the 'side' from team legs.
+ * This catches parlays that cover the same matchups but with flipped sides (e.g., OVER vs UNDER).
+ */
+function createMirrorFingerprint(legs: any[]): string {
+  const keys = legs.map(leg => {
+    if (leg.type === 'team') {
+      return `T:${leg.home_team}_${leg.away_team}_${leg.bet_type}`.toLowerCase();
+    }
+    return `P:${leg.player_name}_${leg.prop_type}_${leg.line}`.toLowerCase();
+  });
+  return keys.sort().join('|');
+}
+
+/**
+ * Snap a fractional line to the nearest 0.5 sportsbook increment.
+ */
+function snapLine(raw: number): number {
+  return Math.round(raw * 2) / 2;
+}
+
 // ============= TIER GENERATION =============
 
 async function generateTierParlays(
@@ -2674,6 +2695,7 @@ async function generateTierParlays(
   strategyName: string,
   bankroll: number,
   globalFingerprints: Set<string> = new Set(),
+  globalMirrorPrints: Set<string> = new Set(),
   goldenCategories: Set<string> = new Set(),
   isThinSlate: boolean = false,
   winningPatterns: any = null
@@ -2809,7 +2831,7 @@ async function generateTierParlays(
 
     // Build parlay from candidates
     // Anti-stacking rule from pattern replay: cap same-side totals
-    const maxSameSidePerParlay = winningPatterns?.max_same_side_per_parlay || 99;
+    const maxSameSidePerParlay = winningPatterns?.max_same_side_per_parlay || 2;
     const parlaySideCount = new Map<string, number>(); // "total_over" -> count
     
     // Apply thin slate leg override
@@ -2944,7 +2966,7 @@ async function generateTierParlays(
           away_team: teamPick.away_team,
           bet_type: teamPick.bet_type,
           side: teamPick.side,
-          line: teamPick.line,
+          line: snapLine(teamPick.line),
           category: teamPick.category,
           american_odds: teamPick.odds,
           sharp_score: teamPick.sharp_score,
@@ -2979,7 +3001,7 @@ async function generateTierParlays(
           player_name: playerPick.player_name,
           team_name: playerPick.team_name,
           prop_type: playerPick.prop_type,
-          line: selectedLine.line,
+          line: snapLine(selectedLine.line),
           side: playerPick.recommended_side || 'over',
           category: playerPick.category,
           weight,
@@ -3058,7 +3080,14 @@ async function generateTierParlays(
         console.log(`[Bot] Skipping duplicate ${tier}/${profile.strategy} parlay (fingerprint match)`);
         continue;
       }
+      // Mirror dedup: skip if same matchups exist with flipped sides
+      const mirrorPrint = createMirrorFingerprint(legs);
+      if (globalMirrorPrints.has(mirrorPrint)) {
+        console.log(`[Bot] Skipping mirror duplicate ${tier}/${profile.strategy} parlay (same games, flipped sides)`);
+        continue;
+      }
       globalFingerprints.add(fingerprint);
+      globalMirrorPrints.add(mirrorPrint);
 
       // Mark all picks as used
       for (const leg of legs) {
@@ -3289,6 +3318,7 @@ Deno.serve(async (req) => {
 
     // Pre-load existing fingerprints from DB to prevent cross-run duplicates
     const globalFingerprints = new Set<string>();
+    const globalMirrorPrints = new Set<string>();
     const { data: existingParlays } = await supabase
       .from('bot_daily_parlays')
       .select('legs')
@@ -3297,8 +3327,9 @@ Deno.serve(async (req) => {
       for (const p of existingParlays) {
         const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs);
         globalFingerprints.add(createParlayFingerprint(legs));
+        globalMirrorPrints.add(createMirrorFingerprint(legs));
       }
-      console.log(`[Bot v2] Pre-loaded ${globalFingerprints.size} existing fingerprints for ${targetDate}`);
+      console.log(`[Bot v2] Pre-loaded ${globalFingerprints.size} fingerprints + ${globalMirrorPrints.size} mirror prints for ${targetDate}`);
     }
 
     for (const tier of tiersToGenerate) {
@@ -3311,6 +3342,7 @@ Deno.serve(async (req) => {
         strategyName,
         bankroll,
         globalFingerprints,
+        globalMirrorPrints,
         pool.goldenCategories,
         isThinSlate,
         winningPatterns
