@@ -1,76 +1,98 @@
 
 
-# Fix Spread Line Signs and Book Accuracy
+# Fix: Improve Leg Accuracy by Blocking Weak Categories
 
-## Problem
-The bot is showing "Arizona +2.5" when the actual FanDuel spread is "Arizona -1.5". Two root causes:
+## The Problem
 
-1. **Wrong sign**: Whale signal team spread picks store the line as positive (home team perspective: Michigan +2.5), but never negate it for the away side. When the bot picks Arizona (away), the line should be -2.5, but it stays +2.5 because whale picks flow through the player prop code path, not the team pick path.
+Looking at your settled parlay data, several leg types have been consistently losing:
 
-2. **Wrong bookmaker line**: The deduplication picks DraftKings (line 2.5) over FanDuel (line 1.5). Since the user bets on FanDuel, the bot should prefer FanDuel lines when available.
+- **NCAAB OVER totals**: Only **31% hit rate** (4/13). Games like Texas A&M/Vanderbilt O165.5 (actual: 151), UCLA/Michigan O155.5 (actual: 142), Northwestern/Nebraska O145.5 (actual: 117) -- all missed badly.
+- **Home moneylines**: Only **25% hit rate** (6/24)
+- **Home spreads**: Only **43% hit rate** (9/21)
+- Meanwhile, player prop UNDERs hit at **74%** and player prop OVERs hit at **60%** -- these are your best categories but are underused.
 
-## Fix 1: Correct spread sign for whale team picks
+Overall parlay win rate is **29%**, mostly dragged down by these weak team-based legs.
+
+## What We'll Fix
+
+### 1. Block NCAAB OVER totals from generation
+
+The data is clear -- NCAAB game totals heavily favor the UNDER. The bot should stop generating OVER total legs for NCAAB games until performance improves.
 
 **File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
+- Add a hard block: if `sport === 'basketball_ncaab'` and `bet_type === 'total'` and `side === 'over'`, reject the leg
+- Allow NCAAB UNDER totals to continue (they perform well at ~39% in the category weights)
 
-In the whale pick enrichment (around line 2608-2636):
-- Detect team spread/moneyline whale picks (those with `player_name` containing "@" and `stat_type` of spread/total/moneyline)
-- For spread picks where `pick_side` is "away", negate the line: `line = -(line)` so Arizona gets -2.5 instead of +2.5
-- Remove the `p.line > 0` filter that would reject correctly negated away spread lines -- change to `Math.abs(p.line) > 0`
+### 2. Reduce home moneyline exposure
 
-## Fix 2: Prefer FanDuel lines in deduplication
+Home moneylines are hitting at 25%. The generator should either:
+- Block home moneyline picks entirely, OR
+- Require a minimum sharp score of 70+ for home ML picks (currently accepting 50+)
 
 **File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
+- Raise the minimum composite score threshold for `bet_type === 'moneyline'` and `side === 'home'` from ~50 to 75
 
-In the game_bets deduplication (around line 1983-1992):
-- Change dedup key to include bookmaker: prioritize FanDuel over other books
-- When multiple bookmakers exist for the same game + bet_type, prefer FanDuel, then DraftKings, then others
-- This ensures the line matches what the user actually sees on their sportsbook
+### 3. Increase minimum composite score for team picks
 
-## Fix 3: Correct the display in both UI components
+Many team legs have low composite scores (50-55), which indicates weak confidence. Raising the floor improves quality.
 
-**File**: `src/components/bot/DayParlayDetail.tsx` and `src/components/bot/BotParlayCard.tsx`
+**File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
+- Change team pick minimum composite score from 50 to 65 for all team-based legs
+- This filters out the weakest team picks while still allowing strong signals through
 
-- Ensure the spread display shows the correct sign based on the stored line value (already partially handled with `leg.line >= 0 ? '+' : ''` formatting, but only works if the line is correctly negative)
+### 4. Prioritize player prop UNDERs
 
-## Fix 4: Re-generate today's parlays
+Player prop UNDERs are the strongest category at 74% hit rate. The generation weights should be boosted so more parlays include these legs.
 
-After deploying the edge function fix:
-- Delete today's parlays (`DELETE FROM bot_daily_parlays WHERE parlay_date = '2026-02-15'`)
-- Re-run generation to produce correctly signed spread lines using FanDuel's -1.5 line
+**File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
+- Increase the weight multiplier for UNDER-side player props during candidate ranking
+- Target at least 1 UNDER leg per parlay when available
+
+### 5. Auto-calibrate category blocks from actual results
+
+Add a check during generation that reads the `bot_category_weights` table and automatically blocks any category + side combination with fewer than 40% hit rate AND 10+ settled picks.
+
+**File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
+- Query `bot_category_weights` at generation time
+- Build a block list of categories where `current_hit_rate < 40` and `total_picks >= 10`
+- Skip any candidate leg matching a blocked category
 
 ## Technical Details
 
-### Whale pick enrichment change (lines ~2608-2636)
+### Hard block for NCAAB OVER totals (in team pick filtering)
 ```typescript
-const enrichedWhalePicks = (rawWhalePicks || []).map((wp: any) => {
-  const side = (wp.pick_side || 'over').toLowerCase();
-  let line = wp.pp_line || wp.line || 0;
-  const isTeamBet = (wp.stat_type === 'spread' || wp.stat_type === 'moneyline' || wp.stat_type === 'total') 
-    && wp.player_name?.includes('@');
-  
-  // For team spread away picks, negate the line (stored as home perspective)
-  if (isTeamBet && wp.stat_type === 'spread' && side === 'away') {
-    line = -line;
-  }
-  // ... rest of enrichment
-}).filter((p) => Math.abs(p.line) > 0 && p.player_name);
-```
-
-### Game bets dedup preference (lines ~1983-1992)
-```typescript
-// Prefer fanduel > draftkings > others
-const BOOK_PRIORITY: Record<string, number> = { fanduel: 3, draftkings: 2 };
-const getBookPriority = (b: string) => BOOK_PRIORITY[b?.toLowerCase()] || 1;
-
-for (const game of rawTeamProps) {
-  const key = `${game.home_team}_${game.away_team}_${game.bet_type}`;
-  const existing = seenGameBets.get(key);
-  if (!existing || getBookPriority(game.bookmaker) > getBookPriority(existing.bookmaker)) {
-    seenGameBets.set(key, game);
-  }
+// Block NCAAB OVER totals - only 31% hit rate historically
+if (pick.sport === 'basketball_ncaab' && pick.betType === 'total' && pick.side === 'over') {
+  console.log(`[Bot] Blocked NCAAB OVER total: ${pick.awayTeam} @ ${pick.homeTeam} O${pick.line}`);
+  return false;
 }
 ```
 
-This ensures: Arizona -1.5 (FanDuel) instead of Arizona +2.5 (wrong sign, wrong book).
+### Dynamic category blocking (at generation start)
+```typescript
+const { data: weakCategories } = await supabaseAdmin
+  .from('bot_category_weights')
+  .select('category, side, current_hit_rate, total_picks')
+  .lt('current_hit_rate', 40)
+  .gte('total_picks', 10);
+
+const blockedCombos = new Set(
+  (weakCategories || []).map(c => `${c.category}_${c.side}`)
+);
+```
+
+### Composite score floor raise
+```typescript
+// For team-based picks, require composite score >= 65
+if (pick.type === 'team' && pick.compositeScore < 65) {
+  return false;
+}
+```
+
+## Expected Impact
+
+- Eliminates the biggest source of losses (NCAAB OVER totals)
+- Raises quality floor for all team picks
+- Self-healing via dynamic category blocking based on real results
+- Should improve overall parlay win rate from ~29% toward 40%+
 
