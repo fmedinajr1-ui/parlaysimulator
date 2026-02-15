@@ -415,7 +415,7 @@ async function handleCalendar(chatId: string) {
     .order('check_date', { ascending: true });
 
   if (!days || days.length === 0) {
-    return `📅 *${new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(now)} P&L*\n\nNo data recorded yet this month.\n\n📊 View full calendar:\nhttps://parlaysimulator.lovable.app/bot`;
+    return `📅 *${new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(now)} P&L*\n\nNo data recorded yet this month.\n\n📊 View full calendar:\nhttps://parlaysimulator.lovable.app/`;
   }
 
   const totalPnL = days.reduce((s, d) => s + (d.daily_profit_loss || 0), 0);
@@ -454,7 +454,7 @@ async function handleCalendar(chatId: string) {
 *Bankroll:* $${lastBankroll.toLocaleString()}
 
 📊 View full calendar:
-https://parlaysimulator.lovable.app/bot`;
+https://parlaysimulator.lovable.app/`;
 }
 
 async function handleStart(chatId: string) {
@@ -1352,7 +1352,7 @@ async function handleWeeklySummary(chatId: string) {
     msg += `*Best Strategy:* ${bestStrat[0]} (${(bestStrat[1].wins / bestStrat[1].total * 100).toFixed(0)}% WR)\n`;
   }
 
-  msg += `\n📊 View dashboard: https://parlaysimulator.lovable.app/bot`;
+  msg += `\n📊 View dashboard: https://parlaysimulator.lovable.app/`;
 
   return msg;
 }
