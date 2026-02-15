@@ -267,7 +267,7 @@ Deno.serve(async (req) => {
       summary,
       category: 'optimization',
       research_date: targetDate,
-      relevance_score: 90,
+      relevance_score: 9.0,
       actionable: true,
       action_taken: 'Applied to smart generation',
       key_insights: [
@@ -426,7 +426,7 @@ Deno.serve(async (req) => {
       summary: `Pre-generation research: ${todayGames.length} games, ${whalePicks.length} whale picks (threshold lowered to 45), ${reverseSteamSignals.length} reverse steam signals. ${injuries.filter((i: any) => i.status === 'Out').length} key injuries flagged.`,
       category: 'team_research',
       research_date: targetDate,
-      relevance_score: 95,
+      relevance_score: 9.5,
       actionable: true,
       action_taken: 'Injected into smart generation',
       key_insights: teamInsights,
