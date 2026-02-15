@@ -87,6 +87,11 @@ function calculateMoveSpeed(currentLine: number, previousLine: number | null, mi
   return Math.min(25, speed * 12.5);
 }
 
+/** Snap a fractional line to the nearest 0.5 sportsbook increment. */
+function snapLine(raw: number): number {
+  return Math.round(raw * 2) / 2;
+}
+
 function calculateConfirmation(ppLine: number, bookLines: number[]): number {
   if (bookLines.length < 2) return 0;
   const avgBook = bookLines.reduce((a, b) => a + b, 0) / bookLines.length;
@@ -414,7 +419,7 @@ serve(async (req) => {
           const spread = Math.max(...lines) - Math.min(...lines);
           
           if (spread >= threshold.minDivergence) {
-            const avgLine = lines.reduce((a: number, b: number) => a + b, 0) / lines.length;
+            const avgLine = snapLine(lines.reduce((a: number, b: number) => a + b, 0) / lines.length);
             const minLine = Math.min(...lines);
             
             // Enhanced scoring with volume bonus
@@ -532,7 +537,7 @@ serve(async (req) => {
           if (sharpScore < threshold.minScore) continue;
           
           const firstBet = gameBets[0];
-          const avgLine = lines.length > 0 ? lines.reduce((a, b) => a + b, 0) / lines.length : 0;
+          const avgLine = lines.length > 0 ? snapLine(lines.reduce((a, b) => a + b, 0) / lines.length) : 0;
           const startTime = new Date(firstBet.commence_time);
           const expiresAt = new Date(startTime.getTime() - 5 * 60 * 1000);
           const confidenceGrade = sharpScore >= 80 ? 'A' : sharpScore >= 65 ? 'B' : 'C';
