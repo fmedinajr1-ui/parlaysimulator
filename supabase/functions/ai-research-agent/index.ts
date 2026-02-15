@@ -101,6 +101,11 @@ const RESEARCH_QUERIES = [
     query: "Today's international table tennis matches and betting signals. Include ITTF events, WTT events, and major league matches. Any sharp line movements on match winners or total games? Which players are in strong form or dealing with fatigue from back-to-back tournaments? Flag players on 3+ match days.",
     systemPrompt: 'You are a table tennis betting analyst. Focus on player form, recent results, head-to-head records, and any sharp money signals. Table tennis has high volume and fast turnover — flag players on 3+ match days as fatigued. Provide specific player names, event names, and directional bias (favorite/underdog, over/under on games).',
   },
+  {
+    category: 'whale_money_steam_moves',
+    query: "What are today's biggest steam moves and whale-sized wagers on player props across NBA, NHL, NCAAB, tennis, and table tennis? Specifically: 1) Which player prop lines have moved 1+ points since open? 2) Which props have books pulled, frozen, or re-posted at significantly different numbers? 3) Where is the heaviest professional/whale money landing on specific player props? 4) Any reverse line movement on props — line moving opposite the ticket count? Provide PLAYER NAME | PROP TYPE | DIRECTION (OVER/UNDER) | line movement details for each signal.",
+    systemPrompt: 'You are an elite sharp money tracker specializing in whale bets and steam moves on player props. Format each signal as: "PLAYER | PROP_TYPE | DIRECTION | line movement details". For example: "LeBron James | PTS | UNDER | opened 25.5 now 27.5, 70% sharp money on UNDER". Be specific about opening vs current lines, money percentages, and which books moved first. Focus on props with the most significant professional action today.',
+  },
 ];
 
 async function queryPerplexity(
@@ -153,7 +158,115 @@ function extractInsights(content: string): string[] {
   return insights.slice(0, 10);
 }
 
-/** Escape text for Telegram HTML parse mode */
+/** Cross-reference today's whale_picks against Perplexity research findings */
+async function crossReferenceWhalePicks(supabase: any): Promise<{ totalPicks: number; matched: number; boosted: number }> {
+  const today = new Date().toISOString().split('T')[0];
+
+  // Fetch today's unsettled whale picks
+  const { data: whalePicks, error: wpErr } = await supabase
+    .from('whale_picks')
+    .select('*')
+    .eq('detected_at_date', today)
+    .is('outcome', null);
+
+  if (wpErr || !whalePicks?.length) {
+    console.log(`[Research Agent] Whale cross-ref: ${wpErr ? 'error' : 'no picks found'}`);
+    return { totalPicks: 0, matched: 0, boosted: 0 };
+  }
+
+  // Fetch today's sharp signal findings
+  const sharpCategories = [
+    'whale_money_steam_moves', 'nba_nhl_sharp_signals', 'ncaab_sharp_signals',
+    'tennis_sharp_signals', 'table_tennis_signals'
+  ];
+  const { data: findings } = await supabase
+    .from('bot_research_findings')
+    .select('category, summary, key_insights')
+    .eq('research_date', today)
+    .in('category', sharpCategories);
+
+  if (!findings?.length) {
+    console.log('[Research Agent] Whale cross-ref: no sharp findings to match against');
+    return { totalPicks: whalePicks.length, matched: 0, boosted: 0 };
+  }
+
+  // Build searchable text from all findings
+  const intelTexts: string[] = [];
+  for (const f of findings) {
+    if (f.summary) intelTexts.push(f.summary.toLowerCase());
+    if (Array.isArray(f.key_insights)) {
+      for (const insight of f.key_insights) {
+        if (typeof insight === 'string') intelTexts.push(insight.toLowerCase());
+      }
+    }
+  }
+  const combinedIntel = intelTexts.join(' ');
+
+  let matched = 0;
+  let boosted = 0;
+
+  for (const pick of whalePicks) {
+    const playerName = (pick.player_name || '').toLowerCase().trim();
+    if (!playerName || playerName.length < 3) continue;
+
+    // Check if player name appears in findings
+    const nameParts = playerName.split(' ');
+    const lastName = nameParts[nameParts.length - 1];
+    const fullNameFound = combinedIntel.includes(playerName);
+    const lastNameFound = lastName.length >= 4 && combinedIntel.includes(lastName);
+
+    if (!fullNameFound && !lastNameFound) continue;
+
+    matched++;
+
+    // Determine match quality
+    const statType = (pick.stat_type || '').toLowerCase();
+    const direction = (pick.direction || '').toLowerCase();
+    
+    // Check for prop type match (pts, reb, ast, sog, saves, etc.)
+    const propTypeFound = statType && combinedIntel.includes(statType);
+    // Check for direction match (over/under)
+    const directionFound = direction && combinedIntel.includes(direction);
+
+    let boost = 5; // Base: player mentioned in sharp context
+    let matchDetail = 'mentioned in sharp signals';
+
+    if (propTypeFound && directionFound) {
+      boost = 12;
+      matchDetail = `${statType} ${direction} confirmed by sharp action`;
+    } else if (directionFound) {
+      boost = 8;
+      matchDetail = `${direction} direction confirmed by sharp money`;
+    }
+
+    const currentScore = pick.sharp_score || 0;
+    const newScore = Math.min(100, currentScore + boost);
+    const newGrade = newScore >= 80 ? 'A' : newScore >= 65 ? 'B' : newScore >= 55 ? 'C' : 'D';
+
+    // Update why_short with Perplexity conviction
+    const currentWhy: string[] = Array.isArray(pick.why_short) ? [...pick.why_short] : [];
+    currentWhy.push(`Perplexity conviction: ${matchDetail} (+${boost})`);
+
+    const { error: updateErr } = await supabase
+      .from('whale_picks')
+      .update({
+        sharp_score: newScore,
+        confidence_grade: newGrade,
+        why_short: currentWhy,
+      })
+      .eq('id', pick.id);
+
+    if (!updateErr) {
+      boosted++;
+      console.log(`[Research Agent] Whale cross-ref: ${pick.player_name} boosted +${boost} → ${newScore} (${newGrade})`);
+    }
+  }
+
+  console.log(`[Research Agent] Whale cross-ref complete: ${matched}/${whalePicks.length} matched, ${boosted} boosted`);
+  return { totalPicks: whalePicks.length, matched, boosted };
+}
+
+
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
@@ -225,6 +338,7 @@ Deno.serve(async (req) => {
           tennis_sharp_signals: 'Tennis Sharp Signals',
           tennis_form_matchups: 'Tennis Form & Matchups',
           table_tennis_signals: 'Table Tennis Signals',
+          whale_money_steam_moves: 'Whale Money & Steam Moves',
         };
 
         findings.push({
@@ -268,7 +382,9 @@ Deno.serve(async (req) => {
       console.error('[Research Agent] Insert error:', insertError);
     }
 
-    // === BUILD TELEGRAM DIGEST (HTML mode, capped at 4000 chars) ===
+    // === CROSS-REFERENCE WHALE PICKS ===
+    const whaleCrossRef = await crossReferenceWhalePicks(supabase);
+
     const dateStr = new Date().toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric',
@@ -292,6 +408,7 @@ Deno.serve(async (req) => {
       tennis_sharp_signals: '🎾',
       tennis_form_matchups: '🎾',
       table_tennis_signals: '🏓',
+      whale_money_steam_moves: '🐳',
     };
 
     let digestMessage = `🔬 <b>AI Research Digest — ${escapeHtml(dateStr)}</b>\n\n`;
@@ -322,6 +439,9 @@ Deno.serve(async (req) => {
 
     const actionableCount = findings.filter(f => f.relevance_score >= 0.65).length;
     digestMessage += `📈 <b>Summary:</b> ${actionableCount}/${findings.length} categories with actionable intel\n`;
+    if (whaleCrossRef.matched > 0) {
+      digestMessage += `🐳 <b>Whale Cross-Ref:</b> ${whaleCrossRef.matched}/${whaleCrossRef.totalPicks} picks confirmed by Perplexity (${whaleCrossRef.boosted} boosted)\n`;
+    }
     digestMessage += `🔗 Findings stored for strategy tuning`;
 
     // Hard cap at 4000 chars (Telegram limit is 4096)
@@ -372,6 +492,11 @@ Deno.serve(async (req) => {
         success: true,
         findingsCount: findings.length,
         actionableCount,
+        whaleCrossRef: {
+          totalPicks: whaleCrossRef.totalPicks,
+          matched: whaleCrossRef.matched,
+          boosted: whaleCrossRef.boosted,
+        },
         findings: findings.map(f => ({
           category: f.category,
           title: f.title,
