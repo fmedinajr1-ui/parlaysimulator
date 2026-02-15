@@ -874,17 +874,35 @@ async function autoFlipUnderperformingCategories(supabase: any): Promise<string[
     
     console.log(`[Category Analyzer] v10.0 AUTO-FLIP CANDIDATE: ${category} over=${(hitRate * 100).toFixed(1)}% (${s.graded} graded picks) — promoting under side`);
     
-    // Auto-create/update weight entries
-    // Deprioritize over side
+    // Auto-create/update weight entries — SPORT-AWARE (v10.1)
+    // Only update entries that DON'T have sport-specific overrides
+    // Check if sport-specific entries exist first
+    const { data: sportSpecific } = await supabase.from('bot_category_weights')
+      .select('id, sport')
+      .eq('category', category)
+      .eq('side', 'over')
+      .not('sport', 'is', null)
+      .not('sport', 'eq', 'team_all');
+    
+    if (sportSpecific && sportSpecific.length > 0) {
+      console.log(`[Category Analyzer] v10.1 SKIP auto-flip for ${category}: has ${sportSpecific.length} sport-specific overrides — manage manually`);
+      flipped.push(`${category}: over ${(hitRate * 100).toFixed(1)}% — SKIPPED (sport-specific overrides exist)`);
+      continue;
+    }
+    
+    // Deprioritize over side (only global/team_all entries)
     await supabase.from('bot_category_weights')
       .update({ weight: 0.50, updated_at: new Date().toISOString() })
       .eq('category', category)
-      .eq('side', 'over');
+      .eq('side', 'over')
+      .or('sport.is.null,sport.eq.team_all');
     
     // Promote under side (upsert)
-    const underWeight = hitRate < 0.40 ? 1.00 : 1.10; // Less confidence if terrible over rate
+    const underWeight = hitRate < 0.40 ? 1.00 : 1.10;
     const { data: existing } = await supabase.from('bot_category_weights')
-      .select('id').eq('category', category).eq('side', 'under').limit(1);
+      .select('id').eq('category', category).eq('side', 'under')
+      .or('sport.is.null,sport.eq.team_all')
+      .limit(1);
     
     if (existing && existing.length > 0) {
       await supabase.from('bot_category_weights')

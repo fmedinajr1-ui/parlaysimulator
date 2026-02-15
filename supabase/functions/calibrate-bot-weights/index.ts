@@ -171,6 +171,10 @@ Deno.serve(async (req) => {
 
     const existingMap = new Map<string, ExistingWeight>();
     for (const w of existingWeights || []) {
+      // Sport-specific key takes priority
+      if (w.sport && w.sport !== 'team_all') {
+        existingMap.set(`${w.category}__${w.side}__${w.sport}`, w);
+      }
       existingMap.set(`${w.category}__${w.side}`, w);
     }
 
