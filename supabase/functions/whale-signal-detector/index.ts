@@ -163,6 +163,150 @@ function calculateTeamSharpScore(
   return { sharpScore: Math.round(sharpScore), recommendedSide, whyShort };
 }
 
+// ========== PERPLEXITY SHARP INTEL INTEGRATION ==========
+
+interface PerplexityIntel {
+  playerName: string;
+  propType: string | null;
+  direction: string | null; // OVER, UNDER, favorite, underdog
+  context: string;
+}
+
+async function fetchPerplexitySharpIntel(supabase: any): Promise<Map<string, PerplexityIntel[]>> {
+  const today = new Date().toISOString().split('T')[0];
+  const intelMap = new Map<string, PerplexityIntel[]>();
+
+  try {
+    const { data: findings } = await supabase
+      .from('bot_research_findings')
+      .select('category, summary, key_insights')
+      .in('category', [
+        'nba_nhl_sharp_signals',
+        'ncaab_sharp_signals', 
+        'tennis_sharp_signals',
+        'table_tennis_signals',
+        'value_line_discrepancies'
+      ])
+      .eq('research_date', today);
+
+    if (!findings || findings.length === 0) {
+      console.log('[Whale Detector] No Perplexity research findings for today');
+      return intelMap;
+    }
+
+    console.log(`[Whale Detector] Found ${findings.length} Perplexity research entries for today`);
+
+    const propKeywords = ['PTS', 'REB', 'AST', 'STL', 'BLK', '3PM', 'SOG', 'saves', 'goals', 'aces', 'points', 'rebounds', 'assists', 'steals', 'blocks'];
+    const directionKeywords = { over: 'OVER', under: 'UNDER', favorite: 'favorite', underdog: 'underdog', rise: 'OVER', drop: 'UNDER', sharp: null };
+
+    for (const finding of findings) {
+      const textsToScan: string[] = [];
+      if (finding.summary) textsToScan.push(finding.summary);
+      if (finding.key_insights && Array.isArray(finding.key_insights)) {
+        for (const insight of finding.key_insights) {
+          if (typeof insight === 'string') textsToScan.push(insight);
+          else if (insight && typeof insight === 'object' && insight.text) textsToScan.push(insight.text);
+        }
+      }
+
+      for (const text of textsToScan) {
+        // Extract player names: look for capitalized multi-word names
+        const namePattern = /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b/g;
+        let match;
+        while ((match = namePattern.exec(text)) !== null) {
+          const playerName = match[1];
+          // Skip common non-player phrases
+          if (['Sharp Money', 'Line Movement', 'Public Action', 'Reverse Steam', 'Value Line'].includes(playerName)) continue;
+
+          // Find prop type nearby
+          let propType: string | null = null;
+          for (const kw of propKeywords) {
+            if (text.toLowerCase().includes(playerName.toLowerCase()) && text.toUpperCase().includes(kw.toUpperCase())) {
+              propType = kw.toUpperCase();
+              break;
+            }
+          }
+
+          // Find direction
+          let direction: string | null = null;
+          const lowerText = text.toLowerCase();
+          for (const [kw, dir] of Object.entries(directionKeywords)) {
+            if (lowerText.includes(kw)) {
+              direction = dir;
+              break;
+            }
+          }
+
+          const normalizedName = playerName.toLowerCase();
+          if (!intelMap.has(normalizedName)) {
+            intelMap.set(normalizedName, []);
+          }
+          intelMap.get(normalizedName)!.push({
+            playerName,
+            propType,
+            direction,
+            context: text.substring(0, 120),
+          });
+        }
+      }
+    }
+
+    console.log(`[Whale Detector] Extracted Perplexity intel for ${intelMap.size} players`);
+    return intelMap;
+  } catch (err) {
+    console.error('[Whale Detector] Perplexity intel fetch error:', err);
+    return intelMap;
+  }
+}
+
+function matchPerplexitySignal(
+  playerName: string,
+  statType: string,
+  recommendedSide: string,
+  intelMap: Map<string, PerplexityIntel[]>
+): { boost: number; reason: string } | null {
+  const normalizedPlayer = playerName.toLowerCase();
+
+  // Try exact match first, then substring
+  let matchedIntels: PerplexityIntel[] | undefined;
+
+  // Check if any intel key is a substring of the player name or vice versa
+  for (const [key, intels] of intelMap) {
+    if (normalizedPlayer.includes(key) || key.includes(normalizedPlayer)) {
+      matchedIntels = intels;
+      break;
+    }
+    // Also check last name match
+    const playerLastName = normalizedPlayer.split(' ').pop() || '';
+    const intelLastName = key.split(' ').pop() || '';
+    if (playerLastName.length >= 4 && playerLastName === intelLastName) {
+      matchedIntels = intels;
+      break;
+    }
+  }
+
+  if (!matchedIntels || matchedIntels.length === 0) return null;
+
+  for (const intel of matchedIntels) {
+    const propMatch = intel.propType && statType.toUpperCase().includes(intel.propType);
+    const dirMatch = intel.direction && (
+      intel.direction === recommendedSide ||
+      (intel.direction === 'OVER' && recommendedSide === 'OVER') ||
+      (intel.direction === 'UNDER' && recommendedSide === 'UNDER')
+    );
+
+    if (propMatch && dirMatch) {
+      return { boost: 12, reason: `Perplexity: sharp money confirmed ${intel.direction} (${intel.context})` };
+    }
+    if (dirMatch) {
+      return { boost: 8, reason: `Perplexity: sharp action ${intel.direction} confirmed (${intel.context})` };
+    }
+  }
+
+  // Generic mention in sharp context
+  return { boost: 5, reason: `Perplexity: player flagged in sharp intel (${matchedIntels[0].context})` };
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -429,6 +573,39 @@ serve(async (req) => {
     
     const allSignals = [...divergenceSignals, ...teamSignals];
     
+    // ========== PERPLEXITY CROSS-REFERENCE ==========
+    let perplexityMatches = 0;
+    if (allSignals.length > 0) {
+      const intelMap = await fetchPerplexitySharpIntel(supabase);
+      
+      if (intelMap.size > 0) {
+        for (const signal of allSignals) {
+          const match = matchPerplexitySignal(
+            signal.player_name,
+            signal.stat_type,
+            signal.recommended_side,
+            intelMap
+          );
+          
+          if (match) {
+            signal.sharp_score = Math.min(100, signal.sharp_score + match.boost);
+            signal.why_short.push(match.reason);
+            
+            // Upgrade confidence grade if threshold crossed
+            const newGrade = getConfidenceGrade(signal.sharp_score);
+            if (newGrade < signal.confidence_grade) { // A < B in char comparison
+              signal.confidence_grade = newGrade;
+              signal.confidence = newGrade;
+            }
+            
+            perplexityMatches++;
+          }
+        }
+        
+        console.log(`[Whale Detector] Perplexity cross-ref: ${perplexityMatches}/${allSignals.length} signals boosted`);
+      }
+    }
+    
     // Insert all signals
     if (allSignals.length > 0) {
       // Delete old signals first
@@ -487,6 +664,7 @@ serve(async (req) => {
         playerPropSignals: divergenceSignals.length,
         teamPropSignals: teamSignals.length,
         totalSignals: allSignals.length,
+        perplexityMatches,
         sports: sports,
       }
     });
@@ -497,6 +675,7 @@ serve(async (req) => {
         playerPropSignals: divergenceSignals.length,
         teamPropSignals: teamSignals.length,
         totalSignals: allSignals.length,
+        perplexityMatches,
         sports: sports,
         sampleSignals: allSignals.slice(0, 5).map(s => ({
           player: s.player_name,
@@ -506,6 +685,7 @@ serve(async (req) => {
           grade: s.confidence_grade,
           side: s.recommended_side,
           type: s.signal_type,
+          whyShort: s.why_short,
         })),
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
