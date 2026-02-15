@@ -1,114 +1,74 @@
 
 
-# Make Today's Parlays Smarter: Per-Team Research + Scoring Overhaul
+# Add Research Intelligence Panel to Admin + Bot Dashboard
 
-## What Went Wrong Yesterday
+## What This Adds
 
-All 4 losses were NCAAB OVER totals that missed badly:
-- UCLA vs Michigan: line 152.5, actual 142 (10 pts under)
-- Texas A&M vs Vanderbilt: line 165.5, actual 151 (14 pts under)
-- Northwestern vs Nebraska: line 145.5, actual 117 (28 pts under!)
-- Clemson vs Duke: line 133.5, actual 121 (12 pts under)
+A new "Research Intelligence" section that shows you exactly what the AI research agent found -- every Perplexity query, every finding, and how it influenced today's parlays.
 
-**Root cause**: The bot picked OVERs blindly because:
-1. Perplexity research returned empty results ("I cannot provide KenPom data") -- so zero research boosts were applied
-2. The scoring function gives tempo bonuses to OVERs but doesn't validate against actual team scoring
-3. Teams with missing KenPom data (like Florida Atlantic today) get a flat 55 score instead of being blocked
-4. No per-team scoring trend analysis -- the bot doesn't check if teams are actually scoring enough to hit the over
+## Two Access Points
 
-## Today's Risk Assessment
+### 1. Admin Panel -- Full Research Dashboard (new admin section)
 
-8 parlays already generated, mostly OVERs again. Key risks:
-- Florida Atlantic has NO KenPom data at all (null everything)
-- Utah is ranked 160, Niagara 191 -- both borderline
-- Iona is 135 -- below our new 200 gate but still risky
-- No research intelligence backing any of these picks
+A new "Research Intelligence" card in the Admin overview that opens a full dashboard showing:
 
-## The Fix: 3 Changes
+- **Today's Research Findings**: All entries from `bot_research_findings` for today, grouped by category (e.g., `ncaab_team_scoring_trends`, `ncaab_scoring_validation`, `sharp_signals`)
+- **Finding Details**: Each finding shows the category, source query, key findings text, relevance score, and whether an action was taken (e.g., "boosted score +7" or "added to blocklist")
+- **Research Timeline**: When each finding was fetched, with status indicators (success/empty/error)
+- **Historical View**: Date picker to review past days' research
 
-### Change 1: Enhanced AI Research Agent -- Team-Specific Queries
+### 2. Bot Dashboard -- Compact Research Summary Card
 
-**File: `supabase/functions/ai-research-agent/index.ts`**
+On the homepage Bot Dashboard, add a small collapsible card above or below the daily parlays showing:
 
-The current KenPom query asks Perplexity a generic question and Perplexity says "I don't have KenPom data." Instead, restructure the NCAAB research categories to ask questions Perplexity CAN actually answer:
+- Number of research findings today (e.g., "14 findings from 6 categories")
+- Quick status: how many had high relevance (above 0.7) vs low
+- Last research run timestamp
+- A "View Details" link that navigates to the Admin research panel (admin only) or expands inline
 
-1. Replace the `ncaab_kenpom_matchups` query with a more practical one that asks about today's specific team matchups, recent scoring trends, and pace of play -- things Perplexity can find from sports news rather than paywalled KenPom data
-2. Add a new `ncaab_team_scoring_trends` category that asks: "For each NCAAB game today, what are the last 5 game scores for each team? What is each team's scoring average over their last 5 games? Which games are likely to go over/under based on recent scoring?" -- This gives the bot actual data to validate over/under picks
-3. Make the sharp signals query more specific by including today's actual game slate (dynamically injected from the database)
+## Technical Details
 
-### Change 2: Composite Score Hardening for NCAAB Totals
+### New Files
 
-**File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
+1. **`src/components/admin/ResearchIntelligencePanel.tsx`** -- Full admin dashboard component
+   - Fetches from `bot_research_findings` table filtered by date
+   - Groups findings by `category`
+   - Displays `key_findings` text, `relevance_score`, `action_taken`, `created_at`
+   - Date picker for historical browsing
+   - Color-coded relevance badges (green > 0.7, yellow 0.4-0.7, red < 0.4)
 
-The `calculateNcaabTeamCompositeScore` function needs critical fixes:
+2. **`src/components/bot/ResearchSummaryCard.tsx`** -- Compact card for the Bot Dashboard
+   - Shows today's research count and relevance summary
+   - Collapsible to show category breakdown
+   - Accessible to all users (read-only summary)
 
-1. **Block teams with no KenPom data from totals**: If either team has null `adj_offense`/`adj_defense`/`adj_tempo`, cap composite score at 40 (below selection threshold) instead of returning flat 55
-2. **Add defensive efficiency check for OVERs**: If both teams have `adj_defense` below 70 (strong defense), penalize OVER by -12. Yesterday's misses all featured at least one strong defensive team
-3. **Validate line against projected total**: Use `(homeOff + awayOff) * (avgTempo / 70)` as a crude projected total. If the OVER line exceeds this projection by 5+, penalize by -10 (the market is already pricing in an over, less value)
-4. **Add UNDER bonus for defensive matchups**: When both teams are below 72 adj_offense (scoring less than average), boost UNDER by +8
+### Modified Files
 
-### Change 3: Regenerate Today's Parlays with Fresh Research
+3. **`src/pages/Admin.tsx`**
+   - Add `'research'` to `AdminSection` type
+   - Add Research Intelligence card to `sectionConfig` array (with `Search` or `BookOpen` icon)
+   - Add case in `renderSectionContent` to render `ResearchIntelligencePanel`
 
-**Execution steps (after deploying the code changes):**
+4. **`src/pages/Index.tsx`** (or wherever the Bot Dashboard lives)
+   - Import and render `ResearchSummaryCard` above/below `DailyParlayHub`
 
-1. Trigger `ai-research-agent` to pull fresh team-specific research with the improved queries
-2. Delete today's 8 existing parlays (they were generated without research intelligence)
-3. Run `bot-generate-daily-parlays` with `source: 'pipeline'` to regenerate with the new scoring and fresh research
-4. Verify the new parlays have meaningful composite scores and aren't all OVERS
+### Database Query
 
-### Technical Details
-
-**ai-research-agent changes:**
-
-Replace the `ncaab_kenpom_matchups` query:
-```
-Old: "What are today's most interesting NCAA college basketball matchups based on KenPom efficiency ratings..."
-New: "For each NCAA college basketball game today (February 15, 2026), provide: 1) Each team's last 5 game scores and results, 2) Average points scored and allowed per game over last 5, 3) Whether the game pace is fast or slow based on recent games, 4) Whether the total is likely to go OVER or UNDER based on recent scoring trends. Focus on: Indiana vs Illinois, South Florida vs Florida Atlantic, Utah vs Cincinnati, Bradley vs Southern Illinois, Iona vs Niagara."
+The panel reads directly from the existing `bot_research_findings` table:
+```sql
+SELECT category, key_findings, relevance_score, action_taken, source_query, created_at
+FROM bot_research_findings
+WHERE research_date = '2026-02-15'
+ORDER BY created_at DESC
 ```
 
-Add new query for `ncaab_scoring_validation`:
-```
-"For these specific NCAAB games on February 15, 2026: [games list]. For each team, what were their exact scores in their last 3 games? What is the combined scoring average? Compare this to the posted total line. Flag any games where the total seems too high or too low based on recent performance."
-```
+No schema changes needed -- all data already exists.
 
-**calculateNcaabTeamCompositeScore changes:**
-```
-// Block: either team has no data
-if (!homeStats || !awayStats) {
-  return { score: 40, breakdown: { no_data_penalty: -10 } };
-}
+### UI Design
 
-// Projected total sanity check for OVERs
-if (betType === 'total' && side === 'over') {
-  const projectedTotal = (homeOff + awayOff) * (avgTempo / 70);
-  const line = game.line || 0;
-  if (line > projectedTotal + 5) {
-    score -= 10;
-    breakdown.line_above_projection = -10;
-  }
-}
-
-// Defensive matchup penalty for OVERs
-if (betType === 'total' && side === 'over' && homeDef < 70 && awayDef < 70) {
-  score -= 12;
-  breakdown.both_strong_defense = -12;
-}
-
-// Defensive matchup bonus for UNDERs
-if (betType === 'total' && side === 'under' && homeOff < 72 && awayOff < 72) {
-  score += 8;
-  breakdown.low_scoring_teams = 8;
-}
-```
-
-**Parlay regeneration:**
-1. Delete today's parlays: `DELETE FROM bot_daily_parlays WHERE parlay_date = '2026-02-15'`
-2. Run fresh research + generation pipeline
-
-### Expected Impact
-
-- Eliminates blind OVER bias by penalizing OVERs when defense is strong or line exceeds projection
-- Research agent will actually return useful data (recent scores, trends) instead of "I can't find KenPom data"
-- Teams with missing stats get blocked from parlays (score capped at 40)
-- Today's regenerated parlays will have a mix of OVERs, UNDERs, and spreads based on actual matchup analysis
+- Matches existing admin panel card style (dark theme, muted borders)
+- Category grouping with collapsible sections
+- Relevance score shown as colored badge (green/yellow/red)
+- Action taken shown as a small tag (e.g., "blocklist", "score boost +7", "no action")
+- Empty state: "No research findings for this date. Run the AI Research Agent to generate."
 
