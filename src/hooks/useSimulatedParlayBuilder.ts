@@ -82,9 +82,38 @@ const DEFAULT_CONFIG: SimulationConfig = {
  * Convert SweetSpotPick to ParlayLegInput for simulation
  */
 function convertToLegInput(pick: SweetSpotPick): ParlayLegInput {
-  // Estimate American odds from confidence (simplified)
   const baseOdds = pick.side === 'over' ? -110 : -110;
-  
+
+  // Build context from real data on the pick
+  const context: Partial<Record<string, number | boolean>> = {};
+
+  // Injury impact: scale from status
+  if (pick.injuryStatus) {
+    const status = pick.injuryStatus.toUpperCase();
+    if (status === 'QUESTIONABLE') context.injuryImpact = -0.08;
+    else if (status === 'DOUBTFUL') context.injuryImpact = -0.20;
+    else if (status === 'GTD' || status === 'DAY-TO-DAY') context.injuryImpact = -0.10;
+    // OUT players should be filtered before reaching simulation
+  }
+
+  // Matchup adjustment -> defense rating
+  // positive matchup = weak defense (rating < 1), negative = strong defense (rating > 1)
+  if (pick.matchupAdjustment != null) {
+    context.defenseRating = 1 - (pick.matchupAdjustment / 100);
+  }
+
+  // Pace adjustment (convert to multiplier)
+  if (pick.paceAdjustment != null) {
+    context.paceAdjustment = 1 + (pick.paceAdjustment / 100);
+  }
+
+  // Recent form from L10 hit rate: 70% = hot (1.1x), 40% = cold (0.9x)
+  if (pick.l10HitRate != null) {
+    context.recentForm = 0.7 + (pick.l10HitRate / 100) * 0.4;
+  }
+
+  const hasContext = Object.keys(context).length > 0;
+
   return {
     id: pick.id,
     propType: pick.prop_type,
@@ -96,7 +125,7 @@ function convertToLegInput(pick: SweetSpotPick): ParlayLegInput {
     expectedValue: pick.projectedValue || pick.line,
     sport: 'basketball',
     gameId: pick.event_id,
-    context: undefined,
+    context: hasContext ? (context as any) : undefined,
   };
 }
 

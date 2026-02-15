@@ -1,4 +1,4 @@
-import { ParlaySimulation, ParlayLeg } from '@/types/parlay';
+import { ParlaySimulation, ParlayLeg, ParlayLegContextualFactors } from '@/types/parlay';
 
 export interface UpsetFactors {
   underdogBoost: number;      // Extra % chance for underdogs (+200 to +499)
@@ -93,6 +93,38 @@ function calculateAdjustedProbability(
   // Chaos day multiplier (underdogs get boosted on chaos days)
   if (isChaosDayActive && odds > 0) {
     adjustedProb *= factors.chaosDayMultiplier;
+  }
+
+  // Apply contextual factors (injury, defense, fatigue, pace, form)
+  if (leg.contextualFactors) {
+    const ctx = leg.contextualFactors;
+    
+    // Injury penalty (negative value reduces probability)
+    if (ctx.injuryImpact) {
+      adjustedProb += ctx.injuryImpact;
+    }
+    
+    // Defense rating: >1 = strong defense (reduces probability for overs)
+    if (ctx.defenseRating && ctx.defenseRating > 1.05) {
+      adjustedProb *= (2 - ctx.defenseRating); // 1.1 defense = 0.9x multiplier
+    } else if (ctx.defenseRating && ctx.defenseRating < 0.95) {
+      adjustedProb *= (2 - ctx.defenseRating); // 0.9 defense = 1.1x multiplier
+    }
+    
+    // Fatigue (back-to-back): 6% penalty
+    if (ctx.isBackToBack) {
+      adjustedProb *= 0.94;
+    }
+    
+    // Pace adjustment
+    if (ctx.paceAdjustment) {
+      adjustedProb *= ctx.paceAdjustment;
+    }
+    
+    // Recent form
+    if (ctx.recentForm) {
+      adjustedProb *= ctx.recentForm;
+    }
   }
 
   // Cap probability between 1% and 95%
