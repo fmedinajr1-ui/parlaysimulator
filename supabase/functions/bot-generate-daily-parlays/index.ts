@@ -1810,6 +1810,73 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     console.log(`[Bot] Applied research edge threshold: ${researchEdge} (overrides lower defaults)`);
   }
 
+  // === GAME CONTEXT FLAGS (revenge, B2B fatigue, blowout, thin slate) ===
+  interface GameContextFlag {
+    type: string;
+    game_id?: string;
+    home_team?: string;
+    away_team?: string;
+    team?: string;
+    sport?: string;
+    penalty?: number;
+    boost?: number;
+    max_legs_override?: number;
+    game_count?: number;
+  }
+
+  let gameContextFlags: GameContextFlag[] = [];
+  let thinSlateOverride = false;
+  let maxLegsOverride: number | null = null;
+
+  try {
+    const { data: contextFindings } = await supabase
+      .from('bot_research_findings')
+      .select('key_insights')
+      .eq('category', 'game_context')
+      .eq('research_date', gameDate)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (contextFindings?.[0]?.key_insights) {
+      const insights = contextFindings[0].key_insights as string[];
+      const jsonInsight = insights.find((i: string) => i.startsWith('{'));
+      if (jsonInsight) {
+        const parsed = JSON.parse(jsonInsight);
+        gameContextFlags = parsed.context_flags || [];
+      }
+    }
+
+    const thinSlateFlag = gameContextFlags.find(f => f.type === 'thin_slate');
+    if (thinSlateFlag) {
+      thinSlateOverride = true;
+      maxLegsOverride = thinSlateFlag.max_legs_override || 3;
+      console.log(`[Bot] THIN SLATE MODE: ${thinSlateFlag.game_count} games, max legs overridden to ${maxLegsOverride}`);
+    }
+
+    console.log(`[Bot] Game context flags: ${gameContextFlags.length} (revenge=${gameContextFlags.filter(f => f.type === 'revenge_game').length}, b2b=${gameContextFlags.filter(f => f.type === 'b2b_fatigue').length}, blowout=${gameContextFlags.filter(f => f.type === 'blowout_risk').length})`);
+  } catch (ctxErr) {
+    console.warn(`[Bot] Failed to load game context flags:`, ctxErr);
+  }
+
+  // Build lookup maps for context penalties/boosts
+  const b2bTeams = new Set<string>();
+  const blowoutGames = new Map<string, number>();
+  const revengeGames = new Map<string, number>();
+
+  for (const flag of gameContextFlags) {
+    if (flag.type === 'b2b_fatigue' && flag.team) {
+      b2bTeams.add(flag.team.toLowerCase());
+    }
+    if (flag.type === 'blowout_risk') {
+      if (flag.home_team) blowoutGames.set(flag.home_team.toLowerCase(), flag.penalty || -8);
+      if (flag.away_team) blowoutGames.set(flag.away_team.toLowerCase(), flag.penalty || -8);
+    }
+    if (flag.type === 'revenge_game') {
+      if (flag.home_team) revengeGames.set(flag.home_team.toLowerCase(), flag.boost || 5);
+      if (flag.away_team) revengeGames.set(flag.away_team.toLowerCase(), flag.boost || 5);
+    }
+  }
+
   // 1. Sweet spot picks (analyzed player props) - no is_active filter, analysis_date is sufficient
   const { data: sweetSpots } = await supabase
     .from('category_sweet_spots')
@@ -1969,6 +2036,26 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
 
   console.log(`[Bot] Filtered to ${enrichedSweetSpots.length} picks with verified sportsbook lines (removed projected-only legs, blocked NCAAB player props)`);
 
+  // === APPLY GAME CONTEXT PENALTIES/BOOSTS TO PLAYER PICKS ===
+  let contextAdjustments = 0;
+  for (const pick of enrichedSweetSpots) {
+    const teamName = (pick.team_name || '').toLowerCase();
+    
+    // B2B fatigue penalty: -6 for players on back-to-back teams
+    if (teamName && b2bTeams.has(teamName)) {
+      pick.compositeScore = Math.max(0, pick.compositeScore - 6);
+      contextAdjustments++;
+    }
+    
+    // Blowout risk penalty: -8 for player props in blowout games
+    if (teamName && blowoutGames.has(teamName)) {
+      pick.compositeScore = Math.max(0, pick.compositeScore + (blowoutGames.get(teamName) || -8));
+      contextAdjustments++;
+    }
+  }
+  if (contextAdjustments > 0) {
+    console.log(`[Bot] Applied ${contextAdjustments} game context adjustments to player picks`);
+  }
   // FALLBACK: If no sweet spots for today, create picks directly from unified_props
   if (enrichedSweetSpots.length === 0 && playerProps && playerProps.length > 0) {
     console.log(`[Bot] No sweet spots for ${targetDate}, using ${playerProps.length} unified_props directly`);
@@ -2467,6 +2554,30 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   enrichedTeamPicks.length = 0;
   enrichedTeamPicks.push(...filteredTeamPicks);
 
+  // === APPLY GAME CONTEXT BOOSTS TO TEAM PICKS ===
+  let teamContextAdjustments = 0;
+  for (const pick of enrichedTeamPicks) {
+    const homeKey = (pick.home_team || '').toLowerCase();
+    const awayKey = (pick.away_team || '').toLowerCase();
+    
+    // Revenge game boost: +5 for team bets in revenge games
+    const revengeBoost = revengeGames.get(homeKey) || revengeGames.get(awayKey);
+    if (revengeBoost) {
+      pick.compositeScore = Math.min(95, pick.compositeScore + revengeBoost);
+      teamContextAdjustments++;
+    }
+    
+    // Blowout risk penalty for team props too (but less severe, -4)
+    const blowoutPenalty = blowoutGames.get(homeKey) || blowoutGames.get(awayKey);
+    if (blowoutPenalty && pick.bet_type === 'total') {
+      pick.compositeScore = Math.max(0, pick.compositeScore - 4);
+      teamContextAdjustments++;
+    }
+  }
+  if (teamContextAdjustments > 0) {
+    console.log(`[Bot] Applied ${teamContextAdjustments} game context adjustments to team picks`);
+  }
+
   // Build golden categories set (60%+ hit rate with 20+ samples)
   const goldenCategories = new Set<string>();
   categoryWeights.forEach(cw => {
@@ -2690,8 +2801,13 @@ async function generateTierParlays(
     const maxSameSidePerParlay = winningPatterns?.max_same_side_per_parlay || 99;
     const parlaySideCount = new Map<string, number>(); // "total_over" -> count
     
+    // Apply thin slate leg override
+    const effectiveMaxLegs = (thinSlateOverride && maxLegsOverride) 
+      ? Math.min(profile.legs, maxLegsOverride) 
+      : profile.legs;
+
     for (const pick of candidatePicks) {
-      if (legs.length >= profile.legs) break;
+      if (legs.length >= effectiveMaxLegs) break;
       
       if (!canUsePickGlobally(pick, tracker, config)) continue;
       if (!canUsePickInParlay(pick, parlayTeamCount, parlayCategoryCount, config, legs)) continue;
