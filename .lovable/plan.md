@@ -1,46 +1,76 @@
 
 
-# Round Robin "Bankroll Doubler" Parlay
+# Fix Spread Line Signs and Book Accuracy
 
-## What This Does
-Creates a special high-confidence mega-parlay by combining the best individual legs from all three tiers (Execution, Validation, Exploration) into one large parlay designed to roughly double your bankroll. Think of it as cherry-picking the absolute best legs the bot has already identified and stacking them together.
+## Problem
+The bot is showing "Arizona +2.5" when the actual FanDuel spread is "Arizona -1.5". Two root causes:
 
-## How It Works
+1. **Wrong sign**: Whale signal team spread picks store the line as positive (home team perspective: Michigan +2.5), but never negate it for the away side. When the bot picks Arizona (away), the line should be -2.5, but it stays +2.5 because whale picks flow through the player prop code path, not the team pick path.
 
-1. **Pull the day's top legs** -- after normal generation runs, scan all existing parlays for the date and extract unique legs ranked by composite score + hit rate
-2. **Apply strict quality filters** -- only legs with 60%+ hit rate, positive edge, and from non-blocked categories qualify
-3. **Build the mega-parlay** -- select 6-10 of these elite legs (targeting ~+2000 to +5000 odds range, enough to 2x the bankroll at a reasonable stake)
-4. **Round robin sub-parlays** -- in addition to the single mega-parlay, generate smaller 3-4 leg "round robin" combinations from the same pool as insurance (e.g., if you pick 6 legs, generate all possible 4-leg combos = 15 sub-parlays)
-5. **Store with a new tier** called `"round_robin"` so it's visually distinct on the Bot Dashboard
+2. **Wrong bookmaker line**: The deduplication picks DraftKings (line 2.5) over FanDuel (line 1.5). Since the user bets on FanDuel, the bot should prefer FanDuel lines when available.
+
+## Fix 1: Correct spread sign for whale team picks
+
+**File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
+
+In the whale pick enrichment (around line 2608-2636):
+- Detect team spread/moneyline whale picks (those with `player_name` containing "@" and `stat_type` of spread/total/moneyline)
+- For spread picks where `pick_side` is "away", negate the line: `line = -(line)` so Arizona gets -2.5 instead of +2.5
+- Remove the `p.line > 0` filter that would reject correctly negated away spread lines -- change to `Math.abs(p.line) > 0`
+
+## Fix 2: Prefer FanDuel lines in deduplication
+
+**File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
+
+In the game_bets deduplication (around line 1983-1992):
+- Change dedup key to include bookmaker: prioritize FanDuel over other books
+- When multiple bookmakers exist for the same game + bet_type, prefer FanDuel, then DraftKings, then others
+- This ensures the line matches what the user actually sees on their sportsbook
+
+## Fix 3: Correct the display in both UI components
+
+**File**: `src/components/bot/DayParlayDetail.tsx` and `src/components/bot/BotParlayCard.tsx`
+
+- Ensure the spread display shows the correct sign based on the stored line value (already partially handled with `leg.line >= 0 ? '+' : ''` formatting, but only works if the line is correctly negative)
+
+## Fix 4: Re-generate today's parlays
+
+After deploying the edge function fix:
+- Delete today's parlays (`DELETE FROM bot_daily_parlays WHERE parlay_date = '2026-02-15'`)
+- Re-run generation to produce correctly signed spread lines using FanDuel's -1.5 line
 
 ## Technical Details
 
-### Edge Function Changes (`bot-generate-daily-parlays/index.ts`)
-- Add a new action `"round_robin"` alongside the existing `"generate"` and `"smart_generate"` actions
-- New function `generateRoundRobinParlays()` that:
-  - Queries all `bot_daily_parlays` for today to extract the best unique legs
-  - Deduplicates by player/team + prop type
-  - Ranks by `composite_score` descending, filtered to 60%+ confidence
-  - Builds one "mega" parlay with the top 6-10 legs
-  - Generates all C(n, k) sub-combinations (k = 3 or 4) as round robin entries
-  - Calculates combined probability and expected odds for each combo
-  - Inserts all with `tier: 'round_robin'` and `strategy_name: 'bankroll_doubler'`
+### Whale pick enrichment change (lines ~2608-2636)
+```typescript
+const enrichedWhalePicks = (rawWhalePicks || []).map((wp: any) => {
+  const side = (wp.pick_side || 'over').toLowerCase();
+  let line = wp.pp_line || wp.line || 0;
+  const isTeamBet = (wp.stat_type === 'spread' || wp.stat_type === 'moneyline' || wp.stat_type === 'total') 
+    && wp.player_name?.includes('@');
+  
+  // For team spread away picks, negate the line (stored as home perspective)
+  if (isTeamBet && wp.stat_type === 'spread' && side === 'away') {
+    line = -line;
+  }
+  // ... rest of enrichment
+}).filter((p) => Math.abs(p.line) > 0 && p.player_name);
+```
 
-### UI Changes
+### Game bets dedup preference (lines ~1983-1992)
+```typescript
+// Prefer fanduel > draftkings > others
+const BOOK_PRIORITY: Record<string, number> = { fanduel: 3, draftkings: 2 };
+const getBookPriority = (b: string) => BOOK_PRIORITY[b?.toLowerCase()] || 1;
 
-**Bot Dashboard (`BotDashboard.tsx`)**
-- Add a "Doubler" button to the sticky bottom action bar that triggers the round robin generation
+for (const game of rawTeamProps) {
+  const key = `${game.home_team}_${game.away_team}_${game.bet_type}`;
+  const existing = seenGameBets.get(key);
+  if (!existing || getBookPriority(game.bookmaker) > getBookPriority(existing.bookmaker)) {
+    seenGameBets.set(key, game);
+  }
+}
+```
 
-**Day Parlay Detail / Bot Parlay Card**
-- Recognize `tier: 'round_robin'` with a distinct badge/color (e.g., gold/yellow)
-- Show the mega-parlay prominently with a "Bankroll Doubler" label
-
-### Hook Changes (`useBotEngine.ts`)
-- Add a `generateRoundRobin()` mutation that calls the edge function with `action: 'round_robin'`
-
-## Safety Rails
-- Round robin generation only works AFTER the daily generation has run (needs legs to pick from)
-- Stake remains at $20 (same flat unit) -- the payout multiplier does the heavy lifting
-- Bankroll floor protection still applies
-- Maximum of 1 mega-parlay + 15 sub-parlays per day to prevent spam
+This ensures: Arizona -1.5 (FanDuel) instead of Arizona +2.5 (wrong sign, wrong book).
 
