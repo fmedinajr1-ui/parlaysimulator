@@ -2689,11 +2689,23 @@ async function generateTierParlays(
     }
 
     // Build parlay from candidates
+    // Anti-stacking rule from pattern replay: cap same-side totals
+    const maxSameSidePerParlay = winningPatterns?.max_same_side_per_parlay || 99;
+    const parlaySideCount = new Map<string, number>(); // "total_over" -> count
+    
     for (const pick of candidatePicks) {
       if (legs.length >= profile.legs) break;
       
       if (!canUsePickGlobally(pick, tracker, config)) continue;
       if (!canUsePickInParlay(pick, parlayTeamCount, parlayCategoryCount, config, legs)) continue;
+      
+      // Pattern replay: anti-stacking (e.g., max 2 OVER totals per parlay)
+      const pickBetType = ('bet_type' in pick ? pick.bet_type : pick.prop_type) || '';
+      const pickSide = pick.recommended_side || '';
+      const sideKey = `${pickBetType}_${pickSide}`.toLowerCase();
+      if ((parlaySideCount.get(sideKey) || 0) >= maxSameSidePerParlay) {
+        continue;
+      }
 
       // Hybrid profile: cap team legs AND player legs to ensure mix
       if (isHybridProfile) {
@@ -2877,6 +2889,11 @@ async function generateTierParlays(
       
       legs.push(legData);
       parlayCategoryCount.set(pick.category, (parlayCategoryCount.get(pick.category) || 0) + 1);
+      // Track side count for anti-stacking
+      const legBetType = ('bet_type' in pick ? pick.bet_type : pick.prop_type) || '';
+      const legSide = pick.recommended_side || '';
+      const legSideKey = `${legBetType}_${legSide}`.toLowerCase();
+      parlaySideCount.set(legSideKey, (parlaySideCount.get(legSideKey) || 0) + 1);
     }
 
     // Only create parlay if we have enough legs
@@ -3006,8 +3023,13 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const targetDate = body.date || getEasternDateRange().gameDate;
     const singleTier = body.tier as TierName | undefined;
+    const winningPatterns = body.winning_patterns || null;
+    const generationSource = body.source || 'manual';
 
-    console.log(`[Bot v2] Generating tiered parlays for ${targetDate}`);
+    console.log(`[Bot v2] Generating tiered parlays for ${targetDate} (source: ${generationSource})`);
+    if (winningPatterns) {
+      console.log(`[Bot v2] Pattern replay active: ${winningPatterns.hot_patterns?.length || 0} hot, ${winningPatterns.cold_patterns?.length || 0} cold patterns`);
+    }
 
     // 1. Load category weights (all sports)
     const { data: weights, error: weightsError } = await supabase

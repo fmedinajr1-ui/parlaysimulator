@@ -519,11 +519,28 @@ export function useBotEngine() {
     totalParlays: stats.totalParlays,
   };
   
+  // Smart Generate: review + optimize then generate
+  const smartGenerateMutation = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke('bot-review-and-optimize', {
+        body: { date: getEasternDate() },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bot-parlays-today'] });
+      queryClient.invalidateQueries({ queryKey: ['bot-activation-status'] });
+    },
+  });
+
   return {
     state,
     generateParlays: generateParlaysMutation.mutateAsync,
+    smartGenerateParlays: smartGenerateMutation.mutateAsync,
     settleParlays: settleParlaysMutation.mutateAsync,
     isGenerating: generateParlaysMutation.isPending,
+    isSmartGenerating: smartGenerateMutation.isPending,
     isSettling: settleParlaysMutation.isPending,
     refetch: () => {
       queryClient.invalidateQueries({ queryKey: ['bot-parlays-today'] });
