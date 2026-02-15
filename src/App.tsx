@@ -70,6 +70,7 @@ function AnimatedRoutes() {
               <Route path="/" element={<BotDashboard />} />
               <Route path="/sweet-spots" element={<SweetSpots />} />
               <Route path="/auth" element={<Navigate to="/" replace />} />
+              <Route path="/bot" element={<Navigate to="/" replace />} />
               <Route path="/verify-email" element={<VerifyEmail />} />
               <Route path="/admin" element={<Admin />} />
               <Route path="/admin/releases" element={<ReleaseManager />} />
