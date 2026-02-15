@@ -1,77 +1,82 @@
 
 
-# Add Tennis and Table Tennis Research Intelligence via Perplexity
+# Fix Voided Parlays: Root Cause and Prevention
 
-## Problem
-The parlay generator has 8 profiles for tennis/table tennis, but the AI Research Agent feeds zero intelligence for these sports. There are no Perplexity queries for tennis surface analysis, player form, head-to-head records, or table tennis sharp signals. The profiles are generating blind -- no research boosts, no injury intel, no sharp signals.
+## Investigation Findings
 
-## Solution
-Add 3 new Perplexity research categories to the AI Research Agent, then wire a new `fetchResearchTennisIntel` function in the parlay generator to consume them as composite score boosts.
+**Void Rate**: Extremely high -- 62 out of 162 total parlays (38%) ended as void.
 
-## Changes
+| Date | Total | Voided | Void % |
+|------|-------|--------|--------|
+| Feb 14 | 16 | 12 | 75% |
+| Feb 13 | 21 | 17 | 81% |
+| Feb 12 | 22 | 4 | 18% |
+| Feb 10 | 7 | 3 | 43% |
+| Feb 9 | 45 | 25 | 56% |
 
-### 1. AI Research Agent -- Add 3 New Categories
+### Root Causes
 
-**File: `supabase/functions/ai-research-agent/index.ts`**
+**1. NCAA Baseball has NO settlement path (critical)**
+- The settlement function routes NCAAB to ESPN and Tennis to Odds API, but `baseball_ncaa` falls through to the NBA player logs path
+- NBA logs return zero results for baseball games, so every baseball leg returns `no_data`
+- Every parlay containing baseball legs is guaranteed to void
+- This affected ALL `baseball_totals`, `baseball_spreads`, and `baseball_mixed` profiles
 
-Add to `RESEARCH_QUERIES`:
+**2. Small-conference NCAAB teams fail ESPN fuzzy matching**
+- Teams like "Bucknell Bison" vs "Boston Univ. Terriers" either do not appear in ESPN's 200-game scoreboard window or fail name normalization
+- The existing Top 200 KenPom gate only blocks when BOTH teams are outside Top 200 -- a single obscure team can still slip through
 
-**Category: `tennis_sharp_signals`**
-- Query: Today's sharpest ATP/WTA tennis betting signals -- line movements on match winners, set totals, game spreads. Where is professional money loading? Any steam moves on specific matches? Include surface-specific edges (hard court, clay, grass).
-- System prompt: Tennis market analyst. Extract specific player names, match odds movements, surface factors, and sharp/public money splits.
+**3. >50% void threshold voids entire parlays**
+- If 2 of 3 legs return `no_data`, the whole parlay is voided even if the 3rd leg hit
 
-**Category: `tennis_form_matchups`**
-- Query: Today's ATP/WTA tennis matches -- player recent form (last 5-10 matches), head-to-head records, surface win rates, fatigue from recent tournaments, any injury concerns or withdrawals. Which favorites are vulnerable? Which underdogs have strong surface-specific records?
-- System prompt: Tennis matchup analyst. Provide win/loss records, surface-specific stats, H2H records, and flag players on fatigue (3+ matches in last 5 days) or returning from injury.
+### Today's Parlays (Feb 15): Risk Assessment
 
-**Category: `table_tennis_signals`**
-- Query: Today's international table tennis matches and betting signals. Include ITTF events, WTT events, and major league matches. Any sharp line movements on match winners or total games? Which players are in strong form or dealing with fatigue from back-to-back tournaments?
-- System prompt: Table tennis betting analyst. Focus on player form, recent results, head-to-head records, and any sharp money signals. Table tennis has high volume and fast turnover -- flag players on 3+ match days.
+All 6 parlays are NCAAB only (no baseball -- good). Unique matchups:
+- Indiana vs Illinois -- safe (Big Ten, will settle)
+- South Florida vs Florida Atlantic -- safe (AAC, will settle)
+- Utah vs Cincinnati -- safe (Big 12, will settle)
+- Bradley vs Southern Illinois -- moderate risk (Missouri Valley Conference, smaller but ESPN covers MVC)
+- Iona vs Niagara -- higher risk (MAAC conference, may fail ESPN matching)
 
-Update `titleMap` and `emojiMap` to include:
-- `tennis_sharp_signals`: "Tennis Sharp Signals" (emoji: tennis ball)
-- `tennis_form_matchups`: "Tennis Form and Matchups" (emoji: tennis ball)
-- `table_tennis_signals`: "Table Tennis Signals" (emoji: ping pong)
+## Plan: Two-Part Fix
 
-Update `markResearchConsumed` to include the 3 new categories.
+### Part 1: Add NCAA Baseball settlement via ESPN (prevents future voids)
 
-### 2. Parlay Generator -- Consume Tennis/TT Research
+**File: `supabase/functions/bot-settle-and-learn/index.ts`**
+
+1. Add ESPN NCAA Baseball scoreboard URL constant:
+   ```
+   https://site.api.espn.com/apis/site/v2/sports/baseball/college-baseball/scoreboard
+   ```
+
+2. Create `settleNcaaBaseballViaESPN` function mirroring the existing `settleNcaabTeamLegViaESPN`:
+   - 3-day search window
+   - Same fuzzy matching logic
+   - Checks `STATUS_FINAL` or `completed: true`
+
+3. Update `settleTeamLeg` routing to check for `baseball_ncaa` sport key:
+   ```
+   if sport includes 'baseball_ncaa' -> settleNcaaBaseballViaESPN
+   ```
+
+### Part 2: Tighten NCAAB quality gate to prevent unsettleable games
 
 **File: `supabase/functions/bot-generate-daily-parlays/index.ts`**
 
-Add new function `fetchResearchTennisIntel`:
-- Reads from `bot_research_findings` where category is in `['tennis_sharp_signals', 'tennis_form_matchups', 'table_tennis_signals']`
-- Extracts:
-  - **Sharp signals**: player names with directional bias (moneyline favorite/underdog, over/under on games)
-  - **Form flags**: players on hot streaks (boost +6) or cold/fatigued (penalty -4, or block from parlay legs)
-  - **Surface edges**: hard court specialists on hard court matches get +5 boost
-- Returns a `Map<string, { boost: number; direction: string }>` keyed by lowercase player name
+Currently the KenPom gate only blocks when BOTH teams are outside Top 200. Tighten it:
 
-Wire into `buildPropPool`:
-- Add `fetchResearchTennisIntel` to the parallel `Promise.all` call (line ~1592)
-- Apply boosts to team picks where sport matches `tennis_atp`, `tennis_wta`, or `tennis_pingpong`
-- Boost logic: when a team pick's `home_team` or `away_team` matches a researched player name, add the boost to composite score
+1. In the exploration tier, block games where EITHER team is outside Top 200 KenPom (not just both)
+2. In validation and execution tiers, keep the existing "both outside Top 200" rule but add: block if either team has no KenPom data at all (rank defaults to 999)
+3. Add a specific `baseball_ncaa` quality gate: only include games where both teams appear in `ncaa_baseball_team_stats` (ensures data exists for settlement)
 
-### 3. Scoring Boosts (Applied in Composite Score)
+### Files to Edit
 
-| Signal Type | Boost | Condition |
-|-------------|-------|-----------|
-| Tennis sharp signal (same direction) | +7 | Sharp money aligns with pick direction |
-| Tennis form -- hot streak | +6 | Player won 4+ of last 5 matches |
-| Tennis form -- cold/fatigued | -4 | Player lost 3+ of last 5 or playing 3rd+ match in 2 days |
-| Surface specialist alignment | +5 | Player's surface win rate mentioned as above 70% |
-| Table tennis sharp signal | +6 | Sharp money on specific TT match |
-| Table tennis fatigue flag | -3 | Player on 3+ match day |
+1. `supabase/functions/bot-settle-and-learn/index.ts` -- add NCAA baseball ESPN settlement path
+2. `supabase/functions/bot-generate-daily-parlays/index.ts` -- tighten quality gates for obscure matchups
 
-### 4. Files to Edit
+### Expected Impact
 
-1. `supabase/functions/ai-research-agent/index.ts` -- add 3 research queries + title/emoji maps
-2. `supabase/functions/bot-generate-daily-parlays/index.ts` -- add `fetchResearchTennisIntel` + wire into pool builder + apply boosts
-
-### 5. What This Enables
-
-- Tennis parlays get Perplexity-powered intelligence on form, surface, and sharp money
-- Table tennis parlays get form and sharp signal awareness
-- Fatigued players are penalized or blocked, preventing bad legs
-- The existing nighttime profiles (`nighttime_mixed`, `validated_tennis`, `validated_nighttime`) benefit from research-boosted composite scores instead of running blind
+- Eliminates 100% of baseball voids (currently guaranteed to void)
+- Reduces NCAAB voids from fuzzy match failures by filtering out obscure teams at generation time
+- Today's parlays should settle cleanly (all are NCAAB with recognizable teams)
 
