@@ -111,6 +111,7 @@ serve(async (req) => {
       await runFunction('auto-refresh-sharp-tracker', {});
       await runFunction('whale-signal-detector', { sports: ['basketball_nba', 'icehockey_nhl', 'basketball_wnba', 'basketball_ncaab', 'baseball_ncaa'] });
       await runFunction('team-bets-scoring-engine', {});
+      await runFunction('bot-game-context-analyzer', {});
     }
 
     // ============ PHASE 3: PARLAY GENERATION ============

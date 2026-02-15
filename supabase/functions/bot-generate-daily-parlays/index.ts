@@ -66,7 +66,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     stake: 20,
     minConfidence: 0.45,
     profiles: [
-      // Multi-sport exploration (15 profiles)
+      // Multi-sport exploration — capped at 4 legs max
       { legs: 3, strategy: 'explore_safe', sports: ['basketball_nba'] },
       { legs: 3, strategy: 'explore_safe', sports: ['basketball_nba'] },
       { legs: 3, strategy: 'explore_safe', sports: ['icehockey_nhl'] },
@@ -77,12 +77,12 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 4, strategy: 'explore_balanced', sports: ['icehockey_nhl'] },
       { legs: 4, strategy: 'explore_mixed', sports: ['all'] },
       { legs: 4, strategy: 'explore_mixed', sports: ['all'] },
-      { legs: 5, strategy: 'explore_aggressive', sports: ['basketball_nba'] },
-      { legs: 5, strategy: 'explore_aggressive', sports: ['all'] },
-      { legs: 5, strategy: 'explore_aggressive', sports: ['all'] },
-      { legs: 6, strategy: 'explore_longshot', sports: ['all'] },
-      { legs: 6, strategy: 'explore_longshot', sports: ['all'] },
-      // NCAAB exploration (5 profiles) - totals/spreads focused (was ML-heavy)
+      { legs: 4, strategy: 'explore_aggressive', sports: ['basketball_nba'] },
+      { legs: 4, strategy: 'explore_aggressive', sports: ['all'] },
+      { legs: 4, strategy: 'explore_aggressive', sports: ['all'] },
+      { legs: 4, strategy: 'explore_longshot', sports: ['all'] },
+      { legs: 4, strategy: 'explore_longshot', sports: ['all'] },
+      // NCAAB exploration — totals/spreads focused
       { legs: 3, strategy: 'ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'] },
       { legs: 3, strategy: 'ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'] },
       { legs: 3, strategy: 'ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'] },
@@ -91,10 +91,10 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'] },
       { legs: 4, strategy: 'ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'] },
       { legs: 3, strategy: 'ncaab_mixed', sports: ['basketball_ncaab'], betTypes: ['spread', 'total'] },
-      // NCAA Baseball exploration (2 profiles — reduced from 5, season-gated)
+      // NCAA Baseball exploration
       { legs: 3, strategy: 'baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'] },
       { legs: 3, strategy: 'baseball_spreads', sports: ['baseball_ncaa'], betTypes: ['spread'] },
-      // Team props exploration (13 profiles) - ML Sniper: hybrid profiles with maxMlLegs: 1
+      // Team props exploration — ML Sniper: hybrid profiles with maxMlLegs: 1
       { legs: 3, strategy: 'team_hybrid', betTypes: ['moneyline', 'spread', 'total'], maxMlLegs: 1 },
       { legs: 3, strategy: 'team_totals', betTypes: ['total'] },
       { legs: 3, strategy: 'team_totals', betTypes: ['total'] },
@@ -105,7 +105,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 4, strategy: 'team_mixed', betTypes: ['spread', 'total'] },
       { legs: 3, strategy: 'team_hybrid_cross', betTypes: ['moneyline', 'spread', 'total'], sports: ['basketball_nba', 'basketball_ncaab'], maxMlLegs: 1 },
       { legs: 4, strategy: 'team_mixed', betTypes: ['spread', 'total'] },
-      // Cross-sport exploration (20 profiles)
+      // Cross-sport exploration — capped at 4 legs
       { legs: 3, strategy: 'cross_sport', sports: ['basketball_nba', 'icehockey_nhl'] },
       { legs: 3, strategy: 'cross_sport', sports: ['basketball_nba', 'basketball_ncaab'] },
       { legs: 3, strategy: 'cross_sport', sports: ['basketball_ncaab', 'icehockey_nhl'] },
@@ -113,29 +113,29 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 4, strategy: 'cross_sport_4', sports: ['all'] },
       { legs: 4, strategy: 'cross_sport_4', sports: ['all'] },
       { legs: 4, strategy: 'cross_sport_4', sports: ['all'] },
-      { legs: 5, strategy: 'cross_sport_5', sports: ['all'] },
-      { legs: 5, strategy: 'cross_sport_5', sports: ['all'] },
-      { legs: 5, strategy: 'cross_sport_5', sports: ['all'] },
+      { legs: 4, strategy: 'cross_sport_4', sports: ['all'] },
+      { legs: 4, strategy: 'cross_sport_4', sports: ['all'] },
+      { legs: 4, strategy: 'cross_sport_4', sports: ['all'] },
       { legs: 3, strategy: 'tennis_focus', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong'] },
       { legs: 3, strategy: 'tennis_focus', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong'] },
       // Table tennis exploration
       { legs: 3, strategy: 'table_tennis_focus', sports: ['tennis_pingpong'] },
       { legs: 3, strategy: 'table_tennis_focus', sports: ['tennis_pingpong'] },
-      // Nighttime mixed (tennis + table tennis + NHL)
+      // Nighttime mixed
       { legs: 4, strategy: 'nighttime_mixed', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong', 'icehockey_nhl'] },
       { legs: 4, strategy: 'nighttime_mixed', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong', 'icehockey_nhl'] },
       { legs: 4, strategy: 'nhl_focus', sports: ['icehockey_nhl'] },
       { legs: 4, strategy: 'nhl_focus', sports: ['icehockey_nhl'] },
-      { legs: 5, strategy: 'max_diversity', sports: ['all'] },
-      { legs: 5, strategy: 'max_diversity', sports: ['all'] },
-      { legs: 5, strategy: 'max_diversity', sports: ['all'] },
-      { legs: 6, strategy: 'max_diversity', sports: ['all'] },
-      { legs: 6, strategy: 'max_diversity', sports: ['all'] },
+      { legs: 4, strategy: 'max_diversity', sports: ['all'] },
+      { legs: 4, strategy: 'max_diversity', sports: ['all'] },
+      { legs: 4, strategy: 'max_diversity', sports: ['all'] },
+      { legs: 4, strategy: 'max_diversity', sports: ['all'] },
+      { legs: 4, strategy: 'max_diversity', sports: ['all'] },
       { legs: 3, strategy: 'props_only', sports: ['basketball_nba'] },
       { legs: 3, strategy: 'props_only', sports: ['icehockey_nhl'] },
       { legs: 4, strategy: 'props_mixed', sports: ['basketball_nba', 'icehockey_nhl'] },
       { legs: 4, strategy: 'props_mixed', sports: ['all'] },
-      { legs: 5, strategy: 'props_mixed', sports: ['all'] },
+      { legs: 4, strategy: 'props_mixed', sports: ['all'] },
       // Whale signal exploration
       { legs: 2, strategy: 'whale_signal', sports: ['all'] },
       { legs: 3, strategy: 'whale_signal', sports: ['all'] },
@@ -153,36 +153,32 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     stake: 20,
     minConfidence: 0.52,
     profiles: [
+      // ALL 3-LEG: Validated tier capped at 3 legs for win rate optimization
       { legs: 3, strategy: 'validated_conservative', sports: ['basketball_nba'], minOddsValue: 45, minHitRate: 55 },
       { legs: 3, strategy: 'validated_conservative', sports: ['basketball_nba'], minOddsValue: 45, minHitRate: 55 },
       { legs: 3, strategy: 'validated_conservative', sports: ['icehockey_nhl'], minOddsValue: 45, minHitRate: 55 },
       { legs: 3, strategy: 'validated_ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'], minOddsValue: 45, minHitRate: 55 },
       { legs: 3, strategy: 'validated_ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'], minOddsValue: 45, minHitRate: 55 },
-      // Validated baseball (1 profile — reduced from 2, season-gated)
       { legs: 3, strategy: 'validated_baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'], minOddsValue: 45, minHitRate: 55 },
-      { legs: 4, strategy: 'validated_balanced', sports: ['basketball_nba'], minOddsValue: 42, minHitRate: 55 },
-      { legs: 4, strategy: 'validated_balanced', sports: ['basketball_nba', 'icehockey_nhl'], minOddsValue: 42, minHitRate: 55 },
-      { legs: 4, strategy: 'validated_balanced', sports: ['basketball_nba', 'basketball_ncaab'], minOddsValue: 42, minHitRate: 55 },
-      { legs: 5, strategy: 'validated_standard', sports: ['basketball_nba'], minOddsValue: 40, minHitRate: 55 },
-      { legs: 5, strategy: 'validated_standard', sports: ['all'], minOddsValue: 40, minHitRate: 55 },
-      { legs: 5, strategy: 'validated_standard', sports: ['all'], minOddsValue: 40, minHitRate: 55, useAltLines: true },
+      { legs: 3, strategy: 'validated_balanced', sports: ['basketball_nba'], minOddsValue: 42, minHitRate: 55 },
+      { legs: 3, strategy: 'validated_balanced', sports: ['basketball_nba', 'icehockey_nhl'], minOddsValue: 42, minHitRate: 55 },
+      { legs: 3, strategy: 'validated_balanced', sports: ['basketball_nba', 'basketball_ncaab'], minOddsValue: 42, minHitRate: 55 },
+      { legs: 3, strategy: 'validated_standard', sports: ['basketball_nba'], minOddsValue: 40, minHitRate: 55 },
+      { legs: 3, strategy: 'validated_standard', sports: ['all'], minOddsValue: 40, minHitRate: 55 },
+      { legs: 3, strategy: 'validated_standard', sports: ['all'], minOddsValue: 40, minHitRate: 55, useAltLines: true },
       { legs: 3, strategy: 'validated_team', betTypes: ['spread', 'total'], minOddsValue: 45, minHitRate: 55 },
       { legs: 3, strategy: 'validated_team', betTypes: ['spread', 'total'], minOddsValue: 45, minHitRate: 55 },
-      { legs: 4, strategy: 'validated_team', betTypes: ['spread', 'total'], minOddsValue: 42, minHitRate: 55 },
-      { legs: 4, strategy: 'validated_cross', sports: ['all'], minOddsValue: 42, minHitRate: 55 },
-      { legs: 5, strategy: 'validated_aggressive', sports: ['all'], minOddsValue: 40, minHitRate: 52, useAltLines: true },
-      // Validated tennis (nighttime)
+      { legs: 3, strategy: 'validated_team', betTypes: ['spread', 'total'], minOddsValue: 42, minHitRate: 55 },
+      { legs: 3, strategy: 'validated_cross', sports: ['all'], minOddsValue: 42, minHitRate: 55 },
+      { legs: 3, strategy: 'validated_aggressive', sports: ['all'], minOddsValue: 40, minHitRate: 52, useAltLines: true },
       { legs: 3, strategy: 'validated_tennis', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong'], betTypes: ['moneyline', 'total'], minOddsValue: 45, minHitRate: 52 },
-      // Validated nighttime mixed
       { legs: 3, strategy: 'validated_nighttime', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong', 'icehockey_nhl'], betTypes: ['moneyline', 'total', 'spread'], minOddsValue: 42, minHitRate: 52 },
-      // Win-rate-first validated profiles
       { legs: 3, strategy: 'validated_winrate', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate' },
-      { legs: 4, strategy: 'validated_winrate', sports: ['basketball_nba'], minHitRate: 58, sortBy: 'hit_rate' },
-      // Promoted from execution: 4-5 leg proving ground (moved from execution tier)
-      { legs: 4, strategy: 'proving_cash', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
-      { legs: 4, strategy: 'proving_cash', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
-      { legs: 4, strategy: 'proving_boosted', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.5 },
-      { legs: 5, strategy: 'proving_boost', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, preferPlusMoney: true, minBufferMultiplier: 1.2 },
+      { legs: 3, strategy: 'validated_winrate', sports: ['basketball_nba'], minHitRate: 58, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'proving_cash', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
+      { legs: 3, strategy: 'proving_cash', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
+      { legs: 3, strategy: 'proving_boosted', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, minBufferMultiplier: 1.5 },
+      { legs: 3, strategy: 'proving_boost', sports: ['all'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: true, boostLegs: 2, preferPlusMoney: true, minBufferMultiplier: 1.2 },
     ],
   },
   execution: {
