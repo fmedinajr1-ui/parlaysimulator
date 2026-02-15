@@ -27,6 +27,7 @@ function formatOdds(odds?: number): string {
 
 function getTierColor(strategyName: string): string {
   const sn = strategyName.toLowerCase();
+  if (sn.includes('bankroll_doubler') || sn.includes('round_robin')) return 'border-l-yellow-500';
   if (sn.includes('exploration')) return 'border-l-blue-500';
   if (sn.includes('validation')) return 'border-l-amber-500';
   return 'border-l-green-500';

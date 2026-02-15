@@ -13,12 +13,13 @@ const TIER_CONFIG = {
   exploration: { icon: FlaskConical, label: 'Explore', color: 'bg-blue-500', textColor: 'text-blue-400' },
   validation: { icon: CheckCircle2, label: 'Validate', color: 'bg-amber-500', textColor: 'text-amber-400' },
   execution: { icon: Rocket, label: 'Execute', color: 'bg-green-500', textColor: 'text-green-400' },
+  round_robin: { icon: Layers, label: 'Doubler', color: 'bg-yellow-500', textColor: 'text-yellow-400' },
 };
 
 export function TierBreakdownCard({ parlays }: TierBreakdownCardProps) {
   const tierCounts = parlays.reduce((acc, parlay) => {
     const sn = (parlay.strategy_name || '').toLowerCase();
-    const tier = sn.includes('exploration') ? 'exploration' : sn.includes('validation') ? 'validation' : 'execution';
+    const tier = sn.includes('bankroll_doubler') || sn.includes('round_robin') ? 'round_robin' : sn.includes('exploration') ? 'exploration' : sn.includes('validation') ? 'validation' : 'execution';
     acc[tier] = (acc[tier] || 0) + 1;
     return acc;
   }, {} as Record<string, number>);
