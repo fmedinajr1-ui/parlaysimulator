@@ -1980,12 +1980,14 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
 
   console.log(`[Bot] Intelligence data: ${paceMap.size} pace, ${defenseMap.size} defense, ${envMap.size} env, ${homeCourtMap.size} home court, ${ncaabStatsMap.size} NCAAB teams, ${baseballTeamsSet.size} baseball teams`);
 
-  // Deduplicate game_bets by home_team + away_team + bet_type (keep most recent)
+  // Deduplicate game_bets by home_team + away_team + bet_type (prefer FanDuel > DraftKings > others)
+  const BOOK_PRIORITY: Record<string, number> = { fanduel: 3, draftkings: 2 };
+  const getBookPriority = (b: string) => BOOK_PRIORITY[b?.toLowerCase()] || 1;
   const seenGameBets = new Map<string, TeamProp>();
   for (const game of (rawTeamProps || []) as TeamProp[]) {
     const key = `${game.home_team}_${game.away_team}_${game.bet_type}`;
     const existing = seenGameBets.get(key);
-    if (!existing || (game.updated_at || '') > (existing.updated_at || '')) {
+    if (!existing || getBookPriority((game as any).bookmaker) > getBookPriority((existing as any).bookmaker)) {
       seenGameBets.set(key, game);
     }
   }
@@ -2609,7 +2611,17 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     const sharpScore = wp.sharp_score || 55;
     const category = mapPropTypeToCategory(wp.stat_type || wp.prop_type || 'points');
     const side = (wp.pick_side || 'over').toLowerCase();
-    const line = wp.pp_line || wp.line || 0;
+    let line = wp.pp_line || wp.line || 0;
+    
+    // Detect team bets (player_name contains "@" for matchup format like "Arizona @ Michigan")
+    const isTeamBet = (wp.stat_type === 'spread' || wp.stat_type === 'moneyline' || wp.stat_type === 'total') 
+      && wp.player_name?.includes('@');
+    
+    // For team spread away picks, negate the line (stored as home team perspective)
+    if (isTeamBet && wp.stat_type === 'spread' && side === 'away') {
+      line = -line;
+    }
+    
     const americanOdds = -110; // Default for player props
     const hitRateDecimal = sharpScore / 100;
     const oddsValueScore = calculateOddsValueScore(americanOdds, hitRateDecimal);
@@ -2624,7 +2636,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       category,
       confidence_score: hitRateDecimal,
       l10_hit_rate: hitRateDecimal,
-      projected_value: line,
+      projected_value: Math.abs(line),
       sport: wp.sport || 'basketball_nba',
       event_id: wp.event_id,
       americanOdds,
@@ -2633,7 +2645,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       has_real_line: true,
       line_source: 'whale_signal',
     } as EnrichedPick;
-  }).filter((p: EnrichedPick) => p.line > 0 && p.player_name);
+  }).filter((p: EnrichedPick) => Math.abs(p.line) > 0 && p.player_name);
 
   console.log(`[Bot] Pool built: ${enrichedSweetSpots.length} player props, ${enrichedTeamPicks.length} team props, ${enrichedWhalePicks.length} whale picks`);
 
