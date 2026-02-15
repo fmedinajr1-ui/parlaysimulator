@@ -1304,7 +1304,7 @@ async function markResearchConsumed(supabase: any, gameDate: string): Promise<vo
   const { error } = await supabase
     .from('bot_research_findings')
     .update({ action_taken: `Applied to generation on ${gameDate}` })
-    .in('category', ['injury_intel', 'statistical_models', 'ncaa_baseball_pitching', 'weather_totals_impact', 'ncaab_kenpom_matchups', 'ncaab_injury_lineups', 'ncaab_sharp_signals', 'nba_nhl_sharp_signals', 'value_line_discrepancies', 'situational_spots'])
+    .in('category', ['injury_intel', 'statistical_models', 'ncaa_baseball_pitching', 'weather_totals_impact', 'ncaab_kenpom_matchups', 'ncaab_injury_lineups', 'ncaab_sharp_signals', 'nba_nhl_sharp_signals', 'value_line_discrepancies', 'situational_spots', 'tennis_sharp_signals', 'tennis_form_matchups', 'table_tennis_signals'])
     .eq('research_date', gameDate)
     .is('action_taken', null);
 
@@ -1313,6 +1313,162 @@ async function markResearchConsumed(supabase: any, gameDate: string): Promise<vo
   } else {
     console.log(`[ResearchIntel] Marked research findings as consumed for ${gameDate}`);
   }
+}
+
+// ============= TENNIS / TABLE TENNIS RESEARCH INTELLIGENCE =============
+
+interface TennisIntelSignal {
+  boost: number;
+  direction: string;
+  reason: string;
+}
+
+async function fetchResearchTennisIntel(supabase: any, gameDate: string): Promise<Map<string, TennisIntelSignal>> {
+  const tennisIntel = new Map<string, TennisIntelSignal>();
+
+  try {
+    const { data: findings } = await supabase
+      .from('bot_research_findings')
+      .select('category, summary, key_insights')
+      .in('category', ['tennis_sharp_signals', 'tennis_form_matchups', 'table_tennis_signals'])
+      .eq('research_date', gameDate)
+      .gte('relevance_score', 0.40);
+
+    if (!findings || findings.length === 0) {
+      console.log(`[TennisIntel] No tennis/TT research findings for ${gameDate}`);
+      return tennisIntel;
+    }
+
+    for (const finding of findings) {
+      const text = `${finding.summary} ${(finding.key_insights || []).join(' ')}`.toLowerCase();
+
+      // Extract player names and signals using pattern matching
+      if (finding.category === 'tennis_sharp_signals') {
+        // Look for sharp money signals with player names
+        const sharpPatterns = [
+          /(?:sharp|professional|steam|whale)\s+(?:money|action|move)\s+(?:on|loading|backing)\s+([a-z\s.'-]+?)(?:\s+(?:at|to|moneyline|ml|over|under|match))/gi,
+          /([a-z][a-z\s.'-]{3,25})\s+(?:has|seeing|getting)\s+(?:sharp|steam|whale|professional)\s+(?:money|action)/gi,
+          /(?:line\s+move|steam\s+move|reverse\s+line)\s+(?:on|for|towards)\s+([a-z][a-z\s.'-]{3,25})/gi,
+        ];
+        for (const pattern of sharpPatterns) {
+          let match;
+          while ((match = pattern.exec(text)) !== null) {
+            const playerName = match[1].trim().toLowerCase();
+            if (playerName.length > 3 && playerName.length < 30 && !playerName.includes('total') && !playerName.includes('game')) {
+              const existing = tennisIntel.get(playerName);
+              const newBoost = 7;
+              if (!existing || existing.boost < newBoost) {
+                tennisIntel.set(playerName, { boost: newBoost, direction: 'sharp', reason: 'tennis sharp signal' });
+              }
+            }
+          }
+        }
+      }
+
+      if (finding.category === 'tennis_form_matchups') {
+        // Hot streak detection (4+ wins in last 5)
+        const hotPatterns = [
+          /([a-z][a-z\s.'-]{3,25})\s+(?:is|has been|on a)\s+(?:hot|strong|excellent|dominant|winning)\s+(?:streak|form|run)/gi,
+          /([a-z][a-z\s.'-]{3,25})\s+(?:won|winning)\s+(?:4|5|6|7|8|9|10)\s+(?:of|out of)\s+(?:last|their last)/gi,
+          /([a-z][a-z\s.'-]{3,25})\s+(?:4|5)-(?:0|1)\s+(?:in|over)\s+(?:last|recent)/gi,
+        ];
+        for (const pattern of hotPatterns) {
+          let match;
+          while ((match = pattern.exec(text)) !== null) {
+            const playerName = match[1].trim().toLowerCase();
+            if (playerName.length > 3 && playerName.length < 30) {
+              const existing = tennisIntel.get(playerName);
+              if (!existing || existing.boost < 6) {
+                tennisIntel.set(playerName, { boost: 6, direction: 'hot_form', reason: 'hot streak' });
+              }
+            }
+          }
+        }
+
+        // Cold/fatigue detection
+        const coldPatterns = [
+          /([a-z][a-z\s.'-]{3,25})\s+(?:is|has been|on a)\s+(?:cold|poor|struggling|losing|fatigued|tired)/gi,
+          /([a-z][a-z\s.'-]{3,25})\s+(?:lost|losing)\s+(?:3|4|5|6|7)\s+(?:of|out of)\s+(?:last|their last)/gi,
+          /(?:fatigue|exhaustion|tired|3rd\+?\s+match)\s+(?:for|concern|flag|warning)\s+([a-z][a-z\s.'-]{3,25})/gi,
+          /([a-z][a-z\s.'-]{3,25})\s+(?:playing|played)\s+(?:3rd|4th|5th|3\+)\s+match/gi,
+        ];
+        for (const pattern of coldPatterns) {
+          let match;
+          while ((match = pattern.exec(text)) !== null) {
+            const playerName = match[1].trim().toLowerCase();
+            if (playerName.length > 3 && playerName.length < 30) {
+              tennisIntel.set(playerName, { boost: -4, direction: 'cold_fatigued', reason: 'cold/fatigued' });
+            }
+          }
+        }
+
+        // Surface specialist detection (70%+ win rate on surface)
+        const surfacePatterns = [
+          /([a-z][a-z\s.'-]{3,25})\s+(?:has|with|boasts)\s+(?:a\s+)?(?:7[0-9]|8[0-9]|9[0-9])%?\s+(?:win\s+rate|record)\s+on\s+(?:hard|clay|grass)/gi,
+          /([a-z][a-z\s.'-]{3,25})\s+(?:specialist|dominant|strong)\s+on\s+(?:hard|clay|grass)\s+(?:court|surface)/gi,
+        ];
+        for (const pattern of surfacePatterns) {
+          let match;
+          while ((match = pattern.exec(text)) !== null) {
+            const playerName = match[1].trim().toLowerCase();
+            if (playerName.length > 3 && playerName.length < 30) {
+              const existing = tennisIntel.get(playerName);
+              const newBoost = (existing?.boost || 0) + 5;
+              tennisIntel.set(playerName, { 
+                boost: Math.min(newBoost, 12), 
+                direction: existing?.direction || 'surface_specialist', 
+                reason: `${existing?.reason || ''} + surface specialist`.trim() 
+              });
+            }
+          }
+        }
+      }
+
+      if (finding.category === 'table_tennis_signals') {
+        // Table tennis sharp signals
+        const ttSharpPatterns = [
+          /(?:sharp|professional|steam)\s+(?:money|action|move)\s+(?:on|loading|backing)\s+([a-z][a-z\s.'-]{3,25})/gi,
+          /([a-z][a-z\s.'-]{3,25})\s+(?:has|seeing|getting)\s+(?:sharp|steam|professional)\s+(?:money|action)/gi,
+        ];
+        for (const pattern of ttSharpPatterns) {
+          let match;
+          while ((match = pattern.exec(text)) !== null) {
+            const playerName = match[1].trim().toLowerCase();
+            if (playerName.length > 3 && playerName.length < 30) {
+              const existing = tennisIntel.get(playerName);
+              if (!existing || existing.boost < 6) {
+                tennisIntel.set(playerName, { boost: 6, direction: 'tt_sharp', reason: 'table tennis sharp signal' });
+              }
+            }
+          }
+        }
+
+        // Table tennis fatigue
+        const ttFatiguePatterns = [
+          /([a-z][a-z\s.'-]{3,25})\s+(?:is|has been|on)\s+(?:fatigued|tired|3\+\s+match|back-to-back)/gi,
+          /(?:fatigue|exhaustion|3\+\s+match\s+day)\s+(?:for|concern|flag)\s+([a-z][a-z\s.'-]{3,25})/gi,
+        ];
+        for (const pattern of ttFatiguePatterns) {
+          let match;
+          while ((match = pattern.exec(text)) !== null) {
+            const playerName = match[1].trim().toLowerCase();
+            if (playerName.length > 3 && playerName.length < 30) {
+              tennisIntel.set(playerName, { boost: -3, direction: 'tt_fatigued', reason: 'table tennis fatigue' });
+            }
+          }
+        }
+      }
+    }
+
+    console.log(`[TennisIntel] Extracted ${tennisIntel.size} player signals from tennis/TT research`);
+    for (const [player, signal] of tennisIntel) {
+      console.log(`[TennisIntel]   ${player}: boost=${signal.boost > 0 ? '+' : ''}${signal.boost} (${signal.reason})`);
+    }
+  } catch (err) {
+    console.warn(`[TennisIntel] Error fetching tennis/TT research:`, err);
+  }
+
+  return tennisIntel;
 }
 
 async function fetchResearchPitchingWeather(supabase: any, gameDate: string): Promise<Map<string, 'over' | 'under' | 'neutral'>> {
@@ -1589,7 +1745,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   const { startUtc, endUtc, gameDate } = getEasternDateRange();
   console.log(`[Bot] ET window: ${startUtc} → ${endUtc} (gameDate: ${gameDate})`);
 
-  const [activePlayersToday, injuryData, teamsPlayingToday, researchBlocklist, researchEdge, weatherBiasMap, ncaabResearch, whaleAndSituational] = await Promise.all([
+  const [activePlayersToday, injuryData, teamsPlayingToday, researchBlocklist, researchEdge, weatherBiasMap, ncaabResearch, whaleAndSituational, tennisIntel] = await Promise.all([
     fetchActivePlayersToday(supabase, startUtc, endUtc),
     fetchInjuryBlocklist(supabase, gameDate),
     fetchTeamsPlayingToday(supabase, startUtc, endUtc, gameDate),
@@ -1598,6 +1754,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     fetchResearchPitchingWeather(supabase, gameDate),
     fetchResearchNcaabIntel(supabase, gameDate),
     fetchResearchWhaleAndSituational(supabase, gameDate),
+    fetchResearchTennisIntel(supabase, gameDate),
   ]);
   const { blocklist, penalties } = injuryData;
 
@@ -2137,6 +2294,37 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     
     return picks;
   });
+
+  // === TENNIS/TABLE TENNIS RESEARCH BOOST APPLICATION ===
+  const tennisSports = new Set(['tennis_atp', 'tennis_wta', 'tennis_pingpong']);
+  if (tennisIntel.size > 0) {
+    let tennisBoostsApplied = 0;
+    for (const pick of enrichedTeamPicks) {
+      if (!tennisSports.has(pick.sport || '')) continue;
+      const homeKey = (pick.home_team || '').toLowerCase().trim();
+      const awayKey = (pick.away_team || '').toLowerCase().trim();
+      const targetKey = pick.side === 'home' ? homeKey : awayKey;
+      const opponentKey = pick.side === 'home' ? awayKey : homeKey;
+
+      // Check if the picked player/team has research intel
+      const targetSignal = tennisIntel.get(targetKey);
+      const opponentSignal = tennisIntel.get(opponentKey);
+
+      if (targetSignal) {
+        pick.compositeScore = clampScore(30, 95, pick.compositeScore + targetSignal.boost);
+        tennisBoostsApplied++;
+        console.log(`[TennisIntel] Applied ${targetSignal.boost > 0 ? '+' : ''}${targetSignal.boost} to ${targetKey} (${targetSignal.reason})`);
+      }
+      // If opponent is fatigued/cold, boost the pick
+      if (opponentSignal && opponentSignal.boost < 0) {
+        const reverseBoost = Math.abs(opponentSignal.boost);
+        pick.compositeScore = clampScore(30, 95, pick.compositeScore + reverseBoost);
+        tennisBoostsApplied++;
+        console.log(`[TennisIntel] Opponent penalty reverse +${reverseBoost} for ${targetKey} (opponent ${opponentKey} ${opponentSignal.reason})`);
+      }
+    }
+    console.log(`[TennisIntel] Applied ${tennisBoostsApplied} boosts to tennis/TT team picks`);
+  }
 
   // === ML SNIPER GATE: Surgical moneyline filtering ===
   const preGateCount = enrichedTeamPicks.length;
