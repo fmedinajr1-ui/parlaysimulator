@@ -500,20 +500,26 @@ function calculateNcaabTeamCompositeScore(
   const homeStats = resolveNcaabTeam(game.home_team, ncaabStatsMap);
   const awayStats = resolveNcaabTeam(game.away_team, ncaabStatsMap);
 
-  // If no NCAAB data available, return flat score
-  if (!homeStats && !awayStats) {
-    breakdown.no_data = 0;
-    return { score: 55, breakdown };
+  // CRITICAL: Block teams with no KenPom data — cap at 40 (below selection threshold)
+  if (!homeStats || !awayStats) {
+    breakdown.no_data_penalty = -15;
+    return { score: 40, breakdown };
   }
 
-  const homeOff = homeStats?.adj_offense || 70;
-  const homeDef = homeStats?.adj_defense || 70;
-  const awayOff = awayStats?.adj_offense || 70;
-  const awayDef = awayStats?.adj_defense || 70;
-  const homeRank = homeStats?.kenpom_rank || 200;
-  const awayRank = awayStats?.kenpom_rank || 200;
-  const homeTempo = homeStats?.adj_tempo || 67;
-  const awayTempo = awayStats?.adj_tempo || 67;
+  // Also block if either team is missing key efficiency data
+  if (!homeStats.adj_offense || !homeStats.adj_defense || !awayStats.adj_offense || !awayStats.adj_defense) {
+    breakdown.missing_efficiency = -15;
+    return { score: 40, breakdown };
+  }
+
+  const homeOff = homeStats.adj_offense;
+  const homeDef = homeStats.adj_defense;
+  const awayOff = awayStats.adj_offense;
+  const awayDef = awayStats.adj_defense;
+  const homeRank = homeStats.kenpom_rank || 200;
+  const awayRank = awayStats.kenpom_rank || 200;
+  const homeTempo = homeStats.adj_tempo || 67;
+  const awayTempo = awayStats.adj_tempo || 67;
 
   // Reject teams ranked 200+ (too unpredictable)
   const sideRank = side === 'home' ? homeRank : awayRank;
@@ -614,6 +620,31 @@ function calculateNcaabTeamCompositeScore(
         score += clampScore(0, 6, ouBonus);
         breakdown.ou_record = clampScore(0, 6, ouBonus);
       }
+    }
+
+    // === NEW: Projected total sanity check for OVERs ===
+    if (side === 'over') {
+      const avgTempo = (homeTempo + awayTempo) / 2;
+      const projectedTotal = (homeOff + awayOff) * (avgTempo / 70);
+      const line = game.line || 0;
+      if (line > projectedTotal + 5) {
+        score -= 10;
+        breakdown.line_above_projection = -10;
+      }
+    }
+
+    // === NEW: Defensive matchup penalty for OVERs ===
+    // Both teams with strong defense (adj_defense < 70 = allow < 70 ppg) makes OVER risky
+    if (side === 'over' && homeDef < 70 && awayDef < 70) {
+      score -= 12;
+      breakdown.both_strong_defense = -12;
+    }
+
+    // === NEW: UNDER bonus for low-scoring matchups ===
+    // Both teams scoring below average (< 72 adj_offense) favors UNDER
+    if (side === 'under' && homeOff < 72 && awayOff < 72) {
+      score += 8;
+      breakdown.low_scoring_teams = 8;
     }
   }
 
