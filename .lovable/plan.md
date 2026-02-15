@@ -1,98 +1,146 @@
 
 
-# Fix: Improve Leg Accuracy by Blocking Weak Categories
+# Wire Injury & Defensive Matchup Data Into Monte Carlo Simulations
 
 ## The Problem
 
-Looking at your settled parlay data, several leg types have been consistently losing:
+The Monte Carlo simulation engine already has a `ContextualFactors` system that supports injury impact, defensive ratings, fatigue, pace, and more — but **nothing actually feeds real data into it**. The `convertToLegInput` function hardcodes `context: undefined`, so every simulation runs on raw implied probability alone, ignoring critical real-world signals.
 
-- **NCAAB OVER totals**: Only **31% hit rate** (4/13). Games like Texas A&M/Vanderbilt O165.5 (actual: 151), UCLA/Michigan O155.5 (actual: 142), Northwestern/Nebraska O145.5 (actual: 117) -- all missed badly.
-- **Home moneylines**: Only **25% hit rate** (6/24)
-- **Home spreads**: Only **43% hit rate** (9/21)
-- Meanwhile, player prop UNDERs hit at **74%** and player prop OVERs hit at **60%** -- these are your best categories but are underused.
-
-Overall parlay win rate is **29%**, mostly dragged down by these weak team-based legs.
+This means a player prop OVER against the #1 defense, or a leg on an injured player, gets the same simulated probability as a clean matchup — producing unrealistic win rates.
 
 ## What We'll Fix
 
-### 1. Block NCAAB OVER totals from generation
+### 1. Wire SweetSpotPick data into ContextualFactors
 
-The data is clear -- NCAAB game totals heavily favor the UNDER. The bot should stop generating OVER total legs for NCAAB games until performance improves.
+The `SweetSpotPick` type already carries `injuryStatus`, `matchupAdjustment`, and `paceAdjustment`. We'll map these into the `ContextualFactors` that the parametric model already consumes.
 
-**File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
-- Add a hard block: if `sport === 'basketball_ncaab'` and `bet_type === 'total'` and `side === 'over'`, reject the leg
-- Allow NCAAB UNDER totals to continue (they perform well at ~39% in the category weights)
+**File**: `src/hooks/useSimulatedParlayBuilder.ts`
 
-### 2. Reduce home moneyline exposure
+- Update `convertToLegInput` to build a real `context` object from the pick's existing fields
+- Map `injuryStatus` to `injuryImpact` (-0.15 for QUESTIONABLE, -0.30 for DOUBTFUL, block OUT entirely)
+- Map `matchupAdjustment` to `defenseRating` (convert from boost/penalty to a multiplier)
+- Pass through `paceAdjustment` directly
 
-Home moneylines are hitting at 25%. The generator should either:
-- Block home moneyline picks entirely, OR
-- Require a minimum sharp score of 70+ for home ML picks (currently accepting 50+)
+### 2. Enrich BotEngine MC validation with fatigue + defense data
 
-**File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
-- Raise the minimum composite score threshold for `bet_type === 'moneyline'` and `side === 'home'` from ~50 to 75
+The bot engine (`useBotEngine.ts`) also runs MC validation but doesn't pass context. We'll update its leg conversion to pull fatigue and matchup data from the `BotLeg` fields.
 
-### 3. Increase minimum composite score for team picks
+**File**: `src/hooks/useBotEngine.ts`
 
-Many team legs have low composite scores (50-55), which indicates weak confidence. Raising the floor improves quality.
+- Update the leg-to-simulation conversion to include contextual factors
+- Map `hit_rate` trends to `recentForm`
+- Use available team/matchup metadata for defense rating
 
-**File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
-- Change team pick minimum composite score from 50 to 65 for all team-based legs
-- This filters out the weakest team picks while still allowing strong signals through
+### 3. Add injury and defense fields to ParlayLeg for the comparison simulator
 
-### 4. Prioritize player prop UNDERs
+The basic `monte-carlo.ts` simulation (used in the Compare tool) also ignores context. We'll extend `ParlayLeg` with optional context and use it in `calculateAdjustedProbability`.
 
-Player prop UNDERs are the strongest category at 74% hit rate. The generation weights should be boosted so more parlays include these legs.
+**File**: `src/types/parlay.ts` and `src/lib/monte-carlo.ts`
 
-**File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
-- Increase the weight multiplier for UNDER-side player props during candidate ranking
-- Target at least 1 UNDER leg per parlay when available
-
-### 5. Auto-calibrate category blocks from actual results
-
-Add a check during generation that reads the `bot_category_weights` table and automatically blocks any category + side combination with fewer than 40% hit rate AND 10+ settled picks.
-
-**File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
-- Query `bot_category_weights` at generation time
-- Build a block list of categories where `current_hit_rate < 40` and `total_picks >= 10`
-- Skip any candidate leg matching a blocked category
+- Add optional `contextualFactors` to `ParlayLeg`
+- In `calculateAdjustedProbability`, apply defense and injury penalties/boosts on top of the existing upset factor logic
 
 ## Technical Details
 
-### Hard block for NCAAB OVER totals (in team pick filtering)
+### convertToLegInput fix (useSimulatedParlayBuilder.ts)
+
 ```typescript
-// Block NCAAB OVER totals - only 31% hit rate historically
-if (pick.sport === 'basketball_ncaab' && pick.betType === 'total' && pick.side === 'over') {
-  console.log(`[Bot] Blocked NCAAB OVER total: ${pick.awayTeam} @ ${pick.homeTeam} O${pick.line}`);
-  return false;
+function convertToLegInput(pick: SweetSpotPick): ParlayLegInput {
+  const baseOdds = pick.side === 'over' ? -110 : -110;
+
+  // Build context from real data on the pick
+  const context: ContextualFactors = {};
+
+  // Injury impact: scale from status
+  if (pick.injuryStatus) {
+    const status = pick.injuryStatus.toUpperCase();
+    if (status === 'QUESTIONABLE') context.injuryImpact = -0.08;
+    else if (status === 'DOUBTFUL') context.injuryImpact = -0.20;
+    else if (status === 'GTD' || status === 'DAY-TO-DAY') context.injuryImpact = -0.10;
+    // OUT players should be filtered before reaching simulation
+  }
+
+  // Matchup adjustment -> defense rating
+  // matchupAdjustment is a boost/penalty value (e.g., +5 = favorable, -5 = tough)
+  if (pick.matchupAdjustment != null) {
+    // Convert: positive matchup = weak defense (rating < 1), negative = strong defense (rating > 1)
+    context.defenseRating = 1 - (pick.matchupAdjustment / 100);
+  }
+
+  // Pace adjustment (already a multiplier-like value)
+  if (pick.paceAdjustment != null) {
+    context.paceAdjustment = 1 + (pick.paceAdjustment / 100);
+  }
+
+  // Recent form from hit rate
+  if (pick.l10HitRate != null) {
+    // L10 hit rate of 70% = hot (1.1x), 40% = cold (0.9x)
+    context.recentForm = 0.7 + (pick.l10HitRate / 100) * 0.4;
+  }
+
+  const hasContext = Object.keys(context).length > 0;
+
+  return {
+    id: pick.id,
+    propType: pick.prop_type,
+    playerName: pick.player_name,
+    teamName: pick.team_name,
+    line: pick.line,
+    side: pick.side as 'over' | 'under',
+    americanOdds: baseOdds,
+    expectedValue: pick.projectedValue || pick.line,
+    sport: 'basketball',
+    gameId: pick.event_id,
+    context: hasContext ? context : undefined,
+  };
 }
 ```
 
-### Dynamic category blocking (at generation start)
-```typescript
-const { data: weakCategories } = await supabaseAdmin
-  .from('bot_category_weights')
-  .select('category, side, current_hit_rate, total_picks')
-  .lt('current_hit_rate', 40)
-  .gte('total_picks', 10);
+### ParlayLeg context extension (monte-carlo.ts)
 
-const blockedCombos = new Set(
-  (weakCategories || []).map(c => `${c.category}_${c.side}`)
-);
+```typescript
+// In calculateAdjustedProbability, after existing upset logic:
+if (leg.contextualFactors) {
+  const ctx = leg.contextualFactors;
+  
+  // Injury penalty
+  if (ctx.injuryImpact) {
+    adjustedProb += ctx.injuryImpact; // Negative = reduces probability
+  }
+  
+  // Defense rating: >1 = strong defense (reduces over prob)
+  if (ctx.defenseRating && ctx.defenseRating > 1.05) {
+    adjustedProb *= (2 - ctx.defenseRating); // 1.1 defense = 0.9x multiplier
+  } else if (ctx.defenseRating && ctx.defenseRating < 0.95) {
+    adjustedProb *= (2 - ctx.defenseRating); // 0.9 defense = 1.1x multiplier
+  }
+  
+  // Fatigue (back-to-back)
+  if (ctx.isBackToBack) {
+    adjustedProb *= 0.94; // 6% penalty
+  }
+  
+  // Pace adjustment
+  if (ctx.paceAdjustment) {
+    adjustedProb *= ctx.paceAdjustment;
+  }
+}
 ```
 
-### Composite score floor raise
+### BotEngine MC enrichment (useBotEngine.ts)
+
 ```typescript
-// For team-based picks, require composite score >= 65
-if (pick.type === 'team' && pick.compositeScore < 65) {
-  return false;
+// When converting BotLeg to ParlayLegInput for validation:
+context: {
+  recentForm: leg.hit_rate > 0.6 ? 1.1 : leg.hit_rate < 0.4 ? 0.85 : 1.0,
+  // Additional fields if available from the parlay metadata
 }
 ```
 
 ## Expected Impact
 
-- Eliminates the biggest source of losses (NCAAB OVER totals)
-- Raises quality floor for all team picks
-- Self-healing via dynamic category blocking based on real results
-- Should improve overall parlay win rate from ~29% toward 40%+
+- Simulated win rates will reflect real matchup difficulty (tough defense = lower sim probability for OVERs)
+- Injured/questionable players get realistic probability haircuts instead of being treated as fully healthy
+- Fatigue and pace data that the system already collects will finally influence the mathematical validation
+- The "Strong Bet" recommendation becomes more trustworthy because the underlying probabilities account for real-world conditions
 
