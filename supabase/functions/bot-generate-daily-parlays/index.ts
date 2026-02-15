@@ -116,8 +116,14 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 5, strategy: 'cross_sport_5', sports: ['all'] },
       { legs: 5, strategy: 'cross_sport_5', sports: ['all'] },
       { legs: 5, strategy: 'cross_sport_5', sports: ['all'] },
-      { legs: 3, strategy: 'tennis_focus', sports: ['tennis_atp', 'tennis_wta'] },
-      { legs: 3, strategy: 'tennis_focus', sports: ['tennis_atp', 'tennis_wta'] },
+      { legs: 3, strategy: 'tennis_focus', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong'] },
+      { legs: 3, strategy: 'tennis_focus', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong'] },
+      // Table tennis exploration
+      { legs: 3, strategy: 'table_tennis_focus', sports: ['tennis_pingpong'] },
+      { legs: 3, strategy: 'table_tennis_focus', sports: ['tennis_pingpong'] },
+      // Nighttime mixed (tennis + table tennis + NHL)
+      { legs: 4, strategy: 'nighttime_mixed', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong', 'icehockey_nhl'] },
+      { legs: 4, strategy: 'nighttime_mixed', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong', 'icehockey_nhl'] },
       { legs: 4, strategy: 'nhl_focus', sports: ['icehockey_nhl'] },
       { legs: 4, strategy: 'nhl_focus', sports: ['icehockey_nhl'] },
       { legs: 5, strategy: 'max_diversity', sports: ['all'] },
@@ -165,6 +171,10 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 4, strategy: 'validated_team', betTypes: ['spread', 'total'], minOddsValue: 42, minHitRate: 55 },
       { legs: 4, strategy: 'validated_cross', sports: ['all'], minOddsValue: 42, minHitRate: 55 },
       { legs: 5, strategy: 'validated_aggressive', sports: ['all'], minOddsValue: 40, minHitRate: 52, useAltLines: true },
+      // Validated tennis (nighttime)
+      { legs: 3, strategy: 'validated_tennis', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong'], betTypes: ['moneyline', 'total'], minOddsValue: 45, minHitRate: 52 },
+      // Validated nighttime mixed
+      { legs: 3, strategy: 'validated_nighttime', sports: ['tennis_atp', 'tennis_wta', 'tennis_pingpong', 'icehockey_nhl'], betTypes: ['moneyline', 'total', 'spread'], minOddsValue: 42, minHitRate: 52 },
       // Win-rate-first validated profiles
       { legs: 3, strategy: 'validated_winrate', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate' },
       { legs: 4, strategy: 'validated_winrate', sports: ['basketball_nba'], minHitRate: 58, sortBy: 'hit_rate' },

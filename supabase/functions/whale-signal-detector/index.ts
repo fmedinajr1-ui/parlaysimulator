@@ -13,6 +13,7 @@ const ALL_SPORTS = [
   'basketball_wnba', 
   'tennis_atp', 
   'tennis_wta',
+  'tennis_pingpong',
   'americanfootball_nfl',
   'basketball_ncaab',
   'americanfootball_ncaaf',
@@ -28,6 +29,7 @@ const SPORT_THRESHOLDS: Record<string, { minDivergence: number; minScore: number
   'basketball_wnba': { minDivergence: 0.5, minScore: 50 },
   'basketball_ncaab': { minDivergence: 1.0, minScore: 50 },
   'americanfootball_ncaaf': { minDivergence: 1.5, minScore: 50 },
+  'tennis_pingpong': { minDivergence: 0.5, minScore: 45 },
 };
 
 interface PPSnapshot {
