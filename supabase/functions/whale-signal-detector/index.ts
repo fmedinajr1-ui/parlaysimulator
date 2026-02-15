@@ -27,7 +27,7 @@ const SPORT_THRESHOLDS: Record<string, { minDivergence: number; minScore: number
   'tennis_wta': { minDivergence: 0.5, minScore: 50 },
   'americanfootball_nfl': { minDivergence: 1.0, minScore: 50 },
   'basketball_wnba': { minDivergence: 0.5, minScore: 50 },
-  'basketball_ncaab': { minDivergence: 1.0, minScore: 50 },
+  'basketball_ncaab': { minDivergence: 0.5, minScore: 25 },
   'americanfootball_ncaaf': { minDivergence: 1.5, minScore: 50 },
   'tennis_pingpong': { minDivergence: 0.5, minScore: 45 },
 };
@@ -614,9 +614,11 @@ serve(async (req) => {
         .delete()
         .in('signal_type', ['book_divergence', 'sharp_spread', 'sharp_total', 'sharp_moneyline']);
       
+      // Strip internal fields not in whale_picks schema
+      const cleanSignals = allSignals.map(({ _game_id, ...rest }: any) => rest);
       const { error: insertError } = await supabase
         .from('whale_picks')
-        .insert(allSignals);
+        .insert(cleanSignals);
 
       if (insertError) {
         console.error('[Whale Detector] Insert error:', insertError);
