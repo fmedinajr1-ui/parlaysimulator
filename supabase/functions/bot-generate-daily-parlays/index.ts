@@ -1098,11 +1098,17 @@ function calculateKellyStake(
   return Math.round(stake * 100) / 100;
 }
 
-function mapTeamBetToCategory(betType: string, side: string): string {
+function mapTeamBetToCategory(betType: string, side: string, odds?: number): string {
+  if (betType === 'moneyline') {
+    if (odds !== undefined && odds !== 0) {
+      return odds < 0 ? 'ML_FAVORITE' : 'ML_UNDERDOG';
+    }
+    // Fallback when odds unavailable: home=favorite, away=underdog
+    return side === 'home' ? 'ML_FAVORITE' : 'ML_UNDERDOG';
+  }
   const categoryMap: Record<string, Record<string, string>> = {
     spread: { home: 'SHARP_SPREAD', away: 'SHARP_SPREAD' },
     total: { over: 'OVER_TOTAL', under: 'UNDER_TOTAL' },
-    moneyline: { home: 'ML_FAVORITE', away: 'ML_UNDERDOG' },
   };
   return categoryMap[betType]?.[side] || 'TEAM_PROP';
 }
@@ -2392,7 +2398,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
           id: `${game.id}_ml_home`,
           type: 'team', sport: game.sport, home_team: game.home_team, away_team: game.away_team,
           bet_type: 'moneyline', side: 'home', line: 0, odds: game.home_odds,
-          category: mapTeamBetToCategory('moneyline', 'home'),
+          category: mapTeamBetToCategory('moneyline', 'home', game.home_odds),
           sharp_score: game.sharp_score || 50,
           compositeScore: clampScore(30, 95, score + plusBonus),
           confidence_score: score / 100,
@@ -2406,7 +2412,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
           id: `${game.id}_ml_away`,
           type: 'team', sport: game.sport, home_team: game.home_team, away_team: game.away_team,
           bet_type: 'moneyline', side: 'away', line: 0, odds: game.away_odds,
-          category: mapTeamBetToCategory('moneyline', 'away'),
+          category: mapTeamBetToCategory('moneyline', 'away', game.away_odds),
           sharp_score: game.sharp_score || 50,
           compositeScore: clampScore(30, 95, score + plusBonus),
           confidence_score: score / 100,
@@ -2478,18 +2484,18 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
         return false;
       }
 
-      // Gate 3: NCAAB ML — restrict to Top 50 KenPom only
+      // Gate 3: NCAAB ML — hard block ALL favorites (5% historical hit rate)
       if (isNCAAB) {
+        if (pick.odds < 0) {
+          mlBlocked.push(`NCAAB ML_FAVORITE blocked (5% historical hit rate, odds ${pick.odds})`);
+          return false;
+        }
+        // NCAAB underdogs: allow but still require Top 50 KenPom
         const teamName = pick.side === 'home' ? pick.home_team : pick.away_team;
         const stats = ncaabStatsMap.get(teamName);
         const rank = stats?.kenpom_rank || 999;
         if (rank > 50) {
-          mlBlocked.push(`${teamName} NCAAB ML (rank ${rank} > 50)`);
-          return false;
-        }
-        // NCAAB favorites: only allow odds between -110 and -300
-        if (pick.odds < 0 && (pick.odds < -300 || pick.odds > -110)) {
-          mlBlocked.push(`${teamName} NCAAB ML fav (odds ${pick.odds} outside -110 to -300)`);
+          mlBlocked.push(`${teamName} NCAAB ML dog (rank ${rank} > 50)`);
           return false;
         }
         // NCAAB underdogs: only allow odds between +150 and +350
