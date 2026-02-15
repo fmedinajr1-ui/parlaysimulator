@@ -2607,6 +2607,15 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   enrichedTeamPicks.sort((a, b) => b.compositeScore - a.compositeScore);
 
   // === CONVERT WHALE PICKS TO ENRICHED FORMAT ===
+  // Build a lookup from deduped game_bets (which prefers FanDuel) for line override
+  const gameBetLineMap = new Map<string, number>();
+  teamProps.forEach((tp: any) => {
+    if (tp.home_team && tp.away_team && tp.bet_type) {
+      const k = `${tp.away_team}_${tp.home_team}_${tp.bet_type}`.toLowerCase();
+      gameBetLineMap.set(k, tp.line);
+    }
+  });
+
   const enrichedWhalePicks: EnrichedPick[] = (rawWhalePicks || []).map((wp: any) => {
     const sharpScore = wp.sharp_score || 55;
     const category = mapPropTypeToCategory(wp.stat_type || wp.prop_type || 'points');
@@ -2617,9 +2626,22 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     const isTeamBet = (wp.stat_type === 'spread' || wp.stat_type === 'moneyline' || wp.stat_type === 'total') 
       && wp.player_name?.includes('@');
     
-    // For team spread away picks, negate the line (stored as home team perspective)
-    if (isTeamBet && wp.stat_type === 'spread' && side === 'away') {
-      line = -line;
+    if (isTeamBet && wp.player_name) {
+      // Try to override line with FanDuel-preferred game_bets line
+      const parts = wp.player_name.split('@').map((s: string) => s.trim());
+      const awayTeam = parts[0] || '';
+      const homeTeam = parts[1] || '';
+      const gbKey = `${awayTeam}_${homeTeam}_${wp.stat_type}`.toLowerCase();
+      const fdLine = gameBetLineMap.get(gbKey);
+      if (fdLine != null) {
+        line = fdLine; // Use the FanDuel-preferred line (home perspective)
+        console.log(`[Bot] Whale pick line override: ${wp.player_name} ${wp.stat_type} ${wp.pp_line || wp.line} → ${fdLine} (FanDuel preferred)`);
+      }
+      
+      // For team spread away picks, negate the line (stored as home team perspective)
+      if (wp.stat_type === 'spread' && side === 'away') {
+        line = -line;
+      }
     }
     
     const americanOdds = -110; // Default for player props
