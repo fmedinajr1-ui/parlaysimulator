@@ -892,7 +892,8 @@ function calculateCompositeScore(
   edge: number,
   oddsValueScore: number,
   categoryWeight: number,
-  calibratedHitRate?: number
+  calibratedHitRate?: number,
+  side?: string
 ): number {
   const hitRateScore = Math.min(100, hitRate);
   const edgeScore = Math.min(100, Math.max(0, edge * 20 + 50));
@@ -915,6 +916,12 @@ function calculateCompositeScore(
     } else if (calibratedHitRate < 45) {
       baseScore = Math.round(baseScore * 0.5);
     }
+  }
+
+  // === FIX 4: Boost player prop UNDERs — 74% historical hit rate ===
+  // UNDER-side player props get a 1.15x multiplier to prioritize them in candidate ranking
+  if (side === 'under') {
+    baseScore = Math.round(baseScore * 1.15);
   }
 
   return baseScore;
@@ -2027,7 +2034,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     
     const oddsValueScore = calculateOddsValueScore(americanOdds, hitRateDecimal);
     const catHitRate = calibratedHitRateMap.get(pick.category);
-    const compositeScore = calculateCompositeScore(hitRatePercent, edge, oddsValueScore, categoryWeight, catHitRate);
+    const compositeScore = calculateCompositeScore(hitRatePercent, edge, oddsValueScore, categoryWeight, catHitRate, side);
     
     return {
       ...pick,
@@ -2106,7 +2113,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       
       const oddsValueScore = calculateOddsValueScore(americanOdds, hitRateDecimal);
       const catHitRatePercent = calibratedHitRate ? calibratedHitRate * 100 : undefined;
-      const compositeScore = calculateCompositeScore(hitRateDecimal * 100, 0.5, oddsValueScore, categoryWeight, catHitRatePercent);
+      const compositeScore = calculateCompositeScore(hitRateDecimal * 100, 0.5, oddsValueScore, categoryWeight, catHitRatePercent, prop.side || 'over');
       
       return {
         id: prop.id,
@@ -2461,6 +2468,18 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     console.log(`[TennisIntel] Applied ${tennisBoostsApplied} boosts to tennis/TT team picks`);
   }
 
+  // === DYNAMIC CATEGORY BLOCKING FOR TEAM PICKS ===
+  // Build blocked combos from category weights (category_side with <40% hit rate and 10+ picks)
+  const blockedTeamCombos = new Set<string>();
+  categoryWeights.forEach(cw => {
+    if (cw.current_hit_rate < 40 && (cw.total_picks || 0) >= 10) {
+      blockedTeamCombos.add(`${cw.category}_${cw.side}`);
+    }
+  });
+  if (blockedTeamCombos.size > 0) {
+    console.log(`[Bot] Dynamic team blocks (hit rate <40%, 10+ picks): ${[...blockedTeamCombos].join(', ')}`);
+  }
+
   // === ML SNIPER GATE: Surgical moneyline filtering ===
   const preGateCount = enrichedTeamPicks.length;
   const mlBlocked: string[] = [];
@@ -2469,8 +2488,33 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     const isNBA = pick.sport?.includes('nba');
     const isML = pick.bet_type === 'moneyline';
 
+    // === FIX 1: Block NCAAB OVER totals — only 31% historical hit rate ===
+    if (isNCAAB && pick.bet_type === 'total' && pick.side === 'over') {
+      mlBlocked.push(`${pick.home_team} vs ${pick.away_team} NCAAB OVER total BLOCKED (31% hit rate)`);
+      return false;
+    }
+
+    // === FIX 5: Dynamic category blocking from bot_category_weights ===
+    const pickComboKey = `${pick.category}_${pick.side}`;
+    if (blockedTeamCombos.has(pickComboKey)) {
+      mlBlocked.push(`${pick.home_team} vs ${pick.away_team} ${pick.category}_${pick.side} BLOCKED (dynamic: <40% hit rate)`);
+      return false;
+    }
+
+    // === FIX 3: Raise composite score floor for ALL team picks to 65 (was no general floor) ===
+    if (pick.compositeScore < 65) {
+      mlBlocked.push(`${pick.home_team} vs ${pick.away_team} ${pick.bet_type} (composite ${pick.compositeScore.toFixed(0)} < 65 team floor)`);
+      return false;
+    }
+
     // === ML-specific gates ===
     if (isML) {
+      // === FIX 2: Home ML requires composite >= 75 (was 70) ===
+      if (pick.side === 'home' && pick.compositeScore < 75) {
+        mlBlocked.push(`${pick.home_team} vs ${pick.away_team} HOME ML (composite ${pick.compositeScore.toFixed(0)} < 75 — home ML 25% hit rate)`);
+        return false;
+      }
+
       // Gate 1: Raise composite score floor for ALL ML picks to 70 (was 62)
       if (pick.compositeScore < 70) {
         mlBlocked.push(`${pick.home_team} vs ${pick.away_team} ML (composite ${pick.compositeScore.toFixed(0)} < 70)`);
@@ -2524,8 +2568,8 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       }
     }
 
-    // Non-ML NCAAB: keep composite floor at 62
-    if (isNCAAB && !isML && pick.compositeScore < 62) {
+    // Non-ML NCAAB: keep composite floor at 65 (raised from 62)
+    if (isNCAAB && !isML && pick.compositeScore < 65) {
       return false;
     }
 
