@@ -16,6 +16,7 @@ const corsHeaders = {
 
 const ESPN_TEAMS_URL = 'https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/teams';
 
+
 interface TeamStats {
   team_name: string;
   espn_id: string;
@@ -24,6 +25,8 @@ interface TeamStats {
   adj_offense: number | null;
   adj_defense: number | null;
   adj_tempo: number | null;
+  ppg: number | null;
+  oppg: number | null;
   home_record: string | null;
   away_record: string | null;
   ats_record: string | null;
@@ -74,27 +77,34 @@ async function fetchAllTeamIds(): Promise<{ id: string; name: string; conference
 }
 
 async function enrichTeamStats(teamId: string): Promise<{
-  ppg: number; oppg: number; home: string | null; away: string | null;
+  ppg: number; oppg: number; home: string | null; away: string | null; conference: string | null;
 } | null> {
-  // Fetch team summary which includes record + stats
   const resp = await fetchWithRetry(`${ESPN_TEAMS_URL}/${teamId}`);
   if (!resp) return null;
   const data = await resp.json();
 
   const team = data.team || data;
   let ppg = 0, oppg = 0, home: string | null = null, away: string | null = null;
+  
+  // Extract conference from standingSummary (e.g. "12th in ACC")
+  let conference: string | null = null;
+  const standingSummary: string | null = team.standingSummary || null;
+  if (standingSummary) {
+    const match = standingSummary.match(/in\s+(.+)$/);
+    if (match) conference = match[1].trim();
+  }
 
-  // Extract from record items
+  // Extract from record items — ESPN uses "road" not "away"
   const recordItems = team.record?.items || [];
   for (const item of recordItems) {
     if (item.type === 'home') home = item.summary || null;
-    if (item.type === 'away') away = item.summary || null;
+    if (item.type === 'road') away = item.summary || null;
     if (item.type === 'total' || !item.type) {
       for (const stat of (item.stats || [])) {
         if (stat.name === 'avgPointsFor' || stat.name === 'pointsFor') {
           const v = parseFloat(stat.value);
           if (stat.name === 'avgPointsFor') ppg = v;
-          else if (v > 0 && ppg === 0) ppg = v; // raw total, will need games played
+          else if (v > 0 && ppg === 0) ppg = v;
         }
         if (stat.name === 'avgPointsAgainst' || stat.name === 'pointsAgainst') {
           const v = parseFloat(stat.value);
@@ -107,7 +117,6 @@ async function enrichTeamStats(teamId: string): Promise<{
 
   // If we got total points but not averages, try to compute
   if (ppg > 200 && recordItems.length > 0) {
-    // Looks like total points, need to divide by games
     const totalItem = recordItems.find((i: any) => i.type === 'total' || !i.type);
     if (totalItem) {
       const gpStat = (totalItem.stats || []).find((s: any) => s.name === 'gamesPlayed');
@@ -122,7 +131,7 @@ async function enrichTeamStats(teamId: string): Promise<{
   }
 
   if (ppg === 0) return null;
-  return { ppg, oppg, home, away };
+  return { ppg, oppg, home, away, conference };
 }
 
 Deno.serve(async (req) => {
@@ -182,11 +191,13 @@ Deno.serve(async (req) => {
           results.push({
             team_name: t.name,
             espn_id: t.id,
-            conference: t.conference,
+            conference: stats.conference || t.conference,
             kenpom_rank: null,
             adj_offense: Math.round(stats.ppg * 10) / 10,
             adj_defense: stats.oppg > 0 ? Math.round(stats.oppg * 10) / 10 : null,
             adj_tempo: tempo,
+            ppg: Math.round(stats.ppg * 10) / 10,
+            oppg: stats.oppg > 0 ? Math.round(stats.oppg * 10) / 10 : null,
             home_record: stats.home,
             away_record: stats.away,
             ats_record: null,
@@ -217,6 +228,8 @@ Deno.serve(async (req) => {
           adj_offense: null,
           adj_defense: null,
           adj_tempo: null,
+          ppg: null,
+          oppg: null,
           home_record: null,
           away_record: null,
           ats_record: null,
@@ -250,6 +263,8 @@ Deno.serve(async (req) => {
         adj_offense: t.adj_offense,
         adj_defense: t.adj_defense,
         adj_tempo: t.adj_tempo,
+        ppg: t.ppg,
+        oppg: t.oppg,
         home_record: t.home_record,
         away_record: t.away_record,
         ats_record: t.ats_record,
