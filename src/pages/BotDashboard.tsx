@@ -12,6 +12,7 @@ import { BotNotificationSettings } from '@/components/bot/BotNotificationSetting
 import { BotActivityFeed } from '@/components/bot/BotActivityFeed';
 import { BotLearningAnalytics } from '@/components/bot/BotLearningAnalytics';
 import { TierBreakdownCard } from '@/components/bot/TierBreakdownCard';
+import { ResearchSummaryCard } from '@/components/bot/ResearchSummaryCard';
 import { BotQuickStats } from '@/components/bot/BotQuickStats';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -139,6 +140,7 @@ export default function BotDashboard() {
 
         {/* Overview Tab */}
         <TabsContent value="overview" className="space-y-4">
+          <ResearchSummaryCard />
           <BotPnLCalendar />
           <BotPerformanceChart />
           {state.activeStrategy && (

@@ -28,6 +28,7 @@ import {
   Settings,
   Clock,
   ArrowLeft,
+  Search,
   Target,
   Sparkles,
   Mail
@@ -53,6 +54,7 @@ import { EliteAccessManager } from '@/components/admin/EliteAccessManager';
 import { GodModeWeightsPanel } from '@/components/admin/GodModeWeightsPanel';
 import { SlipImageViewer } from '@/components/admin/SlipImageViewer';
 import { FeatureAccessManager } from '@/components/admin/FeatureAccessManager';
+import { ResearchIntelligencePanel } from '@/components/admin/ResearchIntelligencePanel';
 
 interface ParlayData {
   id: string;
@@ -80,7 +82,8 @@ type AdminSection =
   | 'users' 
   | 'parlays'
   | 'god-mode'
-  | 'tracker';
+  | 'tracker'
+  | 'research';
 
 const sectionConfig = [
   {
@@ -145,6 +148,13 @@ const sectionConfig = [
     description: 'Real-time picks from all engines',
     icon: Eye,
     color: 'text-emerald-500'
+  },
+  {
+    id: 'research' as AdminSection,
+    title: 'Research Intelligence',
+    description: 'AI research findings and insights',
+    icon: Search,
+    color: 'text-teal-500'
   },
 ];
 
@@ -523,6 +533,9 @@ export default function Admin() {
       
       case 'tracker':
         return <AllSportsTracker />;
+      
+      case 'research':
+        return <ResearchIntelligencePanel />;
       
       case 'parlays':
         return (
