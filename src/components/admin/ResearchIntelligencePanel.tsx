@@ -8,7 +8,8 @@ import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Skeleton } from '@/components/ui/skeleton';
-import { CalendarIcon, ChevronDown, ChevronRight, Search, Clock } from 'lucide-react';
+import { CalendarIcon, ChevronDown, ChevronRight, Search, Clock, Play, RefreshCw } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 
 interface ResearchFinding {
@@ -42,7 +43,9 @@ export function ResearchIntelligencePanel() {
   const [date, setDate] = useState<Date>(new Date());
   const [findings, setFindings] = useState<ResearchFinding[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRunning, setIsRunning] = useState(false);
   const [openCategories, setOpenCategories] = useState<Set<string>>(new Set());
+  const { toast } = useToast();
 
   useEffect(() => {
     fetchFindings();
@@ -83,6 +86,20 @@ export function ResearchIntelligencePanel() {
     setOpenCategories(next);
   };
 
+  const handleRunAgent = async () => {
+    setIsRunning(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('ai-research-agent', { method: 'POST' });
+      if (error) throw error;
+      toast({ title: 'Research Complete', description: `Agent finished. Refreshing findings...` });
+      await fetchFindings();
+    } catch (err) {
+      toast({ title: 'Research Failed', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
+    } finally {
+      setIsRunning(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       {/* Header with date picker */}
@@ -94,13 +111,24 @@ export function ResearchIntelligencePanel() {
             {highRelevance > 0 && <span className="text-green-400"> • {highRelevance} high relevance</span>}
           </p>
         </div>
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="outline" size="sm" className="gap-2">
-              <CalendarIcon className="w-3.5 h-3.5" />
-              {format(date, 'MMM d')}
-            </Button>
-          </PopoverTrigger>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="default"
+            size="sm"
+            className="gap-2"
+            onClick={handleRunAgent}
+            disabled={isRunning}
+          >
+            {isRunning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+            {isRunning ? 'Running…' : 'Run Agent'}
+          </Button>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" className="gap-2">
+                <CalendarIcon className="w-3.5 h-3.5" />
+                {format(date, 'MMM d')}
+              </Button>
+            </PopoverTrigger>
           <PopoverContent className="w-auto p-0" align="end">
             <Calendar
               mode="single"
@@ -111,6 +139,7 @@ export function ResearchIntelligencePanel() {
             />
           </PopoverContent>
         </Popover>
+        </div>
       </div>
 
       {/* Last run timestamp */}
