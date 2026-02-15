@@ -2019,7 +2019,8 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     const hitRatePercent = hitRateDecimal * 100;
     const projectedValue = pick.projected_value || pick.l10_avg || pick.l10_median || line || 0;
     const edge = projectedValue - (line || 0);
-    const categoryWeight = weightMap.get(`${pick.category}__${pick.recommended_side}`) ?? weightMap.get(pick.category) ?? 1.0;
+    const pickSport = pick.sport || 'basketball_nba';
+    const categoryWeight = weightMap.get(`${pick.category}__${pick.recommended_side}__${pickSport}`) ?? weightMap.get(`${pick.category}__${pick.recommended_side}`) ?? weightMap.get(pick.category) ?? 1.0;
     
     const oddsValueScore = calculateOddsValueScore(americanOdds, hitRateDecimal);
     const catHitRate = calibratedHitRateMap.get(pick.category);
@@ -2097,7 +2098,8 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       const hitRateDecimal = calibratedHitRate 
         ? Math.max(calibratedHitRate, 0.50) 
         : (prop.composite_score && prop.composite_score > 0 ? prop.composite_score / 100 : 0.55);
-      const categoryWeight = weightMap.get(`${propCategory}__${prop.side || 'over'}`) ?? weightMap.get(propCategory) ?? 1.0;
+      const propSport = prop.sport || 'basketball_nba';
+      const categoryWeight = weightMap.get(`${propCategory}__${prop.side || 'over'}__${propSport}`) ?? weightMap.get(`${propCategory}__${prop.side || 'over'}`) ?? weightMap.get(propCategory) ?? 1.0;
       
       const oddsValueScore = calculateOddsValueScore(americanOdds, hitRateDecimal);
       const catHitRatePercent = calibratedHitRate ? calibratedHitRate * 100 : undefined;
@@ -2796,8 +2798,10 @@ async function generateTierParlays(
     // Execution tier: sort candidates by category weight descending to prioritize golden archetypes
     if (profile.sortBy !== 'hit_rate' && tier === 'execution') {
       candidatePicks = [...candidatePicks].sort((a, b) => {
-        const aWeight = weightMap.get(`${a.category}__${a.recommended_side}`) ?? weightMap.get(a.category) ?? 1.0;
-        const bWeight = weightMap.get(`${b.category}__${b.recommended_side}`) ?? weightMap.get(b.category) ?? 1.0;
+        const aSport = a.sport || 'basketball_nba';
+        const bSport = b.sport || 'basketball_nba';
+        const aWeight = weightMap.get(`${a.category}__${a.recommended_side}__${aSport}`) ?? weightMap.get(`${a.category}__${a.recommended_side}`) ?? weightMap.get(a.category) ?? 1.0;
+        const bWeight = weightMap.get(`${b.category}__${b.recommended_side}__${bSport}`) ?? weightMap.get(`${b.category}__${b.recommended_side}`) ?? weightMap.get(b.category) ?? 1.0;
         if (bWeight !== aWeight) return bWeight - aWeight;
         return (b.compositeScore || 0) - (a.compositeScore || 0);
       });
@@ -2953,7 +2957,8 @@ async function generateTierParlays(
         parlayTeamCount.set(teamPick.away_team, (parlayTeamCount.get(teamPick.away_team) || 0) + 1);
       } else {
         const playerPick = pick as EnrichedPick;
-        const weight = weightMap.get(`${playerPick.category}__${playerPick.recommended_side}`) ?? weightMap.get(playerPick.category) ?? 1.0;
+        const playerSport = playerPick.sport || 'basketball_nba';
+        const weight = weightMap.get(`${playerPick.category}__${playerPick.recommended_side}__${playerSport}`) ?? weightMap.get(`${playerPick.category}__${playerPick.recommended_side}`) ?? weightMap.get(playerPick.category) ?? 1.0;
         
         // Select line based on profile (with boost leg limiting)
         const boostLimit = profile.boostLegs ?? (profile.useAltLines ? profile.legs : 0);
@@ -3151,20 +3156,29 @@ Deno.serve(async (req) => {
       console.log(`[Bot v2] Pattern replay active: ${winningPatterns.hot_patterns?.length || 0} hot, ${winningPatterns.cold_patterns?.length || 0} cold patterns`);
     }
 
-    // 1. Load category weights (all sports)
-    const { data: weights, error: weightsError } = await supabase
+    // 1. Load category weights (all sports, including blocked for sport-specific overrides)
+    const { data: allWeights, error: weightsError } = await supabase
       .from('bot_category_weights')
-      .select('*')
-      .eq('is_blocked', false)
-      .gte('weight', 0.5);
+      .select('*');
+
+    if (weightsError) throw weightsError;
+
+    // Filter active weights for general use, but keep all for sport-specific map
+    const weights = (allWeights || []).filter((w: CategoryWeight) => !w.is_blocked && w.weight >= 0.5);
 
     if (weightsError) throw weightsError;
 
     const weightMap = new Map<string, number>();
+    // First: load sport-specific entries (including blocked ones with weight=0)
+    (allWeights || []).forEach((w: CategoryWeight) => {
+      if (w.sport && w.sport !== 'team_all') {
+        // Sport-specific key always written (blocked = weight 0, prevents fallback to global)
+        weightMap.set(`${w.category}__${w.side}__${w.sport}`, w.is_blocked ? 0 : w.weight);
+      }
+    });
+    // Then: load global fallback keys from non-blocked weights only
     (weights || []).forEach((w: CategoryWeight) => {
-      // Side-aware key: category__side (e.g., VOLUME_SCORER__under)
       weightMap.set(`${w.category}__${w.side}`, w.weight);
-      // Also keep category-only key as fallback (first non-blocked wins)
       if (!weightMap.has(w.category) || w.weight > 0) {
         weightMap.set(w.category, w.weight);
       }
