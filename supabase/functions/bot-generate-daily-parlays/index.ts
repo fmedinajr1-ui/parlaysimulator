@@ -1845,13 +1845,13 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     .from('whale_picks')
     .select('*')
     .eq('is_expired', false)
-    .gte('sharp_score', 55)
+    .gte('sharp_score', 45)
     .gte('start_time', startUtc)
     .lte('start_time', endUtc)
     .order('sharp_score', { ascending: false })
-    .limit(20);
+    .limit(30);
 
-  console.log(`[Bot] Fetched ${(rawWhalePicks || []).length} whale picks (sharp_score >= 55)`);
+  console.log(`[Bot] Fetched ${(rawWhalePicks || []).length} whale picks (sharp_score >= 45)`);
 
   // 4. Fetch team intelligence data in parallel (including NCAAB stats)
   const [paceResult, defenseResult, envResult, homeCourtResult, ncaabStatsResult] = await Promise.all([
