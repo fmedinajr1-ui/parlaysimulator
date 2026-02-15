@@ -117,7 +117,7 @@ serve(async (req) => {
     if (mode === 'full' || mode === 'generate') {
       // Targeted refresh before generation to ensure fresh lines
       await runFunction('whale-odds-scraper', { mode: 'targeted' });
-      await runFunction('bot-generate-daily-parlays', { source: 'pipeline' });
+      await runFunction('bot-review-and-optimize', { source: 'pipeline' });
     }
 
     // ============ PHASE 4: OUTCOME VERIFICATION & SETTLEMENT ============
