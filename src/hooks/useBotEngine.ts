@@ -534,14 +534,30 @@ export function useBotEngine() {
     },
   });
 
+  // Round Robin Bankroll Doubler
+  const roundRobinMutation = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke('bot-generate-daily-parlays', {
+        body: { date: getEasternDate(), action: 'round_robin' },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bot-parlays-today'] });
+    },
+  });
+
   return {
     state,
     generateParlays: generateParlaysMutation.mutateAsync,
     smartGenerateParlays: smartGenerateMutation.mutateAsync,
     settleParlays: settleParlaysMutation.mutateAsync,
+    generateRoundRobin: roundRobinMutation.mutateAsync,
     isGenerating: generateParlaysMutation.isPending,
     isSmartGenerating: smartGenerateMutation.isPending,
     isSettling: settleParlaysMutation.isPending,
+    isRoundRobinGenerating: roundRobinMutation.isPending,
     refetch: () => {
       queryClient.invalidateQueries({ queryKey: ['bot-parlays-today'] });
       queryClient.invalidateQueries({ queryKey: ['bot-category-weights'] });

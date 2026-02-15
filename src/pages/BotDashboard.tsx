@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { Bot, RefreshCw, Play, CheckCircle, Settings2, ChevronDown, ChevronUp, Target, Sparkles } from 'lucide-react';
+import { Bot, RefreshCw, Play, CheckCircle, Settings2, ChevronDown, ChevronUp, Target, Sparkles, Zap } from 'lucide-react';
 import { useBotEngine } from '@/hooks/useBotEngine';
 import { BotActivationCard } from '@/components/bot/BotActivationCard';
 import { BotPnLCalendar } from '@/components/bot/BotPnLCalendar';
@@ -33,9 +33,11 @@ export default function BotDashboard() {
     generateParlays,
     smartGenerateParlays,
     settleParlays,
+    generateRoundRobin,
     isGenerating,
     isSmartGenerating,
     isSettling,
+    isRoundRobinGenerating,
     refetch,
   } = useBotEngine();
 
@@ -68,6 +70,18 @@ export default function BotDashboard() {
       toast({ title: 'Settlement Complete', description: `Settled ${result?.parlaysSettled || 0} parlay(s)` });
     } catch (error) {
       toast({ title: 'Settlement Failed', description: error instanceof Error ? error.message : 'Unknown error', variant: 'destructive' });
+    }
+  };
+
+  const handleRoundRobin = async () => {
+    try {
+      const result = await generateRoundRobin();
+      toast({ 
+        title: '🎯 Bankroll Doubler Ready', 
+        description: `Created 1 mega-parlay + ${result?.subParlays || 0} round robin combos` 
+      });
+    } catch (error) {
+      toast({ title: 'Doubler Failed', description: error instanceof Error ? error.message : 'Unknown error', variant: 'destructive' });
     }
   };
 
@@ -278,13 +292,21 @@ export default function BotDashboard() {
             className="h-11"
           >
             {isGenerating ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : <Play className="w-4 h-4 mr-2" />}
-            Generate
+            Gen
+          </Button>
+          <Button
+            onClick={handleRoundRobin}
+            disabled={isRoundRobinGenerating || isGenerating}
+            className="h-11 bg-gradient-to-r from-yellow-600 to-amber-500 hover:from-yellow-500 hover:to-amber-400 text-black font-semibold"
+          >
+            {isRoundRobinGenerating ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : <Zap className="w-4 h-4 mr-2" />}
+            Doubler
           </Button>
           <Button
             variant="secondary"
             onClick={handleSettle}
             disabled={isSettling}
-            className="flex-1 h-11"
+            className="h-11"
           >
             {isSettling ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : <CheckCircle className="w-4 h-4 mr-2" />}
             Settle

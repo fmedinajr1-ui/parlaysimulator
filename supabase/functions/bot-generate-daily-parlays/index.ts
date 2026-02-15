@@ -3167,6 +3167,205 @@ async function generateTierParlays(
   return { count: parlaysToCreate.length, parlays: parlaysToCreate };
 }
 
+// ============= ROUND ROBIN BANKROLL DOUBLER =============
+
+interface RoundRobinLeg {
+  id: string;
+  player_name: string;
+  team_name?: string;
+  prop_type: string;
+  line: number;
+  side: string;
+  category: string;
+  weight: number;
+  hit_rate: number;
+  american_odds?: number;
+  composite_score?: number;
+  type?: string;
+  home_team?: string;
+  away_team?: string;
+  bet_type?: string;
+  original_line?: number;
+  selected_line?: number;
+  projected_value?: number;
+}
+
+function getCombinations<T>(arr: T[], k: number): T[][] {
+  if (k === 0) return [[]];
+  if (arr.length === 0) return [];
+  const [first, ...rest] = arr;
+  const withFirst = getCombinations(rest, k - 1).map(c => [first, ...c]);
+  const withoutFirst = getCombinations(rest, k);
+  return [...withFirst, ...withoutFirst];
+}
+
+function americanToDecimal(odds: number): number {
+  return odds > 0 ? (odds / 100) + 1 : (100 / Math.abs(odds)) + 1;
+}
+
+function decimalToAmerican(dec: number): number {
+  if (dec >= 2) return Math.round((dec - 1) * 100);
+  return Math.round(-100 / (dec - 1));
+}
+
+async function generateRoundRobinParlays(
+  supabase: any,
+  targetDate: string,
+  bankroll: number
+): Promise<{ megaParlay: any | null; subParlays: any[]; totalInserted: number }> {
+  console.log(`[RoundRobin] Starting bankroll doubler for ${targetDate}`);
+
+  // 1. Fetch all today's parlays to extract legs
+  const { data: todayParlays, error } = await supabase
+    .from('bot_daily_parlays')
+    .select('*')
+    .eq('parlay_date', targetDate)
+    .neq('tier', 'round_robin');
+
+  if (error) throw error;
+  if (!todayParlays || todayParlays.length === 0) {
+    throw new Error('No parlays found for today. Run standard generation first.');
+  }
+
+  // 2. Extract and deduplicate all legs
+  const legMap = new Map<string, RoundRobinLeg>();
+  for (const parlay of todayParlays) {
+    const legs = Array.isArray(parlay.legs) ? parlay.legs : JSON.parse(parlay.legs);
+    for (const leg of legs) {
+      const key = `${(leg.player_name || leg.home_team || '').toLowerCase()}_${leg.prop_type || leg.bet_type}_${leg.side}`;
+      const existing = legMap.get(key);
+      const score = leg.composite_score || leg.hit_rate || 0;
+      if (!existing || score > (existing.composite_score || existing.hit_rate || 0)) {
+        legMap.set(key, leg);
+      }
+    }
+  }
+
+  // 3. Filter to elite legs: 60%+ hit rate, positive composite
+  let eliteLegs = Array.from(legMap.values()).filter(leg => {
+    const hr = leg.hit_rate || 0;
+    const cs = leg.composite_score || 0;
+    return hr >= 60 && cs > 0;
+  });
+
+  // Sort by composite score descending
+  eliteLegs.sort((a, b) => (b.composite_score || 0) - (a.composite_score || 0));
+
+  // Cap at top 10
+  eliteLegs = eliteLegs.slice(0, 10);
+
+  if (eliteLegs.length < 4) {
+    throw new Error(`Only ${eliteLegs.length} elite legs found (need at least 4). Lower-quality slate today.`);
+  }
+
+  console.log(`[RoundRobin] Found ${eliteLegs.length} elite legs from ${todayParlays.length} parlays`);
+
+  // 4. Calculate mega-parlay odds
+  const megaDecimalOdds = eliteLegs.reduce((acc, leg) => {
+    const odds = leg.american_odds || -110;
+    return acc * americanToDecimal(odds);
+  }, 1);
+
+  const megaAmericanOdds = decimalToAmerican(megaDecimalOdds);
+  const megaCombinedProb = 1 / megaDecimalOdds;
+  const megaEdge = megaCombinedProb * (megaDecimalOdds - 1) - (1 - megaCombinedProb);
+
+  // 5. Build mega-parlay
+  const STAKE = 20;
+  const megaParlay = {
+    parlay_date: targetDate,
+    legs: eliteLegs,
+    leg_count: eliteLegs.length,
+    combined_probability: megaCombinedProb,
+    expected_odds: megaAmericanOdds,
+    simulated_win_rate: megaCombinedProb,
+    simulated_edge: megaEdge,
+    simulated_sharpe: 0,
+    strategy_name: 'bankroll_doubler',
+    strategy_version: 1,
+    outcome: 'pending',
+    is_simulated: true,
+    simulated_stake: STAKE,
+    simulated_payout: STAKE * megaDecimalOdds,
+    tier: 'round_robin',
+    selection_rationale: `Mega-parlay: Top ${eliteLegs.length} elite legs combined. Target: ${megaAmericanOdds > 0 ? '+' : ''}${megaAmericanOdds} odds (~$${(STAKE * megaDecimalOdds).toFixed(0)} payout on $${STAKE}).`,
+  };
+
+  // 6. Generate round robin sub-combinations (4-leg combos)
+  const subSize = Math.min(4, eliteLegs.length - 1);
+  const combos = getCombinations(eliteLegs, subSize);
+  
+  // Cap at 15 sub-parlays
+  const cappedCombos = combos.slice(0, 15);
+
+  const subParlays = cappedCombos.map((combo, idx) => {
+    const decOdds = combo.reduce((acc, leg) => {
+      const odds = leg.american_odds || -110;
+      return acc * americanToDecimal(odds);
+    }, 1);
+    const amOdds = decimalToAmerican(decOdds);
+    const prob = 1 / decOdds;
+    const edge = prob * (decOdds - 1) - (1 - prob);
+
+    return {
+      parlay_date: targetDate,
+      legs: combo,
+      leg_count: combo.length,
+      combined_probability: prob,
+      expected_odds: amOdds,
+      simulated_win_rate: prob,
+      simulated_edge: edge,
+      simulated_sharpe: 0,
+      strategy_name: 'bankroll_doubler',
+      strategy_version: 1,
+      outcome: 'pending',
+      is_simulated: true,
+      simulated_stake: STAKE,
+      simulated_payout: STAKE * decOdds,
+      tier: 'round_robin',
+      selection_rationale: `Round robin combo ${idx + 1}/${cappedCombos.length}: ${combo.length}-leg sub-parlay. ${amOdds > 0 ? '+' : ''}${amOdds} odds.`,
+    };
+  });
+
+  // 7. Check for existing round robin parlays today (max 1 run per day)
+  const { data: existing } = await supabase
+    .from('bot_daily_parlays')
+    .select('id')
+    .eq('parlay_date', targetDate)
+    .eq('tier', 'round_robin')
+    .limit(1);
+
+  if (existing && existing.length > 0) {
+    throw new Error('Round robin already generated for today. Max 1 run per day.');
+  }
+
+  // 8. Insert all
+  const allToInsert = [megaParlay, ...subParlays];
+  const { error: insertError } = await supabase
+    .from('bot_daily_parlays')
+    .insert(allToInsert);
+
+  if (insertError) throw insertError;
+
+  // 9. Log activity
+  await supabase.from('bot_activity_log').insert({
+    event_type: 'round_robin_generated',
+    message: `Bankroll Doubler: 1 mega-parlay (${eliteLegs.length}L, ${megaAmericanOdds > 0 ? '+' : ''}${megaAmericanOdds}) + ${subParlays.length} sub-parlays`,
+    metadata: {
+      eliteLegsCount: eliteLegs.length,
+      megaOdds: megaAmericanOdds,
+      subParlayCount: subParlays.length,
+      subSize,
+      megaPayout: STAKE * megaDecimalOdds,
+    },
+    severity: 'success',
+  });
+
+  console.log(`[RoundRobin] Created 1 mega + ${subParlays.length} subs = ${allToInsert.length} total`);
+
+  return { megaParlay, subParlays, totalInserted: allToInsert.length };
+}
+
 // ============= MAIN HANDLER =============
 
 Deno.serve(async (req) => {
@@ -3180,7 +3379,41 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     const body = await req.json().catch(() => ({}));
+    const action = body.action || 'generate';
     const targetDate = body.date || getEasternDateRange().gameDate;
+
+    // === ROUND ROBIN ACTION ===
+    if (action === 'round_robin') {
+      console.log(`[Bot v2] Round robin requested for ${targetDate}`);
+      
+      // Get bankroll
+      const { data: activationStatus } = await supabase
+        .from('bot_activation_status')
+        .select('simulated_bankroll')
+        .order('check_date', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      
+      const bankroll = activationStatus?.simulated_bankroll || 1000;
+      
+      const result = await generateRoundRobinParlays(supabase, targetDate, bankroll);
+      
+      return new Response(
+        JSON.stringify({
+          success: true,
+          action: 'round_robin',
+          megaParlay: result.megaParlay ? {
+            legCount: result.megaParlay.leg_count,
+            odds: result.megaParlay.expected_odds,
+            payout: result.megaParlay.simulated_payout,
+          } : null,
+          subParlays: result.subParlays.length,
+          totalInserted: result.totalInserted,
+          date: targetDate,
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
     const singleTier = body.tier as TierName | undefined;
     const winningPatterns = body.winning_patterns || null;
     const generationSource = body.source || 'manual';
