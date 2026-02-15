@@ -1,68 +1,76 @@
 
 
-# Smart Thin-Slate Relaxation for Higher Volume
+# Add Tennis and Table Tennis for Nighttime Parlays
 
-## Problem
-On light days (few NBA/NHL games, NCAAB-only slates), the pool size drops sharply. The validation tier's strict gates (52% hit rate, 0.008 edge, 0.02 Sharpe) reject most candidates, producing 0 validation parlays. The pool threshold at 8 picks can also block generation entirely.
+## Overview
+Expand the data pipeline and parlay generator to cover Tennis (ATP/WTA) and Table Tennis for nighttime action. Tennis already has partial support (whale signal detector, 2 exploration profiles) but isn't scraped for odds. Table Tennis is brand new.
 
-## Solution: Adaptive Thin-Slate Mode
-Instead of blanket relaxation (which hurts accuracy), the system will detect thin slates and intelligently loosen gates while preserving quality signals.
+## The Odds API Sport Keys
+- Tennis: `tennis_atp`, `tennis_wta` (already known in codebase)
+- Table Tennis: `tennis_pingpong` (The Odds API key for international table tennis)
 
-## Changes
+## Changes Required
 
-### File: `supabase/functions/bot-generate-daily-parlays/index.ts`
+### 1. Whale Odds Scraper (`supabase/functions/whale-odds-scraper/index.ts`)
+- Add `tennis_atp`, `tennis_wta`, and `tennis_pingpong` to `TIER_2_SPORTS` (currently excluded as "Tier 3 / skip")
+- Add market batches for these sports (tennis uses `h2h`, `spreads`, `totals`; table tennis uses `h2h`, `totals`)
+- This populates `game_bets` with team-level odds for tennis matches and table tennis matches
 
-### 1. Lower Global Pool Threshold (line 2820)
-- Drop minimum pool from **8 to 5** picks to allow generation on very thin slates
-- Drop real-line fallback from **5 to 3** (with team picks check from 5 to 3)
-- This prevents the bot from skipping generation entirely on 2-3 game nights
+### 2. Parlay Generator Profiles (`supabase/functions/bot-generate-daily-parlays/index.ts`)
 
-### 2. Add Thin-Slate Detection (after pool is built, ~line 2852)
-Detect thin slate when total pool is below 25 picks:
+**Exploration tier** -- add 6 new profiles:
+- 2x `tennis_focus` 3-leg (already exist, but add `tennis_pingpong` to the sports filter)
+- 2x `table_tennis_focus` 3-leg for pure table tennis parlays
+- 2x `nighttime_mixed` 4-leg mixing tennis + table tennis + NHL (nighttime sports)
+
+**Validation tier** -- add 2 new profiles:
+- 1x `validated_tennis` 3-leg for tennis moneyline/totals
+- 1x `validated_nighttime` 3-leg mixing tennis + table tennis
+
+**No execution tier changes** -- these are new sports without historical accuracy data; keep them in exploration/validation until performance data accumulates.
+
+### 3. Settlement Pipeline (`supabase/functions/bot-settle-and-learn/index.ts`)
+
+Add tennis/table tennis settlement routing in `settleTeamLeg`:
+- Use The Odds API scores endpoint (`/v4/sports/{sport}/scores`) to check match results (since ESPN doesn't cover table tennis)
+- Fallback: mark as `no_data` if scores unavailable (same as other unsettled sports)
+- Tennis and table tennis legs are moneyline or total bets, so `resolveTeamOutcome` already handles the grading logic once scores are provided
+
+### 4. Unified Live Feed (`supabase/functions/unified-live-feed/index.ts`)
+
+Add tennis/table tennis to the `normalizeSport` map:
 ```
-const isThinSlate = pool.totalPool < 25;
-```
-Log the mode so we can track it in Telegram/dashboard.
-
-### 3. Relax Validation Tier Gates on Thin Slates (in `generateTierParlays`)
-When thin slate is detected, dynamically reduce validation thresholds:
-
-| Gate | Normal | Thin Slate | Why Safe |
-|------|--------|------------|----------|
-| minHitRate | 52% | 48% | Still above coin-flip, keeps directional edge |
-| minEdge | 0.008 | 0.004 | Half the edge floor, but still positive EV |
-| minSharpe | 0.02 | 0.01 | Matches exploration tier floor |
-| minConfidence | 0.52 | 0.48 | Allows borderline candidates in |
-
-### 4. Relax Parlay-Level Quality Gates on Thin Slates (lines 2701-2704)
-- Lower probability floor from `0.001` to `0.0005` for thin slates
-- Lower effective edge floor for validation tier to `0.004` on thin slates
-- Keep execution tier gates unchanged (these are the money bets)
-
-### 5. Intelligence Guardrails (keeps accuracy)
-These remain fully enforced regardless of slate size:
-- Golden Gate rule for execution tier (60%+ hit rate legs required)
-- Negative-edge blocking (projection must support bet direction)
-- Injury/availability gate (OUT/DOUBTFUL players still blocked)
-- Fingerprint deduplication (no duplicate parlays)
-- NCAAB KenPom Top 200 gate for execution/validation
-- Category auto-blocking from calibration (losing categories still blocked)
-
-## Technical Detail
-
-The thin-slate flag will be passed into `generateTierParlays` as a parameter. Inside, if `isThinSlate && tier === 'validation'`, the config thresholds are overridden with the relaxed values before profile iteration begins. Execution tier is never relaxed.
-
-```text
-Normal day (40+ picks)           Thin slate (< 25 picks)
-+----------------------------+   +----------------------------+
-| Exploration: loose gates   |   | Exploration: same          |
-| Validation:  strict gates  |   | Validation:  relaxed gates |
-| Execution:   strictest     |   | Execution:   UNCHANGED     |
-+----------------------------+   +----------------------------+
+'tennis_atp': 'ATP Tennis',
+'tennis_wta': 'WTA Tennis', 
+'tennis_pingpong': 'Table Tennis',
 ```
 
-## Impact
-- On thin slates: expect 5-10 more validation parlays per day
-- On normal slates: zero change (threshold not triggered)
-- Execution tier accuracy fully preserved
-- All safety gates (injuries, dedup, negative-edge) still enforced
+### 5. Sport Key Alignment
+
+Update the following to recognize the new keys:
+- `whale-signal-detector`: add `tennis_pingpong` to `ALL_SPORTS` and `SPORT_THRESHOLDS`
+- `track-odds-movement`: add tennis/table tennis sport key mappings
+
+## Technical Details
+
+### Settlement via Odds API Scores
+Since ESPN doesn't cover table tennis, settlement will use The Odds API scores endpoint:
+```
+GET /v4/sports/tennis_pingpong/scores?apiKey=KEY&daysFrom=3
+```
+This returns completed match scores which can be used to grade moneyline and total bets.
+
+### Market Types
+| Sport | Markets | Bet Types |
+|-------|---------|-----------|
+| Tennis ATP/WTA | h2h, spreads, totals | moneyline, spread, total |
+| Table Tennis | h2h, totals | moneyline, total |
+
+### Files to Edit
+1. `supabase/functions/whale-odds-scraper/index.ts` -- add sports + markets
+2. `supabase/functions/bot-generate-daily-parlays/index.ts` -- add profiles
+3. `supabase/functions/bot-settle-and-learn/index.ts` -- add score-based settlement
+4. `supabase/functions/unified-live-feed/index.ts` -- add sport name mapping
+5. `supabase/functions/whale-signal-detector/index.ts` -- add table tennis to supported sports
+6. `supabase/functions/track-odds-movement/index.ts` -- add sport key mappings (if needed for sharp signals)
+
