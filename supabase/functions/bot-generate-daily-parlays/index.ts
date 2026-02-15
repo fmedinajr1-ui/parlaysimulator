@@ -2808,8 +2808,8 @@ async function generateTierParlays(
     const parlaySideCount = new Map<string, number>(); // "total_over" -> count
     
     // Apply thin slate leg override
-    const effectiveMaxLegs = (thinSlateOverride && maxLegsOverride) 
-      ? Math.min(profile.legs, maxLegsOverride) 
+    const effectiveMaxLegs = isThinSlate 
+      ? Math.min(profile.legs, 3) 
       : profile.legs;
 
     for (const pick of candidatePicks) {
