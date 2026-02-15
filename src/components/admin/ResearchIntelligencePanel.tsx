@@ -45,6 +45,7 @@ export function ResearchIntelligencePanel() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRunning, setIsRunning] = useState(false);
   const [openCategories, setOpenCategories] = useState<Set<string>>(new Set());
+  const [expandedFindings, setExpandedFindings] = useState<Set<string>>(new Set());
   const { toast } = useToast();
 
   useEffect(() => {
@@ -84,6 +85,12 @@ export function ResearchIntelligencePanel() {
     const next = new Set(openCategories);
     next.has(cat) ? next.delete(cat) : next.add(cat);
     setOpenCategories(next);
+  };
+
+  const toggleFinding = (id: string) => {
+    const next = new Set(expandedFindings);
+    next.has(id) ? next.delete(id) : next.add(id);
+    setExpandedFindings(next);
   };
 
   const handleRunAgent = async () => {
@@ -188,28 +195,66 @@ export function ResearchIntelligencePanel() {
               </CollapsibleTrigger>
               <CollapsibleContent>
                 <CardContent className="pt-0 space-y-3">
-                  {items.map(finding => (
-                    <div key={finding.id} className="p-3 rounded-lg bg-muted/30 border border-border/50 space-y-2">
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="text-sm font-medium">{finding.title}</p>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <RelevanceBadge score={finding.relevance_score} />
-                          <ActionTag action={finding.action_taken} />
+                  {items.map(finding => {
+                    const isExpanded = expandedFindings.has(finding.id);
+                    const insights = Array.isArray(finding.key_insights) ? finding.key_insights : [];
+                    return (
+                      <div 
+                        key={finding.id} 
+                        className="p-3 rounded-lg bg-muted/30 border border-border/50 space-y-2 cursor-pointer hover:bg-muted/50 transition-colors"
+                        onClick={() => toggleFinding(finding.id)}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-sm font-medium">{finding.title}</p>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <RelevanceBadge score={finding.relevance_score} />
+                            <ActionTag action={finding.action_taken} />
+                          </div>
+                        </div>
+                        <p className={cn("text-xs text-muted-foreground", !isExpanded && "line-clamp-3")}>{finding.summary}</p>
+                        
+                        {isExpanded && insights.length > 0 && (
+                          <div className="space-y-1 pt-1">
+                            <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Key Insights</p>
+                            <ul className="space-y-0.5 pl-3">
+                              {insights.map((insight: string, i: number) => (
+                                <li key={i} className="text-xs text-muted-foreground list-disc">{String(insight)}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {isExpanded && finding.sources && finding.sources.length > 0 && (
+                          <div className="space-y-1 pt-1">
+                            <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Sources</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {finding.sources.map((src, i) => (
+                                <a 
+                                  key={i} 
+                                  href={src.startsWith('http') ? src : `https://${src}`} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="text-[10px] text-primary hover:underline truncate max-w-[200px]"
+                                >
+                                  {src.replace(/^https?:\/\//, '').split('/')[0]}
+                                </a>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] text-muted-foreground">
+                            {format(new Date(finding.created_at), 'h:mm a')}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground">
+                            {isExpanded ? 'Click to collapse' : 'Click to expand'}
+                          </span>
                         </div>
                       </div>
-                      <p className="text-xs text-muted-foreground line-clamp-3">{finding.summary}</p>
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] text-muted-foreground">
-                          {format(new Date(finding.created_at), 'h:mm a')}
-                        </span>
-                        {finding.sources && finding.sources.length > 0 && (
-                          <span className="text-[10px] text-muted-foreground">
-                            {finding.sources.length} source{finding.sources.length > 1 ? 's' : ''}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </CardContent>
               </CollapsibleContent>
             </Card>
