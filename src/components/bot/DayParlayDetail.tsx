@@ -167,11 +167,29 @@ export function DayParlayDetail({ date, open, onOpenChange }: DayParlayDetailPro
                   <div className="space-y-1">
                     {legs.map((leg, idx) => {
                       const isTeam = leg.type === 'team' || (!!leg.home_team && !!leg.away_team);
-                      const name = isTeam
-                        ? (leg.bet_type === 'total' && leg.home_team && leg.away_team
+                      const isWhaleSpread = !isTeam && (leg.prop_type === 'spread' || leg.prop_type === 'moneyline') && leg.player_name?.includes('@');
+                      const isWhaleTotal = !isTeam && leg.prop_type === 'total' && leg.player_name?.includes('@');
+
+                      // Extract team names from whale signal matchup string "Away @ Home"
+                      const parseMatchup = (matchup: string) => {
+                        const parts = matchup.split('@').map(s => s.trim());
+                        return { away: parts[0] || 'Away', home: parts[1] || 'Home' };
+                      };
+
+                      let name: string;
+                      if (isTeam) {
+                        name = (leg.bet_type === 'total' && leg.home_team && leg.away_team
                           ? `${leg.home_team} vs ${leg.away_team}`
-                          : leg.side === 'home' ? leg.home_team : leg.away_team) || leg.category || 'Team'
-                        : leg.player_name || 'Unknown';
+                          : leg.side === 'home' ? leg.home_team : leg.away_team) || leg.category || 'Team';
+                      } else if (isWhaleSpread) {
+                        const teams = parseMatchup(leg.player_name);
+                        name = leg.side === 'home' ? teams.home : teams.away;
+                      } else if (isWhaleTotal) {
+                        const teams = parseMatchup(leg.player_name);
+                        name = `${teams.away} vs ${teams.home}`;
+                      } else {
+                        name = leg.player_name || 'Unknown';
+                      }
 
                       return (
                         <div key={idx} className="flex items-center justify-between text-xs py-0.5">
@@ -187,10 +205,10 @@ export function DayParlayDetail({ date, open, onOpenChange }: DayParlayDetailPro
                               {isTeam
                                 ? leg.bet_type === 'total'
                                   ? <>{leg.bet_type} <span className={(leg.side ?? 'over') === 'over' ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'}>{(leg.side ?? 'over').toUpperCase()}</span> {leg.line || 0}</>
-                                  : `${(leg.bet_type || 'spread')} ${leg.line || 0}`
-                                : (leg.prop_type === 'spread' || leg.prop_type === 'moneyline')
-                                  ? <>{leg.prop_type} <span className={leg.side === 'home' ? 'text-blue-400 font-semibold' : 'text-orange-400 font-semibold'}>{(leg.side ?? 'away').toUpperCase()}</span> {leg.line || 0}</>
-                                  : (leg.prop_type === 'total')
+                                  : `${(leg.bet_type || 'spread')} ${leg.line >= 0 ? '+' : ''}${leg.line || 0}`
+                                : isWhaleSpread
+                                  ? <>spread <span className="text-foreground font-semibold">{leg.line >= 0 ? '+' : ''}{leg.line || 0}</span></>
+                                  : isWhaleTotal
                                     ? <>total <span className={(leg.side ?? 'over') === 'over' ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'}>{(leg.side ?? 'over').toUpperCase()}</span> {leg.line || 0}</>
                                     : <>{leg.prop_type || ''} <span className={(leg.side ?? 'over') === 'over' ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'}>{(leg.side || 'O').charAt(0).toUpperCase() === 'O' ? 'OVER' : 'UNDER'}</span> {leg.line || 0}</>}
                             </span>
