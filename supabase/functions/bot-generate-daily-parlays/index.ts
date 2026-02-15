@@ -898,10 +898,11 @@ function calculateCompositeScore(
   const edgeScore = Math.min(100, Math.max(0, edge * 20 + 50));
   const weightScore = categoryWeight * 66.67;
   
+  // v15: Accuracy-first weighting — hit rate is primary signal
   let baseScore = Math.round(
-    (hitRateScore * 0.30) +
-    (edgeScore * 0.25) +
-    (oddsValueScore * 0.25) +
+    (hitRateScore * 0.40) +
+    (edgeScore * 0.20) +
+    (oddsValueScore * 0.20) +
     (weightScore * 0.20)
   );
 
@@ -2786,26 +2787,25 @@ async function generateTierParlays(
       });
     }
 
-    // Win-rate-first sorting: re-sort by L10 hit rate descending
-    if (profile.sortBy === 'hit_rate') {
-      candidatePicks = [...candidatePicks].sort((a, b) => {
-        const aHitRate = 'l10_hit_rate' in a ? (a as EnrichedPick).l10_hit_rate : (a.confidence_score || 0);
-        const bHitRate = 'l10_hit_rate' in b ? (b as EnrichedPick).l10_hit_rate : (b.confidence_score || 0);
-        return bHitRate - aHitRate;
-      });
-    }
-
-    // Execution tier: sort candidates by category weight descending to prioritize golden archetypes
-    if (profile.sortBy !== 'hit_rate' && tier === 'execution') {
-      candidatePicks = [...candidatePicks].sort((a, b) => {
-        const aSport = a.sport || 'basketball_nba';
-        const bSport = b.sport || 'basketball_nba';
-        const aWeight = weightMap.get(`${a.category}__${a.recommended_side}__${aSport}`) ?? weightMap.get(`${a.category}__${a.recommended_side}`) ?? weightMap.get(a.category) ?? 1.0;
-        const bWeight = weightMap.get(`${b.category}__${b.recommended_side}__${bSport}`) ?? weightMap.get(`${b.category}__${b.recommended_side}`) ?? weightMap.get(b.category) ?? 1.0;
-        if (bWeight !== aWeight) return bWeight - aWeight;
-        return (b.compositeScore || 0) - (a.compositeScore || 0);
-      });
-    }
+    // === ACCURACY-FIRST SORTING (all tiers) ===
+    // Sort by: category weight (sport-aware) → calibrated hit rate → composite score
+    candidatePicks = [...candidatePicks].sort((a, b) => {
+      const aSport = a.sport || 'basketball_nba';
+      const bSport = b.sport || 'basketball_nba';
+      const aWeight = weightMap.get(`${a.category}__${a.recommended_side}__${aSport}`) ?? weightMap.get(`${a.category}__${a.recommended_side}`) ?? weightMap.get(a.category) ?? 1.0;
+      const bWeight = weightMap.get(`${b.category}__${b.recommended_side}__${bSport}`) ?? weightMap.get(`${b.category}__${b.recommended_side}`) ?? weightMap.get(b.category) ?? 1.0;
+      
+      // Primary: category weight (blocked=0 sink to bottom, boosted=1.2 rise to top)
+      if (bWeight !== aWeight) return bWeight - aWeight;
+      
+      // Secondary: L10 hit rate (player props) or confidence score (team props)
+      const aHitRate = 'l10_hit_rate' in a ? (a as EnrichedPick).l10_hit_rate : (a.confidence_score || 0);
+      const bHitRate = 'l10_hit_rate' in b ? (b as EnrichedPick).l10_hit_rate : (b.confidence_score || 0);
+      if (bHitRate !== aHitRate) return bHitRate - aHitRate;
+      
+      // Tertiary: composite score
+      return (b.compositeScore || 0) - (a.compositeScore || 0);
+    });
 
     // Build parlay from candidates
     // Anti-stacking rule from pattern replay: cap same-side totals
