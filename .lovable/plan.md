@@ -1,64 +1,39 @@
 
 
-# Fix ML_FAVORITE/ML_UNDERDOG Category Mapping
+# Fix: `thinSlateOverride` Scoping Bug Blocking Bot Generation
 
-## What's Wrong
+## Problem
 
-The function `mapTeamBetToCategory` on line 1101-1108 blindly maps:
-- **home moneyline = ML_FAVORITE**
-- **away moneyline = ML_UNDERDOG**
+The bot generation pipeline is currently **completely broken** with this error:
+```
+ReferenceError: thinSlateOverride is not defined
+```
 
-This is wrong. In NCAAB especially, road teams are frequently the favorite. The bot has been labeling home underdogs as "favorites" and tracking/weighting them incorrectly, leading to a 5.3% hit rate on NCAAB ML_FAVORITE.
+Inside the `generateTierParlays` function (line 2811), two variables from the outer handler scope are referenced but not accessible:
+- `thinSlateOverride` — should be the function parameter `isThinSlate`
+- `maxLegsOverride` — not passed as a parameter at all
 
-## The Fix (2 Changes)
+This is a pre-existing scoping bug unrelated to the ML fix, but it blocks all generation.
 
-### Change 1: Odds-Based Category Mapping
-
-Replace the static `mapTeamBetToCategory` function so moneyline categories use actual odds:
-
-- **Negative odds (e.g., -150)** = ML_FAVORITE (the actual favorite)
-- **Positive odds (e.g., +130)** = ML_UNDERDOG (the actual underdog)
-- **Even or missing odds** = fall back to ML_FAVORITE for home, ML_UNDERDOG for away
-
-Update all 4 call sites (lines 2395, 2409, and any others) to pass the `odds` value into the function.
-
-### Change 2: Auto-Block All NCAAB ML_FAVORITE
-
-Add a hard block in the ML Sniper Gate (around line 2481) that rejects ALL NCAAB moneyline favorites outright. The current gate restricts to Top 50 KenPom and odds ranges, but the 5.3% hit rate (1W-12L-6P) shows NCAAB ML favorites simply don't work for the bot regardless of rank or odds.
-
-The block applies after the odds-based category fix, so it will correctly target the actual favorite (negative odds side), not just the home team.
-
-## Technical Details
+## The Fix (1 file, 1 change)
 
 ### File: `supabase/functions/bot-generate-daily-parlays/index.ts`
 
-**1. Update `mapTeamBetToCategory` (lines 1101-1108)**
+**Line 2811**: Replace the outer-scope variables with the function's own parameter:
 
-Add an `odds` parameter. For moneyline bets:
-- `odds < 0` returns `ML_FAVORITE`
-- `odds > 0` returns `ML_UNDERDOG`
-- `odds === 0` or undefined falls back to home=FAVORITE, away=UNDERDOG
+```typescript
+// BEFORE (broken):
+const effectiveMaxLegs = (thinSlateOverride && maxLegsOverride) 
+  ? Math.min(profile.legs, maxLegsOverride) 
+  : profile.legs;
 
-Spread and total mappings stay the same.
-
-**2. Update call sites (lines 2395, 2409)**
-
-Pass `game.home_odds` / `game.away_odds` to `mapTeamBetToCategory` so the function can determine the true favorite.
-
-**3. Add NCAAB ML_FAVORITE hard block (line ~2481)**
-
-Replace the existing NCAAB ML gate (KenPom + odds range filtering) with a complete block:
-
-```
-if (isNCAAB && pick.odds < 0) {
-  mlBlocked.push(`NCAAB ML_FAVORITE blocked (5% historical hit rate)`);
-  return false;
-}
+// AFTER (fixed):
+const effectiveMaxLegs = isThinSlate 
+  ? Math.min(profile.legs, 3) 
+  : profile.legs;
 ```
 
-NCAAB ML_UNDERDOG (positive odds, actual underdogs) remains allowed if it passes the existing KenPom and composite gates.
+- `thinSlateOverride` becomes `isThinSlate` (the existing function parameter, already passed correctly at the call site on line 3300)
+- `maxLegsOverride` becomes a hardcoded `3` (matching the default value set on line 2858 and the thin-slate intent)
 
-### Expected Impact
-- Correct category tracking means calibration weights will reflect true favorite/underdog performance
-- Eliminating NCAAB ML favorites removes the biggest single source of losses (12 losses from 1 category)
-- NBA ML logic is already restricted to home favorites with negative odds, so the odds-based mapping aligns with existing behavior there
+After this fix, the function will be redeployed and we can re-run generation to verify the NCAAB ML_FAVORITE block.
