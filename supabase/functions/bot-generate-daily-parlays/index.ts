@@ -1867,7 +1867,16 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     ncaabStatsMap.set(t.team_name, t as NcaabTeamStats);
   });
 
-  console.log(`[Bot] Intelligence data: ${paceMap.size} pace, ${defenseMap.size} defense, ${envMap.size} env, ${homeCourtMap.size} home court, ${ncaabStatsMap.size} NCAAB teams`);
+  // Build NCAA Baseball teams set for quality gate
+  const baseballTeamsSet = new Set<string>();
+  {
+    const { data: baseballTeams } = await supabase
+      .from('ncaa_baseball_team_stats')
+      .select('team_name');
+    (baseballTeams || []).forEach((t: any) => baseballTeamsSet.add(t.team_name));
+  }
+
+  console.log(`[Bot] Intelligence data: ${paceMap.size} pace, ${defenseMap.size} defense, ${envMap.size} env, ${homeCourtMap.size} home court, ${ncaabStatsMap.size} NCAAB teams, ${baseballTeamsSet.size} baseball teams`);
 
   // Deduplicate game_bets by home_team + away_team + bet_type (keep most recent)
   const seenGameBets = new Map<string, TeamProp>();
@@ -2394,17 +2403,27 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       return false;
     }
 
-    // NCAAB Quality Gate: block obscure matchups in validation/execution tiers
-    // Both teams must NOT be outside Top 200 KenPom to avoid unsettleable voids
+    // NCAAB Quality Gate: block obscure matchups to avoid unsettleable voids
+    // Block if EITHER team is outside Top 200 KenPom or has no data
     if (isNCAAB && ncaabStatsMap && ncaabStatsMap.size > 0) {
       const homeStats = ncaabStatsMap.get(pick.home_team);
       const awayStats = ncaabStatsMap.get(pick.away_team);
       const homeRank = homeStats?.kenpom_rank || 999;
       const awayRank = awayStats?.kenpom_rank || 999;
       
-      if (homeRank > 200 && awayRank > 200) {
-        // Block entirely from validation and execution
-        mlBlocked.push(`${pick.home_team} vs ${pick.away_team} NCAAB (both outside Top 200: #${homeRank} vs #${awayRank})`);
+      if (homeRank > 200 || awayRank > 200) {
+        mlBlocked.push(`${pick.home_team} vs ${pick.away_team} NCAAB (rank #${homeRank} vs #${awayRank}, need both ≤200)`);
+        return false;
+      }
+    }
+
+    // NCAA Baseball Quality Gate: only include games where both teams exist in ncaa_baseball_team_stats
+    const isBaseball = pick.sport?.includes('baseball_ncaa') || pick.sport?.includes('baseball');
+    if (isBaseball && baseballTeamsSet && baseballTeamsSet.size > 0) {
+      const homeInStats = baseballTeamsSet.has(pick.home_team);
+      const awayInStats = baseballTeamsSet.has(pick.away_team);
+      if (!homeInStats || !awayInStats) {
+        mlBlocked.push(`${pick.home_team} vs ${pick.away_team} Baseball (missing stats: home=${homeInStats}, away=${awayInStats})`);
         return false;
       }
     }

@@ -118,6 +118,8 @@ function adjustWeight(
 // For NCAAB: use ESPN scoreboard API directly (more reliable than summing player logs)
 // For NBA: sum player game logs
 const ESPN_NCAAB_SCOREBOARD = 'https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard';
+const ESPN_NCAA_BASEBALL_SCOREBOARD = 'https://site.api.espn.com/apis/site/v2/sports/baseball/college-baseball/scoreboard';
+const ESPN_NHL_SCOREBOARD = 'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard';
 
 function fuzzyMatchTeam(name: string, target: string): boolean {
   const n = name.toLowerCase().replace(/[^a-z\s]/g, '').trim();
@@ -232,6 +234,106 @@ async function settleNcaabTeamLegViaESPN(
   return { outcome: 'no_data', actual_value: null };
 }
 
+// Settle NCAA Baseball team leg via ESPN college baseball scoreboard
+async function settleNcaaBaseballViaESPN(
+  leg: BotLeg,
+  parlayDate: string
+): Promise<{ outcome: string; actual_value: number | null }> {
+  const homeTeam = leg.home_team;
+  const awayTeam = leg.away_team;
+  if (!homeTeam || !awayTeam) return { outcome: 'no_data', actual_value: null };
+
+  for (let d = 0; d < 3; d++) {
+    const searchDate = new Date(parlayDate + 'T12:00:00Z');
+    searchDate.setDate(searchDate.getDate() + d);
+    const dateStr = searchDate.toISOString().split('T')[0].replace(/-/g, '');
+
+    try {
+      const resp = await fetch(`${ESPN_NCAA_BASEBALL_SCOREBOARD}?dates=${dateStr}&limit=200`);
+      if (!resp.ok) continue;
+      const data = await resp.json();
+      const events = data.events || [];
+
+      for (const event of events) {
+        if (event.status?.type?.completed !== true && event.status?.type?.name !== 'STATUS_FINAL') continue;
+
+        const competitors = event.competitions?.[0]?.competitors || [];
+        if (competitors.length !== 2) continue;
+
+        const home = competitors.find((c: any) => c.homeAway === 'home');
+        const away = competitors.find((c: any) => c.homeAway === 'away');
+        if (!home || !away) continue;
+
+        const homeName = home.team?.displayName || home.team?.shortDisplayName || '';
+        const awayName = away.team?.displayName || away.team?.shortDisplayName || '';
+
+        if (fuzzyMatchTeam(homeName, homeTeam) && fuzzyMatchTeam(awayName, awayTeam)) {
+          const homeScore = parseInt(home.score) || 0;
+          const awayScore = parseInt(away.score) || 0;
+          console.log(`[Bot Settle] ESPN Baseball: ${homeName} (${homeScore}) vs ${awayName} (${awayScore})`);
+          return resolveTeamOutcome(leg, homeScore, awayScore);
+        }
+      }
+    } catch (e) {
+      console.error(`[Bot Settle] ESPN Baseball fetch error for ${dateStr}:`, e);
+    }
+
+    await new Promise(r => setTimeout(r, 200));
+  }
+
+  return { outcome: 'no_data', actual_value: null };
+}
+
+// Settle NHL team leg via ESPN NHL scoreboard
+async function settleNhlViaESPN(
+  leg: BotLeg,
+  parlayDate: string
+): Promise<{ outcome: string; actual_value: number | null }> {
+  const homeTeam = leg.home_team;
+  const awayTeam = leg.away_team;
+  if (!homeTeam || !awayTeam) return { outcome: 'no_data', actual_value: null };
+
+  for (let d = 0; d < 3; d++) {
+    const searchDate = new Date(parlayDate + 'T12:00:00Z');
+    searchDate.setDate(searchDate.getDate() + d);
+    const dateStr = searchDate.toISOString().split('T')[0].replace(/-/g, '');
+
+    try {
+      const resp = await fetch(`${ESPN_NHL_SCOREBOARD}?dates=${dateStr}&limit=50`);
+      if (!resp.ok) continue;
+      const data = await resp.json();
+      const events = data.events || [];
+
+      for (const event of events) {
+        if (event.status?.type?.completed !== true && event.status?.type?.name !== 'STATUS_FINAL') continue;
+
+        const competitors = event.competitions?.[0]?.competitors || [];
+        if (competitors.length !== 2) continue;
+
+        const home = competitors.find((c: any) => c.homeAway === 'home');
+        const away = competitors.find((c: any) => c.homeAway === 'away');
+        if (!home || !away) continue;
+
+        const homeName = home.team?.displayName || home.team?.shortDisplayName || '';
+        const awayName = away.team?.displayName || away.team?.shortDisplayName || '';
+
+        if (fuzzyMatchTeam(homeName, homeTeam) && fuzzyMatchTeam(awayName, awayTeam)) {
+          const homeScore = parseInt(home.score) || 0;
+          const awayScore = parseInt(away.score) || 0;
+          console.log(`[Bot Settle] ESPN NHL: ${homeName} (${homeScore}) vs ${awayName} (${awayScore})`);
+          return resolveTeamOutcome(leg, homeScore, awayScore);
+        }
+      }
+    } catch (e) {
+      console.error(`[Bot Settle] ESPN NHL fetch error for ${dateStr}:`, e);
+    }
+
+    await new Promise(r => setTimeout(r, 200));
+  }
+
+  return { outcome: 'no_data', actual_value: null };
+}
+
 async function settleTeamLeg(
   supabase: any,
   leg: BotLeg,
@@ -244,11 +346,22 @@ async function settleTeamLeg(
     return { outcome: 'no_data', actual_value: null };
   }
 
-  // Route NCAAB to ESPN scoreboard (more reliable than summing player logs)
   const legSport = (leg as any).sport || '';
+
+  // Route NCAA Baseball to ESPN college baseball scoreboard
+  if (legSport.includes('baseball_ncaa') || legSport.includes('baseball')) {
+    return settleNcaaBaseballViaESPN(leg, parlayDate);
+  }
+
+  // Route NCAAB to ESPN scoreboard (more reliable than summing player logs)
   const isNCAAB = legSport.includes('ncaab') || legSport.includes('college');
   if (isNCAAB) {
     return settleNcaabTeamLegViaESPN(leg, parlayDate);
+  }
+
+  // Route NHL to ESPN scoreboard
+  if (legSport.includes('icehockey_nhl') || legSport.includes('nhl')) {
+    return settleNhlViaESPN(leg, parlayDate);
   }
 
   // Route Tennis / Table Tennis to Odds API scores (ESPN doesn't cover these)
