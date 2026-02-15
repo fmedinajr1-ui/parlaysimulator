@@ -2309,9 +2309,21 @@ async function generateTierParlays(
   strategyName: string,
   bankroll: number,
   globalFingerprints: Set<string> = new Set(),
-  goldenCategories: Set<string> = new Set()
+  goldenCategories: Set<string> = new Set(),
+  isThinSlate: boolean = false
 ): Promise<{ count: number; parlays: any[] }> {
-  const config = TIER_CONFIG[tier];
+  // Clone config so we can override thresholds for thin slates without mutating the original
+  const config = { ...TIER_CONFIG[tier] };
+
+  // Thin-slate relaxation: loosen validation tier gates only (execution stays strict)
+  if (isThinSlate && tier === 'validation') {
+    config.minHitRate = 48;
+    config.minEdge = 0.004;
+    config.minSharpe = 0.01;
+    config.minConfidence = 0.48;
+    console.log(`[Bot] 🔶 Thin-slate: validation gates relaxed (hitRate≥48%, edge≥0.004, sharpe≥0.01)`);
+  }
+
   const tracker = createUsageTracker();
   const parlaysToCreate: any[] = [];
 
@@ -2698,7 +2710,8 @@ async function generateTierParlays(
       const sharpe = effectiveEdge / (0.5 * Math.sqrt(legs.length));
 
       // Check tier thresholds
-      if (combinedProbability < 0.001) { if (tier === 'execution') console.log(`[Bot] ${tier}/${profile.strategy}: failed prob (${combinedProbability.toFixed(4)})`); continue; }
+      const probFloor = (isThinSlate && tier !== 'execution') ? 0.0005 : 0.001;
+      if (combinedProbability < probFloor) { if (tier === 'execution') console.log(`[Bot] ${tier}/${profile.strategy}: failed prob (${combinedProbability.toFixed(4)})`); continue; }
       const effectiveMinEdge = (isHybridProfile || isTeamProfile) ? Math.min(config.minEdge, 0.008) : config.minEdge;
       if (effectiveEdge < effectiveMinEdge) { if (tier === 'execution') console.log(`[Bot] ${tier}/${profile.strategy}: failed edge (${effectiveEdge.toFixed(4)} < ${effectiveMinEdge})`); continue; }
       if (sharpe < config.minSharpe) { if (tier === 'execution') console.log(`[Bot] ${tier}/${profile.strategy}: failed sharpe (${sharpe.toFixed(4)} < ${config.minSharpe})`); continue; }
@@ -2817,8 +2830,8 @@ Deno.serve(async (req) => {
 
     // Check if we have real odds data
     const realLinePicks = pool.playerPicks.filter(p => p.has_real_line);
-    if (pool.totalPool < 8 || (realLinePicks.length < 5 && pool.teamPicks.length < 5)) {
-      const reason = pool.totalPool < 20 
+    if (pool.totalPool < 5 || (realLinePicks.length < 3 && pool.teamPicks.length < 3)) {
+      const reason = pool.totalPool < 5 
         ? `Insufficient prop pool (${pool.totalPool})` 
         : `No real odds data (${realLinePicks.length} real lines, ${pool.teamPicks.length} team picks)`;
       console.log(`[Bot v2] Skipping generation: ${reason}`);
@@ -2850,7 +2863,13 @@ Deno.serve(async (req) => {
       );
     }
 
-    // 5. Generate parlays for each tier
+    // 5. Detect thin slate mode
+    const isThinSlate = pool.totalPool < 25;
+    if (isThinSlate) {
+      console.log(`[Bot v2] 🔶 THIN SLATE MODE: ${pool.totalPool} picks (< 25 threshold). Relaxing validation gates.`);
+    }
+
+    // Generate parlays for each tier
     // Reduce exposure if bankroll is near floor
     const isLowBankroll = bankroll < BANKROLL_FLOOR * 1.2; // Below $1,200
     let tiersToGenerate: TierName[] = singleTier 
@@ -2888,7 +2907,8 @@ Deno.serve(async (req) => {
         strategyName,
         bankroll,
         globalFingerprints,
-        pool.goldenCategories
+        pool.goldenCategories,
+        isThinSlate
       );
       results[tier] = result;
       allParlays = [...allParlays, ...result.parlays];
