@@ -63,7 +63,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     minHitRate: 45,
     minEdge: 0.003,
     minSharpe: 0.01,
-    stake: 10,
+    stake: 20,
     minConfidence: 0.45,
     profiles: [
       // Multi-sport exploration (15 profiles)
@@ -144,7 +144,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     minHitRate: 52,
     minEdge: 0.008,
     minSharpe: 0.02,
-    stake: 10,
+    stake: 20,
     minConfidence: 0.52,
     profiles: [
       { legs: 3, strategy: 'validated_conservative', sports: ['basketball_nba'], minOddsValue: 45, minHitRate: 55 },
@@ -184,7 +184,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     minHitRate: 60,
     minEdge: 0.008,
     minSharpe: 0.02,
-    stake: 10,
+    stake: 20,
     minConfidence: 0.60,
     profiles: [
       // ALL 3-LEG: Maximum win probability (Feb 11 analysis: all 4 winners were 3-leg)
@@ -2703,8 +2703,8 @@ async function generateTierParlays(
       if (effectiveEdge < effectiveMinEdge) { if (tier === 'execution') console.log(`[Bot] ${tier}/${profile.strategy}: failed edge (${effectiveEdge.toFixed(4)} < ${effectiveMinEdge})`); continue; }
       if (sharpe < config.minSharpe) { if (tier === 'execution') console.log(`[Bot] ${tier}/${profile.strategy}: failed sharpe (${sharpe.toFixed(4)} < ${config.minSharpe})`); continue; }
 
-      // Calculate stake (flat $10 for all tiers)
-      const stake = typeof config.stake === 'number' && config.stake > 0 ? config.stake : 10;
+      // Calculate stake (flat $20 for all tiers)
+      const stake = typeof config.stake === 'number' && config.stake > 0 ? config.stake : 20;
 
       parlaysToCreate.push({
         parlay_date: targetDate,
