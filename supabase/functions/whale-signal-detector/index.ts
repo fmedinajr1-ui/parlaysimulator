@@ -88,7 +88,11 @@ function calculateMoveSpeed(currentLine: number, previousLine: number | null, mi
 }
 
 /** Snap a fractional line to the nearest 0.5 sportsbook increment. */
-function snapLine(raw: number): number {
+function snapLine(raw: number, betType?: string): number {
+  if (betType === 'spread') {
+    const floor = Math.floor(raw);
+    return floor + 0.5;
+  }
   return Math.round(raw * 2) / 2;
 }
 
@@ -537,7 +541,7 @@ serve(async (req) => {
           if (sharpScore < threshold.minScore) continue;
           
           const firstBet = gameBets[0];
-          const avgLine = lines.length > 0 ? snapLine(lines.reduce((a, b) => a + b, 0) / lines.length) : 0;
+          const avgLine = lines.length > 0 ? snapLine(lines.reduce((a, b) => a + b, 0) / lines.length, betType) : 0;
           const startTime = new Date(firstBet.commence_time);
           const expiresAt = new Date(startTime.getTime() - 5 * 60 * 1000);
           const confidenceGrade = sharpScore >= 80 ? 'A' : sharpScore >= 65 ? 'B' : 'C';
