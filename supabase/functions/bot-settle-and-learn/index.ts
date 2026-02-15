@@ -132,6 +132,56 @@ function fuzzyMatchTeam(name: string, target: string): boolean {
   return false;
 }
 
+// Settle tennis/table tennis via The Odds API scores endpoint
+async function settleTennisViaOddsAPI(
+  leg: BotLeg,
+  parlayDate: string,
+  sport: string
+): Promise<{ outcome: string; actual_value: number | null }> {
+  const homeTeam = leg.home_team;
+  const awayTeam = leg.away_team;
+  if (!homeTeam || !awayTeam) return { outcome: 'no_data', actual_value: null };
+
+  const apiKey = Deno.env.get('THE_ODDS_API_KEY');
+  if (!apiKey) {
+    console.error('[Bot Settle] THE_ODDS_API_KEY not set, cannot settle tennis/table tennis');
+    return { outcome: 'no_data', actual_value: null };
+  }
+
+  try {
+    const scoresUrl = `https://api.the-odds-api.com/v4/sports/${sport}/scores/?apiKey=${apiKey}&daysFrom=3`;
+    const resp = await fetch(scoresUrl);
+    if (!resp.ok) {
+      console.error(`[Bot Settle] Odds API scores error for ${sport}: ${resp.status}`);
+      return { outcome: 'no_data', actual_value: null };
+    }
+
+    const events = await resp.json();
+    for (const event of events) {
+      if (!event.completed) continue;
+
+      const matchesHome = fuzzyMatchTeam(event.home_team || '', homeTeam);
+      const matchesAway = fuzzyMatchTeam(event.away_team || '', awayTeam);
+      if (!matchesHome || !matchesAway) continue;
+
+      const scores = event.scores || [];
+      const homeScoreObj = scores.find((s: any) => s.name === event.home_team);
+      const awayScoreObj = scores.find((s: any) => s.name === event.away_team);
+      if (!homeScoreObj || !awayScoreObj) continue;
+
+      const homeScore = parseInt(homeScoreObj.score) || 0;
+      const awayScore = parseInt(awayScoreObj.score) || 0;
+
+      console.log(`[Bot Settle] Odds API ${sport}: ${event.home_team} (${homeScore}) vs ${event.away_team} (${awayScore})`);
+      return resolveTeamOutcome(leg, homeScore, awayScore);
+    }
+  } catch (e) {
+    console.error(`[Bot Settle] Odds API scores fetch error for ${sport}:`, e);
+  }
+
+  return { outcome: 'no_data', actual_value: null };
+}
+
 async function settleNcaabTeamLegViaESPN(
   leg: BotLeg,
   parlayDate: string
@@ -199,6 +249,12 @@ async function settleTeamLeg(
   const isNCAAB = legSport.includes('ncaab') || legSport.includes('college');
   if (isNCAAB) {
     return settleNcaabTeamLegViaESPN(leg, parlayDate);
+  }
+
+  // Route Tennis / Table Tennis to Odds API scores (ESPN doesn't cover these)
+  const isTennis = legSport.includes('tennis_atp') || legSport.includes('tennis_wta') || legSport.includes('tennis_pingpong');
+  if (isTennis) {
+    return settleTennisViaOddsAPI(leg, parlayDate, legSport);
   }
 
   // NBA: use player game logs aggregation

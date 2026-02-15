@@ -37,6 +37,9 @@ function normalizeSport(sport: string): string {
     'baseball_mlb': 'MLB',
     'soccer_epl': 'EPL',
     'mma_mixed_martial_arts': 'UFC',
+    'tennis_atp': 'ATP Tennis',
+    'tennis_wta': 'WTA Tennis',
+    'tennis_pingpong': 'Table Tennis',
   };
   return sportMap[sport] || sport?.toUpperCase() || 'UNKNOWN';
 }

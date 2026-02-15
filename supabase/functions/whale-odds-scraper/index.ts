@@ -10,9 +10,9 @@ const corsHeaders = {
 // Tier 1: Always fetch (best historical data)
 const TIER_1_SPORTS = ['basketball_nba', 'icehockey_nhl'];
 // Tier 2: Fetch if games exist (seasonal)
-const TIER_2_SPORTS = ['basketball_wnba', 'basketball_ncaab', 'baseball_ncaa'];
+const TIER_2_SPORTS = ['basketball_wnba', 'basketball_ncaab', 'baseball_ncaa', 'tennis_atp', 'tennis_wta', 'tennis_pingpong'];
 // Tier 3: Skip for now (offseason / low volume)
-// NFL, NCAAF, Tennis - not fetched to save API budget
+// NFL, NCAAF - not fetched to save API budget
 
 const ALL_ACTIVE_SPORTS = [...TIER_1_SPORTS, ...TIER_2_SPORTS];
 
@@ -35,6 +35,7 @@ const PLAYER_MARKET_BATCHES: Record<string, string[][]> = {
   'baseball_ncaa': [
     ['batter_hits', 'batter_rbis', 'batter_runs_scored', 'batter_total_bases'],
   ],
+  // Tennis/Table Tennis: no player prop markets, team (match) markets only
 };
 
 const TEAM_MARKETS = ['spreads', 'totals', 'h2h'];
@@ -100,6 +101,7 @@ interface GameBetInsert {
 function normalizeSportKey(sportKey: string): string {
   if (sportKey.startsWith('tennis_atp')) return 'tennis_atp';
   if (sportKey.startsWith('tennis_wta')) return 'tennis_wta';
+  if (sportKey.startsWith('tennis_pingpong')) return 'tennis_pingpong';
   return sportKey;
 }
 
