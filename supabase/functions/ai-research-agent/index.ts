@@ -280,6 +280,10 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // Parse optional force flag to bypass dedup guard
+    const body = await req.json().catch(() => ({}));
+    const forceRun = body?.force === true;
+
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const perplexityKey = Deno.env.get('PERPLEXITY_API_KEY');
@@ -296,12 +300,16 @@ Deno.serve(async (req) => {
       .select('*', { count: 'exact', head: true })
       .eq('research_date', today);
 
-    if (existingCount && existingCount > 0) {
+    if (!forceRun && existingCount && existingCount > 0) {
       console.log(`[Research Agent] Already ran today (${existingCount} findings exist for ${today}). Skipping.`);
       return new Response(
         JSON.stringify({ success: true, skipped: true, reason: `Already ran today — ${existingCount} findings exist for ${today}` }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
+    }
+
+    if (forceRun) {
+      console.log(`[Research Agent] Force run requested — bypassing dedup guard (${existingCount ?? 0} existing findings).`);
     }
 
     console.log('[Research Agent] Starting daily research...');
