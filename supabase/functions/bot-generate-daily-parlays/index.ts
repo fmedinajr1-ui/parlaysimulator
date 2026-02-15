@@ -2558,7 +2558,8 @@ async function generateTierParlays(
   bankroll: number,
   globalFingerprints: Set<string> = new Set(),
   goldenCategories: Set<string> = new Set(),
-  isThinSlate: boolean = false
+  isThinSlate: boolean = false,
+  winningPatterns: any = null
 ): Promise<{ count: number; parlays: any[] }> {
   // Clone config so we can override thresholds for thin slates without mutating the original
   const config = { ...TIER_CONFIG[tier] };
@@ -3178,7 +3179,8 @@ Deno.serve(async (req) => {
         bankroll,
         globalFingerprints,
         pool.goldenCategories,
-        isThinSlate
+        isThinSlate,
+        winningPatterns
       );
       results[tier] = result;
       allParlays = [...allParlays, ...result.parlays];
