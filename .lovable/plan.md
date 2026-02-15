@@ -1,51 +1,64 @@
 
 
-# Add Force-Bypass to AI Research Agent and Test Whale Query
+## Fix Parlay Generator: Dedup Mirrors + Over-Stacking Cap + Line Snapping
 
-## Problem
+### Problems Identified
 
-The `ai-research-agent` has a deduplication guard that blocks the entire run if any findings exist for today. Since it already ran today (20 findings from the previous deployment), the new `whale_money_steam_moves` query never executes.
+1. **Mirror parlays not caught by deduplication** -- The fingerprint includes the `side` field, so "Arizona spread UNDER 2.17" and "Arizona spread OVER 2.17" produce different fingerprints. Parlays sharing the same games/matchups but with flipped sides slip through.
 
-## Solution
+2. **Over-stacking has no hard default** -- The anti-stacking variable `maxSameSidePerParlay` defaults to `99` when `winningPatterns` doesn't provide a value, effectively disabling the cap. The screenshot shows parlays with 2-3 OVER totals stacked together.
 
-Add a `force` parameter to bypass the dedup guard, then trigger a test run.
+3. **Fractional lines (e.g., 2.1667)** -- Whale signal lines are raw averages that aren't snapped to valid sportsbook increments (0.5 steps for spreads/totals).
 
-## Implementation
+---
 
-### File: `supabase/functions/ai-research-agent/index.ts`
+### Changes (single file)
 
-**Change 1 -- Parse `force` flag from request body (~line 282)**
+**File:** `supabase/functions/bot-generate-daily-parlays/index.ts`
 
-Before the dedup guard, parse the incoming request body for a `force: true` flag:
-```ts
-const body = await req.json().catch(() => ({}));
-const forceRun = body?.force === true;
+#### 1. Side-agnostic mirror fingerprint
+
+Add a second "mirror fingerprint" that strips the `side` from team legs, so two parlays covering the same set of games (regardless of over/under/home/away) are treated as duplicates.
+
+```text
+createParlayFingerprint  -- existing, keeps side (exact dupe)
+createMirrorFingerprint  -- NEW, drops side (catches flipped mirrors)
 ```
 
-**Change 2 -- Conditionally skip dedup guard (~line 299)**
+Both fingerprint sets will be checked before accepting a parlay.
 
-Wrap the existing dedup check so it only blocks when `forceRun` is false:
-```ts
-if (!forceRun && existingCount && existingCount > 0) {
-  // skip...
+#### 2. Hard-code max 2 OVER totals per parlay
+
+Change the default from `99` to `2`:
+
+```typescript
+const maxSameSidePerParlay = winningPatterns?.max_same_side_per_parlay || 2;
+```
+
+This ensures no parlay can have more than 2 legs of the same bet-type + side combination (e.g., `total_over`), matching the review engine's flagged failure pattern.
+
+#### 3. Snap lines to valid sportsbook increments
+
+Add a `snapLine` utility that rounds fractional lines to the nearest 0.5:
+
+```typescript
+function snapLine(raw: number): number {
+  return Math.round(raw * 2) / 2;
 }
 ```
 
-This way, calling with `{ "force": true }` will re-run all queries including the new whale money query. Normal scheduled runs (no body) still dedup as before.
+Apply it when building team leg data (line 2947) and player leg data so lines like `2.1667` become `2.0` or `2.5`.
 
-### After Deployment
+---
 
-Trigger a test with:
-```
-POST /ai-research-agent  { "force": true }
-```
+### Technical Details
 
-Then verify `whale_money_steam_moves` appears in `bot_research_findings` and the cross-reference updates any matching `whale_picks`.
+| Change | Location (approx line) | Description |
+|--------|----------------------|-------------|
+| `createMirrorFingerprint()` | After line 2664 | New function, team legs keyed by matchup+bet_type only |
+| Mirror fingerprint set | Lines 3056-3061 + 3291-3301 | Add `globalMirrorPrints` set, check both before accepting |
+| Default cap `99` to `2` | Line 2812 | Hard default for `maxSameSidePerParlay` |
+| `snapLine()` utility | After line 2664 | Round to nearest 0.5 |
+| Apply `snapLine` to team legs | Line 2947 | `line: snapLine(teamPick.line)` |
+| Apply `snapLine` to player legs | Where player `legData.line` is set | Same treatment |
 
-### Changes Summary
-
-| What | Where | Detail |
-|------|-------|--------|
-| Parse `force` flag | Line ~282 | Read from request body |
-| Conditional dedup | Line ~299 | Skip guard when `force: true` |
-| Redeploy + test | Post-deploy | Invoke with force, verify findings |
