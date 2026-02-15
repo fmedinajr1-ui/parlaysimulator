@@ -188,7 +188,11 @@ export function DayParlayDetail({ date, open, onOpenChange }: DayParlayDetailPro
                                 ? leg.bet_type === 'total'
                                   ? <>{leg.bet_type} <span className={(leg.side ?? 'over') === 'over' ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'}>{(leg.side ?? 'over').toUpperCase()}</span> {leg.line || 0}</>
                                   : `${(leg.bet_type || 'spread')} ${leg.line || 0}`
-                                : <>{leg.prop_type || ''} <span className={(leg.side ?? 'over') === 'over' ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'}>{(leg.side || 'O').charAt(0).toUpperCase() === 'O' ? 'OVER' : 'UNDER'}</span> {leg.line || 0}</>}
+                                : (leg.prop_type === 'spread' || leg.prop_type === 'moneyline')
+                                  ? <>{leg.prop_type} <span className={leg.side === 'home' ? 'text-blue-400 font-semibold' : 'text-orange-400 font-semibold'}>{(leg.side ?? 'away').toUpperCase()}</span> {leg.line || 0}</>
+                                  : (leg.prop_type === 'total')
+                                    ? <>total <span className={(leg.side ?? 'over') === 'over' ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'}>{(leg.side ?? 'over').toUpperCase()}</span> {leg.line || 0}</>
+                                    : <>{leg.prop_type || ''} <span className={(leg.side ?? 'over') === 'over' ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'}>{(leg.side || 'O').charAt(0).toUpperCase() === 'O' ? 'OVER' : 'UNDER'}</span> {leg.line || 0}</>}
                             </span>
                           </div>
                           {leg.actual_value != null && (

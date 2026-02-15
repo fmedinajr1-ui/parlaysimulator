@@ -2680,7 +2680,12 @@ function createMirrorFingerprint(legs: any[]): string {
 /**
  * Snap a fractional line to the nearest 0.5 sportsbook increment.
  */
-function snapLine(raw: number): number {
+function snapLine(raw: number, betType?: string): number {
+  // For spreads, always snap to .5 to avoid pushes (e.g., 2.1667 → 2.5, not 2.0)
+  if (betType === 'spread') {
+    const floor = Math.floor(raw);
+    return floor + 0.5;
+  }
   return Math.round(raw * 2) / 2;
 }
 
@@ -2966,7 +2971,7 @@ async function generateTierParlays(
           away_team: teamPick.away_team,
           bet_type: teamPick.bet_type,
           side: teamPick.side,
-          line: snapLine(teamPick.line),
+          line: snapLine(teamPick.line, teamPick.bet_type),
           category: teamPick.category,
           american_odds: teamPick.odds,
           sharp_score: teamPick.sharp_score,
@@ -3001,7 +3006,7 @@ async function generateTierParlays(
           player_name: playerPick.player_name,
           team_name: playerPick.team_name,
           prop_type: playerPick.prop_type,
-          line: snapLine(selectedLine.line),
+          line: snapLine(selectedLine.line, playerPick.prop_type),
           side: playerPick.recommended_side || 'over',
           category: playerPick.category,
           weight,
@@ -3010,8 +3015,8 @@ async function generateTierParlays(
           odds_value_score: playerPick.oddsValueScore,
           composite_score: playerPick.compositeScore,
           outcome: 'pending',
-          original_line: snapLine(playerPick.line),
-          selected_line: snapLine(selectedLine.line),
+          original_line: snapLine(playerPick.line, playerPick.prop_type),
+          selected_line: snapLine(selectedLine.line, playerPick.prop_type),
           line_selection_reason: selectedLine.reason,
           odds_improvement: selectedLine.oddsImprovement || 0,
           projection_buffer: (playerPick.projected_value || playerPick.l10_avg || 0) - selectedLine.line,
