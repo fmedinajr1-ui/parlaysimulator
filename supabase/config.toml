@@ -401,3 +401,6 @@ verify_jwt = false
 
 [functions.ncaab-team-stats-fetcher]
 verify_jwt = false
+
+[functions.bot-review-and-optimize]
+verify_jwt = false
