@@ -182,9 +182,10 @@ function scoreNcaab(
       breakdown.tempo_mismatch = -12;
     }
 
-    // --- Projected Total vs Line (KenPom-style) ---
+    // --- Projected Total vs Line (KenPom-style, defense-adjusted) ---
     const tempoFactor = avgTempo / 67;
-    const projectedTotal = ((homeOff + awayOff) / 2) * tempoFactor * 2;
+    const avgD1PPG = 70; // D1 average points per game baseline
+    const projectedTotal = (homeOff + awayOff - homeDef - awayDef + avgD1PPG * 2) * tempoFactor;
     const lineEdge = projectedTotal - (bet.line || 0);
     breakdown.projected_total = Math.round(projectedTotal * 10) / 10;
 

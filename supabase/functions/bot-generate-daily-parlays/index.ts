@@ -621,7 +621,8 @@ function calculateNcaabTeamCompositeScore(
     // === NEW: Projected total sanity check for OVERs ===
     if (side === 'over') {
       const avgTempo = (homeTempo + awayTempo) / 2;
-      const projectedTotal = (homeOff + awayOff) * (avgTempo / 70);
+      const avgD1PPG = 70;
+      const projectedTotal = (homeOff + awayOff - homeDef - awayDef + avgD1PPG * 2) * (avgTempo / 67);
       const line = game.line || 0;
       if (line > projectedTotal + 5) {
         score -= 10;

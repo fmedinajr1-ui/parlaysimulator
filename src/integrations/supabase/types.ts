@@ -6208,7 +6208,9 @@ export type Database = {
           home_record: string | null
           id: string
           kenpom_rank: number | null
+          oppg: number | null
           over_under_record: string | null
+          ppg: number | null
           team_name: string
           updated_at: string
         }
@@ -6222,7 +6224,9 @@ export type Database = {
           home_record?: string | null
           id?: string
           kenpom_rank?: number | null
+          oppg?: number | null
           over_under_record?: string | null
+          ppg?: number | null
           team_name: string
           updated_at?: string
         }
@@ -6236,7 +6240,9 @@ export type Database = {
           home_record?: string | null
           id?: string
           kenpom_rank?: number | null
+          oppg?: number | null
           over_under_record?: string | null
+          ppg?: number | null
           team_name?: string
           updated_at?: string
         }
@@ -10004,6 +10010,48 @@ export type Database = {
           vs_guards_rank?: number | null
           vs_wings_allowed?: number | null
           vs_wings_rank?: number | null
+        }
+        Relationships: []
+      }
+      team_game_results: {
+        Row: {
+          away_score: number
+          away_team: string
+          created_at: string
+          espn_event_id: string | null
+          game_date: string
+          home_score: number
+          home_team: string
+          id: string
+          season: string | null
+          sport: string
+          total_score: number | null
+        }
+        Insert: {
+          away_score: number
+          away_team: string
+          created_at?: string
+          espn_event_id?: string | null
+          game_date: string
+          home_score: number
+          home_team: string
+          id?: string
+          season?: string | null
+          sport: string
+          total_score?: number | null
+        }
+        Update: {
+          away_score?: number
+          away_team?: string
+          created_at?: string
+          espn_event_id?: string | null
+          game_date?: string
+          home_score?: number
+          home_team?: string
+          id?: string
+          season?: string | null
+          sport?: string
+          total_score?: number | null
         }
         Relationships: []
       }
