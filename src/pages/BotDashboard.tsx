@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { Bot, RefreshCw, Play, CheckCircle, Settings2, ChevronDown, ChevronUp, Target } from 'lucide-react';
+import { Bot, RefreshCw, Play, CheckCircle, Settings2, ChevronDown, ChevronUp, Target, Sparkles } from 'lucide-react';
 import { useBotEngine } from '@/hooks/useBotEngine';
 import { BotActivationCard } from '@/components/bot/BotActivationCard';
 import { BotPnLCalendar } from '@/components/bot/BotPnLCalendar';
@@ -31,8 +31,10 @@ export default function BotDashboard() {
   const {
     state,
     generateParlays,
+    smartGenerateParlays,
     settleParlays,
     isGenerating,
+    isSmartGenerating,
     isSettling,
     refetch,
   } = useBotEngine();
@@ -43,6 +45,20 @@ export default function BotDashboard() {
       toast({ title: 'Parlays Generated', description: `Created ${result?.parlaysGenerated || 0} new parlay(s)` });
     } catch (error) {
       toast({ title: 'Generation Failed', description: error instanceof Error ? error.message : 'Unknown error', variant: 'destructive' });
+    }
+  };
+
+  const handleSmartGenerate = async () => {
+    try {
+      const result = await smartGenerateParlays();
+      const analysis = result?.analysis;
+      const genCount = result?.generation?.parlaysGenerated || 0;
+      toast({ 
+        title: '🧠 Smart Generation Complete', 
+        description: `Analyzed ${analysis?.totalAnalyzed || 0} historical parlays. Found ${analysis?.hotPatterns || 0} hot patterns. Generated ${genCount} optimized parlay(s).` 
+      });
+    } catch (error) {
+      toast({ title: 'Smart Generation Failed', description: error instanceof Error ? error.message : 'Unknown error', variant: 'destructive' });
     }
   };
 
@@ -248,9 +264,18 @@ export default function BotDashboard() {
       <div className="fixed bottom-20 left-0 right-0 px-4 z-40">
         <div className="max-w-lg mx-auto flex gap-2 p-2 rounded-2xl bg-card/95 backdrop-blur-md border border-border/50 shadow-lg">
           <Button
+            onClick={handleSmartGenerate}
+            disabled={isSmartGenerating || isGenerating}
+            className="flex-1 h-11 bg-gradient-to-r from-primary to-primary/80"
+          >
+            {isSmartGenerating ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+            Smart
+          </Button>
+          <Button
+            variant="outline"
             onClick={handleGenerate}
-            disabled={isGenerating}
-            className="flex-1 h-11"
+            disabled={isGenerating || isSmartGenerating}
+            className="h-11"
           >
             {isGenerating ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : <Play className="w-4 h-4 mr-2" />}
             Generate
