@@ -1,3 +1,11 @@
+export interface ParlayLegContextualFactors {
+  injuryImpact?: number;     // -1 to 0, negative reduces probability
+  defenseRating?: number;    // >1 = strong defense, <1 = weak defense
+  isBackToBack?: boolean;    // 6% fatigue penalty
+  paceAdjustment?: number;   // multiplier (e.g., 1.05 = 5% faster pace)
+  recentForm?: number;       // multiplier (e.g., 1.1 = hot streak)
+}
+
 export interface ParlayLeg {
   id: string;
   description: string;
@@ -5,6 +13,7 @@ export interface ParlayLeg {
   impliedProbability: number;
   riskLevel: 'low' | 'medium' | 'high' | 'extreme';
   aiAnalysis?: LegAnalysis;
+  contextualFactors?: ParlayLegContextualFactors;
 }
 
 export interface InjuryAlert {
