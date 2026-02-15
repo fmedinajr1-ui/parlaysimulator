@@ -81,6 +81,21 @@ const RESEARCH_QUERIES = [
     query: "What are today's strongest situational betting angles for NBA, NHL, and NCAAB? Look for: 1) LETDOWN spots — teams coming off big emotional wins (rivalries, buzzer beaters, upsets) now facing lesser opponents, 2) REVENGE games — teams facing an opponent that beat them earlier this season, especially by a large margin, 3) TRAVEL/FATIGUE — teams on 3+ game road trips, back-to-backs, or 3-in-4-nights, especially crossing time zones, 4) LOOKAHEAD — teams with a marquee matchup in 2 days who may overlook tonight's opponent, 5) SCHEDULING — any team playing their 4th game in 6 days.",
     systemPrompt: 'You are a sports betting situational analyst. For each spot: name the teams, cite the specific situation (e.g., "Lakers won a buzzer-beater vs Celtics last night, now face Hornets"), quantify the historical ATS record for that situation type (e.g., "NBA teams in letdown spots are 42-58 ATS historically"), and recommend spread/total/ML direction. Focus on spots with the strongest historical edge. Be specific about game times and whether the team is home or away.',
   },
+  {
+    category: 'tennis_sharp_signals',
+    query: "Today's sharpest ATP/WTA tennis betting signals — line movements on match winners, set totals, game spreads. Where is professional money loading? Any steam moves on specific matches? Include surface-specific edges (hard court, clay, grass). Which matches have the biggest line moves since open?",
+    systemPrompt: 'You are a tennis betting market analyst. Extract specific player names, match odds movements, surface factors, and sharp/public money splits. For each signal provide: player name, opponent, direction (favorite/underdog, over/under on games), and magnitude of line movement. Be specific about which surface the match is on.',
+  },
+  {
+    category: 'tennis_form_matchups',
+    query: "Today's ATP/WTA tennis matches — player recent form (last 5-10 matches), head-to-head records, surface win rates, fatigue from recent tournaments, any injury concerns or withdrawals. Which favorites are vulnerable? Which underdogs have strong surface-specific records? Flag any player playing their 3rd+ match in 5 days.",
+    systemPrompt: 'You are a tennis matchup analyst. Provide win/loss records, surface-specific stats, H2H records, and flag players on fatigue (3+ matches in last 5 days) or returning from injury. For each player mention: name, recent form (W/L last 5), surface win rate if relevant, and any fatigue/injury flags. Clearly label hot streaks (4+ wins) and cold streaks (3+ losses).',
+  },
+  {
+    category: 'table_tennis_signals',
+    query: "Today's international table tennis matches and betting signals. Include ITTF events, WTT events, and major league matches. Any sharp line movements on match winners or total games? Which players are in strong form or dealing with fatigue from back-to-back tournaments? Flag players on 3+ match days.",
+    systemPrompt: 'You are a table tennis betting analyst. Focus on player form, recent results, head-to-head records, and any sharp money signals. Table tennis has high volume and fast turnover — flag players on 3+ match days as fatigued. Provide specific player names, event names, and directional bias (favorite/underdog, over/under on games).',
+  },
 ];
 
 async function queryPerplexity(
@@ -201,6 +216,9 @@ Deno.serve(async (req) => {
           nba_nhl_sharp_signals: 'NBA/NHL Whale & Sharp Signals',
           value_line_discrepancies: 'Value Line Discrepancies',
           situational_spots: 'Situational Betting Spots',
+          tennis_sharp_signals: 'Tennis Sharp Signals',
+          tennis_form_matchups: 'Tennis Form & Matchups',
+          table_tennis_signals: 'Table Tennis Signals',
         };
 
         findings.push({
@@ -264,6 +282,9 @@ Deno.serve(async (req) => {
       nba_nhl_sharp_signals: '🐋',
       value_line_discrepancies: '📐',
       situational_spots: '🎯',
+      tennis_sharp_signals: '🎾',
+      tennis_form_matchups: '🎾',
+      table_tennis_signals: '🏓',
     };
 
     let digestMessage = `🔬 <b>AI Research Digest — ${escapeHtml(dateStr)}</b>\n\n`;
