@@ -130,6 +130,9 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 4, strategy: 'props_mixed', sports: ['basketball_nba', 'icehockey_nhl'] },
       { legs: 4, strategy: 'props_mixed', sports: ['all'] },
       { legs: 5, strategy: 'props_mixed', sports: ['all'] },
+      // Whale signal exploration
+      { legs: 2, strategy: 'whale_signal', sports: ['all'] },
+      { legs: 3, strategy: 'whale_signal', sports: ['all'] },
     ],
   },
   validation: {
@@ -210,6 +213,8 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'ncaab_mixed', sports: ['basketball_ncaab'], betTypes: ['spread', 'total'], minHitRate: 55, sortBy: 'composite' },
       // NCAA Baseball execution
       { legs: 3, strategy: 'baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
+      // Whale signal execution
+      { legs: 2, strategy: 'whale_signal', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
     ],
   },
 };
@@ -819,6 +824,7 @@ interface PropPool {
   playerPicks: EnrichedPick[];
   teamPicks: EnrichedTeamPick[];
   sweetSpots: EnrichedPick[];
+  whalePicks: EnrichedPick[];
   totalPool: number;
   goldenCategories: Set<string>;
 }
@@ -1636,6 +1642,19 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     .gte('commence_time', startUtc)
     .lt('commence_time', endUtc);
 
+  // 4. Whale picks from whale_picks table
+  const { data: rawWhalePicks } = await supabase
+    .from('whale_picks')
+    .select('*')
+    .eq('is_expired', false)
+    .gte('sharp_score', 55)
+    .gte('start_time', startUtc)
+    .lte('start_time', endUtc)
+    .order('sharp_score', { ascending: false })
+    .limit(20);
+
+  console.log(`[Bot] Fetched ${(rawWhalePicks || []).length} whale picks (sharp_score >= 55)`);
+
   // 4. Fetch team intelligence data in parallel (including NCAAB stats)
   const [paceResult, defenseResult, envResult, homeCourtResult, ncaabStatsResult] = await Promise.all([
     supabase.from('nba_team_pace_projections').select('team_abbrev, team_name, pace_rating, pace_rank, tempo_factor'),
@@ -2220,13 +2239,45 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   enrichedSweetSpots = interleaveByCategory(enrichedSweetSpots, goldenCategories);
   enrichedTeamPicks.sort((a, b) => b.compositeScore - a.compositeScore);
 
-  console.log(`[Bot] Pool built: ${enrichedSweetSpots.length} player props, ${enrichedTeamPicks.length} team props`);
+  // === CONVERT WHALE PICKS TO ENRICHED FORMAT ===
+  const enrichedWhalePicks: EnrichedPick[] = (rawWhalePicks || []).map((wp: any) => {
+    const sharpScore = wp.sharp_score || 55;
+    const category = mapPropTypeToCategory(wp.stat_type || wp.prop_type || 'points');
+    const side = (wp.pick_side || 'over').toLowerCase();
+    const line = wp.pp_line || wp.line || 0;
+    const americanOdds = -110; // Default for player props
+    const hitRateDecimal = sharpScore / 100;
+    const oddsValueScore = calculateOddsValueScore(americanOdds, hitRateDecimal);
+    const compositeScore = 50 + (sharpScore * 0.3);
+    
+    return {
+      id: wp.id,
+      player_name: wp.player_name,
+      prop_type: wp.stat_type || wp.prop_type || 'points',
+      line,
+      recommended_side: side,
+      category,
+      confidence_score: hitRateDecimal,
+      l10_hit_rate: hitRateDecimal,
+      projected_value: line,
+      sport: wp.sport || 'basketball_nba',
+      event_id: wp.event_id,
+      americanOdds,
+      oddsValueScore,
+      compositeScore,
+      has_real_line: true,
+      line_source: 'whale_signal',
+    } as EnrichedPick;
+  }).filter((p: EnrichedPick) => p.line > 0 && p.player_name);
+
+  console.log(`[Bot] Pool built: ${enrichedSweetSpots.length} player props, ${enrichedTeamPicks.length} team props, ${enrichedWhalePicks.length} whale picks`);
 
   return {
     playerPicks: enrichedSweetSpots,
     teamPicks: enrichedTeamPicks,
     sweetSpots: enrichedSweetSpots,
-    totalPool: enrichedSweetSpots.length + enrichedTeamPicks.length,
+    whalePicks: enrichedWhalePicks,
+    totalPool: enrichedSweetSpots.length + enrichedTeamPicks.length + enrichedWhalePicks.length,
     goldenCategories,
   };
 }
@@ -2293,7 +2344,17 @@ async function generateTierParlays(
     // Filter picks based on profile
     let candidatePicks: (EnrichedPick | EnrichedTeamPick)[] = [];
     
-    if (isTeamProfile) {
+    // WHALE SIGNAL: draw exclusively from whale picks pool
+    const isWhaleProfile = profile.strategy.startsWith('whale_signal');
+    
+    if (isWhaleProfile) {
+      candidatePicks = [...pool.whalePicks].sort((a, b) => b.compositeScore - a.compositeScore);
+      if (candidatePicks.length < profile.legs) {
+        console.log(`[Bot] ${tier}/whale_signal: only ${candidatePicks.length} whale picks available, need ${profile.legs}`);
+        continue;
+      }
+      console.log(`[Bot] ${tier}/whale_signal: using ${candidatePicks.length} whale picks`);
+    } else if (isTeamProfile) {
       candidatePicks = pool.teamPicks.filter(p => {
         if (!profile.betTypes!.includes(p.bet_type)) return false;
         // Apply sport filter so baseball profiles only get baseball picks, etc.
