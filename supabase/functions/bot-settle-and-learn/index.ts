@@ -642,7 +642,9 @@ Deno.serve(async (req) => {
         else if (legOutcome === 'miss') legsMissed++;
         else if (legOutcome === 'void' || legOutcome === 'no_data') legsVoided++;
 
-        updatedLegs.push({ ...leg, outcome: legOutcome, actual_value: actualValue ?? undefined });
+        // Write hit boolean for leg-level learning
+        const legHit = legOutcome === 'hit' ? true : legOutcome === 'miss' ? false : undefined;
+        updatedLegs.push({ ...leg, outcome: legOutcome, actual_value: actualValue ?? undefined, hit: legHit });
 
         if ((legOutcome === 'hit' || legOutcome === 'miss') && leg.category) {
           const existing = categoryUpdates.get(leg.category) || { hits: 0, misses: 0 };

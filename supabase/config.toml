@@ -404,3 +404,6 @@ verify_jwt = false
 
 [functions.bot-review-and-optimize]
 verify_jwt = false
+
+[functions.bot-game-context-analyzer]
+verify_jwt = false
