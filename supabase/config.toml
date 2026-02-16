@@ -407,3 +407,6 @@ verify_jwt = false
 
 [functions.bot-game-context-analyzer]
 verify_jwt = false
+
+[functions.create-bot-checkout]
+verify_jwt = false
