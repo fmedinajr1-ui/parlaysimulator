@@ -14,8 +14,6 @@ import { cn } from '@/lib/utils';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
-import { useSubscription } from '@/hooks/useSubscription';
-import { EliteHitterPaywall } from './EliteHitterPaywall';
 import { EliteHitterPerformance } from './EliteHitterPerformance';
 import { EliteHitterHistory } from './EliteHitterHistory';
 
@@ -291,7 +289,7 @@ export function DailyEliteHitterCard() {
   const [carouselApi, setCarouselApi] = useState<CarouselApi>();
   const [currentSlide, setCurrentSlide] = useState(0);
   const { toast } = useToast();
-  const { hasEliteHitterAccess, isAdmin, isLoading: isSubscriptionLoading } = useSubscription();
+  const isSubscriptionLoading = false;
 
   // Query for 3-leg parlays
   const { data: parlays, isLoading, refetch } = useQuery({
@@ -404,11 +402,6 @@ export function DailyEliteHitterCard() {
       setIsRefreshing(false);
     }
   };
-
-  // Show paywall if user doesn't have access
-  if (!isSubscriptionLoading && !hasEliteHitterAccess && !isAdmin) {
-    return <EliteHitterPaywall />;
-  }
 
   if (isLoading || isSubscriptionLoading) {
     return (

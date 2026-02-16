@@ -13,8 +13,6 @@ interface PilotUserState {
   freeComparesRemaining: number;
   paidScanBalance: number;
   totalScansAvailable: number;
-  hasOddsAccess: boolean;
-  hasEliteAccess: boolean;
   phoneVerified: boolean;
   isPurchasing: boolean;
 }
@@ -36,8 +34,6 @@ const defaultState: PilotUserState = {
   freeComparesRemaining: 3,
   paidScanBalance: 0,
   totalScansAvailable: 5,
-  hasOddsAccess: false,
-  hasEliteAccess: false,
   phoneVerified: false,
   isPurchasing: false,
 };
@@ -50,7 +46,6 @@ export function PilotUserProvider({ children }: { children: React.ReactNode }) {
   const [isPurchasing, setIsPurchasing] = useState(false);
   const lastFocusCheck = useRef<number>(0);
 
-  // React Query for centralized caching - deduplicates all calls
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['pilot-user', user?.id],
     queryFn: async () => {
@@ -63,8 +58,6 @@ export function PilotUserProvider({ children }: { children: React.ReactNode }) {
           freeScansRemaining: 5,
           freeComparesRemaining: 3,
           paidScanBalance: 0,
-          hasOddsAccess: false,
-          hasEliteAccess: false,
           phoneVerified: false,
         };
       }
@@ -78,18 +71,17 @@ export function PilotUserProvider({ children }: { children: React.ReactNode }) {
       
       return data;
     },
-    enabled: true, // Always enabled, returns defaults when no user
-    staleTime: 1000 * 60 * 5, // 5 minutes
-    gcTime: 1000 * 60 * 30, // 30 minutes
-    refetchOnWindowFocus: false, // We handle this manually with throttling
+    enabled: true,
+    staleTime: 1000 * 60 * 5,
+    gcTime: 1000 * 60 * 30,
+    refetchOnWindowFocus: false,
     retry: 2,
   });
 
-  // Throttled window focus handler - only refetch if last check was >30s ago
   useEffect(() => {
     const handleFocus = () => {
       const now = Date.now();
-      if (now - lastFocusCheck.current > 30000) { // 30 seconds
+      if (now - lastFocusCheck.current > 30000) {
         lastFocusCheck.current = now;
         refetch();
       }
@@ -99,7 +91,6 @@ export function PilotUserProvider({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener('focus', handleFocus);
   }, [refetch]);
 
-  // Real-time subscription for instant scan credit updates
   useEffect(() => {
     if (!user) return;
 
@@ -121,7 +112,6 @@ export function PilotUserProvider({ children }: { children: React.ReactNode }) {
           };
 
           if (newData) {
-            // Update the React Query cache directly for instant UI update
             queryClient.setQueryData(['pilot-user', user.id], (old: any) => ({
               ...old,
               freeScansRemaining: newData.free_scans_remaining ?? old?.freeScansRemaining ?? 0,
@@ -160,7 +150,6 @@ export function PilotUserProvider({ children }: { children: React.ReactNode }) {
         return { success: false, error: error.message };
       }
 
-      // Realtime will update the cache automatically
       return result;
     } catch (err) {
       console.error('Error decrementing scan:', err);
@@ -207,14 +196,11 @@ export function PilotUserProvider({ children }: { children: React.ReactNode }) {
         console.error('Error crediting scans:', error);
         return;
       }
-
-      // Realtime will update the cache automatically
     } catch (err) {
       console.error('Error crediting scans:', err);
     }
   }, [user, session]);
 
-  // Compute derived state from React Query data
   const freeScans = data?.freeScansRemaining ?? 5;
   const paidScans = data?.paidScanBalance ?? 0;
 
@@ -228,8 +214,6 @@ export function PilotUserProvider({ children }: { children: React.ReactNode }) {
     freeComparesRemaining: data?.freeComparesRemaining ?? 3,
     paidScanBalance: paidScans,
     totalScansAvailable: freeScans + paidScans,
-    hasOddsAccess: data?.hasOddsAccess ?? false,
-    hasEliteAccess: data?.hasEliteAccess ?? false,
     phoneVerified: data?.phoneVerified ?? false,
     isPurchasing,
     checkStatus,
@@ -253,5 +237,4 @@ export function usePilotUserContext() {
   return context;
 }
 
-// Export the context for direct access if needed
 export { PilotUserContext };
