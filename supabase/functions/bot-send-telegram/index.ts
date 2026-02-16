@@ -143,6 +143,7 @@ function formatTieredParlaysGenerated(data: Record<string, any>, dateStr: string
       if (pick.composite_score || pick.hit_rate) {
         msg += `  Score: ${Math.round(pick.composite_score || 0)} | Hit: ${Math.round(pick.hit_rate || 0)}%\n`;
       }
+      // Source labels intentionally omitted for cleaner display
     }
   }
   
