@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
@@ -20,16 +20,23 @@ export function SimulationAccuracyCard() {
   const [rows, setRows] = useState<AccuracyRow[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    (async () => {
-      const { data } = await supabase
-        .from('simulation_accuracy')
-        .select('*')
-        .order('accuracy_rate', { ascending: false });
-      setRows((data as AccuracyRow[]) || []);
-      setLoading(false);
-    })();
+  const fetchAccuracy = useCallback(async () => {
+    const { data } = await supabase
+      .from('simulation_accuracy')
+      .select('*')
+      .order('accuracy_rate', { ascending: false });
+    setRows((data as AccuracyRow[]) || []);
   }, []);
+
+  useEffect(() => {
+    fetchAccuracy().finally(() => setLoading(false));
+  }, [fetchAccuracy]);
+
+  // Poll every 60s
+  useEffect(() => {
+    const interval = setInterval(fetchAccuracy, 60000);
+    return () => clearInterval(interval);
+  }, [fetchAccuracy]);
 
   if (loading) return <Skeleton className="h-40 w-full" />;
 

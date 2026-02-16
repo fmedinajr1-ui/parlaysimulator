@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -33,9 +33,15 @@ export function ShadowPicksFeed() {
   const [running, setRunning] = useState(false);
   const [sportFilter, setSportFilter] = useState('all');
   const [outcomeFilter, setOutcomeFilter] = useState('all');
+  const [isConnected, setIsConnected] = useState(false);
+  const filtersRef = useRef({ sportFilter, outcomeFilter });
 
-  const fetchPicks = async () => {
-    setLoading(true);
+  // Keep ref in sync so realtime callback sees latest filters
+  useEffect(() => {
+    filtersRef.current = { sportFilter, outcomeFilter };
+  }, [sportFilter, outcomeFilter]);
+
+  const fetchPicks = useCallback(async () => {
     let query = supabase
       .from('simulation_shadow_picks')
       .select('*')
@@ -47,10 +53,55 @@ export function ShadowPicksFeed() {
 
     const { data } = await query;
     setPicks((data as ShadowPick[]) || []);
-    setLoading(false);
-  };
+  }, [sportFilter, outcomeFilter]);
 
-  useEffect(() => { fetchPicks(); }, [sportFilter, outcomeFilter]);
+  // Initial fetch + refetch on filter change
+  useEffect(() => {
+    setLoading(true);
+    fetchPicks().finally(() => setLoading(false));
+  }, [fetchPicks]);
+
+  // Realtime subscription
+  useEffect(() => {
+    const channel = supabase
+      .channel('shadow-picks-realtime')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'simulation_shadow_picks' },
+        (payload) => {
+          const newPick = payload.new as ShadowPick;
+          const { sportFilter: sf, outcomeFilter: of } = filtersRef.current;
+          if (sf !== 'all' && newPick.sport !== sf) return;
+          if (of !== 'all' && newPick.outcome !== of) return;
+          setPicks((prev) => [newPick, ...prev.slice(0, 49)]);
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'simulation_shadow_picks' },
+        (payload) => {
+          const updated = payload.new as ShadowPick;
+          setPicks((prev) =>
+            prev.map((p) => (p.id === updated.id ? updated : p))
+          );
+        }
+      )
+      .subscribe((status) => {
+        setIsConnected(status === 'SUBSCRIBED');
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  // Fallback polling every 60s
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchPicks();
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [fetchPicks]);
 
   const handleRunSimulation = async () => {
     setRunning(true);
@@ -86,7 +137,19 @@ export function ShadowPicksFeed() {
     <Card>
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-lg">Shadow Picks</CardTitle>
+          <div className="flex items-center gap-2">
+            <CardTitle className="text-lg">Shadow Picks</CardTitle>
+            <span className={cn(
+              "flex items-center gap-1.5 text-xs",
+              isConnected ? "text-emerald-400" : "text-muted-foreground"
+            )}>
+              <span className={cn(
+                "w-1.5 h-1.5 rounded-full",
+                isConnected ? "bg-emerald-500 animate-pulse" : "bg-muted-foreground"
+              )} />
+              {isConnected ? "Live" : "Connecting..."}
+            </span>
+          </div>
           <Button size="sm" onClick={handleRunSimulation} disabled={running}>
             {running ? <RefreshCw className="w-4 h-4 mr-1 animate-spin" /> : <Play className="w-4 h-4 mr-1" />}
             Run Simulation
