@@ -3778,8 +3778,8 @@ async function generateTierParlays(
         continue;
       }
 
-      // Calculate stake (flat $20 for all tiers)
-      const stake = typeof config.stake === 'number' && config.stake > 0 ? config.stake : 20;
+      // Calculate stake (flat $100 for all tiers)
+      const stake = typeof config.stake === 'number' && config.stake > 0 ? config.stake : 100;
 
       parlaysToCreate.push({
         parlay_date: targetDate,

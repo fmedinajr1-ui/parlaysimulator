@@ -12,6 +12,7 @@ interface SubscriptionState {
   subscriptionEnd: string | null;
   hasOddsAccess: boolean;
   hasEliteHitterAccess: boolean;
+  hasBotAccess: boolean;
 }
 
 export function useSubscription() {
@@ -25,6 +26,7 @@ export function useSubscription() {
     subscriptionEnd: null,
     hasOddsAccess: false,
     hasEliteHitterAccess: false,
+    hasBotAccess: false,
   });
 
   const checkSubscription = useCallback(async () => {
@@ -38,6 +40,7 @@ export function useSubscription() {
         subscriptionEnd: null,
         hasOddsAccess: false,
         hasEliteHitterAccess: false,
+        hasBotAccess: false,
       });
       return;
     }
@@ -60,6 +63,7 @@ export function useSubscription() {
         subscriptionEnd: data.subscriptionEnd || null,
         hasOddsAccess: data.hasOddsAccess || false,
         hasEliteHitterAccess: data.hasEliteHitterAccess || false,
+        hasBotAccess: data.hasBotAccess || false,
       });
     } catch (err) {
       console.error('Error checking subscription:', err);
@@ -134,11 +138,29 @@ export function useSubscription() {
       }
 
       if (data?.url) {
-        // Use location.href for better mobile/PWA experience
         window.location.href = data.url;
       }
     } catch (err) {
       console.error('Error starting elite hitter checkout:', err);
+    }
+  }, [user, session]);
+
+  const startBotCheckout = useCallback(async () => {
+    if (!user || !session) return;
+
+    try {
+      const { data, error } = await supabase.functions.invoke('create-bot-checkout');
+
+      if (error) {
+        console.error('Error creating bot checkout:', error);
+        return;
+      }
+
+      if (data?.url) {
+        window.location.href = data.url;
+      }
+    } catch (err) {
+      console.error('Error starting bot checkout:', err);
     }
   }, [user, session]);
 
@@ -163,5 +185,6 @@ export function useSubscription() {
     startCheckout,
     openCustomerPortal,
     startEliteHitterCheckout,
+    startBotCheckout,
   };
 }

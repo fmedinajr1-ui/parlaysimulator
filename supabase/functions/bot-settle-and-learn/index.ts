@@ -666,12 +666,12 @@ Deno.serve(async (req) => {
           outcome = 'won';
           const odds = parlay.expected_odds || 500;
           const decimalOdds = odds > 0 ? (odds / 100) + 1 : (100 / Math.abs(odds)) + 1;
-          const payout = (parlay.simulated_stake || 10) * decimalOdds;
-          profitLoss = payout - (parlay.simulated_stake || 10);
+          const payout = (parlay.simulated_stake || 100) * decimalOdds;
+          profitLoss = payout - (parlay.simulated_stake || 100);
           parlaysWon++;
         } else {
           outcome = 'lost';
-          profitLoss = -(parlay.simulated_stake || 10);
+          profitLoss = -(parlay.simulated_stake || 100);
           parlaysLost++;
         }
         parlaysSettled++;
@@ -696,7 +696,7 @@ Deno.serve(async (req) => {
           legs_hit: legsHit,
           legs_missed: legsMissed,
           profit_loss: profitLoss,
-          simulated_payout: outcome === 'won' ? profitLoss + (parlay.simulated_stake || 10) : (outcome === 'lost' ? 0 : null),
+          simulated_payout: outcome === 'won' ? profitLoss + (parlay.simulated_stake || 100) : (outcome === 'lost' ? 0 : null),
           settled_at: outcome !== 'pending' ? new Date().toISOString() : null,
         })
         .eq('id', parlay.id);

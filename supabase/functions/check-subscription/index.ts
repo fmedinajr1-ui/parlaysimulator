@@ -15,6 +15,7 @@ const logStep = (step: string, details?: any) => {
 // Subscription price IDs
 const ODDS_TRACKER_PRICE_ID = "price_1Sb7Tk9D6r1PTCBBmJ3jYBxo";
 const ELITE_HITTER_PRICE_ID = "price_1SiyaG9D6r1PTCBBC4zJBRE5";
+const BOT_PRO_PRICE_ID = "price_1T1HU99D6r1PTCBBLQaWi80Z";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -141,6 +142,7 @@ serve(async (req) => {
     let subscriptionEnd = null;
     let hasOddsSubscription = false;
     let hasEliteHitterSubscription = false;
+    let hasBotProSubscription = false;
 
     if (customers.data.length > 0) {
       const customerId = customers.data[0].id;
@@ -169,6 +171,12 @@ serve(async (req) => {
         );
         logStep("Elite Hitter subscription check", { hasEliteHitterSubscription });
         
+        // Check if user has Bot Pro subscription
+        hasBotProSubscription = subscriptions.data.some((sub: any) => 
+          sub.items.data.some((item: any) => item.price.id === BOT_PRO_PRICE_ID)
+        );
+        logStep("Bot Pro subscription check", { hasBotProSubscription });
+        
         // Update local subscription record
         await supabaseClient.from('subscriptions').upsert({
           user_id: user.id,
@@ -186,6 +194,9 @@ serve(async (req) => {
     
     // Determine elite hitter access: subscription OR elite_access role OR admin
     const hasEliteHitterAccess = hasEliteHitterSubscription || hasEliteAccess;
+    
+    // Determine bot pro access
+    const hasBotAccess = hasBotProSubscription || isAdmin;
 
     // If subscribed, unlimited access
     if (isSubscribed) {
@@ -199,6 +210,7 @@ serve(async (req) => {
         hasOddsAccess,
         hasEliteAccess,
         hasEliteHitterAccess,
+        hasBotAccess,
         phoneVerified,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
