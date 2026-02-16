@@ -1,64 +1,46 @@
 
-# Fix: OVER_TOTAL Category Mismatch + Clean Up Feb 16 Data
 
-## Root Cause
+# Fix: Add Spread Cap to Single-Pick Fallback
 
-The weight-check logic looks up picks using their raw `category` field (e.g., `TOTAL`), but `bot_category_weights` stores sport-specific entries as `OVER_TOTAL` / `UNDER_TOTAL`. The lookup `TOTAL__over__basketball_ncaab` finds no match, falls through to the default weight of `1.0`, and the block/flip logic never triggers.
+## Problem
 
-## Two-Part Fix
+The `MAX_SPREAD_LINE = 10` enforcement only exists in the multi-leg parlay builder (line 3622). The **single-pick fallback** path (line 4596+) has no spread cap, so high spreads like Miss Valley St +14.5 slip through unchecked.
 
-### Part 1: Delete bad existing data for Feb 16
+## Solution
 
-Delete the 18 duplicate single picks from the second run (16:24) and the 4 OVER_TOTAL picks from the first run (16:23) that should have been blocked.
-
-```text
--- Delete 18 duplicates from second run
-DELETE FROM bot_daily_parlays 
-WHERE parlay_date = '2026-02-16' AND leg_count = 1 
-AND created_at >= '2026-02-16 16:24:00+00';
-
--- Delete remaining OVER total picks from first run
-DELETE FROM bot_daily_parlays 
-WHERE parlay_date = '2026-02-16' AND leg_count = 1
-AND legs->0->>'side' = 'over'
-AND (legs->0->>'prop_type' = 'total' OR legs->0->>'category' = 'TOTAL');
-```
-
-### Part 2: Fix category normalization in the weight lookup
-
-In `supabase/functions/bot-generate-daily-parlays/index.ts`, add category normalization before the weight check so that a pick with `category: "TOTAL"` and `side: "over"` resolves to `OVER_TOTAL` for lookup purposes.
-
-Around line 4605, before the weight lookup:
-
-```text
-// Normalize generic "TOTAL" category to side-specific variant
-let pickCategory = pick.category || '';
-if (pickCategory === 'TOTAL' || pickCategory === 'TEAM_TOTAL') {
-  const prefix = pickSide === 'over' ? 'OVER' : 'UNDER';
-  pickCategory = pickCategory === 'TOTAL' 
-    ? `${prefix}_TOTAL` 
-    : `${prefix}_TEAM_TOTAL`;
-}
-```
-
-This ensures:
-- `TOTAL` + `over` maps to `OVER_TOTAL` (blocked for NCAAB, weight=0)
-- `TOTAL` + `under` maps to `UNDER_TOTAL` (active for NCAAB, weight=1.20)
-- The existing flip logic then correctly converts blocked OVER to UNDER
-
-### Expected Result After Fix
-
-| Before | After |
-|--------|-------|
-| 36 single picks (18 dupes) | 18 single picks (no dupes) |
-| 8 OVER_TOTAL NCAAB picks | 0 OVER_TOTAL NCAAB picks |
-| Weight check bypassed for "TOTAL" category | Correctly maps to OVER_TOTAL / UNDER_TOTAL |
+Add a spread cap check in the single-pick loop, right after the weight check block (~line 4648), before the dedup key. If a spread pick exceeds `MAX_SPREAD_LINE`, skip it entirely. No alternate-line shopping for singles — just block it.
 
 ## Technical Details
 
-| Aspect | Detail |
-|--------|--------|
-| File modified | `supabase/functions/bot-generate-daily-parlays/index.ts` |
-| Lines affected | ~4605 (add normalization before weight lookup) |
-| DB cleanup | Delete 22 bad rows from `bot_daily_parlays` |
-| Risk | Low -- normalization only affects the lookup key, not stored data |
+**File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
+
+**Insert after line ~4648** (after the weight check, before the dedup key):
+
+```text
+// SPREAD CAP for singles: block spreads above MAX_SPREAD_LINE
+if (
+  (pick.bet_type === 'spread' || pick.prop_type === 'spread') &&
+  Math.abs(pick.line || 0) >= MAX_SPREAD_LINE
+) {
+  console.log(`[Bot v2] SINGLE SKIP (SpreadCap): ${pick.player_name || pick.home_team} spread ${pick.line} exceeds max ${MAX_SPREAD_LINE}`);
+  continue;
+}
+```
+
+**DB cleanup**: Delete the existing Miss Valley St +14.5 single pick from today:
+
+```sql
+DELETE FROM bot_daily_parlays
+WHERE parlay_date = '2026-02-16'
+  AND leg_count = 1
+  AND legs->0->>'prop_type' = 'spread'
+  AND (legs->0->>'line')::float >= 10;
+```
+
+## Impact
+
+| Before | After |
+|--------|-------|
+| Singles allow any spread size | Singles block spreads with abs(line) >= 10 |
+| Miss Valley St +14.5 included | Blocked automatically |
+
