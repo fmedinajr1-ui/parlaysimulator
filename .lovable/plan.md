@@ -1,89 +1,32 @@
 
 
-# Add Shadow Picks Tab to Bot Dashboard
+# Fix: Shadow Picks Not Saving (Column Name Mismatch)
 
-## Overview
+## Root Cause
 
-Add a new "Simulation" tab to the Bot Dashboard that shows shadow picks from the simulation engine, accuracy stats per sport, and a button to trigger new predictions.
+The simulation engine references `game.event_id` but the `game_bets` table uses `game_id` as the column name. This means every shadow pick insert has `event_id: null`, which violates the NOT NULL constraint on `simulation_shadow_picks.event_id` -- so zero rows are saved.
 
----
+## Changes
 
-## What You'll See
+### 1. Fix `supabase/functions/odds-simulation-engine/index.ts`
 
-- A new **5th tab** labeled "Simulation" on the Bot Dashboard (next to Overview, Parlays, Analytics, Research)
-- **Accuracy Summary Cards**: One card per sport showing hit rate, total picks, and a "production ready" badge when accuracy exceeds threshold
-- **Shadow Picks Feed**: A scrollable list of all shadow picks showing sport, matchup (home vs away), bet type, side, line, predicted score, odds, and outcome (pending/won/lost)
-- **Filter Controls**: Filter by sport, outcome (pending/settled), and bet type
-- **Run Simulation Button**: Triggers the simulation engine's predict mode directly from the dashboard
-- An empty state message when no shadow picks exist yet, with a prompt to run the simulation engine
+- Update the `GameBet` interface: rename `event_id` to `game_id`
+- Update all references from `game.event_id` to `game.game_id` throughout the file (shadow pick construction, duplicate-check keys, settle mode event lookups)
+- In the shadow pick insert object, map `event_id: game.game_id`
 
----
+### 2. Fix settle mode lookup
 
-## Components to Create
+The settle mode queries `game_bets` by `event_id` which doesn't exist. Change it to query by `game_id` instead, and match shadow picks' `event_id` field against `game_bets.game_id`.
 
-### 1. `src/components/bot/SimulationAccuracyCard.tsx`
-- Fetches from `simulation_accuracy` table
-- Shows per-sport accuracy as progress bars with hit rate percentage
-- Green "Production Ready" badge when `is_production_ready = true`
-- Red "Simulating" badge otherwise
-- Shows total predictions made and correct count
+### 3. Make `event_id` nullable (database migration)
 
-### 2. `src/components/bot/ShadowPicksFeed.tsx`
-- Fetches from `simulation_shadow_picks` ordered by `created_at desc`, limit 50
-- Each pick rendered as a compact card showing:
-  - Sport icon/badge
-  - Matchup: home_team vs away_team
-  - Bet type + side + line (e.g., "Total OVER 145.5")
-  - Predicted composite score with color coding (green >= 80, amber >= 60, red < 60)
-  - Odds in American format
-  - Outcome badge: pending (gray), won (green), lost (red)
-- Filter bar at top: sport dropdown, outcome tabs (All/Pending/Won/Lost)
-- "Run Simulation" button that calls `odds-simulation-engine` with `mode: 'predict'`
+As a safety measure, alter `simulation_shadow_picks.event_id` to be nullable with a default of empty string, so a missing game_id doesn't silently block all inserts. Alternatively, keep it NOT NULL but the code fix above should resolve the issue.
 
-### 3. Update `src/pages/BotDashboard.tsx`
-- Add "Simulation" tab trigger and content
-- Import the two new components
-- Place accuracy cards at top, shadow picks feed below
+**Recommendation**: Keep NOT NULL -- the code fix is the right solution.
 
----
+## Files Modified
+- `supabase/functions/odds-simulation-engine/index.ts` -- fix `event_id` -> `game_id` mapping
 
-## Technical Details
-
-### Data Fetching
-
-Both components use direct Supabase queries (no hook refactor needed):
-
-```typescript
-// Shadow picks
-const { data } = await supabase
-  .from('simulation_shadow_picks')
-  .select('*')
-  .order('created_at', { ascending: false })
-  .limit(50);
-
-// Accuracy stats
-const { data } = await supabase
-  .from('simulation_accuracy')
-  .select('*')
-  .order('accuracy_rate', { ascending: false });
-```
-
-### Run Simulation Action
-
-Calls the existing edge function:
-```typescript
-const { data } = await supabase.functions.invoke('odds-simulation-engine', {
-  body: { mode: 'predict' }
-});
-```
-
-### Files Modified
-- `src/pages/BotDashboard.tsx` -- add Simulation tab
-
-### Files Created
-- `src/components/bot/SimulationAccuracyCard.tsx`
-- `src/components/bot/ShadowPicksFeed.tsx`
-
-### No Database Changes Required
-Both tables already exist with public read RLS policies.
+## No Database Changes Needed
+The `simulation_shadow_picks.event_id` column is fine as NOT NULL. The fix is purely in the edge function code.
 
