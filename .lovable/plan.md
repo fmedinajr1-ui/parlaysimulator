@@ -1,68 +1,69 @@
 
 
-# Fix: Block OVER_TOTAL from Single Picks + Flip to UNDER
+# Fix: Block Duplicate Single Picks Across Runs
 
 ## Problem
 
-The single-pick fallback generator bypasses the `bot_category_weights` blocking system. NCAAB OVER_TOTAL has a 29.4% hit rate and is auto-blocked (weight=0), but the fallback still generates OVER total picks because it only checks `composite_score` and `hit_rate` -- not the weightMap.
+The single-pick fallback uses an in-memory `usedSingleKeys` set for deduplication, but this resets on every function invocation. When the generator runs multiple times per day (e.g., at 16:23 and 16:24), identical single picks get inserted again, inflating the count (36 picks = 18 x 2 runs).
 
-Today's output included 4 NCAAB OVER total single picks that should never have been generated.
+Multi-leg parlays already handle this via `globalFingerprints` pre-loaded from the DB, but single picks bypass that system entirely.
 
 ## Solution
 
-Add a weight/block check inside the single-pick fallback loop. For team picks with blocked categories (weight=0), attempt to flip to the opposite side (OVER -> UNDER) if the flipped side has a positive weight. If neither side passes, skip the pick entirely.
+Pre-load existing single-pick dedup keys from the database at the start of the run, and seed `usedSingleKeys` with them. This way, if a single pick was already inserted in a prior run, it gets skipped.
 
 ## Changes to `bot-generate-daily-parlays/index.ts`
 
-### In the single-pick fallback loop (~line 4587)
+### 1. Pre-load existing single-pick keys from DB (after the globalFingerprints block, ~line 4535)
 
-After the composite/hitRate filter and before the dedup key, add:
-
-```text
-1. Look up the pick's category weight from weightMap using the same 
-   hierarchical key logic (category__side__sport > category__side > category)
-
-2. If weight === 0 (blocked):
-   a. For team picks with bet_type === 'total':
-      - Flip side: 'over' -> 'under' or 'under' -> 'over'
-      - Flip category: 'OVER_TOTAL' -> 'UNDER_TOTAL' or vice versa
-      - Check if the flipped side's weight > 0
-      - If yes: use the flipped pick (update side, category on the pick)
-      - If no: skip the pick entirely
-   b. For all other blocked categories: skip the pick entirely
-
-3. If weight > 0 but < 0.5: skip the pick (too weak for single bets)
-```
-
-### Flip Logic Detail
+After the existing fingerprint pre-loading block, add a second pass that extracts dedup keys from existing 1-leg parlays for the target date:
 
 ```text
-function flipTotalSide(pick, weightMap):
-  if pick.bet_type !== 'total': return null
-  
-  flippedSide = pick.side === 'over' ? 'under' : 'over'
-  flippedCategory = pick.side === 'over' ? 'UNDER_TOTAL' : 'OVER_TOTAL'
-  sport = pick.sport || 'basketball_nba'
-  
-  flippedWeight = weightMap.get(flippedCategory__flippedSide__sport) 
-                  ?? weightMap.get(flippedCategory__flippedSide) 
-                  ?? 1.0
-  
-  if flippedWeight > 0:
-    return { ...pick, side: flippedSide, category: flippedCategory }
-  return null
+// Pre-load single-pick dedup keys from existing DB entries
+const existingSingleKeys = new Set<string>();
+if (existingParlays) {
+  for (const p of existingParlays) {
+    if (p.leg_count === 1) {
+      const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs);
+      const leg = legs[0];
+      if (leg) {
+        const key = leg.type === 'team'
+          ? `${leg.home_team}_${leg.away_team}_${leg.bet_type}_${leg.side}`.toLowerCase()
+          : `${leg.player_name}_${leg.prop_type}_${leg.side}`.toLowerCase();
+        existingSingleKeys.add(key);
+      }
+    }
+  }
+  console.log(`[Bot v2] Pre-loaded ${existingSingleKeys.size} single-pick keys`);
+}
 ```
 
-### What This Fixes
+### 2. Seed `usedSingleKeys` with pre-loaded keys (~line 4583)
 
-- NCAAB OVER_TOTAL picks (29.4% hit rate, blocked) will be auto-flipped to UNDER_TOTAL (70.6% hit rate, weight 1.20)
-- Any other blocked category in single picks will be skipped
-- Weak categories (weight < 0.5) won't appear in single picks either
-- The same hierarchical sport-aware weight lookup used by the parlay generator is now respected by the fallback
+Change the initialization of `usedSingleKeys` from an empty set to a copy of the pre-loaded keys:
 
-### Files Modified
+```text
+// Before (current):
+const usedSingleKeys = new Set<string>();
 
-| File | Change |
-|------|--------|
-| `supabase/functions/bot-generate-daily-parlays/index.ts` | Add weightMap check + side-flip logic in single-pick fallback loop |
+// After:
+const usedSingleKeys = new Set<string>(existingSingleKeys);
+```
+
+This ensures any single pick that was already written to the DB in a previous run gets skipped via the existing `if (usedSingleKeys.has(singleKey)) continue;` check at line 4636.
+
+## Technical Details
+
+| Aspect | Detail |
+|--------|--------|
+| File modified | `supabase/functions/bot-generate-daily-parlays/index.ts` |
+| Lines affected | ~4535 (add pre-load block), ~4583 (seed set) |
+| Risk | Low -- uses the same dedup key format already in use |
+| Backward compatible | Yes -- only prevents future duplicates, does not delete existing ones |
+
+## What This Fixes
+
+- Prevents duplicate single picks when the generator runs multiple times per day
+- Uses the same composite key format (`home_away_bettype_side` or `player_proptype_side`) already used for in-run dedup
+- Leverages the existing `existingParlays` query (no extra DB call needed)
 
