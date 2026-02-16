@@ -1,98 +1,138 @@
 
-# Integrate PGA Golf into the Parlay Engine
+# Monetize the Bot: $100 Stakes + Public Landing Page + $99/mo Membership
 
 ## Overview
 
-Add PGA Tour golf tournament markets to the data pipeline and parlay generation engine. Golf uses **outright/futures** markets (tournament winner, top-5 finish, top-10 finish, etc.) rather than traditional head-to-head matchups, so this requires a new market type in the scraper and a golf-specific scoring model.
+Three connected changes:
+1. Reconfigure all stakes from $20 to $100 and backfill historical P&L proportionally
+2. Build a public landing page showcasing bot performance (calendar, win/loss record, profit)
+3. Gate daily parlay access behind a $99/month Stripe subscription
 
-## Key Design Decision: Matchup Props vs. Outrights
+---
 
-The Odds API provides golf as **outrights** (e.g., `golf_masters_tournament_winner`), not head-to-head games. However, some books also offer **matchup props** (Player A vs. Player B round score). The plan starts with **tournament outrights** (winner, top-5, top-10, top-20) since those have the broadest bookmaker coverage and fit cleanly into the existing parlay leg structure as moneyline-style picks.
+## Part 1: Reconfigure Stakes to $100
 
-## What Changes
+### What Changes
+- **Generation engine**: Update flat stake from $20 to $100
+- **Settlement engine**: Update fallback stake references from $10/$20 to $100
+- **Historical backfill**: Run a SQL update to proportionally scale all existing P&L data (multiply by 5x since current data is $20-based)
+- **Bankroll recalculation**: Recalculate `bot_activation_status.simulated_bankroll` and `daily_profit_loss` to reflect $100 unit size
 
-### Phase 1: Data Collection (whale-odds-scraper)
+### Technical Details
 
-- Add golf sport keys to a new `GOLF_SPORTS` array:
-  - `golf_masters_tournament_winner`
-  - `golf_pga_championship_winner`
-  - `golf_us_open_winner`
-  - `golf_the_open_championship_winner`
-- These are **seasonal** -- only active during tournament weeks, so they go in Tier 2
-- Fetch outrights using the `outrights` market key instead of `h2h/spreads/totals`
-- Store results in `game_bets` with `bet_type: 'outright'` and the player name as one of the teams
-- Add `normalizeSportKey` mapping to normalize all golf keys to `golf_pga`
+**bot-generate-daily-parlays/index.ts**
+- Line 3782: Change default stake from `20` to `100`
 
-### Phase 2: Scoring Engine (bot-generate-daily-parlays)
+**bot-settle-and-learn/index.ts**
+- Lines 669, 670, 674, 699: Change all `parlay.simulated_stake || 10` fallbacks to `parlay.simulated_stake || 100`
 
-- Create a `calculateGolfCompositeScore` function that weights:
-  - **Odds Value** (35%): Plus-money outrights with implied probability edge
-  - **Course History** (25%): Placeholder -- uses odds movement as proxy initially
-  - **Recent Form** (20%): Strokes gained trends (approximated from odds shifts between tournaments)
-  - **Field Strength** (10%): Number of top-ranked players in the field
-  - **Weather/Course Fit** (10%): Placeholder for future data
-- Route golf picks through this engine in `calculateTeamCompositeScore`
+**SQL Backfill** (run via migration):
+```sql
+-- Scale all historical parlays from $20 stake to $100 (5x multiplier)
+UPDATE bot_daily_parlays 
+SET simulated_stake = 100,
+    profit_loss = profit_loss * 5,
+    simulated_payout = CASE 
+      WHEN simulated_payout IS NOT NULL AND simulated_payout > 0 
+      THEN simulated_payout * 5 
+      ELSE simulated_payout 
+    END
+WHERE simulated_stake = 20 OR simulated_stake = 10;
 
-### Phase 3: Parlay Profiles
-
-- Add golf exploration profiles (Exploration tier only to start -- same approach as NCAA Baseball):
-  - 2x `{ legs: 2, strategy: 'golf_outright', sports: ['golf_pga'], betTypes: ['outright'] }`
-  - 1x cross-sport: `{ legs: 3, strategy: 'golf_cross', sports: ['golf_pga', 'basketball_nba'] }`
-- **Do NOT add Validation or Execution profiles** until exploration data validates the model
-- Add `golf_pga` to the `BLOCKED_SPORTS` list initially so it collects data passively before going live in parlays
-
-### Phase 4: Data Normalization
-
-- Update `normalizeSportKey` in the scraper to map all golf tournament keys to `golf_pga`
-- Add golf to the sport key alignment standard
-
-## Technical Details
-
-### whale-odds-scraper/index.ts Changes
-
-1. Add golf tournament keys:
-```typescript
-const GOLF_SPORTS = [
-  'golf_masters_tournament_winner',
-  'golf_pga_championship_winner', 
-  'golf_us_open_winner',
-  'golf_the_open_championship_winner'
-];
+-- Recalculate daily P&L in activation status (5x)
+UPDATE bot_activation_status 
+SET daily_profit_loss = daily_profit_loss * 5,
+    simulated_bankroll = 1000 + (simulated_bankroll - 1000) * 5;
 ```
 
-2. Add to `TIER_2_SPORTS` array
+---
 
-3. Add outright-specific fetch logic:
-```typescript
-// Golf uses outrights market, not h2h/spreads/totals
-if (sport.startsWith('golf_')) {
-  const url = `...&markets=outrights&...`;
-  // Store each outcome as a game_bet with bet_type: 'outright'
-}
-```
+## Part 2: Public Landing Page
 
-4. Update `normalizeSportKey`:
-```typescript
-if (sportKey.startsWith('golf_')) return 'golf_pga';
-```
+### Design
+A clean, mobile-first landing page at `/bot` (currently redirects to `/`) that showcases:
 
-### bot-generate-daily-parlays/index.ts Changes
+1. **Hero section**: "AI-Powered Daily Parlays" with key stats (total profit, win rate, days active)
+2. **Performance calendar**: Monthly calendar view showing green (profitable) / red (loss) days -- visible to everyone but parlay details are locked
+3. **Stats dashboard**: Overall record, ROI percentage, best day, current streak
+4. **"Why Multiple Parlays" explainer**: Short section on the multi-parlay strategy
+5. **Pricing CTA**: $99/month subscription card with feature list and checkout button
 
-1. Add `calculateGolfCompositeScore` function (~50 lines)
-2. Add routing in `calculateTeamCompositeScore`:
-```typescript
-if (sport.includes('golf')) {
-  return calculateGolfCompositeScore(game, betType, side);
-}
-```
-3. Add exploration profiles (commented out initially behind `BLOCKED_SPORTS`)
-4. Add `'golf_pga'` to `BLOCKED_SPORTS` for passive data collection phase
+### What's Public vs. Locked
+| Feature | Public | Members Only |
+|---------|--------|-------------|
+| Calendar (green/red days) | Yes | -- |
+| Daily profit/loss amounts | Yes | -- |
+| Overall win/loss record | Yes | -- |
+| Individual parlay legs | No | Yes |
+| Parlay odds and stakes | No | Yes |
+| Strategy breakdowns | No | Yes |
+| Real-time daily picks | No | Yes |
+
+### New Files
+- `src/pages/BotLanding.tsx` -- public landing page
+- `src/components/bot-landing/HeroStats.tsx` -- hero with key metrics
+- `src/components/bot-landing/PerformanceCalendar.tsx` -- public calendar (green/red days)
+- `src/components/bot-landing/PricingCard.tsx` -- $99/mo subscription CTA
+- `src/components/bot-landing/WhyMultipleParlays.tsx` -- strategy explainer
+
+### Data Source
+A new edge function `bot-public-stats` that returns aggregated performance data without exposing individual parlay details:
+- Daily P&L and win/loss counts from `bot_activation_status`
+- Overall totals (no auth required -- public data)
+
+---
+
+## Part 3: $99/month Telegram Bot Subscription
+
+### Stripe Setup
+- Create a new Stripe product: "Parlay Bot Pro" at $99/month
+- Create a new checkout edge function: `create-bot-checkout`
+- Update `check-subscription` to detect the new Bot Pro subscription and return `hasBotAccess: true`
+
+### Access Control Flow
+1. User visits `/bot` landing page -- sees public stats
+2. User clicks "Join Now" -- triggers Stripe checkout ($99/mo)
+3. After payment, `check-subscription` returns `hasBotAccess: true`
+4. User can now view full parlay details on the calendar and access daily picks
+5. Telegram bot `/subscribe` command links to the same checkout flow
+
+### New/Modified Files
+- `supabase/functions/create-bot-checkout/index.ts` -- new checkout function
+- `supabase/functions/check-subscription/index.ts` -- add Bot Pro price detection
+- `supabase/functions/bot-public-stats/index.ts` -- public stats API (no auth)
+- `src/hooks/useSubscription.ts` -- add `hasBotAccess` field
+
+### Route Changes (App.tsx)
+- Change `/bot` from `Navigate to="/"` to render `BotLanding`
+- Keep `/` as the admin `BotDashboard` (existing behavior for logged-in admins)
+
+---
+
+## Implementation Order
+
+1. Create Stripe product + price for Bot Pro ($99/mo)
+2. SQL migration to backfill stakes to $100
+3. Update generation engine stake constant
+4. Update settlement engine fallback stakes
+5. Create `bot-public-stats` edge function
+6. Create `create-bot-checkout` edge function
+7. Update `check-subscription` to include Bot Pro
+8. Build landing page components
+9. Wire up routing and access control
 
 ### Files Modified
-- `supabase/functions/whale-odds-scraper/index.ts` -- golf scraping + normalization
-- `supabase/functions/bot-generate-daily-parlays/index.ts` -- scoring engine + profiles
+- `supabase/functions/bot-generate-daily-parlays/index.ts`
+- `supabase/functions/bot-settle-and-learn/index.ts`
+- `supabase/functions/check-subscription/index.ts`
+- `src/hooks/useSubscription.ts`
+- `src/App.tsx`
 
-### What This Enables
-- Golf odds start flowing into `game_bets` during active tournament weeks
-- The simulation engine can generate shadow picks for golf to test accuracy
-- Once enough data is collected and shadow pick accuracy is validated, remove `golf_pga` from `BLOCKED_SPORTS` to activate live parlay generation
+### Files Created
+- `supabase/functions/create-bot-checkout/index.ts`
+- `supabase/functions/bot-public-stats/index.ts`
+- `src/pages/BotLanding.tsx`
+- `src/components/bot-landing/HeroStats.tsx`
+- `src/components/bot-landing/PerformanceCalendar.tsx`
+- `src/components/bot-landing/PricingCard.tsx`
+- `src/components/bot-landing/WhyMultipleParlays.tsx`
