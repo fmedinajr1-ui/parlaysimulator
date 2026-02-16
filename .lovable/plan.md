@@ -1,50 +1,73 @@
 
 
-# Protect Dashboard Route (Admin Only)
+# Open Customer Commands for Subscribers
 
 ## Summary
 
-Wrap the `/dashboard` route with an admin check so only your account can access it. Non-admin users (or unauthenticated visitors) get redirected to `/`.
+Expand the customer-accessible Telegram commands from 3 to 7, giving paying subscribers more value without exposing admin-only controls (generate, settle, pause, etc.).
+
+## Commands to Open Up
+
+| Command | What It Does | Why Subscribers Want It |
+|---------|-------------|----------------------|
+| `/performance` | Win rate, ROI, record | Track bot's overall results |
+| `/calendar` | Monthly P&L breakdown | See daily profit/loss history |
+| `/roi` | 7d/30d/all-time ROI + strategy breakdown | Deeper performance insight |
+| `/streaks` | Hot and cold category streaks | Know what's working now |
+| `/help` | List available commands | Discoverability for new users |
+
+## Commands That Stay Admin-Only
+
+Generate, settle, force-settle, pause, resume, bankroll, weights, research, backtest, watch, explore, validate, tiers, learning, compare, sharp, avoid, subscribe, unsubscribe, export, digest, natural language chat, and all multi-sport commands.
 
 ## Changes
 
-### 1. `src/pages/BotDashboard.tsx`
+### 1. `supabase/functions/telegram-webhook/index.ts`
 
-Add the existing `useAdminRole` hook at the top of the component:
-- If `isLoading`, show the existing skeleton/loading state
-- If `!isAdmin`, render `<Navigate to="/" replace />`
-- Otherwise, render the dashboard as normal
+In the `handleMessage` router (~line 1644-1654), move `/performance`, `/calendar`, `/roi`, and `/streaks` above the admin gate so they're available to everyone.
 
-This reuses the same `useAdminRole` hook already used by the Admin page, which checks the `user_roles` table for an `admin` role.
+Add a new `/help` command for customers that lists their available commands with descriptions.
 
-### 2. No other changes needed
+Update `handleCustomerStart` to mention the available commands:
 
-The `useAdminRole` hook and `user_roles` table are already in place. Your account already has the admin role. No new tables, RLS policies, or edge functions required.
+```
+Welcome to Parlay Farm!
+
+Recommended Starter Balance: $200-$400
+Stake $10-$20 per parlay
+
+Commands:
+/parlays - Today's picks
+/parlay  - Pending summary
+/performance - Win rate & ROI
+/calendar - Monthly P&L
+/roi - Detailed ROI breakdown
+/streaks - Hot & cold streaks
+/help - All commands
+
+One winning day can return 10x your investment.
+```
+
+### 2. No other files affected
+
+All handler functions (`handlePerformance`, `handleCalendar`, `handleRoi`, `handleStreaks`) already exist and work without admin-specific context. They just need to be moved above the admin gate in the router.
 
 ## Technical Details
 
-At the top of `BotDashboard`:
+The router change is minimal -- move 4 lines from below the `if (!isAdmin(chatId))` check to above it, and add one new `/help` handler:
 
-```tsx
-import { useAdminRole } from '@/hooks/useAdminRole';
-import { Navigate } from 'react-router-dom';
+```typescript
+// Customer commands (available to everyone)
+if (cmd === "/start") { ... }
+if (cmd === "/parlays") { ... }
+if (cmd === "/parlay") { ... }
+if (cmd === "/performance") return await handlePerformance(chatId);
+if (cmd === "/calendar") return await handleCalendar(chatId);
+if (cmd === "/roi") return await handleRoi(chatId);
+if (cmd === "/streaks") return await handleStreaks(chatId);
+if (cmd === "/help") return await handleCustomerHelp(chatId);
 
-export default function BotDashboard() {
-  const { isAdmin, isLoading: adminLoading } = useAdminRole();
-  // ... existing hooks ...
-
-  if (adminLoading || state.isLoading) {
-    return /* existing skeleton */;
-  }
-
-  if (!isAdmin) {
-    return <Navigate to="/" replace />;
-  }
-
-  // ... rest of dashboard
-}
+// All other commands: admin only
+if (!isAdmin(chatId)) { ... }
 ```
-
-## Files Modified
-- `src/pages/BotDashboard.tsx` -- Add admin gate using existing `useAdminRole` hook
 
