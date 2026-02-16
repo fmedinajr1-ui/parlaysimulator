@@ -565,8 +565,7 @@ async function handleParlays(chatId: string) {
     execution: 'Kelly stakes',
   };
 
-  let message = `🎯 *PARLAY GENERATION COMPLETE*\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-  const inlineButtons: any[][] = [];
+  let message = `🎯 *TODAY'S PARLAYS*\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
   for (const tier of ['execution', 'validation', 'exploration']) {
     const group = tierGroups[tier];
@@ -574,8 +573,8 @@ async function handleParlays(chatId: string) {
 
     message += `${tierLabels[tier]} (${group.length}) — _${tierStakes[tier]}_\n\n`;
 
-    // Show top 2 parlays with full legs
-    const showCount = Math.min(2, group.length);
+    // Show up to 5 parlays per tier with all legs inline
+    const showCount = Math.min(5, group.length);
     for (let i = 0; i < showCount; i++) {
       const p = group[i];
       const outcomeEmoji = p.outcome === 'won' ? '✅' : p.outcome === 'lost' ? '❌' : '⏳';
@@ -585,9 +584,9 @@ async function handleParlays(chatId: string) {
       const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs || '[]');
       for (const leg of legs) {
         const legText = formatLegDisplay(leg);
-        // Indent each line of the leg display
-        const indented = legText.split('\n').map(l => `     ${l}`).join('\n');
-        message += `${indented}\n`;
+        // Only show the action line (first line), indented
+        const lines = legText.split('\n');
+        message += `     ${lines[0]}\n`;
       }
       
       // Avg score & hit rate
@@ -599,21 +598,12 @@ async function handleParlays(chatId: string) {
       message += `\n`;
     }
 
-    // Remaining parlays get View Legs buttons
-    if (group.length > 2) {
-      message += `  _+${group.length - 2} more ${tier} parlays_\n`;
-      for (let i = 2; i < Math.min(6, group.length); i++) {
-        inlineButtons.push([{ text: `📋 ${group[i].strategy_name.slice(0, 25)} (${group[i].leg_count}-leg)`, callback_data: `legs:${group[i].id}` }]);
-      }
-      message += `\n`;
+    if (group.length > 5) {
+      message += `  _+${group.length - 5} more ${tier} parlays_\n\n`;
     }
   }
 
-  const replyMarkup = inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined;
   await sendLongMessage(chatId, message, "Markdown");
-  if (replyMarkup && inlineButtons.length > 0) {
-    await sendMessage(chatId, "📋 *More parlays:*", "Markdown", replyMarkup);
-  }
   return null; // Already sent
 }
 
@@ -824,13 +814,10 @@ function formatLegDisplay(leg: any): string {
     matchupLine = leg.matchup || '';
   }
   
-  // Build reasoning line
+  // Build reasoning line (Score + Hit only)
   const parts: string[] = [];
   if (leg.composite_score) parts.push(`Score: ${Math.round(leg.composite_score)}`);
   if (leg.hit_rate) parts.push(`Hit: ${Math.round(leg.hit_rate)}%`);
-  const src = getSourceLabel(leg.line_source, leg.line_selection_reason);
-  if (src) parts.push(src);
-  if (leg.projection_buffer && !leg.type) parts.push(`Buffer: ${leg.projection_buffer > 0 ? '+' : ''}${Number(leg.projection_buffer).toFixed(1)}`);
   
   let result = actionLine.trim();
   if (matchupLine && sportLabel) {
