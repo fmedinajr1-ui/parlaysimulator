@@ -4591,6 +4591,44 @@ Deno.serve(async (req) => {
           const hitRate = (pick.confidence_score || pick.l10_hit_rate || 0.5) * 100;
           if (composite < spTier.minComposite || hitRate < spTier.minHitRate) continue;
 
+          // === WEIGHT CHECK + TOTAL SIDE FLIP ===
+          // Respect bot_category_weights blocking for single picks too
+          const pickCategory = pick.category || '';
+          const pickSide = pick.side || pick.recommended_side || 'over';
+          const pickSport = pick.sport || 'basketball_nba';
+          const sportKey = `${pickCategory}__${pickSide}__${pickSport}`;
+          const sideKey = `${pickCategory}__${pickSide}`;
+          const catWeight = weightMap.get(sportKey) ?? weightMap.get(sideKey) ?? weightMap.get(pickCategory) ?? 1.0;
+
+          if (catWeight === 0) {
+            // Blocked category — try flipping totals
+            if (pick.bet_type === 'total' || pick.bet_type === 'team_total') {
+              const flippedSide = pickSide === 'over' ? 'under' : 'over';
+              const flippedCategory = pickSide === 'over'
+                ? pickCategory.replace('OVER', 'UNDER')
+                : pickCategory.replace('UNDER', 'OVER');
+              const flippedSportKey = `${flippedCategory}__${flippedSide}__${pickSport}`;
+              const flippedSideKey = `${flippedCategory}__${flippedSide}`;
+              const flippedWeight = weightMap.get(flippedSportKey) ?? weightMap.get(flippedSideKey) ?? weightMap.get(flippedCategory) ?? 1.0;
+
+              if (flippedWeight > 0) {
+                console.log(`[Bot v2] 🔄 SINGLE FLIP: ${pickCategory}/${pickSide} blocked → flipped to ${flippedCategory}/${flippedSide} (weight ${flippedWeight})`);
+                pick.side = flippedSide;
+                pick.category = flippedCategory;
+                if (pick.recommended_side) pick.recommended_side = flippedSide;
+              } else {
+                console.log(`[Bot v2] 🚫 SINGLE SKIP: ${pickCategory}/${pickSide} blocked, flip also blocked`);
+                continue;
+              }
+            } else {
+              console.log(`[Bot v2] 🚫 SINGLE SKIP: ${pickCategory}/${pickSide} blocked (weight=0)`);
+              continue;
+            }
+          } else if (catWeight < 0.5) {
+            console.log(`[Bot v2] 🚫 SINGLE SKIP: ${pickCategory}/${pickSide} too weak for singles (weight=${catWeight})`);
+            continue;
+          }
+
           // Dedup key
           const singleKey = pick.pickType === 'team'
             ? `${pick.home_team}_${pick.away_team}_${pick.bet_type}_${pick.side}`.toLowerCase()
