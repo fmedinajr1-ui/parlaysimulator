@@ -21,6 +21,7 @@ import { usePageLifecycle } from "@/hooks/usePageLifecycle";
 
 // Lazy load pages
 const BotDashboard = React.lazy(() => import("./pages/BotDashboard"));
+const BotLanding = React.lazy(() => import("./pages/BotLanding"));
 const SweetSpots = React.lazy(() => import("./pages/SweetSpots"));
 const VerifyEmail = React.lazy(() => import("./pages/VerifyEmail"));
 const Admin = React.lazy(() => import("./pages/Admin"));
@@ -70,7 +71,7 @@ function AnimatedRoutes() {
               <Route path="/" element={<BotDashboard />} />
               <Route path="/sweet-spots" element={<SweetSpots />} />
               <Route path="/auth" element={<Navigate to="/" replace />} />
-              <Route path="/bot" element={<Navigate to="/" replace />} />
+              <Route path="/bot" element={<BotLanding />} />
               <Route path="/verify-email" element={<VerifyEmail />} />
               <Route path="/admin" element={<Admin />} />
               <Route path="/admin/releases" element={<ReleaseManager />} />
