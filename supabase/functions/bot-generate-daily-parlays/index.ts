@@ -3548,6 +3548,133 @@ async function generateRoundRobinParlays(
   return { megaParlay, subParlays, totalInserted: allToInsert.length };
 }
 
+// ============= DRY-RUN SYNTHETIC POOL =============
+
+function generateSyntheticPool(): PropPool {
+  console.log(`[DryRun] Generating synthetic prop pool for gate testing`);
+
+  const NBA_TEAMS = [
+    { name: 'Los Angeles Lakers', abbrev: 'LAL' },
+    { name: 'Boston Celtics', abbrev: 'BOS' },
+    { name: 'Denver Nuggets', abbrev: 'DEN' },
+    { name: 'Milwaukee Bucks', abbrev: 'MIL' },
+    { name: 'Phoenix Suns', abbrev: 'PHX' },
+    { name: 'Golden State Warriors', abbrev: 'GSW' },
+    { name: 'Dallas Mavericks', abbrev: 'DAL' },
+    { name: 'Philadelphia 76ers', abbrev: 'PHI' },
+  ];
+
+  const PLAYERS = [
+    { name: 'LeBron James', team: 'Los Angeles Lakers', propType: 'player_points', line: 25.5, hitRate: 0.72, proj: 28 },
+    { name: 'Jayson Tatum', team: 'Boston Celtics', propType: 'player_points', line: 27.5, hitRate: 0.68, proj: 29 },
+    { name: 'Nikola Jokic', team: 'Denver Nuggets', propType: 'player_assists', line: 8.5, hitRate: 0.74, proj: 10 },
+    { name: 'Giannis Antetokounmpo', team: 'Milwaukee Bucks', propType: 'player_rebounds', line: 11.5, hitRate: 0.70, proj: 13 },
+    { name: 'Devin Booker', team: 'Phoenix Suns', propType: 'player_points', line: 26.5, hitRate: 0.65, proj: 27 },
+    { name: 'Stephen Curry', team: 'Golden State Warriors', propType: 'player_threes', line: 4.5, hitRate: 0.60, proj: 5.2 },
+    { name: 'Luka Doncic', team: 'Dallas Mavericks', propType: 'player_points', line: 29.5, hitRate: 0.63, proj: 30 },
+    { name: 'Joel Embiid', team: 'Philadelphia 76ers', propType: 'player_points', line: 30.5, hitRate: 0.58, proj: 28 },
+    { name: 'Anthony Davis', team: 'Los Angeles Lakers', propType: 'player_rebounds', line: 11.5, hitRate: 0.66, proj: 12.5 },
+    { name: 'Jrue Holiday', team: 'Boston Celtics', propType: 'player_assists', line: 5.5, hitRate: 0.55, proj: 5 },
+    // Low-quality picks to exercise rejection gates
+    { name: 'Bench Player A', team: 'Phoenix Suns', propType: 'player_points', line: 8.5, hitRate: 0.42, proj: 7 },
+    { name: 'Bench Player B', team: 'Dallas Mavericks', propType: 'player_rebounds', line: 3.5, hitRate: 0.40, proj: 3 },
+    { name: 'Role Player C', team: 'Denver Nuggets', propType: 'player_assists', line: 2.5, hitRate: 0.50, proj: 2.8 },
+    { name: 'Starter D', team: 'Milwaukee Bucks', propType: 'player_points', line: 18.5, hitRate: 0.62, proj: 19 },
+    { name: 'Guard E', team: 'Golden State Warriors', propType: 'player_assists', line: 6.5, hitRate: 0.58, proj: 6 },
+  ];
+
+  const GAMES = [
+    { home: NBA_TEAMS[0], away: NBA_TEAMS[1], eventId: 'syn_game_1', total: 224.5, spread: -3.5 },
+    { home: NBA_TEAMS[2], away: NBA_TEAMS[3], eventId: 'syn_game_2', total: 231.5, spread: -5.5 },
+    { home: NBA_TEAMS[4], away: NBA_TEAMS[5], eventId: 'syn_game_3', total: 228.0, spread: -2.5 },
+    { home: NBA_TEAMS[6], away: NBA_TEAMS[7], eventId: 'syn_game_4', total: 219.5, spread: -1.5 },
+  ];
+
+  // Generate player picks with varying quality
+  const playerPicks: EnrichedPick[] = PLAYERS.map((p, i) => {
+    const side = p.proj > p.line ? 'over' : 'under';
+    const edge = Math.abs(p.proj - p.line);
+    const americanOdds = -110;
+    const oddsValueScore = calculateOddsValueScore(americanOdds, p.hitRate);
+    const category = mapPropTypeToCategory(p.propType);
+    const compositeScore = calculateCompositeScore(p.hitRate * 100, edge, oddsValueScore, 1.0, p.hitRate * 100, side);
+
+    return {
+      id: `syn_pick_${i}`,
+      player_name: p.name,
+      team_name: p.team,
+      prop_type: p.propType,
+      line: p.line,
+      recommended_side: side,
+      category,
+      confidence_score: p.hitRate,
+      l10_hit_rate: p.hitRate,
+      projected_value: p.proj,
+      sport: 'basketball_nba',
+      event_id: GAMES.find(g => g.home.name === p.team || g.away.name === p.team)?.eventId || 'syn_game_1',
+      americanOdds,
+      oddsValueScore,
+      compositeScore,
+      has_real_line: true,
+      line_source: 'synthetic_dry_run',
+    } as EnrichedPick;
+  });
+
+  // Generate team picks
+  const teamPicks: EnrichedTeamPick[] = [];
+  for (const game of GAMES) {
+    // Spread picks
+    teamPicks.push({
+      id: `${game.eventId}_spread_home`,
+      type: 'team', sport: 'basketball_nba',
+      home_team: game.home.name, away_team: game.away.name,
+      bet_type: 'spread', side: 'home', line: game.spread,
+      odds: -110, category: 'TEAM_SPREAD_HOME',
+      sharp_score: 60, compositeScore: 72, confidence_score: 0.58,
+      recommended_side: 'home',
+    } as EnrichedTeamPick);
+    teamPicks.push({
+      id: `${game.eventId}_spread_away`,
+      type: 'team', sport: 'basketball_nba',
+      home_team: game.home.name, away_team: game.away.name,
+      bet_type: 'spread', side: 'away', line: -game.spread,
+      odds: -110, category: 'TEAM_SPREAD_AWAY',
+      sharp_score: 55, compositeScore: 68, confidence_score: 0.55,
+      recommended_side: 'away',
+    } as EnrichedTeamPick);
+    // Total picks
+    teamPicks.push({
+      id: `${game.eventId}_total_over`,
+      type: 'team', sport: 'basketball_nba',
+      home_team: game.home.name, away_team: game.away.name,
+      bet_type: 'total', side: 'over', line: game.total,
+      odds: -110, category: 'TEAM_TOTAL_OVER',
+      sharp_score: 58, compositeScore: 75, confidence_score: 0.57,
+      recommended_side: 'over',
+    } as EnrichedTeamPick);
+    teamPicks.push({
+      id: `${game.eventId}_total_under`,
+      type: 'team', sport: 'basketball_nba',
+      home_team: game.home.name, away_team: game.away.name,
+      bet_type: 'total', side: 'under', line: game.total,
+      odds: -110, category: 'TEAM_TOTAL_UNDER',
+      sharp_score: 62, compositeScore: 78, confidence_score: 0.60,
+      recommended_side: 'under',
+    } as EnrichedTeamPick);
+  }
+
+  console.log(`[DryRun] Synthetic pool: ${playerPicks.length} player props, ${teamPicks.length} team props`);
+
+  return {
+    playerPicks,
+    teamPicks,
+    sweetSpots: playerPicks,
+    whalePicks: [],
+    totalPool: playerPicks.length + teamPicks.length,
+    goldenCategories: new Set(['HIGH_SCORER_OVER', 'ELITE_ASSIST_OVER']),
+  };
+}
+
 // ============= MAIN HANDLER =============
 
 Deno.serve(async (req) => {
@@ -3599,6 +3726,11 @@ Deno.serve(async (req) => {
     const singleTier = body.tier as TierName | undefined;
     const winningPatterns = body.winning_patterns || null;
     const generationSource = body.source || 'manual';
+    const isDryRun = body.dry_run === true;
+
+    if (isDryRun) {
+      console.log(`[Bot v2] 🧪 DRY-RUN MODE: No DB writes, synthetic data fallback enabled`);
+    }
 
     console.log(`[Bot v2] Generating tiered parlays for ${targetDate} (source: ${generationSource})`);
     if (winningPatterns) {
@@ -3657,7 +3789,7 @@ Deno.serve(async (req) => {
 
     // === BANKROLL FLOOR PROTECTION ===
     const BANKROLL_FLOOR = 1000;
-    if (bankroll <= BANKROLL_FLOOR) {
+    if (bankroll <= BANKROLL_FLOOR && !isDryRun) {
       console.log(`[Bot v2] Bankroll at floor ($${bankroll}). Pausing generation to protect capital.`);
       await supabase.from('bot_activity_log').insert({
         event_type: 'bankroll_floor_hit',
@@ -3679,41 +3811,46 @@ Deno.serve(async (req) => {
     }
 
     // 4. Build prop pool
-    const pool = await buildPropPool(supabase, targetDate, weightMap, weights as CategoryWeight[] || []);
+    let pool = await buildPropPool(supabase, targetDate, weightMap, weights as CategoryWeight[] || []);
 
     // Check if we have real odds data
     const realLinePicks = pool.playerPicks.filter(p => p.has_real_line);
     if (pool.totalPool < 5 || (realLinePicks.length < 3 && pool.teamPicks.length < 3)) {
-      const reason = pool.totalPool < 5 
-        ? `Insufficient prop pool (${pool.totalPool})` 
-        : `No real odds data (${realLinePicks.length} real lines, ${pool.teamPicks.length} team picks)`;
-      console.log(`[Bot v2] Skipping generation: ${reason}`);
+      if (isDryRun) {
+        console.log(`[DryRun] Real pool empty — injecting synthetic data to exercise scoring gates`);
+        pool = generateSyntheticPool();
+      } else {
+        const reason = pool.totalPool < 5 
+          ? `Insufficient prop pool (${pool.totalPool})` 
+          : `No real odds data (${realLinePicks.length} real lines, ${pool.teamPicks.length} team picks)`;
+        console.log(`[Bot v2] Skipping generation: ${reason}`);
 
-      // Notify via Telegram
-      try {
-        await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${supabaseKey}`,
-          },
-          body: JSON.stringify({
-            type: 'daily_summary',
-            data: { parlaysCount: 0, winRate: 0, edge: 0, bankroll, mode: `Skipped - ${reason}` },
+        // Notify via Telegram
+        try {
+          await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${supabaseKey}`,
+            },
+            body: JSON.stringify({
+              type: 'daily_summary',
+              data: { parlaysCount: 0, winRate: 0, edge: 0, bankroll, mode: `Skipped - ${reason}` },
+            }),
+          });
+        } catch (_) { /* ignore */ }
+
+        return new Response(
+          JSON.stringify({ 
+            success: false, 
+            message: reason,
+            poolSize: pool.totalPool,
+            realLinePicks: realLinePicks.length,
+            parlaysGenerated: 0 
           }),
-        });
-      } catch (_) { /* ignore */ }
-
-      return new Response(
-        JSON.stringify({ 
-          success: false, 
-          message: reason,
-          poolSize: pool.totalPool,
-          realLinePicks: realLinePicks.length,
-          parlaysGenerated: 0 
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
     }
 
     // 5. Detect thin slate mode
@@ -3772,6 +3909,69 @@ Deno.serve(async (req) => {
     }
 
     console.log(`[Bot v2] Total parlays created: ${allParlays.length}`);
+
+    // === DRY-RUN: Skip all DB writes and return detailed gate analysis ===
+    if (isDryRun) {
+      const tierSummary: Record<string, any> = {};
+      for (const [tier, result] of Object.entries(results)) {
+        tierSummary[tier] = {
+          count: result.count,
+          legDistribution: result.parlays.reduce((acc, p) => {
+            acc[p.leg_count] = (acc[p.leg_count] || 0) + 1;
+            return acc;
+          }, {} as Record<number, number>),
+        };
+      }
+
+      // Build detailed parlay breakdown for dry-run analysis
+      const parlayDetails = allParlays.map((p, i) => ({
+        index: i + 1,
+        tier: p.tier,
+        strategy: p.strategy_name,
+        legCount: p.leg_count,
+        legs: (Array.isArray(p.legs) ? p.legs : []).map((l: any) => ({
+          name: l.player_name || `${l.home_team} vs ${l.away_team}`,
+          type: l.type || 'player',
+          betType: l.prop_type || l.bet_type,
+          side: l.side,
+          line: l.line,
+          compositeScore: l.composite_score || l.sharp_score || 0,
+          hitRate: l.hit_rate || 0,
+        })),
+        combinedProbability: p.combined_probability,
+        edge: p.simulated_edge,
+        sharpe: p.simulated_sharpe,
+        odds: p.expected_odds,
+        avgLegScore: (Array.isArray(p.legs) ? p.legs : []).reduce((s: number, l: any) => s + (l.composite_score || l.sharp_score || 0), 0) / (p.leg_count || 1),
+      }));
+
+      console.log(`[DryRun] Complete: ${allParlays.length} parlays generated (0 written to DB)`);
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          dry_run: true,
+          parlaysGenerated: allParlays.length,
+          parlaysWrittenToDb: 0,
+          tierSummary,
+          poolSize: pool.totalPool,
+          playerPicks: pool.playerPicks.length,
+          teamPicks: pool.teamPicks.length,
+          syntheticData: pool.playerPicks.some(p => p.line_source === 'synthetic_dry_run'),
+          parlayDetails,
+          gateConfig: {
+            gap1_dynamicWeighting: 'Hit-rate weight 50% for 4+ legs (vs 40% for ≤3)',
+            gap2_perLegMinScore: { '≤3_legs': 80, '4-5_legs': 90, '6+_legs': 95 },
+            gap3_legCountPenalty: '3% per leg beyond 3rd',
+            gap4_correlationTax: '15% edge haircut for same-game legs',
+            gap5_parlayScoreFloor: { exploration: 75, validation: 80, execution: 85 },
+            gap6_roundRobinGates: { minEdge: 0.02, minAvgScore: 82 },
+          },
+          date: targetDate,
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
     // 6. Append new parlays (no longer deletes previous runs so multiple generations accumulate)
     console.log(`[Bot v2] Appending ${allParlays.length} new parlays for ${targetDate}`);
