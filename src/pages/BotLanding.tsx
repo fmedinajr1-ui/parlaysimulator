@@ -9,6 +9,7 @@ import { PricingCard } from "@/components/bot-landing/PricingCard";
 import { WhyMultipleParlays } from "@/components/bot-landing/WhyMultipleParlays";
 import { WolfLoadingOverlay } from "@/components/ui/wolf-loading-overlay";
 import { ParlayFarmLogo } from "@/components/ParlayFarmLogo";
+import { useTimeOnPage, useSectionView, useTrackClick } from "@/hooks/useAnalytics";
 
 interface PublicStats {
   days: Array<{
@@ -43,6 +44,14 @@ export default function BotLanding() {
   const [searchParams] = useSearchParams();
   const isSuccess = searchParams.get("success") === "true";
 
+  // Analytics tracking
+  useTimeOnPage('/bot');
+  const trackClick = useTrackClick();
+  const heroRef = useSectionView('hero_stats');
+  const calendarRef = useSectionView('performance_calendar');
+  const whyRef = useSectionView('why_multiple_parlays');
+  const pricingRef = useSectionView('pricing');
+
   useEffect(() => {
     async function fetchStats() {
       try {
@@ -75,6 +84,14 @@ export default function BotLanding() {
     }
   };
 
+  const handleCtaClick = () => {
+    trackClick('cta_click', { label: 'join_now' });
+  };
+
+  const handleTelegramClick = () => {
+    trackClick('cta_click', { label: 'telegram_link' });
+  };
+
   if (loading) return <WolfLoadingOverlay />;
 
   const totals = stats?.totals || {
@@ -99,30 +116,45 @@ export default function BotLanding() {
       {isSuccess && (
         <div className="bg-accent/10 border border-accent/30 text-accent px-4 py-3 text-center text-sm">
           🎉 Welcome! Join the Telegram bot to get your picks:{" "}
-          <a href="https://t.me/parlayiqbot" target="_blank" rel="noopener noreferrer" className="underline font-bold">
+          <a
+            href="https://t.me/parlayiqbot"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline font-bold"
+            onClick={handleTelegramClick}
+          >
             t.me/parlayiqbot
           </a>
         </div>
       )}
 
-      <HeroStats
-        totalProfit={totals.totalProfit}
-        totalWins={totals.totalWins}
-      />
+      <div ref={heroRef}>
+        <HeroStats
+          totalProfit={totals.totalProfit}
+          totalWins={totals.totalWins}
+        />
+      </div>
 
-      <PerformanceCalendar
-        days={stats?.days || []}
-        hasBotAccess={hasBotAccess || isAdmin}
-      />
+      <div ref={calendarRef}>
+        <PerformanceCalendar
+          days={stats?.days || []}
+          hasBotAccess={hasBotAccess || isAdmin}
+        />
+      </div>
 
-      <WhyMultipleParlays />
+      <div ref={whyRef}>
+        <WhyMultipleParlays />
+      </div>
 
       {!(hasBotAccess || isAdmin) && (
-        <PricingCard
-          onSubscribe={handleCheckout}
-          isLoading={checkoutLoading}
-          isSubscribed={hasBotAccess}
-        />
+        <div ref={pricingRef}>
+          <PricingCard
+            onSubscribe={handleCheckout}
+            isLoading={checkoutLoading}
+            isSubscribed={hasBotAccess}
+            onCtaClick={handleCtaClick}
+          />
+        </div>
       )}
     </div>
   );

@@ -4,7 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useDeviceFingerprint } from '@/hooks/useDeviceFingerprint';
 import { useLocation } from 'react-router-dom';
 
-const trackEvent = async (
+export const trackEvent = async (
   eventType: string,
   pagePath: string,
   userId?: string,
@@ -58,4 +58,79 @@ export function useTrackClick() {
     },
     [user?.id, deviceInfo?.fingerprint, location.pathname]
   );
+}
+
+export function useTimeOnPage(pagePath: string) {
+  const { user } = useAuth();
+  const { deviceInfo } = useDeviceFingerprint();
+  const startTimeRef = useRef(Date.now());
+  const accumulatedRef = useRef(0);
+  const visibleRef = useRef(true);
+
+  useEffect(() => {
+    startTimeRef.current = Date.now();
+    accumulatedRef.current = 0;
+    visibleRef.current = true;
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        if (visibleRef.current) {
+          accumulatedRef.current += (Date.now() - startTimeRef.current) / 1000;
+          visibleRef.current = false;
+        }
+      } else {
+        startTimeRef.current = Date.now();
+        visibleRef.current = true;
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      if (visibleRef.current) {
+        accumulatedRef.current += (Date.now() - startTimeRef.current) / 1000;
+      }
+      const duration = Math.round(accumulatedRef.current);
+      if (duration > 1) {
+        trackEvent('time_on_page', pagePath, user?.id, deviceInfo?.fingerprint, {
+          duration_seconds: duration,
+        });
+      }
+    };
+  }, [pagePath, user?.id, deviceInfo?.fingerprint]);
+}
+
+export function useSectionView(sectionId: string) {
+  const { user } = useAuth();
+  const { deviceInfo } = useDeviceFingerprint();
+  const location = useLocation();
+  const trackedRef = useRef(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    trackedRef.current = false;
+  }, [location.pathname]);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting && !trackedRef.current) {
+          trackedRef.current = true;
+          trackEvent('section_view', location.pathname, user?.id, deviceInfo?.fingerprint, {
+            section: sectionId,
+          });
+        }
+      },
+      { threshold: 0.3 }
+    );
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [sectionId, location.pathname, user?.id, deviceInfo?.fingerprint]);
+
+  return ref;
 }
