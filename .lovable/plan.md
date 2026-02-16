@@ -1,122 +1,174 @@
-✅ COMPLETED
 
 
-# Implement 6 Scoring Gaps in Bot Parlay Builder
+# Continuous Odds Simulation + Sport-Specific Scoring Engine
 
-## Overview
+## The Problem
 
-Six scoring/filtering improvements to the parlay generation engine in `supabase/functions/bot-generate-daily-parlays/index.ts` that add mathematical rigor to leg selection, parlay construction, and round robin quality gates.
+Right now:
+- All sports except NCAAB use the same generic team scoring formula (defense rank, pace, home court) which doesn't fit hockey, baseball, or tennis
+- There's no way to validate whether the scoring models are actually accurate before putting money on them
+- The scraper already pulls odds from The Odds API (FanDuel, DraftKings, BetMGM, Caesars lines) -- no need to scrape sportsbook websites directly
 
----
+## The Solution: Two-Part Build
 
-## Gap 1: Dynamic Hit-Rate Weight by Parlay Size
+### Part 1: Sport-Specific Scoring Engines
 
-**Current**: `calculateCompositeScore` uses a fixed 40% weight for hit rate regardless of parlay size.
+Replace the one-size-fits-all `calculateTeamCompositeScore` with dedicated scoring functions per sport. Each uses factors that actually matter for that sport.
 
-**Change**: Accept an optional `legCount` parameter. When building 4+ leg parlays, shift weight distribution to emphasize hit rate (50%) at the expense of odds value and category weight (15% each). Edge stays at 20%.
+**NBA** (existing, keep as-is):
+- Pace rating, defense rank, home court cover rate, blowout probability, shootout factor
 
-**Where**: Modify `calculateCompositeScore` (line ~890) to accept `legCount?: number`. Update all call sites to pass the profile's target leg count where available.
+**NHL** (new: `calculateNhlTeamCompositeScore`):
+- Save percentage and goals-against average for UNDER totals
+- Power play percentage and shots-on-goal for OVER totals
+- Home ice advantage (weaker than NBA -- worth ~2 pts, not 5)
+- Goalie starter confirmation (from injury feed)
+- Back-to-back fatigue (bigger deal in hockey than basketball)
 
----
+**NCAA Baseball** (new: `calculateBaseballTeamCompositeScore`):
+- ERA differential (pitcher matchup is king)
+- Run differential and batting average
+- Home/away splits (college baseball has massive home-field advantage)
+- Weather integration (wind, temperature from existing `ai-research-agent` weather queries)
+- National rank from existing `ncaa_baseball_team_stats`
 
-## Gap 2: Per-Leg Minimum Score Gate by Parlay Size
+**Tennis** (new: `calculateTennisCompositeScore`):
+- Head-to-head record
+- Surface-specific win rate (hard, clay, grass)
+- Recent form (last 5 match win rate)
+- Ranking differential
+- Sets handicap vs moneyline alignment
 
-**Current**: No minimum composite score threshold applied per-leg during parlay construction (only hit-rate and odds-value floors exist).
+**WNBA** (new: `calculateWnbaTeamCompositeScore`):
+- Similar to NBA but with adjusted pace thresholds (WNBA games are slower)
+- Smaller home court bonus
+- Rest advantage (WNBA schedule is more compressed)
 
-**Change**: Add a `minScoreByParlaySize` function:
-- 3 legs or fewer: minimum composite score 80
-- 4-5 legs: minimum 90
-- 6+ legs: minimum 95
+Each function returns `{ score: number, breakdown: Record<string, number> }` matching the existing pattern.
 
-Apply this gate inside the parlay construction loop (line ~2925) as a `continue` check after `compositeScore` is computed.
+### Part 2: Simulation Sandbox (Accuracy Validator)
 
----
+A new edge function `odds-simulation-engine` that runs a continuous validation loop:
 
-## Gap 3: Leg-Count Penalty (House Edge Cost)
+**How it works:**
+1. Every time the scraper pulls fresh odds, the simulator scores them using the sport-specific engines
+2. It generates "shadow picks" -- predictions that are logged but never bet on
+3. When games finish, it compares predictions vs outcomes per sport per bet type
+4. It calculates rolling accuracy metrics and stores them in a new `simulation_accuracy` table
 
-**Current**: Parlay combined probability and edge are computed purely from leg products. No penalty for increasing leg count.
+**Table: `simulation_accuracy`**
 
-**Change**: After computing `combinedProbability` and `effectiveEdge` (line ~3206), apply a 3% multiplicative penalty per leg beyond 3:
+| Column | Type | Purpose |
+|--------|------|---------|
+| id | uuid | Primary key |
+| sport | text | Sport key (basketball_nba, icehockey_nhl, etc.) |
+| bet_type | text | spread, total, h2h, player_points, etc. |
+| scoring_version | text | Engine version for A/B testing |
+| predictions_made | int | Total shadow picks |
+| predictions_correct | int | Hits |
+| accuracy_rate | float | Hit rate (0-1) |
+| avg_composite_score | float | Average score of predictions |
+| period_start | date | Window start |
+| period_end | date | Window end |
+| is_production_ready | boolean | Accuracy above threshold for live use |
+| created_at | timestamp | Record creation |
 
-```
-parlayPenalty = 1 - 0.03 * max(0, legCount - 3)
-adjustedEdge = effectiveEdge * parlayPenalty
-```
+**Table: `simulation_shadow_picks`**
 
-Use `adjustedEdge` for the edge floor check instead of raw `effectiveEdge`. Log the penalty when applied.
+| Column | Type | Purpose |
+|--------|------|---------|
+| id | uuid | Primary key |
+| sport | text | Sport key |
+| event_id | text | Game ID |
+| bet_type | text | Type of bet |
+| side | text | over/under/home/away |
+| predicted_score | float | Composite score from engine |
+| line | float | The line at prediction time |
+| odds | int | American odds |
+| outcome | text | won/lost/push/pending |
+| settled_at | timestamp | When settled |
+| scoring_version | text | Which engine version |
+| score_breakdown | jsonb | Full breakdown for analysis |
+| created_at | timestamp | Record creation |
 
----
+**Production Gate:** A sport's scoring engine only feeds into the real parlay generator once its simulation accuracy exceeds a configurable threshold (default: 55% for spreads/totals, 52% for moneylines). Until then, it runs in shadow mode only.
 
-## Gap 4: Correlation Tax (Same-Game Haircut)
+### Part 3: Integration with Bot Generator
 
-**Current**: Same-game legs are partially controlled by `canAddTeamLegToParlay` (blocks same bet-type), but no penalty for legs from the same game across different bet types.
+Update the parlay generator's `buildTeamPickPool` to:
+1. Route each sport to its dedicated scoring function
+2. Check `simulation_accuracy` for that sport -- if accuracy is below threshold, skip that sport entirely
+3. Log which sports are "production ready" vs "still simulating"
 
-**Change**: After building the parlay legs array, detect if any two legs share the same `event_id` or the same `home_team + away_team` combination. If so, apply a 15% haircut to the parlay edge:
-
-```
-if (hasSameGameLegs) adjustedEdge *= 0.85
-```
-
-Add a helper `hasSameGameCorrelation(legs)` that checks for overlapping games. Log when the tax is applied.
-
----
-
-## Gap 5: Parlay-Level Composite Score Floor
-
-**Current**: Tier thresholds check only probability, edge, and Sharpe ratio. No parlay-level composite score validation.
-
-**Change**: After computing all legs, calculate `avgLegCompositeScore` as the mean of each leg's `composite_score`. Apply a floor by tier:
-- Exploration: 75
-- Validation: 80
-- Execution: 85
-
-Reject parlays where the average leg score falls below the tier's floor. Apply leg-count penalty to this average score too.
-
----
-
-## Gap 6: Round Robin EV and Score Gates
-
-**Current**: Round robin sub-parlays and mega-parlay have no EV or composite score quality gates. Any 4-leg combination from elite legs is accepted.
-
-**Change**: In `generateRoundRobinParlays` (line ~3379), filter sub-parlay combos:
-- Require `edge >= 0.02` (2% minimum EV at parlay level)
-- Require average `composite_score >= 82` across the 4 legs
-- Skip combos that fail either gate
-
-Also apply the leg-count penalty (Gap 3) to round robin edge calculations.
-
----
-
-## Technical Details
-
-### Modified Functions
-
-1. **`calculateCompositeScore`** (line 890-928) -- add `legCount` parameter for dynamic weighting
-2. **Parlay construction loop** (line 2925-3127) -- add per-leg score gate (Gap 2)
-3. **Post-construction validation** (line 3186-3219) -- add leg-count penalty (Gap 3), correlation tax (Gap 4), avg score floor (Gap 5)
-4. **`generateRoundRobinParlays`** (line 3289-3444) -- add EV and score gates (Gap 6)
-
-### New Helper Functions
+### Workflow
 
 ```text
-minScoreByParlaySize(legs: number): number
-parlayLegCountPenalty(legs: number): number
-hasSameGameCorrelation(legs: any[]): boolean
-parlayScoreFloor(tier: TierName): number
+Scraper pulls odds (every 15-30 min)
+       |
+       v
+Simulation Engine scores all games with sport-specific models
+       |
+       v
+Shadow picks logged to simulation_shadow_picks
+       |
+       v
+Settlement verifies outcomes, updates simulation_accuracy
+       |
+       v
+Bot Generator checks accuracy gates before including sport
+       |
+       v
+Only sports passing accuracy threshold enter real parlays
 ```
 
-### Call Site Updates for calculateCompositeScore
+## Technical Changes
 
-- Line ~2037: enriching sweet spots -- pass `undefined` (no parlay context yet)
-- Line ~2116: fallback enrichment -- same
-- The per-leg score gate in Gap 2 will use the already-computed composite score; no re-computation needed since the dynamic weight only matters at selection time. The per-leg gate uses the stored score.
+### Files Modified
 
-### Logging
+1. **`supabase/functions/bot-generate-daily-parlays/index.ts`**
+   - Add `calculateNhlTeamCompositeScore()`, `calculateBaseballTeamCompositeScore()`, `calculateTennisCompositeScore()`, `calculateWnbaTeamCompositeScore()`
+   - Update `calculateTeamCompositeScore()` router to dispatch by sport key
+   - Add accuracy gate check in `buildTeamPickPool` that queries `simulation_accuracy`
 
-Each new gate will log rejections at the execution tier level for visibility:
-- `[ScoreGate] Blocked leg X (score Y < Z for N-leg parlay)`
-- `[LegPenalty] Applied 3% x N penalty to edge`
-- `[CorrTax] Same-game correlation tax applied (15% haircut)`
-- `[ParlayFloor] Rejected parlay (avg score X < Y floor)`
-- `[RoundRobin] Skipped combo (edge X < 0.02 or avg score Y < 82)`
+2. **New: `supabase/functions/odds-simulation-engine/index.ts`**
+   - Accepts `mode: 'predict' | 'settle' | 'report'`
+   - `predict`: Scores all active `game_bets` using sport-specific engines, inserts shadow picks
+   - `settle`: Checks finished games, marks shadow picks as won/lost/push
+   - `report`: Returns accuracy breakdown by sport and bet type
+
+3. **Database migrations**
+   - Create `simulation_accuracy` table
+   - Create `simulation_shadow_picks` table
+   - Both with RLS policies for service role access
+
+### Pipeline Integration
+
+The `data-pipeline-orchestrator` gets a new phase after odds collection:
+- Call `odds-simulation-engine` with `mode: 'predict'` after every scrape
+- Call `odds-simulation-engine` with `mode: 'settle'` during the settlement phase
+
+### Sport-Specific Scoring Details
+
+**NHL scoring factors and weights:**
+- Goalie save %: 25% weight (strongest predictor for totals)
+- Goals-against avg: 20%
+- Power play %: 15%
+- Shots on goal avg: 15%
+- Home ice: 10% (worth ~1.5 goals less than NBA home court)
+- Back-to-back: 15% penalty
+
+**Baseball scoring factors:**
+- ERA matchup: 30% weight
+- Run differential: 20%
+- Batting avg: 15%
+- Home field: 15%
+- National rank: 10%
+- Weather: 10%
+
+**Tennis scoring factors:**
+- H2H record: 25%
+- Surface win rate: 25%
+- Ranking diff: 20%
+- Recent form (L5): 20%
+- Fatigue (days since last match): 10%
 
