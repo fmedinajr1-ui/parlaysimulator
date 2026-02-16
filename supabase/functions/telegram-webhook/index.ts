@@ -521,53 +521,99 @@ ${
 async function handleParlays(chatId: string) {
   await logActivity("telegram_parlays", `User requested parlays`, { chatId });
 
-  const parlays = await getParlays();
+  const today = getEasternDate();
+  
+  // Fetch full parlay data to show legs inline
+  const { data: allParlays } = await supabase
+    .from("bot_daily_parlays")
+    .select("*")
+    .eq("parlay_date", today)
+    .order("created_at", { ascending: false });
 
-  if (parlays.count === 0) {
+  if (!allParlays || allParlays.length === 0) {
     return "📭 No parlays generated today yet.\n\nUse /generate to create new parlays!";
   }
 
-  let message = `🎯 *Today's Parlays* (${parlays.count} total)\n\n`;
+  // Get latest batch
+  const latestBatchTime = new Date(allParlays[0].created_at).getTime();
+  const batchWindow = 5 * 60 * 1000;
+  const latestBatch = allParlays.filter(
+    (p) => Math.abs(new Date(p.created_at).getTime() - latestBatchTime) < batchWindow
+  );
+
+  // Group by tier
+  const tierGroups: Record<string, typeof latestBatch> = { exploration: [], validation: [], execution: [] };
+  latestBatch.forEach((p) => {
+    const name = (p.strategy_name || '').toLowerCase();
+    if (name.includes('validation') || name.includes('validated') || name.includes('proving')) {
+      tierGroups.validation.push(p);
+    } else if (name.includes('execution') || name.includes('elite') || name.includes('cash_lock') || name.includes('boosted_cash') || name.includes('golden_lock') || name.includes('hybrid_exec') || name.includes('team_exec')) {
+      tierGroups.execution.push(p);
+    } else {
+      tierGroups.exploration.push(p);
+    }
+  });
 
   const tierLabels: Record<string, string> = {
     exploration: '🔍 Exploration',
     validation: '✅ Validation',
     execution: '💰 Execution',
   };
-  const tierDescriptions: Record<string, string> = {
+  const tierStakes: Record<string, string> = {
     exploration: '$0 stake',
     validation: 'simulated',
     execution: 'Kelly stakes',
   };
 
-  // Build inline buttons for "View Legs"
+  let message = `🎯 *PARLAY GENERATION COMPLETE*\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
   const inlineButtons: any[][] = [];
 
-  if (parlays.tierSummary) {
-    for (const tier of ['exploration', 'validation', 'execution']) {
-      const info = parlays.tierSummary[tier];
-      if (!info) continue;
-      message += `${tierLabels[tier]} (${info.count}) — _${tierDescriptions[tier]}_\n`;
-      info.topParlays.forEach((p, i) => {
-        const outcomeEmoji = p.outcome === 'won' ? '✅' : p.outcome === 'lost' ? '❌' : '⏳';
-        message += `  ${i + 1}. ${p.strategy} (${p.legs}-leg) ${p.odds > 0 ? '+' : ''}${p.odds} ${outcomeEmoji}\n`;
-        // Add inline button for viewing legs
-        inlineButtons.push([{ text: `📋 View Legs: ${p.strategy.slice(0, 20)}`, callback_data: `legs:${p.id}` }]);
-      });
-      if (info.count > 2) {
-        message += `  ... +${info.count - 2} more\n`;
+  for (const tier of ['execution', 'validation', 'exploration']) {
+    const group = tierGroups[tier];
+    if (!group || group.length === 0) continue;
+
+    message += `${tierLabels[tier]} (${group.length}) — _${tierStakes[tier]}_\n\n`;
+
+    // Show top 2 parlays with full legs
+    const showCount = Math.min(2, group.length);
+    for (let i = 0; i < showCount; i++) {
+      const p = group[i];
+      const outcomeEmoji = p.outcome === 'won' ? '✅' : p.outcome === 'lost' ? '❌' : '⏳';
+      const oddsStr = p.expected_odds > 0 ? `+${p.expected_odds}` : `${p.expected_odds}`;
+      message += `  ${i + 1}. *${p.strategy_name}* (${p.leg_count}-leg) ${oddsStr} ${outcomeEmoji}\n`;
+      
+      const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs || '[]');
+      for (const leg of legs) {
+        const legText = formatLegDisplay(leg);
+        // Indent each line of the leg display
+        const indented = legText.split('\n').map(l => `     ${l}`).join('\n');
+        message += `${indented}\n`;
+      }
+      
+      // Avg score & hit rate
+      const avgScore = legs.reduce((s: number, l: any) => s + (l.composite_score || 0), 0) / (legs.length || 1);
+      const avgHit = legs.reduce((s: number, l: any) => s + (l.hit_rate || 0), 0) / (legs.length || 1);
+      if (avgScore > 0 || avgHit > 0) {
+        message += `     Avg Score: ${Math.round(avgScore)} | Avg Hit: ${Math.round(avgHit)}%\n`;
+      }
+      message += `\n`;
+    }
+
+    // Remaining parlays get View Legs buttons
+    if (group.length > 2) {
+      message += `  _+${group.length - 2} more ${tier} parlays_\n`;
+      for (let i = 2; i < Math.min(6, group.length); i++) {
+        inlineButtons.push([{ text: `📋 ${group[i].strategy_name.slice(0, 25)} (${group[i].leg_count}-leg)`, callback_data: `legs:${group[i].id}` }]);
       }
       message += `\n`;
     }
   }
 
-  message += `*Distribution:*\n`;
-  message += Object.entries(parlays.distribution)
-    .map(([legs, count]) => `• ${legs}-Leg: ${count}`)
-    .join("\n");
-
   const replyMarkup = inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined;
-  await sendMessage(chatId, message, "Markdown", replyMarkup);
+  await sendLongMessage(chatId, message, "Markdown");
+  if (replyMarkup && inlineButtons.length > 0) {
+    await sendMessage(chatId, "📋 *More parlays:*", "Markdown", replyMarkup);
+  }
   return null; // Already sent
 }
 
@@ -708,30 +754,95 @@ async function handleSettle(chatId: string) {
   }
 }
 
-// Format a parlay leg for display in Telegram
-function formatLegDisplay(leg: any): string {
-  if (leg.type === 'team') {
-    const matchup = `${leg.away_team || ''} @ ${leg.home_team || ''}`.trim();
-    const betLabel = (leg.bet_type || '').charAt(0).toUpperCase() + (leg.bet_type || '').slice(1);
-    const sideLabel = leg.side === 'home' ? (leg.home_team || 'HOME') :
-                      leg.side === 'away' ? (leg.away_team || 'AWAY') :
-                      (leg.side || '').toUpperCase();
-    const line = leg.line !== null && leg.line !== undefined ? ` ${leg.line}` : '';
-    const odds = leg.american_odds ? (leg.american_odds > 0 ? ` (+${leg.american_odds})` : ` (${leg.american_odds})`) : '';
-    return `${matchup} ${betLabel} ${sideLabel}${line}${odds}`;
-  }
-  const propLabels: Record<string, string> = {
-    threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
-    steals: 'STL', blocks: 'BLK', turnovers: 'TO', pra: 'PRA',
-    pts_rebs: 'P+R', pts_asts: 'P+A', rebs_asts: 'R+A',
-    three_pointers_made: '3PT', fantasy_score: 'FPTS',
+// Sport key to human-readable label
+function getSportLabel(sport: string): string {
+  const labels: Record<string, string> = {
+    'basketball_nba': 'NBA', 'basketball_ncaab': 'NCAAB', 'icehockey_nhl': 'NHL',
+    'baseball_mlb': 'MLB', 'baseball_ncaa': 'NCAA BB', 'americanfootball_nfl': 'NFL',
+    'tennis_atp': 'ATP', 'tennis_wta': 'WTA', 'tennis_pingpong': 'Table Tennis',
+    'golf_pga': 'PGA', 'hockey_nhl': 'NHL',
   };
-  const name = leg.player_name || 'Player';
-  const side = (leg.side || 'over').toUpperCase();
-  const line = leg.line || leg.selected_line || '';
-  const propType = leg.prop_type ? ` ${propLabels[leg.prop_type] || leg.prop_type.toUpperCase()}` : '';
-  const odds = leg.american_odds ? (leg.american_odds > 0 ? ` (+${leg.american_odds})` : ` (${leg.american_odds})`) : '';
-  return `${name} ${side} ${line}${propType}${odds}`;
+  return labels[sport] || sport?.replace(/^[a-z]+_/, '').toUpperCase() || '';
+}
+
+// Source/reason to human-readable label
+function getSourceLabel(source?: string, reason?: string): string {
+  const labels: Record<string, string> = {
+    'whale_signal': 'Whale Signal', 'projection_gap': 'Projection Edge',
+    'alternate_line': 'Alt Line Shop', 'main_line': 'Main Line',
+    'single_pick': 'Single Pick', 'projected': 'Projection',
+    'synthetic_dry_run': 'Synthetic', 'consensus': 'Consensus',
+  };
+  if (source && labels[source]) return labels[source];
+  if (reason && labels[reason]) return labels[reason];
+  return source || reason || '';
+}
+
+// Format a parlay leg for display in Telegram — action-first with reasoning
+function formatLegDisplay(leg: any): string {
+  const odds = leg.american_odds ? (leg.american_odds > 0 ? `(+${leg.american_odds})` : `(${leg.american_odds})`) : '';
+  const sportLabel = getSportLabel(leg.sport);
+  
+  let actionLine = '';
+  let matchupLine = '';
+  
+  if (leg.type === 'team') {
+    const away = leg.away_team || '';
+    const home = leg.home_team || '';
+    const betType = (leg.bet_type || '').toLowerCase();
+    
+    if (betType === 'total') {
+      const side = (leg.side || 'over').toUpperCase();
+      actionLine = `Take ${side} ${leg.line} ${odds}`;
+    } else if (betType === 'spread') {
+      const teamName = leg.side === 'home' ? home : away;
+      const line = leg.line > 0 ? `+${leg.line}` : `${leg.line}`;
+      actionLine = `Take ${teamName} ${line} ${odds}`;
+    } else if (betType === 'moneyline' || betType === 'h2h') {
+      const teamName = leg.side === 'home' ? home : away;
+      actionLine = `Take ${teamName} ML ${odds}`;
+    } else {
+      const sideLabel = leg.side === 'home' ? home : leg.side === 'away' ? away : (leg.side || '').toUpperCase();
+      actionLine = `Take ${sideLabel} ${leg.line || ''} ${odds}`;
+    }
+    matchupLine = `${away} @ ${home}`;
+  } else {
+    // Player prop
+    const propLabels: Record<string, string> = {
+      threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
+      steals: 'STL', blocks: 'BLK', turnovers: 'TO', pra: 'PRA',
+      pts_rebs: 'P+R', pts_asts: 'P+A', rebs_asts: 'R+A',
+      three_pointers_made: '3PT', fantasy_score: 'FPTS',
+      goals: 'G', assists_nhl: 'A', shots: 'SOG', saves: 'SVS',
+      aces: 'ACES', games: 'GAMES',
+    };
+    const name = leg.player_name || 'Player';
+    const side = (leg.side || 'over').toUpperCase();
+    const line = leg.line || leg.selected_line || '';
+    const propType = propLabels[leg.prop_type] || (leg.prop_type || '').toUpperCase();
+    actionLine = `Take ${name} ${side} ${line} ${propType} ${odds}`;
+    matchupLine = leg.matchup || '';
+  }
+  
+  // Build reasoning line
+  const parts: string[] = [];
+  if (leg.composite_score) parts.push(`Score: ${Math.round(leg.composite_score)}`);
+  if (leg.hit_rate) parts.push(`Hit: ${Math.round(leg.hit_rate)}%`);
+  const src = getSourceLabel(leg.line_source, leg.line_selection_reason);
+  if (src) parts.push(src);
+  if (leg.projection_buffer && !leg.type) parts.push(`Buffer: ${leg.projection_buffer > 0 ? '+' : ''}${Number(leg.projection_buffer).toFixed(1)}`);
+  
+  let result = actionLine.trim();
+  if (matchupLine && sportLabel) {
+    result += `\n  ${matchupLine} | ${sportLabel}`;
+  } else if (matchupLine) {
+    result += `\n  ${matchupLine}`;
+  }
+  if (parts.length > 0) {
+    result += `\n  ${parts.join(' | ')}`;
+  }
+  
+  return result;
 }
 
 // ==================== ANALYTICS COMMANDS ====================
@@ -1225,7 +1336,7 @@ async function handleCallbackQuery(callbackQueryId: string, data: string, chatId
 
     const { data: parlay } = await supabase
       .from("bot_daily_parlays")
-      .select("legs, strategy_name, leg_count, expected_odds, outcome")
+      .select("legs, strategy_name, leg_count, expected_odds, outcome, combined_probability")
       .eq("id", parlayId)
       .maybeSingle();
 
@@ -1235,15 +1346,23 @@ async function handleCallbackQuery(callbackQueryId: string, data: string, chatId
     }
 
     const legs = Array.isArray(parlay.legs) ? parlay.legs : JSON.parse(parlay.legs || '[]');
-    let msg = `📋 *${parlay.strategy_name}* (${parlay.leg_count}-leg)\n\n`;
+    const outcomeLabel = parlay.outcome === 'won' ? '✅ WON' : parlay.outcome === 'lost' ? '❌ LOST' : '⏳ PENDING';
+    const oddsStr = parlay.expected_odds > 0 ? `+${parlay.expected_odds}` : `${parlay.expected_odds}`;
+    
+    let msg = `📋 *${parlay.strategy_name}* (${parlay.leg_count}-leg) ${oddsStr} ${outcomeLabel}\n\n`;
     legs.forEach((leg: any, i: number) => {
-      msg += `${i + 1}. ${formatLegDisplay(leg)}\n`;
+      msg += `${i + 1}. ${formatLegDisplay(leg)}\n\n`;
     });
-    msg += `\nOdds: ${parlay.expected_odds > 0 ? '+' : ''}${parlay.expected_odds}`;
-    if (parlay.outcome) msg += ` | ${parlay.outcome === 'won' ? '✅ WON' : parlay.outcome === 'lost' ? '❌ LOST' : '⏳ PENDING'}`;
+    
+    // Summary line
+    const avgScore = legs.reduce((s: number, l: any) => s + (l.composite_score || 0), 0) / (legs.length || 1);
+    const avgHit = legs.reduce((s: number, l: any) => s + (l.hit_rate || 0), 0) / (legs.length || 1);
+    if (avgScore > 0 || avgHit > 0) {
+      msg += `📊 Avg Score: ${Math.round(avgScore)} | Avg Hit: ${Math.round(avgHit)}%`;
+    }
 
     await answerCallbackQuery(callbackQueryId);
-    await sendMessage(chatId, msg);
+    await sendLongMessage(chatId, msg);
   } else if (data.startsWith('fix:')) {
     await handleFixAction(callbackQueryId, data.slice(4), chatId);
   } else {

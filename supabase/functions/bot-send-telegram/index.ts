@@ -98,7 +98,7 @@ function formatParlaysGenerated(data: Record<string, any>, dateStr: string): str
 }
 
 function formatTieredParlaysGenerated(data: Record<string, any>, dateStr: string): string {
-  const { totalCount, exploration, validation, execution, poolSize } = data;
+  const { totalCount, exploration, validation, execution, poolSize, topPicks } = data;
   
   let msg = `📊 *TIERED PARLAY GENERATION COMPLETE*\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
@@ -109,10 +109,44 @@ function formatTieredParlaysGenerated(data: Record<string, any>, dateStr: string
   msg += `🎯 Execution: ${execution || 0} parlays\n\n`;
   
   if (poolSize) {
-    msg += `📍 Pool Size: ${poolSize} picks\n`;
+    msg += `📍 Pool Size: ${poolSize} picks\n\n`;
   }
   
-  // Dashboard link removed - all info delivered in Telegram
+  // Top Picks Preview
+  if (topPicks && Array.isArray(topPicks) && topPicks.length > 0) {
+    msg += `🔥 *Top Picks Preview:*\n`;
+    for (const pick of topPicks.slice(0, 5)) {
+      const propLabels: Record<string, string> = {
+        threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
+        steals: 'STL', blocks: 'BLK', pra: 'PRA', goals: 'G',
+        shots: 'SOG', saves: 'SVS', aces: 'ACES',
+      };
+      if (pick.type === 'team') {
+        const betType = (pick.bet_type || '').toLowerCase();
+        const away = pick.away_team || '';
+        const home = pick.home_team || '';
+        if (betType === 'total') {
+          msg += `• Take ${(pick.side || 'over').toUpperCase()} ${pick.line} (${away} @ ${home})\n`;
+        } else if (betType === 'spread') {
+          const team = pick.side === 'home' ? home : away;
+          const line = pick.line > 0 ? `+${pick.line}` : `${pick.line}`;
+          msg += `• Take ${team} ${line} (${away} @ ${home})\n`;
+        } else {
+          const team = pick.side === 'home' ? home : away;
+          msg += `• Take ${team} ML (${away} @ ${home})\n`;
+        }
+      } else {
+        const side = (pick.side || 'over').toUpperCase();
+        const prop = propLabels[pick.prop_type] || (pick.prop_type || '').toUpperCase();
+        msg += `• Take ${pick.player_name || 'Player'} ${side} ${pick.line} ${prop}\n`;
+      }
+      if (pick.composite_score || pick.hit_rate) {
+        msg += `  Score: ${Math.round(pick.composite_score || 0)} | Hit: ${Math.round(pick.hit_rate || 0)}%\n`;
+      }
+    }
+  }
+  
+  msg += `\nUse /parlays to see all picks with full details`;
   
   return msg;
 }
