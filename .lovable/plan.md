@@ -1,49 +1,40 @@
 
-# Remove All Subscriptions Except Parlay Bot Pro
+# Admin Analytics Dashboard
 
 ## Overview
-Strip out the Odds Tracker Pro and Elite Hitter Pro subscription tiers, keeping only **Parlay Bot Pro** ($99/month, 3-day trial). The features themselves (Odds Tracker page, Elite Hitter card) will remain accessible but without paywalls -- only the separate subscription products are being removed.
+Add a new "Site Analytics" section to the existing Admin panel that displays visitor stats, page views over time, subscription click counts, and conversion rates -- all powered by the `analytics_events` table already in place.
 
-## Changes
+## What You'll See
+- **Summary cards**: Total visitors (unique fingerprints), total page views, subscription clicks, and conversion rate
+- **Page views over time chart**: A line/area chart showing daily page views for the last 30 days
+- **Top pages table**: Which pages get the most traffic
+- **Subscription funnel**: Visual breakdown of page views vs. subscribe clicks vs. conversions
+- **Recent activity feed**: Latest events in real-time
 
-### 1. Backend: Simplify `check-subscription` Edge Function
-- Remove `ODDS_TRACKER_PRICE_ID` and `ELITE_HITTER_PRICE_ID` constants
-- Remove the per-price subscription checks (`hasOddsSubscription`, `hasEliteHitterSubscription`)
-- Keep only `BOT_PRO_PRICE_ID` check
-- Simplify response: if user has ANY active Stripe subscription, grant full access (odds, elite, bot)
-- Remove `approved_odds_users` table lookup since there's no separate odds tier
+## Technical Details
 
-### 2. Backend: Delete Edge Functions
-- Delete `supabase/functions/create-odds-checkout/` (no longer needed)
-- Delete `supabase/functions/create-elite-hitter-checkout/` (no longer needed)
+### 1. Create `src/components/admin/SiteAnalyticsDashboard.tsx`
+A new admin component that:
+- Queries `analytics_events` table with aggregations (grouped by date, event type, page path)
+- Uses `recharts` (already installed) for charts via the existing `ChartContainer` components
+- Uses the existing `StatsCard`/`StatItem` components for summary metrics
+- Computes:
+  - **Unique visitors**: COUNT DISTINCT `device_fingerprint`
+  - **Total page views**: COUNT WHERE `event_type = 'page_view'`
+  - **Subscribe clicks**: COUNT WHERE `event_type = 'subscribe_click'`
+  - **Conversion rate**: subscribe clicks / unique visitors
+- Time range filter (7d / 30d / 90d)
 
-### 3. Frontend: Simplify `useSubscription` Hook
-- Remove `hasOddsAccess`, `hasEliteHitterAccess` from state
-- Remove `startEliteHitterCheckout` function
-- Keep `startBotCheckout` as the single checkout flow
-- Keep `hasBotAccess` (rename concept to just "subscribed")
+### 2. Add section to Admin panel (`src/pages/Admin.tsx`)
+- Add `'analytics'` to the `AdminSection` type
+- Add a new card in `sectionConfig` (icon: `BarChart3` or `Activity`)
+- Add case in `renderSectionContent` to render `<SiteAnalyticsDashboard />`
 
-### 4. Frontend: Remove Paywalls
-- **OddsMovement page**: Remove `OddsPaywall` import and the paywall gate -- make the page accessible to all authenticated users (or keep existing pilot logic)
-- **DailyEliteHitterCard**: Remove `EliteHitterPaywall` gate -- show content without subscription check
-- Delete `src/components/odds/OddsPaywall.tsx`
-- Delete `src/components/suggestions/EliteHitterPaywall.tsx`
+### 3. Data fetching approach
+- Use multiple Supabase queries from the client side (admin-only via RLS)
+- Group page views by date using JS (since Supabase JS client doesn't support GROUP BY directly)
+- Fetch last 30/90 days of events and aggregate in the component
 
-### 5. Frontend: Clean Up Contexts
-- **PilotUserContext**: Remove `hasOddsAccess` and `hasEliteAccess` fields
-- **usePilotUser**: Remove corresponding fields
-
-### 6. Admin Panel
-- Keep `EliteAccessManager` and `FeatureAccessManager` for role-based access (admin can still grant roles) -- these are orthogonal to Stripe subscriptions
-
-## Files Modified
-- `supabase/functions/check-subscription/index.ts` -- simplify price checks
-- `supabase/functions/create-odds-checkout/index.ts` -- DELETE
-- `supabase/functions/create-elite-hitter-checkout/index.ts` -- DELETE
-- `src/hooks/useSubscription.ts` -- remove odds/elite checkout and state
-- `src/contexts/PilotUserContext.tsx` -- remove odds/elite access fields
-- `src/hooks/usePilotUser.ts` -- remove odds/elite access fields
-- `src/pages/OddsMovement.tsx` -- remove paywall gate
-- `src/components/suggestions/DailyEliteHitterCard.tsx` -- remove paywall gate
-- `src/components/odds/OddsPaywall.tsx` -- DELETE
-- `src/components/suggestions/EliteHitterPaywall.tsx` -- DELETE
+### Files Changed
+- `src/components/admin/SiteAnalyticsDashboard.tsx` -- NEW
+- `src/pages/Admin.tsx` -- add analytics section entry
