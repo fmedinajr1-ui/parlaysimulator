@@ -55,6 +55,7 @@ import { GodModeWeightsPanel } from '@/components/admin/GodModeWeightsPanel';
 import { SlipImageViewer } from '@/components/admin/SlipImageViewer';
 import { FeatureAccessManager } from '@/components/admin/FeatureAccessManager';
 import { ResearchIntelligencePanel } from '@/components/admin/ResearchIntelligencePanel';
+import { SiteAnalyticsDashboard } from '@/components/admin/SiteAnalyticsDashboard';
 
 interface ParlayData {
   id: string;
@@ -83,7 +84,8 @@ type AdminSection =
   | 'parlays'
   | 'god-mode'
   | 'tracker'
-  | 'research';
+  | 'research'
+  | 'site-analytics';
 
 const sectionConfig = [
   {
@@ -155,6 +157,13 @@ const sectionConfig = [
     description: 'AI research findings and insights',
     icon: Search,
     color: 'text-teal-500'
+  },
+  {
+    id: 'site-analytics' as AdminSection,
+    title: 'Site Analytics',
+    description: 'Visitor stats, page views, and conversions',
+    icon: Eye,
+    color: 'text-indigo-500'
   },
 ];
 
@@ -726,6 +735,9 @@ export default function Admin() {
         );
 
 
+
+      case 'site-analytics':
+        return <SiteAnalyticsDashboard />;
 
       default:
         return null;
