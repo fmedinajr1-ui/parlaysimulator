@@ -33,7 +33,7 @@ interface NotificationData {
   data: Record<string, any>;
 }
 
-function formatMessage(type: NotificationType, data: Record<string, any>): string | { text: string; reply_markup?: object } {
+async function formatMessage(type: NotificationType, data: Record<string, any>): Promise<string | { text: string; reply_markup?: object }> {
   const now = new Date();
   const dateStr = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' });
 
@@ -41,7 +41,7 @@ function formatMessage(type: NotificationType, data: Record<string, any>): strin
     case 'parlays_generated':
       return formatParlaysGenerated(data, dateStr);
     case 'tiered_parlays_generated':
-      return formatTieredParlaysGenerated(data, dateStr);
+      return await formatTieredParlaysGenerated(data, dateStr);
     case 'settlement_complete':
       return formatSettlement(data, dateStr);
     case 'activation_ready':
@@ -97,12 +97,35 @@ function formatParlaysGenerated(data: Record<string, any>, dateStr: string): str
   return msg;
 }
 
-function formatTieredParlaysGenerated(data: Record<string, any>, dateStr: string): string {
+async function formatTieredParlaysGenerated(data: Record<string, any>, dateStr: string): Promise<string> {
   const { totalCount, exploration, validation, execution, poolSize, topPicks } = data;
   
   let msg = `📊 *TIERED PARLAY GENERATION COMPLETE*\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-  msg += `Generated: *${totalCount || 0} parlays* for ${dateStr}\n\n`;
+  
+  // If totalCount is 0, look up actual parlays for today
+  let displayCount = totalCount || 0;
+  let countLabel = 'Generated';
+  if (displayCount === 0) {
+    try {
+      const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+      const sb = createClient(supabaseUrl, supabaseKey);
+      const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+      const { count } = await sb
+        .from('bot_daily_parlays')
+        .select('*', { count: 'exact', head: true })
+        .eq('parlay_date', today);
+      if (count && count > 0) {
+        displayCount = count;
+        countLabel = 'Active';
+      }
+    } catch (e) {
+      console.error('[Telegram] Failed to lookup existing parlays:', e);
+    }
+  }
+  
+  msg += `✅ *${displayCount} parlays ${countLabel.toLowerCase()}* for ${dateStr}\n\n`;
   
   msg += `🔬 Exploration: ${exploration || 0} parlays\n`;
   msg += `✅ Validation: ${validation || 0} parlays\n`;
@@ -121,29 +144,39 @@ function formatTieredParlaysGenerated(data: Record<string, any>, dateStr: string
         steals: 'STL', blocks: 'BLK', pra: 'PRA', goals: 'G',
         shots: 'SOG', saves: 'SVS', aces: 'ACES',
       };
-      if (pick.type === 'team') {
-        const betType = (pick.bet_type || '').toLowerCase();
-        const away = pick.away_team || '';
-        const home = pick.home_team || '';
-        if (betType === 'total') {
-          msg += `• Take ${(pick.side || 'over').toUpperCase()} ${pick.line} (${away} @ ${home})\n`;
-        } else if (betType === 'spread') {
+      const oddsStr = pick.american_odds ? (pick.american_odds > 0 ? `(+${pick.american_odds})` : `(${pick.american_odds})`) : '';
+      
+      // Detect team-based legs: explicit type OR player_name contains " @ "
+      const isTeamLeg = pick.type === 'team' || (pick.player_name && pick.player_name.includes(' @ ') && !pick.type);
+      
+      if (isTeamLeg) {
+        let away = pick.away_team || '';
+        let home = pick.home_team || '';
+        // Parse from player_name if missing
+        if ((!away || !home) && pick.player_name && pick.player_name.includes(' @ ')) {
+          const parts = pick.player_name.split(' @ ');
+          away = parts[0]?.trim() || away;
+          home = parts[1]?.trim() || home;
+        }
+        const betType = (pick.bet_type || pick.prop_type || '').toLowerCase();
+        if (betType.includes('total')) {
+          msg += `📈 Take ${(pick.side || 'over').toUpperCase()} ${pick.line} ${oddsStr}\n`;
+        } else if (betType.includes('spread')) {
           const team = pick.side === 'home' ? home : away;
           const line = pick.line > 0 ? `+${pick.line}` : `${pick.line}`;
-          msg += `• Take ${team} ${line} (${away} @ ${home})\n`;
+          msg += `📊 Take ${team} ${line} ${oddsStr}\n`;
         } else {
           const team = pick.side === 'home' ? home : away;
-          msg += `• Take ${team} ML (${away} @ ${home})\n`;
+          msg += `💎 Take ${team} ML ${oddsStr}\n`;
         }
       } else {
         const side = (pick.side || 'over').toUpperCase();
         const prop = propLabels[pick.prop_type] || (pick.prop_type || '').toUpperCase();
-        msg += `• Take ${pick.player_name || 'Player'} ${side} ${pick.line} ${prop}\n`;
+        msg += `🏀 Take ${pick.player_name || 'Player'} ${side} ${pick.line} ${prop} ${oddsStr}\n`;
       }
       if (pick.composite_score || pick.hit_rate) {
-        msg += `  Score: ${Math.round(pick.composite_score || 0)} | Hit: ${Math.round(pick.hit_rate || 0)}%\n`;
+        msg += `  🎯${Math.round(pick.composite_score || 0)} | 💎${Math.round(pick.hit_rate || 0)}%\n`;
       }
-      // Source labels intentionally omitted for cleaner display
     }
   }
   
@@ -417,7 +450,7 @@ Deno.serve(async (req) => {
     }
 
     // Format message - diagnostic_report returns { text, reply_markup }
-    const formatted = formatMessage(type, data);
+    const formatted = await formatMessage(type, data);
     let message: string;
     let replyMarkup: object | undefined;
     

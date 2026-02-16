@@ -555,7 +555,7 @@ async function handleParlays(chatId: string) {
   });
 
   const tierLabels: Record<string, string> = {
-    exploration: '🔍 Exploration',
+    exploration: '🔬 Exploration',
     validation: '✅ Validation',
     execution: '💰 Execution',
   };
@@ -565,7 +565,7 @@ async function handleParlays(chatId: string) {
     execution: 'Kelly stakes',
   };
 
-  let message = `🎯 *TODAY'S PARLAYS*\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  let message = `🎯🔥 *TODAY'S PARLAYS* 🔥🎯\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
   for (const tier of ['execution', 'validation', 'exploration']) {
     const group = tierGroups[tier];
@@ -578,7 +578,7 @@ async function handleParlays(chatId: string) {
       const p = group[i];
       const outcomeEmoji = p.outcome === 'won' ? '✅' : p.outcome === 'lost' ? '❌' : '⏳';
       const oddsStr = p.expected_odds > 0 ? `+${p.expected_odds}` : `${p.expected_odds}`;
-      message += `  ${i + 1}. (${p.leg_count}-leg) ${oddsStr} ${outcomeEmoji}\n`;
+      message += `  ${i + 1}. 🎲 (${p.leg_count}-leg) ${oddsStr} ${outcomeEmoji}\n`;
       
       const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs || '[]');
       for (const leg of legs) {
@@ -592,7 +592,7 @@ async function handleParlays(chatId: string) {
       const avgScore = legs.reduce((s: number, l: any) => s + (l.composite_score || 0), 0) / (legs.length || 1);
       const avgHit = legs.reduce((s: number, l: any) => s + (l.hit_rate || 0), 0) / (legs.length || 1);
       if (avgScore > 0 || avgHit > 0) {
-        message += `     Avg Score: ${Math.round(avgScore)} | Avg Hit: ${Math.round(avgHit)}%\n`;
+        message += `     🎯${Math.round(avgScore)} | 💎${Math.round(avgHit)}%\n`;
       }
       message += `\n`;
     }
@@ -770,39 +770,43 @@ function formatLegDisplay(leg: any): string {
   
   let actionLine = '';
   let matchupLine = '';
+  let betIcon = '🏀';
   
-  if (leg.type === 'team') {
-    const away = leg.away_team || '';
-    const home = leg.home_team || '';
-    const betType = (leg.bet_type || '').toLowerCase();
+  // Detect team-based legs: explicit type='team' OR player_name contains " @ " with spread/total/h2h prop_type
+  const category = (leg.category || '').toUpperCase();
+  const propTypeLower = (leg.prop_type || '').toLowerCase();
+  const isTeamLeg = leg.type === 'team' || 
+    (!leg.type && (category === 'SPREAD' || category === 'TOTAL' || category === 'MONEYLINE' ||
+     propTypeLower === 'spread' || propTypeLower === 'total' || propTypeLower === 'h2h' || propTypeLower === 'moneyline') &&
+     leg.player_name && leg.player_name.includes(' @ '));
+  
+  if (isTeamLeg) {
+    let away = leg.away_team || '';
+    let home = leg.home_team || '';
+    // Parse from player_name if missing
+    if ((!away || !home) && leg.player_name && leg.player_name.includes(' @ ')) {
+      const parts = leg.player_name.split(' @ ');
+      away = parts[0]?.trim() || away;
+      home = parts[1]?.trim() || home;
+    }
+    const betType = (leg.bet_type || leg.prop_type || '').toLowerCase();
     
-    if (betType === 'total') {
+    if (betType.includes('total') || category === 'TOTAL') {
       const side = (leg.side || 'over').toUpperCase();
-      actionLine = `Take ${side} ${leg.line} ${odds}`;
-    } else if (betType === 'spread') {
+      actionLine = `📈 Take ${side} ${leg.line} ${odds}`;
+      betIcon = '📈';
+    } else if (betType.includes('spread') || category === 'SPREAD') {
       const teamName = leg.side === 'home' ? home : away;
       const line = leg.line > 0 ? `+${leg.line}` : `${leg.line}`;
-      actionLine = `Take ${teamName} ${line} ${odds}`;
-    } else if (betType === 'moneyline' || betType === 'h2h') {
+      actionLine = `📊 Take ${teamName} ${line} ${odds}`;
+      betIcon = '📊';
+    } else if (betType.includes('moneyline') || betType.includes('h2h') || category === 'MONEYLINE') {
       const teamName = leg.side === 'home' ? home : away;
-      actionLine = `Take ${teamName} ML ${odds}`;
+      actionLine = `💎 Take ${teamName} ML ${odds}`;
+      betIcon = '💎';
     } else {
-      // Infer bet_type from prop_type if missing
-      const propType = (leg.prop_type || '').toLowerCase();
-      if (propType.includes('spread')) {
-        const teamName = leg.side === 'home' ? home : away;
-        const line = leg.line > 0 ? `+${leg.line}` : `${leg.line}`;
-        actionLine = `Take ${teamName} ${line} ${odds}`;
-      } else if (propType.includes('total')) {
-        const side = (leg.side || 'over').toUpperCase();
-        actionLine = `Take ${side} ${leg.line} ${odds}`;
-      } else if (propType.includes('h2h') || propType.includes('moneyline')) {
-        const teamName = leg.side === 'home' ? home : away;
-        actionLine = `Take ${teamName} ML ${odds}`;
-      } else {
-        const sideLabel = leg.side === 'home' ? home : leg.side === 'away' ? away : (leg.side || '').toUpperCase();
-        actionLine = `Take ${sideLabel} ${leg.line || ''} ${odds}`;
-      }
+      const sideLabel = leg.side === 'home' ? home : leg.side === 'away' ? away : (leg.side || '').toUpperCase();
+      actionLine = `📊 Take ${sideLabel} ${leg.line || ''} ${odds}`;
     }
     matchupLine = `${away} @ ${home}`;
   } else {
@@ -819,7 +823,7 @@ function formatLegDisplay(leg: any): string {
     const side = (leg.side || 'over').toUpperCase();
     const line = leg.line || leg.selected_line || '';
     const propType = propLabels[leg.prop_type] || (leg.prop_type || '').toUpperCase();
-    actionLine = `Take ${name} ${side} ${line} ${propType} ${odds}`;
+    actionLine = `🏀 Take ${name} ${side} ${line} ${propType} ${odds}`;
     matchupLine = leg.matchup || '';
   }
   
