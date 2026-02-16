@@ -1,5 +1,6 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
+import { useAdminRole } from '@/hooks/useAdminRole';
 import { Bot, RefreshCw, Play, CheckCircle, Settings2, ChevronDown, ChevronUp, Target, Sparkles, Zap } from 'lucide-react';
 import { useBotEngine } from '@/hooks/useBotEngine';
 import { BotActivationCard } from '@/components/bot/BotActivationCard';
@@ -29,6 +30,7 @@ import { AppShell } from '@/components/layout/AppShell';
 
 export default function BotDashboard() {
   const { toast } = useToast();
+  const { isAdmin, isLoading: adminLoading } = useAdminRole();
   const [showAllParlays, setShowAllParlays] = React.useState(false);
   const {
     state,
@@ -87,7 +89,7 @@ export default function BotDashboard() {
     }
   };
 
-  if (state.isLoading) {
+  if (adminLoading || state.isLoading) {
     return (
       <AppShell>
         <div className="space-y-4 pb-32">
@@ -101,6 +103,10 @@ export default function BotDashboard() {
         </div>
       </AppShell>
     );
+  }
+
+  if (!isAdmin) {
+    return <Navigate to="/" replace />;
   }
 
   const totalPnL = (state.simulatedBankroll || 1000) - 1000;
