@@ -887,24 +887,70 @@ function calculateOddsValueScore(americanOdds: number, estimatedHitRate: number)
   return Math.max(0, Math.min(100, score));
 }
 
+// === GAP 2: Per-leg minimum score gate by parlay size ===
+function minScoreByParlaySize(legs: number): number {
+  if (legs <= 3) return 80;
+  if (legs <= 5) return 90;
+  return 95;
+}
+
+// === GAP 3: Leg-count penalty (house edge cost) ===
+function parlayLegCountPenalty(legsCount: number): number {
+  return 1 - 0.03 * Math.max(0, legsCount - 3);
+}
+
+// === GAP 4: Same-game correlation detection ===
+function hasSameGameCorrelation(legs: any[]): boolean {
+  const eventIds = new Set<string>();
+  const matchups = new Set<string>();
+  for (const leg of legs) {
+    // Check event_id overlap
+    const eventId = leg.id?.split('_')[0] || leg.event_id || '';
+    if (eventId && eventIds.has(eventId)) return true;
+    if (eventId) eventIds.add(eventId);
+    // Check home_team + away_team overlap
+    if (leg.home_team && leg.away_team) {
+      const matchupKey = [leg.home_team, leg.away_team].sort().join('__').toLowerCase();
+      if (matchups.has(matchupKey)) return true;
+      matchups.add(matchupKey);
+    }
+  }
+  return false;
+}
+
+// === GAP 5: Parlay-level composite score floor by tier ===
+function parlayScoreFloor(tier: string): number {
+  if (tier === 'exploration') return 75;
+  if (tier === 'validation') return 80;
+  return 85; // execution
+}
+
 function calculateCompositeScore(
   hitRate: number,
   edge: number,
   oddsValueScore: number,
   categoryWeight: number,
   calibratedHitRate?: number,
-  side?: string
+  side?: string,
+  legCount?: number
 ): number {
   const hitRateScore = Math.min(100, hitRate);
   const edgeScore = Math.min(100, Math.max(0, edge * 20 + 50));
   const weightScore = categoryWeight * 66.67;
   
-  // v15: Accuracy-first weighting — hit rate is primary signal
+  // === GAP 1: Dynamic hit-rate weight by parlay size ===
+  // When building 4+ leg parlays, shift weight to emphasize hit rate (50%)
+  const isLongParlay = (legCount ?? 0) >= 4;
+  const hitWeight = isLongParlay ? 0.50 : 0.40;
+  const edgeWeight = 0.20;
+  const oddsWeight = isLongParlay ? 0.15 : 0.20;
+  const catWeight = isLongParlay ? 0.15 : 0.20;
+
   let baseScore = Math.round(
-    (hitRateScore * 0.40) +
-    (edgeScore * 0.20) +
-    (oddsValueScore * 0.20) +
-    (weightScore * 0.20)
+    (hitRateScore * hitWeight) +
+    (edgeScore * edgeWeight) +
+    (oddsValueScore * oddsWeight) +
+    (weightScore * catWeight)
   );
 
   // Hit-rate tier multiplier based on calibrated category performance
@@ -919,7 +965,6 @@ function calculateCompositeScore(
   }
 
   // === FIX 4: Boost player prop UNDERs — 74% historical hit rate ===
-  // UNDER-side player props get a 1.15x multiplier to prioritize them in candidate ranking
   if (side === 'under') {
     baseScore = Math.round(baseScore * 1.15);
   }
@@ -3117,6 +3162,14 @@ async function generateTierParlays(
         }
       }
       
+      // === GAP 2: Per-leg minimum score gate by parlay size ===
+      const legCompositeScore = legData.composite_score || legData.sharp_score || 0;
+      const minScore = minScoreByParlaySize(effectiveMaxLegs);
+      if (legCompositeScore < minScore) {
+        if (tier === 'execution') console.log(`[ScoreGate] Blocked ${legData.player_name || legData.home_team} (score ${legCompositeScore} < ${minScore} for ${effectiveMaxLegs}-leg parlay)`);
+        continue;
+      }
+
       legs.push(legData);
       parlayCategoryCount.set(pick.category, (parlayCategoryCount.get(pick.category) || 0) + 1);
       // Track side count for anti-stacking
@@ -3207,8 +3260,21 @@ async function generateTierParlays(
       
       // Add minimum edge floor for picks with positive signals
       const hasPositiveSignals = legs.some(l => (l.composite_score || 0) > 50 || (l.sharp_score || 0) > 55);
-      const effectiveEdge = hasPositiveSignals ? Math.max(edge, 0.005) : edge;
+      let effectiveEdge = hasPositiveSignals ? Math.max(edge, 0.005) : edge;
       
+      // === GAP 3: Leg-count penalty (house edge cost) ===
+      const penaltyMultiplier = parlayLegCountPenalty(legs.length);
+      if (penaltyMultiplier < 1) {
+        effectiveEdge *= penaltyMultiplier;
+        if (tier === 'execution') console.log(`[LegPenalty] Applied 3% x ${legs.length - 3} penalty to edge (${edge.toFixed(4)} → ${effectiveEdge.toFixed(4)})`);
+      }
+
+      // === GAP 4: Correlation tax (same-game haircut) ===
+      if (hasSameGameCorrelation(legs)) {
+        effectiveEdge *= 0.85;
+        console.log(`[CorrTax] Same-game correlation tax applied (15% haircut) for ${tier}/${profile.strategy}`);
+      }
+
       const sharpe = effectiveEdge / (0.5 * Math.sqrt(legs.length));
 
       // Check tier thresholds
@@ -3217,6 +3283,15 @@ async function generateTierParlays(
       const effectiveMinEdge = (isHybridProfile || isTeamProfile) ? Math.min(config.minEdge, 0.008) : config.minEdge;
       if (effectiveEdge < effectiveMinEdge) { if (tier === 'execution') console.log(`[Bot] ${tier}/${profile.strategy}: failed edge (${effectiveEdge.toFixed(4)} < ${effectiveMinEdge})`); continue; }
       if (sharpe < config.minSharpe) { if (tier === 'execution') console.log(`[Bot] ${tier}/${profile.strategy}: failed sharpe (${sharpe.toFixed(4)} < ${config.minSharpe})`); continue; }
+
+      // === GAP 5: Parlay-level composite score floor ===
+      const avgLegCompositeScore = legs.reduce((sum, l) => sum + (l.composite_score || l.sharp_score || 0), 0) / legs.length;
+      const adjustedAvgScore = avgLegCompositeScore * penaltyMultiplier;
+      const scoreFloor = parlayScoreFloor(tier);
+      if (adjustedAvgScore < scoreFloor) {
+        if (tier === 'execution') console.log(`[ParlayFloor] Rejected ${tier}/${profile.strategy} parlay (avg score ${adjustedAvgScore.toFixed(1)} < ${scoreFloor} floor)`);
+        continue;
+      }
 
       // Calculate stake (flat $20 for all tiers)
       const stake = typeof config.stake === 'number' && config.stake > 0 ? config.stake : 20;
@@ -3376,23 +3451,49 @@ async function generateRoundRobinParlays(
   // Cap at 15 sub-parlays
   const cappedCombos = combos.slice(0, 15);
 
-  const subParlays = cappedCombos.map((combo, idx) => {
+  // === GAP 6: Round Robin EV and Score Gates ===
+  const subParlays: any[] = [];
+  let skippedCombos = 0;
+  for (let idx = 0; idx < cappedCombos.length; idx++) {
+    const combo = cappedCombos[idx];
     const decOdds = combo.reduce((acc, leg) => {
       const odds = leg.american_odds || -110;
       return acc * americanToDecimal(odds);
     }, 1);
     const amOdds = decimalToAmerican(decOdds);
     const prob = 1 / decOdds;
-    const edge = prob * (decOdds - 1) - (1 - prob);
+    let comboEdge = prob * (decOdds - 1) - (1 - prob);
 
-    return {
+    // Apply leg-count penalty (Gap 3) to round robin edge
+    comboEdge *= parlayLegCountPenalty(combo.length);
+
+    // Apply correlation tax if applicable
+    if (hasSameGameCorrelation(combo)) {
+      comboEdge *= 0.85;
+    }
+
+    // EV gate: require 2% minimum edge
+    if (comboEdge < 0.02) {
+      skippedCombos++;
+      continue;
+    }
+
+    // Score gate: require average composite_score >= 82
+    const avgComposite = combo.reduce((sum, l) => sum + (l.composite_score || l.hit_rate || 0), 0) / combo.length;
+    if (avgComposite < 82) {
+      console.log(`[RoundRobin] Skipped combo ${idx + 1} (avg score ${avgComposite.toFixed(1)} < 82)`);
+      skippedCombos++;
+      continue;
+    }
+
+    subParlays.push({
       parlay_date: targetDate,
       legs: combo,
       leg_count: combo.length,
       combined_probability: prob,
       expected_odds: amOdds,
       simulated_win_rate: prob,
-      simulated_edge: edge,
+      simulated_edge: comboEdge,
       simulated_sharpe: 0,
       strategy_name: 'bankroll_doubler',
       strategy_version: 1,
@@ -3401,9 +3502,12 @@ async function generateRoundRobinParlays(
       simulated_stake: STAKE,
       simulated_payout: STAKE * decOdds,
       tier: 'round_robin',
-      selection_rationale: `Round robin combo ${idx + 1}/${cappedCombos.length}: ${combo.length}-leg sub-parlay. ${amOdds > 0 ? '+' : ''}${amOdds} odds.`,
-    };
-  });
+      selection_rationale: `Round robin combo ${idx + 1 - skippedCombos}/${cappedCombos.length - skippedCombos}: ${combo.length}-leg sub-parlay. ${amOdds > 0 ? '+' : ''}${amOdds} odds.`,
+    });
+  }
+  if (skippedCombos > 0) {
+    console.log(`[RoundRobin] Skipped ${skippedCombos}/${cappedCombos.length} combos (edge < 0.02 or avg score < 82)`);
+  }
 
   // 7. Check for existing round robin parlays today (max 1 run per day)
   const { data: existing } = await supabase
