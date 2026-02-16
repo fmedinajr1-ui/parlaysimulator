@@ -215,6 +215,63 @@ export function SubmitLegModal({ open, onOpenChange, poolId, onLegSubmitted }: S
             </>
           )}
 
+          {(betType === 'spread' || betType === 'moneyline') && (
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="line">Line</Label>
+                <Input
+                  id="line"
+                  placeholder={betType === 'spread' ? '-3.5' : ''}
+                  value={line}
+                  onChange={(e) => setLine(e.target.value)}
+                  type="number"
+                  step="0.5"
+                  disabled={betType === 'moneyline'}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="side">Team to Cover</Label>
+                <Select value={side} onValueChange={setSide}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Pick team" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="home">Home</SelectItem>
+                    <SelectItem value="away">Away</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
+
+          {betType === 'total' && (
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="line">Line</Label>
+                <Input
+                  id="line"
+                  placeholder="220.5"
+                  value={line}
+                  onChange={(e) => setLine(e.target.value)}
+                  type="number"
+                  step="0.5"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="side">Side</Label>
+                <Select value={side} onValueChange={setSide}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="over">Over</SelectItem>
+                    <SelectItem value="under">Under</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
+
           <div className="bg-muted rounded-lg p-3 text-sm text-muted-foreground">
             <p>💡 Tip: Be specific with your pick description so other members can verify the outcome.</p>
           </div>
