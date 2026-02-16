@@ -91,9 +91,9 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'] },
       { legs: 4, strategy: 'ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'] },
       { legs: 3, strategy: 'ncaab_mixed', sports: ['basketball_ncaab'], betTypes: ['spread', 'total'] },
-      // NCAA Baseball exploration
-      { legs: 3, strategy: 'baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'] },
-      { legs: 3, strategy: 'baseball_spreads', sports: ['baseball_ncaa'], betTypes: ['spread'] },
+      // NCAA Baseball exploration — PAUSED (needs more data)
+      // { legs: 3, strategy: 'baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'] },
+      // { legs: 3, strategy: 'baseball_spreads', sports: ['baseball_ncaa'], betTypes: ['spread'] },
       // Team props exploration — ML Sniper: hybrid profiles with maxMlLegs: 1
       { legs: 3, strategy: 'team_hybrid', betTypes: ['moneyline', 'spread', 'total'], maxMlLegs: 1 },
       { legs: 3, strategy: 'team_totals', betTypes: ['total'] },
@@ -159,7 +159,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'validated_conservative', sports: ['icehockey_nhl'], minOddsValue: 45, minHitRate: 55 },
       { legs: 3, strategy: 'validated_ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'], minOddsValue: 45, minHitRate: 55 },
       { legs: 3, strategy: 'validated_ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'], minOddsValue: 45, minHitRate: 55 },
-      { legs: 3, strategy: 'validated_baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'], minOddsValue: 45, minHitRate: 55 },
+      // { legs: 3, strategy: 'validated_baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'], minOddsValue: 45, minHitRate: 55 }, // PAUSED
       { legs: 3, strategy: 'validated_balanced', sports: ['basketball_nba'], minOddsValue: 42, minHitRate: 55 },
       { legs: 3, strategy: 'validated_balanced', sports: ['basketball_nba', 'icehockey_nhl'], minOddsValue: 42, minHitRate: 55 },
       { legs: 3, strategy: 'validated_balanced', sports: ['basketball_nba', 'basketball_ncaab'], minOddsValue: 42, minHitRate: 55 },
@@ -217,13 +217,16 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'ncaab_unders', sports: ['basketball_ncaab'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
       { legs: 3, strategy: 'ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'], minHitRate: 55, sortBy: 'composite' },
       { legs: 3, strategy: 'ncaab_mixed', sports: ['basketball_ncaab'], betTypes: ['spread', 'total'], minHitRate: 55, sortBy: 'composite' },
-      // NCAA Baseball execution
-      { legs: 3, strategy: 'baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
+      // NCAA Baseball execution — PAUSED (needs more data)
+      // { legs: 3, strategy: 'baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
       // Whale signal execution
       { legs: 2, strategy: 'whale_signal', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
     ],
   },
 };
+
+// ============= BLOCKED SPORTS (paused until more data collected) =============
+const BLOCKED_SPORTS = ['baseball_ncaa'];
 
 // ============= CONSTANTS =============
 
@@ -3265,7 +3268,7 @@ async function generateTierParlays(
     const isWhaleProfile = profile.strategy.startsWith('whale_signal');
     
     if (isWhaleProfile) {
-      candidatePicks = [...pool.whalePicks].sort((a, b) => b.compositeScore - a.compositeScore);
+      candidatePicks = [...pool.whalePicks].filter(p => !BLOCKED_SPORTS.includes(p.sport)).sort((a, b) => b.compositeScore - a.compositeScore);
       if (candidatePicks.length < profile.legs) {
         console.log(`[Bot] ${tier}/whale_signal: only ${candidatePicks.length} whale picks available, need ${profile.legs}`);
         continue;
@@ -3274,6 +3277,8 @@ async function generateTierParlays(
     } else if (isTeamProfile) {
       candidatePicks = pool.teamPicks.filter(p => {
         if (!profile.betTypes!.includes(p.bet_type)) return false;
+        // Block picks from paused sports
+        if (BLOCKED_SPORTS.includes(p.sport)) return false;
         // Apply sport filter so baseball profiles only get baseball picks, etc.
         if (!sportFilter.includes('all') && !sportFilter.includes(p.sport)) return false;
         // ncaab_unders: only allow UNDER side for totals
@@ -3307,11 +3312,15 @@ async function generateTierParlays(
     } else if (isHybridProfile) {
       // HYBRID: player props first (sorted by hit rate), then team props appended
       const playerPicks = pool.sweetSpots.filter(p => {
+        // Block picks from paused sports
+        if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
         if (sportFilter.includes('all')) return true;
         return sportFilter.includes(p.sport || 'basketball_nba');
       });
       const teamPicks = pool.teamPicks
         .filter(p => {
+          // Block picks from paused sports
+          if (BLOCKED_SPORTS.includes(p.sport)) return false;
           if (sportFilter.includes('all')) return true;
           return sportFilter.includes(p.sport);
         })
@@ -3321,6 +3330,8 @@ async function generateTierParlays(
       console.log(`[Bot] Hybrid pool: ${playerPicks.length} player + ${teamPicks.length} team picks`);
     } else {
       candidatePicks = pool.sweetSpots.filter(p => {
+        // Block picks from paused sports
+        if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
         if (sportFilter.includes('all')) return true;
         return sportFilter.includes(p.sport || 'basketball_nba');
       });
