@@ -4875,8 +4875,25 @@ Deno.serve(async (req) => {
       severity: 'success',
     });
 
-    // 10. Send Telegram notification
+    // 10. Send Telegram notification with top picks preview
     try {
+      // Extract top 5 legs by composite score across all parlays
+      const allLegs: any[] = [];
+      const seenKeys = new Set<string>();
+      for (const p of allParlays) {
+        const legs = Array.isArray(p.legs) ? p.legs : [];
+        for (const leg of legs) {
+          const key = leg.type === 'team'
+            ? `team_${(leg.home_team || '').toLowerCase()}_${leg.bet_type}_${leg.side}`
+            : `${(leg.player_name || '').toLowerCase()}_${leg.prop_type}_${leg.side}`;
+          if (seenKeys.has(key)) continue;
+          seenKeys.add(key);
+          allLegs.push(leg);
+        }
+      }
+      allLegs.sort((a, b) => (b.composite_score || 0) - (a.composite_score || 0));
+      const topPicks = allLegs.slice(0, 5);
+
       await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
         method: 'POST',
         headers: {
@@ -4892,6 +4909,7 @@ Deno.serve(async (req) => {
             execution: results['execution']?.count || 0,
             poolSize: pool.totalPool,
             date: targetDate,
+            topPicks,
           },
         }),
       });
