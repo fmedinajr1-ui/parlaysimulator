@@ -99,6 +99,10 @@ serve(async (req) => {
       
       await runFunction('daily-fatigue-calculator', {});
       await runFunction('track-odds-movement', { sports: ['basketball_nba', 'icehockey_nhl', 'basketball_wnba', 'basketball_ncaab', 'baseball_ncaa'] });
+      
+      // Run simulation engine predictions after odds collection
+      await runFunction('odds-simulation-engine', { mode: 'predict' });
+      
       await runFunction('pp-props-scraper', { sports: ['NBA', 'NHL', 'WNBA', 'ATP', 'WTA'] });
       await runFunction('firecrawl-lineup-scraper', {});
       await runFunction('ncaa-baseball-data-ingestion', { days_back: 1 });
@@ -131,6 +135,9 @@ serve(async (req) => {
       await runFunction('verify-best-bets-outcomes', {});
       await runFunction('auto-settle-parlays', {});
       await runFunction('bot-settle-and-learn', {});
+      
+      // Settle simulation shadow picks
+      await runFunction('odds-simulation-engine', { mode: 'settle' });
     }
 
     // ============ PHASE 5: CALIBRATION & LEARNING ============

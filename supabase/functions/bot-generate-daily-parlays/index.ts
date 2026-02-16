@@ -698,12 +698,35 @@ function calculateTeamCompositeScore(
   defenseMap: Map<string, number>,
   envMap: Map<string, GameEnvData>,
   homeCourtMap: Map<string, HomeCourtData>,
-  ncaabStatsMap?: Map<string, NcaabTeamStats>
+  ncaabStatsMap?: Map<string, NcaabTeamStats>,
+  nhlStatsMap?: Map<string, NhlTeamStats>,
+  baseballStatsMap?: Map<string, BaseballTeamStats>
 ): { score: number; breakdown: Record<string, number> } {
+  const sport = (game.sport || '').toLowerCase();
+
   // Route NCAAB games to specialized scoring
-  const isNCAAB = game.sport?.includes('ncaab') || game.sport?.includes('college');
-  if (isNCAAB && ncaabStatsMap && ncaabStatsMap.size > 0) {
+  if ((sport.includes('ncaab') || sport.includes('college')) && ncaabStatsMap && ncaabStatsMap.size > 0) {
     return calculateNcaabTeamCompositeScore(game, betType, side, ncaabStatsMap);
+  }
+
+  // Route NHL to dedicated scoring
+  if (sport.includes('nhl') || sport.includes('icehockey')) {
+    return calculateNhlTeamCompositeScore(game, betType, side, nhlStatsMap);
+  }
+
+  // Route NCAA Baseball to dedicated scoring
+  if (sport.includes('baseball')) {
+    return calculateBaseballTeamCompositeScore(game, betType, side, baseballStatsMap);
+  }
+
+  // Route Tennis to dedicated scoring
+  if (sport.includes('tennis') || sport.includes('pingpong')) {
+    return calculateTennisCompositeScore(game, betType, side);
+  }
+
+  // Route WNBA to dedicated scoring (adjusted NBA)
+  if (sport.includes('wnba')) {
+    return calculateWnbaTeamCompositeScore(game, betType, side, paceMap, defenseMap, envMap, homeCourtMap);
   }
 
   let score = 50;
@@ -814,6 +837,360 @@ function calculateTeamCompositeScore(
     if (impliedProb > 0.75) {
       score -= 12;
       breakdown.heavy_fav_penalty = -12;
+    }
+  }
+
+  return { score: clampScore(30, 95, score), breakdown };
+}
+
+// ============= NHL TEAM STATS INTERFACE =============
+interface NhlTeamStats {
+  team_abbrev: string;
+  team_name: string;
+  shots_for_per_game: number;
+  shots_against_per_game: number;
+  shot_differential: number;
+  goals_for_per_game: number;
+  goals_against_per_game: number;
+  games_played: number;
+  wins: number;
+  losses: number;
+  save_pct: number;
+  win_pct: number;
+}
+
+// ============= BASEBALL TEAM STATS INTERFACE =============
+interface BaseballTeamStats {
+  team_name: string;
+  national_rank: number | null;
+  runs_per_game: number | null;
+  runs_allowed_per_game: number | null;
+  era: number | null;
+  batting_avg: number | null;
+  home_record: string | null;
+  away_record: string | null;
+}
+
+// ============= NHL SCORING ENGINE =============
+function calculateNhlTeamCompositeScore(
+  game: TeamProp,
+  betType: string,
+  side: string,
+  nhlStatsMap?: Map<string, NhlTeamStats>
+): { score: number; breakdown: Record<string, number> } {
+  let score = 50;
+  const breakdown: Record<string, number> = { base: 50 };
+
+  if (!nhlStatsMap || nhlStatsMap.size === 0) {
+    breakdown.no_data = -10;
+    return { score: 40, breakdown };
+  }
+
+  const resolveNhl = (name: string): NhlTeamStats | undefined => {
+    const direct = nhlStatsMap.get(name);
+    if (direct) return direct;
+    const lower = name.toLowerCase();
+    for (const [k, v] of nhlStatsMap) {
+      if (k.toLowerCase().includes(lower) || lower.includes(k.toLowerCase())) return v;
+    }
+    return undefined;
+  };
+
+  const homeStats = resolveNhl(game.home_team);
+  const awayStats = resolveNhl(game.away_team);
+
+  if (!homeStats || !awayStats) {
+    breakdown.missing_team = -10;
+    return { score: 40, breakdown };
+  }
+
+  if (betType === 'total') {
+    // Save percentage: higher = fewer goals = UNDER (25% weight)
+    const avgSavePct = (homeStats.save_pct + awayStats.save_pct) / 2;
+    if (side === 'under' && avgSavePct > 0.910) {
+      const saveBonus = Math.round((avgSavePct - 0.900) * 250);
+      score += clampScore(0, 15, saveBonus);
+      breakdown.save_pct = clampScore(0, 15, saveBonus);
+    } else if (side === 'over' && avgSavePct < 0.900) {
+      const saveBonus = Math.round((0.910 - avgSavePct) * 200);
+      score += clampScore(0, 12, saveBonus);
+      breakdown.low_save_pct = clampScore(0, 12, saveBonus);
+    }
+
+    // Goals-against average (20% weight)
+    const avgGAA = (homeStats.goals_against_per_game + awayStats.goals_against_per_game) / 2;
+    if (side === 'under' && avgGAA < 2.8) {
+      const gaaBonus = Math.round((3.0 - avgGAA) * 30);
+      score += clampScore(0, 12, gaaBonus);
+      breakdown.low_gaa = clampScore(0, 12, gaaBonus);
+    } else if (side === 'over' && avgGAA > 3.2) {
+      const gaaBonus = Math.round((avgGAA - 3.0) * 25);
+      score += clampScore(0, 10, gaaBonus);
+      breakdown.high_gaa = clampScore(0, 10, gaaBonus);
+    }
+
+    // Shots on goal for OVER (15% weight)
+    const avgShots = (homeStats.shots_for_per_game + awayStats.shots_for_per_game) / 2;
+    if (side === 'over' && avgShots > 32) {
+      const shotBonus = Math.round((avgShots - 30) * 3);
+      score += clampScore(0, 10, shotBonus);
+      breakdown.high_shots = clampScore(0, 10, shotBonus);
+    }
+
+    // Shot suppression for UNDER (15% weight)
+    const avgShotsAgainst = (homeStats.shots_against_per_game + awayStats.shots_against_per_game) / 2;
+    if (side === 'under' && avgShotsAgainst < 28) {
+      const suppressBonus = Math.round((30 - avgShotsAgainst) * 3);
+      score += clampScore(0, 10, suppressBonus);
+      breakdown.shot_suppression = clampScore(0, 10, suppressBonus);
+    }
+  }
+
+  if (betType === 'spread' || betType === 'moneyline') {
+    // Shot differential (strongest predictor for game winner)
+    const homeShotDiff = homeStats.shot_differential;
+    const awayShotDiff = awayStats.shot_differential;
+    const diffEdge = side === 'home' ? homeShotDiff - awayShotDiff : awayShotDiff - homeShotDiff;
+    const shotBonus = clampScore(-12, 12, diffEdge * 1.5);
+    score += shotBonus;
+    breakdown.shot_differential = shotBonus;
+
+    // Save percentage edge
+    const sideSave = side === 'home' ? homeStats.save_pct : awayStats.save_pct;
+    const oppSave = side === 'home' ? awayStats.save_pct : homeStats.save_pct;
+    if (sideSave > oppSave + 0.01) {
+      const saveEdge = Math.round((sideSave - oppSave) * 500);
+      score += clampScore(0, 8, saveEdge);
+      breakdown.save_edge = clampScore(0, 8, saveEdge);
+    }
+
+    // Win % edge
+    const sideWinPct = side === 'home' ? homeStats.win_pct : awayStats.win_pct;
+    const oppWinPct = side === 'home' ? awayStats.win_pct : homeStats.win_pct;
+    const winEdge = sideWinPct - oppWinPct;
+    if (winEdge > 0.05) {
+      const winBonus = Math.round(winEdge * 60);
+      score += clampScore(0, 8, winBonus);
+      breakdown.win_pct_edge = clampScore(0, 8, winBonus);
+    }
+
+    // Home ice advantage (~2 pts, weaker than NBA)
+    if (side === 'home') {
+      score += 3;
+      breakdown.home_ice = 3;
+    }
+  }
+
+  // Penalize heavy ML favorites
+  if (betType === 'moneyline') {
+    const odds = side === 'home' ? (game.home_odds || -110) : (game.away_odds || -110);
+    const impliedProb = americanToImplied(odds);
+    if (impliedProb > 0.70) {
+      score -= 10;
+      breakdown.heavy_fav_penalty = -10;
+    }
+  }
+
+  return { score: clampScore(30, 95, score), breakdown };
+}
+
+// ============= NCAA BASEBALL SCORING ENGINE =============
+function calculateBaseballTeamCompositeScore(
+  game: TeamProp,
+  betType: string,
+  side: string,
+  baseballStatsMap?: Map<string, BaseballTeamStats>
+): { score: number; breakdown: Record<string, number> } {
+  let score = 50;
+  const breakdown: Record<string, number> = { base: 50 };
+
+  if (!baseballStatsMap || baseballStatsMap.size === 0) {
+    breakdown.no_data = -10;
+    return { score: 40, breakdown };
+  }
+
+  const resolveBaseball = (name: string): BaseballTeamStats | undefined => {
+    const direct = baseballStatsMap.get(name);
+    if (direct) return direct;
+    const lower = name.toLowerCase();
+    for (const [k, v] of baseballStatsMap) {
+      if (k.toLowerCase().includes(lower) || lower.includes(k.toLowerCase())) return v;
+    }
+    return undefined;
+  };
+
+  const homeStats = resolveBaseball(game.home_team);
+  const awayStats = resolveBaseball(game.away_team);
+
+  if (!homeStats || !awayStats) {
+    breakdown.missing_team = -10;
+    return { score: 40, breakdown };
+  }
+
+  if (betType === 'total') {
+    // ERA matchup (30% weight) — lower combined ERA = fewer runs = UNDER
+    const homeERA = homeStats.era || 4.5;
+    const awayERA = awayStats.era || 4.5;
+    const avgERA = (homeERA + awayERA) / 2;
+    if (side === 'under' && avgERA < 3.5) {
+      const eraBonus = Math.round((4.0 - avgERA) * 15);
+      score += clampScore(0, 15, eraBonus);
+      breakdown.low_era = clampScore(0, 15, eraBonus);
+    } else if (side === 'over' && avgERA > 5.0) {
+      const eraBonus = Math.round((avgERA - 4.0) * 10);
+      score += clampScore(0, 12, eraBonus);
+      breakdown.high_era = clampScore(0, 12, eraBonus);
+    }
+
+    // Run differential (20% weight)
+    const homeRPG = homeStats.runs_per_game || 5;
+    const awayRPG = awayStats.runs_per_game || 5;
+    const combinedRPG = homeRPG + awayRPG;
+    if (side === 'over' && combinedRPG > 12) {
+      const runBonus = Math.round((combinedRPG - 10) * 3);
+      score += clampScore(0, 10, runBonus);
+      breakdown.high_scoring = clampScore(0, 10, runBonus);
+    } else if (side === 'under' && combinedRPG < 8) {
+      const runBonus = Math.round((10 - combinedRPG) * 3);
+      score += clampScore(0, 10, runBonus);
+      breakdown.low_scoring = clampScore(0, 10, runBonus);
+    }
+
+    // Batting average (15% weight)
+    const homeBA = homeStats.batting_avg || 0.260;
+    const awayBA = awayStats.batting_avg || 0.260;
+    const avgBA = (homeBA + awayBA) / 2;
+    if (side === 'over' && avgBA > 0.280) {
+      const baBonus = Math.round((avgBA - 0.260) * 200);
+      score += clampScore(0, 8, baBonus);
+      breakdown.high_batting = clampScore(0, 8, baBonus);
+    } else if (side === 'under' && avgBA < 0.240) {
+      const baBonus = Math.round((0.260 - avgBA) * 200);
+      score += clampScore(0, 8, baBonus);
+      breakdown.low_batting = clampScore(0, 8, baBonus);
+    }
+  }
+
+  if (betType === 'spread' || betType === 'moneyline') {
+    // ERA differential (30% weight) — pitcher matchup is king
+    const sideERA = side === 'home' ? (homeStats.era || 4.5) : (awayStats.era || 4.5);
+    const oppERA = side === 'home' ? (awayStats.era || 4.5) : (homeStats.era || 4.5);
+    // Lower ERA is better — so opponent having higher ERA is good for us
+    const eraDiff = oppERA - sideERA;
+    const eraBonus = clampScore(-15, 15, eraDiff * 5);
+    score += eraBonus;
+    breakdown.era_edge = eraBonus;
+
+    // Run differential (20% weight)
+    const sideRPG = side === 'home' ? (homeStats.runs_per_game || 5) : (awayStats.runs_per_game || 5);
+    const sideRA = side === 'home' ? (homeStats.runs_allowed_per_game || 5) : (awayStats.runs_allowed_per_game || 5);
+    const runDiff = sideRPG - sideRA;
+    if (runDiff > 1) {
+      const runBonus = Math.round(runDiff * 4);
+      score += clampScore(0, 10, runBonus);
+      breakdown.run_diff = clampScore(0, 10, runBonus);
+    }
+
+    // Home field advantage (15% weight) — massive in college baseball
+    if (side === 'home') {
+      score += 6;
+      breakdown.home_field = 6;
+      // Extra boost for strong home records
+      if (homeStats.home_record) {
+        const hr = parseRecord(homeStats.home_record);
+        if (hr.rate > 0.65 && hr.wins + hr.losses >= 8) {
+          const hrBonus = Math.round((hr.rate - 0.55) * 30);
+          score += clampScore(0, 8, hrBonus);
+          breakdown.strong_home = clampScore(0, 8, hrBonus);
+        }
+      }
+    }
+
+    // National rank (10% weight)
+    const sideRank = side === 'home' ? (homeStats.national_rank || 999) : (awayStats.national_rank || 999);
+    const oppRank = side === 'home' ? (awayStats.national_rank || 999) : (homeStats.national_rank || 999);
+    if (sideRank <= 25 && oppRank > 50) {
+      score += 8;
+      breakdown.rank_mismatch = 8;
+    } else if (sideRank <= 50 && oppRank > 100) {
+      score += 5;
+      breakdown.rank_edge = 5;
+    }
+  }
+
+  // Penalize heavy ML favorites
+  if (betType === 'moneyline') {
+    const odds = side === 'home' ? (game.home_odds || -110) : (game.away_odds || -110);
+    const impliedProb = americanToImplied(odds);
+    if (impliedProb > 0.75) {
+      score -= 10;
+      breakdown.heavy_fav_penalty = -10;
+    }
+  }
+
+  return { score: clampScore(30, 95, score), breakdown };
+}
+
+// ============= TENNIS SCORING ENGINE =============
+function calculateTennisCompositeScore(
+  game: TeamProp,
+  betType: string,
+  side: string
+): { score: number; breakdown: Record<string, number> } {
+  let score = 50;
+  const breakdown: Record<string, number> = { base: 50 };
+
+  // Tennis has limited structured data — use odds-implied analysis
+  const sideOdds = side === 'home' ? (game.home_odds || -110) : (game.away_odds || -110);
+  const oppOdds = side === 'home' ? (game.away_odds || -110) : (game.home_odds || -110);
+  const sideProb = americanToImplied(sideOdds);
+  const oppProb = americanToImplied(oppOdds);
+
+  if (betType === 'moneyline' || betType === 'h2h') {
+    // Ranking differential via implied probability gap
+    const probGap = sideProb - oppProb;
+    if (probGap > 0.15) {
+      const rankBonus = Math.round(probGap * 40);
+      score += clampScore(0, 12, rankBonus);
+      breakdown.ranking_edge = clampScore(0, 12, rankBonus);
+    } else if (probGap < -0.15) {
+      score -= 8;
+      breakdown.underdog_penalty = -8;
+    }
+
+    // Penalize heavy favorites (> -300)
+    if (sideProb > 0.75) {
+      score -= 12;
+      breakdown.heavy_fav_penalty = -12;
+    }
+
+    // Plus money value
+    if (sideOdds > 0 && sideProb > 0.40) {
+      score += 6;
+      breakdown.plus_money_value = 6;
+    }
+  }
+
+  if (betType === 'total' || betType === 'spread') {
+    // Sets totals: use line proximity to common outcomes (2 or 3 sets)
+    const line = game.line || 0;
+    if (betType === 'total') {
+      // Most matches are 2 or 3 sets; totals around 22-23 games are common
+      if (side === 'under' && line > 23) {
+        score += 6;
+        breakdown.high_total_under = 6;
+      } else if (side === 'over' && line < 21) {
+        score += 6;
+        breakdown.low_total_over = 6;
+      }
+    }
+    if (betType === 'spread') {
+      // Large spreads in tennis (> 4.5 games) favor favorites
+      const absLine = Math.abs(line);
+      if (absLine > 5) {
+        score -= 5;
+        breakdown.large_spread_risk = -5;
+      }
     }
   }
 
@@ -1977,12 +2354,14 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   console.log(`[Bot] Fetched ${(rawWhalePicks || []).length} whale picks (sharp_score >= 45)`);
 
   // 4. Fetch team intelligence data in parallel (including NCAAB stats)
-  const [paceResult, defenseResult, envResult, homeCourtResult, ncaabStatsResult] = await Promise.all([
+  const [paceResult, defenseResult, envResult, homeCourtResult, ncaabStatsResult, nhlStatsResult, baseballStatsResult] = await Promise.all([
     supabase.from('nba_team_pace_projections').select('team_abbrev, team_name, pace_rating, pace_rank, tempo_factor'),
     supabase.from('team_defense_rankings').select('team_abbreviation, team_name, overall_rank').eq('is_current', true),
     supabase.from('game_environment').select('home_team_abbrev, away_team_abbrev, vegas_total, vegas_spread, shootout_factor, grind_factor, blowout_probability').eq('game_date', gameDate),
     supabase.from('home_court_advantage_stats').select('team_name, home_win_rate, home_cover_rate, home_over_rate').eq('sport', 'basketball_nba'),
     supabase.from('ncaab_team_stats').select('team_name, conference, kenpom_rank, adj_offense, adj_defense, adj_tempo, home_record, away_record, ats_record, over_under_record'),
+    supabase.from('nhl_team_pace_stats').select('team_abbrev, team_name, shots_for_per_game, shots_against_per_game, shot_differential, goals_for_per_game, goals_against_per_game, games_played, wins, losses, save_pct, win_pct'),
+    supabase.from('ncaa_baseball_team_stats').select('team_name, national_rank, runs_per_game, runs_allowed_per_game, era, batting_avg, home_record, away_record'),
   ]);
 
   // Build lookup maps
@@ -2021,14 +2400,24 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     ncaabStatsMap.set(t.team_name, t as NcaabTeamStats);
   });
 
+  // Build NHL team stats map
+  const nhlStatsMap = new Map<string, NhlTeamStats>();
+  (nhlStatsResult.data || []).forEach((t: any) => {
+    nhlStatsMap.set(t.team_abbrev, t as NhlTeamStats);
+    if (t.team_name) nhlStatsMap.set(t.team_name, t as NhlTeamStats);
+  });
+
+  // Build Baseball team stats map
+  const baseballStatsMap = new Map<string, BaseballTeamStats>();
+  (baseballStatsResult.data || []).forEach((t: any) => {
+    baseballStatsMap.set(t.team_name, t as BaseballTeamStats);
+  });
+
   // Build NCAA Baseball teams set for quality gate
   const baseballTeamsSet = new Set<string>();
-  {
-    const { data: baseballTeams } = await supabase
-      .from('ncaa_baseball_team_stats')
-      .select('team_name');
-    (baseballTeams || []).forEach((t: any) => baseballTeamsSet.add(t.team_name));
-  }
+  (baseballStatsResult.data || []).forEach((t: any) => baseballTeamsSet.add(t.team_name));
+
+  console.log(`[Bot] Intelligence data: ${paceMap.size} pace, ${defenseMap.size} defense, ${envMap.size} env, ${homeCourtMap.size} home court, ${ncaabStatsMap.size} NCAAB teams, ${nhlStatsMap.size} NHL teams, ${baseballStatsMap.size} baseball teams`);
 
   console.log(`[Bot] Intelligence data: ${paceMap.size} pace, ${defenseMap.size} defense, ${envMap.size} env, ${homeCourtMap.size} home court, ${ncaabStatsMap.size} NCAAB teams, ${baseballTeamsSet.size} baseball teams`);
 
@@ -2324,7 +2713,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
 
       if (game.home_odds) {
         const plusBonus = isPlusMoney(game.home_odds) ? 5 : 0;
-        const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'spread', 'home', paceMap, defenseMap, envMap, homeCourtMap, ncaabStatsMap);
+        const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'spread', 'home', paceMap, defenseMap, envMap, homeCourtMap, ncaabStatsMap, nhlStatsMap, baseballStatsMap);
         picks.push({
           id: `${game.id}_spread_home`,
           type: 'team', sport: game.sport, home_team: game.home_team, away_team: game.away_team,
@@ -2338,7 +2727,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       }
       if (game.away_odds) {
         const plusBonus = isPlusMoney(game.away_odds) ? 5 : 0;
-        const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'spread', 'away', paceMap, defenseMap, envMap, homeCourtMap, ncaabStatsMap);
+        const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'spread', 'away', paceMap, defenseMap, envMap, homeCourtMap, ncaabStatsMap, nhlStatsMap, baseballStatsMap);
         picks.push({
           id: `${game.id}_spread_away`,
           type: 'team', sport: game.sport, home_team: game.home_team, away_team: game.away_team,
@@ -2354,7 +2743,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     
     // Total picks
     if (game.bet_type === 'total' && game.over_odds && game.under_odds) {
-      const { score: overScore, breakdown: overBreakdown } = calculateTeamCompositeScore(gameForScoring, 'total', 'over', paceMap, defenseMap, envMap, homeCourtMap, ncaabStatsMap);
+      const { score: overScore, breakdown: overBreakdown } = calculateTeamCompositeScore(gameForScoring, 'total', 'over', paceMap, defenseMap, envMap, homeCourtMap, ncaabStatsMap, nhlStatsMap, baseballStatsMap);
       const overPlusBonus = isPlusMoney(game.over_odds) ? 5 : 0;
       
       // Weather/pitching research bias adjustment for totals
@@ -2433,7 +2822,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
         confidence_score: overScore / 100,
         score_breakdown: overBreakdown,
       });
-      const { score: underScore, breakdown: underBreakdown } = calculateTeamCompositeScore(gameForScoring, 'total', 'under', paceMap, defenseMap, envMap, homeCourtMap, ncaabStatsMap);
+      const { score: underScore, breakdown: underBreakdown } = calculateTeamCompositeScore(gameForScoring, 'total', 'under', paceMap, defenseMap, envMap, homeCourtMap, ncaabStatsMap, nhlStatsMap, baseballStatsMap);
       const underPlusBonus = isPlusMoney(game.under_odds) ? 5 : 0;
       picks.push({
         id: `${game.id}_total_under`,
@@ -2451,7 +2840,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     if (game.bet_type === 'h2h') {
       if (game.home_odds) {
         const plusBonus = isPlusMoney(game.home_odds) ? 5 : 0;
-        const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'moneyline', 'home', paceMap, defenseMap, envMap, homeCourtMap, ncaabStatsMap);
+        const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'moneyline', 'home', paceMap, defenseMap, envMap, homeCourtMap, ncaabStatsMap, nhlStatsMap, baseballStatsMap);
         picks.push({
           id: `${game.id}_ml_home`,
           type: 'team', sport: game.sport, home_team: game.home_team, away_team: game.away_team,
@@ -2465,7 +2854,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       }
       if (game.away_odds) {
         const plusBonus = isPlusMoney(game.away_odds) ? 5 : 0;
-        const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'moneyline', 'away', paceMap, defenseMap, envMap, homeCourtMap, ncaabStatsMap);
+        const { score, breakdown } = calculateTeamCompositeScore(gameForScoring, 'moneyline', 'away', paceMap, defenseMap, envMap, homeCourtMap, ncaabStatsMap, nhlStatsMap, baseballStatsMap);
         picks.push({
           id: `${game.id}_ml_away`,
           type: 'team', sport: game.sport, home_team: game.home_team, away_team: game.away_team,
