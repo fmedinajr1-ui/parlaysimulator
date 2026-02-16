@@ -12,9 +12,6 @@ const logStep = (step: string, details?: any) => {
   console.log(`[CHECK-SUBSCRIPTION] ${step}${detailsStr}`);
 };
 
-// Subscription price IDs
-const ODDS_TRACKER_PRICE_ID = "price_1Sb7Tk9D6r1PTCBBmJ3jYBxo";
-const ELITE_HITTER_PRICE_ID = "price_1SiyaG9D6r1PTCBBC4zJBRE5";
 const BOT_PRO_PRICE_ID = "price_1T1HU99D6r1PTCBBLQaWi80Z";
 
 serve(async (req) => {
@@ -36,7 +33,6 @@ serve(async (req) => {
 
     const authHeader = req.headers.get("Authorization");
     
-    // If no auth header, return restricted status (pilot mode)
     if (!authHeader) {
       logStep("No auth header, returning restricted pilot status");
       return new Response(JSON.stringify({
@@ -48,7 +44,6 @@ serve(async (req) => {
         freeComparesRemaining: 3,
         paidScanBalance: 0,
         scansRemaining: 5,
-        hasOddsAccess: false,
         phoneVerified: false,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -59,7 +54,6 @@ serve(async (req) => {
     const token = authHeader.replace("Bearer ", "");
     const { data: userData, error: userError } = await supabaseClient.auth.getUser(token);
     
-    // If auth error, return restricted status (pilot mode)
     if (userError || !userData.user?.email) {
       logStep("Auth error or no user email, returning restricted pilot status", { error: userError?.message });
       return new Response(JSON.stringify({
@@ -71,7 +65,6 @@ serve(async (req) => {
         freeComparesRemaining: 3,
         paidScanBalance: 0,
         scansRemaining: 5,
-        hasOddsAccess: false,
         phoneVerified: false,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -90,7 +83,6 @@ serve(async (req) => {
       .maybeSingle();
     
     const phoneVerified = profileData?.phone_verified ?? false;
-    logStep("Phone verification status", { phoneVerified });
 
     // Check user roles (admin, full_access, elite_access, etc.)
     const { data: rolesData } = await supabaseClient
@@ -114,25 +106,12 @@ serve(async (req) => {
         isPilotUser: false,
         canScan: true,
         scansRemaining: -1,
-        hasOddsAccess: true,
-        hasEliteAccess: true,
-        phoneVerified: true, // Admins bypass phone verification
+        phoneVerified: true,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,
       });
     }
-
-    // Check if user is in approved_odds_users table
-    const { data: approvedUser } = await supabaseClient
-      .from('approved_odds_users')
-      .select('is_active')
-      .eq('email', (user.email || '').toLowerCase())
-      .eq('is_active', true)
-      .maybeSingle();
-
-    const isApprovedOddsUser = !!approvedUser;
-    logStep("Approved odds user check", { isApprovedOddsUser });
 
     // Check Stripe subscription
     const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
@@ -140,8 +119,6 @@ serve(async (req) => {
 
     let isSubscribed = false;
     let subscriptionEnd = null;
-    let hasOddsSubscription = false;
-    let hasEliteHitterSubscription = false;
     let hasBotProSubscription = false;
 
     if (customers.data.length > 0) {
@@ -159,23 +136,9 @@ serve(async (req) => {
         subscriptionEnd = new Date(subscriptions.data[0].current_period_end * 1000).toISOString();
         logStep("Active subscription found", { subscriptionEnd });
         
-        // Check if user has Odds Tracker Pro subscription
-        hasOddsSubscription = subscriptions.data.some((sub: any) => 
-          sub.items.data.some((item: any) => item.price.id === ODDS_TRACKER_PRICE_ID)
-        );
-        logStep("Odds Tracker subscription check", { hasOddsSubscription });
-        
-        // Check if user has Elite Hitter Pro subscription
-        hasEliteHitterSubscription = subscriptions.data.some((sub: any) => 
-          sub.items.data.some((item: any) => item.price.id === ELITE_HITTER_PRICE_ID)
-        );
-        logStep("Elite Hitter subscription check", { hasEliteHitterSubscription });
-        
-        // Check if user has Bot Pro subscription
         hasBotProSubscription = subscriptions.data.some((sub: any) => 
           sub.items.data.some((item: any) => item.price.id === BOT_PRO_PRICE_ID)
         );
-        logStep("Bot Pro subscription check", { hasBotProSubscription });
         
         // Update local subscription record
         await supabaseClient.from('subscriptions').upsert({
@@ -189,16 +152,7 @@ serve(async (req) => {
       }
     }
 
-    // Determine odds access: approved user OR has odds subscription
-    const hasOddsAccess = isApprovedOddsUser || hasOddsSubscription;
-    
-    // Determine elite hitter access: subscription OR elite_access role OR admin
-    const hasEliteHitterAccess = hasEliteHitterSubscription || hasEliteAccess;
-    
-    // Determine bot pro access
-    const hasBotAccess = hasBotProSubscription || isAdmin;
-
-    // If subscribed, unlimited access
+    // If subscribed, full access to everything
     if (isSubscribed) {
       return new Response(JSON.stringify({
         subscribed: true,
@@ -207,10 +161,7 @@ serve(async (req) => {
         canScan: true,
         scansRemaining: -1,
         subscriptionEnd,
-        hasOddsAccess,
-        hasEliteAccess,
-        hasEliteHitterAccess,
-        hasBotAccess,
+        hasBotAccess: hasBotProSubscription || isAdmin,
         phoneVerified,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -227,9 +178,6 @@ serve(async (req) => {
         isPilotUser: false,
         canScan: true,
         scansRemaining: -1,
-        hasOddsAccess,
-        hasEliteAccess,
-        hasEliteHitterAccess: true, // full_access grants elite hitter
         phoneVerified,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -237,19 +185,15 @@ serve(async (req) => {
       });
     }
 
-    // ========================================
     // DEFAULT: ALL USERS ARE RESTRICTED (PILOT MODE)
-    // ========================================
     logStep("User is restricted (pilot mode by default)");
 
-    // Check or create pilot quota for user
     let { data: quotaData } = await supabaseClient
       .from('pilot_user_quotas')
       .select('*')
       .eq('user_id', user.id)
       .maybeSingle();
 
-    // Auto-create quota if doesn't exist
     if (!quotaData) {
       logStep("Creating pilot quota for new user");
       const { data: newQuota, error: createError } = await supabaseClient
@@ -273,30 +217,17 @@ serve(async (req) => {
     if (quotaData) {
       const totalScansAvailable = quotaData.free_scans_remaining + quotaData.paid_scan_balance;
       const canScan = totalScansAvailable > 0;
-      
-      // Users who purchased scans get full feature access
       const hasPaidAccess = quotaData.paid_scan_balance > 0;
-
-      logStep("Pilot user quota status", { 
-        freeScansRemaining: quotaData.free_scans_remaining,
-        freeComparesRemaining: quotaData.free_compares_remaining,
-        paidScanBalance: quotaData.paid_scan_balance,
-        hasPaidAccess,
-        canScan 
-      });
 
       return new Response(JSON.stringify({
         subscribed: false,
         isAdmin: false,
-        isPilotUser: !hasPaidAccess, // Unlock features if they have paid scans
+        isPilotUser: !hasPaidAccess,
         canScan,
         scansRemaining: totalScansAvailable,
         freeScansRemaining: quotaData.free_scans_remaining,
         freeComparesRemaining: quotaData.free_compares_remaining,
         paidScanBalance: quotaData.paid_scan_balance,
-        hasOddsAccess: false,
-        hasEliteAccess,
-        hasEliteHitterAccess: hasEliteAccess, // Elite access role grants hitter
         phoneVerified,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -304,7 +235,7 @@ serve(async (req) => {
       });
     }
 
-    // Fallback - shouldn't reach here but return restricted status
+    // Fallback
     return new Response(JSON.stringify({
       subscribed: false,
       isAdmin: false,
@@ -314,7 +245,6 @@ serve(async (req) => {
       freeComparesRemaining: 3,
       paidScanBalance: 0,
       scansRemaining: 5,
-      hasOddsAccess: false,
       phoneVerified: false,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

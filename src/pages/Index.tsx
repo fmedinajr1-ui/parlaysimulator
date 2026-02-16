@@ -37,7 +37,7 @@ function QuickAction({ to, icon: Icon, label, iconClass }: {
 
 const Index = () => {
   const { lightTap, success } = useHapticFeedback();
-  const { isPilotUser, isAdmin, isSubscribed, isLoading, hasEliteAccess } = usePilotUser();
+  const { isPilotUser, isAdmin, isSubscribed, isLoading } = usePilotUser();
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   

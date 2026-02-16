@@ -4,7 +4,6 @@ import { OddsMovementCard } from "@/components/results/OddsMovementCard";
 import { LineHistoryChart } from "@/components/odds/LineHistoryChart";
 import { PushNotificationToggle } from "@/components/odds/PushNotificationToggle";
 
-import { OddsPaywall } from "@/components/odds/OddsPaywall";
 import { MobileHeader } from "@/components/layout/MobileHeader";
 import { PullToRefreshContainer, PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
@@ -56,7 +55,7 @@ const OddsMovement = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { user } = useAuth();
-  const { hasOddsAccess, isLoading: subLoading, isAdmin, checkSubscription } = useSubscription();
+  const { isLoading: subLoading, isAdmin, checkSubscription } = useSubscription();
   const { toast } = useToast();
   const { lightTap, success } = useHapticFeedback();
   
@@ -120,10 +119,8 @@ const OddsMovement = () => {
   }, [selectedSport]);
 
   useEffect(() => {
-    if (hasOddsAccess || isAdmin) {
-      fetchStats();
-    }
-  }, [selectedSport, hasOddsAccess, isAdmin, fetchStats]);
+    fetchStats();
+  }, [selectedSport, fetchStats]);
 
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
@@ -151,20 +148,6 @@ const OddsMovement = () => {
     return (
       <div className="min-h-dvh bg-background flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
-  }
-
-  // Show paywall if user doesn't have access
-  if (!hasOddsAccess && !isAdmin) {
-    return (
-      <div className="min-h-dvh bg-background pb-nav-safe">
-        <MobileHeader 
-          title="ODDS TRACKER" 
-          subtitle="Premium Feature"
-          showBack
-        />
-        <OddsPaywall onSubscribe={() => checkSubscription()} />
       </div>
     );
   }
