@@ -92,7 +92,7 @@ function formatParlaysGenerated(data: Record<string, any>, dateStr: string): str
     msg += `📈 Odds Range: ${oddsRange.min} to ${oddsRange.max}\n`;
   }
   
-  msg += `\n[View Dashboard](https://parlaysimulator.lovable.app/)`;
+  // Dashboard link removed - all info delivered in Telegram
   
   return msg;
 }
@@ -112,7 +112,7 @@ function formatTieredParlaysGenerated(data: Record<string, any>, dateStr: string
     msg += `📍 Pool Size: ${poolSize} picks\n`;
   }
   
-  msg += `\n[View Dashboard](https://parlaysimulator.lovable.app/)`;
+  // Dashboard link removed - all info delivered in Telegram
   
   return msg;
 }
