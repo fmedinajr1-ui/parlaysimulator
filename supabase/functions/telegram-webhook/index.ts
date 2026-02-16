@@ -583,9 +583,12 @@ async function handleParlays(chatId: string) {
       const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs || '[]');
       for (const leg of legs) {
         const legText = formatLegDisplay(leg);
-        // Only show the action line (first line), indented
-        const lines = legText.split('\n');
-        message += `     ${lines[0]}\n`;
+        const legLines = legText.split('\n');
+        // Show action line + matchup line if present
+        message += `     ${legLines[0]}\n`;
+        if (legLines.length > 1 && legLines[1].trim()) {
+          message += `     ${legLines[1]}\n`;
+        }
       }
       
       // Avg score & hit rate
