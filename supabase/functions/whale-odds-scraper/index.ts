@@ -11,10 +11,17 @@ const corsHeaders = {
 const TIER_1_SPORTS = ['basketball_nba', 'icehockey_nhl'];
 // Tier 2: Fetch if games exist (seasonal)
 const TIER_2_SPORTS = ['basketball_wnba', 'basketball_ncaab', 'baseball_ncaa', 'tennis_atp', 'tennis_wta', 'tennis_pingpong'];
+// Golf: Outright/futures markets (seasonal — only active during tournament weeks)
+const GOLF_SPORTS = [
+  'golf_masters_tournament_winner',
+  'golf_pga_championship_winner',
+  'golf_us_open_winner',
+  'golf_the_open_championship_winner',
+];
 // Tier 3: Skip for now (offseason / low volume)
 // NFL, NCAAF - not fetched to save API budget
 
-const ALL_ACTIVE_SPORTS = [...TIER_1_SPORTS, ...TIER_2_SPORTS];
+const ALL_ACTIVE_SPORTS = [...TIER_1_SPORTS, ...TIER_2_SPORTS, ...GOLF_SPORTS];
 
 // Batched player prop markets (comma-separated to reduce API calls)
 const PLAYER_MARKET_BATCHES: Record<string, string[][]> = {
@@ -99,10 +106,15 @@ interface GameBetInsert {
 }
 
 function normalizeSportKey(sportKey: string): string {
+  if (sportKey.startsWith('golf_')) return 'golf_pga';
   if (sportKey.startsWith('tennis_atp')) return 'tennis_atp';
   if (sportKey.startsWith('tennis_wta')) return 'tennis_wta';
   if (sportKey.startsWith('tennis_pingpong')) return 'tennis_pingpong';
   return sportKey;
+}
+
+function isGolfSport(sport: string): boolean {
+  return sport.startsWith('golf_');
 }
 
 function getEasternDate(): string {
@@ -387,6 +399,65 @@ serve(async (req) => {
       if (relevantEvents.length === 0) {
         console.log(`[Full] Skipping ${sport} - no upcoming events`);
         continue;
+      }
+
+      // ===== GOLF: Fetch outrights instead of player props / team markets =====
+      if (isGolfSport(sport)) {
+        const golfBudgetOk = await checkBudget(1);
+        if (!golfBudgetOk) {
+          console.log(`[Full] Budget exceeded, stopping at golf sport ${sport}`);
+          break;
+        }
+
+        // Golf uses the sport-level odds endpoint with outrights market
+        try {
+          const outrightsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/odds?apiKey=${apiKey}&regions=us&markets=outrights&oddsFormat=american&bookmakers=${BOOKMAKERS.join(',')}`;
+          const outrightsResp = await fetch(outrightsUrl);
+          await trackApiCall();
+
+          if (outrightsResp.ok) {
+            const outrightsData = await outrightsResp.json();
+            // outrightsData is an array of events (usually 1 per tournament)
+            for (const tournament of outrightsData) {
+              const tournamentId = tournament.id || sport;
+              const commenceTime = tournament.commence_time || now.toISOString();
+              const tournamentTitle = tournament.sport_title || sport;
+
+              for (const bookmaker of (tournament.bookmakers || []) as Bookmaker[]) {
+                for (const market of bookmaker.markets) {
+                  // Each outcome is a player with their outright odds
+                  for (const outcome of market.outcomes) {
+                    const playerName = outcome.name;
+                    if (!playerName || playerName.length < 3) continue;
+
+                    // Store as game_bet with bet_type: 'outright', player name as home_team
+                    allTeamBets.push({
+                      game_id: `${tournamentId}_${playerName.replace(/\s+/g, '_').toLowerCase()}`,
+                      sport: normalizeSportKey(sport),
+                      bet_type: 'outright',
+                      home_team: playerName,
+                      away_team: tournamentTitle,
+                      line: null,
+                      home_odds: outcome.price ?? null,
+                      away_odds: null,
+                      over_odds: null,
+                      under_odds: null,
+                      bookmaker: bookmaker.key,
+                      commence_time: commenceTime,
+                      is_active: true,
+                    });
+                  }
+                }
+              }
+            }
+            console.log(`[Full] Golf outrights fetched for ${sport}`);
+          } else {
+            console.log(`[Full] Golf outrights fetch failed for ${sport}: ${outrightsResp.status}`);
+          }
+        } catch (golfErr) {
+          console.error(`[Full] Golf outrights error for ${sport}:`, golfErr);
+        }
+        continue; // Skip standard player props / team markets for golf
       }
 
       // Check budget before fetching props for this sport
