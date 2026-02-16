@@ -1,14 +1,11 @@
-import { TrendingUp, Trophy, Calendar, DollarSign } from "lucide-react";
+import { TrendingUp, Trophy, DollarSign } from "lucide-react";
 
 interface HeroStatsProps {
   totalProfit: number;
-  winRate: number;
-  daysActive: number;
   totalWins: number;
-  totalLosses: number;
 }
 
-export function HeroStats({ totalProfit, winRate, daysActive, totalWins, totalLosses }: HeroStatsProps) {
+export function HeroStats({ totalProfit, totalWins }: HeroStatsProps) {
   return (
     <section className="relative overflow-hidden py-16 px-4 sm:px-6">
       {/* Background glow */}
@@ -29,7 +26,7 @@ export function HeroStats({ totalProfit, winRate, daysActive, totalWins, totalLo
         </p>
 
         {/* Key stats grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 gap-4 max-w-md mx-auto">
           <StatCard
             icon={<DollarSign className="w-5 h-5" />}
             label="Total Profit"
@@ -38,21 +35,9 @@ export function HeroStats({ totalProfit, winRate, daysActive, totalWins, totalLo
           />
           <StatCard
             icon={<Trophy className="w-5 h-5" />}
-            label="Win Rate"
-            value={`${winRate}%`}
+            label="Total Wins"
+            value={`${totalWins} Wins`}
             color="text-primary"
-          />
-          <StatCard
-            icon={<Calendar className="w-5 h-5" />}
-            label="Days Active"
-            value={daysActive.toString()}
-            color="text-secondary"
-          />
-          <StatCard
-            icon={<TrendingUp className="w-5 h-5" />}
-            label="Record"
-            value={`${totalWins}W - ${totalLosses}L`}
-            color="text-foreground"
           />
         </div>
       </div>

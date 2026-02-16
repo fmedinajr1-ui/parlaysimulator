@@ -107,10 +107,7 @@ export default function BotLanding() {
 
       <HeroStats
         totalProfit={totals.totalProfit}
-        winRate={totals.winRate}
-        daysActive={totals.daysActive}
         totalWins={totals.totalWins}
-        totalLosses={totals.totalLosses}
       />
 
       <PerformanceCalendar
