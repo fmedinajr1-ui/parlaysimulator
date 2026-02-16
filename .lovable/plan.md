@@ -1,44 +1,50 @@
 
-# Blue "Broke Even" for Zero P&L Days + Telegram & Homepage Updates
 
-## 1. Performance Calendar (Public) -- `src/components/bot-landing/PerformanceCalendar.tsx`
+# Protect Dashboard Route (Admin Only)
 
-Add a check for `profitLoss === 0` days:
-- Show "Even" label instead of "+0"
-- Use blue styling: `bg-blue-500/15 border-blue-500/30 text-blue-400`
-- Three-way conditional: profitable (green) / even (blue) / loss (red)
+## Summary
 
-## 2. Admin Calendar -- `src/components/bot/BotPnLCalendar.tsx`
+Wrap the `/dashboard` route with an admin check so only your account can access it. Non-admin users (or unauthenticated visitors) get redirected to `/`.
 
-Same treatment for zero-profit days:
-- Detect `profitLoss === 0` separately from "no data" (currently `hasData` excludes zero -- fix this)
-- Show "Even" label with blue heatmap color: `hsl(210 100% 55%)` for border/text, `hsl(210 100% 55% / 0.15)` for background
+## Changes
 
-## 3. Telegram Welcome -- `supabase/functions/telegram-webhook/index.ts`
+### 1. `src/pages/BotDashboard.tsx`
 
-Update `handleCustomerStart` to include starter balance recommendation:
+Add the existing `useAdminRole` hook at the top of the component:
+- If `isLoading`, show the existing skeleton/loading state
+- If `!isAdmin`, render `<Navigate to="/" replace />`
+- Otherwise, render the dashboard as normal
 
+This reuses the same `useAdminRole` hook already used by the Admin page, which checks the `user_roles` table for an `admin` role.
+
+### 2. No other changes needed
+
+The `useAdminRole` hook and `user_roles` table are already in place. Your account already has the admin role. No new tables, RLS policies, or edge functions required.
+
+## Technical Details
+
+At the top of `BotDashboard`:
+
+```tsx
+import { useAdminRole } from '@/hooks/useAdminRole';
+import { Navigate } from 'react-router-dom';
+
+export default function BotDashboard() {
+  const { isAdmin, isLoading: adminLoading } = useAdminRole();
+  // ... existing hooks ...
+
+  if (adminLoading || state.isLoading) {
+    return /* existing skeleton */;
+  }
+
+  if (!isAdmin) {
+    return <Navigate to="/" replace />;
+  }
+
+  // ... rest of dashboard
+}
 ```
-Welcome to Parlay Farm!
-
-Recommended Starter Balance: $200-$400
-Stake $10-$20 per parlay -- we generate multiple parlays daily,
-so smaller stakes let you spread across all picks.
-
-Use /parlays to see today's picks.
-
-One winning day can return 10x your investment.
-```
-
-## 4. Homepage Tagline -- `src/components/bot-landing/HeroStats.tsx`
-
-Add a highlighted line below the stats grid:
-> "One winning day can return 10x your investment"
-
-Styled with `text-blue-400` or `text-accent` as a subtle callout.
 
 ## Files Modified
-- `src/components/bot-landing/PerformanceCalendar.tsx`
-- `src/components/bot/BotPnLCalendar.tsx`
-- `supabase/functions/telegram-webhook/index.ts`
-- `src/components/bot-landing/HeroStats.tsx`
+- `src/pages/BotDashboard.tsx` -- Add admin gate using existing `useAdminRole` hook
+
