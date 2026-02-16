@@ -1,67 +1,44 @@
 
+# Blue "Broke Even" for Zero P&L Days + Telegram & Homepage Updates
 
-# Update Hero Stats and Lock Down Telegram Bot
+## 1. Performance Calendar (Public) -- `src/components/bot-landing/PerformanceCalendar.tsx`
 
-## Part 1: Hero Stats Changes
+Add a check for `profitLoss === 0` days:
+- Show "Even" label instead of "+0"
+- Use blue styling: `bg-blue-500/15 border-blue-500/30 text-blue-400`
+- Three-way conditional: profitable (green) / even (blue) / loss (red)
 
-Replace the current 4-stat grid (Total Profit, Win Rate, Days Active, Record) with a simpler 2-stat layout:
+## 2. Admin Calendar -- `src/components/bot/BotPnLCalendar.tsx`
 
-- **Total Profit** -- keep as-is
-- **Total Wins** -- show "25 Wins" (dynamic from `totalWins`)
+Same treatment for zero-profit days:
+- Detect `profitLoss === 0` separately from "no data" (currently `hasData` excludes zero -- fix this)
+- Show "Even" label with blue heatmap color: `hsl(210 100% 55%)` for border/text, `hsl(210 100% 55% / 0.15)` for background
 
-Remove: Win Rate card, Days Active card, Record card.
+## 3. Telegram Welcome -- `supabase/functions/telegram-webhook/index.ts`
 
-The stats grid changes from `grid-cols-2 sm:grid-cols-4` to `grid-cols-2` with just two cards.
+Update `handleCustomerStart` to include starter balance recommendation:
 
-Update `HeroStatsProps` to only require `totalProfit` and `totalWins`. Clean up the parent `BotLanding.tsx` to stop passing unused props.
+```
+Welcome to Parlay Farm!
 
-## Part 2: Telegram Bot -- Customer-Only Access
+Recommended Starter Balance: $200-$400
+Stake $10-$20 per parlay -- we generate multiple parlays daily,
+so smaller stakes let you spread across all picks.
 
-Currently the Telegram bot exposes 30+ commands to anyone who messages it (admin commands like `/generate`, `/settle`, `/force-settle`, `/pause`, `/bankroll`, analytics, learning, etc.). Paying customers should only see today's generated parlays.
+Use /parlays to see today's picks.
 
-### Changes to `telegram-webhook/index.ts`:
+One winning day can return 10x your investment.
+```
 
-1. **Define an admin chat ID check** -- use the existing `TELEGRAM_CHAT_ID` env var as the admin. Only the admin can run all commands.
+## 4. Homepage Tagline -- `src/components/bot-landing/HeroStats.tsx`
 
-2. **For non-admin users, restrict to these commands only:**
-   - `/start` -- welcome message (simplified for customers)
-   - `/parlays` -- view today's generated parlays (the core value)
-   - `/parlay` -- view individual parlay leg details
+Add a highlighted line below the stats grid:
+> "One winning day can return 10x your investment"
 
-3. **Block all other commands for non-admin users** -- respond with a friendly message like "This command is only available to admins."
-
-4. **Disable natural language AI chat for non-admin users** -- customers get a simple "Use /parlays to see today's picks" response instead.
-
-### Customer `/start` message:
-Show a simple welcome with only the commands they can use (`/parlays`), not the full 30-command suite.
-
-## Part 3: Dry Run Test
-
-After deploying the Telegram webhook changes, we will invoke the `bot-generate-daily-parlays` edge function with `dry_run: true` to verify the generation pipeline works. This tests scoring logic, correlation taxes, and parlay building without writing to the database.
+Styled with `text-blue-400` or `text-accent` as a subtle callout.
 
 ## Files Modified
-
-- `src/components/bot-landing/HeroStats.tsx` -- Simplify to 2 stats
-- `src/pages/BotLanding.tsx` -- Update props passed to HeroStats
-- `supabase/functions/telegram-webhook/index.ts` -- Add admin-only gating, simplify customer commands
-
-## Technical Details
-
-### Admin Check Logic
-```typescript
-const ADMIN_CHAT_ID = Deno.env.get("TELEGRAM_CHAT_ID");
-const isAdmin = (chatId: string) => chatId === ADMIN_CHAT_ID;
-```
-
-In `handleMessage`, check `isAdmin(chatId)` before routing to admin commands. Non-admin users get routed only to `/start`, `/parlays`, `/parlay`.
-
-### HeroStats Simplified Interface
-```typescript
-interface HeroStatsProps {
-  totalProfit: number;
-  totalWins: number;
-}
-```
-
-Two cards side by side: Total Profit and Total Wins.
-
+- `src/components/bot-landing/PerformanceCalendar.tsx`
+- `src/components/bot/BotPnLCalendar.tsx`
+- `supabase/functions/telegram-webhook/index.ts`
+- `src/components/bot-landing/HeroStats.tsx`
