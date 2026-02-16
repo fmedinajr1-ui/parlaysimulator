@@ -4602,9 +4602,18 @@ Deno.serve(async (req) => {
 
           // === WEIGHT CHECK + TOTAL SIDE FLIP ===
           // Respect bot_category_weights blocking for single picks too
-          const pickCategory = pick.category || '';
           const pickSide = pick.side || pick.recommended_side || 'over';
           const pickSport = pick.sport || 'basketball_nba';
+          
+          // Normalize generic "TOTAL"/"TEAM_TOTAL" to side-specific variant for weight lookup
+          let pickCategory = pick.category || '';
+          if (pickCategory === 'TOTAL' || pickCategory === 'TEAM_TOTAL') {
+            const prefix = pickSide === 'over' ? 'OVER' : 'UNDER';
+            pickCategory = pickCategory === 'TOTAL' 
+              ? `${prefix}_TOTAL` 
+              : `${prefix}_TEAM_TOTAL`;
+          }
+          
           const sportKey = `${pickCategory}__${pickSide}__${pickSport}`;
           const sideKey = `${pickCategory}__${pickSide}`;
           const catWeight = weightMap.get(sportKey) ?? weightMap.get(sideKey) ?? weightMap.get(pickCategory) ?? 1.0;
