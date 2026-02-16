@@ -1,45 +1,98 @@
 
-# Remove NCAA Baseball from Parlay Generation
+# Integrate PGA Golf into the Parlay Engine
 
 ## Overview
 
-Block all NCAA Baseball (`baseball_ncaa`) picks from being included in bot-generated parlays until more data is collected. The simulation engine and data pipeline will continue tracking baseball data in the background -- this only affects parlay output.
+Add PGA Tour golf tournament markets to the data pipeline and parlay generation engine. Golf uses **outright/futures** markets (tournament winner, top-5 finish, top-10 finish, etc.) rather than traditional head-to-head matchups, so this requires a new market type in the scraper and a golf-specific scoring model.
+
+## Key Design Decision: Matchup Props vs. Outrights
+
+The Odds API provides golf as **outrights** (e.g., `golf_masters_tournament_winner`), not head-to-head games. However, some books also offer **matchup props** (Player A vs. Player B round score). The plan starts with **tournament outrights** (winner, top-5, top-10, top-20) since those have the broadest bookmaker coverage and fit cleanly into the existing parlay leg structure as moneyline-style picks.
 
 ## What Changes
 
-- NCAA Baseball legs will no longer appear in any generated parlays
-- Data collection (odds scraping, scoring, simulation shadow picks) continues unchanged so the data pipeline keeps building history
-- Once you're ready, the block can be removed with a single line change
+### Phase 1: Data Collection (whale-odds-scraper)
+
+- Add golf sport keys to a new `GOLF_SPORTS` array:
+  - `golf_masters_tournament_winner`
+  - `golf_pga_championship_winner`
+  - `golf_us_open_winner`
+  - `golf_the_open_championship_winner`
+- These are **seasonal** -- only active during tournament weeks, so they go in Tier 2
+- Fetch outrights using the `outrights` market key instead of `h2h/spreads/totals`
+- Store results in `game_bets` with `bet_type: 'outright'` and the player name as one of the teams
+- Add `normalizeSportKey` mapping to normalize all golf keys to `golf_pga`
+
+### Phase 2: Scoring Engine (bot-generate-daily-parlays)
+
+- Create a `calculateGolfCompositeScore` function that weights:
+  - **Odds Value** (35%): Plus-money outrights with implied probability edge
+  - **Course History** (25%): Placeholder -- uses odds movement as proxy initially
+  - **Recent Form** (20%): Strokes gained trends (approximated from odds shifts between tournaments)
+  - **Field Strength** (10%): Number of top-ranked players in the field
+  - **Weather/Course Fit** (10%): Placeholder for future data
+- Route golf picks through this engine in `calculateTeamCompositeScore`
+
+### Phase 3: Parlay Profiles
+
+- Add golf exploration profiles (Exploration tier only to start -- same approach as NCAA Baseball):
+  - 2x `{ legs: 2, strategy: 'golf_outright', sports: ['golf_pga'], betTypes: ['outright'] }`
+  - 1x cross-sport: `{ legs: 3, strategy: 'golf_cross', sports: ['golf_pga', 'basketball_nba'] }`
+- **Do NOT add Validation or Execution profiles** until exploration data validates the model
+- Add `golf_pga` to the `BLOCKED_SPORTS` list initially so it collects data passively before going live in parlays
+
+### Phase 4: Data Normalization
+
+- Update `normalizeSportKey` in the scraper to map all golf tournament keys to `golf_pga`
+- Add golf to the sport key alignment standard
 
 ## Technical Details
 
-### File Modified: `supabase/functions/bot-generate-daily-parlays/index.ts`
+### whale-odds-scraper/index.ts Changes
 
-**1. Add a global blocked sports constant** (near line 228, next to other constants):
+1. Add golf tournament keys:
 ```typescript
-const BLOCKED_SPORTS = ['baseball_ncaa'];
+const GOLF_SPORTS = [
+  'golf_masters_tournament_winner',
+  'golf_pga_championship_winner', 
+  'golf_us_open_winner',
+  'golf_the_open_championship_winner'
+];
 ```
 
-**2. Remove baseball-specific profiles** from all three tiers:
-- **Exploration tier** (lines 94-96): Remove the two `baseball_ncaa` profiles (`baseball_totals`, `baseball_spreads`)
-- **Validation tier** (line 162): Remove the `validated_baseball_totals` profile
-- **Execution tier** (line 221): Remove the `baseball_totals` execution profile
+2. Add to `TIER_2_SPORTS` array
 
-**3. Add a global sport filter** in the candidate pick filtering logic (around line 3278) so that `'all'` sport profiles also exclude blocked sports:
+3. Add outright-specific fetch logic:
 ```typescript
-// Block picks from paused sports
-if (BLOCKED_SPORTS.includes(p.sport)) return false;
+// Golf uses outrights market, not h2h/spreads/totals
+if (sport.startsWith('golf_')) {
+  const url = `...&markets=outrights&...`;
+  // Store each outcome as a game_bet with bet_type: 'outright'
+}
 ```
 
-This filter is added in all three candidate selection branches (team picks, hybrid picks, and player prop picks) so baseball legs cannot sneak into cross-sport or `'all'` parlays.
+4. Update `normalizeSportKey`:
+```typescript
+if (sportKey.startsWith('golf_')) return 'golf_pga';
+```
 
-### What Stays Untouched
-- `whale-odds-scraper` -- continues fetching baseball odds
-- `team-bets-scoring-engine` -- continues scoring baseball games
-- `odds-simulation-engine` -- continues generating shadow picks for baseball
-- `bot-settle-and-learn` -- settlement logic stays (for any existing baseball parlays)
-- `data-pipeline-orchestrator` -- keeps baseball in the pipeline
-- `ncaa-baseball-data-ingestion` -- keeps ingesting ESPN data
+### bot-generate-daily-parlays/index.ts Changes
+
+1. Add `calculateGolfCompositeScore` function (~50 lines)
+2. Add routing in `calculateTeamCompositeScore`:
+```typescript
+if (sport.includes('golf')) {
+  return calculateGolfCompositeScore(game, betType, side);
+}
+```
+3. Add exploration profiles (commented out initially behind `BLOCKED_SPORTS`)
+4. Add `'golf_pga'` to `BLOCKED_SPORTS` for passive data collection phase
 
 ### Files Modified
-- `supabase/functions/bot-generate-daily-parlays/index.ts`
+- `supabase/functions/whale-odds-scraper/index.ts` -- golf scraping + normalization
+- `supabase/functions/bot-generate-daily-parlays/index.ts` -- scoring engine + profiles
+
+### What This Enables
+- Golf odds start flowing into `game_bets` during active tournament weeks
+- The simulation engine can generate shadow picks for golf to test accuracy
+- Once enough data is collected and shadow pick accuracy is validated, remove `golf_pga` from `BLOCKED_SPORTS` to activate live parlay generation
