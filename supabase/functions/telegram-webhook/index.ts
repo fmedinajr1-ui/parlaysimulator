@@ -823,10 +823,23 @@ function formatLegDisplay(leg: any): string {
     matchupLine = leg.matchup || '';
   }
   
-  // Build reasoning line (Score + Hit only)
+  // Build reasoning line (Score + Hit only) with emoji indicators
+  const score = leg.composite_score ? Math.round(leg.composite_score) : 0;
+  const hitRate = leg.hit_rate ? Math.round(leg.hit_rate) : 0;
+  const source = (leg.source || leg.reason || '').toLowerCase();
+  
+  // Emoji indicators
+  const emojis: string[] = [];
+  if (score >= 80) emojis.push('🔥');
+  else if (score >= 60 && hitRate >= 70) emojis.push('✨');
+  if (hitRate < 50 || score < 40) emojis.push('⚠️');
+  if (source.includes('whale')) emojis.push('🐋');
+  
+  const emojiStr = emojis.length > 0 ? ` ${emojis.join('')}` : '';
+  
   const parts: string[] = [];
-  if (leg.composite_score) parts.push(`Score: ${Math.round(leg.composite_score)}`);
-  if (leg.hit_rate) parts.push(`Hit: ${Math.round(leg.hit_rate)}%`);
+  if (score) parts.push(`Score: ${score}`);
+  if (hitRate) parts.push(`Hit: ${hitRate}%`);
   
   let result = actionLine.trim();
   if (matchupLine && sportLabel) {
@@ -834,8 +847,8 @@ function formatLegDisplay(leg: any): string {
   } else if (matchupLine) {
     result += `\n  ${matchupLine}`;
   }
-  if (parts.length > 0) {
-    result += `\n  ${parts.join(' | ')}`;
+  if (parts.length > 0 || emojiStr) {
+    result += `\n  ${parts.join(' | ')}${emojiStr}`;
   }
   
   return result;
