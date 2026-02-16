@@ -62,6 +62,9 @@ serve(async (req) => {
         },
       ],
       mode: "subscription",
+      subscription_data: {
+        trial_period_days: 3,
+      },
       success_url: `${origin}/upload?success=true`,
       cancel_url: `${origin}/upload?canceled=true`,
       metadata: {
