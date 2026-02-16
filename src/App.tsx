@@ -29,6 +29,7 @@ const Collaborate = React.lazy(() => import("./pages/Collaborate"));
 const ReleaseManager = React.lazy(() => import("./pages/admin/ReleaseManager"));
 const Offline = React.lazy(() => import("./pages/Offline"));
 const TeamBets = React.lazy(() => import("./pages/TeamBets"));
+const AdminLogin = React.lazy(() => import("./pages/AdminLogin"));
 const NotFound = React.lazy(() => import("./pages/NotFound"));
 
 // QueryClient with optimized defaults
@@ -79,6 +80,7 @@ function AnimatedRoutes() {
               <Route path="/collaborate" element={<Collaborate />} />
               <Route path="/team-bets" element={<TeamBets />} />
               <Route path="/offline" element={<Offline />} />
+              <Route path="/admin-login" element={<AdminLogin />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </React.Suspense>
