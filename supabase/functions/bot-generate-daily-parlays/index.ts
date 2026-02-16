@@ -4569,6 +4569,253 @@ Deno.serve(async (req) => {
       allParlays = [...allParlays, ...result.parlays];
     }
 
+    // === 2-LEG MINI-PARLAY HYBRID FALLBACK ===
+    if (allParlays.length < 10) {
+      console.log(`[Bot v2] 🔗 MINI-PARLAY FALLBACK: Only ${allParlays.length} parlays. Attempting 2-leg mini-parlays.`);
+
+      // Build candidate pool (same merge + dedup as singles)
+      const miniCandidates: any[] = [
+        ...[
+          ...pool.teamPicks.map(p => ({ ...p, pickType: 'team' })),
+          ...pool.playerPicks.map(p => ({ ...p, pickType: 'player' })),
+          ...pool.whalePicks.map(p => ({ ...p, pickType: 'whale' })),
+          ...pool.sweetSpots.map(p => ({ ...p, pickType: 'player' })),
+        ]
+          .filter(p => !BLOCKED_SPORTS.includes(p.sport || 'basketball_nba'))
+          .reduce((acc, pick) => {
+            const key = pick.pickType === 'team'
+              ? `${pick.home_team}_${pick.away_team}_${pick.bet_type}_${pick.side}`.toLowerCase()
+              : `${pick.player_name}_${pick.prop_type}_${pick.recommended_side || pick.side}`.toLowerCase();
+            const existing = acc.get(key);
+            if (!existing || (pick.compositeScore || 0) > (existing.compositeScore || 0)) {
+              acc.set(key, pick);
+            }
+            return acc;
+          }, new Map<string, any>())
+          .values()
+      ]
+        .filter(p => {
+          const composite = p.compositeScore || 0;
+          const hitRate = (p.confidence_score || p.l10_hit_rate || 0.5) * 100;
+          if (composite < 58 || hitRate < 50) return false;
+
+          // Weight check
+          const pickSide = p.side || p.recommended_side || 'over';
+          const pickSport = p.sport || 'basketball_nba';
+          let pickCategory = p.category || '';
+          if (pickCategory === 'TOTAL' || pickCategory === 'TEAM_TOTAL') {
+            const prefix = pickSide === 'over' ? 'OVER' : 'UNDER';
+            pickCategory = pickCategory === 'TOTAL' ? `${prefix}_TOTAL` : `${prefix}_TEAM_TOTAL`;
+          }
+          const sportKey = `${pickCategory}__${pickSide}__${pickSport}`;
+          const sideKey = `${pickCategory}__${pickSide}`;
+          const catWeight = weightMap.get(sportKey) ?? weightMap.get(sideKey) ?? weightMap.get(pickCategory) ?? 1.0;
+          if (catWeight < 0.5) return false;
+
+          // Spread cap
+          if ((p.bet_type === 'spread' || p.prop_type === 'spread') && Math.abs(p.line || 0) >= MAX_SPREAD_LINE) return false;
+
+          return true;
+        })
+        .sort((a, b) => (b.compositeScore || 0) - (a.compositeScore || 0));
+
+      console.log(`[Bot v2] Mini-parlay candidate pool: ${miniCandidates.length}`);
+
+      // Helper: get game identity for a pick
+      const getGameKey = (p: any) => {
+        if (p.home_team && p.away_team) return `${p.home_team}__${p.away_team}`.toLowerCase();
+        if (p.event_id) return p.event_id;
+        return `${p.team_name || p.player_name}`.toLowerCase();
+      };
+
+      // Helper: mirror check (same matchup, opposite sides)
+      const isMirrorPair = (a: any, b: any) => {
+        if (a.pickType === 'team' && b.pickType === 'team') {
+          if (a.home_team === b.home_team && a.away_team === b.away_team && a.bet_type === b.bet_type) {
+            return a.side !== b.side;
+          }
+        }
+        if (a.player_name && b.player_name && a.player_name === b.player_name && a.prop_type === b.prop_type) {
+          return (a.recommended_side || a.side) !== (b.recommended_side || b.side);
+        }
+        return false;
+      };
+
+      interface MiniParlay {
+        leg1: any;
+        leg2: any;
+        avgComposite: number;
+        avgHitRate: number;
+        combinedProb: number;
+        combinedEdge: number;
+        combinedSharpe: number;
+        combinedOdds: number;
+      }
+
+      const miniParlays: MiniParlay[] = [];
+      const usedMiniKeys = new Set<string>();
+      const MAX_MINI_PARLAYS = 16;
+
+      for (let i = 0; i < miniCandidates.length && miniParlays.length < MAX_MINI_PARLAYS * 3; i++) {
+        for (let j = i + 1; j < miniCandidates.length && miniParlays.length < MAX_MINI_PARLAYS * 3; j++) {
+          const p1 = miniCandidates[i];
+          const p2 = miniCandidates[j];
+
+          // Different games only
+          if (getGameKey(p1) === getGameKey(p2)) continue;
+
+          // No mirror pairs
+          if (isMirrorPair(p1, p2)) continue;
+
+          // Dedup fingerprint
+          const fp = [
+            p1.pickType === 'team' ? `${p1.home_team}_${p1.bet_type}_${p1.side}` : `${p1.player_name}_${p1.prop_type}_${p1.recommended_side || p1.side}`,
+            p2.pickType === 'team' ? `${p2.home_team}_${p2.bet_type}_${p2.side}` : `${p2.player_name}_${p2.prop_type}_${p2.recommended_side || p2.side}`,
+          ].sort().join('||').toLowerCase();
+
+          if (usedMiniKeys.has(fp)) continue;
+          if (globalFingerprints.has(fp)) continue;
+
+          const comp1 = p1.compositeScore || 0;
+          const comp2 = p2.compositeScore || 0;
+          const avgComposite = (comp1 + comp2) / 2;
+          if (avgComposite < 60) continue;
+
+          const hr1 = (p1.confidence_score || p1.l10_hit_rate || 0.5) * 100;
+          const hr2 = (p2.confidence_score || p2.l10_hit_rate || 0.5) * 100;
+          const avgHitRate = (hr1 + hr2) / 2;
+
+          const prob1 = hr1 / 100;
+          const prob2 = hr2 / 100;
+          const combinedProb = prob1 * prob2;
+          if (combinedProb < 0.25) continue;
+
+          const odds1 = p1.americanOdds || p1.odds || -110;
+          const odds2 = p2.americanOdds || p2.odds || -110;
+          const ip1 = odds1 < 0 ? Math.abs(odds1) / (Math.abs(odds1) + 100) : 100 / (odds1 + 100);
+          const ip2 = odds2 < 0 ? Math.abs(odds2) / (Math.abs(odds2) + 100) : 100 / (odds2 + 100);
+          const combinedImplied = ip1 * ip2;
+          const combinedEdge = combinedProb - combinedImplied;
+          if (combinedEdge <= 0) continue;
+
+          // Calculate combined American odds from implied
+          const combinedOdds = combinedImplied >= 0.5
+            ? Math.round(-100 * combinedImplied / (1 - combinedImplied))
+            : Math.round(100 * (1 - combinedImplied) / combinedImplied);
+
+          const combinedSharpe = combinedEdge / Math.max(Math.sqrt(combinedProb * (1 - combinedProb)), 0.1);
+
+          usedMiniKeys.add(fp);
+          miniParlays.push({
+            leg1: p1, leg2: p2,
+            avgComposite, avgHitRate, combinedProb, combinedEdge, combinedSharpe, combinedOdds,
+          });
+        }
+      }
+
+      // Sort by combined edge descending
+      miniParlays.sort((a, b) => b.combinedEdge - a.combinedEdge);
+
+      // Assign tiers with caps
+      const miniTierCaps = { execution: 3, validation: 5, exploration: 8 };
+      const miniTierCounts = { execution: 0, validation: 0, exploration: 0 };
+      let totalMiniCreated = 0;
+
+      for (const mp of miniParlays) {
+        if (totalMiniCreated >= MAX_MINI_PARLAYS) break;
+
+        let tier: TierName;
+        if (mp.avgComposite >= 70 && mp.avgHitRate >= 58 && miniTierCounts.execution < miniTierCaps.execution) {
+          tier = 'execution';
+        } else if (mp.avgComposite >= 62 && miniTierCounts.validation < miniTierCaps.validation) {
+          tier = 'validation';
+        } else if (miniTierCounts.exploration < miniTierCaps.exploration) {
+          tier = 'exploration';
+        } else {
+          continue;
+        }
+
+        // Build leg data for each leg
+        const buildLeg = (pick: any) => {
+          if (pick.pickType === 'team' || pick.type === 'team') {
+            return {
+              id: pick.id,
+              type: 'team',
+              home_team: pick.home_team,
+              away_team: pick.away_team,
+              bet_type: pick.bet_type,
+              side: pick.side,
+              line: snapLine(pick.line, pick.bet_type),
+              category: pick.category,
+              american_odds: pick.odds || -110,
+              sharp_score: pick.sharp_score,
+              composite_score: pick.compositeScore || 0,
+              outcome: 'pending',
+              sport: pick.sport,
+            };
+          }
+          return {
+            id: pick.id,
+            player_name: pick.player_name,
+            team_name: pick.team_name,
+            prop_type: pick.prop_type,
+            line: snapLine(pick.line, pick.prop_type),
+            side: pick.recommended_side || 'over',
+            category: pick.category,
+            weight: 1,
+            hit_rate: (pick.confidence_score || pick.l10_hit_rate || 0.5) * 100,
+            american_odds: pick.americanOdds || -110,
+            odds_value_score: pick.oddsValueScore,
+            composite_score: pick.compositeScore || 0,
+            outcome: 'pending',
+            original_line: snapLine(pick.line, pick.prop_type),
+            selected_line: snapLine(pick.line, pick.prop_type),
+            line_selection_reason: 'mini_parlay',
+            projection_buffer: (pick.projected_value || pick.l10_avg || 0) - pick.line,
+            projected_value: pick.projected_value || pick.l10_avg || 0,
+            line_source: pick.line_source || 'projected',
+            has_real_line: pick.has_real_line || false,
+            sport: pick.sport || 'basketball_nba',
+          };
+        };
+
+        const leg1Data = buildLeg(mp.leg1);
+        const leg2Data = buildLeg(mp.leg2);
+
+        const leg1Name = leg1Data.player_name || `${leg1Data.home_team} vs ${leg1Data.away_team}`;
+        const leg2Name = leg2Data.player_name || `${leg2Data.home_team} vs ${leg2Data.away_team}`;
+
+        allParlays.push({
+          parlay_date: targetDate,
+          legs: [leg1Data, leg2Data],
+          leg_count: 2,
+          combined_probability: mp.combinedProb,
+          expected_odds: mp.combinedOdds,
+          simulated_win_rate: mp.combinedProb,
+          simulated_edge: Math.max(mp.combinedEdge, 0.005),
+          simulated_sharpe: mp.combinedSharpe,
+          strategy_name: `${strategyName}_${tier}_mini_parlay`,
+          selection_rationale: `${tier} mini-parlay: ${leg1Name} (${mp.leg1.compositeScore?.toFixed(0) || '?'}) + ${leg2Name} (${mp.leg2.compositeScore?.toFixed(0) || '?'}) | avg composite ${mp.avgComposite.toFixed(0)}`,
+          outcome: 'pending',
+          is_simulated: tier !== 'execution',
+          simulated_stake: getDynamicStake(tier, isLightSlateMode, 100),
+          tier: tier,
+        });
+
+        // Add fingerprint to prevent DB duplication
+        const fp = [
+          mp.leg1.pickType === 'team' ? `${mp.leg1.home_team}_${mp.leg1.bet_type}_${mp.leg1.side}` : `${mp.leg1.player_name}_${mp.leg1.prop_type}_${mp.leg1.recommended_side || mp.leg1.side}`,
+          mp.leg2.pickType === 'team' ? `${mp.leg2.home_team}_${mp.leg2.bet_type}_${mp.leg2.side}` : `${mp.leg2.player_name}_${mp.leg2.prop_type}_${mp.leg2.recommended_side || mp.leg2.side}`,
+        ].sort().join('||').toLowerCase();
+        globalFingerprints.add(fp);
+
+        miniTierCounts[tier]++;
+        totalMiniCreated++;
+      }
+
+      console.log(`[Bot v2] 🔗 Mini-parlays created: ${totalMiniCreated} (exec=${miniTierCounts.execution}, valid=${miniTierCounts.validation}, explore=${miniTierCounts.exploration})`);
+    }
+
     // === SINGLE PICK FALLBACK ===
     // If fewer than 10 parlays generated, create single picks (1-leg straight bets)
     if (allParlays.length < 10) {
