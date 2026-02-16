@@ -1,8 +1,10 @@
+import { useState } from "react";
 import { Check, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 interface PricingCardProps {
-  onSubscribe: () => void;
+  onSubscribe: (email: string) => void;
   isLoading?: boolean;
   isSubscribed?: boolean;
 }
@@ -17,6 +19,18 @@ const features = [
 ];
 
 export function PricingCard({ onSubscribe, isLoading, isSubscribed }: PricingCardProps) {
+  const [email, setEmail] = useState("");
+  const [error, setError] = useState("");
+
+  const handleSubmit = () => {
+    if (!email || !email.includes("@")) {
+      setError("Please enter a valid email address");
+      return;
+    }
+    setError("");
+    onSubscribe(email);
+  };
+
   return (
     <section className="py-12 px-4 sm:px-6" id="pricing">
       <div className="max-w-md mx-auto">
@@ -50,19 +64,31 @@ export function PricingCard({ onSubscribe, isLoading, isSubscribed }: PricingCar
           </div>
 
           {/* CTA */}
-          <div className="px-6 pb-6">
+          <div className="px-6 pb-6 space-y-3">
             {isSubscribed ? (
               <Button className="w-full" variant="secondary" disabled>
                 ✓ You're a member
               </Button>
             ) : (
-              <Button
-                className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-lg py-6"
-                onClick={onSubscribe}
-                disabled={isLoading}
-              >
-                {isLoading ? 'Loading...' : 'Join Now — $99/mo'}
-              </Button>
+              <>
+                <div>
+                  <Input
+                    type="email"
+                    placeholder="Enter your email"
+                    value={email}
+                    onChange={(e) => { setEmail(e.target.value); setError(""); }}
+                    className={error ? "border-destructive" : ""}
+                  />
+                  {error && <p className="text-destructive text-xs mt-1">{error}</p>}
+                </div>
+                <Button
+                  className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-lg py-6"
+                  onClick={handleSubmit}
+                  disabled={isLoading}
+                >
+                  {isLoading ? 'Loading...' : 'Join Now — $99/mo'}
+                </Button>
+              </>
             )}
           </div>
         </div>
