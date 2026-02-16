@@ -18,6 +18,7 @@ import { PWAUpdatePrompt } from "@/components/PWAUpdatePrompt";
 import { RouteErrorBoundary } from "@/components/RouteErrorBoundary";
 import { useRoutePersistence } from "@/hooks/useRoutePersistence";
 import { usePageLifecycle } from "@/hooks/usePageLifecycle";
+import { usePageView } from "@/hooks/useAnalytics";
 
 // Lazy load pages
 const BotDashboard = React.lazy(() => import("./pages/BotDashboard"));
@@ -95,6 +96,7 @@ function SafeRoutePersistence() {
   try {
     useRoutePersistence();
     usePageLifecycle();
+    usePageView();
   } catch (error) {
     console.warn('[SafeRoutePersistence] Hook failed, likely stale cache:', error);
   }

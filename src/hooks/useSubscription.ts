@@ -79,6 +79,15 @@ export function useSubscription() {
     if (!user || !session) return;
 
     try {
+      // Track subscription click
+      supabase.from('analytics_events').insert([{
+        event_type: 'subscribe_click',
+        page_path: window.location.pathname,
+        user_id: user.id,
+        user_agent: navigator.userAgent,
+        metadata: { source: 'checkout' },
+      }]).then(() => {});
+
       const { data, error } = await supabase.functions.invoke('create-checkout');
 
       if (error) {
@@ -91,6 +100,34 @@ export function useSubscription() {
       }
     } catch (err) {
       console.error('Error starting checkout:', err);
+    }
+  }, [user, session]);
+
+  const startBotCheckout = useCallback(async () => {
+    if (!user || !session) return;
+
+    try {
+      // Track bot subscription click
+      supabase.from('analytics_events').insert([{
+        event_type: 'subscribe_click',
+        page_path: window.location.pathname,
+        user_id: user.id,
+        user_agent: navigator.userAgent,
+        metadata: { source: 'bot_checkout' },
+      }]).then(() => {});
+
+      const { data, error } = await supabase.functions.invoke('create-bot-checkout');
+
+      if (error) {
+        console.error('Error creating bot checkout:', error);
+        return;
+      }
+
+      if (data?.url) {
+        window.location.href = data.url;
+      }
+    } catch (err) {
+      console.error('Error starting bot checkout:', err);
     }
   }, [user, session]);
 
@@ -113,24 +150,6 @@ export function useSubscription() {
     }
   }, [user, session]);
 
-  const startBotCheckout = useCallback(async () => {
-    if (!user || !session) return;
-
-    try {
-      const { data, error } = await supabase.functions.invoke('create-bot-checkout');
-
-      if (error) {
-        console.error('Error creating bot checkout:', error);
-        return;
-      }
-
-      if (data?.url) {
-        window.location.href = data.url;
-      }
-    } catch (err) {
-      console.error('Error starting bot checkout:', err);
-    }
-  }, [user, session]);
 
   useEffect(() => {
     checkSubscription();
