@@ -125,6 +125,26 @@ serve(async (req) => {
       await runFunction('bot-review-and-optimize', { source: 'pipeline' });
     }
 
+    // ============ PHASE 3B: MID-DAY RE-GENERATION CHECK ============
+    // If morning run produced < 10 picks, schedule an afternoon re-gen
+    if (mode === 'full' || mode === 'regen') {
+      const { count: parlayCount } = await supabase
+        .from('bot_daily_parlays')
+        .select('*', { count: 'exact', head: true })
+        .eq('parlay_date', today)
+        .eq('outcome', 'pending');
+
+      if ((parlayCount || 0) < 10) {
+        console.log(`[Pipeline] 🔄 MID-DAY RE-GEN: Only ${parlayCount || 0} pending parlays for ${today}. Triggering additional generation.`);
+        await runFunction('whale-odds-scraper', { mode: 'full', sports: ['basketball_nba', 'icehockey_nhl', 'basketball_ncaab', 'basketball_wnba'] });
+        await runFunction('team-bets-scoring-engine', {});
+        await runFunction('bot-review-and-optimize', { source: 'regen' });
+        results['mid_day_regen'] = { success: true, message: `Re-triggered: had ${parlayCount} parlays`, duration: 0 };
+      } else {
+        console.log(`[Pipeline] ✅ Sufficient parlays (${parlayCount}) for ${today}, skipping re-gen.`);
+      }
+    }
+
     // ============ PHASE 4: OUTCOME VERIFICATION & SETTLEMENT ============
     if (mode === 'full' || mode === 'verify') {
       await runFunction('verify-all-engine-outcomes', {});
