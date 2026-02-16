@@ -4647,6 +4647,15 @@ Deno.serve(async (req) => {
             continue;
           }
 
+          // SPREAD CAP for singles: block spreads above MAX_SPREAD_LINE
+          if (
+            (pick.bet_type === 'spread' || pick.prop_type === 'spread') &&
+            Math.abs(pick.line || 0) >= MAX_SPREAD_LINE
+          ) {
+            console.log(`[Bot v2] 🚫 SINGLE SKIP (SpreadCap): ${pick.player_name || pick.home_team} spread ${pick.line} exceeds max ${MAX_SPREAD_LINE}`);
+            continue;
+          }
+
           // Dedup key
           const singleKey = pick.pickType === 'team'
             ? `${pick.home_team}_${pick.away_team}_${pick.bet_type}_${pick.side}`.toLowerCase()
