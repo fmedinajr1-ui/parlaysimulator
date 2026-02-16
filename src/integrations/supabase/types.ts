@@ -9224,6 +9224,105 @@ export type Database = {
         }
         Relationships: []
       }
+      simulation_accuracy: {
+        Row: {
+          accuracy_rate: number
+          avg_composite_score: number
+          bet_type: string
+          created_at: string
+          id: string
+          is_production_ready: boolean
+          period_end: string
+          period_start: string
+          predictions_correct: number
+          predictions_made: number
+          scoring_version: string
+          sport: string
+        }
+        Insert: {
+          accuracy_rate?: number
+          avg_composite_score?: number
+          bet_type: string
+          created_at?: string
+          id?: string
+          is_production_ready?: boolean
+          period_end: string
+          period_start: string
+          predictions_correct?: number
+          predictions_made?: number
+          scoring_version?: string
+          sport: string
+        }
+        Update: {
+          accuracy_rate?: number
+          avg_composite_score?: number
+          bet_type?: string
+          created_at?: string
+          id?: string
+          is_production_ready?: boolean
+          period_end?: string
+          period_start?: string
+          predictions_correct?: number
+          predictions_made?: number
+          scoring_version?: string
+          sport?: string
+        }
+        Relationships: []
+      }
+      simulation_shadow_picks: {
+        Row: {
+          away_team: string | null
+          bet_type: string
+          created_at: string
+          event_id: string
+          home_team: string | null
+          id: string
+          line: number | null
+          odds: number | null
+          outcome: string
+          predicted_score: number
+          score_breakdown: Json | null
+          scoring_version: string
+          settled_at: string | null
+          side: string
+          sport: string
+        }
+        Insert: {
+          away_team?: string | null
+          bet_type: string
+          created_at?: string
+          event_id: string
+          home_team?: string | null
+          id?: string
+          line?: number | null
+          odds?: number | null
+          outcome?: string
+          predicted_score: number
+          score_breakdown?: Json | null
+          scoring_version?: string
+          settled_at?: string | null
+          side: string
+          sport: string
+        }
+        Update: {
+          away_team?: string | null
+          bet_type?: string
+          created_at?: string
+          event_id?: string
+          home_team?: string | null
+          id?: string
+          line?: number | null
+          odds?: number | null
+          outcome?: string
+          predicted_score?: number
+          score_breakdown?: Json | null
+          scoring_version?: string
+          settled_at?: string | null
+          side?: string
+          sport?: string
+        }
+        Relationships: []
+      }
       sports_fatigue_edge_tracking: {
         Row: {
           actual_spread: number | null
