@@ -1627,9 +1627,16 @@ async function handleCustomerStart(chatId: string) {
   return `🌾 *Welcome to Parlay Farm!*
 
 💰 *Recommended Starter Balance:* $200–$400
-📊 *Stake $10–$20 per parlay* — we generate multiple parlays daily, so smaller stakes let you spread across all picks.
+📊 *Stake $10–$20 per parlay*
 
-Use /parlays to see today's picks.
+*Commands:*
+/parlays — Today's picks
+/parlay — Pending summary
+/performance — Win rate & ROI
+/calendar — Monthly P&L
+/roi — Detailed ROI breakdown
+/streaks — Hot & cold streaks
+/help — All commands
 
 One winning day can return 10x your investment. 🚀`;
 }
@@ -1648,30 +1655,29 @@ async function handleMessage(chatId: string, text: string) {
   }
   if (cmd === "/parlays") { await handleParlays(chatId); return null; }
   if (cmd === "/parlay") return await handleParlayStatus(chatId);
+  if (cmd === "/performance") return await handlePerformance(chatId);
+  if (cmd === "/calendar") return await handleCalendar(chatId);
+  if (cmd === "/roi") return await handleRoi(chatId);
+  if (cmd === "/streaks") return await handleStreaks(chatId);
+  if (cmd === "/help") {
+    return `📋 *Available Commands*
+
+/parlays — Today's picks
+/parlay — Pending summary
+/performance — Win rate & ROI
+/calendar — Monthly P&L
+/roi — Detailed ROI breakdown
+/streaks — Hot & cold streaks
+/help — This list`;
+  }
 
   // All other commands: admin only
   if (!isAdmin(chatId)) {
-    return "🔒 This command is only available to admins.\n\nUse /parlays to see today's picks!";
+    return "🔒 This command is only available to admins.\n\nUse /help to see available commands!";
   }
 
   // Admin commands
   if (cmd === "/status") return await handleStatus(chatId);
-  if (cmd === "/performance") return await handlePerformance(chatId);
-  if (cmd === "/weights") return await handleWeights(chatId);
-  if (cmd === "/generate") return await handleGenerate(chatId);
-  if (cmd === "/settle") return await handleSettle(chatId);
-  if (cmd === "/calendar") return await handleCalendar(chatId);
-  if (cmd === "/nhl") return await handleNHL(chatId);
-  if (cmd === "/tennis") return await handleTennis(chatId);
-  if (cmd === "/spreads") return await handleSpreads(chatId);
-  if (cmd === "/totals") return await handleTotals(chatId);
-  if (cmd === "/learning") return await handleLearning(chatId);
-  if (cmd === "/tiers") return await handleTiers(chatId);
-  if (cmd === "/explore") return await handleExplore(chatId);
-  if (cmd === "/validate") return await handleValidate(chatId);
-  if (cmd === "/research") return await handleResearch(chatId);
-  if (cmd === "/roi") return await handleRoi(chatId);
-  if (cmd === "/streaks") return await handleStreaks(chatId);
   if (cmd === "/compare") return await handleCompare(chatId);
   if (cmd === "/sharp") return await handleSharp(chatId);
   if (cmd === "/avoid") return await handleAvoid(chatId);
