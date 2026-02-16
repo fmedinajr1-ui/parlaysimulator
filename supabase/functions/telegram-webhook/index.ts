@@ -1616,18 +1616,43 @@ async function handleParlayStatus(chatId: string) {
   return message;
 }
 
+// ==================== ADMIN CHECK ====================
+
+const ADMIN_CHAT_ID = Deno.env.get("TELEGRAM_CHAT_ID");
+const isAdmin = (chatId: string) => chatId === ADMIN_CHAT_ID;
+
+// Customer-facing /start message
+async function handleCustomerStart(chatId: string) {
+  await logActivity("telegram_start", `Customer started bot chat`, { chatId });
+  return `🌾 *Welcome to Parlay Farm!*
+
+Use /parlays to see today's generated picks.
+
+That's it — we do the research, you place the bets. 🎯`;
+}
+
 // ==================== MAIN ROUTER ====================
 
 async function handleMessage(chatId: string, text: string) {
-  const command = text.toLowerCase().trim();
   const parts = text.trim().split(/\s+/);
   const cmd = parts[0].toLowerCase();
   const args = parts.slice(1).join(' ');
 
-  if (cmd === "/start") return await handleStart(chatId);
-  if (cmd === "/status") return await handleStatus(chatId);
-  if (cmd === "/parlay") return await handleParlayStatus(chatId);
+  // Customer commands (available to everyone)
+  if (cmd === "/start") {
+    if (isAdmin(chatId)) return await handleStart(chatId);
+    return await handleCustomerStart(chatId);
+  }
   if (cmd === "/parlays") { await handleParlays(chatId); return null; }
+  if (cmd === "/parlay") return await handleParlayStatus(chatId);
+
+  // All other commands: admin only
+  if (!isAdmin(chatId)) {
+    return "🔒 This command is only available to admins.\n\nUse /parlays to see today's picks!";
+  }
+
+  // Admin commands
+  if (cmd === "/status") return await handleStatus(chatId);
   if (cmd === "/performance") return await handlePerformance(chatId);
   if (cmd === "/weights") return await handleWeights(chatId);
   if (cmd === "/generate") return await handleGenerate(chatId);
@@ -1642,8 +1667,6 @@ async function handleMessage(chatId: string, text: string) {
   if (cmd === "/explore") return await handleExplore(chatId);
   if (cmd === "/validate") return await handleValidate(chatId);
   if (cmd === "/research") return await handleResearch(chatId);
-
-  // New commands
   if (cmd === "/roi") return await handleRoi(chatId);
   if (cmd === "/streaks") return await handleStreaks(chatId);
   if (cmd === "/compare") return await handleCompare(chatId);
@@ -1660,7 +1683,7 @@ async function handleMessage(chatId: string, text: string) {
   if (cmd === "/export") { await handleExport(chatId, args); return null; }
   if (cmd === "/digest") return await handleWeeklySummary(chatId);
 
-  // Natural language fallback
+  // Natural language fallback (admin only)
   await saveConversation(chatId, "user", text);
   await logActivity("telegram_message", `User sent message`, {
     chatId,
