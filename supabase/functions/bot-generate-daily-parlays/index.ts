@@ -143,6 +143,13 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // Whale signal exploration
       { legs: 2, strategy: 'whale_signal', sports: ['all'] },
       { legs: 3, strategy: 'whale_signal', sports: ['all'] },
+      // NCAAB accuracy profiles (2-leg for light-slate resilience)
+      { legs: 2, strategy: 'ncaab_accuracy_totals', sports: ['basketball_ncaab'], betTypes: ['total'], sortBy: 'composite' },
+      { legs: 2, strategy: 'ncaab_accuracy_totals', sports: ['basketball_ncaab'], betTypes: ['total'], sortBy: 'composite' },
+      { legs: 2, strategy: 'ncaab_accuracy_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'], sortBy: 'composite' },
+      { legs: 2, strategy: 'ncaab_accuracy_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'], sortBy: 'composite' },
+      { legs: 2, strategy: 'ncaab_accuracy_mixed', sports: ['basketball_ncaab'], betTypes: ['spread', 'total'], sortBy: 'composite' },
+      { legs: 2, strategy: 'ncaab_accuracy_mixed', sports: ['basketball_ncaab'], betTypes: ['spread', 'total'], sortBy: 'composite' },
     ],
   },
   validation: {
@@ -1354,6 +1361,7 @@ function calculateOddsValueScore(americanOdds: number, estimatedHitRate: number)
 
 // === GAP 2: Per-leg minimum score gate by parlay size ===
 function minScoreByParlaySize(legs: number): number {
+  if (legs <= 2) return 60;  // 2-leg parlays: lower floor for NCAAB accuracy profiles
   if (legs <= 3) return 80;
   if (legs <= 5) return 90;
   return 95;
@@ -2271,7 +2279,7 @@ async function fetchResearchWhaleAndSituational(supabase: any, gameDate: string)
 
 // ============= PROP POOL BUILDER =============
 
-async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<string, number>, categoryWeights: CategoryWeight[]): Promise<PropPool> {
+async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<string, number>, categoryWeights: CategoryWeight[], isLightSlateMode: boolean = false): Promise<PropPool> {
   console.log(`[Bot] Building prop pool for ${targetDate}`);
 
   // === AUTO-BLOCK LOW HIT-RATE CATEGORIES ===
@@ -3023,9 +3031,11 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       return false;
     }
 
-    // === FIX 3: Raise composite score floor for ALL team picks to 65 (was no general floor) ===
-    if (pick.compositeScore < 65) {
-      mlBlocked.push(`${pick.home_team} vs ${pick.away_team} ${pick.bet_type} (composite ${pick.compositeScore.toFixed(0)} < 65 team floor)`);
+    // === FIX 3: Dynamic composite score floor (light-slate adaptive) ===
+    // On light-slate days (0 player props or <25 total pool), lower floor from 65 to 55
+    const effectiveTeamFloor = isLightSlateMode ? 55 : 65;
+    if (pick.compositeScore < effectiveTeamFloor) {
+      mlBlocked.push(`${pick.home_team} vs ${pick.away_team} ${pick.bet_type} (composite ${pick.compositeScore.toFixed(0)} < ${effectiveTeamFloor} team floor)`);
       return false;
     }
 
@@ -3090,8 +3100,8 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       }
     }
 
-    // Non-ML NCAAB: keep composite floor at 65 (raised from 62)
-    if (isNCAAB && !isML && pick.compositeScore < 65) {
+    // Non-ML NCAAB: use dynamic floor (light-slate: 55, normal: 65)
+    if (isNCAAB && !isML && pick.compositeScore < effectiveTeamFloor) {
       return false;
     }
 
@@ -3308,13 +3318,20 @@ async function generateTierParlays(
   // Clone config so we can override thresholds for thin slates without mutating the original
   const config = { ...TIER_CONFIG[tier] };
 
-  // Thin-slate relaxation: loosen validation tier gates only (execution stays strict)
+  // Thin-slate relaxation: loosen validation AND exploration tier gates (execution stays strict)
   if (isThinSlate && tier === 'validation') {
     config.minHitRate = 48;
     config.minEdge = 0.004;
     config.minSharpe = 0.01;
     config.minConfidence = 0.48;
     console.log(`[Bot] 🔶 Thin-slate: validation gates relaxed (hitRate≥48%, edge≥0.004, sharpe≥0.01)`);
+  }
+  if (isThinSlate && tier === 'exploration') {
+    config.minHitRate = 40;
+    config.minEdge = 0.002;
+    config.minSharpe = 0.005;
+    config.minConfidence = 0.40;
+    console.log(`[Bot] 🔶 Thin-slate: exploration gates relaxed (hitRate≥40%, edge≥0.002)`);
   }
 
   const tracker = createUsageTracker();
@@ -4295,17 +4312,41 @@ Deno.serve(async (req) => {
       );
     }
 
-    // 4. Build prop pool
-    let pool = await buildPropPool(supabase, targetDate, weightMap, weights as CategoryWeight[] || []);
+    // 4. Pre-detect light-slate mode (before pool building so ML Sniper can adapt)
+    // Quick check: count player props available today
+    const { startUtc: preStartUtc, endUtc: preEndUtc } = getEasternDateRange();
+    const { count: playerPropCount } = await supabase
+      .from('category_sweet_spots')
+      .select('*', { count: 'exact', head: true })
+      .eq('is_active', true)
+      .gte('created_at', preStartUtc)
+      .lte('created_at', preEndUtc);
+
+    const { count: sportCount } = await supabase
+      .from('game_bets')
+      .select('sport', { count: 'exact', head: true })
+      .gte('commence_time', preStartUtc)
+      .lte('commence_time', preEndUtc);
+
+    const isLightSlateMode = (playerPropCount || 0) === 0 || (sportCount || 0) <= 2;
+    if (isLightSlateMode) {
+      console.log(`[Bot v2] 🌙 LIGHT-SLATE MODE: ${playerPropCount || 0} player props, ${sportCount || 0} sports. Lowering ML Sniper floor to 55, relaxing constraints.`);
+    }
+
+    // Build prop pool (passes light-slate flag for adaptive ML Sniper floor)
+    let pool = await buildPropPool(supabase, targetDate, weightMap, weights as CategoryWeight[] || [], isLightSlateMode);
 
     // Check if we have real odds data
     const realLinePicks = pool.playerPicks.filter(p => p.has_real_line);
-    if (pool.totalPool < 5 || (realLinePicks.length < 3 && pool.teamPicks.length < 3)) {
+    // On light-slate days, lower the pool minimum to allow team-only generation
+    const minPoolSize = isLightSlateMode ? 3 : 5;
+    const minRealLines = isLightSlateMode ? 0 : 3;
+    if (pool.totalPool < minPoolSize || (!isLightSlateMode && realLinePicks.length < 3 && pool.teamPicks.length < 3)) {
       if (isDryRun) {
         console.log(`[DryRun] Real pool empty — injecting synthetic data to exercise scoring gates`);
         pool = generateSyntheticPool();
       } else {
-        const reason = pool.totalPool < 5 
+        const reason = pool.totalPool < minPoolSize 
           ? `Insufficient prop pool (${pool.totalPool})` 
           : `No real odds data (${realLinePicks.length} real lines, ${pool.teamPicks.length} team picks)`;
         console.log(`[Bot v2] Skipping generation: ${reason}`);
@@ -4338,10 +4379,10 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 5. Detect thin slate mode
-    const isThinSlate = pool.totalPool < 25;
+    // 5. Detect thin slate mode (combines with light-slate)
+    const isThinSlate = pool.totalPool < 25 || isLightSlateMode;
     if (isThinSlate) {
-      console.log(`[Bot v2] 🔶 THIN SLATE MODE: ${pool.totalPool} picks (< 25 threshold). Relaxing validation gates.`);
+      console.log(`[Bot v2] 🔶 THIN SLATE MODE: ${pool.totalPool} picks. Relaxing validation gates.`);
     }
 
     // Generate parlays for each tier
@@ -4374,6 +4415,13 @@ Deno.serve(async (req) => {
       console.log(`[Bot v2] Pre-loaded ${globalFingerprints.size} fingerprints + ${globalMirrorPrints.size} mirror prints for ${targetDate}`);
     }
 
+    // Light-slate: increase usage limits for exploration tier
+    if (isLightSlateMode) {
+      TIER_CONFIG.exploration.maxTeamUsage = 5;
+      TIER_CONFIG.exploration.maxCategoryUsage = 8;
+      console.log(`[Bot v2] Light-slate: exploration maxTeamUsage=5, maxCategoryUsage=8`);
+    }
+
     for (const tier of tiersToGenerate) {
       const result = await generateTierParlays(
         supabase,
@@ -4393,7 +4441,120 @@ Deno.serve(async (req) => {
       allParlays = [...allParlays, ...result.parlays];
     }
 
-    console.log(`[Bot v2] Total parlays created: ${allParlays.length}`);
+    // === SINGLE PICK FALLBACK ===
+    // If fewer than 10 parlays generated, create single picks (1-leg straight bets)
+    if (allParlays.length < 10) {
+      console.log(`[Bot v2] 🎯 SINGLE PICK FALLBACK: Only ${allParlays.length} parlays generated. Creating single picks.`);
+      
+      // Merge all picks, sort by composite score
+      const allPicksForSingles: any[] = [
+        ...pool.teamPicks.map(p => ({ ...p, pickType: 'team' })),
+        ...pool.playerPicks.map(p => ({ ...p, pickType: 'player' })),
+        ...pool.whalePicks.map(p => ({ ...p, pickType: 'whale' })),
+      ]
+        .filter(p => !BLOCKED_SPORTS.includes(p.sport || 'basketball_nba'))
+        .sort((a, b) => (b.compositeScore || 0) - (a.compositeScore || 0));
+
+      const singlePickTiers: { tier: TierName; minComposite: number; minHitRate: number; maxCount: number }[] = [
+        { tier: 'exploration', minComposite: 55, minHitRate: 45, maxCount: 15 },
+        { tier: 'validation', minComposite: 60, minHitRate: 50, maxCount: 5 },
+        { tier: 'execution', minComposite: 70, minHitRate: 58, maxCount: 3 },
+      ];
+
+      const usedSingleKeys = new Set<string>();
+
+      for (const spTier of singlePickTiers) {
+        let singlesCreated = 0;
+        for (const pick of allPicksForSingles) {
+          if (singlesCreated >= spTier.maxCount) break;
+
+          const composite = pick.compositeScore || 0;
+          const hitRate = (pick.confidence_score || pick.l10_hit_rate || 0.5) * 100;
+          if (composite < spTier.minComposite || hitRate < spTier.minHitRate) continue;
+
+          // Dedup key
+          const singleKey = pick.pickType === 'team'
+            ? `${pick.home_team}_${pick.away_team}_${pick.bet_type}_${pick.side}`.toLowerCase()
+            : `${pick.player_name}_${pick.prop_type}_${pick.recommended_side}`.toLowerCase();
+          if (usedSingleKeys.has(singleKey)) continue;
+          usedSingleKeys.add(singleKey);
+
+          // Build the single leg
+          let legData: any;
+          if (pick.pickType === 'team' || pick.type === 'team') {
+            legData = {
+              id: pick.id,
+              type: 'team',
+              home_team: pick.home_team,
+              away_team: pick.away_team,
+              bet_type: pick.bet_type,
+              side: pick.side,
+              line: snapLine(pick.line, pick.bet_type),
+              category: pick.category,
+              american_odds: pick.odds || -110,
+              sharp_score: pick.sharp_score,
+              composite_score: composite,
+              outcome: 'pending',
+              sport: pick.sport,
+            };
+          } else {
+            legData = {
+              id: pick.id,
+              player_name: pick.player_name,
+              team_name: pick.team_name,
+              prop_type: pick.prop_type,
+              line: snapLine(pick.line, pick.prop_type),
+              side: pick.recommended_side || 'over',
+              category: pick.category,
+              weight: 1,
+              hit_rate: hitRate,
+              american_odds: pick.americanOdds || -110,
+              odds_value_score: pick.oddsValueScore,
+              composite_score: composite,
+              outcome: 'pending',
+              original_line: snapLine(pick.line, pick.prop_type),
+              selected_line: snapLine(pick.line, pick.prop_type),
+              line_selection_reason: 'single_pick',
+              projection_buffer: (pick.projected_value || pick.l10_avg || 0) - pick.line,
+              projected_value: pick.projected_value || pick.l10_avg || 0,
+              line_source: pick.line_source || 'projected',
+              has_real_line: pick.has_real_line || false,
+              sport: pick.sport || 'basketball_nba',
+            };
+          }
+
+          const odds = legData.american_odds || -110;
+          const impliedProb = odds < 0
+            ? Math.abs(odds) / (Math.abs(odds) + 100)
+            : 100 / (odds + 100);
+          const edge = (hitRate / 100) - impliedProb;
+
+          const strategyType = composite >= 70 ? 'single_pick_accuracy' : 'single_pick_value';
+
+          allParlays.push({
+            parlay_date: targetDate,
+            legs: [legData],
+            leg_count: 1,
+            combined_probability: hitRate / 100,
+            expected_odds: odds,
+            simulated_win_rate: hitRate / 100,
+            simulated_edge: Math.max(edge, 0.005),
+            simulated_sharpe: edge / 0.5,
+            strategy_name: `${strategyName}_${spTier.tier}_${strategyType}`,
+            selection_rationale: `${spTier.tier} tier: ${strategyType} (1-leg single pick, composite ${composite.toFixed(0)})`,
+            outcome: 'pending',
+            is_simulated: spTier.tier !== 'execution',
+            simulated_stake: 20,
+            tier: spTier.tier,
+          });
+
+          singlesCreated++;
+        }
+        console.log(`[Bot v2] Single picks created for ${spTier.tier}: ${singlesCreated}`);
+      }
+    }
+
+    console.log(`[Bot v2] Total parlays + singles created: ${allParlays.length}`);
 
     // === DRY-RUN: Skip all DB writes and return detailed gate analysis ===
     if (isDryRun) {
