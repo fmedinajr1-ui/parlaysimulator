@@ -1,46 +1,28 @@
 
 
-# Fix: Add Spread Cap to Single-Pick Fallback
+# Remove Web App Links from Telegram Messages
 
 ## Problem
+Telegram bot messages contain links back to `parlaysimulator.lovable.app` — users should get all their info directly in Telegram, not be redirected to a web dashboard.
 
-The `MAX_SPREAD_LINE = 10` enforcement only exists in the multi-leg parlay builder (line 3622). The **single-pick fallback** path (line 4596+) has no spread cap, so high spreads like Miss Valley St +14.5 slip through unchecked.
+## Changes
 
-## Solution
+### 1. `supabase/functions/bot-send-telegram/index.ts`
+Remove two "View Dashboard" links:
+- **Line 95** in `formatParlaysGenerated`: Remove `[View Dashboard](https://parlaysimulator.lovable.app/)`
+- **Line 115** in `formatTieredParlaysGenerated`: Remove `[View Dashboard](https://parlaysimulator.lovable.app/)`
 
-Add a spread cap check in the single-pick loop, right after the weight check block (~line 4648), before the dedup key. If a spread pick exceeds `MAX_SPREAD_LINE`, skip it entirely. No alternate-line shopping for singles — just block it.
+### 2. `supabase/functions/telegram-webhook/index.ts`
+Remove three web links from command responses:
+- **Line 418** in `/calendar` empty state: Remove the `View full calendar` link
+- **Lines 456-457** in `/calendar` results: Remove `View full calendar` link
+- **Line 1355** in `/performance` response: Remove `View dashboard` link
 
-## Technical Details
+### 3. `supabase/functions/send-parlay-alert/index.ts` (Optional - Email Only)
+This file has links in email notifications (not Telegram). These will be left as-is since email users may still want web links. If you want those removed too, let me know.
 
-**File**: `supabase/functions/bot-generate-daily-parlays/index.ts`
-
-**Insert after line ~4648** (after the weight check, before the dedup key):
-
-```text
-// SPREAD CAP for singles: block spreads above MAX_SPREAD_LINE
-if (
-  (pick.bet_type === 'spread' || pick.prop_type === 'spread') &&
-  Math.abs(pick.line || 0) >= MAX_SPREAD_LINE
-) {
-  console.log(`[Bot v2] SINGLE SKIP (SpreadCap): ${pick.player_name || pick.home_team} spread ${pick.line} exceeds max ${MAX_SPREAD_LINE}`);
-  continue;
-}
-```
-
-**DB cleanup**: Delete the existing Miss Valley St +14.5 single pick from today:
-
-```sql
-DELETE FROM bot_daily_parlays
-WHERE parlay_date = '2026-02-16'
-  AND leg_count = 1
-  AND legs->0->>'prop_type' = 'spread'
-  AND (legs->0->>'line')::float >= 10;
-```
-
-## Impact
-
-| Before | After |
-|--------|-------|
-| Singles allow any spread size | Singles block spreads with abs(line) >= 10 |
-| Miss Valley St +14.5 included | Blocked automatically |
+## Scope
+- 5 link removals across 2 edge functions
+- Redeploy `bot-send-telegram` and `telegram-webhook`
+- No database changes needed
 
