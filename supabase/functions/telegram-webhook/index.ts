@@ -573,13 +573,12 @@ async function handleParlays(chatId: string) {
 
     message += `${tierLabels[tier]} (${group.length}) — _${tierStakes[tier]}_\n\n`;
 
-    // Show up to 5 parlays per tier with all legs inline
-    const showCount = Math.min(5, group.length);
-    for (let i = 0; i < showCount; i++) {
+    // Show ALL parlays per tier with all legs inline
+    for (let i = 0; i < group.length; i++) {
       const p = group[i];
       const outcomeEmoji = p.outcome === 'won' ? '✅' : p.outcome === 'lost' ? '❌' : '⏳';
       const oddsStr = p.expected_odds > 0 ? `+${p.expected_odds}` : `${p.expected_odds}`;
-      message += `  ${i + 1}. *${p.strategy_name}* (${p.leg_count}-leg) ${oddsStr} ${outcomeEmoji}\n`;
+      message += `  ${i + 1}. (${p.leg_count}-leg) ${oddsStr} ${outcomeEmoji}\n`;
       
       const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs || '[]');
       for (const leg of legs) {
@@ -596,10 +595,6 @@ async function handleParlays(chatId: string) {
         message += `     Avg Score: ${Math.round(avgScore)} | Avg Hit: ${Math.round(avgHit)}%\n`;
       }
       message += `\n`;
-    }
-
-    if (group.length > 5) {
-      message += `  _+${group.length - 5} more ${tier} parlays_\n\n`;
     }
   }
 
@@ -792,8 +787,22 @@ function formatLegDisplay(leg: any): string {
       const teamName = leg.side === 'home' ? home : away;
       actionLine = `Take ${teamName} ML ${odds}`;
     } else {
-      const sideLabel = leg.side === 'home' ? home : leg.side === 'away' ? away : (leg.side || '').toUpperCase();
-      actionLine = `Take ${sideLabel} ${leg.line || ''} ${odds}`;
+      // Infer bet_type from prop_type if missing
+      const propType = (leg.prop_type || '').toLowerCase();
+      if (propType.includes('spread')) {
+        const teamName = leg.side === 'home' ? home : away;
+        const line = leg.line > 0 ? `+${leg.line}` : `${leg.line}`;
+        actionLine = `Take ${teamName} ${line} ${odds}`;
+      } else if (propType.includes('total')) {
+        const side = (leg.side || 'over').toUpperCase();
+        actionLine = `Take ${side} ${leg.line} ${odds}`;
+      } else if (propType.includes('h2h') || propType.includes('moneyline')) {
+        const teamName = leg.side === 'home' ? home : away;
+        actionLine = `Take ${teamName} ML ${odds}`;
+      } else {
+        const sideLabel = leg.side === 'home' ? home : leg.side === 'away' ? away : (leg.side || '').toUpperCase();
+        actionLine = `Take ${sideLabel} ${leg.line || ''} ${odds}`;
+      }
     }
     matchupLine = `${away} @ ${home}`;
   } else {
