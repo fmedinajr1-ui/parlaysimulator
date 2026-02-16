@@ -130,10 +130,11 @@ export function BotPnLCalendar() {
               {calendarDays.days.map((day) => {
                 const dateStr = format(day, 'yyyy-MM-dd');
                 const data = dailyMap.get(dateStr);
-                const hasData = !!data && data.profitLoss !== 0;
+                const hasData = !!data;
+                const isEven = hasData && data!.profitLoss === 0;
                 const isProfitable = data?.isProfitable ?? false;
                 const isToday = dateStr === format(new Date(), 'yyyy-MM-dd');
-                const intensity = hasData ? getHeatmapIntensity(data!.profitLoss, maxAbsPnL) : 0;
+                const intensity = hasData && !isEven ? getHeatmapIntensity(data!.profitLoss, maxAbsPnL) : 0;
 
                 const cellContent = (
                   <div
@@ -142,7 +143,11 @@ export function BotPnLCalendar() {
                       !hasData && 'border-border/30 text-muted-foreground',
                       isToday && 'ring-1 ring-primary'
                     )}
-                    style={hasData ? {
+                    style={hasData ? (isEven ? {
+                      backgroundColor: 'hsl(210 100% 55% / 0.15)',
+                      borderColor: 'hsl(210 100% 55% / 0.3)',
+                      color: 'hsl(210 100% 55%)',
+                    } : {
                       backgroundColor: isProfitable
                         ? `hsl(145 100% 45% / ${intensity * 0.25})`
                         : `hsl(0 80% 55% / ${intensity * 0.25})`,
@@ -152,14 +157,14 @@ export function BotPnLCalendar() {
                       color: isProfitable
                         ? `hsl(145 100% 55%)`
                         : `hsl(0 80% 60%)`,
-                    } : undefined}
+                    }) : undefined}
                   >
                     <span className={cn('font-medium', isToday && 'text-primary')}>
                       {format(day, 'd')}
                     </span>
                     {hasData && (
                       <span className="text-[8px] font-bold leading-tight">
-                        {data!.profitLoss >= 0 ? '+' : ''}{data!.profitLoss.toFixed(0)}
+                        {isEven ? 'Even' : `${data!.profitLoss >= 0 ? '+' : ''}${data!.profitLoss.toFixed(0)}`}
                       </span>
                     )}
                   </div>

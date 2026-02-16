@@ -40,6 +40,10 @@ export function HeroStats({ totalProfit, totalWins }: HeroStatsProps) {
             color="text-primary"
           />
         </div>
+
+        <p className="mt-6 text-sm font-medium text-blue-400 bg-blue-500/10 border border-blue-500/20 rounded-lg px-4 py-2 inline-block">
+          🚀 One winning day can return 10x your investment
+        </p>
       </div>
     </section>
   );
