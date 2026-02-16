@@ -1626,9 +1626,12 @@ async function handleCustomerStart(chatId: string) {
   await logActivity("telegram_start", `Customer started bot chat`, { chatId });
   return `🌾 *Welcome to Parlay Farm!*
 
-Use /parlays to see today's generated picks.
+💰 *Recommended Starter Balance:* $200–$400
+📊 *Stake $10–$20 per parlay* — we generate multiple parlays daily, so smaller stakes let you spread across all picks.
 
-That's it — we do the research, you place the bets. 🎯`;
+Use /parlays to see today's picks.
+
+One winning day can return 10x your investment. 🚀`;
 }
 
 // ==================== MAIN ROUTER ====================

@@ -75,16 +75,18 @@ export function PerformanceCalendar({ days, hasBotAccess }: PerformanceCalendarP
                 key={day}
                 className={`aspect-square rounded-lg border flex flex-col items-center justify-center text-xs transition-colors ${
                   data
-                    ? data.isProfitable
-                      ? 'bg-accent/15 border-accent/30 text-accent'
-                      : 'bg-destructive/15 border-destructive/30 text-destructive'
+                    ? data.profitLoss === 0
+                      ? 'bg-blue-500/15 border-blue-500/30 text-blue-400'
+                      : data.isProfitable
+                        ? 'bg-accent/15 border-accent/30 text-accent'
+                        : 'bg-destructive/15 border-destructive/30 text-destructive'
                     : 'border-border/50 text-muted-foreground/50'
                 }`}
               >
                 <span className="font-medium">{day}</span>
                 {data && (
                   <span className="text-[10px] font-bold mt-0.5">
-                    {data.profitLoss >= 0 ? '+' : ''}{data.profitLoss.toFixed(0)}
+                    {data.profitLoss === 0 ? 'Even' : `${data.profitLoss >= 0 ? '+' : ''}${data.profitLoss.toFixed(0)}`}
                   </span>
                 )}
                 {data && !hasBotAccess && (
