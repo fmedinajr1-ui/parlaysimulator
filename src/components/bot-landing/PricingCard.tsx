@@ -7,6 +7,7 @@ interface PricingCardProps {
   onSubscribe: (email: string) => void;
   isLoading?: boolean;
   isSubscribed?: boolean;
+  onCtaClick?: () => void;
 }
 
 const features = [
@@ -18,7 +19,7 @@ const features = [
   "Real-time live prop tracking",
 ];
 
-export function PricingCard({ onSubscribe, isLoading, isSubscribed }: PricingCardProps) {
+export function PricingCard({ onSubscribe, isLoading, isSubscribed, onCtaClick }: PricingCardProps) {
   const [email, setEmail] = useState("");
   const [error, setError] = useState("");
 
@@ -28,6 +29,7 @@ export function PricingCard({ onSubscribe, isLoading, isSubscribed }: PricingCar
       return;
     }
     setError("");
+    onCtaClick?.();
     onSubscribe(email);
   };
 

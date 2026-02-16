@@ -7,8 +7,8 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableHeader, TableHead, TableBody, TableRow, TableCell } from '@/components/ui/table';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import { AreaChart, Area, XAxis, YAxis, BarChart, Bar, CartesianGrid } from 'recharts';
-import { Loader2, Users, Eye, MousePointerClick, Percent, Activity } from 'lucide-react';
-import { format, subDays, startOfDay, parseISO } from 'date-fns';
+import { Loader2, Users, Eye, MousePointerClick, Percent, Activity, Clock, Target } from 'lucide-react';
+import { format, subDays, parseISO } from 'date-fns';
 
 type TimeRange = '7d' | '30d' | '90d';
 
@@ -35,15 +35,23 @@ export function SiteAnalyticsDashboard() {
   const stats = useMemo(() => {
     const pageViews = events.filter(e => e.event_type === 'page_view');
     const subClicks = events.filter(e => e.event_type === 'subscribe_click');
+    const ctaClicks = events.filter(e => e.event_type === 'cta_click');
+    const timeEvents = events.filter(e => e.event_type === 'time_on_page');
     const uniqueFingerprints = new Set(events.map(e => e.device_fingerprint).filter(Boolean));
     const uniqueVisitors = uniqueFingerprints.size;
     const conversionRate = uniqueVisitors > 0 ? (subClicks.length / uniqueVisitors) * 100 : 0;
+
+    const avgTime = timeEvents.length > 0
+      ? timeEvents.reduce((sum, e) => sum + (Number((e.metadata as Record<string, unknown>)?.duration_seconds) || 0), 0) / timeEvents.length
+      : 0;
 
     return {
       uniqueVisitors,
       totalPageViews: pageViews.length,
       subscribeClicks: subClicks.length,
       conversionRate,
+      ctaClicks: ctaClicks.length,
+      avgTimeOnPage: Math.round(avgTime),
     };
   }, [events]);
 
@@ -80,9 +88,41 @@ export function SiteAnalyticsDashboard() {
   const funnelData = useMemo(() => {
     return [
       { stage: 'Page Views', count: stats.totalPageViews },
+      { stage: 'CTA Clicks', count: stats.ctaClicks },
       { stage: 'Sub Clicks', count: stats.subscribeClicks },
     ];
   }, [stats]);
+
+  const ctaBreakdown = useMemo(() => {
+    const ctaEvents = events.filter(e => e.event_type === 'cta_click');
+    const counts: Record<string, number> = {};
+    ctaEvents.forEach(e => {
+      const label = String((e.metadata as Record<string, unknown>)?.label || 'unknown');
+      counts[label] = (counts[label] || 0) + 1;
+    });
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([label, count]) => ({ label, count }));
+  }, [events]);
+
+  const sectionReach = useMemo(() => {
+    const sectionEvents = events.filter(e => e.event_type === 'section_view');
+    const uniqueVisitors = new Set(events.map(e => e.device_fingerprint).filter(Boolean)).size;
+    const sections: Record<string, Set<string>> = {};
+    sectionEvents.forEach(e => {
+      const section = String((e.metadata as Record<string, unknown>)?.section || 'unknown');
+      if (!sections[section]) sections[section] = new Set();
+      if (e.device_fingerprint) sections[section].add(e.device_fingerprint);
+    });
+    const order = ['hero_stats', 'performance_calendar', 'why_multiple_parlays', 'pricing'];
+    return order
+      .filter(s => sections[s])
+      .map(section => ({
+        section,
+        viewers: sections[section].size,
+        percentage: uniqueVisitors > 0 ? Math.round((sections[section].size / uniqueVisitors) * 100) : 0,
+      }));
+  }, [events]);
 
   const recentEvents = useMemo(() => events.slice(0, 15), [events]);
 
@@ -99,6 +139,13 @@ export function SiteAnalyticsDashboard() {
     count: { label: 'Count', color: 'hsl(var(--primary))' },
   };
 
+  const formatTime = (seconds: number) => {
+    if (seconds < 60) return `${seconds}s`;
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}m ${secs}s`;
+  };
+
   return (
     <div className="space-y-6">
       {/* Time Range */}
@@ -111,7 +158,7 @@ export function SiteAnalyticsDashboard() {
       </Tabs>
 
       {/* Summary Cards */}
-      <StatsGrid columns={2} className="sm:grid-cols-4">
+      <StatsGrid columns={2} className="sm:grid-cols-3 lg:grid-cols-6">
         <StatsCard>
           <StatItem label="Unique Visitors" value={stats.uniqueVisitors} icon={<Users className="w-5 h-5 text-primary" />} />
         </StatsCard>
@@ -119,10 +166,16 @@ export function SiteAnalyticsDashboard() {
           <StatItem label="Page Views" value={stats.totalPageViews} icon={<Eye className="w-5 h-5 text-blue-500" />} />
         </StatsCard>
         <StatsCard>
-          <StatItem label="Sub Clicks" value={stats.subscribeClicks} icon={<MousePointerClick className="w-5 h-5 text-green-500" />} />
+          <StatItem label="CTA Clicks" value={stats.ctaClicks} icon={<MousePointerClick className="w-5 h-5 text-green-500" />} />
+        </StatsCard>
+        <StatsCard>
+          <StatItem label="Sub Clicks" value={stats.subscribeClicks} icon={<Target className="w-5 h-5 text-orange-500" />} />
         </StatsCard>
         <StatsCard>
           <StatItem label="Conversion" value={`${stats.conversionRate.toFixed(1)}%`} icon={<Percent className="w-5 h-5 text-yellow-500" />} />
+        </StatsCard>
+        <StatsCard>
+          <StatItem label="Avg. Time" value={formatTime(stats.avgTimeOnPage)} icon={<Clock className="w-5 h-5 text-purple-500" />} />
         </StatsCard>
       </StatsGrid>
 
@@ -146,10 +199,9 @@ export function SiteAnalyticsDashboard() {
 
       {/* Funnel + Top Pages */}
       <div className="grid gap-6 md:grid-cols-2">
-        {/* Funnel */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm">Subscription Funnel</CardTitle>
+            <CardTitle className="text-sm">Conversion Funnel</CardTitle>
           </CardHeader>
           <CardContent>
             <ChartContainer config={chartConfig} className="h-[200px] w-full">
@@ -164,7 +216,6 @@ export function SiteAnalyticsDashboard() {
           </CardContent>
         </Card>
 
-        {/* Top Pages */}
         <Card>
           <CardHeader>
             <CardTitle className="text-sm">Top Pages</CardTitle>
@@ -184,6 +235,63 @@ export function SiteAnalyticsDashboard() {
                   <TableRow key={path}>
                     <TableCell className="font-mono text-xs">{path}</TableCell>
                     <TableCell className="text-right">{count}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* CTA Breakdown + Section Reach */}
+      <div className="grid gap-6 md:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">CTA Click Breakdown</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>CTA Label</TableHead>
+                  <TableHead className="text-right">Clicks</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {ctaBreakdown.length === 0 ? (
+                  <TableRow><TableCell colSpan={2} className="text-center text-muted-foreground">No CTA clicks yet</TableCell></TableRow>
+                ) : ctaBreakdown.map(({ label, count }) => (
+                  <TableRow key={label}>
+                    <TableCell className="font-mono text-xs">{label}</TableCell>
+                    <TableCell className="text-right">{count}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Section Reach</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Section</TableHead>
+                  <TableHead className="text-right">Viewers</TableHead>
+                  <TableHead className="text-right">% Reached</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {sectionReach.length === 0 ? (
+                  <TableRow><TableCell colSpan={3} className="text-center text-muted-foreground">No section data yet</TableCell></TableRow>
+                ) : sectionReach.map(({ section, viewers, percentage }) => (
+                  <TableRow key={section}>
+                    <TableCell className="font-mono text-xs">{section}</TableCell>
+                    <TableCell className="text-right">{viewers}</TableCell>
+                    <TableCell className="text-right">{percentage}%</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -216,8 +324,14 @@ export function SiteAnalyticsDashboard() {
                 <TableRow key={event.id}>
                   <TableCell>
                     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                      event.event_type === 'subscribe_click' 
-                        ? 'bg-green-500/10 text-green-500' 
+                      event.event_type === 'cta_click'
+                        ? 'bg-green-500/10 text-green-500'
+                        : event.event_type === 'section_view'
+                        ? 'bg-blue-500/10 text-blue-500'
+                        : event.event_type === 'time_on_page'
+                        ? 'bg-purple-500/10 text-purple-500'
+                        : event.event_type === 'subscribe_click'
+                        ? 'bg-orange-500/10 text-orange-500'
                         : 'bg-primary/10 text-primary'
                     }`}>
                       {event.event_type}
