@@ -4523,15 +4523,24 @@ Deno.serve(async (req) => {
     const globalMirrorPrints = new Set<string>();
     const { data: existingParlays } = await supabase
       .from('bot_daily_parlays')
-      .select('legs')
+      .select('legs, leg_count')
       .eq('parlay_date', targetDate);
+    const existingSingleKeys = new Set<string>();
     if (existingParlays) {
       for (const p of existingParlays) {
         const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs);
         globalFingerprints.add(createParlayFingerprint(legs));
         globalMirrorPrints.add(createMirrorFingerprint(legs));
+        // Pre-load single-pick dedup keys
+        if (p.leg_count === 1 && legs[0]) {
+          const leg = legs[0];
+          const key = leg.type === 'team'
+            ? `${leg.home_team}_${leg.away_team}_${leg.bet_type}_${leg.side}`.toLowerCase()
+            : `${leg.player_name}_${leg.prop_type}_${leg.side}`.toLowerCase();
+          existingSingleKeys.add(key);
+        }
       }
-      console.log(`[Bot v2] Pre-loaded ${globalFingerprints.size} fingerprints + ${globalMirrorPrints.size} mirror prints for ${targetDate}`);
+      console.log(`[Bot v2] Pre-loaded ${globalFingerprints.size} fingerprints + ${globalMirrorPrints.size} mirror prints + ${existingSingleKeys.size} single-pick keys for ${targetDate}`);
     }
 
     // Light-slate: increase usage limits for exploration tier
@@ -4580,7 +4589,7 @@ Deno.serve(async (req) => {
         { tier: 'execution', minComposite: 70, minHitRate: 58, maxCount: 3 },
       ];
 
-      const usedSingleKeys = new Set<string>();
+      const usedSingleKeys = new Set<string>(existingSingleKeys);
 
       for (const spTier of singlePickTiers) {
         let singlesCreated = 0;
