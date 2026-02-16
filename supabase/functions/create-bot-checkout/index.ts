@@ -35,6 +35,9 @@ serve(async (req) => {
       customer_email: customerId ? undefined : email,
       line_items: [{ price: BOT_PRO_PRICE_ID, quantity: 1 }],
       mode: "subscription",
+      subscription_data: {
+        trial_period_days: 3,
+      },
       success_url: TELEGRAM_BOT_URL,
       cancel_url: `${req.headers.get("origin")}/`,
     });
