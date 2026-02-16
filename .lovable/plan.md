@@ -1,32 +1,48 @@
 
 
-# Fix: Shadow Picks Not Saving (Column Name Mismatch)
+# Auto-Refreshing Shadow Picks & Accuracy Data
 
-## Root Cause
+## What Changes
 
-The simulation engine references `game.event_id` but the `game_bets` table uses `game_id` as the column name. This means every shadow pick insert has `event_id: null`, which violates the NOT NULL constraint on `simulation_shadow_picks.event_id` -- so zero rows are saved.
+Make the Simulation tab components continuously update with fresh data, so you always see the latest shadow picks and accuracy stats without manual refreshing.
 
-## Changes
+### 1. ShadowPicksFeed: Real-Time Updates
 
-### 1. Fix `supabase/functions/odds-simulation-engine/index.ts`
+- Enable Supabase realtime on the `simulation_shadow_picks` table so new picks appear instantly as the pipeline generates them
+- Subscribe to `INSERT` events on the table -- when the simulation engine creates new shadow picks, they show up in the feed immediately
+- Also subscribe to `UPDATE` events so when picks get settled (outcome changes from "pending" to "won"/"lost"), the badge updates live
+- Add a small "Live" indicator dot (like the one on the Engine Activity Feed) to show the connection is active
+- Auto-refresh the full list every 60 seconds as a fallback
 
-- Update the `GameBet` interface: rename `event_id` to `game_id`
-- Update all references from `game.event_id` to `game.game_id` throughout the file (shadow pick construction, duplicate-check keys, settle mode event lookups)
-- In the shadow pick insert object, map `event_id: game.game_id`
+### 2. SimulationAccuracyCard: Periodic Refresh
 
-### 2. Fix settle mode lookup
+- Add a 60-second polling interval to re-fetch accuracy stats so the numbers update as picks get settled
+- Show a subtle refresh indicator
 
-The settle mode queries `game_bets` by `event_id` which doesn't exist. Change it to query by `game_id` instead, and match shadow picks' `event_id` field against `game_bets.game_id`.
+### 3. Database: Enable Realtime
 
-### 3. Make `event_id` nullable (database migration)
+- Run a migration to add `simulation_shadow_picks` to the Supabase realtime publication so the subscription works
 
-As a safety measure, alter `simulation_shadow_picks.event_id` to be nullable with a default of empty string, so a missing game_id doesn't silently block all inserts. Alternatively, keep it NOT NULL but the code fix above should resolve the issue.
+## Technical Details
 
-**Recommendation**: Keep NOT NULL -- the code fix is the right solution.
+### Database Migration
+```sql
+ALTER PUBLICATION supabase_realtime ADD TABLE public.simulation_shadow_picks;
+```
 
-## Files Modified
-- `supabase/functions/odds-simulation-engine/index.ts` -- fix `event_id` -> `game_id` mapping
+### ShadowPicksFeed Changes
+- Add a Supabase realtime channel subscription for `postgres_changes` on `simulation_shadow_picks`
+- On `INSERT`: prepend new pick to the list (cap at 50)
+- On `UPDATE`: replace the updated pick in-place (for outcome changes)
+- Add `isConnected` state and a live indicator in the header
+- Add `setInterval` fallback polling every 60 seconds
+- Clean up channel on unmount
 
-## No Database Changes Needed
-The `simulation_shadow_picks.event_id` column is fine as NOT NULL. The fix is purely in the edge function code.
+### SimulationAccuracyCard Changes
+- Wrap the fetch in a `setInterval` of 60 seconds
+- Clean up on unmount
 
+### Files Modified
+- `src/components/bot/ShadowPicksFeed.tsx` -- add realtime subscription + live indicator
+- `src/components/bot/SimulationAccuracyCard.tsx` -- add polling interval
+- Database migration -- enable realtime on `simulation_shadow_picks`
