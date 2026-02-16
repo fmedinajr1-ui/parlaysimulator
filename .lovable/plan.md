@@ -1,69 +1,64 @@
 
+# Fix: OVER_TOTAL Category Mismatch + Clean Up Feb 16 Data
 
-# Fix: Block Duplicate Single Picks Across Runs
+## Root Cause
 
-## Problem
+The weight-check logic looks up picks using their raw `category` field (e.g., `TOTAL`), but `bot_category_weights` stores sport-specific entries as `OVER_TOTAL` / `UNDER_TOTAL`. The lookup `TOTAL__over__basketball_ncaab` finds no match, falls through to the default weight of `1.0`, and the block/flip logic never triggers.
 
-The single-pick fallback uses an in-memory `usedSingleKeys` set for deduplication, but this resets on every function invocation. When the generator runs multiple times per day (e.g., at 16:23 and 16:24), identical single picks get inserted again, inflating the count (36 picks = 18 x 2 runs).
+## Two-Part Fix
 
-Multi-leg parlays already handle this via `globalFingerprints` pre-loaded from the DB, but single picks bypass that system entirely.
+### Part 1: Delete bad existing data for Feb 16
 
-## Solution
-
-Pre-load existing single-pick dedup keys from the database at the start of the run, and seed `usedSingleKeys` with them. This way, if a single pick was already inserted in a prior run, it gets skipped.
-
-## Changes to `bot-generate-daily-parlays/index.ts`
-
-### 1. Pre-load existing single-pick keys from DB (after the globalFingerprints block, ~line 4535)
-
-After the existing fingerprint pre-loading block, add a second pass that extracts dedup keys from existing 1-leg parlays for the target date:
+Delete the 18 duplicate single picks from the second run (16:24) and the 4 OVER_TOTAL picks from the first run (16:23) that should have been blocked.
 
 ```text
-// Pre-load single-pick dedup keys from existing DB entries
-const existingSingleKeys = new Set<string>();
-if (existingParlays) {
-  for (const p of existingParlays) {
-    if (p.leg_count === 1) {
-      const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs);
-      const leg = legs[0];
-      if (leg) {
-        const key = leg.type === 'team'
-          ? `${leg.home_team}_${leg.away_team}_${leg.bet_type}_${leg.side}`.toLowerCase()
-          : `${leg.player_name}_${leg.prop_type}_${leg.side}`.toLowerCase();
-        existingSingleKeys.add(key);
-      }
-    }
-  }
-  console.log(`[Bot v2] Pre-loaded ${existingSingleKeys.size} single-pick keys`);
+-- Delete 18 duplicates from second run
+DELETE FROM bot_daily_parlays 
+WHERE parlay_date = '2026-02-16' AND leg_count = 1 
+AND created_at >= '2026-02-16 16:24:00+00';
+
+-- Delete remaining OVER total picks from first run
+DELETE FROM bot_daily_parlays 
+WHERE parlay_date = '2026-02-16' AND leg_count = 1
+AND legs->0->>'side' = 'over'
+AND (legs->0->>'prop_type' = 'total' OR legs->0->>'category' = 'TOTAL');
+```
+
+### Part 2: Fix category normalization in the weight lookup
+
+In `supabase/functions/bot-generate-daily-parlays/index.ts`, add category normalization before the weight check so that a pick with `category: "TOTAL"` and `side: "over"` resolves to `OVER_TOTAL` for lookup purposes.
+
+Around line 4605, before the weight lookup:
+
+```text
+// Normalize generic "TOTAL" category to side-specific variant
+let pickCategory = pick.category || '';
+if (pickCategory === 'TOTAL' || pickCategory === 'TEAM_TOTAL') {
+  const prefix = pickSide === 'over' ? 'OVER' : 'UNDER';
+  pickCategory = pickCategory === 'TOTAL' 
+    ? `${prefix}_TOTAL` 
+    : `${prefix}_TEAM_TOTAL`;
 }
 ```
 
-### 2. Seed `usedSingleKeys` with pre-loaded keys (~line 4583)
+This ensures:
+- `TOTAL` + `over` maps to `OVER_TOTAL` (blocked for NCAAB, weight=0)
+- `TOTAL` + `under` maps to `UNDER_TOTAL` (active for NCAAB, weight=1.20)
+- The existing flip logic then correctly converts blocked OVER to UNDER
 
-Change the initialization of `usedSingleKeys` from an empty set to a copy of the pre-loaded keys:
+### Expected Result After Fix
 
-```text
-// Before (current):
-const usedSingleKeys = new Set<string>();
-
-// After:
-const usedSingleKeys = new Set<string>(existingSingleKeys);
-```
-
-This ensures any single pick that was already written to the DB in a previous run gets skipped via the existing `if (usedSingleKeys.has(singleKey)) continue;` check at line 4636.
+| Before | After |
+|--------|-------|
+| 36 single picks (18 dupes) | 18 single picks (no dupes) |
+| 8 OVER_TOTAL NCAAB picks | 0 OVER_TOTAL NCAAB picks |
+| Weight check bypassed for "TOTAL" category | Correctly maps to OVER_TOTAL / UNDER_TOTAL |
 
 ## Technical Details
 
 | Aspect | Detail |
 |--------|--------|
 | File modified | `supabase/functions/bot-generate-daily-parlays/index.ts` |
-| Lines affected | ~4535 (add pre-load block), ~4583 (seed set) |
-| Risk | Low -- uses the same dedup key format already in use |
-| Backward compatible | Yes -- only prevents future duplicates, does not delete existing ones |
-
-## What This Fixes
-
-- Prevents duplicate single picks when the generator runs multiple times per day
-- Uses the same composite key format (`home_away_bettype_side` or `player_proptype_side`) already used for in-run dedup
-- Leverages the existing `existingParlays` query (no extra DB call needed)
-
+| Lines affected | ~4605 (add normalization before weight lookup) |
+| DB cleanup | Delete 22 bad rows from `bot_daily_parlays` |
+| Risk | Low -- normalization only affects the lookup key, not stored data |
