@@ -4576,12 +4576,28 @@ Deno.serve(async (req) => {
       
       // Merge all picks, sort by composite score
       const allPicksForSingles: any[] = [
-        ...pool.teamPicks.map(p => ({ ...p, pickType: 'team' })),
-        ...pool.playerPicks.map(p => ({ ...p, pickType: 'player' })),
-        ...pool.whalePicks.map(p => ({ ...p, pickType: 'whale' })),
+        ...[
+          ...pool.teamPicks.map(p => ({ ...p, pickType: 'team' })),
+          ...pool.playerPicks.map(p => ({ ...p, pickType: 'player' })),
+          ...pool.whalePicks.map(p => ({ ...p, pickType: 'whale' })),
+          ...pool.sweetSpots.map(p => ({ ...p, pickType: 'player' })),
+        ]
+          .filter(p => !BLOCKED_SPORTS.includes(p.sport || 'basketball_nba'))
+          .reduce((acc, pick) => {
+            const key = pick.pickType === 'team'
+              ? `${pick.home_team}_${pick.away_team}_${pick.bet_type}_${pick.side}`.toLowerCase()
+              : `${pick.player_name}_${pick.prop_type}_${pick.recommended_side || pick.side}`.toLowerCase();
+            const existing = acc.get(key);
+            if (!existing || (pick.compositeScore || 0) > (existing.compositeScore || 0)) {
+              acc.set(key, pick);
+            }
+            return acc;
+          }, new Map<string, any>())
+          .values()
       ]
-        .filter(p => !BLOCKED_SPORTS.includes(p.sport || 'basketball_nba'))
         .sort((a, b) => (b.compositeScore || 0) - (a.compositeScore || 0));
+
+      console.log(`[Bot v2] Single pick pool: ${allPicksForSingles.length} candidates (team=${pool.teamPicks.length}, player=${pool.playerPicks.length}, whale=${pool.whalePicks.length}, sweetSpots=${pool.sweetSpots.length})`);
 
       const singlePickTiers: { tier: TierName; minComposite: number; minHitRate: number; maxCount: number }[] = [
         { tier: 'exploration', minComposite: 55, minHitRate: 45, maxCount: 15 },
