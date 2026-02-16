@@ -239,6 +239,60 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
 // ============= BLOCKED SPORTS (paused until more data collected) =============
 const BLOCKED_SPORTS = ['baseball_ncaa', 'golf_pga'];
 
+// ============= STALE ODDS DETECTION =============
+const STALE_ODDS_THRESHOLD_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+function isStaleOdds(updatedAt: string | null | undefined): boolean {
+  if (!updatedAt) return true; // No timestamp = stale
+  const updatedTime = new Date(updatedAt).getTime();
+  const now = Date.now();
+  return (now - updatedTime) > STALE_ODDS_THRESHOLD_MS;
+}
+
+// ============= SPORT-SHIFT WEIGHTING =============
+// When dominant sports (NBA) are dark, boost available sports
+const SPORT_SHIFT_WEIGHTS: Record<string, number> = {
+  'basketball_nba': 1.0,
+  'icehockey_nhl': 1.0,
+  'basketball_ncaab': 1.0,
+  'tennis_atp': 1.0,
+  'tennis_wta': 1.0,
+  'tennis_pingpong': 1.0,
+  'golf_pga': 1.0,
+};
+
+function computeSportShiftMultipliers(availableSports: Set<string>): Map<string, number> {
+  const multipliers = new Map<string, number>();
+  const dominantSports = ['basketball_nba', 'icehockey_nhl'];
+  const dominantMissing = dominantSports.filter(s => !availableSports.has(s));
+  
+  if (dominantMissing.length === 0) {
+    // All dominant sports present — no shift needed
+    for (const sport of availableSports) multipliers.set(sport, 1.0);
+    return multipliers;
+  }
+  
+  // Calculate boost: redistribute missing dominant weight across available sports
+  const boostPerSport = (dominantMissing.length * 0.3) / Math.max(availableSports.size, 1);
+  for (const sport of availableSports) {
+    multipliers.set(sport, 1.0 + boostPerSport);
+  }
+  console.log(`[SportShift] Dominant sports dark: ${dominantMissing.join(', ')}. Boosting available sports by +${(boostPerSport * 100).toFixed(0)}%`);
+  return multipliers;
+}
+
+// ============= DYNAMIC STAKE SIZING =============
+function getDynamicStake(tier: TierName, isLightSlate: boolean, baseStake: number): number {
+  if (!isLightSlate) return baseStake;
+  // Light-slate: full for execution, half for validation, quarter for exploration
+  switch (tier) {
+    case 'execution': return baseStake;         // $100 stays $100
+    case 'validation': return baseStake * 0.5;  // $100 → $50
+    case 'exploration': return baseStake * 0.25; // $100 → $25
+    default: return baseStake;
+  }
+}
+
 // ============= CONSTANTS =============
 
 const DEFAULT_MIN_HIT_RATE = 50;
@@ -2528,9 +2582,28 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       seenGameBets.set(key, game);
     }
   }
-  const teamProps = Array.from(seenGameBets.values());
+  const allTeamProps = Array.from(seenGameBets.values());
 
-  console.log(`[Bot] Raw data: ${(sweetSpots || []).length} sweet spots, ${(playerProps || []).length} unified_props, ${(rawTeamProps || []).length} raw team bets → ${teamProps.length} deduped`);
+  // === STALE ODDS FILTER ===
+  const staleCount = allTeamProps.filter(tp => isStaleOdds(tp.updated_at)).length;
+  const teamProps = allTeamProps.filter(tp => {
+    if (isStaleOdds(tp.updated_at)) {
+      return false; // Skip picks with odds data > 6 hours old
+    }
+    return true;
+  });
+  if (staleCount > 0) {
+    console.log(`[StaleOdds] Filtered out ${staleCount} team props with odds data > 6 hours old`);
+  }
+
+  // === SPORT-SHIFT WEIGHTING ===
+  const availableSports = new Set<string>();
+  teamProps.forEach(tp => { if (tp.sport) availableSports.add(tp.sport); });
+  (playerProps || []).forEach((pp: any) => { if (pp.sport) availableSports.add(pp.sport); });
+  const sportShiftMultipliers = computeSportShiftMultipliers(availableSports);
+  console.log(`[SportShift] Available sports: ${[...availableSports].join(', ')}`);
+
+  console.log(`[Bot] Raw data: ${(sweetSpots || []).length} sweet spots, ${(playerProps || []).length} unified_props, ${(rawTeamProps || []).length} raw team bets → ${teamProps.length} deduped (${staleCount} stale removed)`);
 
   // Build odds map
   const oddsMap = new Map<string, { overOdds: number; underOdds: number; line: number; sport: string }>();
@@ -3244,6 +3317,26 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       line_source: 'whale_signal',
     } as EnrichedPick;
   }).filter((p: EnrichedPick) => Math.abs(p.line) > 0 && p.player_name);
+
+  // === APPLY SPORT-SHIFT MULTIPLIERS ===
+  let sportShiftApplied = 0;
+  for (const pick of enrichedSweetSpots) {
+    const mult = sportShiftMultipliers.get(pick.sport || 'basketball_nba') || 1.0;
+    if (mult !== 1.0) {
+      pick.compositeScore = Math.min(95, Math.round(pick.compositeScore * mult));
+      sportShiftApplied++;
+    }
+  }
+  for (const pick of enrichedTeamPicks) {
+    const mult = sportShiftMultipliers.get(pick.sport || 'basketball_nba') || 1.0;
+    if (mult !== 1.0) {
+      pick.compositeScore = Math.min(95, Math.round(pick.compositeScore * mult));
+      sportShiftApplied++;
+    }
+  }
+  if (sportShiftApplied > 0) {
+    console.log(`[SportShift] Boosted composite scores for ${sportShiftApplied} picks from non-dominant sports`);
+  }
 
   console.log(`[Bot] Pool built: ${enrichedSweetSpots.length} player props, ${enrichedTeamPicks.length} team props, ${enrichedWhalePicks.length} whale picks`);
 
@@ -4328,6 +4421,32 @@ Deno.serve(async (req) => {
       .gte('commence_time', preStartUtc)
       .lte('commence_time', preEndUtc);
 
+    // === ZERO-GAME GRACEFUL MODE ===
+    // If 0 games scheduled, skip generation entirely and notify
+    if ((sportCount || 0) === 0) {
+      console.log(`[Bot v2] 🚫 ZERO-GAME MODE: No games scheduled for ${targetDate}. Skipping generation.`);
+      await supabase.from('bot_activity_log').insert({
+        event_type: 'zero_game_day',
+        message: `No games scheduled for ${targetDate}. Generation skipped.`,
+        severity: 'info',
+        metadata: { date: targetDate, playerProps: playerPropCount || 0 },
+      });
+      try {
+        await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseKey}` },
+          body: JSON.stringify({
+            type: 'daily_summary',
+            data: { parlaysCount: 0, winRate: 0, edge: 0, bankroll, mode: '🚫 No Slate Today - Zero games scheduled' },
+          }),
+        });
+      } catch (_) { /* ignore */ }
+      return new Response(
+        JSON.stringify({ success: true, parlaysGenerated: 0, reason: 'zero_game_day', date: targetDate }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     const isLightSlateMode = (playerPropCount || 0) === 0 || (sportCount || 0) <= 2;
     if (isLightSlateMode) {
       console.log(`[Bot v2] 🌙 LIGHT-SLATE MODE: ${playerPropCount || 0} player props, ${sportCount || 0} sports. Lowering ML Sniper floor to 55, relaxing constraints.`);
@@ -4544,7 +4663,7 @@ Deno.serve(async (req) => {
             selection_rationale: `${spTier.tier} tier: ${strategyType} (1-leg single pick, composite ${composite.toFixed(0)})`,
             outcome: 'pending',
             is_simulated: spTier.tier !== 'execution',
-            simulated_stake: 20,
+            simulated_stake: getDynamicStake(spTier.tier, isLightSlateMode, 100),
             tier: spTier.tier,
           });
 
