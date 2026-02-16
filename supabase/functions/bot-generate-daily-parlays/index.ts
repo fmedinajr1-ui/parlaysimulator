@@ -94,6 +94,10 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // NCAA Baseball exploration — PAUSED (needs more data)
       // { legs: 3, strategy: 'baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'] },
       // { legs: 3, strategy: 'baseball_spreads', sports: ['baseball_ncaa'], betTypes: ['spread'] },
+      // PGA Golf exploration — PAUSED (collecting outright data via BLOCKED_SPORTS)
+      // { legs: 2, strategy: 'golf_outright', sports: ['golf_pga'], betTypes: ['outright'] },
+      // { legs: 2, strategy: 'golf_outright', sports: ['golf_pga'], betTypes: ['outright'] },
+      // { legs: 3, strategy: 'golf_cross', sports: ['golf_pga', 'basketball_nba'], betTypes: ['outright', 'spread', 'total'] },
       // Team props exploration — ML Sniper: hybrid profiles with maxMlLegs: 1
       { legs: 3, strategy: 'team_hybrid', betTypes: ['moneyline', 'spread', 'total'], maxMlLegs: 1 },
       { legs: 3, strategy: 'team_totals', betTypes: ['total'] },
@@ -226,7 +230,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
 };
 
 // ============= BLOCKED SPORTS (paused until more data collected) =============
-const BLOCKED_SPORTS = ['baseball_ncaa'];
+const BLOCKED_SPORTS = ['baseball_ncaa', 'golf_pga'];
 
 // ============= CONSTANTS =============
 
@@ -717,9 +721,14 @@ function calculateTeamCompositeScore(
     return calculateNhlTeamCompositeScore(game, betType, side, nhlStatsMap);
   }
 
-  // Route NCAA Baseball to dedicated scoring
+   // Route NCAA Baseball to dedicated scoring
   if (sport.includes('baseball')) {
     return calculateBaseballTeamCompositeScore(game, betType, side, baseballStatsMap);
+  }
+
+  // Route Golf to dedicated scoring
+  if (sport.includes('golf')) {
+    return calculateGolfCompositeScore(game, betType, side);
   }
 
   // Route Tennis to dedicated scoring
@@ -842,6 +851,82 @@ function calculateTeamCompositeScore(
       breakdown.heavy_fav_penalty = -12;
     }
   }
+
+  return { score: clampScore(30, 95, score), breakdown };
+}
+
+// ============= GOLF SCORING ENGINE =============
+// Golf outrights: player_name in home_team, tournament in away_team, odds in home_odds
+function calculateGolfCompositeScore(
+  game: TeamProp,
+  betType: string,
+  side: string
+): { score: number; breakdown: Record<string, number> } {
+  let score = 50;
+  const breakdown: Record<string, number> = { base: 50 };
+
+  // Only outright bets are supported for golf
+  if (betType !== 'outright') {
+    breakdown.unsupported_bet_type = -20;
+    return { score: 30, breakdown };
+  }
+
+  const odds = game.home_odds || 0;
+
+  // === Odds Value (35% weight) ===
+  // Plus-money outrights have implied probability edge opportunities
+  const impliedProb = americanToImplied(odds);
+
+  // Sweet spot: +500 to +3000 range (longshots with value)
+  if (odds >= 500 && odds <= 3000) {
+    const oddsBonus = Math.round((1 / impliedProb - 5) * 2); // Reward longer odds
+    score += clampScore(0, 15, oddsBonus);
+    breakdown.odds_value = clampScore(0, 15, oddsBonus);
+  } else if (odds >= 200 && odds < 500) {
+    // Short favorites: moderate value
+    score += 5;
+    breakdown.odds_value = 5;
+  } else if (odds > 3000) {
+    // Extreme longshots: too risky for parlays
+    score -= 10;
+    breakdown.extreme_longshot = -10;
+  } else if (odds < 200 && odds > 0) {
+    // Heavy favorite in outright = low value
+    score -= 5;
+    breakdown.low_value_favorite = -5;
+  }
+
+  // === Course History Proxy (25% weight) ===
+  // Without real course history data, we use odds tier as a proxy
+  // Top-10 odds players (implied prob > 5%) get a course fitness bonus
+  if (impliedProb > 0.05 && impliedProb < 0.20) {
+    score += 8;
+    breakdown.contender_tier = 8;
+  } else if (impliedProb >= 0.02 && impliedProb <= 0.05) {
+    score += 4;
+    breakdown.mid_field_tier = 4;
+  }
+
+  // === Recent Form Proxy (20% weight) ===
+  // Approximated via odds positioning — top-15 implied players are in form
+  if (impliedProb > 0.03) {
+    const formBonus = Math.round(impliedProb * 50);
+    score += clampScore(0, 10, formBonus);
+    breakdown.form_proxy = clampScore(0, 10, formBonus);
+  }
+
+  // === Field Strength (10% weight) ===
+  // Major tournaments get a bonus (more data, more predictable)
+  const tournament = (game.away_team || '').toLowerCase();
+  if (tournament.includes('masters') || tournament.includes('pga championship') || 
+      tournament.includes('u.s. open') || tournament.includes('open championship')) {
+    score += 5;
+    breakdown.major_tournament = 5;
+  }
+
+  // === Weather/Course Fit Placeholder (10%) ===
+  // No data yet — neutral weight
+  breakdown.weather_placeholder = 0;
 
   return { score: clampScore(30, 95, score), breakdown };
 }
