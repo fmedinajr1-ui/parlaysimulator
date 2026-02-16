@@ -25,7 +25,7 @@ function clamp(min: number, max: number, v: number): number {
 
 interface GameBet {
   id: string;
-  event_id: string;
+  game_id: string;
   sport: string;
   home_team: string;
   away_team: string;
@@ -209,6 +209,7 @@ serve(async (req) => {
 
       const existingKeys = new Set((existingPicks || []).map((p: any) => `${p.event_id}_${p.bet_type}_${p.side}`));
 
+
       const shadowPicks: any[] = [];
 
       for (const game of games as GameBet[]) {
@@ -228,7 +229,7 @@ serve(async (req) => {
         }
 
         for (const { betType, side, odds } of sides) {
-          const key = `${game.event_id}_${betType}_${side}`;
+          const key = `${game.game_id}_${betType}_${side}`;
           if (existingKeys.has(key)) continue;
 
           const { score, breakdown } = scoreGame(game, betType, side, nhlStats, baseballStats);
@@ -237,7 +238,7 @@ serve(async (req) => {
           if (score >= 60) {
             shadowPicks.push({
               sport: game.sport,
-              event_id: game.event_id,
+              event_id: game.game_id,
               bet_type: betType,
               side,
               predicted_score: score,
@@ -287,13 +288,13 @@ serve(async (req) => {
       const eventIds = [...new Set(pendingPicks.map((p: any) => p.event_id))];
       const { data: settledGames } = await supabase
         .from('game_bets')
-        .select('event_id, bet_type, outcome, home_score, away_score')
-        .in('event_id', eventIds)
+        .select('game_id, bet_type, outcome, home_score, away_score')
+        .in('game_id', eventIds)
         .not('outcome', 'is', null);
 
       const outcomeMap = new Map<string, any>();
       (settledGames || []).forEach((g: any) => {
-        outcomeMap.set(`${g.event_id}_${g.bet_type}`, g);
+        outcomeMap.set(`${g.game_id}_${g.bet_type}`, g);
       });
 
       let settledCount = 0;
