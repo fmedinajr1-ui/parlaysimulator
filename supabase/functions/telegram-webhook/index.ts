@@ -823,23 +823,31 @@ function formatLegDisplay(leg: any): string {
     matchupLine = leg.matchup || '';
   }
   
-  // Build reasoning line (Score + Hit only) with emoji indicators
+  // Build compact reasoning line with icons
   const score = leg.composite_score ? Math.round(leg.composite_score) : 0;
   const hitRate = leg.hit_rate ? Math.round(leg.hit_rate) : 0;
   const source = (leg.source || leg.reason || '').toLowerCase();
+  const opponent = leg.opponent_name || leg.opponent || '';
+  const defRank = leg.opponent_defense_rank || leg.defense_rank || null;
   
-  // Emoji indicators
-  const emojis: string[] = [];
-  if (score >= 80) emojis.push('🔥');
-  else if (score >= 60 && hitRate >= 70) emojis.push('✨');
-  if (hitRate < 50 || score < 40) emojis.push('⚠️');
-  if (source.includes('whale')) emojis.push('🐋');
+  // Status emoji
+  let statusEmoji = '';
+  if (score >= 80) statusEmoji = '🔥';
+  else if (score >= 60 && hitRate >= 70) statusEmoji = '✨';
+  if (hitRate < 50 || score < 40) statusEmoji = '⚠️';
+  if (source.includes('whale')) statusEmoji = '🐋';
   
-  const emojiStr = emojis.length > 0 ? ` ${emojis.join('')}` : '';
-  
-  const parts: string[] = [];
-  if (score) parts.push(`Score: ${score}`);
-  if (hitRate) parts.push(`Hit: ${hitRate}%`);
+  // Compact icon line: 🎯85 | 💎75% | vs LAL (#3 DEF) 🔥
+  const compactParts: string[] = [];
+  if (score) compactParts.push(`🎯${score}`);
+  if (hitRate) compactParts.push(`💎${hitRate}%`);
+  if (opponent) {
+    const defStr = defRank ? ` (#${defRank} DEF)` : '';
+    compactParts.push(`vs ${opponent}${defStr}`);
+  } else if (defRank) {
+    compactParts.push(`#${defRank} DEF`);
+  }
+  if (statusEmoji) compactParts.push(statusEmoji);
   
   let result = actionLine.trim();
   if (matchupLine && sportLabel) {
@@ -847,8 +855,8 @@ function formatLegDisplay(leg: any): string {
   } else if (matchupLine) {
     result += `\n  ${matchupLine}`;
   }
-  if (parts.length > 0 || emojiStr) {
-    result += `\n  ${parts.join(' | ')}${emojiStr}`;
+  if (compactParts.length > 0) {
+    result += `\n  ${compactParts.join(' | ')}`;
   }
   
   return result;
