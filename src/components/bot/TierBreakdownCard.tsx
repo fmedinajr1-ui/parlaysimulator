@@ -1,7 +1,7 @@
 import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Layers, FlaskConical, CheckCircle2, Rocket } from 'lucide-react';
+import { Layers, FlaskConical, CheckCircle2, Rocket, Flame } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { BotParlay } from '@/hooks/useBotEngine';
 
@@ -10,6 +10,7 @@ interface TierBreakdownCardProps {
 }
 
 const TIER_CONFIG = {
+  monster: { icon: Flame, label: 'Monster', color: 'bg-red-500', textColor: 'text-red-400' },
   exploration: { icon: FlaskConical, label: 'Explore', color: 'bg-blue-500', textColor: 'text-blue-400' },
   validation: { icon: CheckCircle2, label: 'Validate', color: 'bg-amber-500', textColor: 'text-amber-400' },
   execution: { icon: Rocket, label: 'Execute', color: 'bg-green-500', textColor: 'text-green-400' },
@@ -19,7 +20,7 @@ const TIER_CONFIG = {
 export function TierBreakdownCard({ parlays }: TierBreakdownCardProps) {
   const tierCounts = parlays.reduce((acc, parlay) => {
     const sn = (parlay.strategy_name || '').toLowerCase();
-    const tier = sn.includes('bankroll_doubler') || sn.includes('round_robin') ? 'round_robin' : sn.includes('exploration') ? 'exploration' : sn.includes('validation') ? 'validation' : 'execution';
+    const tier = sn.includes('monster_parlay') ? 'monster' : sn.includes('bankroll_doubler') || sn.includes('round_robin') ? 'round_robin' : sn.includes('exploration') ? 'exploration' : sn.includes('validation') ? 'validation' : 'execution';
     acc[tier] = (acc[tier] || 0) + 1;
     return acc;
   }, {} as Record<string, number>);

@@ -4143,6 +4143,292 @@ async function generateRoundRobinParlays(
   return { megaParlay, subParlays, totalInserted: allToInsert.length };
 }
 
+// ============= MONSTER PARLAY GENERATION (+10,000 odds) =============
+
+function generateMonsterParlays(
+  pool: PropPool,
+  globalFingerprints: Set<string>,
+  targetDate: string,
+  strategyName: string,
+  weightMap: Map<string, number>,
+  bankroll: number,
+): any[] {
+  console.log(`[Bot v2] 🔥 MONSTER PARLAY: Evaluating big-slate eligibility...`);
+
+  // 1. Build quality candidate pool from all sources
+  const allRawCandidates: any[] = [
+    ...pool.teamPicks.map(p => ({ ...p, pickType: 'team' })),
+    ...pool.playerPicks.map(p => ({ ...p, pickType: 'player' })),
+    ...pool.whalePicks.map(p => ({ ...p, pickType: 'whale' })),
+    ...pool.sweetSpots.map(p => ({ ...p, pickType: 'player' })),
+  ].filter(p => !BLOCKED_SPORTS.includes(p.sport || 'basketball_nba'));
+
+  // Deduplicate: keep highest composite per player/team key
+  const dedupMap = new Map<string, any>();
+  for (const pick of allRawCandidates) {
+    const key = pick.pickType === 'team'
+      ? `${pick.home_team}_${pick.away_team}_${pick.bet_type}_${pick.side}`.toLowerCase()
+      : `${pick.player_name}_${pick.prop_type}_${pick.recommended_side || pick.side}`.toLowerCase();
+    const existing = dedupMap.get(key);
+    if (!existing || (pick.compositeScore || 0) > (existing.compositeScore || 0)) {
+      dedupMap.set(key, pick);
+    }
+  }
+
+  // Filter: hit rate >= 55%, composite >= 60, positive edge
+  const qualityCandidates = [...dedupMap.values()]
+    .filter(p => {
+      const hitRate = ((p.confidence_score || p.l10_hit_rate || 0) * 100);
+      const composite = p.compositeScore || 0;
+      const edge = p.edge || p.simulated_edge || 0;
+      if (hitRate < 55 || composite < 60 || edge <= 0) return false;
+
+      // Weight check
+      const pickSide = p.side || p.recommended_side || 'over';
+      const pickSport = p.sport || 'basketball_nba';
+      let pickCategory = p.category || '';
+      if (pickCategory === 'TOTAL' || pickCategory === 'TEAM_TOTAL') {
+        const prefix = pickSide === 'over' ? 'OVER' : 'UNDER';
+        pickCategory = pickCategory === 'TOTAL' ? `${prefix}_TOTAL` : `${prefix}_TEAM_TOTAL`;
+      }
+      const sportKey = `${pickCategory}__${pickSide}__${pickSport}`;
+      const sideKey = `${pickCategory}__${pickSide}`;
+      const catWeight = weightMap.get(sportKey) ?? weightMap.get(sideKey) ?? weightMap.get(pickCategory) ?? 1.0;
+      if (catWeight < 0.5) return false;
+
+      // Spread cap
+      if ((p.bet_type === 'spread' || p.prop_type === 'spread') && Math.abs(p.line || 0) >= MAX_SPREAD_LINE) return false;
+
+      return true;
+    })
+    .sort((a, b) => {
+      const hrA = ((a.confidence_score || a.l10_hit_rate || 0) * 100);
+      const hrB = ((b.confidence_score || b.l10_hit_rate || 0) * 100);
+      return hrB - hrA; // Sort by hit rate descending (accuracy-first)
+    });
+
+  // 2. Big-slate gate: need 15+ quality candidates across 2+ sports
+  const activeSports = new Set(qualityCandidates.map(c => c.sport || 'basketball_nba'));
+  if (qualityCandidates.length < 15 || activeSports.size < 2) {
+    console.log(`[Bot v2] 🔥 MONSTER PARLAY: Skipped (${qualityCandidates.length} candidates, ${activeSports.size} sports — need 15+ candidates, 2+ sports)`);
+    return [];
+  }
+
+  console.log(`[Bot v2] 🔥 MONSTER PARLAY: Big slate detected! ${qualityCandidates.length} quality candidates across ${activeSports.size} sports`);
+
+  // 3. Helpers
+  const getGameKey = (p: any) => {
+    if (p.home_team && p.away_team) return `${p.home_team}__${p.away_team}`.toLowerCase();
+    if (p.event_id) return p.event_id;
+    return `${p.team_name || p.player_name}`.toLowerCase();
+  };
+
+  const getTeamKey = (p: any) => {
+    if (p.pickType === 'team') return (p.side === 'home' ? p.home_team : p.away_team || p.home_team).toLowerCase();
+    return (p.team_name || '').toLowerCase();
+  };
+
+  const isMirrorPick = (selected: any[], pick: any): boolean => {
+    for (const s of selected) {
+      if (s.pickType === 'team' && pick.pickType === 'team') {
+        if (s.home_team === pick.home_team && s.away_team === pick.away_team && s.bet_type === pick.bet_type) {
+          if (s.side !== pick.side) return true;
+        }
+      }
+      if (s.player_name && pick.player_name && s.player_name === pick.player_name && s.prop_type === pick.prop_type) {
+        if ((s.recommended_side || s.side) !== (pick.recommended_side || pick.side)) return true;
+      }
+    }
+    return false;
+  };
+
+  const hasCorrelation = (selected: any[], pick: any): boolean => {
+    for (const s of selected) {
+      if (getGameKey(s) === getGameKey(pick)) return true; // No same-game
+    }
+    return false;
+  };
+
+  const calculateCombinedOdds = (legs: any[]): { decimalOdds: number; americanOdds: number } => {
+    const decimalOdds = legs.reduce((acc, leg) => {
+      const odds = leg.americanOdds || leg.odds || leg.american_odds || -110;
+      return acc * americanToDecimal(odds);
+    }, 1);
+    return { decimalOdds, americanOdds: decimalToAmerican(decimalOdds) };
+  };
+
+  // 4. Greedy leg selection with diversity constraints
+  function selectLegs(candidates: any[], targetOdds: number, maxLegs: number): any[] {
+    const selected: any[] = [];
+    const usedTeams = new Set<string>();
+    const sportCount: Record<string, number> = {};
+
+    for (const pick of candidates) {
+      if (selected.length >= maxLegs) break;
+
+      const teamKey = getTeamKey(pick);
+      if (teamKey && usedTeams.has(teamKey)) continue;
+
+      const sport = pick.sport || 'basketball_nba';
+      if ((sportCount[sport] || 0) >= 2) continue;
+
+      if (isMirrorPick(selected, pick)) continue;
+      if (hasCorrelation(selected, pick)) continue;
+
+      selected.push(pick);
+      if (teamKey) usedTeams.add(teamKey);
+      sportCount[sport] = (sportCount[sport] || 0) + 1;
+
+      // Check if we've hit the odds target with 6+ legs
+      if (selected.length >= 6) {
+        const { americanOdds } = calculateCombinedOdds(selected);
+        if (americanOdds >= targetOdds) break;
+      }
+    }
+    return selected;
+  }
+
+  // 5. Build leg data (reuse pattern from mini-parlays)
+  const buildMonsterLeg = (pick: any) => {
+    if (pick.pickType === 'team' || pick.type === 'team') {
+      return {
+        id: pick.id,
+        type: 'team',
+        home_team: pick.home_team,
+        away_team: pick.away_team,
+        bet_type: pick.bet_type,
+        side: pick.side,
+        line: snapLine(pick.line, pick.bet_type),
+        category: pick.category,
+        american_odds: pick.odds || -110,
+        sharp_score: pick.sharp_score,
+        composite_score: pick.compositeScore || 0,
+        hit_rate: ((pick.confidence_score || pick.l10_hit_rate || 0.5) * 100),
+        outcome: 'pending',
+        sport: pick.sport,
+      };
+    }
+    return {
+      id: pick.id,
+      player_name: pick.player_name,
+      team_name: pick.team_name,
+      prop_type: pick.prop_type,
+      line: snapLine(pick.line, pick.prop_type),
+      side: pick.recommended_side || 'over',
+      category: pick.category,
+      weight: 1,
+      hit_rate: ((pick.confidence_score || pick.l10_hit_rate || 0.5) * 100),
+      american_odds: pick.americanOdds || -110,
+      composite_score: pick.compositeScore || 0,
+      outcome: 'pending',
+      original_line: snapLine(pick.line, pick.prop_type),
+      selected_line: snapLine(pick.line, pick.prop_type),
+      projected_value: pick.projected_value || pick.l10_avg || 0,
+      sport: pick.sport || 'basketball_nba',
+    };
+  };
+
+  const monsters: any[] = [];
+
+  // 6. Build Conservative Monster (+10,000 target)
+  const conservativeLegs = selectLegs(qualityCandidates, 10000, 8);
+  if (conservativeLegs.length < 6) {
+    console.log(`[Bot v2] 🔥 MONSTER PARLAY: Only ${conservativeLegs.length} legs selected (need 6+). Skipping.`);
+    return [];
+  }
+
+  const conservativeResult = calculateCombinedOdds(conservativeLegs);
+  if (conservativeResult.americanOdds < 10000) {
+    console.log(`[Bot v2] 🔥 MONSTER PARLAY: Combined odds +${conservativeResult.americanOdds} < +10,000. Skipping.`);
+    return [];
+  }
+
+  const conservativeBuiltLegs = conservativeLegs.map(buildMonsterLeg);
+  const avgHitRate = conservativeBuiltLegs.reduce((sum, l) => sum + (l.hit_rate || 0), 0) / conservativeBuiltLegs.length;
+  const combinedProb = conservativeLegs.reduce((acc, p) => {
+    const hr = (p.confidence_score || p.l10_hit_rate || 0.5);
+    return acc * hr;
+  }, 1);
+
+  // Dedup fingerprint
+  const consFp = conservativeBuiltLegs.map(l =>
+    l.player_name ? `${l.player_name}_${l.prop_type}_${l.side}` : `${l.home_team}_${l.bet_type}_${l.side}`
+  ).sort().join('||').toLowerCase();
+
+  if (!globalFingerprints.has(consFp)) {
+    globalFingerprints.add(consFp);
+    monsters.push({
+      parlay_date: targetDate,
+      legs: conservativeBuiltLegs,
+      leg_count: conservativeBuiltLegs.length,
+      combined_probability: combinedProb,
+      expected_odds: conservativeResult.americanOdds,
+      simulated_win_rate: combinedProb,
+      simulated_edge: Math.max(combinedProb - (1 / conservativeResult.decimalOdds), 0.005),
+      simulated_sharpe: 0,
+      strategy_name: 'monster_parlay_conservative',
+      selection_rationale: `🔥 Monster Parlay: ${conservativeBuiltLegs.length} accuracy-first legs targeting +${conservativeResult.americanOdds}. Avg hit rate: ${avgHitRate.toFixed(1)}%. Every leg has 55%+ historical accuracy.`,
+      outcome: 'pending',
+      is_simulated: true,
+      simulated_stake: 10,
+      simulated_payout: 10 * conservativeResult.decimalOdds,
+      tier: 'monster',
+    });
+    console.log(`[Bot v2] 🔥 MONSTER Conservative: ${conservativeBuiltLegs.length}L, +${conservativeResult.americanOdds}, avg HR ${avgHitRate.toFixed(1)}%`);
+  }
+
+  // 7. Aggressive Monster (+15,000-25,000) if pool allows
+  const conservativeIds = new Set(conservativeLegs.map(l => l.id));
+  const remainingCandidates = qualityCandidates.filter(c => !conservativeIds.has(c.id));
+
+  if (remainingCandidates.length >= 2) {
+    // Rebuild full pool but shuffle to get different combination
+    const aggressivePool = [...qualityCandidates].sort((a, b) => {
+      // Sort by composite descending for aggressive (different ordering = different picks)
+      return (b.compositeScore || 0) - (a.compositeScore || 0);
+    });
+    const aggressiveLegs = selectLegs(aggressivePool, 15000, 8);
+
+    if (aggressiveLegs.length >= 6) {
+      const aggressiveResult = calculateCombinedOdds(aggressiveLegs);
+      if (aggressiveResult.americanOdds >= 15000) {
+        const aggressiveBuiltLegs = aggressiveLegs.map(buildMonsterLeg);
+        const aggAvgHR = aggressiveBuiltLegs.reduce((sum, l) => sum + (l.hit_rate || 0), 0) / aggressiveBuiltLegs.length;
+        const aggCombinedProb = aggressiveLegs.reduce((acc, p) => acc * (p.confidence_score || p.l10_hit_rate || 0.5), 1);
+
+        const aggFp = aggressiveBuiltLegs.map(l =>
+          l.player_name ? `${l.player_name}_${l.prop_type}_${l.side}` : `${l.home_team}_${l.bet_type}_${l.side}`
+        ).sort().join('||').toLowerCase();
+
+        if (!globalFingerprints.has(aggFp)) {
+          globalFingerprints.add(aggFp);
+          monsters.push({
+            parlay_date: targetDate,
+            legs: aggressiveBuiltLegs,
+            leg_count: aggressiveBuiltLegs.length,
+            combined_probability: aggCombinedProb,
+            expected_odds: aggressiveResult.americanOdds,
+            simulated_win_rate: aggCombinedProb,
+            simulated_edge: Math.max(aggCombinedProb - (1 / aggressiveResult.decimalOdds), 0.005),
+            simulated_sharpe: 0,
+            strategy_name: 'monster_parlay_aggressive',
+            selection_rationale: `🔥🔥 Aggressive Monster: ${aggressiveBuiltLegs.length} legs targeting +${aggressiveResult.americanOdds}. Avg hit rate: ${aggAvgHR.toFixed(1)}%. High-upside moonshot.`,
+            outcome: 'pending',
+            is_simulated: true,
+            simulated_stake: 10,
+            simulated_payout: 10 * aggressiveResult.decimalOdds,
+            tier: 'monster',
+          });
+          console.log(`[Bot v2] 🔥🔥 MONSTER Aggressive: ${aggressiveBuiltLegs.length}L, +${aggressiveResult.americanOdds}, avg HR ${aggAvgHR.toFixed(1)}%`);
+        }
+      }
+    }
+  }
+
+  console.log(`[Bot v2] 🔥 MONSTER PARLAY: ${monsters.length} monster parlays created`);
+  return monsters;
+}
+
 // ============= DRY-RUN SYNTHETIC POOL =============
 
 function generateSyntheticPool(): PropPool {
@@ -4567,6 +4853,13 @@ Deno.serve(async (req) => {
       );
       results[tier] = result;
       allParlays = [...allParlays, ...result.parlays];
+    }
+
+    // === MONSTER PARLAY (big-slate only) ===
+    const monsterParlays = generateMonsterParlays(pool, globalFingerprints, targetDate, strategyName, weightMap, bankroll);
+    if (monsterParlays.length > 0) {
+      allParlays.push(...monsterParlays);
+      console.log(`[Bot v2] 🔥 Monster parlays: ${monsterParlays.length} created (${monsterParlays.map((m: any) => '+' + m.expected_odds).join(', ')})`);
     }
 
     // === 2-LEG MINI-PARLAY HYBRID FALLBACK ===
