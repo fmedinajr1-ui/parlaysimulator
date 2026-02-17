@@ -245,7 +245,7 @@ async function settleNcaabTeamLegViaESPN(
     const dateStr = searchDate.toISOString().split('T')[0].replace(/-/g, '');
     
     try {
-      const resp = await fetch(`${ESPN_NCAAB_SCOREBOARD}?dates=${dateStr}&limit=200`);
+      const resp = await fetch(`${ESPN_NCAAB_SCOREBOARD}?dates=${dateStr}&limit=200&groups=50`);
       if (!resp.ok) {
         console.warn(`[Bot Settle] ESPN NCAAB scoreboard ${dateStr} returned ${resp.status}`);
         continue;
