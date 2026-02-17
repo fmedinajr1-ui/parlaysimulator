@@ -1,100 +1,84 @@
 
-# NCAAB Accuracy Emergency Fix -- Focus Until Thursday
 
-## Current Problems (Critical)
+# Fix Settlement + Verify New Intelligence Is Active
 
-1. **KenPom scraper is broken** -- Top 28 teams have NO efficiency data (Auburn, Duke, Florida, Houston all NULL). The regex parser grabs wrong columns (AdjD=52 for Saint Mary's, should be ~96). Rankings are still PPG-derived for most teams (Saint Louis #1 instead of Auburn).
+## Two Distinct Problems
 
-2. **ATS and O/U records are ALL NULL** -- 0 out of 362 teams. The scoring engine's +8 ATS bonus and +6 O/U trend logic is completely inactive.
+### Problem 1: Feb 16 Parlays Won't Settle
 
-3. **Fatigue/referee data didn't run for today** -- Only Feb 16 data exists. Today (Feb 17) has 0 referee assignments and 0 fatigue scores.
+**Root cause**: The Feb 16 parlays were generated with the OLD leg format. They use `player_name: "Team A @ Team B"` with `prop_type: "total"` and `line_source: "whale_signal"` but have NO `home_team`/`away_team` fields. The `bot-settle-and-learn` function checks `isTeamLeg()` which requires those fields, so every leg returns `no_data` and stays pending forever.
 
-4. **28 unscored games today** -- 88/116 NCAAB bets scored, 28 missing composite scores.
+Additionally, `bot-settle-and-learn` has no recent logs at all -- it appears to not be executing despite its cron schedule (11, 17, 23 UTC).
 
-## What's Working
-- NCAAB OVERs are properly hard-blocked in the generator
-- NCAAB spreads have been winning (2 parlays hit on Feb 13)
-- Whale signal strategies winning (2 for 2 on Feb 15)
-- Fatigue calculator logic and locations are solid, just needs to run on correct dates
+**Fix**: Update `bot-settle-and-learn` to handle the old-format legs:
+- Parse `player_name` like `"Louisiana Ragin' Cajuns @ Old Dominion Monarchs"` to extract home/away teams
+- Treat legs with `line_source: "whale_signal"` and `category: "TOTAL"/"SPREAD"` as team legs even without explicit `home_team`/`away_team`
+- Then trigger a manual settlement run for Feb 16
 
----
+### Problem 2: New Intelligence Layers Are NOT Active in Today's Picks
 
-## Fix 1: Rebuild KenPom Scraper Parser (Critical)
+Evidence from the database:
 
-**File**: `supabase/functions/ncaab-kenpom-scraper/index.ts`
+| Layer | Status | Evidence |
+|-------|--------|----------|
+| KenPom rankings | Broken | Auburn ranked #33 (should be ~1), Saint Mary's AdjD=52 (should be ~96) |
+| ATS records | Empty | 0 of 362 teams have data |
+| O/U records | Empty | 0 of 362 teams have data |
+| Last-5 PPG | Empty | All NULL |
+| Last-5 OPPG | Empty | All NULL |
+| OVER blocking | NOT working | Purdue/Michigan OVER is the #1 scored pick at composite 95 |
+| Referee adjustments | Missing | No `referee_adjustment` in any score breakdown |
+| Fatigue penalties | Missing | No `fatigue_penalty` in any score breakdown |
+| Altitude impact | Missing | No `altitude_impact` in any score breakdown |
 
-The current parser fails because:
-- KenPom's markdown includes `[Team Name](url)` links that break the regex
-- The `stripLinks` helper was added but the fallback parser still grabs wrong columns
-- Top teams (ranks 1-28) don't match any regex pattern at all
+The scoring engine is still running the OLD formula (base + tempo + line_value + sharp_confirmation + rank bonuses based on broken rankings).
 
-**Fix approach**:
-- Scrape kenpom.com with `formats: ['extract']` using a structured schema to extract the table data reliably instead of regex parsing markdown
-- If extract fails, fall back to scraping barttorvik.com/rankings.php which has a cleaner table format
-- Log 5-10 raw lines from the markdown for the top teams so we can debug the exact format
-- Add robust column detection: identify which column indices contain AdjO (should be 95-130 range), AdjD (should be 85-115 range), and AdjT (should be 60-75 range) by checking value ranges instead of hardcoding positions
-- Add validation: reject any AdjD < 80 or AdjD > 120 as clearly wrong parsing
+**Why**: The `data-pipeline-orchestrator` hasn't run today (no entries in `cron_job_history`). The new functions (`ncaab-kenpom-scraper`, `ncaab-referee-scraper`, `ncaab-fatigue-calculator`) were added to the orchestrator code but the orchestrator itself has no cron trigger -- it was being called manually. Meanwhile, the scoring engine updates may not have been deployed.
 
-## Fix 2: Derive ATS and O/U Records from Settled Game Data
+## Fix Plan
 
-**File**: `supabase/functions/ncaab-team-stats-fetcher/index.ts` (modify)
+### Step 1: Fix `bot-settle-and-learn` Old-Format Leg Parsing
+- Add a fallback parser that extracts teams from `player_name` field when `home_team`/`away_team` are missing
+- Pattern: `"Away Team @ Home Team"` or `"Away Team vs Home Team"`
+- Once parsed, route through the existing ESPN settlement paths
 
-Instead of scraping ATS records (which ESPN doesn't publish cleanly), derive them from our own settled `game_bets` data:
-- Query all settled NCAAB spread bets from the last 30 days
-- For each team, count wins/losses against the spread
-- Write the derived ATS record (e.g., "12-8") back to `ncaab_team_stats.ats_record`
-- Same approach for O/U records from settled totals
-- This uses data we already have -- no new API calls needed
+### Step 2: Verify and Fix Scoring Engine Deployment
+- Check that `team-bets-scoring-engine` has the KenPom validation (reject AdjD < 80), referee lookups, fatigue lookups, cold/hot team logic, and OVER blocking
+- The score breakdowns show none of these fields, suggesting the updated version may not be deployed
 
-## Fix 3: Add Last-5-Games Columns + Populate
+### Step 3: Fix KenPom Scraper Parser
+- Current data shows AdjD values of 52, 63, 72 for teams -- all below the 80 minimum that should be validated
+- The scraper parser is still reading wrong columns from the BartTorvik/KenPom markdown
+- Need to add robust column detection that validates AdjD is in the 85-115 range for most teams
 
-**Database**: Add `last_5_ppg`, `last_5_oppg`, `streak`, `last_5_ats` columns to `ncaab_team_stats`
+### Step 4: Populate ATS/OU and L5 Data
+- The `ncaab-team-stats-fetcher` was updated to derive ATS/OU from settled bets but clearly hasn't run successfully
+- Need to verify the function works and trigger it
 
-**File**: `supabase/functions/ncaab-team-stats-fetcher/index.ts` (modify)
+### Step 5: Wire Up Pipeline Orchestrator Cron
+- Add a cron job for the full pipeline orchestrator (currently has none in the cron table)
+- Without this, none of the Phase 1 data collection or Phase 2 analysis runs automatically
 
-- Query the last 5 settled games per team from `game_bets` to calculate recent scoring averages
-- Write `last_5_ppg` and `last_5_oppg` to the team stats table
-- Scoring engine uses blended formula: `effectivePPG = (seasonPPG * 0.4) + (last5PPG * 0.6)`
-
-## Fix 4: Scoring Engine -- Use Recent Data + Fix Projections
-
-**File**: `supabase/functions/team-bets-scoring-engine/index.ts`
-
-- When KenPom AdjD is clearly wrong (< 80 or > 120), fall back to ESPN-derived values instead of using garbage data
-- Use `last_5_ppg`/`last_5_oppg` blended with season averages for totals projections
-- Add "cold team" penalty: if recent scoring is 10%+ below season average, penalize OVERs by -10
-- Add "hot team" bonus: if recent scoring is 10%+ above season average, boost OVERs by +5
-
-## Fix 5: Expand NCAAB Name Map for Void Prevention
-
-**File**: `supabase/functions/team-bets-scoring-engine/index.ts`
-
-- Add 30+ additional team name variations (cross-reference recent void legs to find which names are failing)
-- Focus on small-conference teams that show up in today's slate (Northwestern St, Maryland-Eastern Shore, UT Rio Grande Valley, etc.)
-
-## Fix 6: Re-run Pipeline for Today
-
-After deploying fixes, trigger the pipeline with `mode: 'full'` to:
-- Re-scrape KenPom with fixed parser
-- Calculate fatigue for today's Feb 17 games
-- Re-score all 116 NCAAB bets with fresh data
-- Generate new parlays with correct intelligence
-
----
+### Step 6: Re-run Full Pipeline for Today
+- After all fixes are deployed, trigger a full pipeline run to:
+  - Settle Feb 16 parlays
+  - Re-scrape KenPom with fixed parser
+  - Populate ATS/OU and L5 data
+  - Calculate fatigue and referee data for today
+  - Re-score all Feb 17 NCAAB bets with all intelligence layers active
+  - Regenerate parlays with correct data
 
 ## Files Changed
 
-1. **MODIFY** `supabase/functions/ncaab-kenpom-scraper/index.ts` -- Fix parser to handle markdown links, validate AdjD ranges, add structured extraction fallback
-2. **MODIFY** `supabase/functions/ncaab-team-stats-fetcher/index.ts` -- Add ATS/OU derivation from settled bets, L5 scoring trends
-3. **MODIFY** `supabase/functions/team-bets-scoring-engine/index.ts` -- Validate KenPom values, use L5 data, expand name map, add cold/hot team logic
-4. **DATABASE** -- Add `last_5_ppg`, `last_5_oppg`, `streak`, `last_5_ats` columns to `ncaab_team_stats`
+1. **MODIFY** `supabase/functions/bot-settle-and-learn/index.ts` -- Add old-format leg parser for `player_name` field
+2. **MODIFY** `supabase/functions/ncaab-kenpom-scraper/index.ts` -- Fix column detection to validate AdjD ranges (85-115)
+3. **MODIFY** `supabase/functions/team-bets-scoring-engine/index.ts` -- Verify all new modules (referee, fatigue, L5, OVER block) are present and functional
+4. **MODIFY** `supabase/functions/ncaab-team-stats-fetcher/index.ts` -- Debug and fix ATS/OU derivation + L5 data population
+5. **DATABASE** -- Add pipeline orchestrator cron job for automated daily runs
 
-## Expected Impact
-
-| Issue | Before | After |
-|-------|--------|-------|
-| KenPom coverage | 0 of top 28 teams | All 362 teams with validated efficiency |
-| ATS records | 0/362 teams | Derived from 30 days of settled bets |
-| Projected totals | Using raw PPG/OPPG | KenPom efficiency + L5 recent trends |
-| Void rate | 28% | Target under 10% with expanded name map |
-| Today's scoring | 76% scored | 100% with name map fixes |
+## Expected Outcome
+- Feb 16 parlays settled with correct outcomes
+- Feb 17 picks regenerated with all 3 intelligence layers active (KenPom, referees, fatigue)
+- NCAAB OVERs properly blocked
+- ATS/OU trend bonuses active in scoring
+- Pipeline runs automatically going forward
