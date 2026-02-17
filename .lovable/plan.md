@@ -1,43 +1,45 @@
 
-# Re-Run Pipeline with Team Concentration Cap
+# Delete Feb 17 Parlays & Re-Run with Team Cap
 
-## Current State (Pre-Fix Run)
-The 24 parlays currently in the database were generated **before** the team cap was deployed. They still show the old over-concentration:
+## Current State Confirmed
+The 24 existing parlays were generated **before** the team concentration cap was deployed. The over-concentration is still present:
 
-| Team | Appearances (current) | Target |
-|------|----------------------|--------|
-| SMU Mustangs | 15 | ≤ 4 |
-| Louisville Cardinals | 15 | ≤ 4 |
-| Florida Gators | 10 | ≤ 4 |
-| South Carolina Gamecocks | 10 | ≤ 4 |
-| Rhode Island Rams | 9 | ≤ 4 |
-| NC State Wolfpack | 9 | ≤ 4 |
+| Team | Current Appearances | Target (Light Slate) |
+|------|--------------------|--------------------|
+| SMU Mustangs | 15 | ≤ 6 |
+| Louisville Cardinals | 15 | ≤ 6 |
+| Florida Gators | 10 | ≤ 6 |
+| South Carolina Gamecocks | 10 | ≤ 6 |
+| Saint Louis Billikens | 9 | ≤ 6 |
+| NC State Wolfpack | 9 | ≤ 6 |
 
-The `globalTeamUsage` cap code is already live in the edge function — we just need a clean re-run.
+The `globalTeamUsage` cap is **already deployed** in the edge function — we just need a clean slate to re-run.
 
-## Steps
+## Execution Steps
 
-### Step 1 — Delete today's existing parlays
+### Step 1 — Delete Feb 17 Parlays
 ```sql
 DELETE FROM bot_daily_parlays WHERE parlay_date = '2026-02-17';
 ```
+This clears all 24 existing over-concentrated parlays so the generator starts fresh.
 
-### Step 2 — Re-run the generator
-Invoke `bot-generate-daily-parlays` for Feb 17. With the new cap logic:
-- Any team hitting 4 parlays will be blocked from further appearances
-- Today is a light slate (fewer than 10 top-ranked picks), so the cap relaxes to 6
-- The generator will pull from more of the 26 available NCAAB games to fill the pool
+### Step 2 — Re-Run bot-generate-daily-parlays
+Invoke the generator edge function. With the new cap active:
+- Any team reaching 6 appearances (light slate cap) is blocked from further inclusion
+- The generator will draw from a wider pool of the 26 available NCAAB games
+- Expect a more diverse set of teams across the output
 
-### Step 3 — Run the optimizer
-Invoke `bot-review-and-optimize` to top up to the minimum floor (12+ parlays).
+### Step 3 — Run bot-review-and-optimize
+The optimizer tops up the pool to the minimum floor of 12+ parlays, also subject to the same team cap enforcement.
 
 ### Step 4 — Verify
-Query `bot_daily_parlays` for Feb 17 and confirm:
-- Total parlay count ≥ 12
-- No team (via `home_team` / `away_team` fields) appears more than 6 times (light slate cap)
-- SMU and Florida each appear ≤ 6 times
+Query the new parlays and confirm:
+- Total count ≥ 12
+- No team appears more than 6 times
+- SMU and Florida specifically are each ≤ 6 appearances
 
 ## Technical Notes
-- The cap is 6 (not 4) today because this is a light slate — fewer than 10 qualifying picks widened the rank cutoff to Top 300
-- The check uses `home_team` and `away_team` columns on each leg, normalized to lowercase — matching exactly how the generator tracks and enforces the cap
-- No code changes needed; the fix is already deployed
+- Today triggers **Light Slate Mode** (fewer than 10 top-ranked qualifying picks), which sets the team cap to 6 instead of the normal 4
+- Both `home_team` and `away_team` fields on every leg are normalized to lowercase before counting — matching exactly how the generator tracks internally
+- The existing game-level cap (MAX_GAME_USAGE) and matchup cap (MAX_MATCHUP_USAGE) remain active alongside the new team cap
+- No code changes are needed — only data needs to be cleared and re-generated
