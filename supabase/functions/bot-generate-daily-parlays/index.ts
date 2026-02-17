@@ -4648,6 +4648,60 @@ Deno.serve(async (req) => {
 
     console.log(`[Bot v2] Loaded ${weights?.length || 0} category weights`);
 
+    // === ADAPTIVE INTELLIGENCE INTEGRATION ===
+    // Read latest adaptation state for regime weights, Bayesian rates, gate overrides, correlations
+    let adaptationState: any = null;
+    try {
+      const { data: adaptState } = await supabase
+        .from('bot_adaptation_state')
+        .select('*')
+        .order('adaptation_date', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      
+      if (adaptState) {
+        adaptationState = adaptState;
+        console.log(`[Bot v2] 🧠 Adaptive Intelligence loaded: regime=${adaptState.current_regime}, score=${adaptState.adaptation_score}/100`);
+        
+        // Apply gate overrides from adaptive intelligence
+        const gates = adaptState.gate_overrides as Record<string, number> | null;
+        if (gates) {
+          // Override tier configs dynamically
+          if (gates.minEdge) {
+            TIER_CONFIG.execution.minEdge = gates.minEdge;
+            TIER_CONFIG.validation.minEdge = Math.max(gates.minEdge * 0.8, 0.003);
+          }
+          if (gates.minHitRate) {
+            TIER_CONFIG.execution.minHitRate = gates.minHitRate;
+            TIER_CONFIG.validation.minHitRate = Math.max(gates.minHitRate - 5, 40);
+          }
+          console.log(`[Bot v2] 🚪 Gate overrides applied: minEdge=${gates.minEdge}, minHitRate=${gates.minHitRate}, minComposite=${gates.minComposite}`);
+        }
+        
+        // Apply regime multipliers to weightMap
+        (allWeights || []).forEach((w: any) => {
+          if (w.regime_multiplier && w.regime_multiplier !== 1.0) {
+            const sportKey = w.sport ? `${w.category}__${w.side}__${w.sport}` : null;
+            const sideKey = `${w.category}__${w.side}`;
+            const currentWeight = weightMap.get(sportKey || sideKey) || weightMap.get(sideKey) || w.weight || 1.0;
+            const adjustedWeight = currentWeight * w.regime_multiplier;
+            if (sportKey && weightMap.has(sportKey)) weightMap.set(sportKey, adjustedWeight);
+            if (weightMap.has(sideKey)) weightMap.set(sideKey, adjustedWeight);
+          }
+          
+          // Use Bayesian hit rate where available (replaces raw hit rate in weight calculations)
+          if (w.bayesian_hit_rate && w.bayesian_hit_rate > 0) {
+            // Store for reference — the pool builder will use this
+            (w as any)._bayesian_hit_rate = w.bayesian_hit_rate;
+          }
+        });
+        
+        console.log(`[Bot v2] 🧠 Regime multipliers and Bayesian rates applied to weight map`);
+      }
+    } catch (adaptErr) {
+      console.log(`[Bot v2] ⚠️ Adaptive intelligence not available: ${adaptErr.message}`);
+    }
+
     // 2. Get active strategy
     const { data: strategy } = await supabase
       .from('bot_strategies')

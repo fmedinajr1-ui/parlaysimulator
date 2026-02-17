@@ -957,8 +957,51 @@ export type Database = {
         }
         Relationships: []
       }
+      bot_adaptation_state: {
+        Row: {
+          adaptation_date: string
+          adaptation_score: number | null
+          correlation_matrix: Json | null
+          created_at: string
+          current_regime: string
+          gate_overrides: Json | null
+          id: string
+          modules_run: Json | null
+          regime_confidence: number | null
+          regime_weights: Json | null
+          tier_recommendations: Json | null
+        }
+        Insert: {
+          adaptation_date: string
+          adaptation_score?: number | null
+          correlation_matrix?: Json | null
+          created_at?: string
+          current_regime?: string
+          gate_overrides?: Json | null
+          id?: string
+          modules_run?: Json | null
+          regime_confidence?: number | null
+          regime_weights?: Json | null
+          tier_recommendations?: Json | null
+        }
+        Update: {
+          adaptation_date?: string
+          adaptation_score?: number | null
+          correlation_matrix?: Json | null
+          created_at?: string
+          current_regime?: string
+          gate_overrides?: Json | null
+          id?: string
+          modules_run?: Json | null
+          regime_confidence?: number | null
+          regime_weights?: Json | null
+          tier_recommendations?: Json | null
+        }
+        Relationships: []
+      }
       bot_category_weights: {
         Row: {
+          bayesian_hit_rate: number | null
           best_streak: number | null
           block_reason: string | null
           category: string
@@ -968,6 +1011,8 @@ export type Database = {
           id: string
           is_blocked: boolean | null
           last_calibrated_at: string | null
+          recency_hit_rate: number | null
+          regime_multiplier: number | null
           side: string
           sport: string | null
           total_hits: number | null
@@ -977,6 +1022,7 @@ export type Database = {
           worst_streak: number | null
         }
         Insert: {
+          bayesian_hit_rate?: number | null
           best_streak?: number | null
           block_reason?: string | null
           category: string
@@ -986,6 +1032,8 @@ export type Database = {
           id?: string
           is_blocked?: boolean | null
           last_calibrated_at?: string | null
+          recency_hit_rate?: number | null
+          regime_multiplier?: number | null
           side?: string
           sport?: string | null
           total_hits?: number | null
@@ -995,6 +1043,7 @@ export type Database = {
           worst_streak?: number | null
         }
         Update: {
+          bayesian_hit_rate?: number | null
           best_streak?: number | null
           block_reason?: string | null
           category?: string
@@ -1004,6 +1053,8 @@ export type Database = {
           id?: string
           is_blocked?: boolean | null
           last_calibrated_at?: string | null
+          recency_hit_rate?: number | null
+          regime_multiplier?: number | null
           side?: string
           sport?: string | null
           total_hits?: number | null

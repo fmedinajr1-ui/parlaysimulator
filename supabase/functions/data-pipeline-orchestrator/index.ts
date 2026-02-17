@@ -162,6 +162,10 @@ serve(async (req) => {
 
     // ============ PHASE 5: CALIBRATION & LEARNING ============
     if (mode === 'full' || mode === 'calibrate') {
+      // Adaptive Intelligence runs FIRST — updates recency rates, Bayesian calibration,
+      // regime detection, correlation matrix, gate overrides, and tier recommendations
+      await runFunction('bot-adaptive-intelligence', {});
+      
       await runFunction('calculate-calibration', {});
       await runFunction('recalibrate-sharp-signals', {});
       await runFunction('calibrate-bot-weights', {});
