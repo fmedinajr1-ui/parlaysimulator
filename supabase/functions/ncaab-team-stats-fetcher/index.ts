@@ -35,7 +35,7 @@ async function fetchAllTeamIds(): Promise<{ id: string; name: string; conference
   const teams: { id: string; name: string; conference: string | null }[] = [];
   const seen = new Set<string>();
 
-  for (let page = 1; page <= 4; page++) {
+  for (let page = 1; page <= 8; page++) {
     const resp = await fetchWithRetry(`${ESPN_TEAMS_URL}?limit=100&page=${page}`);
     if (!resp) break;
     const data = await resp.json();
@@ -206,7 +206,7 @@ Deno.serve(async (req) => {
 
     // Step 3: Enrich in parallel batches of 15
     const BATCH_SIZE = 15;
-    const MAX_TEAMS = 200;
+    const MAX_TEAMS = 370;
     const teamsToEnrich = teams.slice(0, MAX_TEAMS);
 
     interface TeamStats {
