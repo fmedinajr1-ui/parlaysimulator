@@ -15,17 +15,46 @@ interface PerformanceCalendarProps {
   hasBotAccess: boolean;
 }
 
+// Simple seeded random for stable renders
+function seededRandom(seed: string): number {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) {
+    h = Math.imul(31, h) + seed.charCodeAt(i) | 0;
+  }
+  h = Math.abs(h);
+  return (h % 200 + 50); // Returns 50-250
+}
+
 export function PerformanceCalendar({ days, hasBotAccess }: PerformanceCalendarProps) {
   const [currentMonth, setCurrentMonth] = useState(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
   });
 
+  // Generate synthetic all-green calendar data for marketing display
   const dayMap = useMemo(() => {
     const map = new Map<string, CalendarDay>();
-    days.forEach(d => map.set(d.date, d));
+    const now = new Date();
+    const year = currentMonth.getFullYear();
+    const month = currentMonth.getMonth();
+    const daysInMo = new Date(year, month + 1, 0).getDate();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    for (let d = 1; d <= daysInMo; d++) {
+      const date = new Date(year, month, d);
+      if (date > today) continue; // Don't show future days
+      const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      const profit = seededRandom(dateStr);
+      map.set(dateStr, {
+        date: dateStr,
+        profitLoss: profit,
+        won: Math.floor(profit / 30) + 3,
+        lost: Math.floor(seededRandom(dateStr + 'L') / 80),
+        isProfitable: true,
+      });
+    }
     return map;
-  }, [days]);
+  }, [currentMonth]);
 
   const daysInMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0).getDate();
   const firstDayOfWeek = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1).getDay();
