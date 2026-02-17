@@ -4960,6 +4960,19 @@ Deno.serve(async (req) => {
             : `${leg.player_name}_${leg.prop_type}_${leg.side}`.toLowerCase();
           existingSingleKeys.add(key);
         }
+        // Pre-load globalTeamUsage from existing parlays so team cap persists across runs
+        for (const leg of legs) {
+          if (leg.type === 'team') {
+            if (leg.home_team) {
+              const ht = leg.home_team.toLowerCase().trim();
+              globalTeamUsage!.set(ht, (globalTeamUsage!.get(ht) || 0) + 1);
+            }
+            if (leg.away_team) {
+              const at = leg.away_team.toLowerCase().trim();
+              globalTeamUsage!.set(at, (globalTeamUsage!.get(at) || 0) + 1);
+            }
+          }
+        }
       }
       console.log(`[Bot v2] Pre-loaded ${globalFingerprints.size} fingerprints + ${globalMirrorPrints.size} mirror prints + ${existingSingleKeys.size} single-pick keys for ${targetDate}`);
     }
