@@ -246,9 +246,13 @@ async function settleNcaabTeamLegViaESPN(
     
     try {
       const resp = await fetch(`${ESPN_NCAAB_SCOREBOARD}?dates=${dateStr}&limit=200`);
-      if (!resp.ok) continue;
+      if (!resp.ok) {
+        console.warn(`[Bot Settle] ESPN NCAAB scoreboard ${dateStr} returned ${resp.status}`);
+        continue;
+      }
       const data = await resp.json();
       const events = data.events || [];
+      console.log(`[Bot Settle] ESPN NCAAB ${dateStr}: ${events.length} events, looking for ${homeTeam} vs ${awayTeam}`);
       
       for (const event of events) {
         if (event.status?.type?.completed !== true && event.status?.type?.name !== 'STATUS_FINAL') continue;
@@ -263,10 +267,17 @@ async function settleNcaabTeamLegViaESPN(
         const homeName = home.team?.displayName || home.team?.shortDisplayName || '';
         const awayName = away.team?.displayName || away.team?.shortDisplayName || '';
         
-        if (fuzzyMatchTeam(homeName, homeTeam) && fuzzyMatchTeam(awayName, awayTeam)) {
+        // Log near-matches for debugging
+        const homeMatch = fuzzyMatchTeam(homeName, homeTeam);
+        const awayMatch = fuzzyMatchTeam(awayName, awayTeam);
+        if (homeMatch || awayMatch) {
+          console.log(`[Bot Settle] Partial match: ESPN="${homeName} vs ${awayName}" target="${homeTeam} vs ${awayTeam}" homeMatch=${homeMatch} awayMatch=${awayMatch}`);
+        }
+        
+        if (homeMatch && awayMatch) {
           const homeScore = parseInt(home.score) || 0;
           const awayScore = parseInt(away.score) || 0;
-          console.log(`[Bot Settle] ESPN NCAAB: ${homeName} (${homeScore}) vs ${awayName} (${awayScore})`);
+          console.log(`[Bot Settle] ESPN NCAAB MATCH: ${homeName} (${homeScore}) vs ${awayName} (${awayScore})`);
           return resolveTeamOutcome(leg, homeScore, awayScore);
         }
       }
