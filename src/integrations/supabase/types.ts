@@ -6454,11 +6454,15 @@ export type Database = {
           kenpom_adj_o: number | null
           kenpom_rank: number | null
           kenpom_source: string | null
+          last_5_ats: string | null
+          last_5_oppg: number | null
+          last_5_ppg: number | null
           luck_factor: number | null
           oppg: number | null
           over_under_record: string | null
           ppg: number | null
           sos_rank: number | null
+          streak: string | null
           team_name: string
           updated_at: string
         }
@@ -6475,11 +6479,15 @@ export type Database = {
           kenpom_adj_o?: number | null
           kenpom_rank?: number | null
           kenpom_source?: string | null
+          last_5_ats?: string | null
+          last_5_oppg?: number | null
+          last_5_ppg?: number | null
           luck_factor?: number | null
           oppg?: number | null
           over_under_record?: string | null
           ppg?: number | null
           sos_rank?: number | null
+          streak?: string | null
           team_name: string
           updated_at?: string
         }
@@ -6496,11 +6504,15 @@ export type Database = {
           kenpom_adj_o?: number | null
           kenpom_rank?: number | null
           kenpom_source?: string | null
+          last_5_ats?: string | null
+          last_5_oppg?: number | null
+          last_5_ppg?: number | null
           luck_factor?: number | null
           oppg?: number | null
           over_under_record?: string | null
           ppg?: number | null
           sos_rank?: number | null
+          streak?: string | null
           team_name?: string
           updated_at?: string
         }

@@ -26,6 +26,59 @@ const NCAAB_NAME_MAP: Record<string, string> = {
   'UNC': 'North Carolina', 'UNC Tar Heels': 'North Carolina Tar Heels',
   'SMU': 'SMU Mustangs', 'UCF': 'UCF Knights', 'UNLV': 'UNLV Rebels',
   'USC': 'USC Trojans', 'LSU': 'LSU Tigers', 'BYU': 'BYU Cougars',
+  // Expanded name map for void prevention
+  'Northwestern St': 'Northwestern State Demons', 'Northwestern St Demons': 'Northwestern State Demons',
+  'SE Missouri St': 'Southeast Missouri State Redhawks', 'SE Missouri St Redhawks': 'Southeast Missouri State Redhawks',
+  'Murray St': 'Murray State Racers', 'Murray St Racers': 'Murray State Racers',
+  'Morehead St': 'Morehead State Eagles', 'Morehead St Eagles': 'Morehead State Eagles',
+  'Utah St': 'Utah State Aggies', 'Utah St Aggies': 'Utah State Aggies',
+  'Wichita St': 'Wichita State Shockers', 'Wichita St Shockers': 'Wichita State Shockers',
+  'Ball St': 'Ball State Cardinals', 'Ball St Cardinals': 'Ball State Cardinals',
+  'Kent St': 'Kent State Golden Flashes', 'Kent St Golden Flashes': 'Kent State Golden Flashes',
+  'Wright St': 'Wright State Raiders', 'Wright St Raiders': 'Wright State Raiders',
+  'Weber St': 'Weber State Wildcats', 'Weber St Wildcats': 'Weber State Wildcats',
+  'Idaho St': 'Idaho State Bengals', 'Idaho St Bengals': 'Idaho State Bengals',
+  'Portland St': 'Portland State Vikings', 'Portland St Vikings': 'Portland State Vikings',
+  'Montana St': 'Montana State Bobcats', 'Montana St Bobcats': 'Montana State Bobcats',
+  'Norfolk St': 'Norfolk State Spartans', 'Norfolk St Spartans': 'Norfolk State Spartans',
+  'Morgan St': 'Morgan State Bears', 'Morgan St Bears': 'Morgan State Bears',
+  'Coppin St': 'Coppin State Eagles', 'Coppin St Eagles': 'Coppin State Eagles',
+  'Cleveland St': 'Cleveland State Vikings', 'Cleveland St Vikings': 'Cleveland State Vikings',
+  'Youngstown St': 'Youngstown State Penguins', 'Youngstown St Penguins': 'Youngstown State Penguins',
+  'Sacramento St': 'Sacramento State Hornets', 'Sacramento St Hornets': 'Sacramento State Hornets',
+  'Arkansas St': 'Arkansas State Red Wolves', 'Arkansas St Red Wolves': 'Arkansas State Red Wolves',
+  'Georgia St': 'Georgia State Panthers', 'Georgia St Panthers': 'Georgia State Panthers',
+  'App St': 'Appalachian State Mountaineers', 'Appalachian St': 'Appalachian State Mountaineers',
+  'Kennesaw St': 'Kennesaw State Owls', 'Kennesaw St Owls': 'Kennesaw State Owls',
+  'McNeese St': 'McNeese Cowboys', 'McNeese St Cowboys': 'McNeese Cowboys',
+  'Sam Houston St': 'Sam Houston Bearkats', 'Sam Houston': 'Sam Houston Bearkats',
+  'S Illinois': 'Southern Illinois Salukis', 'Southern Ill': 'Southern Illinois Salukis',
+  'N Illinois': 'Northern Illinois Huskies', 'Northern Ill': 'Northern Illinois Huskies',
+  'E Kentucky': 'Eastern Kentucky Colonels', 'E Kentucky Colonels': 'Eastern Kentucky Colonels',
+  'W Kentucky': 'Western Kentucky Hilltoppers', 'W Kentucky Hilltoppers': 'Western Kentucky Hilltoppers',
+  'E Michigan': 'Eastern Michigan Eagles', 'E Michigan Eagles': 'Eastern Michigan Eagles',
+  'W Michigan': 'Western Michigan Broncos', 'W Michigan Broncos': 'Western Michigan Broncos',
+  'N Kentucky': 'Northern Kentucky Norse', 'N Kentucky Norse': 'Northern Kentucky Norse',
+  'UT Rio Grande Valley': 'UT Rio Grande Valley Vaqueros', 'UTRGV': 'UT Rio Grande Valley Vaqueros',
+  'Maryland Eastern Shore': 'Maryland-Eastern Shore Hawks', 'UMES': 'Maryland-Eastern Shore Hawks',
+  'UNC Asheville': 'UNC Asheville Bulldogs', 'UNC Greensboro': 'UNC Greensboro Spartans',
+  'UNC Wilmington': 'UNC Wilmington Seahawks',
+  'FGCU': 'Florida Gulf Coast Eagles', 'FGCU Eagles': 'Florida Gulf Coast Eagles',
+  'FIU': 'FIU Panthers', 'FAU': 'Florida Atlantic Owls', 'FAU Owls': 'Florida Atlantic Owls',
+  'UTSA': 'UT San Antonio Roadrunners', 'UTEP': 'UTEP Miners',
+  'Ole Miss': 'Ole Miss Rebels', 'Texas A&M': 'Texas A&M Aggies',
+  "St John's": "St. John's Red Storm", "Saint John's": "St. John's Red Storm",
+  "Saint Mary's": "Saint Mary's Gaels",
+  'VCU': 'VCU Rams', 'VCU Rams': 'VCU Rams',
+  'SIUE': 'SIU Edwardsville Cougars', 'SIU Edwardsville': 'SIU Edwardsville Cougars',
+  'Loyola Chicago': 'Loyola Chicago Ramblers', 'Loyola-Chicago': 'Loyola Chicago Ramblers',
+  'UMass': 'Massachusetts Minutemen', 'UMass Minutemen': 'Massachusetts Minutemen',
+  'Central Conn': 'Central Connecticut Blue Devils', 'Central Conn St': 'Central Connecticut Blue Devils',
+  'LIU': 'LIU Sharks', 'Long Island': 'LIU Sharks',
+  'USC Upstate': 'USC Upstate Spartans',
+  'Pitt': 'Pittsburgh Panthers', 'Pittsburgh': 'Pittsburgh Panthers',
+  'Miami FL': 'Miami Hurricanes', 'Miami OH': 'Miami (OH) RedHawks',
+  'NC State': 'NC State Wolfpack', 'NC State Wolfpack': 'NC State Wolfpack',
 };
 
 interface NcaabTeamStats {
@@ -43,6 +96,12 @@ interface NcaabTeamStats {
   kenpom_adj_d: number | null;
   sos_rank: number | null;
   kenpom_source: string | null;
+  ppg: number | null;
+  oppg: number | null;
+  last_5_ppg: number | null;
+  last_5_oppg: number | null;
+  streak: string | null;
+  last_5_ats: string | null;
 }
 
 interface NcaabGameReferee {
@@ -135,20 +194,44 @@ function scoreNcaab(
     return { score: 55, breakdown };
   }
 
-  // Use real KenPom AdjO/AdjD if available, fall back to ESPN-derived
-  const homeOff = homeStats?.kenpom_adj_o || homeStats?.adj_offense || 70;
-  const homeDef = homeStats?.kenpom_adj_d || homeStats?.adj_defense || 70;
-  const awayOff = awayStats?.kenpom_adj_o || awayStats?.adj_offense || 70;
-  const awayDef = awayStats?.kenpom_adj_d || awayStats?.adj_defense || 70;
+  // Use real KenPom AdjO/AdjD if available AND valid, fall back to ESPN-derived
+  // Validation: reject KenPom values outside reasonable ranges (AdjO: 90-135, AdjD: 80-120)
+  const validKenpomO = (v: number | null | undefined) => v != null && v >= 90 && v <= 135;
+  const validKenpomD = (v: number | null | undefined) => v != null && v >= 80 && v <= 120;
+
+  const homeOff = validKenpomO(homeStats?.kenpom_adj_o) ? homeStats!.kenpom_adj_o! : (homeStats?.adj_offense || 70);
+  const homeDef = validKenpomD(homeStats?.kenpom_adj_d) ? homeStats!.kenpom_adj_d! : (homeStats?.adj_defense || 70);
+  const awayOff = validKenpomO(awayStats?.kenpom_adj_o) ? awayStats!.kenpom_adj_o! : (awayStats?.adj_offense || 70);
+  const awayDef = validKenpomD(awayStats?.kenpom_adj_d) ? awayStats!.kenpom_adj_d! : (awayStats?.adj_defense || 70);
   const homeRank = homeStats?.kenpom_rank || 200;
   const awayRank = awayStats?.kenpom_rank || 200;
   const homeTempo = homeStats?.adj_tempo || 67;
   const awayTempo = awayStats?.adj_tempo || 67;
 
-  // Flag if we have real KenPom data
-  const hasRealKenpom = homeStats?.kenpom_source === 'kenpom' || homeStats?.kenpom_source === 'barttorvik' ||
-                        awayStats?.kenpom_source === 'kenpom' || awayStats?.kenpom_source === 'barttorvik';
+  // Flag if we have real KenPom data (validated)
+  const hasRealKenpom = (validKenpomO(homeStats?.kenpom_adj_o) || validKenpomO(awayStats?.kenpom_adj_o)) &&
+                        (homeStats?.kenpom_source === 'kenpom' || homeStats?.kenpom_source === 'barttorvik' ||
+                         awayStats?.kenpom_source === 'kenpom' || awayStats?.kenpom_source === 'barttorvik');
   if (hasRealKenpom) breakdown.kenpom_source = 'real';
+
+  // ============= COLD/HOT TEAM DETECTION (L5 trends) =============
+  const homePPG = homeStats?.ppg || 0;
+  const awayPPG = awayStats?.ppg || 0;
+  const homeL5 = homeStats?.last_5_ppg;
+  const awayL5 = awayStats?.last_5_ppg;
+  let coldTeam: string | null = null;
+  let hotTeam: string | null = null;
+
+  if (homeL5 && homePPG > 0) {
+    const pctDiff = (homeL5 - homePPG) / homePPG;
+    if (pctDiff < -0.10) coldTeam = bet.home_team;
+    if (pctDiff > 0.10) hotTeam = bet.home_team;
+  }
+  if (awayL5 && awayPPG > 0) {
+    const pctDiff = (awayL5 - awayPPG) / awayPPG;
+    if (pctDiff < -0.10) coldTeam = coldTeam || bet.away_team;
+    if (pctDiff > 0.10) hotTeam = hotTeam || bet.away_team;
+  }
 
   // Rank tier bonus
   const sideRank = side === 'HOME' ? homeRank : awayRank;
@@ -318,6 +401,16 @@ function scoreNcaab(
     if (side === 'UNDER' && anyHighFatigue) {
       score += 5;
       breakdown.fatigue_under_boost = 5;
+    }
+
+    // ============= COLD/HOT TEAM LOGIC =============
+    if (coldTeam) {
+      if (side === 'OVER') { score -= 10; breakdown.cold_team_penalty = -10; breakdown.cold_label = `${coldTeam} scoring 10%+ below avg recently`; }
+      if (side === 'UNDER') { score += 5; breakdown.cold_team_boost = 5; }
+    }
+    if (hotTeam) {
+      if (side === 'OVER') { score += 5; breakdown.hot_team_boost = 5; breakdown.hot_label = `${hotTeam} scoring 10%+ above avg recently`; }
+      if (side === 'UNDER') { score -= 5; breakdown.hot_team_penalty = -5; }
     }
 
     const sideTeam = side === 'OVER' ? homeStats : awayStats;
@@ -742,7 +835,7 @@ serve(async (req) => {
     // Load NCAAB stats (with real KenPom data)
     const { data: ncaabStats } = await supabase
       .from('ncaab_team_stats')
-      .select('team_name, conference, kenpom_rank, adj_offense, adj_defense, adj_tempo, home_record, away_record, ats_record, over_under_record, kenpom_adj_o, kenpom_adj_d, sos_rank, kenpom_source');
+      .select('team_name, conference, kenpom_rank, adj_offense, adj_defense, adj_tempo, home_record, away_record, ats_record, over_under_record, kenpom_adj_o, kenpom_adj_d, sos_rank, kenpom_source, ppg, oppg, last_5_ppg, last_5_oppg, streak, last_5_ats');
 
     const ncaabMap = new Map<string, NcaabTeamStats>();
     (ncaabStats || []).forEach((s: any) => ncaabMap.set(s.team_name, s));

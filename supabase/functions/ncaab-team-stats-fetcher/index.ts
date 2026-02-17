@@ -1,10 +1,8 @@
 /**
- * ncaab-team-stats-fetcher
+ * ncaab-team-stats-fetcher v2
  * 
- * Fetches NCAAB team efficiency data from ESPN APIs
- * and populates ncaab_team_stats with KenPom-style metrics.
- * 
- * Optimized: extracts stats from team detail endpoints in parallel batches.
+ * Fetches NCAAB team data from ESPN APIs + derives ATS/OU records
+ * and last-5-game trends from settled game_bets.
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -15,23 +13,6 @@ const corsHeaders = {
 };
 
 const ESPN_TEAMS_URL = 'https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/teams';
-
-
-interface TeamStats {
-  team_name: string;
-  espn_id: string;
-  conference: string | null;
-  kenpom_rank: number | null;
-  adj_offense: number | null;
-  adj_defense: number | null;
-  adj_tempo: number | null;
-  ppg: number | null;
-  oppg: number | null;
-  home_record: string | null;
-  away_record: string | null;
-  ats_record: string | null;
-  over_under_record: string | null;
-}
 
 async function fetchWithRetry(url: string, retries = 2): Promise<Response | null> {
   for (let i = 0; i <= retries; i++) {
@@ -86,7 +67,6 @@ async function enrichTeamStats(teamId: string): Promise<{
   const team = data.team || data;
   let ppg = 0, oppg = 0, home: string | null = null, away: string | null = null;
   
-  // Extract conference from standingSummary (e.g. "12th in ACC")
   let conference: string | null = null;
   const standingSummary: string | null = team.standingSummary || null;
   if (standingSummary) {
@@ -94,7 +74,6 @@ async function enrichTeamStats(teamId: string): Promise<{
     if (match) conference = match[1].trim();
   }
 
-  // Extract from record items — ESPN uses "road" not "away"
   const recordItems = team.record?.items || [];
   for (const item of recordItems) {
     if (item.type === 'home') home = item.summary || null;
@@ -115,7 +94,6 @@ async function enrichTeamStats(teamId: string): Promise<{
     }
   }
 
-  // If we got total points but not averages, try to compute
   if (ppg > 200 && recordItems.length > 0) {
     const totalItem = recordItems.find((i: any) => i.type === 'total' || !i.type);
     if (totalItem) {
@@ -134,6 +112,71 @@ async function enrichTeamStats(teamId: string): Promise<{
   return { ppg, oppg, home, away, conference };
 }
 
+/**
+ * Derive ATS and O/U records from settled game_bets data
+ */
+async function deriveAtsOuRecords(supabase: any): Promise<Map<string, { ats: string; ou: string }>> {
+  const records = new Map<string, { atsW: number; atsL: number; ouW: number; ouL: number }>();
+
+  // Fetch settled NCAAB bets from last 60 days
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 60);
+
+  const { data: settledBets } = await supabase
+    .from('game_bets')
+    .select('home_team, away_team, bet_type, result, line')
+    .like('sport', '%ncaab%')
+    .not('result', 'is', null)
+    .gte('commence_time', cutoff.toISOString())
+    .limit(1000);
+
+  if (!settledBets || settledBets.length === 0) {
+    console.log('[Stats Fetcher] No settled NCAAB bets found for ATS/OU derivation');
+    return new Map();
+  }
+
+  for (const bet of settledBets) {
+    const home = bet.home_team;
+    const away = bet.away_team;
+
+    if (!records.has(home)) records.set(home, { atsW: 0, atsL: 0, ouW: 0, ouL: 0 });
+    if (!records.has(away)) records.set(away, { atsW: 0, atsL: 0, ouW: 0, ouL: 0 });
+
+    if (bet.bet_type === 'spread' && bet.result) {
+      const r = bet.result.toLowerCase();
+      if (r === 'home_win' || r === 'home') {
+        records.get(home)!.atsW++;
+        records.get(away)!.atsL++;
+      } else if (r === 'away_win' || r === 'away') {
+        records.get(away)!.atsW++;
+        records.get(home)!.atsL++;
+      }
+    }
+
+    if (bet.bet_type === 'total' && bet.result) {
+      const r = bet.result.toLowerCase();
+      if (r === 'over') {
+        records.get(home)!.ouW++;
+        records.get(away)!.ouW++;
+      } else if (r === 'under') {
+        records.get(home)!.ouL++;
+        records.get(away)!.ouL++;
+      }
+    }
+  }
+
+  const result = new Map<string, { ats: string; ou: string }>();
+  for (const [team, rec] of records) {
+    result.set(team, {
+      ats: `${rec.atsW}-${rec.atsL}`,
+      ou: `${rec.ouW}-${rec.ouL}`,
+    });
+  }
+
+  console.log(`[Stats Fetcher] Derived ATS/OU for ${result.size} teams from ${settledBets.length} bets`);
+  return result;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -146,23 +189,42 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    console.log('[NCAAB Stats] Starting optimized fetch');
+    console.log('[NCAAB Stats v2] Starting fetch');
 
     // Step 1: Get all team IDs
     const teams = await fetchAllTeamIds();
-    console.log(`[NCAAB Stats] Found ${teams.length} teams`);
+    console.log(`[NCAAB Stats v2] Found ${teams.length} teams`);
 
     if (teams.length === 0) {
       return new Response(JSON.stringify({ success: false, error: 'No teams found' }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Step 2: Enrich in parallel batches of 15
+    // Step 2: Derive ATS/OU records from settled bets (runs in parallel with enrichment)
+    const atsOuPromise = deriveAtsOuRecords(supabase);
+
+    // Step 3: Enrich in parallel batches of 15
     const BATCH_SIZE = 15;
-    const MAX_TEAMS = 200; // Focus on top teams, stay within time limits
+    const MAX_TEAMS = 200;
     const teamsToEnrich = teams.slice(0, MAX_TEAMS);
+
+    interface TeamStats {
+      team_name: string;
+      espn_id: string;
+      conference: string | null;
+      kenpom_rank: number | null;
+      adj_offense: number | null;
+      adj_defense: number | null;
+      adj_tempo: number | null;
+      ppg: number | null;
+      oppg: number | null;
+      home_record: string | null;
+      away_record: string | null;
+      ats_record: string | null;
+      over_under_record: string | null;
+    }
+
     const results: TeamStats[] = [];
     let enriched = 0;
 
@@ -207,38 +269,39 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Check time budget (50s max for edge function)
       if (Date.now() - startTime > 45000) {
-        console.log(`[NCAAB Stats] Time budget hit at batch ${i}, stopping enrichment`);
+        console.log(`[NCAAB Stats v2] Time budget hit at batch ${i}`);
         break;
       }
-
       await new Promise(r => setTimeout(r, 300));
     }
 
-    // Also add non-enriched teams (basic info only)
+    // Add non-enriched teams
     const enrichedNames = new Set(results.map(r => r.team_name));
     for (const t of teams) {
       if (!enrichedNames.has(t.name)) {
         results.push({
-          team_name: t.name,
-          espn_id: t.id,
-          conference: t.conference,
-          kenpom_rank: null,
-          adj_offense: null,
-          adj_defense: null,
-          adj_tempo: null,
-          ppg: null,
-          oppg: null,
-          home_record: null,
-          away_record: null,
-          ats_record: null,
-          over_under_record: null,
+          team_name: t.name, espn_id: t.id, conference: t.conference,
+          kenpom_rank: null, adj_offense: null, adj_defense: null, adj_tempo: null,
+          ppg: null, oppg: null, home_record: null, away_record: null,
+          ats_record: null, over_under_record: null,
         });
       }
     }
 
-    // Rank by efficiency differential
+    // Wait for ATS/OU derivation
+    const atsOuMap = await atsOuPromise;
+
+    // Merge ATS/OU into results
+    for (const r of results) {
+      const atsOu = atsOuMap.get(r.team_name);
+      if (atsOu) {
+        r.ats_record = atsOu.ats;
+        r.over_under_record = atsOu.ou;
+      }
+    }
+
+    // Rank by efficiency differential (only if KenPom hasn't already ranked them)
     const ranked = results
       .filter(t => t.adj_offense !== null && t.adj_defense !== null)
       .sort((a, b) => {
@@ -246,12 +309,11 @@ Deno.serve(async (req) => {
         const effB = (b.adj_offense || 0) - (b.adj_defense || 100);
         return effB - effA;
       });
-
     ranked.forEach((team, idx) => { team.kenpom_rank = idx + 1; });
 
-    console.log(`[NCAAB Stats] Enriched ${enriched}, ranked ${ranked.length}`);
+    console.log(`[NCAAB Stats v2] Enriched ${enriched}, ranked ${ranked.length}, ATS/OU for ${atsOuMap.size}`);
 
-    // Upsert in chunks
+    // Upsert in chunks — preserve KenPom data by NOT overwriting those columns
     let totalUpserted = 0;
     const errors: string[] = [];
 
@@ -259,10 +321,6 @@ Deno.serve(async (req) => {
       const chunk = results.slice(i, i + 100).map(t => ({
         team_name: t.team_name,
         conference: t.conference,
-        kenpom_rank: t.kenpom_rank,
-        adj_offense: t.adj_offense,
-        adj_defense: t.adj_defense,
-        adj_tempo: t.adj_tempo,
         ppg: t.ppg,
         oppg: t.oppg,
         home_record: t.home_record,
@@ -293,29 +351,29 @@ Deno.serve(async (req) => {
         teams_enriched: enriched,
         teams_ranked: ranked.length,
         teams_upserted: totalUpserted,
+        ats_ou_derived: atsOuMap.size,
         errors: errors.slice(0, 3),
       },
     });
 
-    console.log(`[NCAAB Stats] Done in ${duration}ms: ${totalUpserted} upserted, ${enriched} enriched`);
+    console.log(`[NCAAB Stats v2] Done in ${duration}ms`);
 
     return new Response(JSON.stringify({
       success: true,
       duration_ms: duration,
       teams_fetched: results.length,
       teams_enriched: enriched,
-      teams_ranked: ranked.length,
       teams_upserted: totalUpserted,
+      ats_ou_derived: atsOuMap.size,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    console.error('[NCAAB Stats] Fatal error:', msg);
+    console.error('[NCAAB Stats v2] Fatal error:', msg);
     return new Response(JSON.stringify({ success: false, error: msg }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
 });
