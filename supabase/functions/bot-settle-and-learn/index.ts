@@ -70,10 +70,56 @@ interface RecentOutcome {
   settled_at: string;
 }
 
+/**
+ * Parse old-format whale signal legs where teams are encoded in player_name
+ * e.g. "Louisiana Ragin' Cajuns @ Old Dominion Monarchs"
+ */
+function parseTeamsFromPlayerName(leg: BotLeg): { home_team: string; away_team: string } | null {
+  const name = leg.player_name || '';
+  // Pattern: "Away Team @ Home Team" or "Away Team vs Home Team"
+  const atMatch = name.match(/^(.+?)\s+@\s+(.+)$/);
+  if (atMatch) return { away_team: atMatch[1].trim(), home_team: atMatch[2].trim() };
+  const vsMatch = name.match(/^(.+?)\s+vs\.?\s+(.+)$/i);
+  if (vsMatch) return { away_team: vsMatch[1].trim(), home_team: vsMatch[2].trim() };
+  return null;
+}
+
 function isTeamLeg(leg: BotLeg): boolean {
-  return leg.type === 'team' ||
-    TEAM_CATEGORIES.includes(leg.category ?? '') ||
-    (!!leg.home_team && !!leg.away_team);
+  if (leg.type === 'team') return true;
+  if (TEAM_CATEGORIES.includes(leg.category ?? '')) return true;
+  if (!!leg.home_team && !!leg.away_team) return true;
+  // Old-format: whale signal legs with teams in player_name
+  if ((leg as any).line_source === 'whale_signal' && parseTeamsFromPlayerName(leg)) return true;
+  return false;
+}
+
+/**
+ * Hydrate old-format legs: extract home_team/away_team from player_name if missing,
+ * and infer bet_type from category/prop_type
+ */
+function hydrateLegTeams(leg: BotLeg): BotLeg {
+  if (leg.home_team && leg.away_team) return leg;
+  const parsed = parseTeamsFromPlayerName(leg);
+  if (!parsed) return leg;
+  
+  const hydrated = { ...leg, home_team: parsed.home_team, away_team: parsed.away_team };
+  
+  // Infer bet_type from category or prop_type if missing
+  if (!hydrated.bet_type) {
+    const cat = (leg.category || '').toUpperCase();
+    const pt = (leg.prop_type || '').toLowerCase();
+    if (cat.includes('SPREAD') || pt === 'spread') hydrated.bet_type = 'spread';
+    else if (cat.includes('TOTAL') || pt === 'total') hydrated.bet_type = 'total';
+    else if (cat.includes('ML') || pt === 'moneyline' || pt === 'h2h') hydrated.bet_type = 'h2h';
+  }
+  
+  // Infer sport from team names or default to NCAAB for whale signals
+  if (!(hydrated as any).sport) {
+    (hydrated as any).sport = 'basketball_ncaab';
+  }
+  
+  console.log(`[Bot Settle] Hydrated old-format leg: "${leg.player_name}" → home=${parsed.home_team}, away=${parsed.away_team}, bet=${hydrated.bet_type}`);
+  return hydrated;
 }
 
 function adjustWeight(
@@ -339,35 +385,41 @@ async function settleTeamLeg(
   leg: BotLeg,
   parlayDate: string
 ): Promise<{ outcome: string; actual_value: number | null }> {
-  const homeTeam = leg.home_team;
-  const awayTeam = leg.away_team;
+  // Old variables kept for reference but we use hydrated versions below
   
-  if (!homeTeam || !awayTeam) {
+  // Hydrate old-format legs before checking teams
+  const hydratedLeg = hydrateLegTeams(leg);
+  const homeTeamH = hydratedLeg.home_team;
+  const awayTeamH = hydratedLeg.away_team;
+  
+  if (!homeTeamH || !awayTeamH) {
     return { outcome: 'no_data', actual_value: null };
   }
 
-  const legSport = (leg as any).sport || '';
+  // Use hydrated values for settlement
+  const settledLeg = { ...hydratedLeg, home_team: homeTeamH, away_team: awayTeamH };
+  const legSport = (settledLeg as any).sport || '';
 
   // Route NCAA Baseball to ESPN college baseball scoreboard
   if (legSport.includes('baseball_ncaa') || legSport.includes('baseball')) {
-    return settleNcaaBaseballViaESPN(leg, parlayDate);
+    return settleNcaaBaseballViaESPN(settledLeg, parlayDate);
   }
 
   // Route NCAAB to ESPN scoreboard (more reliable than summing player logs)
   const isNCAAB = legSport.includes('ncaab') || legSport.includes('college');
   if (isNCAAB) {
-    return settleNcaabTeamLegViaESPN(leg, parlayDate);
+    return settleNcaabTeamLegViaESPN(settledLeg, parlayDate);
   }
 
   // Route NHL to ESPN scoreboard
   if (legSport.includes('icehockey_nhl') || legSport.includes('nhl')) {
-    return settleNhlViaESPN(leg, parlayDate);
+    return settleNhlViaESPN(settledLeg, parlayDate);
   }
 
   // Route Tennis / Table Tennis to Odds API scores (ESPN doesn't cover these)
   const isTennis = legSport.includes('tennis_atp') || legSport.includes('tennis_wta') || legSport.includes('tennis_pingpong');
   if (isTennis) {
-    return settleTennisViaOddsAPI(leg, parlayDate, legSport);
+    return settleTennisViaOddsAPI(settledLeg, parlayDate, legSport);
   }
 
   // NBA: use player game logs aggregation
@@ -394,8 +446,8 @@ async function settleTeamLeg(
     .gte('game_date', parlayDate)
     .lte('game_date', windowEndStr);
 
-  const normAway = normalizeTeam(awayTeam);
-  const normHome = normalizeTeam(homeTeam);
+  const normAway = normalizeTeam(awayTeamH);
+  const normHome = normalizeTeam(homeTeamH);
 
   const homeScoreLogs = (homePlayerLogs || []).filter((log: any) => {
     const normOpp = normalizeTeam(log.opponent || '');
@@ -418,8 +470,8 @@ async function settleTeamLeg(
     return { outcome: 'no_data', actual_value: null };
   }
 
-  console.log(`[Bot Settle] Team leg: ${homeTeam} (${homeScore}) vs ${awayTeam} (${awayScore}) | bet=${leg.bet_type} side=${leg.side} line=${leg.line}`);
-  return resolveTeamOutcome(leg, homeScore, awayScore);
+  console.log(`[Bot Settle] Team leg: ${homeTeamH} (${homeScore}) vs ${awayTeamH} (${awayScore}) | bet=${settledLeg.bet_type} side=${settledLeg.side} line=${settledLeg.line}`);
+  return resolveTeamOutcome(settledLeg, homeScore, awayScore);
 }
 
 function resolveTeamOutcome(
