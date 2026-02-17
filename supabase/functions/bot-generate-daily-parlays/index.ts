@@ -3397,6 +3397,7 @@ function snapLine(raw: number, betType?: string): number {
 
 let globalGameUsage: Map<string, number> | undefined;
 let globalMatchupUsage: Map<string, number> | undefined;
+let globalTeamUsage: Map<string, number> | undefined;
 
 async function generateTierParlays(
   supabase: any,
@@ -3847,6 +3848,27 @@ async function generateTierParlays(
         continue;
       }
 
+      // Team concentration cap: no single team may appear in more than MAX_TEAM_PARLAY_CAP parlays
+      const MAX_TEAM_PARLAY_CAP = isLightSlateMode ? 6 : 4;
+      const teamKeys = legs
+        .filter((l: any) => l.type === 'team')
+        .flatMap((l: any) => [l.home_team, l.away_team])
+        .filter(Boolean)
+        .map((t: string) => t.toLowerCase().trim());
+
+      let teamOverused = false;
+      for (const tk of teamKeys) {
+        if (!globalTeamUsage) globalTeamUsage = new Map();
+        if ((globalTeamUsage.get(tk) || 0) >= MAX_TEAM_PARLAY_CAP) {
+          teamOverused = true;
+          break;
+        }
+      }
+      if (teamOverused) {
+        console.log(`[Bot] Skipping ${tier}/${profile.strategy}: team concentration cap hit`);
+        continue;
+      }
+
       // Matchup-level dedup: same set of team pairs limited to 2 parlays
       if (matchupKey && matchupKey.length > 0) {
         if (!globalMatchupUsage) globalMatchupUsage = new Map();
@@ -3867,6 +3889,12 @@ async function generateTierParlays(
       if (matchupKey && matchupKey.length > 0) {
         if (!globalMatchupUsage) globalMatchupUsage = new Map();
         globalMatchupUsage.set(matchupKey, (globalMatchupUsage.get(matchupKey) || 0) + 1);
+      }
+
+      // Track team usage
+      for (const tk of teamKeys) {
+        if (!globalTeamUsage) globalTeamUsage = new Map();
+        globalTeamUsage.set(tk, (globalTeamUsage.get(tk) || 0) + 1);
       }
 
       // Mark all picks as used
@@ -4913,6 +4941,7 @@ Deno.serve(async (req) => {
     const globalMirrorPrints = new Set<string>();
     globalGameUsage = new Map();
     globalMatchupUsage = new Map();
+    globalTeamUsage = new Map();
     const { data: existingParlays } = await supabase
       .from('bot_daily_parlays')
       .select('legs, leg_count')
