@@ -48,6 +48,16 @@ const COMBO_STAT_TYPES = [
   'points+rebounds+assists',
 ];
 
+// PAE Game Context — populated from ncaab_team_stats for NCAAB props
+interface GameContext {
+  team_tempo?: number;
+  opp_tempo?: number;
+  team_adj_offense?: number;
+  opp_adj_defense?: number;
+  team_kenpom_rank?: number;
+  opp_kenpom_rank?: number;
+}
+
 interface PropInput {
   player_name: string;
   prop_type: string;
@@ -63,6 +73,8 @@ interface PropInput {
   spread?: number;
   position?: string;
   market_type?: 'Standard' | 'Goblin' | 'Demon';
+  sport?: string;
+  game_context?: GameContext;
 }
 
 interface SESComponents {
@@ -277,17 +289,60 @@ function calculateSES(prop: PropInput, archetype: string): { score: number; comp
     marketTypeScore = clearancePercent >= 20 && minutesCertainty === 'LOCKED' ? 12 : 2;
   }
 
-  // 5. BLOWOUT/PACE CONTEXT SCORE (10% weight) - max 10 points
+  // 5. BLOWOUT/PACE + PAE GAME ENVIRONMENT SCORE (10% weight) - max 10 points
   let blowoutPaceScore = 0;
-  if (spread >= 8) {
-    // Blowout risk
-    if (isOver && archetype === 'Big') blowoutPaceScore = 10; // Bigs get more rebounds in blowouts
-    else if (isOver) blowoutPaceScore = 6;
-    else blowoutPaceScore = 2; // Unders risky in blowouts
-  } else if (spread >= 4) {
-    blowoutPaceScore = 7; // Moderate
+  const isNcaab = (prop.sport || '').toLowerCase().includes('ncaab') || (prop.sport || '').toLowerCase().includes('college');
+  const ctx = prop.game_context;
+  const isCountingStat = ['pts', 'reb', 'ast', 'points', 'rebounds', 'assists', 'pra', 'pts+reb', 'pts+ast', 'reb+ast']
+    .some(s => prop.prop_type.toLowerCase().includes(s));
+
+  if (isNcaab && ctx && isCountingStat) {
+    // PAE Game Environment scoring replaces spread-based blowout for NCAAB counting stats
+    let paeScore = 5; // neutral baseline
+
+    const tempoAvg = (ctx.team_tempo && ctx.opp_tempo)
+      ? (ctx.team_tempo + ctx.opp_tempo) / 2
+      : null;
+
+    if (tempoAvg !== null) {
+      if (isOver) {
+        if (tempoAvg > 69) paeScore += 4;       // Fast game = inflation
+        else if (tempoAvg > 67) paeScore += 2;
+        else if (tempoAvg < 63) paeScore -= 4;  // Grind = suppress overs
+      } else {
+        // Unders benefit from slow tempo
+        if (tempoAvg < 63) paeScore += 4;
+        else if (tempoAvg < 65) paeScore += 2;
+        else if (tempoAvg > 69) paeScore -= 3;
+      }
+    }
+
+    if (ctx.opp_adj_defense !== undefined) {
+      if (isOver) {
+        if (ctx.opp_adj_defense > 105) paeScore -= 3; // Strong D = harder to hit overs
+        else if (ctx.opp_adj_defense < 97) paeScore += 3; // Weak D = favorable
+      } else {
+        if (ctx.opp_adj_defense > 105) paeScore += 3;
+        else if (ctx.opp_adj_defense < 97) paeScore -= 2;
+      }
+    }
+
+    if (isOver && ctx.team_adj_offense !== undefined && ctx.team_adj_offense > 125) {
+      paeScore += 2; // Elite offense = better looks
+    }
+
+    blowoutPaceScore = Math.min(10, Math.max(0, paeScore));
   } else {
-    blowoutPaceScore = 8; // Competitive game = more predictable
+    // Default spread-based blowout/pace logic for NBA / non-NCAAB
+    if (spread >= 8) {
+      if (isOver && archetype === 'Big') blowoutPaceScore = 10;
+      else if (isOver) blowoutPaceScore = 6;
+      else blowoutPaceScore = 2;
+    } else if (spread >= 4) {
+      blowoutPaceScore = 7;
+    } else {
+      blowoutPaceScore = 8;
+    }
   }
 
   // Apply archetype adjustments
@@ -338,23 +393,43 @@ function generateKeyReason(prop: PropInput, sesScore: number, autoFailReason: st
   const lineStructure = getLineStructure(prop.line);
   const medianGap = prop.rolling_median ? prop.line - prop.rolling_median : null;
   const isOver = prop.side === 'over';
+  const ctx = prop.game_context;
+  const isNcaab = (prop.sport || '').toLowerCase().includes('ncaab') || (prop.sport || '').toLowerCase().includes('college');
+
+  // Build PAE context string if available
+  let paeContext = '';
+  if (isNcaab && ctx) {
+    const tempoAvg = ctx.team_tempo && ctx.opp_tempo
+      ? ((ctx.team_tempo + ctx.opp_tempo) / 2).toFixed(1)
+      : null;
+    if (tempoAvg && parseFloat(tempoAvg) > 69) {
+      paeContext = ` — Elite tempo game (avg ${tempoAvg} poss) boosts counting stats`;
+    } else if (tempoAvg && parseFloat(tempoAvg) < 63) {
+      paeContext = ` — Grind matchup (avg ${tempoAvg} poss) suppresses overs`;
+    }
+    if (ctx.opp_adj_defense && ctx.opp_adj_defense > 105 && isOver) {
+      paeContext += paeContext ? ', strong D' : ' — Strong opponent defense suppresses over';
+    } else if (ctx.opp_adj_defense && ctx.opp_adj_defense < 97 && isOver) {
+      paeContext += paeContext ? ', weak D matchup' : ' — Weak opponent defense favors over';
+    }
+  }
 
   if (sesScore >= 72) {
     if (medianGap !== null) {
       const gapDirection = isOver ? 'below' : 'above';
-      return `Strong edge: Line ${Math.abs(medianGap).toFixed(1)} ${gapDirection} median with ${lineStructure} structure`;
+      return `Strong edge: Line ${Math.abs(medianGap).toFixed(1)} ${gapDirection} median with ${lineStructure} structure${paeContext}`;
     }
-    return `High SES (${sesScore}) with favorable line structure`;
+    return `High SES (${sesScore}) with favorable line structure${paeContext}`;
   } else if (sesScore >= 64) {
-    return `Marginal edge (SES ${sesScore}) - parlay only, not straight bet`;
+    return `Marginal edge (SES ${sesScore}) - parlay only, not straight bet${paeContext}`;
   } else {
     if (components.median_gap_score < 15) {
-      return 'Weak median gap - line too close to expected value';
+      return `Weak median gap - line too close to expected value${paeContext}`;
     }
     if (components.line_structure_score < 10) {
-      return `.5 line structure creates unnecessary risk`;
+      return `.5 line structure creates unnecessary risk${paeContext}`;
     }
-    return `Insufficient edge (SES ${sesScore}) - PASS`;
+    return `Insufficient edge (SES ${sesScore}) - PASS${paeContext}`;
   }
 }
 
@@ -552,6 +627,15 @@ Deno.serve(async (req) => {
     if (action === 'full_slate' || action === 'analyze_all' || mode === 'full_slate') {
       const today = getEasternDate();
       console.log(`[Prop Engine v2] Full slate mode for ${today}`);
+
+      // Load NCAAB team stats for PAE game context enrichment
+      const { data: ncaabStats } = await supabase
+        .from('ncaab_team_stats')
+        .select('team_name, kenpom_adj_o, kenpom_adj_d, adj_tempo, kenpom_rank');
+      const ncaabMap = new Map(
+        (ncaabStats ?? []).map((t: any) => [t.team_name.toLowerCase(), t])
+      );
+      console.log(`[Prop Engine v2] Loaded ${ncaabMap.size} NCAAB teams for PAE context`);
       
       // Fetch approved props from Risk Engine (uses nba_risk_engine_picks table)
       const { data: approvedProps, error: fetchError } = await supabase
@@ -602,6 +686,27 @@ Deno.serve(async (req) => {
           }
         }
         
+        // Build PAE game context for NCAAB props
+        const sportLower = (prop.sport || '').toLowerCase();
+        const isNcaabProp = sportLower.includes('ncaab') || sportLower.includes('college');
+        let gameContext: GameContext | undefined;
+        if (isNcaabProp && ncaabMap.size > 0) {
+          const teamKey = (prop.team_name || '').toLowerCase();
+          const oppKey = (prop.opponent || '').toLowerCase();
+          const teamStats = ncaabMap.get(teamKey) as any;
+          const oppStats = ncaabMap.get(oppKey) as any;
+          if (teamStats || oppStats) {
+            gameContext = {
+              team_tempo: teamStats?.adj_tempo ?? undefined,
+              opp_tempo: oppStats?.adj_tempo ?? undefined,
+              team_adj_offense: teamStats?.kenpom_adj_o ?? teamStats?.adj_offense ?? undefined,
+              opp_adj_defense: oppStats?.kenpom_adj_d ?? oppStats?.adj_defense ?? undefined,
+              team_kenpom_rank: teamStats?.kenpom_rank ?? undefined,
+              opp_kenpom_rank: oppStats?.kenpom_rank ?? undefined,
+            };
+          }
+        }
+
         propsToAnalyze.push({
           player_name: prop.player_name,
           prop_type: prop.prop_type,
@@ -616,6 +721,8 @@ Deno.serve(async (req) => {
           spread: prop.spread,
           position: prop.player_role,
           market_type: 'Standard',
+          sport: prop.sport,
+          game_context: gameContext,
         });
       }
       
