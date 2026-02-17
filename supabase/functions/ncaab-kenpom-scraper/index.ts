@@ -143,10 +143,10 @@ Deno.serve(async (req) => {
       .update({ kenpom_adj_o: null, kenpom_adj_d: null, kenpom_source: null, kenpom_rank: null })
       .or('kenpom_adj_d.lt.80,kenpom_adj_d.gt.120');
 
-    // Step 2: Load all teams WITH conference
+    // Step 2: Load all teams WITH conference and existing PAE data
     const { data: allTeams, error: fetchError } = await supabase
       .from('ncaab_team_stats')
-      .select('team_name, ppg, oppg, home_record, away_record, sos_rank, conference')
+      .select('team_name, ppg, oppg, home_record, away_record, sos_rank, conference, adj_offense, adj_defense')
       .order('team_name');
 
     if (fetchError || !allTeams?.length) {
@@ -155,10 +155,16 @@ Deno.serve(async (req) => {
       });
     }
 
-    console.log(`[PAE] Loaded ${allTeams.length} teams`);
+    // Split: teams with ESPN data get PAE calculated; teams without ESPN data but with prior PAE keep their values
+    const teamsWithData = allTeams.filter(t => t.ppg && t.ppg > 0 && t.oppg && t.oppg > 0);
+    const teamsWithoutData = allTeams.filter(t => !t.ppg || t.ppg <= 0 || !t.oppg || t.oppg <= 0);
+    const teamsWithPriorPAE = teamsWithoutData.filter(t => t.adj_offense && t.adj_offense > 0 && t.adj_defense && t.adj_defense > 0);
+    const teamsSkipped = teamsWithoutData.filter(t => !t.adj_offense || t.adj_offense <= 0 || !t.adj_defense || t.adj_defense <= 0);
 
-    // Step 3: Calculate PAE
-    const ranked = calculatePAE(allTeams);
+    console.log(`[PAE] Loaded ${allTeams.length} teams: ${teamsWithData.length} with ESPN data, ${teamsWithPriorPAE.length} preserving prior PAE, ${teamsSkipped.length} skipped (no data)`);
+
+    // Step 3: Calculate PAE only for teams with actual ESPN data
+    const ranked = calculatePAE(teamsWithData);
 
     console.log('[PAE] Top 15:', ranked.slice(0, 15).map((t, i) =>
       `#${i+1} ${t.team_name} (O:${t.pae_o} D:${t.pae_d} NET:${t.pae_net} SOS:${t.est_sos})`

@@ -3394,6 +3394,9 @@ function snapLine(raw: number, betType?: string): number {
 
 // ============= TIER GENERATION =============
 
+let globalGameUsage: Map<string, number> | undefined;
+let globalMatchupUsage: Map<string, number> | undefined;
+
 async function generateTierParlays(
   supabase: any,
   tier: TierName,
@@ -3817,8 +3820,49 @@ async function generateTierParlays(
         console.log(`[Bot] Skipping mirror duplicate ${tier}/${profile.strategy} parlay (same games, flipped sides)`);
         continue;
       }
+
+      // Game-level dedup: cap each unique game to 3 appearances across all parlays
+      const MAX_GAME_USAGE = 3;
+      const MAX_MATCHUP_USAGE = 2;
+      const gameKeys = legs.filter(l => l.type === 'team').map(l => 
+        `${[l.home_team, l.away_team].sort().join('_vs_')}`.toLowerCase()
+      );
+      const matchupKey = gameKeys.sort().join('||');
+      
+      let gameOverused = false;
+      for (const gk of gameKeys) {
+        if (!globalGameUsage) globalGameUsage = new Map();
+        if ((globalGameUsage.get(gk) || 0) >= MAX_GAME_USAGE) {
+          gameOverused = true;
+          break;
+        }
+      }
+      if (gameOverused) {
+        console.log(`[Bot] Skipping ${tier}/${profile.strategy}: game usage cap hit`);
+        continue;
+      }
+
+      // Matchup-level dedup: same set of team pairs limited to 2 parlays
+      if (matchupKey && matchupKey.length > 0) {
+        if (!globalMatchupUsage) globalMatchupUsage = new Map();
+        if ((globalMatchupUsage.get(matchupKey) || 0) >= MAX_MATCHUP_USAGE) {
+          console.log(`[Bot] Skipping ${tier}/${profile.strategy}: matchup combo cap hit`);
+          continue;
+        }
+      }
+
       globalFingerprints.add(fingerprint);
       globalMirrorPrints.add(mirrorPrint);
+      
+      // Track game and matchup usage
+      for (const gk of gameKeys) {
+        if (!globalGameUsage) globalGameUsage = new Map();
+        globalGameUsage.set(gk, (globalGameUsage.get(gk) || 0) + 1);
+      }
+      if (matchupKey && matchupKey.length > 0) {
+        if (!globalMatchupUsage) globalMatchupUsage = new Map();
+        globalMatchupUsage.set(matchupKey, (globalMatchupUsage.get(matchupKey) || 0) + 1);
+      }
 
       // Mark all picks as used
       for (const leg of legs) {
@@ -4861,6 +4905,8 @@ Deno.serve(async (req) => {
     // Pre-load existing fingerprints from DB to prevent cross-run duplicates
     const globalFingerprints = new Set<string>();
     const globalMirrorPrints = new Set<string>();
+    globalGameUsage = new Map();
+    globalMatchupUsage = new Map();
     const { data: existingParlays } = await supabase
       .from('bot_daily_parlays')
       .select('legs, leg_count')

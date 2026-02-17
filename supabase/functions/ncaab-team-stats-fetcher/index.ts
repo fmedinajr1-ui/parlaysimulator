@@ -276,18 +276,10 @@ Deno.serve(async (req) => {
       await new Promise(r => setTimeout(r, 300));
     }
 
-    // Add non-enriched teams
+    // Skip non-enriched teams — don't overwrite existing DB data with nulls
     const enrichedNames = new Set(results.map(r => r.team_name));
-    for (const t of teams) {
-      if (!enrichedNames.has(t.name)) {
-        results.push({
-          team_name: t.name, espn_id: t.id, conference: t.conference,
-          kenpom_rank: null, adj_offense: null, adj_defense: null, adj_tempo: null,
-          ppg: null, oppg: null, home_record: null, away_record: null,
-          ats_record: null, over_under_record: null,
-        });
-      }
-    }
+    const skippedCount = teams.filter(t => !enrichedNames.has(t.name)).length;
+    console.log(`[NCAAB Stats v2] Skipping ${skippedCount} non-enriched teams (preserving existing DB data)`);
 
     // Wait for ATS/OU derivation
     const atsOuMap = await atsOuPromise;
