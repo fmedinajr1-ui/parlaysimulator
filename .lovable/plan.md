@@ -1,186 +1,111 @@
 
 
-# Ultimate Adaptive Intelligence Engine
+# NCAAB Accuracy Blitz: KenPom + Referees + Venue Intelligence
 
-## The Vision
-Transform the current scattered calibration scripts into a unified, self-optimizing intelligence system that continuously evaluates every decision it makes and rewires itself to maximize accuracy. This is the "money printer" -- an AI that gets smarter with every bet it settles.
+## Overview
+Three new data layers to dramatically improve NCAAB accuracy before NBA returns Thursday. Each addresses a blind spot that's currently costing wins.
 
-## What's Missing Today
+## Problem Context
+The current "KenPom rankings" are just PPG minus OPPG sorted -- Saint Louis Billikens is ranked #1 and Miami (OH) is #6, which is wildly wrong. Real KenPom has teams like Auburn, Duke, Florida, and Houston at the top. This means the scoring engine's rank-based bonuses (+10 for Top 25, +7 for Top 50) are being applied to the wrong teams entirely.
 
-The current system has 6 separate adaptation scripts that each adjust one narrow dimension:
-- `calibrate-bot-weights` -- recalculates category weights from all-time data (no recency bias)
-- `bot-settle-and-learn` -- nudges weights by fixed +0.02/-0.03 per outcome
-- `bot-evolve-strategies` -- retires/boosts strategies weekly (coarse, slow)
-- `bot-review-and-optimize` -- detects hot/cold patterns (doesn't act on them dynamically)
-- `autoFlipUnderperformingCategories` -- flips sides when over < 50% (binary, no nuance)
-- `recalibrate-sharp-signals` -- tunes sharp thresholds (isolated from main pipeline)
+---
 
-**Critical gaps:**
-1. All outcomes weighted equally -- a miss from 6 months ago counts the same as yesterday's miss
-2. No regime detection -- doesn't know when market conditions shift (playoff mode, injury waves, etc.)
-3. No confidence intervals -- treats a 60% hit rate from 10 samples the same as from 200 samples
-4. No cross-category learning -- doesn't know that when 3PT shooting drops, rebounds tend to spike
-5. No intra-day adaptation -- waits until next day to learn from morning results
-6. No automatic tier restructuring -- execution tier stays at 3 legs even if 2-leg parlays are crushing
+## Upgrade 1: Real KenPom Rankings via Firecrawl Scraping
 
-## The New System: `bot-adaptive-intelligence`
+**What**: Scrape actual KenPom efficiency data from kenpom.com using the existing Firecrawl connector.
 
-A single edge function that replaces the fragmented approach with a unified adaptive engine running as part of every pipeline cycle.
+**Why**: The current ranking system (PPG - OPPG) has Miami (OH) at #6 and Saint Louis at #1. Real KenPom adjusts for strength of schedule, pace, and opponent quality. This single fix will improve every NCAAB spread, moneyline, and total projection.
 
-### Architecture
+**How**:
+- New edge function `ncaab-kenpom-scraper` uses Firecrawl to scrape kenpom.com/index.php
+- Extracts: team name, rank, adjusted offensive efficiency (AdjO), adjusted defensive efficiency (AdjD), adjusted tempo (AdjT), strength of schedule, and luck factor
+- Maps scraped team names to existing `ncaab_team_stats` entries using fuzzy matching
+- Overwrites `kenpom_rank`, `adj_offense`, `adj_defense`, `adj_tempo` with real values
+- Adds new columns: `sos_rank` (strength of schedule), `luck_factor`, `kenpom_adj_o` and `kenpom_adj_d` (per-100-possession efficiency, distinct from raw PPG)
+- Runs in Phase 1 of the pipeline, before the scoring engine
 
-```text
-                     PIPELINE TRIGGER
-                           |
-                           v
-              +---------------------------+
-              | bot-adaptive-intelligence  |
-              +---------------------------+
-              |                           |
-              |  1. RECENCY ANALYZER      |   -- Exponential decay weighting
-              |  2. REGIME DETECTOR       |   -- Market condition classification  
-              |  3. BAYESIAN CALIBRATOR   |   -- Confidence-weighted adjustments
-              |  4. CORRELATION MAPPER    |   -- Cross-category edge detection
-              |  5. TIER OPTIMIZER        |   -- Dynamic profile restructuring
-              |  6. GATE TUNER           |   -- Auto-adjust quality thresholds
-              |  7. ADAPTATION WRITER     |   -- Writes all changes atomically
-              |                           |
-              +---------------------------+
-                           |
-                           v
-              bot_adaptation_state (new table)
-              bot_category_weights (updated)
-              bot_strategies (updated)
-```
+**Database changes**:
+- Add columns to `ncaab_team_stats`: `kenpom_adj_o` (numeric), `kenpom_adj_d` (numeric), `sos_rank` (integer), `luck_factor` (numeric), `kenpom_source` (text, default 'scraped')
 
-### Module 1: Recency-Weighted Learning
+**Scoring engine update**:
+- Use `kenpom_adj_o` and `kenpom_adj_d` (per-100-possessions efficiency) instead of raw PPG/OPPG for the projection formula
+- The projected total formula becomes: `(kenpomAdjO_home + kenpomAdjO_away) * tempoFactor / 100` which is the standard KenPom method
+- Rank bonuses now based on real KenPom rank (Duke at #5 gets +7, not Saint Louis)
 
-Instead of treating all historical outcomes equally, apply exponential decay so recent results matter more.
+---
 
-- **Half-life**: 14 days (a result from 2 weeks ago counts 50%, 4 weeks ago counts 25%)
-- **Formula**: `recencyWeight = Math.pow(0.5, daysSinceOutcome / HALF_LIFE)`
-- **Impact**: Category weights shift faster when recent performance diverges from historical averages
-- Stored as `recency_hit_rate` alongside `current_hit_rate` in `bot_category_weights`
+## Upgrade 2: NCAAB Referee Tendency Database
 
-### Module 2: Regime Detection
+**What**: Build a referee tendency database by scraping referee assignment and foul/scoring data, then use it to adjust totals predictions.
 
-Classify each day's market into a "regime" so the engine knows which playbook to use.
+**How**:
+- New edge function `ncaab-referee-scraper` uses Firecrawl to scrape referee assignment data from ESPN game pages and barttorvik.com (which publishes ref tendencies)
+- New table `ncaab_referee_data` stores per-referee stats: avg fouls called, avg total points in their games, over/under rate, pace tendency
+- New table `ncaab_game_referees` maps referees to upcoming games
+- For each upcoming NCAAB game, look up assigned refs and calculate expected foul/pace impact
 
-- **Regimes detected**: 
-  - `full_slate` (NBA + NHL + NCAAB all active, 8+ games)
-  - `light_slate` (1-2 sports, < 6 games)
-  - `playoff_mode` (postseason games detected)
-  - `injury_storm` (5+ key players OUT across slate)
-  - `chalk_day` (favorites covering at 65%+ over trailing 3 days)
-  - `upset_wave` (underdogs covering at 55%+ over trailing 3 days)
-- Each regime has its own optimal weight multipliers learned from historical data
-- Stored in new `bot_adaptation_state` table with `regime`, `regime_weights` (JSONB), and `regime_accuracy`
+**Database changes**:
+- New table `ncaab_referee_data`: `id`, `referee_name`, `games_officiated` (int), `avg_fouls_per_game` (numeric), `avg_total_points` (numeric), `over_rate` (numeric), `under_rate` (numeric), `pace_tendency` (text: 'fast', 'neutral', 'slow'), `updated_at`
+- New table `ncaab_game_referees`: `id`, `game_date` (date), `home_team` (text), `away_team` (text), `referee_names` (jsonb), `expected_pace_impact` (numeric), `expected_total_adjustment` (numeric)
 
-### Module 3: Bayesian Confidence Calibrator
+**Scoring engine update**:
+- Before scoring totals, check `ncaab_game_referees` for the matchup
+- If refs trend high-foul (avg fouls > league avg + 2): OVER gets +6 bonus, UNDER gets -4
+- If refs trend low-foul (avg fouls < league avg - 2): UNDER gets +6 bonus, OVER gets -4
+- Add `referee_adjustment` to score breakdown so it's visible in reasoning pills
 
-Replace raw hit rates with Bayesian-adjusted estimates that account for sample size uncertainty.
+---
 
-- **Prior**: League-wide average hit rate for the category type (e.g., player props = 52%, team totals = 50%)
-- **Formula**: `bayesianRate = (prior * priorStrength + hits) / (priorStrength + totalPicks)`
-  - `priorStrength` = 20 (equivalent to 20 "virtual" samples at the prior rate)
-- **Effect**: New categories with 3/3 hits (100%) get pulled toward 60-65% instead of being wildly overweighted
-- Categories with 200+ samples converge to their true rate with minimal prior influence
-- Written as `bayesian_hit_rate` in `bot_category_weights`
+## Upgrade 3: NCAAB Venue Altitude and Travel Fatigue
 
-### Module 4: Cross-Category Correlation Mapper
+**What**: Build a venue/location database for NCAAB teams and calculate travel fatigue for college basketball (currently only NBA has this).
 
-Detect when categories move together (or inversely) to exploit hidden edges.
+**How**:
+- New table `ncaab_team_locations` with city, state, latitude, longitude, timezone, and altitude for every D1 program
+- Pre-populated with known high-altitude venues: Colorado (5,328 ft), Air Force (6,035 ft), BYU (4,551 ft), Utah (4,226 ft), Wyoming (7,220 ft), Nevada (4,505 ft), New Mexico (5,312 ft), Boise State (2,730 ft)
+- New edge function `ncaab-fatigue-calculator` mirrors the NBA fatigue calculator logic but adapted for college schedules (games every 2-3 days, conference travel patterns)
+- Calculates: travel distance between games, timezone crossings, altitude differential, back-to-back detection, 3-in-5-day detection
+- Stores results in new `ncaab_fatigue_scores` table
 
-- Analyze trailing 30-day outcomes to build a correlation matrix between categories
-- Example findings: "When 3PT_SHOOTER over misses, BIG_REBOUNDER over hits 72% of the time"
-- Store top 20 strongest correlations in `bot_adaptation_state`
-- Generation engine uses these to boost/penalize correlated legs in the same parlay
-- Anti-correlation pairs get a synergy bonus; high-correlation pairs get a stacking penalty
+**Database changes**:
+- New table `ncaab_team_locations`: `id`, `team_name` (text, unique), `city` (text), `state` (text), `latitude` (numeric), `longitude` (numeric), `timezone` (text), `altitude_feet` (integer), `conference` (text)
+- New table `ncaab_fatigue_scores`: `id`, `team_name` (text), `opponent` (text), `fatigue_score` (numeric), `fatigue_category` (text), `is_back_to_back` (boolean), `travel_miles` (numeric), `timezone_changes` (integer), `is_altitude_game` (boolean), `altitude_differential` (integer), `game_date` (date), `event_id` (text)
 
-### Module 5: Dynamic Tier Optimizer
+**Scoring engine update**:
+- Load `ncaab_fatigue_scores` for today's date
+- If a team has fatigue score >= 30: penalize their side by -6 (spread/ML), boost UNDER by +5
+- If altitude differential > 3000 ft for visiting team: penalize visitor by -4, boost UNDER by +3
+- Cross-country travel (> 1500 miles): penalize by -3
+- Add `fatigue_penalty` and `altitude_impact` to score breakdown
 
-Automatically restructure tier configs based on which leg counts and strategies are actually winning.
+---
 
-- Analyze last 30 days of settled parlays by `leg_count` and `tier`
-- If 2-leg parlays are winning at 65% but 4-leg at 30%, shift execution toward 2-leg profiles
-- Auto-generate new profiles for winning leg count + sport combinations
-- Retire profiles that haven't produced a win in 14+ days
-- Store recommended tier config in `bot_adaptation_state` for next generation cycle
+## Pipeline Integration
 
-### Module 6: Quality Gate Auto-Tuner
+Add to `data-pipeline-orchestrator` Phase 1 (Data Collection), in this order:
+1. `ncaab-kenpom-scraper` (runs first to get real rankings)
+2. `ncaab-team-stats-fetcher` (existing, now supplements KenPom data with ESPN records)
+3. `ncaab-referee-scraper` (scrapes ref assignments for today's games)
+4. `ncaab-fatigue-calculator` (calculates travel/altitude for today's slate)
 
-Dynamically adjust the minEdge, minHitRate, minSharpe, and minComposite thresholds.
+All four run before `team-bets-scoring-engine` so the scoring engine has fresh data from all three layers.
 
-- If execution tier win rate > 60%, slightly **lower** gates to increase volume (more bets at good accuracy)
-- If execution tier win rate < 40%, **raise** gates to restrict to only the highest-quality picks
-- Adjustments are small (5% per cycle) to prevent overcorrection
-- Each threshold has a hard floor and ceiling to prevent runaway tuning
-- Stores `gate_overrides` JSONB in `bot_adaptation_state`
-
-### Module 7: Adaptation Writer
-
-Atomically writes all changes and logs a complete adaptation report.
-
-- Updates `bot_category_weights` with recency rates and Bayesian adjustments
-- Updates `bot_adaptation_state` with regime, correlations, tier recommendations, gate overrides
-- Logs a detailed adaptation report to `bot_activity_log` and sends a Telegram summary
-- All changes are timestamped so the generation engine always reads the latest state
-
-## Database Changes
-
-### New Table: `bot_adaptation_state`
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | uuid | Primary key |
-| adaptation_date | date | Date of this adaptation snapshot |
-| current_regime | text | Detected market regime |
-| regime_confidence | numeric | How confident the regime detection is (0-100) |
-| regime_weights | jsonb | Per-category weight multipliers for this regime |
-| correlation_matrix | jsonb | Top cross-category correlations |
-| tier_recommendations | jsonb | Recommended tier config overrides |
-| gate_overrides | jsonb | Quality gate threshold overrides |
-| adaptation_score | numeric | Overall system health score (0-100) |
-| modules_run | jsonb | Which modules ran and their individual results |
-| created_at | timestamptz | Timestamp |
-
-### Modify: `bot_category_weights`
-
-Add 3 new columns:
-- `recency_hit_rate` (numeric) -- Exponential-decay-weighted hit rate
-- `bayesian_hit_rate` (numeric) -- Bayesian-adjusted hit rate
-- `regime_multiplier` (numeric, default 1.0) -- Current regime-specific multiplier
-
-## Integration Points
-
-### Generation Engine (`bot-generate-daily-parlays`)
-
-Before building the candidate pool, read the latest `bot_adaptation_state`:
-1. Apply `regime_multiplier` to each category's weight
-2. Use `bayesian_hit_rate` (instead of raw `current_hit_rate`) for all hit rate gates
-3. Apply correlation bonuses/penalties when scoring multi-leg parlays
-4. Use `gate_overrides` to dynamically set minEdge, minHitRate, etc.
-5. Use `tier_recommendations` to select which profiles to run
-
-### Pipeline Orchestrator
-
-Add `bot-adaptive-intelligence` as the first step of Phase 5 (Calibration & Learning), running before `calibrate-bot-weights` and `recalibrate-sharp-signals`.
+---
 
 ## Files Changed
 
-1. **NEW** `supabase/functions/bot-adaptive-intelligence/index.ts` -- The unified adaptive engine (all 7 modules)
-2. **MODIFY** `supabase/functions/bot-generate-daily-parlays/index.ts` -- Read adaptation state and apply regime weights, Bayesian rates, correlation bonuses, gate overrides
-3. **MODIFY** `supabase/functions/data-pipeline-orchestrator/index.ts` -- Add `bot-adaptive-intelligence` to Phase 5
-4. **DATABASE** -- Create `bot_adaptation_state` table, add 3 columns to `bot_category_weights`
+1. **NEW** `supabase/functions/ncaab-kenpom-scraper/index.ts` -- Scrapes real KenPom data via Firecrawl
+2. **NEW** `supabase/functions/ncaab-referee-scraper/index.ts` -- Scrapes referee assignments and tendencies
+3. **NEW** `supabase/functions/ncaab-fatigue-calculator/index.ts` -- Travel/altitude fatigue for NCAAB teams
+4. **MODIFY** `supabase/functions/team-bets-scoring-engine/index.ts` -- Add referee adjustment, fatigue/altitude penalties, use real KenPom efficiency numbers
+5. **MODIFY** `supabase/functions/data-pipeline-orchestrator/index.ts` -- Add 3 new functions to Phase 1
+6. **DATABASE** -- Add columns to `ncaab_team_stats`, create `ncaab_referee_data`, `ncaab_game_referees`, `ncaab_team_locations`, `ncaab_fatigue_scores`
 
-## What This Means for You
+## Expected Impact
 
-- Every single cycle, the AI evaluates its own accuracy across 7 dimensions and adjusts
-- Recent results matter more than stale data (recency decay)
-- Small samples don't trick the system into overconfidence (Bayesian calibration)
-- Market conditions are detected and responded to automatically (regime detection)
-- Hidden edges between categories are exploited (correlation mapping)
-- The system restructures its own bet sizing and tier allocation (tier optimizer)
-- Quality gates self-tune to find the sweet spot between volume and accuracy (gate tuner)
-- Everything is logged, traceable, and visible in the bot dashboard
+| Data Layer | Current State | After Upgrade | Scoring Impact |
+|-----------|--------------|---------------|----------------|
+| KenPom Rankings | PPG-OPPG derived (Saint Louis #1) | Real adjusted efficiency (Auburn #1) | Every rank bonus correctly applied |
+| Referee Data | None | Foul/pace tendencies per ref crew | +/-6 pts on totals when refs trend strongly |
+| Venue/Travel | NBA only | Full D1 altitude + travel | -3 to -6 penalty on fatigued/altitude-disadvantaged teams |
 
