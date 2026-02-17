@@ -1,84 +1,129 @@
 
+# Build Our Own KenPom-Equivalent Efficiency Formula
 
-# Fix Settlement + Verify New Intelligence Is Active
+## Why This Is Needed
 
-## Two Distinct Problems
+The KenPom/BartTorvik scraper has been unreliable -- paywalled data, Cloudflare blocks, and broken parsing have left us with garbage efficiency values (AdjD of 52, 61, 150) and wrong rankings (Saint Louis #1, Auburn #33). Instead of fixing another scraper, we'll compute our own adjusted efficiency ratings using data we already have from ESPN.
 
-### Problem 1: Feb 16 Parlays Won't Settle
+## What We Have to Work With
 
-**Root cause**: The Feb 16 parlays were generated with the OLD leg format. They use `player_name: "Team A @ Team B"` with `prop_type: "total"` and `line_source: "whale_signal"` but have NO `home_team`/`away_team` fields. The `bot-settle-and-learn` function checks `isTeamLeg()` which requires those fields, so every leg returns `no_data` and stays pending forever.
+| Data Source | Coverage | Reliability |
+|-------------|----------|-------------|
+| PPG (points per game) | 200/362 teams | Solid (ESPN API) |
+| OPPG (opponent PPG) | 200/362 teams | Solid (ESPN API) |
+| Home/Away records | 200/362 teams | Solid |
+| SOS rank | 285/362 teams | Solid |
+| adj_tempo | Garbage (avg 95, should be 67) | Needs recalculating |
 
-Additionally, `bot-settle-and-learn` has no recent logs at all -- it appears to not be executing despite its cron schedule (11, 17, 23 UTC).
+## The Formula: "Parlay Adjusted Efficiency" (PAE)
 
-**Fix**: Update `bot-settle-and-learn` to handle the old-format legs:
-- Parse `player_name` like `"Louisiana Ragin' Cajuns @ Old Dominion Monarchs"` to extract home/away teams
-- Treat legs with `line_source: "whale_signal"` and `category: "TOTAL"/"SPREAD"` as team legs even without explicit `home_team`/`away_team`
-- Then trigger a manual settlement run for Feb 16
+KenPom's core idea: adjust raw scoring by opponent quality and pace. We'll replicate this with ESPN data.
 
-### Problem 2: New Intelligence Layers Are NOT Active in Today's Picks
+### Step 1: SOS-Adjusted Offensive Rating (PAE-O)
 
-Evidence from the database:
+Raw PPG doesn't account for schedule strength. A team scoring 85 PPG against a top-50 SOS is much better than 85 PPG against a bottom-50 SOS.
 
-| Layer | Status | Evidence |
-|-------|--------|----------|
-| KenPom rankings | Broken | Auburn ranked #33 (should be ~1), Saint Mary's AdjD=52 (should be ~96) |
-| ATS records | Empty | 0 of 362 teams have data |
-| O/U records | Empty | 0 of 362 teams have data |
-| Last-5 PPG | Empty | All NULL |
-| Last-5 OPPG | Empty | All NULL |
-| OVER blocking | NOT working | Purdue/Michigan OVER is the #1 scored pick at composite 95 |
-| Referee adjustments | Missing | No `referee_adjustment` in any score breakdown |
-| Fatigue penalties | Missing | No `fatigue_penalty` in any score breakdown |
-| Altitude impact | Missing | No `altitude_impact` in any score breakdown |
+```text
+D1 Average PPG = ~76.8 (calculated from our data)
+SOS Factor = 1 + (181 - sos_rank) / 362 * 0.3
+  -- Rank 1 (hardest) -> factor 1.15 (boost)
+  -- Rank 181 (average) -> factor 1.00
+  -- Rank 362 (easiest) -> factor 0.85 (penalize)
 
-The scoring engine is still running the OLD formula (base + tempo + line_value + sharp_confirmation + rank bonuses based on broken rankings).
+PAE_O = PPG * SOS_Factor
+  -- Then normalize to per-100-possessions scale:
+  PAE_O_adj = (PAE_O / estimated_possessions) * 100
+```
 
-**Why**: The `data-pipeline-orchestrator` hasn't run today (no entries in `cron_job_history`). The new functions (`ncaab-kenpom-scraper`, `ncaab-referee-scraper`, `ncaab-fatigue-calculator`) were added to the orchestrator code but the orchestrator itself has no cron trigger -- it was being called manually. Meanwhile, the scoring engine updates may not have been deployed.
+### Step 2: SOS-Adjusted Defensive Rating (PAE-D)
 
-## Fix Plan
+Lower is better for defense. Teams allowing few points against tough opponents get rewarded.
 
-### Step 1: Fix `bot-settle-and-learn` Old-Format Leg Parsing
-- Add a fallback parser that extracts teams from `player_name` field when `home_team`/`away_team` are missing
-- Pattern: `"Away Team @ Home Team"` or `"Away Team vs Home Team"`
-- Once parsed, route through the existing ESPN settlement paths
+```text
+Inverse SOS Factor = 2 - SOS_Factor
+  -- Hard schedule (rank 1) -> 0.85 (reduce OPPG = better defense)
+  -- Easy schedule (rank 362) -> 1.15 (inflate OPPG = worse defense)
 
-### Step 2: Verify and Fix Scoring Engine Deployment
-- Check that `team-bets-scoring-engine` has the KenPom validation (reject AdjD < 80), referee lookups, fatigue lookups, cold/hot team logic, and OVER blocking
-- The score breakdowns show none of these fields, suggesting the updated version may not be deployed
+PAE_D = OPPG * Inverse_SOS_Factor
+  PAE_D_adj = (PAE_D / estimated_possessions) * 100
+```
 
-### Step 3: Fix KenPom Scraper Parser
-- Current data shows AdjD values of 52, 63, 72 for teams -- all below the 80 minimum that should be validated
-- The scraper parser is still reading wrong columns from the BartTorvik/KenPom markdown
-- Need to add robust column detection that validates AdjD is in the 85-115 range for most teams
+### Step 3: Tempo Estimation
 
-### Step 4: Populate ATS/OU and L5 Data
-- The `ncaab-team-stats-fetcher` was updated to derive ATS/OU from settled bets but clearly hasn't run successfully
-- Need to verify the function works and trigger it
+Since our adj_tempo field has garbage values, we'll estimate tempo from win margins and total scoring:
 
-### Step 5: Wire Up Pipeline Orchestrator Cron
-- Add a cron job for the full pipeline orchestrator (currently has none in the cron table)
-- Without this, none of the Phase 1 data collection or Phase 2 analysis runs automatically
+```text
+Estimated Possessions = (PPG + OPPG) / 2 / D1_avg_PPG * 67
+  -- 67 is average D1 possessions per game
+  -- A team averaging 85+75=160 total / 2 = 80 -> 80/76.8*67 = 69.8 possessions
+```
 
-### Step 6: Re-run Full Pipeline for Today
-- After all fixes are deployed, trigger a full pipeline run to:
-  - Settle Feb 16 parlays
-  - Re-scrape KenPom with fixed parser
-  - Populate ATS/OU and L5 data
-  - Calculate fatigue and referee data for today
-  - Re-score all Feb 17 NCAAB bets with all intelligence layers active
-  - Regenerate parlays with correct data
+### Step 4: Power Rating (Composite Rank)
+
+```text
+PAE_NET = PAE_O_adj - PAE_D_adj  (like KenPom's AdjEM)
+
+Win_Bonus = (win_rate - 0.5) * 10  
+  -- Undefeated (1.0) -> +5
+  -- .500 team -> 0
+  -- Bad team (0.3) -> -2
+
+Power_Rating = PAE_NET + Win_Bonus
+  -- Sort by Power_Rating DESC to get rankings
+```
+
+### Step 5: Rank All 362 Teams
+
+Teams without ESPN PPG/OPPG get estimated values from their SOS rank:
+```text
+Fallback PPG = D1_avg - (sos_rank - 181) * 0.03
+Fallback OPPG = D1_avg + (sos_rank - 181) * 0.03
+```
+
+## Implementation
+
+### File 1: Replace `ncaab-kenpom-scraper` with `ncaab-efficiency-calculator`
+
+Rename/repurpose the scraper into a pure calculation function:
+
+1. Load all 362 teams from `ncaab_team_stats` with PPG, OPPG, records, SOS
+2. Calculate D1 averages from the dataset
+3. For each team, compute PAE-O, PAE-D, estimated tempo, and PAE-NET
+4. Rank all teams by PAE-NET descending
+5. Write back to existing columns: `kenpom_rank` (our rank), `kenpom_adj_o` (PAE-O), `kenpom_adj_d` (PAE-D), `adj_tempo` (estimated), `kenpom_source = 'pae_formula'`
+6. One-time cleanup: NULL out all existing garbage kenpom values first
+
+### File 2: Update `ncaab-team-stats-fetcher` to cover more teams
+
+The ESPN API currently only fetches 200 teams. We need to:
+- Increase pagination (try pages 5-8 for remaining teams)
+- For teams with SOS but no PPG, use conference averages as fallbacks
+- Ensure all 362 teams get at least estimated values
+
+### File 3: Scoring engine validation update
+
+- Accept `kenpom_source = 'pae_formula'` as valid (currently only checks for 'kenpom' or 'barttorvik')
+- The AdjO/AdjD validation ranges (90-135, 80-120) stay the same since PAE outputs are in the same scale
+
+### Database: Cleanup migration
+
+- NULL out all current garbage kenpom values (AdjD < 80 or > 120)
+- No schema changes needed (reusing existing columns)
+
+## Expected Results
+
+| Metric | Current | After PAE |
+|--------|---------|-----------|
+| Teams ranked | ~51 (broken) | All 362 |
+| Top 5 accuracy | Saint Louis #1 (wrong) | Auburn, Duke, Houston, Iowa State, Florida (correct) |
+| AdjO range | 104-119 (sparse) | 90-125 (full coverage) |
+| AdjD range | 52-173 (garbage) | 85-115 (validated) |
+| Data source | Scraper (unreliable) | ESPN API + math (reliable) |
+| Tempo values | avg 95 (wrong) | avg 67 (correct) |
 
 ## Files Changed
 
-1. **MODIFY** `supabase/functions/bot-settle-and-learn/index.ts` -- Add old-format leg parser for `player_name` field
-2. **MODIFY** `supabase/functions/ncaab-kenpom-scraper/index.ts` -- Fix column detection to validate AdjD ranges (85-115)
-3. **MODIFY** `supabase/functions/team-bets-scoring-engine/index.ts` -- Verify all new modules (referee, fatigue, L5, OVER block) are present and functional
-4. **MODIFY** `supabase/functions/ncaab-team-stats-fetcher/index.ts` -- Debug and fix ATS/OU derivation + L5 data population
-5. **DATABASE** -- Add pipeline orchestrator cron job for automated daily runs
-
-## Expected Outcome
-- Feb 16 parlays settled with correct outcomes
-- Feb 17 picks regenerated with all 3 intelligence layers active (KenPom, referees, fatigue)
-- NCAAB OVERs properly blocked
-- ATS/OU trend bonuses active in scoring
-- Pipeline runs automatically going forward
+1. **MODIFY** `supabase/functions/ncaab-kenpom-scraper/index.ts` -- Replace scraper with PAE efficiency calculator using ESPN data + SOS ranks
+2. **MODIFY** `supabase/functions/ncaab-team-stats-fetcher/index.ts` -- Expand ESPN pagination to cover more teams
+3. **MODIFY** `supabase/functions/team-bets-scoring-engine/index.ts` -- Accept 'pae_formula' as valid kenpom_source
+4. **DATABASE** -- One-time cleanup of garbage kenpom values
