@@ -1776,7 +1776,58 @@ async function handleCustomerStart(chatId: string) {
 /streaks — Hot & cold streaks
 /help — All commands
 
-One winning day can return 10x your investment. 🚀`;
+One winning day can return 10x your investment. 🚀
+
+💬 Or just *ask me anything* in plain English!`;
+}
+
+// ==================== CUSTOMER AI Q&A ====================
+
+async function handleCustomerQuestion(message: string, chatId: string): Promise<string> {
+  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+  if (!LOVABLE_API_KEY) {
+    return "I'm not able to answer questions right now. Use /parlays, /performance, or /help to check the bot.";
+  }
+
+  try {
+    const history = await getConversationHistory(chatId, 6);
+    const [parlays, performance] = await Promise.all([getParlays(), getPerformance()]);
+
+    const systemPrompt = `You are ParlayIQ Bot, a friendly sports betting assistant for Parlay Farm members.
+You help members understand today's picks and track their performance.
+
+CURRENT DATA:
+- Today's Parlays: ${parlays.count} generated
+- Distribution: ${Object.entries(parlays.distribution).map(([l, c]) => `${l}-leg: ${c}`).join(', ') || 'None'}
+- Performance: ${performance.winRate.toFixed(1)}% win rate, ${performance.roi.toFixed(1)}% ROI
+- Record: ${performance.wins}W - ${performance.losses}L
+
+RULES:
+- Be friendly, concise, and helpful (under 400 chars when possible)
+- Never share admin controls, internal weights, or system configuration
+- If asked about specific picks, direct them to /parlays
+- If asked about ROI or stats, give the real numbers above
+- Use Telegram Markdown (*bold*, _italic_) and emojis
+- If you can't answer something, say "Try /help to see what I can show you"`;
+
+    const messages = [
+      { role: "system" as const, content: systemPrompt },
+      ...history.map(h => ({ role: h.role as "user" | "assistant", content: h.content })),
+      { role: "user" as const, content: message },
+    ];
+
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "google/gemini-3-flash-preview", messages, max_tokens: 400 }),
+    });
+
+    if (!response.ok) return "I'm having trouble right now. Try /parlays or /performance.";
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content || "Use /help to see available commands.";
+  } catch {
+    return "Something went wrong. Use /parlays or /help for quick info.";
+  }
 }
 
 // ==================== MAIN ROUTER ====================
@@ -1798,7 +1849,8 @@ async function handleMessage(chatId: string, text: string) {
   if (cmd === "/roi") return await handleRoi(chatId);
   if (cmd === "/streaks") return await handleStreaks(chatId);
   if (cmd === "/help") {
-    return `📋 *Available Commands*
+    if (isAdmin(chatId)) {
+      return `📋 *Available Commands*
 
 /parlays — Today's picks
 /parlay — Pending summary
@@ -1806,12 +1858,54 @@ async function handleMessage(chatId: string, text: string) {
 /calendar — Monthly P&L
 /roi — Detailed ROI breakdown
 /streaks — Hot & cold streaks
-/help — This list`;
+/help — This list
+/status — Bot status
+/compare — Compare strategies
+/sharp — Sharp signals
+/avoid — Avoid patterns
+/backtest — Run backtest
+/watch — Watch picks
+/pause — Pause bot
+/resume — Resume bot
+/bankroll — Set bankroll
+/force-settle — Force settle
+/subscribe — Subscribe to alerts
+/unsubscribe — Unsubscribe
+/export — Export data
+/digest — Weekly summary
+
+💬 Or just ask me anything in plain English!`;
+    }
+    return `📋 *Parlay Farm — Help*
+
+*Commands:*
+/parlays — Today's full pick list
+/parlay — Pending bets summary
+/performance — Win rate & ROI stats
+/calendar — This month's P\&L
+/roi — Detailed ROI by time period
+/streaks — Hot & cold streaks
+
+💬 *Ask me anything:*
+Just type a question in plain English\\! Examples:
+• "How are we doing this week?"
+• "Which picks look the strongest today?"
+• "What's my ROI this month?"
+• "Explain how the bot picks work"
+• "Is today a good day to bet?"`;
   }
 
-  // All other commands: admin only
+  // All other commands: admin only, but non-admins get AI Q&A
   if (!isAdmin(chatId)) {
-    return "🔒 This command is only available to admins.\n\nUse /help to see available commands!";
+    // If it looks like a slash command, block it
+    if (cmd.startsWith('/')) {
+      return "🔒 This command is for admins only.\n\nUse /help to see your available commands, or just ask me a question!";
+    }
+    // Otherwise route to customer-safe AI Q&A
+    await saveConversation(chatId, "user", text);
+    const response = await handleCustomerQuestion(text, chatId);
+    await saveConversation(chatId, "assistant", response);
+    return response;
   }
 
   // Admin commands
