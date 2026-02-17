@@ -5153,6 +5153,25 @@ Deno.serve(async (req) => {
       for (const mp of miniParlays) {
         if (totalMiniCreated >= MAX_MINI_PARLAYS) break;
 
+        // === TEAM CONCENTRATION CAP (mini-parlay path) ===
+        const MAX_TEAM_PARLAY_CAP_MINI = isLightSlateMode ? 6 : 4;
+        const miniTeamKeys: string[] = [];
+        for (const pick of [mp.leg1, mp.leg2]) {
+          if (pick.pickType === 'team' || pick.type === 'team') {
+            if (pick.home_team) miniTeamKeys.push(pick.home_team.toLowerCase().trim());
+            if (pick.away_team) miniTeamKeys.push(pick.away_team.toLowerCase().trim());
+          }
+        }
+        let miniTeamOverused = false;
+        for (const tk of miniTeamKeys) {
+          if (!globalTeamUsage) globalTeamUsage = new Map();
+          if ((globalTeamUsage.get(tk) || 0) >= MAX_TEAM_PARLAY_CAP_MINI) {
+            miniTeamOverused = true;
+            break;
+          }
+        }
+        if (miniTeamOverused) continue;
+
         let tier: TierName;
         if (mp.avgComposite >= 70 && mp.avgHitRate >= 58 && miniTierCounts.execution < miniTierCaps.execution) {
           tier = 'execution';
@@ -5237,6 +5256,12 @@ Deno.serve(async (req) => {
           mp.leg2.pickType === 'team' ? `${mp.leg2.home_team}_${mp.leg2.bet_type}_${mp.leg2.side}` : `${mp.leg2.player_name}_${mp.leg2.prop_type}_${mp.leg2.recommended_side || mp.leg2.side}`,
         ].sort().join('||').toLowerCase();
         globalFingerprints.add(fp);
+
+        // Track team usage for cap enforcement
+        for (const tk of miniTeamKeys) {
+          if (!globalTeamUsage) globalTeamUsage = new Map();
+          globalTeamUsage.set(tk, (globalTeamUsage.get(tk) || 0) + 1);
+        }
 
         miniTierCounts[tier]++;
         totalMiniCreated++;
@@ -5354,6 +5379,27 @@ Deno.serve(async (req) => {
             : `${pick.player_name}_${pick.prop_type}_${pick.recommended_side}`.toLowerCase();
           if (usedSingleKeys.has(singleKey)) continue;
           usedSingleKeys.add(singleKey);
+
+          // === TEAM CONCENTRATION CAP (single-pick path) ===
+          if (pick.pickType === 'team' || pick.type === 'team') {
+            const MAX_TEAM_CAP_SINGLE = isLightSlateMode ? 6 : 4;
+            const singleTeamKeys: string[] = [];
+            if (pick.home_team) singleTeamKeys.push(pick.home_team.toLowerCase().trim());
+            if (pick.away_team) singleTeamKeys.push(pick.away_team.toLowerCase().trim());
+            let singleTeamOverused = false;
+            for (const tk of singleTeamKeys) {
+              if (!globalTeamUsage) globalTeamUsage = new Map();
+              if ((globalTeamUsage.get(tk) || 0) >= MAX_TEAM_CAP_SINGLE) {
+                singleTeamOverused = true;
+                break;
+              }
+            }
+            if (singleTeamOverused) continue;
+            // Track after accepting
+            for (const tk of singleTeamKeys) {
+              globalTeamUsage!.set(tk, (globalTeamUsage!.get(tk) || 0) + 1);
+            }
+          }
 
           // Build the single leg
           let legData: any;
