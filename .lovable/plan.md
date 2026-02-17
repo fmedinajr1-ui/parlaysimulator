@@ -1,81 +1,43 @@
 
-# Cap Any Single Team to Max 4 Parlays Per Day
+# Re-Run Pipeline with Team Concentration Cap
 
-## What's Happening Now
+## Current State (Pre-Fix Run)
+The 24 parlays currently in the database were generated **before** the team cap was deployed. They still show the old over-concentration:
 
-Today's data confirms the over-concentration problem:
-- **SMU Mustangs**: appeared in 15 of 24 parlays (62%)
-- **Florida Gators**: appeared in 10 of 24 parlays (42%)
-- **Rhode Island Rams**: 9 of 24
-- **NC State Wolfpack**: 9 of 24
+| Team | Appearances (current) | Target |
+|------|----------------------|--------|
+| SMU Mustangs | 15 | ≤ 4 |
+| Louisville Cardinals | 15 | ≤ 4 |
+| Florida Gators | 10 | ≤ 4 |
+| South Carolina Gamecocks | 10 | ≤ 4 |
+| Rhode Island Rams | 9 | ≤ 4 |
+| NC State Wolfpack | 9 | ≤ 4 |
 
-The generator already has `globalGameUsage` (cap per game matchup) and `globalMatchupUsage` (cap per combination), but has no concept of per-team concentration. A dominant team like Florida or SMU can appear in the same game repeatedly across many parlay combinations.
+The `globalTeamUsage` cap code is already live in the edge function — we just need a clean re-run.
 
-## The Fix
+## Steps
 
-Add a `globalTeamUsage` map — a third dimension of deduplication — right alongside the existing game and matchup caps.
-
-### Cap Rules
-- **Normal slates**: max **4 appearances** per team across the full daily parlay pool
-- **Light slate mode**: max **6 appearances** per team (relaxed since fewer games are available)
-
-### Where the Change Goes — `supabase/functions/bot-generate-daily-parlays/index.ts`
-
-**Step 1 — Declare the global map** (line ~3399, next to existing globals):
-```typescript
-let globalGameUsage: Map<string, number> | undefined;
-let globalMatchupUsage: Map<string, number> | undefined;
-let globalTeamUsage: Map<string, number> | undefined;   // NEW
+### Step 1 — Delete today's existing parlays
+```sql
+DELETE FROM bot_daily_parlays WHERE parlay_date = '2026-02-17';
 ```
 
-**Step 2 — Initialize on pipeline start** (line ~4914, next to existing resets):
-```typescript
-globalGameUsage = new Map();
-globalMatchupUsage = new Map();
-globalTeamUsage = new Map();   // NEW
-```
+### Step 2 — Re-run the generator
+Invoke `bot-generate-daily-parlays` for Feb 17. With the new cap logic:
+- Any team hitting 4 parlays will be blocked from further appearances
+- Today is a light slate (fewer than 10 top-ranked picks), so the cap relaxes to 6
+- The generator will pull from more of the 26 available NCAAB games to fill the pool
 
-**Step 3 — Check before accepting a parlay** (after the game usage check, ~line 3848):
-```typescript
-const MAX_TEAM_PARLAY_CAP = isLightSlateMode ? 6 : 4;
-const teamKeys = legs
-  .filter(l => l.type === 'team')
-  .flatMap(l => [l.home_team, l.away_team])
-  .filter(Boolean)
-  .map(t => t.toLowerCase().trim());
+### Step 3 — Run the optimizer
+Invoke `bot-review-and-optimize` to top up to the minimum floor (12+ parlays).
 
-let teamOverused = false;
-for (const tk of teamKeys) {
-  if (!globalTeamUsage) globalTeamUsage = new Map();
-  if ((globalTeamUsage.get(tk) || 0) >= MAX_TEAM_PARLAY_CAP) {
-    teamOverused = true;
-    break;
-  }
-}
-if (teamOverused) {
-  console.log(`[Bot] Skipping ${tier}/${profile.strategy}: team concentration cap hit`);
-  continue;
-}
-```
-
-**Step 4 — Track usage after accepting** (after the fingerprint/mirror tracking, ~line 3870):
-```typescript
-for (const tk of teamKeys) {
-  if (!globalTeamUsage) globalTeamUsage = new Map();
-  globalTeamUsage.set(tk, (globalTeamUsage.get(tk) || 0) + 1);
-}
-```
+### Step 4 — Verify
+Query `bot_daily_parlays` for Feb 17 and confirm:
+- Total parlay count ≥ 12
+- No team (via `home_team` / `away_team` fields) appears more than 6 times (light slate cap)
+- SMU and Florida each appear ≤ 6 times
 
 ## Technical Notes
-
-- The `teamKeys` array extracts **both** `home_team` and `away_team` from every team-type leg — so both teams in a game count toward their respective caps
-- On light slates (fewer than 10 qualifying picks), the cap relaxes from 4 to 6 to maintain parlay volume
-- This operates at the **global pool level**, not within a single parlay — so Florida can still be in a 2-leg parlay but won't dominate the entire day's output
-- The existing per-game cap (MAX_GAME_USAGE) and per-matchup cap (MAX_MATCHUP_USAGE) are unchanged — this new cap stacks on top as an additional filter
-
-## Expected Result
-
-After re-running the generator, today's parlays should have much better spread:
-- No team appears more than 4 times (6 on light slates)
-- More teams from the available 26 NCAAB games will be represented
-- Parlay variety increases meaningfully for users browsing the dashboard
+- The cap is 6 (not 4) today because this is a light slate — fewer than 10 qualifying picks widened the rank cutoff to Top 300
+- The check uses `home_team` and `away_team` columns on each leg, normalized to lowercase — matching exactly how the generator tracks and enforces the cap
+- No code changes needed; the fix is already deployed
