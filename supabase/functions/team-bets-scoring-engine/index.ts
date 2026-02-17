@@ -39,6 +39,30 @@ interface NcaabTeamStats {
   away_record: string | null;
   ats_record: string | null;
   over_under_record: string | null;
+  kenpom_adj_o: number | null;
+  kenpom_adj_d: number | null;
+  sos_rank: number | null;
+  kenpom_source: string | null;
+}
+
+interface NcaabGameReferee {
+  game_date: string;
+  home_team: string;
+  away_team: string;
+  referee_names: string[] | null;
+  expected_pace_impact: number;
+  expected_total_adjustment: number;
+}
+
+interface NcaabFatigueScore {
+  team_name: string;
+  fatigue_score: number;
+  fatigue_category: string;
+  is_back_to_back: boolean;
+  travel_miles: number;
+  is_altitude_game: boolean;
+  altitude_differential: number;
+  game_date: string;
 }
 
 interface GameBet {
@@ -96,7 +120,9 @@ function americanToImplied(odds: number): number {
 function scoreNcaab(
   bet: GameBet,
   side: string,
-  ncaabMap: Map<string, NcaabTeamStats>
+  ncaabMap: Map<string, NcaabTeamStats>,
+  refMap: Map<string, NcaabGameReferee>,
+  fatigueMap: Map<string, NcaabFatigueScore>
 ): { score: number; breakdown: Record<string, number | string> } {
   let score = 50;
   const breakdown: Record<string, number | string> = { base: 50 };
@@ -109,14 +135,20 @@ function scoreNcaab(
     return { score: 55, breakdown };
   }
 
-  const homeOff = homeStats?.adj_offense || 70;
-  const homeDef = homeStats?.adj_defense || 70;
-  const awayOff = awayStats?.adj_offense || 70;
-  const awayDef = awayStats?.adj_defense || 70;
+  // Use real KenPom AdjO/AdjD if available, fall back to ESPN-derived
+  const homeOff = homeStats?.kenpom_adj_o || homeStats?.adj_offense || 70;
+  const homeDef = homeStats?.kenpom_adj_d || homeStats?.adj_defense || 70;
+  const awayOff = awayStats?.kenpom_adj_o || awayStats?.adj_offense || 70;
+  const awayDef = awayStats?.kenpom_adj_d || awayStats?.adj_defense || 70;
   const homeRank = homeStats?.kenpom_rank || 200;
   const awayRank = awayStats?.kenpom_rank || 200;
   const homeTempo = homeStats?.adj_tempo || 67;
   const awayTempo = awayStats?.adj_tempo || 67;
+
+  // Flag if we have real KenPom data
+  const hasRealKenpom = homeStats?.kenpom_source === 'kenpom' || homeStats?.kenpom_source === 'barttorvik' ||
+                        awayStats?.kenpom_source === 'kenpom' || awayStats?.kenpom_source === 'barttorvik';
+  if (hasRealKenpom) breakdown.kenpom_source = 'real';
 
   // Rank tier bonus
   const sideRank = side === 'HOME' ? homeRank : awayRank;
@@ -132,6 +164,33 @@ function scoreNcaab(
     breakdown.sharp_confirmation = sharpBonus;
   }
 
+  // ============= FATIGUE & ALTITUDE ADJUSTMENTS =============
+  const sideTeamName = side === 'HOME' ? bet.home_team : bet.away_team;
+  const oppTeamName = side === 'HOME' ? bet.away_team : bet.home_team;
+  const sideFatigue = fatigueMap.get(sideTeamName);
+  const oppFatigue = fatigueMap.get(oppTeamName);
+
+  if (sideFatigue && sideFatigue.fatigue_score >= 30) {
+    const fatiguePenalty = clampScore(-10, 0, -Math.round(sideFatigue.fatigue_score * 0.2));
+    score += fatiguePenalty;
+    breakdown.fatigue_penalty = fatiguePenalty;
+    breakdown.fatigue_label = `${sideFatigue.fatigue_category} (${sideFatigue.fatigue_score})`;
+  }
+
+  if (oppFatigue && oppFatigue.fatigue_score >= 30) {
+    const oppFatigueBonus = clampScore(0, 6, Math.round(oppFatigue.fatigue_score * 0.15));
+    score += oppFatigueBonus;
+    breakdown.opp_fatigue_boost = oppFatigueBonus;
+  }
+
+  // Altitude impact (away team at altitude)
+  if (sideFatigue?.is_altitude_game && sideFatigue.altitude_differential > 2000 && side !== 'HOME') {
+    const altPenalty = clampScore(-6, 0, -Math.round(sideFatigue.altitude_differential / 1000));
+    score += altPenalty;
+    breakdown.altitude_impact = altPenalty;
+    breakdown.altitude_label = `+${sideFatigue.altitude_differential}ft`;
+  }
+
   if (bet.bet_type === 'spread') {
     const homeNetAdv = (homeOff - awayDef) - (awayOff - homeDef);
     const sideAdv = side === 'HOME' ? homeNetAdv : -homeNetAdv;
@@ -140,7 +199,7 @@ function scoreNcaab(
     breakdown.efficiency_edge = effBonus;
     if (effBonus > 5) breakdown.efficiency_label = `+${sideAdv.toFixed(1)} pts edge`;
 
-    if (side === 'HOME') { score += 5; breakdown.home_court = 5; }
+    if (side === 'HOME') { score += 8; breakdown.home_court = 8; } // Increased from 5
 
     const sideTeam = side === 'HOME' ? homeStats : awayStats;
     if (sideTeam?.ats_record) {
@@ -164,7 +223,7 @@ function scoreNcaab(
   if (bet.bet_type === 'total') {
     const avgTempo = (homeTempo + awayTempo) / 2;
     
-    // --- Tightened tempo thresholds (no dead zone) ---
+    // --- Tempo thresholds ---
     if (side === 'OVER' && avgTempo >= 67) {
       const paceBonus = clampScore(0, 18, Math.round((avgTempo - 65) * 4));
       score += paceBonus;
@@ -176,33 +235,40 @@ function scoreNcaab(
       breakdown.tempo_slow = paceBonus;
       breakdown.tempo_label = `Combined tempo: ${avgTempo.toFixed(1)} (slow)`;
     }
-    // Mismatch penalty for extreme cases
     if ((side === 'OVER' && avgTempo < 62) || (side === 'UNDER' && avgTempo > 72)) {
       score -= 12;
       breakdown.tempo_mismatch = -12;
     }
 
-    // --- Projected Total vs Line (KenPom-style, defense-adjusted) ---
+    // --- KenPom Projected Total (real efficiency-based) ---
     const tempoFactor = avgTempo / 67;
-    const avgD1PPG = 70; // D1 average points per game baseline
-    const projectedTotal = (homeOff + awayOff - homeDef - awayDef + avgD1PPG * 2) * tempoFactor;
+    let projectedTotal: number;
+    if (hasRealKenpom) {
+      // Real KenPom: (AdjO_home + AdjO_away) * tempo / 100 is standard method
+      // But we need to account for both sides' offense vs opponent defense
+      projectedTotal = ((homeOff + awayOff) * tempoFactor / 100) * 2;
+      // Clamp to reasonable range
+      projectedTotal = Math.max(100, Math.min(200, projectedTotal));
+    } else {
+      // Fallback defense-adjusted formula
+      const avgD1PPG = 70;
+      projectedTotal = (homeOff + awayOff - homeDef - awayDef + avgD1PPG * 2) * tempoFactor;
+    }
+    
     const lineEdge = projectedTotal - (bet.line || 0);
     breakdown.projected_total = Math.round(projectedTotal * 10) / 10;
 
     if (side === 'OVER' && lineEdge < -5) {
-      // Line is inflated — projected total well below the posted line
       const penalty = clampScore(-15, 0, Math.round(lineEdge * 2));
       score += penalty;
       breakdown.line_inflated = penalty;
       breakdown.line_edge_label = `Proj ${projectedTotal.toFixed(0)} vs Line ${bet.line} (inflated)`;
     } else if (side === 'UNDER' && lineEdge < -3) {
-      // Line is too high — value on the under
       const bonus = clampScore(0, 12, Math.round(Math.abs(lineEdge) * 2));
       score += bonus;
       breakdown.line_value = bonus;
       breakdown.line_edge_label = `Proj ${projectedTotal.toFixed(0)} vs Line ${bet.line} (value under)`;
     } else if (side === 'OVER' && lineEdge > 3) {
-      // Projected total above line — value on the over
       score += 5;
       breakdown.line_value = 5;
       breakdown.line_edge_label = `Proj ${projectedTotal.toFixed(0)} vs Line ${bet.line} (value over)`;
@@ -212,6 +278,47 @@ function scoreNcaab(
     const combinedDef = homeDef + awayDef;
     if (side === 'OVER' && combinedOff > 148) { score += 5; breakdown.high_scoring = 5; }
     if (side === 'UNDER' && combinedDef < 128) { score += 5; breakdown.strong_defense = 5; }
+
+    // Conference game UNDER boost
+    if (side === 'UNDER' && homeStats?.conference && awayStats?.conference && 
+        homeStats.conference === awayStats.conference && avgTempo < 67) {
+      score += 8;
+      breakdown.conference_under = 8;
+      breakdown.conference_label = `Conference game + slow tempo`;
+    }
+
+    // ============= REFEREE ADJUSTMENT =============
+    const gameKey = `${bet.home_team}|${bet.away_team}`;
+    const refData = refMap.get(gameKey);
+    if (refData && refData.expected_total_adjustment !== 0) {
+      const refAdj = refData.expected_total_adjustment;
+      if (side === 'OVER' && refAdj > 0.5) {
+        const bonus = clampScore(0, 6, Math.round(refAdj * 3));
+        score += bonus;
+        breakdown.referee_adjustment = bonus;
+        breakdown.referee_label = 'High-foul ref crew';
+      } else if (side === 'UNDER' && refAdj < -0.5) {
+        const bonus = clampScore(0, 6, Math.round(Math.abs(refAdj) * 3));
+        score += bonus;
+        breakdown.referee_adjustment = bonus;
+        breakdown.referee_label = 'Low-foul ref crew';
+      } else if (side === 'OVER' && refAdj < -0.5) {
+        score -= 4;
+        breakdown.referee_penalty = -4;
+        breakdown.referee_label = 'Low-foul ref crew (bad for over)';
+      } else if (side === 'UNDER' && refAdj > 0.5) {
+        score -= 4;
+        breakdown.referee_penalty = -4;
+        breakdown.referee_label = 'High-foul ref crew (bad for under)';
+      }
+    }
+
+    // Fatigue boosts UNDER
+    const anyHighFatigue = (sideFatigue && sideFatigue.fatigue_score >= 25) || (oppFatigue && oppFatigue.fatigue_score >= 25);
+    if (side === 'UNDER' && anyHighFatigue) {
+      score += 5;
+      breakdown.fatigue_under_boost = 5;
+    }
 
     const sideTeam = side === 'OVER' ? homeStats : awayStats;
     if (sideTeam?.over_under_record) {
@@ -236,7 +343,7 @@ function scoreNcaab(
     if (rankDiff > 100) { score += 10; breakdown.rank_mismatch = 10; breakdown.rank_label = `Rank #${sideRank} vs #${side === 'HOME' ? awayRank : homeRank}`; }
     else if (rankDiff > 50) { score += 6; breakdown.rank_edge = 6; breakdown.rank_label = `Rank #${sideRank} vs #${side === 'HOME' ? awayRank : homeRank}`; }
 
-    if (side === 'HOME') { score += 6; breakdown.home_court = 6; }
+    if (side === 'HOME') { score += 8; breakdown.home_court = 8; } // Increased from 6
 
     if (side === 'HOME' && homeStats?.home_record) {
       const hr = parseRecord(homeStats.home_record);
@@ -632,13 +739,36 @@ serve(async (req) => {
 
     console.log(`[Scoring Engine] Found ${bets.length} active bets to score`);
 
-    // Load NCAAB stats
+    // Load NCAAB stats (with real KenPom data)
     const { data: ncaabStats } = await supabase
       .from('ncaab_team_stats')
-      .select('team_name, conference, kenpom_rank, adj_offense, adj_defense, adj_tempo, home_record, away_record, ats_record, over_under_record');
+      .select('team_name, conference, kenpom_rank, adj_offense, adj_defense, adj_tempo, home_record, away_record, ats_record, over_under_record, kenpom_adj_o, kenpom_adj_d, sos_rank, kenpom_source');
 
     const ncaabMap = new Map<string, NcaabTeamStats>();
     (ncaabStats || []).forEach((s: any) => ncaabMap.set(s.team_name, s));
+
+    // Load NCAAB referee data for today
+    const todayDate = todayStart.toISOString().substring(0, 10);
+    const { data: refData } = await supabase
+      .from('ncaab_game_referees')
+      .select('*')
+      .eq('game_date', todayDate);
+
+    const refMap = new Map<string, NcaabGameReferee>();
+    (refData || []).forEach((r: any) => {
+      refMap.set(`${r.home_team}|${r.away_team}`, r);
+    });
+
+    // Load NCAAB fatigue scores for today
+    const { data: fatigueData } = await supabase
+      .from('ncaab_fatigue_scores')
+      .select('*')
+      .eq('game_date', todayDate);
+
+    const fatigueMap = new Map<string, NcaabFatigueScore>();
+    (fatigueData || []).forEach((f: any) => fatigueMap.set(f.team_name, f));
+
+    console.log(`[Scoring Engine] NCAAB intelligence: ${ncaabMap.size} teams, ${refMap.size} ref assignments, ${fatigueMap.size} fatigue scores`);
 
     // Load NHL stats
     const { data: nhlStats } = await supabase
@@ -685,7 +815,7 @@ serve(async (req) => {
         if (isBaseballNcaa) {
           result = scoreBaseballNcaa(bet, side, baseballMap);
         } else if (isNCAAB) {
-          result = scoreNcaab(bet, side, ncaabMap);
+          result = scoreNcaab(bet, side, ncaabMap, refMap, fatigueMap);
         } else if (isNHL) {
           result = scoreNhl(bet, side, nhlMap);
         } else {

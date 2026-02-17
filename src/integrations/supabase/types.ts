@@ -6230,6 +6230,87 @@ export type Database = {
         }
         Relationships: []
       }
+      ncaab_fatigue_scores: {
+        Row: {
+          altitude_differential: number | null
+          created_at: string | null
+          event_id: string | null
+          fatigue_category: string | null
+          fatigue_score: number | null
+          game_date: string
+          id: string
+          is_altitude_game: boolean | null
+          is_back_to_back: boolean | null
+          opponent: string | null
+          team_name: string
+          timezone_changes: number | null
+          travel_miles: number | null
+        }
+        Insert: {
+          altitude_differential?: number | null
+          created_at?: string | null
+          event_id?: string | null
+          fatigue_category?: string | null
+          fatigue_score?: number | null
+          game_date: string
+          id?: string
+          is_altitude_game?: boolean | null
+          is_back_to_back?: boolean | null
+          opponent?: string | null
+          team_name: string
+          timezone_changes?: number | null
+          travel_miles?: number | null
+        }
+        Update: {
+          altitude_differential?: number | null
+          created_at?: string | null
+          event_id?: string | null
+          fatigue_category?: string | null
+          fatigue_score?: number | null
+          game_date?: string
+          id?: string
+          is_altitude_game?: boolean | null
+          is_back_to_back?: boolean | null
+          opponent?: string | null
+          team_name?: string
+          timezone_changes?: number | null
+          travel_miles?: number | null
+        }
+        Relationships: []
+      }
+      ncaab_game_referees: {
+        Row: {
+          away_team: string
+          created_at: string | null
+          expected_pace_impact: number | null
+          expected_total_adjustment: number | null
+          game_date: string
+          home_team: string
+          id: string
+          referee_names: Json | null
+        }
+        Insert: {
+          away_team: string
+          created_at?: string | null
+          expected_pace_impact?: number | null
+          expected_total_adjustment?: number | null
+          game_date: string
+          home_team: string
+          id?: string
+          referee_names?: Json | null
+        }
+        Update: {
+          away_team?: string
+          created_at?: string | null
+          expected_pace_impact?: number | null
+          expected_total_adjustment?: number | null
+          game_date?: string
+          home_team?: string
+          id?: string
+          referee_names?: Json | null
+        }
+        Relationships: []
+      }
       ncaab_player_game_logs: {
         Row: {
           assists: number | null
@@ -6284,6 +6365,81 @@ export type Database = {
         }
         Relationships: []
       }
+      ncaab_referee_data: {
+        Row: {
+          avg_fouls_per_game: number | null
+          avg_total_points: number | null
+          created_at: string | null
+          games_officiated: number | null
+          id: string
+          over_rate: number | null
+          pace_tendency: string | null
+          referee_name: string
+          under_rate: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          avg_fouls_per_game?: number | null
+          avg_total_points?: number | null
+          created_at?: string | null
+          games_officiated?: number | null
+          id?: string
+          over_rate?: number | null
+          pace_tendency?: string | null
+          referee_name: string
+          under_rate?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          avg_fouls_per_game?: number | null
+          avg_total_points?: number | null
+          created_at?: string | null
+          games_officiated?: number | null
+          id?: string
+          over_rate?: number | null
+          pace_tendency?: string | null
+          referee_name?: string
+          under_rate?: number | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      ncaab_team_locations: {
+        Row: {
+          altitude_feet: number | null
+          city: string | null
+          conference: string | null
+          id: string
+          latitude: number | null
+          longitude: number | null
+          state: string | null
+          team_name: string
+          timezone: string | null
+        }
+        Insert: {
+          altitude_feet?: number | null
+          city?: string | null
+          conference?: string | null
+          id?: string
+          latitude?: number | null
+          longitude?: number | null
+          state?: string | null
+          team_name: string
+          timezone?: string | null
+        }
+        Update: {
+          altitude_feet?: number | null
+          city?: string | null
+          conference?: string | null
+          id?: string
+          latitude?: number | null
+          longitude?: number | null
+          state?: string | null
+          team_name?: string
+          timezone?: string | null
+        }
+        Relationships: []
+      }
       ncaab_team_stats: {
         Row: {
           adj_defense: number | null
@@ -6294,10 +6450,15 @@ export type Database = {
           conference: string | null
           home_record: string | null
           id: string
+          kenpom_adj_d: number | null
+          kenpom_adj_o: number | null
           kenpom_rank: number | null
+          kenpom_source: string | null
+          luck_factor: number | null
           oppg: number | null
           over_under_record: string | null
           ppg: number | null
+          sos_rank: number | null
           team_name: string
           updated_at: string
         }
@@ -6310,10 +6471,15 @@ export type Database = {
           conference?: string | null
           home_record?: string | null
           id?: string
+          kenpom_adj_d?: number | null
+          kenpom_adj_o?: number | null
           kenpom_rank?: number | null
+          kenpom_source?: string | null
+          luck_factor?: number | null
           oppg?: number | null
           over_under_record?: string | null
           ppg?: number | null
+          sos_rank?: number | null
           team_name: string
           updated_at?: string
         }
@@ -6326,10 +6492,15 @@ export type Database = {
           conference?: string | null
           home_record?: string | null
           id?: string
+          kenpom_adj_d?: number | null
+          kenpom_adj_o?: number | null
           kenpom_rank?: number | null
+          kenpom_source?: string | null
+          luck_factor?: number | null
           oppg?: number | null
           over_under_record?: string | null
           ppg?: number | null
+          sos_rank?: number | null
           team_name?: string
           updated_at?: string
         }
