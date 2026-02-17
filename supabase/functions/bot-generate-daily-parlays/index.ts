@@ -3410,7 +3410,8 @@ async function generateTierParlays(
   globalMirrorPrints: Set<string> = new Set(),
   goldenCategories: Set<string> = new Set(),
   isThinSlate: boolean = false,
-  winningPatterns: any = null
+  winningPatterns: any = null,
+  isLightSlateMode: boolean = false
 ): Promise<{ count: number; parlays: any[] }> {
   // Clone config so we can override thresholds for thin slates without mutating the original
   const config = { ...TIER_CONFIG[tier] };
@@ -3430,6 +3431,9 @@ async function generateTierParlays(
     config.minConfidence = 0.40;
     console.log(`[Bot] 🔶 Thin-slate: exploration gates relaxed (hitRate≥40%, edge≥0.002)`);
   }
+
+  // Light-slate: raise spread cap so large-spread games aren't blocked when pool is thin
+  const effectiveSpreadCap = isLightSlateMode ? 25 : MAX_SPREAD_LINE;
 
   const tracker = createUsageTracker();
   const parlaysToCreate: any[] = [];
@@ -3623,7 +3627,7 @@ async function generateTierParlays(
         const teamPick = pick as EnrichedTeamPick;
         
         // SPREAD CAP: Block high spreads or shop for alt lines
-        if (teamPick.bet_type === 'spread' && Math.abs(teamPick.line) >= MAX_SPREAD_LINE) {
+        if (teamPick.bet_type === 'spread' && Math.abs(teamPick.line) >= effectiveSpreadCap) {
           console.log(`[SpreadCap] High spread detected: ${teamPick.home_team} vs ${teamPick.away_team} line=${teamPick.line}, shopping for alt...`);
           
           // Try to fetch alternate spread lines
@@ -3651,7 +3655,7 @@ async function generateTierParlays(
               const altData = await altResponse.json();
               const altLines: { line: number; overOdds: number }[] = altData.lines || [];
               
-              // Find best alt spread: abs(line) between 7 and MAX_SPREAD_LINE, reasonable odds
+              // Find best alt spread: abs(line) between 7 and effectiveSpreadCap, reasonable odds
               const isNegative = teamPick.line < 0;
               const viableAlts = altLines.filter(alt => {
                 const absLine = Math.abs(alt.line);
@@ -3659,7 +3663,7 @@ async function generateTierParlays(
                 if (isNegative && alt.line > 0) return false;
                 if (!isNegative && alt.line < 0) return false;
                 // Target range
-                if (absLine < 7 || absLine > MAX_SPREAD_LINE) return false;
+                if (absLine < 7 || absLine > effectiveSpreadCap) return false;
                 // Reasonable odds (-150 to +200)
                 if (alt.overOdds < -150 || alt.overOdds > 200) return false;
                 return true;
@@ -4241,8 +4245,8 @@ function generateMonsterParlays(
       const catWeight = weightMap.get(sportKey) ?? weightMap.get(sideKey) ?? weightMap.get(pickCategory) ?? 1.0;
       if (catWeight < 0.5) return false;
 
-      // Spread cap
-      if ((p.bet_type === 'spread' || p.prop_type === 'spread') && Math.abs(p.line || 0) >= MAX_SPREAD_LINE) return false;
+      // Spread cap (light-slate: raised to 25)
+      if ((p.bet_type === 'spread' || p.prop_type === 'spread') && Math.abs(p.line || 0) >= effectiveSpreadCap) return false;
 
       return true;
     })
@@ -4950,7 +4954,8 @@ Deno.serve(async (req) => {
         globalMirrorPrints,
         pool.goldenCategories,
         isThinSlate,
-        winningPatterns
+        winningPatterns,
+        isLightSlateMode
       );
       results[tier] = result;
       allParlays = [...allParlays, ...result.parlays];
@@ -5006,8 +5011,8 @@ Deno.serve(async (req) => {
           const catWeight = weightMap.get(sportKey) ?? weightMap.get(sideKey) ?? weightMap.get(pickCategory) ?? 1.0;
           if (catWeight < 0.5) return false;
 
-          // Spread cap
-          if ((p.bet_type === 'spread' || p.prop_type === 'spread') && Math.abs(p.line || 0) >= MAX_SPREAD_LINE) return false;
+          // Spread cap (light-slate: raised to 25)
+          if ((p.bet_type === 'spread' || p.prop_type === 'spread') && Math.abs(p.line || 0) >= effectiveSpreadCap) return false;
 
           return true;
         })
@@ -5304,12 +5309,12 @@ Deno.serve(async (req) => {
             continue;
           }
 
-          // SPREAD CAP for singles: block spreads above MAX_SPREAD_LINE
+          // SPREAD CAP for singles: block spreads above effectiveSpreadCap (light-slate: 25)
           if (
             (pick.bet_type === 'spread' || pick.prop_type === 'spread') &&
-            Math.abs(pick.line || 0) >= MAX_SPREAD_LINE
+            Math.abs(pick.line || 0) >= effectiveSpreadCap
           ) {
-            console.log(`[Bot v2] 🚫 SINGLE SKIP (SpreadCap): ${pick.player_name || pick.home_team} spread ${pick.line} exceeds max ${MAX_SPREAD_LINE}`);
+            console.log(`[Bot v2] 🚫 SINGLE SKIP (SpreadCap): ${pick.player_name || pick.home_team} spread ${pick.line} exceeds max ${effectiveSpreadCap}`);
             continue;
           }
 
