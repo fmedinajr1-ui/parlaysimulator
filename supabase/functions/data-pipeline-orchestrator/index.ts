@@ -108,8 +108,9 @@ serve(async (req) => {
       await runFunction('ncaa-baseball-data-ingestion', { days_back: 1 });
       await runFunction('ncaa-baseball-team-stats-fetcher', {});
       
-      // NCAAB Intelligence Layer (KenPom -> Stats -> Refs -> Fatigue)
+      // NCAAB Intelligence Layer (KenPom -> Team Stats -> Refs -> Fatigue)
       await runFunction('ncaab-kenpom-scraper', {});
+      await runFunction('ncaab-team-stats-fetcher', {});
       await runFunction('ncaab-referee-scraper', {});
       await runFunction('ncaab-fatigue-calculator', {});
     }

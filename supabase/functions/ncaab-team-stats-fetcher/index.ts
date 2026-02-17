@@ -124,9 +124,9 @@ async function deriveAtsOuRecords(supabase: any): Promise<Map<string, { ats: str
 
   const { data: settledBets } = await supabase
     .from('game_bets')
-    .select('home_team, away_team, bet_type, result, line')
+    .select('home_team, away_team, bet_type, outcome, line')
     .like('sport', '%ncaab%')
-    .not('result', 'is', null)
+    .not('outcome', 'is', null)
     .gte('commence_time', cutoff.toISOString())
     .limit(1000);
 
@@ -142,8 +142,8 @@ async function deriveAtsOuRecords(supabase: any): Promise<Map<string, { ats: str
     if (!records.has(home)) records.set(home, { atsW: 0, atsL: 0, ouW: 0, ouL: 0 });
     if (!records.has(away)) records.set(away, { atsW: 0, atsL: 0, ouW: 0, ouL: 0 });
 
-    if (bet.bet_type === 'spread' && bet.result) {
-      const r = bet.result.toLowerCase();
+    if (bet.bet_type === 'spread' && bet.outcome) {
+      const r = bet.outcome.toLowerCase();
       if (r === 'home_win' || r === 'home') {
         records.get(home)!.atsW++;
         records.get(away)!.atsL++;
@@ -153,8 +153,8 @@ async function deriveAtsOuRecords(supabase: any): Promise<Map<string, { ats: str
       }
     }
 
-    if (bet.bet_type === 'total' && bet.result) {
-      const r = bet.result.toLowerCase();
+    if (bet.bet_type === 'total' && bet.outcome) {
+      const r = bet.outcome.toLowerCase();
       if (r === 'over') {
         records.get(home)!.ouW++;
         records.get(away)!.ouW++;
