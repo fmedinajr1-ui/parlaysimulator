@@ -1,31 +1,28 @@
 
 
-# Add 2-Leg Mini-Parlay Hybrid Fallback
+# Monster Parlay Challenge: +10,000 Odds AI Parlay
 
-## Overview
-Insert a new generation pass between the multi-leg parlay assembly and the single pick fallback. When fewer than 10 parlays are produced, first attempt to pair quality picks into 2-leg "mini-parlays" before falling back to singles. This gives you actual parlay action on light-slate days instead of only straight bets.
+## What This Does
+Adds a new "Monster Parlay" generation pass that runs automatically on big-slate days (6+ games across 2+ sports). The AI cherry-picks its highest-accuracy legs and assembles a 6-8 leg mega parlay targeting +10,000 or higher odds -- but every leg is backed by real accuracy data (60%+ hit rates, positive edge, strong composite scores). Think of it as the AI's "best shot at a moonshot."
 
 ## How It Works
 
-The new block runs at line ~4571 (after tier generation, before single pick fallback):
+1. **Slate Detection**: Only generates Monster Parlays when the daily pool has 15+ quality candidates across 2+ sports (big-slate days with NBA, NHL, NCAAB all active). On light-slate days, it skips entirely.
 
-1. **Trigger**: Same condition as singles -- `allParlays.length < 10`
-2. **Build candidate pool**: Reuse the same merged+deduplicated pool (team, player, whale, sweet spots)
-3. **Pair generation**: Iterate through top candidates and pair them using constraints:
-   - Both legs must have composite score >= 58 and hit rate >= 50%
-   - Legs must be from **different games** (no same-game correlation tax)
-   - Respect weight checks and spread caps (same as singles)
-   - No mirror pairs (e.g., Team A spread + Team A moneyline)
-4. **Quality gates**: Each mini-parlay must have:
-   - Average composite score >= 60
-   - Combined probability >= 25% (both legs hitting)
-   - Positive expected edge
-5. **Tier assignment**: Mini-parlays are assigned tiers based on average composite:
-   - Execution: avg composite >= 70 and avg hit rate >= 58% (max 3)
-   - Validation: avg composite >= 62 (max 5)
-   - Exploration: everything else that passes gates (max 8)
-6. **Cap**: Generate up to 16 mini-parlays total, then let remaining candidates fall through to single pick fallback
-7. **Fallback continues**: After mini-parlays, if total parlays (multi-leg + mini) is still < 10, the single pick fallback runs as before
+2. **Leg Selection (Accuracy-First)**:
+   - Pulls from the full deduplicated candidate pool (player props, team picks, whale signals, sweet spots)
+   - Every leg must have: hit rate >= 55%, composite score >= 60, positive edge
+   - Sorts by hit rate descending (best accuracy first)
+   - Enforces diversity: max 2 legs per sport, max 1 leg per team, no mirror/correlated pairs
+   - No same-game parlays (avoids correlation tax)
+
+3. **Odds Targeting**:
+   - Starts with the top 6 legs and calculates combined odds
+   - If below +10,000, adds legs one at a time (up to 8 total) until the threshold is crossed
+   - If the top 8 legs still can't reach +10,000, it uses alternate/boosted lines on 1-2 legs to push odds higher while maintaining the accuracy floor
+   - Hard cap: never exceeds 8 legs (keeps it ambitious but not delusional)
+
+4. **Output**: Creates 1-2 Monster Parlays per day (one conservative at exactly +10,000, one aggressive pushing +15,000-25,000 if enough quality legs exist)
 
 ## Technical Details
 
@@ -33,47 +30,126 @@ The new block runs at line ~4571 (after tier generation, before single pick fall
 `supabase/functions/bot-generate-daily-parlays/index.ts`
 
 ### Change Location
-Insert new block at line 4571, between the tier generation loop and the `// === SINGLE PICK FALLBACK ===` comment.
+New function `generateMonsterParlays()` added after the existing `generateBankrollDoubler()` function (around line 4144). Called from the main orchestrator after standard tier generation but before the mini-parlay/single fallback.
 
-### New Code Block (pseudo-structure)
+### New Function: `generateMonsterParlays()`
 
 ```text
-// === 2-LEG MINI-PARLAY HYBRID FALLBACK ===
-if (allParlays.length < 10) {
-  1. Build candidatePool (same merge + dedup as singles, reuse allPicksForSingles logic)
-  2. Filter candidates: composite >= 58, hitRate >= 50%, weight > 0.5, spread < MAX_SPREAD_LINE
-  3. Generate pairs:
-     for i in candidates:
-       for j in candidates (j > i):
-         - Skip if same game (matching home_team+away_team or event_id)
-         - Skip if mirror (same matchup, opposite sides)
-         - Skip if duplicate fingerprint already in globalFingerprints
-         - Calculate combined probability, edge, sharpe
-         - If passes quality gates, add to miniParlays[]
-  4. Sort miniParlays by combined edge descending
-  5. Assign tiers + cap counts
-  6. Push to allParlays[]
-  7. Log: "[Bot v2] Mini-parlays created: X (exec=Y, valid=Z, explore=W)"
-}
+async function generateMonsterParlays(
+  pool, globalFingerprints, targetDate, supabase
+) {
+  // 1. Big-slate gate: need 15+ quality candidates across 2+ sports
+  const allCandidates = [...pool.playerPicks, ...pool.teamPicks, ...pool.whalePicks, ...pool.sweetSpots]
+    .filter(p => (p.hit_rate >= 55) && (p.compositeScore >= 60) && (p.edge > 0))
+    .deduplicate by player/team key (keep highest composite)
+    .sort by hit_rate descending
 
-// === SINGLE PICK FALLBACK === (existing, now checks allParlays.length < 10 again)
+  const activeSports = new Set(allCandidates.map(c => c.sport))
+  if (allCandidates.length < 15 || activeSports.size < 2) return []
+
+  // 2. Greedy leg selection with diversity constraints
+  function selectLegs(candidates, targetOdds = 10000, maxLegs = 8) {
+    const selected = []
+    const usedTeams = new Set()
+    const sportCount = {}
+
+    for (const pick of candidates) {
+      if (selected.length >= maxLegs) break
+      if (usedTeams.has(pick.team)) continue
+      if ((sportCount[pick.sport] || 0) >= 2) continue
+      if (hasMirror(selected, pick)) continue
+      if (hasCorrelation(selected, pick)) continue
+
+      selected.push(pick)
+      usedTeams.add(pick.team)
+      sportCount[pick.sport] = (sportCount[pick.sport] || 0) + 1
+
+      // Check if we've hit the odds target with 6+ legs
+      if (selected.length >= 6) {
+        const combinedOdds = calculateCombinedAmericanOdds(selected)
+        if (combinedOdds >= targetOdds) break
+      }
+    }
+    return selected
+  }
+
+  // 3. Build Conservative Monster (+10,000 target)
+  const conservativeLegs = selectLegs(allCandidates, 10000, 8)
+  const conservativeOdds = calculateCombinedAmericanOdds(conservativeLegs)
+
+  if (conservativeOdds < 10000 || conservativeLegs.length < 6) return [] // Not enough quality
+
+  const monsters = []
+
+  // Conservative Monster
+  monsters.push({
+    parlay_date: targetDate,
+    legs: conservativeLegs.map(formatLeg),
+    leg_count: conservativeLegs.length,
+    combined_probability: calculateCombinedProb(conservativeLegs),
+    expected_odds: conservativeOdds,
+    strategy_name: 'monster_parlay_conservative',
+    tier: 'monster',
+    is_simulated: true,
+    simulated_stake: 10,
+    simulated_payout: 10 * americanToDecimal(conservativeOdds),
+    selection_rationale: `Monster Parlay: ${conservativeLegs.length} accuracy-first legs targeting +${conservativeOdds}. Avg hit rate: ${avgHitRate}%. Every leg has 55%+ historical accuracy.`,
+  })
+
+  // 4. Aggressive Monster (+15,000-25,000) if pool allows
+  const remainingCandidates = allCandidates.filter(not in conservativeLegs)
+  if (remainingCandidates.length >= 2) {
+    const aggressiveLegs = selectLegs(allCandidates, 15000, 8)
+    // ... same structure, higher target
+  }
+
+  // 5. Dedup + insert
+  return monsters
+}
 ```
 
-### Key Details
-- Mini-parlay `strategy_name` uses format: `{strategyName}_{tier}_mini_parlay`
-- `leg_count` is set to 2
-- `selection_rationale` includes both leg names and composite scores
-- Combined odds calculated using standard multiplication of implied probabilities
-- `is_simulated` follows same tier logic (only execution tier is not simulated)
-- Stake uses existing `getDynamicStake()` function
-- Dedup keys are added to `globalFingerprints` to prevent the DB insert from duplicating with existing parlays
-- The single pick fallback threshold remains `< 10`, so if mini-parlays push the count above 10, singles are skipped entirely
+### Integration Point
+In the main generation orchestrator (around line 4560), after tier generation:
+
+```text
+// === MONSTER PARLAY (big-slate only) ===
+const monsterParlays = await generateMonsterParlays(pool, globalFingerprints, targetDate, supabase);
+if (monsterParlays.length > 0) {
+  allParlays.push(...monsterParlays);
+  console.log(`[Bot v2] Monster parlays: ${monsterParlays.length} created (${monsterParlays.map(m => '+' + m.expected_odds).join(', ')})`);
+}
+```
+
+### UI Updates
+
+**`src/components/bot/BotParlayCard.tsx`**: Add monster tier styling
+- Border color: `border-l-red-500` (fiery red for monster)
+- Badge: skull/fire emoji with "+10,000" odds highlight
+
+**`src/components/bot/TierBreakdownCard.tsx`**: Add monster tier to breakdown
+- Icon: flame or skull
+- Label: "Monster"
+- Color: red/fire theme
+
+### Key Constraints
+- Minimum 6 legs, maximum 8 legs
+- Every leg must have 55%+ hit rate and 60+ composite score
+- Max 2 legs per sport, max 1 per team
+- No same-game legs, no mirror pairs
+- Only generates on big-slate days (15+ candidates, 2+ sports)
+- Targets +10,000 minimum combined odds
+- $10 stake (small bet, big upside)
+- Uses `globalFingerprints` for deduplication with existing parlays
 
 ### No Database Changes
-Uses the existing `bot_daily_parlays` table -- 2-leg parlays are already a valid `leg_count`.
+Uses the existing `bot_daily_parlays` table -- the `tier` field accepts any string value, and `strategy_name` is already flexible.
 
-## Impact
-- Light-slate days will now produce a mix of 2-leg parlays AND singles instead of only singles
-- The pairing constraint (different games) avoids the 15% correlation tax
-- Quality gates ensure mini-parlays maintain the same accuracy standards as regular tiers
-- Existing multi-leg generation is completely untouched -- this only activates when the normal pipeline underproduces
+## What You'll See
+On a busy NBA + NHL + NCAAB night, the bot dashboard will show 1-2 Monster Parlays at the top with a fiery red accent, displaying something like:
+
+> **Monster Parlay** -- 7 Legs -- +12,450 Odds
+> $10 to win $1,255 -- Avg Hit Rate: 62%
+> "Every leg has 55%+ accuracy. The AI's best moonshot."
+
+On light-slate days (like today with only NCAAB), Monster Parlays are skipped entirely -- no low-quality longshots.
+
