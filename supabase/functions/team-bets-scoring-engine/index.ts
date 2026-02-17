@@ -209,9 +209,9 @@ function scoreNcaab(
   const awayTempo = awayStats?.adj_tempo || 67;
 
   // Flag if we have real KenPom data (validated)
+  const validSources = ['kenpom', 'barttorvik', 'pae_formula'];
   const hasRealKenpom = (validKenpomO(homeStats?.kenpom_adj_o) || validKenpomO(awayStats?.kenpom_adj_o)) &&
-                        (homeStats?.kenpom_source === 'kenpom' || homeStats?.kenpom_source === 'barttorvik' ||
-                         awayStats?.kenpom_source === 'kenpom' || awayStats?.kenpom_source === 'barttorvik');
+                        (validSources.includes(homeStats?.kenpom_source || '') || validSources.includes(awayStats?.kenpom_source || ''));
   if (hasRealKenpom) breakdown.kenpom_source = 'real';
 
   // ============= COLD/HOT TEAM DETECTION (L5 trends) =============
