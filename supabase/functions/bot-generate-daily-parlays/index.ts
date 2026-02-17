@@ -4245,8 +4245,8 @@ function generateMonsterParlays(
       const catWeight = weightMap.get(sportKey) ?? weightMap.get(sideKey) ?? weightMap.get(pickCategory) ?? 1.0;
       if (catWeight < 0.5) return false;
 
-      // Spread cap (light-slate: raised to 25)
-      if ((p.bet_type === 'spread' || p.prop_type === 'spread') && Math.abs(p.line || 0) >= effectiveSpreadCap) return false;
+      // Spread cap (monster parlays only run on big slates, use base cap)
+      if ((p.bet_type === 'spread' || p.prop_type === 'spread') && Math.abs(p.line || 0) >= MAX_SPREAD_LINE) return false;
 
       return true;
     })
@@ -4837,6 +4837,7 @@ Deno.serve(async (req) => {
     }
 
     const isLightSlateMode = (playerPropCount || 0) === 0 || (sportCount || 0) <= 2;
+    const effectiveSpreadCap = isLightSlateMode ? 25 : MAX_SPREAD_LINE;
     if (isLightSlateMode) {
       console.log(`[Bot v2] 🌙 LIGHT-SLATE MODE: ${playerPropCount || 0} player props, ${sportCount || 0} sports. Lowering ML Sniper floor to 55, relaxing constraints.`);
     }
