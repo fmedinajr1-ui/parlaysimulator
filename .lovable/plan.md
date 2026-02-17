@@ -1,111 +1,100 @@
 
+# NCAAB Accuracy Emergency Fix -- Focus Until Thursday
 
-# NCAAB Accuracy Blitz: KenPom + Referees + Venue Intelligence
+## Current Problems (Critical)
 
-## Overview
-Three new data layers to dramatically improve NCAAB accuracy before NBA returns Thursday. Each addresses a blind spot that's currently costing wins.
+1. **KenPom scraper is broken** -- Top 28 teams have NO efficiency data (Auburn, Duke, Florida, Houston all NULL). The regex parser grabs wrong columns (AdjD=52 for Saint Mary's, should be ~96). Rankings are still PPG-derived for most teams (Saint Louis #1 instead of Auburn).
 
-## Problem Context
-The current "KenPom rankings" are just PPG minus OPPG sorted -- Saint Louis Billikens is ranked #1 and Miami (OH) is #6, which is wildly wrong. Real KenPom has teams like Auburn, Duke, Florida, and Houston at the top. This means the scoring engine's rank-based bonuses (+10 for Top 25, +7 for Top 50) are being applied to the wrong teams entirely.
+2. **ATS and O/U records are ALL NULL** -- 0 out of 362 teams. The scoring engine's +8 ATS bonus and +6 O/U trend logic is completely inactive.
 
----
+3. **Fatigue/referee data didn't run for today** -- Only Feb 16 data exists. Today (Feb 17) has 0 referee assignments and 0 fatigue scores.
 
-## Upgrade 1: Real KenPom Rankings via Firecrawl Scraping
+4. **28 unscored games today** -- 88/116 NCAAB bets scored, 28 missing composite scores.
 
-**What**: Scrape actual KenPom efficiency data from kenpom.com using the existing Firecrawl connector.
-
-**Why**: The current ranking system (PPG - OPPG) has Miami (OH) at #6 and Saint Louis at #1. Real KenPom adjusts for strength of schedule, pace, and opponent quality. This single fix will improve every NCAAB spread, moneyline, and total projection.
-
-**How**:
-- New edge function `ncaab-kenpom-scraper` uses Firecrawl to scrape kenpom.com/index.php
-- Extracts: team name, rank, adjusted offensive efficiency (AdjO), adjusted defensive efficiency (AdjD), adjusted tempo (AdjT), strength of schedule, and luck factor
-- Maps scraped team names to existing `ncaab_team_stats` entries using fuzzy matching
-- Overwrites `kenpom_rank`, `adj_offense`, `adj_defense`, `adj_tempo` with real values
-- Adds new columns: `sos_rank` (strength of schedule), `luck_factor`, `kenpom_adj_o` and `kenpom_adj_d` (per-100-possession efficiency, distinct from raw PPG)
-- Runs in Phase 1 of the pipeline, before the scoring engine
-
-**Database changes**:
-- Add columns to `ncaab_team_stats`: `kenpom_adj_o` (numeric), `kenpom_adj_d` (numeric), `sos_rank` (integer), `luck_factor` (numeric), `kenpom_source` (text, default 'scraped')
-
-**Scoring engine update**:
-- Use `kenpom_adj_o` and `kenpom_adj_d` (per-100-possessions efficiency) instead of raw PPG/OPPG for the projection formula
-- The projected total formula becomes: `(kenpomAdjO_home + kenpomAdjO_away) * tempoFactor / 100` which is the standard KenPom method
-- Rank bonuses now based on real KenPom rank (Duke at #5 gets +7, not Saint Louis)
+## What's Working
+- NCAAB OVERs are properly hard-blocked in the generator
+- NCAAB spreads have been winning (2 parlays hit on Feb 13)
+- Whale signal strategies winning (2 for 2 on Feb 15)
+- Fatigue calculator logic and locations are solid, just needs to run on correct dates
 
 ---
 
-## Upgrade 2: NCAAB Referee Tendency Database
+## Fix 1: Rebuild KenPom Scraper Parser (Critical)
 
-**What**: Build a referee tendency database by scraping referee assignment and foul/scoring data, then use it to adjust totals predictions.
+**File**: `supabase/functions/ncaab-kenpom-scraper/index.ts`
 
-**How**:
-- New edge function `ncaab-referee-scraper` uses Firecrawl to scrape referee assignment data from ESPN game pages and barttorvik.com (which publishes ref tendencies)
-- New table `ncaab_referee_data` stores per-referee stats: avg fouls called, avg total points in their games, over/under rate, pace tendency
-- New table `ncaab_game_referees` maps referees to upcoming games
-- For each upcoming NCAAB game, look up assigned refs and calculate expected foul/pace impact
+The current parser fails because:
+- KenPom's markdown includes `[Team Name](url)` links that break the regex
+- The `stripLinks` helper was added but the fallback parser still grabs wrong columns
+- Top teams (ranks 1-28) don't match any regex pattern at all
 
-**Database changes**:
-- New table `ncaab_referee_data`: `id`, `referee_name`, `games_officiated` (int), `avg_fouls_per_game` (numeric), `avg_total_points` (numeric), `over_rate` (numeric), `under_rate` (numeric), `pace_tendency` (text: 'fast', 'neutral', 'slow'), `updated_at`
-- New table `ncaab_game_referees`: `id`, `game_date` (date), `home_team` (text), `away_team` (text), `referee_names` (jsonb), `expected_pace_impact` (numeric), `expected_total_adjustment` (numeric)
+**Fix approach**:
+- Scrape kenpom.com with `formats: ['extract']` using a structured schema to extract the table data reliably instead of regex parsing markdown
+- If extract fails, fall back to scraping barttorvik.com/rankings.php which has a cleaner table format
+- Log 5-10 raw lines from the markdown for the top teams so we can debug the exact format
+- Add robust column detection: identify which column indices contain AdjO (should be 95-130 range), AdjD (should be 85-115 range), and AdjT (should be 60-75 range) by checking value ranges instead of hardcoding positions
+- Add validation: reject any AdjD < 80 or AdjD > 120 as clearly wrong parsing
 
-**Scoring engine update**:
-- Before scoring totals, check `ncaab_game_referees` for the matchup
-- If refs trend high-foul (avg fouls > league avg + 2): OVER gets +6 bonus, UNDER gets -4
-- If refs trend low-foul (avg fouls < league avg - 2): UNDER gets +6 bonus, OVER gets -4
-- Add `referee_adjustment` to score breakdown so it's visible in reasoning pills
+## Fix 2: Derive ATS and O/U Records from Settled Game Data
 
----
+**File**: `supabase/functions/ncaab-team-stats-fetcher/index.ts` (modify)
 
-## Upgrade 3: NCAAB Venue Altitude and Travel Fatigue
+Instead of scraping ATS records (which ESPN doesn't publish cleanly), derive them from our own settled `game_bets` data:
+- Query all settled NCAAB spread bets from the last 30 days
+- For each team, count wins/losses against the spread
+- Write the derived ATS record (e.g., "12-8") back to `ncaab_team_stats.ats_record`
+- Same approach for O/U records from settled totals
+- This uses data we already have -- no new API calls needed
 
-**What**: Build a venue/location database for NCAAB teams and calculate travel fatigue for college basketball (currently only NBA has this).
+## Fix 3: Add Last-5-Games Columns + Populate
 
-**How**:
-- New table `ncaab_team_locations` with city, state, latitude, longitude, timezone, and altitude for every D1 program
-- Pre-populated with known high-altitude venues: Colorado (5,328 ft), Air Force (6,035 ft), BYU (4,551 ft), Utah (4,226 ft), Wyoming (7,220 ft), Nevada (4,505 ft), New Mexico (5,312 ft), Boise State (2,730 ft)
-- New edge function `ncaab-fatigue-calculator` mirrors the NBA fatigue calculator logic but adapted for college schedules (games every 2-3 days, conference travel patterns)
-- Calculates: travel distance between games, timezone crossings, altitude differential, back-to-back detection, 3-in-5-day detection
-- Stores results in new `ncaab_fatigue_scores` table
+**Database**: Add `last_5_ppg`, `last_5_oppg`, `streak`, `last_5_ats` columns to `ncaab_team_stats`
 
-**Database changes**:
-- New table `ncaab_team_locations`: `id`, `team_name` (text, unique), `city` (text), `state` (text), `latitude` (numeric), `longitude` (numeric), `timezone` (text), `altitude_feet` (integer), `conference` (text)
-- New table `ncaab_fatigue_scores`: `id`, `team_name` (text), `opponent` (text), `fatigue_score` (numeric), `fatigue_category` (text), `is_back_to_back` (boolean), `travel_miles` (numeric), `timezone_changes` (integer), `is_altitude_game` (boolean), `altitude_differential` (integer), `game_date` (date), `event_id` (text)
+**File**: `supabase/functions/ncaab-team-stats-fetcher/index.ts` (modify)
 
-**Scoring engine update**:
-- Load `ncaab_fatigue_scores` for today's date
-- If a team has fatigue score >= 30: penalize their side by -6 (spread/ML), boost UNDER by +5
-- If altitude differential > 3000 ft for visiting team: penalize visitor by -4, boost UNDER by +3
-- Cross-country travel (> 1500 miles): penalize by -3
-- Add `fatigue_penalty` and `altitude_impact` to score breakdown
+- Query the last 5 settled games per team from `game_bets` to calculate recent scoring averages
+- Write `last_5_ppg` and `last_5_oppg` to the team stats table
+- Scoring engine uses blended formula: `effectivePPG = (seasonPPG * 0.4) + (last5PPG * 0.6)`
 
----
+## Fix 4: Scoring Engine -- Use Recent Data + Fix Projections
 
-## Pipeline Integration
+**File**: `supabase/functions/team-bets-scoring-engine/index.ts`
 
-Add to `data-pipeline-orchestrator` Phase 1 (Data Collection), in this order:
-1. `ncaab-kenpom-scraper` (runs first to get real rankings)
-2. `ncaab-team-stats-fetcher` (existing, now supplements KenPom data with ESPN records)
-3. `ncaab-referee-scraper` (scrapes ref assignments for today's games)
-4. `ncaab-fatigue-calculator` (calculates travel/altitude for today's slate)
+- When KenPom AdjD is clearly wrong (< 80 or > 120), fall back to ESPN-derived values instead of using garbage data
+- Use `last_5_ppg`/`last_5_oppg` blended with season averages for totals projections
+- Add "cold team" penalty: if recent scoring is 10%+ below season average, penalize OVERs by -10
+- Add "hot team" bonus: if recent scoring is 10%+ above season average, boost OVERs by +5
 
-All four run before `team-bets-scoring-engine` so the scoring engine has fresh data from all three layers.
+## Fix 5: Expand NCAAB Name Map for Void Prevention
+
+**File**: `supabase/functions/team-bets-scoring-engine/index.ts`
+
+- Add 30+ additional team name variations (cross-reference recent void legs to find which names are failing)
+- Focus on small-conference teams that show up in today's slate (Northwestern St, Maryland-Eastern Shore, UT Rio Grande Valley, etc.)
+
+## Fix 6: Re-run Pipeline for Today
+
+After deploying fixes, trigger the pipeline with `mode: 'full'` to:
+- Re-scrape KenPom with fixed parser
+- Calculate fatigue for today's Feb 17 games
+- Re-score all 116 NCAAB bets with fresh data
+- Generate new parlays with correct intelligence
 
 ---
 
 ## Files Changed
 
-1. **NEW** `supabase/functions/ncaab-kenpom-scraper/index.ts` -- Scrapes real KenPom data via Firecrawl
-2. **NEW** `supabase/functions/ncaab-referee-scraper/index.ts` -- Scrapes referee assignments and tendencies
-3. **NEW** `supabase/functions/ncaab-fatigue-calculator/index.ts` -- Travel/altitude fatigue for NCAAB teams
-4. **MODIFY** `supabase/functions/team-bets-scoring-engine/index.ts` -- Add referee adjustment, fatigue/altitude penalties, use real KenPom efficiency numbers
-5. **MODIFY** `supabase/functions/data-pipeline-orchestrator/index.ts` -- Add 3 new functions to Phase 1
-6. **DATABASE** -- Add columns to `ncaab_team_stats`, create `ncaab_referee_data`, `ncaab_game_referees`, `ncaab_team_locations`, `ncaab_fatigue_scores`
+1. **MODIFY** `supabase/functions/ncaab-kenpom-scraper/index.ts` -- Fix parser to handle markdown links, validate AdjD ranges, add structured extraction fallback
+2. **MODIFY** `supabase/functions/ncaab-team-stats-fetcher/index.ts` -- Add ATS/OU derivation from settled bets, L5 scoring trends
+3. **MODIFY** `supabase/functions/team-bets-scoring-engine/index.ts` -- Validate KenPom values, use L5 data, expand name map, add cold/hot team logic
+4. **DATABASE** -- Add `last_5_ppg`, `last_5_oppg`, `streak`, `last_5_ats` columns to `ncaab_team_stats`
 
 ## Expected Impact
 
-| Data Layer | Current State | After Upgrade | Scoring Impact |
-|-----------|--------------|---------------|----------------|
-| KenPom Rankings | PPG-OPPG derived (Saint Louis #1) | Real adjusted efficiency (Auburn #1) | Every rank bonus correctly applied |
-| Referee Data | None | Foul/pace tendencies per ref crew | +/-6 pts on totals when refs trend strongly |
-| Venue/Travel | NBA only | Full D1 altitude + travel | -3 to -6 penalty on fatigued/altitude-disadvantaged teams |
-
+| Issue | Before | After |
+|-------|--------|-------|
+| KenPom coverage | 0 of top 28 teams | All 362 teams with validated efficiency |
+| ATS records | 0/362 teams | Derived from 30 days of settled bets |
+| Projected totals | Using raw PPG/OPPG | KenPom efficiency + L5 recent trends |
+| Void rate | 28% | Target under 10% with expanded name map |
+| Today's scoring | 76% scored | 100% with name map fixes |
