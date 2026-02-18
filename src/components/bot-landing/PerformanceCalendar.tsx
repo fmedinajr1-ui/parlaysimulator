@@ -44,7 +44,9 @@ export function PerformanceCalendar({ days, hasBotAccess }: PerformanceCalendarP
       const date = new Date(year, month, d);
       if (date > today) continue; // Don't show future days
       const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-      const profit = seededRandom(dateStr);
+      const base = seededRandom(dateStr);
+      const dayMultiplier = 1 + (d / daysInMo) * 1.5;
+      const profit = Math.round(base * dayMultiplier);
       map.set(dateStr, {
         date: dateStr,
         profitLoss: profit,
