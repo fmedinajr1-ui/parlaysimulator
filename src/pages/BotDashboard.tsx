@@ -12,6 +12,7 @@ import { LearningLogCard } from '@/components/bot/LearningLogCard';
 import { BotNotificationSettings } from '@/components/bot/BotNotificationSettings';
 import { BotActivityFeed } from '@/components/bot/BotActivityFeed';
 import { BotLearningAnalytics } from '@/components/bot/BotLearningAnalytics';
+import { ProfitAuditCard } from '@/components/bot/ProfitAuditCard';
 import { TierBreakdownCard } from '@/components/bot/TierBreakdownCard';
 import { ResearchSummaryCard } from '@/components/bot/ResearchSummaryCard';
 import { ResearchIntelligencePanel } from '@/components/admin/ResearchIntelligencePanel';
@@ -272,6 +273,7 @@ export default function BotDashboard() {
         {/* Analytics Tab */}
         <TabsContent value="analytics" className="space-y-4">
           <BotLearningAnalytics />
+          <ProfitAuditCard />
           <CategoryWeightsChart weights={state.categoryWeights} />
           <LearningLogCard weights={state.categoryWeights} />
           <BotActivityFeed />
