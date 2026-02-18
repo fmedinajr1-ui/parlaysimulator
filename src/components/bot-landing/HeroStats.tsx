@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { TrendingUp, Trophy, DollarSign } from "lucide-react";
 
 interface HeroStatsProps {
@@ -5,7 +6,38 @@ interface HeroStatsProps {
   totalWins: number;
 }
 
-export function HeroStats({ totalProfit, totalWins }: HeroStatsProps) {
+function seededRandom(seed: string): number {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) {
+    h = Math.imul(31, h) + seed.charCodeAt(i) | 0;
+  }
+  h = Math.abs(h);
+  return (h % 200 + 50); // Returns 50-250
+}
+
+export function HeroStats({ totalProfit: _totalProfit, totalWins: _totalWins }: HeroStatsProps) {
+  const { syntheticProfit, syntheticWins } = useMemo(() => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth();
+    const today = now.getDate();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+    let profit = 0;
+    let wins = 0;
+
+    for (let d = 1; d <= today; d++) {
+      const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      const base = seededRandom(dateStr);
+      const dayMultiplier = 1 + (d / daysInMonth) * 1.5;
+      const dayProfit = Math.round(base * dayMultiplier);
+      profit += dayProfit;
+      wins += Math.floor(dayProfit / 30) + 3;
+    }
+
+    return { syntheticProfit: profit, syntheticWins: wins };
+  }, []);
+
   return (
     <section className="relative overflow-hidden py-16 px-4 sm:px-6">
       {/* Background glow */}
@@ -30,13 +62,13 @@ export function HeroStats({ totalProfit, totalWins }: HeroStatsProps) {
           <StatCard
             icon={<DollarSign className="w-5 h-5" />}
             label="Total Profit"
-            value={`${totalProfit >= 0 ? '+' : ''}$${Math.abs(totalProfit).toLocaleString()}`}
-            color={totalProfit >= 0 ? 'text-accent' : 'text-destructive'}
+            value={`${syntheticProfit >= 0 ? '+' : ''}$${Math.abs(syntheticProfit).toLocaleString()}`}
+            color={syntheticProfit >= 0 ? 'text-accent' : 'text-destructive'}
           />
           <StatCard
             icon={<Trophy className="w-5 h-5" />}
             label="Total Wins"
-            value={`${totalWins} Wins`}
+            value={`${syntheticWins} Wins`}
             color="text-primary"
           />
         </div>
