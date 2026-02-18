@@ -4637,6 +4637,31 @@ Deno.serve(async (req) => {
     const action = body.action || 'generate';
     const targetDate = body.date || getEasternDateRange().gameDate;
 
+    // ============= LOAD DYNAMIC STAKE CONFIG =============
+    // Read stakes from bot_stake_config table so they can be updated without code deploys
+    const { data: stakeConfig } = await supabase
+      .from('bot_stake_config')
+      .select('*')
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (stakeConfig) {
+      TIER_CONFIG.execution.stake = stakeConfig.execution_stake ?? 300;
+      TIER_CONFIG.validation.stake = stakeConfig.validation_stake ?? 150;
+      TIER_CONFIG.exploration.stake = stakeConfig.exploration_stake ?? 50;
+      console.log(`[Bot v2] Loaded stake config: exec=$${stakeConfig.execution_stake}, val=$${stakeConfig.validation_stake}, expl=$${stakeConfig.exploration_stake}, block2leg=${stakeConfig.block_two_leg_parlays}`);
+      
+      // Block 2-leg parlays from execution tier if configured
+      if (stakeConfig.block_two_leg_parlays) {
+        TIER_CONFIG.execution.profiles = TIER_CONFIG.execution.profiles.filter(p => p.legs !== 2);
+        TIER_CONFIG.validation.profiles = TIER_CONFIG.validation.profiles.filter(p => p.legs !== 2);
+        console.log(`[Bot v2] 2-leg parlays BLOCKED from execution and validation tiers`);
+      }
+    } else {
+      console.log(`[Bot v2] No stake config found, using hardcoded TIER_CONFIG defaults`);
+    }
+
     // === ROUND ROBIN ACTION ===
     if (action === 'round_robin') {
       console.log(`[Bot v2] Round robin requested for ${targetDate}`);

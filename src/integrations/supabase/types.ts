@@ -1350,6 +1350,45 @@ export type Database = {
         }
         Relationships: []
       }
+      bot_stake_config: {
+        Row: {
+          bankroll_doubler_stake: number
+          block_two_leg_parlays: boolean | null
+          execution_stake: number
+          exploration_stake: number
+          id: string
+          max_daily_parlays_execution: number | null
+          max_daily_parlays_exploration: number | null
+          max_daily_parlays_validation: number | null
+          updated_at: string | null
+          validation_stake: number
+        }
+        Insert: {
+          bankroll_doubler_stake?: number
+          block_two_leg_parlays?: boolean | null
+          execution_stake?: number
+          exploration_stake?: number
+          id?: string
+          max_daily_parlays_execution?: number | null
+          max_daily_parlays_exploration?: number | null
+          max_daily_parlays_validation?: number | null
+          updated_at?: string | null
+          validation_stake?: number
+        }
+        Update: {
+          bankroll_doubler_stake?: number
+          block_two_leg_parlays?: boolean | null
+          execution_stake?: number
+          exploration_stake?: number
+          id?: string
+          max_daily_parlays_execution?: number | null
+          max_daily_parlays_exploration?: number | null
+          max_daily_parlays_validation?: number | null
+          updated_at?: string | null
+          validation_stake?: number
+        }
+        Relationships: []
+      }
       bot_strategies: {
         Row: {
           auto_generated: boolean | null

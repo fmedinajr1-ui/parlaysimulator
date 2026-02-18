@@ -32,6 +32,7 @@ const Offline = React.lazy(() => import("./pages/Offline"));
 const TeamBets = React.lazy(() => import("./pages/TeamBets"));
 const AdminLogin = React.lazy(() => import("./pages/AdminLogin"));
 const NotFound = React.lazy(() => import("./pages/NotFound"));
+const ProfitPlan = React.lazy(() => import("./pages/ProfitPlan"));
 
 // QueryClient with optimized defaults
 const queryClient = new QueryClient({
@@ -82,6 +83,7 @@ function AnimatedRoutes() {
               <Route path="/team-bets" element={<TeamBets />} />
               <Route path="/offline" element={<Offline />} />
               <Route path="/admin-login" element={<AdminLogin />} />
+              <Route path="/profit-plan" element={<ProfitPlan />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </React.Suspense>
