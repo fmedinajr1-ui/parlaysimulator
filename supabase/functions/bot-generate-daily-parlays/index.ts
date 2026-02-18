@@ -83,8 +83,8 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 4, strategy: 'explore_longshot', sports: ['all'] },
       { legs: 4, strategy: 'explore_longshot', sports: ['all'] },
       // NCAAB exploration — UNDERS ONLY (70.6% hit rate confirmed, overs/spreads blocked)
-      { legs: 3, strategy: 'ncaab_accuracy', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minHitRate: 60, sortBy: 'hit_rate' },
-      { legs: 3, strategy: 'ncaab_unders_probe', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minHitRate: 58, sortBy: 'composite' },
+      { legs: 3, strategy: 'ncaab_accuracy', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minHitRate: 60, sortBy: 'hit_rate', maxCategoryUsage: 3 },
+      { legs: 3, strategy: 'ncaab_unders_probe', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minHitRate: 58, sortBy: 'composite', maxCategoryUsage: 3 },
       // NCAA Baseball exploration — PAUSED (needs more data)
       // { legs: 3, strategy: 'baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'] },
       // { legs: 3, strategy: 'baseball_spreads', sports: ['baseball_ncaa'], betTypes: ['spread'] },
@@ -157,7 +157,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'validated_conservative', sports: ['basketball_nba'], minOddsValue: 45, minHitRate: 55 },
       { legs: 3, strategy: 'validated_conservative', sports: ['icehockey_nhl'], minOddsValue: 45, minHitRate: 55 },
       // NCAAB validation — UNDERS ONLY (70.6% hit rate, spreads/overs remain blocked)
-      { legs: 3, strategy: 'validated_ncaab_unders', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minOddsValue: 45, minHitRate: 62 },
+      { legs: 3, strategy: 'validated_ncaab_unders', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minOddsValue: 45, minHitRate: 62, maxCategoryUsage: 3 },
       // { legs: 3, strategy: 'validated_baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'], minOddsValue: 45, minHitRate: 55 }, // PAUSED
       { legs: 3, strategy: 'validated_balanced', sports: ['basketball_nba'], minOddsValue: 42, minHitRate: 55 },
       { legs: 3, strategy: 'validated_balanced', sports: ['basketball_nba', 'icehockey_nhl'], minOddsValue: 42, minHitRate: 55 },
@@ -211,7 +211,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // TEAM EXECUTION: Pure team props with high composite scores
       { legs: 3, strategy: 'team_exec', betTypes: ['moneyline', 'spread', 'total'], minHitRate: 55 },
       // NCAAB EXECUTION: UNDERS ONLY — 70.6% hit rate (12/17), replaces 1 NBA slot
-      { legs: 3, strategy: 'ncaab_unders_only', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minHitRate: 62, sortBy: 'hit_rate', useAltLines: false },
+      { legs: 3, strategy: 'ncaab_unders_only', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minHitRate: 62, sortBy: 'hit_rate', useAltLines: false, maxCategoryUsage: 3 },
       { legs: 3, strategy: 'nba_under_specialist', sports: ['basketball_nba'], minHitRate: 62, sortBy: 'hit_rate', useAltLines: false },
       { legs: 3, strategy: 'nba_3pt_focus', sports: ['basketball_nba'], minHitRate: 62, sortBy: 'hit_rate', useAltLines: false },
       { legs: 3, strategy: 'nba_mixed_cats', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite', useAltLines: false },
@@ -228,13 +228,16 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
 const BLOCKED_SPORTS = ['baseball_ncaa', 'golf_pga'];
 
 // ============= STALE ODDS DETECTION =============
-const STALE_ODDS_THRESHOLD_MS = 6 * 60 * 60 * 1000; // 6 hours
+const STALE_ODDS_THRESHOLD_MS = 6 * 60 * 60 * 1000; // 6 hours (NBA/NHL props)
+const STALE_ODDS_THRESHOLD_GAME_DAY_MS = 24 * 60 * 60 * 1000; // 24 hours (NCAAB game-day totals — odds set morning, valid all day)
 
-function isStaleOdds(updatedAt: string | null | undefined): boolean {
+function isStaleOdds(updatedAt: string | null | undefined, sport?: string | null): boolean {
   if (!updatedAt) return true; // No timestamp = stale
   const updatedTime = new Date(updatedAt).getTime();
   const now = Date.now();
-  return (now - updatedTime) > STALE_ODDS_THRESHOLD_MS;
+  // NCAAB game-day odds are set in the morning and remain valid all day
+  const threshold = (sport === 'basketball_ncaab') ? STALE_ODDS_THRESHOLD_GAME_DAY_MS : STALE_ODDS_THRESHOLD_MS;
+  return (now - updatedTime) > threshold;
 }
 
 // ============= SPORT-SHIFT WEIGHTING =============
@@ -435,6 +438,8 @@ interface TeamProp {
   over_odds?: number;
   under_odds?: number;
   sharp_score?: number;
+  composite_score?: number | null; // Pre-computed by dedicated scorer (e.g. NCAAB KenPom-based scorer)
+  recommended_side?: string | null; // 'OVER' | 'UNDER' | null
   commence_time: string;
   updated_at?: string;
 }
@@ -2573,15 +2578,15 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   const allTeamProps = Array.from(seenGameBets.values());
 
   // === STALE ODDS FILTER ===
-  const staleCount = allTeamProps.filter(tp => isStaleOdds(tp.updated_at)).length;
+  const staleCount = allTeamProps.filter(tp => isStaleOdds(tp.updated_at, tp.sport)).length;
   const teamProps = allTeamProps.filter(tp => {
-    if (isStaleOdds(tp.updated_at)) {
-      return false; // Skip picks with odds data > 6 hours old
+    if (isStaleOdds(tp.updated_at, tp.sport)) {
+      return false; // Skip picks with odds data beyond threshold (6h NBA/NHL, 24h NCAAB)
     }
     return true;
   });
   if (staleCount > 0) {
-    console.log(`[StaleOdds] Filtered out ${staleCount} team props with odds data > 6 hours old`);
+    console.log(`[StaleOdds] Filtered out ${staleCount} team props with stale odds (>6h NBA/NHL, >24h NCAAB)`);
   }
 
   // === SPORT-SHIFT WEIGHTING ===
@@ -2969,26 +2974,43 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
         console.log(`[Bot] Value discrepancy UNDER boost for ${game.home_team} vs ${game.away_team}`);
       }
 
+      // Calculate under score up front (needed below for effective score logic)
+      const { score: underScore, breakdown: underBreakdown } = calculateTeamCompositeScore(gameForScoring, 'total', 'under', paceMap, defenseMap, envMap, homeCourtMap, ncaabStatsMap, nhlStatsMap, baseballStatsMap);
+      const underPlusBonus = isPlusMoney(game.under_odds) ? 5 : 0;
+
+      // For NCAAB totals: prefer the pre-computed composite_score from the DB (KenPom-based scorer)
+      // over the re-calculated score which lacks NCAAB intelligence data.
+      // The DB recommended_side tells us which side the dedicated scorer favors.
+      const isNcaabTotal = game.sport === 'basketball_ncaab' && game.bet_type === 'total';
+      const dbScore = game.composite_score ?? null;
+      const dbFavorsUnder = game.recommended_side?.toUpperCase() === 'UNDER';
+      const dbFavorsOver = game.recommended_side?.toUpperCase() === 'OVER';
+
+      const effectiveOverScore = (isNcaabTotal && dbScore !== null)
+        ? (dbFavorsOver ? dbScore : Math.max(30, dbScore - 20)) // penalize the non-recommended side
+        : (overScore ?? 50);
+      const effectiveUnderScore = (isNcaabTotal && dbScore !== null)
+        ? (dbFavorsUnder ? dbScore : Math.max(30, dbScore - 20))
+        : (underScore ?? 50);
+
       picks.push({
         id: `${game.id}_total_over`,
         type: 'team', sport: game.sport, home_team: game.home_team, away_team: game.away_team,
         bet_type: 'total', side: 'over', line: game.line || 0, odds: game.over_odds,
         category: mapTeamBetToCategory('total', 'over'),
         sharp_score: game.sharp_score || 50,
-        compositeScore: clampScore(30, 95, (overScore ?? 50) + overPlusBonus + overWeatherBonus),
-        confidence_score: overScore / 100,
+        compositeScore: clampScore(30, 95, effectiveOverScore + overPlusBonus + overWeatherBonus),
+        confidence_score: effectiveOverScore / 100,
         score_breakdown: overBreakdown,
       });
-      const { score: underScore, breakdown: underBreakdown } = calculateTeamCompositeScore(gameForScoring, 'total', 'under', paceMap, defenseMap, envMap, homeCourtMap, ncaabStatsMap, nhlStatsMap, baseballStatsMap);
-      const underPlusBonus = isPlusMoney(game.under_odds) ? 5 : 0;
       picks.push({
         id: `${game.id}_total_under`,
         type: 'team', sport: game.sport, home_team: game.home_team, away_team: game.away_team,
         bet_type: 'total', side: 'under', line: game.line || 0, odds: game.under_odds,
         category: mapTeamBetToCategory('total', 'under'),
         sharp_score: game.sharp_score || 50,
-        compositeScore: clampScore(30, 95, (underScore ?? 50) + underPlusBonus + underWeatherBonus),
-        confidence_score: underScore / 100,
+        compositeScore: clampScore(30, 95, effectiveUnderScore + underPlusBonus + underWeatherBonus),
+        confidence_score: effectiveUnderScore / 100,
         score_breakdown: underBreakdown,
       });
     }
@@ -3060,11 +3082,20 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   }
 
   // === DYNAMIC CATEGORY BLOCKING FOR TEAM PICKS ===
-  // Build blocked combos from category weights (category_side with <40% hit rate and 10+ picks)
-  const blockedTeamCombos = new Set<string>();
+  // Build blocked combos from category weights (category_side + sport, <40% hit rate and 10+ picks)
+  // Also build an exemptions map: if a sport has its OWN entry with hit_rate >= 40, it overrides the team_all block
+  const blockedTeamCombos = new Set<string>(); // "SPORT|CATEGORY_SIDE" or "team_all|CATEGORY_SIDE"
+  const sportExemptions = new Set<string>(); // "SPORT|CATEGORY_SIDE" keys where sport-specific hit rate >= 40
+
   categoryWeights.forEach(cw => {
+    const sportKey = cw.sport || 'team_all';
+    const comboKey = `${cw.category}_${cw.side}`;
+    const fullKey = `${sportKey}|${comboKey}`;
     if (cw.current_hit_rate < 40 && (cw.total_picks || 0) >= 10) {
-      blockedTeamCombos.add(`${cw.category}_${cw.side}`);
+      blockedTeamCombos.add(fullKey);
+    } else if (cw.current_hit_rate >= 40 && sportKey !== 'team_all') {
+      // This sport has a healthy hit rate — exempt it from any team_all block
+      sportExemptions.add(fullKey);
     }
   });
   if (blockedTeamCombos.size > 0) {
@@ -3085,10 +3116,14 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       return false;
     }
 
-    // === FIX 5: Dynamic category blocking from bot_category_weights ===
+    // === FIX 5: Dynamic category blocking from bot_category_weights (sport-scoped, with exemptions) ===
+    // If the pick's sport has a healthy sport-specific hit rate, it overrides any team_all block
     const pickComboKey = `${pick.category}_${pick.side}`;
-    if (blockedTeamCombos.has(pickComboKey)) {
-      mlBlocked.push(`${pick.home_team} vs ${pick.away_team} ${pick.category}_${pick.side} BLOCKED (dynamic: <40% hit rate)`);
+    const sportScopedKey = `${pick.sport}|${pickComboKey}`;
+    const teamAllKey = `team_all|${pickComboKey}`;
+    const isExempted = sportExemptions.has(sportScopedKey); // sport-specific good rate overrides team_all block
+    if (!isExempted && (blockedTeamCombos.has(sportScopedKey) || blockedTeamCombos.has(teamAllKey))) {
+      mlBlocked.push(`${pick.home_team} vs ${pick.away_team} ${pickComboKey} BLOCKED (dynamic: <40% hit rate for ${pick.sport})`);
       return false;
     }
 
@@ -3168,8 +3203,9 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
 
     // NCAAB Quality Gate: block obscure matchups to avoid unsettleable voids
     // Dynamic rank cutoff: widen to 300 on light-slate days so mid-major games qualify
+    // Skip rank gate entirely for NCAAB totals — the pre-scored composite_score already encodes team quality
     const RANK_CUTOFF = isLightSlateMode ? 300 : 200;
-    if (isNCAAB && ncaabStatsMap && ncaabStatsMap.size > 0) {
+    if (isNCAAB && ncaabStatsMap && ncaabStatsMap.size > 0 && pick.bet_type !== 'total') {
       const homeStats = ncaabStatsMap.get(pick.home_team);
       const awayStats = ncaabStatsMap.get(pick.away_team);
       const homeRank = homeStats?.kenpom_rank || 999;
