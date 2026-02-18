@@ -4274,8 +4274,9 @@ function generateMonsterParlays(
 
   // 2. Big-slate gate: need 15+ quality candidates across 2+ sports
   const activeSports = new Set(qualityCandidates.map(c => c.sport || 'basketball_nba'));
-  if (qualityCandidates.length < 15 || activeSports.size < 2) {
-    console.log(`[Bot v2] 🔥 MONSTER PARLAY: Skipped (${qualityCandidates.length} candidates, ${activeSports.size} sports — need 15+ candidates, 2+ sports)`);
+  const monsterMinCandidates = activeSports.size >= 3 ? 15 : 10;
+  if (qualityCandidates.length < monsterMinCandidates || activeSports.size < 2) {
+    console.log(`[Bot v2] 🔥 MONSTER PARLAY: Skipped (${qualityCandidates.length} candidates, ${activeSports.size} sports — need ${monsterMinCandidates}+ candidates, 2+ sports)`);
     return [];
   }
 
@@ -5025,7 +5026,7 @@ Deno.serve(async (req) => {
     }
 
     // === 2-LEG MINI-PARLAY HYBRID FALLBACK ===
-    if (allParlays.length < 12) {
+    if (allParlays.length < 6) {
       console.log(`[Bot v2] 🔗 MINI-PARLAY FALLBACK: Only ${allParlays.length} parlays. Attempting 2-leg mini-parlays.`);
 
       // Build candidate pool (same merge + dedup as singles)
@@ -5079,7 +5080,12 @@ Deno.serve(async (req) => {
 
           return true;
         })
-        .sort((a, b) => (b.compositeScore || 0) - (a.compositeScore || 0));
+        .sort((a, b) => {
+          const hrA = ((a.confidence_score || a.l10_hit_rate || 0) * 100);
+          const hrB = ((b.confidence_score || b.l10_hit_rate || 0) * 100);
+          if (hrB !== hrA) return hrB - hrA; // Hit-rate first
+          return (b.compositeScore || 0) - (a.compositeScore || 0); // Then composite
+        });
 
       console.log(`[Bot v2] Mini-parlay candidate pool: ${miniCandidates.length}`);
 
@@ -5116,7 +5122,7 @@ Deno.serve(async (req) => {
 
       const miniParlays: MiniParlay[] = [];
       const usedMiniKeys = new Set<string>();
-      const MAX_MINI_PARLAYS = isLightSlateMode ? 24 : 16;
+      const MAX_MINI_PARLAYS = isLightSlateMode ? 10 : 6;
 
       for (let i = 0; i < miniCandidates.length && miniParlays.length < MAX_MINI_PARLAYS * 3; i++) {
         for (let j = i + 1; j < miniCandidates.length && miniParlays.length < MAX_MINI_PARLAYS * 3; j++) {
