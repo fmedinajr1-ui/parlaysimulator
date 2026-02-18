@@ -1,112 +1,98 @@
 
-# Restore NCAAB Total Unders — Surgical Block Instead of Full Ban
+# Verification Report + Cleanup Plan
 
-## What the Data Actually Shows
+## What the Test Revealed
 
-The database `bot_category_weights` table reveals a critical distinction that was missed in the blanket NCAAB ban:
+### Run History Today
 
-| NCAAB Category | Hit Rate | Bayesian Rate | Status |
+| Time (UTC) | Run | Execution NCAAB Legs | Status |
 |---|---|---|---|
-| UNDER_TOTAL (unders) | **70.6%** (12/17) | 59.46% | NOT blocked, weight 1.20 |
-| OVER_TOTAL (overs) | 29.4% (5/17) | 40.54% | Auto-blocked ✅ |
-| Spread / Moneyline | All voiding | — | Need to block |
+| 10:03 | Pre-fix | 0 NCAAB legs | Pure NBA only |
+| 12:00 | Pre-fix | 0 NCAAB legs | Pure NBA only |
+| 13:02 | Pre-fix (before new deploy) | 2 NCAAB SPREAD legs in execution | BAD — old code |
+| 14:55 | After new deploy | Pool = 1, 0 generated | Code is clean |
 
-The full NCAAB ban we just deployed throws away the **best-performing team total category in the entire bot**. NCAAB unders are hitting at 70.6% — higher than any NBA category currently.
+### The Code Fix Is Working
 
-The problem was never "NCAAB unders". The problem was NCAAB spreads, overs, and moneylines that generate void settlements.
+The 14:55 UTC run log confirms:
+- `"Blocked NCAAB player props"` — player prop block active
+- ML Sniper log: `"NCAAB OVER total BLOCKED (31% hit rate)"` — overs blocked
+- NCAAB under totals with composite < 40% also correctly blocked by dynamic floor
+- NCAAB unders that clear the floor (Furman UNDER composite 93, Georgetown UNDER composite 62) are sitting in the game_bets pool, ready to be used when the parlay pool is large enough
 
-## What Needs to Change
+### NCAAB Unders Available Tonight
 
-### Change 1 — Add one targeted NCAAB unders-only execution profile back
+The following NCAAB under totals are live in the system today (games tip tonight):
 
-In `supabase/functions/bot-generate-daily-parlays/index.ts`, add back a **single** NCAAB execution profile that is strictly limited to totals/under side only:
+| Matchup | Bet Type | Side | Composite | Sharp Score |
+|---|---|---|---|---|
+| Furman vs East Tennessee St | total | UNDER | 93 | 65 |
+| Holy Cross vs Lafayette | total | UNDER | 73 | 50 |
+| Georgetown vs Butler | total | UNDER | 62 | 50 |
+| Penn State vs Rutgers | total | UNDER | 60 | 55 |
 
-```typescript
-// ADD back to execution.profiles — NCAAB unders only, NOT spreads or overs:
-{ 
-  legs: 3, 
-  strategy: 'ncaab_unders_only', 
-  sports: ['basketball_ncaab'], 
-  betTypes: ['total'], 
-  side: 'under',           // <-- under side only
-  minHitRate: 62,          // floor above the 59.46% bayesian rate
-  sortBy: 'hit_rate', 
-  useAltLines: false 
-},
+These are exactly the NCAAB unders profile targets — they will enter the `ncaab_unders_only` execution profile when NBA player prop pool expands.
+
+### The One Remaining Problem
+
+Two execution-tier parlays from the 13:02 run (created before the fix deployed) still have NCAAB **spread** legs:
+- `James Madison @ Coastal Carolina — SPREAD, side: home` — should never be in execution
+- `East Tennessee St @ Furman Paladins — SPREAD, side: home` — should never be in execution
+
+These are stale pre-fix data. They need to be deleted.
+
+### Why There Are No 3-Leg NBA Parlays Yet
+
+The NBA is completely dark today — no games, only 1 player prop in the pool (minimum is 12). The 3-leg NBA execution profiles and NCAAB unders profiles will activate Thursday when the NBA slate returns. Today's parlays are all from the mini-parlay fallback running on a thin prop pool.
+
+## The Fix Plan
+
+### Action 1 — Delete the 2 stale NCAAB spread execution parlays (SQL migration)
+
+Delete the 2 execution-tier parlays from 13:02 UTC that contain NCAAB spread legs — these were created before the fix deployed and are the only remaining bad data:
+
+```sql
+DELETE FROM bot_daily_parlays
+WHERE parlay_date = CURRENT_DATE
+  AND tier = 'execution'
+  AND created_at >= '2026-02-18 13:00:00+00'
+  AND created_at < '2026-02-18 13:10:00+00'
+  AND EXISTS (
+    SELECT 1 FROM jsonb_array_elements(legs) AS leg
+    WHERE leg->>'sport' = 'basketball_ncaab'
+      AND leg->>'prop_type' = 'spread'
+  );
 ```
 
-This is one profile replacing one of the 5 NBA profiles added — keeping total NBA profile count at 9 (the original 5 core + 4 new NBA profiles + 1 NCAAB under-only).
+This is a targeted surgical delete — only removes parlays that have NCAAB spread legs in the 13:02 batch.
 
-### Change 2 — Add NCAAB unders back to validation tier (1 profile only)
+### Action 2 — Also clean up all pre-fix execution mini-parlays from 10:03 and 12:00 that are 2-leg combos
 
-Similarly restore one NCAAB under-only profile to validation:
+The 10:03 and 12:00 runs also produced 2-leg execution mini-parlays (cap should now be 0). These are all pure NBA but still violate the new rule that execution tier never gets 2-leg mini-parlays:
 
-```typescript
-// ADD back to validation.profiles — 1 profile, under side only:
-{ 
-  legs: 3, 
-  strategy: 'validated_ncaab_unders', 
-  sports: ['basketball_ncaab'], 
-  betTypes: ['total'], 
-  side: 'under',           // <-- under side only
-  minOddsValue: 45, 
-  minHitRate: 62 
-},
+```sql
+DELETE FROM bot_daily_parlays
+WHERE parlay_date = CURRENT_DATE
+  AND tier = 'execution'
+  AND leg_count = 2
+  AND strategy_name = 'premium_boost_execution_mini_parlay';
 ```
 
-### Change 3 — Add NCAAB under side filter in the mini-parlay leg builder
+This removes all 9 execution-tier 2-leg mini-parlays regardless of sport, since the new rule is zero 2-leg minis in execution.
 
-The mini-parlay fallback picks team game bets from a pool. NCAAB unders should be allowed there but NCAAB overs and spreads should not. In the mini-parlay leg filter added previously:
+## Expected State After Cleanup
 
-```typescript
-// Current (blocks ALL NCAAB):
-const eligibleMiniLegs = allTeamPicks.filter(pick => 
-  pick.sport !== 'basketball_ncaab' && pick.sport !== 'baseball_ncaa'
-);
+| Tier | Parlays Remaining | Leg Count | Strategy |
+|---|---|---|---|
+| execution | 0 (all deleted, fresh start for Thursday) | — | — |
+| validation | 15 | 2-leg | mini_parlay at $50 |
+| exploration | 29 | 2-3 leg | mixed at $20-25 |
 
-// Replace with (only blocks NCAAB overs + spreads):
-const eligibleMiniLegs = allTeamPicks.filter(pick => {
-  if (pick.sport === 'basketball_ncaab') {
-    // Only allow NCAAB unders (total, under side) — no spreads, no overs
-    return pick.bet_type === 'total' && pick.side === 'under';
-  }
-  if (pick.sport === 'baseball_ncaa') return false;
-  return true;
-});
-```
-
-### Change 4 — Keep NCAAB unders in exploration (restore 2 profiles)
-
-In the exploration tier, restore the NCAAB under profiles that were trimmed. These are low-stake test runs that confirm the under edge is consistent:
-
-```typescript
-// ADD back to exploration.profiles:
-{ legs: 3, strategy: 'ncaab_accuracy', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minHitRate: 60, sortBy: 'hit_rate' },
-{ legs: 3, strategy: 'ncaab_unders_probe', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minHitRate: 58, sortBy: 'composite' },
-```
+Thursday's NBA game night will be the real end-to-end test:
+- 3-leg NBA execution parlays using Embiid (84% hit rate), THREE_POINT_SHOOTER (96%) 
+- NCAAB unders execution parlays using tonight's Furman UNDER (composite 93), Georgetown UNDER (composite 62)
+- Zero 2-leg mini-parlays in execution tier
 
 ## Files to Change
 
-**1 file: `supabase/functions/bot-generate-daily-parlays/index.ts`**
-
-- Execution profiles: Add 1 NCAAB under-only profile back (replaces 1 of the 5 added NBA profiles, leaving 4 new NBA + original 5 + 1 NCAAB under)
-- Validation profiles: Restore 1 NCAAB under-only profile  
-- Exploration profiles: Restore 2 NCAAB under-only profiles (trimmed too aggressively)
-- Mini-parlay leg filter: Change from `sport !== 'basketball_ncaab'` to allow NCAAB under totals only
-
-Redeploy the edge function after changes.
-
-## Why This Is the Right Call
-
-The `bot_category_weights` auto-calibrator already blocked NCAAB overs (29.4% → auto-blocked). The system correctly identified the bad half of NCAAB. The human intervention (blanket ban) was too broad — it removed a 70.6% hit-rate category from the engine.
-
-Keeping NCAAB unders in execution at $100 with a 70.6% hit rate is correct bankroll deployment. Removing them was leaving money on the table.
-
-## Expected Outcome
-
-| Category | Before Fix | After Fix |
-|---|---|---|
-| NCAAB unders (70.6% hit rate) | Blocked | Active in execution, validation, exploration |
-| NCAAB overs (29.4% hit rate) | Auto-blocked by calibrator | Remains blocked by calibrator |
-| NCAAB spreads/moneylines (voids) | Blocked | Remain blocked |
-| NBA 3-leg parlays | 4 new profiles | Still 4 new NBA profiles (one swapped for NCAAB under) |
+One SQL migration only — no code changes needed. The code fix is already deployed and verified working.
