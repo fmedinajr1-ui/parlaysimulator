@@ -1,105 +1,112 @@
 
-## Add Stake Size to Each Parlay Card
+# Two Bugs Found: Single-Pick Flood + Telegram Fake Stakes
 
-### What's Happening Now
+## Root Cause 1: Single-Pick Fallback Has Wrong Threshold
 
-The `BotParlayCard` already receives `parlay.simulated_stake` from the database. It's displayed as a small muted number in the header row: `$25` in grey, sandwiched between edge % and profit/loss text. It's easy to miss and doesn't communicate "this is what you should bet."
-
-**Current layout (compressed, hard to read):**
-```
-[Pending] 3L · Feb 18 2:44 PM  +27.3%  $50  → (nothing yet)
-```
-
-### What's in the Database
-
-Today's stakes from `bot_stake_config`:
-- **Execution** tier → **$300** per parlay
-- **Validation** tier → **$150** per parlay
-- **Exploration** tier → **$50** per parlay
-- **Bankroll Doubler** → **$25** per parlay (round robin)
-- Mini-parlays → **$50** (validation mini), **$25** (exploration mini), **$20** (exploration 3-leg)
-
-### The Fix: Make Stake Prominent on Every Card
-
-**File: `src/components/bot/BotParlayCard.tsx`**
-
-Three visual changes:
-
-**1. Prominent stake badge in the card header**
-
-Replace the current muted `$50` span with a styled, clearly labeled "Bet" badge using a `DollarSign` icon so it reads as an action item rather than metadata:
-
-```tsx
-// BEFORE (line 99):
-<span className="text-muted-foreground">${parlay.simulated_stake || 10}</span>
-
-// AFTER:
-<span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-primary/15 text-primary text-xs font-bold border border-primary/30">
-  <DollarSign className="w-3 h-3" />
-  {parlay.simulated_stake || 10}
-</span>
-```
-
-**2. Stake + potential payout summary row in the expanded detail section**
-
-When the card is expanded, show a dedicated "Stake Plan" row that shows:
-- **Bet**: `$50`
-- **To Win**: `$400` (calculated from `simulated_payout`)
-- **Kelly Tier**: `Exploration` (derived from `tier` field)
-
-This goes just above the legs list in the `CollapsibleContent`:
-
-```tsx
-<div className="flex items-center justify-between py-2 px-2.5 rounded bg-primary/10 border border-primary/20 text-xs mb-2">
-  <div className="flex items-center gap-1.5 text-primary font-semibold">
-    <DollarSign className="w-3.5 h-3.5" />
-    <span>Bet ${parlay.simulated_stake || 10}</span>
-  </div>
-  <div className="flex items-center gap-3 text-muted-foreground">
-    <span>To win <span className="text-green-400 font-semibold">${(parlay.simulated_payout || 0).toFixed(0)}</span></span>
-    <span className="capitalize">{parlay.tier || 'explore'} tier</span>
-  </div>
-</div>
-```
-
-**3. Add `tier` to the `BotParlay` type**
-
-The `BotParlay` interface in `useBotEngine.ts` doesn't currently include `tier`. The database has it. Add it:
+The approved fix lowered the **mini-parlay** gate from `< 12` to `< 6` (line 5029). But there is a **separate gate** on line 5314 for single-leg straight bets:
 
 ```ts
-// In BotParlay interface (line ~50):
-tier?: string;
+// Line 5314 — NOT changed in last deploy
+if (allParlays.length < 10) {
+  // generates 1-leg picks
+}
 ```
 
-This lets the card display `Execution`, `Validation`, or `Exploration` next to the stake so the user immediately knows the confidence level behind the bet size.
+Today's 5:45 PM run generated **5 standard parlays**. Since 5 < 6, mini-parlays were (correctly) skipped. But since 5 < 10, the **single-pick fallback fired** and added 5 more 1-leg bets. That is every parlay in the Telegram screenshot showing `(1-leg)`.
+
+**Fix:** Change the single-pick fallback threshold from `< 10` to `< 3` — same philosophy as the mini-parlay fix. Single-leg straight bets should only exist on catastrophically thin slates (fewer than 3 parlays total), not as padding whenever the board sits at 5-9 standard parlays.
 
 ---
 
-### Visual Result
+## Root Cause 2: Telegram Shows `$0 stake` — Hardcoded Labels
 
-**Collapsed card** — stake appears as a green-tinted pill badge that stands out:
-```
-[Pending] 3L · Feb 18  +27.3%  [$50]  → (pending)
+In `supabase/functions/telegram-webhook/index.ts` lines 562-566, the tier stake labels are **hardcoded strings** that ignore the actual `simulated_stake` value stored on each parlay:
+
+```ts
+// CURRENT — always shows $0 stake regardless of real stake
+const tierStakes: Record<string, string> = {
+  exploration: '$0 stake',       // ← hardcoded
+  validation: 'simulated',       // ← hardcoded
+  execution: 'Kelly stakes',     // ← hardcoded
+};
 ```
 
-**Expanded card** — a dedicated "Stake Plan" bar shows before the legs:
-```
-┌─────────────────────────────────────────────┐
-│  $ Bet $50              To win $387   Explore│
-├─────────────────────────────────────────────┤
-│  LeBron James  Points OVER 25.5     -115    │
-│  ...                                        │
-└─────────────────────────────────────────────┘
+The database already has the correct stake on every parlay (`simulated_stake: 25`, `50`, `300`, etc.). The formatter just never reads it.
+
+**Fix:** Replace the hardcoded `tierStakes` label with a dynamic calculation that reads the actual `simulated_stake` from the parlays in the group. The tier header will show the real dollar amount from the database:
+
+```ts
+// NEW — reads actual stake from the first parlay in the group
+const tierStake = group[0]?.simulated_stake ? `$${group[0].simulated_stake} stake` : 'simulated';
 ```
 
 ---
 
-### Files Changed
+## What Each Change Fixes
 
-**1. `src/hooks/useBotEngine.ts`** — Add `tier?: string` to `BotParlay` interface (1 line)
+| Issue | File | Change |
+|---|---|---|
+| 1-leg parlays appearing | `bot-generate-daily-parlays/index.ts` line 5314 | `< 10` → `< 3` |
+| `$0 stake` in Telegram | `telegram-webhook/index.ts` lines 562-566 | Replace hardcoded labels with real `simulated_stake` from DB |
 
-**2. `src/components/bot/BotParlayCard.tsx`** — Two UI changes:
-   - Replace muted stake span in the header with a styled pill badge
-   - Add stake/payout summary row inside the expanded collapsible content
+---
 
-No database changes, no new dependencies, no new components needed.
+## Technical Details
+
+### File 1: `supabase/functions/bot-generate-daily-parlays/index.ts`
+
+**Line 5314** — single-pick fallback gate:
+```ts
+// BEFORE:
+if (allParlays.length < 10) {
+
+// AFTER:
+if (allParlays.length < 3) {
+```
+
+This means single-leg bets only generate when the bot has produced literally 0, 1, or 2 real parlays — a true emergency. Any slate that produces 3+ standard parlays will skip single picks entirely.
+
+### File 2: `supabase/functions/telegram-webhook/index.ts`
+
+**Lines 562-574** — replace hardcoded `tierStakes` block:
+```ts
+// BEFORE:
+const tierStakes: Record<string, string> = {
+  exploration: '$0 stake',
+  validation: 'simulated',
+  execution: 'Kelly stakes',
+};
+// ...
+message += `${tierLabels[tier]} (${group.length}) — _${tierStakes[tier]}_\n\n`;
+
+// AFTER:
+// (remove tierStakes object entirely)
+// In the loop:
+const tierStake = group[0]?.simulated_stake
+  ? `$${group[0].simulated_stake} stake`
+  : 'simulated';
+message += `${tierLabels[tier]} (${group.length}) — _${tierStake}_\n\n`;
+```
+
+Both functions are redeployed automatically after changes.
+
+---
+
+## What Telegram Will Look Like After Fix
+
+```
+🎯🔥 TODAY'S PARLAYS 🔥🎯
+
+💰 Execution (3) — $300 stake
+
+  1. 🎲 (3-leg) +750 ⏳
+     📊 Take UConn -15.5 (-115)
+     📊 LeBron O25.5 pts (-110)
+     ...
+
+✅ Validation (5) — $150 stake
+
+🔬 Exploration (4) — $50 stake
+```
+
+No more `$0 stake` or 1-leg entries filling the board.
