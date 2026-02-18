@@ -12,7 +12,12 @@ const logStep = (step: string, details?: any) => {
   console.log(`[CHECK-SUBSCRIPTION] ${step}${detailsStr}`);
 };
 
-const BOT_PRO_PRICE_ID = "price_1T1HU99D6r1PTCBBLQaWi80Z";
+const BOT_PRICE_IDS: Record<string, 'entry' | 'pro' | 'ultimate'> = {
+  "price_1T1HU99D6r1PTCBBLQaWi80Z": "entry",
+  "price_1T2D1i9D6r1PTCBBSlceNbTR": "entry",
+  "price_1T2D4I9D6r1PTCBB3kngnoRk": "pro",
+  "price_1T2DD99D6r1PTCBBpcsPloWj": "ultimate",
+};
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -136,9 +141,16 @@ serve(async (req) => {
         subscriptionEnd = new Date(subscriptions.data[0].current_period_end * 1000).toISOString();
         logStep("Active subscription found", { subscriptionEnd });
         
-        hasBotProSubscription = subscriptions.data.some((sub: any) => 
-          sub.items.data.some((item: any) => item.price.id === BOT_PRO_PRICE_ID)
-        );
+        // Check if any active subscription belongs to a bot price
+        for (const sub of subscriptions.data) {
+          for (const item of sub.items.data) {
+            if (BOT_PRICE_IDS[item.price.id]) {
+              hasBotProSubscription = true;
+              break;
+            }
+          }
+          if (hasBotProSubscription) break;
+        }
         
         // Update local subscription record
         await supabaseClient.from('subscriptions').upsert({
@@ -152,6 +164,25 @@ serve(async (req) => {
       }
     }
 
+    // Detect bot tier from active subscription price IDs
+    let botTier: string | null = null;
+    if (hasBotProSubscription && customers.data.length > 0) {
+      const activeSubs = await stripe.subscriptions.list({
+        customer: customers.data[0].id,
+        status: "active",
+        limit: 10,
+      });
+      for (const sub of activeSubs.data) {
+        for (const item of sub.items.data) {
+          if (BOT_PRICE_IDS[item.price.id]) {
+            botTier = BOT_PRICE_IDS[item.price.id];
+            break;
+          }
+        }
+        if (botTier) break;
+      }
+    }
+
     // If subscribed, full access to everything
     if (isSubscribed) {
       return new Response(JSON.stringify({
@@ -162,6 +193,7 @@ serve(async (req) => {
         scansRemaining: -1,
         subscriptionEnd,
         hasBotAccess: hasBotProSubscription || isAdmin,
+        botTier,
         phoneVerified,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },

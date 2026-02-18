@@ -11,6 +11,7 @@ interface SubscriptionState {
   scansRemaining: number;
   subscriptionEnd: string | null;
   hasBotAccess: boolean;
+  botTier: 'entry' | 'pro' | 'ultimate' | null;
 }
 
 export function useSubscription() {
@@ -23,6 +24,7 @@ export function useSubscription() {
     scansRemaining: 3,
     subscriptionEnd: null,
     hasBotAccess: false,
+    botTier: null,
   });
 
   const checkSubscription = useCallback(async () => {
@@ -35,6 +37,7 @@ export function useSubscription() {
         scansRemaining: 3,
         subscriptionEnd: null,
         hasBotAccess: false,
+        botTier: null,
       });
       return;
     }
@@ -56,6 +59,7 @@ export function useSubscription() {
         scansRemaining: data.scansRemaining ?? 3,
         subscriptionEnd: data.subscriptionEnd || null,
         hasBotAccess: data.hasBotAccess || false,
+        botTier: data.botTier || null,
       });
     } catch (err) {
       console.error('Error checking subscription:', err);

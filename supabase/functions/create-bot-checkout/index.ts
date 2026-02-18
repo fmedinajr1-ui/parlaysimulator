@@ -6,7 +6,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const BOT_PRO_PRICE_ID = "price_1T1HU99D6r1PTCBBLQaWi80Z";
+const DEFAULT_PRICE_ID = "price_1T1HU99D6r1PTCBBLQaWi80Z";
 const TELEGRAM_BOT_URL = "https://t.me/parlayiqbot";
 
 serve(async (req) => {
@@ -15,10 +15,12 @@ serve(async (req) => {
   }
 
   try {
-    const { email } = await req.json();
+    const { email, priceId } = await req.json();
     if (!email || !email.includes("@")) {
       throw new Error("A valid email is required");
     }
+
+    const resolvedPriceId = priceId || DEFAULT_PRICE_ID;
 
     const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY") || "", {
       apiVersion: "2025-08-27.basil",
@@ -33,11 +35,8 @@ serve(async (req) => {
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
       customer_email: customerId ? undefined : email,
-      line_items: [{ price: BOT_PRO_PRICE_ID, quantity: 1 }],
+      line_items: [{ price: resolvedPriceId, quantity: 1 }],
       mode: "subscription",
-      subscription_data: {
-        trial_period_days: 3,
-      },
       success_url: TELEGRAM_BOT_URL,
       cancel_url: `${req.headers.get("origin")}/`,
     });
