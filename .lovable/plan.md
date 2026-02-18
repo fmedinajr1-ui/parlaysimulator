@@ -1,100 +1,105 @@
 
-# Fix: Mini Parlay Flood + Monster Parlay Gate + Archetype Priority
+## Add Stake Size to Each Parlay Card
 
-## What's Actually Happening Today
+### What's Happening Now
 
-### Problem 1: Mini Parlay Flood (39 of 47 parlays are 2-leg)
-The mini-parlay fallback in `bot-generate-daily-parlays` triggers when `allParlays.length < 12`. Today, only 8 standard (3-4 leg) parlays were built before the monster parlay check, so the fallback ran and created 39 mini-parlays. The threshold of `< 12` is too low — it lets the system dump the board with low-value 2-leggers instead of enforcing quality.
+The `BotParlayCard` already receives `parlay.simulated_stake` from the database. It's displayed as a small muted number in the header row: `$25` in grey, sandwiched between edge % and profit/loss text. It's easy to miss and doesn't communicate "this is what you should bet."
 
-**Fix:** Raise the mini-parlay fallback threshold from `< 12` to `< 6`. Mini-parlays should only exist as a last resort on truly thin slates, not fill in whenever the 3+ leg builder doesn't hit 12.
+**Current layout (compressed, hard to read):**
+```
+[Pending] 3L · Feb 18 2:44 PM  +27.3%  $50  → (nothing yet)
+```
 
-Additionally, cap mini-parlay total output more aggressively: currently `MAX_MINI_PARLAYS` is 24 (exploration) and 16 validation. Reduce to 8 exploration and 5 validation maximum.
+### What's in the Database
 
-### Problem 2: Monster Parlay Not Triggering
-The monster parlay gate requires **15+ quality candidates across 2+ sports**. Today only NBA + NCAAB are available (2 sports ✓), but the candidate filter is very strict: hit_rate >= 55%, composite >= 60, AND catWeight >= 0.5. With only a 2-sport day, it's likely sitting at 10-14 candidates — just under the 15 threshold.
+Today's stakes from `bot_stake_config`:
+- **Execution** tier → **$300** per parlay
+- **Validation** tier → **$150** per parlay
+- **Exploration** tier → **$50** per parlay
+- **Bankroll Doubler** → **$25** per parlay (round robin)
+- Mini-parlays → **$50** (validation mini), **$25** (exploration mini), **$20** (exploration 3-leg)
 
-**Fix:** Lower the monster parlay candidate floor from `15` to `10` on days with exactly 2 sports, making the gate: `qualityCandidates.length >= 10 && activeSports.size >= 2`. On 3+ sport days keep the 15 minimum. This gives monster parlays a realistic chance on normal NBA+NCAAB days.
+### The Fix: Make Stake Prominent on Every Card
 
-### Problem 3: Wrong Archetypes Being Used at Scale
-Today's data shows `BIG_REBOUNDER over` (56.9% hit rate) appears in 33 of 47 parlays. Meanwhile the highest hit-rate archetypes are barely used:
+**File: `src/components/bot/BotParlayCard.tsx`**
 
-| Archetype | Hit Rate | Picks |
-|---|---|---|
-| BIG_REBOUNDER under | 100% | 9 |
-| LOW_LINE_REBOUNDER under | 100% | 7 |
-| THREE_POINT_SHOOTER over | 75.3% | 214 |
-| HIGH_ASSIST_UNDER | 75% | 12 |
+Three visual changes:
 
-The mini-parlay fallback sorts candidates by `compositeScore` (not hit rate), so it ranks BIG_REBOUNDER heavily due to its high weight and volume availability, even though the under version of that archetype has 100% hit rate. The main tiered generator already uses accuracy-first sorting — but the mini-parlay fallback doesn't match this.
+**1. Prominent stake badge in the card header**
 
-**Fix:** In the mini-parlay fallback candidate sort, switch from pure `compositeScore` to `hit_rate DESC, compositeScore DESC` — matching the same accuracy-first sorting already enforced in the monster parlay generator. Also enforce that UNDER-side archetypes with `catWeight > 1.0` get a priority boost to surface `BIG_REBOUNDER under`, `LOW_LINE_REBOUNDER under`, and `HIGH_ASSIST_UNDER` first.
+Replace the current muted `$50` span with a styled, clearly labeled "Bet" badge using a `DollarSign` icon so it reads as an action item rather than metadata:
+
+```tsx
+// BEFORE (line 99):
+<span className="text-muted-foreground">${parlay.simulated_stake || 10}</span>
+
+// AFTER:
+<span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-primary/15 text-primary text-xs font-bold border border-primary/30">
+  <DollarSign className="w-3 h-3" />
+  {parlay.simulated_stake || 10}
+</span>
+```
+
+**2. Stake + potential payout summary row in the expanded detail section**
+
+When the card is expanded, show a dedicated "Stake Plan" row that shows:
+- **Bet**: `$50`
+- **To Win**: `$400` (calculated from `simulated_payout`)
+- **Kelly Tier**: `Exploration` (derived from `tier` field)
+
+This goes just above the legs list in the `CollapsibleContent`:
+
+```tsx
+<div className="flex items-center justify-between py-2 px-2.5 rounded bg-primary/10 border border-primary/20 text-xs mb-2">
+  <div className="flex items-center gap-1.5 text-primary font-semibold">
+    <DollarSign className="w-3.5 h-3.5" />
+    <span>Bet ${parlay.simulated_stake || 10}</span>
+  </div>
+  <div className="flex items-center gap-3 text-muted-foreground">
+    <span>To win <span className="text-green-400 font-semibold">${(parlay.simulated_payout || 0).toFixed(0)}</span></span>
+    <span className="capitalize">{parlay.tier || 'explore'} tier</span>
+  </div>
+</div>
+```
+
+**3. Add `tier` to the `BotParlay` type**
+
+The `BotParlay` interface in `useBotEngine.ts` doesn't currently include `tier`. The database has it. Add it:
+
+```ts
+// In BotParlay interface (line ~50):
+tier?: string;
+```
+
+This lets the card display `Execution`, `Validation`, or `Exploration` next to the stake so the user immediately knows the confidence level behind the bet size.
 
 ---
 
-## Files Being Changed
+### Visual Result
 
-### File 1: `supabase/functions/bot-generate-daily-parlays/index.ts` (3 targeted edits)
-
-**Edit A — Mini-parlay fallback threshold (line ~5027):**
-Change:
-```ts
-if (allParlays.length < 12) {
+**Collapsed card** — stake appears as a green-tinted pill badge that stands out:
 ```
-To:
-```ts
-if (allParlays.length < 6) {
+[Pending] 3L · Feb 18  +27.3%  [$50]  → (pending)
 ```
 
-**Edit B — Mini-parlay cap reduction (line ~5119):**
-Change:
-```ts
-const MAX_MINI_PARLAYS = isLightSlateMode ? 24 : 16;
+**Expanded card** — a dedicated "Stake Plan" bar shows before the legs:
 ```
-To:
-```ts
-const MAX_MINI_PARLAYS = isLightSlateMode ? 10 : 6;
-```
-
-**Edit C — Mini-parlay candidate sort (line ~5082):**
-Change from pure composite sort to hit-rate-first:
-```ts
-.sort((a, b) => (b.compositeScore || 0) - (a.compositeScore || 0));
-```
-To:
-```ts
-.sort((a, b) => {
-  const hrA = ((a.confidence_score || a.l10_hit_rate || 0) * 100);
-  const hrB = ((b.confidence_score || b.l10_hit_rate || 0) * 100);
-  if (hrB !== hrA) return hrB - hrA; // Hit-rate first
-  return (b.compositeScore || 0) - (a.compositeScore || 0); // Then composite
-});
-```
-
-**Edit D — Monster parlay gate (line ~4277):**
-Change the fixed `15` threshold to sport-aware:
-```ts
-if (qualityCandidates.length < 15 || activeSports.size < 2) {
-```
-To:
-```ts
-const monsterMinCandidates = activeSports.size >= 3 ? 15 : 10;
-if (qualityCandidates.length < monsterMinCandidates || activeSports.size < 2) {
+┌─────────────────────────────────────────────┐
+│  $ Bet $50              To win $387   Explore│
+├─────────────────────────────────────────────┤
+│  LeBron James  Points OVER 25.5     -115    │
+│  ...                                        │
+└─────────────────────────────────────────────┘
 ```
 
 ---
 
-## What This Achieves
+### Files Changed
 
-- Mini parlays only appear when the bot truly has fewer than 6 real parlays (was 12), and are capped at 6 total (was 16-24)
-- Monster parlays now fire on standard NBA + NCAAB days when 10+ quality candidates exist
-- The highest hit-rate archetypes (THREE_POINT_SHOOTER 75%, HIGH_ASSIST_UNDER 75%, BIG_REBOUNDER under 100%) get sorted to the top of the mini-parlay pool if mini-parlays do run
-- No schema changes, no new dependencies — all changes are contained to one function
+**1. `src/hooks/useBotEngine.ts`** — Add `tier?: string` to `BotParlay` interface (1 line)
 
----
+**2. `src/components/bot/BotParlayCard.tsx`** — Two UI changes:
+   - Replace muted stake span in the header with a styled pill badge
+   - Add stake/payout summary row inside the expanded collapsible content
 
-## Technical Notes
-
-- All 4 edits are in `supabase/functions/bot-generate-daily-parlays/index.ts`
-- The function will be redeployed automatically after edits
-- Today's board can be refreshed via "Refresh All Engines" button in the Dashboard to see the new parlay composition immediately
-- `BIG_REBOUNDER over` (56.9%) will still appear but no longer dominate — it will be outranked by `THREE_POINT_SHOOTER over` (75.3%) and UNDER-side archetypes in sorting priority
+No database changes, no new dependencies, no new components needed.
