@@ -96,7 +96,10 @@ export function BotParlayCard({ parlay }: BotParlayCardProps) {
               )}
               <div className="flex items-center gap-2 text-xs">
                 <span className="text-green-400 font-medium">+{((parlay.simulated_edge || 0) * 100).toFixed(1)}%</span>
-                <span className="text-muted-foreground">${parlay.simulated_stake || 10}</span>
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-primary/15 text-primary text-xs font-bold border border-primary/30">
+                  <DollarSign className="w-3 h-3" />
+                  {parlay.simulated_stake || 10}
+                </span>
                 {parlay.outcome === 'won' && (
                   <span className="text-green-400 font-medium">→ +${(parlay.profit_loss || 0).toFixed(0)}</span>
                 )}
@@ -112,6 +115,16 @@ export function BotParlayCard({ parlay }: BotParlayCardProps) {
         <CollapsibleContent>
           <CardContent className="pt-0 pb-3">
             <div className="border-t border-border/50 pt-2 space-y-1.5">
+              <div className="flex items-center justify-between py-2 px-2.5 rounded bg-primary/10 border border-primary/20 text-xs mb-2">
+                <div className="flex items-center gap-1.5 text-primary font-semibold">
+                  <DollarSign className="w-3.5 h-3.5" />
+                  <span>Bet ${parlay.simulated_stake || 10}</span>
+                </div>
+                <div className="flex items-center gap-3 text-muted-foreground">
+                  <span>To win <span className="text-green-400 font-semibold">${(parlay.simulated_payout || 0).toFixed(0)}</span></span>
+                  <span className="capitalize">{parlay.tier || 'explore'} tier</span>
+                </div>
+              </div>
               <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5">
                 Legs ({parlay.legs_hit || 0} hit / {parlay.legs_missed || 0} missed)
               </div>
