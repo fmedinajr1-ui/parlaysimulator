@@ -559,19 +559,14 @@ async function handleParlays(chatId: string) {
     validation: '✅ Validation',
     execution: '💰 Execution',
   };
-  const tierStakes: Record<string, string> = {
-    exploration: '$0 stake',
-    validation: 'simulated',
-    execution: 'Kelly stakes',
-  };
-
   let message = `🎯🔥 *TODAY'S PARLAYS* 🔥🎯\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
   for (const tier of ['execution', 'validation', 'exploration']) {
     const group = tierGroups[tier];
     if (!group || group.length === 0) continue;
 
-    message += `${tierLabels[tier]} (${group.length}) — _${tierStakes[tier]}_\n\n`;
+    const tierStake = group[0]?.simulated_stake ? `$${group[0].simulated_stake} stake` : 'simulated';
+    message += `${tierLabels[tier]} (${group.length}) — _${tierStake}_\n\n`;
 
     // Show ALL parlays per tier with all legs inline
     for (let i = 0; i < group.length; i++) {
