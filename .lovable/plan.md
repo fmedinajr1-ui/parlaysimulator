@@ -1,93 +1,56 @@
 
-# Verification Results + Two Follow-Up Fixes
+# Board Cleanup + Fresh Generation
 
-## What Was Verified
+## What's Happening
 
-The UI code is correctly implemented:
+The Parlays tab shows **52 total parlays** from pre-deploy runs today:
+- **5 × 1-leg** straight bets (the exact flood we fixed — generated at 9:45 AM before the deploy)
+- **40 × 2-leg** mini-parlays (from 5:02 AM and earlier runs)
+- **7 × 3-leg** standard parlays
 
-- **Stake badge in header** (line 99-102): The styled `bg-primary/15` pill with `DollarSign` icon and `{parlay.simulated_stake || 10}` is live and rendering on every card.
-- **Expanded stake plan row** (lines 118-127): The `Bet $X → To win $Y · tier tier` bar is present in the `CollapsibleContent` above the legs list.
-- **`tier?: string`** is added to the `BotParlay` interface at line 70 of `useBotEngine.ts`.
+Smart Generate is correctly deployed but generates **0 new parlays** because the generator pre-loads `existingParlays` from today's DB at startup, which maxes out all team/game usage caps before it even tries to build new ones. With 52 parlays already logged, every team slot is saturated.
 
-The code changes are all correct and complete.
+## The Good News
 
----
+The **stake badge UI is fully working** — every card correctly shows the `$25` pill badge in the header. The expanded "To win" calculation also works (pending cards compute payout from `expected_odds`). The visual changes are correct.
 
-## Two Problems Found in Live Data
+## The Fix: Delete Today's Stale Parlays
 
-### Problem 1: "To win $0" on Every Expanded Card
+The cleanest solution is a targeted SQL delete of today's parlays so the next Smart Generate run starts from a clean slate. This is safe — all these parlays are `pending` (no settled results to lose), and they're from pre-deploy runs using the old broken logic.
 
-Every parlay in today's board has `simulated_payout = null` in the database. The `expected_odds` column IS populated (+264 for 2-leg, +596 for 3-leg), but the payout was never calculated and stored.
-
-The expanded card currently shows:
-```
-$ Bet $50     To win $0     exploration tier
-```
-
-**Root cause:** The generator writes `expected_odds` as American odds (e.g. +264) but never converts that to a dollar payout and stores it in `simulated_payout`. The settlement function writes `simulated_payout` after a win, but for pending parlays it remains null.
-
-**Fix option A (recommended — frontend only):** Compute the payout on the fly from `expected_odds` and `simulated_stake` in `BotParlayCard.tsx`:
-
-```ts
-// American odds to payout calculation
-function computePayout(stake: number, americanOdds: number): number {
-  if (americanOdds > 0) return stake + (stake * americanOdds / 100);
-  return stake + (stake * 100 / Math.abs(americanOdds));
-}
+**SQL to run:**
+```sql
+DELETE FROM bot_daily_parlays
+WHERE parlay_date = '2026-02-18'
+  AND outcome = 'pending';
 ```
 
-Then in the expanded row, replace `parlay.simulated_payout || 0` with:
-```ts
-parlay.simulated_payout || computePayout(parlay.simulated_stake || 10, parlay.expected_odds || 0)
+This will remove all 52 pending parlays from today. After that, a Smart Generate run will:
+1. Start with zero existing parlays (no cap pre-population)
+2. Skip single-leg fallback (since 0 < 3 threshold only fires below 3 — and the real threshold check is that standard parlays generated must be < 3)
+3. Generate proper 3–5 leg multi-leg parlays per the new logic
+4. Keep mini-parlays capped at 6 max
+
+## Implementation Steps
+
+**Step 1 — Database migration** to delete today's stale pending parlays:
+```sql
+DELETE FROM bot_daily_parlays
+WHERE parlay_date = '2026-02-18'
+  AND outcome = 'pending';
 ```
 
-This requires adding `expected_odds?: number` to the `BotParlay` interface in `useBotEngine.ts`.
+**Step 2 — Trigger Smart Generate** immediately after deletion via the dashboard button (or via edge function call).
 
-### Problem 2: 5 Single-Leg Parlays Still Visible (Pre-Deploy Leftovers)
+**Step 3 — Verify** the new board in the Parlays tab shows:
+- Multi-leg parlays (2+ legs) only
+- No 1-leg straight bets
+- Correct stake badges on all cards
+- Correct "To win" amounts in expanded view
 
-Today's board has:
-- 5 × 1-leg parlays (from the pre-deploy run at 10:03 AM)
-- 40 × 2-leg mini-parlays
-- 7 × 3-leg parlays
+## Technical Details
 
-The new `< 3` threshold is deployed and working but the stale 1-leg picks from before the deploy are still sitting in the DB. The mini-parlay flood (40 of them) also remains from the pre-deploy run.
-
-**Fix:** Trigger a fresh generation from the Dashboard (Smart Generate or Gen button) to clear today's stale board and produce a clean run under the new rules. The new run will skip single picks (since 7 standard parlays > 3 threshold) and keep mini-parlays capped at 6.
-
----
-
-## Plan
-
-### File 1: `src/hooks/useBotEngine.ts`
-Add `expected_odds?: number` to the `BotParlay` interface (1 line after line 68).
-
-### File 2: `src/components/bot/BotParlayCard.tsx`
-Two targeted changes:
-
-**A — Add `computePayout` helper** above the component (after `formatOdds`):
-```ts
-function computePayout(stake: number, americanOdds: number): number {
-  if (!americanOdds || !stake) return 0;
-  if (americanOdds > 0) return stake + (stake * americanOdds / 100);
-  return stake + (stake * 100 / Math.abs(americanOdds));
-}
-```
-
-**B — Replace the "To win" value** in the expanded stake plan row (line 124):
-```ts
-// BEFORE:
-<span>To win <span className="text-green-400 font-semibold">${(parlay.simulated_payout || 0).toFixed(0)}</span></span>
-
-// AFTER:
-<span>To win <span className="text-green-400 font-semibold">
-  ${(parlay.simulated_payout || computePayout(parlay.simulated_stake || 10, parlay.expected_odds || 0)).toFixed(0)}
-</span></span>
-```
-
-This means:
-- Settled/won parlays → use the actual stored `simulated_payout` (accurate)
-- Pending parlays → compute from `expected_odds` × `simulated_stake` (estimated but correct)
-
-For a $50 stake at +264 odds → **To win $182**. For $20 at +596 → **To win $139**.
-
-No database migration required. No new dependencies. After the code change, hit **Smart Generate** in the Dashboard to clear the stale 1-leg board.
+- **Table affected:** `bot_daily_parlays`
+- **Rows deleted:** ~52 (all `outcome = 'pending'` for `parlay_date = 2026-02-18'`)
+- **Risk:** None — these are pending simulation bets only, not real money
+- **After deletion:** Dashboard will show "No parlays yet" until Smart Generate completes (~30–60 seconds)
