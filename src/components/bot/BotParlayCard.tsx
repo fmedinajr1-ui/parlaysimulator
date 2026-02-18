@@ -20,6 +20,12 @@ function getTeamLegName(leg: BotLeg): string {
   return leg.category ?? 'Team Bet';
 }
 
+function computePayout(stake: number, americanOdds: number): number {
+  if (!americanOdds || !stake) return 0;
+  if (americanOdds > 0) return stake + (stake * americanOdds / 100);
+  return stake + (stake * 100 / Math.abs(americanOdds));
+}
+
 function formatOdds(odds?: number): string {
   if (!odds) return '-110';
   return odds > 0 ? `+${odds}` : `${odds}`;
@@ -121,7 +127,7 @@ export function BotParlayCard({ parlay }: BotParlayCardProps) {
                   <span>Bet ${parlay.simulated_stake || 10}</span>
                 </div>
                 <div className="flex items-center gap-3 text-muted-foreground">
-                  <span>To win <span className="text-green-400 font-semibold">${(parlay.simulated_payout || 0).toFixed(0)}</span></span>
+                  <span>To win <span className="text-green-400 font-semibold">${(parlay.simulated_payout || computePayout(parlay.simulated_stake || 10, parlay.expected_odds || 0)).toFixed(0)}</span></span>
                   <span className="capitalize">{parlay.tier || 'explore'} tier</span>
                 </div>
               </div>
