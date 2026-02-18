@@ -1,56 +1,125 @@
 
-# Board Cleanup + Fresh Generation
+# Fix: NCAAB Under Totals Not Building 3-Leg Parlays
 
-## What's Happening
+## Root Cause Analysis
 
-The Parlays tab shows **52 total parlays** from pre-deploy runs today:
-- **5 × 1-leg** straight bets (the exact flood we fixed — generated at 9:45 AM before the deploy)
-- **40 × 2-leg** mini-parlays (from 5:02 AM and earlier runs)
-- **7 × 3-leg** standard parlays
+The database confirms there ARE valid NCAAB total under picks today. For example:
+- East Tennessee St vs Furman: `composite_score: 93`, `recommended_side: UNDER` ✓
+- Bradley vs Valparaiso: `composite_score: 84` ✓  
+- Holy Cross vs Lafayette: `composite_score: 73`, `recommended_side: UNDER` ✓
+- Coastal Carolina vs James Madison: `composite_score: 67`, `recommended_side: UNDER` ✓
 
-Smart Generate is correctly deployed but generates **0 new parlays** because the generator pre-loads `existingParlays` from today's DB at startup, which maxes out all team/game usage caps before it even tries to build new ones. With 52 parlays already logged, every team slot is saturated.
+These should be forming 3-leg parlays but instead the generator is falling back to 5 single-leg NCAAB spread picks. Here is exactly why:
 
-## The Good News
+---
 
-The **stake badge UI is fully working** — every card correctly shows the `$25` pill badge in the header. The expanded "To win" calculation also works (pending cards compute payout from `expected_odds`). The visual changes are correct.
+## Bug 1 — The Side Filter Uses the Wrong Strategy Name (Critical)
 
-## The Fix: Delete Today's Stale Parlays
+**File:** `supabase/functions/bot-generate-daily-parlays/index.ts`, line 3477
 
-The cleanest solution is a targeted SQL delete of today's parlays so the next Smart Generate run starts from a clean slate. This is safe — all these parlays are `pending` (no settled results to lose), and they're from pre-deploy runs using the old broken logic.
-
-**SQL to run:**
-```sql
-DELETE FROM bot_daily_parlays
-WHERE parlay_date = '2026-02-18'
-  AND outcome = 'pending';
+```ts
+// CURRENT (broken):
+if (profile.strategy === 'ncaab_unders' && p.bet_type === 'total') {
+  return (p as EnrichedTeamPick).side?.toUpperCase() === 'UNDER';
+}
+return true; // ← falls through here for all other strategies!
 ```
 
-This will remove all 52 pending parlays from today. After that, a Smart Generate run will:
-1. Start with zero existing parlays (no cap pre-population)
-2. Skip single-leg fallback (since 0 < 3 threshold only fires below 3 — and the real threshold check is that standard parlays generated must be < 3)
-3. Generate proper 3–5 leg multi-leg parlays per the new logic
-4. Keep mini-parlays capped at 6 max
+The profile strategies are named `ncaab_unders_only`, `validated_ncaab_unders`, `ncaab_accuracy`, and `ncaab_unders_probe`. **None of them match `'ncaab_unders'`**. So the UNDER side filter never fires. Instead, `return true` runs for everything — meaning NCAAB OVER totals pass through too (even though they're already blocked upstream). More critically, without this filter enforcing UNDERs, the picks aren't being sorted or selected as UNDER-specific candidates, which causes the builder to mix in non-under picks and fail validation.
 
-## Implementation Steps
+**Fix:** Replace the exact string match with a `.includes()` check that catches all NCAAB under strategy names:
 
-**Step 1 — Database migration** to delete today's stale pending parlays:
-```sql
-DELETE FROM bot_daily_parlays
-WHERE parlay_date = '2026-02-18'
-  AND outcome = 'pending';
+```ts
+// FIXED:
+const isNcaabUnderStrategy = profile.strategy.includes('ncaab_under') || 
+  profile.strategy === 'ncaab_accuracy' || 
+  profile.strategy === 'ncaab_unders_probe';
+
+if (isNcaabUnderStrategy && p.bet_type === 'total') {
+  return (p as EnrichedTeamPick).side?.toUpperCase() === 'UNDER';
+}
 ```
 
-**Step 2 — Trigger Smart Generate** immediately after deletion via the dashboard button (or via edge function call).
+---
 
-**Step 3 — Verify** the new board in the Parlays tab shows:
-- Multi-leg parlays (2+ legs) only
-- No 1-leg straight bets
-- Correct stake badges on all cards
-- Correct "To win" amounts in expanded view
+## Bug 2 — Profile `side` Property Is Declared But Never Used to Filter (Critical)
 
-## Technical Details
+**File:** `supabase/functions/bot-generate-daily-parlays/index.ts`, lines 86–214
 
-- **Table affected:** `bot_daily_parlays`
-- **Rows deleted:** ~52 (all `outcome = 'pending'` for `parlay_date = 2026-02-18'`)
-- **Risk:** None — these are pending simulation bets only, not real money
-- **After deletion:** Dashboard will show "No parlays yet" until Smart Generate completes (~30–60 seconds)
+Every NCAAB under profile declares `side: 'under'` in its config:
+```ts
+{ legs: 3, strategy: 'ncaab_unders_only', ..., side: 'under', ... }
+{ legs: 3, strategy: 'validated_ncaab_unders', ..., side: 'under', ... }
+{ legs: 3, strategy: 'ncaab_accuracy', ..., side: 'under', ... }
+```
+
+But the `isTeamProfile` filter block (line 3469–3481) **never reads `profile.side`**. It only checks `profile.betTypes`. So even if Bug 1 were fixed, a profile with `side: 'under'` gets all picks (both OVER and UNDER) when the strategy name doesn't exactly match.
+
+**Fix:** Add a generic `profile.side` filter that works for any strategy that declares it:
+
+```ts
+} else if (isTeamProfile) {
+  candidatePicks = pool.teamPicks.filter(p => {
+    if (!profile.betTypes!.includes(p.bet_type)) return false;
+    if (BLOCKED_SPORTS.includes(p.sport)) return false;
+    if (!sportFilter.includes('all') && !sportFilter.includes(p.sport)) return false;
+    // Generic: if profile declares a required side, enforce it
+    if (profile.side && p.bet_type === 'total') {
+      return (p as EnrichedTeamPick).side?.toLowerCase() === profile.side.toLowerCase();
+    }
+    return true;
+  });
+```
+
+This is cleaner than the per-strategy string match and automatically handles all current and future strategy names that declare `side`.
+
+---
+
+## Bug 3 — `game_bets` Records from the Whale Sync Have `composite_score: null` (Secondary)
+
+The DB query shows that many NCAAB `game_bets` rows (from the whale-signal-detector sync) have `composite_score: null` and `recommended_side: null`. These records come from the Whale Detector (`whale-signal-detector`), not from the scorer. When `buildPropPool` processes `game_bets`, if `composite_score` is null the `calculateTeamCompositeScore()` function runs — but the ML Sniper Gate at line 3098 checks `pick.compositeScore < effectiveTeamFloor`. If `compositeScore` ends up as 0 or NaN due to null input data, the pick gets blocked by the floor filter (composite 0 < 65).
+
+However, the picks that ARE correctly scored (Holy Cross 93, East Tennessee St 93, Bradley 84) pass this gate fine. The null-score picks are a separate issue for the whale sync — the main parlay-building failure is Bugs 1 and 2.
+
+**Fix (minor):** Add a null-guard so null composite_score from game_bets defaults to 50 instead of 0/NaN during enrichment:
+
+In `buildPropPool` where picks are pushed:
+```ts
+compositeScore: clampScore(30, 95, (score ?? 50) + plusBonus + underWeatherBonus),
+```
+
+---
+
+## Files Changed
+
+| File | Lines | Change |
+|---|---|---|
+| `supabase/functions/bot-generate-daily-parlays/index.ts` | 3476–3480 | Replace `profile.strategy === 'ncaab_unders'` with generic `profile.side` filter (fixes Bugs 1 + 2 in one shot) |
+
+That's it — one targeted fix to the filter block. No schema changes, no new tables.
+
+---
+
+## What Happens After the Fix
+
+With the side filter working:
+
+- `ncaab_unders_only` (execution tier): gets only NCAAB total UNDERs → East Tennessee St (93), Bradley (84), Holy Cross (73) → **forms a 3-leg NCAAB under parlay**
+- `validated_ncaab_unders` (validation tier): same pool → builds another 3-leg parlay  
+- `ncaab_accuracy` + `ncaab_unders_probe` (exploration tier): build 2 more 3-leg NCAAB under parlays
+
+Expected result after fix + fresh Smart Generate: **4–6 valid 3-leg NCAAB under parlays** from today's confirmed-scored picks, plus whatever team picks survive the existing NBA/NHL gates.
+
+---
+
+## Database Cleanup (After Deploy)
+
+After deploying, delete today's 5 single-leg junk picks and re-run:
+
+```sql
+DELETE FROM bot_daily_parlays 
+WHERE parlay_date = '2026-02-18' 
+AND outcome = 'pending';
+```
+
+Then trigger Smart Generate — it will find the NCAAB under picks and build proper 3-leg parlays.
