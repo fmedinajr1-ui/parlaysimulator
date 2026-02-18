@@ -1,167 +1,122 @@
 
-# Add AI Help / Q&A for Clients in Telegram Bot
+# Fix Parlay Generation: Ban 2-Leg NBA Minis, Block NCAAB, Enforce NBA 3-Leg Execution
 
-## Problem
+## What's Broken Right Now
 
-Non-admin clients can use 7 commands but have zero ability to ask questions. When they type anything outside those commands, they get:
+**Problem 1 — 2-leg mini-parlays dominating execution tier**
+The execution tier has 15 pending 2-leg parlays today (all NBA, `premium_boost_execution_mini_parlay`). The mini-parlay fallback at line 5014 triggers when `allParlays.length < 12`, and those mini-parlays get assigned to the execution tier at $100 each. The root cause is the golden gate (`ENFORCE_GOLDEN_GATE = true`) rejecting valid 3-leg NBA profiles before they can build.
 
-> "🔒 This command is only available to admins. Use /help to see available commands!"
+**Problem 2 — NCAAB is bleeding**
+The DB shows NCAAB parlays settling as `void` repeatedly. The KenPom-powered NCAAB team bet profiles (execution: `ncaab_totals`, `ncaab_unders`, `ncaab_spreads`, `ncaab_mixed`) are producing parlays that then cannot be settled — wasting $100 stakes. NCAAB's hit rate for totals/spreads historically < 45% per the bot logs.
 
-The `handleNaturalLanguage()` function — which is powered by Gemini and already has full bot context (parlays, performance, bankroll, live picks) — is **gated to admin-only**. Clients cannot access it at all.
+**Problem 3 — Stakes look correct in DB ($100) but config says $20**
+Line 3969 already overrides with 100: `const stake = typeof config.stake === 'number' && config.stake > 0 ? config.stake : 100`. However `TIER_CONFIG` still shows `stake: 20` for all tiers, which is misleading. This needs to be corrected so the explicit logic is removed and the config value is the single source of truth at $100.
 
-## What Needs to Change
+**Problem 4 — Best NBA props are being wasted in 2-leg combos**
+Today's top picks (Joel Embiid PTS 84% hit rate, THREE_POINT_SHOOTER 96% avg hit rate) are being put into 2-leg parlays instead of building proper 3-leg NBA parlays. The golden gate is too aggressive for the current pool size.
 
-**File:** `supabase/functions/telegram-webhook/index.ts`
+---
 
-### Change 1 — Upgrade `/help` for clients (line 1800–1810)
+## The Fix Plan
 
-Replace the bare static list with a richer message that:
-- Explains all 7 commands clearly
-- Explicitly tells clients they can ask questions in plain English
-- Gives example questions they can ask
+### Change 1 — Upgrade TIER_CONFIG stakes to $100 across all tiers
 
-Current `/help` response:
-```
-📋 *Available Commands*
-
-/parlays — Today's picks
-/parlay — Pending summary
-/performance — Win rate & ROI
-/calendar — Monthly P&L
-/roi — Detailed ROI breakdown
-/streaks — Hot & cold streaks
-/help — This list
-```
-
-New `/help` response (customer-aware):
-```
-📋 *Parlay Farm — Help*
-
-*Commands:*
-/parlays — Today's full pick list
-/parlay — Pending bets summary
-/performance — Win rate & ROI stats
-/calendar — This month's P&L
-/roi — Detailed ROI by time period
-/streaks — Hot & cold streaks
-
-💬 *Ask me anything:*
-Just type a question in plain English! Examples:
-• "How are we doing this week?"
-• "Which picks look the strongest today?"
-• "What's my ROI this month?"
-• "Explain how the bot picks work"
-• "Is today a good day to bet?"
-```
-
-Admins keep their existing long command list (no change there).
-
-### Change 2 — Enable AI Q&A for all non-admin users (line 1812–1815)
-
-Currently:
-```typescript
-// All other commands: admin only
-if (!isAdmin(chatId)) {
-  return "🔒 This command is only available to admins.\n\nUse /help to see available commands!";
-}
-```
-
-Replace the generic "admin only" block with a **customer AI handler** that routes unrecognised input to `handleNaturalLanguage()` for non-admin users, with a **client-safe system prompt** that:
-- Does NOT expose admin/internal data (no bankroll admin controls, no category weights detail, no bot internal state)
-- Answers questions about today's picks, win rates, performance, and general betting guidance
-- Keeps responses concise and encouraging
-- Falls back gracefully if the AI is unavailable
-
-New logic:
-```typescript
-// All other commands: admin only, but non-admins get AI Q&A
-if (!isAdmin(chatId)) {
-  // If it looks like a slash command, block it
-  if (cmd.startsWith('/')) {
-    return "🔒 This command is for admins only.\n\nUse /help to see your available commands, or just ask me a question!";
-  }
-  // Otherwise route to customer-safe AI Q&A
-  await saveConversation(chatId, "user", text);
-  const response = await handleCustomerQuestion(text, chatId);
-  await saveConversation(chatId, "assistant", response);
-  return response;
-}
-```
-
-### Change 3 — New `handleCustomerQuestion()` function
-
-Add a new function (before `handleMessage`) that wraps `handleNaturalLanguage` with a **client-specific system prompt**:
+In `TIER_CONFIG` (lines 56-237), update `stake` to `100` for all three tiers (exploration, validation, execution). This makes the config the source of truth and removes the override at line 3969 (which becomes `config.stake` = 100 automatically).
 
 ```typescript
-async function handleCustomerQuestion(message: string, chatId: string): Promise<string> {
-  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-  if (!LOVABLE_API_KEY) {
-    return "I'm not able to answer questions right now. Use /parlays, /performance, or /help to check the bot.";
-  }
+// Before — in all 3 tiers:
+stake: 20,
 
-  const history = await getConversationHistory(chatId, 6);
-  const [parlays, performance] = await Promise.all([getParlays(), getPerformance()]);
-
-  const systemPrompt = `You are ParlayIQ Bot, a friendly sports betting assistant for Parlay Farm members.
-You help members understand today's picks and track their performance.
-
-CURRENT DATA:
-- Today's Parlays: ${parlays.count} generated
-- Distribution: ${Object.entries(parlays.distribution).map(([l, c]) => `${l}-leg: ${c}`).join(', ') || 'None'}
-- Performance: ${performance.winRate.toFixed(1)}% win rate, ${performance.roi.toFixed(1)}% ROI
-- Record: ${performance.wins}W - ${performance.losses}L
-
-RULES:
-- Be friendly, concise, and helpful (under 400 chars when possible)
-- Never share admin controls, internal weights, or system configuration
-- If asked about specific picks, direct them to /parlays
-- If asked about ROI or stats, give the real numbers above
-- Use Telegram Markdown (*bold*, _italic_) and emojis
-- If you can't answer something, say "Try /help to see what I can show you"`;
-
-  const messages = [
-    { role: "system" as const, content: systemPrompt },
-    ...history.map(h => ({ role: h.role as "user" | "assistant", content: h.content })),
-    { role: "user" as const, content: message },
-  ];
-
-  try {
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "google/gemini-3-flash-preview", messages, max_tokens: 400 }),
-    });
-    if (!response.ok) return "I'm having trouble right now. Try /parlays or /performance.";
-    const data = await response.json();
-    return data.choices?.[0]?.message?.content || "Use /help to see available commands.";
-  } catch {
-    return "Something went wrong. Use /parlays or /help for quick info.";
-  }
-}
+// After — in all 3 tiers:
+stake: 100,
 ```
 
-### Change 4 — Update `handleCustomerStart()` to mention Q&A (line 1763–1780)
+### Change 2 — Remove NCAAB from execution tier profiles entirely
 
-Add one line to the welcome message so new clients know they can ask questions immediately:
+NCAAB parlays are producing voids and losses. Remove all 5 NCAAB profiles from the execution tier profiles array (lines 226-230):
 
+```typescript
+// REMOVE these 5 profiles from execution.profiles:
+{ legs: 3, strategy: 'ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
+{ legs: 3, strategy: 'ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
+{ legs: 3, strategy: 'ncaab_unders', sports: ['basketball_ncaab'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
+{ legs: 3, strategy: 'ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'], minHitRate: 55, sortBy: 'composite' },
+{ legs: 3, strategy: 'ncaab_mixed', sports: ['basketball_ncaab'], betTypes: ['spread', 'total'], minHitRate: 55, sortBy: 'composite' },
 ```
-💬 Or just *ask me anything* in plain English!
+
+Also remove the 2 NCAAB profiles from validation tier (lines 171-172):
+```typescript
+// REMOVE from validation.profiles:
+{ legs: 3, strategy: 'validated_ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'], minOddsValue: 45, minHitRate: 55 },
+{ legs: 3, strategy: 'validated_ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'], minOddsValue: 45, minHitRate: 55 },
 ```
 
-## Technical Notes
+And remove/reduce NCAAB exploration profiles (lines 86-152) — keep only 2 conservative ones instead of 9.
 
-- Conversation history is saved/loaded per `chatId` from `bot_conversations` — this already works for admin, and will now work for clients too (same table, same functions)
-- The `LOVABLE_API_KEY` is already configured — no new secrets needed
-- The client prompt deliberately hides `bot_adaptation_state`, `bot_category_weights`, and bankroll controls from clients
-- Admin natural language fallback (line 1839) is **unchanged** — admins still get the full system prompt with all internal data
-- The `if (cmd.startsWith('/'))` guard ensures unknown slash commands still get the "admin only" message rather than being sent to the AI
+### Change 3 — Add more NBA 3-leg execution profiles to replace NCAAB slots
+
+Replace the 5 removed NCAAB execution profiles with 5 more NBA-focused 3-leg profiles:
+
+```typescript
+// ADD to execution.profiles — replacing the 5 NCAAB slots:
+{ legs: 3, strategy: 'nba_under_specialist', sports: ['basketball_nba'], minHitRate: 62, sortBy: 'hit_rate', useAltLines: false },
+{ legs: 3, strategy: 'nba_3pt_focus', sports: ['basketball_nba'], minHitRate: 62, sortBy: 'hit_rate', useAltLines: false },
+{ legs: 3, strategy: 'nba_mixed_cats', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite', useAltLines: false },
+{ legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
+{ legs: 3, strategy: 'golden_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
+```
+
+### Change 4 — Fix the mini-parlay fallback to NEVER use the execution tier
+
+The mini-parlay fallback at line 5161 assigns tiers. Change the execution cap from 3 to 0 — mini-parlays should never be execution tier bets:
+
+```typescript
+// Before (approx line 5161-5163):
+const miniTierCaps = { execution: 3, validation: 5, exploration: 8 };
+
+// After:
+const miniTierCaps = { execution: 0, validation: 3, exploration: 6 };
+```
+
+This ensures the 2-leg combos stay in exploration/validation at reduced stakes, not execution at $100.
+
+### Change 5 — Relax the golden gate threshold slightly for NBA
+
+Currently `ENFORCE_GOLDEN_GATE = true` requires `playerLegs.length - 1` legs from golden categories. With a thin NBA sweet-spot pool, this blocks valid 3-leg parlays. Change to `Math.max(1, Math.floor(playerLegs.length * 0.5))` — at least 50% golden legs (1 of 2 player legs, or 1 of 3), not `all-1`:
+
+```typescript
+// Before (line 3808):
+const minGoldenLegs = Math.max(1, playerLegs.length - 1); // Allow 1 non-golden player leg
+
+// After:
+const minGoldenLegs = Math.max(1, Math.floor(playerLegs.length * 0.5)); // 50% golden legs
+```
+
+This relaxes from requiring 2-of-3 golden to 1-of-2 or 2-of-4, building more valid NBA 3-leg parlays instead of falling back to 2-leg minis.
+
+---
 
 ## Files to Change
 
-1. `supabase/functions/telegram-webhook/index.ts` — 4 targeted edits:
-   - Add `handleCustomerQuestion()` function (~40 lines, before `handleMessage`)
-   - Update `/help` handler (lines 1800–1810) — customer-aware response
-   - Replace the admin-only wall (lines 1812–1815) — route non-command text to AI
-   - Add one line to `handleCustomerStart()` (line 1778) — mention Q&A
+**1 file: `supabase/functions/bot-generate-daily-parlays/index.ts`**
 
-No database migrations needed. No new secrets needed.
+- Lines 57-237: Update `stake: 20 → 100` in all 3 tier configs
+- Lines 171-172: Remove 2 NCAAB validation profiles  
+- Lines 86-152: Trim NCAAB exploration from 9 profiles to 2 (keep `ncaab_accuracy` only)
+- Lines 226-230: Remove 5 NCAAB execution profiles, add 5 NBA profiles
+- Line 3808: Relax golden gate from `playerLegs.length - 1` to `Math.floor(playerLegs.length * 0.5)`
+- Lines 5161-5163: Set mini-parlay execution cap to 0
+
+Then redeploy the edge function.
+
+---
+
+## Expected Outcome
+
+| Before | After |
+|---|---|
+| 15 x 2-leg NBA mini-parlays in execution ($100 each) | 0 mini-parlays in execution tier |
+| 5 NCAAB execution profiles (bleeding $) | NCAAB execution = blocked |
+| Golden gate blocking valid NBA 3-leg builds | 3-leg NBA parlays built with 50% golden threshold |
+| Stake config says $20 but overrides to $100 | Config correctly says $100, no override needed |
+| Best picks (Embiid 84%, 3PT 96%) stuck in 2-leg combos | Proper 3-leg NBA execution parlays using best picks |
