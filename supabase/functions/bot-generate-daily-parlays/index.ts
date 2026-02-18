@@ -82,10 +82,9 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 4, strategy: 'explore_aggressive', sports: ['all'] },
       { legs: 4, strategy: 'explore_longshot', sports: ['all'] },
       { legs: 4, strategy: 'explore_longshot', sports: ['all'] },
-      // NCAAB exploration — SUSPENDED (high void rate, low hit rate < 45%)
-      // Only 2 conservative accuracy profiles kept for data collection
-      { legs: 2, strategy: 'ncaab_accuracy_totals', sports: ['basketball_ncaab'], betTypes: ['total'], sortBy: 'composite' },
-      { legs: 2, strategy: 'ncaab_accuracy_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'], sortBy: 'composite' },
+      // NCAAB exploration — UNDERS ONLY (70.6% hit rate confirmed, overs/spreads blocked)
+      { legs: 3, strategy: 'ncaab_accuracy', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minHitRate: 60, sortBy: 'hit_rate' },
+      { legs: 3, strategy: 'ncaab_unders_probe', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minHitRate: 58, sortBy: 'composite' },
       // NCAA Baseball exploration — PAUSED (needs more data)
       // { legs: 3, strategy: 'baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'] },
       // { legs: 3, strategy: 'baseball_spreads', sports: ['baseball_ncaa'], betTypes: ['spread'] },
@@ -157,7 +156,8 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'validated_conservative', sports: ['basketball_nba'], minOddsValue: 45, minHitRate: 55 },
       { legs: 3, strategy: 'validated_conservative', sports: ['basketball_nba'], minOddsValue: 45, minHitRate: 55 },
       { legs: 3, strategy: 'validated_conservative', sports: ['icehockey_nhl'], minOddsValue: 45, minHitRate: 55 },
-      // NCAAB validation profiles REMOVED — high void rate, suspended
+      // NCAAB validation — UNDERS ONLY (70.6% hit rate, spreads/overs remain blocked)
+      { legs: 3, strategy: 'validated_ncaab_unders', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minOddsValue: 45, minHitRate: 62 },
       // { legs: 3, strategy: 'validated_baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'], minOddsValue: 45, minHitRate: 55 }, // PAUSED
       { legs: 3, strategy: 'validated_balanced', sports: ['basketball_nba'], minOddsValue: 42, minHitRate: 55 },
       { legs: 3, strategy: 'validated_balanced', sports: ['basketball_nba', 'icehockey_nhl'], minOddsValue: 42, minHitRate: 55 },
@@ -210,11 +210,11 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'hybrid_exec_cross', sports: ['all'], minHitRate: 58, sortBy: 'hit_rate', useAltLines: false, allowTeamLegs: 1 },
       // TEAM EXECUTION: Pure team props with high composite scores
       { legs: 3, strategy: 'team_exec', betTypes: ['moneyline', 'spread', 'total'], minHitRate: 55 },
-      // NCAAB EXECUTION: SUSPENDED — void rate too high, replaced with NBA 3-leg profiles
+      // NCAAB EXECUTION: UNDERS ONLY — 70.6% hit rate (12/17), replaces 1 NBA slot
+      { legs: 3, strategy: 'ncaab_unders_only', sports: ['basketball_ncaab'], betTypes: ['total'], side: 'under', minHitRate: 62, sortBy: 'hit_rate', useAltLines: false },
       { legs: 3, strategy: 'nba_under_specialist', sports: ['basketball_nba'], minHitRate: 62, sortBy: 'hit_rate', useAltLines: false },
       { legs: 3, strategy: 'nba_3pt_focus', sports: ['basketball_nba'], minHitRate: 62, sortBy: 'hit_rate', useAltLines: false },
       { legs: 3, strategy: 'nba_mixed_cats', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite', useAltLines: false },
-      { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
       { legs: 3, strategy: 'golden_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
       // NCAA Baseball execution — PAUSED (needs more data)
       // { legs: 3, strategy: 'baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
@@ -5011,7 +5011,14 @@ Deno.serve(async (req) => {
           ...pool.whalePicks.map(p => ({ ...p, pickType: 'whale' })),
           ...pool.sweetSpots.map(p => ({ ...p, pickType: 'player' })),
         ]
-          .filter(p => !BLOCKED_SPORTS.includes(p.sport || 'basketball_nba'))
+          .filter(p => {
+            if (BLOCKED_SPORTS.includes(p.sport || 'basketball_nba')) return false;
+            // NCAAB mini-parlay: only allow total unders (70.6% hit rate), block spreads/overs
+            if (p.sport === 'basketball_ncaab') {
+              return (p.bet_type === 'total' || p.prop_type === 'total') && (p.side === 'under' || p.recommended_side === 'under');
+            }
+            return true;
+          })
           .reduce((acc, pick) => {
             const key = pick.pickType === 'team'
               ? `${pick.home_team}_${pick.away_team}_${pick.bet_type}_${pick.side}`.toLowerCase()
