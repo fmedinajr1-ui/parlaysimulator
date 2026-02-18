@@ -1,85 +1,109 @@
 
-# 3-Tier Subscription Redesign with Funding Access
+# 7-Day Profit Audit — Build Plan
 
-## Overview
+## What This Builds
 
-Replace the current single-tier $99 pricing card with a full 3-tier pricing section on the BotLanding page. "Access to funding" means subscribers at higher tiers get the bot to place bets using platform capital on their behalf — a prop-firm style funded account perk.
+A new **Profit Audit** component that lives inside the existing BotDashboard Analytics tab. It pulls the last 7 days of settled parlays from `bot_daily_parlays`, aggregates by day and tier, and surfaces two intelligence panels:
+1. **Day-by-Day Table** — date, total staked, gross won, net profit, ROI% per tier row
+2. **Best ROI Finder** — which tier wins most and which day-of-week produces the highest ROI (so volume can be concentrated there)
 
-## The 3 Tiers
+All data already exists in `bot_daily_parlays` with `parlay_date`, `tier`, `outcome`, `simulated_stake`, `profit_loss`, and `expected_odds` columns — confirmed live in the database.
 
-| Tier | Price | Key Hook |
-|---|---|---|
-| Entry | $99/mo | Bot picks via Telegram, full analytics |
-| Pro | $399/mo | Everything in Entry + $1,000 funded account managed by the bot |
-| Ultimate | $799/mo | Everything in Pro + $5,000 funded account + VIP strategy + priority support |
+---
 
-## What "Access to Funding" Means (displayed to users)
+## Data Model (confirmed from live query)
 
-- **Pro ($399)**: Receive access to a **$1,000 funded betting account** — the bot places execution-tier parlays using platform capital. You keep a profit split (e.g. 70/30).
-- **Ultimate ($799)**: Receive access to a **$5,000 funded betting account** — full bot automation at max stakes. You keep a higher profit split (e.g. 80/20).
+The audit aggregates at `(parlay_date × tier)` level and produces:
 
-This is prominently called out as a badge/highlight on those tiers.
+| Field | Source |
+|---|---|
+| Total Staked | `SUM(simulated_stake)` |
+| Gross Won | `SUM(stake + profit_loss)` where won |
+| Net Profit | `SUM(profit_loss)` |
+| ROI % | `net_profit / total_staked × 100` |
+
+Day-of-week is derived from `parlay_date` using `date-fns` `getDay()` — no extra DB column needed.
 
 ---
 
 ## Files to Create / Edit
 
-### 1. `src/components/bot-landing/PricingSection.tsx` (NEW)
-A full 3-column pricing section that replaces `PricingCard`. Each tier gets its own card with:
-- Tier name, badge (e.g. "Most Popular"), price, feature list
-- Funding badge for Pro and Ultimate (e.g. "$1K Funded Account")
-- Email input + CTA button per card
-- `priceId` prop mapped to the correct Stripe price ID for each tier
+### 1. `src/hooks/useProfitAudit.ts` (NEW)
+A focused query hook that:
+- Fetches all settled parlays from the last 7 days from `bot_daily_parlays`
+- Groups by `(parlay_date, tier)` in-memory
+- Computes: `totalStaked`, `grossWon`, `netProfit`, `roiPct`, `parlayCount`, `wins`, `losses`
+- Rolls up a `dayOfWeek` dimension (0=Sun → 6=Sat)
+- Returns:
+  - `dailyTierRows[]` — sorted newest-first, one row per (day, tier) combination
+  - `tierSummary[]` — overall 7-day ROI per tier, sorted by ROI descending
+  - `dowSummary[]` — ROI aggregated by day-of-week across all tiers, sorted by ROI descending
+  - `bestTier` — the tier with highest 7-day ROI
+  - `bestDow` — day-of-week name with highest 7-day ROI
+  - `totalNetProfit`, `totalStaked`, `overallROI`
 
-Three price IDs to wire up (from Stripe products created in prior steps):
-- Entry: existing `price_1T1HU99D6r1PTCBBLQaWi80Z` (the existing $99 price)
-- Pro: new $399 price ID (created in Stripe — to be filled in)
-- Ultimate: new $799 price ID (created in Stripe — to be filled in)
+### 2. `src/components/bot/ProfitAuditCard.tsx` (NEW)
+A self-contained card component with three visual sections:
 
-### 2. `src/pages/BotLanding.tsx` (EDIT)
-- Replace `<PricingCard>` with `<PricingSection>`
-- Pass `handleCheckout(email, priceId)` so each tier routes to the correct Stripe price
-- Update `handleCheckout` to accept a `priceId` parameter
+**Section A — 7-Day Summary Banner**
+Three stat chips: Total Staked / Net Profit / Overall ROI%
 
-### 3. `supabase/functions/create-bot-checkout/index.ts` (EDIT)
-- Accept `priceId` in the request body alongside `email`
-- Fall back to the existing `BOT_PRO_PRICE_ID` if none provided (backward compat)
-- Remove `trial_period_days` (per memory: no free trial on any tier)
+**Section B — Daily Breakdown Table**
+Scrollable table with columns: Date | Tier | Parlays | Staked | Net P&L | ROI%
+- Color-coded ROI cells (green ≥ 0, red < 0)
+- Grouped by date with a subtle date header row
+- Tier labels: Execution / Validation / Exploration (already used in `TierPerformanceTable`)
 
-### 4. `supabase/functions/check-subscription/index.ts` (EDIT)
-- Add tier detection: check which price ID the active subscription belongs to
-- Return `botTier: 'entry' | 'pro' | 'ultimate' | null` alongside `hasBotAccess`
-- Entry tier = $99 price ID; Pro = $399 price ID; Ultimate = $799 price ID
+**Section C — Intelligence Panel (the "focus volume here" output)**
+Two highlight cards side by side:
+- Best Tier badge: tier name + its 7-day ROI%
+- Best Day-of-Week badge: day name (e.g. "Thursday") + avg ROI%
+- Below each: a mini bar chart using Recharts `BarChart` (already a dependency) showing all tiers/days for comparison
 
-### 5. `src/hooks/useSubscription.ts` (EDIT)
-- Add `botTier: 'entry' | 'pro' | 'ultimate' | null` to `SubscriptionState`
+### 3. `src/pages/BotDashboard.tsx` (EDIT — minimal)
+- Import `ProfitAuditCard`
+- Add it to the **Analytics tab** section, positioned after `BotLearningAnalytics` and before `CategoryWeightsChart`
 
 ---
 
-## Visual Design Plan for PricingSection
+## Layout Sketch (mobile-first)
 
 ```text
-┌──────────────┐  ┌──────────────────┐  ┌──────────────────┐
-│    ENTRY     │  │      PRO         │  │    ULTIMATE      │
-│   $99/mo     │  │   $399/mo        │  │   $799/mo        │
-│              │  │  ⭐ Most Popular  │  │  👑 VIP Tier     │
-│ - Bot picks  │  │ - All Entry +    │  │ - All Pro +      │
-│ - Telegram   │  │ - $1K Funded     │  │ - $5K Funded     │
-│ - Calendar   │  │   Account        │  │   Account        │
-│ - Analytics  │  │ - Execution      │  │ - Max stakes     │
-│              │  │   tier parlays   │  │ - 80/20 split    │
-│              │  │ - 70/30 split    │  │ - Priority DMs   │
-│  [Join $99]  │  │  [Join $399]     │  │  [Join $799]     │
-└──────────────┘  └──────────────────┘  └──────────────────┘
+┌─────────────────────────────────┐
+│  📊 7-Day Profit Audit          │
+│  Feb 12 – Feb 18                │
+├─────────────────────────────────┤
+│  $2,810 staked │ +$892 net      │
+│  Overall ROI: +31.7%            │
+├─────────────────────────────────┤
+│  DATE      TIER    #  STAKED ROI│
+│  Feb 17    Exec    2   $200  -100%│
+│            Valid   8   $400  -55%│
+│            Explor  6   $145 -100%│
+│  Feb 16    Exec    2   $200  -100%│
+│            Valid   3    $60  +90%│
+│            Explor  10  $205  -44%│
+│  ...                             │
+├─────────────────────────────────┤
+│  BEST TIER          BEST DAY    │
+│  ┌──────────┐  ┌──────────────┐ │
+│  │Validation│  │  Thursday    │ │
+│  │ +340% ROI│  │  +340% ROI   │ │
+│  └──────────┘  └──────────────┘ │
+│  [mini bar chart per tier/dow]  │
+└─────────────────────────────────┘
 ```
-
-The Pro card will have a highlighted border (primary color) and "Most Popular" badge. The Ultimate card will have a gold/amber accent.
 
 ---
 
 ## Technical Notes
 
-- The Stripe price IDs for the $399 and $799 tiers need to be confirmed. They were created earlier in this session — the exact IDs will be read from the Stripe products list if available, or placeholders will be added with a clear TODO comment.
-- No webhook needed: subscription status is verified via Stripe API on the `check-subscription` function call, as already implemented.
-- `hasBotAccess` continues to work for all 3 tiers (any active bot subscription = access). The new `botTier` field differentiates features on the dashboard if needed in future.
-- The funding access feature is a **marketing/feature display** item for now — showing what subscribers get access to. It does not require new backend tables unless a funded account management system is built later.
+- Uses the existing `americanToDecimal` / `calculateROI` utilities already in `src/utils/roiCalculator.ts` for consistency
+- `profit_loss` field from the DB is the authoritative net figure — no odds recalculation needed
+- `gross_won = simulated_stake + profit_loss` for won parlays; `0` for lost; `simulated_stake` for push
+- Pending parlays are excluded from all calculations (only `won`, `lost`, `push` outcomes)
+- The hook uses `@tanstack/react-query` with `queryKey: ['profit-audit-7d']` — consistent with existing bot hooks
+- Recharts `BarChart` is already used in `BotPerformanceChart` so no new dependency needed
+- Day-of-week mapping: `['Sun','Mon','Tue','Wed','Thu','Fri','Sat']`
+- Tier label mapping reuses the existing `TIER_LABELS` constant pattern from `TierPerformanceTable`
+- No new database tables or migrations required — purely a frontend analytics layer over existing data
