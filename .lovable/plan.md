@@ -1,112 +1,93 @@
 
-# Two Bugs Found: Single-Pick Flood + Telegram Fake Stakes
+# Verification Results + Two Follow-Up Fixes
 
-## Root Cause 1: Single-Pick Fallback Has Wrong Threshold
+## What Was Verified
 
-The approved fix lowered the **mini-parlay** gate from `< 12` to `< 6` (line 5029). But there is a **separate gate** on line 5314 for single-leg straight bets:
+The UI code is correctly implemented:
+
+- **Stake badge in header** (line 99-102): The styled `bg-primary/15` pill with `DollarSign` icon and `{parlay.simulated_stake || 10}` is live and rendering on every card.
+- **Expanded stake plan row** (lines 118-127): The `Bet $X → To win $Y · tier tier` bar is present in the `CollapsibleContent` above the legs list.
+- **`tier?: string`** is added to the `BotParlay` interface at line 70 of `useBotEngine.ts`.
+
+The code changes are all correct and complete.
+
+---
+
+## Two Problems Found in Live Data
+
+### Problem 1: "To win $0" on Every Expanded Card
+
+Every parlay in today's board has `simulated_payout = null` in the database. The `expected_odds` column IS populated (+264 for 2-leg, +596 for 3-leg), but the payout was never calculated and stored.
+
+The expanded card currently shows:
+```
+$ Bet $50     To win $0     exploration tier
+```
+
+**Root cause:** The generator writes `expected_odds` as American odds (e.g. +264) but never converts that to a dollar payout and stores it in `simulated_payout`. The settlement function writes `simulated_payout` after a win, but for pending parlays it remains null.
+
+**Fix option A (recommended — frontend only):** Compute the payout on the fly from `expected_odds` and `simulated_stake` in `BotParlayCard.tsx`:
 
 ```ts
-// Line 5314 — NOT changed in last deploy
-if (allParlays.length < 10) {
-  // generates 1-leg picks
+// American odds to payout calculation
+function computePayout(stake: number, americanOdds: number): number {
+  if (americanOdds > 0) return stake + (stake * americanOdds / 100);
+  return stake + (stake * 100 / Math.abs(americanOdds));
 }
 ```
 
-Today's 5:45 PM run generated **5 standard parlays**. Since 5 < 6, mini-parlays were (correctly) skipped. But since 5 < 10, the **single-pick fallback fired** and added 5 more 1-leg bets. That is every parlay in the Telegram screenshot showing `(1-leg)`.
-
-**Fix:** Change the single-pick fallback threshold from `< 10` to `< 3` — same philosophy as the mini-parlay fix. Single-leg straight bets should only exist on catastrophically thin slates (fewer than 3 parlays total), not as padding whenever the board sits at 5-9 standard parlays.
-
----
-
-## Root Cause 2: Telegram Shows `$0 stake` — Hardcoded Labels
-
-In `supabase/functions/telegram-webhook/index.ts` lines 562-566, the tier stake labels are **hardcoded strings** that ignore the actual `simulated_stake` value stored on each parlay:
-
+Then in the expanded row, replace `parlay.simulated_payout || 0` with:
 ```ts
-// CURRENT — always shows $0 stake regardless of real stake
-const tierStakes: Record<string, string> = {
-  exploration: '$0 stake',       // ← hardcoded
-  validation: 'simulated',       // ← hardcoded
-  execution: 'Kelly stakes',     // ← hardcoded
-};
+parlay.simulated_payout || computePayout(parlay.simulated_stake || 10, parlay.expected_odds || 0)
 ```
 
-The database already has the correct stake on every parlay (`simulated_stake: 25`, `50`, `300`, etc.). The formatter just never reads it.
+This requires adding `expected_odds?: number` to the `BotParlay` interface in `useBotEngine.ts`.
 
-**Fix:** Replace the hardcoded `tierStakes` label with a dynamic calculation that reads the actual `simulated_stake` from the parlays in the group. The tier header will show the real dollar amount from the database:
+### Problem 2: 5 Single-Leg Parlays Still Visible (Pre-Deploy Leftovers)
 
+Today's board has:
+- 5 × 1-leg parlays (from the pre-deploy run at 10:03 AM)
+- 40 × 2-leg mini-parlays
+- 7 × 3-leg parlays
+
+The new `< 3` threshold is deployed and working but the stale 1-leg picks from before the deploy are still sitting in the DB. The mini-parlay flood (40 of them) also remains from the pre-deploy run.
+
+**Fix:** Trigger a fresh generation from the Dashboard (Smart Generate or Gen button) to clear today's stale board and produce a clean run under the new rules. The new run will skip single picks (since 7 standard parlays > 3 threshold) and keep mini-parlays capped at 6.
+
+---
+
+## Plan
+
+### File 1: `src/hooks/useBotEngine.ts`
+Add `expected_odds?: number` to the `BotParlay` interface (1 line after line 68).
+
+### File 2: `src/components/bot/BotParlayCard.tsx`
+Two targeted changes:
+
+**A — Add `computePayout` helper** above the component (after `formatOdds`):
 ```ts
-// NEW — reads actual stake from the first parlay in the group
-const tierStake = group[0]?.simulated_stake ? `$${group[0].simulated_stake} stake` : 'simulated';
+function computePayout(stake: number, americanOdds: number): number {
+  if (!americanOdds || !stake) return 0;
+  if (americanOdds > 0) return stake + (stake * americanOdds / 100);
+  return stake + (stake * 100 / Math.abs(americanOdds));
+}
 ```
 
----
-
-## What Each Change Fixes
-
-| Issue | File | Change |
-|---|---|---|
-| 1-leg parlays appearing | `bot-generate-daily-parlays/index.ts` line 5314 | `< 10` → `< 3` |
-| `$0 stake` in Telegram | `telegram-webhook/index.ts` lines 562-566 | Replace hardcoded labels with real `simulated_stake` from DB |
-
----
-
-## Technical Details
-
-### File 1: `supabase/functions/bot-generate-daily-parlays/index.ts`
-
-**Line 5314** — single-pick fallback gate:
+**B — Replace the "To win" value** in the expanded stake plan row (line 124):
 ```ts
 // BEFORE:
-if (allParlays.length < 10) {
+<span>To win <span className="text-green-400 font-semibold">${(parlay.simulated_payout || 0).toFixed(0)}</span></span>
 
 // AFTER:
-if (allParlays.length < 3) {
+<span>To win <span className="text-green-400 font-semibold">
+  ${(parlay.simulated_payout || computePayout(parlay.simulated_stake || 10, parlay.expected_odds || 0)).toFixed(0)}
+</span></span>
 ```
 
-This means single-leg bets only generate when the bot has produced literally 0, 1, or 2 real parlays — a true emergency. Any slate that produces 3+ standard parlays will skip single picks entirely.
+This means:
+- Settled/won parlays → use the actual stored `simulated_payout` (accurate)
+- Pending parlays → compute from `expected_odds` × `simulated_stake` (estimated but correct)
 
-### File 2: `supabase/functions/telegram-webhook/index.ts`
+For a $50 stake at +264 odds → **To win $182**. For $20 at +596 → **To win $139**.
 
-**Lines 562-574** — replace hardcoded `tierStakes` block:
-```ts
-// BEFORE:
-const tierStakes: Record<string, string> = {
-  exploration: '$0 stake',
-  validation: 'simulated',
-  execution: 'Kelly stakes',
-};
-// ...
-message += `${tierLabels[tier]} (${group.length}) — _${tierStakes[tier]}_\n\n`;
-
-// AFTER:
-// (remove tierStakes object entirely)
-// In the loop:
-const tierStake = group[0]?.simulated_stake
-  ? `$${group[0].simulated_stake} stake`
-  : 'simulated';
-message += `${tierLabels[tier]} (${group.length}) — _${tierStake}_\n\n`;
-```
-
-Both functions are redeployed automatically after changes.
-
----
-
-## What Telegram Will Look Like After Fix
-
-```
-🎯🔥 TODAY'S PARLAYS 🔥🎯
-
-💰 Execution (3) — $300 stake
-
-  1. 🎲 (3-leg) +750 ⏳
-     📊 Take UConn -15.5 (-115)
-     📊 LeBron O25.5 pts (-110)
-     ...
-
-✅ Validation (5) — $150 stake
-
-🔬 Exploration (4) — $50 stake
-```
-
-No more `$0 stake` or 1-leg entries filling the board.
+No database migration required. No new dependencies. After the code change, hit **Smart Generate** in the Dashboard to clear the stale 1-leg board.
