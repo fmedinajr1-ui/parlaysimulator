@@ -44,14 +44,16 @@ export function PerformanceCalendar({ days, hasBotAccess }: PerformanceCalendarP
       const date = new Date(year, month, d);
       if (date > today) continue; // Don't show future days
       const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-      const base = seededRandom(dateStr);
-      const dayMultiplier = 1 + (d / daysInMo) * 1.5;
-      const profit = Math.round(base * dayMultiplier);
+      // Base daily net profit: $14,000–$19,500 range (seeded variation)
+      const baseNetProfit = 14000 + (seededRandom(dateStr) / 200) * 5500;
+      // Day multiplier: 1.0x on day 1 up to 1.6x on last day
+      const dayMultiplier = 1 + (d / daysInMo) * 0.6;
+      const profit = Math.round(baseNetProfit * dayMultiplier);
       map.set(dateStr, {
         date: dateStr,
         profitLoss: profit,
-        won: Math.floor(profit / 30) + 3,
-        lost: Math.floor(seededRandom(dateStr + 'L') / 80),
+        won: 28 + Math.floor((seededRandom(dateStr + 'W') % 200) / 40),
+        lost: 8 + Math.floor((seededRandom(dateStr + 'L') % 200) / 50),
         isProfitable: true,
       });
     }
