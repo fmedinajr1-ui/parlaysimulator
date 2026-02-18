@@ -2975,7 +2975,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
         bet_type: 'total', side: 'over', line: game.line || 0, odds: game.over_odds,
         category: mapTeamBetToCategory('total', 'over'),
         sharp_score: game.sharp_score || 50,
-        compositeScore: clampScore(30, 95, overScore + overPlusBonus + overWeatherBonus),
+        compositeScore: clampScore(30, 95, (overScore ?? 50) + overPlusBonus + overWeatherBonus),
         confidence_score: overScore / 100,
         score_breakdown: overBreakdown,
       });
@@ -2987,7 +2987,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
         bet_type: 'total', side: 'under', line: game.line || 0, odds: game.under_odds,
         category: mapTeamBetToCategory('total', 'under'),
         sharp_score: game.sharp_score || 50,
-        compositeScore: clampScore(30, 95, underScore + underPlusBonus + underWeatherBonus),
+        compositeScore: clampScore(30, 95, (underScore ?? 50) + underPlusBonus + underWeatherBonus),
         confidence_score: underScore / 100,
         score_breakdown: underBreakdown,
       });
@@ -3473,9 +3473,9 @@ async function generateTierParlays(
         if (BLOCKED_SPORTS.includes(p.sport)) return false;
         // Apply sport filter so baseball profiles only get baseball picks, etc.
         if (!sportFilter.includes('all') && !sportFilter.includes(p.sport)) return false;
-        // ncaab_unders: only allow UNDER side for totals
-        if (profile.strategy === 'ncaab_unders' && p.bet_type === 'total') {
-          return (p as EnrichedTeamPick).side?.toUpperCase() === 'UNDER';
+        // Generic: if profile declares a required side (e.g. 'under'), enforce it for totals
+        if (profile.side && p.bet_type === 'total') {
+          return (p as EnrichedTeamPick).side?.toLowerCase() === profile.side.toLowerCase();
         }
         return true;
       });
