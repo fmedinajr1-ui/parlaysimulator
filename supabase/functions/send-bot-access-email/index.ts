@@ -119,7 +119,7 @@ serve(async (req) => {
         Authorization: `Bearer ${RESEND_API_KEY}`,
       },
       body: JSON.stringify({
-        from: "ParlayIQ <noreply@parlaysimulator.lovable.app>",
+        from: "ParlayIQ <onboarding@resend.dev>",
         to: [email],
         subject: "🤖 Your ParlayIQ Bot Access is Ready",
         html: emailHtml(email),
