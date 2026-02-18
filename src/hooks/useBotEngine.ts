@@ -67,6 +67,7 @@ export interface BotParlay {
   simulated_stake: number;
   simulated_payout: number;
   profit_loss: number;
+  tier?: string;
 }
 
 export interface CategoryWeight {
