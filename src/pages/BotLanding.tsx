@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useSubscription } from "@/hooks/useSubscription";
 import { HeroStats } from "@/components/bot-landing/HeroStats";
 import { PerformanceCalendar } from "@/components/bot-landing/PerformanceCalendar";
-import { PricingCard } from "@/components/bot-landing/PricingCard";
+import { PricingSection } from "@/components/bot-landing/PricingSection";
 import { WhyMultipleParlays } from "@/components/bot-landing/WhyMultipleParlays";
 import { WolfLoadingOverlay } from "@/components/ui/wolf-loading-overlay";
 import { ParlayFarmLogo } from "@/components/ParlayFarmLogo";
@@ -41,6 +41,7 @@ export default function BotLanding() {
   const [stats, setStats] = useState<PublicStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [loadingPriceId, setLoadingPriceId] = useState<string | undefined>(undefined);
   const [searchParams] = useSearchParams();
   const isSuccess = searchParams.get("success") === "true";
 
@@ -67,11 +68,12 @@ export default function BotLanding() {
     fetchStats();
   }, []);
 
-  const handleCheckout = async (email: string) => {
+  const handleCheckout = async (email: string, priceId: string) => {
     setCheckoutLoading(true);
+    setLoadingPriceId(priceId);
     try {
       const { data, error } = await supabase.functions.invoke('create-bot-checkout', {
-        body: { email },
+        body: { email, priceId },
       });
       if (error) throw error;
       if (data?.url) {
@@ -81,6 +83,7 @@ export default function BotLanding() {
       console.error('Error starting checkout:', err);
     } finally {
       setCheckoutLoading(false);
+      setLoadingPriceId(undefined);
     }
   };
 
@@ -148,9 +151,10 @@ export default function BotLanding() {
 
       {!(hasBotAccess || isAdmin) && (
         <div ref={pricingRef}>
-          <PricingCard
+          <PricingSection
             onSubscribe={handleCheckout}
             isLoading={checkoutLoading}
+            loadingPriceId={loadingPriceId}
             isSubscribed={hasBotAccess}
             onCtaClick={handleCtaClick}
           />
