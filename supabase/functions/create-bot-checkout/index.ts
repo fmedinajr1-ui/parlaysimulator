@@ -37,6 +37,9 @@ serve(async (req) => {
       customer_email: customerId ? undefined : email,
       line_items: [{ price: resolvedPriceId, quantity: 1 }],
       mode: "subscription",
+      subscription_data: {
+        trial_period_days: 0, // Explicitly disable any default trial from price/product settings
+      },
       success_url: TELEGRAM_BOT_URL,
       cancel_url: `${req.headers.get("origin")}/`,
     });
