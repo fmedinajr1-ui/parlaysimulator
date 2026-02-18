@@ -5310,8 +5310,8 @@ Deno.serve(async (req) => {
     }
 
     // === SINGLE PICK FALLBACK ===
-    // If fewer than 10 parlays generated, create single picks (1-leg straight bets)
-    if (allParlays.length < 10) {
+    // If fewer than 3 parlays generated, create single picks (1-leg straight bets) — emergency only
+    if (allParlays.length < 3) {
       console.log(`[Bot v2] 🎯 SINGLE PICK FALLBACK: Only ${allParlays.length} parlays generated. Creating single picks.`);
       
       // Merge all picks, sort by composite score
