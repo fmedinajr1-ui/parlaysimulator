@@ -63,7 +63,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     minHitRate: 45,
     minEdge: 0.003,
     minSharpe: 0.01,
-    stake: 20,
+    stake: 100,
     minConfidence: 0.45,
     profiles: [
       // Multi-sport exploration — capped at 4 legs max
@@ -82,15 +82,10 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 4, strategy: 'explore_aggressive', sports: ['all'] },
       { legs: 4, strategy: 'explore_longshot', sports: ['all'] },
       { legs: 4, strategy: 'explore_longshot', sports: ['all'] },
-      // NCAAB exploration — totals/spreads focused
-      { legs: 3, strategy: 'ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'] },
-      { legs: 3, strategy: 'ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'] },
-      { legs: 3, strategy: 'ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'] },
-      { legs: 3, strategy: 'ncaab_unders', sports: ['basketball_ncaab'], betTypes: ['total'] },
-      { legs: 3, strategy: 'ncaab_unders', sports: ['basketball_ncaab'], betTypes: ['total'] },
-      { legs: 3, strategy: 'ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'] },
-      { legs: 4, strategy: 'ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'] },
-      { legs: 3, strategy: 'ncaab_mixed', sports: ['basketball_ncaab'], betTypes: ['spread', 'total'] },
+      // NCAAB exploration — SUSPENDED (high void rate, low hit rate < 45%)
+      // Only 2 conservative accuracy profiles kept for data collection
+      { legs: 2, strategy: 'ncaab_accuracy_totals', sports: ['basketball_ncaab'], betTypes: ['total'], sortBy: 'composite' },
+      { legs: 2, strategy: 'ncaab_accuracy_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'], sortBy: 'composite' },
       // NCAA Baseball exploration — PAUSED (needs more data)
       // { legs: 3, strategy: 'baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'] },
       // { legs: 3, strategy: 'baseball_spreads', sports: ['baseball_ncaa'], betTypes: ['spread'] },
@@ -143,13 +138,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // Whale signal exploration
       { legs: 2, strategy: 'whale_signal', sports: ['all'] },
       { legs: 3, strategy: 'whale_signal', sports: ['all'] },
-      // NCAAB accuracy profiles (2-leg for light-slate resilience)
-      { legs: 2, strategy: 'ncaab_accuracy_totals', sports: ['basketball_ncaab'], betTypes: ['total'], sortBy: 'composite' },
-      { legs: 2, strategy: 'ncaab_accuracy_totals', sports: ['basketball_ncaab'], betTypes: ['total'], sortBy: 'composite' },
-      { legs: 2, strategy: 'ncaab_accuracy_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'], sortBy: 'composite' },
-      { legs: 2, strategy: 'ncaab_accuracy_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'], sortBy: 'composite' },
-      { legs: 2, strategy: 'ncaab_accuracy_mixed', sports: ['basketball_ncaab'], betTypes: ['spread', 'total'], sortBy: 'composite' },
-      { legs: 2, strategy: 'ncaab_accuracy_mixed', sports: ['basketball_ncaab'], betTypes: ['spread', 'total'], sortBy: 'composite' },
+      // NCAAB accuracy profiles — REMOVED (deduplicated above, kept 2 conservative ones only)
     ],
   },
   validation: {
@@ -161,15 +150,14 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     minHitRate: 52,
     minEdge: 0.008,
     minSharpe: 0.02,
-    stake: 20,
+    stake: 100,
     minConfidence: 0.52,
     profiles: [
       // ALL 3-LEG: Validated tier capped at 3 legs for win rate optimization
       { legs: 3, strategy: 'validated_conservative', sports: ['basketball_nba'], minOddsValue: 45, minHitRate: 55 },
       { legs: 3, strategy: 'validated_conservative', sports: ['basketball_nba'], minOddsValue: 45, minHitRate: 55 },
       { legs: 3, strategy: 'validated_conservative', sports: ['icehockey_nhl'], minOddsValue: 45, minHitRate: 55 },
-      { legs: 3, strategy: 'validated_ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'], minOddsValue: 45, minHitRate: 55 },
-      { legs: 3, strategy: 'validated_ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'], minOddsValue: 45, minHitRate: 55 },
+      // NCAAB validation profiles REMOVED — high void rate, suspended
       // { legs: 3, strategy: 'validated_baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'], minOddsValue: 45, minHitRate: 55 }, // PAUSED
       { legs: 3, strategy: 'validated_balanced', sports: ['basketball_nba'], minOddsValue: 42, minHitRate: 55 },
       { legs: 3, strategy: 'validated_balanced', sports: ['basketball_nba', 'icehockey_nhl'], minOddsValue: 42, minHitRate: 55 },
@@ -201,7 +189,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
     minHitRate: 60,
     minEdge: 0.008,
     minSharpe: 0.02,
-    stake: 20,
+    stake: 100,
     minConfidence: 0.60,
     profiles: [
       // ALL 3-LEG: Maximum win probability (Feb 11 analysis: all 4 winners were 3-leg)
@@ -222,12 +210,12 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'hybrid_exec_cross', sports: ['all'], minHitRate: 58, sortBy: 'hit_rate', useAltLines: false, allowTeamLegs: 1 },
       // TEAM EXECUTION: Pure team props with high composite scores
       { legs: 3, strategy: 'team_exec', betTypes: ['moneyline', 'spread', 'total'], minHitRate: 55 },
-      // NCAAB EXECUTION: KenPom-powered, totals/spreads only (ML favorites were 0/12)
-      { legs: 3, strategy: 'ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
-      { legs: 3, strategy: 'ncaab_totals', sports: ['basketball_ncaab'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
-      { legs: 3, strategy: 'ncaab_unders', sports: ['basketball_ncaab'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
-      { legs: 3, strategy: 'ncaab_spreads', sports: ['basketball_ncaab'], betTypes: ['spread'], minHitRate: 55, sortBy: 'composite' },
-      { legs: 3, strategy: 'ncaab_mixed', sports: ['basketball_ncaab'], betTypes: ['spread', 'total'], minHitRate: 55, sortBy: 'composite' },
+      // NCAAB EXECUTION: SUSPENDED — void rate too high, replaced with NBA 3-leg profiles
+      { legs: 3, strategy: 'nba_under_specialist', sports: ['basketball_nba'], minHitRate: 62, sortBy: 'hit_rate', useAltLines: false },
+      { legs: 3, strategy: 'nba_3pt_focus', sports: ['basketball_nba'], minHitRate: 62, sortBy: 'hit_rate', useAltLines: false },
+      { legs: 3, strategy: 'nba_mixed_cats', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'composite', useAltLines: false },
+      { legs: 3, strategy: 'cash_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
+      { legs: 3, strategy: 'golden_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
       // NCAA Baseball execution — PAUSED (needs more data)
       // { legs: 3, strategy: 'baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
       // Whale signal execution
@@ -3805,7 +3793,7 @@ async function generateTierParlays(
         const playerLegs = legs.filter(l => l.type !== 'team');
         if (playerLegs.length > 0) {
           const goldenLegCount = playerLegs.filter(l => goldenCategories.has(l.category)).length;
-          const minGoldenLegs = Math.max(1, playerLegs.length - 1); // Allow 1 non-golden player leg
+          const minGoldenLegs = Math.max(1, Math.floor(playerLegs.length * 0.5)); // 50% golden legs (relaxed from all-1)
           if (goldenLegCount < minGoldenLegs) {
             console.log(`[Bot] Skipping ${tier}/${profile.strategy}: only ${goldenLegCount}/${playerLegs.length} golden player legs (need ${minGoldenLegs})`);
             continue;
@@ -5159,7 +5147,7 @@ Deno.serve(async (req) => {
       miniParlays.sort((a, b) => b.combinedEdge - a.combinedEdge);
 
       // Assign tiers with caps
-      const miniTierCaps = { execution: 3, validation: 5, exploration: 8 };
+      const miniTierCaps = { execution: 0, validation: 3, exploration: 6 }; // mini-parlays NEVER go to execution tier
       const miniTierCounts = { execution: 0, validation: 0, exploration: 0 };
       let totalMiniCreated = 0;
 
