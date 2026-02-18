@@ -28,11 +28,14 @@ export function HeroStats({ totalProfit: _totalProfit, totalWins: _totalWins }: 
 
     for (let d = 1; d <= today; d++) {
       const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-      const base = seededRandom(dateStr);
-      const dayMultiplier = 1 + (d / daysInMonth) * 1.5;
-      const dayProfit = Math.round(base * dayMultiplier);
+      // Base daily net profit: $14,000–$19,500 range (seeded variation)
+      const baseNetProfit = 14000 + (seededRandom(dateStr) / 200) * 5500;
+      // Day multiplier: 1.0x on day 1 up to 1.6x on last day
+      const dayMultiplier = 1 + (d / daysInMonth) * 0.6;
+      const dayProfit = Math.round(baseNetProfit * dayMultiplier);
       profit += dayProfit;
-      wins += Math.floor(dayProfit / 30) + 3;
+      // Wins: 28–32 per day (seeded variation around 30)
+      wins += 28 + Math.floor((seededRandom(dateStr + 'W') % 200) / 40);
     }
 
     return { syntheticProfit: profit, syntheticWins: wins };
