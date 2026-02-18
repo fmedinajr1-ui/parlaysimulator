@@ -130,19 +130,21 @@ serve(async (req) => {
       const customerId = customers.data[0].id;
       logStep("Found Stripe customer", { customerId });
 
-      const subscriptions = await stripe.subscriptions.list({
-        customer: customerId,
-        status: "active",
-        limit: 10,
-      });
+      const [activeSubs, trialingSubs] = await Promise.all([
+        stripe.subscriptions.list({ customer: customerId, status: "active", limit: 10 }),
+        stripe.subscriptions.list({ customer: customerId, status: "trialing", limit: 10 }),
+      ]);
 
-      if (subscriptions.data.length > 0) {
+      const allSubs = [...activeSubs.data, ...trialingSubs.data];
+
+      if (allSubs.length > 0) {
         isSubscribed = true;
-        subscriptionEnd = new Date(subscriptions.data[0].current_period_end * 1000).toISOString();
-        logStep("Active subscription found", { subscriptionEnd });
+        subscriptionEnd = new Date(allSubs[0].current_period_end * 1000).toISOString();
+        const statusFound = allSubs[0].status;
+        logStep("Subscription found", { subscriptionEnd, status: statusFound });
         
-        // Check if any active subscription belongs to a bot price
-        for (const sub of subscriptions.data) {
+        // Check if any active/trialing subscription belongs to a bot price
+        for (const sub of allSubs) {
           for (const item of sub.items.data) {
             if (BOT_PRICE_IDS[item.price.id]) {
               hasBotProSubscription = true;
@@ -164,15 +166,15 @@ serve(async (req) => {
       }
     }
 
-    // Detect bot tier from active subscription price IDs
+    // Detect bot tier from active/trialing subscription price IDs
     let botTier: string | null = null;
     if (hasBotProSubscription && customers.data.length > 0) {
-      const activeSubs = await stripe.subscriptions.list({
-        customer: customers.data[0].id,
-        status: "active",
-        limit: 10,
-      });
-      for (const sub of activeSubs.data) {
+      const [activeSubsForTier, trialingSubsForTier] = await Promise.all([
+        stripe.subscriptions.list({ customer: customers.data[0].id, status: "active", limit: 10 }),
+        stripe.subscriptions.list({ customer: customers.data[0].id, status: "trialing", limit: 10 }),
+      ]);
+      const allSubsForTier = [...activeSubsForTier.data, ...trialingSubsForTier.data];
+      for (const sub of allSubsForTier) {
         for (const item of sub.items.data) {
           if (BOT_PRICE_IDS[item.price.id]) {
             botTier = BOT_PRICE_IDS[item.price.id];
