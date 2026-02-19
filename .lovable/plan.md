@@ -1,97 +1,63 @@
 
 
-## Add Customer-Facing Simplified Hedge Indicator
+## Add Scout Paywall to Homepage and Simplify to 2 Tiers
 
-### Overview
+### What Changes
 
-Replace the detailed admin `HedgeRecommendation` component (834 lines of rotation analysis, zone matchups, hedge sizing, etc.) with a clean, simplified indicator for the customer view. Customers see only three statuses: **ON TRACK**, **CAUTION**, and **ACTION NEEDED** -- no dollar amounts, no "BET UNDER X NOW" instructions, no internal analytics.
-
-### Status Mapping
-
-The 5-tier admin system maps to 3 customer-friendly tiers:
-
-```text
-Admin Status         Customer Status      Customer Label
-────────────────     ──────────────────   ──────────────
-on_track             on_track             ON TRACK
-profit_lock          on_track             ON TRACK
-monitor              caution              CAUTION
-alert                action_needed        ACTION NEEDED
-urgent               action_needed        ACTION NEEDED
-```
-
-### Changes
-
-**1. New component: `src/components/scout/CustomerHedgeIndicator.tsx`**
-- Simple component that accepts a `DeepSweetSpot` and renders one of three badges
-- Uses the shared `calculateHedgeStatus()` from `hedgeStatusUtils.ts` (same logic as admin, just simplified display)
-- Shows a short, non-technical message:
-  - ON TRACK: "Looking good" + a progress indicator (e.g., "12 of 24.5")
-  - CAUTION: "Keep watching" + current vs line
-  - ACTION NEEDED: "At risk" + current vs line
-- No dollar amounts, no "BET X", no hedge sizing, no rotation tiers
-
-**2. New component: `src/components/scout/CustomerHedgePanel.tsx`**
-- Replaces `ScoutHedgePanel` in the customer view
-- Same data source (useDeepSweetSpots + useSweetSpotLiveData) but uses `CustomerHedgeIndicator` instead of `HedgeRecommendation`
-- Header says "Pick Status" instead of "Hedge Recommendations"
-- Summary badges show counts of ON TRACK / CAUTION / ACTION NEEDED
-
-**3. Update `src/components/scout/CustomerScoutView.tsx`**
-- Replace `ScoutHedgePanel` with `CustomerHedgePanel`
-- Admin view (`Scout.tsx` without `isCustomer`) keeps the existing detailed `ScoutHedgePanel`
+1. **Remove Pro ($399) and Ultimate ($799) tiers** from `PricingSection.tsx` -- these were the funded-account tiers
+2. **Keep only Entry ($99, renamed "Parlay Bot") and Scout ($750)**
+3. **Add the pricing section to the homepage** (`Index.tsx`) so visitors see subscription options directly
+4. **Update grid layout** from 4-column to 2-column since there are only 2 tiers
+5. **Clean up unused code** -- remove funding badge logic, gold accent styling, and Pro/Ultimate price constants
 
 ### Technical Details
 
-**CustomerHedgeIndicator.tsx**
-```tsx
-// Maps hedge status -> simplified customer tier
-type CustomerTier = 'on_track' | 'caution' | 'action_needed';
+**1. `src/components/bot-landing/PricingSection.tsx`**
 
-function mapToCustomerTier(status: HedgeStatus): CustomerTier {
-  if (status === 'on_track' || status === 'profit_lock') return 'on_track';
-  if (status === 'monitor') return 'caution';
-  return 'action_needed'; // alert, urgent
-}
+- Remove `PRO_PRICE_ID` and `ULTIMATE_PRICE_ID` constants
+- Remove the Pro and Ultimate tier objects from the `tiers` array
+- Rename Entry tier to "Parlay Bot" with updated CTA text
+- Make Entry the highlighted tier (since there's no Pro to highlight anymore)
+- Remove `TrendingUp` import and funding badge rendering logic (no tiers use it)
+- Remove `goldAccent` styling branches from TierCard (no tier uses it)
+- Update grid from `lg:grid-cols-4` to `md:grid-cols-2` for the 2-card layout
+- Update subtitle copy to reflect the simplified offering
 
-// Renders a single-line badge with icon + label + "Current X of Line"
-// No hedge sizing, no "BET UNDER X", no dollar amounts
+**2. `src/pages/Index.tsx`**
+
+- Import `PricingSection` from `@/components/bot-landing/PricingSection`
+- Import `supabase` for the checkout flow
+- Add the `PricingSection` component between `WeeklyParlayHistory` and `HowItWorks`
+- Wire up the `handleCheckout` function (calls `create-bot-checkout` with email + priceId)
+- Only show pricing to non-subscribed users (hide for admins and existing subscribers)
+
+**3. `src/pages/BotLanding.tsx`**
+
+- No structural changes needed -- it already uses `PricingSection` and will automatically reflect the reduced tiers
+
+### Tier Configuration (After)
+
+```text
+Tier          Price    Badge         Highlight    Trial
+─────────     ─────   ───────────   ─────────    ─────
+Parlay Bot    $99/mo   Most Popular  Yes          No
+Scout         $750/mo  Live Edge     No           1-day
 ```
 
-**CustomerHedgePanel.tsx**
-```tsx
-// Same data flow as ScoutHedgePanel but:
-// - Title: "Pick Status" (not "Hedge Recommendations")
-// - Uses CustomerHedgeIndicator (not HedgeRecommendation)
-// - Summary badges: ON TRACK / CAUTION / ACTION NEEDED counts
-// - No internal analytics exposed
+### Homepage Layout (After)
+
+```text
+HeroBanner
+Sign Out (if logged in)
+Quick Actions
+Main CTA (Analyze Your Parlay)
+SlateRefreshControls
+Elite3PTFixedParlay
+WhenWeWinBig
+DailyParlayHub
+SweetSpotPicksCard
+WeeklyParlayHistory
+── NEW: PricingSection (2 cards: Parlay Bot + Scout) ──
+HowItWorks
 ```
-
-**CustomerScoutView.tsx**
-```tsx
-// Line 37: Replace ScoutHedgePanel with CustomerHedgePanel
-import { CustomerHedgePanel } from './CustomerHedgePanel';
-// ...
-<CustomerHedgePanel homeTeam={homeTeam} awayTeam={awayTeam} />
-```
-
-### What Customers See
-
-Each pick card shows:
-- Player name + prop type badge (e.g., "PTS")
-- Side + line (e.g., "OVER 24.5")
-- A single status badge: green "ON TRACK", yellow "CAUTION", or red "ACTION NEEDED"
-- A short neutral message like "12 of 24.5 -- on pace" (no betting instructions)
-
-### What Customers Do NOT See
-
-- Dollar hedge sizing ("$50-100")
-- "BET UNDER X NOW" instructions
-- Rotation tier analysis
-- Zone matchup charts
-- Quarter sparklines
-- Pace momentum trackers
-- Hit probability percentages
-- Rate per minute calculations
-- Risk flag details (blowout, foul trouble)
 
