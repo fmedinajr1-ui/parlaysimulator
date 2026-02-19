@@ -1,6 +1,6 @@
 import React from 'react';
 import { ScoutSweetSpotProps } from './ScoutSweetSpotProps';
-import { ScoutHedgePanel } from './ScoutHedgePanel';
+import { CustomerHedgePanel } from './CustomerHedgePanel';
 import { Card, CardContent } from '@/components/ui/card';
 import { Video } from 'lucide-react';
 import type { ScoutGameContext } from '@/pages/Scout';
@@ -34,7 +34,7 @@ export function CustomerScoutView({ gameContext }: CustomerScoutViewProps) {
       {/* Props + Hedge side by side */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <ScoutSweetSpotProps homeTeam={homeTeam} awayTeam={awayTeam} />
-        <ScoutHedgePanel homeTeam={homeTeam} awayTeam={awayTeam} />
+        <CustomerHedgePanel homeTeam={homeTeam} awayTeam={awayTeam} />
       </div>
     </div>
   );
