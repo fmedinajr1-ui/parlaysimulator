@@ -34,6 +34,7 @@ export function ScoutVideoUpload({
   const [extractionProgress, setExtractionProgress] = useState<ExtractionProgress | null>(null);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [previewFrames, setPreviewFrames] = useState<string[]>([]);
+  const cachedFramesRef = useRef<ReturnType<typeof deduplicateFrames> | null>(null);
 
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -52,6 +53,7 @@ export function ScoutVideoUpload({
 
     setUploadedFile(file);
     setPreviewFrames([]);
+    cachedFramesRef.current = null;
 
     // Extract frames for preview
     try {
@@ -64,6 +66,7 @@ export function ScoutVideoUpload({
 
       const result = await extractFramesFromVideo(file, setExtractionProgress);
       const uniqueFrames = deduplicateFrames(result.frames);
+      cachedFramesRef.current = uniqueFrames;
       
       // Show first 4 frames as preview
       setPreviewFrames(uniqueFrames.slice(0, 4).map(f => f.base64));
@@ -101,16 +104,19 @@ export function ScoutVideoUpload({
     setIsAnalyzing(true);
     
     try {
-      setExtractionProgress({
-        stage: 'extracting',
-        currentFrame: 0,
-        totalFrames: 0,
-        message: 'Extracting frames...',
-      });
-
-      // Re-extract frames for analysis
-      const result = await extractFramesFromVideo(uploadedFile, setExtractionProgress);
-      const uniqueFrames = deduplicateFrames(result.frames);
+      // Reuse cached frames from file select, or re-extract if missing
+      let uniqueFrames = cachedFramesRef.current;
+      if (!uniqueFrames) {
+        setExtractionProgress({
+          stage: 'extracting',
+          currentFrame: 0,
+          totalFrames: 0,
+          message: 'Extracting frames...',
+        });
+        const result = await extractFramesFromVideo(uploadedFile, setExtractionProgress);
+        uniqueFrames = deduplicateFrames(result.frames);
+        cachedFramesRef.current = uniqueFrames;
+      }
       
       // Build roster context string
       const homeRosterContext = gameContext.homeRoster
