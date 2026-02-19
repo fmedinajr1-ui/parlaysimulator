@@ -134,8 +134,7 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 4, strategy: 'props_mixed', sports: ['basketball_nba', 'icehockey_nhl'] },
       { legs: 4, strategy: 'props_mixed', sports: ['all'] },
       { legs: 4, strategy: 'props_mixed', sports: ['all'] },
-      // Whale signal exploration
-      { legs: 2, strategy: 'whale_signal', sports: ['all'] },
+      // Whale signal exploration (3-leg only — 2-leg permanently removed)
       { legs: 3, strategy: 'whale_signal', sports: ['all'] },
       // NCAAB accuracy profiles — REMOVED (deduplicated above, kept 2 conservative ones only)
     ],
@@ -218,8 +217,11 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       { legs: 3, strategy: 'golden_lock', sports: ['basketball_nba'], minHitRate: 60, sortBy: 'hit_rate', useAltLines: false },
       // NCAA Baseball execution — PAUSED (needs more data)
       // { legs: 3, strategy: 'baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
-      // Whale signal execution
-      { legs: 2, strategy: 'whale_signal', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
+      // Whale signal execution (3-leg only — 2-leg permanently removed)
+      { legs: 3, strategy: 'whale_signal', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
+      // MASTER PARLAY: 6-leg bankroll doubler with defense-filtered matchups
+      // Targets +500 to +2000 odds range. ALL legs pass defensive matchup validation.
+      { legs: 6, strategy: 'master_parlay', sports: ['basketball_nba'], minHitRate: 62, sortBy: 'hit_rate', useAltLines: false, requireDefenseFilter: true },
       // HOT-STREAK LOCKS: Force selection from categories with current_streak >= 3 and 100% hit rate
       // These run FIRST before standard profiles to guarantee hot-streak concentration in 3-leg parlays
       { legs: 3, strategy: 'hot_streak_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate', useAltLines: false },
@@ -3413,6 +3415,61 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     console.log(`[SportShift] Boosted composite scores for ${sportShiftApplied} picks from non-dominant sports`);
   }
 
+  // === DEFENSE MATCHUP COMPOSITE ADJUSTMENTS (NBA player props) ===
+  // Apply soft bonuses/penalties based on today's opponent defensive ranking.
+  // This enriches ALL picks before parlay assembly — the master parlay will hard-filter on top of this.
+  try {
+    const { startUtc: defStartUtc, endUtc: defEndUtc } = getEasternDateRange();
+    const { data: todayNbaGames } = await supabase
+      .from('game_bets')
+      .select('home_team, away_team')
+      .eq('sport', 'basketball_nba')
+      .gte('commence_time', defStartUtc)
+      .lte('commence_time', defEndUtc);
+
+    const defOpponentMap = new Map<string, string>();
+    if (todayNbaGames && todayNbaGames.length > 0) {
+      for (const g of todayNbaGames) {
+        const home = (g.home_team || '').toLowerCase().trim();
+        const away = (g.away_team || '').toLowerCase().trim();
+        if (home && away) { defOpponentMap.set(home, away); defOpponentMap.set(away, home); }
+      }
+    }
+
+    const { data: defRankData } = await supabase
+      .from('nba_opponent_defense_stats')
+      .select('team_name, stat_category, defense_rank');
+
+    const defMapPool = new Map<string, Map<string, number>>();
+    if (defRankData && defRankData.length > 0) {
+      for (const row of defRankData) {
+        const key = (row.team_name || '').toLowerCase().trim();
+        if (!defMapPool.has(key)) defMapPool.set(key, new Map());
+        defMapPool.get(key)!.set((row.stat_category || 'overall').toLowerCase(), row.defense_rank);
+      }
+    }
+
+    let defAdjApplied = 0;
+    for (const pick of enrichedSweetSpots) {
+      if ((pick.sport || 'basketball_nba') !== 'basketball_nba') continue;
+      const teamKey = ((pick as any).team_name || '').toLowerCase().trim();
+      const side = (pick.recommended_side || 'over').toLowerCase();
+      const rank = getOpponentDefenseRank(teamKey, pick.prop_type || 'points', defOpponentMap, defMapPool);
+      const adj = getDefenseMatchupAdjustment(rank, side);
+      if (adj !== 0) {
+        pick.compositeScore = Math.min(95, Math.max(0, pick.compositeScore + adj));
+        (pick as any).defenseMatchupRank = rank;
+        (pick as any).defenseMatchupAdj = adj;
+        defAdjApplied++;
+      }
+    }
+    if (defAdjApplied > 0) {
+      console.log(`[DefenseMatchup] Applied composite adjustments to ${defAdjApplied} NBA picks based on opponent defense rankings`);
+    }
+  } catch (defErr) {
+    console.log(`[DefenseMatchup] ⚠️ Failed to apply defense adjustments: ${defErr.message}`);
+  }
+
   console.log(`[Bot] Pool built: ${enrichedSweetSpots.length} player props, ${enrichedTeamPicks.length} team props, ${enrichedWhalePicks.length} whale picks`);
 
   return {
@@ -4708,6 +4765,274 @@ function generateSyntheticPool(): PropPool {
   };
 }
 
+// ============= DEFENSE MATCHUP FILTER HELPERS =============
+
+/**
+ * Map prop_type string to the stat_category key used in nba_opponent_defense_stats
+ */
+function propTypeToDefenseStat(propType: string): string {
+  const pt = (propType || '').toLowerCase();
+  if (pt.includes('rebound')) return 'rebounds';
+  if (pt.includes('assist')) return 'assists';
+  if (pt.includes('three') || pt.includes('3pt') || pt.includes('3p')) return 'threes';
+  if (pt.includes('block')) return 'blocks';
+  return 'points';
+}
+
+/**
+ * Get opponent defense rank for a player prop pick.
+ * opponentMap: team_name_lower → opponent_team_name_lower (today's schedule)
+ * defenseMap: team_name_lower → { stat_category → defense_rank }
+ * Returns null if no data (no data = don't block)
+ */
+function getOpponentDefenseRank(
+  playerTeamName: string,
+  propType: string,
+  opponentMap: Map<string, string>,
+  defenseMap: Map<string, Map<string, number>>
+): number | null {
+  const teamKey = (playerTeamName || '').toLowerCase().trim();
+  const opponent = opponentMap.get(teamKey);
+  if (!opponent) return null;
+  const defRanks = defenseMap.get(opponent);
+  if (!defRanks) return null;
+  const statKey = propTypeToDefenseStat(propType);
+  return defRanks.get(statKey) ?? defRanks.get('overall') ?? null;
+}
+
+/**
+ * Check if a pick passes the defensive matchup threshold for inclusion in master parlay.
+ * For OVER picks: need soft defense (rank >= 17, meaning 17th-worst = lots allowed)
+ * For UNDER picks: need strong defense (rank <= 15)
+ * null rank = no data = allow (don't block on missing data)
+ */
+function passesDefenseMatchup(opponentRank: number | null, side: string): boolean {
+  if (opponentRank === null) return true;
+  const s = (side || '').toLowerCase();
+  if (s === 'over') return opponentRank >= 17;
+  if (s === 'under') return opponentRank <= 15;
+  return true;
+}
+
+/**
+ * Get defensive matchup composite adjustment for regular execution picks.
+ * This provides soft bonuses/penalties across ALL execution tier picks (not just master parlay).
+ */
+function getDefenseMatchupAdjustment(opponentRank: number | null, side: string): number {
+  if (opponentRank === null) return 0;
+  const s = (side || '').toLowerCase();
+  if (s === 'over') {
+    if (opponentRank >= 25) return 8;  // Very soft defense — big boost
+    if (opponentRank >= 20) return 4;  // Soft defense
+    if (opponentRank <= 8) return -10; // Tough defense — big penalty
+    return 0;
+  } else if (s === 'under') {
+    if (opponentRank <= 8) return 8;   // Very strong defense — confirms under
+    if (opponentRank <= 15) return 6;  // Strong defense — confirms under
+    if (opponentRank >= 25) return -8; // Soft defense — hurts under
+    return 0;
+  }
+  return 0;
+}
+
+// ============= GENERATE MASTER PARLAY =============
+/**
+ * Builds a single 6-leg NBA master parlay targeting +500 to +2000 odds.
+ * - Loads today's NBA opponent matchups from game_bets
+ * - Loads defense ranks from nba_opponent_defense_stats
+ * - Filters to picks that pass defensive matchup validation
+ * - Enforces 1 pick per archetype AND 1 pick per team (no same-team correlation)
+ * - Targets 5 player props from diverse archetypes + 1 anchor leg
+ * - Stakes at bankroll_doubler_stake ($500 default)
+ */
+async function generateMasterParlay(
+  supabase: any,
+  pool: { playerPicks: EnrichedPick[]; teamPicks: EnrichedPick[]; whalePicks: EnrichedPick[] },
+  targetDate: string,
+  strategyName: string,
+  bankroll: number,
+  globalFingerprints: Set<string>,
+  stakeAmount: number
+): Promise<any | null> {
+  console.log(`[MasterParlay] 🏆 Building 6-leg bankroll doubler for ${targetDate}`);
+
+  // Load today's NBA games to build team → opponent map
+  const { startUtc, endUtc } = getEasternDateRange();
+  const { data: todayGames } = await supabase
+    .from('game_bets')
+    .select('home_team, away_team, sport')
+    .eq('sport', 'basketball_nba')
+    .gte('commence_time', startUtc)
+    .lte('commence_time', endUtc);
+
+  // Build bidirectional opponent map: team_lower → opponent_lower
+  const opponentMap = new Map<string, string>();
+  if (todayGames && todayGames.length > 0) {
+    for (const g of todayGames) {
+      const home = (g.home_team || '').toLowerCase().trim();
+      const away = (g.away_team || '').toLowerCase().trim();
+      if (home && away) {
+        opponentMap.set(home, away);
+        opponentMap.set(away, home);
+      }
+    }
+    console.log(`[MasterParlay] Opponent map built from ${todayGames.length} NBA games: ${opponentMap.size / 2} matchups`);
+  } else {
+    console.log(`[MasterParlay] ⚠️ No NBA games found for today — defense filter will use null (allow-all) mode`);
+  }
+
+  // Load defensive rankings from nba_opponent_defense_stats
+  const { data: defStats } = await supabase
+    .from('nba_opponent_defense_stats')
+    .select('team_name, stat_category, defense_rank');
+
+  // Build defenseMap: team_lower → Map<stat_category, rank>
+  const defenseMap = new Map<string, Map<string, number>>();
+  if (defStats && defStats.length > 0) {
+    for (const row of defStats) {
+      const key = (row.team_name || '').toLowerCase().trim();
+      if (!defenseMap.has(key)) defenseMap.set(key, new Map());
+      defenseMap.get(key)!.set((row.stat_category || 'overall').toLowerCase(), row.defense_rank);
+    }
+    console.log(`[MasterParlay] Defense map loaded: ${defenseMap.size} teams`);
+  }
+
+  // NBA player prop candidates (real lines only, not blocked sports)
+  const nbaCandidates = pool.playerPicks.filter(p =>
+    (p.sport === 'basketball_nba' || !p.sport) &&
+    p.has_real_line &&
+    Math.abs(p.line || 0) > 0 &&
+    p.player_name &&
+    (p.l10_hit_rate || p.confidence_score || 0) >= 0.62
+  );
+
+  // Enrich each candidate with defense rank + check pass/fail
+  type EnrichedMasterCandidate = EnrichedPick & {
+    defenseRank: number | null;
+    defenseAdj: number;
+    passesMatchup: boolean;
+    masterScore: number;
+    teamLower: string;
+  };
+
+  const enrichedCandidates: EnrichedMasterCandidate[] = nbaCandidates.map(pick => {
+    // Get the player's team from available fields
+    const teamLower = ((pick as any).team_name || '').toLowerCase().trim();
+    const side = (pick.recommended_side || 'over').toLowerCase();
+    const defenseRank = getOpponentDefenseRank(teamLower, pick.prop_type || 'points', opponentMap, defenseMap);
+    const defenseAdj = getDefenseMatchupAdjustment(defenseRank, side);
+    const passesMatchup = passesDefenseMatchup(defenseRank, side);
+    const hitRate = (pick.l10_hit_rate || pick.confidence_score || 0) * 100;
+    // Master score = composite + defense adjustment + hit-rate bonus
+    const masterScore = (pick.compositeScore || 60) + defenseAdj + (hitRate >= 70 ? 5 : hitRate >= 65 ? 3 : 0);
+
+    return { ...pick, defenseRank, defenseAdj, passesMatchup, masterScore, teamLower };
+  });
+
+  // Hard-filter: must pass defensive matchup
+  const validCandidates = enrichedCandidates
+    .filter(c => c.passesMatchup)
+    .sort((a, b) => b.masterScore - a.masterScore);
+
+  console.log(`[MasterParlay] ${nbaCandidates.length} NBA candidates → ${validCandidates.length} pass defense matchup filter`);
+
+  if (validCandidates.length < 4) {
+    console.log(`[MasterParlay] ⚠️ Not enough defense-validated candidates (${validCandidates.length}). Skipping master parlay.`);
+    return null;
+  }
+
+  // Greedily select legs enforcing: 1 per archetype, 1 per team
+  const selectedLegs: EnrichedMasterCandidate[] = [];
+  const usedArchetypes = new Set<string>();
+  const usedTeams = new Set<string>();
+
+  for (const candidate of validCandidates) {
+    if (selectedLegs.length >= 6) break;
+    const archetype = candidate.archetype || candidate.category || 'UNKNOWN';
+    const teamKey = candidate.teamLower;
+
+    // Enforce archetype diversity (max 1 per archetype)
+    if (usedArchetypes.has(archetype)) continue;
+    // Enforce team diversity (max 1 player per team)
+    if (teamKey && usedTeams.has(teamKey)) continue;
+
+    selectedLegs.push(candidate);
+    usedArchetypes.add(archetype);
+    if (teamKey) usedTeams.add(teamKey);
+  }
+
+  // Need at least 5 legs for a meaningful master parlay
+  if (selectedLegs.length < 5) {
+    console.log(`[MasterParlay] ⚠️ Only ${selectedLegs.length} diverse legs found. Skipping master parlay.`);
+    return null;
+  }
+
+  // Build the parlay legs array
+  const parlayLegs = selectedLegs.map((pick, idx) => ({
+    type: 'player',
+    player_name: pick.player_name,
+    prop_type: pick.prop_type,
+    line: pick.line,
+    side: pick.recommended_side || 'over',
+    sport: pick.sport || 'basketball_nba',
+    americanOdds: pick.americanOdds || -110,
+    hit_rate: Math.round((pick.l10_hit_rate || pick.confidence_score || 0.62) * 100),
+    defense_rank: (pick as EnrichedMasterCandidate).defenseRank,
+    defense_adj: (pick as EnrichedMasterCandidate).defenseAdj,
+    archetype: pick.archetype || pick.category,
+    leg_index: idx,
+  }));
+
+  // Calculate combined odds and probability
+  const combinedProbability = selectedLegs.reduce((acc, pick) => {
+    const p = pick.l10_hit_rate || pick.confidence_score || 0.62;
+    return acc * p;
+  }, 1.0);
+
+  // Convert each leg's American odds to decimal, multiply for parlay odds
+  const combinedDecimalOdds = selectedLegs.reduce((acc, pick) => {
+    const odds = pick.americanOdds || -110;
+    const decimal = odds < 0 ? (100 / Math.abs(odds)) + 1 : (odds / 100) + 1;
+    return acc * decimal;
+  }, 1.0);
+  const combinedAmericanOdds = combinedDecimalOdds >= 2
+    ? Math.round((combinedDecimalOdds - 1) * 100)
+    : Math.round(-100 / (combinedDecimalOdds - 1));
+
+  // Dedup fingerprint
+  const fingerprint = createParlayFingerprint(parlayLegs);
+  if (globalFingerprints.has(fingerprint)) {
+    console.log(`[MasterParlay] Duplicate master parlay — skipping`);
+    return null;
+  }
+  globalFingerprints.add(fingerprint);
+
+  const defRankSummary = selectedLegs.map(l =>
+    `${l.player_name?.split(' ').pop()} ${l.recommended_side} vs def#${(l as EnrichedMasterCandidate).defenseRank ?? 'N/A'}`
+  ).join(', ');
+
+  const parlayRecord = {
+    parlay_date: targetDate,
+    legs: parlayLegs,
+    leg_count: parlayLegs.length,
+    combined_probability: combinedProbability,
+    expected_odds: combinedAmericanOdds,
+    simulated_win_rate: combinedProbability,
+    simulated_edge: Math.max(combinedProbability - (1 / (combinedDecimalOdds)), -0.1),
+    simulated_sharpe: combinedProbability * 2,
+    strategy_name: `master_parlay_${strategyName}`,
+    selection_rationale: `6-leg NBA Bankroll Doubler | Defense-filtered matchups | ${defRankSummary} | Target: +${combinedAmericanOdds}`,
+    outcome: 'pending',
+    is_simulated: false,
+    simulated_stake: stakeAmount,
+    tier: 'execution',
+    category_weights_snapshot: { master_parlay: true, legs: parlayLegs.length, defense_filtered: true },
+  };
+
+  console.log(`[MasterParlay] ✅ Built ${parlayLegs.length}-leg master parlay: +${combinedAmericanOdds} odds | prob ${(combinedProbability * 100).toFixed(1)}% | ${defRankSummary}`);
+  return parlayRecord;
+}
+
 // ============= MAIN HANDLER =============
 
 Deno.serve(async (req) => {
@@ -5117,6 +5442,17 @@ Deno.serve(async (req) => {
       console.log(`[Bot v2] 🔥 Monster parlays: ${monsterParlays.length} created (${monsterParlays.map((m: any) => '+' + m.expected_odds).join(', ')})`);
     }
 
+    // === MASTER PARLAY: 6-leg NBA bankroll doubler with defensive matchup filter ===
+    // Runs every day. Defense-validates every leg before inclusion.
+    const masterParlayStake = stakeConfig?.bankroll_doubler_stake ?? 500;
+    const masterParlay = await generateMasterParlay(
+      supabase, pool, targetDate, strategyName, bankroll, globalFingerprints, masterParlayStake
+    );
+    if (masterParlay) {
+      allParlays.push(masterParlay);
+      console.log(`[Bot v2] 🏆 MASTER PARLAY: ${masterParlay.leg_count} legs | +${masterParlay.expected_odds} odds | $${masterParlayStake} stake`);
+    }
+
     // === 2-LEG MINI-PARLAY HYBRID FALLBACK ===
     if (allParlays.length < 6 && !stakeConfig?.block_two_leg_parlays) {
       console.log(`[Bot v2] 🔗 MINI-PARLAY FALLBACK: Only ${allParlays.length} parlays. Attempting 2-leg mini-parlays.`);
@@ -5403,8 +5739,9 @@ Deno.serve(async (req) => {
 
     // === SINGLE PICK FALLBACK ===
     // Only create single picks if ZERO multi-leg parlays were generated (true emergency)
-    // Threshold raised from <3 to <1 to prevent flooding the board with 1-leg straight bets
-    if (allParlays.length < 1) {
+    // AND fewer than 6 parlays already exist in the DB (prevents flooding on second run)
+    const existingParlaysCount = existingParlays?.length || 0;
+    if (allParlays.length < 1 && existingParlaysCount < 6) {
       console.log(`[Bot v2] 🎯 SINGLE PICK FALLBACK: Only ${allParlays.length} parlays generated. Creating single picks.`);
       
       // Merge all picks, sort by composite score
