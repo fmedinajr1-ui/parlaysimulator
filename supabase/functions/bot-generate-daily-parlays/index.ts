@@ -2623,17 +2623,16 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
   const playerTeamMap = new Map<string, string>();
   try {
     const { data: playerTeamRows } = await supabase
-      .from('nba_player_game_logs')
+      .from('bdl_player_cache')
       .select('player_name, team_name')
-      .order('game_date', { ascending: false })
-      .limit(5000);
+      .not('team_name', 'is', null);
     for (const row of playerTeamRows || []) {
       const key = (row.player_name || '').toLowerCase().trim();
       if (key && row.team_name && !playerTeamMap.has(key)) {
-        playerTeamMap.set(key, row.team_name); // Keep most recent game's team only
+        playerTeamMap.set(key, row.team_name);
       }
     }
-    console.log(`[PlayerTeamMap] Resolved ${playerTeamMap.size} player→team mappings from game logs`);
+    console.log(`[PlayerTeamMap] Resolved ${playerTeamMap.size} player→team mappings from bdl_player_cache`);
   } catch (ptmErr) {
     console.warn(`[PlayerTeamMap] Failed to build player team map: ${ptmErr}`);
   }
