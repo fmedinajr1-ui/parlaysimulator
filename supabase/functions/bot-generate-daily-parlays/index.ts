@@ -5118,7 +5118,7 @@ Deno.serve(async (req) => {
     }
 
     // === 2-LEG MINI-PARLAY HYBRID FALLBACK ===
-    if (allParlays.length < 6) {
+    if (allParlays.length < 6 && !stakeConfig?.block_two_leg_parlays) {
       console.log(`[Bot v2] 🔗 MINI-PARLAY FALLBACK: Only ${allParlays.length} parlays. Attempting 2-leg mini-parlays.`);
 
       // Build candidate pool (same merge + dedup as singles)
