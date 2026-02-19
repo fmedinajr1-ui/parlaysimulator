@@ -216,7 +216,6 @@ Deno.serve(async (req) => {
       kenpom_rank: number | null;
       adj_offense: number | null;
       adj_defense: number | null;
-      adj_tempo: number | null;
       ppg: number | null;
       oppg: number | null;
       home_record: string | null;
@@ -240,15 +239,8 @@ Deno.serve(async (req) => {
       for (const r of batchResults) {
         if (r.status === 'fulfilled' && r.value.stats) {
           const { team: t, stats } = r.value;
-          const avgTempo = 67;
-          const avgTotal = 135;
-          let tempo: number | null = null;
-
-          if (stats.oppg > 0) {
-            const totalPPG = stats.ppg + stats.oppg;
-            const tempoDelta = ((totalPPG - avgTotal) / 10) * 3;
-            tempo = Math.round((avgTempo + tempoDelta) * 10) / 10;
-          }
+          // adj_tempo is written exclusively by ncaab-kenpom-scraper (PAE formula).
+          // Do not compute or upsert it here — the stats-fetcher upsert excludes adj_tempo.
 
           results.push({
             team_name: t.name,
@@ -257,7 +249,6 @@ Deno.serve(async (req) => {
             kenpom_rank: null,
             adj_offense: Math.round(stats.ppg * 10) / 10,
             adj_defense: stats.oppg > 0 ? Math.round(stats.oppg * 10) / 10 : null,
-            adj_tempo: tempo,
             ppg: Math.round(stats.ppg * 10) / 10,
             oppg: stats.oppg > 0 ? Math.round(stats.oppg * 10) / 10 : null,
             home_record: stats.home,
