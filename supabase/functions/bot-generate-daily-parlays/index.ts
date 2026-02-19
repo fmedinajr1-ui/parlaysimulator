@@ -5030,24 +5030,31 @@ async function generateMasterParlay(
   }
 
   // Build the parlay legs array
-  const parlayLegs = selectedLegs.map((pick, idx) => ({
-    type: 'player',
-    player_name: pick.player_name,
-    prop_type: pick.prop_type,
-    line: pick.line,
-    side: pick.recommended_side || 'over',
-    sport: pick.sport || 'basketball_nba',
-    americanOdds: pick.americanOdds || -110,
-    hit_rate: Math.round((pick.l10_hit_rate || pick.confidence_score || 0.62) * 100),
-    defense_rank: (pick as EnrichedMasterCandidate).defenseRank,
-    defense_adj: (pick as EnrichedMasterCandidate).defenseAdj,
-    archetype: pick.archetype || pick.category,
-    leg_index: idx,
-  }));
+  const parlayLegs = selectedLegs.map((pick, idx) => {
+    const rawHitRate = pick.l10_hit_rate || pick.confidence_score || 0.62;
+    // Cap hit rate at 75% for any pick where hit rate is suspiciously high (≥ 1.0 = was computed against 0.5 line)
+    // This prevents fake 100% hit rates when the player's threes were scored at the trivial OVER 0.5 line
+    const cappedHitRate = rawHitRate >= 1.0 ? 0.75 : rawHitRate;
+    return {
+      type: 'player',
+      player_name: pick.player_name,
+      prop_type: pick.prop_type,
+      line: pick.line,
+      side: pick.recommended_side || 'over',
+      sport: pick.sport || 'basketball_nba',
+      americanOdds: pick.americanOdds || -110,
+      hit_rate: Math.round(cappedHitRate * 100),
+      defense_rank: (pick as EnrichedMasterCandidate).defenseRank,
+      defense_adj: (pick as EnrichedMasterCandidate).defenseAdj,
+      archetype: pick.archetype || pick.category,
+      leg_index: idx,
+    };
+  });
 
-  // Calculate combined odds and probability
+  // Calculate combined odds and probability (cap hit rates at 75% for any that were inflated by 0.5 lines)
   const combinedProbability = selectedLegs.reduce((acc, pick) => {
-    const p = pick.l10_hit_rate || pick.confidence_score || 0.62;
+    const rawP = pick.l10_hit_rate || pick.confidence_score || 0.62;
+    const p = rawP >= 1.0 ? 0.75 : rawP;
     return acc * p;
   }, 1.0);
 
