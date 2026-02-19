@@ -308,6 +308,32 @@
   100% { background-position: 200% 0; }
 }
 
+@keyframes shimmer-border {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.shimmer-border {
+  background: linear-gradient(270deg, hsl(var(--neon-green)), hsl(var(--neon-cyan)), hsl(var(--neon-purple)), hsl(var(--neon-green)));
+  background-size: 400% 400%;
+  animation: shimmer-border 3s ease infinite;
+}
+
+.conic-ring {
+  background: conic-gradient(
+    hsl(var(--neon-green)) var(--progress, 0%),
+    hsl(var(--muted)) var(--progress, 0%)
+  );
+  border-radius: 50%;
+}
+
+.sportsbook-grid {
+  background-image:
+    repeating-linear-gradient(0deg, hsl(var(--border) / 0.08) 0px, hsl(var(--border) / 0.08) 1px, transparent 1px, transparent 60px),
+    repeating-linear-gradient(90deg, hsl(var(--border) / 0.08) 0px, hsl(var(--border) / 0.08) 1px, transparent 1px, transparent 60px);
+}
+
 .shimmer {
   background: linear-gradient(
     90deg,
