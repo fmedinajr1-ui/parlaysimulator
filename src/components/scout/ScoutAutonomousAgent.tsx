@@ -54,9 +54,10 @@ import { cn } from '@/lib/utils';
 
 interface ScoutAutonomousAgentProps {
   gameContext: GameContext;
+  isCustomer?: boolean;
 }
 
-export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps) {
+export function ScoutAutonomousAgent({ gameContext, isCustomer = false }: ScoutAutonomousAgentProps) {
   const { toast } = useToast();
   const videoRef = useRef<HTMLVideoElement>(null);
   const captureIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -132,6 +133,16 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
     }
     loadDevices();
   }, []);
+
+  // Auto-start in data-only mode for customers
+  const customerAutoStartRef = useRef(false);
+  useEffect(() => {
+    if (isCustomer && !state.isRunning && !customerAutoStartRef.current) {
+      customerAutoStartRef.current = true;
+      setDataOnlyMode(true);
+      startAgent();
+    }
+  }, [isCustomer, state.isRunning]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -549,59 +560,64 @@ export function ScoutAutonomousAgent({ gameContext }: ScoutAutonomousAgentProps)
                 <RefreshCw className={cn("w-4 h-4", isRefreshing && "animate-spin")} />
               </Button>
               
-              {state.isRunning ? (
+              {/* Admin-only controls */}
+              {!isCustomer && (
                 <>
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={() => state.isPaused ? resumeAgent() : pauseAgent()}
-                  >
-                    {state.isPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
-                  </Button>
-                  <Button 
-                    variant="destructive" 
-                    size="sm"
-                    onClick={handleStop}
-                  >
-                    <Square className="w-4 h-4 mr-1" />
-                    Stop
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <Button 
-                    onClick={handleStart} 
-                    className="gap-2"
-                    disabled={captureMode === 'camera' && videoDevices.length === 0}
-                  >
-                    <Play className="w-4 h-4" />
-                    Start Autopilot
-                  </Button>
-                  {sessionRestored && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={clearSession}
-                      title="Clear session and restart fresh"
-                    >
-                      <RefreshCw className="w-4 h-4" />
-                    </Button>
+                  {state.isRunning ? (
+                    <>
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => state.isPaused ? resumeAgent() : pauseAgent()}
+                      >
+                        {state.isPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
+                      </Button>
+                      <Button 
+                        variant="destructive" 
+                        size="sm"
+                        onClick={handleStop}
+                      >
+                        <Square className="w-4 h-4 mr-1" />
+                        Stop
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button 
+                        onClick={handleStart} 
+                        className="gap-2"
+                        disabled={captureMode === 'camera' && videoDevices.length === 0}
+                      >
+                        <Play className="w-4 h-4" />
+                        Start Autopilot
+                      </Button>
+                      {sessionRestored && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={clearSession}
+                          title="Clear session and restart fresh"
+                        >
+                          <RefreshCw className="w-4 h-4" />
+                        </Button>
+                      )}
+                    </>
                   )}
+                  <Button 
+                    variant="ghost" 
+                    size="icon"
+                    onClick={() => setShowSettings(!showSettings)}
+                  >
+                    <Settings className="w-4 h-4" />
+                  </Button>
                 </>
               )}
-              <Button 
-                variant="ghost" 
-                size="icon"
-                onClick={() => setShowSettings(!showSettings)}
-              >
-                <Settings className="w-4 h-4" />
-              </Button>
             </div>
           </div>
         </CardHeader>
 
-        {/* Settings Panel */}
-        {showSettings && (
+        {/* Settings Panel — admin only */}
+        {showSettings && !isCustomer && (
           <CardContent className="pt-0 border-t space-y-3">
             {/* Capture Mode Toggle */}
             {!state.isRunning && (

@@ -404,7 +404,7 @@ const Scout = () => {
 
             {/* Autopilot mode — shown to both admin and customers */}
             {(scoutMode === 'autopilot' || isCustomer) && (
-              <ScoutAutonomousAgent gameContext={selectedGame} />
+              <ScoutAutonomousAgent gameContext={selectedGame} isCustomer={isCustomer} />
             )}
 
             {/* Profile mode — admin only */}
