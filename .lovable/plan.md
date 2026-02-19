@@ -1,100 +1,69 @@
 
 
-# Pre-Generation Pipeline Health Check
+## Customer Scout Access + $750 Scout Tier
 
-## Overview
-Add a new `bot-pipeline-preflight` edge function that runs automatically before every parlay generation cycle. It performs critical checks on data freshness, API health, and pipeline integrity -- then stores results in `bot_activity_log` and fires a Telegram alert if anything is broken. On the frontend, the `SlateRefreshControls` component and a new `usePipelinePreflight` hook will surface these issues as urgent toast messages so you can catch problems before they produce bad parlays.
+### What We're Building
 
----
-
-## What Gets Checked (8 Pre-Flight Gates)
-
-| # | Check | Pass | Fail |
-|---|-------|------|------|
-| 1 | **Odds freshness** | `unified_props` has 50+ rows for today | Stale or missing odds |
-| 2 | **Game log freshness** | `nba_player_game_logs` has data within last 5 days | Stats fetcher is broken |
-| 3 | **API budget** | `api_budget_tracker` has 200+ calls remaining | Budget exhausted |
-| 4 | **Sweet spots exist** | `category_sweet_spots` has rows for today | Analyzer failed |
-| 5 | **Whale signals exist** | `game_bets` has rows updated today | Whale detector failed |
-| 6 | **Recent cron success** | Last `data-pipeline-orchestrator` run in `cron_job_history` was not `failed` | Pipeline crashed |
-| 7 | **Stale props cleaned** | No `unified_props` older than 48h with today's game date | Cleanup missed |
-| 8 | **Integrity check** | No 1-leg or 2-leg parlays from last run | Generator bug |
+1. **A new "Scout" subscription tier at $750/mo** with a 1-day free trial, added to the landing page pricing grid
+2. **A customer-facing Scout page** that shows only the Autopilot view with 4 tabs: Game Bets, Player Props, Lock Mode, and Advanced -- gated behind the Scout subscription (or admin access)
+3. **Subscription gating** so non-Scout subscribers see an upgrade prompt instead of the full Scout tools
 
 ---
 
-## Implementation
+### Changes
 
-### New Edge Function: `supabase/functions/bot-pipeline-preflight/index.ts`
+#### 1. Create Stripe Product + Price
+- Create a new Stripe product "Scout" at $750/mo recurring
+- This gives us a `price_id` to use in checkout and subscription checks
 
-- Runs all 8 checks against the database
-- Returns a JSON response with `{ ready: boolean, checks: CheckResult[], blockers: string[] }`
-- If `ready === false`, fires a Telegram alert via `bot-send-telegram` with type `preflight_alert` (bypasses quiet hours)
-- Logs results to `bot_activity_log` with event_type `preflight_check`
-- Designed to complete in under 2 seconds (all queries are simple count/select)
+#### 2. Update `check-subscription` Edge Function
+**File:** `supabase/functions/check-subscription/index.ts`
+- Add the new Scout price ID to `BOT_PRICE_IDS` map with tier `'scout'`
+- Add a `hasScoutAccess` boolean to the response (true when botTier is `'scout'` or user is admin)
+- Update the botTier type to include `'scout'`
 
-### Pipeline Integration: `supabase/functions/data-pipeline-orchestrator/index.ts`
+#### 3. Update `create-bot-checkout` Edge Function
+**File:** `supabase/functions/create-bot-checkout/index.ts`
+- When the Scout price ID is passed, set `trial_period_days: 1` instead of 0
+- All other tiers keep `trial_period_days: 0` as before
 
-- Add a preflight call at the top of PHASE 3 (PARLAY GENERATION), right before `whale-odds-scraper targeted`:
-```
-// Before generation, run preflight health check
-const preflightOk = await runFunction('bot-pipeline-preflight', {});
-if (!preflightOk) {
-  console.warn('[Pipeline] Preflight failed -- generation will proceed with warnings');
-}
-```
-- The pipeline continues even if preflight fails (no hard block), but the alert ensures you know something is wrong
+#### 4. Update `PricingSection` Component
+**File:** `src/components/bot-landing/PricingSection.tsx`
+- Add a 4th tier card: "Scout" at $750/mo with badge "Live Edge", features list including streaming analysis, player props, game bets, lock mode, and advanced analytics
+- Show "1-day free trial" instead of "No free trial" for this tier
+- Grid changes from 3-col to 4-col on desktop (2-col on mobile stays fine)
 
-### Frontend Hook: `src/hooks/usePipelinePreflight.ts`
+#### 5. Update `useSubscription` Hook
+**File:** `src/hooks/useSubscription.ts`
+- Add `hasScoutAccess` to the state interface (derived from `botTier === 'scout'` or `isAdmin`)
+- Pass through from the `check-subscription` response
 
-- Queries `bot_activity_log` for the most recent `preflight_check` event
-- Returns `{ isHealthy, blockers, lastCheckTime, refetch }`
-- Uses React Query with 60-second polling (`refetchInterval: 60000`) to keep status live
-- Stale time of 30 seconds so it stays responsive
+#### 6. Create Customer Scout Page Component
+**File:** `src/pages/Scout.tsx` (modify existing)
+- At the top of the component, check `hasScoutAccess` (or `isAdmin`) from `useSubscription`
+- If user does NOT have Scout access: show a locked/upgrade card with the $750 Scout tier features and a "Start 1-Day Free Trial" CTA button that triggers checkout with the Scout price ID
+- If user HAS access: show the current Scout page but **only the Autopilot mode** (skip the Upload, Live, Profile mode tabs) -- the customer sees:
+  - Game Selector
+  - Autopilot agent with streaming/video preview
+  - The 4 content tabs: Game Bets, Player Props, Lock Mode, Advanced
+- Hide the mode toggle tabs (Upload/Live/Auto/Profile) for customers -- they go straight into Autopilot
+- Admins continue to see all modes as before
 
-### Frontend Integration: `src/components/market/SlateRefreshControls.tsx`
-
-- Import and use `usePipelinePreflight`
-- Before the existing "Refresh All Engines" flow, show a warning banner if `isHealthy === false`
-- Display blockers as a red/amber alert row above the refresh button:
-```
-[!] 2 pipeline issues detected:
-  - Odds data is stale (last update 6h ago)  
-  - API budget exhausted (0 remaining)
-[Fix Issues] [Refresh Anyway]
-```
-- The "Fix Issues" button links to the admin panel
-- "Refresh Anyway" proceeds with a confirmation toast
-- When healthy, show a small green checkmark: "Pipeline healthy"
-
-### Telegram Alert Format (in `bot-send-telegram`)
-
-- Add a new `preflight_alert` message type handler
-- Format:
-```
-PIPELINE PREFLIGHT FAILED
-
-2 blockers detected before generation:
-- Odds data stale (0 props for today)
-- API budget exhausted
-
-Action required before next generation cycle.
-```
+#### 7. Update Sidebar Navigation
+**File:** `src/components/layout/DesktopSidebar.tsx`
+- The Scout link is already accessible via quick actions; no sidebar change needed since it's already in the route list
 
 ---
 
-## Technical Details
+### Technical Details
 
-### New Files
-1. `supabase/functions/bot-pipeline-preflight/index.ts` -- The preflight check function
-2. `src/hooks/usePipelinePreflight.ts` -- Frontend hook to surface preflight status
-
-### Modified Files
-1. `supabase/functions/data-pipeline-orchestrator/index.ts` -- Add preflight call before Phase 3
-2. `src/components/market/SlateRefreshControls.tsx` -- Show preflight status + blockers banner
-3. `supabase/functions/bot-send-telegram/index.ts` -- Add `preflight_alert` message formatter
-
-### No Database Changes Needed
-- All checks query existing tables (`unified_props`, `nba_player_game_logs`, `api_budget_tracker`, `category_sweet_spots`, `game_bets`, `cron_job_history`, `bot_daily_parlays`)
-- Results logged to existing `bot_activity_log` table
-- No new tables or migrations required
+| Item | Detail |
+|------|--------|
+| New Stripe product | "Scout - Live Betting" at $750/mo with 1-day trial |
+| Price ID | Will be created via Stripe tool, then hardcoded |
+| Subscription check | `hasScoutAccess` field added to `check-subscription` response |
+| Customer view | Autopilot mode only (GameBetsTab, HalftimeBettingPanel, LockModeTab, Advanced) |
+| Admin view | Full Scout page with all 4 modes (Upload, Live, Autopilot, Profile) |
+| Trial | 1-day free trial for Scout tier only; all other tiers remain trial-free |
+| Gating | Non-subscribers see upgrade prompt with feature list and checkout CTA |
 
