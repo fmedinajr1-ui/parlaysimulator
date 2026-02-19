@@ -1,121 +1,75 @@
 
 
-## Customer Scout Command Center -- Full Feature Build
+## Demo/Preview Mode for Customer Scout View
 
-### Overview
+### Problem
+When no game is live, customers see a blank "No game is currently live" message. This gives no sense of what the Scout experience looks like and doesn't build excitement.
 
-Transform the customer Scout view from a basic props + hedge panel into a full command center with 5 new modules. All new features are added to `CustomerScoutView.tsx` as additional cards in the layout -- no admin tools are exposed.
+### Solution
+Show a fully populated demo version of the Command Center using hardcoded sample data, with a clear "DEMO" banner so customers know it's a preview.
 
-### New Layout
+### What Customers Will See
 
 ```text
-[Stream Panel]                          (existing)
-[Slip Scanner]                          (NEW)
-[Props + Hedge Status] (side by side)   (existing)
-[Steam/Signal Overlay]                  (NEW)
-[Confidence Dashboard]                  (NEW)
-  - Heat meters + live hit %
-  - Monte Carlo survival %
-[Risk Mode Toggle]                      (NEW)
-[AI Commentary Whisper]                 (NEW)
+[DEMO BANNER - "Preview Mode - Live data appears when a game starts"]
+[Stream Panel - "Lakers vs Celtics" demo matchup]
+[Slip Scanner]
+[Props cards - 4-5 sample picks with hit rates + edges]
+[Pick Status - sample ON TRACK / CAUTION indicators]
+[Confidence Dashboard - sample heat meters at various %]
+[Risk Mode Toggle]
+[AI Whisper - sample insights rotating]
 ```
 
-### Feature 1: Slip Scanner with Instant Edge Score
+### Implementation
 
-**New component: `src/components/scout/CustomerSlipScanner.tsx`**
+**1. New file: `src/data/demoScoutData.ts`**
+- Export a demo `ScoutGameContext` (Lakers vs Celtics)
+- Export sample confidence picks (5 players with realistic current values)
+- Export sample whisper picks (same picks with game progress)
+- Export a sample whale signals Map with 1-2 entries
 
-- Camera/upload button that accepts a betting slip screenshot
-- Calls existing `extract-parlay` edge function to extract legs
-- For each extracted leg, runs:
-  - CHESS EV calculator (`calculateCHESSEV` from `chess-ev-calculator.ts`) using available injury/line data
-  - Kelly sizing (`calculateKelly` from `kelly-calculator.ts`) with a default $100 bankroll (user can change)
-  - Quick hit probability from `category_sweet_spots` L10 hit rate lookup
-- Displays an "Edge Score" card per leg showing:
-  - Player + prop + line
-  - Edge Score (CHESS EV normalized 0-100)
-  - Kelly suggestion (e.g., "1.2% of bankroll")
-  - Hit rate from sweet spots if available
-  - Overall verdict: "Strong Edge" / "Thin Edge" / "No Edge"
-- No raw CHESS internals shown -- just the simplified score and verdict
+**2. Update: `src/pages/Scout.tsx`**
+- When `isCustomer && !selectedGame && !activeGame`, instead of showing the empty message, render the `CustomerScoutView` wrapped in `RiskModeProvider` using the demo game context
+- Pass a `isDemo={true}` prop to `CustomerScoutView`
 
-### Feature 2: Steam/Signal Overlay on Pick Cards
+**3. Update: `src/components/scout/CustomerScoutView.tsx`**
+- Accept optional `isDemo` prop
+- When `isDemo` is true:
+  - Show a subtle banner at the top: "Preview Mode" with a pulsing dot
+  - Use the demo confidence picks and whisper picks instead of live data (which would be empty)
+  - Still render all 7 modules so customers see the full layout
+- The Slip Scanner, Risk Toggle, and Sweet Spot Props work independently and don't need demo data
+- The Confidence Dashboard and AI Whisper receive the demo picks directly
 
-**Update: `src/components/scout/CustomerHedgeIndicator.tsx`**
+**4. Update: `src/components/scout/CustomerConfidenceDashboard.tsx`**
+- No changes needed -- it already accepts picks as props
 
-- Add optional `signal` prop for whale/steam data
-- Query `whale_signals` table for matching player + prop type from today
-- Display small inline badges on each pick card:
-  - STEAM (fire icon) -- when `signal_type = 'STEAM'`
-  - FREEZE (snowflake icon) -- when `signal_type = 'FREEZE'`
-  - SHARP (whale icon) -- when `signal_type = 'DIVERGENCE'`
-- Only show badges, no detailed scores (those stay admin-only)
+**5. Update: `src/components/scout/CustomerAIWhisper.tsx`**
+- No changes needed -- it already accepts picks and signals as props
 
-**New hook: `src/hooks/useCustomerWhaleSignals.ts`**
+### Demo Data Examples
 
-- Fetches today's `whale_signals` keyed by player name for quick lookup
-- Returns a `Map<string, SignalType>` for the panel to use
+| Player | Prop | Line | Current | Side |
+|---|---|---|---|---|
+| LeBron James | points | 24.5 | 18 | over |
+| Jayson Tatum | rebounds | 8.5 | 5 | over |
+| Anthony Davis | blocks | 2.5 | 1 | over |
+| Jrue Holiday | assists | 5.5 | 7 | over |
+| Austin Reaves | points | 16.5 | 19 | under |
 
-### Feature 3: Confidence Dashboard
+### Technical Details
 
-**New component: `src/components/scout/CustomerConfidenceDashboard.tsx`**
+- Demo mode is purely client-side -- no database queries, no edge function calls
+- The Sweet Spot Props and Hedge Panel will show their normal "no data" empty states (since there's no real DB data), which is fine -- the demo picks populate the Confidence Dashboard and Whisper
+- Demo banner uses a subtle `bg-primary/10` strip with a pulsing indicator so it's noticeable but not intrusive
+- No new dependencies needed
 
-- Takes the enriched sweet spots and displays:
-  - **Heat meter** per pick: a colored progress bar (0-100) based on hit probability derived from current pace vs line
-  - **Overall slip survival %**: runs the existing `quickHybridAnalysis` from `hybrid-monte-carlo.ts` across all active picks to show "X% of 10,000 simulations survive"
-  - **Live hit %**: shows `currentValue / line * 100` as a simple pace indicator
-- Uses existing `Progress` component for heat bars
-- Color coding: green (>70%), yellow (40-70%), red (<40%)
-
-### Feature 4: Risk Mode Toggle
-
-**New component: `src/components/scout/CustomerRiskToggle.tsx`**
-
-- Three-button toggle: Conservative / Balanced / Aggressive
-- Stored in local state (React context or prop drilling from CustomerScoutView)
-- Affects:
-  - Kelly multiplier passed to slip scanner (0.25 / 0.5 / 1.0)
-  - Hedge status thresholds -- adjusts buffer by +1 / 0 / -1 on top of the progress-aware thresholds
-  - Confidence dashboard coloring thresholds
-- Simple toggle UI using existing `Tabs` or `ToggleGroup` component
-
-**New context: `src/contexts/RiskModeContext.tsx`**
-
-- Provides `riskMode` ('conservative' | 'balanced' | 'aggressive') and `setRiskMode` to all customer components
-- Default: 'balanced'
-
-### Feature 5: AI Commentary Whisper
-
-**New component: `src/components/scout/CustomerAIWhisper.tsx`**
-
-- Small card at the bottom that generates contextual one-liner insights
-- Logic is purely client-side based on available data:
-  - If a player's current pace is way above line: "LeBron is pacing at 34 pts -- well above the 24.5 line"
-  - If a steam signal exists: "Sharp money detected on Giannis rebounds"
-  - If hedge status changed to caution: "Keep an eye on Tatum's assists -- pace has slowed"
-  - If game progress > 75% and pick is on track: "Almost there -- Jokic needs just 2 more rebounds"
-- Rotates through insights every 30 seconds (carousel or single line)
-- No AI API calls -- just template-driven from live data
-
-### Changes Summary
+### Files Changed
 
 | File | Action |
 |---|---|
-| `src/contexts/RiskModeContext.tsx` | Create -- risk mode provider |
-| `src/components/scout/CustomerRiskToggle.tsx` | Create -- 3-mode toggle UI |
-| `src/components/scout/CustomerSlipScanner.tsx` | Create -- upload + edge score |
-| `src/hooks/useCustomerWhaleSignals.ts` | Create -- whale signal lookup |
-| `src/components/scout/CustomerConfidenceDashboard.tsx` | Create -- heat meters + Monte Carlo survival |
-| `src/components/scout/CustomerAIWhisper.tsx` | Create -- contextual insight carousel |
-| `src/components/scout/CustomerHedgeIndicator.tsx` | Update -- add signal badges |
-| `src/components/scout/CustomerHedgePanel.tsx` | Update -- pass whale signals to indicators |
-| `src/components/scout/CustomerScoutView.tsx` | Update -- compose all new panels into layout |
-| `src/pages/Scout.tsx` | Update -- wrap customer view in RiskModeContext |
-
-### Technical Notes
-
-- All new components use existing data sources (sweet spots, whale signals, category sweet spots) -- no new edge functions needed except the existing `extract-parlay`
-- CHESS EV and Kelly calculations run client-side using existing utility functions
-- Monte Carlo uses the lightweight `quickHybridAnalysis` (not the full 100K simulation) for performance
-- Risk mode is local state only -- no database persistence needed
-- Whale signal query is filtered to today's date with 60s stale time
+| `src/data/demoScoutData.ts` | Create -- demo game context + sample picks |
+| `src/pages/Scout.tsx` | Update -- render demo CustomerScoutView when no game live |
+| `src/components/scout/CustomerScoutView.tsx` | Update -- accept isDemo prop, show banner, use demo data |
 
