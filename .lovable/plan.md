@@ -1,69 +1,38 @@
 
 
-## Customer Scout Access + $750 Scout Tier
+## Hide Admin Controls from Customer Scout View
 
-### What We're Building
-
-1. **A new "Scout" subscription tier at $750/mo** with a 1-day free trial, added to the landing page pricing grid
-2. **A customer-facing Scout page** that shows only the Autopilot view with 4 tabs: Game Bets, Player Props, Lock Mode, and Advanced -- gated behind the Scout subscription (or admin access)
-3. **Subscription gating** so non-Scout subscribers see an upgrade prompt instead of the full Scout tools
-
----
+### Goal
+Customers should see a clean, read-only Scout dashboard with just the streaming data and analysis tabs -- no Start/Stop/Pause buttons, no settings gear, no capture mode toggles. The agent should auto-start in data-only mode for customers.
 
 ### Changes
 
-#### 1. Create Stripe Product + Price
-- Create a new Stripe product "Scout" at $750/mo recurring
-- This gives us a `price_id` to use in checkout and subscription checks
+#### 1. Pass `isCustomer` prop to `ScoutAutonomousAgent`
+**File:** `src/pages/Scout.tsx`
+- Pass `isCustomer={isCustomer}` to the `ScoutAutonomousAgent` component
 
-#### 2. Update `check-subscription` Edge Function
-**File:** `supabase/functions/check-subscription/index.ts`
-- Add the new Scout price ID to `BOT_PRICE_IDS` map with tier `'scout'`
-- Add a `hasScoutAccess` boolean to the response (true when botTier is `'scout'` or user is admin)
-- Update the botTier type to include `'scout'`
+#### 2. Update `ScoutAutonomousAgent` to hide admin controls for customers
+**File:** `src/components/scout/ScoutAutonomousAgent.tsx`
+- Accept `isCustomer` prop
+- When `isCustomer` is true:
+  - Hide the "Start Autopilot" / Stop / Pause buttons
+  - Hide the Settings gear icon
+  - Hide the settings panel (capture mode, device selector, FPS slider, data-only toggle)
+  - Auto-start the agent in **data-only mode** on mount (no video capture required)
+  - Show a simplified header: just "Scout Autopilot" with the status/stats timestamp, and the Refresh Stats button
+- When `isCustomer` is false (admin): no changes, everything works as before
 
-#### 3. Update `create-bot-checkout` Edge Function
-**File:** `supabase/functions/create-bot-checkout/index.ts`
-- When the Scout price ID is passed, set `trial_period_days: 1` instead of 0
-- All other tiers keep `trial_period_days: 0` as before
-
-#### 4. Update `PricingSection` Component
-**File:** `src/components/bot-landing/PricingSection.tsx`
-- Add a 4th tier card: "Scout" at $750/mo with badge "Live Edge", features list including streaming analysis, player props, game bets, lock mode, and advanced analytics
-- Show "1-day free trial" instead of "No free trial" for this tier
-- Grid changes from 3-col to 4-col on desktop (2-col on mobile stays fine)
-
-#### 5. Update `useSubscription` Hook
-**File:** `src/hooks/useSubscription.ts`
-- Add `hasScoutAccess` to the state interface (derived from `botTier === 'scout'` or `isAdmin`)
-- Pass through from the `check-subscription` response
-
-#### 6. Create Customer Scout Page Component
-**File:** `src/pages/Scout.tsx` (modify existing)
-- At the top of the component, check `hasScoutAccess` (or `isAdmin`) from `useSubscription`
-- If user does NOT have Scout access: show a locked/upgrade card with the $750 Scout tier features and a "Start 1-Day Free Trial" CTA button that triggers checkout with the Scout price ID
-- If user HAS access: show the current Scout page but **only the Autopilot mode** (skip the Upload, Live, Profile mode tabs) -- the customer sees:
-  - Game Selector
-  - Autopilot agent with streaming/video preview
-  - The 4 content tabs: Game Bets, Player Props, Lock Mode, Advanced
-- Hide the mode toggle tabs (Upload/Live/Auto/Profile) for customers -- they go straight into Autopilot
-- Admins continue to see all modes as before
-
-#### 7. Update Sidebar Navigation
-**File:** `src/components/layout/DesktopSidebar.tsx`
-- The Scout link is already accessible via quick actions; no sidebar change needed since it's already in the route list
-
----
+#### 3. Auto-start behavior for customers
+- On component mount, if `isCustomer` is true and agent is not running, automatically call `startAgent()` with data-only mode enabled
+- This means customers see the tabs (Game Bets, Player Props, Lock Mode, Advanced) populated with live data immediately after selecting a game
+- No screen share or camera prompts
 
 ### Technical Details
 
 | Item | Detail |
 |------|--------|
-| New Stripe product | "Scout - Live Betting" at $750/mo with 1-day trial |
-| Price ID | Will be created via Stripe tool, then hardcoded |
-| Subscription check | `hasScoutAccess` field added to `check-subscription` response |
-| Customer view | Autopilot mode only (GameBetsTab, HalftimeBettingPanel, LockModeTab, Advanced) |
-| Admin view | Full Scout page with all 4 modes (Upload, Live, Autopilot, Profile) |
-| Trial | 1-day free trial for Scout tier only; all other tiers remain trial-free |
-| Gating | Non-subscribers see upgrade prompt with feature list and checkout CTA |
+| Hidden elements (customer) | Start/Stop/Pause buttons, Settings gear, Settings panel (capture mode, device selector, FPS, data-only toggle) |
+| Visible elements (customer) | Bot icon, "Scout Autopilot" title, stats timestamp, Refresh button, all 4 analysis tabs |
+| Auto-start | Data-only mode triggers automatically on mount for customers |
+| Admin view | Unchanged -- full control panel remains |
 
