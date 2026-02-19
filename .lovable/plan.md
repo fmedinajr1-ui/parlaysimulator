@@ -1,125 +1,177 @@
 
-# Fix: NCAAB Under Totals Not Building 3-Leg Parlays
+# Apply 3 NCAAB Scoring Fixes — Exact Code Changes
 
-## Root Cause Analysis
+## Confirmed Current State (from file reads)
 
-The database confirms there ARE valid NCAAB total under picks today. For example:
-- East Tennessee St vs Furman: `composite_score: 93`, `recommended_side: UNDER` ✓
-- Bradley vs Valparaiso: `composite_score: 84` ✓  
-- Holy Cross vs Lafayette: `composite_score: 73`, `recommended_side: UNDER` ✓
-- Coastal Carolina vs James Madison: `composite_score: 67`, `recommended_side: UNDER` ✓
+All bugs are confirmed present in the live code. Exact line numbers verified:
 
-These should be forming 3-leg parlays but instead the generator is falling back to 5 single-leg NCAAB spread picks. Here is exactly why:
+- **Line 200**: `validKenpomD` max is 120 — blocks 75 D1 teams with defensive ratings 120–138
+- **Lines 329–334**: Broken formula `((homeOff + awayOff) * tempoFactor / 100) * 2` → produces ~4.7 → clamped to 100 every time
+- **Lines 341–358**: Raw `lineEdge` bonus/penalty block with no PPG sanity guard
+- **Lines 3113–3117**: NCAAB OVER block ends at line 3117 — circuit breaker goes immediately after
+- **Lines 218–219**: `homePPG` and `awayPPG` are confirmed in scope at the insertion point
 
 ---
 
-## Bug 1 — The Side Filter Uses the Wrong Strategy Name (Critical)
+## Edit 1 — Widen validKenpomD (line 200, team-bets-scoring-engine)
 
-**File:** `supabase/functions/bot-generate-daily-parlays/index.ts`, line 3477
-
+**Current:**
 ```ts
-// CURRENT (broken):
-if (profile.strategy === 'ncaab_unders' && p.bet_type === 'total') {
-  return (p as EnrichedTeamPick).side?.toUpperCase() === 'UNDER';
+const validKenpomD = (v: number | null | undefined) => v != null && v >= 80 && v <= 120;
+```
+**Fixed:**
+```ts
+const validKenpomD = (v: number | null | undefined) => v != null && v >= 80 && v <= 140;
+```
+
+Teams like Delaware (121.6), East Carolina (122.0), Bucknell (128.1) currently fail this check and fall back to the `adj_defense` column instead. Widening to 140 covers the full real D1 range (max observed: 138.1) and ensures `hasRealKenpom` can be properly set for all teams.
+
+---
+
+## Edit 2 — Fix the Projected Total Formula (lines 329–334, team-bets-scoring-engine)
+
+**Current (broken):**
+```ts
+if (hasRealKenpom) {
+  // Real KenPom: (AdjO_home + AdjO_away) * tempo / 100 is standard method
+  // But we need to account for both sides' offense vs opponent defense
+  projectedTotal = ((homeOff + awayOff) * tempoFactor / 100) * 2;
+  // Clamp to reasonable range
+  projectedTotal = Math.max(100, Math.min(200, projectedTotal));
 }
-return true; // ← falls through here for all other strategies!
 ```
 
-The profile strategies are named `ncaab_unders_only`, `validated_ncaab_unders`, `ncaab_accuracy`, and `ncaab_unders_probe`. **None of them match `'ncaab_unders'`**. So the UNDER side filter never fires. Instead, `return true` runs for everything — meaning NCAAB OVER totals pass through too (even though they're already blocked upstream). More critically, without this filter enforcing UNDERs, the picks aren't being sorted or selected as UNDER-specific candidates, which causes the builder to mix in non-under picks and fail validation.
+The problem: `homeOff` is ~107–123 (KenPom per-100-possession ratings). Dividing by 100 gives ~1.07. Multiplying by `tempoFactor` (~0.96) gives ~2.06. Times 2 = ~4.12. Clamped to 100 — every single time.
 
-**Fix:** Replace the exact string match with a `.includes()` check that catches all NCAAB under strategy names:
-
+**Fixed (possession-adjusted KenPom formula):**
 ```ts
-// FIXED:
-const isNcaabUnderStrategy = profile.strategy.includes('ncaab_under') || 
-  profile.strategy === 'ncaab_accuracy' || 
-  profile.strategy === 'ncaab_unders_probe';
+if (hasRealKenpom) {
+  // Correct KenPom possession-adjusted formula:
+  // AdjO = points scored per 100 possessions against avg D1 defense
+  // AdjD = points allowed per 100 possessions against avg D1 offense
+  // To project home points: homeOff × (awayDef / 100) × avgTempo / 100
+  // This gives: "how many pts home team scores vs this specific defense over avgTempo possessions"
+  const homePts = homeOff * (awayDef / 100) * avgTempo / 100;
+  const awayPts = awayOff * (homeDef / 100) * avgTempo / 100;
+  projectedTotal = homePts + awayPts;
+  projectedTotal = Math.max(115, Math.min(195, projectedTotal));
+}
+```
 
-if (isNcaabUnderStrategy && p.bet_type === 'total') {
-  return (p as EnrichedTeamPick).side?.toUpperCase() === 'UNDER';
+**Example output for George Mason (AdjO: 123.3, AdjD: 104.2, Tempo: 62.3) vs Dayton (AdjO: 121.1, AdjD: 106.4, Tempo: 64.7):**
+- avgTempo = 63.5
+- homePts = 123.3 × (106.4/100) × 63.5/100 = **83.3**
+- awayPts = 121.1 × (104.2/100) × 63.5/100 = **80.1**
+- `projected_total = 163.4` — line was 136.5 → `lineEdge = +26.9` → **OVER value, zero Under bonus**
+
+The fallback formula on lines 335–339 is left unchanged (applies when `hasRealKenpom = false`).
+
+---
+
+## Edit 3 — PPG Sanity Guard Wrapping the lineEdge Block (lines 341–358, team-bets-scoring-engine)
+
+`homePPG` (line 218) and `awayPPG` (line 219) are already declared in scope here.
+
+**Current (lines 341–358):**
+```ts
+const lineEdge = projectedTotal - (bet.line || 0);
+breakdown.projected_total = Math.round(projectedTotal * 10) / 10;
+
+if (side === 'OVER' && lineEdge < -5) {
+  const penalty = clampScore(-15, 0, Math.round(lineEdge * 2));
+  score += penalty;
+  breakdown.line_inflated = penalty;
+  breakdown.line_edge_label = `Proj ${projectedTotal.toFixed(0)} vs Line ${bet.line} (inflated)`;
+} else if (side === 'UNDER' && lineEdge < -3) {
+  const bonus = clampScore(0, 12, Math.round(Math.abs(lineEdge) * 2));
+  score += bonus;
+  breakdown.line_value = bonus;
+  breakdown.line_edge_label = `Proj ${projectedTotal.toFixed(0)} vs Line ${bet.line} (value under)`;
+} else if (side === 'OVER' && lineEdge > 3) {
+  score += 5;
+  breakdown.line_value = 5;
+  breakdown.line_edge_label = `Proj ${projectedTotal.toFixed(0)} vs Line ${bet.line} (value over)`;
+}
+```
+
+**Fixed (wrapped in PPG sanity guard):**
+```ts
+breakdown.projected_total = Math.round(projectedTotal * 10) / 10;
+
+// PPG sanity guard: if projection is implausibly low vs teams' real scoring averages,
+// skip the line-edge bonus/penalty entirely — the projection cannot be trusted
+const combinedPPG = (homePPG || 0) + (awayPPG || 0);
+const projectionIsSane = combinedPPG <= 100 || projectedTotal >= combinedPPG * 0.85;
+
+if (!projectionIsSane) {
+  breakdown.projection_sanity_fail = 1;
+  breakdown.sanity_label = `Proj ${projectedTotal.toFixed(0)} < 85% of combined PPG ${combinedPPG.toFixed(0)} — line edge skipped`;
+} else {
+  const lineEdge = projectedTotal - (bet.line || 0);
+  if (side === 'OVER' && lineEdge < -5) {
+    const penalty = clampScore(-15, 0, Math.round(lineEdge * 2));
+    score += penalty;
+    breakdown.line_inflated = penalty;
+    breakdown.line_edge_label = `Proj ${projectedTotal.toFixed(0)} vs Line ${bet.line} (inflated)`;
+  } else if (side === 'UNDER' && lineEdge < -3) {
+    const bonus = clampScore(0, 12, Math.round(Math.abs(lineEdge) * 2));
+    score += bonus;
+    breakdown.line_value = bonus;
+    breakdown.line_edge_label = `Proj ${projectedTotal.toFixed(0)} vs Line ${bet.line} (value under)`;
+  } else if (side === 'OVER' && lineEdge > 3) {
+    score += 5;
+    breakdown.line_value = 5;
+    breakdown.line_edge_label = `Proj ${projectedTotal.toFixed(0)} vs Line ${bet.line} (value over)`;
+  }
+}
+```
+
+Safety check: for today's lost picks, George Mason (74.5 ppg) + Dayton (75.8 ppg) = combined PPG 150.3. Minimum sane projection = 127.8. Even if the formula had somehow still output 100, the guard would catch it and award zero bonus. This is an independent failsafe.
+
+---
+
+## Edit 4 — Circuit Breaker in bot-generate-daily-parlays (after line 3117)
+
+The NCAAB OVER block ends at line 3117 (`return false;` + closing brace). The new guard goes immediately after:
+
+**Insert after line 3117:**
+```ts
+// === CIRCUIT BREAKER: Block NCAAB totals where projected_total is the hardcoded 100 fallback ===
+// This is an independent backstop — even if the scorer produces a broken projection in an
+// edge case, picks built on projected_total ≤ 100 against lines > 125 never enter parlays
+if (isNCAAB && pick.bet_type === 'total') {
+  const breakdown = pick.score_breakdown as any;
+  const projTotal = breakdown?.projected_total;
+  const line = pick.line || 0;
+  if (projTotal !== undefined && projTotal <= 100 && line > 125) {
+    mlBlocked.push(
+      `${pick.home_team} vs ${pick.away_team} NCAAB total BLOCKED — projected_total=${projTotal} is hardcoded fallback, line=${line}`
+    );
+    return false;
+  }
 }
 ```
 
 ---
 
-## Bug 2 — Profile `side` Property Is Declared But Never Used to Filter (Critical)
+## Files Changed Summary
 
-**File:** `supabase/functions/bot-generate-daily-parlays/index.ts`, lines 86–214
-
-Every NCAAB under profile declares `side: 'under'` in its config:
-```ts
-{ legs: 3, strategy: 'ncaab_unders_only', ..., side: 'under', ... }
-{ legs: 3, strategy: 'validated_ncaab_unders', ..., side: 'under', ... }
-{ legs: 3, strategy: 'ncaab_accuracy', ..., side: 'under', ... }
-```
-
-But the `isTeamProfile` filter block (line 3469–3481) **never reads `profile.side`**. It only checks `profile.betTypes`. So even if Bug 1 were fixed, a profile with `side: 'under'` gets all picks (both OVER and UNDER) when the strategy name doesn't exactly match.
-
-**Fix:** Add a generic `profile.side` filter that works for any strategy that declares it:
-
-```ts
-} else if (isTeamProfile) {
-  candidatePicks = pool.teamPicks.filter(p => {
-    if (!profile.betTypes!.includes(p.bet_type)) return false;
-    if (BLOCKED_SPORTS.includes(p.sport)) return false;
-    if (!sportFilter.includes('all') && !sportFilter.includes(p.sport)) return false;
-    // Generic: if profile declares a required side, enforce it
-    if (profile.side && p.bet_type === 'total') {
-      return (p as EnrichedTeamPick).side?.toLowerCase() === profile.side.toLowerCase();
-    }
-    return true;
-  });
-```
-
-This is cleaner than the per-strategy string match and automatically handles all current and future strategy names that declare `side`.
-
----
-
-## Bug 3 — `game_bets` Records from the Whale Sync Have `composite_score: null` (Secondary)
-
-The DB query shows that many NCAAB `game_bets` rows (from the whale-signal-detector sync) have `composite_score: null` and `recommended_side: null`. These records come from the Whale Detector (`whale-signal-detector`), not from the scorer. When `buildPropPool` processes `game_bets`, if `composite_score` is null the `calculateTeamCompositeScore()` function runs — but the ML Sniper Gate at line 3098 checks `pick.compositeScore < effectiveTeamFloor`. If `compositeScore` ends up as 0 or NaN due to null input data, the pick gets blocked by the floor filter (composite 0 < 65).
-
-However, the picks that ARE correctly scored (Holy Cross 93, East Tennessee St 93, Bradley 84) pass this gate fine. The null-score picks are a separate issue for the whale sync — the main parlay-building failure is Bugs 1 and 2.
-
-**Fix (minor):** Add a null-guard so null composite_score from game_bets defaults to 50 instead of 0/NaN during enrichment:
-
-In `buildPropPool` where picks are pushed:
-```ts
-compositeScore: clampScore(30, 95, (score ?? 50) + plusBonus + underWeatherBonus),
-```
-
----
-
-## Files Changed
-
-| File | Lines | Change |
+| File | Line(s) | Change |
 |---|---|---|
-| `supabase/functions/bot-generate-daily-parlays/index.ts` | 3476–3480 | Replace `profile.strategy === 'ncaab_unders'` with generic `profile.side` filter (fixes Bugs 1 + 2 in one shot) |
+| `supabase/functions/team-bets-scoring-engine/index.ts` | 200 | `v <= 120` → `v <= 140` |
+| `supabase/functions/team-bets-scoring-engine/index.ts` | 329–334 | Replace broken formula with `homeOff × (awayDef/100) × avgTempo/100` |
+| `supabase/functions/team-bets-scoring-engine/index.ts` | 341–358 | Wrap lineEdge block in PPG sanity guard |
+| `supabase/functions/bot-generate-daily-parlays/index.ts` | After 3117 | Add `projected_total ≤ 100` circuit breaker |
 
-That's it — one targeted fix to the filter block. No schema changes, no new tables.
-
----
-
-## What Happens After the Fix
-
-With the side filter working:
-
-- `ncaab_unders_only` (execution tier): gets only NCAAB total UNDERs → East Tennessee St (93), Bradley (84), Holy Cross (73) → **forms a 3-leg NCAAB under parlay**
-- `validated_ncaab_unders` (validation tier): same pool → builds another 3-leg parlay  
-- `ncaab_accuracy` + `ncaab_unders_probe` (exploration tier): build 2 more 3-leg NCAAB under parlays
-
-Expected result after fix + fresh Smart Generate: **4–6 valid 3-leg NCAAB under parlays** from today's confirmed-scored picks, plus whatever team picks survive the existing NBA/NHL gates.
+No database changes. No schema migrations. Both functions auto-deploy after the edits are saved.
 
 ---
 
-## Database Cleanup (After Deploy)
+## What Happens Immediately After Deploy
 
-After deploying, delete today's 5 single-leg junk picks and re-run:
-
-```sql
-DELETE FROM bot_daily_parlays 
-WHERE parlay_date = '2026-02-18' 
-AND outcome = 'pending';
-```
-
-Then trigger Smart Generate — it will find the NCAAB under picks and build proper 3-leg parlays.
+1. Both edge functions redeploy automatically
+2. The team-bets-scoring-engine needs to be re-triggered to re-score today's existing `game_bets` rows — either via its next scheduled run or a manual invocation
+3. After re-scoring, all NCAAB total picks will show `projected_total` in the 140–170 range instead of 100
+4. Games with OVER value (projected > line) will no longer receive the +12 Under bonus — composite scores for today's failing picks drop from 93–95 to ~55–65
+5. The circuit breaker in the generator means even stale `projected_total: 100` rows in the database are blocked at generation time before they ever enter a parlay
+6. Genuine slow-pace Under games (two teams averaging ~64 ppg each, line ~128) still score correctly — the formula produces projections near the line and rewards the Under through the existing defensive efficiency and tempo layers
