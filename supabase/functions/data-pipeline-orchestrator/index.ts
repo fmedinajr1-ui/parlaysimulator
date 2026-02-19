@@ -126,6 +126,12 @@ serve(async (req) => {
 
     // ============ PHASE 3: PARLAY GENERATION ============
     if (mode === 'full' || mode === 'generate') {
+      // Pre-generation health check
+      const preflightOk = await runFunction('bot-pipeline-preflight', {});
+      if (!preflightOk) {
+        console.warn('[Pipeline] ⚠️ Preflight failed -- generation will proceed with warnings');
+      }
+      
       // Targeted refresh before generation to ensure fresh lines
       await runFunction('whale-odds-scraper', { mode: 'targeted' });
       await runFunction('bot-review-and-optimize', { source: 'pipeline' });

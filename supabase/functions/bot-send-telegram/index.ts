@@ -27,6 +27,7 @@ type NotificationType =
   | 'strategy_update'
   | 'diagnostic_report'
   | 'integrity_alert'
+  | 'preflight_alert'
   | 'test';
 
 interface NotificationData {
@@ -57,6 +58,8 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return formatDiagnosticReport(data, dateStr);
     case 'integrity_alert':
       return formatIntegrityAlert(data, dateStr);
+    case 'preflight_alert':
+      return formatPreflightAlert(data, dateStr);
     case 'test':
       return `🤖 *ParlayIQ Bot Test*\n\nConnection successful! You'll receive notifications here.\n\n_Sent ${dateStr}_`;
     default:
@@ -385,6 +388,28 @@ function formatIntegrityAlert(data: Record<string, any>, dateStr: string): strin
   return msg;
 }
 
+function formatPreflightAlert(data: Record<string, any>, dateStr: string): string {
+  const { blockers, checks } = data;
+  
+  let msg = `⚠️ PIPELINE PREFLIGHT FAILED\n`;
+  msg += `========================\n`;
+  msg += `Date: ${dateStr}\n\n`;
+  msg += `${(blockers || []).length} blocker(s) detected before generation:\n`;
+  
+  for (const b of (blockers || [])) {
+    msg += `  • ${b}\n`;
+  }
+  
+  msg += `\nAction required before next generation cycle.`;
+  
+  if (checks && Array.isArray(checks)) {
+    const passed = checks.filter((c: any) => c.passed).length;
+    msg += `\n\nChecks: ${passed}/${checks.length} passed`;
+  }
+  
+  return msg;
+}
+
 function formatOdds(odds?: number): string {
   if (!odds) return '-110';
   return odds > 0 ? `+${odds}` : `${odds}`;
@@ -411,8 +436,8 @@ Deno.serve(async (req) => {
     
     console.log(`[Telegram] Sending ${type} notification`);
 
-    // Check notification preferences (skip for test and integrity_alert — these always fire)
-    if (type !== 'test' && type !== 'integrity_alert') {
+    // Check notification preferences (skip for test, integrity_alert, preflight_alert — these always fire)
+    if (type !== 'test' && type !== 'integrity_alert' && type !== 'preflight_alert') {
       const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
       const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
       const supabase = createClient(supabaseUrl, supabaseKey);
