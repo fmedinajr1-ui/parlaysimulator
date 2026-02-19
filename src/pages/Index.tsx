@@ -7,6 +7,7 @@ import { DailyParlayHub } from "@/components/parlays/DailyParlayHub";
 import { SweetSpotPicksCard } from "@/components/market/SweetSpotPicksCard";
 import { WeeklyParlayHistory } from "@/components/dashboard/WeeklyParlayHistory";
 import { Elite3PTFixedParlay } from "@/components/market/Elite3PTFixedParlay";
+import { WhenWeWinBig } from "@/components/WhenWeWinBig";
 import { PullToRefreshContainer, PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
 import { useHapticFeedback } from "@/hooks/useHapticFeedback";
@@ -149,6 +150,11 @@ const Index = () => {
         {/* ★ ELITE 3PT FIXED PARLAY - Today's 100% L10 Picks ★ */}
         <div className="mb-4">
           <Elite3PTFixedParlay />
+        </div>
+
+        {/* 🔥 WHEN WE WIN, WE WIN BIG — Payout Preview */}
+        <div className="mb-4">
+          <WhenWeWinBig />
         </div>
 
         {/* ★ DAILY PARLAY HUB - Primary Content ★ */}
