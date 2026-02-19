@@ -52,7 +52,10 @@ export function ScoutSweetSpotProps({ homeTeam, awayTeam }: ScoutSweetSpotPropsP
         .order('l10_hit_rate', { ascending: false });
 
       if (error) throw error;
-      return data ?? [];
+      // Filter out fake lines (e.g. 0.5 for 3PT)
+      return (data ?? []).filter(
+        pick => pick.recommended_line == null || pick.recommended_line >= 1.5
+      );
     },
     staleTime: 60_000,
   });

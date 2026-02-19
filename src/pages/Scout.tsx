@@ -1,5 +1,6 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -16,7 +17,7 @@ import { FilmProfileUpload } from "@/components/scout/FilmProfileUpload";
 import { useToast } from "@/hooks/use-toast";
 import { useSubscription } from "@/hooks/useSubscription";
 import { useAuth } from "@/contexts/AuthContext";
-import { Video, Eye, Zap, Clock, Users, Upload, Radio, Bot, Film, Lock, Check } from "lucide-react";
+import { Video, Eye, Zap, Clock, Users, Upload, Radio, Bot, Film, Lock, Check, Send } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
 import type { PreGameBaseline, TeamFatigueData } from '@/types/pre-game-baselines';
@@ -203,6 +204,59 @@ const Scout = () => {
   const isCustomer = (hasScoutAccess && !isAdmin) || testCustomer;
   const hasAccess = isAdmin || hasScoutAccess || testCustomer;
 
+  // Fetch admin-set active game for customers
+  const { data: activeGame } = useQuery({
+    queryKey: ['scout-active-game'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('scout_active_game')
+        .select('*')
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+    enabled: isCustomer,
+    staleTime: 30_000,
+  });
+
+  // Auto-set selected game from active game for customers
+  useEffect(() => {
+    if (isCustomer && activeGame && !selectedGame) {
+      setSelectedGame({
+        eventId: activeGame.event_id,
+        homeTeam: activeGame.home_team,
+        awayTeam: activeGame.away_team,
+        commenceTime: activeGame.commence_time ?? '',
+        gameDescription: activeGame.game_description ?? `${activeGame.away_team} @ ${activeGame.home_team}`,
+        homeRoster: [],
+        awayRoster: [],
+      });
+    }
+  }, [isCustomer, activeGame, selectedGame]);
+
+  // Admin: set live game for customers
+  const handleSetLive = async () => {
+    if (!selectedGame) return;
+    try {
+      // Delete existing, then insert new (upsert pattern for single row)
+      await supabase.from('scout_active_game').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      const { error } = await supabase.from('scout_active_game').insert({
+        event_id: selectedGame.eventId,
+        home_team: selectedGame.homeTeam,
+        away_team: selectedGame.awayTeam,
+        game_description: selectedGame.gameDescription,
+        commence_time: selectedGame.commenceTime || null,
+      });
+      if (error) throw error;
+      toast({ title: "Game Set Live", description: `${selectedGame.awayTeam} @ ${selectedGame.homeTeam} is now live for customers` });
+    } catch (err) {
+      console.error('Error setting live game:', err);
+      toast({ title: "Error", description: "Failed to set live game", variant: "destructive" });
+    }
+  };
+
   const handleLiveObservationsUpdate = useCallback((observations: LiveObservation[]) => {
     setLiveObservations(observations);
   }, []);
@@ -260,28 +314,52 @@ const Scout = () => {
   return (
     <AppShell className="pt-safe pb-20">
       <div className="space-y-4">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-display font-bold flex items-center gap-2">
-              <Eye className="w-6 h-6 text-primary" />
-              Second Half Scout
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              AI-powered video analysis for halftime betting edges
-            </p>
+        {/* Header — admin only */}
+        {!isCustomer && (
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-display font-bold flex items-center gap-2">
+                <Eye className="w-6 h-6 text-primary" />
+                Second Half Scout
+              </h1>
+              <p className="text-sm text-muted-foreground">
+                AI-powered video analysis for halftime betting edges
+              </p>
+            </div>
+            <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20">
+              <Zap className="w-3 h-3 mr-1" />
+              Beta
+            </Badge>
           </div>
-          <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20">
-            <Zap className="w-3 h-3 mr-1" />
-            Beta
-          </Badge>
-        </div>
+        )}
 
-        {/* Game Selector */}
-        <ScoutGameSelector 
-          selectedGame={selectedGame} 
-          onGameSelect={handleGameSelect} 
-        />
+        {/* Game Selector — admin only */}
+        {!isCustomer && (
+          <div className="space-y-2">
+            <ScoutGameSelector 
+              selectedGame={selectedGame} 
+              onGameSelect={handleGameSelect} 
+            />
+            {selectedGame && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-2 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10"
+                onClick={handleSetLive}
+              >
+                <Send className="w-3.5 h-3.5" />
+                Set Live for Customers
+              </Button>
+            )}
+          </div>
+        )}
+
+        {/* Customer: no game live message */}
+        {isCustomer && !selectedGame && !activeGame && (
+          <div className="flex items-center justify-center min-h-[40vh]">
+            <p className="text-muted-foreground text-sm">No game is currently live. Check back soon.</p>
+          </div>
+        )}
 
         {selectedGame && (
           <>
@@ -430,8 +508,8 @@ const Scout = () => {
           </>
         )}
 
-        {/* Info Section */}
-        {!selectedGame && (
+        {/* Info Section — admin only */}
+        {!selectedGame && !isCustomer && (
           <Card className="border-dashed border-2 border-muted-foreground/20">
             <CardContent className="py-8 text-center">
               <Video className="w-12 h-12 mx-auto mb-4 text-muted-foreground/50" />

@@ -74,6 +74,8 @@ export function DesktopSidebar({ collapsed, onToggle }: DesktopSidebarProps) {
 
   const isActive = (path: string) => location.pathname === path;
   const isAdmin = isAdminRole || isPilotAdmin;
+  const isScoutCustomer = location.pathname === '/scout' && 
+    new URLSearchParams(location.search).get('test_customer') === 'true';
 
   const NavItem = ({ icon: Icon, label, path }: { icon: typeof Home; label: string; path: string }) => {
     const active = isActive(path);
@@ -152,17 +154,19 @@ export function DesktopSidebar({ collapsed, onToggle }: DesktopSidebarProps) {
 
       {/* Navigation */}
       <div className="flex-1 overflow-y-auto py-4 px-2">
-        {/* Main Nav */}
-        <div className="space-y-1">
-          {!collapsed && (
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 mb-2">
-              Main
-            </p>
-          )}
-          {mainNavItems.map((item) => (
-            <NavItem key={item.path} {...item} />
-          ))}
-        </div>
+        {/* Main Nav — hidden for scout customers */}
+        {!isScoutCustomer && (
+          <div className="space-y-1">
+            {!collapsed && (
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-3 mb-2">
+                Main
+              </p>
+            )}
+            {mainNavItems.map((item) => (
+              <NavItem key={item.path} {...item} />
+            ))}
+          </div>
+        )}
 
 
         {/* Admin Section */}
