@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { PropEdge } from '@/types/scout-agent';
+import { PropHedgeIndicator } from './PropHedgeIndicator';
+import { PlayerL5History } from './PlayerL5History';
 import { Copy, ChevronDown, ChevronUp, TrendingUp, TrendingDown, AlertTriangle, Timer, Target } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
@@ -135,6 +137,12 @@ export function EdgeRowCompact({ edge, rank }: EdgeRowCompactProps) {
                   </div>
                 </div>
               )}
+
+              {/* Hedge Indicator */}
+              <PropHedgeIndicator edge={edge} />
+
+              {/* L5 History */}
+              <PlayerL5History playerName={edge.player} propType={edge.prop} line={edge.line} lean={edge.lean} />
 
               {/* Range Band */}
               {lowRange != null && highRange != null && (

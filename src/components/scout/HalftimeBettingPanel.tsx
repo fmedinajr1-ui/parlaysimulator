@@ -152,83 +152,65 @@ export function HalftimeBettingPanel({
 
   return (
     <Card className="border-primary/30 bg-card">
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Target className="w-5 h-5 text-primary" />
-            <CardTitle className="text-lg">Halftime Betting Console</CardTitle>
-          </div>
-          
+      <CardHeader className="pb-3 px-3 sm:px-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            {/* Refresh Stats Button */}
-            {onRefreshStats && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={async () => {
-                  const result = await onRefreshStats();
-                  if (result.success) {
-                    toast({
-                      title: "Stats Refreshed",
-                      description: `Updated ${result.playerCount || 0} players`,
-                    });
-                  }
-                }}
-                disabled={isRefreshing}
-                title="Refresh box score stats"
-              >
-                <RefreshCw className={cn("w-4 h-4", isRefreshing && "animate-spin")} />
-              </Button>
-            )}
-            
-            {/* PBP Timestamp */}
-            {lastPbpUpdate && (
-              <span className="flex items-center gap-1 text-muted-foreground text-xs">
-                <Clock className="w-3 h-3" />
-                {formatDistanceToNow(lastPbpUpdate, { addSuffix: true })}
-                {lastPbpGameTime && ` (${lastPbpGameTime})`}
-              </span>
-            )}
-
-            {/* Status Badge */}
+            <Target className="w-4 h-4 text-primary" />
+            <CardTitle className="text-base sm:text-lg">Betting Console</CardTitle>
+            {/* Status Badge - inline on mobile */}
             <Badge 
               variant="outline" 
               className={cn(
-                "gap-1.5",
+                "gap-1 text-[10px] px-1.5 py-0.5",
                 mode === 'HALFTIME_LOCK' 
                   ? "bg-chart-2/10 text-chart-2 border-chart-2/30" 
                   : "bg-primary/10 text-primary border-primary/30"
               )}
             >
               {mode === 'HALFTIME_LOCK' ? (
-                <>
-                  <Lock className="w-3 h-3" />
-                  LOCKED
-                </>
+                <><Lock className="w-2.5 h-2.5" />LOCKED</>
               ) : (
-                <>
-                  <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
-                  LIVE
-                </>
+                <><div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />LIVE</>
               )}
             </Badge>
-            
-            {/* Game Time */}
             {gameTime && (
-              <Badge variant="secondary" className="font-mono text-xs">
+              <Badge variant="secondary" className="font-mono text-[10px] px-1.5 py-0.5">
                 {gameTime}
               </Badge>
             )}
-
-            {/* Copy All Button */}
+          </div>
+          
+          <div className="flex items-center gap-1.5">
+            {onRefreshStats && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 p-0"
+                onClick={async () => {
+                  const result = await onRefreshStats();
+                  if (result.success) {
+                    toast({ title: "Refreshed", description: `${result.playerCount || 0} players` });
+                  }
+                }}
+                disabled={isRefreshing}
+              >
+                <RefreshCw className={cn("w-3.5 h-3.5", isRefreshing && "animate-spin")} />
+              </Button>
+            )}
+            {lastPbpUpdate && (
+              <span className="text-muted-foreground text-[10px] hidden sm:flex items-center gap-1">
+                <Clock className="w-2.5 h-2.5" />
+                {formatDistanceToNow(lastPbpUpdate, { addSuffix: true })}
+              </span>
+            )}
             <Button
               variant="outline"
               size="sm"
               onClick={handleCopyAll}
-              className="gap-1.5"
+              className="h-7 gap-1 text-xs px-2"
             >
-              <Copy className="w-3.5 h-3.5" />
-              Copy All
+              <Copy className="w-3 h-3" />
+              Copy
             </Button>
           </div>
         </div>
@@ -300,27 +282,21 @@ export function HalftimeBettingPanel({
           </div>
         ) : (
           mode === 'LIVE' && (
-            <div className="text-center py-8 text-muted-foreground">
-              <Zap className="w-10 h-10 mx-auto mb-3 opacity-50" />
-              <p className="font-medium">No edges match your filters</p>
-              <p className="text-sm">
-                Try lowering min confidence or allowing volatile picks
-              </p>
+            <div className="text-center py-6 text-muted-foreground">
+              <Zap className="w-8 h-8 mx-auto mb-2 opacity-40" />
+              <p className="text-sm font-medium">No edges match filters</p>
+              <p className="text-xs">Lower confidence or allow volatile picks</p>
             </div>
           )
         )}
 
-        {/* Pre-lock empty state */}
+        {/* Pre-lock shimmer state */}
         {mode === 'LIVE' && edges.length === 0 && lockedRecommendations.length === 0 && (
-          <div className="text-center py-8 text-muted-foreground">
-            <Target className="w-10 h-10 mx-auto mb-3 opacity-50" />
-            <p className="font-medium">Analyzing Game...</p>
-            <p className="text-sm">
-              Prop edges will appear as the agent processes data
-            </p>
-            {gameTime && (
-              <p className="text-xs mt-2 font-mono">Current: {gameTime}</p>
-            )}
+          <div className="space-y-2">
+            {[1, 2, 3].map(i => (
+              <div key={i} className="h-20 rounded-lg bg-muted/50 animate-pulse" />
+            ))}
+            <p className="text-center text-xs text-muted-foreground mt-2">Scanning for edges...</p>
           </div>
         )}
       </CardContent>
