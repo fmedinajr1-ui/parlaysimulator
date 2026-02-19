@@ -3116,6 +3116,21 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       return false;
     }
 
+    // === CIRCUIT BREAKER: Block NCAAB totals where projected_total is the hardcoded 100 fallback ===
+    // Independent backstop — even if the scorer produces a broken projection in an edge case,
+    // picks built on projected_total ≤ 100 against lines > 125 never enter parlays
+    if (isNCAAB && pick.bet_type === 'total') {
+      const breakdown = pick.score_breakdown as any;
+      const projTotal = breakdown?.projected_total;
+      const line = pick.line || 0;
+      if (projTotal !== undefined && projTotal <= 100 && line > 125) {
+        mlBlocked.push(
+          `${pick.home_team} vs ${pick.away_team} NCAAB total BLOCKED — projected_total=${projTotal} is hardcoded fallback, line=${line}`
+        );
+        return false;
+      }
+    }
+
     // === FIX 5: Dynamic category blocking from bot_category_weights (sport-scoped, with exemptions) ===
     // If the pick's sport has a healthy sport-specific hit rate, it overrides any team_all block
     const pickComboKey = `${pick.category}_${pick.side}`;
