@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -219,7 +219,7 @@ const Scout = () => {
       if (error) throw error;
       return data;
     },
-    enabled: isCustomer,
+    enabled: isCustomer || isAdmin,
     staleTime: 30_000,
   });
 
@@ -238,6 +238,8 @@ const Scout = () => {
     }
   }, [isCustomer, activeGame, selectedGame]);
 
+  const queryClient = useQueryClient();
+
   // Admin: set live game for customers
   const handleSetLive = async () => {
     if (!selectedGame) return;
@@ -252,6 +254,7 @@ const Scout = () => {
         commence_time: selectedGame.commenceTime || null,
       });
       if (error) throw error;
+      queryClient.invalidateQueries({ queryKey: ['scout-active-game'] });
       toast({ title: "Game Set Live", description: `${selectedGame.awayTeam} @ ${selectedGame.homeTeam} is now live for customers` });
     } catch (err) {
       console.error('Error setting live game:', err);
@@ -352,6 +355,19 @@ const Scout = () => {
                 <Send className="w-3.5 h-3.5" />
                 Set Live for Customers
               </Button>
+            )}
+            {/* Currently Live Indicator */}
+            {activeGame ? (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+                </span>
+                <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wide">LIVE:</span>
+                <span className="text-xs text-foreground">{activeGame.game_description || `${activeGame.away_team} @ ${activeGame.home_team}`}</span>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">No game currently live for customers</p>
             )}
           </div>
         )}
