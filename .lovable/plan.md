@@ -1,75 +1,75 @@
 
 
-## Demo/Preview Mode for Customer Scout View
+## Test Plan: Customer Scout Command Center + Vision AI Pipeline
 
-### Problem
-When no game is live, customers see a blank "No game is currently live" message. This gives no sense of what the Scout experience looks like and doesn't build excitement.
+### Bugs Found During Code Review
 
-### Solution
-Show a fully populated demo version of the Command Center using hardcoded sample data, with a clear "DEMO" banner so customers know it's a preview.
+#### Bug 1 (Critical): Demo Whale Signals Key Mismatch in AI Whisper
+- **File**: `src/data/demoScoutData.ts` + `src/components/scout/CustomerAIWhisper.tsx`
+- **Problem**: `demoWhaleSignals` uses keys like `"LeBron James_points"`, but `CustomerAIWhisper.generateInsights()` looks up signals using `signals?.get(pick.playerName.toLowerCase())` which produces `"lebron james"`. These keys never match, so STEAM/DIVERGENCE insights never appear in demo mode.
+- **Fix**: Change demo map keys to match the lookup format (lowercase player name only), OR update the lookup to use `playerName_propType` format.
 
-### What Customers Will See
+#### Bug 2 (Low): Double Frame Extraction
+- **File**: `src/components/scout/ScoutVideoUpload.tsx`
+- **Problem**: Frames are extracted once on file select (line ~63) and again on analyze (line ~100). The second extraction re-processes the entire video unnecessarily.
+- **Fix**: Cache the extracted frames from the first pass and reuse on analyze.
 
-```text
-[DEMO BANNER - "Preview Mode - Live data appears when a game starts"]
-[Stream Panel - "Lakers vs Celtics" demo matchup]
-[Slip Scanner]
-[Props cards - 4-5 sample picks with hit rates + edges]
-[Pick Status - sample ON TRACK / CAUTION indicators]
-[Confidence Dashboard - sample heat meters at various %]
-[Risk Mode Toggle]
-[AI Whisper - sample insights rotating]
-```
+#### Bug 3 (Info): Vision AI Uses Direct OpenAI Key
+- **File**: `supabase/functions/analyze-game-footage/index.ts`
+- **Problem**: The edge function calls `api.openai.com` directly with `OPENAI_API_KEY` instead of using the Lovable AI gateway (`ai.gateway.lovable.dev`). This works if the secret is configured, but doesn't leverage the built-in Lovable AI key.
+- **Impact**: Not a bug if `OPENAI_API_KEY` is set. Migration to Lovable AI gateway is optional but would remove the API key dependency.
 
-### Implementation
+### Test Suite Implementation
 
-**1. New file: `src/data/demoScoutData.ts`**
-- Export a demo `ScoutGameContext` (Lakers vs Celtics)
-- Export sample confidence picks (5 players with realistic current values)
-- Export sample whisper picks (same picks with game progress)
-- Export a sample whale signals Map with 1-2 entries
+Create comprehensive tests for all 7 customer modules plus the vision AI pipeline:
 
-**2. Update: `src/pages/Scout.tsx`**
-- When `isCustomer && !selectedGame && !activeGame`, instead of showing the empty message, render the `CustomerScoutView` wrapped in `RiskModeProvider` using the demo game context
-- Pass a `isDemo={true}` prop to `CustomerScoutView`
+**New file: `src/test/scout-customer-view.test.tsx`**
 
-**3. Update: `src/components/scout/CustomerScoutView.tsx`**
-- Accept optional `isDemo` prop
-- When `isDemo` is true:
-  - Show a subtle banner at the top: "Preview Mode" with a pulsing dot
-  - Use the demo confidence picks and whisper picks instead of live data (which would be empty)
-  - Still render all 7 modules so customers see the full layout
-- The Slip Scanner, Risk Toggle, and Sweet Spot Props work independently and don't need demo data
-- The Confidence Dashboard and AI Whisper receive the demo picks directly
+Tests covering:
 
-**4. Update: `src/components/scout/CustomerConfidenceDashboard.tsx`**
-- No changes needed -- it already accepts picks as props
+1. **Stream Panel** -- Renders game title, shows video placeholder
+2. **Slip Scanner** -- Renders upload area, shows scanning state
+3. **Sweet Spot Props** -- Renders loading state, handles empty data
+4. **Hedge Panel** -- Renders empty state message, loading spinner
+5. **Confidence Dashboard** -- Heat meter calculation, color thresholds, survival % math
+6. **Risk Toggle** -- All 3 modes render, toggle changes mode, description updates
+7. **AI Whisper** -- Insight generation logic, carousel rotation, signal detection
+8. **Demo Mode** -- Banner renders, demo data flows to all modules
+9. **Demo Whale Signals** -- Verify signal lookup actually matches (will catch Bug 1)
 
-**5. Update: `src/components/scout/CustomerAIWhisper.tsx`**
-- No changes needed -- it already accepts picks and signals as props
+**New file: `src/test/video-frame-extractor.test.ts`**
 
-### Demo Data Examples
+Tests covering:
 
-| Player | Prop | Line | Current | Side |
-|---|---|---|---|---|
-| LeBron James | points | 24.5 | 18 | over |
-| Jayson Tatum | rebounds | 8.5 | 5 | over |
-| Anthony Davis | blocks | 2.5 | 1 | over |
-| Jrue Holiday | assists | 5.5 | 7 | over |
-| Austin Reaves | points | 16.5 | 19 | under |
+1. **validateVideoFile** -- Accepts MP4/MOV/WebM, rejects invalid types, enforces 100MB limit
+2. **areFramesSimilar** -- Length-based comparison, sample matching, threshold behavior
+3. **deduplicateFrames** -- Removes consecutive duplicates, keeps unique frames
+4. **detectDuplicateFrameIssue** -- Identifies title-card-only extractions
+5. **isVideoFile** -- Type detection for video files
+
+**New file: `src/test/demo-scout-data.test.ts`**
+
+Tests covering:
+
+1. **Data integrity** -- All demo picks have required fields
+2. **Whale signal key matching** -- Keys match the lookup format used by AI Whisper (catches Bug 1)
+3. **Whisper picks** -- Have gameProgress field added
 
 ### Technical Details
 
-- Demo mode is purely client-side -- no database queries, no edge function calls
-- The Sweet Spot Props and Hedge Panel will show their normal "no data" empty states (since there's no real DB data), which is fine -- the demo picks populate the Confidence Dashboard and Whisper
-- Demo banner uses a subtle `bg-primary/10` strip with a pulsing indicator so it's noticeable but not intrusive
-- No new dependencies needed
+- All tests use Vitest + React Testing Library
+- Scout components that call Supabase are mocked at the module level
+- RiskModeContext is wrapped around components that need it
+- No edge function deployment needed -- these are pure frontend unit tests
+- The Bug 1 fix changes 2 map keys in `demoScoutData.ts`
+- The Bug 2 fix adds a `useRef` to cache frames between select and analyze in `ScoutVideoUpload.tsx`
 
 ### Files Changed
 
 | File | Action |
 |---|---|
-| `src/data/demoScoutData.ts` | Create -- demo game context + sample picks |
-| `src/pages/Scout.tsx` | Update -- render demo CustomerScoutView when no game live |
-| `src/components/scout/CustomerScoutView.tsx` | Update -- accept isDemo prop, show banner, use demo data |
-
+| `src/data/demoScoutData.ts` | Fix -- correct whale signal map keys |
+| `src/components/scout/ScoutVideoUpload.tsx` | Fix -- cache frames to avoid double extraction |
+| `src/test/scout-customer-view.test.tsx` | Create -- 7-module test suite |
+| `src/test/video-frame-extractor.test.ts` | Create -- frame extractor unit tests |
+| `src/test/demo-scout-data.test.ts` | Create -- demo data integrity tests |
