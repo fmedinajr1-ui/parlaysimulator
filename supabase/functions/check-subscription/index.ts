@@ -12,11 +12,12 @@ const logStep = (step: string, details?: any) => {
   console.log(`[CHECK-SUBSCRIPTION] ${step}${detailsStr}`);
 };
 
-const BOT_PRICE_IDS: Record<string, 'entry' | 'pro' | 'ultimate'> = {
+const BOT_PRICE_IDS: Record<string, 'entry' | 'pro' | 'ultimate' | 'scout'> = {
   "price_1T1HU99D6r1PTCBBLQaWi80Z": "entry",
   "price_1T2D1i9D6r1PTCBBSlceNbTR": "entry",
   "price_1T2D4I9D6r1PTCBB3kngnoRk": "pro",
   "price_1T2DD99D6r1PTCBBpcsPloWj": "ultimate",
+  "price_1T2br19D6r1PTCBBfrDD4opY": "scout",
 };
 
 serve(async (req) => {
@@ -196,6 +197,7 @@ serve(async (req) => {
         subscriptionEnd,
         hasBotAccess: hasBotProSubscription || isAdmin,
         botTier,
+        hasScoutAccess: botTier === 'scout' || isAdmin,
         phoneVerified,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
