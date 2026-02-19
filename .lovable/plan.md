@@ -1,133 +1,72 @@
 
-# Line Accuracy Fix — Master Parlay + All Strategies
+# Revive the Scout Page — Full Feature Restoration
 
-## Root Cause: Two Separate Line Problems
+## What's Currently Broken
 
-### Problem 1 — THREE_POINT_SHOOTER Category Uses 0.5 Line (Wrong Sportsbook Line)
+The Scout page (`src/pages/Scout.tsx`) exists and is fully built, but it is **completely unreachable** because no route is registered for `/scout` in `App.tsx`. It also has no entry in the menu drawer or bottom nav.
 
-The `category_sweet_spots` table stores `recommended_line = 0.5` for every `THREE_POINT_SHOOTER` pick (3,466 rows). The parlay engine picks up this line using:
+All backend edge functions the Scout page depends on are deployed and operational:
+- `analyze-game-footage` — Upload mode video AI analysis
+- `analyze-live-frame` — Live mode per-frame AI detection
+- `compile-halftime-analysis` — Halftime synthesis of all captured moments
+- `scout-agent-loop` — Autopilot mode continuous AI loop
+- `scout-data-projection` — Data-only projection engine (no video required)
+- `fetch-live-pbp` — Play-by-play polling
+- `sync-missing-rosters` — Jersey/roster sync from BDL + ESPN
+- `bulk-sync-jerseys` — Bulk sync all 30 NBA teams
+- `build-player-profile` — Film profile builder
+- `refresh-todays-props` — Game list data source
 
-```typescript
-const line = pick.actual_line ?? pick.recommended_line ?? pick.line;
-```
-
-Since `actual_line` is NULL for every threes pick, it falls back to `recommended_line = 0.5`. This is the historical "sweet spot" (at least 1 three pointer made), but it is NOT the current sportsbook line.
-
-The `oddsMap` already has the real sportsbook line from `unified_props`:
-- Tyrese Maxey threes: **3.5** (sportsbook) vs 0.5 stored
-- Donovan Mitchell threes: **2.5** (DraftKings) / **3.5** (FanDuel) vs 0.5 stored
-- Aaron Nesmith threes: **2.5** vs 0.5 stored
-- Nickeil Alexander-Walker threes: **3.5** vs 0.5 stored
-- LaMelo Ball threes: **3.5** vs 0.5 stored
-- Moses Moody threes: **2.5** vs 0.5 stored
-
-**The fix:** When the `oddsMap` has a real `current_line` for this player+prop combination, use it as the line instead of the `recommended_line` from `category_sweet_spots`. The `oddsMap` is the source of truth.
-
-**Code change location:** Line 2642 in `bot-generate-daily-parlays/index.ts`
-
-```typescript
-// BEFORE (wrong):
-const line = pick.actual_line ?? pick.recommended_line ?? pick.line;
-
-// AFTER (correct):
-const oddsKey = `${pick.player_name}_${pick.prop_type}`.toLowerCase();
-const realLine = oddsMap.get(oddsKey)?.line;
-const line = pick.actual_line ?? (realLine && realLine > 0 ? realLine : null) ?? pick.recommended_line ?? pick.line;
-```
-
-Note: `oddsKey` is already computed 2 lines later — the code should be restructured so `oddsKey` is computed first, then used for both line resolution AND odds lookup.
-
-### Problem 2 — 0.5 Threes Picks Survive the `has_real_line` Guard
-
-The existing guard `p.has_real_line` was supposed to block picks without sportsbook lines. But `hasRealLine` is set to `true` whenever `oddsMap.has(oddsKey)` — which is true for threes because `unified_props` has a row for the player's threes. So the pick passes the guard (real sportsbook odds exist) but uses the wrong line value (0.5 from `recommended_line` instead of 2.5/3.5 from `unified_props.current_line`).
-
-The guard is not broken — the line resolution is. Once the line resolution is fixed (Problem 1), the guard will correctly approve picks using the real sportsbook line.
-
-### Problem 3 — hit_rate Values Show "100" for THREE_POINT_SHOOTER
-
-The master parlay shows hit_rate=100 for Tyrese Maxey threes and Aaron Nesmith threes. This is because many historical sweet-spot rows have `l10_hit_rate = 1.0` (i.e., the player made at least 1 three in 10/10 recent games). This is accurate for OVER 0.5 (trivially easy) but is NOT the hit rate for OVER 2.5 or OVER 3.5. After fixing the line, the hit rate needs to be re-evaluated from `unified_props` actual data, or at minimum the hit rate displayed must be capped to reflect that the player is being evaluated against the real sportsbook line.
-
-The simplest approach: When substituting the real line from `oddsMap`, also re-derive the hit rate from any available recent game data. If not available, cap the displayed hit rate at 75% for any pick where the line was overridden from a `recommended_line` to a `realLine`.
+The game selector reads from `unified_props` and `bdl_player_cache`, both populated. All Scout sub-components (`ScoutVideoUpload`, `ScoutLiveCapture`, `ScoutAutonomousAgent`, `FilmProfileUpload`, `ScoutAnalysisResults`, `ScoutGameSelector`) exist and import correctly.
 
 ---
 
-## Files Changed
+## What Needs To Be Fixed
+
+### 1. Register `/scout` Route in App.tsx
+The Scout page is lazy-loaded elsewhere in the codebase but never added to `AnimatedRoutes`. This is the primary fix — add:
+```tsx
+const Scout = React.lazy(() => import("./pages/Scout"));
+// ...
+<Route path="/scout" element={<Scout />} />
+```
+
+### 2. Add Scout to the Menu Drawer
+`src/components/layout/MenuDrawer.tsx` has a `menuItems` array with only Team Bets. Scout needs to be added so users can navigate to it from the hamburger menu. The quick action on the home page (`Index.tsx` line 70) already links to `/scout`, but the menu drawer is the persistent navigation point.
+
+Add Scout to `menuItems`:
+```typescript
+{ icon: Eye, label: "Scout", path: "/scout", description: "AI video analysis for halftime edges" }
+```
+
+### 3. Add Scout to Bottom Nav (Optional — Assessed Below)
+The bottom nav currently shows Bot, Analysis, and the menu drawer. The quick actions row on the homepage already surfaces Scout prominently. Scout is a niche live-game feature that doesn't warrant a permanent nav slot alongside the core picks flow. It will remain accessible via the home page quick actions and the menu drawer.
+
+---
+
+## Files to Change
 
 | File | Change |
 |---|---|
-| `supabase/functions/bot-generate-daily-parlays/index.ts` | Fix line resolution order at line 2642 |
-| `supabase/functions/bot-generate-daily-parlays/index.ts` | Re-cap hit rate when line is overridden from sportsbook |
+| `src/App.tsx` | Add `Scout` lazy import + `/scout` route |
+| `src/components/layout/MenuDrawer.tsx` | Add Scout to `menuItems` array |
 
 ---
 
-## Exact Code Change
+## Technical Notes
 
-**Location: Lines 2641–2678 (enrichedSweetSpots mapping block)**
-
-Current logic:
-```typescript
-let enrichedSweetSpots: EnrichedPick[] = (sweetSpots || []).map((pick: SweetSpotPick) => {
-  const line = pick.actual_line ?? pick.recommended_line ?? pick.line;
-  const oddsKey = `${pick.player_name}_${pick.prop_type}`.toLowerCase();
-  const hasRealLine = oddsMap.has(oddsKey) || (pick.actual_line !== null && pick.actual_line !== undefined);
-  const odds = oddsMap.get(oddsKey) || { overOdds: -110, underOdds: -110, line: 0, sport: 'basketball_nba' };
-  ...
-  return { ...pick, line, ... };
-```
-
-Fixed logic:
-```typescript
-let enrichedSweetSpots: EnrichedPick[] = (sweetSpots || []).map((pick: SweetSpotPick) => {
-  // Resolve oddsKey FIRST — used for both line override and odds lookup
-  const oddsKey = `${pick.player_name}_${pick.prop_type}`.toLowerCase();
-  const oddsEntry = oddsMap.get(oddsKey);
-  
-  // CRITICAL: Use the real sportsbook line from unified_props when available.
-  // category_sweet_spots stores recommended_line=0.5 for THREE_POINT_SHOOTER (historical sweet spot)
-  // but the actual sportsbook line is 2.5 or 3.5. The oddsMap has the correct current_line.
-  const realSportsbookLine = oddsEntry?.line && oddsEntry.line > 0 ? oddsEntry.line : null;
-  const line = pick.actual_line ?? realSportsbookLine ?? pick.recommended_line ?? pick.line;
-  const lineWasOverridden = !pick.actual_line && realSportsbookLine && realSportsbookLine !== pick.recommended_line;
-  
-  const hasRealLine = !!oddsEntry || (pick.actual_line !== null && pick.actual_line !== undefined);
-  const odds = oddsEntry || { overOdds: -110, underOdds: -110, line: 0, sport: 'basketball_nba' };
-  
-  // If the line was overridden to the real sportsbook line (e.g., 2.5 instead of 0.5),
-  // cap the historical hit rate at 75% since the 0.5 hit rate doesn't apply to the real line
-  const rawHitRateDecimal = pick.l10_hit_rate || pick.confidence_score || 0.5;
-  const hitRateDecimal = lineWasOverridden 
-    ? Math.min(rawHitRateDecimal, 0.75) 
-    : rawHitRateDecimal;
-  ...
-  return { ...pick, line, ... };
-```
+- The Scout page uses `AppShell` for layout, consistent with other pages — no new layout wrapper needed.
+- All Scout edge functions are already deployed and confirmed working per the function list.
+- The `analyze-game-footage` function requires `OPENAI_API_KEY` — already configured (it was working previously before the route was removed).
+- The `ScoutGameSelector` component auto-refreshes props from `unified_props` with a 5-minute cache (`scout_props_last_refresh` in localStorage) and triggers `refresh-todays-props` if no games are found — this path is fully functional.
+- The Autopilot mode's data-only projection runs every 15 seconds even without video — users without a capture card can still get live data projections.
 
 ---
 
-## After the Fix
+## Implementation Steps
 
-For every THREE_POINT_SHOOTER pick in the pool:
-- Stored parlay line will match the real sportsbook line (2.5, 3.5, etc.)
-- Hit rates capped at 75% when the line was overridden (prevents fake 100% hit rates at the real line)
-- Negative-edge gate will re-evaluate correctly: `projectedValue - realLine` instead of `projectedValue - 0.5`
-- Master parlay players will be evaluated against lines you can actually bet
+1. Add `const Scout = React.lazy(() => import("./pages/Scout"));` to the lazy imports block in `App.tsx`
+2. Add `<Route path="/scout" element={<Scout />} />` inside `AnimatedRoutes` in `App.tsx`
+3. Add `Eye` icon import and Scout entry to `menuItems` in `MenuDrawer.tsx`
 
-## After the Fix + Regeneration
-
-The master parlay will likely shrink its 3PM OVER picks because the real hit rate at 2.5/3.5 threes is lower than at 0.5. Only players whose hit rate at the real sportsbook line is ≥62% will survive the `nbaCandidates` filter. This is the correct behavior.
-
----
-
-## Scope of Impact
-
-8 distinct player+prop combinations currently stored with wrong lines in today's parlays:
-- Tyrese Maxey threes: 0.5 stored, 3.5 real
-- Nickeil Alexander-Walker threes: 0.5 stored, 3.5 real
-- Donovan Mitchell threes: 0.5 stored, 2.5/3.5 real
-- Aaron Nesmith threes: 0.5 stored, 2.5 real
-- Moses Moody threes: 0.5 stored, 2.5 real
-- LaMelo Ball threes: 0.5 stored, 3.5 real
-- Landry Shamet threes: 0.5 stored, 1.5 real
-- Jarace Walker threes: 0.5 stored, 1.5 real
-
-After the fix, every parlay leg will have the line that players can actually place at the sportsbook.
+These are the only two files that need changes. The Scout page and all its components are already complete and functional.
