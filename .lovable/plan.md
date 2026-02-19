@@ -1,90 +1,69 @@
 
 
-## Simplify Customer Scout View -- No Game Selector, No Admin UI
+## Refine Hedge Recommendation Thresholds
 
-### What Changes
+### Current State
 
-**For customers**, the Scout page becomes a simple, locked-down view:
-- No game selector (admin controls which game is active)
-- No header (title, description, Beta badge)
-- No "How It Works" card
-- No sidebar navigation links (Bot, Analysis)
-- Sweet Spot Props filters out fake lines (e.g. 0.5 for 3PT)
+The hedge snapshot table has 133 records (all from Feb 7-8), but **none of them have matching settled outcomes** in any outcome table. The players/prop types recorded in snapshots don't overlap with the players that have `actual_value` populated in `category_sweet_spots`. Until more games are played with the recorder active AND outcomes get settled, we cannot do empirical threshold calibration.
 
-Customers land on the page and immediately see the stream placeholder plus props/hedge panels for whichever game the admin has set as "active."
+However, there are structural problems we can fix now that will improve accuracy and prepare for data-driven calibration later.
 
-### How Admin Controls the Active Game
+### Problems Found
 
-A new database table `scout_active_game` stores which game is currently being streamed to customers. The admin selects a game normally; a "Set Live for Customers" button saves that game's context. The customer view reads from this table instead of showing a game picker.
+1. **Duplicate hedge status logic**: `useHedgeStatusRecorder.ts` has its own `calculateHedgeStatus()` that uses **confidence-based thresholds** (65/45/25), while the shared `hedgeStatusUtils.ts` uses **projection buffer thresholds** (+2/0/-2). The recorder is saving statuses calculated with the wrong (stale) algorithm.
 
-### Technical Details
+2. **Buffer thresholds are too tight**: The current +2/0/-2 buffer in `hedgeStatusUtils.ts` doesn't account for game progress. A +2 buffer in Q1 is very different from +2 in Q4. Early-game buffers should be wider (projections are less certain), late-game buffers should be tighter.
 
-**1. New database table: `scout_active_game`**
+3. **No outcome backfill pipeline**: Snapshots exist but can never be validated because no edge function settles them against final box scores.
 
+### Changes
+
+**1. `src/hooks/useHedgeStatusRecorder.ts`**
+- Remove the duplicate `calculateHedgeStatus()` function (lines 135-167)
+- Import and use the shared `calculateHedgeStatus` from `@/lib/hedgeStatusUtils`
+- This ensures the recorder saves the same status that the UI displays
+
+**2. `src/lib/hedgeStatusUtils.ts`**
+- Replace fixed +2/0/-2 buffer thresholds with **game-progress-aware thresholds**:
+  - Q1 (0-25%): on_track at +4, monitor at +1, alert at -2, urgent below
+  - Q2 (25-50%): on_track at +3, monitor at +0.5, alert at -1.5
+  - Q3 (50-75%): on_track at +2, monitor at 0, alert at -1
+  - Q4 (75-100%): on_track at +1.5, monitor at -0.5, alert at -1 (tightest -- less time to recover)
+- This reflects the reality that early-game projections have wider variance
+
+**3. `src/components/sweetspots/HedgeRecommendation.tsx`**
+- Update `calculateHitProbability()` buffer thresholds to match the new progress-aware logic (align with hedgeStatusUtils)
+- Currently uses fixed +3/+1/0/-1/-2 buckets -- switch to the same progress-aware scaling
+
+**4. New edge function: `settle-hedge-snapshots`**
+- Runs after games end (can be triggered by existing cron or manually)
+- Matches snapshots to final box scores in `category_sweet_spots` using `player_name + prop_type + analysis_date`
+- Writes `actual_final` and `outcome` (hit/miss) back to the snapshots table
+- This creates the feedback loop needed for future empirical calibration
+
+**5. Database migration: add outcome columns to `sweet_spot_hedge_snapshots`**
 ```sql
-CREATE TABLE public.scout_active_game (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  event_id text NOT NULL,
-  home_team text NOT NULL,
-  away_team text NOT NULL,
-  game_description text,
-  commence_time timestamptz,
-  set_by uuid REFERENCES auth.users(id),
-  updated_at timestamptz DEFAULT now()
-);
-
--- Only one row ever exists (upsert pattern)
--- RLS: anyone can read, only admins can write
-ALTER TABLE public.scout_active_game ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "Anyone can read active game"
-  ON public.scout_active_game FOR SELECT
-  USING (true);
-
-CREATE POLICY "Admins can manage active game"
-  ON public.scout_active_game FOR ALL
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.user_roles
-      WHERE user_id = auth.uid() AND role = 'admin'
-    )
-  );
+ALTER TABLE sweet_spot_hedge_snapshots
+  ADD COLUMN IF NOT EXISTS actual_final numeric,
+  ADD COLUMN IF NOT EXISTS outcome text; -- 'hit', 'miss', 'push'
 ```
 
-**2. `src/pages/Scout.tsx`**
-
-- When `isCustomer` is true:
-  - Hide the header section (title, description, Beta badge)
-  - Hide `ScoutGameSelector` entirely
-  - Hide the "How It Works" card
-  - Instead, fetch the active game from `scout_active_game` and auto-set it as `selectedGame`
-  - Show `CustomerScoutView` immediately (or a "No game live" message if no active game)
-- When admin (`!isCustomer`):
-  - Add a "Set Live for Customers" button next to the game selector that upserts to `scout_active_game`
-
-**3. `src/components/layout/DesktopSidebar.tsx`**
-
-- Detect when on `/scout?test_customer=true`
-- Hide the main nav items (Bot, Analysis) so the customer sees a clean, single-purpose layout
-
-**4. `src/components/scout/ScoutSweetSpotProps.tsx`**
-
-- Filter out picks with `recommended_line < 1.5` (removes fake 0.5 lines for 3PT and similar)
-- Only display props with realistic sportsbook lines
-
-**5. `src/components/scout/CustomerScoutView.tsx`**
-
-- No structural changes -- it already only shows stream + props + hedge panels
-- The game context will now come from the admin-set active game instead of user selection
-
-### User Flow
+### Progress-Aware Buffer Thresholds (Detail)
 
 ```text
-Admin Flow:
-  Select game in Scout -> Click "Set Live" -> Game saved to DB
-  
-Customer Flow:
-  Visit /scout -> Active game auto-loaded from DB -> See stream + props + hedges
-  (No selector, no header, no admin controls visible)
+Game Progress    on_track    monitor    alert    urgent
+0-25% (Q1)       >= +4       >= +1      >= -2    < -2
+25-50% (Q2)      >= +3       >= +0.5    >= -1.5  < -1.5
+50-75% (Q3)      >= +2       >= 0       >= -1    < -1
+75-100% (Q4)     >= +1.5     >= -0.5    >= -1    < -1
 ```
+
+This means in Q1, a player projected 3 pts above their line is only "monitor" (not "on_track"), because projections are volatile early. By Q4, being projected 1.5 above is enough for "on_track" because there's little time for variance.
+
+### Summary
+
+- Fix the duplicate status logic (immediate accuracy improvement)
+- Add game-progress-aware thresholds (smarter classification)
+- Add outcome settlement pipeline (enables future data-driven refinement)
+- Align the HedgeRecommendation probability calculation with the shared utility
 
