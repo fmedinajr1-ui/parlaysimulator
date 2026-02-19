@@ -10,6 +10,7 @@ import { WhyMultipleParlays } from "@/components/bot-landing/WhyMultipleParlays"
 import { WolfLoadingOverlay } from "@/components/ui/wolf-loading-overlay";
 import { ParlayFarmLogo } from "@/components/ParlayFarmLogo";
 import { useTimeOnPage, useSectionView, useTrackClick } from "@/hooks/useAnalytics";
+import { HomepageAnalyzer } from "@/components/home/HomepageAnalyzer";
 
 interface PublicStats {
   days: Array<{
@@ -137,6 +138,9 @@ export default function BotLanding() {
           totalWins={totals.totalWins}
         />
       </div>
+
+
+      <HomepageAnalyzer />
 
       <div ref={calendarRef}>
         <PerformanceCalendar
