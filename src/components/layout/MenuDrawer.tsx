@@ -7,6 +7,7 @@ import {
   Shield,
   Users,
   Target,
+  Eye,
   ChevronRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -19,6 +20,7 @@ import { useViewport } from "@/hooks/useViewport";
 
 const menuItems = [
   { icon: Target, label: "Team Bets", path: "/team-bets", description: "NCAAB spreads, totals & ML" },
+  { icon: Eye, label: "Scout", path: "/scout", description: "AI video analysis for halftime edges" },
 ];
 
 const adminItems = [
