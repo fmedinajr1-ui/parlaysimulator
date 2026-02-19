@@ -238,7 +238,7 @@ const Scout = () => {
   }, [toast]);
 
   // Loading state
-  if (subLoading) {
+  if (subLoading && !testCustomer) {
     return (
       <AppShell className="pt-safe pb-20">
         <div className="flex items-center justify-center min-h-[60vh]">
