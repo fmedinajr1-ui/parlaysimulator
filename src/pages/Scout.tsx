@@ -1,4 +1,5 @@
 import React, { useState, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -197,7 +198,8 @@ const Scout = () => {
   const [scoutMode, setScoutMode] = useState<'upload' | 'live' | 'autopilot' | 'profile'>('autopilot');
   const [liveObservations, setLiveObservations] = useState<LiveObservation[]>([]);
 
-  const isCustomer = hasScoutAccess && !isAdmin;
+  const [searchParams] = useSearchParams();
+  const isCustomer = (hasScoutAccess && !isAdmin) || searchParams.get('test_customer') === 'true';
   const hasAccess = isAdmin || hasScoutAccess;
 
   const handleLiveObservationsUpdate = useCallback((observations: LiveObservation[]) => {
