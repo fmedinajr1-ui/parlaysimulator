@@ -12,7 +12,10 @@ import { ScoutLiveCapture, LiveObservation } from "@/components/scout/ScoutLiveC
 import { ScoutAutonomousAgent } from "@/components/scout/ScoutAutonomousAgent";
 import { FilmProfileUpload } from "@/components/scout/FilmProfileUpload";
 import { useToast } from "@/hooks/use-toast";
-import { Video, Eye, Zap, Clock, Users, Upload, Radio, Bot, Film } from "lucide-react";
+import { useSubscription } from "@/hooks/useSubscription";
+import { useAuth } from "@/contexts/AuthContext";
+import { Video, Eye, Zap, Clock, Users, Upload, Radio, Bot, Film, Lock, Check } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
 
 import type { PreGameBaseline, TeamFatigueData } from '@/types/pre-game-baselines';
 
@@ -37,21 +40,19 @@ export interface RosterPlayer {
 
 export interface ScoutGameContext {
   eventId: string;
-  espnEventId?: string; // ESPN's 9-digit event ID for PBP data
+  espnEventId?: string;
   homeTeam: string;
   awayTeam: string;
   commenceTime: string;
   gameDescription: string;
   homeRoster: RosterPlayer[];
   awayRoster: RosterPlayer[];
-  propLines?: PropLine[]; // Real betting lines from unified_props
-  // Pre-game baselines
+  propLines?: PropLine[];
   preGameBaselines?: PreGameBaseline[];
   homeTeamFatigue?: TeamFatigueData;
   awayTeamFatigue?: TeamFatigueData;
 }
 
-// Re-export for backwards compatibility with components still using old name
 export type GameContext = ScoutGameContext;
 
 export interface AnalysisResult {
@@ -88,7 +89,6 @@ export interface PropRecommendation {
   confidence: "low" | "medium" | "high";
   reasoning: string;
   visualEvidence: string[];
-  // Real bookmaker data (enriched from unified_props)
   actualLine: number | null;
   overPrice: number | null;
   underPrice: number | null;
@@ -97,16 +97,107 @@ export interface PropRecommendation {
   lineDelta: number | null;
 }
 
+const SCOUT_PRICE_ID = "price_1T2br19D6r1PTCBBfrDD4opY";
+
+const scoutFeatures = [
+  "Real-time streaming analysis",
+  "Live player prop tracking",
+  "Game bets & whale signals",
+  "Lock Mode advanced picks",
+  "AI-powered halftime edges",
+  "Full Scout dashboard access",
+];
+
+function ScoutUpgradeGate() {
+  const { user } = useAuth();
+  const [email, setEmail] = useState(user?.email || "");
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleStartTrial = async () => {
+    const targetEmail = user?.email || email;
+    if (!targetEmail || !targetEmail.includes("@")) return;
+
+    setIsLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('create-bot-checkout', {
+        body: { email: targetEmail, priceId: SCOUT_PRICE_ID },
+      });
+      if (error) throw error;
+      if (data?.url) window.location.href = data.url;
+    } catch (err) {
+      console.error('Error starting scout checkout:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center justify-center min-h-[60vh]">
+      <Card className="max-w-md w-full border-2 border-emerald-500/40 bg-card">
+        <CardHeader className="text-center">
+          <div className="mx-auto w-14 h-14 rounded-full bg-emerald-500/15 flex items-center justify-center mb-3">
+            <Lock className="w-7 h-7 text-emerald-400" />
+          </div>
+          <CardTitle className="text-2xl font-bebas tracking-wide">Scout — Live Betting</CardTitle>
+          <CardDescription>
+            Full access to real-time AI-powered scouting tools
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="text-center">
+            <span className="text-4xl font-bold text-foreground">$750</span>
+            <span className="text-muted-foreground text-sm">/month</span>
+            <p className="text-emerald-400 text-xs mt-1 font-semibold">1-day free trial included</p>
+          </div>
+
+          <div className="space-y-2.5">
+            {scoutFeatures.map((feature) => (
+              <div key={feature} className="flex items-start gap-2.5">
+                <Check className="w-4 h-4 text-emerald-400 mt-0.5 flex-shrink-0" />
+                <span className="text-sm text-foreground">{feature}</span>
+              </div>
+            ))}
+          </div>
+
+          {!user && (
+            <input
+              type="email"
+              placeholder="Enter your email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full px-3 py-2 rounded-md border border-border bg-background text-foreground text-sm"
+            />
+          )}
+
+          <Button
+            className="w-full bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-base py-5"
+            onClick={handleStartTrial}
+            disabled={isLoading}
+          >
+            {isLoading ? "Loading..." : "Start 1-Day Free Trial"}
+          </Button>
+
+          <p className="text-xs text-muted-foreground text-center">Cancel anytime · No commitment</p>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 const Scout = () => {
   const { toast } = useToast();
+  const { isAdmin, hasScoutAccess, isLoading: subLoading } = useSubscription();
   const [selectedGame, setSelectedGame] = useState<GameContext | null>(null);
   const [clipCategory, setClipCategory] = useState<string>("timeout");
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [extractedFrames, setExtractedFrames] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState("upload");
-  const [scoutMode, setScoutMode] = useState<'upload' | 'live' | 'autopilot' | 'profile'>('upload');
+  const [scoutMode, setScoutMode] = useState<'upload' | 'live' | 'autopilot' | 'profile'>('autopilot');
   const [liveObservations, setLiveObservations] = useState<LiveObservation[]>([]);
+
+  const isCustomer = hasScoutAccess && !isAdmin;
+  const hasAccess = isAdmin || hasScoutAccess;
 
   const handleLiveObservationsUpdate = useCallback((observations: LiveObservation[]) => {
     setLiveObservations(observations);
@@ -142,6 +233,26 @@ const Scout = () => {
     });
   }, [toast]);
 
+  // Loading state
+  if (subLoading) {
+    return (
+      <AppShell className="pt-safe pb-20">
+        <div className="flex items-center justify-center min-h-[60vh]">
+          <div className="text-muted-foreground">Loading...</div>
+        </div>
+      </AppShell>
+    );
+  }
+
+  // Gate: no Scout access
+  if (!hasAccess) {
+    return (
+      <AppShell className="pt-safe pb-20">
+        <ScoutUpgradeGate />
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell className="pt-safe pb-20">
       <div className="space-y-4">
@@ -170,31 +281,33 @@ const Scout = () => {
 
         {selectedGame && (
           <>
-            {/* Mode Toggle */}
-            <Tabs value={scoutMode} onValueChange={(v) => setScoutMode(v as 'upload' | 'live' | 'autopilot' | 'profile')} className="w-full">
-              <TabsList className="grid w-full grid-cols-4">
-                <TabsTrigger value="upload" className="gap-1 text-xs sm:text-sm sm:gap-2">
-                  <Upload className="w-3 h-3 sm:w-4 sm:h-4" />
-                  <span className="hidden sm:inline">Upload</span>
-                </TabsTrigger>
-                <TabsTrigger value="live" className="gap-1 text-xs sm:text-sm sm:gap-2">
-                  <Radio className="w-3 h-3 sm:w-4 sm:h-4" />
-                  <span className="hidden sm:inline">Live</span>
-                </TabsTrigger>
-                <TabsTrigger value="autopilot" className="gap-1 text-xs sm:text-sm sm:gap-2">
-                  <Bot className="w-3 h-3 sm:w-4 sm:h-4" />
-                  <span className="hidden sm:inline">Auto</span>
-                </TabsTrigger>
-                <TabsTrigger value="profile" className="gap-1 text-xs sm:text-sm sm:gap-2">
-                  <Film className="w-3 h-3 sm:w-4 sm:h-4" />
-                  <span className="hidden sm:inline">Profile</span>
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
+            {/* Mode Toggle — admin only */}
+            {!isCustomer && (
+              <Tabs value={scoutMode} onValueChange={(v) => setScoutMode(v as 'upload' | 'live' | 'autopilot' | 'profile')} className="w-full">
+                <TabsList className="grid w-full grid-cols-4">
+                  <TabsTrigger value="upload" className="gap-1 text-xs sm:text-sm sm:gap-2">
+                    <Upload className="w-3 h-3 sm:w-4 sm:h-4" />
+                    <span className="hidden sm:inline">Upload</span>
+                  </TabsTrigger>
+                  <TabsTrigger value="live" className="gap-1 text-xs sm:text-sm sm:gap-2">
+                    <Radio className="w-3 h-3 sm:w-4 sm:h-4" />
+                    <span className="hidden sm:inline">Live</span>
+                  </TabsTrigger>
+                  <TabsTrigger value="autopilot" className="gap-1 text-xs sm:text-sm sm:gap-2">
+                    <Bot className="w-3 h-3 sm:w-4 sm:h-4" />
+                    <span className="hidden sm:inline">Auto</span>
+                  </TabsTrigger>
+                  <TabsTrigger value="profile" className="gap-1 text-xs sm:text-sm sm:gap-2">
+                    <Film className="w-3 h-3 sm:w-4 sm:h-4" />
+                    <span className="hidden sm:inline">Profile</span>
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+            )}
 
-            {scoutMode === 'upload' && (
+            {/* Upload mode — admin only */}
+            {scoutMode === 'upload' && !isCustomer && (
               <>
-                {/* Clip Category Selector */}
                 <Card className="border-border/50">
                   <CardHeader className="pb-3">
                     <CardTitle className="text-base flex items-center gap-2">
@@ -240,7 +353,6 @@ const Scout = () => {
                   </CardContent>
                 </Card>
 
-                {/* Main Content Tabs */}
                 <Tabs value={activeTab} onValueChange={setActiveTab}>
                   <TabsList className="grid w-full grid-cols-2">
                     <TabsTrigger value="upload">Upload & Analyze</TabsTrigger>
@@ -272,15 +384,14 @@ const Scout = () => {
               </>
             )}
 
-            {scoutMode === 'live' && (
+            {/* Live mode — admin only */}
+            {scoutMode === 'live' && !isCustomer && (
               <div className="space-y-4">
                 <ScoutLiveCapture
                   gameContext={selectedGame}
                   onObservationsUpdate={handleLiveObservationsUpdate}
                   onHalftimeAnalysis={handleLiveAnalysisComplete}
                 />
-                
-                {/* Show results after halftime analysis */}
                 {analysisResult && (
                   <ScoutAnalysisResults
                     result={analysisResult}
@@ -291,11 +402,13 @@ const Scout = () => {
               </div>
             )}
 
-            {scoutMode === 'autopilot' && (
+            {/* Autopilot mode — shown to both admin and customers */}
+            {(scoutMode === 'autopilot' || isCustomer) && (
               <ScoutAutonomousAgent gameContext={selectedGame} />
             )}
 
-            {scoutMode === 'profile' && (
+            {/* Profile mode — admin only */}
+            {scoutMode === 'profile' && !isCustomer && (
               <FilmProfileUpload 
                 onProfileUpdated={(playerName, profileData) => {
                   toast({

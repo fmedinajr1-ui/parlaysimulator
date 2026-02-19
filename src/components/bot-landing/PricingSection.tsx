@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Zap, Crown, TrendingUp } from "lucide-react";
+import { Check, Zap, Crown, TrendingUp, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -14,6 +14,7 @@ interface PricingSectionProps {
 const ENTRY_PRICE_ID = "price_1T1HU99D6r1PTCBBLQaWi80Z";
 const PRO_PRICE_ID = "price_1T2D4I9D6r1PTCBB3kngnoRk";
 const ULTIMATE_PRICE_ID = "price_1T2DD99D6r1PTCBBpcsPloWj";
+const SCOUT_PRICE_ID = "price_1T2br19D6r1PTCBBfrDD4opY";
 
 const tiers = [
   {
@@ -75,6 +76,29 @@ const tiers = [
       "Priority 1-on-1 DM support",
     ],
     cta: "Join Ultimate — $799/mo",
+    hasTrial: false,
+  },
+  {
+    id: "scout",
+    priceId: SCOUT_PRICE_ID,
+    name: "Scout",
+    price: 750,
+    badge: "Live Edge",
+    badgeIcon: Eye,
+    highlight: false,
+    goldAccent: false,
+    scoutAccent: true,
+    fundingBadge: null,
+    features: [
+      "Real-time streaming analysis",
+      "Live player prop tracking",
+      "Game bets & whale signals",
+      "Lock Mode advanced picks",
+      "AI-powered halftime edges",
+      "Full Scout dashboard access",
+    ],
+    cta: "Start Free Trial — $750/mo",
+    hasTrial: true,
   },
 ];
 
@@ -113,30 +137,40 @@ function TierCard({
     ? "border-primary"
     : tier.goldAccent
     ? "border-yellow-500/60"
+    : (tier as any).scoutAccent
+    ? "border-emerald-500/60"
     : "border-border";
 
   const headerGradient = tier.highlight
     ? "bg-gradient-to-r from-primary/25 to-secondary/20"
     : tier.goldAccent
     ? "bg-gradient-to-r from-yellow-600/20 to-amber-500/10"
+    : (tier as any).scoutAccent
+    ? "bg-gradient-to-r from-emerald-600/20 to-emerald-500/10"
     : "bg-gradient-to-r from-muted/40 to-muted/20";
 
   const badgeBg = tier.highlight
     ? "bg-primary/20 text-primary"
     : tier.goldAccent
     ? "bg-yellow-500/20 text-yellow-400"
+    : (tier as any).scoutAccent
+    ? "bg-emerald-500/20 text-emerald-400"
     : "";
 
   const checkColor = tier.highlight
     ? "text-primary"
     : tier.goldAccent
     ? "text-yellow-400"
+    : (tier as any).scoutAccent
+    ? "text-emerald-400"
     : "text-accent";
 
   const btnClass = tier.highlight
     ? "bg-primary hover:bg-primary/90 text-primary-foreground"
     : tier.goldAccent
     ? "bg-yellow-500 hover:bg-yellow-400 text-black"
+    : (tier as any).scoutAccent
+    ? "bg-emerald-500 hover:bg-emerald-400 text-black"
     : "bg-secondary hover:bg-secondary/90 text-secondary-foreground";
 
   return (
@@ -184,7 +218,9 @@ function TierCard({
           <span className="text-5xl font-bold text-foreground">${tier.price}</span>
           <span className="text-muted-foreground text-sm">/month</span>
         </div>
-        <p className="text-muted-foreground text-xs mt-1">Cancel anytime · No free trial</p>
+        <p className="text-muted-foreground text-xs mt-1">
+          Cancel anytime · {(tier as any).hasTrial ? '1-day free trial' : 'No free trial'}
+        </p>
       </div>
 
       {/* Features */}
@@ -251,7 +287,7 @@ export function PricingSection({
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-stretch">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-stretch">
           {tiers.map((tier) => (
             <TierCard
               key={tier.id}

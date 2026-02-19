@@ -7,6 +7,7 @@ const corsHeaders = {
 };
 
 const DEFAULT_PRICE_ID = "price_1T1HU99D6r1PTCBBLQaWi80Z";
+const SCOUT_PRICE_ID = "price_1T2br19D6r1PTCBBfrDD4opY";
 const TELEGRAM_BOT_URL = "https://t.me/parlayiqbot";
 
 serve(async (req) => {
@@ -32,15 +33,16 @@ serve(async (req) => {
       customerId = customers.data[0].id;
     }
 
+    const isScoutTier = resolvedPriceId === SCOUT_PRICE_ID;
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
       customer_email: customerId ? undefined : email,
       line_items: [{ price: resolvedPriceId, quantity: 1 }],
       mode: "subscription",
       subscription_data: {
-        trial_period_days: 0, // Explicitly disable any default trial from price/product settings
+        trial_period_days: isScoutTier ? 1 : 0,
       },
-      success_url: TELEGRAM_BOT_URL,
+      success_url: isScoutTier ? `${req.headers.get("origin")}/scout` : TELEGRAM_BOT_URL,
       cancel_url: `${req.headers.get("origin")}/`,
     });
 
