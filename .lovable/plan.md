@@ -1,75 +1,99 @@
 
 
-## Test Plan: Customer Scout Command Center + Vision AI Pipeline
+## Free Homepage Analyzer with $20 Advanced Upgrade
 
-### Bugs Found During Code Review
+### Overview
+Add an inline parlay analyzer directly on the homepage that works without sign-up. Users enter or upload their parlay, get instant free analysis (probability, basic leg breakdown, risk label), then see a paywall to unlock advanced features like AI swap suggestions and our picks for $20 (one-time payment).
 
-#### Bug 1 (Critical): Demo Whale Signals Key Mismatch in AI Whisper
-- **File**: `src/data/demoScoutData.ts` + `src/components/scout/CustomerAIWhisper.tsx`
-- **Problem**: `demoWhaleSignals` uses keys like `"LeBron James_points"`, but `CustomerAIWhisper.generateInsights()` looks up signals using `signals?.get(pick.playerName.toLowerCase())` which produces `"lebron james"`. These keys never match, so STEAM/DIVERGENCE insights never appear in demo mode.
-- **Fix**: Change demo map keys to match the lookup format (lowercase player name only), OR update the lookup to use `playerName_propType` format.
+### User Flow
 
-#### Bug 2 (Low): Double Frame Extraction
-- **File**: `src/components/scout/ScoutVideoUpload.tsx`
-- **Problem**: Frames are extracted once on file select (line ~63) and again on analyze (line ~100). The second extraction re-processes the entire video unnecessarily.
-- **Fix**: Cache the extracted frames from the first pass and reuse on analyze.
+```text
+Homepage
+  |
+  v
+[Inline Parlay Input] -- paste/upload slip or type legs manually
+  |
+  v
+[Free Analysis] -- runs extract-parlay + basic simulation
+  - Win probability %
+  - Leg breakdown with implied odds
+  - Risk label (Degen / Risky / Solid)
+  - Basic verdict ("3 of 5 legs look strong")
+  |
+  v
+[Blurred/Locked Premium Section] -- $20 one-time unlock
+  - AI-powered leg-by-leg analysis (analyze-parlay engine)
+  - Smart Swap suggestions (find-swap-alternatives engine)
+  - Our picks to replace weak legs
+  - Trap detection
+  - Fatigue impact
+```
 
-#### Bug 3 (Info): Vision AI Uses Direct OpenAI Key
-- **File**: `supabase/functions/analyze-game-footage/index.ts`
-- **Problem**: The edge function calls `api.openai.com` directly with `OPENAI_API_KEY` instead of using the Lovable AI gateway (`ai.gateway.lovable.dev`). This works if the secret is configured, but doesn't leverage the built-in Lovable AI key.
-- **Impact**: Not a bug if `OPENAI_API_KEY` is set. Migration to Lovable AI gateway is optional but would remove the API key dependency.
+### What Runs Free (No Auth)
+- **Client-side only**: `simulateParlay()` -- calculates combined probability, EV, risk label
+- **extract-parlay** edge function (already exists) -- OCR from screenshot to structured legs
+- No database writes, no user tracking needed
 
-### Test Suite Implementation
+### What's Behind the $20 Paywall
+- **analyze-parlay** -- AI leg-by-leg analysis with confidence scores
+- **find-swap-alternatives** -- suggests better picks from our data
+- Trap detection, fatigue, coaching insights
+- Essentially the full Results page experience
 
-Create comprehensive tests for all 7 customer modules plus the vision AI pipeline:
+### Implementation
 
-**New file: `src/test/scout-customer-view.test.tsx`**
+**1. New Stripe Product: "Advanced Parlay Analysis" -- $20 one-time**
+- Create via Stripe tools (product + price)
+- One-time payment, not subscription
 
-Tests covering:
+**2. New file: `src/components/home/HomepageAnalyzer.tsx`**
+- Compact inline card on homepage
+- Two input modes: screenshot upload OR manual leg entry (2-3 fields)
+- Uses `extract-parlay` for OCR (no auth required -- function already works without JWT)
+- Runs `simulateParlay()` client-side for free results
+- Shows free tier results: probability donut, risk label, basic leg list
+- Below free results: locked "Advanced Analysis" section with blur overlay
+- CTA button: "Unlock Full Analysis -- $20" triggers checkout
 
-1. **Stream Panel** -- Renders game title, shows video placeholder
-2. **Slip Scanner** -- Renders upload area, shows scanning state
-3. **Sweet Spot Props** -- Renders loading state, handles empty data
-4. **Hedge Panel** -- Renders empty state message, loading spinner
-5. **Confidence Dashboard** -- Heat meter calculation, color thresholds, survival % math
-6. **Risk Toggle** -- All 3 modes render, toggle changes mode, description updates
-7. **AI Whisper** -- Insight generation logic, carousel rotation, signal detection
-8. **Demo Mode** -- Banner renders, demo data flows to all modules
-9. **Demo Whale Signals** -- Verify signal lookup actually matches (will catch Bug 1)
+**3. New edge function: `supabase/functions/create-analysis-checkout/index.ts`**
+- Creates a Stripe checkout session for the $20 one-time payment
+- Does NOT require auth (guest checkout via email on Stripe)
+- Stores the parlay legs in session metadata so we can deliver results after payment
+- Success URL returns to homepage with `?analysis_paid=true&session_id=xxx`
 
-**New file: `src/test/video-frame-extractor.test.ts`**
+**4. New edge function: `supabase/functions/verify-analysis-payment/index.ts`**
+- Called after redirect from Stripe
+- Verifies the checkout session is paid
+- Returns the session metadata (parlay legs) so we can run the advanced engines
+- Runs `analyze-parlay` logic inline and returns the full analysis
 
-Tests covering:
+**5. Update: `src/pages/Index.tsx`**
+- Add `<HomepageAnalyzer />` component between the main CTA and the Slate Controls
+- On `?analysis_paid=true`, auto-expand the analyzer with full results unlocked
 
-1. **validateVideoFile** -- Accepts MP4/MOV/WebM, rejects invalid types, enforces 100MB limit
-2. **areFramesSimilar** -- Length-based comparison, sample matching, threshold behavior
-3. **deduplicateFrames** -- Removes consecutive duplicates, keeps unique frames
-4. **detectDuplicateFrameIssue** -- Identifies title-card-only extractions
-5. **isVideoFile** -- Type detection for video files
+**6. Update: `supabase/config.toml`**
+- Add `create-analysis-checkout` and `verify-analysis-payment` with `verify_jwt = false` (guest access)
 
-**New file: `src/test/demo-scout-data.test.ts`**
-
-Tests covering:
-
-1. **Data integrity** -- All demo picks have required fields
-2. **Whale signal key matching** -- Keys match the lookup format used by AI Whisper (catches Bug 1)
-3. **Whisper picks** -- Have gameProgress field added
+### Pricing Setup
+| Product | Price | Type |
+|---|---|---|
+| Advanced Parlay Analysis | $20.00 | One-time payment |
 
 ### Technical Details
 
-- All tests use Vitest + React Testing Library
-- Scout components that call Supabase are mocked at the module level
-- RiskModeContext is wrapped around components that need it
-- No edge function deployment needed -- these are pure frontend unit tests
-- The Bug 1 fix changes 2 map keys in `demoScoutData.ts`
-- The Bug 2 fix adds a `useRef` to cache frames between select and analyze in `ScoutVideoUpload.tsx`
+- The free analyzer is 100% usable without an account -- no auth gates
+- Screenshot upload calls `extract-parlay` directly via `supabase.functions.invoke()` with just the anon key
+- Client-side `simulateParlay()` handles all free math (no edge function needed)
+- The $20 checkout uses Stripe's built-in email collection for guest users
+- After payment, the advanced results render inline on the homepage (no navigation to /results)
+- Session metadata preserves the parlay so results survive the Stripe redirect
 
 ### Files Changed
 
 | File | Action |
 |---|---|
-| `src/data/demoScoutData.ts` | Fix -- correct whale signal map keys |
-| `src/components/scout/ScoutVideoUpload.tsx` | Fix -- cache frames to avoid double extraction |
-| `src/test/scout-customer-view.test.tsx` | Create -- 7-module test suite |
-| `src/test/video-frame-extractor.test.ts` | Create -- frame extractor unit tests |
-| `src/test/demo-scout-data.test.ts` | Create -- demo data integrity tests |
+| `src/components/home/HomepageAnalyzer.tsx` | Create -- inline analyzer with free/paid tiers |
+| `supabase/functions/create-analysis-checkout/index.ts` | Create -- guest Stripe checkout for $20 |
+| `supabase/functions/verify-analysis-payment/index.ts` | Create -- verify payment + run advanced analysis |
+| `src/pages/Index.tsx` | Update -- add HomepageAnalyzer component |
+| `supabase/config.toml` | Update -- add new functions with verify_jwt = false |
