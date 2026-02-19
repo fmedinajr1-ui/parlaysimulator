@@ -370,7 +370,7 @@ serve(async (req) => {
         }
       }
       
-      // Upsert all records
+      // Upsert all records into team_defensive_ratings (position-specific, used by matchup-intelligence)
       const { error: upsertError } = await supabase
         .from('team_defensive_ratings')
         .upsert(records, { 
@@ -381,11 +381,79 @@ serve(async (req) => {
         throw upsertError;
       }
       
+      // === CRITICAL: Also upsert into nba_opponent_defense_stats ===
+      // bot-generate-daily-parlays reads from THIS table for composite score adjustments.
+      // Map each team's overall (position_group='all') stat rows into nba_opponent_defense_stats format.
+      const defenseStatsNow = new Date().toISOString();
+      const nbaDefenseStatRecords: Array<{
+        team_name: string;
+        stat_category: string;
+        defense_rank: number;
+        defense_rating: number;
+        updated_at: string;
+      }> = [];
+      
+      for (const teamData of NBA_DEFENSE_RATINGS) {
+        // One row per stat category (overall only — used by buildPropPool defense filter)
+        nbaDefenseStatRecords.push({
+          team_name: teamData.team_name,
+          stat_category: 'points',
+          defense_rank: teamData.points_rank,
+          defense_rating: teamData.points_allowed,
+          updated_at: defenseStatsNow,
+        });
+        nbaDefenseStatRecords.push({
+          team_name: teamData.team_name,
+          stat_category: 'rebounds',
+          defense_rank: teamData.rebounds_rank,
+          defense_rating: teamData.rebounds_allowed,
+          updated_at: defenseStatsNow,
+        });
+        nbaDefenseStatRecords.push({
+          team_name: teamData.team_name,
+          stat_category: 'assists',
+          defense_rank: teamData.assists_rank,
+          defense_rating: teamData.assists_allowed,
+          updated_at: defenseStatsNow,
+        });
+        nbaDefenseStatRecords.push({
+          team_name: teamData.team_name,
+          stat_category: 'threes',
+          defense_rank: teamData.threes_rank,
+          defense_rating: teamData.threes_allowed,
+          updated_at: defenseStatsNow,
+        });
+        // Overall composite rank (average of the four)
+        const overallRank = Math.round(
+          (teamData.points_rank + teamData.rebounds_rank + teamData.assists_rank + teamData.threes_rank) / 4
+        );
+        nbaDefenseStatRecords.push({
+          team_name: teamData.team_name,
+          stat_category: 'overall',
+          defense_rank: overallRank,
+          defense_rating: teamData.points_allowed,
+          updated_at: defenseStatsNow,
+        });
+      }
+      
+      const { error: nbaDefStatsError } = await supabase
+        .from('nba_opponent_defense_stats')
+        .upsert(nbaDefenseStatRecords, {
+          onConflict: 'team_name,stat_category',
+        });
+      
+      if (nbaDefStatsError) {
+        console.error('[Defense Ratings] Failed to upsert nba_opponent_defense_stats:', nbaDefStatsError);
+      } else {
+        console.log(`[Defense Ratings] Also updated ${nbaDefenseStatRecords.length} rows in nba_opponent_defense_stats`);
+      }
+      
       console.log(`[Defense Ratings] Updated ${records.length} defensive rating records (position-specific)`);
       
       return new Response(JSON.stringify({
         success: true,
         updated: records.length,
+        nba_defense_stats_updated: nbaDefenseStatRecords.length,
         teams: NBA_DEFENSE_RATINGS.length,
         positionGroups: positionGroups.length,
         statTypes: statTypes.length,

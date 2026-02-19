@@ -2618,6 +2618,26 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     });
   });
 
+  // === PLAYER TEAM MAP: Resolve team_name for each player from most recent game log ===
+  // category_sweet_spots has no team_name column — we must look it up from nba_player_game_logs
+  const playerTeamMap = new Map<string, string>();
+  try {
+    const { data: playerTeamRows } = await supabase
+      .from('nba_player_game_logs')
+      .select('player_name, team_name')
+      .order('game_date', { ascending: false })
+      .limit(5000);
+    for (const row of playerTeamRows || []) {
+      const key = (row.player_name || '').toLowerCase().trim();
+      if (key && row.team_name && !playerTeamMap.has(key)) {
+        playerTeamMap.set(key, row.team_name); // Keep most recent game's team only
+      }
+    }
+    console.log(`[PlayerTeamMap] Resolved ${playerTeamMap.size} player→team mappings from game logs`);
+  } catch (ptmErr) {
+    console.warn(`[PlayerTeamMap] Failed to build player team map: ${ptmErr}`);
+  }
+
   // Enrich sweet spots
   let enrichedSweetSpots: EnrichedPick[] = (sweetSpots || []).map((pick: SweetSpotPick) => {
     const line = pick.actual_line ?? pick.recommended_line ?? pick.line;
@@ -2640,6 +2660,10 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     const catHitRate = calibratedHitRateMap.get(pick.category);
     const compositeScore = calculateCompositeScore(hitRatePercent, edge, oddsValueScore, categoryWeight, catHitRate, side);
     
+    // Resolve team_name: category_sweet_spots has no team_name column, so we pull from playerTeamMap
+    const resolvedTeamName = (pick as any).team_name || 
+      playerTeamMap.get((pick.player_name || '').toLowerCase().trim()) || '';
+
     return {
       ...pick,
       line,
@@ -2650,6 +2674,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
       has_real_line: hasRealLine,
       line_source: hasRealLine ? 'verified' : 'projected',
       sport: pick.sport || 'basketball_nba',
+      team_name: resolvedTeamName,
     };
   }).filter((p: EnrichedPick) => p.americanOdds >= -200 && p.americanOdds <= 200 && !blockedByHitRate.has(p.category) && p.has_real_line);
 
