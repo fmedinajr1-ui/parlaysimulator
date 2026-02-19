@@ -205,9 +205,52 @@ function parseESPNPlayerStats(athlete: any, labels: string[]): Record<string, nu
   return stats;
 }
 
+// Validated fetch wrapper for ESPN - distinguishes API failures from empty results
+async function fetchWithValidation(url: string, label: string): Promise<{ ok: boolean; data: any | null; status: number }> {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      console.error(`[ESPN NBA] ${label} failed: HTTP ${response.status} ${response.statusText} — ${url}`);
+      return { ok: false, data: null, status: response.status };
+    }
+    const data = await response.json();
+    return { ok: true, data, status: response.status };
+  } catch (error) {
+    console.error(`[ESPN NBA] ${label} network error: ${error} — ${url}`);
+    return { ok: false, data: null, status: 0 };
+  }
+}
+
 // ESPN Backup fetcher - more reliable for recent games
-async function fetchESPNGameLogs(daysBack: number = 7): Promise<any[]> {
+// Auto-expands lookback when 0 completed games found on first pass
+async function fetchESPNGameLogs(daysBack: number = 7): Promise<{ records: any[]; daysSearched: number; apiErrors: number }> {
+  let currentDaysBack = daysBack;
+  const maxDaysBack = 14;
+  let apiErrors = 0;
+
+  while (currentDaysBack <= maxDaysBack) {
+    const result = await _fetchESPNGameLogsInner(currentDaysBack);
+    apiErrors += result.apiErrors;
+
+    if (result.records.length > 0) {
+      return { records: result.records, daysSearched: currentDaysBack, apiErrors };
+    }
+
+    if (currentDaysBack >= maxDaysBack) break;
+
+    // Expand lookback on second pass
+    const nextDays = Math.min(currentDaysBack * 2, maxDaysBack);
+    console.log(`[ESPN NBA] 0 completed games in ${currentDaysBack} days — expanding lookback to ${nextDays} days`);
+    currentDaysBack = nextDays;
+  }
+
+  console.warn(`[ESPN NBA] 0 completed games found after searching ${currentDaysBack} days`);
+  return { records: [], daysSearched: currentDaysBack, apiErrors };
+}
+
+async function _fetchESPNGameLogsInner(daysBack: number): Promise<{ records: any[]; apiErrors: number }> {
   const gameLogRecords: any[] = [];
+  let apiErrors = 0;
   
   try {
     console.log(`[ESPN NBA] Fetching game logs for last ${daysBack} days...`);
@@ -221,31 +264,25 @@ async function fetchESPNGameLogs(daysBack: number = 7): Promise<any[]> {
       const dateStr = targetDate.toISOString().split('T')[0].replace(/-/g, '');
       const isoDateStr = targetDate.toISOString().split('T')[0];
       
-      try {
-        const scoreboardUrl = `${ESPN_NBA_API}/scoreboard?dates=${dateStr}`;
-        console.log(`[ESPN NBA] Fetching scoreboard: ${scoreboardUrl}`);
-        const scoreboardRes = await fetch(scoreboardUrl);
+      const scoreboardUrl = `${ESPN_NBA_API}/scoreboard?dates=${dateStr}`;
+      const { ok, data: scoreboardData, status } = await fetchWithValidation(scoreboardUrl, `Scoreboard ${isoDateStr}`);
+      
+      if (!ok) {
+        apiErrors++;
+        continue;
+      }
+      
+      const events = scoreboardData.events || [];
+      console.log(`[ESPN NBA] Day ${isoDateStr}: ${events.length} games found`);
+      
+      for (const event of events) {
+        const statusObj = event.status?.type;
+        console.log(`[ESPN NBA] Game ${event.id}: ${event.shortName}, status: ${statusObj?.name}`);
         
-        if (scoreboardRes.ok) {
-          const scoreboardData = await scoreboardRes.json();
-          const events = scoreboardData.events || [];
-          
-          console.log(`[ESPN NBA] Day ${isoDateStr}: ${events.length} games found`);
-          
-          for (const event of events) {
-            const status = event.status?.type;
-            console.log(`[ESPN NBA] Game ${event.id}: ${event.shortName}, status: ${status?.name}`);
-            
-            // Check if game is completed
-            if (status?.completed === true || status?.name === 'STATUS_FINAL') {
-              allGameIds.push({ id: event.id, dateStr: isoDateStr });
-            }
-          }
-        } else {
-          console.error(`[ESPN NBA] Scoreboard fetch failed: ${scoreboardRes.status} ${scoreboardRes.statusText}`);
+        // Check if game is completed
+        if (statusObj?.completed === true || statusObj?.name === 'STATUS_FINAL') {
+          allGameIds.push({ id: event.id, dateStr: isoDateStr });
         }
-      } catch (e) {
-        console.error(`[ESPN NBA] Error fetching day ${dayOffset}:`, e);
       }
     }
     
@@ -255,15 +292,12 @@ async function fetchESPNGameLogs(daysBack: number = 7): Promise<any[]> {
     for (const game of allGameIds.slice(0, 30)) {
       try {
         const boxscoreUrl = `${ESPN_NBA_API}/summary?event=${game.id}`;
-        console.log(`[ESPN NBA] Fetching boxscore: ${boxscoreUrl}`);
-        const boxRes = await fetch(boxscoreUrl);
+        const { ok, data: boxData } = await fetchWithValidation(boxscoreUrl, `Boxscore ${game.id}`);
         
-        if (!boxRes.ok) {
-          console.error(`[ESPN NBA] Boxscore fetch failed for ${game.id}: ${boxRes.status}`);
+        if (!ok) {
+          apiErrors++;
           continue;
         }
-        
-        const boxData = await boxRes.json();
         
         // Get game date from header - MUST convert UTC to Eastern Time
         // ESPN returns UTC timestamps (e.g., "2026-01-30T00:10:00Z" for a 7:10 PM ET game on Jan 29th)
@@ -335,15 +369,17 @@ async function fetchESPNGameLogs(daysBack: number = 7): Promise<any[]> {
         await new Promise(resolve => setTimeout(resolve, 200));
       } catch (gameError) {
         console.error(`[ESPN NBA] Error processing game ${game.id}:`, gameError);
+        apiErrors++;
       }
     }
     
     console.log(`[ESPN NBA] Total: ${gameLogRecords.length} player game logs extracted`);
   } catch (error) {
     console.error('[ESPN NBA] Fatal error:', error);
+    apiErrors++;
   }
   
-  return gameLogRecords;
+  return { records: gameLogRecords, apiErrors };
 }
 
 // Extract player names from pending elite parlays
@@ -416,15 +452,25 @@ serve(async (req) => {
     // First try ESPN (more reliable for recent data)
     if (useESPN) {
       console.log('[NBA Stats Fetcher] Fetching from ESPN API (primary)...');
-      const espnRecords = await fetchESPNGameLogs(daysBack);
+      const espnResult = await fetchESPNGameLogs(daysBack);
       
-      console.log(`[NBA Stats Fetcher] ESPN returned ${espnRecords.length} records`);
+      console.log(`[NBA Stats Fetcher] ESPN returned ${espnResult.records.length} records (searched ${espnResult.daysSearched} days, ${espnResult.apiErrors} API errors)`);
+      results.espnDaysSearched = espnResult.daysSearched;
+      results.espnApiErrors = espnResult.apiErrors;
       
-      if (espnRecords.length > 0) {
+      if (espnResult.records.length > 0) {
+        // Deduplicate by player_name+game_date (keep last occurrence which has most complete stats)
+        const deduped = new Map<string, any>();
+        for (const rec of espnResult.records) {
+          deduped.set(`${rec.player_name}::${rec.game_date}`, rec);
+        }
+        const uniqueRecords = Array.from(deduped.values());
+        console.log(`[NBA Stats Fetcher] Deduped ${espnResult.records.length} -> ${uniqueRecords.length} unique records`);
+
         // Batch insert in chunks of 100
         const chunkSize = 100;
-        for (let i = 0; i < espnRecords.length; i += chunkSize) {
-          const chunk = espnRecords.slice(i, i + chunkSize);
+        for (let i = 0; i < uniqueRecords.length; i += chunkSize) {
+          const chunk = uniqueRecords.slice(i, i + chunkSize);
           const { error: espnError } = await supabase
             .from('nba_player_game_logs')
             .upsert(chunk, { 
@@ -442,7 +488,9 @@ serve(async (req) => {
         results.statsInserted += results.espnRecords;
         console.log(`[NBA Stats Fetcher] Successfully inserted ${results.espnRecords} ESPN records`);
       } else {
-        console.warn('[NBA Stats Fetcher] ESPN returned 0 records - API may be down or format changed');
+        const warning = `No NBA games found in last ${espnResult.daysSearched} days — possible schedule gap or API issue (${espnResult.apiErrors} API errors)`;
+        console.warn(`[NBA Stats Fetcher] ${warning}`);
+        results.espnWarning = warning;
       }
     }
 
@@ -628,13 +676,22 @@ serve(async (req) => {
     const duration = Date.now() - startTime;
     console.log(`[NBA Stats Fetcher] Completed in ${duration}ms`, results);
 
+    // Determine accurate status
+    let jobStatus = 'completed';
+    if (results.errors.length > 0) {
+      jobStatus = 'partial';
+    } else if (results.statsInserted === 0) {
+      jobStatus = 'no_data';
+    }
+
     await supabase.from('cron_job_history').insert({
       job_name: 'nba-stats-fetcher',
-      status: results.errors.length > 0 ? 'partial' : 'completed',
+      status: jobStatus,
       started_at: new Date(startTime).toISOString(),
       completed_at: new Date().toISOString(),
       duration_ms: duration,
       result: results,
+      ...(jobStatus === 'no_data' && results.espnWarning ? { error_message: results.espnWarning } : {}),
     });
 
     return new Response(JSON.stringify({

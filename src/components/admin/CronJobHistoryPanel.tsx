@@ -71,6 +71,8 @@ export function CronJobHistoryPanel() {
         return <XCircle className="h-4 w-4 text-red-400" />;
       case 'running':
         return <Loader2 className="h-4 w-4 text-neon-yellow animate-spin" />;
+      case 'no_data':
+        return <Clock className="h-4 w-4 text-orange-400" />;
       default:
         return <Clock className="h-4 w-4 text-muted-foreground" />;
     }
@@ -84,6 +86,8 @@ export function CronJobHistoryPanel() {
         return 'bg-red-500/20 text-red-400 border-red-500/30';
       case 'running':
         return 'bg-neon-yellow/20 text-neon-yellow border-neon-yellow/30';
+      case 'no_data':
+        return 'bg-orange-500/20 text-orange-400 border-orange-500/30';
       default:
         return 'bg-muted text-muted-foreground';
     }
@@ -202,8 +206,8 @@ export function CronJobHistoryPanel() {
               </div>
             )}
 
-            {job.status === 'failed' && job.error_message && (
-              <div className="mt-2 p-2 rounded bg-red-500/10 text-xs text-red-400">
+            {(job.status === 'failed' || job.status === 'no_data') && job.error_message && (
+              <div className={`mt-2 p-2 rounded text-xs ${job.status === 'failed' ? 'bg-red-500/10 text-red-400' : 'bg-orange-500/10 text-orange-400'}`}>
                 {job.error_message}
               </div>
             )}
