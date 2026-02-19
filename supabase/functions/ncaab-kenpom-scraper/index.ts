@@ -69,7 +69,7 @@ function calculatePAE(teams: TeamRow[]) {
 
   console.log(`[PAE] D1 avg PPG: ${d1AvgPPG.toFixed(1)} from ${withData.length} teams`);
 
-  const AVG_POSS = 67;
+  const AVG_POSS = 66; // Aligned to observed D1 average (65.96); was 67
   const TOTAL = 362;
   const MID = 181;
 
