@@ -7,6 +7,7 @@ import { HalftimeRecalibrationCard } from "./HalftimeRecalibrationCard";
 import { QuarterProgressSparkline } from "./QuarterProgressSparkline";
 import { PaceMomentumTracker } from "./PaceMomentumTracker";
 import { RotationStatusBadge } from "./RotationStatusBadge";
+import { getBufferThresholds } from "@/lib/hedgeStatusUtils";
 import { 
   calculateRotationMinutes, 
   inferPlayerTier, 
@@ -68,27 +69,28 @@ function calculateHitProbability(
   
   let baseProbability: number;
   
+  // Use progress-aware thresholds (aligned with hedgeStatusUtils)
+  const thresholds = getBufferThresholds(gameProgress);
+  
   if (side === 'over') {
     const needed = line - current;
     if (needed <= 0) return 100; // Already hit
     const projected = current + (ratePerMin * minutesRemaining);
     const buffer = projected - line;
-    // Scale probability based on buffer
-    if (buffer >= 3) baseProbability = 85;
-    else if (buffer >= 1) baseProbability = 70;
+    if (buffer >= thresholds.onTrack) baseProbability = 85;
+    else if (buffer >= thresholds.monitor) baseProbability = 70;
     else if (buffer >= 0) baseProbability = 55;
-    else if (buffer >= -1) baseProbability = 40;
-    else if (buffer >= -2) baseProbability = 25;
+    else if (buffer >= thresholds.alert) baseProbability = 40;
     else baseProbability = 15;
   } else {
     // UNDER: probability of staying under
     const projected = current + (ratePerMin * minutesRemaining);
     const buffer = line - projected;
-    if (buffer >= 3) baseProbability = 85;
-    else if (buffer >= 1) baseProbability = 70;
+    if (buffer >= thresholds.onTrack) baseProbability = 85;
+    else if (buffer >= thresholds.monitor) baseProbability = 70;
     else if (buffer >= 0) baseProbability = 55;
-    else if (buffer >= -1) baseProbability = 40;
-    else baseProbability = 25;
+    else if (buffer >= thresholds.alert) baseProbability = 40;
+    else baseProbability = 15;
   }
   
   // Apply zone matchup modifier (±15% max)

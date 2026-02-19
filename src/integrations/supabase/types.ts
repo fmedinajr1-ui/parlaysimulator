@@ -10183,6 +10183,7 @@ export type Database = {
       }
       sweet_spot_hedge_snapshots: {
         Row: {
+          actual_final: number | null
           analysis_date: string | null
           captured_at: string
           current_value: number
@@ -10194,6 +10195,7 @@ export type Database = {
           line: number
           line_movement: number | null
           live_book_line: number | null
+          outcome: string | null
           pace_rating: number | null
           player_name: string
           projected_final: number
@@ -10208,6 +10210,7 @@ export type Database = {
           zone_matchup_score: number | null
         }
         Insert: {
+          actual_final?: number | null
           analysis_date?: string | null
           captured_at?: string
           current_value: number
@@ -10219,6 +10222,7 @@ export type Database = {
           line: number
           line_movement?: number | null
           live_book_line?: number | null
+          outcome?: string | null
           pace_rating?: number | null
           player_name: string
           projected_final: number
@@ -10233,6 +10237,7 @@ export type Database = {
           zone_matchup_score?: number | null
         }
         Update: {
+          actual_final?: number | null
           analysis_date?: string | null
           captured_at?: string
           current_value?: number
@@ -10244,6 +10249,7 @@ export type Database = {
           line?: number
           line_movement?: number | null
           live_book_line?: number | null
+          outcome?: string | null
           pace_rating?: number | null
           player_name?: string
           projected_final?: number

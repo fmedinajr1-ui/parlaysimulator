@@ -1,18 +1,19 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { getEasternDate } from '@/lib/dateUtils';
+import { calculateHedgeStatus } from '@/lib/hedgeStatusUtils';
 import type { DeepSweetSpot } from '@/types/sweetSpot';
 
 // Quarter boundary thresholds (game progress %)
 const QUARTER_BOUNDARIES = {
-  1: { min: 22, max: 28 },   // End of Q1: ~24%
-  2: { min: 47, max: 53 },   // End of Q2 (Halftime): ~50%
-  3: { min: 72, max: 78 },   // End of Q3: ~75%
-  4: { min: 92, max: 100 },  // Late Q4: 92%+
+  1: { min: 22, max: 28 },
+  2: { min: 47, max: 53 },
+  3: { min: 72, max: 78 },
+  4: { min: 92, max: 100 },
 };
 
 interface HedgeSnapshotPayload {
-  sweet_spot_id?: string; // Now optional
+  sweet_spot_id?: string;
   player_name: string;
   prop_type: string;
   line: number;
@@ -32,20 +33,17 @@ interface HedgeSnapshotPayload {
   risk_flags?: string[];
   live_book_line?: number;
   line_movement?: number;
-  analysis_date: string; // YYYY-MM-DD for outcome matching
+  analysis_date: string;
 }
 
 /**
  * Hook that automatically records hedge status snapshots at quarter boundaries
- * This data is used to analyze which hedge recommendations are most accurate
  */
 export function useHedgeStatusRecorder(spots: DeepSweetSpot[]) {
-  // Track which (spotId, quarter) combinations have been recorded this session
   const recordedRef = useRef<Map<string, Set<number>>>(new Map());
   
   const isAlreadyRecorded = useCallback((spotId: string, quarter: number): boolean => {
-    const recorded = recordedRef.current.get(spotId);
-    return recorded?.has(quarter) ?? false;
+    return recordedRef.current.get(spotId)?.has(quarter) ?? false;
   }, []);
   
   const markAsRecorded = useCallback((spotId: string, quarter: number) => {
@@ -64,15 +62,13 @@ export function useHedgeStatusRecorder(spots: DeepSweetSpot[]) {
   const recordSnapshot = useCallback(async (spot: DeepSweetSpot, quarter: number) => {
     if (!spot.liveData) return;
     
-    // Calculate hedge status and hit probability from live data
-    const hedgeStatus = calculateHedgeStatus(spot);
+    // Use shared calculateHedgeStatus — same logic as UI
+    const hedgeStatus = calculateHedgeStatus(spot) ?? 'unknown';
     const hitProbability = spot.liveData.confidence ?? 50;
-    
-    // Use today's date for analysis_date to link with settled outcomes
     const analysisDate = getEasternDate();
     
     const payload: HedgeSnapshotPayload = {
-      sweet_spot_id: spot.id || undefined, // Optional now - may be client-generated
+      sweet_spot_id: spot.id || undefined,
       player_name: spot.playerName,
       prop_type: spot.propType,
       line: spot.line,
@@ -88,7 +84,7 @@ export function useHedgeStatusRecorder(spots: DeepSweetSpot[]) {
       gap_to_line: (spot.liveData.projectedFinal ?? 0) - spot.line,
       pace_rating: spot.liveData.paceRating,
       zone_matchup_score: spot.liveData.shotChartMatchup?.overallMatchupScore,
-      rotation_tier: undefined, // Would need to be passed from rotation analysis
+      rotation_tier: undefined,
       risk_flags: spot.liveData.riskFlags,
       live_book_line: spot.liveData.liveBookLine,
       line_movement: spot.liveData.lineMovement,
@@ -111,18 +107,13 @@ export function useHedgeStatusRecorder(spots: DeepSweetSpot[]) {
     }
   }, []);
   
-  // Main effect: check each spot and record at quarter boundaries
   useEffect(() => {
-    // Record for ALL live spots - no UUID validation needed
-    // Outcome matching uses composite key (player_name + prop_type + line + date)
     const liveSpots = spots.filter(s => s.liveData?.isLive && s.playerName);
     
     liveSpots.forEach(spot => {
       const progress = spot.liveData?.gameProgress ?? 0;
-      // Use composite key for deduplication: playerName_propType_line
       const compositeKey = `${spot.playerName}_${spot.propType}_${spot.line}`;
       
-      // Check if we should record for any quarter
       for (let q = 1; q <= 4; q++) {
         if (shouldRecordAtProgress(q, progress) && !isAlreadyRecorded(compositeKey, q)) {
           recordSnapshot(spot, q);
@@ -132,7 +123,6 @@ export function useHedgeStatusRecorder(spots: DeepSweetSpot[]) {
     });
   }, [spots, shouldRecordAtProgress, isAlreadyRecorded, markAsRecorded, recordSnapshot]);
   
-  // Return stats for debugging
   const recordedCount = Array.from(recordedRef.current.values())
     .reduce((sum, set) => sum + set.size, 0);
   
@@ -142,59 +132,12 @@ export function useHedgeStatusRecorder(spots: DeepSweetSpot[]) {
   };
 }
 
-/**
- * Calculate hedge status from live data
- * Mirrors the logic in HedgeRecommendation.tsx
- */
-function calculateHedgeStatus(spot: DeepSweetSpot): string {
-  const liveData = spot.liveData;
-  if (!liveData) return 'unknown';
-  
-  const confidence = liveData.confidence ?? 50;
-  const isOver = (spot.side ?? 'over').toLowerCase() === 'over';
-  
-  // Check for already-settled states
-  if (isOver && liveData.currentValue >= spot.line) {
-    return 'profit_lock';
-  }
-  if (!isOver && liveData.currentValue >= spot.line) {
-    return 'urgent'; // Line exceeded for UNDER
-  }
-  
-  // Risk factor overrides
-  const hasBlowout = liveData.riskFlags?.includes('blowout');
-  const hasFoulTrouble = liveData.riskFlags?.includes('foul_trouble');
-  const gameProgress = liveData.gameProgress ?? 0;
-  
-  if (hasBlowout && gameProgress > 60) {
-    return 'urgent';
-  }
-  if (hasBlowout && hasFoulTrouble) {
-    return 'urgent';
-  }
-  
-  // Pace-based override for OVER bets
-  if (isOver && (liveData.paceRating ?? 100) < 95) {
-    if (confidence < 45) return 'urgent';
-    if (confidence < 55) return 'alert';
-  }
-  
-  // Standard thresholds
-  if (confidence >= 65) return 'on_track';
-  if (confidence >= 45) return 'monitor';
-  if (confidence >= 25) return 'alert';
-  return 'urgent';
-}
-
-/**
- * Calculate rate needed to hit the line
- */
 function calculateRateNeeded(spot: DeepSweetSpot): number | undefined {
   const liveData = spot.liveData;
   if (!liveData || !liveData.gameProgress) return undefined;
   
   const remaining = (100 - liveData.gameProgress) / 100;
-  const remainingMinutes = remaining * 48; // Assuming 48 minute game
+  const remainingMinutes = remaining * 48;
   
   if (remainingMinutes <= 0) return undefined;
   
