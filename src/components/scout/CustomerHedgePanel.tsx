@@ -1,6 +1,7 @@
 import React from 'react';
 import { useDeepSweetSpots } from '@/hooks/useDeepSweetSpots';
 import { useSweetSpotLiveData } from '@/hooks/useSweetSpotLiveData';
+import { useCustomerWhaleSignals } from '@/hooks/useCustomerWhaleSignals';
 import { CustomerHedgeIndicator, mapToCustomerTier, type CustomerTier } from './CustomerHedgeIndicator';
 import { FeedCard, FeedCardHeader } from '@/components/FeedCard';
 import { Shield, Loader2 } from 'lucide-react';
@@ -22,9 +23,9 @@ export function CustomerHedgePanel({ homeTeam, awayTeam }: CustomerHedgePanelPro
   const { data, isLoading: spotsLoading } = useDeepSweetSpots();
   const rawSpots = data?.spots ?? [];
   const { spots: enrichedSpots, isLoading: liveLoading } = useSweetSpotLiveData(rawSpots);
+  const { data: whaleSignals } = useCustomerWhaleSignals();
 
   const isLoading = spotsLoading || liveLoading;
-
   const hedgeSpots = enrichedSpots.filter((s) => !!s.liveData?.hedgeStatus);
 
   if (isLoading) {
@@ -75,19 +76,23 @@ export function CustomerHedgePanel({ homeTeam, awayTeam }: CustomerHedgePanelPro
         }
       />
       <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
-        {hedgeSpots.map((spot) => (
-          <div key={spot.id} className="rounded-lg border border-border/40 bg-card/50 p-2">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-sm font-semibold text-foreground truncate">
-                {spot.playerName}
-              </span>
-              <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-                {spot.side?.toUpperCase()} {spot.line}
-              </Badge>
+        {hedgeSpots.map((spot) => {
+          const playerKey = spot.playerName?.toLowerCase();
+          const signal = playerKey ? whaleSignals?.get(playerKey)?.signalType : undefined;
+          return (
+            <div key={spot.id} className="rounded-lg border border-border/40 bg-card/50 p-2">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-sm font-semibold text-foreground truncate">
+                  {spot.playerName}
+                </span>
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                  {spot.side?.toUpperCase()} {spot.line}
+                </Badge>
+              </div>
+              <CustomerHedgeIndicator spot={spot} signal={signal} />
             </div>
-            <CustomerHedgeIndicator spot={spot} />
-          </div>
-        ))}
+          );
+        })}
       </div>
     </FeedCard>
   );

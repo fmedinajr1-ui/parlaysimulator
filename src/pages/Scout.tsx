@@ -13,6 +13,7 @@ import { ScoutGameSelector } from "@/components/scout/ScoutGameSelector";
 import { ScoutLiveCapture, LiveObservation } from "@/components/scout/ScoutLiveCapture";
 import { ScoutAutonomousAgent } from "@/components/scout/ScoutAutonomousAgent";
 import { CustomerScoutView } from "@/components/scout/CustomerScoutView";
+import { RiskModeProvider } from "@/contexts/RiskModeContext";
 import { FilmProfileUpload } from "@/components/scout/FilmProfileUpload";
 import { useToast } from "@/hooks/use-toast";
 import { useSubscription } from "@/hooks/useSubscription";
@@ -486,7 +487,9 @@ const Scout = () => {
 
             {/* Customer view: Stream + Props + Hedges */}
             {isCustomer && (
-              <CustomerScoutView gameContext={selectedGame} />
+              <RiskModeProvider>
+                <CustomerScoutView gameContext={selectedGame} />
+              </RiskModeProvider>
             )}
 
             {/* Autopilot mode — admin only */}
