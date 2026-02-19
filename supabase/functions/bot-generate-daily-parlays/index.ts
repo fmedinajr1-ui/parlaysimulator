@@ -2639,16 +2639,28 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
 
   // Enrich sweet spots
   let enrichedSweetSpots: EnrichedPick[] = (sweetSpots || []).map((pick: SweetSpotPick) => {
-    const line = pick.actual_line ?? pick.recommended_line ?? pick.line;
-    // Check if this player has real sportsbook odds in unified_props (oddsMap)
+    // Resolve oddsKey FIRST — used for both line override and odds lookup
     const oddsKey = `${pick.player_name}_${pick.prop_type}`.toLowerCase();
-    const hasRealLine = oddsMap.has(oddsKey) || (pick.actual_line !== null && pick.actual_line !== undefined);
-    
-    const odds = oddsMap.get(oddsKey) || { overOdds: -110, underOdds: -110, line: 0, sport: 'basketball_nba' };
+    const oddsEntry = oddsMap.get(oddsKey);
+
+    // CRITICAL: Use the real sportsbook line from unified_props when available.
+    // category_sweet_spots stores recommended_line=0.5 for THREE_POINT_SHOOTER (historical sweet spot)
+    // but the actual sportsbook line is 2.5 or 3.5. The oddsMap has the correct current_line.
+    const realSportsbookLine = oddsEntry?.line && oddsEntry.line > 0 ? oddsEntry.line : null;
+    const line = pick.actual_line ?? realSportsbookLine ?? pick.recommended_line ?? pick.line;
+    const lineWasOverridden = !pick.actual_line && realSportsbookLine !== null && realSportsbookLine !== pick.recommended_line;
+
+    // Check if this player has real sportsbook odds in unified_props (oddsMap)
+    const hasRealLine = !!oddsEntry || (pick.actual_line !== null && pick.actual_line !== undefined);
+
+    const odds = oddsEntry || { overOdds: -110, underOdds: -110, line: 0, sport: 'basketball_nba' };
     const side = pick.recommended_side || 'over';
     const americanOdds = side === 'over' ? odds.overOdds : odds.underOdds;
-    
-    const hitRateDecimal = pick.l10_hit_rate || pick.confidence_score || 0.5;
+
+    // If the line was overridden to the real sportsbook line (e.g., 2.5 instead of 0.5),
+    // cap the historical hit rate at 75% since the 0.5 hit rate doesn't apply to the real line
+    const rawHitRateDecimal = pick.l10_hit_rate || pick.confidence_score || 0.5;
+    const hitRateDecimal = lineWasOverridden ? Math.min(rawHitRateDecimal, 0.75) : rawHitRateDecimal;
     const hitRatePercent = hitRateDecimal * 100;
     const projectedValue = pick.projected_value || pick.l10_avg || pick.l10_median || line || 0;
     const edge = projectedValue - (line || 0);
