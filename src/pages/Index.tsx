@@ -2,6 +2,7 @@ import React from "react";
 import { HeroBanner } from "@/components/HeroBanner";
 import { HowItWorks } from "@/components/HowItWorks";
 import { SampleParlayButton } from "@/components/SampleParlayButton";
+import { HomepageAnalyzer } from "@/components/home/HomepageAnalyzer";
 import { SlateRefreshControls } from "@/components/market/SlateRefreshControls";
 import { DailyParlayHub } from "@/components/parlays/DailyParlayHub";
 import { SweetSpotPicksCard } from "@/components/market/SweetSpotPicksCard";
@@ -164,6 +165,11 @@ const Index = () => {
             </Button>
           </Link>
           <SampleParlayButton />
+        </div>
+
+        {/* Free Parlay Analyzer */}
+        <div className="mb-4">
+          <HomepageAnalyzer />
         </div>
 
         {/* Slate Control - Unified Refresh All Engines */}

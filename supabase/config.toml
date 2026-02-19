@@ -413,3 +413,9 @@ verify_jwt = false
 
 [functions.bot-parlay-integrity-check]
 verify_jwt = false
+
+[functions.create-analysis-checkout]
+verify_jwt = false
+
+[functions.verify-analysis-payment]
+verify_jwt = false
