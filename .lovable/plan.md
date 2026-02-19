@@ -1,95 +1,116 @@
 
-# Re-score Feb 18 NCAAB Picks — Full Analysis & Remediation Plan
 
-## What Actually Happened on Feb 18
+# Scout Page TikTok-Ready Upgrade: UI Polish, Hedging, and L5 Hit Rate Cards
 
-### The Broken Picks
-The Feb 18 pipeline generated 7 NCAAB parlay legs from 4 games, all settled as **lost**:
-
-| Game | Line | Actual Total | Outcome |
-|---|---|---|---|
-| George Mason vs Dayton | U 136.5 | 149 | MISS |
-| Furman vs East Tennessee St | U 140.5 | 147 | MISS |
-| East Carolina vs Wichita St | U 144.5 | 181 | MISS |
-| Delaware vs Western Kentucky | U 141.5 | 175 | MISS |
-
-Every leg had identical `composite_score: 95` (the clamp ceiling, i.e. a hardcoded junk score) and `sharp_score: 50–65`. The `score_breakdown` was null for all legs (the serialization bug fixed in the previous task). The `projected_total` fallback was 100 for every game.
-
-### Why the Formula Was Broken
-The old scoring engine was producing `projected_total = 100` (the floor fallback) for these games because the KenPom lookup was failing or returning zero values. The corrected possession-adjusted formula produces:
-
-| Game | Corrected Projected Total | Sportsbook Line |
-|---|---|---|
-| George Mason vs Dayton | **166.1** | 136.5 |
-| Furman vs East Tennessee St | **168.9** | 140.5 |
-| East Carolina vs Wichita St | **172.1** | 144.5 |
-| Delaware vs Western Kentucky | **169.5** | 141.5 |
-
-### What the Corrected Engine Would Have Done
-With projectedTotals of 166–172 against sportsbook lines of 136–144:
-- `lineEdge = projectedTotal - line ≈ +29 to +30`
-- This is a **POSITIVE** edge (projection is WAY over the line) — meaning the under is a terrible pick
-- The circuit breaker (`projected_total <= 100 AND line > 125`) would NOT have been triggered since projectedTotal is now >100
-- Instead, the scoring engine would apply a **line penalty**: for UNDER picks where `lineEdge > +3` (projection above the sportsbook line), the pick gets no under bonus and may get penalized
-- Result: all 4 games would have scored **LOW** (well below the 62 threshold) and been filtered out of parlays entirely
-
-In other words: **the corrected engine would not have generated any NCAAB picks on Feb 18**. The games were correctly bad UNDER bets (projections 30 points above the sportsbook line).
+## Overview
+Three enhancements to make the Scout page showcase-ready for a live TikTok demo:
+1. UI cleanup and bug scan
+2. Add hedging recommendations to the Player Props (EdgeRowCompact) cards
+3. Add L5 game scoring history + hit rate under each player prop card
 
 ---
 
-## What Can (and Cannot) Be Done
+## 1. UI Cleanup and Bug Fixes
 
-### What CAN be done
-1. **Delete the 7 lost Feb 18 NCAAB-only parlays** from `bot_daily_parlays` so they don't pollute the learning dataset with false "NCAAB under" misses
-2. **Re-run `team-bets-scoring-engine` for Feb 18 game_bets** — this will write correct `composite_score` and `score_breakdown` values to the `game_bets` rows, giving historical accuracy for future calibration
-3. **Re-run `bot-review-and-optimize`** with `parlay_date: '2026-02-18'` — with the corrected engine, NCAAB picks will score low and be excluded. The optimizer will regenerate Feb 18 parlays without any NCAAB legs. This produces a **clean Feb 18 parlay record** from NBA/NHL legs only
+### Issues Found
+- **Header overflow on mobile**: The "Halftime Betting Console" header has too many elements (title, refresh, timestamp, status badge, game time badge, Copy All button) that can overflow on narrow TikTok-portrait screens
+- **EdgeRowCompact stat row wrapping**: The "Now / Proj / Edge / Conf" row wraps awkwardly on small screens
+- **Tab labels cut off on mobile**: The 4-tab layout (Game Bets / Player Props / Lock / Advanced) uses `grid-cols-4` which gets cramped
+- **Empty states visible during demo**: When no edges are loaded yet, generic empty states show (not good for a live demo)
+- **ScoutAutonomousAgent video preview aspect ratio**: The `aspect-video` container looks large on mobile when not actively capturing
 
-### What CANNOT be done
-- The actual game outcomes (actual_value fields) on already-settled legs are correct and stay
-- We cannot retroactively "win" the parlays — the games are over and the unders lost by 10–37 points
-- Historical parlays from before Feb 18 are unaffected
-
----
-
-## Implementation Plan
-
-### Step 1 — Delete the 7 Bad Feb 18 NCAAB Parlays
-Run a SQL DELETE against `bot_daily_parlays` targeting the 7 parlay IDs that contain NCAAB legs with `composite_score: 95`:
-- `76382c68`, `add17935`, `4fdf7b2a`, `2461ae88`, `2de8e298`, `cf982182`, `16d81268`
-
-All are already settled as `lost` so removing them does not affect any pending bets.
-
-### Step 2 — Re-run `team-bets-scoring-engine`
-Call the edge function with a Feb 18 backfill mode. This rewrites `composite_score` and `score_breakdown` on the `game_bets` rows for those 4 NCAAB matchups, so calibration queries against `game_bets` reflect the correct projected totals.
-
-### Step 3 — Re-run `bot-review-and-optimize` for Feb 18
-Call `bot-review-and-optimize` with `{ source: 'backfill', parlay_date: '2026-02-18' }`. The optimizer will:
-- Read the now-corrected `game_bets` scores
-- Find NCAAB under picks scoring below 62 → exclude them
-- Re-build the parlay slate from NBA/NHL legs only
-- Insert clean `bot_daily_parlays` rows dated `2026-02-18`
-
-### Step 4 — Re-run `bot-settle-and-learn` for Feb 18
-Once new parlays are inserted, call `bot-settle-and-learn` targeting Feb 18. This re-settles the new parlay legs against the stored actual game scores and updates the learning model with accurate outcomes.
+### Fixes
+- Tighten the HalftimeBettingPanel header: stack timestamp below title on mobile, reduce badge padding
+- Make EdgeRowCompact stat row use smaller text (`text-xs`) and tighter gaps on mobile
+- Ensure tab labels are readable on mobile with shorter labels
+- Add a subtle loading shimmer instead of generic empty states
+- Reduce video preview height on mobile
 
 ---
 
-## Files to Change
+## 2. Hedging Recommendations on EdgeRowCompact (Player Props)
 
-The approach uses **edge function invocations only** — no code changes needed. The corrected engine is already deployed. The plan executes the following sequence:
+### What It Does
+Under each player prop edge card, show a compact hedging recommendation based on the existing `HedgeRecommendation` logic from `src/components/sweetspots/HedgeRecommendation.tsx`.
 
-1. **SQL via Supabase data tool**: DELETE 7 specific parlay rows from `bot_daily_parlays`
-2. **Edge function call**: `team-bets-scoring-engine` — re-score Feb 18 game_bets
-3. **Edge function call**: `bot-review-and-optimize` with `{ source: 'backfill', parlay_date: '2026-02-18' }`
-4. **Edge function call**: `bot-settle-and-learn` — re-settle the regenerated Feb 18 parlays
+### Implementation
+- Create a new `PropHedgeIndicator` component that takes a `PropEdge` and calculates:
+  - Current progress toward line (already shown as progress bar)
+  - Hedge status: ON TRACK / MONITOR / HEDGE ALERT / HEDGE NOW
+  - Recommended action text (e.g., "Bet UNDER 24.5 now" or "Hold position")
+  - Hedge sizing suggestion based on gap
+- Display this as a compact colored banner below the progress bar in `EdgeRowCompact`:
+  - Green = on track, no action
+  - Yellow = monitor, prepare hedge
+  - Red = hedge now with specific action
+- Uses existing data from `PropEdge`: `currentStat`, `expectedFinal`, `line`, `lean`, `confidence`, `remainingMinutes`
+- No new API calls needed -- all data is already in the edge object
 
-No TypeScript files change. The corrected formula is already in place from the previous fix (projected_total floor issue in `team-bets-scoring-engine`).
+### Visual Design
+```text
++-----------------------------------------------+
+| #1 LeBron James  [OVER Points 28.5]           |
+| Now 14  Proj 30.2  Edge +1.7  Conf 78%        |
+| [=========>          ] 49% to line             |
+| [green] ON TRACK -- Projected to clear by 3.2 |
++-----------------------------------------------+
+```
+
+or in urgent state:
+```text
+| [red] HEDGE NOW -- Bet UNDER 28.5 ($25-50)    |
+```
 
 ---
 
-## Technical Notes
+## 3. L5 Game Scoring History + Hit Rate Under Each Prop Card
 
-- The `bot-review-and-optimize` function reads from `game_bets` where `is_active = true` and `commence_time` falls on the target date. For Feb 18, this requires passing `parlay_date` in the body so it filters `commence_time >= '2026-02-18' AND < '2026-02-19'`.
-- The `bot-settle-and-learn` function needs the ESPN scoreboard data for Feb 18 (NCAAB `&groups=50`) — it can still fetch historical scores since ESPN provides them.
-- The `game_bets` table itself (which stores raw odds data) does NOT need to be deleted — only the derived `bot_daily_parlays` rows are removed. The raw odds history is preserved for audit.
-- This is forward-safe: the pipeline cron job for Feb 19 is unaffected since it targets today's date.
+### What It Does
+For each player prop edge, fetch that player's last 5 game results for the relevant stat and show:
+- A compact row of their L5 scores (e.g., `22 | 18 | 31 | 25 | 19`)
+- Hit rate vs the current line (e.g., "3/5 would have hit OVER 24.5")
+- Visual indicators (green/red dots per game)
+
+### Implementation
+- Create a new `PlayerL5History` component
+- Create a `usePlayerL5Stats` hook that:
+  - Takes `playerName` and `propType` (Points/Rebounds/Assists)
+  - Queries `nba_player_game_logs` for last 5 games: `points`, `rebounds`, `assists`, `threes_made`
+  - Calculates hit rate against the current line
+  - Caches results per player to avoid repeated queries
+- Uses React Query with `staleTime: 300000` (5 min cache) to avoid hammering DB during live demo
+- Display inside `EdgeRowCompact` below the progress bar (always visible, not in the collapsible)
+
+### Visual Design
+```text
+L5: 22  18  31  25  19  |  3/5 hit OVER 24.5 (60%)
+    [g] [r] [g] [g] [r]
+```
+
+Where `[g]` = green dot (would have hit), `[r]` = red dot (would have missed)
+
+---
+
+## Technical Details
+
+### New Files
+1. `src/components/scout/PropHedgeIndicator.tsx` -- Compact hedge status banner
+2. `src/components/scout/PlayerL5History.tsx` -- L5 game history display
+3. `src/hooks/usePlayerL5Stats.ts` -- Hook to fetch L5 game logs per player/prop
+
+### Modified Files
+1. `src/components/scout/EdgeRowCompact.tsx` -- Add `PropHedgeIndicator` and `PlayerL5History` below progress bar
+2. `src/components/scout/HalftimeBettingPanel.tsx` -- Minor mobile layout fixes
+3. `src/components/scout/ScoutAutonomousAgent.tsx` -- Minor mobile viewport fixes, tighten video preview
+
+### Data Flow
+- `nba_player_game_logs` table already has all needed columns: `player_name`, `game_date`, `points`, `rebounds`, `assists`, `threes_made`
+- No new database tables or migrations needed
+- No new edge functions needed
+- All hedging logic derived from existing `PropEdge` fields
+
+### Performance Considerations
+- L5 queries batched per visible player (max 8 at a time due to `slice(0, 8)` in ranked edges)
+- React Query deduplication prevents duplicate fetches
+- 5-minute stale time means minimal DB load during a TikTok stream
+
