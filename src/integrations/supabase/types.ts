@@ -9020,6 +9020,39 @@ export type Database = {
         }
         Relationships: []
       }
+      scout_active_game: {
+        Row: {
+          away_team: string
+          commence_time: string | null
+          event_id: string
+          game_description: string | null
+          home_team: string
+          id: string
+          set_by: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          away_team: string
+          commence_time?: string | null
+          event_id: string
+          game_description?: string | null
+          home_team: string
+          id?: string
+          set_by?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          away_team?: string
+          commence_time?: string | null
+          event_id?: string
+          game_description?: string | null
+          home_team?: string
+          id?: string
+          set_by?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       scout_confidence_bucket_map: {
         Row: {
           bucket: number
