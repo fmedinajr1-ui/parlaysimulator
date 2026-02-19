@@ -197,7 +197,7 @@ export function DayParlayDetail({ date, open, onOpenChange }: DayParlayDetailPro
                             {leg.outcome === 'hit' && <CheckCircle className="w-3 h-3 text-green-400 shrink-0" />}
                             {leg.outcome === 'miss' && <XCircle className="w-3 h-3 text-red-400 shrink-0" />}
                             {leg.outcome === 'push' && <Minus className="w-3 h-3 text-blue-400 shrink-0" />}
-                            {(!leg.outcome && (parlay.outcome === 'void' || leg.actual_value == null)) ? (
+                            {(!leg.outcome && parlay.outcome === 'void') ? (
                               <span className="text-[10px] font-medium text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded shrink-0">VOID</span>
                             ) : (!leg.outcome && <Clock className="w-3 h-3 text-muted-foreground shrink-0" />)}
                             <span className="truncate">{name}</span>
