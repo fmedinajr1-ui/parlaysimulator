@@ -218,7 +218,10 @@ export function HomepageAnalyzer() {
             </span>
           </div>
           <p className="text-sm text-muted-foreground mt-2">
-            No account needed. Upload or type your parlay.
+            If you already have a parlay, try our analyzer to test our bot logic
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">
+            No account needed
           </p>
         </div>
 
