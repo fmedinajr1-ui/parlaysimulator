@@ -3593,6 +3593,7 @@ async function generateTierParlays(
 
   const tracker = createUsageTracker();
   const parlaysToCreate: any[] = [];
+  const loggedNegEdgeKeys = new Set<string>(); // dedup NegEdgeBlock log spam across all profiles
 
   console.log(`[Bot] Generating ${tier} tier (${config.count} target)`);
 
@@ -3914,7 +3915,11 @@ async function generateTierParlays(
         const projBuffer = legData.projection_buffer || 0;
         const projValue = legData.projected_value || 0;
         if (projValue > 0 && projBuffer < 0) {
-          console.log(`[NegEdgeBlock] Blocked ${legData.player_name} ${legData.prop_type} ${legData.side} ${legData.line} (proj: ${projValue}, buffer: ${projBuffer.toFixed(1)})`);
+          const negKey = `${legData.player_name}_${legData.prop_type}_${legData.side}_${legData.line}`;
+          if (!loggedNegEdgeKeys.has(negKey)) {
+            console.log(`[NegEdgeBlock] Blocked ${legData.player_name} ${legData.prop_type} ${legData.side} ${legData.line} (proj: ${projValue}, buffer: ${projBuffer.toFixed(1)})`);
+            loggedNegEdgeKeys.add(negKey);
+          }
           continue;
         }
         
@@ -4967,6 +4972,13 @@ async function generateMasterParlay(
     return { ...pick, defenseRank, defenseAdj, passesMatchup, masterScore, teamLower };
   });
 
+  // Log each candidate's defense outcome for diagnostics
+  for (const c of enrichedCandidates) {
+    const rankStr = c.defenseRank !== null ? `rank ${c.defenseRank}` : 'rank null (no data)';
+    const result = c.passesMatchup ? '✅ PASS' : '❌ BLOCK';
+    console.log(`[MasterParlay] ${result} ${c.player_name} (${c.teamLower}) ${c.recommended_side || 'over'} ${c.prop_type} — opponent ${rankStr} | masterScore ${c.masterScore}`);
+  }
+
   // Hard-filter: must pass defensive matchup
   const validCandidates = enrichedCandidates
     .filter(c => c.passesMatchup)
@@ -4975,7 +4987,7 @@ async function generateMasterParlay(
   console.log(`[MasterParlay] ${nbaCandidates.length} NBA candidates → ${validCandidates.length} pass defense matchup filter`);
 
   if (validCandidates.length < 4) {
-    console.log(`[MasterParlay] ⚠️ Not enough defense-validated candidates (${validCandidates.length}). Skipping master parlay.`);
+    console.log(`[MasterParlay] ⚠️ Not enough defense-validated candidates (${validCandidates.length}/${nbaCandidates.length}). Skipping master parlay.`);
     return null;
   }
 
@@ -5483,6 +5495,7 @@ Deno.serve(async (req) => {
     // === MASTER PARLAY: 6-leg NBA bankroll doubler with defensive matchup filter ===
     // Runs every day. Defense-validates every leg before inclusion.
     const masterParlayStake = stakeConfig?.bankroll_doubler_stake ?? 500;
+    console.log(`[Bot v2] 🏆 Calling generateMasterParlay — ${pool.playerPicks.length} player picks in pool, stake $${masterParlayStake}`);
     const masterParlay = await generateMasterParlay(
       supabase, pool, targetDate, strategyName, bankroll, globalFingerprints, masterParlayStake
     );
