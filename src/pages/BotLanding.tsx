@@ -139,9 +139,6 @@ export default function BotLanding() {
         />
       </div>
 
-
-      <HomepageAnalyzer />
-
       <div ref={calendarRef}>
         <PerformanceCalendar
           days={stats?.days || []}
@@ -152,6 +149,8 @@ export default function BotLanding() {
       <div ref={whyRef}>
         <WhyMultipleParlays />
       </div>
+
+      <HomepageAnalyzer />
 
       {!(hasBotAccess || isAdmin) && (
         <div ref={pricingRef}>
