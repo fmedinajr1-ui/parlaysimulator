@@ -24,6 +24,6 @@ export const demoWhisperPicks = demoConfidencePicks.map((p) => ({
 }));
 
 export const demoWhaleSignals = new Map<string, { signalType: 'STEAM' | 'FREEZE' | 'DIVERGENCE'; sharpScore: number }>([
-  ['LeBron James_points', { signalType: 'STEAM', sharpScore: 8.5 }],
-  ['Jayson Tatum_rebounds', { signalType: 'DIVERGENCE', sharpScore: 7.2 }],
+  ['lebron james', { signalType: 'STEAM', sharpScore: 8.5 }],
+  ['jayson tatum', { signalType: 'DIVERGENCE', sharpScore: 7.2 }],
 ]);
