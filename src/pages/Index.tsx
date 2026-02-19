@@ -8,6 +8,7 @@ import { SweetSpotPicksCard } from "@/components/market/SweetSpotPicksCard";
 import { WeeklyParlayHistory } from "@/components/dashboard/WeeklyParlayHistory";
 import { Elite3PTFixedParlay } from "@/components/market/Elite3PTFixedParlay";
 import { WhenWeWinBig } from "@/components/WhenWeWinBig";
+import { PricingSection } from "@/components/bot-landing/PricingSection";
 import { PullToRefreshContainer, PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
 import { useHapticFeedback } from "@/hooks/useHapticFeedback";
@@ -17,6 +18,8 @@ import { AppShell } from "@/components/layout/AppShell";
 import { BarChart3, GitCompare, LogIn, LogOut, Radio, Video, Trophy } from "lucide-react";
 import { usePilotUser } from "@/hooks/usePilotUser";
 import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 
 function QuickAction({ to, icon: Icon, label, iconClass }: {
   to: string; 
@@ -41,9 +44,30 @@ const Index = () => {
   const { isPilotUser, isAdmin, isSubscribed, isLoading } = usePilotUser();
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
+  const [checkoutLoading, setCheckoutLoading] = React.useState(false);
+  const [checkoutPriceId, setCheckoutPriceId] = React.useState<string>();
   
   // Pilot users who are NOT admin and NOT subscribed get restricted view
   const isPilotRestricted = isPilotUser && !isAdmin && !isSubscribed;
+
+  const handleCheckout = async (email: string, priceId: string) => {
+    setCheckoutLoading(true);
+    setCheckoutPriceId(priceId);
+    try {
+      const { data, error } = await supabase.functions.invoke('create-bot-checkout', {
+        body: { email, priceId },
+      });
+      if (error) throw error;
+      if (data?.url) {
+        window.open(data.url, '_blank');
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to start checkout');
+    } finally {
+      setCheckoutLoading(false);
+      setCheckoutPriceId(undefined);
+    }
+  };
 
   const handleAuthAction = async () => {
     lightTap();
@@ -171,6 +195,15 @@ const Index = () => {
         <div className="mb-4">
           <WeeklyParlayHistory />
         </div>
+
+        {/* Pricing Section - hide for admins and existing subscribers */}
+        {!isAdmin && !isSubscribed && (
+          <PricingSection
+            onSubscribe={handleCheckout}
+            isLoading={checkoutLoading}
+            loadingPriceId={checkoutPriceId}
+          />
+        )}
 
         <HowItWorks />
       </div>
