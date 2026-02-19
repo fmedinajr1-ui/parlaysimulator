@@ -1,72 +1,100 @@
 
-# Revive the Scout Page — Full Feature Restoration
+# Fix NCAAB Leg Serialization — Store `score_breakdown` and `projected_total`
 
-## What's Currently Broken
+## Confirmed Root Cause
 
-The Scout page (`src/pages/Scout.tsx`) exists and is fully built, but it is **completely unreachable** because no route is registered for `/scout` in `App.tsx`. It also has no entry in the menu drawer or bottom nav.
+After a full audit of the database and edge function code, here is the precise bug:
 
-All backend edge functions the Scout page depends on are deployed and operational:
-- `analyze-game-footage` — Upload mode video AI analysis
-- `analyze-live-frame` — Live mode per-frame AI detection
-- `compile-halftime-analysis` — Halftime synthesis of all captured moments
-- `scout-agent-loop` — Autopilot mode continuous AI loop
-- `scout-data-projection` — Data-only projection engine (no video required)
-- `fetch-live-pbp` — Play-by-play polling
-- `sync-missing-rosters` — Jersey/roster sync from BDL + ESPN
-- `bulk-sync-jerseys` — Bulk sync all 30 NBA teams
-- `build-player-profile` — Film profile builder
-- `refresh-todays-props` — Game list data source
+**File:** `supabase/functions/bot-generate-daily-parlays/index.ts`  
+**Lines:** 3862–3876
 
-The game selector reads from `unified_props` and `bdl_player_cache`, both populated. All Scout sub-components (`ScoutVideoUpload`, `ScoutLiveCapture`, `ScoutAutonomousAgent`, `FilmProfileUpload`, `ScoutAnalysisResults`, `ScoutGameSelector`) exist and import correctly.
+When a team pick (spread, total, or moneyline) is serialized into a stored parlay leg, `score_breakdown` is intentionally excluded:
+
+```typescript
+legData = {
+  id: teamPick.id,
+  type: 'team',
+  home_team: teamPick.home_team,
+  away_team: teamPick.away_team,
+  bet_type: teamPick.bet_type,
+  side: teamPick.side,
+  line: snapLine(teamPick.line, teamPick.bet_type),
+  category: teamPick.category,
+  american_odds: teamPick.odds,
+  sharp_score: teamPick.sharp_score,
+  composite_score: teamPick.compositeScore,
+  outcome: 'pending',
+  sport: teamPick.sport,
+  // ❌ score_breakdown is MISSING here — this is where projected_total lives
+};
+```
+
+Every `EnrichedTeamPick` has `score_breakdown` populated (e.g. line 3058: `score_breakdown: underBreakdown`) — containing `projected_total`, `tempo_slow`, `strong_defense`, etc. But it was never written to the stored object.
+
+**Database confirmation:** A query against `bot_daily_parlays` for NCAAB legs on Feb 18–19 shows:
+- `home_team` and `away_team` are stored correctly (e.g. `UMBC Retrievers`, `Vermont Catamounts`)
+- `score_breakdown` is `null` for every single NCAAB leg
+
+**Note:** The "team: null" observation was a display misreading. The `home_team`/`away_team` fields are there in the DB; `type: 'team'` is also stored. The true missing data is `score_breakdown` (and therefore `projected_total`).
 
 ---
 
-## What Needs To Be Fixed
+## What to Fix
 
-### 1. Register `/scout` Route in App.tsx
-The Scout page is lazy-loaded elsewhere in the codebase but never added to `AnimatedRoutes`. This is the primary fix — add:
-```tsx
-const Scout = React.lazy(() => import("./pages/Scout"));
-// ...
-<Route path="/scout" element={<Scout />} />
-```
+### 1. Add `score_breakdown` and `projected_total` to team leg serialization
 
-### 2. Add Scout to the Menu Drawer
-`src/components/layout/MenuDrawer.tsx` has a `menuItems` array with only Team Bets. Scout needs to be added so users can navigate to it from the hamburger menu. The quick action on the home page (`Index.tsx` line 70) already links to `/scout`, but the menu drawer is the persistent navigation point.
+**File:** `supabase/functions/bot-generate-daily-parlays/index.ts`  
+**Lines:** 3862–3876
 
-Add Scout to `menuItems`:
+Add two fields to the `legData` object:
+
 ```typescript
-{ icon: Eye, label: "Scout", path: "/scout", description: "AI video analysis for halftime edges" }
+legData = {
+  id: teamPick.id,
+  type: 'team',
+  home_team: teamPick.home_team,
+  away_team: teamPick.away_team,
+  bet_type: teamPick.bet_type,
+  side: teamPick.side,
+  line: snapLine(teamPick.line, teamPick.bet_type),
+  category: teamPick.category,
+  american_odds: teamPick.odds,
+  sharp_score: teamPick.sharp_score,
+  composite_score: teamPick.compositeScore,
+  outcome: 'pending',
+  sport: teamPick.sport,
+  score_breakdown: teamPick.score_breakdown || null,             // ✅ ADD
+  projected_total: (teamPick.score_breakdown as any)?.projected_total ?? null, // ✅ ADD (NCAAB totals)
+};
 ```
 
-### 3. Add Scout to Bottom Nav (Optional — Assessed Below)
-The bottom nav currently shows Bot, Analysis, and the menu drawer. The quick actions row on the homepage already surfaces Scout prominently. Scout is a niche live-game feature that doesn't warrant a permanent nav slot alongside the core picks flow. It will remain accessible via the home page quick actions and the menu drawer.
+This is a one-location, two-field change in a 6231-line file.
+
+---
+
+## Why This Matters
+
+- **Auditability:** Without `projected_total`, there's no way to verify whether the circuit breaker (which blocks picks with `projected_total <= 100` against lines `> 125`) was correctly applied to a stored pick. 
+- **Settlement verification:** The `bot-settle-and-learn` function currently cannot verify that a pick was based on a valid projection vs a hardcoded fallback.
+- **Debugging:** When a parlay loses, there's no way to look up what the engine's projected total was vs the actual sportsbook line.
+- **`DayParlayDetail.tsx`:** No changes needed — `home_team`/`away_team` are already rendering correctly from stored data. The component at line 169 checks `leg.type === 'team' || (!!leg.home_team && !!leg.away_team)` which is working.
 
 ---
 
 ## Files to Change
 
-| File | Change |
-|---|---|
-| `src/App.tsx` | Add `Scout` lazy import + `/scout` route |
-| `src/components/layout/MenuDrawer.tsx` | Add Scout to `menuItems` array |
+| File | Lines | Change |
+|---|---|---|
+| `supabase/functions/bot-generate-daily-parlays/index.ts` | 3862–3876 | Add `score_breakdown` and `projected_total` to team leg object |
+
+That's the only change needed. The data already exists on `teamPick.score_breakdown` — it's simply being dropped during serialization.
 
 ---
 
 ## Technical Notes
 
-- The Scout page uses `AppShell` for layout, consistent with other pages — no new layout wrapper needed.
-- All Scout edge functions are already deployed and confirmed working per the function list.
-- The `analyze-game-footage` function requires `OPENAI_API_KEY` — already configured (it was working previously before the route was removed).
-- The `ScoutGameSelector` component auto-refreshes props from `unified_props` with a 5-minute cache (`scout_props_last_refresh` in localStorage) and triggers `refresh-todays-props` if no games are found — this path is fully functional.
-- The Autopilot mode's data-only projection runs every 15 seconds even without video — users without a capture card can still get live data projections.
-
----
-
-## Implementation Steps
-
-1. Add `const Scout = React.lazy(() => import("./pages/Scout"));` to the lazy imports block in `App.tsx`
-2. Add `<Route path="/scout" element={<Scout />} />` inside `AnimatedRoutes` in `App.tsx`
-3. Add `Eye` icon import and Scout entry to `menuItems` in `MenuDrawer.tsx`
-
-These are the only two files that need changes. The Scout page and all its components are already complete and functional.
+- `score_breakdown` on an `EnrichedTeamPick` is typed as `Record<string, number> | undefined` (line 469). For NCAAB total unders, it contains keys like: `base`, `tempo_slow`, `strong_defense`, `ou_record`, `low_scoring_teams`, `projected_total`.
+- `projected_total` is written by `calculateNcaabTeamCompositeScore` (line 694) and by the `team-bets-scoring-engine` (line 345 of that function).
+- The `EnrichedTeamPick` interface already has `score_breakdown?: Record<string, number>` — no type changes needed.
+- This fix is forward-only. Historical rows (Feb 18–19) will keep `score_breakdown: null`. Future runs will store it correctly.
+- Re-deploying the edge function is automatic — no manual step needed.
