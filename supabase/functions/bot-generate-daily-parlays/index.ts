@@ -220,6 +220,12 @@ const TIER_CONFIG: Record<TierName, TierConfig> = {
       // { legs: 3, strategy: 'baseball_totals', sports: ['baseball_ncaa'], betTypes: ['total'], minHitRate: 55, sortBy: 'composite' },
       // Whale signal execution
       { legs: 2, strategy: 'whale_signal', sports: ['all'], minHitRate: 55, sortBy: 'composite' },
+      // HOT-STREAK LOCKS: Force selection from categories with current_streak >= 3 and 100% hit rate
+      // These run FIRST before standard profiles to guarantee hot-streak concentration in 3-leg parlays
+      { legs: 3, strategy: 'hot_streak_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate', useAltLines: false },
+      { legs: 3, strategy: 'hot_streak_lock', sports: ['basketball_nba'], minHitRate: 70, sortBy: 'hit_rate', useAltLines: false },
+      { legs: 3, strategy: 'hot_streak_lock_cross', sports: ['all'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: false },
+      { legs: 3, strategy: 'hot_streak_lock_ncaab', sports: ['basketball_ncaab', 'basketball_nba'], minHitRate: 65, sortBy: 'hit_rate', useAltLines: false },
     ],
   },
 };
@@ -3290,6 +3296,35 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     console.log(`[Bot] Golden categories (60%+ hit rate, 20+ samples): ${[...goldenCategories].join(', ')}`);
   }
 
+  // === HOT-STREAK COMPOSITE BOOST ===
+  // Picks from categories with current_streak >= 3 and hit_rate >= 65% get +15 composite score
+  // This ensures hot-streak categories front-load the pool and get priority in 3-leg parlay assembly
+  const HOT_STREAK_MIN_STREAK = 3;
+  const HOT_STREAK_MIN_HIT_RATE = 65;
+  const hotStreakCategories = new Set<string>();
+  categoryWeights.forEach((w: CategoryWeight) => {
+    const hitRate = (w.total_hits ?? 0) / Math.max(w.total_picks ?? 1, 1) * 100;
+    if (!w.is_blocked && (w.current_streak || 0) >= HOT_STREAK_MIN_STREAK && hitRate >= HOT_STREAK_MIN_HIT_RATE) {
+      hotStreakCategories.add(`${w.category}__${w.side}`);
+      hotStreakCategories.add(w.category);
+    }
+  });
+  if (hotStreakCategories.size > 0) {
+    console.log(`[HotStreak] ${hotStreakCategories.size / 2} hot-streak categories active (streak >= ${HOT_STREAK_MIN_STREAK}, hit rate >= ${HOT_STREAK_MIN_HIT_RATE}%)`);
+  }
+  let hotStreakBoosted = 0;
+  for (const pick of enrichedSweetSpots) {
+    const catKey = `${pick.category}__${pick.recommended_side}`;
+    if (hotStreakCategories.has(catKey) || hotStreakCategories.has(pick.category)) {
+      pick.compositeScore = Math.min(95, pick.compositeScore + 15);
+      (pick as any).isHotStreak = true;
+      hotStreakBoosted++;
+    }
+  }
+  if (hotStreakBoosted > 0) {
+    console.log(`[HotStreak] +15 composite boost applied to ${hotStreakBoosted} picks from hot-streak categories`);
+  }
+
   // Sort by composite score, then interleave with golden category priority
   enrichedSweetSpots.sort((a, b) => b.compositeScore - a.compositeScore);
   enrichedSweetSpots = interleaveByCategory(enrichedSweetSpots, goldenCategories);
@@ -4708,7 +4743,13 @@ Deno.serve(async (req) => {
       if (stakeConfig.block_two_leg_parlays) {
         TIER_CONFIG.execution.profiles = TIER_CONFIG.execution.profiles.filter(p => p.legs !== 2);
         TIER_CONFIG.validation.profiles = TIER_CONFIG.validation.profiles.filter(p => p.legs !== 2);
-        console.log(`[Bot v2] 2-leg parlays BLOCKED from execution and validation tiers`);
+        // Fix: Also block exploration mini-parlay and whale_signal 2-leg paths (previously bypassed this flag)
+        TIER_CONFIG.exploration.profiles = TIER_CONFIG.exploration.profiles.filter(p => {
+          if (p.legs === 2 && p.strategy.includes('mini_parlay')) return false;
+          if (p.legs === 2 && p.strategy === 'whale_signal') return false;
+          return p.legs !== 2;
+        });
+        console.log(`[Bot v2] 2-leg parlays BLOCKED from all tiers including exploration mini-parlay and whale_signal paths`);
       }
     } else {
       console.log(`[Bot v2] No stake config found, using hardcoded TIER_CONFIG defaults`);
