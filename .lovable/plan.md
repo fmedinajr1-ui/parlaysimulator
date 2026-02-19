@@ -1,69 +1,97 @@
 
 
-## Refine Hedge Recommendation Thresholds
+## Add Customer-Facing Simplified Hedge Indicator
 
-### Current State
+### Overview
 
-The hedge snapshot table has 133 records (all from Feb 7-8), but **none of them have matching settled outcomes** in any outcome table. The players/prop types recorded in snapshots don't overlap with the players that have `actual_value` populated in `category_sweet_spots`. Until more games are played with the recorder active AND outcomes get settled, we cannot do empirical threshold calibration.
+Replace the detailed admin `HedgeRecommendation` component (834 lines of rotation analysis, zone matchups, hedge sizing, etc.) with a clean, simplified indicator for the customer view. Customers see only three statuses: **ON TRACK**, **CAUTION**, and **ACTION NEEDED** -- no dollar amounts, no "BET UNDER X NOW" instructions, no internal analytics.
 
-However, there are structural problems we can fix now that will improve accuracy and prepare for data-driven calibration later.
+### Status Mapping
 
-### Problems Found
+The 5-tier admin system maps to 3 customer-friendly tiers:
 
-1. **Duplicate hedge status logic**: `useHedgeStatusRecorder.ts` has its own `calculateHedgeStatus()` that uses **confidence-based thresholds** (65/45/25), while the shared `hedgeStatusUtils.ts` uses **projection buffer thresholds** (+2/0/-2). The recorder is saving statuses calculated with the wrong (stale) algorithm.
-
-2. **Buffer thresholds are too tight**: The current +2/0/-2 buffer in `hedgeStatusUtils.ts` doesn't account for game progress. A +2 buffer in Q1 is very different from +2 in Q4. Early-game buffers should be wider (projections are less certain), late-game buffers should be tighter.
-
-3. **No outcome backfill pipeline**: Snapshots exist but can never be validated because no edge function settles them against final box scores.
+```text
+Admin Status         Customer Status      Customer Label
+────────────────     ──────────────────   ──────────────
+on_track             on_track             ON TRACK
+profit_lock          on_track             ON TRACK
+monitor              caution              CAUTION
+alert                action_needed        ACTION NEEDED
+urgent               action_needed        ACTION NEEDED
+```
 
 ### Changes
 
-**1. `src/hooks/useHedgeStatusRecorder.ts`**
-- Remove the duplicate `calculateHedgeStatus()` function (lines 135-167)
-- Import and use the shared `calculateHedgeStatus` from `@/lib/hedgeStatusUtils`
-- This ensures the recorder saves the same status that the UI displays
+**1. New component: `src/components/scout/CustomerHedgeIndicator.tsx`**
+- Simple component that accepts a `DeepSweetSpot` and renders one of three badges
+- Uses the shared `calculateHedgeStatus()` from `hedgeStatusUtils.ts` (same logic as admin, just simplified display)
+- Shows a short, non-technical message:
+  - ON TRACK: "Looking good" + a progress indicator (e.g., "12 of 24.5")
+  - CAUTION: "Keep watching" + current vs line
+  - ACTION NEEDED: "At risk" + current vs line
+- No dollar amounts, no "BET X", no hedge sizing, no rotation tiers
 
-**2. `src/lib/hedgeStatusUtils.ts`**
-- Replace fixed +2/0/-2 buffer thresholds with **game-progress-aware thresholds**:
-  - Q1 (0-25%): on_track at +4, monitor at +1, alert at -2, urgent below
-  - Q2 (25-50%): on_track at +3, monitor at +0.5, alert at -1.5
-  - Q3 (50-75%): on_track at +2, monitor at 0, alert at -1
-  - Q4 (75-100%): on_track at +1.5, monitor at -0.5, alert at -1 (tightest -- less time to recover)
-- This reflects the reality that early-game projections have wider variance
+**2. New component: `src/components/scout/CustomerHedgePanel.tsx`**
+- Replaces `ScoutHedgePanel` in the customer view
+- Same data source (useDeepSweetSpots + useSweetSpotLiveData) but uses `CustomerHedgeIndicator` instead of `HedgeRecommendation`
+- Header says "Pick Status" instead of "Hedge Recommendations"
+- Summary badges show counts of ON TRACK / CAUTION / ACTION NEEDED
 
-**3. `src/components/sweetspots/HedgeRecommendation.tsx`**
-- Update `calculateHitProbability()` buffer thresholds to match the new progress-aware logic (align with hedgeStatusUtils)
-- Currently uses fixed +3/+1/0/-1/-2 buckets -- switch to the same progress-aware scaling
+**3. Update `src/components/scout/CustomerScoutView.tsx`**
+- Replace `ScoutHedgePanel` with `CustomerHedgePanel`
+- Admin view (`Scout.tsx` without `isCustomer`) keeps the existing detailed `ScoutHedgePanel`
 
-**4. New edge function: `settle-hedge-snapshots`**
-- Runs after games end (can be triggered by existing cron or manually)
-- Matches snapshots to final box scores in `category_sweet_spots` using `player_name + prop_type + analysis_date`
-- Writes `actual_final` and `outcome` (hit/miss) back to the snapshots table
-- This creates the feedback loop needed for future empirical calibration
+### Technical Details
 
-**5. Database migration: add outcome columns to `sweet_spot_hedge_snapshots`**
-```sql
-ALTER TABLE sweet_spot_hedge_snapshots
-  ADD COLUMN IF NOT EXISTS actual_final numeric,
-  ADD COLUMN IF NOT EXISTS outcome text; -- 'hit', 'miss', 'push'
+**CustomerHedgeIndicator.tsx**
+```tsx
+// Maps hedge status -> simplified customer tier
+type CustomerTier = 'on_track' | 'caution' | 'action_needed';
+
+function mapToCustomerTier(status: HedgeStatus): CustomerTier {
+  if (status === 'on_track' || status === 'profit_lock') return 'on_track';
+  if (status === 'monitor') return 'caution';
+  return 'action_needed'; // alert, urgent
+}
+
+// Renders a single-line badge with icon + label + "Current X of Line"
+// No hedge sizing, no "BET UNDER X", no dollar amounts
 ```
 
-### Progress-Aware Buffer Thresholds (Detail)
-
-```text
-Game Progress    on_track    monitor    alert    urgent
-0-25% (Q1)       >= +4       >= +1      >= -2    < -2
-25-50% (Q2)      >= +3       >= +0.5    >= -1.5  < -1.5
-50-75% (Q3)      >= +2       >= 0       >= -1    < -1
-75-100% (Q4)     >= +1.5     >= -0.5    >= -1    < -1
+**CustomerHedgePanel.tsx**
+```tsx
+// Same data flow as ScoutHedgePanel but:
+// - Title: "Pick Status" (not "Hedge Recommendations")
+// - Uses CustomerHedgeIndicator (not HedgeRecommendation)
+// - Summary badges: ON TRACK / CAUTION / ACTION NEEDED counts
+// - No internal analytics exposed
 ```
 
-This means in Q1, a player projected 3 pts above their line is only "monitor" (not "on_track"), because projections are volatile early. By Q4, being projected 1.5 above is enough for "on_track" because there's little time for variance.
+**CustomerScoutView.tsx**
+```tsx
+// Line 37: Replace ScoutHedgePanel with CustomerHedgePanel
+import { CustomerHedgePanel } from './CustomerHedgePanel';
+// ...
+<CustomerHedgePanel homeTeam={homeTeam} awayTeam={awayTeam} />
+```
 
-### Summary
+### What Customers See
 
-- Fix the duplicate status logic (immediate accuracy improvement)
-- Add game-progress-aware thresholds (smarter classification)
-- Add outcome settlement pipeline (enables future data-driven refinement)
-- Align the HedgeRecommendation probability calculation with the shared utility
+Each pick card shows:
+- Player name + prop type badge (e.g., "PTS")
+- Side + line (e.g., "OVER 24.5")
+- A single status badge: green "ON TRACK", yellow "CAUTION", or red "ACTION NEEDED"
+- A short neutral message like "12 of 24.5 -- on pace" (no betting instructions)
+
+### What Customers Do NOT See
+
+- Dollar hedge sizing ("$50-100")
+- "BET UNDER X NOW" instructions
+- Rotation tier analysis
+- Zone matchup charts
+- Quarter sparklines
+- Pace momentum trackers
+- Hit probability percentages
+- Rate per minute calculations
+- Risk flag details (blowout, foul trouble)
 
