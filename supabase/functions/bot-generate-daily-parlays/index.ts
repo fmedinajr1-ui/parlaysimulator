@@ -3873,6 +3873,8 @@ async function generateTierParlays(
           composite_score: teamPick.compositeScore,
           outcome: 'pending',
           sport: teamPick.sport,
+          score_breakdown: teamPick.score_breakdown || null,
+          projected_total: (teamPick.score_breakdown as any)?.projected_total ?? null,
         };
         
         parlayTeamCount.set(teamPick.home_team, (parlayTeamCount.get(teamPick.home_team) || 0) + 1);
