@@ -10,13 +10,15 @@ import { useDeepSweetSpots } from '@/hooks/useDeepSweetSpots';
 import { useSweetSpotLiveData } from '@/hooks/useSweetSpotLiveData';
 import { Card, CardContent } from '@/components/ui/card';
 import { Video } from 'lucide-react';
+import { demoConfidencePicks, demoWhisperPicks, demoWhaleSignals } from '@/data/demoScoutData';
 import type { ScoutGameContext } from '@/pages/Scout';
 
 interface CustomerScoutViewProps {
   gameContext: ScoutGameContext;
+  isDemo?: boolean;
 }
 
-export function CustomerScoutView({ gameContext }: CustomerScoutViewProps) {
+export function CustomerScoutView({ gameContext, isDemo = false }: CustomerScoutViewProps) {
   const { homeTeam, awayTeam } = gameContext;
   const { data: whaleSignals } = useCustomerWhaleSignals();
 
@@ -26,7 +28,7 @@ export function CustomerScoutView({ gameContext }: CustomerScoutViewProps) {
   const { spots: enrichedSpots } = useSweetSpotLiveData(rawSpots);
 
   // Build confidence picks from enriched spots that have live data
-  const confidencePicks = enrichedSpots
+  const liveConfidencePicks = enrichedSpots
     .filter((s) => s.liveData?.currentValue != null)
     .map((s) => ({
       playerName: s.playerName,
@@ -37,13 +39,31 @@ export function CustomerScoutView({ gameContext }: CustomerScoutViewProps) {
     }));
 
   // Build whisper picks with game progress
-  const whisperPicks = confidencePicks.map((p) => ({
+  const liveWhisperPicks = liveConfidencePicks.map((p) => ({
     ...p,
-    gameProgress: 0.5, // Default; would come from live game state if available
+    gameProgress: 0.5,
   }));
+
+  // Use demo data when in demo mode, live data otherwise
+  const confidencePicks = isDemo ? demoConfidencePicks : liveConfidencePicks;
+  const whisperPicks = isDemo ? demoWhisperPicks : liveWhisperPicks;
+  const effectiveSignals = isDemo ? demoWhaleSignals : whaleSignals;
 
   return (
     <div className="space-y-4">
+      {/* Demo Banner */}
+      {isDemo && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/10 border border-primary/20">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+          </span>
+          <span className="text-xs text-primary font-medium">
+            Preview Mode — Live data appears when a game starts
+          </span>
+        </div>
+      )}
+
       {/* Stream Panel */}
       <Card className="border-border/50 overflow-hidden">
         <CardContent className="p-0">
@@ -77,7 +97,7 @@ export function CustomerScoutView({ gameContext }: CustomerScoutViewProps) {
       <CustomerRiskToggle />
 
       {/* AI Commentary Whisper */}
-      <CustomerAIWhisper picks={whisperPicks} signals={whaleSignals} />
+      <CustomerAIWhisper picks={whisperPicks} signals={effectiveSignals} />
     </div>
   );
 }

@@ -14,6 +14,7 @@ import { ScoutLiveCapture, LiveObservation } from "@/components/scout/ScoutLiveC
 import { ScoutAutonomousAgent } from "@/components/scout/ScoutAutonomousAgent";
 import { CustomerScoutView } from "@/components/scout/CustomerScoutView";
 import { RiskModeProvider } from "@/contexts/RiskModeContext";
+import { demoGameContext } from "@/data/demoScoutData";
 import { FilmProfileUpload } from "@/components/scout/FilmProfileUpload";
 import { useToast } from "@/hooks/use-toast";
 import { useSubscription } from "@/hooks/useSubscription";
@@ -355,11 +356,11 @@ const Scout = () => {
           </div>
         )}
 
-        {/* Customer: no game live message */}
+        {/* Customer: demo mode when no game is live */}
         {isCustomer && !selectedGame && !activeGame && (
-          <div className="flex items-center justify-center min-h-[40vh]">
-            <p className="text-muted-foreground text-sm">No game is currently live. Check back soon.</p>
-          </div>
+          <RiskModeProvider>
+            <CustomerScoutView gameContext={demoGameContext} isDemo />
+          </RiskModeProvider>
         )}
 
         {selectedGame && (
