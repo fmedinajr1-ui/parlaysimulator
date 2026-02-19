@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Zap, Crown, TrendingUp, Eye } from "lucide-react";
+import { Check, Zap, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -11,22 +11,18 @@ interface PricingSectionProps {
   onCtaClick?: () => void;
 }
 
-const ENTRY_PRICE_ID = "price_1T1HU99D6r1PTCBBLQaWi80Z";
-const PRO_PRICE_ID = "price_1T2D4I9D6r1PTCBB3kngnoRk";
-const ULTIMATE_PRICE_ID = "price_1T2DD99D6r1PTCBBpcsPloWj";
+const PARLAY_BOT_PRICE_ID = "price_1T1HU99D6r1PTCBBLQaWi80Z";
 const SCOUT_PRICE_ID = "price_1T2br19D6r1PTCBBfrDD4opY";
 
 const tiers = [
   {
-    id: "entry",
-    priceId: ENTRY_PRICE_ID,
-    name: "Entry",
+    id: "parlay-bot",
+    priceId: PARLAY_BOT_PRICE_ID,
+    name: "Parlay Bot",
     price: 99,
-    badge: null,
-    badgeIcon: null,
-    highlight: false,
-    goldAccent: false,
-    fundingBadge: null,
+    badge: "Most Popular",
+    badgeIcon: Zap,
+    highlight: true,
     features: [
       "Daily AI-generated parlay picks",
       "Full parlay leg breakdowns & odds",
@@ -35,47 +31,7 @@ const tiers = [
       "Telegram bot alerts & commands",
       "Real-time live prop tracking",
     ],
-    cta: "Join Entry — $99/mo",
-  },
-  {
-    id: "pro",
-    priceId: PRO_PRICE_ID,
-    name: "Pro",
-    price: 399,
-    badge: "Most Popular",
-    badgeIcon: Zap,
-    highlight: true,
-    goldAccent: false,
-    fundingBadge: "$1,000 Funded Account",
-    features: [
-      "Everything in Entry",
-      "$1,000 funded betting account",
-      "Bot places execution-tier parlays for you",
-      "70/30 profit split in your favor",
-      "Execution-tier parlay access",
-      "Priority Telegram picks",
-    ],
-    cta: "Join Pro — $399/mo",
-  },
-  {
-    id: "ultimate",
-    priceId: ULTIMATE_PRICE_ID,
-    name: "Ultimate",
-    price: 799,
-    badge: "VIP Tier",
-    badgeIcon: Crown,
-    highlight: false,
-    goldAccent: true,
-    fundingBadge: "$5,000 Funded Account",
-    features: [
-      "Everything in Pro",
-      "$5,000 funded betting account",
-      "Bot places max-stake parlays for you",
-      "80/20 profit split in your favor",
-      "Personalized parlay strategy",
-      "Priority 1-on-1 DM support",
-    ],
-    cta: "Join Ultimate — $799/mo",
+    cta: "Join Parlay Bot — $99/mo",
     hasTrial: false,
   },
   {
@@ -86,9 +42,7 @@ const tiers = [
     badge: "Live Edge",
     badgeIcon: Eye,
     highlight: false,
-    goldAccent: false,
     scoutAccent: true,
-    fundingBadge: null,
     features: [
       "Real-time streaming analysis",
       "Live player prop tracking",
@@ -133,43 +87,35 @@ function TierCard({
 
   const BadgeIcon = tier.badgeIcon;
 
+  const isScout = (tier as any).scoutAccent;
+
   const borderClass = tier.highlight
     ? "border-primary"
-    : tier.goldAccent
-    ? "border-yellow-500/60"
-    : (tier as any).scoutAccent
+    : isScout
     ? "border-emerald-500/60"
     : "border-border";
 
   const headerGradient = tier.highlight
     ? "bg-gradient-to-r from-primary/25 to-secondary/20"
-    : tier.goldAccent
-    ? "bg-gradient-to-r from-yellow-600/20 to-amber-500/10"
-    : (tier as any).scoutAccent
+    : isScout
     ? "bg-gradient-to-r from-emerald-600/20 to-emerald-500/10"
     : "bg-gradient-to-r from-muted/40 to-muted/20";
 
   const badgeBg = tier.highlight
     ? "bg-primary/20 text-primary"
-    : tier.goldAccent
-    ? "bg-yellow-500/20 text-yellow-400"
-    : (tier as any).scoutAccent
+    : isScout
     ? "bg-emerald-500/20 text-emerald-400"
     : "";
 
   const checkColor = tier.highlight
     ? "text-primary"
-    : tier.goldAccent
-    ? "text-yellow-400"
-    : (tier as any).scoutAccent
+    : isScout
     ? "text-emerald-400"
     : "text-accent";
 
   const btnClass = tier.highlight
     ? "bg-primary hover:bg-primary/90 text-primary-foreground"
-    : tier.goldAccent
-    ? "bg-yellow-500 hover:bg-yellow-400 text-black"
-    : (tier as any).scoutAccent
+    : isScout
     ? "bg-emerald-500 hover:bg-emerald-400 text-black"
     : "bg-secondary hover:bg-secondary/90 text-secondary-foreground";
 
@@ -179,7 +125,6 @@ function TierCard({
         tier.highlight ? "shadow-primary/10 scale-[1.02]" : ""
       } transition-transform`}
     >
-      {/* Most Popular / VIP ribbon */}
       {tier.badge && BadgeIcon && (
         <div className="absolute top-3 right-3 z-10">
           <div
@@ -191,39 +136,22 @@ function TierCard({
         </div>
       )}
 
-      {/* Header */}
       <div className={`${headerGradient} px-6 py-5 text-center`}>
         <h3 className="text-2xl font-bold text-foreground font-bebas tracking-wide">
           {tier.name}
         </h3>
-
-        {/* Funding badge */}
-        {tier.fundingBadge && (
-          <div
-            className={`inline-flex items-center gap-1.5 mt-2 px-3 py-1 rounded-full text-xs font-bold ${
-              tier.goldAccent
-                ? "bg-yellow-500/25 text-yellow-300 border border-yellow-500/40"
-                : "bg-primary/15 text-primary border border-primary/30"
-            }`}
-          >
-            <TrendingUp className="w-3 h-3" />
-            {tier.fundingBadge} — Access to Funding
-          </div>
-        )}
       </div>
 
-      {/* Price */}
       <div className="px-6 py-5 text-center border-b border-border">
         <div className="flex items-baseline justify-center gap-1">
           <span className="text-5xl font-bold text-foreground">${tier.price}</span>
           <span className="text-muted-foreground text-sm">/month</span>
         </div>
         <p className="text-muted-foreground text-xs mt-1">
-          Cancel anytime · {(tier as any).hasTrial ? '1-day free trial' : 'No free trial'}
+          Cancel anytime · {tier.hasTrial ? '1-day free trial' : 'No free trial'}
         </p>
       </div>
 
-      {/* Features */}
       <div className="px-6 py-5 space-y-3 flex-1">
         {tier.features.map((feature) => (
           <div key={feature} className="flex items-start gap-2.5">
@@ -233,7 +161,6 @@ function TierCard({
         ))}
       </div>
 
-      {/* CTA */}
       <div className="px-6 pb-6 space-y-3">
         {isSubscribed ? (
           <Button className="w-full" variant="secondary" disabled>
@@ -277,17 +204,17 @@ export function PricingSection({
 }: PricingSectionProps) {
   return (
     <section className="py-12 px-4 sm:px-6" id="pricing">
-      <div className="max-w-5xl mx-auto">
+      <div className="max-w-3xl mx-auto">
         <div className="text-center mb-10">
           <h2 className="text-3xl sm:text-4xl font-bold font-bebas tracking-wide text-foreground">
             Choose Your Edge
           </h2>
           <p className="text-muted-foreground mt-2 text-sm max-w-md mx-auto">
-            Start with picks. Unlock funding. Let the bot bet for you.
+            AI-powered picks or live betting intelligence. Pick your lane.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-stretch">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-stretch">
           {tiers.map((tier) => (
             <TierCard
               key={tier.id}
