@@ -199,8 +199,9 @@ const Scout = () => {
   const [liveObservations, setLiveObservations] = useState<LiveObservation[]>([]);
 
   const [searchParams] = useSearchParams();
-  const isCustomer = (hasScoutAccess && !isAdmin) || searchParams.get('test_customer') === 'true';
-  const hasAccess = isAdmin || hasScoutAccess;
+  const testCustomer = searchParams.get('test_customer') === 'true';
+  const isCustomer = (hasScoutAccess && !isAdmin) || testCustomer;
+  const hasAccess = isAdmin || hasScoutAccess || testCustomer;
 
   const handleLiveObservationsUpdate = useCallback((observations: LiveObservation[]) => {
     setLiveObservations(observations);
