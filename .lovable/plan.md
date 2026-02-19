@@ -1,34 +1,23 @@
 
 
-## Test Customer Scout View with Query Parameter Override
+## Fix: Bypass Paywall for Test Customer Mode
 
-### Goal
-Add a simple `?test_customer=true` query parameter to the Scout page URL so you (as an admin) can preview exactly what customers see -- without changing your subscription or role.
+### Problem
+When visiting `/scout?test_customer=true`, the `subLoading` check and/or `hasAccess` check still blocks the page -- showing the paywall instead of the customer view.
 
-### How It Works
-A single line change in `src/pages/Scout.tsx` will check for the URL parameter and override the `isCustomer` flag:
+### Solution
+A single change in `src/pages/Scout.tsx`: when `testCustomer` is true, skip the loading spinner and the paywall gate entirely.
 
+### Changes
+
+**File: `src/pages/Scout.tsx`**
+
+1. Update the loading gate (line 241) to also allow `testCustomer` through:
 ```
-const isCustomer = (hasScoutAccess && !isAdmin) || searchParams.get('test_customer') === 'true';
+if (subLoading && !testCustomer) {
 ```
 
-### To Test
-After the change, navigate to:
+2. The `hasAccess` gate already includes `testCustomer`, so no change needed there -- but if `subLoading` never resolves (e.g. user not logged in), this fix ensures the page still renders.
 
-**`/scout?test_customer=true`**
-
-You'll see the customer view with:
-- Stream panel (placeholder)
-- Sweet Spot Props (from today's `category_sweet_spots` data)
-- Hedge Recommendations (live enriched data)
-
-Remove `?test_customer=true` from the URL to go back to admin view.
-
-### Technical Details
-
-**File:** `src/pages/Scout.tsx`
-- Import `useSearchParams` from `react-router-dom`
-- Add `const [searchParams] = useSearchParams();`
-- Update `isCustomer` to include the query param override
-- No other files change; this is a dev/test convenience only
+This is a one-line change. After this, navigating to `/scout?test_customer=true` will immediately show the customer dashboard with the stream panel, sweet spot props, and hedge recommendations -- no login or subscription required.
 
