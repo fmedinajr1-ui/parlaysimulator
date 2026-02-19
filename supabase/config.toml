@@ -410,3 +410,6 @@ verify_jwt = false
 
 [functions.create-bot-checkout]
 verify_jwt = false
+
+[functions.bot-parlay-integrity-check]
+verify_jwt = false

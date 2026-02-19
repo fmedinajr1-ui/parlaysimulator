@@ -6124,6 +6124,20 @@ Deno.serve(async (req) => {
       console.error('[Bot v2] Telegram notification failed:', telegramError);
     }
 
+    // Step 11: Run integrity check — alerts Telegram if any 1-leg or 2-leg parlays slipped through
+    try {
+      await fetch(`${supabaseUrl}/functions/v1/bot-parlay-integrity-check`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseKey}`,
+        },
+        body: JSON.stringify({ date: targetDate }),
+      });
+    } catch (integrityError) {
+      console.error('[Bot v2] Integrity check failed:', integrityError);
+    }
+
     return new Response(
       JSON.stringify({
         success: true,
