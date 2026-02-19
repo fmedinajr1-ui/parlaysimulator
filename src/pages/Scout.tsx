@@ -10,6 +10,7 @@ import { ScoutAnalysisResults } from "@/components/scout/ScoutAnalysisResults";
 import { ScoutGameSelector } from "@/components/scout/ScoutGameSelector";
 import { ScoutLiveCapture, LiveObservation } from "@/components/scout/ScoutLiveCapture";
 import { ScoutAutonomousAgent } from "@/components/scout/ScoutAutonomousAgent";
+import { CustomerScoutView } from "@/components/scout/CustomerScoutView";
 import { FilmProfileUpload } from "@/components/scout/FilmProfileUpload";
 import { useToast } from "@/hooks/use-toast";
 import { useSubscription } from "@/hooks/useSubscription";
@@ -402,9 +403,14 @@ const Scout = () => {
               </div>
             )}
 
-            {/* Autopilot mode — shown to both admin and customers */}
-            {(scoutMode === 'autopilot' || isCustomer) && (
-              <ScoutAutonomousAgent gameContext={selectedGame} isCustomer={isCustomer} />
+            {/* Customer view: Stream + Props + Hedges */}
+            {isCustomer && (
+              <CustomerScoutView gameContext={selectedGame} />
+            )}
+
+            {/* Autopilot mode — admin only */}
+            {!isCustomer && scoutMode === 'autopilot' && (
+              <ScoutAutonomousAgent gameContext={selectedGame} isCustomer={false} />
             )}
 
             {/* Profile mode — admin only */}
