@@ -3476,7 +3476,7 @@ async function buildPropPool(supabase: any, targetDate: string, weightMap: Map<s
     let defAdjApplied = 0;
     for (const pick of enrichedSweetSpots) {
       if ((pick.sport || 'basketball_nba') !== 'basketball_nba') continue;
-      const teamKey = ((pick as any).team_name || '').toLowerCase().trim();
+      const teamKey = normalizeBdlTeamName((pick as any).team_name || '');
       const side = (pick.recommended_side || 'over').toLowerCase();
       const rank = getOpponentDefenseRank(teamKey, pick.prop_type || 'points', defOpponentMap, defMapPool);
       const adj = getDefenseMatchupAdjustment(rank, side);
@@ -3906,6 +3906,8 @@ async function generateTierParlays(
           line_source: playerPick.line_source || 'projected',
           has_real_line: playerPick.has_real_line || false,
           sport: playerPick.sport || 'basketball_nba',
+          defense_rank: (playerPick as any).defenseMatchupRank ?? null,
+          defense_adj: (playerPick as any).defenseMatchupAdj ?? 0,
         };
 
         // NEGATIVE-EDGE GATE: Block legs where projection contradicts bet direction
@@ -4804,6 +4806,18 @@ function propTypeToDefenseStat(propType: string): string {
 }
 
 /**
+ * Normalize BDL team names to match game_bets naming conventions.
+ * e.g. "LA Clippers" → "Los Angeles Clippers"
+ */
+function normalizeBdlTeamName(name: string): string {
+  const fixes: Record<string, string> = {
+    'la clippers': 'los angeles clippers',
+  };
+  const lower = (name || '').toLowerCase().trim();
+  return fixes[lower] ?? lower;
+}
+
+/**
  * Get opponent defense rank for a player prop pick.
  * opponentMap: team_name_lower → opponent_team_name_lower (today's schedule)
  * defenseMap: team_name_lower → { stat_category → defense_rank }
@@ -4941,7 +4955,7 @@ async function generateMasterParlay(
 
   const enrichedCandidates: EnrichedMasterCandidate[] = nbaCandidates.map(pick => {
     // Get the player's team from available fields
-    const teamLower = ((pick as any).team_name || '').toLowerCase().trim();
+    const teamLower = normalizeBdlTeamName((pick as any).team_name || '');
     const side = (pick.recommended_side || 'over').toLowerCase();
     const defenseRank = getOpponentDefenseRank(teamLower, pick.prop_type || 'points', opponentMap, defenseMap);
     const defenseAdj = getDefenseMatchupAdjustment(defenseRank, side);
