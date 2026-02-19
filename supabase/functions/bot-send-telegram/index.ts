@@ -26,6 +26,7 @@ type NotificationType =
   | 'weight_change'
   | 'strategy_update'
   | 'diagnostic_report'
+  | 'integrity_alert'
   | 'test';
 
 interface NotificationData {
@@ -54,6 +55,8 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return formatStrategyUpdate(data);
     case 'diagnostic_report':
       return formatDiagnosticReport(data, dateStr);
+    case 'integrity_alert':
+      return formatIntegrityAlert(data, dateStr);
     case 'test':
       return `🤖 *ParlayIQ Bot Test*\n\nConnection successful! You'll receive notifications here.\n\n_Sent ${dateStr}_`;
     default:
@@ -358,6 +361,30 @@ function formatDiagnosticReport(data: Record<string, any>, dateStr: string): { t
   return { text: msg, reply_markup };
 }
 
+function formatIntegrityAlert(data: Record<string, any>, dateStr: string): string {
+  const { oneLegCount, twoLegCount, total, strategyCounts } = data;
+
+  let msg = `⚠️ *PARLAY INTEGRITY ALERT — ${dateStr}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  msg += `🚨 Leak detected in today's parlays:\n`;
+  if (oneLegCount > 0) msg += `  • 1-leg singles: *${oneLegCount} parlays*\n`;
+  if (twoLegCount > 0) msg += `  • 2-leg minis:   *${twoLegCount} parlays*\n`;
+  msg += `  Total violations: *${total}*\n\n`;
+
+  if (strategyCounts && Object.keys(strategyCounts).length > 0) {
+    msg += `Strategies involved:\n`;
+    for (const [name, count] of Object.entries(strategyCounts)) {
+      msg += `  • ${name} (×${count})\n`;
+    }
+    msg += `\n`;
+  }
+
+  msg += `⚡ *Action required:* Review bot-generate-daily-parlays\n`;
+  msg += `Run /admin cleanup to remove bad parlays`;
+
+  return msg;
+}
+
 function formatOdds(odds?: number): string {
   if (!odds) return '-110';
   return odds > 0 ? `+${odds}` : `${odds}`;
@@ -384,8 +411,8 @@ Deno.serve(async (req) => {
     
     console.log(`[Telegram] Sending ${type} notification`);
 
-    // Check notification preferences (optional - skip for test messages)
-    if (type !== 'test') {
+    // Check notification preferences (skip for test and integrity_alert — these always fire)
+    if (type !== 'test' && type !== 'integrity_alert') {
       const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
       const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
       const supabase = createClient(supabaseUrl, supabaseKey);
