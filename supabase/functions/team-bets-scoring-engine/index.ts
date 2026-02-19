@@ -197,7 +197,7 @@ function scoreNcaab(
   // Use real KenPom AdjO/AdjD if available AND valid, fall back to ESPN-derived
   // Validation: reject KenPom values outside reasonable ranges (AdjO: 90-135, AdjD: 80-120)
   const validKenpomO = (v: number | null | undefined) => v != null && v >= 90 && v <= 135;
-  const validKenpomD = (v: number | null | undefined) => v != null && v >= 80 && v <= 120;
+  const validKenpomD = (v: number | null | undefined) => v != null && v >= 80 && v <= 140;
 
   const homeOff = validKenpomO(homeStats?.kenpom_adj_o) ? homeStats!.kenpom_adj_o! : (homeStats?.adj_offense || 70);
   const homeDef = validKenpomD(homeStats?.kenpom_adj_d) ? homeStats!.kenpom_adj_d! : (homeStats?.adj_defense || 70);
@@ -327,34 +327,48 @@ function scoreNcaab(
     const tempoFactor = avgTempo / 67;
     let projectedTotal: number;
     if (hasRealKenpom) {
-      // Real KenPom: (AdjO_home + AdjO_away) * tempo / 100 is standard method
-      // But we need to account for both sides' offense vs opponent defense
-      projectedTotal = ((homeOff + awayOff) * tempoFactor / 100) * 2;
-      // Clamp to reasonable range
-      projectedTotal = Math.max(100, Math.min(200, projectedTotal));
+      // Correct KenPom possession-adjusted formula:
+      // AdjO = points scored per 100 possessions against avg D1 defense
+      // AdjD = points allowed per 100 possessions against avg D1 offense
+      // homePts = homeOff × (awayDef / 100) × avgTempo / 100
+      // This gives: "how many pts home team scores vs this specific defense over avgTempo possessions"
+      const homePts = homeOff * (awayDef / 100) * avgTempo / 100;
+      const awayPts = awayOff * (homeDef / 100) * avgTempo / 100;
+      projectedTotal = homePts + awayPts;
+      projectedTotal = Math.max(115, Math.min(195, projectedTotal));
     } else {
       // Fallback defense-adjusted formula
       const avgD1PPG = 70;
       projectedTotal = (homeOff + awayOff - homeDef - awayDef + avgD1PPG * 2) * tempoFactor;
     }
     
-    const lineEdge = projectedTotal - (bet.line || 0);
     breakdown.projected_total = Math.round(projectedTotal * 10) / 10;
 
-    if (side === 'OVER' && lineEdge < -5) {
-      const penalty = clampScore(-15, 0, Math.round(lineEdge * 2));
-      score += penalty;
-      breakdown.line_inflated = penalty;
-      breakdown.line_edge_label = `Proj ${projectedTotal.toFixed(0)} vs Line ${bet.line} (inflated)`;
-    } else if (side === 'UNDER' && lineEdge < -3) {
-      const bonus = clampScore(0, 12, Math.round(Math.abs(lineEdge) * 2));
-      score += bonus;
-      breakdown.line_value = bonus;
-      breakdown.line_edge_label = `Proj ${projectedTotal.toFixed(0)} vs Line ${bet.line} (value under)`;
-    } else if (side === 'OVER' && lineEdge > 3) {
-      score += 5;
-      breakdown.line_value = 5;
-      breakdown.line_edge_label = `Proj ${projectedTotal.toFixed(0)} vs Line ${bet.line} (value over)`;
+    // PPG sanity guard: if projection is implausibly low vs teams' real scoring averages,
+    // skip the line-edge bonus/penalty entirely — the projection cannot be trusted
+    const combinedPPG = (homePPG || 0) + (awayPPG || 0);
+    const projectionIsSane = combinedPPG <= 100 || projectedTotal >= combinedPPG * 0.85;
+
+    if (!projectionIsSane) {
+      breakdown.projection_sanity_fail = 1;
+      breakdown.sanity_label = `Proj ${projectedTotal.toFixed(0)} < 85% of combined PPG ${combinedPPG.toFixed(0)} — line edge skipped`;
+    } else {
+      const lineEdge = projectedTotal - (bet.line || 0);
+      if (side === 'OVER' && lineEdge < -5) {
+        const penalty = clampScore(-15, 0, Math.round(lineEdge * 2));
+        score += penalty;
+        breakdown.line_inflated = penalty;
+        breakdown.line_edge_label = `Proj ${projectedTotal.toFixed(0)} vs Line ${bet.line} (inflated)`;
+      } else if (side === 'UNDER' && lineEdge < -3) {
+        const bonus = clampScore(0, 12, Math.round(Math.abs(lineEdge) * 2));
+        score += bonus;
+        breakdown.line_value = bonus;
+        breakdown.line_edge_label = `Proj ${projectedTotal.toFixed(0)} vs Line ${bet.line} (value under)`;
+      } else if (side === 'OVER' && lineEdge > 3) {
+        score += 5;
+        breakdown.line_value = 5;
+        breakdown.line_edge_label = `Proj ${projectedTotal.toFixed(0)} vs Line ${bet.line} (value over)`;
+      }
     }
 
     const combinedOff = homeOff + awayOff;
