@@ -1,74 +1,67 @@
 
 
-## Mispriced Lines Dashboard Card + Daily Telegram Report
+## Cross-Reference: Mispriced Lines x Risk Engine Picks
 
-### Part 1: Dashboard UI Component
+### The Problem
 
-**New file: `src/components/market/MispricedLinesCard.tsx`**
+The `mispriced_lines` table uses prop types like `player_points`, `player_assists`, `player_rebounds` while `nba_risk_engine_picks` uses short names like `points`. This naming mismatch means a simple SQL join finds zero overlaps. We need a normalization layer to match them, plus a new UI component to surface the highest-conviction plays where both engines agree.
 
-A card component following the same pattern as `SweetSpotPicksCard` that displays today's mispriced lines with filtering:
+### What We'll Build
 
-- **Data fetch**: Query `mispriced_lines` table for today's date (Eastern Time), ordered by `ABS(edge_pct)` descending
-- **Filter controls** at the top:
-  - **Sport tabs**: ALL | NBA | MLB (filters by `sport` column)
-  - **Signal chips**: ALL | OVER | UNDER (filters by `signal` column)
-  - **Confidence chips**: ALL | ELITE | HIGH | MEDIUM (filters by `confidence_tier`)
-- **Each row displays**:
-  - Player name
-  - Prop type (formatted)
-  - Book line vs Player avg (L10/season)
-  - Edge % with color coding (green for OVER, red for UNDER, intensity by magnitude)
-  - Signal badge (OVER/UNDER)
-  - Confidence tier badge (ELITE = gold, HIGH = green, MEDIUM = blue)
-  - Sport icon (basketball/baseball)
-- **Shooting/Baseball context** expandable per row showing FG%/3P%/FT% for NBA or AVG/OBP/SLG/OPS for MLB
-- **Summary header**: Shows counts (e.g., "157 NBA | 0 MLB | 55 OVER | 102 UNDER")
-- **Refresh button**: Invokes `detect-mispriced-lines` edge function
+A new **"High Conviction Plays"** card that automatically cross-references mispriced lines against all 4 engines (Risk Engine, Prop V2, Sharp Builder, Heat Engine) and highlights overlaps where the statistical edge from mispriced lines is confirmed by at least one engine pick on the same side.
 
-### Part 2: Add to Homepage
+### Implementation
 
-**Modified file: `src/pages/Index.tsx`**
+**1. New hook: `src/hooks/useHighConvictionPlays.ts`**
 
-Add the `MispricedLinesCard` component between the Elite 3PT section and the Daily Parlay Hub section on the homepage.
+- Fetches today's `mispriced_lines` and all engine picks (reusing the same queries from `useEngineComparison`)
+- Normalizes prop types with a mapping function: strips `player_`, `batter_`, `pitcher_` prefixes for comparison (so `player_points` matches `points`)
+- Joins on `normalized_prop_type + lowercase player_name`
+- For each overlap, computes a **conviction score** based on:
+  - Mispriced edge magnitude (higher = better)
+  - Mispriced confidence tier (ELITE +3, HIGH +2, MEDIUM +1)
+  - Number of engines that agree on the same side
+  - Whether the mispriced signal direction matches the engine side
+  - Risk engine confidence score (if available)
+- Flags side agreement: does the engine pick the same direction (OVER/UNDER) as the mispriced signal?
+- Returns overlaps sorted by conviction score descending
 
-### Part 3: Telegram Daily Report
+**2. New component: `src/components/market/HighConvictionCard.tsx`**
 
-**Modified file: `supabase/functions/bot-send-telegram/index.ts`**
+- Header: "High Conviction Plays" with a target/crosshair icon
+- Summary badge: "X plays confirmed by multiple engines"
+- Each row shows:
+  - Player name + prop type
+  - Mispriced edge % with direction
+  - Mispriced confidence tier badge
+  - Which engines confirmed (colored dots: Risk, PropV2, Sharp, Heat)
+  - Side agreement indicator (checkmark if all agree, warning if split)
+  - Conviction score bar
+- Empty state: "No cross-engine overlaps today -- check back when all engines have run"
+- Sorted by conviction score (highest first)
 
-1. Add `'mispriced_lines_report'` to the `NotificationType` union
-2. Add a `formatMispricedLinesReport(data, dateStr)` function that formats the report:
+**3. Add to homepage: `src/pages/Index.tsx`**
 
+- Place the `HighConvictionCard` right above or below the `MispricedLinesCard` for natural flow
+
+### Prop Type Normalization
+
+```text
+normalize("player_points")       -> "points"
+normalize("player_assists")      -> "assists"
+normalize("player_rebounds")     -> "rebounds"
+normalize("batter_hits")         -> "hits"
+normalize("pitcher_strikeouts")  -> "strikeouts"
+normalize("points")              -> "points"  (already clean)
 ```
-Format:
-🔍 MISPRICED LINES REPORT — Feb 20
 
-📊 NBA: 157 lines | ⚾ MLB: 0 lines
-🟢 55 OVER | 🔴 102 UNDER
-
-🏆 ELITE EDGES:
-📈 Dean Wade — Assists O 1.5 | Avg: 4.2 | Edge: +180%
-📈 Jarrett Allen — Blocks O 0.5 | Avg: 1.0 | Edge: +100%
-...
-
-🔥 HIGH CONFIDENCE:
-📉 Kobe Brown — Points U 8.5 | Avg: 3.1 | Edge: -64%
-...
-```
-
-3. Groups by confidence tier (ELITE first, then HIGH, then MEDIUM)
-4. Shows top 10-15 per tier to keep message manageable
-5. Uses existing `sendToTelegram` long-message splitting
-
-**Modified file: `supabase/functions/detect-mispriced-lines/index.ts`**
-
-After persisting results, automatically call `bot-send-telegram` with `type: 'mispriced_lines_report'` and pass the summary data (counts + top picks by tier). This fires every time the detector runs in the pipeline, giving a daily Telegram delivery.
+This ensures cross-engine matching works regardless of which naming convention each engine uses.
 
 ### Files Summary
 
 | Action | File |
 |--------|------|
-| Create | `src/components/market/MispricedLinesCard.tsx` |
+| Create | `src/hooks/useHighConvictionPlays.ts` |
+| Create | `src/components/market/HighConvictionCard.tsx` |
 | Modify | `src/pages/Index.tsx` (add card to homepage) |
-| Modify | `supabase/functions/bot-send-telegram/index.ts` (add report type + formatter) |
-| Modify | `supabase/functions/detect-mispriced-lines/index.ts` (trigger Telegram after analysis) |
 
