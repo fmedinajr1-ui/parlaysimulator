@@ -80,7 +80,7 @@ const Install = () => {
 
   if (isStandalone || isInstalled) {
     return (
-      <div className="min-h-screen bg-background pb-24">
+      <div className="min-h-screen bg-background pb-6">
         <main className="max-w-lg mx-auto px-4 py-8">
           <div className="text-center py-12">
             <div className="w-20 h-20 rounded-full bg-neon-green/20 flex items-center justify-center mx-auto mb-6">
@@ -101,7 +101,7 @@ const Install = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background pb-24">
+    <div className="min-h-screen bg-background pb-6">
       <MobileHeader 
         title="Install App" 
         subtitle="Get the native experience"

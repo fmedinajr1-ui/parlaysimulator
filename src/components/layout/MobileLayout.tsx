@@ -14,8 +14,8 @@ export function MobileLayout({ children, className, noPadding = false }: MobileL
       className
     )}>
       <main className={cn(
-        "flex-1 flex flex-col max-w-lg mx-auto w-full pb-[88px]",
-        !noPadding && "px-4 py-4"
+        "flex-1 flex flex-col max-w-lg mx-auto w-full",
+        !noPadding && "px-3 py-4"
       )}>
         {children}
       </main>

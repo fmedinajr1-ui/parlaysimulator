@@ -27,7 +27,7 @@ export default function ProfitPlan() {
       </div>
 
       <ScrollArea className="h-[calc(100vh-57px)]">
-        <div className="max-w-2xl mx-auto px-4 py-6 space-y-6 pb-24">
+        <div className="max-w-2xl mx-auto px-4 py-6 space-y-6 pb-6">
           {/* Summary banner */}
           <div className="rounded-2xl bg-primary/10 border border-primary/20 p-4">
             <h2 className="font-bold text-base mb-1">Smart Stake Plan</h2>

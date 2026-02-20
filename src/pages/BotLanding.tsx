@@ -106,16 +106,11 @@ export default function BotLanding() {
   };
 
   return (
-    <div className="min-h-screen bg-background pb-24">
-      {/* Navigation */}
-      <nav className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-border">
+    <div className="min-h-screen bg-background">
+      {/* Floating logo */}
+      <div className="px-4 pt-4 pb-2">
         <ParlayFarmLogo size="sm" />
-        {user && isAdmin && (
-          <a href="/dashboard" className="text-sm text-muted-foreground hover:text-foreground">
-            Admin Dashboard →
-          </a>
-        )}
-      </nav>
+      </div>
 
       {/* Success banner */}
       {isSuccess && (
