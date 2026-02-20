@@ -5458,6 +5458,78 @@ export type Database = {
           },
         ]
       }
+      mlb_player_game_logs: {
+        Row: {
+          at_bats: number | null
+          batting_avg: number | null
+          created_at: string
+          earned_runs: number | null
+          game_date: string
+          hits: number | null
+          home_runs: number | null
+          id: string
+          innings_pitched: number | null
+          is_home: boolean | null
+          opponent: string | null
+          pitcher_hits_allowed: number | null
+          pitcher_strikeouts: number | null
+          player_name: string
+          rbis: number | null
+          runs: number | null
+          stolen_bases: number | null
+          strikeouts: number | null
+          team: string
+          total_bases: number | null
+          walks: number | null
+        }
+        Insert: {
+          at_bats?: number | null
+          batting_avg?: number | null
+          created_at?: string
+          earned_runs?: number | null
+          game_date: string
+          hits?: number | null
+          home_runs?: number | null
+          id?: string
+          innings_pitched?: number | null
+          is_home?: boolean | null
+          opponent?: string | null
+          pitcher_hits_allowed?: number | null
+          pitcher_strikeouts?: number | null
+          player_name: string
+          rbis?: number | null
+          runs?: number | null
+          stolen_bases?: number | null
+          strikeouts?: number | null
+          team: string
+          total_bases?: number | null
+          walks?: number | null
+        }
+        Update: {
+          at_bats?: number | null
+          batting_avg?: number | null
+          created_at?: string
+          earned_runs?: number | null
+          game_date?: string
+          hits?: number | null
+          home_runs?: number | null
+          id?: string
+          innings_pitched?: number | null
+          is_home?: boolean | null
+          opponent?: string | null
+          pitcher_hits_allowed?: number | null
+          pitcher_strikeouts?: number | null
+          player_name?: string
+          rbis?: number | null
+          runs?: number | null
+          stolen_bases?: number | null
+          strikeouts?: number | null
+          team?: string
+          total_bases?: number | null
+          walks?: number | null
+        }
+        Relationships: []
+      }
       monthly_accuracy_snapshot: {
         Row: {
           created_at: string | null

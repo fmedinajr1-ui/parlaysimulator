@@ -10,7 +10,7 @@ const corsHeaders = {
 // Tier 1: Always fetch (best historical data)
 const TIER_1_SPORTS = ['basketball_nba', 'icehockey_nhl'];
 // Tier 2: Fetch if games exist (seasonal)
-const TIER_2_SPORTS = ['basketball_wnba', 'basketball_ncaab', 'baseball_ncaa', 'tennis_atp', 'tennis_wta', 'tennis_pingpong'];
+const TIER_2_SPORTS = ['basketball_wnba', 'basketball_ncaab', 'baseball_ncaa', 'baseball_mlb', 'tennis_atp', 'tennis_wta', 'tennis_pingpong'];
 // Golf: Outright/futures markets (seasonal — only active during tournament weeks)
 const GOLF_SPORTS = [
   'golf_masters_tournament_winner',
@@ -42,6 +42,10 @@ const PLAYER_MARKET_BATCHES: Record<string, string[][]> = {
   ],
   'baseball_ncaa': [
     ['batter_hits', 'batter_rbis', 'batter_runs_scored', 'batter_total_bases'],
+  ],
+  'baseball_mlb': [
+    ['batter_hits', 'batter_rbis', 'batter_runs_scored', 'batter_total_bases'],
+    ['batter_home_runs', 'batter_stolen_bases', 'pitcher_strikeouts', 'pitcher_outs'],
   ],
   // Tennis/Table Tennis: no player prop markets, team (match) markets only
 };

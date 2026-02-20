@@ -422,3 +422,6 @@ verify_jwt = false
 
 [functions.tt-stats-collector]
 verify_jwt = false
+
+[functions.mlb-data-ingestion]
+verify_jwt = false
