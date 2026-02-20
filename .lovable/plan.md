@@ -1,105 +1,66 @@
 
 
-## Pitcher Strikeout Props from PrizePicks + Historical Cross-Reference
+## Fix MLB Pitcher Data Extraction + Run Backfill
 
-### Current Gaps
+### Root Cause
 
-1. **PrizePicks scraper excludes MLB** -- the default sports array is `['NBA', 'NHL', 'WNBA', 'ATP', 'WTA']`, so no MLB props (including pitcher Ks) are ever scraped
-2. **Stat type mapping is wrong** -- PrizePicks "Strikeouts" maps to `player_strikeouts` (batter stat), not `pitcher_strikeouts` (the prop market key used everywhere else)
-3. **No pitcher game log data** -- the `mlb_player_game_logs` table has 24K rows but zero pitcher strikeout data (backfill only pulled batters)
-4. **No cross-reference logic** -- nothing compares PrizePicks pitcher K lines against historical L10/L20 averages
+The `extractStats` function in `mlb-data-ingestion` has been processing 24K+ batting rows but zero pitching rows. The pitching detection logic checks for labels `IP`, `ER`, `ERA` in the `statGroup.labels` array, but this check is likely failing because:
 
-### What We'll Build
+1. ESPN's pitching `statGroup` may use a `name` or `type` field (e.g., `"name": "pitching"`) that we're ignoring
+2. The label format may differ from expectations (e.g., case sensitivity after uppercasing, different abbreviation)
+3. If both batting and pitching labels contain `H` (hits/hits allowed), the `isBatting` check fires first and the `else if (isPitching)` branch never runs for pitching groups that also happen to match batting criteria
 
-**Phase 1: Add MLB to PrizePicks Scraper**
-- Add `'MLB'` to the default sports array in `pp-props-scraper`
-- Add pitcher-specific stat mappings: `'Pitcher Strikeouts' -> 'pitcher_strikeouts'`, `'Strikeouts (Pitching)' -> 'pitcher_strikeouts'`, `'Ks' -> 'pitcher_strikeouts'`
-- Context-aware mapping: when league is MLB and stat is "Strikeouts", check if player position contains "P" or "SP" to route to `pitcher_strikeouts` vs `batter_strikeouts`
-
-**Phase 2: Backfill Pitcher Strikeout Data**
-- Update `mlb-data-ingestion` to accept a `pitchers_only` mode that specifically targets the pitching box score section
-- Run a 2024/2025 season backfill to populate `pitcher_strikeouts` for starting pitchers (~30 teams x 5 starters x 30 starts = ~4,500 pitcher game logs)
-
-**Phase 3: Cross-Reference Engine**
-- Create a new edge function `mlb-pitcher-k-analyzer` that:
-  1. Fetches today's pitcher K props from `pp_snapshot` (where `stat_type = 'pitcher_strikeouts'` and `sport = 'baseball_mlb'`)
-  2. Looks up each pitcher's L10 and L20 strikeout averages from `mlb_player_game_logs`
-  3. Computes edge percentage: `(l10_avg - pp_line) / pp_line * 100`
-  4. Writes results to `mispriced_lines` table with `confidence_tier` based on edge magnitude
-  5. Sends a formatted report via Telegram
-
-**Phase 4: Telegram Command**
-- Add `/pitcherk` command to `telegram-webhook` that triggers the analyzer and shows paginated results like the other commands
-
-### Technical Details
-
-**File: `supabase/functions/pp-props-scraper/index.ts`**
-
-- Line 186: Change default sports from `['NBA', 'NHL', 'WNBA', 'ATP', 'WTA']` to `['NBA', 'NHL', 'WNBA', 'ATP', 'WTA', 'MLB']`
-- Lines 98-124: Add to `STAT_TYPE_MAP`:
-```
-'Pitcher Strikeouts': 'pitcher_strikeouts',
-'Strikeouts (Pitching)': 'pitcher_strikeouts', 
-'Ks': 'pitcher_strikeouts',
-'Pitching Strikeouts': 'pitcher_strikeouts',
-'Earned Runs Allowed': 'pitcher_earned_runs',
-'Hits Allowed': 'pitcher_hits_allowed',
-'Outs': 'pitcher_outs',
-'Total Bases': 'batter_total_bases',
-'Home Runs': 'batter_home_runs',
-'Stolen Bases': 'batter_stolen_bases',
-```
-- In `processExtractedProjections`, add logic: if league is `'MLB'` and stat is `'Strikeouts'` (unmapped generic), default to `'pitcher_strikeouts'` since PrizePicks pitcher K props are the dominant strikeout market
+### Fix Plan
 
 **File: `supabase/functions/mlb-data-ingestion/index.ts`**
 
-- Add `pitchers_only` flag to request body parsing
-- When `pitchers_only` is true, only parse the pitching section of ESPN box scores and skip batting lines
-- This allows targeted backfill without re-processing all 24K batter rows
+1. **Use `statGroup.name` or `statGroup.type` for detection** instead of label-sniffing:
+   - Check `statGroup.name?.toLowerCase() === 'pitching'` or `statGroup.type === 'pitching'` as the primary detection method
+   - Keep label-based detection as a fallback
+   - This ensures pitching groups are never misidentified as batting
 
-**New File: `supabase/functions/mlb-pitcher-k-analyzer/index.ts`**
+2. **Fix the `isBatting` / `isPitching` mutual exclusion**:
+   - Currently `isPitching` is in an `else if` — if `isBatting` triggers first (because labels contain `H` which appears in both), pitching entries are skipped
+   - Change to check `statGroup.name` first, then fall back to labels
 
-Core logic:
-1. Query `pp_snapshot` for today's `pitcher_strikeouts` props
-2. For each pitcher, query `mlb_player_game_logs` for their last 10 and 20 games where `pitcher_strikeouts IS NOT NULL`
-3. Calculate L10 avg, L20 avg, median, max, min, hit rate (games over the line)
-4. Compute edge: `((l10_avg - pp_line) / pp_line) * 100`
-5. Assign confidence tier:
-   - ELITE: abs(edge) >= 25% AND hit rate >= 70% (or <= 30% for unders)
-   - HIGH: abs(edge) >= 15% AND hit rate >= 60%
-   - MEDIUM: abs(edge) >= 8%
-6. Upsert into `mispriced_lines` with `sport = 'baseball_mlb'` and `prop_type = 'pitcher_strikeouts'`
-7. Send Telegram report with top plays grouped by tier
+3. **Add debug logging** (temporary):
+   - Log the `statGroup` name/type and labels for each group processed
+   - Log the count of pitching entries found per game
+   - This lets us verify the fix works before running the full backfill
 
-**File: `supabase/functions/telegram-webhook/index.ts`**
+4. **Smaller batch support**:
+   - Add a `max_days_per_run` parameter (default 3) to prevent timeouts
+   - Each weekly backfill chunk processes 3 days at a time
 
-- Add `/pitcherk` command that calls `handlePitcherK(chatId, page)` 
-- The handler queries `mispriced_lines` for today's `pitcher_strikeouts` entries
-- Paginated display (5 per page) showing: pitcher name, team, line, L10 avg, edge%, hit rate, tier
-- Prev/Next inline buttons with `pitcherk_page:N` callback data
+### Updated `extractStats` Logic
 
-**File: `supabase/functions/data-pipeline-orchestrator/index.ts`**
+```typescript
+for (const statGroup of (teamStats.statistics || [])) {
+  const groupName = (statGroup.name || statGroup.type || '').toLowerCase();
+  const labels = (statGroup.labels || statGroup.keys || []).map((l: string) => l.toUpperCase());
+  
+  // Use group name as primary detection, labels as fallback
+  const isBatting = groupName === 'batting' || 
+    (!groupName && (labels.includes('AB') && labels.includes('RBI')));
+  const isPitching = groupName === 'pitching' || 
+    (!groupName && (labels.includes('IP') && labels.includes('ER')));
+  
+  // ... rest of logic with isBatting/isPitching as separate if blocks, not if/else if
+}
+```
 
-- Add `mlb-pitcher-k-analyzer` to Phase 2 (Analysis) after `high-conviction-analyzer`
-- Only runs during MLB season (April-October)
+### Execution After Deploy
 
-### Execution Order
-
-1. Modify `pp-props-scraper` (add MLB + pitcher stat mappings)
-2. Modify `mlb-data-ingestion` (add pitchers_only backfill mode)
-3. Create `mlb-pitcher-k-analyzer` (cross-reference engine)
-4. Modify `telegram-webhook` (add /pitcherk command)
-5. Modify `data-pipeline-orchestrator` (add to Phase 2)
-6. Deploy all functions
-7. Run pitcher backfill: invoke `mlb-data-ingestion` with `{ "pitchers_only": true, "days_back": 365 }`
+1. Deploy the fixed function
+2. Test with a single recent game day to verify pitcher data appears: `{ "pitchers_only": true, "days_back": 3 }`
+3. Check logs to confirm pitching groups are detected
+4. Run weekly backfill chunks (April-October 2025) in 3-day increments:
+   - `{ "pitchers_only": true, "start_date": "2025-04-01", "end_date": "2025-04-03" }`
+   - Continue in 3-day chunks across the season
 
 ### Files Changed
 
 | Action | File |
 |--------|------|
-| Modify | `supabase/functions/pp-props-scraper/index.ts` |
 | Modify | `supabase/functions/mlb-data-ingestion/index.ts` |
-| Create | `supabase/functions/mlb-pitcher-k-analyzer/index.ts` |
-| Modify | `supabase/functions/telegram-webhook/index.ts` |
-| Modify | `supabase/functions/data-pipeline-orchestrator/index.ts` |
 
