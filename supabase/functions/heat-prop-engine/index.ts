@@ -600,9 +600,13 @@ function buildParlays(
     const isStar = isStarPlayer(c.player_name);
     if (leg1IsStar && isStar) return false;
 
-    // DIVERSITY: Prefer different prop category
+    // DIVERSITY: MUST be different prop type for 2-leg parlays (strict enforcement)
     const category = getPropCategory(c.market_type);
-    return !propCategories.has(category);
+    if (propCategories.has(category)) {
+      console.log(`[Heat Engine] Skipping ${c.player_name} ${c.market_type} - same prop type (${category}) as leg1`);
+      return false;
+    }
+    return true;
   });
 
   // If no diverse option found with different team, fall back to any valid leg with different team
@@ -1119,7 +1123,24 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
 
     console.log(`[Heat Engine] Found ${eligibleProps?.length || 0} eligible props for today`);
 
-    if (!eligibleProps || eligibleProps.length < 2) {
+    // MINIMUM PROJECTION BUFFER GATE (0.3) - filter out thin edges before building
+    const bufferedProps = eligibleProps?.filter((p: any) => {
+      const projKey = `${p.player_name?.toLowerCase()}_${(p.market_type || '').toLowerCase().replace('player_', '')}`;
+      const projection = projectionMap.get(projKey);
+      if (projection?.projectedValue && projection?.actualLine) {
+        const side = (p.side || 'over').toLowerCase();
+        const buffer = side === 'over' ? projection.projectedValue - projection.actualLine : projection.actualLine - projection.projectedValue;
+        if (Math.abs(buffer) < 0.3) {
+          console.log(`[Heat BufferGate] Blocked ${p.player_name} ${p.market_type} (buffer: ${buffer.toFixed(2)} < 0.3)`);
+          return false;
+        }
+      }
+      return true;
+    }) || [];
+
+    console.log(`[Heat Engine] ${bufferedProps.length} props passed buffer gate (from ${eligibleProps?.length || 0})`);
+
+    if (bufferedProps.length < 2) {
       // Clear today's supporting data
       await supabase.from("heat_watchlist").delete().eq("watchlist_date", today);
       await supabase.from("heat_do_not_bet").delete().eq("dnb_date", today);
@@ -1127,7 +1148,7 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
       return {
         success: false,
         error: "INSUFFICIENT_PROPS",
-        message: "NO CORE PLAY TODAY - insufficient eligible props. Need at least 2 eligible props.",
+        message: "NO CORE PLAY TODAY - insufficient eligible props after buffer gate. Need at least 2 eligible props.",
         core_parlay: null,
         upside_parlay: null,
         watchlist: [],
@@ -1137,7 +1158,7 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
 
     // Build CORE parlay first
     const coreParlay = buildParlays(
-      eligibleProps.filter((p: any) => p.is_eligible_core),
+      bufferedProps.filter((p: any) => p.is_eligible_core),
       "CORE",
       [], // No exclusions for CORE
     );
@@ -1149,7 +1170,7 @@ async function runHeatEngine(supabase: any, action: string, sport?: string) {
 
     // Build UPSIDE parlay with CORE players excluded for variety
     const upsideParlay = buildParlays(
-      eligibleProps.filter((p: any) => p.is_eligible_upside),
+      bufferedProps.filter((p: any) => p.is_eligible_upside),
       "UPSIDE",
       corePlayerNames, // Exclude CORE players for differentiation
     );
