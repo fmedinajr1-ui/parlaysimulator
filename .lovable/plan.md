@@ -1,80 +1,39 @@
 
+## Self-Fetch Daily Winners in bot-send-telegram
 
-## Problem: Wemby Data Bug + Daily Winners Showcase
+### What changes
+When `bot-send-telegram` receives a `daily_winners` notification with no `data` payload (or empty data), it will automatically call the `bot-daily-winners` edge function to fetch the data itself before formatting and sending the message.
 
-### 1. Bug Found: NULL Line Settlement
-
-Victor Wembanyama's points pick was marked "hit" with actual_value=17 but `actual_line` is NULL. Many picks across the system have NULL `actual_line` values, meaning the verification function (`verify-sweet-spot-outcomes` or `bot-check-live-props`) settled them without a valid line comparison. 
-
-**Fix:** Add a NULL-line guard in both `verify-sweet-spot-outcomes` and `bot-check-live-props` so picks with no `actual_line` are skipped (left as `pending`) rather than incorrectly settled.
-
-### 2. New Feature: "Today's Winners" Showcase on Landing Page
-
-A new component on the `/bot` landing page that displays yesterday's verified winning picks in an animated data box, showing real proof of the system's accuracy.
-
-**What it shows:**
-- Player name, prop type, line, side, and actual value for each hit
-- Hit rate summary (e.g., "47/72 picks hit -- 65%")
-- Prop type breakdown with icons
-- Animated entrance with staggered card reveals
-
-**Data flow:**
-- New edge function `bot-daily-winners` queries `category_sweet_spots` for yesterday's settled hits with valid `actual_line` values
-- Landing page calls this function and renders the results in a scrollable animated section
-
-### 3. Telegram Daily Winners Report
-
-Add a new notification type `daily_winners` to `bot-send-telegram` that sends the same data as a formatted Telegram message after settlement completes.
-
-**Format:**
-```text
-DAILY WINNERS REPORT -- Feb 19
-================================
-
-47/72 Picks Hit (65%)
-
-Top Hits:
-  [hit] Carlton Carrington O1.5 3PT (actual: 3)
-  [hit] Tidjane Salaun O3.5 REB (actual: 4)
-  [hit] Danny Wolf O5.5 REB (actual: 6)
-  ...
-
-Prop Breakdown:
-  3PT: 12/18 (67%)
-  REB: 15/22 (68%)
-  PTS: 10/20 (50%)
-  AST: 10/12 (83%)
-```
+### Why
+Currently, manual triggers of `daily_winners` require the caller to pass the full data object. This change makes it so you can simply call `bot-send-telegram` with `{ "type": "daily_winners" }` and it handles everything.
 
 ### Technical Details
 
-**Files to modify:**
+**File:** `supabase/functions/bot-send-telegram/index.ts`
 
-1. **`supabase/functions/verify-sweet-spot-outcomes/index.ts`**
-   - Add guard: skip picks where `actual_line` is NULL (don't settle them, leave as pending)
-   
-2. **`supabase/functions/bot-check-live-props/index.ts`**
-   - Same NULL-line guard before settlement
+**Change location:** After parsing `{ type, data }` from the request body (~line 564), add a block that checks if `type === 'daily_winners'` and `data` is missing/empty. If so, fetch it:
 
-3. **New file: `supabase/functions/bot-daily-winners/index.ts`**
-   - Query `category_sweet_spots` for yesterday's `outcome = 'hit'` with non-null `actual_line`
-   - Return structured JSON: winners array, hit rate, prop breakdown
-   
-4. **New file: `src/components/bot-landing/DailyWinnersShowcase.tsx`**
-   - Animated card grid with staggered fade-in
-   - Each winner shows: player name, prop icon, "O/U [line]", actual value, checkmark
-   - Summary bar at top with hit rate percentage and prop breakdown
-   - Scrollable/collapsible for mobile
+```typescript
+const { type, data: rawData }: NotificationData = await req.json();
 
-5. **`src/pages/BotLanding.tsx`**
-   - Add `DailyWinnersShowcase` component between PerformanceCalendar and WhyMultipleParlays sections
+let data = rawData;
 
-6. **`supabase/functions/bot-send-telegram/index.ts`**
-   - Add `daily_winners` notification type
-   - Format with icons: checkmark for hits, prop type icons, alert icons for streaks
-   
-7. **`supabase/functions/bot-settle-and-learn/index.ts`**
-   - After settlement completes, trigger `bot-send-telegram` with type `daily_winners` containing the day's hit data
+// Self-fetch daily winners data if not provided
+if (type === 'daily_winners' && (!data || Object.keys(data).length === 0)) {
+  console.log('[Telegram] No data provided for daily_winners, self-fetching...');
+  const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  const resp = await fetch(`${supabaseUrl}/functions/v1/bot-daily-winners`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${supabaseKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({}),
+  });
+  data = await resp.json();
+  console.log(`[Telegram] Fetched daily winners: ${data?.totalHits}/${data?.totalPicks}`);
+}
+```
 
-**No schema changes needed** -- all data comes from existing `category_sweet_spots` table.
-
+This is a ~15-line addition. No other files need changes.
