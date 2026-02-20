@@ -302,6 +302,30 @@ function formatSettlement(data: Record<string, any>, dateStr: string): string {
         msg += `${key}: missed in ${count} parlay${count > 1 ? 's' : ''}${actualStr}\n`;
       }
     }
+    
+    // --- PROP TYPE BREAKDOWN ---
+    const propTypeStats = new Map<string, { hits: number; total: number }>();
+    for (const p of parlayDetails) {
+      for (const leg of (p.legs || [])) {
+        if (leg.outcome !== 'hit' && leg.outcome !== 'miss') continue;
+        const prop = propLabels[leg.prop_type] || (leg.prop_type || '').toUpperCase();
+        const existing = propTypeStats.get(prop) || { hits: 0, total: 0 };
+        existing.total++;
+        if (leg.outcome === 'hit') existing.hits++;
+        propTypeStats.set(prop, existing);
+      }
+    }
+    
+    if (propTypeStats.size > 0) {
+      const sorted = [...propTypeStats.entries()]
+        .sort((a, b) => (a[1].hits / a[1].total) - (b[1].hits / b[1].total));
+      
+      msg += `\n--- PROP TYPE BREAKDOWN ---\n`;
+      for (const [prop, { hits, total }] of sorted) {
+        const pct = Math.round((hits / total) * 100);
+        msg += `${prop}: ${hits}/${total} hit (${pct}%)\n`;
+      }
+    }
   }
   
   return msg;
