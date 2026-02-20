@@ -1587,6 +1587,88 @@ async function handleHighConv(chatId: string, page = 1) {
   }
 }
 
+// ==================== PITCHER K HANDLER ====================
+
+async function handlePitcherK(chatId: string, page = 1) {
+  const today = getEasternDate();
+  const PER_PAGE = 5;
+
+  const { data: lines } = await supabase
+    .from('mispriced_lines')
+    .select('player_name, prop_type, signal, edge_pct, confidence_tier, book_line, player_avg_l10, sport, metadata')
+    .eq('analysis_date', today)
+    .eq('prop_type', 'pitcher_strikeouts')
+    .order('edge_pct', { ascending: true });
+
+  if (!lines || lines.length === 0) {
+    await sendMessage(chatId, "⚾ No pitcher K analysis found today.\n\nUse /runpitcherk to trigger the analyzer.");
+    return;
+  }
+
+  // Group by tier
+  const tierOrder = ['ELITE', 'HIGH', 'MEDIUM'];
+  const grouped: Record<string, typeof lines> = { ELITE: [], HIGH: [], MEDIUM: [] };
+  lines.forEach(l => {
+    const tier = l.confidence_tier || 'MEDIUM';
+    if (grouped[tier]) grouped[tier].push(l);
+    else grouped.MEDIUM.push(l);
+  });
+
+  const ordered = [...grouped.ELITE, ...grouped.HIGH, ...grouped.MEDIUM];
+  const total = ordered.length;
+  const totalPages = Math.ceil(total / PER_PAGE);
+  const safePage = Math.max(1, Math.min(page, totalPages));
+  const startIdx = (safePage - 1) * PER_PAGE;
+  const endIdx = Math.min(startIdx + PER_PAGE, total);
+  const pageLines = ordered.slice(startIdx, endIdx);
+
+  let overCount = 0, underCount = 0;
+  lines.forEach(l => { if (l.signal?.toLowerCase() === 'over') overCount++; else underCount++; });
+
+  const dateLabel = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' }).format(new Date());
+  let msg = `⚾ *PITCHER K PROPS — ${dateLabel}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `Showing ${startIdx + 1}-${endIdx} of ${total} pitchers\n`;
+  msg += `⬆️ OVER: ${overCount} | ⬇️ UNDER: ${underCount}\n\n`;
+
+  let lastTier = '';
+  for (let i = 0; i < pageLines.length; i++) {
+    const l = pageLines[i];
+    const tier = l.confidence_tier || 'MEDIUM';
+    if (tier !== lastTier) {
+      const tierEmoji = tier === 'ELITE' ? '💎' : tier === 'HIGH' ? '🔥' : '📊';
+      msg += `${tierEmoji} *${tier}:*\n\n`;
+      lastTier = tier;
+    }
+    const globalIdx = startIdx + i + 1;
+    const side = (l.signal || 'UNDER').toUpperCase();
+    const edgeStr = l.edge_pct >= 0 ? `+${l.edge_pct.toFixed(0)}%` : `${l.edge_pct.toFixed(0)}%`;
+    const meta = (l.metadata as any) || {};
+    const hitRate = meta.hit_rate_over != null
+      ? (side === 'OVER' ? `${meta.hit_rate_over.toFixed(0)}% over` : `${(100 - meta.hit_rate_over).toFixed(0)}% under`)
+      : '';
+    const team = meta.team ? ` (${meta.team})` : '';
+    
+    msg += `${globalIdx}. *${l.player_name}*${team}\n`;
+    msg += `   ${side} ${l.book_line} | L10: ${l.player_avg_l10?.toFixed(1) || '?'} | Edge: ${edgeStr}`;
+    if (hitRate) msg += ` | ${hitRate}`;
+    msg += `\n`;
+    if (meta.l10_median != null) {
+      msg += `   Med: ${meta.l10_median.toFixed(1)} | Range: ${meta.l10_min}-${meta.l10_max} (${meta.games_analyzed || '?'} games)\n`;
+    }
+    msg += `\n`;
+  }
+
+  const buttons: Array<{ text: string; callback_data: string }> = [];
+  if (safePage > 1) buttons.push({ text: `< Prev ${PER_PAGE}`, callback_data: `pitcherk_page:${safePage - 1}` });
+  if (safePage < totalPages) buttons.push({ text: `Next ${PER_PAGE} >`, callback_data: `pitcherk_page:${safePage + 1}` });
+
+  await sendLongMessage(chatId, msg, "Markdown");
+  if (buttons.length > 0) {
+    await sendMessage(chatId, `📄 Page ${safePage}/${totalPages}`, "Markdown", { inline_keyboard: [buttons] });
+  }
+}
+
 // ==================== CALLBACK QUERY HANDLER ====================
 
 async function handleCallbackQuery(callbackQueryId: string, data: string, chatId: string) {
@@ -1633,6 +1715,10 @@ async function handleCallbackQuery(callbackQueryId: string, data: string, chatId
     const page = parseInt(data.split(':')[1], 10) || 1;
     await answerCallbackQuery(callbackQueryId, `Loading page ${page}...`);
     await handleHighConv(chatId, page);
+  } else if (data.startsWith('pitcherk_page:')) {
+    const page = parseInt(data.split(':')[1], 10) || 1;
+    await answerCallbackQuery(callbackQueryId, `Loading page ${page}...`);
+    await handlePitcherK(chatId, page);
   } else if (data.startsWith('fix:')) {
     await handleFixAction(callbackQueryId, data.slice(4), chatId);
   } else {
@@ -2173,6 +2259,8 @@ Just type a question in plain English\\! Examples:
   if (cmd === "/highconv") { await handleHighConv(chatId, 1); return null; }
   if (cmd === "/runmispriced") return await handleTriggerFunction(chatId, 'detect-mispriced-lines', 'Mispriced Lines Scan');
   if (cmd === "/runhighconv") return await handleTriggerFunction(chatId, 'high-conviction-analyzer', 'High-Conviction Analyzer');
+  if (cmd === "/pitcherk") { await handlePitcherK(chatId, 1); return null; }
+  if (cmd === "/runpitcherk") return await handleTriggerFunction(chatId, 'mlb-pitcher-k-analyzer', 'Pitcher K Analyzer');
   if (cmd === "/forcegen") return await handleTriggerFunction(chatId, 'bot-force-fresh-parlays', 'Force Fresh Parlays');
 
   // Generic edge function trigger handler

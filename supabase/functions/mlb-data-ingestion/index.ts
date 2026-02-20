@@ -203,13 +203,20 @@ Deno.serve(async (req) => {
     let fetchAllPlayers = false;
     let startDate: string | null = null;
     let endDate: string | null = null;
+    let pitchersOnly = false;
     try {
       const body = await req.json();
       daysBack = body.days_back || 1;
       fetchAllPlayers = body.fetch_all === true || daysBack > 7;
       startDate = body.start_date || null; // e.g. "2025-09-01"
       endDate = body.end_date || null;     // e.g. "2025-09-30"
+      pitchersOnly = body.pitchers_only === true;
     } catch {}
+    
+    if (pitchersOnly) {
+      fetchAllPlayers = true;
+      console.log(`[MLB Ingestion] Pitchers-only mode: will only keep pitcher game logs`);
+    }
 
     // Build list of dates to process
     const datesToProcess: string[] = [];
@@ -273,9 +280,14 @@ Deno.serve(async (req) => {
           }
 
           const playerLogs = extractStats(boxScore, dateStr);
-          const relevantLogs = (fetchAllPlayers || targetPlayers.size === 0)
+          let relevantLogs = (fetchAllPlayers || targetPlayers.size === 0)
             ? playerLogs
             : playerLogs.filter(log => targetPlayers.has(normalizeName(log.player_name)));
+          
+          // In pitchers_only mode, only keep logs with pitcher strikeout data
+          if (pitchersOnly) {
+            relevantLogs = relevantLogs.filter(log => log.pitcher_strikeouts !== null && log.pitcher_strikeouts !== undefined);
+          }
 
         if (relevantLogs.length === 0) continue;
 
