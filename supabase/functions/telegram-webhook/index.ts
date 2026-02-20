@@ -1376,6 +1376,217 @@ async function handleExport(chatId: string, dateStr: string) {
   return null; // Already sent
 }
 
+// ==================== MISPRICED LINES HANDLER ====================
+
+function normalizePropType(raw: string): string {
+  return raw.replace(/^(player_|batter_|pitcher_)/, '').toLowerCase().trim();
+}
+
+async function handleMispriced(chatId: string, page = 1) {
+  const today = getEasternDate();
+  const PER_PAGE = 10;
+
+  const { data: lines } = await supabase
+    .from('mispriced_lines')
+    .select('player_name, prop_type, signal, edge_pct, confidence_tier, book_line, player_avg_l10, sport')
+    .eq('analysis_date', today)
+    .order('edge_pct', { ascending: true });
+
+  if (!lines || lines.length === 0) {
+    await sendMessage(chatId, "📭 No mispriced lines found today.\n\nUse /runmispriced to trigger a scan.");
+    return;
+  }
+
+  // Group by tier
+  const tierOrder = ['ELITE', 'HIGH', 'MEDIUM'];
+  const grouped: Record<string, typeof lines> = { ELITE: [], HIGH: [], MEDIUM: [] };
+  lines.forEach(l => {
+    const tier = l.confidence_tier || 'MEDIUM';
+    if (grouped[tier]) grouped[tier].push(l);
+    else grouped.MEDIUM.push(l);
+  });
+
+  // Flatten in tier order
+  const ordered = [...grouped.ELITE, ...grouped.HIGH, ...grouped.MEDIUM];
+  const total = ordered.length;
+  const totalPages = Math.ceil(total / PER_PAGE);
+  const safePage = Math.max(1, Math.min(page, totalPages));
+  const startIdx = (safePage - 1) * PER_PAGE;
+  const endIdx = Math.min(startIdx + PER_PAGE, total);
+  const pageLines = ordered.slice(startIdx, endIdx);
+
+  // Stats
+  const sportCounts: Record<string, number> = {};
+  let overCount = 0, underCount = 0;
+  lines.forEach(l => {
+    const sport = getSportLabel(l.sport || '') || 'OTHER';
+    sportCounts[sport] = (sportCounts[sport] || 0) + 1;
+    if (l.signal?.toLowerCase() === 'over') overCount++;
+    else underCount++;
+  });
+
+  const dateLabel = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' }).format(new Date());
+  let msg = `📉 *MISPRICED LINES — ${dateLabel}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `Showing ${startIdx + 1}-${endIdx} of ${total} lines\n`;
+  msg += `${Object.entries(sportCounts).map(([s, c]) => `${s}: ${c}`).join(' | ')} | ⬆️${overCount} | ⬇️${underCount}\n\n`;
+
+  let lastTier = '';
+  for (let i = 0; i < pageLines.length; i++) {
+    const l = pageLines[i];
+    const tier = l.confidence_tier || 'MEDIUM';
+    if (tier !== lastTier) {
+      const tierEmoji = tier === 'ELITE' ? '💎' : tier === 'HIGH' ? '🔥' : '📊';
+      msg += `${tierEmoji} *${tier} EDGES:*\n\n`;
+      lastTier = tier;
+    }
+    const globalIdx = startIdx + i + 1;
+    const side = (l.signal || 'UNDER').toUpperCase().charAt(0);
+    const propLabel = normalizePropType(l.prop_type || '').toUpperCase();
+    const edgeStr = l.edge_pct >= 0 ? `+${l.edge_pct.toFixed(0)}%` : `${l.edge_pct.toFixed(0)}%`;
+    msg += `${globalIdx}. *${l.player_name}* — ${propLabel} ${side} ${l.book_line}\n`;
+    msg += `   L10: ${l.player_avg_l10?.toFixed(1) || '?'} | Edge: ${edgeStr}\n`;
+  }
+
+  // Pagination buttons
+  const buttons: Array<{ text: string; callback_data: string }> = [];
+  if (safePage > 1) buttons.push({ text: `< Prev ${PER_PAGE}`, callback_data: `mispriced_page:${safePage - 1}` });
+  if (safePage < totalPages) buttons.push({ text: `Next ${PER_PAGE} >`, callback_data: `mispriced_page:${safePage + 1}` });
+
+  await sendLongMessage(chatId, msg, "Markdown");
+  if (buttons.length > 0) {
+    await sendMessage(chatId, `📄 Page ${safePage}/${totalPages}`, "Markdown", { inline_keyboard: [buttons] });
+  }
+}
+
+// ==================== HIGH CONVICTION HANDLER ====================
+
+async function handleHighConv(chatId: string, page = 1) {
+  const today = getEasternDate();
+  const PER_PAGE = 5;
+
+  // Fetch mispriced lines + engine picks in parallel
+  const [mispricedRes, riskRes, propV2Res] = await Promise.all([
+    supabase.from('mispriced_lines')
+      .select('player_name, prop_type, signal, edge_pct, confidence_tier, book_line, player_avg_l10, sport')
+      .eq('analysis_date', today),
+    supabase.from('nba_risk_engine_picks')
+      .select('player_name, prop_type, side, confidence_score')
+      .eq('game_date', today),
+    supabase.from('prop_engine_v2_picks')
+      .select('player_name, prop_type, side, ses_score')
+      .eq('game_date', today),
+  ]);
+
+  const mispricedLines = mispricedRes.data || [];
+  if (mispricedLines.length === 0) {
+    await sendMessage(chatId, "📭 No mispriced lines found today. Run /runmispriced first.");
+    return;
+  }
+
+  // Build engine map
+  interface EPick { player_name: string; prop_type: string; side: string; confidence?: number; engine: string }
+  const engineMap = new Map<string, EPick[]>();
+  const addPick = (p: EPick) => {
+    if (!p.player_name || !p.prop_type) return;
+    const key = `${p.player_name.toLowerCase()}|${normalizePropType(p.prop_type)}`;
+    if (!engineMap.has(key)) engineMap.set(key, []);
+    engineMap.get(key)!.push(p);
+  };
+
+  for (const p of riskRes.data || []) {
+    addPick({ player_name: p.player_name, prop_type: p.prop_type, side: p.side || 'over', confidence: p.confidence_score, engine: 'risk' });
+  }
+  for (const p of propV2Res.data || []) {
+    addPick({ player_name: p.player_name, prop_type: p.prop_type, side: p.side || 'over', confidence: p.ses_score, engine: 'propv2' });
+  }
+
+  // Cross-reference
+  const plays: Array<{
+    player_name: string; prop_type: string; signal: string; edge_pct: number;
+    confidence_tier: string; book_line: number; engines: EPick[];
+    sideAgreement: boolean; convictionScore: number;
+  }> = [];
+
+  for (const ml of mispricedLines) {
+    const key = `${ml.player_name.toLowerCase()}|${normalizePropType(ml.prop_type)}`;
+    const matches = engineMap.get(key);
+    if (!matches || matches.length === 0) continue;
+
+    const mispricedSide = ml.signal.toLowerCase();
+    const sideAgreement = matches.every(m => m.side.toLowerCase() === mispricedSide);
+
+    const edgeScore = Math.min(Math.abs(ml.edge_pct) / 10, 10);
+    const tierBonus = ml.confidence_tier === 'ELITE' ? 3 : ml.confidence_tier === 'HIGH' ? 2 : 1;
+    const engineCountBonus = matches.length * 2;
+    const agreementBonus = sideAgreement ? 3 : 0;
+    const sameDir = matches.filter(m => m.side.toLowerCase() === mispricedSide).length;
+    const dirBonus = sameDir * 1.5;
+    const riskConf = matches.find(m => m.engine === 'risk')?.confidence || 0;
+    const riskBonus = riskConf > 0 ? riskConf / 20 : 0;
+    const convictionScore = edgeScore + tierBonus + engineCountBonus + agreementBonus + dirBonus + riskBonus;
+
+    plays.push({
+      player_name: ml.player_name, prop_type: normalizePropType(ml.prop_type),
+      signal: ml.signal, edge_pct: ml.edge_pct, confidence_tier: ml.confidence_tier,
+      book_line: ml.book_line, engines: matches, sideAgreement, convictionScore,
+    });
+  }
+
+  plays.sort((a, b) => b.convictionScore - a.convictionScore);
+
+  if (plays.length === 0) {
+    await sendMessage(chatId, "📭 No cross-engine overlaps found today.\n\nMispriced lines exist but no engine picks match.");
+    return;
+  }
+
+  const total = plays.length;
+  const totalPages = Math.ceil(total / PER_PAGE);
+  const safePage = Math.max(1, Math.min(page, totalPages));
+  const startIdx = (safePage - 1) * PER_PAGE;
+  const endIdx = Math.min(startIdx + PER_PAGE, total);
+  const pagePlays = plays.slice(startIdx, endIdx);
+
+  const allAgree = plays.filter(p => p.sideAgreement).length;
+  const engineSet = new Set<string>();
+  plays.forEach(p => p.engines.forEach(e => engineSet.add(e.engine)));
+
+  const dateLabel = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' }).format(new Date());
+  let msg = `🎯 *HIGH CONVICTION PLAYS — ${dateLabel}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `Showing ${startIdx + 1}-${endIdx} of ${total} overlaps\n`;
+  msg += `All Agree: ${allAgree} | Engines: ${[...engineSet].join(', ')}\n\n`;
+
+  for (let i = 0; i < pagePlays.length; i++) {
+    const p = pagePlays[i];
+    const globalIdx = startIdx + i + 1;
+    const side = (p.signal || 'UNDER').toUpperCase();
+    const propLabel = p.prop_type.toUpperCase();
+    const edgeStr = p.edge_pct >= 0 ? `+${p.edge_pct.toFixed(0)}%` : `${p.edge_pct.toFixed(0)}%`;
+    const agreeEmoji = p.sideAgreement ? '✅' : '⚠️';
+
+    msg += `${globalIdx}. *${p.player_name}* — ${propLabel} ${side} ${p.book_line}\n`;
+    msg += `   Edge: ${edgeStr} (${p.confidence_tier}) ${agreeEmoji}\n`;
+
+    const engineDetails = p.engines.map(e => {
+      const eSide = e.side.toUpperCase();
+      const agrees = eSide === side ? '✓' : '✗';
+      return `${e.engine} ${agrees} ${eSide}`;
+    }).join(' | ');
+    msg += `   ${engineDetails} | Score: ${p.convictionScore.toFixed(1)}/30\n\n`;
+  }
+
+  // Pagination buttons
+  const buttons: Array<{ text: string; callback_data: string }> = [];
+  if (safePage > 1) buttons.push({ text: `< Prev ${PER_PAGE}`, callback_data: `highconv_page:${safePage - 1}` });
+  if (safePage < totalPages) buttons.push({ text: `Next ${PER_PAGE} >`, callback_data: `highconv_page:${safePage + 1}` });
+
+  await sendLongMessage(chatId, msg, "Markdown");
+  if (buttons.length > 0) {
+    await sendMessage(chatId, `📄 Page ${safePage}/${totalPages}`, "Markdown", { inline_keyboard: [buttons] });
+  }
+}
+
 // ==================== CALLBACK QUERY HANDLER ====================
 
 async function handleCallbackQuery(callbackQueryId: string, data: string, chatId: string) {
@@ -1402,7 +1613,6 @@ async function handleCallbackQuery(callbackQueryId: string, data: string, chatId
       msg += `${i + 1}. ${formatLegDisplay(leg)}\n\n`;
     });
     
-    // Summary line
     const avgScore = legs.reduce((s: number, l: any) => s + (l.composite_score || 0), 0) / (legs.length || 1);
     const avgHit = legs.reduce((s: number, l: any) => s + (l.hit_rate || 0), 0) / (legs.length || 1);
     if (avgScore > 0 || avgHit > 0) {
@@ -1415,6 +1625,14 @@ async function handleCallbackQuery(callbackQueryId: string, data: string, chatId
     const page = parseInt(data.split(':')[1], 10) || 1;
     await answerCallbackQuery(callbackQueryId, `Loading page ${page}...`);
     await handleParlays(chatId, page);
+  } else if (data.startsWith('mispriced_page:')) {
+    const page = parseInt(data.split(':')[1], 10) || 1;
+    await answerCallbackQuery(callbackQueryId, `Loading page ${page}...`);
+    await handleMispriced(chatId, page);
+  } else if (data.startsWith('highconv_page:')) {
+    const page = parseInt(data.split(':')[1], 10) || 1;
+    await answerCallbackQuery(callbackQueryId, `Loading page ${page}...`);
+    await handleHighConv(chatId, page);
   } else if (data.startsWith('fix:')) {
     await handleFixAction(callbackQueryId, data.slice(4), chatId);
   } else {
@@ -1951,8 +2169,10 @@ Just type a question in plain English\\! Examples:
   if (cmd === "/unsubscribe") return await handleUnsubscribe(chatId, args);
   if (cmd === "/export") { await handleExport(chatId, args); return null; }
   if (cmd === "/digest") return await handleWeeklySummary(chatId);
-  if (cmd === "/mispriced") return await handleTriggerFunction(chatId, 'detect-mispriced-lines', 'Mispriced Lines Scan');
-  if (cmd === "/highconv") return await handleTriggerFunction(chatId, 'high-conviction-analyzer', 'High-Conviction Analyzer');
+  if (cmd === "/mispriced") { await handleMispriced(chatId, 1); return null; }
+  if (cmd === "/highconv") { await handleHighConv(chatId, 1); return null; }
+  if (cmd === "/runmispriced") return await handleTriggerFunction(chatId, 'detect-mispriced-lines', 'Mispriced Lines Scan');
+  if (cmd === "/runhighconv") return await handleTriggerFunction(chatId, 'high-conviction-analyzer', 'High-Conviction Analyzer');
   if (cmd === "/forcegen") return await handleTriggerFunction(chatId, 'bot-force-fresh-parlays', 'Force Fresh Parlays');
 
   // Generic edge function trigger handler
