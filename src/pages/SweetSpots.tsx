@@ -202,7 +202,7 @@ export default function SweetSpots() {
   
   return (
     <AppShell noPadding>
-    <div className="pb-24">
+    <div className="pb-6">
       {/* Header */}
       <div className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b border-border">
         <div className="max-w-4xl mx-auto px-4 py-3">

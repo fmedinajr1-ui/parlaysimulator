@@ -228,7 +228,7 @@ export default function BestBets() {
 
   return (
     <AppShell>
-      <div className="container max-w-7xl mx-auto px-4 py-6 pb-24 space-y-6">
+      <div className="container max-w-7xl mx-auto px-4 py-6 pb-6 space-y-6">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold flex items-center gap-2">

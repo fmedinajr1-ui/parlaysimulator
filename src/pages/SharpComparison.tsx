@@ -25,7 +25,7 @@ const SharpComparison = () => {
   }, []);
 
   return (
-    <AppShell className="pt-safe pb-24">
+    <AppShell className="pt-safe pb-6">
       <MobileHeader
         title="Sharp Comparison"
         subtitle="Your picks vs the pros"

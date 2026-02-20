@@ -241,7 +241,7 @@ export default function PoolDetail() {
   const progress = (legs.length / pool.num_legs_required) * 100;
 
   return (
-    <div className="min-h-screen bg-background pb-24">
+    <div className="min-h-screen bg-background pb-6">
       {/* Header */}
       <div className="bg-gradient-to-b from-primary/20 to-background p-4 pt-8">
         <div className="flex items-center gap-3 mb-4">

@@ -4,7 +4,7 @@ import { Radio } from 'lucide-react';
 
 export default function LiveDashboard() {
   return (
-    <div className="min-h-screen bg-background pb-24">
+    <div className="min-h-screen bg-background pb-6">
       <MobileHeader
         title="Live Dashboard"
         subtitle="Track your pending parlays in real-time"

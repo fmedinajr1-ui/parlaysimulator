@@ -121,7 +121,7 @@ export default function ManualBuilder() {
   }, [props, isLoading, selectedLegs]);
 
   return (
-    <div className="min-h-screen bg-background pb-24">
+    <div className="min-h-screen bg-background pb-6">
       {/* Header */}
       <div className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b">
         <div className="container py-4">

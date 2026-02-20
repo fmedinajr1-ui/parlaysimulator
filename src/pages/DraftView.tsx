@@ -159,7 +159,7 @@ export default function DraftView() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background pb-24">
+      <div className="min-h-screen bg-background pb-6">
         <div className="container py-6 max-w-2xl">
           <Skeleton className="h-8 w-48 mb-4" />
           <Skeleton className="h-24 w-full mb-4" />
@@ -174,7 +174,7 @@ export default function DraftView() {
   }
 
   return (
-    <div className="min-h-screen bg-background pb-24">
+    <div className="min-h-screen bg-background pb-6">
       {/* Header */}
       <div className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b">
         <div className="container py-4 max-w-2xl">
