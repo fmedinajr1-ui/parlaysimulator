@@ -1,110 +1,75 @@
 
 
-## Cross-Reference Shooting Percentages to Find Mispriced NBA Lines
+## Add MLB Cross-Reference to Mispriced Line Detector
 
-### What This Does
-Every NBA prop in `unified_props` gets cross-referenced against a player's actual shooting/stat percentages (FG%, FT%, 3P%, OREB, DREB, TO, FGM/FGA, FTM/FTA) calculated from their game logs. By comparing historical averages to the current sportsbook line, we can flag "mispriced" lines where the book's number is significantly off from what the data says.
+### Overview
+Extend the existing `detect-mispriced-lines` function to also analyze MLB player props using the 24,000+ game logs already backfilled from last year. Since the MLB season just started, all historical data comes from the 2024 season (July-November in the database). The function will use this full-season data to calculate player averages and compare against current book lines.
 
-For example: if a player averages 2.8 threes on 38% shooting with 7.4 attempts per game, and the book sets the line at 1.5 threes, that's a strong OVER signal. Conversely, if they're shooting 28% from three with declining attempts, an Over 2.5 line is mispriced in the other direction.
-
----
-
-### Phase 1: Add Missing Stat Columns to `nba_player_game_logs`
-
-The screenshot shows: 3PM, FG%, FT%, TO, OREB, DREB, 3PA, 3P%, FGM, FGA, FTM, FTA.
-
-Currently missing from the table (need to add):
-- `field_goals_made` (integer)
-- `free_throws_made` (integer)
-- `free_throws_attempted` (integer)
-- `offensive_rebounds` (integer)
-- `defensive_rebounds` (integer)
-- `min` (text) -- raw minutes string for display
-
-Already present: `threes_made`, `threes_attempted`, `field_goals_attempted`, `turnovers`, `rebounds` (total), `points`, `assists`, `blocks`, `steals`
-
-**Database migration:** ALTER TABLE to add the 6 missing columns (all nullable integers, no breaking changes).
+Instead of NBA shooting context (FG%, 3P%, FT%), MLB will use baseball-specific context: **AVG, OBP, SLG, OPS** -- matching the stats shown in the screenshot.
 
 ---
 
-### Phase 2: Update ESPN Backfill to Capture All Stats
+### Database Change
 
-**File:** `supabase/functions/backfill-player-stats/index.ts`
-
-Update the ESPN parser's `getStatByLabel` calls to also extract:
-- `FGM` (from the `FG` label, split "5-10" to get made)
-- `FGA` (from the `FG` label, split to get attempted -- already done for `field_goals_attempted`)
-- `FTM` (from `FT` label, split for made)
-- `FTA` (from `FT` label, split for attempted)
-- `OREB` (ESPN provides this directly)
-- `DREB` (ESPN provides this directly)
-
-Update the upsert to include these new columns.
+**Add `sport` column to `mispriced_lines` table** so we can distinguish NBA vs MLB results:
+- Column: `sport` (text, default `'basketball_nba'`)
+- Backfill existing rows to `'basketball_nba'`
+- Update the unique constraint to include sport: `(player_name, prop_type, analysis_date, sport)`
 
 ---
 
-### Phase 3: Build Mispriced Line Detector Edge Function
+### Code Changes (1 file)
 
-**New file:** `supabase/functions/detect-mispriced-lines/index.ts`
+**File: `supabase/functions/detect-mispriced-lines/index.ts`**
 
-Logic:
-1. Pull all active NBA props from `unified_props` for today
-2. For each player, fetch their last 10-20 games from `nba_player_game_logs`
-3. Calculate per-game averages and shooting percentages:
+Add MLB support alongside the existing NBA logic:
 
-```text
-Stat          | How Calculated
---------------+------------------------------------------
-FG%           | SUM(fgm) / SUM(fga)
-FT%           | SUM(ftm) / SUM(fta)
-3P%           | SUM(threes_made) / SUM(threes_attempted)
-Avg 3PM       | AVG(threes_made)
-Avg Points    | AVG(points)
-Avg Rebounds   | AVG(rebounds)
-Avg OREB      | AVG(offensive_rebounds)
-Avg DREB      | AVG(defensive_rebounds)
-Avg Assists   | AVG(assists)
-Avg TO        | AVG(turnovers)
-```
+1. **New MLB prop-to-stat mapping:**
+   - `batter_hits` -> `hits`
+   - `batter_rbis` -> `rbis`
+   - `batter_runs_scored` -> `runs`
+   - `batter_total_bases` -> `total_bases`
+   - `batter_home_runs` -> `home_runs`
+   - `batter_stolen_bases` -> `stolen_bases`
+   - `pitcher_strikeouts` -> `pitcher_strikeouts`
+   - `pitcher_outs` -> (skip for now, not in game logs)
 
-4. Compare each average to the sportsbook line to compute an **edge percentage**:
+2. **New `calcBaseballContext(logs)` function** computing from raw game log data:
 
-```text
-edge = ((player_avg - line) / line) * 100
-```
+| Stat | Formula |
+|------|---------|
+| AVG  | total hits / total at_bats |
+| OBP  | (hits + walks) / (at_bats + walks) |
+| SLG  | total_bases / at_bats |
+| OPS  | OBP + SLG |
+| Avg Hits | avg hits per game |
+| Avg RBIs | avg rbis per game |
+| Avg Total Bases | avg total_bases per game |
 
-5. Flag as "mispriced" when:
-   - Edge > +15% (strong OVER signal)
-   - Edge < -15% (strong UNDER signal)
-   - Shooting trend diverges (L5 avg vs L20 avg shows momentum)
+3. **MLB analysis block** (runs after NBA block):
+   - Pulls all `baseball_mlb` props from `unified_props`
+   - Fetches player logs from `mlb_player_game_logs` (using ALL available data from last year, not just L20 -- since we're cross-referencing a full season)
+   - For MLB, use L20 and full-season averages (we have 50-100+ games per player from 2024)
+   - Calculates edge the same way: `edge = ((player_avg - line) / line) * 100`
+   - Tags results with `sport: 'baseball_mlb'`
 
-6. Persist results to a new `mispriced_lines` table with columns: player_name, prop_type, book_line, player_avg_l10, player_avg_l20, edge_pct, signal (OVER/UNDER), shooting_context (JSON with FG%, 3P%, FT% etc.), confidence_tier, analysis_date
+4. **Update delete/upsert logic** to include `sport` in the conflict key and delete filter.
 
----
-
-### Phase 4: Wire Into the Pipeline
-
-**File:** `supabase/functions/engine-cascade-runner/index.ts`
-
-Add `detect-mispriced-lines` as a step after `category-props-analyzer` in the cascade, so it runs automatically with each daily refresh.
+5. **Update cron history result** to include MLB counts alongside NBA counts.
 
 ---
 
-### Phase 5: Backfill Historical Shooting Stats
+### Key Design Decision: Full Season Data
 
-After deploying the updated backfill function, run it with `days_back: 60` to populate the new columns for recent games. This gives us enough data for L10/L20 calculations immediately.
+Since the MLB season just started and all our data is from last year, the function will use the entire backfill (~50-150 games per player) for calculating averages rather than just L10/L20. This gives us:
+- **L20 avg**: Most recent 20 games from last season
+- **Season avg**: Full 2024 season average (much more reliable for baseball)
+- The edge calculation will use the **season average** as the primary comparison since baseball stats stabilize over larger samples
 
 ---
 
-### Database Changes Summary
+### Files Summary
 
-1. **ALTER** `nba_player_game_logs`: add 6 columns (field_goals_made, free_throws_made, free_throws_attempted, offensive_rebounds, defensive_rebounds, min)
-2. **CREATE** `mispriced_lines` table: stores detected mispriced lines with edge calculations and shooting context
-
-### Files to Modify
-1. `supabase/functions/backfill-player-stats/index.ts` -- capture all shooting stats from ESPN
-2. `supabase/functions/engine-cascade-runner/index.ts` -- add new step
-
-### Files to Create
-1. `supabase/functions/detect-mispriced-lines/index.ts` -- core mispricing detection logic
+- **1 migration**: Add `sport` column to `mispriced_lines`, update unique constraint
+- **1 file modified**: `supabase/functions/detect-mispriced-lines/index.ts` -- add MLB prop mapping, baseball context calculator, and MLB analysis block
 
