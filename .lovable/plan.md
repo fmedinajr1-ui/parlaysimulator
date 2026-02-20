@@ -1,43 +1,28 @@
 
 
-## Add Per-Prop-Type Breakdown to Settlement Report
+## Lower Coherence Score Thresholds
 
-### What it does
-Adds a new section to the Telegram settlement report that summarizes hit/miss rates by prop type (e.g., `3PT: 2/8 hit | REB: 4/5 hit`), making it easy to spot which stat categories are dragging down performance at a glance.
+### Change
+Reduce the minimum coherence score gates in `bot-generate-daily-parlays` so parlays can still generate on thin slates (1-2 games) while maintaining a baseline quality standard.
 
-### Where it appears
-In the daily settlement Telegram message, after the "TOP BUSTERS" section:
+**Current thresholds:**
+- Execution tier: 85
+- All other tiers: 75
 
-```text
---- LEG BREAKDOWN ---
-Parlay #1 (Execution) - LOST
-  [hit]  Jalen Brunson O24.5 PTS (actual: 28)
-  [miss] Josh Hart O2.5 3PT (actual: 1)
-  ...
-
---- TOP BUSTERS ---
-Josh Hart O2.5 3PT: missed in 3 parlays (actual: 1)
-...
-
---- PROP TYPE BREAKDOWN ---
-PTS: 5/6 hit (83%)
-REB: 3/4 hit (75%)
-AST: 2/3 hit (67%)
-3PT: 1/5 hit (20%)  <-- worst
-```
+**New thresholds:**
+- Execution tier: 70
+- All other tiers: 60
 
 ### Technical Details
 
-**File:** `supabase/functions/bot-send-telegram/index.ts`
+**File:** `supabase/functions/bot-generate-daily-parlays/index.ts`
 
-**Change location:** Inside `formatSettlement()`, after the TOP BUSTERS block (around line 304), before the function returns.
+Two lines change (around lines 4601-4606):
 
-**Logic:**
-1. Iterate all legs across all `parlayDetails`
-2. Aggregate hits and total counts per `prop_type` using the existing `propLabels` map
-3. Sort by hit rate ascending (worst first) so problem categories jump out
-4. Append a `--- PROP TYPE BREAKDOWN ---` section with one line per prop type: `{LABEL}: {hits}/{total} hit ({pct}%)`
-5. Skip prop types with 0 legs
+1. Line 4601: `coherence < 85` becomes `coherence < 70`
+2. Line 4605: `coherence < 75` becomes `coherence < 60`
 
-No other files need to change -- the `parlayDetails` data already contains all necessary fields (`prop_type`, `outcome`) from the settlement function.
+Log messages will be updated to reflect the new thresholds.
+
+No other files or schema changes needed.
 
