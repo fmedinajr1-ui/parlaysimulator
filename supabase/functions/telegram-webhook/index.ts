@@ -467,6 +467,7 @@ async function handleStart(chatId: string) {
 
 *Actions:*
 /generate /settle /force-settle [date]
+/mispriced /highconv /forcegen
 
 *Analytics:*
 /roi /streaks /compare /sharp /avoid /backtest [strategy]
@@ -1950,6 +1951,34 @@ Just type a question in plain English\\! Examples:
   if (cmd === "/unsubscribe") return await handleUnsubscribe(chatId, args);
   if (cmd === "/export") { await handleExport(chatId, args); return null; }
   if (cmd === "/digest") return await handleWeeklySummary(chatId);
+  if (cmd === "/mispriced") return await handleTriggerFunction(chatId, 'detect-mispriced-lines', 'Mispriced Lines Scan');
+  if (cmd === "/highconv") return await handleTriggerFunction(chatId, 'high-conviction-analyzer', 'High-Conviction Analyzer');
+  if (cmd === "/forcegen") return await handleTriggerFunction(chatId, 'bot-force-fresh-parlays', 'Force Fresh Parlays');
+
+  // Generic edge function trigger handler
+  async function handleTriggerFunction(cid: string, fnName: string, label: string): Promise<string> {
+    await logActivity(`telegram_${fnName}`, `Admin triggered ${label}`, { chatId: cid });
+    await sendMessage(cid, `⏳ Running *${label}*...`, "Markdown");
+    try {
+      const resp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/${fnName}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({}),
+      });
+      if (!resp.ok) {
+        const errText = await resp.text();
+        return `❌ *${label}* failed (${resp.status}):\n${errText.slice(0, 200)}`;
+      }
+      const data = await resp.json();
+      const summary = JSON.stringify(data).slice(0, 300);
+      return `✅ *${label}* complete!\n\n\`${summary}\``;
+    } catch (err) {
+      return `❌ *${label}* error: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
 
   // Natural language fallback (admin only)
   await saveConversation(chatId, "user", text);
