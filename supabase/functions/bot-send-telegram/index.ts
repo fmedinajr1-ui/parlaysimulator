@@ -28,6 +28,7 @@ type NotificationType =
   | 'diagnostic_report'
   | 'integrity_alert'
   | 'preflight_alert'
+  | 'daily_winners'
   | 'test';
 
 interface NotificationData {
@@ -60,6 +61,8 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return formatIntegrityAlert(data, dateStr);
     case 'preflight_alert':
       return formatPreflightAlert(data, dateStr);
+    case 'daily_winners':
+      return formatDailyWinnersReport(data, dateStr);
     case 'test':
       return `🤖 *ParlayIQ Bot Test*\n\nConnection successful! You'll receive notifications here.\n\n_Sent ${dateStr}_`;
     default:
@@ -491,6 +494,51 @@ function formatPreflightAlert(data: Record<string, any>, dateStr: string): strin
   return msg;
 }
 
+function formatDailyWinnersReport(data: Record<string, any>, dateStr: string): string {
+  const { winners, totalHits, totalPicks, hitRate, propBreakdown, date } = data;
+  const displayDate = date || dateStr;
+
+  const propIcons: Record<string, string> = {
+    POINTS: '🏀', PTS: '🏀', REBOUNDS: '💪', REB: '💪',
+    ASSISTS: '🎯', AST: '🎯', THREES: '🔥', THREE_POINTERS: '🔥', '3PT': '🔥',
+    STEALS: '🖐️', STL: '🖐️', BLOCKS: '🛡️', BLK: '🛡️', PRA: '⭐',
+  };
+  const propLabels: Record<string, string> = {
+    POINTS: 'PTS', PTS: 'PTS', REBOUNDS: 'REB', REB: 'REB',
+    ASSISTS: 'AST', AST: 'AST', THREES: '3PT', THREE_POINTERS: '3PT', '3PT': '3PT',
+    STEALS: 'STL', STL: 'STL', BLOCKS: 'BLK', BLK: 'BLK', PRA: 'PRA',
+  };
+
+  let msg = `🏆 DAILY WINNERS REPORT — ${displayDate}\n`;
+  msg += `================================\n\n`;
+  msg += `✅ ${totalHits}/${totalPicks} Picks Hit (${hitRate}%)\n\n`;
+
+  if (winners && winners.length > 0) {
+    msg += `Top Hits:\n`;
+    for (const w of winners.slice(0, 15)) {
+      const prop = propLabels[w.propType?.toUpperCase()] || w.propType;
+      const icon = propIcons[w.propType?.toUpperCase()] || '📊';
+      const side = (w.side || 'over').charAt(0).toUpperCase();
+      msg += `  ✅ ${w.playerName} ${side}${w.line} ${icon}${prop} (actual: ${w.actualValue})\n`;
+    }
+    if (winners.length > 15) {
+      msg += `  ... +${winners.length - 15} more winners\n`;
+    }
+  }
+
+  if (propBreakdown && Object.keys(propBreakdown).length > 0) {
+    msg += `\nProp Breakdown:\n`;
+    const sorted = Object.entries(propBreakdown).sort((a: any, b: any) => b[1].rate - a[1].rate);
+    for (const [prop, stats] of sorted) {
+      const icon = propIcons[prop] || '📊';
+      const label = propLabels[prop] || prop;
+      msg += `  ${icon} ${label}: ${(stats as any).hits}/${(stats as any).total} (${(stats as any).rate}%)\n`;
+    }
+  }
+
+  return msg;
+}
+
 function formatOdds(odds?: number): string {
   if (!odds) return '-110';
   return odds > 0 ? `+${odds}` : `${odds}`;
@@ -518,7 +566,7 @@ Deno.serve(async (req) => {
     console.log(`[Telegram] Sending ${type} notification`);
 
     // Check notification preferences (skip for test, integrity_alert, preflight_alert — these always fire)
-    if (type !== 'test' && type !== 'integrity_alert' && type !== 'preflight_alert') {
+    if (type !== 'test' && type !== 'integrity_alert' && type !== 'preflight_alert' && type !== 'daily_winners') {
       const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
       const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
       const supabase = createClient(supabaseUrl, supabaseKey);

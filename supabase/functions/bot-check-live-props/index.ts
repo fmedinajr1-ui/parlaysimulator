@@ -109,7 +109,11 @@ Deno.serve(async (req) => {
       const actualValue = (log as any)[statKey];
       if (actualValue === null || actualValue === undefined) continue;
 
-      const line = pick.recommended_line || 0;
+      const line = pick.recommended_line;
+      if (line === null || line === undefined) {
+        console.log(`[LiveProps] Skipping ${pick.player_name} — no line value`);
+        continue;
+      }
       const side = (pick.recommended_side || 'over').toLowerCase();
       const hit = (side === 'over' && actualValue > line) || (side === 'under' && actualValue < line);
       const emoji = hit ? '✅' : '❌';

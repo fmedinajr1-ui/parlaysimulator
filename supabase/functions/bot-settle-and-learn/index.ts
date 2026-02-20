@@ -1210,6 +1210,35 @@ Deno.serve(async (req) => {
         }),
       });
       console.log('[Bot Settle] Telegram notification sent');
+
+      // Send daily winners report
+      try {
+        const winnersResp = await fetch(`${supabaseUrl}/functions/v1/bot-daily-winners`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${supabaseKey}`,
+          },
+          body: JSON.stringify({}),
+        });
+        const winnersData = await winnersResp.json();
+        if (winnersData?.winners?.length > 0) {
+          await fetch(`${supabaseUrl}/functions/v1/bot-send-telegram`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${supabaseKey}`,
+            },
+            body: JSON.stringify({
+              type: 'daily_winners',
+              data: winnersData,
+            }),
+          });
+          console.log('[Bot Settle] Daily winners Telegram report sent');
+        }
+      } catch (winnersErr) {
+        console.error('[Bot Settle] Daily winners report failed:', winnersErr);
+      }
     } catch (telegramError) {
       console.error('[Bot Settle] Telegram notification failed:', telegramError);
     }
