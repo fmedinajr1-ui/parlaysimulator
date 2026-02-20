@@ -428,3 +428,6 @@ verify_jwt = false
 
 [functions.detect-mispriced-lines]
 verify_jwt = false
+
+[functions.bot-force-fresh-parlays]
+verify_jwt = false

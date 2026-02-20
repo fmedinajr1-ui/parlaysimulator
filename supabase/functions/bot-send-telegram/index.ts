@@ -31,6 +31,7 @@ type NotificationType =
   | 'daily_winners'
   | 'mispriced_lines_report'
   | 'high_conviction_report'
+  | 'fresh_slate_report'
   | 'test';
 
 interface NotificationData {
@@ -69,6 +70,8 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return formatMispricedLinesReport(data, dateStr);
     case 'high_conviction_report':
       return formatHighConvictionReport(data, dateStr);
+    case 'fresh_slate_report':
+      return formatFreshSlateReport(data, dateStr);
     case 'test':
       return `🤖 *ParlayIQ Bot Test*\n\nConnection successful! You'll receive notifications here.\n\n_Sent ${dateStr}_`;
     default:
@@ -627,7 +630,53 @@ function formatHighConvictionReport(data: Record<string, any>, dateStr: string):
 
   if (plays.length > 15) {
     msg += `... +${plays.length - 15} more plays\n`;
+}
+
+function formatFreshSlateReport(data: Record<string, any>, dateStr: string): string {
+  const { parlays, totalParlays, voidedCount, totalPicks } = data;
+
+  let msg = `🔥 FRESH CONVICTION SLATE — ${dateStr}\n`;
+  msg += `==================================\n\n`;
+  
+  if (voidedCount > 0) {
+    msg += `🗑️ Cleared ${voidedCount} old pending parlays\n`;
   }
+  msg += `✅ ${totalParlays} high-conviction 3-leg parlays\n`;
+  msg += `📊 Built from ${totalPicks} ELITE/HIGH mispriced picks\n\n`;
+
+  const propLabels: Record<string, string> = {
+    player_points: 'PTS', player_rebounds: 'REB', player_assists: 'AST',
+    player_threes: '3PT', player_blocks: 'BLK', player_steals: 'STL',
+    player_turnovers: 'TO', player_points_rebounds_assists: 'PRA',
+    batter_hits: 'Hits', batter_rbis: 'RBI', batter_total_bases: 'TB',
+    pitcher_strikeouts: 'K',
+  };
+
+  if (parlays && Array.isArray(parlays)) {
+    for (const p of parlays) {
+      const scoreEmoji = p.avgScore >= 80 ? '🔥' : p.avgScore >= 60 ? '✨' : '📊';
+      msg += `${scoreEmoji} PARLAY ${p.index} (Score: ${p.avgScore.toFixed(0)}/100)\n`;
+      if (p.riskConfirmedCount > 0) {
+        msg += `  ✅ ${p.riskConfirmedCount}/3 risk-engine confirmed\n`;
+      }
+      
+      for (const leg of (p.legs || [])) {
+        const side = leg.signal === 'OVER' ? 'O' : 'U';
+        const prop = propLabels[leg.prop_type] || leg.prop_type.replace(/^(player_|batter_|pitcher_)/, '').toUpperCase();
+        const edgeSign = leg.edge_pct > 0 ? '+' : '';
+        const tierEmoji = leg.confidence_tier === 'ELITE' ? '🏆' : '🔥';
+        const riskTag = leg.risk_confirmed ? ' ✅' : '';
+        msg += `  📈 ${leg.player_name} ${prop} ${side} ${leg.book_line} | Edge: ${edgeSign}${Math.round(leg.edge_pct)}% ${tierEmoji}${riskTag}\n`;
+      }
+      msg += `\n`;
+    }
+  }
+
+  msg += `Strategy: force_mispriced_conviction\n`;
+  msg += `Focus: 3-leg only | UNDER bias | ELITE/HIGH edges`;
+
+  return msg;
+}
 
   return msg;
 }
@@ -692,7 +741,7 @@ Deno.serve(async (req) => {
     console.log(`[Telegram] Sending ${type} notification`);
 
     // Check notification preferences (skip for test, integrity_alert, preflight_alert — these always fire)
-    if (type !== 'test' && type !== 'integrity_alert' && type !== 'preflight_alert' && type !== 'daily_winners' && type !== 'mispriced_lines_report' && type !== 'high_conviction_report') {
+    if (type !== 'test' && type !== 'integrity_alert' && type !== 'preflight_alert' && type !== 'daily_winners' && type !== 'mispriced_lines_report' && type !== 'high_conviction_report' && type !== 'fresh_slate_report') {
       const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
       const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
       const supabase = createClient(supabaseUrl, supabaseKey);
