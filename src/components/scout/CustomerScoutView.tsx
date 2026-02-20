@@ -69,6 +69,7 @@ export function CustomerScoutView({ gameContext, isDemo = false }: CustomerScout
         homeTeam={homeTeam}
         awayTeam={awayTeam}
         eventId={gameContext.eventId}
+        espnEventId={gameContext.espnEventId}
       />
 
       {/* Slip Scanner */}

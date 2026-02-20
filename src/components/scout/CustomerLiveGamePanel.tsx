@@ -19,6 +19,7 @@ interface CustomerLiveGamePanelProps {
   homeTeam: string;
   awayTeam: string;
   eventId: string;
+  espnEventId?: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -320,13 +321,24 @@ export function CustomerLiveGamePanel({
   homeTeam,
   awayTeam,
   eventId,
+  espnEventId,
 }: CustomerLiveGamePanelProps) {
-  const { games, isLoading: scoresLoading } = useLiveScores({ eventId });
+  // Try ESPN event ID first (live_game_scores uses ESPN IDs), fall back to odds API eventId
+  const primaryEventId = espnEventId || eventId;
+  const { games: eventGames, isLoading: scoresLoading } = useLiveScores({ eventId: primaryEventId });
+  // Also fetch all games so we can match by team name as fallback
+  const { games: allGames } = useLiveScores({});
   const { games: feedGames, isLoading: feedLoading } = useUnifiedLiveFeed({
-    eventIds: [eventId],
+    eventIds: [primaryEventId],
   });
 
-  const game = games[0];
+  // Try event ID match first, then fall back to team name matching
+  const game = eventGames[0] ?? allGames.find(g => {
+    const h = g.homeTeam.toLowerCase();
+    const a = g.awayTeam.toLowerCase();
+    return (h.includes(homeTeam.toLowerCase().split(' ').pop()!) || homeTeam.toLowerCase().includes(h.split(' ').pop()!)) &&
+           (a.includes(awayTeam.toLowerCase().split(' ').pop()!) || awayTeam.toLowerCase().includes(a.split(' ').pop()!));
+  });
   const feedGame = feedGames[0];
 
   // Extract recent plays from feed game players or top-level
