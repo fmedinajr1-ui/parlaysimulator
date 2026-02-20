@@ -121,22 +121,43 @@ async function formatTieredParlaysGenerated(data: Record<string, any>, dateStr: 
   let msg = `📊 *TIERED PARLAY GENERATION COMPLETE*\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
   
-  // If totalCount is 0, look up actual parlays for today
+  // If all tier counts are 0, look up actual parlays and classify them
   let displayCount = totalCount || 0;
+  let displayExploration = exploration || 0;
+  let displayValidation = validation || 0;
+  let displayExecution = execution || 0;
   let countLabel = 'Generated';
-  if (displayCount === 0) {
+
+  if (displayCount === 0 || (displayExploration === 0 && displayValidation === 0 && displayExecution === 0)) {
     try {
       const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
       const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
       const sb = createClient(supabaseUrl, supabaseKey);
       const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
-      const { count } = await sb
+      const { data: todayParlays } = await sb
         .from('bot_daily_parlays')
-        .select('*', { count: 'exact', head: true })
+        .select('strategy_name')
         .eq('parlay_date', today);
-      if (count && count > 0) {
-        displayCount = count;
+      if (todayParlays && todayParlays.length > 0) {
+        displayCount = todayParlays.length;
         countLabel = 'Active';
+        // Classify by strategy name
+        displayExploration = 0;
+        displayValidation = 0;
+        displayExecution = 0;
+        for (const p of todayParlays) {
+          const name = (p.strategy_name || '').toLowerCase();
+          if (name.includes('validation') || name.includes('validated') || name.includes('proving')) {
+            displayValidation++;
+          } else if (name.includes('execution') || name.includes('elite') || name.includes('cash_lock') ||
+              name.includes('boosted_cash') || name.includes('golden_lock') || name.includes('hybrid_exec') ||
+              name.includes('team_exec') || name.includes('mispriced') || name.includes('conviction') ||
+              name.startsWith('force_')) {
+            displayExecution++;
+          } else {
+            displayExploration++;
+          }
+        }
       }
     } catch (e) {
       console.error('[Telegram] Failed to lookup existing parlays:', e);
@@ -145,9 +166,9 @@ async function formatTieredParlaysGenerated(data: Record<string, any>, dateStr: 
   
   msg += `✅ *${displayCount} parlays ${countLabel.toLowerCase()}* for ${dateStr}\n\n`;
   
-  msg += `🔬 Exploration: ${exploration || 0} parlays\n`;
-  msg += `✅ Validation: ${validation || 0} parlays\n`;
-  msg += `🎯 Execution: ${execution || 0} parlays\n\n`;
+  msg += `🔬 Exploration: ${displayExploration} parlays\n`;
+  msg += `✅ Validation: ${displayValidation} parlays\n`;
+  msg += `🎯 Execution: ${displayExecution} parlays\n\n`;
   
   if (poolSize) {
     msg += `📍 Pool Size: ${poolSize} picks\n\n`;

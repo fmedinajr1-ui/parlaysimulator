@@ -189,31 +189,19 @@ async function getParlays() {
     return { count: 0, parlays: [], distribution: {} };
   }
 
-  const latestCreatedAt = parlays[0].created_at;
-  const latestBatchTime = new Date(latestCreatedAt).getTime();
-  const batchWindow = 5 * 60 * 1000;
-  const latestBatch = parlays.filter(
-    (p) => Math.abs(new Date(p.created_at).getTime() - latestBatchTime) < batchWindow
-  );
+  // Show ALL of today's parlays (no batch filter)
+  const allToday = parlays;
 
   const distribution: Record<number, number> = {};
-  latestBatch.forEach((p) => {
+  allToday.forEach((p) => {
     const legCount = p.leg_count || 3;
     distribution[legCount] = (distribution[legCount] || 0) + 1;
   });
 
-  const tierGroups: Record<string, typeof latestBatch> = { exploration: [], validation: [], execution: [] };
-  latestBatch.forEach((p) => {
-    const name = (p.strategy_name || '').toLowerCase();
-    if (name.includes('exploration') || name.includes('explore') || name.includes('cross_sport') || name.includes('team_') || name.includes('props_') || name.includes('tennis_') || name.includes('nhl_') || name.includes('max_diversity')) {
-      tierGroups.exploration.push(p);
-    } else if (name.includes('validation') || name.includes('validated')) {
-      tierGroups.validation.push(p);
-    } else if (name.includes('execution') || name.includes('elite')) {
-      tierGroups.execution.push(p);
-    } else {
-      tierGroups.exploration.push(p);
-    }
+  const tierGroups: Record<string, typeof allToday> = { exploration: [], validation: [], execution: [] };
+  allToday.forEach((p) => {
+    const tier = classifyTier(p.strategy_name);
+    tierGroups[tier].push(p);
   });
 
   const tierSummary: Record<string, { count: number; topParlays: Array<{ id: string; strategy: string; legs: number; odds: number; outcome: string | null }> }> = {};
@@ -232,8 +220,8 @@ async function getParlays() {
   }
 
   return {
-    count: latestBatch.length,
-    parlays: latestBatch.slice(0, 5).map((p) => ({
+    count: allToday.length,
+    parlays: allToday.slice(0, 5).map((p) => ({
       id: p.id,
       strategy: p.strategy_name,
       legs: p.leg_count,
@@ -243,6 +231,21 @@ async function getParlays() {
     distribution,
     tierSummary,
   };
+}
+
+// Shared tier classification helper
+function classifyTier(strategyName: string | null): string {
+  const name = (strategyName || '').toLowerCase();
+  if (name.includes('validation') || name.includes('validated') || name.includes('proving')) {
+    return 'validation';
+  }
+  if (name.includes('execution') || name.includes('elite') || name.includes('cash_lock') ||
+      name.includes('boosted_cash') || name.includes('golden_lock') || name.includes('hybrid_exec') ||
+      name.includes('team_exec') || name.includes('mispriced') || name.includes('conviction') ||
+      name.startsWith('force_')) {
+    return 'execution';
+  }
+  return 'exploration';
 }
 
 async function getPerformance() {
@@ -518,12 +521,13 @@ ${
 }`;
 }
 
-async function handleParlays(chatId: string) {
-  await logActivity("telegram_parlays", `User requested parlays`, { chatId });
+async function handleParlays(chatId: string, page = 1) {
+  await logActivity("telegram_parlays", `User requested parlays page ${page}`, { chatId });
 
   const today = getEasternDate();
+  const PARLAYS_PER_PAGE = 5;
   
-  // Fetch full parlay data to show legs inline
+  // Fetch ALL of today's parlays (no batch filter)
   const { data: allParlays } = await supabase
     .from("bot_daily_parlays")
     .select("*")
@@ -534,69 +538,93 @@ async function handleParlays(chatId: string) {
     return "📭 No parlays generated today yet.\n\nUse /generate to create new parlays!";
   }
 
-  // Get latest batch
-  const latestBatchTime = new Date(allParlays[0].created_at).getTime();
-  const batchWindow = 5 * 60 * 1000;
-  const latestBatch = allParlays.filter(
-    (p) => Math.abs(new Date(p.created_at).getTime() - latestBatchTime) < batchWindow
-  );
-
-  // Group by tier
-  const tierGroups: Record<string, typeof latestBatch> = { exploration: [], validation: [], execution: [] };
-  latestBatch.forEach((p) => {
-    const name = (p.strategy_name || '').toLowerCase();
-    if (name.includes('validation') || name.includes('validated') || name.includes('proving')) {
-      tierGroups.validation.push(p);
-    } else if (name.includes('execution') || name.includes('elite') || name.includes('cash_lock') || name.includes('boosted_cash') || name.includes('golden_lock') || name.includes('hybrid_exec') || name.includes('team_exec')) {
-      tierGroups.execution.push(p);
-    } else {
-      tierGroups.exploration.push(p);
-    }
+  // Group by tier using shared classifier
+  const tierGroups: Record<string, typeof allParlays> = { execution: [], validation: [], exploration: [] };
+  allParlays.forEach((p) => {
+    const tier = classifyTier(p.strategy_name);
+    tierGroups[tier].push(p);
   });
+
+  // Flatten in tier order for pagination
+  const orderedParlays = [
+    ...tierGroups.execution,
+    ...tierGroups.validation,
+    ...tierGroups.exploration,
+  ];
+
+  const totalParlays = orderedParlays.length;
+  const totalPages = Math.ceil(totalParlays / PARLAYS_PER_PAGE);
+  const safePage = Math.max(1, Math.min(page, totalPages));
+  const startIdx = (safePage - 1) * PARLAYS_PER_PAGE;
+  const endIdx = Math.min(startIdx + PARLAYS_PER_PAGE, totalParlays);
+  const pageParlays = orderedParlays.slice(startIdx, endIdx);
 
   const tierLabels: Record<string, string> = {
     exploration: '🔬 Exploration',
     validation: '✅ Validation',
     execution: '💰 Execution',
   };
-  let message = `🎯🔥 *TODAY'S PARLAYS* 🔥🎯\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-  for (const tier of ['execution', 'validation', 'exploration']) {
-    const group = tierGroups[tier];
-    if (!group || group.length === 0) continue;
+  // Header with counts
+  const tierCounts = Object.entries(tierGroups)
+    .filter(([_, g]) => g.length > 0)
+    .map(([t, g]) => `${tierLabels[t]}: ${g.length}`)
+    .join(' | ');
 
-    const tierStake = group[0]?.simulated_stake ? `$${group[0].simulated_stake} stake` : 'simulated';
-    message += `${tierLabels[tier]} (${group.length}) — _${tierStake}_\n\n`;
+  let message = `🎯🔥 *TODAY'S PARLAYS* 🔥🎯\n`;
+  message += `━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  message += `Showing ${startIdx + 1}-${endIdx} of ${totalParlays} parlays\n`;
+  message += `${tierCounts}\n\n`;
 
-    // Show ALL parlays per tier with all legs inline
-    for (let i = 0; i < group.length; i++) {
-      const p = group[i];
-      const outcomeEmoji = p.outcome === 'won' ? '✅' : p.outcome === 'lost' ? '❌' : '⏳';
-      const oddsStr = p.expected_odds > 0 ? `+${p.expected_odds}` : `${p.expected_odds}`;
-      message += `  ${i + 1}. 🎲 (${p.leg_count}-leg) ${oddsStr} ${outcomeEmoji}\n`;
-      
-      const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs || '[]');
-      for (const leg of legs) {
-        const legText = formatLegDisplay(leg);
-        const legLines = legText.split('\n');
-        // Show action line + matchup line if present
-        message += `     ${legLines[0]}\n`;
-        if (legLines.length > 1 && legLines[1].trim()) {
-          message += `     ${legLines[1]}\n`;
-        }
-      }
-      
-      // Avg score & hit rate
-      const avgScore = legs.reduce((s: number, l: any) => s + (l.composite_score || 0), 0) / (legs.length || 1);
-      const avgHit = legs.reduce((s: number, l: any) => s + (l.hit_rate || 0), 0) / (legs.length || 1);
-      if (avgScore > 0 || avgHit > 0) {
-        message += `     🎯${Math.round(avgScore)} | 💎${Math.round(avgHit)}%\n`;
-      }
-      message += `\n`;
+  // Track which tier label we last printed
+  let lastTier = '';
+  for (let i = 0; i < pageParlays.length; i++) {
+    const p = pageParlays[i];
+    const tier = classifyTier(p.strategy_name);
+    if (tier !== lastTier) {
+      const tierStake = p.simulated_stake ? `$${p.simulated_stake} stake` : 'simulated';
+      message += `${tierLabels[tier]} — _${tierStake}_\n\n`;
+      lastTier = tier;
     }
+
+    const globalIdx = startIdx + i + 1;
+    const outcomeEmoji = p.outcome === 'won' ? '✅' : p.outcome === 'lost' ? '❌' : '⏳';
+    const oddsStr = p.expected_odds > 0 ? `+${p.expected_odds}` : `${p.expected_odds}`;
+    message += `  ${globalIdx}. 🎲 (${p.leg_count}-leg) ${oddsStr} ${outcomeEmoji}\n`;
+    
+    const legs = Array.isArray(p.legs) ? p.legs : JSON.parse(p.legs || '[]');
+    for (const leg of legs) {
+      const legText = formatLegDisplay(leg);
+      const legLines = legText.split('\n');
+      message += `     ${legLines[0]}\n`;
+      if (legLines.length > 1 && legLines[1].trim()) {
+        message += `     ${legLines[1]}\n`;
+      }
+    }
+    
+    const avgScore = legs.reduce((s: number, l: any) => s + (l.composite_score || 0), 0) / (legs.length || 1);
+    const avgHit = legs.reduce((s: number, l: any) => s + (l.hit_rate || 0), 0) / (legs.length || 1);
+    if (avgScore > 0 || avgHit > 0) {
+      message += `     🎯${Math.round(avgScore)} | 💎${Math.round(avgHit)}%\n`;
+    }
+    message += `\n`;
   }
 
+  // Build pagination inline keyboard
+  const buttons: Array<{ text: string; callback_data: string }> = [];
+  if (safePage > 1) {
+    buttons.push({ text: `< Prev ${PARLAYS_PER_PAGE}`, callback_data: `parlays_page:${safePage - 1}` });
+  }
+  if (safePage < totalPages) {
+    buttons.push({ text: `Next ${PARLAYS_PER_PAGE} >`, callback_data: `parlays_page:${safePage + 1}` });
+  }
+
+  const replyMarkup = buttons.length > 0 ? { inline_keyboard: [buttons] } : undefined;
   await sendLongMessage(chatId, message, "Markdown");
+  // Send pagination buttons as a separate small message if needed
+  if (replyMarkup) {
+    await sendMessage(chatId, `📄 Page ${safePage}/${totalPages}`, "Markdown", replyMarkup);
+  }
   return null; // Already sent
 }
 
@@ -1382,6 +1410,10 @@ async function handleCallbackQuery(callbackQueryId: string, data: string, chatId
 
     await answerCallbackQuery(callbackQueryId);
     await sendLongMessage(chatId, msg);
+  } else if (data.startsWith('parlays_page:')) {
+    const page = parseInt(data.split(':')[1], 10) || 1;
+    await answerCallbackQuery(callbackQueryId, `Loading page ${page}...`);
+    await handleParlays(chatId, page);
   } else if (data.startsWith('fix:')) {
     await handleFixAction(callbackQueryId, data.slice(4), chatId);
   } else {
