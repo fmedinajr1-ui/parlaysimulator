@@ -30,6 +30,7 @@ type NotificationType =
   | 'preflight_alert'
   | 'daily_winners'
   | 'mispriced_lines_report'
+  | 'high_conviction_report'
   | 'test';
 
 interface NotificationData {
@@ -66,6 +67,8 @@ async function formatMessage(type: NotificationType, data: Record<string, any>):
       return formatDailyWinnersReport(data, dateStr);
     case 'mispriced_lines_report':
       return formatMispricedLinesReport(data, dateStr);
+    case 'high_conviction_report':
+      return formatHighConvictionReport(data, dateStr);
     case 'test':
       return `🤖 *ParlayIQ Bot Test*\n\nConnection successful! You'll receive notifications here.\n\n_Sent ${dateStr}_`;
     default:
@@ -578,6 +581,57 @@ function formatMispricedLinesReport(data: Record<string, any>, dateStr: string):
   return msg;
 }
 
+function formatHighConvictionReport(data: Record<string, any>, dateStr: string): string {
+  const { plays, stats } = data;
+  const total = stats?.total || 0;
+  const allAgree = stats?.allAgree || 0;
+
+  let msg = `🎯 HIGH CONVICTION PLAYS — ${dateStr}\n`;
+  msg += `================================\n\n`;
+  msg += `🔥 ${total} cross-engine overlaps found\n`;
+  msg += `✅ ${allAgree} with full side agreement\n`;
+
+  if (stats?.engineCounts) {
+    const engines = Object.entries(stats.engineCounts)
+      .map(([e, c]) => `${e}: ${c}`)
+      .join(' | ');
+    msg += `⚙️ Engines: ${engines}\n`;
+  }
+
+  if (!plays || plays.length === 0) {
+    msg += `\nNo cross-engine overlaps detected today.`;
+    return msg;
+  }
+
+  msg += `\n🏆 TOP PLAYS (by conviction score):\n\n`;
+
+  for (let i = 0; i < Math.min(plays.length, 15); i++) {
+    const p = plays[i];
+    const side = (p.signal || 'OVER').charAt(0);
+    const propLabel = formatPropLabel(p.displayPropType || p.prop_type);
+    const edgeSign = p.edge_pct > 0 ? '+' : '';
+    const tierEmoji = p.confidence_tier === 'ELITE' ? '🏆' : p.confidence_tier === 'HIGH' ? '🔥' : '📊';
+
+    msg += `${i + 1}. 🏀 ${p.player_name} — ${propLabel} ${side} ${p.current_line}\n`;
+    msg += `   📈 Edge: ${edgeSign}${Math.round(p.edge_pct)}% (${p.confidence_tier}) ${tierEmoji}\n`;
+
+    // Engine agreement details
+    const engineNames = (p.engines || []).map((e: any) => e.engine).join(' + ');
+    if (p.sideAgreement) {
+      msg += `   ✅ ${engineNames} agree ${p.signal}\n`;
+    } else {
+      msg += `   ⚠️ ${engineNames} (mixed sides)\n`;
+    }
+    msg += `   🎯 Score: ${p.convictionScore.toFixed(1)}/30\n\n`;
+  }
+
+  if (plays.length > 15) {
+    msg += `... +${plays.length - 15} more plays\n`;
+  }
+
+  return msg;
+}
+
 function formatPropLabel(pt: string): string {
   const labels: Record<string, string> = {
     player_points: 'PTS', player_rebounds: 'REB', player_assists: 'AST',
@@ -638,7 +692,7 @@ Deno.serve(async (req) => {
     console.log(`[Telegram] Sending ${type} notification`);
 
     // Check notification preferences (skip for test, integrity_alert, preflight_alert — these always fire)
-    if (type !== 'test' && type !== 'integrity_alert' && type !== 'preflight_alert' && type !== 'daily_winners' && type !== 'mispriced_lines_report') {
+    if (type !== 'test' && type !== 'integrity_alert' && type !== 'preflight_alert' && type !== 'daily_winners' && type !== 'mispriced_lines_report' && type !== 'high_conviction_report') {
       const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
       const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
       const supabase = createClient(supabaseUrl, supabaseKey);
