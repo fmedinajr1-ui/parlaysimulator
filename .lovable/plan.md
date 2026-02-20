@@ -1,74 +1,77 @@
 
 
-## Full Engine Refresh + High Conviction Telegram Report
+## Fresh High-Conviction Parlay Blast
 
-### Step 1: Run Risk Engine (Full Slate)
+### The Problem
 
-Invoke `nba-player-prop-risk-engine` with `{ action: 'analyze_slate', mode: 'full_slate' }` to populate today's risk engine picks, creating more potential overlaps with the 157 mispriced lines already detected.
+The bot is on a **7-day losing streak** (Feb 14-20). Today has 44 pending parlays but none use the new `mispriced_edge` strategy because player reuse caps blocked generation. The risk engine only returned 4 picks today (full_slate mode), limiting cross-engine overlap. We need to force-generate fresh, high-conviction parlays focused purely on the strongest statistical edges.
 
-### Step 2: Add High Conviction Report to Telegram Bot
+### What We'll Build
 
-**Modified file: `supabase/functions/bot-send-telegram/index.ts`**
+A **"Force Generate"** mode that:
+1. Clears today's pending parlays (they haven't settled yet)
+2. Generates fresh parlays using ONLY the highest-conviction picks (mispriced ELITE/HIGH + risk engine confirmed)
+3. Caps at 3-leg parlays exclusively (your best-performing format at 37.1% win rate)
+4. Sends the new slate to Telegram immediately
 
-1. Add `'high_conviction_report'` to the `NotificationType` union
-2. Create `formatHighConvictionReport(data, dateStr)` formatter:
+### Implementation
+
+**1. New edge function: `supabase/functions/bot-force-fresh-parlays/index.ts`**
+
+A focused generator that bypasses the main engine's complexity:
+
+- Queries `mispriced_lines` for today's ELITE + HIGH confidence picks (edge >= 50%)
+- Queries `nba_risk_engine_picks` for today's picks
+- Cross-references for overlaps (same player + same direction = highest conviction)
+- Builds 3-leg parlays using a simple greedy algorithm:
+  - Rule 1: Max 1 player per team
+  - Rule 2: No duplicate prop types in a parlay
+  - Rule 3: Prioritize UNDER plays (historically higher hit rate per your winning formula)
+  - Rule 4: Only picks with book_line > 0 (real lines)
+- Generates 5-8 parlays max (quality over quantity)
+- Inserts into `bot_daily_parlays` with strategy_name `force_mispriced_conviction`
+- Sends to Telegram via `bot-send-telegram` with a special "FRESH CONVICTION SLATE" format
+
+**2. Modify `supabase/functions/bot-send-telegram/index.ts`**
+
+Add a `fresh_slate_report` notification type that formats:
 
 ```
-Format:
-🎯 HIGH CONVICTION PLAYS — Feb 20
-================================
+FRESH CONVICTION SLATE -- Feb 20
+==================================
+5 high-conviction 3-leg parlays
 
-🔥 12 cross-engine overlaps found
-✅ 8 with full side agreement
+PARLAY 1 (Score: 92/100)
+  Kobe Brown REB U 7.5 (Edge: -64%, HIGH)
+  Ben Sheppard BLK U 0.5 (Edge: -100%, HIGH)  
+  Isaiah Collier BLK U 0.5 (Edge: -80%, HIGH)
 
-🏆 TOP PLAYS (sorted by conviction score):
-
-1. 🏀 Dean Wade — AST O 1.5
-   📈 Edge: +180% (ELITE)
-   ✅ Risk + Sharp agree OVER
-   🎯 Score: 28.5/30
-
-2. 🏀 Jarrett Allen — BLK O 0.5
-   📈 Edge: +100% (ELITE)
-   ✅ Risk agrees OVER
-   🎯 Score: 24.2/30
-
-...
+PARLAY 2 (Score: 88/100)
+  ...
 ```
 
-3. Shows top 15 plays by conviction score
-4. Includes engine confirmation details and side agreement status
+**3. Optional cleanup: Clear underperforming pending parlays**
 
-### Step 3: Create Server-Side Cross-Reference Edge Function
+Before generating, the function can optionally mark today's existing pending `max_boost_*` parlays as `void` to declutter the calendar, keeping only the new conviction-based ones active.
 
-**New file: `supabase/functions/high-conviction-analyzer/index.ts`**
+### Why This Should Win
 
-This edge function replicates the client-side logic from `useHighConvictionPlays.ts` but runs server-side so it can:
+- **3-leg only**: Your data shows 37.1% win rate on 3-leggers vs 11.8% on 2-leggers
+- **Mispriced edge focus**: Statistical edges of 60-180% on today's lines
+- **UNDER bias**: Aligns with the winning formula's defensive filtering
+- **No bloat**: 5-8 parlays instead of 44 spreads the risk thin
 
-1. Query `mispriced_lines` for today
-2. Query all engine tables (`nba_risk_engine_picks`, `prop_engine_v2_picks`, `sharp_ai_parlays`, `heat_parlays`)
-3. Normalize prop types and cross-reference
-4. Compute conviction scores
-5. Call `bot-send-telegram` with `type: 'high_conviction_report'` and the top plays
-
-### Step 4: Wire Into Pipeline
-
-**Modified file: `supabase/functions/detect-mispriced-lines/index.ts`**
-
-After the existing Telegram report fires, also call `high-conviction-analyzer` so the cross-engine overlap report is sent automatically after mispriced line detection completes.
-
-### Files Summary
+### Files
 
 | Action | File |
 |--------|------|
-| Modify | `supabase/functions/bot-send-telegram/index.ts` (add high_conviction_report type + formatter) |
-| Create | `supabase/functions/high-conviction-analyzer/index.ts` (server-side cross-reference + Telegram trigger) |
-| Modify | `supabase/functions/detect-mispriced-lines/index.ts` (chain call to high-conviction-analyzer) |
+| Create | `supabase/functions/bot-force-fresh-parlays/index.ts` |
+| Modify | `supabase/functions/bot-send-telegram/index.ts` (add fresh_slate_report type) |
 
-### Immediate Actions (after code changes)
+### Post-Deploy
 
-1. Deploy all 3 edge functions
-2. Invoke `nba-player-prop-risk-engine` with full_slate mode
-3. Invoke `high-conviction-analyzer` to compute overlaps and send to Telegram
-4. Verify Telegram receives both reports (mispriced lines + high conviction overlaps)
+1. Deploy both functions
+2. Invoke `bot-force-fresh-parlays` immediately
+3. Verify Telegram receives the fresh slate
+4. Monitor outcomes tonight
 
