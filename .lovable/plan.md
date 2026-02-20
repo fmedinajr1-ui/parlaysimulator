@@ -1,66 +1,93 @@
 
-
-## Fix MLB Pitcher Data Extraction + Run Backfill
+## Fix PrizePicks Scraper for MLB Spring Training (MLBST)
 
 ### Root Cause
 
-The `extractStats` function in `mlb-data-ingestion` has been processing 24K+ batting rows but zero pitching rows. The pitching detection logic checks for labels `IP`, `ER`, `ERA` in the `statGroup.labels` array, but this check is likely failing because:
+PrizePicks uses the league code `MLBST` (MLB Spring Training) instead of `MLB` during the pre-season. The scraper has three failures stemming from this:
 
-1. ESPN's pitching `statGroup` may use a `name` or `type` field (e.g., `"name": "pitching"`) that we're ignoring
-2. The label format may differ from expectations (e.g., case sensitivity after uppercasing, different abbreviation)
-3. If both batting and pitching labels contain `H` (hits/hits allowed), the `isBatting` check fires first and the `else if (isPitching)` branch never runs for pitching groups that also happen to match batting criteria
+1. `LEAGUE_TO_SPORT['MLBST']` is undefined → sport falls back to `'basketball_nba'` (wrong)
+2. The context-aware `pitcher_strikeouts` mapping checks `league === 'MLB'` exactly → `'MLBST'` never matches, so `'Strikeouts'` / `'Ks'` stay as `player_strikeouts`
+3. The `mlb-pitcher-k-analyzer` queries `pp_snapshot` where `sport = 'baseball_mlb'` → but these props land as `basketball_nba`, so zero results
 
-### Fix Plan
+The fix is three targeted changes in `pp-props-scraper/index.ts` and one cleanup in `mlb-pitcher-k-analyzer/index.ts`.
 
-**File: `supabase/functions/mlb-data-ingestion/index.ts`**
+### Changes
 
-1. **Use `statGroup.name` or `statGroup.type` for detection** instead of label-sniffing:
-   - Check `statGroup.name?.toLowerCase() === 'pitching'` or `statGroup.type === 'pitching'` as the primary detection method
-   - Keep label-based detection as a fallback
-   - This ensures pitching groups are never misidentified as batting
+**File: `supabase/functions/pp-props-scraper/index.ts`**
 
-2. **Fix the `isBatting` / `isPitching` mutual exclusion**:
-   - Currently `isPitching` is in an `else if` — if `isBatting` triggers first (because labels contain `H` which appears in both), pitching entries are skipped
-   - Change to check `statGroup.name` first, then fall back to labels
-
-3. **Add debug logging** (temporary):
-   - Log the `statGroup` name/type and labels for each group processed
-   - Log the count of pitching entries found per game
-   - This lets us verify the fix works before running the full backfill
-
-4. **Smaller batch support**:
-   - Add a `max_days_per_run` parameter (default 3) to prevent timeouts
-   - Each weekly backfill chunk processes 3 days at a time
-
-### Updated `extractStats` Logic
+**1. Add `MLBST` (and other Spring Training / minor variants) to the league map** (line ~89)
 
 ```typescript
-for (const statGroup of (teamStats.statistics || [])) {
-  const groupName = (statGroup.name || statGroup.type || '').toLowerCase();
-  const labels = (statGroup.labels || statGroup.keys || []).map((l: string) => l.toUpperCase());
-  
-  // Use group name as primary detection, labels as fallback
-  const isBatting = groupName === 'batting' || 
-    (!groupName && (labels.includes('AB') && labels.includes('RBI')));
-  const isPitching = groupName === 'pitching' || 
-    (!groupName && (labels.includes('IP') && labels.includes('ER')));
-  
-  // ... rest of logic with isBatting/isPitching as separate if blocks, not if/else if
-}
+const LEAGUE_TO_SPORT: Record<string, string> = {
+  'NBA': 'basketball_nba',
+  'WNBA': 'basketball_wnba',
+  'NHL': 'hockey_nhl',
+  'NFL': 'americanfootball_nfl',
+  'MLB': 'baseball_mlb',
+  'MLBST': 'baseball_mlb',   // MLB Spring Training
+  'ATP': 'tennis_atp',
+  'WTA': 'tennis_wta',
+  'PGA': 'golf_pga',
+  'UFC': 'mma_ufc',
+  'ESPORTS': 'esports',
+};
+```
+
+**2. Broaden the context-aware MLB strikeout check** (line ~160)
+
+Change:
+```typescript
+if (league === 'MLB' && proj.stat_type === 'Strikeouts') {
+```
+To:
+```typescript
+if ((league === 'MLB' || league === 'MLBST') && proj.stat_type === 'Strikeouts') {
+```
+
+**3. Add `MLBST` to the default sports array** (line ~204)
+
+Change:
+```typescript
+const { sports = ['NBA', 'NHL', 'WNBA', 'ATP', 'WTA', 'MLB'] } = ...
+```
+To:
+```typescript
+const { sports = ['NBA', 'NHL', 'WNBA', 'ATP', 'WTA', 'MLB', 'MLBST'] } = ...
+```
+
+**File: `supabase/functions/mlb-pitcher-k-analyzer/index.ts`**
+
+**4. Query `pp_snapshot` by `stat_type` only (not restricted to sport)** to catch both `baseball_mlb` and any mislabeled rows while the fix propagates:
+
+Instead of:
+```typescript
+.eq('stat_type', 'pitcher_strikeouts')
+.eq('is_active', true)
+```
+Add a sport filter that accepts both:
+```typescript
+.eq('stat_type', 'pitcher_strikeouts')
+.eq('is_active', true)
+.in('sport', ['baseball_mlb', 'basketball_nba'])  // temporary catch-all during transition
+```
+
+Actually, the cleaner fix is just to not filter by sport in the analyzer — since `stat_type = 'pitcher_strikeouts'` is unambiguous:
+```typescript
+.eq('stat_type', 'pitcher_strikeouts')
+.eq('is_active', true)
+// sport filter removed — pitcher_strikeouts is MLB-only by definition
 ```
 
 ### Execution After Deploy
 
-1. Deploy the fixed function
-2. Test with a single recent game day to verify pitcher data appears: `{ "pitchers_only": true, "days_back": 3 }`
-3. Check logs to confirm pitching groups are detected
-4. Run weekly backfill chunks (April-October 2025) in 3-day increments:
-   - `{ "pitchers_only": true, "start_date": "2025-04-01", "end_date": "2025-04-03" }`
-   - Continue in 3-day chunks across the season
+1. Deploy `pp-props-scraper` and `mlb-pitcher-k-analyzer`
+2. Run scraper with: `{ "sports": ["MLB", "MLBST"] }` to pull today's Spring Training props
+3. Run analyzer: invoke `mlb-pitcher-k-analyzer` to cross-reference against historical logs
+4. Check Telegram for the pitcher K report or use `/pitcherk` in the bot
 
 ### Files Changed
 
-| Action | File |
-|--------|------|
-| Modify | `supabase/functions/mlb-data-ingestion/index.ts` |
-
+| Action | File | Change |
+|--------|------|--------|
+| Modify | `supabase/functions/pp-props-scraper/index.ts` | Add `MLBST` to league map, fix context check, add to default sports |
+| Modify | `supabase/functions/mlb-pitcher-k-analyzer/index.ts` | Remove sport filter from `pp_snapshot` query |
