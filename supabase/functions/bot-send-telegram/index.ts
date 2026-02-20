@@ -192,7 +192,7 @@ async function formatTieredParlaysGenerated(data: Record<string, any>, dateStr: 
 }
 
 function formatSettlement(data: Record<string, any>, dateStr: string): string {
-  const { parlaysWon, parlaysLost, profitLoss, consecutiveDays, bankroll, isRealModeReady, weightChanges, strategyName, strategyWinRate, blockedCategories, unblockedCategories } = data;
+  const { parlaysWon, parlaysLost, profitLoss, consecutiveDays, bankroll, isRealModeReady, weightChanges, strategyName, strategyWinRate, blockedCategories, unblockedCategories, parlayDetails } = data;
   const totalParlays = (parlaysWon || 0) + (parlaysLost || 0);
   const winRate = totalParlays > 0 ? ((parlaysWon / totalParlays) * 100).toFixed(0) : 0;
   
@@ -244,6 +244,63 @@ function formatSettlement(data: Record<string, any>, dateStr: string): string {
     for (const change of weightChanges.slice(0, 8)) {
       const arrow = change.delta > 0 ? '+' : '';
       msg += `${change.category}: ${change.oldWeight.toFixed(2)} -> ${change.newWeight.toFixed(2)} (${arrow}${change.delta.toFixed(2)})\n`;
+    }
+  }
+
+  // --- LEG BREAKDOWN ---
+  if (parlayDetails && Array.isArray(parlayDetails) && parlayDetails.length > 0) {
+    msg += `\n--- LEG BREAKDOWN ---\n`;
+    
+    const propLabels: Record<string, string> = {
+      threes: '3PT', points: 'PTS', assists: 'AST', rebounds: 'REB',
+      steals: 'STL', blocks: 'BLK', pra: 'PRA', goals: 'G',
+      shots: 'SOG', saves: 'SVS', aces: 'ACES', spread: 'SPR',
+      total: 'TOT', moneyline: 'ML', h2h: 'ML',
+    };
+    
+    for (let i = 0; i < parlayDetails.length; i++) {
+      const p = parlayDetails[i];
+      const tierLabel = (p.tier || 'exploration').charAt(0).toUpperCase() + (p.tier || 'exploration').slice(1);
+      const outcomeLabel = p.outcome === 'won' ? 'WON' : 'LOST';
+      msg += `\nParlay #${i + 1} (${tierLabel}) - ${outcomeLabel}\n`;
+      
+      for (const leg of (p.legs || [])) {
+        const icon = leg.outcome === 'hit' ? '[hit] ' : leg.outcome === 'miss' ? '[miss]' : '[void]';
+        const side = (leg.side || 'over').charAt(0).toUpperCase();
+        const prop = propLabels[leg.prop_type] || (leg.prop_type || '').toUpperCase();
+        const actualStr = leg.actual_value !== null && leg.actual_value !== undefined ? ` (actual: ${leg.actual_value})` : '';
+        msg += `  ${icon} ${leg.player_name} ${side}${leg.line} ${prop}${actualStr}\n`;
+      }
+    }
+    
+    // --- TOP BUSTERS ---
+    const missMap = new Map<string, { count: number; actual_value: number | null }>();
+    for (const p of parlayDetails) {
+      if (p.outcome !== 'lost') continue;
+      for (const leg of (p.legs || [])) {
+        if (leg.outcome !== 'miss') continue;
+        const side = (leg.side || 'over').charAt(0).toUpperCase();
+        const prop = propLabels[leg.prop_type] || (leg.prop_type || '').toUpperCase();
+        const key = `${leg.player_name} ${side}${leg.line} ${prop}`;
+        const existing = missMap.get(key);
+        if (existing) {
+          existing.count++;
+        } else {
+          missMap.set(key, { count: 1, actual_value: leg.actual_value });
+        }
+      }
+    }
+    
+    if (missMap.size > 0) {
+      const busters = [...missMap.entries()]
+        .sort((a, b) => b[1].count - a[1].count)
+        .slice(0, 5);
+      
+      msg += `\n--- TOP BUSTERS ---\n`;
+      for (const [key, { count, actual_value }] of busters) {
+        const actualStr = actual_value !== null && actual_value !== undefined ? ` (actual: ${actual_value})` : '';
+        msg += `${key}: missed in ${count} parlay${count > 1 ? 's' : ''}${actualStr}\n`;
+      }
     }
   }
   
@@ -513,39 +570,56 @@ Deno.serve(async (req) => {
       message = formatted as string;
     }
     
-    // Send via Telegram API with Markdown, fallback to plain text
-    const sendBody: Record<string, any> = {
-      chat_id: chatId,
-      text: message,
-      parse_mode: 'Markdown',
-      disable_web_page_preview: true,
-    };
-    if (replyMarkup) sendBody.reply_markup = replyMarkup;
-
-    let telegramResponse = await fetch(`${TELEGRAM_API}${botToken}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(sendBody),
-    });
-
-    let telegramResult = await telegramResponse.json();
-
-    // If Markdown parsing fails, retry without parse_mode
-    if (!telegramResponse.ok && telegramResult?.description?.includes('parse')) {
-      console.warn('[Telegram] Markdown parse failed, retrying as plain text');
-      const fallbackBody: Record<string, any> = {
+    // Send via Telegram API - use sendLongMessage for settlement reports
+    const sendToTelegram = async (text: string, markup?: object) => {
+      const body: Record<string, any> = {
         chat_id: chatId,
-        text: message,
+        text,
         disable_web_page_preview: true,
       };
-      if (replyMarkup) fallbackBody.reply_markup = replyMarkup;
-      telegramResponse = await fetch(`${TELEGRAM_API}${botToken}/sendMessage`, {
+      if (markup) body.reply_markup = markup;
+
+      let resp = await fetch(`${TELEGRAM_API}${botToken}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(fallbackBody),
+        body: JSON.stringify(body),
       });
-      telegramResult = await telegramResponse.json();
-    }
+      let result = await resp.json();
+
+      // If too long, split by double newline
+      if (!resp.ok && result?.description?.includes('message is too long')) {
+        const chunks: string[] = [];
+        let current = '';
+        for (const line of text.split('\n')) {
+          if ((current + '\n' + line).length > 4000 && current.length > 0) {
+            chunks.push(current);
+            current = line;
+          } else {
+            current += (current ? '\n' : '') + line;
+          }
+        }
+        if (current) chunks.push(current);
+
+        for (let i = 0; i < chunks.length; i++) {
+          const chunkBody: Record<string, any> = {
+            chat_id: chatId,
+            text: chunks[i],
+            disable_web_page_preview: true,
+          };
+          if (i === chunks.length - 1 && markup) chunkBody.reply_markup = markup;
+          resp = await fetch(`${TELEGRAM_API}${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(chunkBody),
+          });
+          result = await resp.json();
+        }
+      }
+
+      return { resp, result };
+    };
+
+    const { resp: telegramResponse, result: telegramResult } = await sendToTelegram(message, replyMarkup);
 
     if (!telegramResponse.ok) {
       console.error('[Telegram] API error:', telegramResult);
