@@ -1,50 +1,69 @@
 
 
-## Remove Sidebar + Bottom Nav on Mobile, Clean Up Mobile UI
+## Accuracy Fix: Block Failing Categories + Add Missing Prop Markets
 
-### Overview
-Strip the mobile experience down to a clean, full-screen, app-like feel -- no bottom tab bar, no sidebar drawer. Navigation moves inline into the landing page content itself (e.g., section links or contextual CTAs). Desktop sidebar stays untouched.
+### Problem
+1. **30% hit rate** is driven by game-level picks (OVER_TOTAL at 10%, ML_FAVORITE at 20%, BIG_ASSIST_OVER at 10%) and loose thresholds
+2. **Missing prop markets**: The odds scraper only pulls 6 NBA markets: `player_points`, `player_rebounds`, `player_assists`, `player_threes`, `player_blocks`, `player_steals`. It does NOT pull turnovers, combos (PRA, PR, PA, RA), steals+blocks, or double-doubles -- all of which are available on The Odds API and already mapped in other functions like `fetch-current-odds`
 
 ### Changes
 
-**1. Remove BottomNav on mobile** 
-- In `src/App.tsx`, remove the `{isMobile && <BottomNav />}` render entirely
-- The BottomNav component stays in the codebase (desktop doesn't use it either, so it's effectively unused), or we can delete it outright
+#### 1. Expand NBA prop markets in the odds scraper
+**File:** `supabase/functions/whale-odds-scraper/index.ts`
 
-**2. Remove MenuDrawer from BottomNav**
-- Since BottomNav is gone, the hamburger menu drawer is also gone from mobile
-- Menu items (Team Bets, Scout) become accessible via inline links on the landing page or via a minimal top header menu
+Add two more batches to the NBA market list:
+```
+'basketball_nba': [
+  ['player_points', 'player_rebounds', 'player_assists'],
+  ['player_threes', 'player_blocks', 'player_steals'],
+  ['player_turnovers', 'player_double_double'],                          // NEW
+  ['player_points_rebounds_assists', 'player_points_rebounds',            // NEW
+   'player_points_assists', 'player_rebounds_assists'],
+],
+```
+This gives the generation engine access to turnovers, double-doubles, and all combo markets (PRA, P+R, P+A, R+A). More diverse props = less concentration on the same 4 prop types.
 
-**3. Clean up MobileLayout padding**
-- In `src/components/layout/MobileLayout.tsx`, remove the `pb-[88px]` bottom padding (no more bottom nav to account for)
-- Make it edge-to-edge: reduce default horizontal padding for a more immersive feel
+#### 2. Block catastrophic categories in generation
+**File:** `supabase/functions/bot-generate-daily-parlays/index.ts`
 
-**4. Modernize BotLanding.tsx for mobile**
-- Remove the top `<nav>` bar with the logo border -- replace with a floating logo or integrate into the hero
-- Make the hero section full-bleed with larger typography and tighter spacing
-- Add inline navigation links to Team Bets, Scout, Sweet Spots within the page content (e.g., a "Quick Links" row or contextual buttons)
-- Remove `pb-24` (was for bottom nav clearance)
+Add a hardcoded `BLOCKED_CATEGORIES` set near the top:
+```
+const BLOCKED_CATEGORIES = new Set([
+  'OVER_TOTAL',      // 10.2% hit rate
+  'UNDER_TOTAL',     // 18.2% hit rate  
+  'ML_FAVORITE',     // 20% hit rate (NCAAB already blocked, now block all)
+  'BIG_ASSIST_OVER', // 10.3% hit rate
+]);
+```
+Check this set in `canUsePickGlobally` -- if a pick's category is in the blocked set, skip it.
 
-**5. Add lightweight mobile navigation**
-- Add a minimal floating menu button (top-right corner) that opens a small popover or bottom sheet with page links (Sweet Spots, Team Bets, Scout, Dashboard)
-- This replaces both the sidebar and bottom tab bar with a single, unobtrusive access point
+#### 3. Cap SHARP_SPREAD to max 1 per parlay
+In the parlay building loop (around line 4219), add a spread-specific cap:
+```
+if (pickBetType === 'spread') {
+  const currentSpreads = legs.filter(l => l.bet_type === 'spread').length;
+  if (currentSpreads >= 1) continue;
+}
+```
 
-**6. Update AppShell mobile detection**
-- Ensure `AppShell` and `MobileLayout` don't add extra padding for bottom nav
+#### 4. Tighten quality thresholds
+- Raise `MIN_PROJECTION_BUFFER` from 0.3 to 1.0 for player props
+- Add `hit_rate_score >= 70` gate in `canUsePickGlobally`
+- Lower per-pick reuse from 3 to 2 (reduce blast radius of bad picks)
 
-### Technical Details
+#### 5. Keep existing anti-stacking logic
+The anti-correlation blocking (line 4212-4217) and same-side-total capping (line 4219-4225) stay as-is -- these are already doing the right thing to prevent contradictory legs in the same parlay.
 
-| File | Change |
-|------|--------|
-| `src/App.tsx` | Remove `{isMobile && <BottomNav />}` line (~line 131) |
-| `src/components/layout/MobileLayout.tsx` | Change `pb-[88px]` to `pb-4`, reduce px from 4 to 3 for tighter mobile feel |
-| `src/pages/BotLanding.tsx` | Remove `pb-24`, redesign top nav to floating/minimal, add inline navigation row for other pages |
-| `src/components/layout/MobileHeader.tsx` | Add optional floating menu trigger (small FAB-style button) |
-| New: `src/components/layout/MobileFloatingMenu.tsx` | Lightweight floating action button that opens a drawer/popover with navigation links (replaces sidebar + bottom nav) |
-| Various pages using `pb-24` or bottom-nav spacing | Remove bottom padding overrides (LiveDashboard, etc.) |
+### Expected Impact
+- Removing ~244 game-level legs (10-25% hit rate) from the pool
+- Adding turnovers, combos, and double-doubles diversifies the prop mix
+- Tighter thresholds push remaining picks toward 50%+ individual hit rates
+- Lower reuse limits contain blast radius when a pick does miss
 
-### What stays the same
-- Desktop sidebar and layout -- completely untouched
-- All routes and page components
-- Sheet/Drawer UI primitives (reused for the new floating menu)
+### Implementation Sequence
+1. Update `whale-odds-scraper` with new NBA market batches and deploy
+2. Add `BLOCKED_CATEGORIES` set and filter in generation engine
+3. Add spread cap (max 1 per parlay)
+4. Raise projection buffer, hit rate gate, and lower reuse limit
+5. Deploy generation engine and run test generation
 
