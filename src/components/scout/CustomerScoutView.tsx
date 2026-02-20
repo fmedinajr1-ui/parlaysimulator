@@ -9,7 +9,7 @@ import { useCustomerWhaleSignals } from '@/hooks/useCustomerWhaleSignals';
 import { useDeepSweetSpots } from '@/hooks/useDeepSweetSpots';
 import { useSweetSpotLiveData } from '@/hooks/useSweetSpotLiveData';
 import { Card, CardContent } from '@/components/ui/card';
-import { Video } from 'lucide-react';
+import { CustomerLiveGamePanel } from './CustomerLiveGamePanel';
 import { demoConfidencePicks, demoWhisperPicks, demoWhaleSignals } from '@/data/demoScoutData';
 import type { ScoutGameContext } from '@/pages/Scout';
 
@@ -64,22 +64,12 @@ export function CustomerScoutView({ gameContext, isDemo = false }: CustomerScout
         </div>
       )}
 
-      {/* Stream Panel */}
-      <Card className="border-border/50 overflow-hidden">
-        <CardContent className="p-0">
-          <div className="aspect-video bg-muted/30 flex items-center justify-center">
-            <div className="text-center space-y-2">
-              <Video className="w-10 h-10 mx-auto text-muted-foreground/40" />
-              <p className="text-sm text-muted-foreground">
-                {awayTeam} @ {homeTeam}
-              </p>
-              <p className="text-xs text-muted-foreground/60">
-                Stream coming soon
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      {/* Live Game Command Center */}
+      <CustomerLiveGamePanel
+        homeTeam={homeTeam}
+        awayTeam={awayTeam}
+        eventId={gameContext.eventId}
+      />
 
       {/* Slip Scanner */}
       <CustomerSlipScanner />
