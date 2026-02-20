@@ -106,9 +106,17 @@ function extractStats(boxScore: any, gameDate: string): PlayerGameLog[] {
     const opponent = competitors.find((c: any) => c.id !== teamId)?.team?.displayName || 'Unknown';
 
     for (const statGroup of (teamStats.statistics || [])) {
-      const labels = (statGroup.labels || []).map((l: string) => l.toUpperCase());
-      const isBatting = labels.includes('AB') || labels.includes('H') || labels.includes('RBI');
-      const isPitching = labels.includes('IP') || labels.includes('ER') || labels.includes('ERA');
+      const groupName = (statGroup.name || statGroup.type || '').toLowerCase();
+      const labels = (statGroup.labels || statGroup.keys || []).map((l: string) => l.toUpperCase());
+      
+      // Use group name as primary detection, labels as fallback
+      const isBatting = groupName === 'batting' || 
+        (!groupName && (labels.includes('AB') && labels.includes('RBI')));
+      const isPitching = groupName === 'pitching' || 
+        (!groupName && (labels.includes('IP') && labels.includes('ER')));
+      
+      // Debug logging for group detection
+      console.log(`[MLB Ingestion] StatGroup: name="${groupName}" labels=[${labels.slice(0, 5).join(',')}] isBatting=${isBatting} isPitching=${isPitching}`);
 
       for (const athlete of (statGroup.athletes || [])) {
         const playerName = athlete.athlete?.displayName;
@@ -147,7 +155,8 @@ function extractStats(boxScore: any, gameDate: string): PlayerGameLog[] {
             pitcher_hits_allowed: null,
             is_home: isHome,
           });
-        } else if (isPitching) {
+        }
+        if (isPitching) {
           const ip = parseFloat(statMap['IP'] || '0') || 0;
           if (ip === 0) continue;
 
