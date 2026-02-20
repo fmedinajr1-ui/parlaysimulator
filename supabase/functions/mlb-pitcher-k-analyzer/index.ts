@@ -49,6 +49,7 @@ Deno.serve(async (req) => {
     console.log(`[Pitcher K Analyzer] Starting analysis for ${today}`);
 
     // Fetch today's pitcher strikeout props from pp_snapshot
+    // pitcher_strikeouts is unambiguous — no sport filter needed
     const { data: ppProps } = await supabase
       .from('pp_snapshot')
       .select('player_name, pp_line, team, sport')
