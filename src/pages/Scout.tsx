@@ -223,10 +223,10 @@ const Scout = () => {
     staleTime: 30_000,
   });
 
-  // Auto-set selected game from active game for customers
+  // Auto-set selected game from active game for customers (resolve ESPN ID too)
   useEffect(() => {
     if (isCustomer && activeGame && !selectedGame) {
-      setSelectedGame({
+      const game: ScoutGameContext = {
         eventId: activeGame.event_id,
         homeTeam: activeGame.home_team,
         awayTeam: activeGame.away_team,
@@ -234,7 +234,17 @@ const Scout = () => {
         gameDescription: activeGame.game_description ?? `${activeGame.away_team} @ ${activeGame.home_team}`,
         homeRoster: [],
         awayRoster: [],
-      });
+      };
+      setSelectedGame(game);
+
+      // Resolve ESPN event ID for live score lookups
+      supabase.functions.invoke('get-espn-event-id', {
+        body: { homeTeam: activeGame.home_team, awayTeam: activeGame.away_team },
+      }).then(({ data }) => {
+        if (data?.espnEventId) {
+          setSelectedGame(prev => prev ? { ...prev, espnEventId: data.espnEventId } : prev);
+        }
+      }).catch(err => console.error('ESPN ID resolve failed:', err));
     }
   }, [isCustomer, activeGame, selectedGame]);
 
