@@ -4598,12 +4598,12 @@ async function generateTierParlays(
 
       // === COHERENCE GATE: reject incoherent leg combinations ===
       const coherence = calculateParlayCoherence(legs);
-      if (coherence < 85 && tier === 'execution') {
-        console.log(`[CoherenceGate] Rejected ${tier}/${profile.strategy} parlay (coherence ${coherence} < 85)`);
+      if (coherence < 70 && tier === 'execution') {
+        console.log(`[CoherenceGate] Rejected ${tier}/${profile.strategy} parlay (coherence ${coherence} < 70)`);
         continue;
       }
-      if (coherence < 75) {
-        console.log(`[CoherenceGate] Rejected ${tier}/${profile.strategy} parlay (coherence ${coherence} < 75)`);
+      if (coherence < 60) {
+        console.log(`[CoherenceGate] Rejected ${tier}/${profile.strategy} parlay (coherence ${coherence} < 60)`);
         continue;
       }
 
